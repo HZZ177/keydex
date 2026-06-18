@@ -1,0 +1,203 @@
+.block {
+  display: grid;
+  gap: 10px;
+  max-width: 100%;
+  border: 1px solid var(--inline-block-border);
+  border-radius: var(--radius-md);
+  background: var(--inline-block-bg);
+  color: var(--color-text-secondary);
+  padding: 10px 12px;
+}
+
+.block[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--color-danger) 26%, var(--inline-block-border));
+}
+
+.header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--color-accent);
+}
+
+.block[data-status="failed"] .icon {
+  color: var(--color-danger);
+}
+
+.titleGroup {
+  min-width: 0;
+}
+
+.title {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 1px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.statusMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--color-text-tertiary);
+}
+
+.statusDot[data-state="running"] {
+  animation: breathing 1.4s ease-in-out infinite;
+  background: var(--color-accent);
+}
+
+.statusDot[data-state="failed"] {
+  background: var(--color-danger);
+}
+
+.statusDot[data-state="done"] {
+  background: var(--color-success-6);
+}
+
+.fileList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fileItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.previewButton {
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.previewButton:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.fileButton {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  padding: 6px 5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fileButton:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.fileButton svg {
+  transition: transform 140ms ease;
+}
+
+.fileButton svg[data-expanded="true"] {
+  transform: rotate(180deg);
+}
+
+.path {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileStats {
+  color: var(--color-text-tertiary);
+}
+
+.diff {
+  display: grid;
+  max-width: 100%;
+  margin: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 0;
+}
+
+.diff span {
+  display: block;
+  min-height: 18px;
+  padding: 0 10px;
+  white-space: pre-wrap;
+}
+
+.added {
+  background: color-mix(in srgb, var(--color-success-6) 12%, transparent);
+  color: color-mix(in srgb, var(--color-success-6) 78%, var(--color-text-primary));
+}
+
+.removed {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  color: color-mix(in srgb, var(--color-danger) 78%, var(--color-text-primary));
+}
+
+.hunk {
+  color: var(--color-accent);
+}
+
+.context {
+  color: var(--color-text-secondary);
+}
+
+@keyframes breathing {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}

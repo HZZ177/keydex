@@ -1,0 +1,46 @@
+.status {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--inline-block-border);
+  border-radius: var(--radius-pill);
+  background: var(--inline-block-bg);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  padding: 7px 10px;
+}
+
+.icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--color-accent);
+}
+
+.status[data-state="starting"] .icon,
+.status[data-state="running"] .icon {
+  animation: spin 900ms linear infinite;
+}
+
+.status[data-state="failed"] .icon {
+  color: var(--color-danger);
+}
+
+.text {
+  font-weight: 550;
+}
+
+.detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,0 +1,148 @@
+.home {
+  position: relative;
+  display: flex;
+  min-height: calc(100vh - var(--titlebar-height));
+  align-items: center;
+  justify-content: center;
+  padding: clamp(60px, 8vh, 96px) 0 clamp(72px, 10vh, 128px);
+  color: var(--color-text-primary);
+}
+
+.canvas {
+  display: grid;
+  width: min(880px, calc(100% - 96px));
+  min-width: min(100%, 320px);
+  align-items: center;
+  justify-items: center;
+  gap: 46px;
+  transform: translateY(-1vh);
+}
+
+.title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 34px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.18;
+  text-align: center;
+}
+
+.composer {
+  display: flex;
+  min-height: 112px;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 18px;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 18px 50px rgb(15 23 42 / 10%);
+}
+
+.input {
+  width: 100%;
+  min-height: 46px;
+  max-height: 190px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.leftTools {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.iconButton,
+.sendButton,
+.modelButton {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.iconButton {
+  width: 32px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.modelButton {
+  gap: 6px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--color-accent);
+}
+
+.sendButton {
+  width: 32px;
+  background: var(--color-text-primary);
+  color: var(--color-bg-elevated);
+}
+
+.iconButton:not(:disabled):hover,
+.modelButton:hover {
+  background: var(--color-fill-hover);
+  color: var(--color-text-primary);
+}
+
+.sendButton:disabled,
+.iconButton:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.error {
+  align-self: center;
+  max-width: 100%;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-bg-elevated));
+  color: var(--color-danger);
+  font-size: 13px;
+}
+
+@media (max-width: 860px) {
+  .home {
+    padding: 44px 14px 80px;
+  }
+
+  .canvas {
+    width: min(100%, 720px);
+    gap: 36px;
+  }
+
+  .title {
+    font-size: 28px;
+  }
+}
+
+@media (max-width: 520px) {
+  .title {
+    font-size: 24px;
+  }
+}

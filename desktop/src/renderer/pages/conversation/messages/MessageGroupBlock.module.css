@@ -1,0 +1,143 @@
+.block {
+  display: grid;
+  gap: 8px;
+  max-width: 100%;
+  border: 1px solid var(--inline-block-border);
+  border-radius: var(--radius-md);
+  background: var(--inline-block-bg);
+  color: var(--color-text-secondary);
+  padding: 8px 10px;
+}
+
+.header {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.header:hover .title {
+  color: var(--color-text-primary);
+}
+
+.header svg:last-child {
+  color: var(--color-text-tertiary);
+  transition: transform 140ms ease;
+}
+
+.header svg:last-child[data-expanded="true"] {
+  transform: rotate(180deg);
+}
+
+.icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--color-accent);
+}
+
+.title {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.summaryList {
+  display: grid;
+  gap: 5px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-muted) 56%, transparent);
+  padding: 6px 8px;
+}
+
+.summaryItem {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(90px, max-content) minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.statusDot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--color-text-tertiary);
+}
+
+.statusDot[data-state="done"] {
+  background: var(--color-success);
+}
+
+.statusDot[data-state="failed"] {
+  background: var(--color-danger);
+}
+
+.statusDot[data-state="running"] {
+  background: var(--color-primary-6);
+  animation: summaryPulse 1.4s ease-in-out infinite;
+}
+
+.statusDot[data-state="pending"] {
+  background: var(--color-warning);
+}
+
+.summaryTitle,
+.summaryDetail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summaryTitle {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.summaryDetail {
+  color: var(--color-text-tertiary);
+}
+
+.children {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--inline-block-border);
+  padding-top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statusDot[data-state="running"] {
+    animation: none;
+  }
+}
+
+@keyframes summaryPulse {
+  0%,
+  100% {
+    opacity: 0.36;
+  }
+  50% {
+    opacity: 1;
+  }
+}

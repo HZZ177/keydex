@@ -1,0 +1,254 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 18%);
+  padding: 24px;
+  animation: backdropEnter var(--motion-fast) var(--motion-ease-standard) both;
+}
+
+.panel {
+  width: min(520px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-popover);
+  animation: modalEnter var(--motion-panel) var(--motion-ease-out) both;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding: 17px 18px 14px;
+}
+
+.header h2 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.header p {
+  margin: 6px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.iconButton {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.iconButton:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.form {
+  display: grid;
+  gap: 14px;
+  padding: 17px 18px 18px;
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+}
+
+.field span,
+.toggleRow strong {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field input {
+  width: 100%;
+  height: 36px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  outline: 0;
+  background: var(--surface-bg);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 0 10px;
+}
+
+.field input:focus {
+  border-color: color-mix(in srgb, var(--color-accent) 48%, var(--color-border-default));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 9%, transparent);
+}
+
+.field small,
+.toggleRow small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  padding: 11px 12px;
+}
+
+.toggleRow span {
+  display: grid;
+  gap: 4px;
+}
+
+.toggleRow input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--color-accent);
+}
+
+.error {
+  border: 1px solid color-mix(in srgb, var(--color-danger) 22%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-danger) 7%, var(--surface-bg));
+  color: var(--color-danger);
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 9px 10px;
+}
+
+.confirmBox {
+  display: grid;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 22%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-danger) 6%, var(--surface-bg));
+  padding: 10px;
+}
+
+.confirmBox span {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.confirmBox div {
+  display: flex;
+  gap: 8px;
+}
+
+.confirmBox button {
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.confirmBox button:first-child {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.confirmBox button:last-child {
+  background: var(--surface-hover);
+  color: var(--color-text-secondary);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.primaryButton,
+.secondaryButton,
+.dangerButton {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 13px;
+}
+
+.primaryButton {
+  background: var(--color-text-primary);
+  color: var(--color-bg-elevated);
+}
+
+.secondaryButton {
+  background: var(--surface-muted);
+  color: var(--color-text-secondary);
+}
+
+.dangerButton {
+  background: transparent;
+  color: var(--color-danger);
+}
+
+.primaryButton:hover:not(:disabled),
+.secondaryButton:hover:not(:disabled),
+.dangerButton:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.dangerButton:disabled,
+.confirmBox button:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+@keyframes backdropEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop,
+  .panel {
+    animation: none;
+  }
+}

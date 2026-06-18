@@ -1,0 +1,21 @@
+.bootstrap {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  color: var(--color-text-1);
+  background: var(--app-bg);
+}
+
+.mark {
+  font-size: 13px;
+  line-height: 1;
+  color: var(--color-text-3);
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}

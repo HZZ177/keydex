@@ -1,0 +1,86 @@
+.modelPill,
+.settingsButton {
+  display: inline-flex;
+  min-width: 0;
+  height: 34px;
+  align-items: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.modelPill:hover,
+.settingsButton:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--color-text-secondary);
+}
+
+.modelPill:focus-within,
+.settingsButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 34%, transparent);
+  outline-offset: 2px;
+}
+
+.modelCluster {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.modelPill {
+  position: relative;
+  gap: 8px;
+  max-width: min(220px, 30vw);
+  padding: 0 8px;
+}
+
+.modelDot {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--color-text-tertiary) 34%, transparent);
+}
+
+.select {
+  width: auto;
+  max-width: 142px;
+  min-width: 68px;
+  border: 0;
+  outline: 0;
+  appearance: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.select:disabled {
+  cursor: not-allowed;
+  color: var(--color-text-tertiary);
+}
+
+.settingsButton {
+  padding: 0 10px;
+  color: var(--color-accent);
+}
+
+@media (max-width: 680px) {
+  .modelCluster {
+    width: 100%;
+  }
+
+  .modelPill {
+    max-width: min(100%, 260px);
+  }
+
+  .select {
+    max-width: 148px;
+  }
+}

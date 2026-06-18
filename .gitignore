@@ -286,3 +286,16 @@ scripts
 /PROJECT_RULES.md
 
 docs/superpowers/prototype
+
+# Project helper scripts
+!/scripts/
+!/scripts/*.ps1
+
+# Python Codex local runtime/build artifacts
+/.data/
+/artifacts/
+/agent-server.spec
+/desktop/.npm-cache/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/binaries/agent-server.exe

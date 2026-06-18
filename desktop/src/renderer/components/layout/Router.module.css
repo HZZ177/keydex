@@ -1,0 +1,55 @@
+.centerPage {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  color: var(--color-text-1);
+  background: var(--surface-bg);
+}
+
+.mark {
+  font-size: 13px;
+  line-height: 1;
+  color: var(--color-text-3);
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.documentPage {
+  min-height: 100%;
+  padding: 48px 0 120px;
+  color: var(--color-text-1);
+}
+
+.sectionTitle {
+  margin: 0 0 12px;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.muted {
+  margin: 0;
+  color: var(--color-text-3);
+  font-size: 14px;
+}
+
+.backButton {
+  height: 30px;
+  margin-bottom: 22px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--color-text-2);
+}
+
+.backButton:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}

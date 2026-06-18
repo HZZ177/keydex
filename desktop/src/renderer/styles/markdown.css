@@ -1,0 +1,130 @@
+.codex-markdown {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--color-text-1);
+  font-size: 15px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.codex-markdown :where(p) {
+  margin: 12px 0;
+}
+
+.codex-markdown > :where(p):first-child {
+  margin-top: 0;
+}
+
+.codex-markdown > :where(p):last-child {
+  margin-bottom: 0;
+}
+
+.codex-markdown :where(h1, h2, h3, h4, h5, h6) {
+  color: var(--color-text-1);
+  font-weight: 650;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.codex-markdown > :where(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
+}
+
+.codex-markdown :where(h1) {
+  margin: 22px 0 12px;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.codex-markdown :where(h2, h3, h4, h5, h6) {
+  margin: 18px 0 10px;
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.codex-markdown :where(a) {
+  color: var(--color-primary-6);
+  text-decoration: none;
+}
+
+.codex-markdown :where(a):hover {
+  text-decoration: underline;
+}
+
+.codex-markdown :where(ul, ol) {
+  margin: 10px 0;
+  padding-left: 22px;
+}
+
+.codex-markdown :where(li) {
+  margin: 4px 0;
+  padding-left: 2px;
+}
+
+.codex-markdown :where(blockquote) {
+  margin: 14px 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--color-border-2);
+  color: var(--color-text-2);
+}
+
+.codex-markdown :where(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 12px 0;
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+}
+
+.codex-markdown :where(code):not(:where(pre code)) {
+  padding: 2px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--code-bg);
+  color: var(--color-text-1);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.codex-markdown :where(pre) {
+  max-width: 100%;
+  margin: 10px 0;
+  padding: 12px;
+  overflow-x: auto;
+  overflow-y: visible;
+  border-radius: var(--radius-md);
+  background: var(--code-bg);
+  color: var(--color-text-1);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  scrollbar-width: thin;
+}
+
+.codex-markdown :where(table) {
+  min-width: max-content;
+  max-width: none;
+  border-collapse: collapse;
+}
+
+.codex-markdown-table-scroll {
+  max-width: 100%;
+  margin: 12px 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.codex-markdown-table-scroll :where(table) {
+  margin: 0;
+}
+
+.codex-markdown :where(th, td) {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-2);
+}
+
+.codex-markdown :where(th) {
+  background: var(--surface-muted);
+  font-weight: 600;
+}

@@ -1,0 +1,38 @@
+:root {
+  --app-min-width: 360px;
+  --titlebar-height: 40px;
+  --sidebar-width: 286px;
+  --sidebar-collapsed-width: 58px;
+  --composer-width: 880px;
+  --content-reading-width: 880px;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --shadow-soft: 0 10px 28px rgb(15 23 42 / 8%);
+  --shadow-popover: 0 18px 50px rgb(15 23 42 / 14%);
+  --motion-fast: 140ms;
+  --motion-panel: 180ms;
+  --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  --font-mono:
+    "SFMono-Regular", Consolas, "Liberation Mono", "Cascadia Mono", Menlo, monospace;
+}
+
+html,
+body,
+#app {
+  min-width: var(--app-min-width);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}

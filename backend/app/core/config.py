@@ -1,0 +1,49 @@
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_PROTOCOL_VERSION = "2026-06-15"
+
+
+class AppSettings(BaseSettings):
+    app_name: str = "codex-copy-agent"
+    version: str = "0.1.0"
+    protocol_version: str = DEFAULT_PROTOCOL_VERSION
+    host: str = "127.0.0.1"
+    port: int = 8765
+    data_dir: Path = Field(default_factory=lambda: Path(".data").resolve())
+    workspace_root: Path = Field(default_factory=lambda: Path.cwd().resolve())
+    default_user_id: str = "local-user"
+    default_scene_id: str = "desktop-agent"
+    default_scene_name: str = "Local Desktop Agent"
+    max_history_messages: int = Field(default=40, ge=1)
+    max_tool_calls: int = Field(default=80, ge=1)
+    tool_timeout_seconds: float = Field(default=120.0, gt=0)
+    shell_timeout_seconds: float = Field(default=120.0, gt=0)
+    log_level: str = "INFO"
+    reload: bool = True
+    e2e_model_transport: bool = False
+    e2e_stream_delay_ms: int = Field(default=80, ge=0)
+
+    model_config = SettingsConfigDict(
+        env_prefix="CODEX_COPY_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    @field_validator("data_dir", "workspace_root", mode="before")
+    @classmethod
+    def resolve_path(cls, value: str | Path) -> Path:
+        return Path(value).expanduser().resolve()
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> AppSettings:
+    return AppSettings()
+
+
+def reset_settings_cache() -> None:
+    get_settings.cache_clear()

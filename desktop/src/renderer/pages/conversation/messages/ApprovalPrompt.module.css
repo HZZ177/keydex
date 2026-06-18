@@ -1,0 +1,184 @@
+.block {
+  display: grid;
+  gap: 10px;
+  max-width: 100%;
+  border: 1px solid var(--inline-block-border);
+  border-radius: var(--radius-md);
+  background: var(--inline-block-bg);
+  color: var(--color-text-secondary);
+  padding: 10px 12px;
+}
+
+.block[data-status="pending"],
+.block[data-status="submitted"] {
+  border-color: color-mix(in srgb, var(--color-accent) 28%, var(--inline-block-border));
+}
+
+.block[data-status="rejected"],
+.block[data-status="expired"],
+.block[data-status="cancelled"] {
+  border-color: color-mix(in srgb, var(--color-danger) 26%, var(--inline-block-border));
+}
+
+.header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--color-accent);
+}
+
+.block[data-status="rejected"] .icon,
+.block[data-status="expired"] .icon,
+.block[data-status="cancelled"] .icon {
+  color: var(--color-danger);
+}
+
+.titleGroup {
+  min-width: 0;
+}
+
+.title {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 1px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.target {
+  max-width: min(520px, 100%);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.description {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.riskLine {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 7px;
+}
+
+.riskLine strong {
+  color: var(--color-text-primary);
+  font-weight: 650;
+}
+
+.detailsToggle {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  padding: 3px 5px;
+}
+
+.detailsToggle:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.detailsToggle svg {
+  transition: transform 140ms ease;
+}
+
+.detailsToggle svg[data-expanded="true"] {
+  transform: rotate(180deg);
+}
+
+.details {
+  max-width: 100%;
+  margin: 0;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 9px;
+  white-space: pre-wrap;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.approveButton,
+.rejectButton {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 10px;
+}
+
+.approveButton {
+  border: 1px solid color-mix(in srgb, var(--color-accent) 36%, var(--inline-block-border));
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.rejectButton {
+  border: 1px solid var(--inline-block-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.approveButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 88%, #000);
+}
+
+.rejectButton:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.approveButton:disabled,
+.rejectButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}

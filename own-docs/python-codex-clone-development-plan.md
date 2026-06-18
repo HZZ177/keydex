@@ -1,4 +1,4 @@
-# Python Codex Clone Development Plan
+# Python Codex 复刻开发计划
 
 > 目标：用 Python 后端和可打包为 Windows exe 的桌面前端，复刻 Codex 的核心 chat + harness 体验。保留 Codex 的线程/回合/事件/工具执行/patch/终端流式体验，裁剪复杂的自动化、云端、插件市场、多层配置、Guardian、企业管控等能力，形成团队内部本地使用的可执行开发方案。
 
@@ -9,7 +9,7 @@
 - 前端：`Tauri 2 + Vue 3 + TypeScript + Vite + Pinia + TanStack Query for Vue/VueUse + Xterm.js + Monaco Editor + Naive UI`
 - 后端：`Python 3.11 + FastAPI + WebSocket/SSE + Pydantic + SQLModel/SQLite + httpx + anyio`
 - 打包：Tauri 打包 Windows exe，安装包内携带 Python runtime 或独立 PyInstaller 后端二进制
-- 模型接口：OpenAI-compatible Chat Completions/Responses 适配层，用户可配置 `base_url`、`api_key`，模型列表从 `GET /models` 自动解析
+- 模型接口：OpenAI 兼容 Chat Completions/Responses 适配层，用户可配置 `base_url`、`api_key`，模型列表从 `GET /models` 自动解析
 - 核心运行时：复刻 Codex 的 `Thread -> Turn -> Item`、`Submission(Op) -> Event`、tool registry、shell/apply_patch/read_file/write_file/list_dir/search 等 harness 能力
 - 第一阶段不做：MCP、插件市场、skills 自动加载、复杂 sandbox、Guardian 自动审批、云任务、realtime audio、多 agent、远程环境、复杂配置分层
 
@@ -53,7 +53,7 @@ flowchart LR
    - `Op::UserInput`、`Op::Interrupt`、`Op::ExecApproval`、`Op::PatchApproval` 等定义在 `codex-rs/protocol/src/protocol.rs`
    - core 产出 `EventMsg::TurnStarted`、`AgentMessage`、`AgentReasoning`、`ExecCommandBegin/Delta/End`、`PatchApplyBegin/End`、`TokenCount` 等事件
 
-4. agent core
+4. Agent 核心
    - `ThreadManager` 创建/恢复线程：`codex-rs/core/src/thread_manager.rs`
    - `Codex::spawn` 创建 session 并启动 submission loop：`codex-rs/core/src/session/mod.rs`
    - `submission_loop` 处理 `Op`：`codex-rs/core/src/session/handlers.rs`
@@ -73,7 +73,7 @@ Python 版要复刻的是这些“产品结构和运行语义”，不是复刻 
 - 会话线程：创建、列表、重命名、删除、恢复历史
 - 回合状态：pending/running/completed/failed/cancelled
 - 工具面板：每次工具调用独立卡片，显示参数、状态、耗时、输出、错误
-- 终端命令：shell 命令流式 stdout/stderr、exit code、运行时间、工作目录
+- 终端命令：shell 命令流式 stdout/stderr、退出码、运行时间、工作目录
 - 文件变更：apply_patch 或文件写入展示 diff，支持人工确认后应用
 - 模型配置：base_url、api_key、model，模型列表从接口自动拉取
 - 权限模式：只实现简单三档
@@ -251,7 +251,7 @@ python-codex/
 
 Python 版保留 Codex 的 `Thread -> Turn -> Item` 模型。
 
-### 6.1 Thread
+### 6.1 会话线程（Thread）
 
 ```python
 class Thread(BaseModel):
@@ -267,7 +267,7 @@ class Thread(BaseModel):
     turns: list[Turn] = []
 ```
 
-### 6.2 Turn
+### 6.2 执行回合（Turn）
 
 ```python
 class Turn(BaseModel):
@@ -365,12 +365,12 @@ runtime.error
 
 ## 8. 模型适配层
 
-目标是支持任意 OpenAI-compatible endpoint：
+目标是支持任意 OpenAI 兼容端点：
 
 - OpenAI
 - Azure OpenAI 兼容层
 - vLLM
-- Ollama OpenAI-compatible endpoint
+- Ollama OpenAI 兼容端点
 - LM Studio
 - LiteLLM proxy
 - 内部模型网关
@@ -414,7 +414,7 @@ Authorization: Bearer {api_key}
 
 ### 8.3 流式协议
 
-第一版建议用 Chat Completions streaming：
+第一版建议用 Chat Completions 流式接口：
 
 ```http
 POST /chat/completions
@@ -435,9 +435,9 @@ POST /chat/completions
 - finish_reason = tool_calls
 - finish_reason = stop
 
-如果 endpoint 支持 Responses API，可后续增加 `responses` adapter，不影响上层 runtime。
+如果端点支持 Responses API，可后续增加 `responses` adapter，不影响上层 runtime。
 
-## 9. Agent Runtime 设计
+## 9. Agent 运行时设计
 
 核心类：
 
@@ -456,7 +456,7 @@ class AgentRuntime:
 1. 创建 Turn
 2. 写入 UserMessage item
 3. 构建 model messages + tool schemas
-4. 调用模型 stream
+4. 调用模型流
 5. 前端实时接收 assistant/reasoning delta
 6. 如果模型请求 tool_calls：
    6.1 创建 tool item
@@ -465,7 +465,7 @@ class AgentRuntime:
    6.4 写入 tool result
    6.5 再次调用模型
 7. 如果模型停止：
-   7.1 turn completed
+   7.1 turn 状态变为 completed
    7.2 持久化 rollout
 ```
 
@@ -495,7 +495,7 @@ async def run_turn(ctx: TurnContext):
             })
 ```
 
-## 10. Context Builder
+## 10. 上下文构建器
 
 Python 版的上下文构建要简单，但保留 Codex 的关键思想：有边界、有上限、可解释。
 
@@ -536,11 +536,11 @@ current_date: 2026-06-15
 - 最近 N 个 turn 优先
 - 老 turn 压缩为 summary，第一版可先只做硬截断
 
-## 11. Tool Harness
+## 11. 工具执行框架
 
 第一版工具清单：
 
-| Tool | 作用 | Codex 对应 |
+| 工具 | 作用 | Codex 对应 |
 |---|---|---|
 | `shell_command` | 执行 shell 命令，流式输出 | shell / exec_command |
 | `read_file` | 读取文件 | fs/context 工具 |
@@ -550,16 +550,16 @@ current_date: 2026-06-15
 | `search_text` | ripgrep 搜索 | shell/rg |
 | `view_image` | 前端展示本地图片 | view_image |
 
-### 11.1 Tool Schema
+### 11.1 工具 Schema
 
-对 OpenAI-compatible tool calling：
+对 OpenAI 兼容 tool calling：
 
 ```json
 {
   "type": "function",
   "function": {
     "name": "shell_command",
-    "description": "Run a shell command in the workspace.",
+    "description": "在工作区内执行 shell 命令。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -574,7 +574,7 @@ current_date: 2026-06-15
 }
 ```
 
-### 11.2 Tool Runtime
+### 11.2 工具运行时
 
 ```python
 class ToolRuntime(Protocol):
@@ -597,34 +597,34 @@ class ToolRuntime(Protocol):
 - 发 `item.completed`
 - 返回模型可见结果
 
-### 11.3 Shell 工具
+### 11.3 Shell 命令工具
 
 shell 执行要求：
 
 - Windows 默认 PowerShell
 - 支持指定 workdir
 - stdout/stderr 合并流式输出
-- 支持 timeout
-- 支持 interrupt
+- 支持超时
+- 支持中断
 - 输出做截断，避免模型上下文爆炸
 - 前端显示：
-  - command
+  - 命令
   - cwd
-  - status
-  - streaming output
-  - exit code
-  - duration
+  - 状态
+  - 流式输出
+  - 退出码
+  - 耗时
 
 模型可见输出格式：
 
 ```text
-Exit code: 0
-Wall time: 1.2 seconds
-Output:
+退出码：0
+耗时：1.2 秒
+输出：
 ...
 ```
 
-### 11.4 Patch 工具
+### 11.4 补丁工具
 
 第一版实现两种路径：
 
@@ -634,9 +634,9 @@ Output:
 前端展示：
 
 - 文件列表
-- additions/deletions
-- diff viewer
-- accept/reject
+- 新增/删除行数
+- diff 查看器
+- 接受/拒绝
 
 审批模式：
 
@@ -650,21 +650,21 @@ Output:
 
 ```text
 +---------------------------------------------------------------+
-| Top Bar: model selector | cwd | permission mode | settings     |
+| 顶栏：模型选择器 | cwd | 权限模式 | 设置             |
 +----------------------+----------------------------------------+
-| Thread Sidebar        | Chat Timeline                          |
-| - New Thread          | - User message                         |
-| - Thread list         | - Assistant streaming markdown          |
-| - Search              | - Reasoning collapsible                 |
-|                       | - Tool cards                            |
-|                       | - Patch cards                           |
-|                       | - Command output terminal cards         |
+| 会话侧栏              | 对话时间线                             |
+| - 新建会话            | - 用户消息                             |
+| - 会话列表            | - 助手流式 Markdown                    |
+| - 搜索                | - 推理过程可折叠                       |
+|                       | - 工具卡片                              |
+|                       | - 补丁卡片                              |
+|                       | - 命令输出终端卡片                      |
 |                       +----------------------------------------+
-|                       | Composer: text area + attach + send     |
+|                       | 输入区：文本框 + 附件 + 发送           |
 +----------------------+----------------------------------------+
 ```
 
-### 12.2 Chat Timeline
+### 12.2 对话时间线
 
 组件：
 
@@ -681,35 +681,35 @@ Output:
 
 流式效果：
 
-- assistant text 按 delta 追加
+- assistant 正文按 delta 追加
 - reasoning 独立折叠面板
-- tool call 卡片先出现 pending，执行中显示 spinner，输出增量刷新
+- tool call 卡片先出现 pending，执行中显示加载状态，输出增量刷新
 - command 卡片里用 xterm 或 pre 区块流式追加
-- patch 卡片先显示 proposed，审批后变 applied/rejected
+- patch 卡片先显示拟议状态，审批后变为已应用/已拒绝
 
-### 12.3 Composer
+### 12.3 输入区
 
 功能：
 
 - 多行输入
 - Enter 发送，Shift+Enter 换行
-- Stop 按钮
+- 停止按钮
 - 图片/文件附件第一版可选
 - 输入时显示当前模型、权限、cwd
 
-### 12.4 Settings
+### 12.4 设置
 
 必须有：
 
 - base_url
 - api_key
-- model selector
-- refresh models
-- permission mode
-- workspace root
-- default shell
-- command timeout
-- max output chars
+- 模型选择器
+- 刷新模型列表
+- 权限模式
+- 工作区根目录
+- 默认 shell
+- 命令超时时间
+- 最大输出字符数
 
 ## 13. 后端存储设计
 
@@ -802,7 +802,7 @@ class PermissionMode(str, Enum):
 
 ## 15. 开发里程碑
 
-### Milestone 0: 项目骨架
+### 里程碑 0：项目骨架
 
 交付：
 
@@ -820,7 +820,7 @@ uvicorn pycodex_server.main:app --reload
 pytest
 ```
 
-### Milestone 1: Settings + Model List
+### 里程碑 1：设置与模型列表
 
 交付：
 
@@ -831,25 +831,25 @@ pytest
 
 验收：
 
-- 配置 LM Studio/LiteLLM/OpenAI-compatible endpoint 后可拉取模型
+- 配置 LM Studio/LiteLLM/OpenAI 兼容端点后可拉取模型
 - 拉取失败时显示错误且允许手动输入模型
 
-### Milestone 2: Thread/Turn/Event 基础闭环
+### 里程碑 2：会话/回合/事件基础闭环
 
 交付：
 
-- 创建 thread
+- 创建会话线程
 - 发送 turn
 - WebSocket 推送 `turn.started`、assistant delta、`turn.completed`
 - SQLite 持久化 thread/turn/item
-- Thread list 恢复
+- 会话列表恢复
 
 验收：
 
 - 关闭重开 app 后能看到历史线程
-- 一次普通 chat 可以完整流式输出
+- 一次普通聊天可以完整流式输出
 
-### Milestone 3: Tool Calling Runtime
+### 里程碑 3：工具调用运行时
 
 交付：
 
@@ -857,7 +857,7 @@ pytest
 - Model tool_calls parser
 - shell_command 工具
 - read_file/list_dir/search_text 工具
-- tool card UI
+- 工具卡片 UI
 
 验收：
 
@@ -866,14 +866,14 @@ pytest
 - 模型可以调用 `shell_command`
 - 前端能显示工具入参、状态、输出、耗时
 
-### Milestone 4: Patch/File Change
+### 里程碑 4：补丁与文件变更
 
 交付：
 
 - write_file 工具
 - apply_patch 工具
 - diff 生成
-- approval prompt
+- 审批提示
 - diff viewer UI
 
 验收：
@@ -882,12 +882,12 @@ pytest
 - 用户 accept 后文件落盘
 - 用户 reject 后模型收到 rejected 结果
 
-### Milestone 5: Interrupt + Process Management
+### 里程碑 5：中断与进程管理
 
 交付：
 
 - stop current turn
-- 终止模型 stream
+- 终止模型流
 - 终止 shell subprocess
 - turn 状态变 cancelled
 
@@ -896,7 +896,7 @@ pytest
 - 长命令执行中点击 stop，进程退出，UI 不再追加输出
 - 模型流式输出中点击 stop，turn 结束为 cancelled
 
-### Milestone 6: UI 高保真
+### 里程碑 6：UI 高保真
 
 交付：
 
@@ -914,7 +914,7 @@ pytest
 - 所有 item 状态清晰可见
 - 1000 行命令输出不卡顿
 
-### Milestone 7: Windows exe 打包
+### 里程碑 7：Windows exe 打包
 
 交付：
 
@@ -934,7 +934,7 @@ pytest
 后端任务：
 
 - `server/main.py`: FastAPI app、CORS、本地绑定
-- `api/http.py`: REST endpoints
+- `api/http.py`: REST 端点
 - `api/websocket.py`: event bus subscription
 - `config/settings.py`: settings load/save
 - `model/openai_compatible.py`: models list + stream chat
@@ -943,7 +943,7 @@ pytest
 - `runtime/context_builder.py`: messages build/truncate
 - `tools/registry.py`: tool registration
 - `tools/orchestrator.py`: approval + execution wrapper
-- `tools/shell.py`: async subprocess streaming
+- `tools/shell.py`: 异步子进程流式输出
 - `tools/filesystem.py`: read/list/write/search
 - `tools/patch.py`: patch parse/apply/diff
 - `storage/db.py`: SQLite init
@@ -952,8 +952,8 @@ pytest
 
 前端任务：
 
-- `api/client.ts`: HTTP client
-- `api/events.ts`: WebSocket client
+- `api/client.ts`: HTTP 客户端
+- `api/events.ts`: WebSocket 客户端
 - `stores/settingsStore.ts`
 - `stores/threadStore.ts`
 - `features/thread-list/ThreadSidebar.vue`
@@ -973,16 +973,16 @@ pytest
 
 - settings 保存/读取
 - model list 响应解析
-- streaming delta parser
-- tool call parser
-- path sandbox check
-- shell timeout/interrupt
-- patch apply/reject
-- rollout replay
+- 流式 delta 解析器
+- tool call 解析器
+- path sandbox 检查
+- shell 超时/中断
+- patch 应用/拒绝
+- rollout 回放
 
 后端集成测试：
 
-- mock OpenAI-compatible server 返回普通文本
+- mock OpenAI 兼容服务返回普通文本
 - mock server 返回 tool call
 - shell tool 完整执行
 - write_file approval 后落盘
@@ -992,16 +992,16 @@ pytest
 
 - settings 表单
 - thread list
-- streaming item reducer
-- tool card 状态转换
-- patch approval flow
+- 流式 item reducer
+- 工具卡片状态转换
+- patch 审批流程
 
 端到端测试：
 
 - Playwright 启动 Tauri 或 web dev app
-- 配置 mock model server
+- 配置模拟模型服务
 - 发送 prompt
-- 验证 UI 出现 assistant delta/tool card/diff card/completed
+- 验证 UI 出现 assistant delta、工具卡片、diff 卡片和完成状态
 
 ## 18. 验收场景
 
@@ -1012,7 +1012,7 @@ pytest
 期望：
 
 - assistant 流式输出
-- turn completed
+- turn 状态变为 completed
 - 历史可恢复
 
 ### 场景 B: 读文件
@@ -1022,7 +1022,7 @@ pytest
 期望：
 
 - 模型调用 `read_file`
-- UI 出现 tool card
+- UI 出现工具卡片
 - assistant 基于文件内容回答
 
 ### 场景 C: 搜索并执行命令
@@ -1034,7 +1034,7 @@ pytest
 - 模型调用 `search_text`
 - 模型调用 `shell_command`
 - 命令输出流式显示
-- exit code 展示
+- 退出码展示
 
 ### 场景 D: 修改文件
 
@@ -1049,17 +1049,17 @@ pytest
 
 ### 场景 E: 中断
 
-用户运行长命令后点击 stop。
+用户运行长命令后点击停止按钮。
 
 期望：
 
-- shell process 被终止
-- turn cancelled
+- shell 进程被终止
+- turn 状态变为 cancelled
 - UI 状态稳定
 
 ## 19. 风险和处理
 
-### 19.1 OpenAI-compatible endpoint 差异
+### 19.1 OpenAI 兼容端点差异
 
 风险：
 
@@ -1071,7 +1071,7 @@ pytest
 
 - adapter 层隔离
 - 提供手动模型名输入
-- tool calling 不可用时 fallback 为文本提示模式，但标注能力受限
+- tool calling 不可用时回退为文本提示模式，但标注能力受限
 
 ### 19.2 Shell 安全
 
@@ -1137,16 +1137,16 @@ MVP 不要求：
 ## 21. 推荐执行顺序
 
 1. 先做后端 runtime，不急着美化 UI
-2. 用 mock model server 固定返回文本和 tool_calls，保证 agent loop 可测
+2. 用模拟模型服务固定返回文本和 tool_calls，保证 Agent 循环可测
 3. 再做 UI event reducer，确保所有事件可视化
-4. 再接真实 OpenAI-compatible endpoint
+4. 再接真实 OpenAI 兼容端点
 5. 最后做 Tauri sidecar 和 exe 打包
 
 原因：这个项目真正难的是 “模型流 -> tool calls -> tool result -> 再进模型 -> 事件持久化 -> UI 同步状态”，不是 UI 皮肤。
 
 ## 22. 开发时的协议样例
 
-### 22.1 创建 thread
+### 22.1 创建会话线程
 
 请求：
 
@@ -1235,7 +1235,7 @@ Content-Type: application/json
 项目达到完成体时，应能证明：
 
 - 用户拿到 exe，可以本地启动
-- 首次进入能配置模型 endpoint
+- 首次进入能配置模型端点
 - 模型列表能自动刷新
 - chat 流式体验完整
 - 模型能读项目文件、搜索文本、执行命令、修改文件

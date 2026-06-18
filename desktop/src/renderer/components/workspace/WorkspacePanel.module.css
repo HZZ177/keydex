@@ -1,0 +1,162 @@
+.panel {
+  display: grid;
+  gap: 12px;
+  color: var(--color-text-primary);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.rootInfo {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.rootInfo span {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.rootInfo strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header button {
+  display: inline-flex;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  padding: 0 9px;
+}
+
+.header button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.header button:disabled {
+  cursor: default;
+  opacity: 0.56;
+}
+
+.pathBar {
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 7px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree {
+  display: grid;
+  gap: 2px;
+}
+
+.node {
+  min-width: 0;
+}
+
+.nodeButton {
+  display: grid;
+  width: 100%;
+  min-height: 28px;
+  grid-template-columns: 14px 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  text-align: left;
+}
+
+.nodeButton:hover,
+.nodeButton[data-selected="true"] {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.nodeButton span:not(.fileSpacer) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeButton em {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.chevron {
+  color: var(--color-text-tertiary);
+  transition: transform 120ms ease;
+}
+
+.chevron[data-expanded="true"] {
+  transform: rotate(90deg);
+}
+
+.fileSpacer {
+  width: 14px;
+  height: 14px;
+}
+
+.muted,
+.emptyDir {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.error,
+.inlineError {
+  border: 1px solid color-mix(in srgb, var(--color-danger) 22%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-danger) 7%, var(--surface-bg));
+  color: var(--color-danger);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px;
+}
+
+.inlineError {
+  margin: 4px 0 4px 28px;
+}
+
+.spinning {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

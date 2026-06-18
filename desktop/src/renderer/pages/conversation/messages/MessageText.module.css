@@ -1,0 +1,323 @@
+.assistantMessage,
+.userMessage {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.assistantMessage:hover .actions,
+.userMessage:hover .actions,
+.actions:focus-within,
+.actions[data-copy-state="copied"],
+.actions[data-copy-state="failed"] {
+  opacity: 1;
+}
+
+.assistantMessage {
+  justify-items: start;
+}
+
+.userMessage {
+  justify-items: end;
+}
+
+.bubble {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.userMessage .bubble {
+  max-width: min(680px, 82%);
+  border-radius: 14px;
+  background: var(--message-user-bg);
+  padding: 9px 12px;
+}
+
+.assistantMessage .bubble {
+  width: 100%;
+}
+
+.protocolNotice {
+  display: inline-flex;
+  max-width: min(720px, 100%);
+  align-items: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+}
+
+.cancelledBadge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1;
+  margin-top: 8px;
+  padding: 5px 9px;
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.userMessage .actions {
+  justify-self: end;
+}
+
+.actionButton {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  padding: 0 6px;
+}
+
+.actionButton:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.streamingCursor {
+  display: inline-block;
+  width: 6px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--color-text-tertiary);
+  animation: cursorPulse 1s ease-in-out infinite;
+  vertical-align: -2px;
+}
+
+.codeBlock {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--code-bg);
+}
+
+.codeHeader {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px 0 12px;
+}
+
+.codeLanguage {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codeActions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.codeIconButton {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.codeIconButton:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.codeTextButton {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.codeTextButton:hover,
+.codeTextButton[aria-pressed="true"] {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.codeTextButton:focus-visible {
+  outline: 2px solid var(--color-primary-6);
+  outline-offset: 2px;
+}
+
+.codeIconButton:focus-visible {
+  outline: 2px solid var(--color-primary-6);
+  outline-offset: 2px;
+}
+
+.codeViewport {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.codeViewport[data-collapsed="true"] {
+  max-height: 76px;
+  overflow: hidden;
+}
+
+.codeFooter {
+  display: flex;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid var(--color-border-subtle);
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  padding: 0 12px;
+}
+
+.codeFooter:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.codeCopyError {
+  position: absolute;
+  top: 11px;
+  right: 78px;
+  color: var(--color-danger-6);
+  font-size: 12px;
+}
+
+.htmlPreview {
+  min-height: 220px;
+  max-height: 420px;
+  overflow: hidden;
+  border-top: 1px solid var(--color-border-subtle);
+  background: #fff;
+}
+
+.htmlPreviewFrame {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  height: min(420px, 48vh);
+  border: 0;
+  background: #fff;
+}
+
+.mathPreview {
+  overflow-x: auto;
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  padding: 14px 16px;
+  color: var(--color-text-primary);
+}
+
+.imagePlaceholder,
+.imageError {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1;
+  margin: 8px 0;
+  padding: 8px 10px;
+}
+
+.imageError {
+  color: var(--color-text-secondary);
+}
+
+.mermaidPreview {
+  min-height: 180px;
+  overflow-x: auto;
+  overflow-y: visible;
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  padding: 16px;
+}
+
+.mermaidStatus {
+  display: flex;
+  min-height: 148px;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.mermaidSvg {
+  display: grid;
+  min-width: 0;
+  min-height: 148px;
+  place-items: center;
+}
+
+.mermaidSvg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+@keyframes cursorPulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}

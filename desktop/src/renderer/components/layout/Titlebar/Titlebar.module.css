@@ -1,0 +1,75 @@
+.titlebar {
+  height: var(--titlebar-height);
+  display: grid;
+  grid-template-columns: 1fr minmax(160px, auto) 1fr;
+  align-items: center;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--color-border-1);
+  background: var(--shell-bg);
+  user-select: none;
+}
+
+.left,
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.actions {
+  justify-content: flex-end;
+}
+
+.navGhost {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-4);
+}
+
+.navGhost span {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--color-border-2);
+}
+
+.dragRegion {
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.title {
+  max-width: min(560px, 45vw);
+  overflow: hidden;
+  color: var(--color-text-1);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iconButton,
+.windowButton,
+.closeButton {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-2);
+}
+
+.iconButton:hover,
+.windowButton:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.closeButton:hover {
+  background: var(--color-danger-6);
+  color: #ffffff;
+}

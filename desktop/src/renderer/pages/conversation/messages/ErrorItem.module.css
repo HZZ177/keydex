@@ -1,0 +1,94 @@
+.block {
+  display: grid;
+  gap: 9px;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 26%, var(--inline-block-border));
+  border-radius: var(--radius-md);
+  background: var(--inline-block-bg);
+  color: var(--color-text-secondary);
+  padding: 10px 12px;
+}
+
+.header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--color-danger);
+}
+
+.titleGroup {
+  min-width: 0;
+}
+
+.title {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 1px;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.actionButton {
+  display: inline-flex;
+  width: fit-content;
+  height: 24px;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  padding: 0 6px;
+}
+
+.actionButton:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.actionButton svg {
+  transition: transform 140ms ease;
+}
+
+.actionButton svg[data-expanded="true"] {
+  transform: rotate(180deg);
+}
+
+.details {
+  max-width: 100%;
+  margin: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 9px;
+  white-space: pre-wrap;
+}
