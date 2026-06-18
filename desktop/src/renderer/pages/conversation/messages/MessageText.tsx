@@ -55,6 +55,12 @@ export function MessageText({ message, showActionRow = true, onQuoteSelection }:
     enabled: !isUser && isStreaming,
     completeImmediately: isUser || cancelled,
   });
+  const hasPendingDisplayBacklog =
+    !isUser &&
+    isStreaming &&
+    displayedContent.length < normalizedContent.length &&
+    normalizedContent.startsWith(displayedContent);
+  const showStreamingCursor = !isUser && isStreaming && !isAnimating && !hasPendingDisplayBacklog && !cancelled;
   const visuallyStreaming = isStreaming || isAnimating;
   const markdownComponents = useMemo(() => ({ pre: MarkdownCodeBlock, table: MarkdownTable, img: MarkdownImage }), []);
 
@@ -83,7 +89,9 @@ export function MessageText({ message, showActionRow = true, onQuoteSelection }:
           >
             {displayedContent}
           </ReactMarkdown>
-          {isAnimating ? <span className={styles.streamingCursor} aria-hidden="true" /> : null}
+          {showStreamingCursor ? (
+            <span className={styles.streamingCursor} data-testid="streaming-cursor" aria-hidden="true" />
+          ) : null}
         </div>
         {cancelled ? <div className={styles.cancelledBadge}>已中断</div> : null}
         {onQuoteSelection ? (

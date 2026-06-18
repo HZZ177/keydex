@@ -66,6 +66,20 @@ describe("Sider", () => {
     expect(screen.getByText("codex-copy").getAttribute("role")).toBeNull();
   });
 
+  it("keeps history rows quiet with weak time metadata and no native title popup", () => {
+    renderSider(
+      <Sider
+        activePath="/conversation/thread-1"
+        conversations={[{ id: "thread-1", title: "会话 A", updatedAt: "2026-06-17T10:00:00Z" }]}
+      />,
+    );
+
+    const row = screen.getByRole("button", { name: "会话 A" });
+    expect(row.getAttribute("title")).toBeNull();
+    expect(row.querySelector("time")?.getAttribute("datetime")).toBe("2026-06-17T10:00:00Z");
+    expect(row.getAttribute("aria-current")).toBe("page");
+  });
+
   it("uses icon-only collapsed affordances", () => {
     renderSider(<Sider collapsed />);
 

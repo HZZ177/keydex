@@ -1,4 +1,5 @@
-import { ChevronDown, Circle } from "lucide-react";
+import { Check, ChevronDown, Search } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import type { ModelLoadState } from "./useRuntimeModelSelection";
 import styles from "./RuntimeModelSelector.module.css";
@@ -9,6 +10,7 @@ export interface RuntimeModelSelectorProps {
   modelLoadState: ModelLoadState;
   modelError: string | null;
   disabled?: boolean;
+  placement?: "top" | "bottom";
   onModelChange: (model: string) => void;
   onOpenModelSettings?: () => void;
 }
@@ -19,33 +21,131 @@ export function RuntimeModelSelector({
   modelLoadState,
   modelError,
   disabled = false,
+  placement = "bottom",
   onModelChange,
   onOpenModelSettings,
 }: RuntimeModelSelectorProps) {
+  const menuId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const hasModels = modelOptions.length > 0;
   const modelHint = getModelHint(model, modelOptions, modelLoadState, modelError);
   const showSettingsAction = Boolean(onOpenModelSettings) && (modelLoadState === "error" || (!model && !modelOptions.length));
+  const selectedModel = hasModels ? model : "";
+  const displayModel = useMemo(
+    () => (selectedModel ? selectedModel : modelLoadState === "loading" ? "读取模型" : "暂无模型"),
+    [modelLoadState, selectedModel],
+  );
+  const disabledButton = disabled || !hasModels;
+  const filteredModels = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) {
+      return modelOptions;
+    }
+    return modelOptions.filter((modelId) => modelId.toLowerCase().includes(keyword));
+  }, [modelOptions, query]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (disabledButton) {
+      setOpen(false);
+      setQuery("");
+    }
+  }, [disabledButton]);
+
+  const toggleMenu = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setQuery("");
+    setOpen(true);
+  };
+
+  const chooseModel = (modelId: string) => {
+    onModelChange(modelId);
+    setQuery("");
+    setOpen(false);
+  };
 
   return (
-    <div className={styles.modelCluster} aria-label="运行模型">
-      <label className={styles.modelPill} title={modelHint ?? "选择模型"}>
-        <Circle size={13} strokeWidth={2.1} className={styles.modelDot} aria-hidden="true" />
-        <select
-          className={styles.select}
+    <div className={styles.modelCluster} ref={rootRef} aria-label="运行模型">
+      <div className={styles.modelPicker}>
+        <button
+          className={styles.modelPill}
+          type="button"
           aria-label="选择模型"
-          value={hasModels ? model : ""}
-          disabled={disabled || !hasModels}
-          onChange={(event) => onModelChange(event.target.value)}
+          aria-haspopup="listbox"
+          aria-expanded={open ? "true" : "false"}
+          aria-controls={open ? menuId : undefined}
+          title={modelHint ?? "选择模型"}
+          disabled={disabledButton}
+          onClick={toggleMenu}
         >
-          {hasModels ? null : <option value="">暂无模型</option>}
-          {modelOptions.map((modelId) => (
-            <option key={modelId} value={modelId}>
-              {compactModelName(modelId)}
-            </option>
-          ))}
-        </select>
-        <ChevronDown size={16} strokeWidth={1.9} aria-hidden="true" />
-      </label>
+          <span className={styles.modelName}>{displayModel}</span>
+          <ChevronDown size={15} strokeWidth={1.9} aria-hidden="true" />
+        </button>
+
+        {open ? (
+          <div className={styles.menu} data-placement={placement}>
+            <div className={styles.menuLabel}>模型</div>
+            <label className={styles.searchBox}>
+              <Search size={13} strokeWidth={1.9} aria-hidden="true" />
+              <input
+                aria-label="筛选模型"
+                autoFocus
+                placeholder="搜索模型"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            <div className={styles.optionList} id={menuId} role="listbox" aria-label="模型">
+              {filteredModels.length ? (
+                filteredModels.map((modelId) => {
+                  const selected = modelId === selectedModel;
+                  return (
+                    <button
+                      className={styles.option}
+                      key={modelId}
+                      type="button"
+                      role="option"
+                      aria-selected={selected ? "true" : "false"}
+                      onClick={() => chooseModel(modelId)}
+                    >
+                      <span>{modelId}</span>
+                      {selected ? <Check size={14} strokeWidth={1.9} aria-hidden="true" /> : null}
+                    </button>
+                  );
+                })
+              ) : (
+                <div className={styles.empty}>没有匹配模型</div>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
 
       {showSettingsAction ? (
         <button className={styles.settingsButton} type="button" disabled={disabled} onClick={onOpenModelSettings}>
@@ -75,12 +175,4 @@ function getModelHint(
     return "当前模型不在已刷新列表中，请到设置中确认";
   }
   return null;
-}
-
-function compactModelName(modelId: string): string {
-  const trimmed = modelId.trim();
-  if (trimmed.length <= 18) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, 15)}...`;
 }

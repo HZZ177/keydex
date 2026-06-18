@@ -20,7 +20,7 @@ describe("HomePage", () => {
     );
 
     await waitFor(() => {
-      expect((screen.getByLabelText("选择模型") as HTMLSelectElement).value).toBe("qwen-coder");
+      expect(screen.getByLabelText("选择模型").textContent).toContain("qwen-coder");
     });
     fireEvent.change(screen.getByLabelText("输入需求"), { target: { value: "实现一个新功能" } });
     fireEvent.click(screen.getByLabelText("发送"));
@@ -46,7 +46,7 @@ describe("HomePage", () => {
   it("keeps model selection available without exposing inactive workspace controls", async () => {
     const runtime = fakeRuntime({
       model: "qwen-coder",
-      models: [{ id: "qwen-coder" }, { id: "deepseek-coder" }],
+      models: [{ id: "qwen-coder" }, { id: "deepseek-coder" }, { id: "kimi-k2" }],
     });
 
     const onNavigateToConversation = vi.fn();
@@ -59,10 +59,19 @@ describe("HomePage", () => {
     );
 
     await waitFor(() => {
-      expect((screen.getByLabelText("选择模型") as HTMLSelectElement).value).toBe("qwen-coder");
+      expect(screen.getByLabelText("选择模型").textContent).toContain("qwen-coder");
     });
+    expect(screen.queryByRole("combobox", { name: "选择模型" })).toBeNull();
 
-    fireEvent.change(screen.getByLabelText("选择模型"), { target: { value: "deepseek-coder" } });
+    fireEvent.click(screen.getByLabelText("选择模型"));
+    const listbox = screen.getByRole("listbox", { name: "模型" });
+    expect(listbox).not.toBeNull();
+    expect(listbox.closest("[data-placement]")?.getAttribute("data-placement")).toBe("bottom");
+    expect(screen.getByRole("option", { name: "qwen-coder" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.change(screen.getByLabelText("筛选模型"), { target: { value: "deep" } });
+    expect(screen.queryByRole("option", { name: "qwen-coder" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "kimi-k2" })).toBeNull();
+    fireEvent.click(screen.getByRole("option", { name: "deepseek-coder" }));
     fireEvent.change(screen.getByLabelText("输入需求"), { target: { value: "读取仓库结构" } });
     fireEvent.click(screen.getByLabelText("发送"));
 
@@ -90,7 +99,7 @@ describe("HomePage", () => {
     );
 
     await waitFor(() => {
-      expect((screen.getByLabelText("选择模型") as HTMLSelectElement).value).toBe("qwen-coder");
+      expect(screen.getByLabelText("选择模型").textContent).toContain("qwen-coder");
     });
     expect((screen.getByLabelText("发送") as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByLabelText("发送"));

@@ -28,6 +28,11 @@ select {
   font: inherit;
 }
 
+:where(button, input, textarea, select, a, [role="button"], [tabindex]):focus,
+:where(button, input, textarea, select, a, [role="button"], [tabindex]):focus-visible {
+  outline: none;
+}
+
 button {
   border: 0;
   cursor: pointer;

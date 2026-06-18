@@ -21,9 +21,9 @@ describe("EventReplayHarness", () => {
     expect(screen.getByText("正在检查代码结构。")).not.toBeNull();
     expect(screen.getByText("允许执行测试命令")).not.toBeNull();
     expect(screen.getByText("模型网关返回错误示例")).not.toBeNull();
-    expect(screen.getByText("2 个工具步骤")).not.toBeNull();
+    expect(screen.getByText("读取了 1 个文件，已运行 1 条命令")).not.toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "2 个工具步骤详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "读取了 1 个文件，已运行 1 条命令详情" }));
     expect(screen.getByTestId("tool-call-block")).not.toBeNull();
     expect(screen.getByTestId("command-execution-block")).not.toBeNull();
   });

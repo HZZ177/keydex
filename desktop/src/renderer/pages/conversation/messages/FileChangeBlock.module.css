@@ -1,30 +1,43 @@
 .block {
   display: grid;
-  gap: 10px;
+  gap: 6px;
   max-width: 100%;
-  border: 1px solid var(--inline-block-border);
-  border-radius: var(--radius-md);
-  background: var(--inline-block-bg);
-  color: var(--color-text-secondary);
-  padding: 10px 12px;
-}
-
-.block[data-status="failed"] {
-  border-color: color-mix(in srgb, var(--color-danger) 26%, var(--inline-block-border));
+  color: var(--color-text-tertiary);
 }
 
 .header {
-  display: flex;
-  min-width: 0;
+  display: grid;
+  width: fit-content;
+  max-width: 100%;
+  grid-template-columns: 18px minmax(0, auto) 16px;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  padding: 3px 5px 3px 2px;
+  text-align: left;
+}
+
+.header:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-secondary);
+}
+
+.header:focus-visible {
+  outline: none;
 }
 
 .icon {
   display: inline-grid;
-  flex: 0 0 auto;
   place-items: center;
-  color: var(--color-accent);
+  color: var(--color-text-tertiary);
+}
+
+.block[data-status="running"] .icon {
+  animation: spin 900ms linear infinite;
+  color: var(--color-text-secondary);
 }
 
 .block[data-status="failed"] .icon {
@@ -32,35 +45,46 @@
 }
 
 .titleGroup {
+  display: inline-flex;
   min-width: 0;
+  align-items: center;
+  gap: 7px;
 }
 
 .title {
-  color: var(--color-text-primary);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
   font-size: 13px;
-  font-weight: 650;
-  line-height: 1.35;
+  font-weight: 500;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header:hover .title {
+  color: var(--color-text-secondary);
 }
 
 .meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 1px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
   color: var(--color-text-tertiary);
-  font-size: 12px;
-  line-height: 1.35;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .statusMeta {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .statusDot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   flex: 0 0 auto;
   border-radius: var(--radius-pill);
   background: var(--color-text-tertiary);
@@ -68,7 +92,7 @@
 
 .statusDot[data-state="running"] {
   animation: breathing 1.4s ease-in-out infinite;
-  background: var(--color-accent);
+  background: var(--color-text-secondary);
 }
 
 .statusDot[data-state="failed"] {
@@ -79,9 +103,54 @@
   background: var(--color-success-6);
 }
 
+.chevron {
+  color: var(--color-text-tertiary);
+  transition: transform 220ms var(--motion-ease-out);
+}
+
+.header[aria-expanded="true"] .chevron {
+  transform: rotate(180deg);
+}
+
+.details {
+  display: grid;
+  max-width: min(760px, 100%);
+  box-sizing: border-box;
+  margin-left: 25px;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--collapse-open-duration, 250ms) ease-in-out,
+    opacity 220ms ease;
+}
+
+.details[data-motion="closed"],
+.details[data-motion="opening"],
+.details[data-motion="closing"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.details[data-motion="closing"] {
+  transition:
+    grid-template-rows var(--collapse-close-duration, 220ms) ease-in,
+    opacity 140ms ease;
+}
+
+.detailsInner {
+  display: grid;
+  min-height: 0;
+  gap: 7px;
+  padding: 2px 0 2px 13px;
+  overflow: hidden;
+}
+
 .fileList {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -96,7 +165,7 @@
 
 .previewButton {
   display: inline-flex;
-  height: 26px;
+  height: 24px;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -113,6 +182,10 @@
   color: var(--color-text-primary);
 }
 
+.previewButton:focus-visible {
+  outline: none;
+}
+
 .fileButton {
   display: grid;
   width: 100%;
@@ -124,7 +197,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12px;
-  padding: 6px 5px;
+  padding: 4px 5px;
   text-align: left;
   cursor: pointer;
 }
@@ -134,8 +207,13 @@
   color: var(--color-text-primary);
 }
 
+.fileButton:focus-visible {
+  outline: none;
+}
+
 .fileButton svg {
-  transition: transform 140ms ease;
+  color: var(--color-text-tertiary);
+  transition: transform 220ms var(--motion-ease-out);
 }
 
 .fileButton svg[data-expanded="true"] {
@@ -156,11 +234,11 @@
 .diff {
   display: grid;
   max-width: 100%;
-  margin: 0;
+  margin: 4px 0 0;
   overflow-x: auto;
   overflow-y: visible;
-  border-radius: var(--radius-sm);
-  background: var(--code-bg);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 74%, transparent);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
@@ -192,6 +270,12 @@
   color: var(--color-text-secondary);
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes breathing {
   0%,
   100% {
@@ -199,5 +283,21 @@
   }
   50% {
     opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .block[data-status="running"] .icon,
+  .statusDot[data-state="running"] {
+    animation: none;
+  }
+
+  .chevron,
+  .fileButton svg {
+    transition: none;
+  }
+
+  .details {
+    transition: none;
   }
 }

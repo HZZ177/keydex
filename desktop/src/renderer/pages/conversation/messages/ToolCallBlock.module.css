@@ -1,70 +1,55 @@
 .block {
   display: grid;
-  gap: 9px;
+  gap: 6px;
   min-width: 0;
   max-width: 100%;
-  border: 1px solid var(--inline-block-border);
-  border-radius: var(--radius-md);
-  background: var(--inline-block-bg);
-  color: var(--color-text-secondary);
-  padding: 10px 12px;
-}
-
-.block[data-status="failed"] {
-  border-color: color-mix(in srgb, var(--color-danger) 26%, var(--inline-block-border));
+  color: var(--color-text-tertiary);
 }
 
 .header {
-  display: flex;
-  min-width: 0;
+  display: grid;
+  width: fit-content;
+  max-width: 100%;
+  grid-template-columns: minmax(0, auto) 16px;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  padding: 3px 5px 3px 2px;
+  text-align: left;
 }
 
-.icon {
-  display: inline-grid;
-  flex: 0 0 auto;
-  place-items: center;
-  color: var(--color-accent);
+.header:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-secondary);
 }
 
-.block[data-status="running"] .icon,
-.block[data-status="pending"] .icon {
-  animation: spin 900ms linear infinite;
-}
-
-.block[data-status="failed"] .icon {
-  color: var(--color-danger);
+.header:focus-visible {
+  outline: none;
 }
 
 .titleGroup {
-  flex: 1 1 auto;
+  display: inline-flex;
   min-width: 0;
-}
-
-.title {
-  overflow: hidden;
-  color: var(--color-text-primary);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  align-items: center;
+  gap: 7px;
 }
 
 .status {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
-  margin-top: 1px;
+  gap: 5px;
   color: var(--color-text-tertiary);
-  font-size: 12px;
-  line-height: 1.35;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .statusDot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   flex: 0 0 auto;
   border-radius: var(--radius-pill);
   background: var(--color-text-tertiary);
@@ -72,7 +57,7 @@
 
 .statusDot[data-state="running"] {
   animation: breathing 1.4s ease-in-out infinite;
-  background: var(--color-accent);
+  background: var(--color-text-secondary);
 }
 
 .statusDot[data-state="failed"] {
@@ -83,50 +68,76 @@
   background: var(--color-success-6);
 }
 
-.detailsToggle {
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 28px;
-  align-items: center;
-  gap: 5px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
+.title {
+  min-width: 0;
+  overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 12px;
-  padding: 0 7px;
-  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.detailsToggle:hover {
-  background: var(--surface-hover);
-  color: var(--color-text-primary);
+.header:hover .title {
+  color: var(--color-text-secondary);
 }
 
-.detailsToggle svg {
-  transition: transform 140ms ease;
+.chevron {
+  color: var(--color-text-tertiary);
+  transition: transform 220ms var(--motion-ease-out);
 }
 
-.detailsToggle[aria-expanded="true"] svg {
+.header[aria-expanded="true"] .chevron {
   transform: rotate(180deg);
 }
 
 .details {
   display: grid;
-  gap: 10px;
-  animation: detailsEnter var(--motion-fast) var(--motion-ease-out) both;
+  max-width: min(760px, 100%);
+  box-sizing: border-box;
+  padding-left: 25px;
+  overflow: hidden;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--collapse-open-duration, 250ms) ease-in-out,
+    opacity 220ms ease;
+}
+
+.details[data-motion="closed"],
+.details[data-motion="opening"],
+.details[data-motion="closing"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.details[data-motion="closing"] {
+  transition:
+    grid-template-rows var(--collapse-close-duration, 220ms) ease-in,
+    opacity 140ms ease;
+}
+
+.detailsInner {
+  display: grid;
+  min-height: 0;
+  gap: 8px;
+  overflow: hidden;
 }
 
 .detailSection {
   display: grid;
   gap: 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 72%, transparent);
+  padding: 8px 9px;
 }
 
 .detailSection h3 {
   margin: 0;
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -136,13 +147,13 @@
   margin: 0;
   overflow-x: auto;
   overflow-y: visible;
-  border-radius: var(--radius-sm);
-  background: var(--code-bg);
+  border-radius: 0;
+  background: transparent;
   color: var(--color-text-primary);
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.55;
-  padding: 9px;
+  line-height: 1.58;
+  padding: 0;
   white-space: pre-wrap;
 }
 
@@ -166,31 +177,18 @@
 }
 
 .copyButton:hover {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--color-bg-elevated) 86%, transparent);
   color: var(--color-text-primary);
+}
+
+.copyButton:focus-visible {
+  outline: none;
 }
 
 .emptyResult {
   margin: 0;
   color: var(--color-text-tertiary);
   font-size: 12px;
-}
-
-@keyframes detailsEnter {
-  from {
-    opacity: 0;
-    transform: translateY(-3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @keyframes breathing {
@@ -204,11 +202,15 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .details {
+  .statusDot[data-state="running"] {
     animation: none;
   }
 
-  .detailsToggle svg {
+  .chevron {
+    transition: none;
+  }
+
+  .details {
     transition: none;
   }
 }

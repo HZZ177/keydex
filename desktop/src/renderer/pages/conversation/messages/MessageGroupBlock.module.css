@@ -1,34 +1,37 @@
 .block {
   display: grid;
-  gap: 8px;
+  gap: 5px;
   max-width: 100%;
-  border: 1px solid var(--inline-block-border);
-  border-radius: var(--radius-md);
-  background: var(--inline-block-bg);
-  color: var(--color-text-secondary);
-  padding: 8px 10px;
+  color: var(--color-text-tertiary);
 }
 
 .header {
   display: grid;
-  width: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  width: fit-content;
+  max-width: 100%;
+  grid-template-columns: 18px minmax(0, auto) auto 16px;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
-  padding: 0;
+  padding: 3px 5px 3px 2px;
   text-align: left;
 }
 
-.header:hover .title {
-  color: var(--color-text-primary);
+.header:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-secondary);
+}
+
+.header:focus-visible {
+  outline: none;
 }
 
 .header svg:last-child {
   color: var(--color-text-tertiary);
-  transition: transform 140ms ease;
+  transition: transform 220ms var(--motion-ease-out);
 }
 
 .header svg:last-child[data-expanded="true"] {
@@ -38,106 +41,94 @@
 .icon {
   display: inline-grid;
   place-items: center;
-  color: var(--color-accent);
+  color: var(--color-text-tertiary);
+}
+
+.block[data-state="running"] .icon,
+.block[data-state="pending"] .icon {
+  animation: spin 900ms linear infinite;
+  color: var(--color-text-secondary);
+}
+
+.block[data-state="failed"] .icon {
+  color: var(--color-danger);
 }
 
 .title {
+  min-width: 0;
   overflow: hidden;
-  color: var(--color-text-primary);
+  color: var(--color-text-tertiary);
   font-size: 13px;
-  font-weight: 650;
-  line-height: 1.35;
+  font-weight: 500;
+  line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.header:hover .title {
+  color: var(--color-text-secondary);
 }
 
 .source {
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.35;
-}
-
-.summaryList {
-  display: grid;
-  gap: 5px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface-muted) 56%, transparent);
-  padding: 6px 8px;
-}
-
-.summaryItem {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(90px, max-content) minmax(0, 1fr);
-  align-items: center;
-  gap: 7px;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.statusDot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-pill);
-  background: var(--color-text-tertiary);
-}
-
-.statusDot[data-state="done"] {
-  background: var(--color-success);
-}
-
-.statusDot[data-state="failed"] {
-  background: var(--color-danger);
-}
-
-.statusDot[data-state="running"] {
-  background: var(--color-primary-6);
-  animation: summaryPulse 1.4s ease-in-out infinite;
-}
-
-.statusDot[data-state="pending"] {
-  background: var(--color-warning);
-}
-
-.summaryTitle,
-.summaryDetail {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.summaryTitle {
-  color: var(--color-text-primary);
-  font-family: var(--font-mono);
-  font-weight: 600;
-}
-
-.summaryDetail {
-  color: var(--color-text-tertiary);
 }
 
 .children {
   display: grid;
-  gap: 8px;
-  border-top: 1px solid var(--inline-block-border);
-  padding-top: 8px;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-left: 25px;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--collapse-open-duration, 250ms) ease-in-out,
+    opacity 220ms ease;
+}
+
+.children[data-motion="closed"],
+.children[data-motion="opening"],
+.children[data-motion="closing"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.children[data-motion="closing"] {
+  transition:
+    grid-template-rows var(--collapse-close-duration, 220ms) ease-in,
+    opacity 140ms ease;
+}
+
+.childrenInner {
+  display: grid;
+  min-height: 0;
+  gap: 7px;
+  padding: 2px 0 2px 13px;
+  overflow: hidden;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .statusDot[data-state="running"] {
+  .block[data-state="running"] .icon,
+  .block[data-state="pending"] .icon {
     animation: none;
   }
-}
 
-@keyframes summaryPulse {
-  0%,
-  100% {
-    opacity: 0.36;
+  .header svg:last-child {
+    transition: none;
   }
-  50% {
-    opacity: 1;
+
+  .children {
+    transition: none;
   }
 }

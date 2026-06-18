@@ -20,7 +20,7 @@
   width: min(860px, 100%);
   min-height: 110px;
   gap: 0;
-  overflow: hidden;
+  overflow: visible;
   border-color: color-mix(in srgb, var(--composer-border) 92%, #fff);
   border-radius: 20px;
   background:
@@ -33,10 +33,8 @@
 }
 
 .root[data-focused="true"] {
-  border-color: color-mix(in srgb, var(--color-accent) 35%, var(--composer-border));
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--color-accent) 9%, transparent),
-    var(--composer-shadow);
+  border-color: color-mix(in srgb, var(--color-border-default) 72%, var(--composer-border));
+  box-shadow: var(--composer-shadow);
 }
 
 .root[data-dragging="true"] {

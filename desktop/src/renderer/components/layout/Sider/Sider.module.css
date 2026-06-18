@@ -3,11 +3,11 @@
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 18px;
-  padding: 14px 8px 12px;
+  gap: 14px;
+  padding: 12px 7px 10px;
   overflow: hidden;
-  border-right: 1px solid var(--color-border-1);
-  background: var(--sidebar-bg);
+  border-right: 1px solid color-mix(in srgb, var(--color-border-1) 86%, transparent);
+  background: color-mix(in srgb, var(--sidebar-bg) 94%, var(--shell-bg));
 }
 
 .nav,
@@ -19,19 +19,36 @@
 .nav,
 .footer {
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
 .history {
   min-height: 0;
   overflow: hidden auto;
+  padding-top: 5px;
   scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-text-4) 34%, transparent) transparent;
+}
+
+.history::-webkit-scrollbar {
+  width: 8px;
+}
+
+.history::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.history::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-4) 32%, transparent);
+  background-clip: padding-box;
 }
 
 .section {
   display: grid;
-  gap: 3px;
-  margin-bottom: 18px;
+  gap: 2px;
+  margin-bottom: 17px;
 }
 
 .searchBox {
@@ -63,9 +80,10 @@
 }
 
 .sectionTitle {
-  padding: 0 10px 6px;
+  padding: 0 9px 7px;
   color: var(--color-text-4);
   font-size: 12px;
+  line-height: 1;
 }
 
 .navItem,
@@ -73,81 +91,145 @@
 .projectItem {
   width: 100%;
   min-width: 0;
-  height: 34px;
+  height: 30px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-  border-radius: var(--radius-sm);
+  gap: 9px;
+  padding: 0 9px;
+  border-radius: 7px;
   background: transparent;
   color: var(--color-text-2);
+  font-size: 14px;
+  line-height: 1;
   text-align: left;
+  transition:
+    background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    opacity var(--motion-fast) ease;
+}
+
+.navItem svg,
+.projectItem svg {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, currentColor 82%, transparent);
 }
 
 .projectItem {
+  height: 29px;
   cursor: default;
   color: var(--color-text-2);
+  font-size: 13px;
 }
 
 .historyRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  position: relative;
+  display: block;
+  min-width: 0;
   align-items: center;
-  gap: 3px;
-  border-radius: var(--radius-sm);
+  border-radius: 7px;
 }
 
 .navItem:hover,
 .historyItem:hover,
 .historyRow:focus-within {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--surface-hover) 86%, transparent);
   color: var(--color-text-1);
 }
 
 .navItem[data-active="true"],
 .historyItem[data-active="true"] {
-  background: var(--surface-active);
+  background: color-mix(in srgb, var(--surface-active) 94%, var(--surface-hover));
   color: var(--color-text-1);
 }
 
 .historyItem[data-active="true"]::after {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 7px;
+  height: 7px;
   border-radius: var(--radius-pill);
-  background: var(--color-text-4);
+  background: color-mix(in srgb, var(--color-accent) 86%, var(--color-text-4));
   content: "";
+  transform: translateY(-50%);
+}
+
+.historyItem {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 7px;
+  padding: 0 24px 0 10px;
+}
+
+.historyItem[data-active="true"] {
+  padding-right: 25px;
+}
+
+.historyTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.historyMeta {
+  min-width: max-content;
+  color: var(--color-text-4);
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.86;
+  transition: opacity var(--motion-fast) ease;
+  white-space: nowrap;
+}
+
+.historyItem[data-active="true"] .historyMeta {
+  margin-right: 10px;
 }
 
 .historyActions {
-  display: none;
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding-right: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity var(--motion-fast) ease;
 }
 
 .historyRow:hover .historyActions,
 .historyRow:focus-within .historyActions {
-  display: flex;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.historyRow:hover .historyMeta,
+.historyRow:focus-within .historyMeta,
+.historyRow:hover .historyItem[data-active="true"]::after,
+.historyRow:focus-within .historyItem[data-active="true"]::after {
+  opacity: 0;
 }
 
 .historyActions button,
 .renameForm button,
 .confirmRow button {
   display: inline-grid;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   place-items: center;
   border: 0;
   border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-text-4);
+  background: color-mix(in srgb, var(--sidebar-bg) 86%, transparent);
+  color: var(--color-text-3);
 }
 
 .historyActions button:hover,
 .renameForm button:hover,
 .confirmRow button:hover {
-  background: var(--surface-hover);
+  background: var(--surface-active);
   color: var(--color-text-1);
 }
 
@@ -157,7 +239,7 @@
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 4px;
-  padding: 3px 4px;
+  padding: 3px 5px 3px 8px;
 }
 
 .renameForm input {
@@ -179,7 +261,7 @@
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 4px;
-  border-radius: var(--radius-sm);
+  border-radius: 7px;
   background: color-mix(in srgb, var(--color-danger) 6%, transparent);
   padding: 4px 5px 4px 10px;
 }
@@ -199,7 +281,6 @@
 }
 
 .navItem span,
-.historyItem span,
 .projectItem span {
   min-width: 0;
   overflow: hidden;
@@ -208,7 +289,7 @@
 }
 
 .empty {
-  padding: 6px 10px;
+  padding: 7px 9px;
   color: var(--color-text-4);
   font-size: 12px;
 }

@@ -16,9 +16,10 @@ describe("CommandExecutionBlock", () => {
   it("renders command metadata with output collapsed by default", () => {
     render(<CommandExecutionBlock message={commandMessage("running", { stdout: "line 1\n" })} />);
 
-    expect(screen.getByText("pytest backend/tests")).not.toBeNull();
+    expect(screen.getByText("正在执行命令 pytest backend/tests")).not.toBeNull();
     expect(screen.getByText("D:/repo")).not.toBeNull();
-    expect(screen.getByText("正在执行")).not.toBeNull();
+    expect(screen.getByText("2.3s")).not.toBeNull();
+    expect(screen.getByTestId("command-execution-block").textContent).toMatch(/正在执行命令 pytest backend\/tests.*2\.3s/);
     expect(screen.queryByText("line 1")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
@@ -44,8 +45,15 @@ describe("CommandExecutionBlock", () => {
 
     expect(screen.getByTestId("command-execution-block")).not.toBeNull();
     expect(screen.getByText("退出码 1")).not.toBeNull();
-    expect(screen.getByText("执行失败")).not.toBeNull();
+    expect(screen.getByText("执行命令失败 pytest backend/tests")).not.toBeNull();
     expect(screen.queryByText("failed")).toBeNull();
+  });
+
+  it("formats sub-second command durations as milliseconds", () => {
+    render(<CommandExecutionBlock message={commandMessage("completed", { stdout: "ok\n", duration_ms: 86 })} />);
+
+    expect(screen.getByText("86ms")).not.toBeNull();
+    expect(screen.queryByText("0.1 秒")).toBeNull();
   });
 });
 

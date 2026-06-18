@@ -298,10 +298,10 @@ function ProjectSection({
     <section className={styles.section}>
       <div className={styles.sectionTitle}>{title}</div>
       {items.map((item) => (
-          <div className={styles.projectItem} key={item.id} title={item.title}>
-            <Folder size={16} />
-            <span>{item.title}</span>
-          </div>
+        <div className={styles.projectItem} key={item.id}>
+          <Folder size={16} />
+          <span>{item.title}</span>
+        </div>
       ))}
     </section>
   );
@@ -394,12 +394,17 @@ function SiderSection({
                   <button
                     className={styles.historyItem}
                     type="button"
-                    title={item.title}
+                    aria-label={item.title}
                     aria-current={active ? "page" : undefined}
                     data-active={active ? "true" : "false"}
                     onClick={() => onNavigate?.(path)}
                   >
-                    <span>{item.title}</span>
+                    <span className={styles.historyTitle}>{item.title}</span>
+                    {item.updatedAt ? (
+                      <time className={styles.historyMeta} dateTime={item.updatedAt}>
+                        {formatRelativeTime(item.updatedAt)}
+                      </time>
+                    ) : null}
                   </button>
                   {canMutate ? (
                     <div className={styles.historyActions}>
@@ -445,6 +450,29 @@ function formatRelativeTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return "";
+  }
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) {
+    return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+  }
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const week = 7 * day;
+  if (diffMs < minute) {
+    return "刚刚";
+  }
+  if (diffMs < hour) {
+    return `${Math.max(1, Math.floor(diffMs / minute))}分`;
+  }
+  if (diffMs < day) {
+    return `${Math.floor(diffMs / hour)}小时`;
+  }
+  if (diffMs < week) {
+    return `${Math.floor(diffMs / day)}天`;
+  }
+  if (diffMs < 6 * week) {
+    return `${Math.floor(diffMs / week)}周`;
   }
   return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
 }

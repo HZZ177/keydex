@@ -16,13 +16,16 @@ describe("ToolCallBlock", () => {
   it("renders tool name and status with details collapsed by default", () => {
     render(<ToolCallBlock message={toolMessage("running", null)} />);
 
-    expect(screen.getByText("read_file")).not.toBeNull();
-    expect(screen.getByText("正在执行")).not.toBeNull();
-    expect(screen.queryByText(/README.md/)).toBeNull();
+    const block = screen.getByTestId("tool-call-block");
+    expect(block.textContent).toContain("正在读取文件 README.md");
+    expect(block.querySelectorAll("svg")).toHaveLength(1);
+    expect(screen.getByText("正在读取文件 README.md")).not.toBeNull();
+    expect(screen.queryByText("read_file")).toBeNull();
+    expect(screen.queryByText(/"path": "README.md"/)).toBeNull();
     expect(screen.queryByText("工具正在执行")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
-    expect(screen.getByText(/README.md/)).not.toBeNull();
+    expect(screen.getByLabelText("工具参数").textContent).toContain('"path": "README.md"');
     expect(screen.getByText("工具正在执行")).not.toBeNull();
   });
 
@@ -30,7 +33,8 @@ describe("ToolCallBlock", () => {
     const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
     render(<ToolCallBlock message={toolMessage("completed", { status: "success", model_content: "文件内容", duration_ms: 1250 })} />);
 
-    expect(screen.getByText("1.3 秒")).not.toBeNull();
+    expect(screen.getByTestId("tool-call-block").textContent).toMatch(/已读取文件 README\.md.*1\.3s/);
+    expect(screen.getByText("1.3s")).not.toBeNull();
     expect(screen.queryByText("文件内容")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
     fireEvent.click(screen.getByRole("button", { name: "复制工具结果" }));
@@ -43,10 +47,17 @@ describe("ToolCallBlock", () => {
     });
   });
 
+  it("formats sub-second tool durations as milliseconds", () => {
+    render(<ToolCallBlock message={toolMessage("completed", { status: "success", model_content: "文件内容", duration_ms: 125 })} />);
+
+    expect(screen.getByText("125ms")).not.toBeNull();
+    expect(screen.queryByText("0.1 秒")).toBeNull();
+  });
+
   it("keeps failed tools visible", () => {
     render(<ToolCallBlock message={toolMessage("failed", { status: "error", model_content: "", error: "读取失败" })} />);
 
-    expect(screen.getByText("执行失败")).not.toBeNull();
+    expect(screen.getByText("读取文件失败 README.md")).not.toBeNull();
     expect(screen.queryByText("读取失败")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
     expect(screen.getByRole("region", { name: "工具错误" })).not.toBeNull();

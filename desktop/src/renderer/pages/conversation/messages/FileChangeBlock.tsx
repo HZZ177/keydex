@@ -1,9 +1,10 @@
-import { ChevronDown, FileDiff, XCircle } from "lucide-react";
+import { ChevronDown, FileDiff, LoaderCircle, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
 import styles from "./FileChangeBlock.module.css";
+import { useDeferredUnmount } from "./useDeferredUnmount";
 
 export interface FileChangeBlockProps {
   message: ConversationMessage;
@@ -16,20 +17,28 @@ export interface FileChangePreview {
 }
 
 export function FileChangeBlock({ message, onPreviewFile }: FileChangeBlockProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
   const change = useMemo(() => parseFileChange(message), [message]);
   const failed = message.status === "failed" || change.status === "failed";
   const expandedFile = change.files.find((file) => file.path === expandedPath) ?? null;
   const statusKind = failed ? "failed" : change.status === "running" ? "running" : "done";
+  const title = change.files.length ? `编辑了 ${change.files.length} 个文件` : "文件变更";
+  const detailsMotion = useDeferredUnmount<HTMLDivElement>(detailsOpen);
 
   return (
     <article className={styles.block} data-status={failed ? "failed" : change.status} data-testid="file-change-block">
-      <header className={styles.header}>
+      <button
+        className={styles.header}
+        type="button"
+        aria-expanded={detailsOpen}
+        aria-label={detailsOpen ? "收起文件变更详情" : "展开文件变更详情"}
+        onClick={() => setDetailsOpen((open) => !open)}
+      >
         <span className={styles.icon} aria-hidden="true">
-          {failed ? <XCircle size={16} /> : <FileDiff size={16} />}
+          {failed ? <XCircle size={16} /> : change.status === "running" ? <LoaderCircle size={16} /> : <FileDiff size={16} />}
         </span>
         <div className={styles.titleGroup}>
-          <div className={styles.title}>{change.files.length ? `${change.files.length} 个文件变更` : "文件变更"}</div>
           <div className={styles.meta}>
             <span className={styles.statusMeta}>
               <span className={styles.statusDot} data-state={statusKind} />
@@ -38,28 +47,47 @@ export function FileChangeBlock({ message, onPreviewFile }: FileChangeBlockProps
             <span>+{change.additions}</span>
             <span>-{change.deletions}</span>
           </div>
+          <div className={styles.title}>{title}</div>
         </div>
-      </header>
+        <ChevronDown className={styles.chevron} size={14} />
+      </button>
 
-      <ul className={styles.fileList} aria-label="变更文件">
-        {change.files.map((file) => {
-          const open = expandedPath === file.path;
-          return (
-            <li key={file.path} className={styles.fileItem}>
-              <button className={styles.fileButton} type="button" aria-expanded={open} onClick={() => setExpandedPath(open ? null : file.path)}>
-                <ChevronDown size={14} data-expanded={open ? "true" : "false"} />
-                <span className={styles.path}>{file.path}</span>
-                <span className={styles.fileStats}>+{file.additions} -{file.deletions}</span>
-              </button>
-              <button className={styles.previewButton} type="button" onClick={() => onPreviewFile?.({ path: file.path, diff: file.diff })}>
-                预览
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      {detailsMotion.shouldRender ? (
+        <div
+          className={styles.details}
+          data-motion={detailsMotion.phase}
+          ref={detailsMotion.ref}
+          style={detailsMotion.style}
+          aria-hidden={!detailsOpen}
+        >
+          <div className={styles.detailsInner}>
+            <ul className={styles.fileList} aria-label="变更文件">
+              {change.files.map((file) => {
+                const open = expandedPath === file.path;
+                return (
+                  <li key={file.path} className={styles.fileItem}>
+                    <button
+                      className={styles.fileButton}
+                      type="button"
+                      aria-expanded={open}
+                      onClick={() => setExpandedPath(open ? null : file.path)}
+                    >
+                      <ChevronDown size={14} data-expanded={open ? "true" : "false"} />
+                      <span className={styles.path}>{file.path}</span>
+                      <span className={styles.fileStats}>+{file.additions} -{file.deletions}</span>
+                    </button>
+                    <button className={styles.previewButton} type="button" onClick={() => onPreviewFile?.({ path: file.path, diff: file.diff })}>
+                      预览
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
 
-      {expandedFile ? <DiffView diff={expandedFile.diff} /> : null}
+            {expandedFile ? <DiffView diff={expandedFile.diff} /> : null}
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }

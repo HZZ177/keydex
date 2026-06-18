@@ -51,32 +51,64 @@ describe("MessageList", () => {
   });
 
   it("summarizes consecutive tool messages and expands original blocks on demand", () => {
-    render(<MessageList messages={[message("t1", "tool", "read_file"), message("c1", "command", "echo ok")]} />);
+    render(<MessageList messages={[toolMessage("t1"), commandMessage("c1")]} />);
 
     expect(screen.getByTestId("message-group-block")).not.toBeNull();
-    expect(screen.getByText("2 个工具步骤")).not.toBeNull();
-    expect(screen.getByLabelText("步骤摘要")).not.toBeNull();
-    expect(screen.getByText("read_file")).not.toBeNull();
-    expect(screen.getByText("echo ok")).not.toBeNull();
+    expect(screen.getByText("读取了 1 个文件，已运行 1 条命令")).not.toBeNull();
+    expect(screen.queryByText("已执行 2 个工具步骤")).toBeNull();
+    expect(screen.queryByText("2 步")).toBeNull();
+    expect(screen.queryByLabelText("步骤摘要")).toBeNull();
+    expect(screen.queryByText("read_file")).toBeNull();
+    expect(screen.queryByText("pytest backend/tests")).toBeNull();
+    expect(screen.queryByText(/"path": "README\.md"/)).toBeNull();
+    expect(screen.queryByText("文件内容")).toBeNull();
     expect(screen.queryByTestId("tool-call-block")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "2 个工具步骤详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "读取了 1 个文件，已运行 1 条命令详情" }));
 
     expect(screen.getByTestId("tool-call-block")).not.toBeNull();
     expect(screen.getByTestId("command-execution-block")).not.toBeNull();
+    expect(screen.getByText("已读取文件 README.md")).not.toBeNull();
+    expect(screen.getByText("已执行命令 pytest backend/tests")).not.toBeNull();
+    expect(screen.queryByText(/"path": "README\.md"/)).toBeNull();
+    expect(screen.queryByText("文件内容")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
+    expect(screen.getByLabelText("工具参数").textContent).toContain('"path": "README.md"');
+    expect(screen.getByText("文件内容")).not.toBeNull();
+  });
+
+  it("summarizes mixed tool activity by natural-language tool categories", () => {
+    render(
+      <MessageList
+        messages={[
+          toolMessage("read-1", "read_file", { path: "README.md" }),
+          toolMessage("read-2", "read_file", { path: "src/main.ts" }),
+          toolMessage("dir-1", "list_directory", { path: "src" }),
+          toolMessage("search-1", "search_files", { query: "agent" }),
+          commandMessage("cmd-1"),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("读取了 2 个文件，查看了 1 个目录，搜索了 1 次，已运行 1 条命令")).not.toBeNull();
+    expect(screen.queryByText(/工具步骤/)).toBeNull();
+    expect(screen.queryByText("5 步")).toBeNull();
+    expect(screen.queryByText("read_file")).toBeNull();
   });
 
   it("renders compact file-change summaries before expanding details", () => {
     render(<MessageList messages={[fileChangeMessage("file-change-1", "src/main.py"), fileChangeMessage("file-change-2", "src/app.py")]} />);
 
-    expect(screen.getByText("2 个文件变更")).not.toBeNull();
-    expect(screen.getByLabelText("步骤摘要").textContent).toContain("src/main.py");
-    expect(screen.getByLabelText("步骤摘要").textContent).toContain("+1 -0");
+    expect(screen.getByText("编辑了 2 个文件")).not.toBeNull();
+    expect(screen.queryByLabelText("步骤摘要")).toBeNull();
+    expect(screen.queryByText("src/main.py")).toBeNull();
+    expect(screen.queryByText("+1 -0")).toBeNull();
     expect(screen.queryByTestId("file-change-block")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "2 个文件变更详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑了 2 个文件详情" }));
 
     expect(screen.getAllByTestId("file-change-block")).toHaveLength(2);
+    expect(screen.getAllByText("编辑了 1 个文件")).toHaveLength(2);
   });
 
   it("renders update_plan as a collapsible plan card", () => {
@@ -99,6 +131,7 @@ describe("MessageList", () => {
     const onFilePreview = vi.fn();
     render(<MessageList messages={[fileChangeMessage()]} onFilePreview={onFilePreview} />);
 
+    fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
     fireEvent.click(screen.getByRole("button", { name: "预览" }));
 
     expect(onFilePreview).toHaveBeenCalledWith({
@@ -203,6 +236,39 @@ function message(
     payload: {},
     createdAt: `2026-06-17T10:00:0${id.slice(-1)}Z`,
     updatedAt: `2026-06-17T10:00:0${id.slice(-1)}Z`,
+  };
+}
+
+function toolMessage(
+  id: string,
+  name = "read_file",
+  args: Record<string, unknown> = { path: "README.md" },
+): ConversationMessage {
+  return {
+    ...message(id, "tool", name),
+    payload: {
+      call: {
+        id: `call-${id}`,
+        name,
+        arguments: args,
+      },
+      result: {
+        status: "success",
+        model_content: "文件内容",
+      },
+    },
+  };
+}
+
+function commandMessage(id: string): ConversationMessage {
+  return {
+    ...message(id, "command", "pytest backend/tests"),
+    payload: {
+      command: "pytest backend/tests",
+      cwd: "D:/repo",
+      stdout: "24 passed",
+      exit_code: 0,
+    },
   };
 }
 

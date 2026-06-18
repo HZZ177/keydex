@@ -48,8 +48,7 @@
 }
 
 .action:focus-visible {
-  outline: 2px solid var(--color-primary-6);
-  outline-offset: 2px;
+  outline: none;
 }
 
 @keyframes toolbarEnter {

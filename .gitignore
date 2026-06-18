@@ -299,3 +299,4 @@ docs/superpowers/prototype
 /desktop/dist/
 /desktop/src-tauri/target/
 /desktop/src-tauri/binaries/agent-server.exe
+/backend/app/.data/app.db

@@ -77,9 +77,9 @@ describe("ConversationPage", () => {
     render(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     expect((await screen.findByTestId("tool-call-block")).getAttribute("data-collapsed")).toBe("true");
-    expect(screen.getByText("read_file")).not.toBeNull();
+    expect(screen.getByText("已读取文件 README.md")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
-    expect(screen.getByText(/README\.md/)).not.toBeNull();
+    expect(screen.getByLabelText("工具参数").textContent).toContain('"path": "README.md"');
     expect(screen.getByText("文件内容")).not.toBeNull();
   });
 
@@ -126,7 +126,10 @@ describe("ConversationPage", () => {
 
     await readyComposer();
     expect(screen.getByRole("form", { name: "继续对话输入" }).getAttribute("data-variant")).toBe("codex");
-    expect((screen.getByLabelText("选择模型") as HTMLSelectElement).value).toBe("qwen-coder");
+    expect(screen.getByLabelText("选择模型").textContent).toContain("qwen-coder");
+    fireEvent.click(screen.getByLabelText("选择模型"));
+    expect(screen.getByRole("listbox", { name: "模型" }).closest("[data-placement]")?.getAttribute("data-placement")).toBe("top");
+    fireEvent.click(screen.getByLabelText("选择模型"));
     fireEvent.change(screen.getByLabelText("继续输入"), { target: { value: "继续修改" } });
     await waitSendEnabled();
     fireEvent.click(screen.getByLabelText("发送"));
@@ -141,7 +144,7 @@ describe("ConversationPage", () => {
     render(<ConversationPage threadId="ses-1" runtime={runtime} initialModel="deepseek-coder" />);
 
     await readyComposer();
-    expect((screen.getByLabelText("选择模型") as HTMLSelectElement).value).toBe("deepseek-coder");
+    expect(screen.getByLabelText("选择模型").textContent).toContain("deepseek-coder");
     fireEvent.change(screen.getByLabelText("继续输入"), { target: { value: "使用首页模型" } });
     await waitSendEnabled();
     fireEvent.click(screen.getByLabelText("发送"));

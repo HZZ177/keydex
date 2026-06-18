@@ -409,6 +409,44 @@ describe("MessageText", () => {
     cancelFrame.mockRestore();
   });
 
+  it("shows the stream cursor only while waiting for the next chunk before completion", () => {
+    const frames: FrameRequestCallback[] = [];
+    const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    const base = "起始";
+    const content = `${base}${"等".repeat(420)}`;
+    let now = performance.now();
+    const { rerender } = render(<MessageText message={message("assistant", base, "running")} />);
+
+    expect(screen.getByTestId("streaming-cursor")).not.toBeNull();
+
+    rerender(<MessageText message={message("assistant", content, "running")} />);
+    expect(screen.queryByTestId("streaming-cursor")).toBeNull();
+
+    act(() => {
+      now += 100;
+      frames.shift()?.(now);
+    });
+    expect(screen.queryByTestId("streaming-cursor")).toBeNull();
+
+    for (let index = 0; index < 8 && frames.length; index += 1) {
+      act(() => {
+        now += 1000;
+        frames.shift()?.(now);
+      });
+    }
+    expect(screen.getByTestId("streaming-cursor")).not.toBeNull();
+
+    rerender(<MessageText message={message("assistant", content, "completed")} />);
+    expect(screen.queryByTestId("streaming-cursor")).toBeNull();
+
+    requestFrame.mockRestore();
+    cancelFrame.mockRestore();
+  });
+
   it("reports runtime typing speed while assistant text is being displayed", () => {
     const frames: FrameRequestCallback[] = [];
     const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {

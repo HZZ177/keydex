@@ -82,8 +82,7 @@
 
 .tabMain:focus-visible,
 .tabClose:focus-visible {
-  outline: 2px solid var(--color-primary-6);
-  outline-offset: 1px;
+  outline: none;
 }
 
 .header {
@@ -193,8 +192,7 @@
 
 .segmented button:focus-visible,
 .iconButton:focus-visible {
-  outline: 2px solid var(--color-primary-6);
-  outline-offset: 2px;
+  outline: none;
 }
 
 .muted {

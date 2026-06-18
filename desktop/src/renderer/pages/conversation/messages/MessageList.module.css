@@ -1,15 +1,15 @@
 .root {
   position: relative;
-  min-height: calc(100vh - 250px);
+  min-height: 0;
 }
 
 .scroller {
-  min-height: calc(100vh - 250px);
+  min-height: 0;
   overflow: visible;
 }
 
 .contentSurface {
-  min-height: inherit;
+  min-height: 0;
 }
 
 .list {

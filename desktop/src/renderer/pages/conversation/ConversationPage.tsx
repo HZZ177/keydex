@@ -344,6 +344,7 @@ function ConversationComposer({
           modelLoadState={modelSelection.modelLoadState}
           modelError={modelSelection.modelError}
           disabled={isBusy(runtimeState)}
+          placement="top"
           onModelChange={modelSelection.setSelectedModel}
           onOpenModelSettings={onOpenModelSettings}
         />

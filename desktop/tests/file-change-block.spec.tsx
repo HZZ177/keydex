@@ -8,11 +8,13 @@ describe("FileChangeBlock", () => {
   it("summarizes multiple files and expands a diff on demand", () => {
     render(<FileChangeBlock message={fileChangeMessage("completed", true)} />);
 
-    expect(screen.getByText("2 个文件变更")).not.toBeNull();
+    expect(screen.getByText("编辑了 2 个文件")).not.toBeNull();
     expect(screen.getByText("+2")).not.toBeNull();
     expect(screen.getByText("-1")).not.toBeNull();
     expect(screen.queryByLabelText("文件 diff")).toBeNull();
+    expect(screen.queryByLabelText("变更文件")).toBeNull();
 
+    fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
     fireEvent.click(screen.getByRole("button", { name: /src\/main.py/ }));
     expect(screen.getByLabelText("文件 diff").textContent).toContain("+print('new')");
   });
@@ -35,6 +37,7 @@ describe("FileChangeBlock", () => {
     const onPreviewFile = vi.fn();
     render(<FileChangeBlock message={fileChangeMessage("completed", true)} onPreviewFile={onPreviewFile} />);
 
+    fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
     fireEvent.click(screen.getAllByRole("button", { name: "预览" })[0]);
 
     expect(onPreviewFile).toHaveBeenCalledWith({

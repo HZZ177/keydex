@@ -22,11 +22,11 @@ export function createEventReplayFixture(): RuntimeEvent[] {
     itemCompleted(
       12,
       item("item-tool", "tool_call", "completed", { call: { id: "call-read", name: "read_file", arguments: { path: "src/main.ts" } } }),
-      { status: "success", model_content: "读取完成" },
+      { status: "success", model_content: "读取完成", duration_ms: 86 },
     ),
     itemStarted(13, item("item-command", "command_execution", "running", { command: "pnpm test", stdout: "" })),
     itemDelta(14, "item-command", "command_execution", { stdout: "24 passed\n" }),
-    itemCompleted(15, item("item-command", "command_execution", "completed", { command: "pnpm test", stdout: "24 passed\n", exit_code: 0 })),
+    itemCompleted(15, item("item-command", "command_execution", "completed", { command: "pnpm test", stdout: "24 passed\n", exit_code: 0, duration_ms: 2300 })),
     itemStarted(16, item("item-file", "file_change", "completed", {
       files: [
         { path: "src/main.ts", additions: 1, deletions: 1, diff: "@@\n-old\n+new" },

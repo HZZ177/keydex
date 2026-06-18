@@ -186,13 +186,11 @@
 }
 
 .codeTextButton:focus-visible {
-  outline: 2px solid var(--color-primary-6);
-  outline-offset: 2px;
+  outline: none;
 }
 
 .codeIconButton:focus-visible {
-  outline: 2px solid var(--color-primary-6);
-  outline-offset: 2px;
+  outline: none;
 }
 
 .codeViewport {

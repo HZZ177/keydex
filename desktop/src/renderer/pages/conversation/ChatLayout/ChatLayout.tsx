@@ -1,5 +1,5 @@
 import { Check, Copy, Files, MoreHorizontal, PanelRightOpen, SendHorizontal, X } from "lucide-react";
-import { type PropsWithChildren, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type PropsWithChildren, type ReactNode, useEffect, useRef, useState } from "react";
 
 import styles from "./ChatLayout.module.css";
 
@@ -22,7 +22,6 @@ export function ChatLayout({
   previewPanel,
 }: ChatLayoutProps) {
   const layoutRef = useRef<HTMLElement>(null);
-  const composerDockRef = useRef<HTMLDivElement>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -44,28 +43,6 @@ export function ChatLayout({
       setWorkspaceOpen(false);
     }
   }, [hasWorkspacePanel]);
-
-  useLayoutEffect(() => {
-    const layout = layoutRef.current;
-    const composerDock = composerDockRef.current;
-    if (!layout || !composerDock) {
-      return;
-    }
-
-    const updateReservedHeight = () => {
-      const height = Math.ceil(composerDock.getBoundingClientRect().height);
-      layout.style.setProperty("--conversation-composer-reserved-height", `${height + 28}px`);
-    };
-
-    updateReservedHeight();
-    if (typeof ResizeObserver === "undefined") {
-      return;
-    }
-
-    const resizeObserver = new ResizeObserver(updateReservedHeight);
-    resizeObserver.observe(composerDock);
-    return () => resizeObserver.disconnect();
-  }, [composer, composerAccessory]);
 
   useEffect(() => {
     if (!menuOpen) {
@@ -213,7 +190,7 @@ export function ChatLayout({
         </aside>
       ) : null}
 
-      <div ref={composerDockRef} className={styles.composerDock} data-testid="conversation-composer">
+      <div className={styles.composerDock} data-testid="conversation-composer">
         {composerAccessory ? <div className={styles.composerAccessory}>{composerAccessory}</div> : null}
         {composer ?? <ReadOnlyComposer />}
       </div>
