@@ -18,7 +18,7 @@ describe("ToolCallBlock", () => {
 
     const block = screen.getByTestId("tool-call-block");
     expect(block.textContent).toContain("正在读取文件 README.md");
-    expect(block.querySelectorAll("svg")).toHaveLength(1);
+    expect(block.querySelectorAll("svg")).toHaveLength(2);
     expect(screen.getByText("正在读取文件 README.md")).not.toBeNull();
     expect(screen.queryByText("read_file")).toBeNull();
     expect(screen.queryByText(/"path": "README.md"/)).toBeNull();

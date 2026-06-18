@@ -206,7 +206,11 @@ async def test_realtime_persistence_and_history_keep_cancelled_sequence(tmp_path
 
     assert [item["action"] for item in chat_adapter.sent] == ["stream", "cancelled"]
     assert [event.action for event in persisted_events] == ["stream_batch", "cancelled"]
-    assert messages == [{"role": "assistant", "content": "半截", "cancelled": True}]
+    assert len(messages) == 1
+    assert messages[0]["role"] == "assistant"
+    assert messages[0]["content"] == "半截"
+    assert messages[0]["cancelled"] is True
+    assert isinstance(messages[0]["timestamp"], int)
     assert terminal_payload["status"] == "cancelled"
     assert terminal_payload["final_content"] == "半截"
 
@@ -258,7 +262,10 @@ async def test_realtime_persistence_and_history_keep_error_sequence(tmp_path) ->
     assert messages[0]["content"] == "准备"
     assert messages[1]["status"] == "error"
     assert messages[1]["toolError"] == "权限不足"
-    assert messages[2] == {"role": "error", "content": "模型失败", "traceId": TRACE_ID}
+    assert messages[2]["role"] == "error"
+    assert messages[2]["content"] == "模型失败"
+    assert messages[2]["traceId"] == TRACE_ID
+    assert isinstance(messages[2]["timestamp"], int)
     assert terminal_payload["status"] == "failed"
     assert terminal_payload["final_content"] == "准备"
 
@@ -345,8 +352,7 @@ async def test_realtime_persistence_and_history_keep_subagent_reasoning_sequence
     assert messages[0]["subagentName"] == "worker"
     assert messages[0]["subagentToolCalls"][0]["status"] == "completed"
     assert messages[0]["subagentToolCalls"][0]["toolResult"] == "ok"
-    assert messages[1] == {
-        "role": "reasoning",
-        "content": "观察完成",
-        "reasoningKind": "initial_response",
-    }
+    assert messages[1]["role"] == "reasoning"
+    assert messages[1]["content"] == "观察完成"
+    assert messages[1]["reasoningKind"] == "initial_response"
+    assert isinstance(messages[1]["timestamp"], int)

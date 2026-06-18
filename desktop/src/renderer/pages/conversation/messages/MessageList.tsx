@@ -227,8 +227,15 @@ function collectAssistantActionRowMessageIds(messages: ConversationMessage[], is
 
   const finalAssistantMessageId = pendingAssistantMessageId;
   flush();
-  if (isProcessing && finalAssistantMessageId) {
-    ids.delete(finalAssistantMessageId);
+  if (isProcessing) {
+    const currentTurnStart = messages.findLastIndex((message) => message.kind === "user");
+    for (const message of messages.slice(currentTurnStart + 1)) {
+      if (message.kind === "assistant") {
+        ids.delete(message.id);
+      }
+    }
+  } else if (finalAssistantMessageId) {
+    ids.add(finalAssistantMessageId);
   }
 
   return ids;

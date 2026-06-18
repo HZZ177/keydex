@@ -64,10 +64,14 @@ def test_sessions_api_returns_aggregated_messages(tmp_path) -> None:
     response = client.get(f"/api/sessions/{session_id}/history")
 
     assert response.status_code == 200
-    assert response.json()["list"] == [
-        {"role": "user", "content": "你好", "attachments": []},
-        {"role": "assistant", "content": "收到"},
-    ]
+    messages = response.json()["list"]
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "你好"
+    assert messages[0]["attachments"] == []
+    assert isinstance(messages[0]["timestamp"], int)
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["content"] == "收到"
+    assert isinstance(messages[1]["timestamp"], int)
     assert response.json()["event_total"] == 2
     assert response.json()["turn_indexes"] == [1]
 

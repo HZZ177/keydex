@@ -600,5 +600,5 @@ function isoFromTimestamp(timestamp: number, index: number): string {
   if (timestamp > 1_000_000_000_000) {
     return new Date(timestamp).toISOString();
   }
-  return new Date(index + 1).toISOString();
+  return new Date(Date.now() + index).toISOString();
 }

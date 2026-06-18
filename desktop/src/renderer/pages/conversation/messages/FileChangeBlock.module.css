@@ -2,7 +2,7 @@
   display: grid;
   gap: 6px;
   max-width: 100%;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-primary);
 }
 
 .header {
@@ -11,37 +11,40 @@
   max-width: 100%;
   grid-template-columns: 18px minmax(0, auto) 16px;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: transparent;
   color: inherit;
-  padding: 3px 5px 3px 2px;
+  opacity: 0.46;
+  padding: 2px 0;
   text-align: left;
+  transition: opacity 150ms ease;
 }
 
 .header:hover {
-  background: var(--surface-hover);
-  color: var(--color-text-secondary);
+  background: transparent;
+  color: inherit;
+  opacity: 0.78;
 }
 
 .header:focus-visible {
   outline: none;
+  opacity: 0.78;
 }
 
 .icon {
   display: inline-grid;
   place-items: center;
-  color: var(--color-text-tertiary);
+  color: currentColor;
 }
 
 .block[data-status="running"] .icon {
   animation: spin 900ms linear infinite;
-  color: var(--color-text-secondary);
 }
 
 .block[data-status="failed"] .icon {
-  color: var(--color-danger);
+  color: currentColor;
 }
 
 .titleGroup {
@@ -54,7 +57,7 @@
 .title {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text-tertiary);
+  color: currentColor;
   font-size: 13px;
   font-weight: 500;
   line-height: 1.45;
@@ -62,16 +65,12 @@
   white-space: nowrap;
 }
 
-.header:hover .title {
-  color: var(--color-text-secondary);
-}
-
 .meta {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  color: var(--color-text-tertiary);
+  color: currentColor;
   font-size: 13px;
   line-height: 1.45;
 }
@@ -83,6 +82,7 @@
 }
 
 .statusDot {
+  display: none;
   width: 5px;
   height: 5px;
   flex: 0 0 auto;
@@ -104,7 +104,7 @@
 }
 
 .chevron {
-  color: var(--color-text-tertiary);
+  color: currentColor;
   transition: transform 220ms var(--motion-ease-out);
 }
 

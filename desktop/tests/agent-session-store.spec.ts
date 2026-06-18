@@ -245,16 +245,17 @@ describe("agentSessionStore reducer", () => {
 
   it("appends stream chunks and deduplicates events with explicit event ids", () => {
     let state = createInitialAgentConversationState();
+    const streamTimestamp = new Date("2026-06-18T12:34:00+08:00").getTime();
     const first: AgentActionEnvelope = {
       action: "stream",
-      data: { session_id: "ses-1", content: "你", event_id: "evt-1" },
+      data: { session_id: "ses-1", content: "你", event_id: "evt-1", timestamp_ms: streamTimestamp },
     };
     state = reduceAgentWsEvent(state, first);
     state = reduceAgentWsEvent(state, { action: "stream", data: { session_id: "ses-1", content: "好" } });
     state = reduceAgentWsEvent(state, first);
 
     expect(selectAgentMessages(state, "ses-1")).toMatchObject([
-      { role: "assistant", content: "你好", streaming: true, status: "streaming" },
+      { role: "assistant", content: "你好", timestamp: streamTimestamp, streaming: true, status: "streaming" },
     ]);
     expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
   });

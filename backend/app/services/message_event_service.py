@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from backend.app.events.actions import CompletedEventItemAction, ReplayAction
@@ -31,6 +32,7 @@ class MessageEventService:
                         "role": "user",
                         "content": data.get("content", ""),
                         "attachments": data.get("attachments", []),
+                        "timestamp": self._event_timestamp_ms(event),
                     }
                 )
                 continue
@@ -38,19 +40,42 @@ class MessageEventService:
             if action == ReplayAction.SYSTEM_MESSAGE.value:
                 if self._is_hidden_internal_system_message(data):
                     continue
-                messages.append({"role": "system", "content": data.get("content", "")})
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": data.get("content", ""),
+                        "timestamp": self._event_timestamp_ms(event),
+                    }
+                )
                 continue
 
             if action == ReplayAction.AI_MESSAGE.value:
-                messages.append({"role": "assistant", "content": data.get("content", "")})
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": data.get("content", ""),
+                        "timestamp": self._event_timestamp_ms(event),
+                    }
+                )
                 continue
 
             if action == ReplayAction.STREAM_BATCH.value:
-                self._append_stream_batch(messages, active_subagents, data)
+                self._append_stream_batch(
+                    messages,
+                    active_subagents,
+                    data,
+                    self._event_timestamp_ms(event),
+                )
                 continue
 
             if action == ReplayAction.TOOL_START.value:
-                self._append_tool_start(messages, active_subagents, tool_run_map, data)
+                self._append_tool_start(
+                    messages,
+                    active_subagents,
+                    tool_run_map,
+                    data,
+                    self._event_timestamp_ms(event),
+                )
                 continue
 
             if action == ReplayAction.TOOL_END.value:
@@ -67,6 +92,7 @@ class MessageEventService:
                         "subagentId": subagent_id,
                         "subagentTask": data.get("task", ""),
                         "subagentToolCalls": [],
+                        "timestamp": self._event_timestamp_ms(event),
                     }
                 )
                 if subagent_id:
@@ -92,6 +118,7 @@ class MessageEventService:
                         "role": "reasoning",
                         "content": str(data.get("text", data.get("content", "")) or ""),
                         "reasoningKind": data.get("kind", "reasoning"),
+                        "timestamp": self._event_timestamp_ms(event),
                     }
                 )
                 continue
@@ -110,6 +137,7 @@ class MessageEventService:
                         "role": "error",
                         "content": data.get("message", data.get("error", "")),
                         "traceId": data.get("trace_id"),
+                        "timestamp": self._event_timestamp_ms(event),
                     }
                 )
 
@@ -193,6 +221,7 @@ class MessageEventService:
         messages: list[dict[str, Any]],
         active_subagents: dict[str, int],
         data: dict[str, Any],
+        timestamp: int,
     ) -> None:
         content = str(data.get("content") or "")
         subagent_id = str(data.get("subagent_id") or "")
@@ -202,7 +231,7 @@ class MessageEventService:
         if messages and messages[-1].get("role") == "assistant":
             messages[-1]["content"] += content
             return
-        messages.append({"role": "assistant", "content": content})
+        messages.append({"role": "assistant", "content": content, "timestamp": timestamp})
 
     @staticmethod
     def _append_tool_start(
@@ -210,6 +239,7 @@ class MessageEventService:
         active_subagents: dict[str, int],
         tool_run_map: dict[str, tuple[int, int | None]],
         data: dict[str, Any],
+        timestamp: int,
     ) -> None:
         run_id = str(data.get("run_id") or "")
         tool_call = {
@@ -217,6 +247,7 @@ class MessageEventService:
             "toolParams": data.get("params"),
             "runId": run_id,
             "status": "running",
+            "timestamp": timestamp,
         }
         subagent_id = str(data.get("subagent_id") or "")
         if data.get("is_subagent") and subagent_id in active_subagents:
@@ -290,3 +321,28 @@ class MessageEventService:
             if trace_id:
                 message["traceId"] = trace_id
             return
+
+    @staticmethod
+    def _event_timestamp_ms(event: MessageEventRecord) -> int:
+        data_timestamp = MessageEventService._coerce_timestamp_ms(
+            event.data.get("messageTimeMs")
+            or event.data.get("timestamp_ms")
+            or event.data.get("timestamp")
+        )
+        if data_timestamp is not None:
+            return data_timestamp
+        try:
+            return int(
+                datetime.fromisoformat(event.created_at.replace("Z", "+00:00")).timestamp()
+                * 1000
+            )
+        except ValueError:
+            return 0
+
+    @staticmethod
+    def _coerce_timestamp_ms(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int | float) and value > 1_000_000_000_000:
+            return int(value)
+        return None

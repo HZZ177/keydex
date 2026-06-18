@@ -255,7 +255,7 @@ function addUserMessage(
     role: "user",
     content: action.content,
     attachments: action.attachments,
-    timestamp: action.timestamp ?? nextTimestamp(view),
+    timestamp: action.timestamp ?? Date.now(),
   });
   next.selectedSessionId = action.sessionId;
   return next;
@@ -312,13 +312,15 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
   }
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
+  const eventTimestamp = timestampFromData(data);
   if (data.is_subagent && data.subagent_id) {
     const message = ensureSubagentMessage(next, view, data.subagent_id, {
       subagentName: data.subagent_name ?? "",
       streaming: true,
+      timestamp: eventTimestamp,
     });
     message.content += content;
-    appendSubagentTextItem(next, message, content);
+    appendSubagentTextItem(next, message, content, eventTimestamp);
   } else {
     const message = latestStreamingMessage(view, "assistant");
     if (message) {
@@ -329,7 +331,7 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
         sessionId,
         role: "assistant",
         content,
-        timestamp: nextTimestamp(view),
+        timestamp: eventTimestamp,
         streaming: true,
         status: "streaming",
       });
@@ -375,7 +377,7 @@ function handleReasoning(
       role: "reasoning",
       content,
       reasoningKind: kind,
-      timestamp: nextTimestamp(view),
+      timestamp: timestampFromData(data),
       streaming: true,
       status: "streaming",
     });
@@ -397,6 +399,7 @@ function handleToolStart(state: AgentConversationState, data: AgentToolEventData
     const subagent = ensureSubagentMessage(next, view, data.subagent_id, {
       subagentName: data.subagent_name ?? "",
       streaming: true,
+      timestamp: timestampFromData(data),
     });
     closeSubagentTextStreams(subagent);
     const tool = findSubagentTool(subagent, data.run_id);
@@ -407,7 +410,7 @@ function handleToolStart(state: AgentConversationState, data: AgentToolEventData
         ...toolCallFromStart(data, toolName),
         id: nextMessageId(next, "subagent-tool", sessionId),
         type: "tool" as const,
-        timestamp: nextTimestamp(view),
+        timestamp: timestampFromData(data),
       };
       subagent.subagentToolCalls = [...(subagent.subagentToolCalls ?? []), toolItem];
       subagent.subagentItems = [...(subagent.subagentItems ?? []), toolItem];
@@ -425,7 +428,7 @@ function handleToolStart(state: AgentConversationState, data: AgentToolEventData
         sessionId,
         role: "tool",
         content: "",
-        timestamp: nextTimestamp(view),
+        timestamp: timestampFromData(data),
         ...patch,
       });
     }
@@ -472,7 +475,7 @@ function handleToolEnd(state: AgentConversationState, data: AgentToolEventData):
         sessionId,
         role: "tool",
         content: "",
-        timestamp: nextTimestamp(view),
+        timestamp: timestampFromData(data),
         ...toolCallFromStart(data, toolNameFromData(data)),
         status,
         toolResult: result,
@@ -500,6 +503,7 @@ function handleSubagentStart(state: AgentConversationState, data: Record<string,
     subagentTask: stringValue(data.task) || stringValue(data.input),
     subagentRunId: stringValue(data.run_id),
     streaming: true,
+    timestamp: timestampFromData(data),
   });
   view.isStreaming = true;
   markTurnInProgress(view);
@@ -519,7 +523,7 @@ function handleSubagentEnd(state: AgentConversationState, data: Record<string, u
     const result = stringValue(data.result_summary) || stringValue(data.result);
     if (result && !message.content.includes(result)) {
       message.content += message.content ? `\n\n${result}` : result;
-      appendSubagentTextItem(next, message, result);
+      appendSubagentTextItem(next, message, result, timestampFromData(data));
     }
     message.streaming = false;
     closeSubagentTextStreams(message);
@@ -540,10 +544,11 @@ function handleSubagentError(state: AgentConversationState, data: Record<string,
   const message = ensureSubagentMessage(next, view, subagentId, {
     subagentName: stringValue(data.subagent_name) || stringValue(data.agent_name) || stringValue(data.name),
     streaming: false,
+    timestamp: timestampFromData(data),
   });
   const errorText = `\n\n[错误: ${stringValue(data.error) || stringValue(data.message) || "子任务失败"}]`;
   message.content += errorText;
-  appendSubagentTextItem(next, message, errorText);
+  appendSubagentTextItem(next, message, errorText, timestampFromData(data));
   message.streaming = false;
   message.status = "failed";
   closeSubagentTextStreams(message);
@@ -575,7 +580,7 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
       sessionId,
       role: "assistant",
       content: finalContent,
-      timestamp: nextTimestamp(view),
+      timestamp: timestampFromData(payload),
       streaming: false,
     };
     view.messages.push(completedTarget);
@@ -643,7 +648,7 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
     sessionId,
     role: "error",
     content: data.message || data.error || data.code || "对话执行失败",
-    timestamp: nextTimestamp(view),
+    timestamp: timestampFromData(data),
     traceId: data.trace_id,
     status: "failed",
   });
@@ -718,7 +723,7 @@ function historyMessageFromPayload(
     ...payload,
     id: payload.id ?? `hist:${sessionId}:${index + 1}`,
     sessionId: payload.sessionId ?? sessionId,
-    timestamp: payload.timestamp ?? index + 1,
+    timestamp: payload.timestamp ?? Date.now() + index,
     content: payload.content ?? "",
     ghostStats,
     streaming: false,
@@ -823,6 +828,7 @@ function ensureSubagentMessage(
     subagentTask?: string;
     subagentRunId?: string;
     streaming?: boolean;
+    timestamp?: number;
   } = {},
 ): AgentChatMessage {
   const existing = view.messages.find(
@@ -852,7 +858,7 @@ function ensureSubagentMessage(
     sessionId: view.sessionId,
     role: "subagent",
     content: "",
-    timestamp: nextTimestamp(view),
+    timestamp: options.timestamp ?? Date.now(),
     subagentId,
     subagentName: options.subagentName ?? "",
     subagentRunId: options.subagentRunId,
@@ -870,6 +876,7 @@ function appendSubagentTextItem(
   state: AgentConversationState,
   message: AgentChatMessage,
   content: string,
+  timestamp = Date.now(),
 ) {
   if (!content) {
     return;
@@ -886,7 +893,7 @@ function appendSubagentTextItem(
     id: nextMessageId(state, "subagent-text", message.sessionId),
     type: "text",
     content,
-    timestamp: Date.now(),
+    timestamp,
     streaming: true,
   });
 }
@@ -1132,11 +1139,6 @@ function nextMessageId(state: AgentConversationState, prefix: string, sessionId:
   return `${prefix}:${sessionId}:${state.messageSeq}`;
 }
 
-function nextTimestamp(view: AgentSessionViewState): number {
-  const last = view.messages[view.messages.length - 1]?.timestamp ?? 0;
-  return last + 1;
-}
-
 function sortSessionIds(sessions: AgentSession[]): string[] {
   return uniqueById(sessions)
     .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
@@ -1153,6 +1155,20 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function timestampFromData(data: object): number {
+  const record = data as { messageTimeMs?: unknown; timestamp_ms?: unknown; timestamp?: unknown };
+  const timestamp =
+    realTimestampMs(record.messageTimeMs) ?? realTimestampMs(record.timestamp_ms) ?? realTimestampMs(record.timestamp);
+  return timestamp ?? Date.now();
+}
+
+function realTimestampMs(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 1_000_000_000_000) {
+    return null;
+  }
+  return Math.trunc(value);
 }
 
 function nullableString(value: unknown): string | null {

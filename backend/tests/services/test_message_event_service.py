@@ -64,9 +64,13 @@ def test_message_event_service_aggregates_user_stream_tool_and_completed(tmp_pat
 
     messages = service.get_display_messages("ses_history")
 
-    assert messages[0] == {"role": "user", "content": "读文件", "attachments": []}
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "读文件"
+    assert messages[0]["attachments"] == []
+    assert isinstance(messages[0]["timestamp"], int)
     assert messages[1]["role"] == "assistant"
     assert messages[1]["content"] == "我来读取"
+    assert isinstance(messages[1]["timestamp"], int)
     assert messages[1]["ghostStats"] == {
         "traceId": "trace_1",
         "inputTokens": 3,
@@ -76,6 +80,7 @@ def test_message_event_service_aggregates_user_stream_tool_and_completed(tmp_pat
     assert messages[2]["role"] == "tool"
     assert messages[2]["status"] == "completed"
     assert messages[2]["toolResult"] == "content"
+    assert isinstance(messages[2]["timestamp"], int)
 
 
 def test_message_event_service_handles_multi_turn_reasoning_error_and_cancel(tmp_path) -> None:
@@ -89,9 +94,18 @@ def test_message_event_service_handles_multi_turn_reasoning_error_and_cancel(tmp
 
     messages = service.get_display_messages("ses_history")
 
-    assert messages[0] == {"role": "assistant", "content": "半截", "cancelled": True}
-    assert messages[1] == {"role": "reasoning", "content": "观察", "reasoningKind": "reasoning"}
-    assert messages[2] == {"role": "error", "content": "失败", "traceId": "trace_2"}
+    assert messages[0]["role"] == "assistant"
+    assert messages[0]["content"] == "半截"
+    assert messages[0]["cancelled"] is True
+    assert isinstance(messages[0]["timestamp"], int)
+    assert messages[1]["role"] == "reasoning"
+    assert messages[1]["content"] == "观察"
+    assert messages[1]["reasoningKind"] == "reasoning"
+    assert isinstance(messages[1]["timestamp"], int)
+    assert messages[2]["role"] == "error"
+    assert messages[2]["content"] == "失败"
+    assert messages[2]["traceId"] == "trace_2"
+    assert isinstance(messages[2]["timestamp"], int)
 
 
 def test_message_event_service_pairs_subagent_tools(tmp_path) -> None:

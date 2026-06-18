@@ -49,6 +49,7 @@ class ChatProjection:
 
         payload = dict(event.payload or {})
         payload.setdefault("session_id", session_id)
+        payload.setdefault("timestamp_ms", event.timestamp_ms)
         await self.adapter.send(session_id=session_id, action=action.value, data=payload)
 
     async def _send_reasoning_event(
@@ -64,6 +65,7 @@ class ChatProjection:
             "kind": payload.get("kind", "reasoning"),
             "done": payload.get("done", False),
             "trace_id": event.trace_id or payload.get("trace_id"),
+            "timestamp_ms": event.timestamp_ms,
         }
         if "content" in payload:
             chat_data["content"] = payload["content"]

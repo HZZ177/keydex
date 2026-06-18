@@ -9,45 +9,9 @@
   line-height: 1.35;
 }
 
-.traceButton {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  height: 24px;
-  align-items: center;
-  gap: 5px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font: inherit;
-  padding: 0 5px;
-}
-
-.traceButton:hover,
-.traceButton[data-copy-state="copied"] {
-  background: var(--surface-hover);
-  color: var(--color-text-primary);
-}
-
-.traceButton code {
-  min-width: 0;
-  overflow: hidden;
-  color: inherit;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.meta,
-.copyError {
+.meta {
   display: inline-flex;
   min-width: 0;
   color: var(--color-text-tertiary);
   white-space: nowrap;
-}
-
-.copyError {
-  color: var(--color-danger);
 }

@@ -1,7 +1,3 @@
-import { Check, Copy } from "lucide-react";
-import { useState } from "react";
-
-import { copyText } from "./markdown";
 import styles from "./MessageGhostFooter.module.css";
 
 export interface MessageGhostFooterData {
@@ -17,48 +13,21 @@ export interface MessageGhostFooterProps {
 }
 
 export function MessageGhostFooter({ footer }: MessageGhostFooterProps) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   if (!footer || !hasVisibleFooterData(footer)) {
     return null;
   }
 
   const tokenParts = tokenSummary(footer);
-  const copyTrace = async () => {
-    if (!footer.traceId) {
-      return;
-    }
-    try {
-      await copyText(footer.traceId);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
-  };
-
   return (
-    <footer className={styles.footer} aria-label="轻量 trace 信息" data-testid="message-ghost-footer">
-      {footer.traceId ? (
-        <button
-          className={styles.traceButton}
-          type="button"
-          aria-label={`复制 trace_id ${footer.traceId}`}
-          data-copy-state={copyState}
-          onClick={copyTrace}
-        >
-          {copyState === "copied" ? <Check size={12} /> : <Copy size={12} />}
-          <span>追踪</span>
-          <code>{footer.traceId}</code>
-        </button>
-      ) : null}
-      {tokenParts.length ? <span className={styles.meta}>令牌 {tokenParts.join(" / ")}</span> : null}
+    <footer className={styles.footer} aria-label="message metadata" data-testid="message-ghost-footer">
+      {tokenParts.length ? <span className={styles.meta}>token {tokenParts.join(" - ")}</span> : null}
       {footer.duration ? <span className={styles.meta}>耗时 {footer.duration}</span> : null}
-      {copyState === "failed" ? <span className={styles.copyError}>复制失败</span> : null}
     </footer>
   );
 }
 
 function hasVisibleFooterData(footer: MessageGhostFooterData): boolean {
-  return Boolean(footer.traceId || footer.duration || tokenSummary(footer).length);
+  return Boolean(footer.duration || tokenSummary(footer).length);
 }
 
 function tokenSummary(footer: MessageGhostFooterData): string[] {

@@ -144,7 +144,7 @@ function ghostFooterFromPayload(payload: Record<string, unknown>): MessageGhostF
     duration: formatDuration(payload.duration_ms ?? payload.durationMs),
   };
 
-  return footer.traceId || footer.duration || hasTokenValue(footer) ? footer : null;
+  return footer.duration || hasTokenValue(footer) ? footer : null;
 }
 
 function hasTokenValue(footer: MessageGhostFooterData): boolean {

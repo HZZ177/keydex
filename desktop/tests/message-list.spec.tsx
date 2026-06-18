@@ -50,6 +50,27 @@ describe("MessageList", () => {
     expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(1);
   });
 
+  it("hides all assistant copy rows in the active turn until completion", () => {
+    render(
+      <MessageList
+        messages={[
+          message("m1", "user", "上一轮"),
+          message("m2", "assistant", "上一轮回答"),
+          message("m3", "user", "当前轮"),
+          message("m4", "assistant", "第一段"),
+          toolMessage("t1"),
+          message("m5", "assistant", "第二段"),
+        ]}
+        isProcessing
+      />,
+    );
+
+    const textMessages = screen.getAllByTestId("message-text");
+    expect(within(textMessages[1]).getByRole("button", { name: "复制消息" })).not.toBeNull();
+    expect(within(textMessages[3]).queryByRole("button", { name: "复制消息" })).toBeNull();
+    expect(within(textMessages[4]).queryByRole("button", { name: "复制消息" })).toBeNull();
+  });
+
   it("shows a pending assistant cursor while processing before the next stream chunk", () => {
     const { rerender } = render(<MessageList messages={[message("m1", "user", "开始")]} isProcessing />);
 

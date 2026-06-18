@@ -1,4 +1,15 @@
-import { Check, ChevronDown, Clipboard } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Clipboard,
+  FileText,
+  FolderOpen,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  Wrench,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
@@ -17,7 +28,6 @@ export function ToolCallBlock({ message }: ToolCallBlockProps) {
   const tool = useMemo(() => parseToolPayload(message), [message]);
   const running = message.status === "pending" || message.status === "running";
   const failed = message.status === "failed" || tool.resultStatus === "error";
-  const statusKind = failed ? "failed" : running ? "running" : "done";
   const resultLabel = failed ? "错误" : "结果";
   const detailsMotion = useDeferredUnmount<HTMLDivElement>(detailsOpen);
 
@@ -44,12 +54,12 @@ export function ToolCallBlock({ message }: ToolCallBlockProps) {
         aria-label={detailsOpen ? "收起工具详情" : "展开工具详情"}
         onClick={() => setDetailsOpen((open) => !open)}
       >
+        <span className={styles.icon} aria-hidden="true">
+          {toolIcon(tool.name)}
+        </span>
         <div className={styles.titleGroup}>
           <div className={styles.title}>{tool.title}</div>
-          <div className={styles.status}>
-            <span className={styles.statusDot} data-state={statusKind} />
-            {tool.duration ? <span>{tool.duration}</span> : null}
-          </div>
+          {tool.duration ? <div className={styles.meta}>{tool.duration}</div> : null}
         </div>
         <ChevronDown className={styles.chevron} size={14} />
       </button>
@@ -217,6 +227,28 @@ function toolAction(name: string): ToolAction | null {
     };
   }
   return null;
+}
+
+function toolIcon(name: string) {
+  if (["read_file", "read_text_file", "open_file"].includes(name)) {
+    return <FileText size={14} />;
+  }
+  if (["list_directory", "list_dir", "read_directory"].includes(name)) {
+    return <FolderOpen size={14} />;
+  }
+  if (["search_files", "search_text", "search", "grep"].includes(name)) {
+    return <Search size={14} />;
+  }
+  if (["write_file", "apply_patch", "edit_file"].includes(name)) {
+    return <Pencil size={14} />;
+  }
+  if (name === "create_file") {
+    return <Plus size={14} />;
+  }
+  if (name === "delete_file") {
+    return <Trash2 size={14} />;
+  }
+  return <Wrench size={14} />;
 }
 
 interface ToolAction {

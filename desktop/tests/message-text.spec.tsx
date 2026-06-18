@@ -128,8 +128,7 @@ describe("MessageText", () => {
     expect(screen.getByText("已复制")).not.toBeNull();
   });
 
-  it("renders a lightweight ghost footer with trace, token and duration data", async () => {
-    const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
+  it("renders a lightweight ghost footer with token and duration data", () => {
     render(
       <MessageText
         message={message("assistant", "完成", "completed", {
@@ -145,18 +144,12 @@ describe("MessageText", () => {
     );
 
     expect(screen.getByTestId("message-ghost-footer")).not.toBeNull();
-    expect(screen.getByText("trace-1")).not.toBeNull();
-    expect(screen.getByText("令牌 输入 10 / 缓存 3 / 输出 5")).not.toBeNull();
+    expect(screen.queryByText("trace-1")).toBeNull();
+    expect(screen.getByText("token 输入 10 - 缓存 3 - 输出 5")).not.toBeNull();
     expect(screen.getByText("耗时 2.3 秒")).not.toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "复制 trace_id trace-1" }));
-
-    await waitFor(() => {
-      expect(clipboard).toHaveBeenCalledWith("trace-1");
-    });
   });
 
-  it("keeps ghost footer absent without real trace or token data", () => {
+  it("keeps ghost footer absent without token or duration data", () => {
     const { rerender } = render(<MessageText message={message("assistant", "普通回答", "completed")} />);
 
     expect(screen.queryByTestId("message-ghost-footer")).toBeNull();
@@ -169,9 +162,9 @@ describe("MessageText", () => {
         })}
       />,
     );
-    expect(screen.getByTestId("message-ghost-footer")).not.toBeNull();
-    expect(screen.getByText("trace-history")).not.toBeNull();
-    expect(screen.queryByText(/^令牌 /)).toBeNull();
+    expect(screen.queryByTestId("message-ghost-footer")).toBeNull();
+    expect(screen.queryByText("trace-history")).toBeNull();
+    expect(screen.queryByText(/^token /)).toBeNull();
   });
 
   it("shows a lightweight cancelled badge for interrupted assistant messages", () => {

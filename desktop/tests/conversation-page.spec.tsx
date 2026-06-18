@@ -101,23 +101,38 @@ describe("ConversationPage", () => {
 
     render(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
-    expect(await screen.findByText("trace-history")).not.toBeNull();
-    expect(screen.getByText("令牌 输入 10 / 缓存 2 / 输出 5")).not.toBeNull();
+    expect(screen.queryByText("trace-history")).toBeNull();
+    expect(await screen.findByText("token 输入 10 - 缓存 2 - 输出 5")).not.toBeNull();
     expect(screen.getByText("模型请求失败")).not.toBeNull();
     expect(screen.getByText("已中断")).not.toBeNull();
   });
 
   it("streams assistant text from websocket events", async () => {
     const { runtime, emit } = fakeRuntime();
+    const eventTime = new Date("2026-06-18T12:34:00+08:00").getTime();
+    const expectedTime = new Date(eventTime).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     render(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     await screen.findByLabelText("继续输入");
 
     await act(async () => {
-      emit(agentEvent("stream", { id: "evt-stream-1", session_id: "ses-1", content: "来自事件的回答" }));
+      emit(agentEvent("stream", {
+        id: "evt-stream-1",
+        session_id: "ses-1",
+        content: "来自事件的回答",
+        timestamp_ms: eventTime,
+      }));
+      emit(agentEvent("completed", {
+        id: "evt-stream-completed-1",
+        session_id: "ses-1",
+        status: "completed",
+        events: [],
+      }));
     });
 
     expect(await screen.findByText("来自事件的回答")).not.toBeNull();
+    expect(screen.getByText(expectedTime)).not.toBeNull();
+    expect(screen.queryByText("08:00")).toBeNull();
   });
 
   it("keeps the pending cursor visible after a tool result until completion", async () => {
