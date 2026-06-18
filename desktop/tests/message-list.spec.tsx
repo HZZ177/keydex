@@ -119,7 +119,7 @@ describe("MessageList", () => {
     expect(screen.getByTestId("tool-call-block")).not.toBeNull();
     expect(screen.getByTestId("command-execution-block")).not.toBeNull();
     expect(screen.getByText("已读取文件 README.md")).not.toBeNull();
-    expect(screen.getByText("已执行命令 pytest backend/tests")).not.toBeNull();
+    expect(screen.getByText("已执行 pytest backend/tests")).not.toBeNull();
     expect(screen.queryByText(/"path": "README\.md"/)).toBeNull();
     expect(screen.queryByText("文件内容")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
@@ -144,6 +144,33 @@ describe("MessageList", () => {
     expect(screen.queryByText(/工具步骤/)).toBeNull();
     expect(screen.queryByText("5 步")).toBeNull();
     expect(screen.queryByText("read_file")).toBeNull();
+  });
+
+  it("uses the concrete tool icon for grouped activity with one tool category", () => {
+    render(
+      <MessageList
+        messages={[
+          toolMessage("read-1", "read_file", { path: "README.md" }),
+          toolMessage("read-2", "read_file", { path: "src/main.ts" }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("message-group-block").querySelector("[data-icon-kind]")?.getAttribute("data-icon-kind")).toBe("read");
+  });
+
+  it("keeps the check icon for grouped activity with mixed tool categories", () => {
+    render(
+      <MessageList
+        messages={[
+          toolMessage("read-1", "read_file", { path: "README.md" }),
+          toolMessage("search-1", "search_files", { query: "agent" }),
+          commandMessage("cmd-1"),
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("message-group-block").querySelector("[data-icon-kind]")?.getAttribute("data-icon-kind")).toBe("done");
   });
 
   it("renders compact file-change summaries before expanding details", () => {

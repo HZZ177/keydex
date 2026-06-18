@@ -20,22 +20,25 @@ import type { AgentActionEnvelope, AgentChatMessage } from "@/types/protocol";
 
 import { ChatLayout } from "./ChatLayout";
 import { MessageList, type MessageListScrollControls } from "./messages";
+import { consumeQuickChatSend } from "./quickSend";
 import styles from "./ConversationPage.module.css";
 
 export interface ConversationPageProps {
   threadId: string;
   runtime?: RuntimeBridge;
   initialModel?: string;
-  initialMessage?: string;
+  quickSendId?: string;
   onOpenModelSettings?: () => void;
+  onQuickSendConsumed?: () => void;
 }
 
 export function ConversationPage({
   threadId,
   runtime = runtimeBridge,
   initialModel = "",
-  initialMessage = "",
+  quickSendId = "",
   onOpenModelSettings,
+  onQuickSendConsumed,
 }: ConversationPageProps) {
   const [state, dispatch] = useReducer(agentConversationReducer, createInitialAgentConversationState());
   const [draft, setDraft] = useState("");
@@ -46,7 +49,7 @@ export function ConversationPage({
   const [preview, setPreview] = useState<FilePreviewRequest | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const channelRef = useRef<ChatChannel | null>(null);
-  const initialMessageSentRef = useRef<string | null>(null);
+  const quickSendConsumedRef = useRef<string | null>(null);
   const scrollToBottomRef = useRef<((behavior?: ScrollBehavior) => void) | null>(null);
   const previewContext = useOptionalPreview();
   const modelSelection = useRuntimeModelSelection(runtime, initialModel);
@@ -187,19 +190,6 @@ export function ConversationPage({
     [onOpenModelSettings, runtimeState, threadId, wsStatus],
   );
 
-  useEffect(() => {
-    const text = initialMessage.trim();
-    const model = modelSelection.selectedModel.trim();
-    const key = `${threadId}:${model}:${text}`;
-    if (!text || !threadId || loading || !connectionReady || initialMessageSentRef.current === key) {
-      return;
-    }
-    const sent = sendText(text, model);
-    if (sent) {
-      initialMessageSentRef.current = key;
-    }
-  }, [connectionReady, initialMessage, loading, modelSelection.selectedModel, sendText, threadId]);
-
   const send = () => {
     const text = draft.trim();
     if (!text) {
@@ -208,6 +198,41 @@ export function ConversationPage({
     const model = modelSelection.selectedModel.trim();
     sendText(text, model, { clearDraft: true });
   };
+
+  useEffect(() => {
+    if (!quickSendId || !threadId || loading || quickSendConsumedRef.current === quickSendId) {
+      return;
+    }
+    if (agentMessages.length > 0) {
+      quickSendConsumedRef.current = quickSendId;
+      consumeQuickChatSend(quickSendId, threadId);
+      onQuickSendConsumed?.();
+      return;
+    }
+    if (!connectionReady) {
+      return;
+    }
+
+    quickSendConsumedRef.current = quickSendId;
+    const pending = consumeQuickChatSend(quickSendId, threadId);
+    onQuickSendConsumed?.();
+    if (!pending) {
+      return;
+    }
+    const sent = sendText(pending.message, pending.model || modelSelection.selectedModel);
+    if (!sent) {
+      setDraft((current) => (current.trim() ? current : pending.message));
+    }
+  }, [
+    agentMessages.length,
+    connectionReady,
+    loading,
+    modelSelection.selectedModel,
+    onQuickSendConsumed,
+    quickSendId,
+    sendText,
+    threadId,
+  ]);
 
   const stop = () => {
     if (!threadId || !canStop) {

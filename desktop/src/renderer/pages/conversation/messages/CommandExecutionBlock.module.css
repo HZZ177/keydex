@@ -157,6 +157,12 @@
   line-height: 1.35;
 }
 
+.detailSection {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
 .output pre {
   max-width: 100%;
   margin: 0;
@@ -172,7 +178,7 @@
   white-space: pre-wrap;
 }
 
-.output pre[data-stream="command"] {
+.output pre[data-stream="input"] {
   color: var(--color-text-primary);
 }
 

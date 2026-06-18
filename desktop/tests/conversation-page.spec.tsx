@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import { ConversationPage } from "@/renderer/pages/conversation";
+import { clearQuickChatSendQueue, queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
 import { PreviewProvider } from "@/renderer/providers/PreviewProvider";
 import type {
   AgentActionEnvelope,
@@ -12,6 +13,10 @@ import type {
 } from "@/types/protocol";
 
 describe("ConversationPage", () => {
+  beforeEach(() => {
+    clearQuickChatSendQueue();
+  });
+
   it("restores an empty session history with a clear empty state", async () => {
     const { runtime } = fakeRuntime({ history: [] });
 
@@ -83,7 +88,7 @@ describe("ConversationPage", () => {
     expect(screen.getByText("文件内容")).not.toBeNull();
   });
 
-  it("restores ghost footer, error and cancelled states from history", async () => {
+  it("restores hidden metadata, error and cancelled states from history", async () => {
     const { runtime } = fakeRuntime({
       history: [
         historyMessage("assistant", "完成", {
@@ -101,8 +106,9 @@ describe("ConversationPage", () => {
 
     render(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
+    expect(await screen.findByText("完成")).not.toBeNull();
     expect(screen.queryByText("trace-history")).toBeNull();
-    expect(await screen.findByText("token 输入 10 - 缓存 2 - 输出 5")).not.toBeNull();
+    expect(screen.queryByText(/^token /)).toBeNull();
     expect(screen.getByText("模型请求失败")).not.toBeNull();
     expect(screen.getByText("已中断")).not.toBeNull();
   });
@@ -215,14 +221,21 @@ describe("ConversationPage", () => {
     });
   });
 
-  it("sends the initial quick chat message after the conversation route is ready", async () => {
+  it("sends the queued quick chat message after the conversation route is ready", async () => {
     const { runtime, channel } = fakeRuntime();
+    const queued = queueQuickChatSend({
+      sessionId: "ses-1",
+      model: "deepseek-coder",
+      message: "从快速对话发送",
+    });
+    const onQuickSendConsumed = vi.fn();
     render(
       <ConversationPage
         threadId="ses-1"
         runtime={runtime}
         initialModel="deepseek-coder"
-        initialMessage="从快速对话发送"
+        quickSendId={queued.id}
+        onQuickSendConsumed={onQuickSendConsumed}
       />,
     );
 
@@ -233,7 +246,57 @@ describe("ConversationPage", () => {
         model: "deepseek-coder",
       });
     });
+    expect(onQuickSendConsumed).toHaveBeenCalledTimes(1);
     expect(screen.getByText("从快速对话发送")).not.toBeNull();
+  });
+
+  it("does not resend the queued quick chat message when history already has messages", async () => {
+    const { runtime, channel } = fakeRuntime({
+      history: [historyMessage("user", "从快速对话发送")],
+    });
+    const queued = queueQuickChatSend({
+      sessionId: "ses-1",
+      model: "deepseek-coder",
+      message: "从快速对话发送",
+    });
+    const onQuickSendConsumed = vi.fn();
+
+    render(
+      <ConversationPage
+        threadId="ses-1"
+        runtime={runtime}
+        initialModel="deepseek-coder"
+        quickSendId={queued.id}
+        onQuickSendConsumed={onQuickSendConsumed}
+      />,
+    );
+
+    expect(await screen.findByText("从快速对话发送")).not.toBeNull();
+    await waitFor(() => {
+      expect(onQuickSendConsumed).toHaveBeenCalledTimes(1);
+    });
+    expect(channel.chat).not.toHaveBeenCalled();
+  });
+
+  it("does not send when a quick chat route id has no queued user action", async () => {
+    const { runtime, channel } = fakeRuntime();
+    const onQuickSendConsumed = vi.fn();
+
+    render(
+      <ConversationPage
+        threadId="ses-1"
+        runtime={runtime}
+        initialModel="deepseek-coder"
+        quickSendId="quick:missing"
+        onQuickSendConsumed={onQuickSendConsumed}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(onQuickSendConsumed).toHaveBeenCalledTimes(1);
+    });
+    expect(channel.chat).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("继续输入") as HTMLTextAreaElement).value).toBe("");
   });
 
   it("allows sending another message after a channel error", async () => {

@@ -1,8 +1,9 @@
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
-import type { PropsWithChildren } from "react";
+import { useCallback, type PropsWithChildren } from "react";
 
 import { EventReplayHarness } from "@/renderer/devtools/EventReplayHarness";
 import { ConversationPage } from "@/renderer/pages/conversation";
+import { queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
 import { HomePage } from "@/renderer/pages/home";
 import { ModelSettingsPage } from "@/renderer/pages/settings/model";
 
@@ -61,11 +62,16 @@ function HomeRoute() {
   return (
     <RoutedLayout title="新对话" contentMode="full">
       <HomePage
-        onNavigateToConversation={(threadId, initialModel, initialMessage) =>
+        onNavigateToConversation={(threadId, initialModel, initialMessage) => {
+          const quickSend = queueQuickChatSend({
+            sessionId: threadId,
+            model: initialModel,
+            message: initialMessage,
+          });
           void navigate(`/conversation/${encodeURIComponent(threadId)}`, {
-            state: { initialModel, initialMessage },
-          })
-        }
+            state: { initialModel, quickSendId: quickSend.id },
+          });
+        }}
         onOpenModelSettings={() => void navigate("/settings/model", { state: { from: location.pathname } })}
       />
     </RoutedLayout>
@@ -76,16 +82,27 @@ function ConversationRoute() {
   const { threadId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const routeState = location.state as { initialModel?: string; initialMessage?: string } | null;
+  const routeState = location.state as { initialModel?: string; quickSendId?: string; initialMessage?: string } | null;
   const initialModel = routeState?.initialModel ?? "";
-  const initialMessage = routeState?.initialMessage ?? "";
+  const quickSendId = routeState?.quickSendId ?? "";
+  const clearQuickSend = useCallback(() => {
+    if (!routeState?.quickSendId && !routeState?.initialMessage) {
+      return;
+    }
+    const nextInitialModel = routeState?.initialModel;
+    void navigate(location.pathname, {
+      replace: true,
+      state: nextInitialModel ? { initialModel: nextInitialModel } : null,
+    });
+  }, [location.pathname, navigate, routeState?.initialMessage, routeState?.initialModel, routeState?.quickSendId]);
 
   return (
     <RoutedLayout title="" contentMode="full">
       <ConversationPage
         threadId={threadId ?? ""}
         initialModel={initialModel}
-        initialMessage={initialMessage}
+        quickSendId={quickSendId}
+        onQuickSendConsumed={clearQuickSend}
         onOpenModelSettings={() => void navigate("/settings/model", { state: { from: location.pathname } })}
       />
     </RoutedLayout>

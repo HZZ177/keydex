@@ -16,10 +16,10 @@ describe("CommandExecutionBlock", () => {
   it("renders command metadata with output collapsed by default", () => {
     render(<CommandExecutionBlock message={commandMessage("running", { stdout: "line 1\n" })} />);
 
-    expect(screen.getByText("正在执行命令 pytest backend/tests")).not.toBeNull();
+    expect(screen.getByText("正在执行 pytest backend/tests")).not.toBeNull();
     expect(screen.getByText("D:/repo")).not.toBeNull();
     expect(screen.getByText("2.3s")).not.toBeNull();
-    expect(screen.getByTestId("command-execution-block").textContent).toMatch(/正在执行命令 pytest backend\/tests.*2\.3s/);
+    expect(screen.getByTestId("command-execution-block").textContent).toMatch(/正在执行 pytest backend\/tests.*2\.3s/);
     expect(screen.queryByText("line 1")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
@@ -45,7 +45,7 @@ describe("CommandExecutionBlock", () => {
 
     expect(screen.getByTestId("command-execution-block")).not.toBeNull();
     expect(screen.getByText("退出码 1")).not.toBeNull();
-    expect(screen.getByText("执行命令失败 pytest backend/tests")).not.toBeNull();
+    expect(screen.getByText("执行失败 pytest backend/tests")).not.toBeNull();
     expect(screen.queryByText("failed")).toBeNull();
   });
 
@@ -54,6 +54,29 @@ describe("CommandExecutionBlock", () => {
 
     expect(screen.getByText("86ms")).not.toBeNull();
     expect(screen.queryByText("0.1 秒")).toBeNull();
+  });
+
+  it("shows command input even when there is no output and truncates the one-line title", () => {
+    const longCommand = `python -c "${"print(1);".repeat(24)}"`;
+    render(
+      <CommandExecutionBlock
+        message={commandMessage("running", {
+          command: longCommand,
+          stdout: "",
+          stderr: "",
+          timeout_seconds: 45,
+        })}
+      />,
+    );
+
+    const title = screen.getByText(/^正在执行 /).textContent ?? "";
+    expect(title).toContain("…");
+    expect(title.length).toBeLessThanOrEqual(101);
+
+    fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
+    expect(screen.getByLabelText("命令入参").textContent).toContain("print(1);");
+    expect(screen.getByLabelText("命令入参").textContent).toContain("timeout_seconds");
+    expect(screen.getByText("等待命令输出")).not.toBeNull();
   });
 });
 

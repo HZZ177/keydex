@@ -123,34 +123,11 @@ export function MessageText({ message, showActionRow = true, onQuoteSelection }:
 }
 
 function ghostFooterFromPayload(payload: Record<string, unknown>): MessageGhostFooterData | null {
-  const stats = asRecord(payload.ghostStats);
-  const traceQueryContext = asRecord(payload.traceQueryContext) ?? asRecord(payload.trace_query_context);
-  const tokenUsage =
-    asRecord(payload.latest_llm_token_usage) ??
-    asRecord(payload.chain_token_usage) ??
-    asRecord(asRecord(payload.ghost_footer)?.latest_llm_token_usage) ??
-    asRecord(asRecord(payload.ghost_footer)?.chain_token_usage);
-  const traceId =
-    stringValue(stats?.traceId) ||
-    stringValue(payload.traceId) ||
-    stringValue(payload.trace_id) ||
-    stringValue(traceQueryContext?.trace_id) ||
-    stringValue(asRecord(payload.ghost_footer)?.trace_id);
   const footer: MessageGhostFooterData = {
-    traceId: traceId || undefined,
-    inputTokens: numberValue(stats?.inputTokens ?? tokenUsage?.input_tokens),
-    cacheReadTokens: numberValue(stats?.cacheReadTokens ?? tokenUsage?.cache_read_tokens),
-    outputTokens: numberValue(stats?.outputTokens ?? tokenUsage?.output_tokens),
     duration: formatDuration(payload.duration_ms ?? payload.durationMs),
   };
 
-  return footer.duration || hasTokenValue(footer) ? footer : null;
-}
-
-function hasTokenValue(footer: MessageGhostFooterData): boolean {
-  return [footer.inputTokens, footer.cacheReadTokens, footer.outputTokens].some(
-    (value) => typeof value === "number" && value > 0,
-  );
+  return footer.duration ? footer : null;
 }
 
 function formatDuration(value: unknown): string | undefined {
@@ -160,14 +137,6 @@ function formatDuration(value: unknown): string | undefined {
   }
   const seconds = ms / 1000;
   return `${seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1)} 秒`;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
-function stringValue(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
 }
 
 function numberValue(value: unknown): number | undefined {

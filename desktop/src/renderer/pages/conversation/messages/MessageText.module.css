@@ -27,10 +27,11 @@
 }
 
 .userMessage .bubble {
-  max-width: min(680px, 82%);
-  border-radius: 14px;
-  background: var(--message-user-bg);
-  padding: 9px 12px;
+  max-width: min(568px, calc(100% - 36px));
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+  color: var(--color-text-primary);
+  padding: 10px 14px;
 }
 
 .assistantMessage .bubble {
@@ -78,7 +79,28 @@
 }
 
 .userMessage .actions {
+  flex-direction: row-reverse;
   justify-self: end;
+  gap: 8px;
+  margin-right: 3px;
+}
+
+.userMessage .actions time {
+  line-height: 24px;
+}
+
+.userMessage .actionButton {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+}
+
+.userMessage .actionButton span {
+  display: none;
+}
+
+.userMessage .actionButton:hover {
+  background: transparent;
 }
 
 .actionButton {
@@ -97,6 +119,16 @@
 .actionButton:hover {
   background: var(--surface-hover);
   color: var(--color-text-primary);
+}
+
+.assistantMessage .actionButton {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+}
+
+.assistantMessage .actionButton span {
+  display: none;
 }
 
 .streamingCursor {

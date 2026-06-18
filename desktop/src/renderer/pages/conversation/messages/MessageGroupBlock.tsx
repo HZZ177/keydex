@@ -1,4 +1,18 @@
-import { CheckCircle2, ChevronDown, FileDiff, LoaderCircle, Terminal, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  FileDiff,
+  FileText,
+  FolderOpen,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  Search,
+  SquareTerminal,
+  Trash2,
+  Wrench,
+  XCircle,
+} from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
@@ -21,6 +35,7 @@ export function MessageGroupBlock({ groupKind, count, messages = [], sourceMessa
   const summaries = useMemo(() => messages.map((message) => summarizeMessage(message)), [messages]);
   const state = groupState(summaries);
   const label = groupLabel(groupKind, count, messages, state);
+  const iconKind = groupIconKind(groupKind, messages, state);
   const childrenMotion = useDeferredUnmount<HTMLDivElement>(expanded);
 
   return (
@@ -32,8 +47,8 @@ export function MessageGroupBlock({ groupKind, count, messages = [], sourceMessa
         aria-label={`${label}详情`}
         onClick={() => setExpanded((value) => !value)}
       >
-        <span className={styles.icon} aria-hidden="true">
-          {groupIcon(groupKind, messages, state)}
+        <span className={styles.icon} data-icon-kind={iconKind} aria-hidden="true">
+          {groupIcon(iconKind)}
         </span>
         <span className={styles.title}>{label}</span>
         {expanded ? (
@@ -71,24 +86,68 @@ function groupLabel(
   return toolActivityLabel(messages, state, count);
 }
 
-function groupIcon(
+type GroupIconKind =
+  | "done"
+  | "running"
+  | "failed"
+  | "file_change"
+  | "read"
+  | "directory"
+  | "search"
+  | "command"
+  | "edit"
+  | "create"
+  | "delete"
+  | "other";
+
+function groupIconKind(
   kind: MessageGroupKind,
   messages: ConversationMessage[],
   state: GroupSummary["state"],
-) {
+): GroupIconKind {
   if (state === "running" || state === "pending") {
-    return <LoaderCircle size={15} />;
+    return "running";
   }
   if (state === "failed") {
-    return <XCircle size={15} />;
+    return "failed";
   }
   if (kind === "file_changes") {
-    return <FileDiff size={15} />;
+    return "file_change";
   }
-  if (messages.length && messages.every((message) => message.kind === "command")) {
-    return <Terminal size={15} />;
+  const toolKinds = new Set(messages.map(toolIconKindFromMessage));
+  if (toolKinds.size === 1) {
+    return [...toolKinds][0] ?? "done";
   }
-  return <CheckCircle2 size={15} />;
+  return "done";
+}
+
+function groupIcon(kind: GroupIconKind) {
+  switch (kind) {
+    case "running":
+      return <LoaderCircle size={15} />;
+    case "failed":
+      return <XCircle size={15} />;
+    case "file_change":
+      return <FileDiff size={15} />;
+    case "read":
+      return <FileText size={15} />;
+    case "directory":
+      return <FolderOpen size={15} />;
+    case "search":
+      return <Search size={15} />;
+    case "command":
+      return <SquareTerminal size={15} />;
+    case "edit":
+      return <Pencil size={15} />;
+    case "create":
+      return <Plus size={15} />;
+    case "delete":
+      return <Trash2 size={15} />;
+    case "other":
+      return <Wrench size={15} />;
+    case "done":
+      return <CheckCircle2 size={15} />;
+  }
 }
 
 interface GroupSummary {
@@ -145,6 +204,32 @@ function summarizeFileChange(message: ConversationMessage): GroupSummary {
     id: message.id,
     state: summaryState(message),
   };
+}
+
+function toolIconKindFromMessage(message: ConversationMessage): GroupIconKind {
+  if (message.kind === "command") {
+    return "command";
+  }
+  const toolName = toolNameFromMessage(message);
+  if (isReadTool(toolName)) {
+    return "read";
+  }
+  if (isDirectoryTool(toolName)) {
+    return "directory";
+  }
+  if (isSearchTool(toolName)) {
+    return "search";
+  }
+  if (["write_file", "apply_patch", "edit_file"].includes(toolName)) {
+    return "edit";
+  }
+  if (toolName === "create_file") {
+    return "create";
+  }
+  if (toolName === "delete_file") {
+    return "delete";
+  }
+  return "other";
 }
 
 function summaryState(message: ConversationMessage): GroupSummary["state"] {

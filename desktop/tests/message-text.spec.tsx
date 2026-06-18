@@ -128,7 +128,7 @@ describe("MessageText", () => {
     expect(screen.getByText("已复制")).not.toBeNull();
   });
 
-  it("renders a lightweight ghost footer with token and duration data", () => {
+  it("renders a lightweight ghost footer with duration data", () => {
     render(
       <MessageText
         message={message("assistant", "完成", "completed", {
@@ -145,7 +145,7 @@ describe("MessageText", () => {
 
     expect(screen.getByTestId("message-ghost-footer")).not.toBeNull();
     expect(screen.queryByText("trace-1")).toBeNull();
-    expect(screen.getByText("token 输入 10 - 缓存 3 - 输出 5")).not.toBeNull();
+    expect(screen.queryByText(/^token /)).toBeNull();
     expect(screen.getByText("耗时 2.3 秒")).not.toBeNull();
   });
 

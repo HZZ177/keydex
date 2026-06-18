@@ -34,10 +34,10 @@
 }
 
 .item[data-kind="user"] .content {
-  max-width: min(680px, 80%);
-  border-radius: 14px;
-  background: var(--message-user-bg);
-  padding: 9px 12px;
+  max-width: min(568px, calc(100% - 36px));
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+  padding: 10px 14px;
 }
 
 .meta {
