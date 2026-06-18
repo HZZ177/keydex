@@ -56,6 +56,13 @@ export function MessageList({
     [messages],
   );
   const processedMessages = useMemo(() => processMessages(messages), [messages]);
+  const pendingAssistantMessage = useMemo(
+    () =>
+      isProcessing && shouldShowPendingAssistantCursor(messages)
+        ? createPendingAssistantMessage(messages)
+        : null,
+    [isProcessing, messages],
+  );
   const assistantActionRowMessageIds = useMemo(
     () => collectAssistantActionRowMessageIds(messages, isProcessing),
     [isProcessing, messages],
@@ -126,6 +133,15 @@ export function MessageList({
                   )}
                 </li>
               ))}
+              {pendingAssistantMessage ? (
+                <li className={styles.item} data-kind="assistant">
+                  <MessageText
+                    message={pendingAssistantMessage}
+                    showActionRow={false}
+                    onQuoteSelection={onQuoteSelection}
+                  />
+                </li>
+              ) : null}
             </ol>
           ) : (
             <div className={styles.empty} data-testid={emptyTestId}>
@@ -223,6 +239,35 @@ function shouldShowTextActionRow(message: ConversationMessage, assistantActionRo
     return assistantActionRowMessageIds.has(message.id);
   }
   return true;
+}
+
+function shouldShowPendingAssistantCursor(messages: ConversationMessage[]): boolean {
+  const last = messages[messages.length - 1];
+  if (!last) {
+    return false;
+  }
+  return !(last.kind === "assistant" && isStreamingStatus(last.status));
+}
+
+function createPendingAssistantMessage(messages: ConversationMessage[]): ConversationMessage {
+  const last = messages[messages.length - 1];
+  const now = last?.updatedAt ?? new Date(0).toISOString();
+  return {
+    id: "pending-assistant-cursor",
+    threadId: last?.threadId ?? "",
+    turnId: last?.turnId ?? null,
+    itemId: null,
+    kind: "assistant",
+    status: "running",
+    content: "",
+    payload: {},
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function isStreamingStatus(status: ConversationMessage["status"]): boolean {
+  return status === "pending" || status === "running";
 }
 
 function MessageSkeleton() {

@@ -90,7 +90,11 @@ export function MessageText({ message, showActionRow = true, onQuoteSelection }:
             {displayedContent}
           </ReactMarkdown>
           {showStreamingCursor ? (
-            <span className={styles.streamingCursor} data-testid="streaming-cursor" aria-hidden="true" />
+            <span className={styles.streamingCursor} data-testid="streaming-cursor" aria-hidden="true">
+              <span className={styles.streamingDot} />
+              <span className={styles.streamingDot} />
+              <span className={styles.streamingDot} />
+            </span>
           ) : null}
         </div>
         {cancelled ? <div className={styles.cancelledBadge}>已中断</div> : null}

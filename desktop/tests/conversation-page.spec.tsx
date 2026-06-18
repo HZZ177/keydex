@@ -120,6 +120,49 @@ describe("ConversationPage", () => {
     expect(await screen.findByText("来自事件的回答")).not.toBeNull();
   });
 
+  it("keeps the pending cursor visible after a tool result until completion", async () => {
+    const { runtime, emit } = fakeRuntime();
+    render(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await screen.findByLabelText("继续输入");
+
+    await act(async () => {
+      emit(agentEvent("stream", { id: "evt-stream-before-tool", session_id: "ses-1", content: "我先读取文件" }));
+      emit(agentEvent("tool_start", {
+        id: "evt-tool-start",
+        session_id: "ses-1",
+        run_id: "run-1",
+        tool_name: "read_file",
+        params: { path: "README.md" },
+      }));
+      emit(agentEvent("tool_end", {
+        id: "evt-tool-end",
+        session_id: "ses-1",
+        run_id: "run-1",
+        result: "文件内容",
+        status: "success",
+      }));
+    });
+
+    expect(await screen.findByText("已读取文件 README.md")).not.toBeNull();
+    expect(screen.getByTestId("streaming-cursor")).not.toBeNull();
+    expect(screen.getByLabelText("停止")).not.toBeNull();
+
+    await act(async () => {
+      emit(agentEvent("completed", {
+        id: "evt-completed-after-tool",
+        session_id: "ses-1",
+        status: "completed",
+        events: [],
+      }));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("streaming-cursor")).toBeNull();
+    });
+    expect(screen.getByLabelText("发送")).not.toBeNull();
+  });
+
   it("sends the composer text through the bound chat channel", async () => {
     const { runtime, channel } = fakeRuntime();
     render(<ConversationPage threadId="ses-1" runtime={runtime} />);
@@ -136,6 +179,7 @@ describe("ConversationPage", () => {
 
     expect(channel.chat).toHaveBeenCalledWith({ session_id: "ses-1", message: "继续修改", model: "qwen-coder" });
     expect(screen.getByLabelText("停止")).not.toBeNull();
+    expect(screen.getByTestId("streaming-cursor")).not.toBeNull();
     expect(screen.queryByTestId("message-agent-status")).toBeNull();
   });
 

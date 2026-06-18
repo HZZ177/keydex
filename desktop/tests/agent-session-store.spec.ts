@@ -286,6 +286,40 @@ describe("agentSessionStore reducer", () => {
     });
   });
 
+  it("keeps the turn running after a tool finishes until a terminal event arrives", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, { action: "stream", data: { session_id: "ses-1", content: "我先查一下" } });
+    state = reduceAgentWsEvent(state, toolStart("ses-1", "run-1", "read_file"));
+    state = reduceAgentWsEvent(state, {
+      action: "tool_end",
+      data: {
+        session_id: "ses-1",
+        run_id: "run-1",
+        result: "文件内容",
+        duration_ms: 12,
+        status: "success",
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1").at(-1)).toMatchObject({
+      role: "tool",
+      runId: "run-1",
+      status: "completed",
+    });
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
+
+    state = reduceAgentWsEvent(state, {
+      action: "completed",
+      data: {
+        session_id: "ses-1",
+        status: "completed",
+        events: [],
+      },
+    });
+
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("idle");
+  });
+
   it("keeps structured tool output for command rendering", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, toolStart("ses-1", "run-command", "run_command"));

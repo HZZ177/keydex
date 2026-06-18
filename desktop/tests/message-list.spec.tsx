@@ -50,6 +50,35 @@ describe("MessageList", () => {
     expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(1);
   });
 
+  it("shows a pending assistant cursor while processing before the next stream chunk", () => {
+    const { rerender } = render(<MessageList messages={[message("m1", "user", "开始")]} isProcessing />);
+
+    expect(screen.getByTestId("streaming-cursor")).not.toBeNull();
+
+    rerender(
+      <MessageList
+        messages={[
+          message("m1", "user", "开始"),
+          { ...message("m2", "assistant", "正在输出"), status: "running" },
+        ]}
+        isProcessing
+      />,
+    );
+    expect(screen.getAllByTestId("streaming-cursor")).toHaveLength(1);
+
+    rerender(
+      <MessageList
+        messages={[
+          message("m1", "user", "开始"),
+          message("m2", "assistant", "已落一段"),
+          toolMessage("t1"),
+        ]}
+        isProcessing
+      />,
+    );
+    expect(screen.getByTestId("streaming-cursor")).not.toBeNull();
+  });
+
   it("summarizes consecutive tool messages and expands original blocks on demand", () => {
     render(<MessageList messages={[toolMessage("t1"), commandMessage("c1")]} />);
 

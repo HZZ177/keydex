@@ -266,6 +266,7 @@ export function ConversationPage({
       <MessageList
         messages={messages}
         loading={loading}
+        isProcessing={runtimeState === "running"}
         runtimeState={runtimeState}
         runtimeDetail={runtimeDetail}
         onFilePreview={(file) => openPreview({ type: "diff", path: file.path, diff: file.diff })}

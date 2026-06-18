@@ -336,7 +336,7 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
     }
   }
   view.isStreaming = true;
-  view.runtimeState = "running";
+  markTurnInProgress(view);
   next.selectedSessionId = sessionId;
   return next;
 }
@@ -356,7 +356,7 @@ function handleReasoning(
   if (data.done) {
     closeReasoningStream(view, kind);
     view.isStreaming = hasStreamingMessage(view);
-    view.runtimeState = view.isStreaming ? "running" : "idle";
+    markTurnInProgress(view);
     return next;
   }
 
@@ -381,7 +381,7 @@ function handleReasoning(
     });
   }
   view.isStreaming = true;
-  view.runtimeState = "running";
+  markTurnInProgress(view);
   return next;
 }
 
@@ -431,7 +431,7 @@ function handleToolStart(state: AgentConversationState, data: AgentToolEventData
     }
   }
   view.isStreaming = true;
-  view.runtimeState = "running";
+  markTurnInProgress(view);
   return next;
 }
 
@@ -483,7 +483,7 @@ function handleToolEnd(state: AgentConversationState, data: AgentToolEventData):
     }
   }
   view.isStreaming = hasStreamingMessage(view);
-  view.runtimeState = view.isStreaming ? "running" : "idle";
+  markTurnInProgress(view);
   return next;
 }
 
@@ -502,7 +502,7 @@ function handleSubagentStart(state: AgentConversationState, data: Record<string,
     streaming: true,
   });
   view.isStreaming = true;
-  view.runtimeState = "running";
+  markTurnInProgress(view);
   return next;
 }
 
@@ -525,7 +525,7 @@ function handleSubagentEnd(state: AgentConversationState, data: Record<string, u
     closeSubagentTextStreams(message);
   }
   view.isStreaming = hasStreamingMessage(view);
-  view.runtimeState = view.isStreaming ? "running" : "idle";
+  markTurnInProgress(view);
   return next;
 }
 
@@ -548,7 +548,7 @@ function handleSubagentError(state: AgentConversationState, data: Record<string,
   message.status = "failed";
   closeSubagentTextStreams(message);
   view.isStreaming = hasStreamingMessage(view);
-  view.runtimeState = view.isStreaming ? "running" : "idle";
+  markTurnInProgress(view);
   return next;
 }
 
@@ -944,6 +944,12 @@ function hasStreamingMessage(view: AgentSessionViewState): boolean {
       item.type === "text" ? item.streaming : item.status === "running",
     ) ?? false;
   });
+}
+
+function markTurnInProgress(view: AgentSessionViewState) {
+  if (view.runtimeState !== "cancelling" && view.runtimeState !== "closed") {
+    view.runtimeState = "running";
+  }
 }
 
 function findSubagentTool(
