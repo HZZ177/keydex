@@ -70,15 +70,12 @@
 
 .body {
   min-height: 0;
-  display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  transition: grid-template-columns 160ms ease;
+  display: flex;
+  overflow: hidden;
 }
 
 .shell[data-sidebar="collapsed"] .body {
   --active-sidebar-width: var(--sidebar-collapsed-width);
-
-  grid-template-columns: var(--sidebar-collapsed-width) minmax(0, 1fr);
 }
 
 .sidebar {
@@ -163,8 +160,12 @@
 }
 
 .content {
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  border-left: 1px solid color-mix(in srgb, var(--color-border-1) 86%, transparent);
+  border-top-left-radius: 12px;
+  border-bottom-left-radius: 12px;
   overflow-x: hidden;
   overflow-y: auto;
   background: var(--surface-bg);

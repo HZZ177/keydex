@@ -3,6 +3,7 @@ import type {
   AgentChatMessagePayload,
   AgentHistoryResponse,
   AgentSession,
+  AgentSessionType,
   AgentSessionListResponse,
   AgentSessionResponse,
 } from "@/types/protocol";
@@ -23,6 +24,10 @@ export interface CreateSessionPayload {
   title?: string | null;
   session_tag?: string;
   session_id?: string | null;
+  sessionType?: AgentSessionType;
+  workspaceId?: string | null;
+  cwd?: string | null;
+  workspaceRoots?: string[];
 }
 
 export interface ListSessionsOptions {
@@ -30,6 +35,8 @@ export interface ListSessionsOptions {
   sceneId?: string;
   status?: string;
   sessionTag?: string;
+  sessionType?: AgentSessionType;
+  workspaceId?: string;
   title?: string;
   currentSessionId?: string;
   page?: number;
@@ -174,6 +181,8 @@ function sessionListQuery(options: ListSessionsOptions) {
   appendParam(params, "scene_id", options.sceneId);
   appendParam(params, "status", options.status);
   appendParam(params, "session_tag", options.sessionTag);
+  appendParam(params, "session_type", options.sessionType);
+  appendParam(params, "workspace_id", options.workspaceId);
   appendParam(params, "title", options.title);
   appendParam(params, "current_session_id", options.currentSessionId);
   appendParam(params, "page", options.page);
@@ -206,5 +215,9 @@ function snakeSessionPayload(payload: CreateSessionPayload): Record<string, unkn
     ...(payload.title !== undefined ? { title: payload.title } : {}),
     ...(payload.session_tag !== undefined ? { session_tag: payload.session_tag } : {}),
     ...(payload.session_id !== undefined ? { session_id: payload.session_id } : {}),
+    ...(payload.sessionType !== undefined ? { session_type: payload.sessionType } : {}),
+    ...(payload.workspaceId !== undefined ? { workspace_id: payload.workspaceId } : {}),
+    ...(payload.cwd !== undefined ? { cwd: payload.cwd } : {}),
+    ...(payload.workspaceRoots !== undefined ? { workspace_roots: payload.workspaceRoots } : {}),
   };
 }

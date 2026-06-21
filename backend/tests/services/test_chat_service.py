@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,7 @@ class FakeAgentFactory(AgentFactory):
         super().__init__()
         self.model = model
         self.requested_models: list[str] = []
+        self.created_tool_counts: list[int] = []
 
     def get_or_create_llm(
         self,
@@ -49,6 +51,26 @@ class FakeAgentFactory(AgentFactory):
     ) -> ToolFriendlyFakeModel:
         self.requested_models.append(model)
         return self.model
+
+    def create_agent(
+        self,
+        *,
+        model: Any,
+        tools: list[Any],
+        system_prompt: Any,
+        checkpointer: Any,
+        middleware: tuple[Any, ...] = (),
+        name: str = "desktop_agent",
+    ) -> Any:
+        self.created_tool_counts.append(len(tools))
+        return super().create_agent(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            checkpointer=checkpointer,
+            middleware=middleware,
+            name=name,
+        )
 
 
 def _service(
@@ -101,6 +123,12 @@ async def test_chat_service_uses_langchain_agent_and_persists_history(tmp_path) 
     trace = repositories.trace_records.get(result.trace_id)
     assert trace.status == "completed"
     assert trace.output_checkpoint_id
+    llm_logs, total = repositories.llm_request_logs.list()
+    assert total == 1
+    assert llm_logs[0].trace_id == result.trace_id
+    assert llm_logs[0].session_id == result.session_id
+    assert llm_logs[0].model == "qwen-coder"
+    assert llm_logs[0].status == "completed"
 
 
 @pytest.mark.asyncio
@@ -135,6 +163,8 @@ async def test_chat_service_uses_checkpoint_as_model_context(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_chat_service_routes_langchain_tool_events(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
     registry = ToolRegistry()
     registry.register(
         FunctionTool(
@@ -145,7 +175,10 @@ async def test_chat_service_routes_langchain_tool_events(tmp_path) -> None:
                 "properties": {"path": {"type": "string"}},
                 "required": ["path"],
             },
-            handler=lambda args, context: {"content": f"文件内容:{args['path']}"},
+            handler=lambda args, context: {
+                "content": f"文件内容:{args['path']}",
+                "root": str(context.workspace_root),
+            },
         )
     )
     model = ToolFriendlyFakeModel(
@@ -163,11 +196,21 @@ async def test_chat_service_routes_langchain_tool_events(tmp_path) -> None:
             AIMessage(content="已读取"),
         ]
     )
-    service, _repositories, _checkpointer, _factory = _service(tmp_path, model, registry)
+    service, repositories, _checkpointer, _factory = _service(tmp_path, model, registry)
+    workspace = repositories.workspaces.create(workspace_id="ws_project", root_path=project)
+    session = repositories.sessions.create(
+        session_id="ses_project",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
     chat_adapter = RecordingChatAdapter()
 
     result = await service.handle_chat(
-        ChatRequest(message="读文件", model="qwen-coder"),
+        ChatRequest(session_id=session.id, message="读文件", model="qwen-coder"),
         chat_adapter=chat_adapter,
     )
 
@@ -181,10 +224,41 @@ async def test_chat_service_routes_langchain_tool_events(tmp_path) -> None:
     assert chat_adapter.sent[0]["data"]["tool"] == "read_file"
     assert chat_adapter.sent[1]["data"]["status"] == "completed"
     assert "文件内容:a.txt" in chat_adapter.sent[1]["data"]["result"]
+    tool_result = json.loads(chat_adapter.sent[1]["data"]["result"])
+    assert tool_result["root"] == str(project.resolve())
     history = service.message_event_service.get_display_messages(result.session_id)
     assert [message["role"] for message in history] == ["user", "tool", "assistant"]
     assert history[1]["toolName"] == "read_file"
     assert history[2]["content"] == "已读取"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_disables_project_tools_for_chat_session(tmp_path) -> None:
+    registry = ToolRegistry()
+    registry.register(
+        FunctionTool(
+            name="read_file",
+            description="读取文件",
+            parameters={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+            handler=lambda args, context: {"content": "不应执行"},
+        )
+    )
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="普通回复")])
+    service, _repositories, _checkpointer, factory = _service(tmp_path, model, registry)
+    chat_adapter = RecordingChatAdapter()
+
+    result = await service.handle_chat(
+        ChatRequest(message="只聊天", model="qwen-coder"),
+        chat_adapter=chat_adapter,
+    )
+
+    assert result.status == "completed"
+    assert factory.created_tool_counts == [0]
+    assert [item["action"] for item in chat_adapter.sent] == ["stream", "completed"]
 
 
 @pytest.mark.asyncio

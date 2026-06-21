@@ -1,6 +1,6 @@
 # codex-copy 项目现状说明
 
-更新时间：2026-06-18
+更新时间：2026-06-21
 
 ## 当前定位
 
@@ -35,19 +35,21 @@
 ## 当前已完成能力
 
 - React 入口、主题变量、Codex-like AppShell、标题栏、侧边栏和最小路由。
-- 快速对话页已按 Codex-like 启动页重构：输入区居中、标题聚焦任务输入，只保留真实可用的模型选择、当前工作区展示和权限模式；未实现的附件按钮、伪工作区选择和重复审批提示不再暴露。
+- 新对话页已按 Codex-like 启动页重构：输入区居中、标题聚焦任务输入，只保留真实可用的模型选择和工作区选择；未实现的附件按钮、伪权限选择和重复审批提示不再暴露。
 - 首页和对话页共用 SendBox，支持 IME、发送/停止、slash 命令、`@` workspace 搜索、文件 chip、拖拽和粘贴。
 - HTTP/WebSocket Runtime Bridge，对接真实 Python 后端。
 - Conversation Store、Runtime Event reducer、MessageList 自动滚动和消息分组；历史会话 `thread/detail` 中的已存 items 会重新投影为消息，左侧进入历史会话不再显示空态占位。
 - Markdown、thinking、工具、命令、文件 diff、审批和错误组件；thinking/reasoning 按运行时事件顺序内联到正文流里，使用低噪音可展开幽灵面板，不再固定堆到末尾。
 - AionUi 类计划卡片：后端已提供正式 `update_plan` 工具，前端把真实工具事件渲染为可折叠计划步骤卡片。
 - 已参考 AionUi 补强流式事件缓冲、assistant 文本平滑输出节奏控制、消息自动滚动跟随、消息区单滚动容器、消息 hover/focus 复制时间行、流式 Markdown 未闭合代码块/display math 修复、代码块语法高亮/复制/折叠/diff 行样式、JSON 自动格式化、HTML fenced code sandbox 预览、KaTeX 数学公式渲染、LaTeX delimiter 转换、fenced latex 块渲染、Mermaid fenced code 按需预览、Markdown 表格横向滚动容器、Markdown 图片自适应渲染、选中文本浮动引用工具条，以及 assistant `<think>` 标签过滤。
-- 打字机速度改为固定速率，不按积压动态加速；设置页提供滑块，默认 10 字符/秒，偏好存储在本地浏览器存储。
+- 打字机速度已改为自动自适应策略，输入框上方实时显示当前真实输出速度和待输出缓冲量，不再保留手动设置滑块。
 - 工具、命令、文件变更内联块已加入 AionUi 类似的轻量状态点和运行态 breathing 效果；连续工具/文件组折叠态会展示每个步骤的名称、状态点和一行摘要，展开后保留完整详情块。
 - 后端 `create_app()` 已注册默认工具编排器，运行时会向 OpenAI-compatible Provider 发送正式 tools schema，并在模型返回 `tool_calls` 后执行真实工具、发出正式 `tool_call` item 事件。
 - 模型若忽略 tools schema 并输出 `<tool_call>/<tool_result>` 文本协议，后端会立即失败并停止透出原始标签；前端对历史污染文本只显示协议泄漏提示，不伪装为真实工具执行。
 - 模型 Provider 后端存储/API、前端设置页、Provider Modal、模型刷新、搜索、启停、默认模型和健康检查。
 - Workspace 后端 API、文件树、文本预览、受 workspace 限制的图片 media data URL 读取和 diff 预览。
+- 工作区已成为一等数据模型：新对话可选择本机项目，项目会话固化 `workspace_id/cwd/workspace_roots`，纯聊天不挂载工作区；工具执行、文件搜索、文件预览和 Markdown 相对图片读取均按 session 工作区边界运行，不再回退到应用自身目录。
+- 左侧历史已按工作区分组，纯聊天进入“对话”分组；工作区被删除或不可访问时，历史会话显示“工作区不可用”，不会伪装成纯聊天，也不会启用项目文件入口。
 - 右侧 Preview 面板已升级为 AionUi 类轻量预览壳，支持 Markdown 渲染/源码切换/源码预览分屏、HTML sandbox 预览/源码预览分屏、图片文件预览、Diff 彩色渲染、JSON 格式化、复制和选区引用；消息内 HTML/Mermaid/Markdown/Diff/JSON 代码块可通过 PreviewProvider 打开到右侧侧栏，预览历史支持最近标签切换和关闭。
 - 对话页顶部工作区/预览按钮改为打开右侧 in-flow 侧栏，不再使用窄小 fixed 弹窗；消息区域为底部输入框预留高度，正文不再钻到输入框背后。
 - 左侧会话历史加载、本地搜索、恢复、重命名和归档删除。
@@ -113,13 +115,13 @@ npm.cmd run test
 当前执行计划：
 
 ```text
-.dev/plans/2026-06-17_18-47-37-aionui-frontend-clone.md
+.dev/plans/2026-06-21_00-51-10-workspace-session-runtime-redesign.md
 ```
 
 Issue 状态源：
 
 ```text
-.dev/issues/2026-06-17_18-47-37-aionui-frontend-clone.csv
+.dev/issues/2026-06-21_00-51-10-workspace-session-runtime-redesign.csv
 ```
 
 视觉参考：
@@ -138,4 +140,11 @@ Issue 状态源：
 
 ```text
 .dev/test/reports/2026-06-18-aionui-streaming-rendering.md
+```
+
+工作区页面级 E2E 合同：
+
+```text
+.dev/e2e/workspace-session-redesign.csv
+.dev/verification/e2e-workspace-session-redesign-report.json
 ```

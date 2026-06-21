@@ -14,8 +14,10 @@
     "test:e2e:settings": "node .dev/e2e/empty-input-settings.mjs",
     "test:e2e:stream": "node .dev/e2e/stream-markdown-scroll.mjs",
     "test:e2e:tools": "node .dev/e2e/tool-timeline.mjs",
+    "test:e2e:workspace": "node .dev/e2e/workspace-session-redesign.mjs",
     "test:e2e:recovery": "node .dev/e2e/error-cancel-history.mjs",
     "test:e2e:visual": "node .dev/e2e/visual-localization-audit.mjs",
+    "test:e2e:settings-usage": "node .dev/e2e/settings-usage-redesign.mjs",
     "build:frontend": "pnpm --dir desktop run build",
     "test": "pnpm run lint:backend && pnpm run test:backend && pnpm run test:frontend",
     "verify": "pnpm run test"

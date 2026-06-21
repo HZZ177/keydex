@@ -24,10 +24,10 @@ describe("RuntimeBridge", () => {
       if (url.endsWith("/api/models/refresh") && init.method === "POST") {
         return Promise.resolve(jsonResponse(200, { models: [{ id: "qwen-coder" }], cached: false }));
       }
-      if (url.includes("/api/workspace/search?") && init.method === "GET") {
+      if (url.includes("/api/sessions/ses-1/workspace/search?") && init.method === "GET") {
         return Promise.resolve(jsonResponse(200, [{ path: "src/main.ts", name: "main.ts", type: "file" }]));
       }
-      if (url.includes("/api/workspace/media?") && init.method === "GET") {
+      if (url.includes("/api/workspaces/ws-1/media?") && init.method === "GET") {
         return Promise.resolve(
           jsonResponse(200, {
             path: "docs/assets/pixel.png",
@@ -48,10 +48,10 @@ describe("RuntimeBridge", () => {
       models: [{ id: "qwen-coder" }],
       cached: false,
     });
-    await expect(runtime.workspace.search("D:/repo", "main")).resolves.toEqual([
+    await expect(runtime.workspace.search({ sessionId: "ses-1" }, "main")).resolves.toEqual([
       { path: "src/main.ts", name: "main.ts", type: "file" },
     ]);
-    await expect(runtime.workspace.readMedia("D:/repo", "docs/assets/pixel.png")).resolves.toMatchObject({
+    await expect(runtime.workspace.readMedia({ workspaceId: "ws-1" }, "docs/assets/pixel.png")).resolves.toMatchObject({
       media_type: "image/png",
       data_url: "data:image/png;base64,abc",
     });
@@ -68,7 +68,7 @@ describe("RuntimeBridge", () => {
     });
     expect(fetcher).toHaveBeenNthCalledWith(
       3,
-      "http://127.0.0.1:8765/api/workspace/search?root=D%3A%2Frepo&q=main",
+      "http://127.0.0.1:8765/api/sessions/ses-1/workspace/search?q=main",
       {
         method: "GET",
         headers: {},
@@ -77,12 +77,82 @@ describe("RuntimeBridge", () => {
     );
     expect(fetcher).toHaveBeenNthCalledWith(
       4,
-      "http://127.0.0.1:8765/api/workspace/media?root=D%3A%2Frepo&path=docs%2Fassets%2Fpixel.png",
+      "http://127.0.0.1:8765/api/workspaces/ws-1/media?path=docs%2Fassets%2Fpixel.png",
       {
         method: "GET",
         headers: {},
         body: undefined,
       },
+    );
+  });
+
+  it("routes workspace registry calls to the backend workspace API", async () => {
+    const workspace = {
+      id: "ws-1",
+      name: "codex-copy",
+      root_path: "D:/Pycharm Projects/codex-copy",
+      normalized_root_path: "d:/pycharm projects/codex-copy",
+      type: "project",
+      created_at: "2026-06-21T00:00:00Z",
+      updated_at: "2026-06-21T00:00:00Z",
+      last_opened_at: null,
+      is_deleted: false,
+    };
+    const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
+      const url = requestUrl(input);
+      if (url.endsWith("/api/workspaces") && init.method === "GET") {
+        return Promise.resolve(jsonResponse(200, { list: [workspace], total: 1 }));
+      }
+      if (url.endsWith("/api/workspaces") && init.method === "POST") {
+        return Promise.resolve(jsonResponse(200, { workspace }));
+      }
+      if (url.endsWith("/api/workspaces/ws%201") && init.method === "GET") {
+        return Promise.resolve(jsonResponse(200, { workspace: { ...workspace, id: "ws 1" } }));
+      }
+      if (url.endsWith("/api/workspaces/ws%201") && init.method === "PATCH") {
+        return Promise.resolve(jsonResponse(200, { workspace: { ...workspace, id: "ws 1", name: "repo" } }));
+      }
+      if (url.endsWith("/api/workspaces/ws%201") && init.method === "DELETE") {
+        return Promise.resolve(jsonResponse(204, undefined));
+      }
+      return jsonResponse(404, { detail: "not found" });
+    });
+    const runtime = createRuntimeBridge({ fetcher });
+
+    await expect(runtime.workspaces.list()).resolves.toMatchObject({ total: 1, list: [{ id: "ws-1" }] });
+    await expect(
+      runtime.workspaces.create({ rootPath: "D:/Pycharm Projects/codex-copy", name: "codex-copy" }),
+    ).resolves.toMatchObject({ id: "ws-1" });
+    await expect(runtime.workspaces.get("ws 1")).resolves.toMatchObject({ id: "ws 1" });
+    await expect(runtime.workspaces.update("ws 1", { name: "repo", touch: true })).resolves.toMatchObject({
+      name: "repo",
+    });
+    await expect(runtime.workspaces.delete("ws 1")).resolves.toBeUndefined();
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, "http://127.0.0.1:8765/api/workspaces", expect.objectContaining({
+      method: "GET",
+    }));
+    expect(fetcher).toHaveBeenNthCalledWith(2, "http://127.0.0.1:8765/api/workspaces", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ root_path: "D:/Pycharm Projects/codex-copy", name: "codex-copy" }),
+    }));
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      "http://127.0.0.1:8765/api/workspaces/ws%201",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
+      "http://127.0.0.1:8765/api/workspaces/ws%201",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ name: "repo", touch: true }),
+      }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      5,
+      "http://127.0.0.1:8765/api/workspaces/ws%201",
+      expect.objectContaining({ method: "DELETE" }),
     );
   });
 
@@ -94,6 +164,21 @@ describe("RuntimeBridge", () => {
       status: "active",
       title: "会话",
       session_tag: "chat",
+      session_type: "workspace",
+      workspace_id: "ws-1",
+      cwd: "D:/repo",
+      workspace_roots: ["D:/repo"],
+      workspace: {
+        id: "ws-1",
+        name: "repo",
+        root_path: "D:/repo",
+        normalized_root_path: "d:/repo",
+        type: "project",
+        created_at: "2026-06-18T00:00:00Z",
+        updated_at: "2026-06-18T00:00:00Z",
+        last_opened_at: null,
+        is_deleted: false,
+      },
       active_session_id: null,
       parent_session_id: null,
       child_session_id: null,
@@ -138,10 +223,26 @@ describe("RuntimeBridge", () => {
     });
     const runtime = createRuntimeBridge({ fetcher });
 
-    await expect(runtime.conversation.listSessions({ title: "会话", page: 1, pageSize: 20 })).resolves.toMatchObject({
+    await expect(
+      runtime.conversation.listSessions({
+        title: "会话",
+        sessionType: "workspace",
+        workspaceId: "ws-1",
+        page: 1,
+        pageSize: 20,
+      }),
+    ).resolves.toMatchObject({
       list: [{ id: "ses-1" }],
     });
-    await expect(runtime.conversation.createSession({ title: "会话" })).resolves.toMatchObject({ id: "ses-1" });
+    await expect(
+      runtime.conversation.createSession({
+        title: "会话",
+        sessionType: "workspace",
+        workspaceId: "ws-1",
+        cwd: "D:/repo",
+        workspaceRoots: ["D:/repo"],
+      }),
+    ).resolves.toMatchObject({ id: "ses-1" });
     await expect(runtime.conversation.getSession("ses 1")).resolves.toMatchObject({ id: "ses 1" });
     await expect(runtime.conversation.updateSession("ses 1", { title: "新标题" })).resolves.toMatchObject({
       id: "ses 1",
@@ -155,7 +256,7 @@ describe("RuntimeBridge", () => {
 
     expect(fetcher).toHaveBeenNthCalledWith(
       1,
-      "http://127.0.0.1:8765/api/sessions?title=%E4%BC%9A%E8%AF%9D&page=1&page_size=20",
+      "http://127.0.0.1:8765/api/sessions?session_type=workspace&workspace_id=ws-1&title=%E4%BC%9A%E8%AF%9D&page=1&page_size=20",
       expect.objectContaining({
         method: "GET",
       }),
@@ -165,7 +266,13 @@ describe("RuntimeBridge", () => {
       "http://127.0.0.1:8765/api/sessions",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ title: "会话" }),
+        body: JSON.stringify({
+          title: "会话",
+          session_type: "workspace",
+          workspace_id: "ws-1",
+          cwd: "D:/repo",
+          workspace_roots: ["D:/repo"],
+        }),
       }),
     );
     expect(fetcher).toHaveBeenNthCalledWith(
@@ -189,6 +296,112 @@ describe("RuntimeBridge", () => {
     expect(fetcher).toHaveBeenNthCalledWith(
       6,
       "http://127.0.0.1:8765/api/sessions/ses%201/history?turn_index=1&order=asc",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("routes usage statistics calls to real backend paths", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
+      const url = requestUrl(input);
+      if (url.includes("/api/usage/summary?") && init.method === "GET") {
+        return Promise.resolve(
+          jsonResponse(200, {
+            request_count: 1,
+            total_tokens: 55,
+            input_tokens: 49,
+            cache_read_tokens: 12,
+            output_tokens: 6,
+            success_count: 1,
+            failed_count: 0,
+            avg_duration_ms: 2400,
+          }),
+        );
+      }
+      if (url.includes("/api/usage/trend?") && init.method === "GET") {
+        return Promise.resolve(
+          jsonResponse(200, {
+            points: [
+              {
+                time: "2026-06-18",
+                request_count: 1,
+                input_tokens: 49,
+                cache_read_tokens: 12,
+                output_tokens: 6,
+                total_tokens: 55,
+                failed_count: 0,
+              },
+            ],
+          }),
+        );
+      }
+      if (url.includes("/api/usage/requests?") && init.method === "GET") {
+        return Promise.resolve(
+          jsonResponse(200, {
+            list: [{ id: "llm_req_1", model: "deepseek-v4-flash", status: "completed" }],
+            total: 1,
+            page: 2,
+            page_size: 10,
+          }),
+        );
+      }
+      if (url.endsWith("/api/usage/requests/llm%20req%201") && init.method === "GET") {
+        return Promise.resolve(
+          jsonResponse(200, {
+            request: { id: "llm req 1", model: "deepseek-v4-flash", status: "completed" },
+            trace: null,
+            events: [],
+          }),
+        );
+      }
+      return jsonResponse(404, { detail: "not found" });
+    });
+    const runtime = createRuntimeBridge({ fetcher });
+
+    await expect(
+      runtime.usage.getSummary({
+        startTime: "2026-06-18T00:00:00Z",
+        endTime: "2026-06-19T00:00:00Z",
+        model: "deepseek-v4-flash",
+      }),
+    ).resolves.toMatchObject({ request_count: 1, total_tokens: 55 });
+    await expect(
+      runtime.usage.getTrend({
+        bucket: "day",
+        model: "deepseek-v4-flash",
+        timezoneOffsetMinutes: 480,
+      }),
+    ).resolves.toMatchObject({
+      points: [{ time: "2026-06-18" }],
+    });
+    await expect(
+      runtime.usage.listRequests({ status: "completed", page: 2, pageSize: 10 }),
+    ).resolves.toMatchObject({
+      total: 1,
+      page: 2,
+      page_size: 10,
+    });
+    await expect(runtime.usage.getRequestDetail("llm req 1")).resolves.toMatchObject({
+      request: { id: "llm req 1" },
+    });
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:8765/api/usage/summary?start_time=2026-06-18T00%3A00%3A00Z&end_time=2026-06-19T00%3A00%3A00Z&model=deepseek-v4-flash",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:8765/api/usage/trend?model=deepseek-v4-flash&bucket=day&timezone_offset_minutes=480",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      "http://127.0.0.1:8765/api/usage/requests?status=completed&page=2&page_size=10",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
+      "http://127.0.0.1:8765/api/usage/requests/llm%20req%201",
       expect.objectContaining({ method: "GET" }),
     );
   });

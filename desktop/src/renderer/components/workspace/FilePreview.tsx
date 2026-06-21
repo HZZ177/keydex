@@ -2,7 +2,7 @@ import { Check, Code2, Columns2, Copy, Eye, FileText, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 
-import type { RuntimeBridge, WorkspaceMediaResponse } from "@/runtime";
+import type { RuntimeBridge, WorkspaceMediaResponse, WorkspaceScope } from "@/runtime";
 import { MarkdownCodeBlock } from "@/renderer/pages/conversation/messages/MarkdownCodeBlock";
 import { MarkdownImage } from "@/renderer/pages/conversation/messages/MarkdownImage";
 import { MarkdownTable } from "@/renderer/pages/conversation/messages/MarkdownTable";
@@ -22,13 +22,14 @@ import styles from "./FilePreview.module.css";
 export type FilePreviewRequest = PreviewRequest;
 
 export interface FilePreviewProps {
-  root?: string;
+  workspaceId?: string;
+  sessionId?: string;
   request: FilePreviewRequest;
   runtime?: RuntimeBridge;
   onQuoteSelection?: (text: string) => void;
 }
 
-export function FilePreview({ root, request, runtime, onQuoteSelection }: FilePreviewProps) {
+export function FilePreview({ workspaceId, sessionId, request, runtime, onQuoteSelection }: FilePreviewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const kind = useMemo(() => detectPreviewKind(request), [request]);
   const [content, setContent] = useState("");
@@ -43,6 +44,7 @@ export function FilePreview({ root, request, runtime, onQuoteSelection }: FilePr
   const activePreviewId = previewContext?.activeEntryId ?? null;
   const showPreviewTabs = previewEntries.length > 1;
   const selection = useTextSelection(bodyRef, Boolean(onQuoteSelection) && !loading && !error);
+  const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
 
   useEffect(() => {
     let active = true;
@@ -69,7 +71,7 @@ export function FilePreview({ root, request, runtime, onQuoteSelection }: FilePr
     }
 
     setContent("");
-    if (!root || !runtime) {
+    if (!scope || !runtime) {
       setError("工作区预览运行时未就绪");
       setLoading(false);
       return () => {
@@ -80,12 +82,12 @@ export function FilePreview({ root, request, runtime, onQuoteSelection }: FilePr
     setLoading(true);
     const loader =
       kind === "image"
-        ? runtime.workspace.readMedia(root, request.path).then((response) => {
+        ? runtime.workspace.readMedia(scope, request.path).then((response) => {
             if (active) {
               setMedia(response);
             }
           })
-        : runtime.workspace.readFile(root, request.path).then((response) => {
+        : runtime.workspace.readFile(scope, request.path).then((response) => {
             if (active) {
               setContent(response.content);
             }
@@ -106,7 +108,7 @@ export function FilePreview({ root, request, runtime, onQuoteSelection }: FilePr
     return () => {
       active = false;
     };
-  }, [kind, root, runtime, request]);
+  }, [kind, scope, runtime, request]);
 
   const title = previewTitle(request);
   const canPreview = kind === "markdown" || kind === "html" || kind === "diff";
@@ -118,10 +120,10 @@ export function FilePreview({ root, request, runtime, onQuoteSelection }: FilePr
       pre: PreviewMarkdownCodeBlock,
       table: MarkdownTable,
       img: (props: Parameters<typeof MarkdownImage>[0]) => (
-        <MarkdownImage {...props} root={root} runtime={runtime} sourcePath={sourceLabel} />
+        <MarkdownImage {...props} workspaceScope={scope} runtime={runtime} sourcePath={sourceLabel} />
       ),
     }),
-    [root, runtime, sourceLabel],
+    [scope, runtime, sourceLabel],
   );
   const markdownContent = kind === "mermaid" ? `\`\`\`mermaid\n${content || ""}\n\`\`\`` : content || "文件为空";
 
@@ -322,6 +324,22 @@ type PreviewKind = "markdown" | "html" | "diff" | "json" | "code" | "text" | "me
 
 function PreviewMarkdownCodeBlock({ children }: { children?: ReactNode }) {
   return <MarkdownCodeBlock defaultViewMode="preview" children={children} />;
+}
+
+function workspaceScope({
+  workspaceId,
+  sessionId,
+}: {
+  workspaceId?: string;
+  sessionId?: string;
+}): WorkspaceScope | null {
+  if (sessionId) {
+    return { sessionId };
+  }
+  if (workspaceId) {
+    return { workspaceId };
+  }
+  return null;
 }
 
 function DiffPreview({ diff }: { diff: string }) {

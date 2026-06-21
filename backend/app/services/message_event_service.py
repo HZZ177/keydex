@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -181,9 +182,12 @@ class MessageEventService:
                     target = messages[tool_run_map[run_id]]
                     target["toolResult"] = data.get("result", "")
                     target["toolDurationMs"] = data.get("duration_ms")
-                    target["status"] = "error" if data.get("error") else "completed"
-                    if data.get("error"):
-                        target["toolError"] = data.get("error")
+                    error = data.get("error") or MessageEventService._tool_result_error(
+                        data.get("result")
+                    )
+                    target["status"] = "error" if error else "completed"
+                    if error:
+                        target["toolError"] = error
                 continue
             if action == CompletedEventItemAction.REASONING_MESSAGE.value:
                 messages.append(
@@ -277,9 +281,32 @@ class MessageEventService:
         )
         target["toolResult"] = data.get("result", "")
         target["toolDurationMs"] = data.get("duration_ms")
-        target["status"] = "error" if data.get("error") else "completed"
-        if data.get("error"):
-            target["toolError"] = data.get("error")
+        error = data.get("error") or MessageEventService._tool_result_error(data.get("result"))
+        target["status"] = "error" if error else "completed"
+        if error:
+            target["toolError"] = error
+
+    @staticmethod
+    def _tool_result_error(result: Any) -> str:
+        if isinstance(result, dict):
+            return MessageEventService._tool_error_message(result)
+        if not isinstance(result, str):
+            return ""
+        try:
+            parsed = json.loads(result)
+        except json.JSONDecodeError:
+            return ""
+        if not isinstance(parsed, dict):
+            return ""
+        return MessageEventService._tool_error_message(parsed)
+
+    @staticmethod
+    def _tool_error_message(payload: dict[str, Any]) -> str:
+        code = payload.get("code")
+        message = payload.get("message")
+        if isinstance(code, str) and code.strip() and isinstance(message, str):
+            return message
+        return ""
 
     @staticmethod
     def _append_cancelled_suffix(messages: list[dict[str, Any]]) -> None:

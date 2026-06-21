@@ -157,6 +157,105 @@ export interface ModelInfo {
   raw?: Record<string, unknown>;
 }
 
+export type UsageBucket = "hour" | "day";
+export type UsageRequestStatus = "running" | "completed" | "failed" | "cancelled" | (string & {});
+
+export interface UsageSummary {
+  request_count: number;
+  total_tokens: number;
+  input_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+  success_count: number;
+  failed_count: number;
+  avg_duration_ms: number;
+}
+
+export interface UsageTrendPoint {
+  time: string;
+  request_count: number;
+  input_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  failed_count: number;
+}
+
+export interface UsageTrendResponse {
+  points: UsageTrendPoint[];
+}
+
+export interface UsageRequestLog {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  trace_id: string;
+  trace_record_id: string;
+  session_id: string;
+  active_session_id?: string | null;
+  gateway_thread_id?: string | null;
+  gateway_trace_id?: string | null;
+  turn_index?: number | null;
+  provider_id?: string | null;
+  provider_name?: string | null;
+  model: string;
+  status: UsageRequestStatus;
+  start_time: string;
+  end_time?: string | null;
+  duration_ms?: number | null;
+  input_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  request_preview?: string | null;
+  response_preview?: string | null;
+  error_message?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UsageRequestListResponse {
+  list: UsageRequestLog[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface UsageTraceSummary {
+  trace_id: string;
+  session_id: string;
+  active_session_id?: string | null;
+  scene_id: string;
+  scene_name?: string | null;
+  user_id: string;
+  turn_index: number;
+  status: string;
+  start_time: string;
+  end_time?: string | null;
+  duration_ms?: number | null;
+  total_input_tokens: number;
+  total_cache_read_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  user_message_preview?: string | null;
+}
+
+export interface UsageEventSummary {
+  id: number;
+  event_type: string;
+  source: string;
+  occurred_at: string;
+  sequence_no?: number | null;
+  run_id?: string | null;
+  turn_index?: number | null;
+  payload_summary: string;
+}
+
+export interface UsageRequestDetail {
+  request: UsageRequestLog;
+  trace: UsageTraceSummary | null;
+  events: UsageEventSummary[];
+}
+
 export const AGENT_CHAT_ACTIONS = [
   "session_created",
   "bind_ok",
@@ -223,10 +322,23 @@ export const AGENT_INBOUND_ACTIONS = [
 
 export type AgentInboundAction = (typeof AGENT_INBOUND_ACTIONS)[number];
 
+export type AgentSessionType = "chat" | "workspace";
 export type AgentSessionStatus = "active" | "running" | "closed" | "failed";
 export type AgentChatRole = "user" | "assistant" | "tool" | "system" | "subagent" | "reasoning" | "error";
 export type AgentToolStatus = "running" | "completed" | "error" | "cancelled";
 export type AgentReasoningKind = "initial_response" | "status_update" | "progress_fact" | (string & {});
+
+export interface Workspace {
+  id: string;
+  name: string;
+  root_path: string;
+  normalized_root_path: string;
+  type: string;
+  created_at: string;
+  updated_at: string;
+  last_opened_at: string | null;
+  is_deleted: boolean;
+}
 
 export interface AgentSession {
   id: string;
@@ -235,6 +347,11 @@ export interface AgentSession {
   status: AgentSessionStatus;
   title: string | null;
   session_tag: string;
+  session_type: AgentSessionType;
+  workspace_id: string | null;
+  cwd: string | null;
+  workspace_roots: string[];
+  workspace: Workspace | null;
   active_session_id: string | null;
   parent_session_id: string | null;
   child_session_id: string | null;

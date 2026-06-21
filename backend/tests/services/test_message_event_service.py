@@ -144,6 +144,36 @@ def test_message_event_service_pairs_subagent_tools(tmp_path) -> None:
     assert messages[0]["subagentToolCalls"][0]["toolResult"] == "ok"
 
 
+def test_message_event_service_marks_serialized_tool_error_failed(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_1",
+        "tool_start",
+        {"tool": "read_file", "params": {"path": "missing.txt"}, "run_id": "tool_1"},
+    )
+    _append(
+        repositories,
+        "evt_2",
+        "tool_end",
+        {
+            "run_id": "tool_1",
+            "result": (
+                '{"code":"file_not_found","message":"文件不存在",'
+                '"details":{"path":"missing.txt"}}'
+            ),
+        },
+    )
+
+    messages = service.get_display_messages("ses_history")
+
+    assert messages[0]["role"] == "tool"
+    assert messages[0]["status"] == "error"
+    assert messages[0]["toolError"] == "文件不存在"
+
+
 def test_completed_events_to_messages_fast_path_applies_ghost_footer() -> None:
     messages = MessageEventService.events_to_messages(
         [

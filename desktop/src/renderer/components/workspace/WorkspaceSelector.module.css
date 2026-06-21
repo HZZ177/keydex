@@ -1,0 +1,385 @@
+.root {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.trigger {
+  display: inline-flex;
+  max-width: min(280px, 42vw);
+  height: 32px;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 9px;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.trigger:hover:not(:disabled),
+.trigger[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.trigger:focus-visible {
+  outline: none;
+}
+
+.trigger:disabled {
+  cursor: default;
+  opacity: 0.82;
+}
+
+.root[data-readonly="true"] .trigger {
+  padding-inline: 0;
+}
+
+.triggerText {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  bottom: auto;
+  z-index: 96;
+  display: grid;
+  width: min(392px, 74vw);
+  min-width: 300px;
+  overflow: visible;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 84%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 96%, transparent);
+  box-shadow:
+    0 18px 48px rgb(15 23 42 / 12%),
+    0 2px 9px rgb(15 23 42 / 7%);
+  padding: 7px;
+  transform-origin: left top;
+  backdrop-filter: blur(14px);
+  animation: menuEnter 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.menu[data-placement="top"] {
+  top: auto;
+  bottom: calc(100% + 8px);
+  transform-origin: left bottom;
+  animation-name: menuEnterFromBottom;
+}
+
+.menuLabel {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 7px 8px;
+}
+
+.searchBox {
+  display: grid;
+  height: 30px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 76%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-bg-muted) 66%, transparent);
+  color: var(--color-text-tertiary);
+  padding: 0 8px;
+}
+
+.searchBox:focus-within {
+  border-color: color-mix(in srgb, var(--color-border-strong) 42%, transparent);
+  background: var(--color-bg-elevated);
+}
+
+.searchBox input,
+.manualPathBox input {
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.searchBox input::placeholder,
+.manualPathBox input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.section {
+  display: grid;
+  gap: 2px;
+  max-height: min(220px, 34vh);
+  overflow: hidden auto;
+  scrollbar-width: thin;
+}
+
+.section + .section {
+  margin-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-default) 62%, transparent);
+  padding-top: 4px;
+}
+
+.option {
+  display: grid;
+  min-height: 40px;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  padding: 6px 7px;
+  text-align: left;
+}
+
+.option:hover,
+.option:focus-visible,
+.option[aria-selected="true"] {
+  outline: none;
+  background: var(--surface-hover);
+}
+
+.option svg {
+  color: var(--color-text-tertiary);
+}
+
+.optionText {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.optionText span,
+.optionText small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optionText span {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.optionText small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.empty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 32px;
+  padding: 0 7px;
+}
+
+.addSection {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  margin-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-default) 62%, transparent);
+  padding-top: 6px;
+}
+
+.addProjectButton,
+.addSubmenuItem {
+  display: grid;
+  min-height: 34px;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.addProjectButton:hover:not(:disabled),
+.addProjectButton[aria-expanded="true"],
+.addSubmenuItem:hover:not(:disabled),
+.addSubmenuItem:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+}
+
+.addProjectButton svg,
+.addSubmenuItem svg {
+  color: var(--color-text-tertiary);
+}
+
+.addProjectButton span,
+.addSubmenuItem span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.addSubmenu {
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: 0;
+  z-index: 98;
+  display: grid;
+  width: 272px;
+  gap: 2px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 96%, transparent);
+  box-shadow:
+    0 18px 48px rgb(15 23 42 / 13%),
+    0 2px 9px rgb(15 23 42 / 8%);
+  padding: 7px;
+  transform-origin: left bottom;
+  backdrop-filter: blur(14px);
+  animation: submenuEnter 135ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.addSubmenu::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -10px;
+  width: 10px;
+  content: "";
+}
+
+.addProjectButton:disabled,
+.addSubmenuItem:disabled {
+  opacity: 0.58;
+}
+
+.manualPathBox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 5px 2px 1px;
+}
+
+.manualPathBox input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-muted) 62%, transparent);
+  padding: 0 8px;
+}
+
+.manualPathBox input:focus {
+  border-color: color-mix(in srgb, var(--color-border-strong) 42%, transparent);
+  background: var(--color-bg-elevated);
+}
+
+.manualPathBox button {
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-hover);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  padding: 0 10px;
+}
+
+.manualPathBox button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 72%, var(--color-text-tertiary));
+  color: var(--color-text-primary);
+}
+
+.error {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-danger);
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 0 2px 2px;
+}
+
+@media (max-width: 680px) {
+  .trigger {
+    max-width: min(100%, 260px);
+  }
+
+  .menu {
+    width: min(330px, calc(100vw - 28px));
+    min-width: 0;
+  }
+
+  .addSubmenu {
+    position: static;
+    width: auto;
+    margin-top: 4px;
+    box-shadow: none;
+  }
+}
+
+@keyframes menuEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes menuEnterFromBottom {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes submenuEnter {
+  from {
+    opacity: 0;
+    transform: translateX(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu {
+    animation: none;
+  }
+}

@@ -63,6 +63,45 @@
   color: var(--color-text-2);
 }
 
+.sidebarToggle {
+  position: relative;
+  overflow: hidden;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--motion-ease-standard);
+}
+
+.sidebarToggle:active {
+  transform: scale(0.94);
+}
+
+.toggleGlyph {
+  grid-area: 1 / 1;
+  display: inline-grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(0) scale(0.86);
+  transition:
+    opacity 150ms var(--motion-ease-standard),
+    transform 180ms var(--motion-ease-out);
+  will-change: opacity, transform;
+}
+
+.toggleGlyph[data-kind="close"][data-visible="false"] {
+  transform: translateX(-4px) scale(0.86);
+}
+
+.toggleGlyph[data-kind="open"][data-visible="false"] {
+  transform: translateX(4px) scale(0.86);
+}
+
+.toggleGlyph[data-visible="true"] {
+  opacity: 1;
+  transform: translateX(0) scale(1);
+}
+
 .iconButton:hover,
 .windowButton:hover {
   background: var(--surface-hover);
@@ -72,4 +111,15 @@
 .closeButton:hover {
   background: var(--color-danger-6);
   color: #ffffff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebarToggle,
+  .toggleGlyph {
+    transition: none;
+  }
+
+  .sidebarToggle:active {
+    transform: none;
+  }
 }

@@ -179,9 +179,16 @@ function summarizeMessage(message: ConversationMessage): GroupSummary {
 }
 
 function summarizeTool(message: ConversationMessage): GroupSummary {
+  const result = asRecord(message.payload.result);
+  const resultStatus = stringValue(result?.status);
+  const failed =
+    message.status === "failed" ||
+    resultStatus === "error" ||
+    Boolean(message.payload.error) ||
+    Boolean(result?.error);
   return {
     id: message.id,
-    state: summaryState(message),
+    state: failed ? "failed" : summaryState(message),
   };
 }
 

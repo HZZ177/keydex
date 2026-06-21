@@ -12,7 +12,9 @@ describe("Titlebar", () => {
 
     expect(screen.getByTestId("titlebar")).not.toBeNull();
     expect(screen.getByText("测试标题")).not.toBeNull();
-    fireEvent.click(screen.getByLabelText("折叠侧边栏"));
+    const toggle = screen.getByLabelText("折叠侧边栏");
+    expect(toggle.getAttribute("data-state")).toBe("expanded");
+    fireEvent.click(toggle);
     expect(onToggleSidebar).toHaveBeenCalledTimes(1);
   });
 

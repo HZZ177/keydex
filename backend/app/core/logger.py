@@ -4,13 +4,13 @@ import logging
 import sys
 import threading
 from collections.abc import Mapping
-from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 from backend.app.core.file_path import log_path
+from backend.app.core.request_context import trace_id_var
 
 SENSITIVE_KEYS = {
     "api_key",
@@ -43,9 +43,6 @@ QUIET_THIRD_PARTY_LOGGERS = (
 DISABLED_THIRD_PARTY_LOGGERS = (
     "uvicorn.access",
 )
-
-trace_id_var: ContextVar[str] = ContextVar("trace_id", default="")
-
 
 def trace_id_filter(record: dict[str, Any]) -> bool:
     record["extra"]["trace_id"] = trace_id_var.get()
@@ -171,7 +168,6 @@ configure_logging()
 
 __all__ = [
     "logger",
-    "trace_id_var",
     "configure_logging",
     "get_logger",
     "redact_sensitive",

@@ -90,6 +90,46 @@ def test_websocket_create_bind_and_ping(tmp_path) -> None:
     assert isinstance(pong["data"]["timestamp"], int)
 
 
+def test_websocket_create_workspace_session(tmp_path) -> None:
+    client = _client(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    workspace = client.post(
+        "/api/workspaces",
+        json={"root_path": str(project), "name": "项目"},
+    ).json()["workspace"]
+
+    with client.websocket_connect("/agent-base/ws/chat") as ws:
+        ws.send_json(
+            {
+                "action": "create_session",
+                "session_type": "workspace",
+                "workspace_id": workspace["id"],
+                "scene_id": "desktop-agent",
+            }
+        )
+        created = ws.receive_json()
+
+    assert created["action"] == "session_created"
+    session = created["data"]["session"]
+    assert session["session_type"] == "workspace"
+    assert session["workspace_id"] == workspace["id"]
+    assert session["cwd"] == str(project.resolve())
+    assert session["workspace"]["id"] == workspace["id"]
+
+
+def test_websocket_rejects_invalid_workspace_session_contract(tmp_path) -> None:
+    client = _client(tmp_path)
+
+    with client.websocket_connect("/agent-base/ws/chat") as ws:
+        ws.send_json({"action": "create_session", "session_type": "workspace"})
+        error = ws.receive_json()
+
+    assert error["action"] == "error"
+    assert error["data"]["code"] == "invalid_session"
+    assert "必须选择工作区" in error["data"]["message"]
+
+
 def test_websocket_chat_streams_projection_actions(tmp_path) -> None:
     client = _client(tmp_path, FakeListChatModel(responses=["你好"]))
 
@@ -121,6 +161,8 @@ def test_websocket_chat_streams_projection_actions(tmp_path) -> None:
 
 
 def test_websocket_chat_streams_tool_actions_and_history(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
     registry = ToolRegistry()
     registry.register(
         FunctionTool(
@@ -153,9 +195,19 @@ def test_websocket_chat_streams_tool_actions_and_history(tmp_path) -> None:
         ),
         registry,
     )
+    workspace = client.post(
+        "/api/workspaces",
+        json={"root_path": str(project), "name": "项目"},
+    ).json()["workspace"]
 
     with client.websocket_connect("/agent-base/ws/chat") as ws:
-        ws.send_json({"action": "create_session"})
+        ws.send_json(
+            {
+                "action": "create_session",
+                "session_type": "workspace",
+                "workspace_id": workspace["id"],
+            }
+        )
         session_id = ws.receive_json()["data"]["session_id"]
 
         ws.send_json(

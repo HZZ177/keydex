@@ -19,7 +19,11 @@ def _repositories(tmp_path) -> StorageRepositories:
 
 
 def _service(repositories: StorageRepositories) -> SessionService:
-    return SessionService(repositories.sessions, repositories.message_events)
+    return SessionService(
+        repositories.sessions,
+        repositories.message_events,
+        repositories.workspaces,
+    )
 
 
 def _append(
@@ -70,11 +74,171 @@ def test_session_service_lists_sessions_with_sort_filter_and_current_marker(tmp_
     assert [item["id"] for item in filtered["list"]] == [first.id]
 
 
+def test_session_service_groups_sessions_by_workspace_and_chat(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    alpha = tmp_path / "alpha"
+    beta = tmp_path / "beta"
+    alpha.mkdir()
+    beta.mkdir()
+    workspace_a = repositories.workspaces.create(
+        workspace_id="ws_alpha",
+        root_path=alpha,
+        name="Alpha",
+    )
+    workspace_b = repositories.workspaces.create(
+        workspace_id="ws_beta",
+        root_path=beta,
+        name="Beta",
+    )
+    repositories.sessions.create(
+        session_id="ses_alpha",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="Alpha 会话",
+        session_type="workspace",
+        workspace_id=workspace_a.id,
+        cwd=str(alpha),
+        workspace_roots=[str(alpha)],
+    )
+    time.sleep(0.001)
+    repositories.sessions.create(
+        session_id="ses_chat",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="纯聊天",
+    )
+    time.sleep(0.001)
+    repositories.sessions.create(
+        session_id="ses_beta",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="Beta 会话",
+        session_type="workspace",
+        workspace_id=workspace_b.id,
+        cwd=str(beta),
+        workspace_roots=[str(beta)],
+    )
+    service = _service(repositories)
+
+    grouped = service.group_sessions(ListSessionsRequest(current_session_id="ses_beta"))
+
+    assert grouped["total"] == 3
+    assert [group["title"] for group in grouped["groups"]] == ["Beta", "对话", "Alpha"]
+    assert grouped["groups"][0]["workspace_id"] == "ws_beta"
+    assert grouped["groups"][0]["workspace"]["id"] == "ws_beta"
+    assert grouped["groups"][0]["list"][0]["id"] == "ses_beta"
+    assert grouped["groups"][0]["list"][0]["is_current"] is True
+    assert grouped["groups"][1]["type"] == "chat"
+
+
 def test_session_service_get_detail_raises_for_missing_session(tmp_path) -> None:
     service = _service(_repositories(tmp_path))
 
     with pytest.raises(SessionNotFoundError, match="会话不存在"):
         service.get_session_detail("ses_missing")
+
+
+def test_session_service_creates_workspace_and_chat_sessions_with_contract(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    workspace = repositories.workspaces.create(workspace_id="ws_project", root_path=project)
+    service = _service(repositories)
+
+    workspace_session = service.create_session(
+        session_id="ses_workspace",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="项目会话",
+        session_type="workspace",
+        workspace_id=workspace.id,
+    )
+    chat_session = service.create_session(
+        session_id="ses_chat",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="纯聊天",
+        session_type="chat",
+    )
+
+    assert workspace_session["session_type"] == "workspace"
+    assert workspace_session["workspace_id"] == workspace.id
+    assert workspace_session["cwd"] == str(project.resolve())
+    assert workspace_session["workspace_roots"] == [str(project.resolve())]
+    assert workspace_session["workspace"]["id"] == workspace.id
+    assert chat_session["session_type"] == "chat"
+    assert chat_session["workspace_id"] is None
+    assert chat_session["cwd"] is None
+    assert chat_session["workspace"] is None
+
+
+def test_session_service_touches_workspace_when_project_session_is_created(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    alpha = tmp_path / "alpha"
+    beta = tmp_path / "beta"
+    alpha.mkdir()
+    beta.mkdir()
+    alpha_workspace = repositories.workspaces.create(
+        workspace_id="ws_alpha",
+        root_path=alpha,
+        last_opened_at="2000-01-01T00:00:00Z",
+    )
+    beta_workspace = repositories.workspaces.create(
+        workspace_id="ws_beta",
+        root_path=beta,
+        last_opened_at="2000-01-02T00:00:00Z",
+    )
+    service = _service(repositories)
+
+    session = service.create_session(
+        session_id="ses_alpha",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="最近项目",
+        session_type="workspace",
+        workspace_id=alpha_workspace.id,
+    )
+
+    touched = repositories.workspaces.get(alpha_workspace.id)
+    assert touched is not None
+    assert touched.last_opened_at not in {None, "2000-01-01T00:00:00Z"}
+    assert session["workspace"]["last_opened_at"] == touched.last_opened_at
+    assert [record.id for record in repositories.workspaces.list()][:2] == [
+        alpha_workspace.id,
+        beta_workspace.id,
+    ]
+
+
+def test_session_service_rejects_invalid_workspace_session_contract(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    project = tmp_path / "project"
+    outside = tmp_path / "outside"
+    project.mkdir()
+    outside.mkdir()
+    workspace = repositories.workspaces.create(workspace_id="ws_project", root_path=project)
+    service = _service(repositories)
+
+    with pytest.raises(SessionValidationError, match="必须选择工作区"):
+        service.create_session(
+            user_id="local-user",
+            scene_id="desktop-agent",
+            session_type="workspace",
+        )
+    with pytest.raises(SessionValidationError, match="不能绑定工作区"):
+        service.create_session(
+            user_id="local-user",
+            scene_id="desktop-agent",
+            session_type="chat",
+            workspace_id=workspace.id,
+        )
+    with pytest.raises(SessionValidationError, match="不在工作区内"):
+        service.create_session(
+            user_id="local-user",
+            scene_id="desktop-agent",
+            session_type="workspace",
+            workspace_id=workspace.id,
+            cwd=str(outside),
+        )
 
 
 def test_session_service_returns_empty_history_for_session_without_events(tmp_path) -> None:

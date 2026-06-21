@@ -1,4 +1,6 @@
 .sider {
+  width: var(--sidebar-width);
+  flex: 0 0 var(--sidebar-width);
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -6,8 +8,18 @@
   gap: 14px;
   padding: 12px 7px 10px;
   overflow: hidden;
-  border-right: 1px solid color-mix(in srgb, var(--color-border-1) 86%, transparent);
   background: color-mix(in srgb, var(--sidebar-bg) 94%, var(--shell-bg));
+}
+
+:global([data-sidebar-motion="true"]) .sider {
+  transition:
+    width 220ms var(--motion-ease-standard),
+    flex-basis 220ms var(--motion-ease-standard);
+}
+
+.sider[data-collapsed="true"] {
+  width: var(--sidebar-collapsed-width);
+  flex-basis: var(--sidebar-collapsed-width);
 }
 
 .nav,
@@ -174,7 +186,10 @@
 }
 
 .historyMeta {
+  display: inline-flex;
   min-width: max-content;
+  align-items: center;
+  gap: 5px;
   color: var(--color-text-4);
   font-size: 12px;
   line-height: 1;
@@ -441,9 +456,118 @@
 }
 
 .sider[data-collapsed="true"] .navItem span,
-.sider[data-collapsed="true"] .history,
 .sider[data-collapsed="true"] .footer .navItem span {
   display: none;
+}
+
+.sider[data-collapsed="true"] .history {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 7px;
+  overflow-x: visible;
+}
+
+.collapsedSection {
+  position: relative;
+  display: grid;
+  width: 100%;
+  justify-items: center;
+  gap: 6px;
+}
+
+.collapsedSessionButton {
+  position: relative;
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-text-3);
+  transition:
+    background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease,
+    transform var(--motion-fast) ease;
+}
+
+.collapsedSessionButton:hover,
+.collapsedSessionButton:focus-visible,
+.collapsedSessionButton[data-active="true"] {
+  outline: 0;
+  background: color-mix(in srgb, var(--surface-active) 86%, var(--surface-hover));
+  color: var(--color-text-1);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text-1) 7%, transparent);
+}
+
+.collapsedSessionButton:hover {
+  transform: translateY(-1px);
+}
+
+.collapsedSessionInitial {
+  display: inline-grid;
+  width: 19px;
+  height: 19px;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.collapsedSessionActiveDot {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--sidebar-bg);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+}
+
+.collapsedSessionCard {
+  position: fixed;
+  top: var(--session-card-top);
+  left: calc(var(--sidebar-collapsed-width) + 10px);
+  z-index: 96;
+  display: grid;
+  width: 224px;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 96%, transparent);
+  box-shadow:
+    0 14px 34px rgb(15 23 42 / 12%),
+    0 2px 8px rgb(15 23 42 / 7%);
+  padding: 10px 11px;
+  pointer-events: none;
+  transform: translateY(-50%);
+  animation: collapsedSessionCardIn 140ms var(--motion-ease-out) both;
+  backdrop-filter: blur(14px);
+}
+
+.collapsedSessionCardTitle {
+  overflow: hidden;
+  color: var(--color-text-1);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapsedSessionCardMeta {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-4);
+  font-size: 11px;
+  line-height: 1;
 }
 
 @keyframes overlayIn {
@@ -466,9 +590,29 @@
   }
 }
 
+@keyframes collapsedSessionCardIn {
+  from {
+    opacity: 0;
+    transform: translate(-4px, -50%) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, -50%) scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  :global([data-sidebar-motion="true"]) .sider {
+    transition: none;
+  }
+
   .searchOverlay,
-  .searchDialog {
+  .searchDialog,
+  .collapsedSessionCard {
     animation: none;
+  }
+
+  .collapsedSessionButton {
+    transition: none;
   }
 }

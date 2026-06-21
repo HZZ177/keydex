@@ -10,6 +10,7 @@ import type {
   AgentChatMessagePayload,
   AgentHistoryResponse,
   AgentSession,
+  Workspace,
 } from "@/types/protocol";
 
 describe("ConversationPage", () => {
@@ -25,6 +26,53 @@ describe("ConversationPage", () => {
     expect((await screen.findByTestId("conversation-empty")).textContent).toBe("还没有消息，输入需求开始对话。");
     expect(runtime.conversation.loadHistory).toHaveBeenCalledWith("ses-1", { order: "asc" });
     expect(runtime.conversation.openChatChannel).toHaveBeenCalled();
+  });
+
+  it("does not show workspace picker in the bottom composer for a project session", async () => {
+    const { runtime } = fakeRuntime({
+      session: agentSession({
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        cwd: "D:/repo",
+        workspace_roots: ["D:/repo"],
+        workspace: workspace("ws-1", "repo", "D:/repo"),
+      }),
+    });
+
+    render(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await readyComposer();
+    expect(screen.queryByLabelText("选择工作区")).toBeNull();
+  });
+
+  it("does not show project-free workspace picker in the bottom composer for a pure chat session", async () => {
+    const { runtime } = fakeRuntime();
+
+    render(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await readyComposer();
+    expect(screen.queryByLabelText("选择工作区")).toBeNull();
+  });
+
+  it("does not expose workspace search when a bound workspace is unavailable", async () => {
+    const { runtime } = fakeRuntime({
+      session: agentSession({
+        session_type: "workspace",
+        workspace_id: "ws-missing",
+        cwd: "D:/missing",
+        workspace_roots: ["D:/missing"],
+        workspace: null,
+      }),
+    });
+
+    render(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await readyComposer();
+    expect(screen.queryByLabelText("选择工作区")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.change(screen.getByLabelText("继续输入"), { target: { value: "@README" } });
+    expect(screen.queryByTestId("at-file-menu")).toBeNull();
+    expect(runtime.workspace.search).not.toHaveBeenCalled();
   });
 
   it("restores persisted user and assistant messages from session history", async () => {
@@ -394,7 +442,33 @@ describe("ConversationPage", () => {
     selection.restore();
   });
 
-  it("does not expose unimplemented file selection inside the composer", async () => {
+  it("searches project files from the composer through the bound session workspace", async () => {
+    const workspaceSearch = vi.fn().mockResolvedValue([
+      { path: "README.md", name: "README.md", type: "file" },
+    ]);
+    const { runtime } = fakeRuntime({
+      workspaceSearch,
+      session: agentSession({
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        cwd: "D:/repo",
+        workspace_roots: ["D:/repo"],
+        workspace: workspace("ws-1", "repo", "D:/repo"),
+      }),
+    });
+    render(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await screen.findByLabelText("继续输入");
+    fireEvent.change(screen.getByLabelText("继续输入"), { target: { value: "@READ" } });
+
+    expect(await screen.findByTestId("at-file-menu")).not.toBeNull();
+    await waitFor(() => {
+      expect(workspaceSearch).toHaveBeenCalledWith({ sessionId: "ses-1" }, "READ");
+    });
+    expect(await screen.findByRole("option", { name: /README\.md/ })).not.toBeNull();
+  });
+
+  it("hides workspace file search inside the pure chat composer", async () => {
     const { runtime } = fakeRuntime();
     render(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
@@ -459,6 +533,7 @@ function fakeRuntime({
   session = agentSession(),
   chat = vi.fn(),
   cancel = vi.fn(),
+  workspaceSearch = vi.fn().mockResolvedValue([]),
   wsStatus = "open",
   model = "qwen-coder",
 }: {
@@ -466,6 +541,7 @@ function fakeRuntime({
   session?: AgentSession;
   chat?: ReturnType<typeof vi.fn>;
   cancel?: ReturnType<typeof vi.fn>;
+  workspaceSearch?: ReturnType<typeof vi.fn>;
   wsStatus?: WsConnectionStatus;
   model?: string;
 } = {}) {
@@ -508,7 +584,7 @@ function fakeRuntime({
       listDirectory: vi.fn().mockResolvedValue({ root: "D:/repo", entries: [] }),
       readFile: vi.fn(),
       readMedia: vi.fn(),
-      search: vi.fn().mockResolvedValue([]),
+      search: workspaceSearch,
     },
   } as unknown as RuntimeBridge;
   return {
@@ -552,6 +628,11 @@ function agentSession(patch: Partial<AgentSession> = {}): AgentSession {
     status: "active",
     title: "测试对话",
     session_tag: "chat",
+    session_type: "chat",
+    workspace_id: null,
+    cwd: null,
+    workspace_roots: [],
+    workspace: null,
     active_session_id: null,
     parent_session_id: null,
     child_session_id: null,
@@ -562,6 +643,20 @@ function agentSession(patch: Partial<AgentSession> = {}): AgentSession {
     is_scheduled: false,
     is_current: false,
     ...patch,
+  };
+}
+
+function workspace(id: string, name: string, rootPath: string): Workspace {
+  return {
+    id,
+    name,
+    root_path: rootPath,
+    normalized_root_path: rootPath.replace(/\\/g, "/").toLowerCase(),
+    type: "project",
+    created_at: "2026-06-21T00:00:00Z",
+    updated_at: "2026-06-21T00:00:00Z",
+    last_opened_at: null,
+    is_deleted: false,
   };
 }
 

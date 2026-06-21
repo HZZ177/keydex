@@ -1,6 +1,7 @@
 import { ArrowDown } from "lucide-react";
 import { type ReactNode, useEffect, useMemo } from "react";
 
+import type { RuntimeBridge, WorkspaceScope } from "@/runtime";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
 
@@ -26,6 +27,8 @@ export interface MessageListProps {
   runtimeState?: ConversationRuntimeState;
   runtimeDetail?: string | null;
   renderMessage?: (message: ConversationMessage) => ReactNode;
+  workspaceRuntime?: RuntimeBridge;
+  workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onFilePreview?: (file: FileChangePreview) => void;
   onQuoteSelection?: (text: string) => void;
@@ -45,6 +48,8 @@ export function MessageList({
   emptyText = "暂无消息",
   emptyTestId = "message-empty",
   renderMessage,
+  workspaceRuntime,
+  workspaceScope,
   onApprovalDecision,
   onFilePreview,
   onQuoteSelection,
@@ -107,6 +112,8 @@ export function MessageList({
                       <DefaultMessage
                         message={item.message}
                         assistantActionRowMessageIds={assistantActionRowMessageIds}
+                        workspaceRuntime={workspaceRuntime}
+                        workspaceScope={workspaceScope}
                         onApprovalDecision={onApprovalDecision}
                         onFilePreview={onFilePreview}
                         onQuoteSelection={onQuoteSelection}
@@ -123,6 +130,8 @@ export function MessageList({
                         <DefaultMessage
                           message={message}
                           assistantActionRowMessageIds={assistantActionRowMessageIds}
+                          workspaceRuntime={workspaceRuntime}
+                          workspaceScope={workspaceScope}
                           onApprovalDecision={onApprovalDecision}
                           onFilePreview={onFilePreview}
                           onQuoteSelection={onQuoteSelection}
@@ -138,6 +147,8 @@ export function MessageList({
                   <MessageText
                     message={pendingAssistantMessage}
                     showActionRow={false}
+                    workspaceRuntime={workspaceRuntime}
+                    workspaceScope={workspaceScope}
                     onQuoteSelection={onQuoteSelection}
                   />
                 </li>
@@ -164,12 +175,16 @@ export function MessageList({
 function DefaultMessage({
   message,
   assistantActionRowMessageIds,
+  workspaceRuntime,
+  workspaceScope,
   onApprovalDecision,
   onFilePreview,
   onQuoteSelection,
 }: {
   message: ConversationMessage;
   assistantActionRowMessageIds: Set<string>;
+  workspaceRuntime?: RuntimeBridge;
+  workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onFilePreview?: (file: FileChangePreview) => void;
   onQuoteSelection?: (text: string) => void;
@@ -199,6 +214,8 @@ function DefaultMessage({
     <MessageText
       message={message}
       showActionRow={shouldShowTextActionRow(message, assistantActionRowMessageIds)}
+      workspaceRuntime={workspaceRuntime}
+      workspaceScope={workspaceScope}
       onQuoteSelection={onQuoteSelection}
     />
   );

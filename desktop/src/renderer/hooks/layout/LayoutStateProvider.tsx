@@ -13,6 +13,7 @@ import type { LayoutState } from "./layoutStore";
 export interface LayoutStateActions {
   toggleSidebar(): void;
   setSidebarCollapsed(collapsed: boolean): void;
+  setSidebarWidth(width: number): void;
   toggleWorkspace(): void;
   setWorkspaceOpen(open: boolean): void;
   togglePreview(): void;
@@ -42,7 +43,7 @@ export function LayoutStateProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     writeLayoutPreferences(window.localStorage, state);
-  }, [state.sidebarCollapsed, state.workspaceWidth, state.previewWidth]);
+  }, [state.sidebarCollapsed, state.sidebarWidth, state.workspaceWidth, state.previewWidth]);
 
   const actions = useMemo<LayoutStateActions>(
     () => ({
@@ -51,6 +52,9 @@ export function LayoutStateProvider({ children }: PropsWithChildren) {
       },
       setSidebarCollapsed(collapsed) {
         dispatch({ type: "set-sidebar", collapsed });
+      },
+      setSidebarWidth(width) {
+        dispatch({ type: "set-sidebar-width", width });
       },
       toggleWorkspace() {
         dispatch({ type: "toggle-workspace" });

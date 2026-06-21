@@ -12,7 +12,7 @@ class BlobStore:
         safe_category = category.replace("/", "_").replace("\\", "_")
         category_root = self.root / safe_category
         category_root.mkdir(parents=True, exist_ok=True)
-        blob_id = new_id("blob")
+        blob_id = new_id()
         path = category_root / f"{blob_id}{suffix}"
         path.write_text(text, encoding="utf-8")
         return f"{safe_category}/{path.name}"
@@ -22,4 +22,3 @@ class BlobStore:
         if not path.is_relative_to(self.root.resolve()):
             raise ValueError("blob_ref is outside blob root")
         return path.read_text(encoding="utf-8")
-

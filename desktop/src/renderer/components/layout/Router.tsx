@@ -5,10 +5,11 @@ import { EventReplayHarness } from "@/renderer/devtools/EventReplayHarness";
 import { ConversationPage } from "@/renderer/pages/conversation";
 import { queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
 import { HomePage } from "@/renderer/pages/home";
+import { SettingsShell } from "@/renderer/pages/settings/SettingsShell";
 import { ModelSettingsPage } from "@/renderer/pages/settings/model";
+import { UsageStatsPage } from "@/renderer/pages/settings/usage";
 
 import { Layout } from "./Layout";
-import styles from "./Router.module.css";
 
 export function AppRouter() {
   return (
@@ -18,7 +19,8 @@ export function AppRouter() {
       <Route path="/conversation/:threadId" element={<ConversationRoute />} />
       <Route path="/__dev/event-replay" element={<EventReplayRoute />} />
       <Route path="/settings/model" element={<ModelSettingsRoute />} />
-      <Route path="/settings/general" element={<SettingsPage section="通用设置" />} />
+      <Route path="/settings/usage" element={<UsageSettingsRoute />} />
+      <Route path="/settings/general" element={<Navigate to="/settings/model" replace />} />
       <Route path="*" element={<Navigate to="/guid" replace />} />
     </Routes>
   );
@@ -110,36 +112,17 @@ function ConversationRoute() {
 }
 
 function ModelSettingsRoute() {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from;
-
   return (
-    <RoutedLayout title="模型设置">
-      <main className={styles.documentPage}>
-        <button className={styles.backButton} type="button" onClick={() => void navigate(from ?? "/guid")}>
-          返回
-        </button>
-        <ModelSettingsPage />
-      </main>
-    </RoutedLayout>
+    <SettingsShell activeSection="model">
+      <ModelSettingsPage />
+    </SettingsShell>
   );
 }
 
-function SettingsPage({ section }: { section: string }) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from;
-
+function UsageSettingsRoute() {
   return (
-    <RoutedLayout title={section}>
-      <main className={styles.documentPage}>
-        <button className={styles.backButton} type="button" onClick={() => void navigate(from ?? "/guid")}>
-          返回
-        </button>
-        <h1 className={styles.sectionTitle}>{section}</h1>
-        <p className={styles.muted}>设置内容将在后续 issue 接入。</p>
-      </main>
-    </RoutedLayout>
+    <SettingsShell activeSection="usage">
+      <UsageStatsPage />
+    </SettingsShell>
   );
 }

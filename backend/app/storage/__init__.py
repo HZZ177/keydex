@@ -2,6 +2,7 @@
 
 from backend.app.storage.db import Database, init_database
 from backend.app.storage.repositories import (
+    LLMRequestLogRecord,
     MessageEventRecord,
     ModelDefaultRecord,
     ModelProviderRecord,
@@ -9,11 +10,14 @@ from backend.app.storage.repositories import (
     StorageRepositories,
     TraceEventLogRecord,
     TraceRecord,
+    WorkspaceRecord,
+    WorkspacesRepository,
     legacy_model_provider_from_settings,
 )
 
 __all__ = [
     "Database",
+    "LLMRequestLogRecord",
     "MessageEventRecord",
     "ModelDefaultRecord",
     "ModelProviderRecord",
@@ -21,6 +25,8 @@ __all__ = [
     "StorageRepositories",
     "TraceEventLogRecord",
     "TraceRecord",
+    "WorkspaceRecord",
+    "WorkspacesRepository",
     "init_database",
     "legacy_model_provider_from_settings",
 ]

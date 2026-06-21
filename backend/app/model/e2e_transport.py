@@ -62,6 +62,8 @@ def _chat_chunks(payload: dict[str, Any]) -> list[str]:
     user_message = _last_user_message(payload)
     if "工具时序" in user_message:
         return _tool_sequence_chunks(payload)
+    if "预览面板" in user_message:
+        return _preview_panel_chunks(payload)
     if "工具失败" in user_message:
         return _tool_failure_chunks(payload)
     if "取消验收" in user_message:
@@ -158,6 +160,20 @@ def _tool_sequence_chunks(payload: dict[str, Any]) -> list[str]:
         ),
         _sse_done(),
     ]
+
+
+def _preview_panel_chunks(payload: dict[str, Any]) -> list[str]:
+    return _content_chunks(
+        payload,
+        (
+            "下面是一段用于打开预览面板的 HTML 片段。\n\n"
+            "```html\n"
+            "<main><h1>预览面板检查点</h1><p>HTML 预览已通过页面级 E2E 打开。</p></main>\n"
+            "```\n\n"
+            "预览面板检查点。"
+        ),
+        usage={"prompt_tokens": 14, "completion_tokens": 18},
+    )
 
 
 def _tool_failure_chunks(payload: dict[str, Any]) -> list[str]:

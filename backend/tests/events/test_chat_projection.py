@@ -35,13 +35,11 @@ async def test_chat_projection_maps_llm_stream_to_stream_action() -> None:
 
     await projection.handle(_event(DomainEventType.LLM_STREAM, {"content": "hello"}))
 
-    assert adapter.sent == [
-        {
-            "session_id": "ses_original",
-            "action": "stream",
-            "data": {"content": "hello", "session_id": "ses_original"},
-        }
-    ]
+    assert adapter.sent[0]["session_id"] == "ses_original"
+    assert adapter.sent[0]["action"] == "stream"
+    assert adapter.sent[0]["data"]["content"] == "hello"
+    assert adapter.sent[0]["data"]["session_id"] == "ses_original"
+    assert isinstance(adapter.sent[0]["data"]["timestamp_ms"], int)
 
 
 @pytest.mark.asyncio
@@ -120,20 +118,16 @@ async def test_chat_projection_filters_reasoning_payload_for_chat_channel() -> N
         )
     )
 
-    assert adapter.sent == [
-        {
-            "session_id": "ses_original",
-            "action": "reasoning",
-            "data": {
-                "session_id": "ses_original",
-                "kind": "initial_response",
-                "done": False,
-                "trace_id": "trace_1",
-                "text": "thinking",
-                "cancel_main": False,
-            },
-        }
-    ]
+    assert adapter.sent[0]["session_id"] == "ses_original"
+    assert adapter.sent[0]["action"] == "reasoning"
+    assert adapter.sent[0]["data"]["session_id"] == "ses_original"
+    assert adapter.sent[0]["data"]["kind"] == "initial_response"
+    assert adapter.sent[0]["data"]["done"] is False
+    assert adapter.sent[0]["data"]["trace_id"] == "trace_1"
+    assert adapter.sent[0]["data"]["text"] == "thinking"
+    assert adapter.sent[0]["data"]["cancel_main"] is False
+    assert isinstance(adapter.sent[0]["data"]["timestamp_ms"], int)
+    assert "internal_only" not in adapter.sent[0]["data"]
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@
 from backend.app.security.workspace import (
     ResolvedWorkspacePath,
     WorkspacePathError,
+    normalize_workspace_root_for_storage,
     normalize_workspace_roots,
     resolve_path,
     resolve_workspace_path,
@@ -11,6 +12,7 @@ from backend.app.security.workspace import (
 __all__ = [
     "ResolvedWorkspacePath",
     "WorkspacePathError",
+    "normalize_workspace_root_for_storage",
     "normalize_workspace_roots",
     "resolve_path",
     "resolve_workspace_path",

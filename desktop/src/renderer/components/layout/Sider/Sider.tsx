@@ -1,7 +1,9 @@
-import { Check, Folder, MessageCircle, Moon, Pencil, Search, Settings, Sun, Trash2, X } from "lucide-react";
+import { Check, MessageCircle, Moon, Pencil, Search, Settings, SquarePen, Sun, Trash2, X } from "lucide-react";
+import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
+import { subscribeSessionCreated } from "@/renderer/events/sessionEvents";
 import { useTheme } from "@/renderer/providers/ThemeProvider";
 import type { AgentSession } from "@/types/protocol";
 
@@ -11,6 +13,15 @@ export interface SiderEntry {
   id: string;
   title: string;
   updatedAt?: string;
+  groupTitle?: string;
+}
+
+interface SiderGroup {
+  id: string;
+  title: string;
+  kind: "workspace" | "chat";
+  items: SiderEntry[];
+  latestUpdatedAt?: string;
 }
 
 export interface SiderProps {
@@ -23,7 +34,7 @@ export interface SiderProps {
 }
 
 const mainEntries = [
-  { key: "quick-chat", label: "快速对话", path: "/guid", icon: MessageCircle },
+  { key: "quick-chat", label: "新对话", path: "/guid", icon: SquarePen },
   { key: "search", label: "搜索", path: "/search", icon: Search },
 ];
 
@@ -37,7 +48,7 @@ export function Sider({
 }: SiderProps) {
   const { theme, toggleTheme } = useTheme();
   const ThemeIcon = theme === "dark" ? Sun : Moon;
-  const [loadedConversations, setLoadedConversations] = useState<SiderEntry[]>([]);
+  const [loadedSessions, setLoadedSessions] = useState<AgentSession[]>([]);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -48,7 +59,12 @@ export function Sider({
     typeof runtime.conversation.updateSession === "function" && typeof runtime.conversation.deleteSession === "function";
 
   const controlled = conversations !== undefined;
-  const historyItems = conversations ?? loadedConversations;
+  const loadedGroups = useMemo(() => buildSessionGroups(loadedSessions), [loadedSessions]);
+  const historyGroups = useMemo(
+    () => (conversations ? buildControlledGroups(projects, conversations) : loadedGroups),
+    [conversations, loadedGroups, projects],
+  );
+  const historyItems = useMemo(() => historyGroups.flatMap((group) => group.items), [historyGroups]);
   const searchResults = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     if (!keyword) {
@@ -73,7 +89,7 @@ export function Sider({
       .listSessions({ pageSize: 50 })
       .then((response) => {
         if (active) {
-          setLoadedConversations(response.list.map(sessionToEntry).sort(compareEntryUpdatedAt));
+          setLoadedSessions(response.list);
         }
       })
       .catch((reason) => {
@@ -91,6 +107,15 @@ export function Sider({
     };
   }, [controlled, runtime]);
 
+  useEffect(() => {
+    if (controlled) {
+      return;
+    }
+    return subscribeSessionCreated((session) => {
+      setLoadedSessions((items) => upsertSession(items, session));
+    });
+  }, [controlled]);
+
   async function renameConversation(id: string, title: string) {
     const cleaned = title.trim();
     if (!cleaned) {
@@ -104,7 +129,7 @@ export function Sider({
     }
     try {
       const updated = await runtime.conversation.updateSession(id, { title: cleaned });
-      setLoadedConversations((items) => upsertEntry(items, sessionToEntry(updated)));
+      setLoadedSessions((items) => upsertSession(items, updated));
       setEditing(null);
     } catch (reason) {
       setHistoryError(errorMessage(reason));
@@ -119,7 +144,7 @@ export function Sider({
     }
     try {
       await runtime.conversation.deleteSession(id);
-      setLoadedConversations((items) => items.filter((item) => item.id !== id));
+      setLoadedSessions((items) => items.filter((item) => item.id !== id));
       setConfirmDeleteId(null);
       if (isActivePath(activePath, conversationPath(id))) {
         onNavigate?.("/guid");
@@ -151,26 +176,31 @@ export function Sider({
       </nav>
 
       <div className={styles.history} aria-label="会话历史">
-        <ProjectSection title="项目" items={projects} collapsed={collapsed} />
         {historyError && !collapsed ? <div className={styles.error} role="alert">{historyError}</div> : null}
-        <SiderSection
-          title="对话"
-          items={historyItems}
-          collapsed={collapsed}
-          emptyText={loadingHistory ? "正在加载会话" : "暂无会话"}
-          activePath={activePath}
-          editing={editing}
-          confirmDeleteId={confirmDeleteId}
-          canMutate={canMutateConversations}
-          onDelete={(id) => void deleteConversation(id)}
-          onCancelDelete={() => setConfirmDeleteId(null)}
-          onCancelRename={() => setEditing(null)}
-          onConfirmDelete={setConfirmDeleteId}
-          onRename={(id, title) => void renameConversation(id, title)}
-          onStartRename={(item) => setEditing({ id: item.id, title: item.title })}
-          onUpdateRename={(title) => setEditing((value) => (value ? { ...value, title } : value))}
-          onNavigate={navigateTo}
-        />
+        {historyGroups.length === 0 && !collapsed ? (
+          <SiderSection title="对话" items={[]} collapsed={collapsed} emptyText={loadingHistory ? "正在加载会话" : "暂无会话"} />
+        ) : null}
+        {historyGroups.map((group) => (
+          <SiderSection
+            title={group.title}
+            items={group.items}
+            collapsed={collapsed}
+            emptyText={loadingHistory ? "正在加载会话" : "暂无会话"}
+            activePath={activePath}
+            editing={editing}
+            confirmDeleteId={confirmDeleteId}
+            canMutate={canMutateConversations}
+            key={group.id}
+            onDelete={(id) => void deleteConversation(id)}
+            onCancelDelete={() => setConfirmDeleteId(null)}
+            onCancelRename={() => setEditing(null)}
+            onConfirmDelete={setConfirmDeleteId}
+            onRename={(id, title) => void renameConversation(id, title)}
+            onStartRename={(item) => setEditing({ id: item.id, title: item.title })}
+            onUpdateRename={(title) => setEditing((value) => (value ? { ...value, title } : value))}
+            onNavigate={navigateTo}
+          />
+        ))}
       </div>
 
       <div className={styles.footer}>
@@ -241,7 +271,7 @@ function SessionSearchDialog({
             autoFocus
             aria-label="搜索会话"
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="搜索会话或打开快速对话"
+            placeholder="搜索会话或打开新对话"
             value={query}
           />
           <button aria-label="关闭搜索" type="button" onClick={onClose}>
@@ -251,8 +281,8 @@ function SessionSearchDialog({
 
         <div className={styles.searchQuickActions}>
           <button type="button" onClick={() => onNavigate("/guid")}>
-            <MessageCircle size={15} />
-            <span>新建快速对话</span>
+            <SquarePen size={15} />
+            <span>新建对话</span>
           </button>
         </div>
 
@@ -275,35 +305,6 @@ function SessionSearchDialog({
         </section>
       </section>
     </div>
-  );
-}
-
-function ProjectSection({
-  title,
-  items,
-  collapsed,
-}: {
-  title: string;
-  items: SiderEntry[];
-  collapsed: boolean;
-}) {
-  if (collapsed) {
-    return null;
-  }
-  if (items.length === 0) {
-    return null;
-  }
-
-  return (
-    <section className={styles.section}>
-      <div className={styles.sectionTitle}>{title}</div>
-      {items.map((item) => (
-        <div className={styles.projectItem} key={item.id}>
-          <Folder size={16} />
-          <span>{item.title}</span>
-        </div>
-      ))}
-    </section>
   );
 }
 
@@ -344,12 +345,52 @@ function SiderSection({
   onStartRename,
   onUpdateRename,
 }: SiderSectionProps) {
+  const [hoveredSession, setHoveredSession] = useState<CollapsedSessionCard | null>(null);
+
+  const showCollapsedCard = (item: SiderEntry, active: boolean, target: HTMLElement) => {
+    const rect = target.getBoundingClientRect();
+    setHoveredSession({
+      id: item.id,
+      title: item.title,
+      updatedAt: item.updatedAt,
+      groupTitle: item.groupTitle,
+      active,
+      top: Math.round(rect.top + rect.height / 2),
+    });
+  };
+
   if (collapsed) {
-    return null;
+    return (
+      <section className={styles.collapsedSection} aria-label={title}>
+        {items.map((item) => {
+          const path = conversationPath(item.id);
+          const active = isActivePath(activePath, path);
+          return (
+            <button
+              aria-current={active ? "page" : undefined}
+              aria-label={`打开会话 ${item.title}`}
+              className={styles.collapsedSessionButton}
+              data-active={active ? "true" : "false"}
+              key={item.id}
+              onBlur={() => setHoveredSession(null)}
+              onClick={() => onNavigate?.(path)}
+              onFocus={(event) => showCollapsedCard(item, active, event.currentTarget)}
+              onMouseEnter={(event) => showCollapsedCard(item, active, event.currentTarget)}
+              onMouseLeave={() => setHoveredSession(null)}
+              type="button"
+            >
+              <span className={styles.collapsedSessionInitial}>{sessionInitial(item.title)}</span>
+              {active ? <span className={styles.collapsedSessionActiveDot} aria-hidden="true" /> : null}
+            </button>
+          );
+        })}
+        {hoveredSession ? <CollapsedSessionCardView session={hoveredSession} /> : null}
+      </section>
+    );
   }
 
   return (
-    <section className={styles.section}>
+    <section className={styles.section} aria-label={title}>
       <div className={styles.sectionTitle}>{title}</div>
       {items.length === 0 ? (
         <div className={styles.empty}>{emptyText}</div>
@@ -400,11 +441,9 @@ function SiderSection({
                     onClick={() => onNavigate?.(path)}
                   >
                     <span className={styles.historyTitle}>{item.title}</span>
-                    {item.updatedAt ? (
-                      <time className={styles.historyMeta} dateTime={item.updatedAt}>
-                        {formatRelativeTime(item.updatedAt)}
-                      </time>
-                    ) : null}
+                    <span className={styles.historyMeta}>
+                      {item.updatedAt ? <time dateTime={item.updatedAt}>{formatRelativeTime(item.updatedAt)}</time> : null}
+                    </span>
                   </button>
                   {canMutate ? (
                     <div className={styles.historyActions}>
@@ -426,24 +465,146 @@ function SiderSection({
   );
 }
 
-function sessionToEntry(session: AgentSession): SiderEntry {
+interface CollapsedSessionCard {
+  id: string;
+  title: string;
+  updatedAt?: string;
+  groupTitle?: string;
+  active: boolean;
+  top: number;
+}
+
+function CollapsedSessionCardView({ session }: { session: CollapsedSessionCard }) {
+  return (
+    <div
+      className={styles.collapsedSessionCard}
+      role="tooltip"
+      style={{ "--session-card-top": `${session.top}px` } as CSSProperties}
+    >
+      <div className={styles.collapsedSessionCardTitle}>{session.title}</div>
+      <div className={styles.collapsedSessionCardMeta}>
+        <span>{session.active ? "当前会话" : "会话"}</span>
+        {session.groupTitle ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <span>{session.groupTitle}</span>
+          </>
+        ) : null}
+        {session.updatedAt ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <time dateTime={session.updatedAt}>{formatRelativeTime(session.updatedAt)}</time>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function sessionToEntry(session: AgentSession, groupTitle: string): SiderEntry {
   return {
     id: session.id,
     title: session.title || session.id,
     updatedAt: session.updated_at,
+    groupTitle,
   };
+}
+
+function buildSessionGroups(sessions: AgentSession[]): SiderGroup[] {
+  const groups = new Map<string, SiderGroup>();
+  sessions
+    .slice()
+    .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
+    .forEach((session) => {
+      const meta = sessionGroupMeta(session);
+      const group =
+        groups.get(meta.id) ??
+        {
+          id: meta.id,
+          title: meta.title,
+          kind: meta.kind,
+          items: [],
+          latestUpdatedAt: session.updated_at,
+        };
+      group.title = meta.title;
+      group.latestUpdatedAt = maxTime(group.latestUpdatedAt, session.updated_at);
+      group.items.push(sessionToEntry(session, group.title));
+      groups.set(group.id, group);
+    });
+
+  const workspaceGroups = [...groups.values()]
+    .filter((group) => group.kind === "workspace")
+    .sort(compareGroupUpdatedAt);
+  const chatGroup = groups.get("chat");
+  return chatGroup ? [...workspaceGroups, chatGroup] : workspaceGroups;
+}
+
+function buildControlledGroups(projects: SiderEntry[], conversations: SiderEntry[]): SiderGroup[] {
+  if (!conversations.length) {
+    return projects.map((project) => ({
+      id: `project:${project.id}`,
+      title: project.title,
+      kind: "workspace" as const,
+      items: [],
+      latestUpdatedAt: project.updatedAt,
+    }));
+  }
+  const title = projects[0]?.title ?? "对话";
+  return [
+    {
+      id: projects[0] ? `project:${projects[0].id}` : "chat",
+      title,
+      kind: projects[0] ? "workspace" : "chat",
+      items: conversations.map((item) => ({ ...item, groupTitle: title })),
+      latestUpdatedAt: conversations[0]?.updatedAt,
+    },
+  ];
+}
+
+function sessionGroupMeta(session: AgentSession): Pick<SiderGroup, "id" | "title" | "kind"> {
+  if (session.session_type === "workspace") {
+    if (session.workspace) {
+      return {
+        id: `workspace:${session.workspace.id}`,
+        title: session.workspace.name || session.workspace.root_path,
+        kind: "workspace",
+      };
+    }
+    return {
+      id: `workspace:${session.workspace_id ?? "missing"}`,
+      title: "工作区不可用",
+      kind: "workspace",
+    };
+  }
+  return {
+    id: "chat",
+    title: "对话",
+    kind: "chat",
+  };
+}
+
+function upsertSession(sessions: AgentSession[], session: AgentSession): AgentSession[] {
+  return [session, ...sessions.filter((item) => item.id !== session.id)].sort((left, right) =>
+    right.updated_at.localeCompare(left.updated_at),
+  );
+}
+
+function compareGroupUpdatedAt(left: SiderGroup, right: SiderGroup): number {
+  return (right.latestUpdatedAt ?? "").localeCompare(left.latestUpdatedAt ?? "");
+}
+
+function maxTime(left: string | undefined, right: string | undefined): string | undefined {
+  if (!left) {
+    return right;
+  }
+  if (!right) {
+    return left;
+  }
+  return left.localeCompare(right) >= 0 ? left : right;
 }
 
 function conversationPath(id: string): string {
   return `/conversation/${encodeURIComponent(id)}`;
-}
-
-function upsertEntry(items: SiderEntry[], entry: SiderEntry): SiderEntry[] {
-  return items.map((item) => (item.id === entry.id ? entry : item)).sort(compareEntryUpdatedAt);
-}
-
-function compareEntryUpdatedAt(left: SiderEntry, right: SiderEntry): number {
-  return (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");
 }
 
 function formatRelativeTime(value: string): string {
@@ -475,6 +636,14 @@ function formatRelativeTime(value: string): string {
     return `${Math.floor(diffMs / week)}周`;
   }
   return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+}
+
+function sessionInitial(title: string): string {
+  const trimmed = title.trim();
+  if (!trimmed) {
+    return "会";
+  }
+  return Array.from(trimmed)[0]?.toUpperCase() ?? "会";
 }
 
 function isActivePath(activePath: string, path: string): boolean {

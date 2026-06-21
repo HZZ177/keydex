@@ -1,12 +1,12 @@
 import { ImageOff } from "lucide-react";
 import { useEffect, useMemo, useState, type ImgHTMLAttributes } from "react";
 
-import type { RuntimeBridge } from "@/runtime";
+import type { RuntimeBridge, WorkspaceScope } from "@/runtime";
 
 import styles from "./MessageText.module.css";
 
 export interface MarkdownImageProps extends ImgHTMLAttributes<HTMLImageElement> {
-  root?: string;
+  workspaceScope?: WorkspaceScope | null;
   sourcePath?: string;
   runtime?: RuntimeBridge;
   node?: unknown;
@@ -15,7 +15,7 @@ export interface MarkdownImageProps extends ImgHTMLAttributes<HTMLImageElement> 
 export function MarkdownImage({
   src,
   alt,
-  root,
+  workspaceScope,
   sourcePath,
   runtime,
   node: _node,
@@ -44,7 +44,7 @@ export function MarkdownImage({
       };
     }
 
-    if (!root || !runtime || !workspacePath) {
+    if (!workspaceScope || !runtime || !workspacePath) {
       setResolvedSrc(null);
       setStatus("failed");
       return () => {
@@ -55,7 +55,7 @@ export function MarkdownImage({
     setResolvedSrc(null);
     setStatus("loading");
     void runtime.workspace
-      .readMedia(root, workspacePath)
+      .readMedia(workspaceScope, workspacePath)
       .then((response) => {
         if (!active) {
           return;
@@ -74,7 +74,7 @@ export function MarkdownImage({
     return () => {
       active = false;
     };
-  }, [root, runtime, src, workspacePath]);
+  }, [workspaceScope, runtime, src, workspacePath]);
 
   if (status === "loading") {
     return <span className={styles.imagePlaceholder}>正在读取图片</span>;

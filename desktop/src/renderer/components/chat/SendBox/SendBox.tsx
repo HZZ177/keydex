@@ -373,8 +373,8 @@ export function SendBox({
         </div>
 
         <div className={styles.rightActions}>
-          {rightControls}
           {statusText ? <span className={styles.statusText}>{statusText}</span> : null}
+          {rightControls}
           {busy ? (
             <button className={styles.stopButton} type="button" aria-label="停止" disabled={!canStop} onClick={onStop}>
               <Square size={13} />

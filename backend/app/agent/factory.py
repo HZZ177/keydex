@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,9 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 
+from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
+from backend.app.core.request_context import get_trace_id
 from backend.app.model import ModelSettings
 
 _llm_gateway_trace_registry: dict[str, str] = {}
@@ -35,7 +36,7 @@ def ensure_llm_gateway_trace_id(run_id: str) -> str | None:
     gateway_trace_id = _llm_gateway_trace_registry.get(run_id)
     if gateway_trace_id:
         return gateway_trace_id
-    gateway_trace_id = uuid.uuid4().hex
+    gateway_trace_id = new_id()
     _llm_gateway_trace_registry[run_id] = gateway_trace_id
     return gateway_trace_id
 
@@ -50,19 +51,37 @@ class PatchedChatOpenAI(ChatOpenAI):
     """ChatOpenAI with gateway trace headers and streaming usage de-duplication."""
 
     @staticmethod
-    def _inject_gateway_headers(kwargs: dict[str, Any], gateway_trace_id: str) -> dict[str, Any]:
-        extra_headers = dict(kwargs.get("extra_headers") or {})
-        extra_headers["AH-Trace-Id"] = gateway_trace_id
-        kwargs["extra_headers"] = extra_headers
-        return kwargs
-
-    @staticmethod
     def _get_gateway_trace_id_from_kwargs(kwargs: dict[str, Any]) -> str | None:
         extra_headers = kwargs.get("extra_headers")
         if not isinstance(extra_headers, dict):
             return None
         value = extra_headers.get("AH-Trace-Id")
         return str(value) if value else None
+
+    @classmethod
+    def _resolve_gateway_trace_id(cls, run_id: str, kwargs: dict[str, Any]) -> str:
+        gateway_trace_id = (
+            cls._get_gateway_trace_id_from_kwargs(kwargs)
+            or ensure_llm_gateway_trace_id(run_id)
+            or new_id()
+        )
+        if run_id and not get_llm_gateway_trace_id(run_id):
+            register_llm_gateway_trace_id(run_id, gateway_trace_id)
+        return gateway_trace_id
+
+    @staticmethod
+    def _inject_gateway_headers(kwargs: dict[str, Any], gateway_trace_id: str) -> dict[str, Any]:
+        gateway_thread_id = get_trace_id()
+        extra_headers = dict(kwargs.get("extra_headers") or {})
+        if gateway_thread_id:
+            extra_headers["AH-Thread-Id"] = gateway_thread_id
+        extra_headers["AH-Trace-Id"] = gateway_trace_id
+        kwargs["extra_headers"] = extra_headers
+        logger.debug(
+            f"[LLM] 注入网关追踪头 | AH-Thread-Id={gateway_thread_id or '-'} | "
+            f"AH-Trace-Id={gateway_trace_id}"
+        )
+        return kwargs
 
     async def _agenerate_with_cache(
         self,
@@ -72,12 +91,9 @@ class PatchedChatOpenAI(ChatOpenAI):
         **kwargs: Any,
     ) -> Any:
         run_id = str(getattr(run_manager, "run_id", "") or "")
-        gateway_trace_id = (
-            self._get_gateway_trace_id_from_kwargs(kwargs)
-            or ensure_llm_gateway_trace_id(run_id)
-            or uuid.uuid4().hex
-        )
-        kwargs = self._inject_gateway_headers(dict(kwargs), gateway_trace_id)
+        resolved_kwargs = dict(kwargs)
+        gateway_trace_id = self._resolve_gateway_trace_id(run_id, resolved_kwargs)
+        kwargs = self._inject_gateway_headers(resolved_kwargs, gateway_trace_id)
         try:
             return await super()._agenerate_with_cache(
                 messages,
@@ -101,12 +117,9 @@ class PatchedChatOpenAI(ChatOpenAI):
         **kwargs: Any,
     ) -> Any:
         run_id = str(getattr(run_manager, "run_id", "") or "")
-        gateway_trace_id = (
-            self._get_gateway_trace_id_from_kwargs(kwargs)
-            or ensure_llm_gateway_trace_id(run_id)
-            or uuid.uuid4().hex
-        )
-        kwargs = self._inject_gateway_headers(dict(kwargs), gateway_trace_id)
+        resolved_kwargs = dict(kwargs)
+        gateway_trace_id = self._resolve_gateway_trace_id(run_id, resolved_kwargs)
+        kwargs = self._inject_gateway_headers(resolved_kwargs, gateway_trace_id)
         try:
             return await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
         except Exception:
@@ -124,12 +137,9 @@ class PatchedChatOpenAI(ChatOpenAI):
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
         run_id = str(getattr(run_manager, "run_id", "") or "")
-        gateway_trace_id = (
-            self._get_gateway_trace_id_from_kwargs(kwargs)
-            or ensure_llm_gateway_trace_id(run_id)
-            or uuid.uuid4().hex
-        )
-        kwargs = self._inject_gateway_headers(dict(kwargs), gateway_trace_id)
+        resolved_kwargs = dict(kwargs)
+        gateway_trace_id = self._resolve_gateway_trace_id(run_id, resolved_kwargs)
+        kwargs = self._inject_gateway_headers(resolved_kwargs, gateway_trace_id)
 
         seen_input_tokens: int | None = None
         seen_output_tokens: int | None = None

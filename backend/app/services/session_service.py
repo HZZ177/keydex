@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from backend.app.core.ids import IdPrefix, new_id
+from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
+from backend.app.security import WorkspacePathError, resolve_workspace_path
 from backend.app.services.message_event_service import MessageEventService
+from backend.app.services.workspace_service import WorkspaceService, WorkspaceServiceError
 from backend.app.storage import MessageEventRecord, SessionRecord
 
 
@@ -27,6 +30,8 @@ class ListSessionsRequest:
     scene_id: str | None = None
     status: str | None = None
     session_tag: str | None = None
+    workspace_id: str | None = None
+    session_type: str | None = None
     title: str | None = None
     current_session_id: str | None = None
     page: int = 1
@@ -49,10 +54,14 @@ class SessionService:
         self,
         sessions_repository,
         message_events_repository,
+        workspaces_repository=None,
         message_event_service: MessageEventService | None = None,
     ) -> None:
         self._sessions = sessions_repository
         self._message_events = message_events_repository
+        self._workspace_service = (
+            WorkspaceService(workspaces_repository) if workspaces_repository is not None else None
+        )
         self._message_event_service = message_event_service or MessageEventService(
             message_events_repository
         )
@@ -65,37 +74,41 @@ class SessionService:
         title: str | None = None,
         session_tag: str = "chat",
         session_id: str | None = None,
+        session_type: str = "chat",
+        workspace_id: str | None = None,
+        cwd: str | None = None,
+        workspace_roots: list[str] | None = None,
     ) -> dict[str, Any]:
+        workspace_context = self._resolve_workspace_create_context(
+            session_type=session_type,
+            workspace_id=workspace_id,
+            cwd=cwd,
+            workspace_roots=workspace_roots,
+        )
+        if session_type == "workspace" and workspace_context["workspace_id"]:
+            self._workspace_service.touch_workspace(workspace_context["workspace_id"])
         record = self._sessions.create(
-            session_id=session_id or new_id(IdPrefix.SESSION),
+            session_id=session_id or new_id(),
             user_id=user_id,
             scene_id=scene_id,
             title=title,
             session_tag=session_tag,
+            workspace_id=workspace_context["workspace_id"],
+            session_type=session_type,
+            cwd=workspace_context["cwd"],
+            workspace_roots=workspace_context["workspace_roots"],
         )
         logger.info(
             f"[SessionService] 创建会话 | session_id={record.id} | "
-            f"user_id={user_id} | scene_id={scene_id} | session_tag={session_tag}"
+            f"user_id={user_id} | scene_id={scene_id} | session_tag={session_tag} | "
+            f"session_type={session_type} | workspace_id={record.workspace_id or '-'}"
         )
         return self._serialize_session(record)
 
     def list_sessions(self, request: ListSessionsRequest) -> dict[str, Any]:
         page = max(1, int(request.page or 1))
         page_size = min(max(1, int(request.page_size or 20)), 100)
-        records = self._sessions.list(
-            user_id=request.user_id,
-            scene_id=request.scene_id,
-            status=request.status,
-            session_tag=request.session_tag,
-            limit=500,
-        )
-        if request.title:
-            keyword = request.title.strip().lower()
-            records = [
-                record
-                for record in records
-                if keyword in str(record.title or "").lower()
-            ]
+        records = self._load_session_records(request)
 
         total = len(records)
         start = (page - 1) * page_size
@@ -114,6 +127,66 @@ class SessionService:
             "page": page,
             "page_size": page_size,
         }
+
+    def group_sessions(self, request: ListSessionsRequest) -> dict[str, Any]:
+        records = self._load_session_records(request)
+        groups: dict[str, dict[str, Any]] = {}
+        for record in records:
+            if record.session_type == "workspace" and record.workspace_id:
+                key = f"workspace:{record.workspace_id}"
+                workspace = self._workspace_summary(record.workspace_id)
+                title = workspace["name"] if workspace else "已移除工作区"
+                group = groups.setdefault(
+                    key,
+                    {
+                        "type": "workspace",
+                        "title": title,
+                        "workspace_id": record.workspace_id,
+                        "workspace": workspace,
+                        "list": [],
+                        "total": 0,
+                    },
+                )
+            else:
+                group = groups.setdefault(
+                    "chat",
+                    {
+                        "type": "chat",
+                        "title": "对话",
+                        "workspace_id": None,
+                        "workspace": None,
+                        "list": [],
+                        "total": 0,
+                    },
+                )
+            group["list"].append(
+                self._serialize_session(record, current_session_id=request.current_session_id)
+            )
+            group["total"] += 1
+
+        return {
+            "groups": list(groups.values()),
+            "total": len(records),
+        }
+
+    def _load_session_records(self, request: ListSessionsRequest) -> list[SessionRecord]:
+        records = self._sessions.list(
+            user_id=request.user_id,
+            scene_id=request.scene_id,
+            status=request.status,
+            session_tag=request.session_tag,
+            workspace_id=request.workspace_id,
+            session_type=request.session_type,
+            limit=500,
+        )
+        if request.title:
+            keyword = request.title.strip().lower()
+            records = [
+                record
+                for record in records
+                if keyword in str(record.title or "").lower()
+            ]
+        return records
 
     def get_session_detail(
         self,
@@ -213,16 +286,74 @@ class SessionService:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         return record
 
+    def _resolve_workspace_create_context(
+        self,
+        *,
+        session_type: str,
+        workspace_id: str | None,
+        cwd: str | None,
+        workspace_roots: list[str] | None,
+    ) -> dict[str, Any]:
+        if session_type not in {"workspace", "chat"}:
+            raise SessionValidationError(f"不支持的 session 类型: {session_type}")
+        if session_type == "chat":
+            if workspace_id or cwd or workspace_roots:
+                raise SessionValidationError("纯聊天会话不能绑定工作区")
+            return {"workspace_id": None, "cwd": None, "workspace_roots": []}
+
+        if not workspace_id:
+            raise SessionValidationError("项目会话必须选择工作区")
+        if self._workspace_service is None:
+            raise SessionValidationError("当前运行时未配置工作区服务")
+        workspace = self._workspace_service.require_workspace(workspace_id)
+        workspace_root = Path(workspace.root_path).expanduser().resolve()
+        resolved_cwd = Path(cwd or workspace_root).expanduser().resolve()
+        try:
+            resolved_cwd = resolve_workspace_path(
+                resolved_cwd,
+                cwd=workspace_root,
+                workspace_roots=[workspace_root],
+            )
+        except WorkspacePathError as exc:
+            raise SessionValidationError("会话运行目录不在工作区内") from exc
+        if not resolved_cwd.exists():
+            raise SessionValidationError("会话运行目录不存在")
+        if not resolved_cwd.is_dir():
+            raise SessionValidationError("会话运行目录不是目录")
+        resolved_roots = [str(workspace_root)]
+        if workspace_roots:
+            resolved_roots = []
+            for root in workspace_roots:
+                try:
+                    resolved_root = resolve_workspace_path(
+                        root,
+                        cwd=workspace_root,
+                        workspace_roots=[workspace_root],
+                    )
+                except WorkspacePathError as exc:
+                    raise SessionValidationError("会话工作区根目录不在工作区内") from exc
+                if not resolved_root.exists() or not resolved_root.is_dir():
+                    raise SessionValidationError("会话工作区根目录不存在或不是目录")
+                resolved_roots.append(str(resolved_root))
+        return {
+            "workspace_id": workspace.id,
+            "cwd": str(resolved_cwd),
+            "workspace_roots": resolved_roots,
+        }
+
     def _turn_indexes(self, session_id: str) -> list[int]:
         events = self._message_events.list_by_session(session_id)
         return sorted({event.turn_index for event in events})
 
-    @staticmethod
     def _serialize_session(
+        self,
         record: SessionRecord,
         *,
         current_session_id: str | None = None,
     ) -> dict[str, Any]:
+        workspace = None
+        if record.workspace_id and self._workspace_service is not None:
+            workspace = self._workspace_summary(record.workspace_id)
         return {
             "id": record.id,
             "user_id": record.user_id,
@@ -234,12 +365,25 @@ class SessionService:
             "parent_session_id": record.parent_session_id,
             "child_session_id": record.child_session_id,
             "source_trace_id": record.source_trace_id,
+            "workspace_id": record.workspace_id,
+            "session_type": record.session_type,
+            "cwd": record.cwd,
+            "workspace_roots": record.workspace_roots,
+            "workspace": workspace,
             "created_at": record.created_at,
             "updated_at": record.updated_at,
             "is_debug": record.is_debug,
             "is_scheduled": record.is_scheduled,
             "is_current": record.id == current_session_id if current_session_id else False,
         }
+
+    def _workspace_summary(self, workspace_id: str) -> dict[str, Any] | None:
+        if self._workspace_service is None:
+            return None
+        try:
+            return self._workspace_service.get_workspace(workspace_id)
+        except WorkspaceServiceError:
+            return None
 
 
 def terminal_turn_indexes(events: list[MessageEventRecord]) -> list[int]:

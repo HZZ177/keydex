@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -7,8 +8,15 @@ from typing import Any
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
 
+from backend.app.agent.factory import (
+    get_llm_gateway_trace_id,
+    pop_llm_gateway_trace_id,
+)
+from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.events import DomainEventType, EventDispatcher
+from backend.app.storage import LLMRequestLogRecord
+from backend.app.storage.repositories import LLMRequestLogsRepository
 
 
 @dataclass
@@ -36,9 +44,13 @@ async def process_agent_events(
     user_id: str,
     active_session_id: str,
     turn_index: int,
+    model: str = "",
+    llm_request_logs: LLMRequestLogsRepository | None = None,
 ) -> AgentEventResult:
     result = AgentEventResult()
     tool_start_times: dict[str, float] = {}
+    llm_start_times: dict[str, float] = {}
+    llm_request_ids: dict[str, str] = {}
     reasoning_parts_by_run_id: dict[str, list[str]] = {}
     stream_chunk_count = 0
     reasoning_chunk_count = 0
@@ -56,8 +68,30 @@ async def process_agent_events(
 
             event_type = str(event.get("event") or "")
             data = event.get("data") or {}
+            metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
             run_id = str(event.get("run_id") or "")
             name = str(event.get("name") or "")
+
+            if event_type == "on_chat_model_start":
+                request_log = _start_llm_request_log(
+                    llm_request_logs=llm_request_logs,
+                    run_id=run_id,
+                    gateway_trace_id=get_llm_gateway_trace_id(run_id),
+                    gateway_thread_id=trace_id,
+                    name=name,
+                    data=data,
+                    metadata=metadata,
+                    session_id=session_id,
+                    trace_id=trace_id,
+                    user_id=user_id,
+                    active_session_id=active_session_id,
+                    turn_index=turn_index,
+                    model=model,
+                )
+                if request_log is not None:
+                    llm_request_ids[run_id] = request_log.id
+                    llm_start_times[run_id] = time.perf_counter()
+                continue
 
             if event_type == "on_chat_model_stream":
                 chunk = data.get("chunk")
@@ -81,6 +115,14 @@ async def process_agent_events(
 
             if event_type == "on_chat_model_end":
                 _collect_usage(data.get("output"), result)
+                _finish_llm_request_log(
+                    llm_request_logs=llm_request_logs,
+                    llm_request_ids=llm_request_ids,
+                    llm_start_times=llm_start_times,
+                    run_id=run_id,
+                    data=data,
+                    usage=result.latest_llm_token_usage,
+                )
                 if result.latest_llm_token_usage:
                     logger.info(
                         f"[AgentEvents] LLM 调用完成 | session_id={session_id} | "
@@ -118,6 +160,17 @@ async def process_agent_events(
                     user_id=user_id,
                     active_session_id=active_session_id,
                     turn_index=turn_index,
+                )
+                continue
+
+            if event_type == "on_chat_model_error":
+                _fail_llm_request_log(
+                    llm_request_logs=llm_request_logs,
+                    llm_request_ids=llm_request_ids,
+                    llm_start_times=llm_start_times,
+                    run_id=run_id,
+                    data=data,
+                    event=event,
                 )
                 continue
 
@@ -240,6 +293,112 @@ async def process_agent_events(
     return result
 
 
+def _start_llm_request_log(
+    *,
+    llm_request_logs: LLMRequestLogsRepository | None,
+    run_id: str,
+    gateway_trace_id: str | None,
+    gateway_thread_id: str,
+    name: str,
+    data: dict[str, Any],
+    metadata: dict[str, Any],
+    session_id: str,
+    trace_id: str,
+    user_id: str,
+    active_session_id: str,
+    turn_index: int,
+    model: str,
+) -> LLMRequestLogRecord | None:
+    if llm_request_logs is None:
+        return None
+    request_id = run_id or new_id()
+    resolved_model = (
+        _metadata_text(metadata, "ls_model_name")
+        or _metadata_text(metadata, "model")
+        or model
+    )
+    if not resolved_model:
+        resolved_model = "unknown"
+    return llm_request_logs.start(
+        request_id=request_id,
+        trace_id=trace_id,
+        trace_record_id=trace_id,
+        session_id=session_id,
+        active_session_id=active_session_id,
+        gateway_thread_id=gateway_thread_id,
+        gateway_trace_id=gateway_trace_id,
+        turn_index=turn_index,
+        provider_name=_metadata_text(metadata, "ls_provider") or name or None,
+        model=resolved_model,
+        request_preview=_preview_value(data.get("input")),
+        metadata={
+            "run_id": run_id,
+            "event_name": name,
+            "user_id": user_id,
+            "langchain_metadata": metadata,
+        },
+    )
+
+
+def _finish_llm_request_log(
+    *,
+    llm_request_logs: LLMRequestLogsRepository | None,
+    llm_request_ids: dict[str, str],
+    llm_start_times: dict[str, float],
+    run_id: str,
+    data: dict[str, Any],
+    usage: dict[str, Any],
+) -> None:
+    gateway_trace_id = pop_llm_gateway_trace_id(run_id)
+    if llm_request_logs is None:
+        return
+    request_id = llm_request_ids.pop(run_id, "")
+    if not request_id:
+        return
+    started_at = llm_start_times.pop(run_id, time.perf_counter())
+    duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+    output = data.get("output")
+    llm_request_logs.finish(
+        request_id,
+        input_tokens=int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0),
+        cache_read_tokens=int(usage.get("cache_read_tokens") or 0),
+        output_tokens=int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
+        total_tokens=int(usage.get("total_tokens") or 0) or None,
+        response_preview=_message_text(output) or _preview_value(output),
+        duration_ms=duration_ms,
+        gateway_thread_id=None,
+        gateway_trace_id=gateway_trace_id,
+    )
+
+
+def _fail_llm_request_log(
+    *,
+    llm_request_logs: LLMRequestLogsRepository | None,
+    llm_request_ids: dict[str, str],
+    llm_start_times: dict[str, float],
+    run_id: str,
+    data: dict[str, Any],
+    event: dict[str, Any],
+) -> None:
+    gateway_trace_id = pop_llm_gateway_trace_id(run_id)
+    if llm_request_logs is None:
+        return
+    request_id = llm_request_ids.pop(run_id, "")
+    if not request_id:
+        return
+    started_at = llm_start_times.pop(run_id, time.perf_counter())
+    duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+    error_text = str(data.get("error") or event.get("error") or "模型请求失败")
+    llm_request_logs.fail(
+        request_id,
+        error_message=error_text,
+        response_preview=_preview_value(data.get("output")),
+        duration_ms=duration_ms,
+        gateway_thread_id=None,
+        gateway_trace_id=gateway_trace_id,
+    )
+
+
 async def _handle_chat_model_stream(
     *,
     data: dict[str, Any],
@@ -348,6 +507,18 @@ def _message_text(message: Any) -> str:
     return ""
 
 
+def _metadata_text(metadata: dict[str, Any], key: str) -> str:
+    value = metadata.get(key)
+    return value if isinstance(value, str) else ""
+
+
+def _preview_value(value: Any, limit: int = 1000) -> str:
+    if value is None:
+        return ""
+    text = str(_make_json_serializable(value))
+    return text if len(text) <= limit else f"{text[:limit]}..."
+
+
 def _reasoning_text(message: Any) -> str:
     if not isinstance(message, AIMessageChunk):
         return ""
@@ -397,7 +568,29 @@ def _cache_read_tokens(usage: Any) -> int:
 
 
 def _tool_output_is_error(output: Any) -> bool:
-    return isinstance(output, ToolMessage) and getattr(output, "status", None) == "error"
+    if isinstance(output, ToolMessage):
+        if getattr(output, "status", None) == "error":
+            return True
+        return _serialized_tool_output_is_error(getattr(output, "content", ""))
+    return _serialized_tool_output_is_error(output)
+
+
+def _serialized_tool_output_is_error(output: Any) -> bool:
+    if isinstance(output, dict):
+        return _tool_error_payload(output)
+    if not isinstance(output, str):
+        return False
+    try:
+        parsed = json.loads(output)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(parsed, dict) and _tool_error_payload(parsed)
+
+
+def _tool_error_payload(payload: dict[str, Any]) -> bool:
+    code = payload.get("code")
+    message = payload.get("message")
+    return isinstance(code, str) and bool(code.strip()) and isinstance(message, str)
 
 
 def _stringify_tool_output(output: Any) -> str:

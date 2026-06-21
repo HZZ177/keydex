@@ -2,7 +2,10 @@ import { createConversationRuntime, type ConversationRuntime, type ConversationR
 import { createHttpClient, HttpClient, type HttpClientOptions } from "./httpClient";
 import { createModelsRuntime, type ModelsRuntime } from "./models";
 import { createSettingsRuntime, type HealthResponse, type SettingsRuntime } from "./settings";
+import { createUsageRuntime, type UsageRuntime } from "./usage";
 import { createWorkspaceRuntime, type WorkspaceRuntime } from "./workspace";
+import { createWorkspacesRuntime, type WorkspacesRuntime } from "./workspaces";
+import { createDesktopPickerRuntime, type DesktopPickerRuntime } from "./desktopPicker";
 
 export interface RuntimeBridgeOptions extends HttpClientOptions, ConversationRuntimeOptions {
   httpClient?: HttpClient;
@@ -13,7 +16,10 @@ export interface RuntimeBridge {
   conversation: ConversationRuntime;
   models: ModelsRuntime;
   settings: SettingsRuntime;
+  usage: UsageRuntime;
   workspace: WorkspaceRuntime;
+  workspaces: WorkspacesRuntime;
+  desktopPicker: DesktopPickerRuntime;
   getBaseUrl(): string;
   setBaseUrl(baseUrl: string): void;
   health(): Promise<HealthResponse>;
@@ -28,7 +34,10 @@ export function createRuntimeBridge(options: RuntimeBridgeOptions = {}): Runtime
     conversation: createConversationRuntime(http, options),
     models: createModelsRuntime(http),
     settings,
+    usage: createUsageRuntime(http),
     workspace: createWorkspaceRuntime(http),
+    workspaces: createWorkspacesRuntime(http),
+    desktopPicker: createDesktopPickerRuntime(),
     getBaseUrl() {
       return http.getBaseUrl();
     },

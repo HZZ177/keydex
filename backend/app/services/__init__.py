@@ -14,6 +14,19 @@ from backend.app.services.session_service import (
     SessionService,
     SessionValidationError,
 )
+from backend.app.services.usage_service import (
+    UsageRequestNotFoundError,
+    UsageRequestQuery,
+    UsageService,
+    UsageValidationError,
+)
+from backend.app.services.workspace_service import (
+    WorkspaceDeletedError,
+    WorkspaceNotFoundError,
+    WorkspaceRuntimeContext,
+    WorkspaceService,
+    WorkspaceServiceError,
+)
 
 __all__ = [
     "ChatCancellationToken",
@@ -26,4 +39,13 @@ __all__ = [
     "SessionNotFoundError",
     "SessionService",
     "SessionValidationError",
+    "UsageRequestNotFoundError",
+    "UsageRequestQuery",
+    "UsageService",
+    "UsageValidationError",
+    "WorkspaceDeletedError",
+    "WorkspaceNotFoundError",
+    "WorkspaceRuntimeContext",
+    "WorkspaceService",
+    "WorkspaceServiceError",
 ]

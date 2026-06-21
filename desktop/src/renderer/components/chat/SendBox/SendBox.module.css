@@ -225,8 +225,16 @@
   min-height: 56px;
   align-items: center;
   margin: 0 -16px;
+  overflow: visible;
+  border-top: 1px solid color-mix(in srgb, var(--composer-border) 70%, transparent);
+  border-bottom-right-radius: 19px;
+  border-bottom-left-radius: 19px;
   padding: 0 18px;
   background: color-mix(in srgb, var(--surface-muted) 82%, var(--composer-bg));
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--composer-border) 50%, transparent),
+    inset -1px 0 0 color-mix(in srgb, var(--composer-border) 50%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--composer-border) 62%, transparent);
   color: var(--color-text-tertiary);
 }
 
@@ -270,6 +278,8 @@
   .contextBar {
     min-height: auto;
     margin: 0 -14px;
+    border-bottom-right-radius: 17px;
+    border-bottom-left-radius: 17px;
     padding: 10px 14px 12px;
   }
 

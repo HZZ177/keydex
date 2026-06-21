@@ -14,6 +14,7 @@ from backend.app.services import (
     SessionNotFoundError,
     SessionService,
     SessionValidationError,
+    WorkspaceServiceError,
 )
 from backend.app.storage import StorageRepositories
 
@@ -28,6 +29,10 @@ class CreateSessionRequest(BaseModel):
     title: str | None = None
     session_tag: str = "chat"
     session_id: str | None = None
+    session_type: str = "chat"
+    workspace_id: str | None = None
+    cwd: str | None = None
+    workspace_roots: list[str] | None = None
 
 
 class UpdateSessionRequest(BaseModel):
@@ -44,6 +49,11 @@ class SessionListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class SessionGroupedResponse(BaseModel):
+    groups: list[dict[str, Any]]
+    total: int
 
 
 class SessionHistoryResponse(BaseModel):
@@ -63,13 +73,22 @@ def create_session(
     settings: AppSettings = SettingsDep,
 ) -> SessionResponse:
     service = _service(repositories)
-    session = service.create_session(
-        session_id=payload.session_id,
-        user_id=payload.user_id or settings.default_user_id,
-        scene_id=payload.scene_id or settings.default_scene_id,
-        title=payload.title,
-        session_tag=payload.session_tag,
-    )
+    try:
+        session = service.create_session(
+            session_id=payload.session_id,
+            user_id=payload.user_id or settings.default_user_id,
+            scene_id=payload.scene_id or settings.default_scene_id,
+            title=payload.title,
+            session_tag=payload.session_tag,
+            session_type=payload.session_type,
+            workspace_id=payload.workspace_id,
+            cwd=payload.cwd,
+            workspace_roots=payload.workspace_roots,
+        )
+    except WorkspaceServiceError as exc:
+        raise _workspace_error(exc) from exc
+    except SessionValidationError as exc:
+        raise _bad_request("invalid_session_create", str(exc)) from exc
     return SessionResponse(session=session)
 
 
@@ -79,6 +98,8 @@ def list_sessions(
     scene_id: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     session_tag: str | None = None,
+    workspace_id: str | None = None,
+    session_type: str | None = None,
     title: str | None = None,
     current_session_id: str | None = None,
     page: int = Query(default=1, ge=1),
@@ -91,6 +112,8 @@ def list_sessions(
             scene_id=scene_id,
             status=status_filter,
             session_tag=session_tag,
+            workspace_id=workspace_id,
+            session_type=session_type,
             title=title,
             current_session_id=current_session_id,
             page=page,
@@ -103,6 +126,33 @@ def list_sessions(
         f"page={page} | page_size={page_size} | total={result.get('total', 0)}"
     )
     return SessionListResponse(**result)
+
+
+@router.get("/grouped", response_model=SessionGroupedResponse)
+def group_sessions(
+    user_id: str | None = None,
+    scene_id: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    session_tag: str | None = None,
+    workspace_id: str | None = None,
+    session_type: str | None = None,
+    title: str | None = None,
+    current_session_id: str | None = None,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> SessionGroupedResponse:
+    result = _service(repositories).group_sessions(
+        ListSessionsRequest(
+            user_id=user_id,
+            scene_id=scene_id,
+            status=status_filter,
+            session_tag=session_tag,
+            workspace_id=workspace_id,
+            session_type=session_type,
+            title=title,
+            current_session_id=current_session_id,
+        )
+    )
+    return SessionGroupedResponse(**result)
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
@@ -218,7 +268,11 @@ def _history_response(
 
 
 def _service(repositories: StorageRepositories) -> SessionService:
-    return SessionService(repositories.sessions, repositories.message_events)
+    return SessionService(
+        repositories.sessions,
+        repositories.message_events,
+        repositories.workspaces,
+    )
 
 
 def _not_found(exc: SessionNotFoundError) -> HTTPException:
@@ -232,4 +286,15 @@ def _bad_request(code: str, message: str) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail={"code": code, "message": message, "details": {}},
+    )
+
+
+def _workspace_error(exc: WorkspaceServiceError) -> HTTPException:
+    status_code = {
+        "workspace_not_found": status.HTTP_404_NOT_FOUND,
+        "workspace_deleted": status.HTTP_410_GONE,
+    }.get(exc.code, status.HTTP_400_BAD_REQUEST)
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": exc.code, "message": exc.message, "details": exc.details},
     )

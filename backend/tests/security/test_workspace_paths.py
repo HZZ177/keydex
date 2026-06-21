@@ -4,6 +4,7 @@ import pytest
 
 from backend.app.security import (
     WorkspacePathError,
+    normalize_workspace_root_for_storage,
     normalize_workspace_roots,
     resolve_path,
     resolve_workspace_path,
@@ -43,3 +44,11 @@ def test_normalize_workspace_roots_deduplicates_and_resolves(tmp_path) -> None:
     roots = normalize_workspace_roots(tmp_path, [tmp_path, Path(tmp_path) / "."])
 
     assert roots == [tmp_path.resolve()]
+
+
+def test_normalize_workspace_root_for_storage_uses_stable_key(tmp_path) -> None:
+    first = normalize_workspace_root_for_storage(tmp_path)
+    second = normalize_workspace_root_for_storage(Path(tmp_path) / ".")
+
+    assert first == second
+    assert "\\" not in first

@@ -15,7 +15,6 @@ export interface TitlebarProps {
 
 export function Titlebar({ title, sidebarCollapsed, onToggleSidebar, windowControls }: TitlebarProps) {
   const controls = useMemo(() => windowControls ?? createWindowControls(), [windowControls]);
-  const ToggleIcon = sidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
 
   const handleDrag = (event: MouseEvent<HTMLElement>) => {
     if (event.button !== 0) {
@@ -32,12 +31,28 @@ export function Titlebar({ title, sidebarCollapsed, onToggleSidebar, windowContr
     <header className={styles.titlebar} data-testid="titlebar">
       <div className={styles.left}>
         <button
-          className={styles.iconButton}
+          className={`${styles.iconButton} ${styles.sidebarToggle}`}
+          data-state={sidebarCollapsed ? "collapsed" : "expanded"}
           type="button"
           aria-label={sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
           onClick={onToggleSidebar}
         >
-          <ToggleIcon size={17} strokeWidth={2} />
+          <span
+            className={styles.toggleGlyph}
+            data-kind="close"
+            data-visible={sidebarCollapsed ? "false" : "true"}
+            aria-hidden="true"
+          >
+            <PanelLeftClose size={17} strokeWidth={2} />
+          </span>
+          <span
+            className={styles.toggleGlyph}
+            data-kind="open"
+            data-visible={sidebarCollapsed ? "true" : "false"}
+            aria-hidden="true"
+          >
+            <PanelLeftOpen size={17} strokeWidth={2} />
+          </span>
         </button>
         <div className={styles.navGhost} aria-hidden="true">
           <span />

@@ -4,7 +4,7 @@ import json
 import time
 from typing import Any
 
-from backend.app.core.ids import IdPrefix, new_id
+from backend.app.core.ids import new_id
 from backend.app.events import DomainEventType, EventDispatcher
 from backend.app.tools.base import (
     ToolExecutionContext,
@@ -31,7 +31,7 @@ class ToolOrchestrator:
         subagent_id: str | None = None,
     ) -> ToolExecutionResult:
         resolved_args = dict(args or {})
-        resolved_run_id = run_id or new_id(IdPrefix.CALL)
+        resolved_run_id = run_id or new_id()
         is_subagent = bool(subagent_name or subagent_id)
         started_at = time.perf_counter()
         start_time_ms = int(time.time() * 1000)

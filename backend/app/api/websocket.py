@@ -3,18 +3,20 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import uuid
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from backend.app.core.ids import IdPrefix, new_id
-from backend.app.core.logger import logger, trace_id_var
+from backend.app.core.ids import new_id
+from backend.app.core.logger import logger
+from backend.app.core.request_context import trace_id_var
 from backend.app.services import (
     ChatCancellationToken,
     ChatRequest,
     SessionNotFoundError,
     SessionService,
+    SessionValidationError,
+    WorkspaceServiceError,
 )
 
 router = APIRouter(prefix="/agent-base/ws", tags=["websocket"])
@@ -38,12 +40,16 @@ class WebSocketChannelAdapter:
 @router.websocket("/chat")
 async def chat_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
-    connection_trace_id = websocket.headers.get("x-trace-id") or uuid.uuid4().hex
+    connection_trace_id = websocket.headers.get("x-trace-id") or new_id()
     trace_token = trace_id_var.set(connection_trace_id)
     runtime = websocket.app.state.runtime
     settings = runtime.settings
     repositories = runtime.repositories
-    session_service = SessionService(repositories.sessions, repositories.message_events)
+    session_service = SessionService(
+        repositories.sessions,
+        repositories.message_events,
+        repositories.workspaces,
+    )
     adapter = WebSocketChannelAdapter(websocket)
     bound_session_id = str(websocket.query_params.get("session_id") or "").strip() or None
     current_task: asyncio.Task | None = None
@@ -117,10 +123,14 @@ async def chat_websocket(websocket: WebSocket) -> None:
                 )
                 if action == "create_session":
                     session = session_service.create_session(
-                        session_id=str(payload.get("session_id") or new_id(IdPrefix.SESSION)),
+                        session_id=str(payload.get("session_id") or new_id()),
                         user_id=str(payload.get("user_id") or settings.default_user_id),
                         scene_id=str(payload.get("scene_id") or settings.default_scene_id),
                         title=payload.get("title"),
+                        session_type=str(payload.get("session_type") or "chat"),
+                        workspace_id=payload.get("workspace_id"),
+                        cwd=payload.get("cwd"),
+                        workspace_roots=payload.get("workspace_roots"),
                     )
                     bound_session_id = session["id"]
                     logger.info(
@@ -195,6 +205,18 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     f"action={action} | error={exc}"
                 )
                 await send_error("session_not_found", str(exc))
+            except SessionValidationError as exc:
+                logger.warning(
+                    f"[WebSocket] session 请求非法 | trace_id={connection_trace_id} | "
+                    f"action={action} | error={exc}"
+                )
+                await send_error("invalid_session", str(exc))
+            except WorkspaceServiceError as exc:
+                logger.warning(
+                    f"[WebSocket] workspace 请求非法 | trace_id={connection_trace_id} | "
+                    f"action={action} | code={exc.code} | error={exc}"
+                )
+                await send_error(exc.code, exc.message, {"details": exc.details})
             except Exception as exc:
                 logger.opt(exception=True).error(
                     f"[WebSocket] action 处理失败 | trace_id={connection_trace_id} | "

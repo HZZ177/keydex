@@ -17,8 +17,10 @@ from backend.app.api.models import router as models_router
 from backend.app.api.sessions import router as sessions_router
 from backend.app.api.settings import load_effective_model_settings
 from backend.app.api.settings import router as settings_router
+from backend.app.api.usage import router as usage_router
 from backend.app.api.websocket import router as websocket_router
 from backend.app.api.workspace import router as workspace_router
+from backend.app.api.workspaces import router as workspaces_router
 from backend.app.core.config import AppSettings, get_settings
 from backend.app.core.exception_handler import register_exception_handlers
 from backend.app.core.logger import configure_logging, logger
@@ -55,7 +57,10 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         allow_credentials=False,
     )
     app.state.settings = resolved_settings
-    app.state.database = init_database(resolved_settings.data_dir / "app.db")
+    app.state.database = init_database(
+        resolved_settings.data_dir / "app.db",
+        default_workspace_root=resolved_settings.workspace_root,
+    )
     app.state.repositories = StorageRepositories(app.state.database)
     app.state.checkpointer = SQLiteCheckpointSaver(app.state.database)
     if resolved_settings.e2e_model_transport:
@@ -98,6 +103,8 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(model_providers_router)
     app.include_router(models_router)
     app.include_router(sessions_router)
+    app.include_router(usage_router)
+    app.include_router(workspaces_router)
     app.include_router(workspace_router)
     app.include_router(websocket_router)
     return app

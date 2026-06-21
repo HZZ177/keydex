@@ -1,12 +1,14 @@
 import { ChevronRight, FileText, Folder, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import type { RuntimeBridge, WorkspaceEntry } from "@/runtime";
+import type { RuntimeBridge, WorkspaceEntry, WorkspaceScope } from "@/runtime";
 
 import styles from "./WorkspacePanel.module.css";
 
 export interface WorkspacePanelProps {
-  root: string;
+  workspaceId?: string;
+  sessionId?: string;
+  label?: string;
   runtime: RuntimeBridge;
   onSelectFile?: (path: string) => void;
 }
@@ -14,12 +16,14 @@ export interface WorkspacePanelProps {
 type EntryMap = Record<string, WorkspaceEntry[]>;
 type ErrorMap = Record<string, string>;
 
-export function WorkspacePanel({ root, runtime, onSelectFile }: WorkspacePanelProps) {
+export function WorkspacePanel({ workspaceId, sessionId, label, runtime, onSelectFile }: WorkspacePanelProps) {
   const [entriesByPath, setEntriesByPath] = useState<EntryMap>({});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([""]));
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(() => new Set());
   const [errorsByPath, setErrorsByPath] = useState<ErrorMap>({});
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
+  const scopeLabel = label ?? workspaceId ?? sessionId ?? "未绑定工作区";
 
   useEffect(() => {
     let active = true;
@@ -28,8 +32,15 @@ export function WorkspacePanel({ root, runtime, onSelectFile }: WorkspacePanelPr
     setExpandedPaths(new Set([""]));
     setSelectedPath(null);
     setLoadingPaths(new Set([""]));
+    if (!scope) {
+      setErrorsByPath({ "": "工作区未绑定" });
+      setLoadingPaths(new Set());
+      return () => {
+        active = false;
+      };
+    }
     void runtime.workspace
-      .listDirectory(root, "")
+      .listDirectory(scope, "")
       .then((response) => {
         if (!active) {
           return;
@@ -49,7 +60,7 @@ export function WorkspacePanel({ root, runtime, onSelectFile }: WorkspacePanelPr
     return () => {
       active = false;
     };
-  }, [root, runtime]);
+  }, [runtime, scope]);
 
   const rootEntries = entriesByPath[""] ?? [];
   const rootLoading = loadingPaths.has("");
@@ -63,7 +74,11 @@ export function WorkspacePanel({ root, runtime, onSelectFile }: WorkspacePanelPr
     setLoadingPaths((paths) => addToSet(paths, path));
     setErrorsByPath((errors) => removeKey(errors, path));
     try {
-      const response = await runtime.workspace.listDirectory(root, path);
+      if (!scope) {
+        setErrorsByPath((errors) => ({ ...errors, [path]: "工作区未绑定" }));
+        return;
+      }
+      const response = await runtime.workspace.listDirectory(scope, path);
       setEntriesByPath((entries) => ({ ...entries, [path]: sortEntries(response.entries) }));
     } catch (reason) {
       setErrorsByPath((errors) => ({ ...errors, [path]: errorMessage(reason) }));
@@ -91,7 +106,7 @@ export function WorkspacePanel({ root, runtime, onSelectFile }: WorkspacePanelPr
       <header className={styles.header}>
         <div className={styles.rootInfo}>
           <span>当前工作区</span>
-          <strong title={root}>{root}</strong>
+          <strong title={scopeLabel}>{scopeLabel}</strong>
         </div>
         <button disabled={rootLoading} onClick={() => void loadDirectory("", true)} type="button">
           <RefreshCw className={rootLoading ? styles.spinning : undefined} size={14} />
@@ -125,6 +140,22 @@ export function WorkspacePanel({ root, runtime, onSelectFile }: WorkspacePanelPr
       {!rootLoading && !rootError && !rootEntries.length ? <p className={styles.muted}>工作区为空</p> : null}
     </section>
   );
+}
+
+function workspaceScope({
+  workspaceId,
+  sessionId,
+}: {
+  workspaceId?: string;
+  sessionId?: string;
+}): WorkspaceScope | null {
+  if (sessionId) {
+    return { sessionId };
+  }
+  if (workspaceId) {
+    return { workspaceId };
+  }
+  return null;
 }
 
 function TreeNode({

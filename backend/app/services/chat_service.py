@@ -7,8 +7,9 @@ from typing import Any
 from backend.app.agent import AgentRunner
 from backend.app.agent.event_processor import AgentEventResult, process_agent_events
 from backend.app.core.config import AppSettings
-from backend.app.core.ids import IdPrefix, new_id
-from backend.app.core.logger import logger, trace_id_var
+from backend.app.core.ids import new_id
+from backend.app.core.logger import logger
+from backend.app.core.request_context import reset_request_context, set_request_context
 from backend.app.events import (
     ChatProjection,
     ChatProjectionAdapter,
@@ -18,6 +19,7 @@ from backend.app.events import (
     TurnCompletedAggregator,
 )
 from backend.app.services.message_event_service import MessageEventService
+from backend.app.services.workspace_service import WorkspaceService
 from backend.app.storage import SessionRecord, StorageRepositories
 from backend.app.tools import ToolExecutionContext
 
@@ -77,6 +79,7 @@ class ChatService:
         self.repositories = repositories
         self.agent_runner = agent_runner
         self.message_event_service = MessageEventService(repositories.message_events)
+        self.workspace_service = WorkspaceService(repositories.workspaces)
 
     async def handle_chat(
         self,
@@ -92,10 +95,16 @@ class ChatService:
         session = self._ensure_session(request)
         _, max_turn = self.repositories.message_events.get_max_seq_and_turn(session.id)
         turn_index = max_turn + 1
-        trace_id = new_id("trace")
+        trace_id = new_id()
         root_node_id = f"{trace_id}-root"
         started_at = time.perf_counter()
-        trace_token = trace_id_var.set(trace_id)
+        active_session_id = session.active_session_id or session.id
+        context_token = set_request_context(
+            trace_id=trace_id,
+            session_id=session.id,
+            active_session_id=active_session_id,
+            user_id=request.user_id or session.user_id,
+        )
 
         logger.info(
             f"[ChatTurn] 开始处理对话 | session_id={session.id} | turn_index={turn_index} | "
@@ -279,7 +288,7 @@ class ChatService:
                 error=error_message,
             )
         finally:
-            trace_id_var.reset(trace_token)
+            reset_request_context(context_token)
 
     async def _run_agent_loop(
         self,
@@ -292,22 +301,24 @@ class ChatService:
         cancellation: ChatCancellationToken,
     ) -> AgentLoopOutcome:
         active_session_id = session.active_session_id or session.id
-        tool_context = ToolExecutionContext(
-            session_id=session.id,
-            user_id=request.user_id or session.user_id,
-            workspace_root=self.settings.workspace_root,
-            turn_index=turn_index,
+        tool_context, enable_tools = self._build_tool_context(
+            request=request,
+            session=session,
             trace_id=trace_id,
+            turn_index=turn_index,
         )
+        workspace_root_label = str(tool_context.workspace_root) if enable_tools else "-"
         logger.info(
             f"[AgentLoop] 创建 agent | session_id={session.id} | turn_index={turn_index} | "
             f"trace_id={trace_id} | model={request.model.strip()} | "
-            f"workspace_root={self.settings.workspace_root}"
+            f"session_type={session.session_type} | tools_enabled={enable_tools} | "
+            f"workspace_root={workspace_root_label}"
         )
         agent = self.agent_runner.create_agent(
             model=request.model.strip(),
             system_prompt=request.system_prompt,
             tool_context=tool_context,
+            enable_tools=enable_tools,
         )
         run_config = {
             "configurable": {
@@ -334,6 +345,8 @@ class ChatService:
             user_id=request.user_id or session.user_id,
             active_session_id=active_session_id,
             turn_index=turn_index,
+            model=request.model.strip(),
+            llm_request_logs=self.repositories.llm_request_logs,
         )
         checkpoint_config = await self.agent_runner.get_latest_checkpoint_config(
             thread_id=active_session_id,
@@ -351,6 +364,46 @@ class ChatService:
             output_checkpoint_id=checkpoint_config.get("checkpoint_id"),
             output_checkpoint_ns=str(checkpoint_config.get("checkpoint_ns") or ""),
         )
+
+    def _build_tool_context(
+        self,
+        *,
+        request: ChatRequest,
+        session: SessionRecord,
+        trace_id: str,
+        turn_index: int,
+    ) -> tuple[ToolExecutionContext, bool]:
+        if session.session_type == "workspace":
+            workspace_context = self.workspace_service.runtime_context_for_session(session)
+            return (
+                ToolExecutionContext(
+                    session_id=session.id,
+                    user_id=request.user_id or session.user_id,
+                    workspace_root=workspace_context.cwd,
+                    turn_index=turn_index,
+                    trace_id=trace_id,
+                    metadata={
+                        "workspace_id": workspace_context.workspace_id,
+                        "workspace_roots": [
+                            str(root) for root in workspace_context.workspace_roots
+                        ],
+                    },
+                ),
+                True,
+            )
+        if session.session_type == "chat":
+            return (
+                ToolExecutionContext(
+                    session_id=session.id,
+                    user_id=request.user_id or session.user_id,
+                    workspace_root=self.settings.data_dir,
+                    turn_index=turn_index,
+                    trace_id=trace_id,
+                    metadata={"tools_enabled": False},
+                ),
+                False,
+            )
+        raise ValueError(f"不支持的 session 类型: {session.session_type}")
 
     def _build_turn_dispatcher(
         self,
@@ -439,7 +492,7 @@ class ChatService:
                 logger.debug(f"[Session] 复用已有会话 | session_id={existing.id}")
                 return existing
         created = self.repositories.sessions.create(
-            session_id=request.session_id or new_id(IdPrefix.SESSION),
+            session_id=request.session_id or new_id(),
             user_id=request.user_id or self.settings.default_user_id,
             scene_id=request.scene_id or self.settings.default_scene_id,
             title=_title_from_message(request.message),

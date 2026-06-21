@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,14 @@ def normalize_workspace_roots(cwd: str | Path, roots: list[str | Path] | None = 
         resolved = Path(root).expanduser().resolve()
         if resolved not in normalized:
             normalized.append(resolved)
+    return normalized
+
+
+def normalize_workspace_root_for_storage(root: str | Path) -> str:
+    resolved = Path(root).expanduser().resolve()
+    normalized = resolved.as_posix().rstrip("/")
+    if os.name == "nt":
+        return normalized.casefold()
     return normalized
 
 

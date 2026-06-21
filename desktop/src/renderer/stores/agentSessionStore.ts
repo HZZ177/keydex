@@ -10,12 +10,14 @@ import type {
   AgentReasoningKind,
   AgentSession,
   AgentSessionStatus,
+  AgentSessionType,
   AgentStreamActionData,
   AgentSubagentItem,
   AgentSubagentToolItem,
   AgentToolCall,
   AgentToolEventData,
   AgentToolStatus,
+  Workspace,
 } from "@/types/protocol";
 
 export type AgentSessionRuntimeState = "idle" | "running" | "cancelling" | "failed" | "closed";
@@ -1054,6 +1056,7 @@ function sessionFromData(data: Record<string, unknown>): AgentSession | null {
 function normalizeSession(data: Record<string, unknown>): AgentSession {
   const now = new Date(0).toISOString();
   const status = stringValue(data.status);
+  const sessionType = stringValue(data.session_type);
   return {
     id: stringValue(data.id) || stringValue(data.session_id),
     user_id: stringValue(data.user_id) || "local-user",
@@ -1061,6 +1064,11 @@ function normalizeSession(data: Record<string, unknown>): AgentSession {
     status: isAgentSessionStatus(status) ? status : "active",
     title: typeof data.title === "string" ? data.title : null,
     session_tag: stringValue(data.session_tag) || "chat",
+    session_type: isAgentSessionType(sessionType) ? sessionType : "chat",
+    workspace_id: nullableString(data.workspace_id),
+    cwd: nullableString(data.cwd),
+    workspace_roots: stringArray(data.workspace_roots),
+    workspace: normalizeWorkspace(data.workspace),
     active_session_id: nullableString(data.active_session_id),
     parent_session_id: nullableString(data.parent_session_id),
     child_session_id: nullableString(data.child_session_id),
@@ -1071,6 +1079,24 @@ function normalizeSession(data: Record<string, unknown>): AgentSession {
     is_scheduled: Boolean(data.is_scheduled),
     is_current: Boolean(data.is_current),
     scene_version_seq: typeof data.scene_version_seq === "number" ? data.scene_version_seq : null,
+  };
+}
+
+function normalizeWorkspace(value: unknown): Workspace | null {
+  const workspace = asRecord(value);
+  if (!workspace || !stringValue(workspace.id)) {
+    return null;
+  }
+  return {
+    id: stringValue(workspace.id),
+    name: stringValue(workspace.name),
+    root_path: stringValue(workspace.root_path),
+    normalized_root_path: stringValue(workspace.normalized_root_path),
+    type: stringValue(workspace.type) || "project",
+    created_at: stringValue(workspace.created_at),
+    updated_at: stringValue(workspace.updated_at),
+    last_opened_at: nullableString(workspace.last_opened_at),
+    is_deleted: Boolean(workspace.is_deleted),
   };
 }
 
@@ -1173,6 +1199,14 @@ function realTimestampMs(value: unknown): number | null {
 
 function nullableString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function isAgentSessionType(value: string): value is AgentSessionType {
+  return value === "chat" || value === "workspace";
 }
 
 function isAgentSessionStatus(value: string): value is AgentSessionStatus {

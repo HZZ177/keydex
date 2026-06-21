@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import type { RuntimeBridge } from "@/runtime";
 import { MessageList } from "@/renderer/pages/conversation/messages";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
@@ -20,6 +21,40 @@ describe("MessageList", () => {
     expect(screen.getByText("你好")).not.toBeNull();
     expect(screen.getByText("收到")).not.toBeNull();
     expect(screen.getAllByRole("button", { name: "复制消息" }).length).toBe(2);
+  });
+
+  it("loads relative markdown images through the session workspace scope", async () => {
+    const readMedia = vi.fn().mockResolvedValue({
+      path: "assets/pixel.png",
+      media_type: "image/png",
+      size: 68,
+      data_url: "data:image/png;base64,abc",
+    });
+    const runtime = fakeRuntime(readMedia);
+
+    render(
+      <MessageList
+        messages={[message("m1", "assistant", "![项目图](assets/pixel.png)")]}
+        workspaceRuntime={runtime}
+        workspaceScope={{ sessionId: "ses-1" }}
+      />,
+    );
+
+    const image = (await screen.findByAltText("项目图")) as HTMLImageElement;
+    expect(image.getAttribute("src")).toBe("data:image/png;base64,abc");
+    expect(readMedia).toHaveBeenCalledWith({ sessionId: "ses-1" }, "assets/pixel.png");
+  });
+
+  it("shows a readable failure state for relative markdown images without workspace scope", async () => {
+    const readMedia = vi.fn();
+
+    render(<MessageList messages={[message("m1", "assistant", "![项目图](assets/pixel.png)")]} />);
+
+    await waitFor(() => {
+      expect(screen.queryByAltText("项目图")).toBeNull();
+    });
+    expect(screen.getByRole("img", { name: "项目图" }).textContent).toContain("项目图");
+    expect(readMedia).not.toHaveBeenCalled();
   });
 
   it("shows assistant copy row only on the last assistant text in a turn", () => {
@@ -144,6 +179,42 @@ describe("MessageList", () => {
     expect(screen.queryByText(/工具步骤/)).toBeNull();
     expect(screen.queryByText("5 步")).toBeNull();
     expect(screen.queryByText("read_file")).toBeNull();
+  });
+
+  it("uses failure wording for grouped tools with error results", () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            ...toolMessage("read-failed", "read_file", { path: "missing.txt" }),
+            payload: {
+              call: {
+                id: "call-read-failed",
+                name: "read_file",
+                arguments: { path: "missing.txt" },
+              },
+              result: {
+                status: "error",
+                error: "文件不存在",
+              },
+            },
+          },
+          {
+            ...commandMessage("cmd-failed"),
+            payload: {
+              command: "pytest backend/tests",
+              cwd: "D:/repo",
+              stderr: "failed",
+              exit_code: 1,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("读取失败 1 个文件，运行失败 1 条命令")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "读取失败 1 个文件，运行失败 1 条命令详情" }));
+    expect(screen.getByText("读取文件失败 missing.txt")).not.toBeNull();
   });
 
   it("uses the concrete tool icon for grouped activity with one tool category", () => {
@@ -400,4 +471,13 @@ function mockScrollMetrics(
   Object.defineProperty(element, "scrollHeight", { configurable: true, value: metrics.scrollHeight });
   Object.defineProperty(element, "clientHeight", { configurable: true, value: metrics.clientHeight });
   Object.defineProperty(element, "scrollTop", { configurable: true, writable: true, value: metrics.scrollTop });
+}
+
+function fakeRuntime(readMedia: ReturnType<typeof vi.fn>): RuntimeBridge {
+  return {
+    workspace: {
+      readMedia,
+      readFile: vi.fn(),
+    },
+  } as unknown as RuntimeBridge;
 }

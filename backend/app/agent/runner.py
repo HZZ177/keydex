@@ -58,6 +58,7 @@ class AgentRunner:
         model: str,
         system_prompt: str | None,
         tool_context: ToolExecutionContext,
+        enable_tools: bool = True,
     ) -> Any:
         if self.checkpointer is None:
             logger.error("[AgentRunner] checkpointer 未配置，无法创建 agent")
@@ -69,9 +70,13 @@ class AgentRunner:
             model=model,
             http_transport=self._model_http_transport_provider(),
         )
-        tools = registry_to_langchain_tools(
-            self.tool_registry,
-            context_factory=lambda: tool_context,
+        tools = (
+            registry_to_langchain_tools(
+                self.tool_registry,
+                context_factory=lambda: tool_context,
+            )
+            if enable_tools
+            else []
         )
         resolved_system_prompt = (
             system_prompt if system_prompt is not None else self.default_system_prompt
@@ -79,7 +84,8 @@ class AgentRunner:
         prompt = resolved_system_prompt.strip() if resolved_system_prompt else ""
         logger.info(
             f"[AgentRunner] 组装 agent | model={model} | tools={len(tools)} | "
-            f"prompt_len={len(prompt)} | workspace_root={tool_context.workspace_root}"
+            f"tools_enabled={enable_tools} | prompt_len={len(prompt)} | "
+            f"workspace_root={tool_context.workspace_root}"
         )
         return self.factory.create_agent(
             model=llm,

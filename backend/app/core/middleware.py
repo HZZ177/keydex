@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
 from collections.abc import Callable
 from typing import Any
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from backend.app.core.logger import logger, redact_sensitive, trace_id_var
+from backend.app.core.ids import new_id
+from backend.app.core.logger import logger, redact_sensitive
+from backend.app.core.request_context import trace_id_var
 
 MAX_BODY_LOG_CHARS = 2_000
 
@@ -30,7 +31,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return any(filtered_url in url for filtered_url in self.filtered_urls)
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
-        trace_id = request.headers.get("x-trace-id") or uuid.uuid4().hex
+        trace_id = request.headers.get("x-trace-id") or new_id()
         token = trace_id_var.set(trace_id)
         start_time = time.perf_counter()
         method = request.method

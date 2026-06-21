@@ -1,7 +1,13 @@
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
-import { runtimeBridge, type ChatChannel, type RuntimeBridge, type WsConnectionStatus } from "@/runtime";
+import {
+  runtimeBridge,
+  type ChatChannel,
+  type RuntimeBridge,
+  type WorkspaceSearchResult,
+  type WsConnectionStatus,
+} from "@/runtime";
 import { SendBox } from "@/renderer/components/chat/SendBox";
 import { RuntimeModelSelector, type RuntimeModelSelection, useRuntimeModelSelection } from "@/renderer/components/model";
 import { FilePreview, type FilePreviewRequest } from "@/renderer/components/workspace";
@@ -59,6 +65,12 @@ export function ConversationPage({
   const messages = useMemo(() => agentMessages.map(agentMessageToConversationMessage), [agentMessages]);
   const runtimeState = toConversationRuntimeState(requestState ?? selectAgentRuntimeState(state, threadId));
   const title = session?.title || (threadId ? `对话 ${threadId}` : "对话");
+  const messageWorkspaceScope = useMemo(() => ({ sessionId: threadId }), [threadId]);
+  const workspaceUnavailable = Boolean(session && session.session_type === "workspace" && !session.workspace);
+  const searchWorkspace =
+    session?.session_type === "workspace" && session.workspace && !workspaceUnavailable
+      ? (query: string) => runtime.workspace.search({ sessionId: threadId }, query)
+      : undefined;
   const connectionReady = wsStatus === "open";
   const canSend = draft.trim().length > 0 && !isBusy(runtimeState) && connectionReady;
   const canStop = runtimeState === "running" && connectionReady;
@@ -276,6 +288,7 @@ export function ConversationPage({
           canStop={canStop}
           connectionReady={connectionReady}
           modelSelection={modelSelection}
+          onSearchWorkspace={searchWorkspace}
           onOpenModelSettings={onOpenModelSettings}
           onChange={setDraft}
           onSend={send}
@@ -284,7 +297,12 @@ export function ConversationPage({
       }
       previewPanel={
         activePreview ? (
-          <FilePreview root={undefined} request={activePreview} runtime={runtime} onQuoteSelection={quoteSelection} />
+          <FilePreview
+            sessionId={threadId}
+            request={activePreview}
+            runtime={runtime}
+            onQuoteSelection={quoteSelection}
+          />
         ) : null
       }
     >
@@ -294,6 +312,8 @@ export function ConversationPage({
         isProcessing={runtimeState === "running"}
         runtimeState={runtimeState}
         runtimeDetail={runtimeDetail}
+        workspaceRuntime={runtime}
+        workspaceScope={messageWorkspaceScope}
         onFilePreview={(file) => openPreview({ type: "diff", path: file.path, diff: file.diff })}
         onQuoteSelection={quoteSelection}
         scrollButtonMode="external"
@@ -339,6 +359,7 @@ function ConversationComposer({
   canStop,
   connectionReady,
   modelSelection,
+  onSearchWorkspace,
   onOpenModelSettings,
   onChange,
   onSend,
@@ -350,6 +371,7 @@ function ConversationComposer({
   canStop: boolean;
   connectionReady: boolean;
   modelSelection: RuntimeModelSelection;
+  onSearchWorkspace?: (query: string) => Promise<WorkspaceSearchResult[]>;
   onOpenModelSettings?: () => void;
   onChange: (value: string) => void;
   onSend: () => void;
@@ -363,7 +385,7 @@ function ConversationComposer({
       canStop={canStop}
       statusText={composerStatusText(runtimeState, connectionReady)}
       variant="codex"
-      controls={
+      rightControls={
         <RuntimeModelSelector
           model={modelSelection.selectedModel}
           modelOptions={modelSelection.modelOptions}
@@ -378,7 +400,8 @@ function ConversationComposer({
       onChange={onChange}
       onSend={onSend}
       onStop={onStop}
-      allowFileSelection={false}
+      allowFileSelection={Boolean(onSearchWorkspace)}
+      onSearchWorkspace={onSearchWorkspace}
     />
   );
 }

@@ -1,9 +1,13 @@
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
+from backend.app.core.time import to_iso_z, utc_now
+from backend.app.security import normalize_workspace_root_for_storage
 
 SCHEMA_SQL = """
 pragma foreign_keys = on;
@@ -35,6 +39,26 @@ create table if not exists model_defaults (
   foreign key(provider_id) references model_providers(id) on delete cascade
 );
 
+create table if not exists workspaces (
+  id text primary key,
+  name text not null,
+  root_path text not null,
+  normalized_root_path text not null,
+  type text not null default 'project',
+  created_at text not null,
+  updated_at text not null,
+  last_opened_at text,
+  is_deleted integer not null default 0
+);
+
+create unique index if not exists idx_workspaces_normalized_root_active
+  on workspaces(normalized_root_path)
+  where is_deleted = 0;
+create index if not exists idx_workspaces_last_opened
+  on workspaces(last_opened_at desc, updated_at desc, created_at desc);
+create index if not exists idx_workspaces_deleted_updated
+  on workspaces(is_deleted, updated_at desc);
+
 create table if not exists sessions (
   id text primary key,
   user_id text not null,
@@ -53,10 +77,15 @@ create table if not exists sessions (
   source_active_session_id text,
   source_checkpoint_id text,
   source_checkpoint_ns text,
+  workspace_id text,
+  session_type text not null default 'chat',
+  cwd text,
+  workspace_roots_json text not null default '[]',
   title text,
   created_at text not null,
   updated_at text not null,
-  is_deleted integer not null default 0
+  is_deleted integer not null default 0,
+  foreign key(workspace_id) references workspaces(id) on delete set null
 );
 
 create index if not exists idx_sessions_scene_id on sessions(scene_id);
@@ -126,6 +155,46 @@ create index if not exists idx_trace_record_session_turn_created_at
 create index if not exists idx_trace_record_agg
   on trace_record(scene_id, scene_version_seq, end_time, status, user_id, created_at);
 
+create table if not exists llm_request_logs (
+  id text primary key,
+  trace_id text not null,
+  trace_record_id text not null,
+  session_id text not null,
+  active_session_id text,
+  gateway_thread_id text,
+  gateway_trace_id text,
+  turn_index integer,
+  provider_id text,
+  provider_name text,
+  model text not null,
+  status text not null,
+  start_time text not null,
+  end_time text,
+  duration_ms integer,
+  input_tokens integer not null default 0,
+  cache_read_tokens integer not null default 0,
+  output_tokens integer not null default 0,
+  total_tokens integer not null default 0,
+  request_preview text,
+  response_preview text,
+  error_message text,
+  metadata_json text not null default '{}',
+  created_at text not null,
+  updated_at text not null,
+  is_deleted integer not null default 0,
+  foreign key(trace_record_id) references trace_record(trace_id) on delete cascade,
+  foreign key(session_id) references sessions(id) on delete cascade
+);
+
+create index if not exists idx_llm_request_logs_time
+  on llm_request_logs(start_time desc);
+create index if not exists idx_llm_request_logs_trace
+  on llm_request_logs(trace_id, start_time);
+create index if not exists idx_llm_request_logs_model_time
+  on llm_request_logs(model, start_time desc);
+create index if not exists idx_llm_request_logs_status_time
+  on llm_request_logs(status, start_time desc);
+
 create table if not exists trace_event_log (
   id integer primary key autoincrement,
   trace_id text not null,
@@ -192,6 +261,21 @@ create index if not exists idx_writes_thread_ns_ckpt
   on checkpoint_writes_v2(thread_id, checkpoint_ns, checkpoint_id);
 """
 
+SCHEMA_UPGRADE_SQL = """
+create index if not exists idx_llm_request_logs_gateway_trace
+  on llm_request_logs(gateway_trace_id);
+create index if not exists idx_llm_request_logs_gateway_thread_time
+  on llm_request_logs(gateway_thread_id, start_time desc);
+create index if not exists idx_sessions_workspace_id
+  on sessions(workspace_id);
+create index if not exists idx_sessions_session_type
+  on sessions(session_type);
+create index if not exists idx_sessions_workspace_updated
+  on sessions(workspace_id, updated_at desc);
+create index if not exists idx_sessions_type_updated
+  on sessions(session_type, updated_at desc);
+"""
+
 
 class Database:
     def __init__(self, path: Path | str) -> None:
@@ -204,10 +288,106 @@ class Database:
         conn.execute("pragma foreign_keys = on")
         return conn
 
-    def init_schema(self) -> None:
+    def init_schema(self, *, default_workspace_root: Path | str | None = None) -> None:
         with self.connect() as conn:
+            legacy_session_columns = self._column_names(conn, "sessions")
+            should_migrate_legacy_sessions = (
+                bool(legacy_session_columns)
+                and "workspace_id" not in legacy_session_columns
+            )
             conn.executescript(SCHEMA_SQL)
+            self._ensure_column(conn, "sessions", "workspace_id", "text")
+            self._ensure_column(
+                conn,
+                "sessions",
+                "session_type",
+                "text not null default 'chat'",
+            )
+            self._ensure_column(conn, "sessions", "cwd", "text")
+            self._ensure_column(
+                conn,
+                "sessions",
+                "workspace_roots_json",
+                "text not null default '[]'",
+            )
+            self._ensure_column(conn, "llm_request_logs", "gateway_thread_id", "text")
+            self._ensure_column(conn, "llm_request_logs", "gateway_trace_id", "text")
+            conn.executescript(SCHEMA_UPGRADE_SQL)
+            if should_migrate_legacy_sessions:
+                self._migrate_legacy_sessions_to_default_workspace(
+                    conn,
+                    default_workspace_root=default_workspace_root,
+                )
         logger.info(f"[Database] 初始化 schema 完成 | path={self.path}")
+
+    @staticmethod
+    def _column_names(conn: sqlite3.Connection, table_name: str) -> set[str]:
+        return {
+            str(row["name"])
+            for row in conn.execute(f"pragma table_info({table_name})").fetchall()
+        }
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        column_definition: str,
+    ) -> None:
+        columns = {
+            str(row["name"])
+            for row in conn.execute(f"pragma table_info({table_name})").fetchall()
+        }
+        if column_name not in columns:
+            conn.execute(f"alter table {table_name} add column {column_name} {column_definition}")
+
+    @staticmethod
+    def _migrate_legacy_sessions_to_default_workspace(
+        conn: sqlite3.Connection,
+        *,
+        default_workspace_root: Path | str | None,
+    ) -> None:
+        root = Path(default_workspace_root or Path.cwd()).expanduser().resolve()
+        root_text = str(root)
+        normalized_root = normalize_workspace_root_for_storage(root)
+        workspace = conn.execute(
+            """
+            select id from workspaces
+            where normalized_root_path = ? and is_deleted = 0
+            limit 1
+            """,
+            (normalized_root,),
+        ).fetchone()
+        workspace_id = str(workspace["id"]) if workspace else new_id()
+        now = to_iso_z(utc_now())
+        if workspace is None:
+            conn.execute(
+                """
+                insert into workspaces (
+                  id, name, root_path, normalized_root_path, type,
+                  created_at, updated_at, last_opened_at
+                ) values (?, ?, ?, ?, 'project', ?, ?, ?)
+                """,
+                (workspace_id, "codex-copy", root_text, normalized_root, now, now, now),
+            )
+
+        cursor = conn.execute(
+            """
+            update sessions
+            set
+              workspace_id = ?,
+              session_type = 'workspace',
+              cwd = ?,
+              workspace_roots_json = ?
+            where workspace_id is null
+              and session_tag = 'chat'
+            """,
+            (workspace_id, root_text, json.dumps([root_text], ensure_ascii=False)),
+        )
+        logger.info(
+            "[Database] 旧会话已迁移到默认工作区 | "
+            f"workspace_id={workspace_id} | root={root_text} | sessions={cursor.rowcount}"
+        )
 
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
@@ -224,8 +404,12 @@ class Database:
             conn.close()
 
 
-def init_database(path: Path | str) -> Database:
+def init_database(
+    path: Path | str,
+    *,
+    default_workspace_root: Path | str | None = None,
+) -> Database:
     db = Database(path)
-    db.init_schema()
+    db.init_schema(default_workspace_root=default_workspace_root)
     logger.info(f"[Database] 数据库已就绪 | path={db.path}")
     return db

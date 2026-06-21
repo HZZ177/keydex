@@ -32,11 +32,64 @@ def test_session_repository_create_get_and_list(tmp_path) -> None:
     assert first.id == "ses_first"
     assert first.status == "active"
     assert first.active_session_id == "ses_first"
+    assert first.session_type == "chat"
+    assert first.workspace_id is None
+    assert first.cwd is None
+    assert first.workspace_roots == []
     assert repositories.sessions.get("ses_first") == first
 
     sessions = repositories.sessions.list(user_id="local-user", scene_id="desktop-agent")
     assert [session.id for session in sessions] == [second.id, first.id]
     assert repositories.sessions.list(status="running") == [second]
+
+
+def test_session_repository_persists_workspace_runtime_fields(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    with repositories.db.transaction() as conn:
+        conn.execute(
+            """
+            insert into workspaces (
+              id, name, root_path, normalized_root_path, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "ws_project",
+                "demo",
+                "D:/Projects/demo",
+                "d:/projects/demo",
+                "2026-06-18T00:00:00Z",
+                "2026-06-18T00:00:00Z",
+            ),
+        )
+
+    workspace_session = repositories.sessions.create(
+        session_id="ses_workspace",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="项目会话",
+        workspace_id="ws_project",
+        session_type="workspace",
+        cwd="D:/Projects/demo",
+        workspace_roots=["D:/Projects/demo"],
+    )
+    chat_session = repositories.sessions.create(
+        session_id="ses_chat",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="纯聊天",
+    )
+
+    assert workspace_session.workspace_id == "ws_project"
+    assert workspace_session.session_type == "workspace"
+    assert workspace_session.cwd == "D:/Projects/demo"
+    assert workspace_session.workspace_roots == ["D:/Projects/demo"]
+    assert chat_session.session_type == "chat"
+    assert chat_session.workspace_id is None
+
+    assert repositories.sessions.get("ses_workspace") == workspace_session
+    assert repositories.sessions.list(workspace_id="ws_project") == [workspace_session]
+    assert repositories.sessions.list(session_type="workspace") == [workspace_session]
+    assert repositories.sessions.list(session_type="chat") == [chat_session]
 
 
 def test_session_repository_update_status_title_and_touch(tmp_path) -> None:
@@ -153,3 +206,11 @@ def test_session_repository_rejects_invalid_status(tmp_path) -> None:
     )
     with pytest.raises(ValueError, match="不支持的 session 状态"):
         repositories.sessions.update("ses_valid", status="paused")
+
+    with pytest.raises(ValueError, match="不支持的 session 类型"):
+        repositories.sessions.create(
+            session_id="ses_invalid_type",
+            user_id="local-user",
+            scene_id="desktop-agent",
+            session_type="project",
+        )

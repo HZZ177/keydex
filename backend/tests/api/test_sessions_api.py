@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from backend.app.core.config import AppSettings
-from backend.app.core.ids import IdPrefix, new_id
+from backend.app.core.ids import new_id
 from backend.app.main import create_app
 
 
@@ -30,6 +30,113 @@ def test_sessions_api_creates_lists_and_reads_detail(tmp_path) -> None:
     assert detail.json()["session"]["title"] == "会话一"
 
 
+def test_sessions_api_creates_workspace_session_and_filters(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    client = _client(tmp_path)
+    workspace = client.post(
+        "/api/workspaces",
+        json={"root_path": str(project), "name": "项目"},
+    ).json()["workspace"]
+
+    created = client.post(
+        "/api/sessions",
+        json={
+            "title": "项目会话",
+            "session_type": "workspace",
+            "workspace_id": workspace["id"],
+        },
+    )
+    chat = client.post(
+        "/api/sessions",
+        json={"title": "纯聊天", "session_type": "chat"},
+    )
+    workspace_list = client.get(
+        "/api/sessions",
+        params={"workspace_id": workspace["id"], "session_type": "workspace"},
+    )
+    chat_list = client.get("/api/sessions", params={"session_type": "chat"})
+
+    assert created.status_code == 200
+    session = created.json()["session"]
+    assert session["session_type"] == "workspace"
+    assert session["workspace_id"] == workspace["id"]
+    assert session["cwd"] == str(project.resolve())
+    assert session["workspace_roots"] == [str(project.resolve())]
+    assert session["workspace"]["id"] == workspace["id"]
+    assert chat.status_code == 200
+    assert chat.json()["session"]["workspace_id"] is None
+    assert workspace_list.json()["total"] == 1
+    assert workspace_list.json()["list"][0]["id"] == session["id"]
+    assert chat_list.json()["total"] == 1
+    assert chat_list.json()["list"][0]["id"] == chat.json()["session"]["id"]
+
+
+def test_sessions_api_returns_grouped_sessions(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    client = _client(tmp_path)
+    workspace = client.post(
+        "/api/workspaces",
+        json={"root_path": str(project), "name": "项目"},
+    ).json()["workspace"]
+    workspace_session = client.post(
+        "/api/sessions",
+        json={
+            "title": "项目会话",
+            "session_type": "workspace",
+            "workspace_id": workspace["id"],
+        },
+    ).json()["session"]
+    chat_session = client.post(
+        "/api/sessions",
+        json={"title": "纯聊天"},
+    ).json()["session"]
+
+    grouped = client.get(
+        "/api/sessions/grouped",
+        params={"current_session_id": workspace_session["id"]},
+    )
+    workspace_only = client.get(
+        "/api/sessions/grouped",
+        params={"workspace_id": workspace["id"], "session_type": "workspace"},
+    )
+
+    assert grouped.status_code == 200
+    payload = grouped.json()
+    assert payload["total"] == 2
+    assert [group["type"] for group in payload["groups"]] == ["chat", "workspace"]
+    assert payload["groups"][0]["list"][0]["id"] == chat_session["id"]
+    assert payload["groups"][1]["workspace"]["id"] == workspace["id"]
+    assert payload["groups"][1]["list"][0]["is_current"] is True
+    assert workspace_only.json()["total"] == 1
+    assert workspace_only.json()["groups"][0]["workspace_id"] == workspace["id"]
+
+
+def test_sessions_api_rejects_invalid_workspace_session_contract(tmp_path) -> None:
+    client = _client(tmp_path)
+
+    missing_workspace = client.post(
+        "/api/sessions",
+        json={"session_type": "workspace"},
+    )
+    unknown_workspace = client.post(
+        "/api/sessions",
+        json={"session_type": "workspace", "workspace_id": "missing"},
+    )
+    chat_with_workspace = client.post(
+        "/api/sessions",
+        json={"session_type": "chat", "workspace_id": "ws_any"},
+    )
+
+    assert missing_workspace.status_code == 400
+    assert missing_workspace.json()["detail"]["code"] == "invalid_session_create"
+    assert unknown_workspace.status_code == 404
+    assert unknown_workspace.json()["detail"]["code"] == "workspace_not_found"
+    assert chat_with_workspace.status_code == 400
+    assert chat_with_workspace.json()["detail"]["code"] == "invalid_session_create"
+
+
 def test_sessions_api_returns_empty_history(tmp_path) -> None:
     client = _client(tmp_path)
     session_id = client.post("/api/sessions", json={}).json()["session"]["id"]
@@ -47,14 +154,14 @@ def test_sessions_api_returns_aggregated_messages(tmp_path) -> None:
     app = client.app
     session_id = client.post("/api/sessions", json={"title": "历史"}).json()["session"]["id"]
     app.state.repositories.message_events.append(
-        event_id=new_id(IdPrefix.EVENT),
+        event_id=new_id(),
         session_id=session_id,
         turn_index=1,
         action="user_message",
         data={"content": "你好"},
     )
     app.state.repositories.message_events.append(
-        event_id=new_id(IdPrefix.EVENT),
+        event_id=new_id(),
         session_id=session_id,
         turn_index=1,
         action="stream_batch",
@@ -81,14 +188,14 @@ def test_sessions_api_filters_turn_history(tmp_path) -> None:
     app = client.app
     session_id = client.post("/api/sessions", json={}).json()["session"]["id"]
     app.state.repositories.message_events.append(
-        event_id=new_id(IdPrefix.EVENT),
+        event_id=new_id(),
         session_id=session_id,
         turn_index=1,
         action="user_message",
         data={"content": "第一轮"},
     )
     app.state.repositories.message_events.append(
-        event_id=new_id(IdPrefix.EVENT),
+        event_id=new_id(),
         session_id=session_id,
         turn_index=2,
         action="user_message",

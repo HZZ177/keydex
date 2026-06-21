@@ -62,6 +62,26 @@ pnpm run dev
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\dev-start.ps1 -Help
 ```
 
+## 工作区与会话运行目录
+
+`codex-copy` 的 Agent 不应该运行在应用自身仓库目录下。当前实现把“工作区”作为一等实体：
+
+- `workspaces` 表保存用户添加的本机项目目录。
+- `session_type=workspace` 的会话必须绑定 `workspace_id`，并在创建时固化自己的 `cwd` 和 `workspace_roots`。
+- `session_type=chat` 是纯聊天会话，不挂载工作区，也不会注册文件、搜索、命令、补丁等项目工具。
+- Agent 工具执行、文件搜索、文件预览、Markdown 相对图片读取都使用 session 绑定的工作区范围。
+- 左侧历史按工作区分组；纯聊天进入“对话”分组。
+- `settings.workspace_root` 只作为本地启动和旧数据迁移的默认值，不再作为 Agent 运行目录使用。
+
+开发时添加测试工作区：
+
+1. 打开“新对话”。
+2. 点击输入框底部的工作区选择器。
+3. 输入本机项目目录，例如 `D:\Pycharm Projects\my-project`，或在 exe 环境下使用浏览入口。
+4. 在该工作区下发送消息后，会话历史会归入对应项目分组。
+
+工作区被删除或路径不可访问时，历史会话仍保留，但页面会显示“工作区不可用”，并且不会回退到 `codex-copy` 应用目录。
+
 ## 测试
 
 根目录统一测试入口：
@@ -101,8 +121,10 @@ pnpm run test:e2e:app-shell
 pnpm run test:e2e:settings
 pnpm run test:e2e:stream
 pnpm run test:e2e:tools
+pnpm run test:e2e:workspace
 pnpm run test:e2e:recovery
 pnpm run test:e2e:visual
+pnpm run test:e2e:settings-usage
 ```
 
 说明文档：`.dev/e2e/README.md`
@@ -114,6 +136,7 @@ pnpm run test:e2e:visual
 后端：
 
 - SQLite 表和仓储：`sessions`、`message_events`、`trace_records`、`trace_event_logs`。
+- 工作区表和会话运行目录：`workspaces`、`sessions.workspace_id/session_type/cwd/workspace_roots`。
 - DomainEvent 事件事实层、实时投影、持久化投影、completed 聚合和历史聚合。
 - OpenAI-compatible `/chat/completions` 流式对接，支持正文、reasoning、tool calls、HTTP 错误和非 JSON 错误。
 - 工具注册与真实执行：文件读取、目录浏览、搜索、命令执行、补丁应用、计划更新。
@@ -124,6 +147,7 @@ pnpm run test:e2e:visual
 
 - Codex 风格浅色应用壳、左侧导航、会话列表、空态快速对话和对话页。
 - 首页/对话页共用输入框，支持中文 IME、发送、停止、模型选择和必要的本地文件交互。
+- 新对话支持真实工作区选择；对话页工作区只读展示；左侧历史按工作区和纯聊天分组。
 - 动态流式缓冲，Markdown、代码块、图片、Mermaid、数学公式渲染。
 - reasoning 思考、工具、命令、文件变更、错误、取消和 ghost footer 按真实事件时序展示。
 - 模型设置页支持供应商、模型刷新、模型筛选、启停、默认模型和健康检查。
@@ -133,6 +157,8 @@ pnpm run test:e2e:visual
 
 - 开发计划：`.dev/plans/2026-06-18_04-14-21-codex-style-kt-agentloop-rewrite.md`
 - Issue CSV：`.dev/issues/2026-06-18_04-14-21-codex-style-kt-agentloop-rewrite.csv`
+- 工作区重构计划：`.dev/plans/2026-06-21_00-51-10-workspace-session-runtime-redesign.md`
+- 工作区 E2E 合同：`.dev/e2e/workspace-session-redesign.csv`
 - 视觉参考图：`.dev/prototype/img.png`
 - 视觉与中文化验收：`.dev/verification/visual-localization-audit.md`
 

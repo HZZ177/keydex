@@ -1,11 +1,12 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge } from "@/runtime";
 import { Sider } from "@/renderer/components/layout/Sider";
+import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
-import type { AgentSession } from "@/types/protocol";
+import type { AgentSession, Workspace } from "@/types/protocol";
 
 function renderSider(ui: ReactElement) {
   return render(<ThemeProvider>{ui}</ThemeProvider>);
@@ -20,7 +21,7 @@ describe("Sider", () => {
       />,
     );
 
-    expect(screen.getByText("快速对话")).not.toBeNull();
+    expect(screen.getByText("新对话")).not.toBeNull();
     expect(screen.getByText("搜索")).not.toBeNull();
     expect(screen.getByText("codex-copy")).not.toBeNull();
     expect(screen.getByText("研读文档与 Codex 源码")).not.toBeNull();
@@ -41,7 +42,7 @@ describe("Sider", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("快速对话"));
+    fireEvent.click(screen.getByText("新对话"));
     fireEvent.click(screen.getByText("会话 A"));
     fireEvent.click(screen.getByText("设置"));
     fireEvent.click(screen.getByLabelText("切换主题"));
@@ -62,7 +63,7 @@ describe("Sider", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "快速对话" }).getAttribute("data-active")).toBe("true");
+    expect(screen.getByRole("button", { name: "新对话" }).getAttribute("data-active")).toBe("true");
     expect(screen.getByText("codex-copy").getAttribute("role")).toBeNull();
   });
 
@@ -83,10 +84,35 @@ describe("Sider", () => {
   it("uses icon-only collapsed affordances", () => {
     renderSider(<Sider collapsed />);
 
-    expect(screen.getByTitle("快速对话")).not.toBeNull();
+    expect(screen.getByTitle("新对话")).not.toBeNull();
     expect(screen.getByTitle("搜索")).not.toBeNull();
     expect(screen.getByTitle("切换主题")).not.toBeNull();
     expect(screen.getByTitle("设置")).not.toBeNull();
+  });
+
+  it("keeps collapsed sessions as center rail buttons with hover cards", () => {
+    const onNavigate = vi.fn();
+    renderSider(
+      <Sider
+        collapsed
+        activePath="/conversation/thread-1"
+        conversations={[{ id: "thread-1", title: "研读文档", updatedAt: "2026-06-17T10:00:00Z" }]}
+        onNavigate={onNavigate}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "打开会话 研读文档" });
+    expect(button.getAttribute("aria-current")).toBe("page");
+    expect(screen.queryByText("研读文档")).toBeNull();
+
+    fireEvent.mouseEnter(button);
+
+    const card = screen.getByRole("tooltip");
+    expect(card.textContent).toContain("研读文档");
+    expect(card.textContent).toContain("当前会话");
+
+    fireEvent.click(button);
+    expect(onNavigate).toHaveBeenCalledWith("/conversation/thread-1");
   });
 
   it("opens a session search dialog from the top search action", async () => {
@@ -114,6 +140,57 @@ describe("Sider", () => {
     expect(onNavigate).toHaveBeenCalledWith("/conversation/thread-b");
   });
 
+  it("groups loaded sessions by their real workspace and pure chat bucket", async () => {
+    const runtime = fakeRuntime([
+      thread({
+        id: "workspace-a",
+        title: "项目会话 A",
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "codex-copy"),
+      }),
+      thread({
+        id: "workspace-b",
+        title: "项目会话 B",
+        session_type: "workspace",
+        workspace_id: "ws-2",
+        workspace: workspace("ws-2", "kt-agent-framework"),
+      }),
+      thread({ id: "chat-a", title: "纯聊天" }),
+    ]);
+
+    renderSider(<Sider runtime={runtime} activePath="/conversation/workspace-a" />);
+
+    expect(await screen.findByText("codex-copy")).not.toBeNull();
+    expect(screen.getByText("kt-agent-framework")).not.toBeNull();
+    expect(screen.getByText("对话")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "项目会话 A" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("button", { name: "项目会话 B" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "纯聊天" })).not.toBeNull();
+  });
+
+  it("shows workspace ownership in collapsed session hover cards", async () => {
+    const runtime = fakeRuntime([
+      thread({
+        id: "workspace-a",
+        title: "项目会话 A",
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "codex-copy"),
+      }),
+    ]);
+
+    renderSider(<Sider runtime={runtime} collapsed activePath="/conversation/workspace-a" />);
+
+    const button = await screen.findByRole("button", { name: "打开会话 项目会话 A" });
+    fireEvent.mouseEnter(button);
+
+    const card = screen.getByRole("tooltip");
+    expect(card.textContent).toContain("项目会话 A");
+    expect(card.textContent).toContain("codex-copy");
+    expect(card.textContent).toContain("当前会话");
+  });
+
   it("renames conversations through updateSession", async () => {
     const runtime = fakeRuntime([thread({ id: "thread-a", title: "旧标题" })]);
     renderSider(<Sider runtime={runtime} />);
@@ -127,6 +204,59 @@ describe("Sider", () => {
       expect(runtime.conversation.updateSession).toHaveBeenCalledWith("thread-a", { title: "新标题" });
     });
     expect(await screen.findByText("新标题")).not.toBeNull();
+  });
+
+  it("renames a session inside its workspace group without moving it", async () => {
+    const runtime = fakeRuntime([
+      thread({
+        id: "thread-a",
+        title: "旧标题",
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "codex-copy"),
+      }),
+    ]);
+    renderSider(<Sider runtime={runtime} />);
+
+    await screen.findByText("codex-copy");
+    fireEvent.click(screen.getByRole("button", { name: "重命名 旧标题" }));
+    fireEvent.change(screen.getByLabelText("重命名 旧标题"), { target: { value: "新标题" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存重命名" }));
+
+    const group = await screen.findByRole("region", { name: "codex-copy" });
+    expect(within(group).getByRole("button", { name: "新标题" })).not.toBeNull();
+  });
+
+  it("inserts a locally created session into the matching workspace group top", async () => {
+    const runtime = fakeRuntime([
+      thread({
+        id: "thread-old",
+        title: "旧会话",
+        updated_at: "2026-06-17T10:00:00Z",
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "codex-copy"),
+      }),
+    ]);
+    renderSider(<Sider runtime={runtime} />);
+
+    const oldNode = await screen.findByText("旧会话");
+    act(() => {
+      emitSessionCreated(
+        thread({
+          id: "thread-new",
+          title: "新会话",
+          updated_at: "2026-06-17T11:00:00Z",
+          session_type: "workspace",
+          workspace_id: "ws-1",
+          workspace: workspace("ws-1", "codex-copy"),
+        }),
+      );
+    });
+
+    const group = await screen.findByRole("region", { name: "codex-copy" });
+    const newNode = within(group).getByText("新会话");
+    expect(Boolean(newNode.compareDocumentPosition(oldNode) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
   it("deletes conversations after explicit delete confirmation", async () => {
@@ -188,6 +318,11 @@ function thread(patch: Partial<AgentSession> = {}): AgentSession {
     scene_id: "desktop-agent",
     status: "active",
     session_tag: "chat",
+    session_type: "chat",
+    workspace_id: null,
+    cwd: null,
+    workspace_roots: [],
+    workspace: null,
     active_session_id: null,
     parent_session_id: null,
     child_session_id: null,
@@ -198,5 +333,19 @@ function thread(patch: Partial<AgentSession> = {}): AgentSession {
     is_scheduled: false,
     is_current: false,
     ...patch,
+  };
+}
+
+function workspace(id: string, name: string): Workspace {
+  return {
+    id,
+    name,
+    root_path: `D:/Pycharm Projects/${name}`,
+    normalized_root_path: `d:/pycharm projects/${name}`,
+    type: "project",
+    created_at: "2026-06-21T00:00:00Z",
+    updated_at: "2026-06-21T00:00:00Z",
+    last_opened_at: null,
+    is_deleted: false,
   };
 }

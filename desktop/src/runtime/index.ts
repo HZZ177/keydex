@@ -12,7 +12,10 @@ export {
 export { createSettingsRuntime } from "./settings";
 export { createModelsRuntime } from "./models";
 export { createConversationRuntime } from "./conversation";
+export { createUsageRuntime } from "./usage";
 export { createWorkspaceRuntime } from "./workspace";
+export { createWorkspacesRuntime } from "./workspaces";
+export { createDesktopPickerRuntime } from "./desktopPicker";
 export type { HttpClientOptions, RequestOptions } from "./httpClient";
 export type { WebSocketConstructor, WebSocketLike, WsClientOptions, WsConnectionStatus } from "./wsClient";
 export type { RuntimeErrorEnvelope, RuntimeHttpErrorParams } from "./errors";
@@ -33,6 +36,12 @@ export type {
   ModelsRuntime,
 } from "./models";
 export type {
+  UsageQueryOptions,
+  UsageRequestListOptions,
+  UsageRuntime,
+  UsageTrendOptions,
+} from "./usage";
+export type {
   ChatChannel,
   ChatChannelOptions,
   ChatPayload,
@@ -48,6 +57,18 @@ export type {
   WorkspaceFileResponse,
   WorkspaceMediaResponse,
   WorkspaceRuntime,
+  WorkspaceScope,
   WorkspaceSearchResult,
   WorkspaceTreeResponse,
 } from "./workspace";
+export type {
+  CreateWorkspacePayload,
+  UpdateWorkspacePayload,
+  WorkspaceListResponse,
+  WorkspaceResponse,
+  WorkspacesRuntime,
+} from "./workspaces";
+export type {
+  DesktopPickerRuntime,
+  DesktopPickerRuntimeOptions,
+} from "./desktopPicker";

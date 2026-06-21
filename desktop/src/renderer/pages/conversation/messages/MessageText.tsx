@@ -2,6 +2,7 @@ import { Check, Copy } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 
+import type { RuntimeBridge, WorkspaceScope } from "@/runtime";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
@@ -26,10 +27,18 @@ import styles from "./MessageText.module.css";
 export interface MessageTextProps {
   message: ConversationMessage;
   showActionRow?: boolean;
+  workspaceRuntime?: RuntimeBridge;
+  workspaceScope?: WorkspaceScope | null;
   onQuoteSelection?: (text: string) => void;
 }
 
-export function MessageText({ message, showActionRow = true, onQuoteSelection }: MessageTextProps) {
+export function MessageText({
+  message,
+  showActionRow = true,
+  workspaceRuntime,
+  workspaceScope,
+  onQuoteSelection,
+}: MessageTextProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const isUser = message.kind === "user";
@@ -62,7 +71,16 @@ export function MessageText({ message, showActionRow = true, onQuoteSelection }:
     normalizedContent.startsWith(displayedContent);
   const showStreamingCursor = !isUser && isStreaming && !isAnimating && !hasPendingDisplayBacklog && !cancelled;
   const visuallyStreaming = isStreaming || isAnimating;
-  const markdownComponents = useMemo(() => ({ pre: MarkdownCodeBlock, table: MarkdownTable, img: MarkdownImage }), []);
+  const markdownComponents = useMemo(
+    () => ({
+      pre: MarkdownCodeBlock,
+      table: MarkdownTable,
+      img: (props: Parameters<typeof MarkdownImage>[0]) => (
+        <MarkdownImage {...props} runtime={workspaceRuntime} workspaceScope={workspaceScope} />
+      ),
+    }),
+    [workspaceRuntime, workspaceScope],
+  );
 
   const handleCopy = async () => {
     try {

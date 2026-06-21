@@ -79,6 +79,9 @@ describe("style foundation", () => {
     expect(sider).toMatch(/\.historyMeta\s*{[^}]*white-space:\s*nowrap/s);
     expect(sider).toMatch(/\.historyItem\[data-active="true"\]::after\s*{[^}]*position:\s*absolute/s);
     expect(sendBox).toMatch(/\.root\[data-variant="codex"\]\s*{[^}]*overflow:\s*visible/s);
+    expect(sendBox).toMatch(/\.contextBar\s*{[^}]*overflow:\s*visible/s);
+    expect(sendBox).toMatch(/\.contextBar\s*{[^}]*border-bottom-left-radius:\s*19px/s);
+    expect(sendBox).toMatch(/\.contextBar\s*{[^}]*inset 0 -1px 0/s);
 
     [commandBlock, toolBlock, fileChangeBlock, errorBlock].forEach((css) => {
       expect(css).not.toMatch(/overflow-y\s*:\s*(auto|scroll)/);
@@ -91,6 +94,46 @@ describe("style foundation", () => {
       expect(css).not.toContain("background: var(--inline-block-bg)");
       expect(css).toContain("animation:");
     });
+  });
+
+  it("keeps settings workspace on its own Codex-like layout baseline", () => {
+    const mainLayout = readSource("renderer/components/layout/Layout.module.css");
+    const sider = readSource("renderer/components/layout/Sider/Sider.module.css");
+    const resizeHandle = readSource("renderer/components/layout/SidebarResizeHandle.module.css");
+    const titlebar = readSource("renderer/components/layout/Titlebar/Titlebar.module.css");
+    const shell = readSource("renderer/pages/settings/SettingsShell.module.css");
+    const model = readSource("renderer/pages/settings/model/ModelSettingsPage.module.css");
+    const usage = readSource("renderer/pages/settings/usage/UsageStatsPage.module.css");
+
+    expect(mainLayout).toMatch(/\.body\s*{[^}]*display:\s*flex/s);
+    expect(mainLayout).toMatch(/\.content\s*{[^}]*border-top-left-radius:\s*12px/s);
+    expect(mainLayout).toMatch(/\.content\s*{[^}]*border-bottom-left-radius:\s*12px/s);
+    expect(titlebar).toMatch(/\.titlebar\s*{[^}]*border-bottom:\s*1px solid var\(--color-border-1\)/s);
+    expect(sider).toMatch(/\.sider\s*{[^}]*width:\s*var\(--sidebar-width\)/s);
+    expect(sider).toMatch(/\.sider\s*{[^}]*flex:\s*0 0 var\(--sidebar-width\)/s);
+    expect(sider).not.toContain("border-right:");
+    expect(resizeHandle).toMatch(/\.handle::before\s*{[^}]*top:\s*12px/s);
+    expect(resizeHandle).toMatch(/\.handle::before\s*{[^}]*bottom:\s*12px/s);
+    expect(shell).toMatch(/\.shell\s*{[^}]*grid-template-rows:\s*var\(--titlebar-height\) minmax\(0,\s*1fr\)/s);
+    expect(shell).toMatch(/\.body\s*{[^}]*display:\s*flex/s);
+    expect(shell).toMatch(/\.sidebar\s*{[^}]*width:\s*var\(--sidebar-width\)/s);
+    expect(shell).toMatch(/\.sidebar\s*{[^}]*flex:\s*0 0 var\(--sidebar-width\)/s);
+    expect(shell).toMatch(/\.sidebar\s*{[^}]*padding:\s*12px 7px 10px/s);
+    expect(shell).not.toMatch(/\.sidebar\s*{[^}]*border-right/s);
+    expect(shell).toMatch(/\.backButton\s*{[^}]*height:\s*30px/s);
+    expect(shell).toMatch(/\.searchBox\s*{[^}]*height:\s*30px/s);
+    expect(shell).toMatch(/\.groupLabel\s*{[^}]*font-size:\s*12px/s);
+    expect(shell).toMatch(/\.menuItem\s*{\s*width:\s*100%;[^}]*height:\s*30px/s);
+    expect(shell).toMatch(/\.menuItem\s*{\s*width:\s*100%;[^}]*font-size:\s*14px/s);
+    expect(shell).toMatch(/\.content\s*{[^}]*overflow:\s*auto/s);
+    expect(shell).toMatch(/\.content\s*{[^}]*border-top-left-radius:\s*12px/s);
+    expect(shell).toMatch(/\.content\s*{[^}]*border-bottom-left-radius:\s*12px/s);
+    expect(shell).toMatch(/\.menuItem\[data-active="true"\]\s*{[^}]*surface-active/s);
+    expect(shell).not.toContain("暂未开放");
+    expect(model).toContain("width: min(960px, calc(100% - 136px))");
+    expect(model).toContain("padding: 92px 0 128px");
+    expect(usage).toContain("width: min(1180px, calc(100% - 136px))");
+    expect(usage).toContain("padding: 92px 0 128px");
   });
 
   it("does not scale font sizes with viewport units", () => {

@@ -98,7 +98,7 @@ async def create_provider(
 ) -> PublicModelProvider:
     now = to_iso_z(utc_now())
     provider = ModelProviderRecord(
-        id=new_id("provider"),
+        id=new_id(),
         name=request.name.strip(),
         base_url=_normalize_base_url(request.base_url),
         api_key=request.api_key,

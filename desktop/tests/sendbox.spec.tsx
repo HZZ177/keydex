@@ -50,6 +50,29 @@ describe("SendBox", () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps runtime controls immediately before the send button", () => {
+    render(
+      <SendBox
+        value="继续修改"
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        statusText="回车发送"
+        rightControls={<button type="button" aria-label="选择模型">qwen-coder</button>}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    const status = screen.getByText("回车发送");
+    const model = screen.getByRole("button", { name: "选择模型" });
+    const send = screen.getByRole("button", { name: "发送" });
+
+    expect(Boolean(status.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(model.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
+
   it("switches to stop button while running and prevents repeated send", () => {
     const onSend = vi.fn();
     const onStop = vi.fn();

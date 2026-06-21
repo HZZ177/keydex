@@ -19,6 +19,7 @@ class RecordingAgentFactory(AgentFactory):
         super().__init__()
         self.model = model
         self.requested_models: list[str] = []
+        self.created_tool_counts: list[int] = []
 
     def get_or_create_llm(
         self,
@@ -32,6 +33,26 @@ class RecordingAgentFactory(AgentFactory):
     ) -> Any:
         self.requested_models.append(model)
         return self.model
+
+    def create_agent(
+        self,
+        *,
+        model: Any,
+        tools: list[Any],
+        system_prompt: Any,
+        checkpointer: Any,
+        middleware: tuple[Any, ...] = (),
+        name: str = "desktop_agent",
+    ) -> Any:
+        self.created_tool_counts.append(len(tools))
+        return super().create_agent(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            checkpointer=checkpointer,
+            middleware=middleware,
+            name=name,
+        )
 
 
 def _tool_registry() -> ToolRegistry:
@@ -120,7 +141,7 @@ async def test_agent_runner_checkpoint_records_messages(tmp_path) -> None:
 
 
 def test_agent_runner_exports_registered_tools_to_langchain_agent(tmp_path) -> None:
-    runner, _factory = _runner(tmp_path, registry=_tool_registry())
+    runner, factory = _runner(tmp_path, registry=_tool_registry())
 
     agent = runner.create_agent(
         model="qwen-coder",
@@ -137,3 +158,25 @@ def test_agent_runner_exports_registered_tools_to_langchain_agent(tmp_path) -> N
     graph = agent.get_graph()
     assert graph is not None
     assert runner.tool_registry.names() == ["read_file"]
+    assert factory.created_tool_counts == [1]
+
+
+def test_agent_runner_can_disable_registered_tools(tmp_path) -> None:
+    runner, factory = _runner(tmp_path, registry=_tool_registry())
+
+    agent = runner.create_agent(
+        model="qwen-coder",
+        system_prompt="自定义提示",
+        tool_context=ToolExecutionContext(
+            session_id="ses_1",
+            user_id="user_1",
+            workspace_root=tmp_path,
+            turn_index=1,
+            trace_id="trace_1",
+        ),
+        enable_tools=False,
+    )
+
+    assert agent is not None
+    assert runner.tool_registry.names() == ["read_file"]
+    assert factory.created_tool_counts == [0]

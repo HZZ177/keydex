@@ -32,34 +32,48 @@ export interface WorkspaceSearchResult {
   type: "file" | "directory";
 }
 
+export type WorkspaceScope =
+  | { workspaceId: string; sessionId?: never }
+  | { sessionId: string; workspaceId?: never };
+
 export interface WorkspaceRuntime {
-  listDirectory(root: string, path?: string): Promise<WorkspaceTreeResponse>;
-  readFile(root: string, path: string): Promise<WorkspaceFileResponse>;
-  readMedia(root: string, path: string): Promise<WorkspaceMediaResponse>;
-  search(root: string, query: string): Promise<WorkspaceSearchResult[]>;
+  listDirectory(scope: WorkspaceScope, path?: string): Promise<WorkspaceTreeResponse>;
+  readFile(scope: WorkspaceScope, path: string): Promise<WorkspaceFileResponse>;
+  readMedia(scope: WorkspaceScope, path: string): Promise<WorkspaceMediaResponse>;
+  search(scope: WorkspaceScope, query: string): Promise<WorkspaceSearchResult[]>;
 }
 
 export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
   return {
-    listDirectory(root, path = "") {
+    listDirectory(scope, path = "") {
       return http.request<WorkspaceTreeResponse>(
-        `/api/workspace/tree?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+        `${workspaceBasePath(scope)}/tree?path=${encodeURIComponent(path)}`,
       );
     },
-    readFile(root, path) {
+    readFile(scope, path) {
       return http.request<WorkspaceFileResponse>(
-        `/api/workspace/read?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+        `${workspaceBasePath(scope)}/read?path=${encodeURIComponent(path)}`,
       );
     },
-    readMedia(root, path) {
+    readMedia(scope, path) {
       return http.request<WorkspaceMediaResponse>(
-        `/api/workspace/media?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+        `${workspaceBasePath(scope)}/media?path=${encodeURIComponent(path)}`,
       );
     },
-    search(root, query) {
+    search(scope, query) {
       return http.request<WorkspaceSearchResult[]>(
-        `/api/workspace/search?root=${encodeURIComponent(root)}&q=${encodeURIComponent(query)}`,
+        `${workspaceBasePath(scope)}/search?q=${encodeURIComponent(query)}`,
       );
     },
   };
+}
+
+function workspaceBasePath(scope: WorkspaceScope): string {
+  if ("sessionId" in scope && scope.sessionId) {
+    return `/api/sessions/${encodeURIComponent(scope.sessionId)}/workspace`;
+  }
+  if ("workspaceId" in scope && scope.workspaceId) {
+    return `/api/workspaces/${encodeURIComponent(scope.workspaceId)}`;
+  }
+  throw new Error("workspace scope requires sessionId or workspaceId");
 }

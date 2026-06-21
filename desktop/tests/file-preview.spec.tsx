@@ -23,11 +23,11 @@ describe("FilePreview", () => {
       }),
     });
 
-    render(<FilePreview request={{ type: "file", path: "README.md" }} root="D:/repo" runtime={runtime} />);
+    render(<FilePreview request={{ type: "file", path: "README.md" }} sessionId="ses-1" runtime={runtime} />);
 
     expect(await screen.findByLabelText("预览内容")).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Hello" })).not.toBeNull();
-    expect(runtime.workspace.readFile).toHaveBeenCalledWith("D:/repo", "README.md");
+    expect(runtime.workspace.readFile).toHaveBeenCalledWith({ sessionId: "ses-1" }, "README.md");
   });
 
   it("switches markdown preview back to source", async () => {
@@ -39,7 +39,7 @@ describe("FilePreview", () => {
       }),
     });
 
-    render(<FilePreview request={{ type: "file", path: "guide.md" }} root="D:/repo" runtime={runtime} />);
+    render(<FilePreview request={{ type: "file", path: "guide.md" }} sessionId="ses-1" runtime={runtime} />);
 
     expect(await screen.findByRole("heading", { name: "Guide" })).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /源码/ }));
@@ -56,7 +56,7 @@ describe("FilePreview", () => {
       }),
     });
 
-    render(<FilePreview request={{ type: "file", path: "guide.md" }} root="D:/repo" runtime={runtime} />);
+    render(<FilePreview request={{ type: "file", path: "guide.md" }} sessionId="ses-1" runtime={runtime} />);
 
     expect(await screen.findByRole("heading", { name: "Guide" })).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "打开分屏预览" }));
@@ -76,7 +76,7 @@ describe("FilePreview", () => {
       }),
     });
 
-    render(<FilePreview request={{ type: "file", path: "index.html" }} root="D:/repo" runtime={runtime} />);
+    render(<FilePreview request={{ type: "file", path: "index.html" }} sessionId="ses-1" runtime={runtime} />);
 
     const frame = (await screen.findByTitle("HTML 文件预览")) as HTMLIFrameElement;
     expect(frame.getAttribute("sandbox")).toBe("");
@@ -92,7 +92,7 @@ describe("FilePreview", () => {
       }),
     });
 
-    render(<FilePreview request={{ type: "file", path: "index.html" }} root="D:/repo" runtime={runtime} />);
+    render(<FilePreview request={{ type: "file", path: "index.html" }} sessionId="ses-1" runtime={runtime} />);
 
     expect(await screen.findByTitle("HTML 文件预览")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "打开分屏预览" }));
@@ -113,13 +113,13 @@ describe("FilePreview", () => {
       }),
     });
 
-    render(<FilePreview request={{ type: "file", path: "assets/pixel.png" }} root="D:/repo" runtime={runtime} />);
+    render(<FilePreview request={{ type: "file", path: "assets/pixel.png" }} sessionId="ses-1" runtime={runtime} />);
 
     const image = (await screen.findByAltText("pixel.png")) as HTMLImageElement;
     expect(image.getAttribute("src")).toBe("data:image/png;base64,abc");
     expect(screen.getByText("image/png")).not.toBeNull();
     expect(screen.getByText("68 B")).not.toBeNull();
-    expect(runtime.workspace.readMedia).toHaveBeenCalledWith("D:/repo", "assets/pixel.png");
+    expect(runtime.workspace.readMedia).toHaveBeenCalledWith({ sessionId: "ses-1" }, "assets/pixel.png");
     expect(runtime.workspace.readFile).not.toHaveBeenCalled();
   });
 
@@ -190,14 +190,14 @@ describe("FilePreview", () => {
           contentType: "markdown",
           sourcePath: "docs/guide.md",
         }}
-        root="D:/repo"
+        sessionId="ses-1"
         runtime={runtime}
       />,
     );
 
     const image = (await screen.findByAltText("示例图片")) as HTMLImageElement;
     expect(image.getAttribute("src")).toBe("data:image/png;base64,abc");
-    expect(runtime.workspace.readMedia).toHaveBeenCalledWith("D:/repo", "docs/assets/pixel.png");
+    expect(runtime.workspace.readMedia).toHaveBeenCalledWith({ sessionId: "ses-1" }, "docs/assets/pixel.png");
   });
 
   it("switches and closes preview history tabs from the shared preview provider", () => {
@@ -231,7 +231,7 @@ describe("FilePreview", () => {
       readFile: vi.fn().mockRejectedValue(new Error("文件过大，暂不预览")),
     });
 
-    render(<FilePreview request={{ type: "file", path: "large.log" }} root="D:/repo" runtime={runtime} />);
+    render(<FilePreview request={{ type: "file", path: "large.log" }} sessionId="ses-1" runtime={runtime} />);
 
     expect((await screen.findByRole("alert")).textContent).toBe("文件过大，暂不预览");
   });
@@ -242,7 +242,7 @@ describe("FilePreview", () => {
     render(
       <FilePreview
         request={{ type: "diff", path: "src/main.py", diff: "@@\n-print('old')\n+print('new')" }}
-        root="D:/repo"
+        sessionId="ses-1"
         runtime={runtime}
       />,
     );
@@ -263,7 +263,7 @@ describe("FilePreview", () => {
       }),
     });
 
-    render(<FilePreview request={{ type: "file", path: "notes.txt" }} root="D:/repo" runtime={runtime} />);
+    render(<FilePreview request={{ type: "file", path: "notes.txt" }} sessionId="ses-1" runtime={runtime} />);
 
     await screen.findByLabelText("预览内容");
     fireEvent.click(screen.getByRole("button", { name: "复制预览内容" }));

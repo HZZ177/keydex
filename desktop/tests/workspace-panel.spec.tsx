@@ -15,7 +15,7 @@ describe("WorkspacePanel", () => {
     });
     const onSelectFile = vi.fn();
 
-    render(<WorkspacePanel onSelectFile={onSelectFile} root="D:/repo" runtime={runtime} />);
+    render(<WorkspacePanel onSelectFile={onSelectFile} sessionId="ses-1" label="D:/repo" runtime={runtime} />);
 
     expect(await screen.findByText("D:/repo")).not.toBeNull();
     expect(screen.getByText("README.md")).not.toBeNull();
@@ -34,7 +34,7 @@ describe("WorkspacePanel", () => {
       src: [entry("main.py", "src/main.py", "file", 24)],
     });
 
-    render(<WorkspacePanel root="D:/repo" runtime={runtime} />);
+    render(<WorkspacePanel sessionId="ses-1" label="D:/repo" runtime={runtime} />);
 
     await screen.findByText("src");
     fireEvent.click(screen.getByRole("button", { name: "展开 src" }));
@@ -45,7 +45,9 @@ describe("WorkspacePanel", () => {
     expect(screen.getByText("main.py")).not.toBeNull();
 
     await waitFor(() => {
-      expect(vi.mocked(runtime.workspace.listDirectory).mock.calls.filter(([, path]) => path === "src")).toHaveLength(1);
+      expect(
+        vi.mocked(runtime.workspace.listDirectory).mock.calls.filter(([, path]) => path === "src"),
+      ).toHaveLength(1);
     });
   });
 
@@ -56,19 +58,19 @@ describe("WorkspacePanel", () => {
       },
     } as unknown as RuntimeBridge;
 
-    render(<WorkspacePanel root="D:/missing" runtime={runtime} />);
+    render(<WorkspacePanel sessionId="ses-missing" label="D:/missing" runtime={runtime} />);
 
     expect((await screen.findByRole("alert")).textContent).toBe("工作区不存在");
   });
 });
 
 function fakeRuntime(entriesByPath: Record<string, WorkspaceEntry[]>): RuntimeBridge {
-  const listDirectory = vi.fn((root: string, path = ""): Promise<WorkspaceTreeResponse> => {
+  const listDirectory = vi.fn((_scope: unknown, path = ""): Promise<WorkspaceTreeResponse> => {
     const entries = entriesByPath[path];
     if (!entries) {
       return Promise.reject(new Error(`目录不存在：${path}`));
     }
-    return Promise.resolve({ root, entries });
+    return Promise.resolve({ root: "D:/repo", entries });
   });
   return {
     workspace: {

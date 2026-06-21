@@ -1,5 +1,6 @@
 export interface LayoutState {
   sidebarCollapsed: boolean;
+  sidebarWidth: number;
   workspaceOpen: boolean;
   previewOpen: boolean;
   workspaceWidth: number;
@@ -10,6 +11,7 @@ export interface LayoutState {
 export type LayoutAction =
   | { type: "toggle-sidebar" }
   | { type: "set-sidebar"; collapsed: boolean }
+  | { type: "set-sidebar-width"; width: number }
   | { type: "toggle-workspace" }
   | { type: "set-workspace-open"; open: boolean }
   | { type: "toggle-preview" }
@@ -19,11 +21,15 @@ export type LayoutAction =
   | { type: "set-mobile-like"; value: boolean };
 
 export const LAYOUT_PREFERENCES_KEY = "codex-copy.layout.preferences";
+export const DEFAULT_SIDEBAR_WIDTH = 286;
+export const MIN_SIDEBAR_WIDTH = 220;
+export const MAX_SIDEBAR_WIDTH = 460;
 export const MIN_PANEL_WIDTH = 280;
 export const MAX_PANEL_WIDTH = 760;
 
 export const defaultLayoutState: LayoutState = {
   sidebarCollapsed: false,
+  sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   workspaceOpen: false,
   previewOpen: false,
   workspaceWidth: 360,
@@ -33,8 +39,16 @@ export const defaultLayoutState: LayoutState = {
 
 export interface LayoutPreferences {
   sidebarCollapsed?: boolean;
+  sidebarWidth?: number;
   workspaceWidth?: number;
   previewWidth?: number;
+}
+
+export function clampSidebarWidth(width: number) {
+  if (!Number.isFinite(width)) {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(width)));
 }
 
 export function clampPanelWidth(width: number) {
@@ -50,6 +64,8 @@ export function layoutReducer(state: LayoutState, action: LayoutAction): LayoutS
       return { ...state, sidebarCollapsed: !state.sidebarCollapsed };
     case "set-sidebar":
       return { ...state, sidebarCollapsed: action.collapsed };
+    case "set-sidebar-width":
+      return { ...state, sidebarWidth: clampSidebarWidth(action.width) };
     case "toggle-workspace":
       return { ...state, workspaceOpen: !state.workspaceOpen };
     case "set-workspace-open":
@@ -73,6 +89,8 @@ export function mergeLayoutPreferences(state: LayoutState, preferences: LayoutPr
   return {
     ...state,
     sidebarCollapsed: preferences.sidebarCollapsed ?? state.sidebarCollapsed,
+    sidebarWidth:
+      preferences.sidebarWidth === undefined ? state.sidebarWidth : clampSidebarWidth(preferences.sidebarWidth),
     workspaceWidth:
       preferences.workspaceWidth === undefined ? state.workspaceWidth : clampPanelWidth(preferences.workspaceWidth),
     previewWidth: preferences.previewWidth === undefined ? state.previewWidth : clampPanelWidth(preferences.previewWidth),
@@ -90,6 +108,7 @@ export function readLayoutPreferences(storage: Pick<Storage, "getItem">): Layout
     return {
       sidebarCollapsed:
         typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : undefined,
+      sidebarWidth: typeof parsed.sidebarWidth === "number" ? parsed.sidebarWidth : undefined,
       workspaceWidth: typeof parsed.workspaceWidth === "number" ? parsed.workspaceWidth : undefined,
       previewWidth: typeof parsed.previewWidth === "number" ? parsed.previewWidth : undefined,
     };
@@ -100,12 +119,13 @@ export function readLayoutPreferences(storage: Pick<Storage, "getItem">): Layout
 
 export function writeLayoutPreferences(
   storage: Pick<Storage, "setItem">,
-  state: Pick<LayoutState, "sidebarCollapsed" | "workspaceWidth" | "previewWidth">,
+  state: Pick<LayoutState, "sidebarCollapsed" | "sidebarWidth" | "workspaceWidth" | "previewWidth">,
 ) {
   storage.setItem(
     LAYOUT_PREFERENCES_KEY,
     JSON.stringify({
       sidebarCollapsed: state.sidebarCollapsed,
+      sidebarWidth: clampSidebarWidth(state.sidebarWidth),
       workspaceWidth: clampPanelWidth(state.workspaceWidth),
       previewWidth: clampPanelWidth(state.previewWidth),
     }),
