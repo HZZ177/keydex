@@ -61,7 +61,7 @@
   min-width: 0;
   overflow: hidden;
   color: currentColor;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.45;
   text-overflow: ellipsis;
@@ -70,7 +70,7 @@
 
 .source {
   color: currentColor;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.35;
   white-space: nowrap;
 }

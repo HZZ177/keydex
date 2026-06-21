@@ -42,13 +42,13 @@
 
 .meta {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
 .content {
   color: var(--color-text-primary);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.72;
   white-space: pre-wrap;
 }
@@ -57,7 +57,7 @@
   max-width: 540px;
   margin: 18vh auto 0;
   color: var(--color-text-tertiary);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.7;
   text-align: center;
 }
@@ -106,7 +106,7 @@
   background: var(--color-bg-elevated);
   box-shadow: var(--shadow-soft);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 11px;
   padding: 0 11px;
 }
 

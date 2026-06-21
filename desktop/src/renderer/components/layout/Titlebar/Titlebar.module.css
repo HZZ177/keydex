@@ -45,7 +45,7 @@
   max-width: min(560px, 45vw);
   overflow: hidden;
   color: var(--color-text-1);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;

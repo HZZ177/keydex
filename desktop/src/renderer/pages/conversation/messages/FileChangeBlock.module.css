@@ -58,7 +58,7 @@
   min-width: 0;
   overflow: hidden;
   color: currentColor;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.45;
   text-overflow: ellipsis;
@@ -71,7 +71,7 @@
   align-items: center;
   gap: 6px;
   color: currentColor;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -172,7 +172,7 @@
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
   padding: 0 8px;
   cursor: pointer;
 }
@@ -196,7 +196,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 11px;
   padding: 4px 5px;
   text-align: left;
   cursor: pointer;
@@ -240,7 +240,7 @@
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface-muted) 74%, transparent);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.5;
   padding: 8px 0;
 }

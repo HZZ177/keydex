@@ -25,7 +25,7 @@
 }
 
 .header h1 {
-  font-size: 25px;
+  font-size: 24px;
   font-weight: 650;
 }
 
@@ -36,16 +36,16 @@
 }
 
 .header p {
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .panelHeader h2 {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 650;
 }
 
 .panelHeader p {
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .panelHeaderActions {
@@ -72,7 +72,7 @@
   background: transparent;
   color: var(--color-text-tertiary);
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
   padding: 0 10px;
 }
@@ -107,7 +107,7 @@
   background: var(--surface-bg);
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
 }
 
@@ -192,7 +192,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .modelMenu button {
@@ -204,7 +204,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.3;
   padding: 8px 9px;
   text-align: left;
@@ -220,7 +220,7 @@
 
 .menuEmpty {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
   padding: 8px 9px;
 }
 
@@ -266,7 +266,7 @@
   background: var(--surface-muted);
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   outline: 0;
   padding: 0 9px;
 }
@@ -281,7 +281,7 @@
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-danger) 7%, var(--surface-bg));
   color: var(--color-danger);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
   margin-bottom: 14px;
   padding: 10px 12px;
@@ -326,7 +326,7 @@
   align-items: center;
   gap: 6px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
 }
 
@@ -335,7 +335,7 @@
 }
 
 .metricCard strong {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 680;
   letter-spacing: 0;
   line-height: 1;
@@ -343,7 +343,7 @@
 
 .metricCard > span {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.2;
 }
 
@@ -358,13 +358,13 @@
   justify-content: space-between;
   gap: 8px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
 }
 
 .progressMeta strong {
   color: var(--color-success-6);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 650;
 }
 
@@ -415,7 +415,7 @@
   display: grid;
   place-items: center;
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .chartEmpty {
@@ -447,13 +447,13 @@
 
 .table th {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
 }
 
 .table td {
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .table td:nth-child(2) {
@@ -511,7 +511,7 @@
   gap: 10px;
   border-top: 1px solid var(--color-border-subtle);
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
   padding: 12px 16px;
 }
 
@@ -567,7 +567,7 @@
 }
 
 .detail h2 {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 650;
 }
 
@@ -575,7 +575,7 @@
   margin: 5px 0 0;
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .detail header button {
@@ -608,7 +608,7 @@
 
 .detailBody h3 {
   color: var(--color-text-primary);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 650;
 }
 
@@ -617,7 +617,7 @@
   grid-template-columns: 88px minmax(0, 1fr);
   gap: 8px 10px;
   margin: 0;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .detailBody dt {
@@ -643,7 +643,7 @@
   border-radius: var(--radius-pill);
   background: var(--surface-muted);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 11px;
   padding: 0 10px;
 }
 
@@ -654,7 +654,7 @@
   background: var(--surface-muted);
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.55;
   margin: 0;
   padding: 12px;
@@ -678,13 +678,13 @@
 }
 
 .eventList strong {
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .eventList span,
 .eventList small {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
   overflow-wrap: anywhere;
 }
 

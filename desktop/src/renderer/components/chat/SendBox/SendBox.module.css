@@ -1,4 +1,4 @@
-﻿.root {
+.root {
   position: relative;
   display: grid;
   width: min(880px, 100%);
@@ -52,13 +52,13 @@
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.55;
 }
 
 .root[data-variant="codex"] .input {
   min-height: 48px;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.45;
 }
 
@@ -88,7 +88,7 @@
   background: var(--surface-muted);
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   padding: 0 9px;
 }
 
@@ -105,7 +105,7 @@
 
 .fileError {
   color: var(--color-danger);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
@@ -160,7 +160,7 @@
   align-items: center;
   gap: 5px;
   color: var(--color-accent);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
   white-space: nowrap;
 }
@@ -169,7 +169,7 @@
   overflow: hidden;
   min-width: 0;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -262,7 +262,7 @@
 
   .root[data-variant="codex"] .input {
     min-height: 48px;
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .leftActions,

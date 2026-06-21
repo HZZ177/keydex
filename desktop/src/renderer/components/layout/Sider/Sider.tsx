@@ -1,4 +1,4 @@
-import { Check, MessageCircle, Moon, Pencil, Search, Settings, SquarePen, Sun, Trash2, X } from "lucide-react";
+import { Check, Folder, MessageCircle, Moon, Pencil, Search, Settings, SquarePen, Sun, Trash2, X } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -183,6 +183,7 @@ export function Sider({
         {historyGroups.map((group) => (
           <SiderSection
             title={group.title}
+            kind={group.kind}
             items={group.items}
             collapsed={collapsed}
             emptyText={loadingHistory ? "正在加载会话" : "暂无会话"}
@@ -310,6 +311,7 @@ function SessionSearchDialog({
 
 interface SiderSectionProps {
   title: string;
+  kind?: "workspace" | "chat";
   items: SiderEntry[];
   collapsed: boolean;
   emptyText: string;
@@ -329,6 +331,7 @@ interface SiderSectionProps {
 
 function SiderSection({
   title,
+  kind = "chat",
   items,
   collapsed,
   emptyText,
@@ -391,7 +394,10 @@ function SiderSection({
 
   return (
     <section className={styles.section} aria-label={title}>
-      <div className={styles.sectionTitle}>{title}</div>
+      <div className={styles.sectionTitle}>
+        {kind === "workspace" ? <Folder size={15} strokeWidth={1.75} aria-hidden="true" /> : null}
+        <span>{title}</span>
+      </div>
       {items.length === 0 ? (
         <div className={styles.empty}>{emptyText}</div>
       ) : (

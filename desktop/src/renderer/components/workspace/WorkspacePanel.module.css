@@ -19,14 +19,14 @@
 
 .rootInfo span {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .rootInfo strong {
   overflow: hidden;
   color: var(--color-text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -44,7 +44,7 @@
   border-radius: var(--radius-pill);
   background: var(--surface-muted);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 11px;
   padding: 0 9px;
 }
 
@@ -65,7 +65,7 @@
   background: var(--surface-muted);
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.35;
   padding: 7px 8px;
   text-overflow: ellipsis;
@@ -92,7 +92,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   text-align: left;
 }
 
@@ -110,7 +110,7 @@
 
 .nodeButton em {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 10px;
   font-style: normal;
 }
 
@@ -132,7 +132,7 @@
 .emptyDir {
   margin: 0;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -142,7 +142,7 @@
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-danger) 7%, var(--surface-bg));
   color: var(--color-danger);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.45;
   padding: 8px;
 }

@@ -14,7 +14,7 @@ function renderSider(ui: ReactElement) {
 
 describe("Sider", () => {
   it("renders the personal local navigation without removed AionUi entries", () => {
-    renderSider(
+    const { container } = renderSider(
       <Sider
         projects={[{ id: "project-1", title: "codex-copy" }]}
         conversations={[{ id: "thread-1", title: "研读文档与 Codex 源码" }]}
@@ -30,6 +30,7 @@ describe("Sider", () => {
     expect(screen.queryByText("Cron")).toBeNull();
     expect(screen.queryByText("Scheduled")).toBeNull();
     expect(screen.queryByText("自动化")).toBeNull();
+    expect(container.querySelector('section[aria-label="codex-copy"] svg')).not.toBeNull();
   });
 
   it("emits navigation requests and toggles theme", () => {

@@ -9,13 +9,13 @@
 }
 
 .mark {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
   color: var(--color-text-3);
 }
 
 .title {
   margin: 0;
-  font-size: 22px;
+  font-size: 21px;
   font-weight: 600;
 }

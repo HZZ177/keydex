@@ -9,14 +9,14 @@
 }
 
 .mark {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
   color: var(--color-text-3);
 }
 
 .title {
   margin: 0;
-  font-size: 22px;
+  font-size: 21px;
   font-weight: 600;
   letter-spacing: 0;
 }
@@ -29,7 +29,7 @@
 
 .sectionTitle {
   margin: 0 0 12px;
-  font-size: 22px;
+  font-size: 21px;
   font-weight: 650;
   letter-spacing: 0;
 }
@@ -37,7 +37,7 @@
 .muted {
   margin: 0;
   color: var(--color-text-3);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .backButton {

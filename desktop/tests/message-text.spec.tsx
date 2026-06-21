@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { calculateDynamicStreamStep } from "@/renderer/hooks/useDynamicStreamBuffer";
@@ -214,7 +214,11 @@ describe("MessageText", () => {
   it("collapses long code blocks and expands them on demand", () => {
     render(
       <MessageText
-        message={message("assistant", "```diff\n@@\n-old\n+new\n context\n tail\n```", "completed")}
+        message={message(
+          "assistant",
+          "```diff\n@@\n line 1\n line 2\n line 3\n line 4\n line 5\n line 6\n line 7\n line 8\n line 9\n line 10\n line 11\n```",
+          "completed",
+        )}
       />,
     );
 
@@ -227,7 +231,7 @@ describe("MessageText", () => {
     expect(screen.getByText("收起代码")).not.toBeNull();
   });
 
-  it("previews fenced html code inside a sandboxed iframe only on demand", () => {
+  it("previews fenced html code by default and shows a loading placeholder when switching to source", async () => {
     render(
       <MessageText
         message={message(
@@ -238,34 +242,74 @@ describe("MessageText", () => {
       />,
     );
 
-    expect(screen.queryByTitle("HTML 预览")).toBeNull();
     expect(document.querySelector("script")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "预览 HTML" }));
 
     const frame = screen.getByTitle("HTML 预览") as HTMLIFrameElement;
     expect(frame).not.toBeNull();
     expect(frame.getAttribute("sandbox")).toBe("");
     expect(frame.getAttribute("srcdoc")).toContain("预览标题");
+    expect(screen.getByRole("button", { name: "全屏显示 HTML" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "查看源码" })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看源码" }));
+    expect(screen.getByLabelText("正在切换代码视图")).not.toBeNull();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "预览 HTML" })).not.toBeNull();
+    });
+    expect(screen.queryByTitle("HTML 预览")).toBeNull();
   });
 
-  it("previews fenced Mermaid code only after the user opens preview", async () => {
+  it("opens rendered html code in a fullscreen preview dialog", () => {
+    render(
+      <MessageText
+        message={message("assistant", "```html\n<main><h1>全屏页面</h1></main>\n```", "completed")}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "全屏显示 HTML" }));
+
+    const dialog = screen.getByRole("dialog", { name: "HTML 预览" });
+    const frames = within(dialog).getAllByTitle("HTML 预览") as HTMLIFrameElement[];
+    expect(frames[0]?.getAttribute("sandbox")).toBe("");
+    expect(frames[0]?.getAttribute("srcdoc")).toContain("全屏页面");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭全屏预览" }));
+    expect(screen.queryByRole("dialog", { name: "HTML 预览" })).toBeNull();
+  });
+
+  it("previews fenced Mermaid code by default", async () => {
     render(
       <MessageText
         message={message("assistant", "```mermaid\ngraph TD\nA[开始] --> B[结束]\n```", "completed")}
       />,
     );
 
-    expect(screen.queryByTestId("mermaid-preview")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "预览 Mermaid" }));
-
     expect(screen.getByTestId("mermaid-preview")).not.toBeNull();
     await waitFor(() => {
       expect(screen.getByLabelText("Mermaid 图表")).not.toBeNull();
     });
+    expect(screen.getByRole("button", { name: "全屏显示 Mermaid" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "查看源码" })).not.toBeNull();
+  });
+
+  it("opens Mermaid code fullscreen with zoom and reset controls", async () => {
+    render(
+      <MessageText
+        message={message("assistant", "```mermaid\ngraph TD\nA[开始] --> B[结束]\n```", "completed")}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Mermaid 图表")).not.toBeNull();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "全屏显示 Mermaid" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Mermaid 预览" });
+    expect(within(dialog).getByLabelText("Mermaid 视图控制")).not.toBeNull();
+    expect(within(dialog).getByRole("button", { name: "放大 Mermaid" })).not.toBeNull();
+    expect(within(dialog).getByRole("button", { name: "缩小 Mermaid" })).not.toBeNull();
+    expect(within(dialog).getByRole("button", { name: "重置 Mermaid 视图" })).not.toBeNull();
   });
 
   it("opens rich fenced code into the shared preview provider", () => {
@@ -281,6 +325,19 @@ describe("MessageText", () => {
     fireEvent.click(screen.getByRole("button", { name: "在预览面板打开 Mermaid 图表" }));
 
     expect(screen.getByTestId("preview-request").textContent).toContain("mermaid:Mermaid 图表");
+  });
+
+  it("offers fullscreen preview for code blocks that can also open the side preview", () => {
+    render(
+      <MessageText
+        message={message("assistant", "```markdown\n# 片段标题\n\n正文\n```", "completed")}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "全屏显示 Markdown 预览" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Markdown 预览" });
+    expect(within(dialog).getByRole("heading", { name: "片段标题" })).not.toBeNull();
   });
 
   it("quotes selected message text through the floating selection toolbar", async () => {

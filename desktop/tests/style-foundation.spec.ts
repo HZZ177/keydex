@@ -59,6 +59,7 @@ describe("style foundation", () => {
     const toolBlock = readSource("renderer/pages/conversation/messages/ToolCallBlock.module.css");
     const fileChangeBlock = readSource("renderer/pages/conversation/messages/FileChangeBlock.module.css");
     const errorBlock = readSource("renderer/pages/conversation/messages/ErrorItem.module.css");
+    const messageText = readSource("renderer/pages/conversation/messages/MessageText.module.css");
     const sendBox = readSource("renderer/components/chat/SendBox/SendBox.module.css");
 
     expect(layout).toContain("overflow-y: auto");
@@ -76,6 +77,8 @@ describe("style foundation", () => {
     expect(messageList).not.toMatch(/\.scroller\s*{[^}]*overflow-y\s*:\s*(auto|scroll)/s);
     expect(messageList).toMatch(/\.list\s*{[^}]*display:\s*grid/s);
     expect(messageList).not.toMatch(/\.list\s*{[^}]*justify-content:\s*flex-end/s);
+    expect(messageText).toMatch(/\.codeViewport\s*{[^}]*transition:\s*[^}]*max-height/s);
+    expect(messageText).toContain(".codeViewLoading");
     expect(sider).toMatch(/\.historyMeta\s*{[^}]*white-space:\s*nowrap/s);
     expect(sider).toMatch(/\.historyItem\[data-active="true"\]::after\s*{[^}]*position:\s*absolute/s);
     expect(sendBox).toMatch(/\.root\[data-variant="codex"\]\s*{[^}]*overflow:\s*visible/s);
@@ -122,9 +125,9 @@ describe("style foundation", () => {
     expect(shell).not.toMatch(/\.sidebar\s*{[^}]*border-right/s);
     expect(shell).toMatch(/\.backButton\s*{[^}]*height:\s*30px/s);
     expect(shell).toMatch(/\.searchBox\s*{[^}]*height:\s*30px/s);
-    expect(shell).toMatch(/\.groupLabel\s*{[^}]*font-size:\s*12px/s);
+    expect(shell).toMatch(/\.groupLabel\s*{[^}]*font-size:\s*11px/s);
     expect(shell).toMatch(/\.menuItem\s*{\s*width:\s*100%;[^}]*height:\s*30px/s);
-    expect(shell).toMatch(/\.menuItem\s*{\s*width:\s*100%;[^}]*font-size:\s*14px/s);
+    expect(shell).toMatch(/\.menuItem\s*{\s*width:\s*100%;[^}]*font-size:\s*13px/s);
     expect(shell).toMatch(/\.content\s*{[^}]*overflow:\s*auto/s);
     expect(shell).toMatch(/\.content\s*{[^}]*border-top-left-radius:\s*12px/s);
     expect(shell).toMatch(/\.content\s*{[^}]*border-bottom-left-radius:\s*12px/s);

@@ -6,7 +6,7 @@
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--surface-muted) 44%, transparent);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   padding: 6px;
 }
 
@@ -72,7 +72,7 @@
   padding: 8px 0 0 10px;
   border-left: 2px solid var(--inline-block-border);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.65;
   white-space: pre-wrap;
 }

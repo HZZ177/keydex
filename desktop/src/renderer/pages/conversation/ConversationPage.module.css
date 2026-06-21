@@ -18,7 +18,7 @@
   background: color-mix(in srgb, var(--composer-bg) 92%, var(--surface-muted));
   box-shadow: 0 6px 18px rgb(15 23 42 / 6%);
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
   padding: 0 12px;
   pointer-events: auto;
@@ -78,7 +78,7 @@
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.55;
 }
 
@@ -92,7 +92,7 @@
   justify-content: space-between;
   gap: 12px;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .sendButton,

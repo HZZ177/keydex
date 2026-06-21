@@ -7,7 +7,7 @@
   border-radius: var(--radius-pill);
   background: var(--inline-block-bg);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
   padding: 7px 10px;
 }
