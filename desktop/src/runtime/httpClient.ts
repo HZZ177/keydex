@@ -15,7 +15,7 @@ export interface RequestOptions {
 }
 
 const SENSITIVE_KEY_PATTERN = /api[_-]?key|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|secret/i;
-export const AGENT_BASE_URL_STORAGE_KEY = "codex-copy:agent-base-url";
+export const AGENT_BASE_URL_STORAGE_KEY = "keydex:agent-base-url";
 
 export class HttpClient {
   private baseUrl: string;

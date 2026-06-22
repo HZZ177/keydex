@@ -9,7 +9,6 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
@@ -500,6 +499,7 @@ function MermaidPreview({
   const [state, setState] = useState<MermaidPreviewState>({ status: "loading" });
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const previewRef = useRef<HTMLDivElement>(null);
   const instanceId = useRef(`mermaid-${Math.random().toString(36).slice(2)}`);
   const dragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(
     null,
@@ -513,13 +513,24 @@ function MermaidPreview({
     setOffset({ x: 0, y: 0 });
 
     void import("mermaid")
-      .then(({ default: mermaid }) => {
+      .then(async ({ default: mermaid }) => {
         mermaid.initialize({
           startOnLoad: false,
           theme: theme === "dark" ? "dark" : "default",
           securityLevel: "strict",
+          suppressErrorRendering: true,
         });
-        return mermaid.render(renderId, code);
+        await mermaid.parse(code, { suppressErrors: false });
+        const renderHost = document.createElement("div");
+        renderHost.setAttribute("data-mermaid-render-host", "true");
+        renderHost.style.cssText =
+          "position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;";
+        previewRef.current?.appendChild(renderHost);
+        try {
+          return await mermaid.render(renderId, code, renderHost);
+        } finally {
+          renderHost.remove();
+        }
       })
       .then((result) => {
         if (cancelled) {
@@ -533,6 +544,7 @@ function MermaidPreview({
           return;
         }
         const message = error instanceof Error ? error.message : "Mermaid 渲染失败";
+        cleanupGlobalMermaidErrors();
         setState({ status: "error", message });
       });
 
@@ -541,6 +553,22 @@ function MermaidPreview({
     };
   }, [code, theme]);
 
+  useEffect(() => {
+    if (!interactive) {
+      return;
+    }
+    const element = previewRef.current;
+    if (!element) {
+      return;
+    }
+    const handleNativeWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      setScale((current) => clampMermaidScale(current + (event.deltaY < 0 ? 0.12 : -0.12)));
+    };
+    element.addEventListener("wheel", handleNativeWheel, { passive: false });
+    return () => element.removeEventListener("wheel", handleNativeWheel);
+  }, [interactive]);
+
   const zoomBy = (delta: number) => {
     setScale((current) => clampMermaidScale(current + delta));
   };
@@ -548,14 +576,6 @@ function MermaidPreview({
   const resetTransform = () => {
     setScale(1);
     setOffset({ x: 0, y: 0 });
-  };
-
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!interactive) {
-      return;
-    }
-    event.preventDefault();
-    setScale((current) => clampMermaidScale(current + (event.deltaY < 0 ? 0.12 : -0.12)));
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -592,6 +612,7 @@ function MermaidPreview({
 
   return (
     <div
+      ref={previewRef}
       className={styles.mermaidPreview}
       data-interactive={interactive ? "true" : "false"}
       data-size={size}
@@ -600,7 +621,6 @@ function MermaidPreview({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onWheel={handleWheel}
     >
       {interactive ? (
         <div className={styles.mermaidControls} aria-label="Mermaid 视图控制" onPointerDown={(event) => event.stopPropagation()}>
@@ -638,6 +658,23 @@ function MermaidPreview({
 
 function clampMermaidScale(value: number): number {
   return Math.min(3, Math.max(0.35, Math.round(value * 100) / 100));
+}
+
+function cleanupGlobalMermaidErrors() {
+  document.querySelectorAll(".error-icon, .error-text").forEach((element) => {
+    const svg = element.closest("svg");
+    const wrapper = svg?.parentElement;
+    if (!svg || !wrapper) {
+      return;
+    }
+    if (wrapper.parentElement === document.body && wrapper.id.startsWith("dmermaid-")) {
+      wrapper.remove();
+      return;
+    }
+    if (svg.parentElement === document.body && svg.id.startsWith("mermaid-")) {
+      svg.remove();
+    }
+  });
 }
 
 function extractText(node: ReactNode): string {

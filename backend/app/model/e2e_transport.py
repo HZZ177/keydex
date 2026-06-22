@@ -7,13 +7,13 @@ from typing import Any
 
 import httpx
 
-E2E_MODEL_ID = "e2e-codex-stream"
+E2E_MODEL_ID = "e2e-keydex-stream"
 
 
 def create_e2e_model_transport(*, delay_ms: int = 80) -> httpx.MockTransport:
     """Create an explicit E2E-only OpenAI-compatible HTTP transport.
 
-    This is enabled only by CODEX_COPY_E2E_MODEL_TRANSPORT. It is injected into
+    This is enabled only by KEYDEX_E2E_MODEL_TRANSPORT. It is injected into
     LangChain's ChatOpenAI httpx client for page-level E2E tests, not used as a
     runtime fallback when model configuration is missing.
     """
@@ -23,7 +23,7 @@ def create_e2e_model_transport(*, delay_ms: int = 80) -> httpx.MockTransport:
         if path.endswith("/models"):
             return httpx.Response(
                 200,
-                json={"data": [{"id": E2E_MODEL_ID, "owned_by": "codex-copy-e2e"}]},
+                json={"data": [{"id": E2E_MODEL_ID, "owned_by": "keydex-e2e"}]},
             )
         if path.endswith("/chat/completions"):
             payload = _json_body(await request.aread())

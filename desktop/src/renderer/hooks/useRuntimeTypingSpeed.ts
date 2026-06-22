@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-export const RUNTIME_TYPING_SPEED_EVENT = "codex-copy:runtime-typing-speed-change";
+export const RUNTIME_TYPING_SPEED_EVENT = "keydex:runtime-typing-speed-change";
 
 export interface RuntimeTypingSpeedEventDetail {
   sourceId: string;

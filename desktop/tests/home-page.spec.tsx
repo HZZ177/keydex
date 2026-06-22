@@ -36,7 +36,7 @@ describe("HomePage", () => {
     expect(onNavigateToConversation).toHaveBeenCalledWith("ses-1", "qwen-coder", "实现一个新功能");
     expect(onOpenModelSettings).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("工作目录")).toBeNull();
-    expect(screen.getByLabelText("选择工作区").textContent).toContain("codex-copy");
+    expect(screen.getByLabelText("选择工作区").textContent).toContain("keydex");
     expect(screen.queryByLabelText("快速对话上下文")).toBeNull();
     expect(screen.queryByLabelText("自定义模型配置")).toBeNull();
     expect(screen.queryByRole("group", { name: "权限模式" })).toBeNull();
@@ -86,7 +86,7 @@ describe("HomePage", () => {
       });
     });
     expect(onNavigateToConversation).toHaveBeenCalledWith("ses-1", "deepseek-coder", "读取仓库结构");
-    expect(screen.getByLabelText("选择工作区").textContent).toContain("codex-copy");
+    expect(screen.getByLabelText("选择工作区").textContent).toContain("keydex");
     expect(screen.queryByLabelText("快速对话上下文")).toBeNull();
     expect(screen.queryByRole("button", { name: "完全访问" })).toBeNull();
   });
@@ -106,7 +106,7 @@ describe("HomePage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByLabelText("选择工作区").textContent).toContain("codex-copy");
+      expect(screen.getByLabelText("选择工作区").textContent).toContain("keydex");
     });
     fireEvent.change(screen.getByLabelText("输入需求"), { target: { value: "@READ" } });
 
@@ -288,7 +288,7 @@ describe("HomePage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByLabelText("选择工作区").textContent).toContain("codex-copy");
+      expect(screen.getByLabelText("选择工作区").textContent).toContain("keydex");
     });
     fireEvent.click(screen.getByRole("button", { name: "选择工作区" }));
     fireEvent.click(screen.getByRole("button", { name: /无项目聊天/ }));
@@ -314,7 +314,7 @@ describe("HomePage", () => {
 function fakeRuntime({
   model,
   models = model ? [{ id: model }] : [],
-  workspaces = [workspace("ws-1", "codex-copy")],
+  workspaces = [workspace("ws-1", "keydex")],
   workspaceSearch = vi.fn().mockResolvedValue([]),
   canPickDirectory = false,
   pickDirectory = vi.fn().mockResolvedValue(null),

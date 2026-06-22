@@ -4,19 +4,19 @@
   grid-template-columns: 1fr minmax(160px, auto) 1fr;
   align-items: center;
   padding: 0 10px;
-  border-bottom: 1px solid var(--color-border-1);
-  background: var(--shell-bg);
+  background: color-mix(in srgb, var(--sidebar-bg) 94%, var(--shell-bg));
   user-select: none;
 }
 
-.left,
-.actions {
+.left {
   display: flex;
   align-items: center;
   gap: 7px;
 }
 
-.actions {
+.right {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
 }
 
@@ -51,9 +51,7 @@
   white-space: nowrap;
 }
 
-.iconButton,
-.windowButton,
-.closeButton {
+.iconButton {
   width: 30px;
   height: 30px;
   display: inline-grid;
@@ -76,46 +74,13 @@
   transform: scale(0.94);
 }
 
-.toggleGlyph {
-  grid-area: 1 / 1;
-  display: inline-grid;
-  place-items: center;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(0) scale(0.86);
-  transition:
-    opacity 150ms var(--motion-ease-standard),
-    transform 180ms var(--motion-ease-out);
-  will-change: opacity, transform;
-}
-
-.toggleGlyph[data-kind="close"][data-visible="false"] {
-  transform: translateX(-4px) scale(0.86);
-}
-
-.toggleGlyph[data-kind="open"][data-visible="false"] {
-  transform: translateX(4px) scale(0.86);
-}
-
-.toggleGlyph[data-visible="true"] {
-  opacity: 1;
-  transform: translateX(0) scale(1);
-}
-
-.iconButton:hover,
-.windowButton:hover {
+.iconButton:hover {
   background: var(--surface-hover);
   color: var(--color-text-1);
 }
 
-.closeButton:hover {
-  background: var(--color-danger-6);
-  color: #ffffff;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .sidebarToggle,
-  .toggleGlyph {
+  .sidebarToggle {
     transition: none;
   }
 

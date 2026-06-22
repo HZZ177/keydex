@@ -6,11 +6,11 @@ import type { Workspace } from "@/types/protocol";
 
 describe("WorkspaceSelector", () => {
   it("opens and closes the Codex style workspace menu", () => {
-    render(<WorkspaceSelector value={{ type: "chat" }} workspaces={[workspace("ws-1", "codex-copy")]} />);
+    render(<WorkspaceSelector value={{ type: "chat" }} workspaces={[workspace("ws-1", "keydex")]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "选择工作区" }));
     expect(screen.getByRole("dialog", { name: "工作区选择" })).not.toBeNull();
-    expect(screen.getByRole("option", { name: /codex-copy/ })).not.toBeNull();
+    expect(screen.getByRole("option", { name: /keydex/ })).not.toBeNull();
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "工作区选择" })).toBeNull();
@@ -18,7 +18,7 @@ describe("WorkspaceSelector", () => {
 
   it("selects a recent workspace and closes the menu", () => {
     const onSelectWorkspace = vi.fn();
-    const selected = workspace("ws-1", "codex-copy");
+    const selected = workspace("ws-1", "keydex");
     const target = workspace("ws-2", "kt-agent-framework");
 
     render(
@@ -41,8 +41,8 @@ describe("WorkspaceSelector", () => {
 
     render(
       <WorkspaceSelector
-        value={{ type: "workspace", workspace: workspace("ws-1", "codex-copy") }}
-        workspaces={[workspace("ws-1", "codex-copy")]}
+        value={{ type: "workspace", workspace: workspace("ws-1", "keydex") }}
+        workspaces={[workspace("ws-1", "keydex")]}
         onSelectChat={onSelectChat}
       />,
     );
@@ -114,7 +114,7 @@ describe("WorkspaceSelector", () => {
     render(
       <WorkspaceSelector
         value={{ type: "chat" }}
-        workspaces={[workspace("ws-1", "codex-copy"), workspace("ws-2", "kt-agent-framework")]}
+        workspaces={[workspace("ws-1", "keydex"), workspace("ws-2", "kt-agent-framework")]}
       />,
     );
 
@@ -122,7 +122,7 @@ describe("WorkspaceSelector", () => {
     fireEvent.change(screen.getByLabelText("筛选工作区"), { target: { value: "kt-agent" } });
 
     expect(screen.getByRole("option", { name: /kt-agent-framework/ })).not.toBeNull();
-    expect(screen.queryByRole("option", { name: /codex-copy/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /keydex/ })).toBeNull();
   });
 });
 

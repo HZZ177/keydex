@@ -368,7 +368,7 @@ class Database:
                   created_at, updated_at, last_opened_at
                 ) values (?, ?, ?, ?, 'project', ?, ?, ?)
                 """,
-                (workspace_id, "codex-copy", root_text, normalized_root, now, now, now),
+                (workspace_id, "keydex", root_text, normalized_root, now, now, now),
             )
 
         cursor = conn.execute(

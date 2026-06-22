@@ -5,6 +5,8 @@ import os
 
 import uvicorn
 
+from backend.app.core.env import env_name
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -13,7 +15,7 @@ def main() -> None:
     parser.add_argument("--data-dir", default=None)
     args = parser.parse_args()
     if args.data_dir:
-        os.environ["CODEX_COPY_DATA_DIR"] = args.data_dir
+        os.environ[env_name("DATA_DIR")] = args.data_dir
 
     from backend.app.main import app
 

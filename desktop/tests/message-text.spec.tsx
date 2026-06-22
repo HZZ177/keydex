@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import mermaid, { type ParseResult, type RenderResult } from "mermaid";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { calculateDynamicStreamStep } from "@/renderer/hooks/useDynamicStreamBuffer";
@@ -7,10 +8,20 @@ import { MessageText } from "@/renderer/pages/conversation/messages";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
+const mermaidParseResult: ParseResult = { diagramType: "flowchart-v2", config: {} };
+const mermaidRenderResult: RenderResult = {
+  diagramType: "flowchart-v2",
+  svg: '<svg role="img" aria-label="测试图表"></svg>',
+};
+
 vi.mock("mermaid", () => ({
   default: {
     initialize: vi.fn(),
-    render: vi.fn().mockResolvedValue({ svg: '<svg role="img" aria-label="测试图表"></svg>' }),
+    parse: vi.fn().mockResolvedValue({ diagramType: "flowchart-v2", config: {} }),
+    render: vi.fn().mockResolvedValue({
+      diagramType: "flowchart-v2",
+      svg: '<svg role="img" aria-label="测试图表"></svg>',
+    }),
   },
 }));
 
@@ -21,6 +32,8 @@ describe("MessageText", () => {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
     });
+    vi.mocked(mermaid.parse).mockResolvedValue(mermaidParseResult);
+    vi.mocked(mermaid.render).mockResolvedValue(mermaidRenderResult);
   });
 
   it("renders markdown without raw html execution", () => {
@@ -310,6 +323,44 @@ describe("MessageText", () => {
     expect(within(dialog).getByRole("button", { name: "放大 Mermaid" })).not.toBeNull();
     expect(within(dialog).getByRole("button", { name: "缩小 Mermaid" })).not.toBeNull();
     expect(within(dialog).getByRole("button", { name: "重置 Mermaid 视图" })).not.toBeNull();
+  });
+
+  it("keeps Mermaid render errors inside the preview panel and removes global error artifacts", async () => {
+    vi.mocked(mermaid.parse).mockRejectedValueOnce(new Error("Mermaid 语法错误"));
+    const legacyError = document.createElement("div");
+    legacyError.id = "dmermaid-legacy";
+    legacyError.innerHTML = '<svg id="mermaid-legacy"><path class="error-icon"></path></svg>';
+    document.body.appendChild(legacyError);
+
+    render(
+      <MessageText
+        message={message("assistant", "```mermaid\n不是合法图表\n```", "completed")}
+      />,
+    );
+
+    const preview = screen.getByTestId("mermaid-preview");
+    const alert = await within(preview).findByRole("alert");
+    expect(alert.textContent).toContain("Mermaid 语法错误");
+    expect(document.body.querySelector("#dmermaid-legacy")).toBeNull();
+  });
+
+  it("registers fullscreen Mermaid wheel handling as a non-passive listener", async () => {
+    const addEventListener = vi.spyOn(HTMLDivElement.prototype, "addEventListener");
+    render(
+      <MessageText
+        message={message("assistant", "```mermaid\ngraph TD\nA[开始] --> B[结束]\n```", "completed")}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Mermaid 图表")).not.toBeNull();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "全屏显示 Mermaid" }));
+
+    await waitFor(() => {
+      expect(addEventListener).toHaveBeenCalledWith("wheel", expect.any(Function), { passive: false });
+    });
+    addEventListener.mockRestore();
   });
 
   it("opens rich fenced code into the shared preview provider", () => {

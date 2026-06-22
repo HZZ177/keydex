@@ -32,8 +32,6 @@
 .handle:hover::before,
 .handle:focus-visible::before,
 .handle[data-dragging="true"]::before {
-  left: 3px;
-  width: 3px;
   background: color-mix(in srgb, var(--color-text-3) 34%, transparent);
 }
 

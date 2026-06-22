@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from backend.app.core.env import ENV_PREFIX
+
 DEFAULT_PROTOCOL_VERSION = "2026-06-15"
 
 
 class AppSettings(BaseSettings):
-    app_name: str = "codex-copy-agent"
+    app_name: str = "keydex-agent"
     version: str = "0.1.0"
     protocol_version: str = DEFAULT_PROTOCOL_VERSION
     host: str = "127.0.0.1"
@@ -28,7 +32,7 @@ class AppSettings(BaseSettings):
     e2e_stream_delay_ms: int = Field(default=80, ge=0)
 
     model_config = SettingsConfigDict(
-        env_prefix="CODEX_COPY_",
+        env_prefix=ENV_PREFIX,
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",

@@ -16,21 +16,21 @@ describe("Sider", () => {
   it("renders the personal local navigation without removed AionUi entries", () => {
     const { container } = renderSider(
       <Sider
-        projects={[{ id: "project-1", title: "codex-copy" }]}
+        projects={[{ id: "project-1", title: "keydex" }]}
         conversations={[{ id: "thread-1", title: "研读文档与 Codex 源码" }]}
       />,
     );
 
     expect(screen.getByText("新对话")).not.toBeNull();
     expect(screen.getByText("搜索")).not.toBeNull();
-    expect(screen.getByText("codex-copy")).not.toBeNull();
+    expect(screen.getByText("keydex")).not.toBeNull();
     expect(screen.getByText("研读文档与 Codex 源码")).not.toBeNull();
     expect(screen.getByText("设置")).not.toBeNull();
     expect(screen.queryByText("Team")).toBeNull();
     expect(screen.queryByText("Cron")).toBeNull();
     expect(screen.queryByText("Scheduled")).toBeNull();
     expect(screen.queryByText("自动化")).toBeNull();
-    expect(container.querySelector('section[aria-label="codex-copy"] svg')).not.toBeNull();
+    expect(container.querySelector('section[aria-label="keydex"] svg')).not.toBeNull();
   });
 
   it("emits navigation requests and toggles theme", () => {
@@ -59,13 +59,13 @@ describe("Sider", () => {
     renderSider(
       <Sider
         activePath="/guid"
-        projects={[{ id: "project-1", title: "codex-copy" }]}
+        projects={[{ id: "project-1", title: "keydex" }]}
         conversations={[{ id: "thread-1", title: "会话 A" }]}
       />,
     );
 
     expect(screen.getByRole("button", { name: "新对话" }).getAttribute("data-active")).toBe("true");
-    expect(screen.getByText("codex-copy").getAttribute("role")).toBeNull();
+    expect(screen.getByText("keydex").getAttribute("role")).toBeNull();
   });
 
   it("keeps history rows quiet with weak time metadata and no native title popup", () => {
@@ -148,7 +148,7 @@ describe("Sider", () => {
         title: "项目会话 A",
         session_type: "workspace",
         workspace_id: "ws-1",
-        workspace: workspace("ws-1", "codex-copy"),
+        workspace: workspace("ws-1", "keydex"),
       }),
       thread({
         id: "workspace-b",
@@ -162,7 +162,7 @@ describe("Sider", () => {
 
     renderSider(<Sider runtime={runtime} activePath="/conversation/workspace-a" />);
 
-    expect(await screen.findByText("codex-copy")).not.toBeNull();
+    expect(await screen.findByText("keydex")).not.toBeNull();
     expect(screen.getByText("kt-agent-framework")).not.toBeNull();
     expect(screen.getByText("对话")).not.toBeNull();
     expect(screen.getByRole("button", { name: "项目会话 A" }).getAttribute("aria-current")).toBe("page");
@@ -177,7 +177,7 @@ describe("Sider", () => {
         title: "项目会话 A",
         session_type: "workspace",
         workspace_id: "ws-1",
-        workspace: workspace("ws-1", "codex-copy"),
+        workspace: workspace("ws-1", "keydex"),
       }),
     ]);
 
@@ -188,7 +188,7 @@ describe("Sider", () => {
 
     const card = screen.getByRole("tooltip");
     expect(card.textContent).toContain("项目会话 A");
-    expect(card.textContent).toContain("codex-copy");
+    expect(card.textContent).toContain("keydex");
     expect(card.textContent).toContain("当前会话");
   });
 
@@ -214,17 +214,17 @@ describe("Sider", () => {
         title: "旧标题",
         session_type: "workspace",
         workspace_id: "ws-1",
-        workspace: workspace("ws-1", "codex-copy"),
+        workspace: workspace("ws-1", "keydex"),
       }),
     ]);
     renderSider(<Sider runtime={runtime} />);
 
-    await screen.findByText("codex-copy");
+    await screen.findByText("keydex");
     fireEvent.click(screen.getByRole("button", { name: "重命名 旧标题" }));
     fireEvent.change(screen.getByLabelText("重命名 旧标题"), { target: { value: "新标题" } });
     fireEvent.click(screen.getByRole("button", { name: "保存重命名" }));
 
-    const group = await screen.findByRole("region", { name: "codex-copy" });
+    const group = await screen.findByRole("region", { name: "keydex" });
     expect(within(group).getByRole("button", { name: "新标题" })).not.toBeNull();
   });
 
@@ -236,7 +236,7 @@ describe("Sider", () => {
         updated_at: "2026-06-17T10:00:00Z",
         session_type: "workspace",
         workspace_id: "ws-1",
-        workspace: workspace("ws-1", "codex-copy"),
+        workspace: workspace("ws-1", "keydex"),
       }),
     ]);
     renderSider(<Sider runtime={runtime} />);
@@ -250,12 +250,12 @@ describe("Sider", () => {
           updated_at: "2026-06-17T11:00:00Z",
           session_type: "workspace",
           workspace_id: "ws-1",
-          workspace: workspace("ws-1", "codex-copy"),
+          workspace: workspace("ws-1", "keydex"),
         }),
       );
     });
 
-    const group = await screen.findByRole("region", { name: "codex-copy" });
+    const group = await screen.findByRole("region", { name: "keydex" });
     const newNode = within(group).getByText("新会话");
     expect(Boolean(newNode.compareDocumentPosition(oldNode) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });

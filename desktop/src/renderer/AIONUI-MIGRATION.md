@@ -1,6 +1,6 @@
 # AionUi 迁移边界
 
-本文件记录 `codex-copy` 前端迁移时对 AionUi 的使用边界。AionUi 只作为成熟 React renderer 交互与组件实现参考，最终产品仍是本项目的本地个人型 Codex-like Windows 桌面 Agent。
+本文件记录 `keydex` 前端迁移时对 AionUi 的使用边界。AionUi 只作为成熟 React renderer 交互与组件实现参考，最终产品仍是本项目的本地个人型 Codex-like Windows 桌面 Agent。
 
 ## 来源
 
@@ -13,7 +13,7 @@
 ```text
 Derived from AionUi (Apache-2.0).
 Source: <AionUi relative path>
-Modified for codex-copy.
+Modified for keydex.
 ```
 
 如果只是重新实现同类交互，不需要在每个文件头部加来源说明，但实现必须遵守本文件的删除边界。

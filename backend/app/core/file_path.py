@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
+
+from backend.app.core.env import get_prefixed_env
 
 
 def _resolve_log_path() -> Path:
-    explicit = os.getenv("CODEX_COPY_LOG_DIR")
+    explicit = get_prefixed_env("LOG_DIR")
     if explicit:
         return Path(explicit).expanduser().resolve()
-    data_dir = Path(os.getenv("CODEX_COPY_DATA_DIR", ".data")).expanduser().resolve()
+    data_dir = Path(get_prefixed_env("DATA_DIR", ".data") or ".data").expanduser().resolve()
     return data_dir / "logs"
 
 

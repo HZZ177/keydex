@@ -19,10 +19,10 @@ def test_backend_main_uses_import_string_for_reload(monkeypatch, tmp_path) -> No
         calls.append((app, kwargs))
 
     monkeypatch.setattr(uvicorn, "run", fake_run)
-    monkeypatch.setenv("CODEX_COPY_HOST", "127.0.0.9")
-    monkeypatch.setenv("CODEX_COPY_PORT", "9876")
-    monkeypatch.setenv("CODEX_COPY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("CODEX_COPY_RELOAD", "true")
+    monkeypatch.setenv("KEYDEX_HOST", "127.0.0.9")
+    monkeypatch.setenv("KEYDEX_PORT", "9876")
+    monkeypatch.setenv("KEYDEX_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("KEYDEX_RELOAD", "true")
     reset_settings_cache()
     try:
         backend_main.main()
@@ -68,11 +68,11 @@ def test_sidecar_entry_sets_data_dir_and_runs_imported_app(monkeypatch, tmp_path
             str(data_dir),
         ],
     )
-    monkeypatch.delenv("CODEX_COPY_DATA_DIR", raising=False)
+    monkeypatch.delenv("KEYDEX_DATA_DIR", raising=False)
 
     entry.main()
 
-    assert Path(os.environ["CODEX_COPY_DATA_DIR"]) == data_dir
+    assert Path(os.environ["KEYDEX_DATA_DIR"]) == data_dir
     assert calls == [
         (
             backend_main.app,

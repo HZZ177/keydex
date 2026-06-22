@@ -1,4 +1,4 @@
-import { Maximize2, Minus, MoreHorizontal, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useMemo } from "react";
 
@@ -9,11 +9,20 @@ import type { WindowControls } from "./windowControls";
 export interface TitlebarProps {
   title: string;
   sidebarCollapsed: boolean;
+  rightSidebarOpen?: boolean;
   onToggleSidebar(): void;
+  onToggleRightSidebar?: () => void;
   windowControls?: WindowControls;
 }
 
-export function Titlebar({ title, sidebarCollapsed, onToggleSidebar, windowControls }: TitlebarProps) {
+export function Titlebar({
+  title,
+  sidebarCollapsed,
+  rightSidebarOpen = false,
+  onToggleSidebar,
+  onToggleRightSidebar,
+  windowControls,
+}: TitlebarProps) {
   const controls = useMemo(() => windowControls ?? createWindowControls(), [windowControls]);
 
   const handleDrag = (event: MouseEvent<HTMLElement>) => {
@@ -33,26 +42,16 @@ export function Titlebar({ title, sidebarCollapsed, onToggleSidebar, windowContr
         <button
           className={`${styles.iconButton} ${styles.sidebarToggle}`}
           data-state={sidebarCollapsed ? "collapsed" : "expanded"}
+          data-icon={sidebarCollapsed ? "panel-left-open" : "panel-left-close"}
           type="button"
           aria-label={sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
           onClick={onToggleSidebar}
         >
-          <span
-            className={styles.toggleGlyph}
-            data-kind="close"
-            data-visible={sidebarCollapsed ? "false" : "true"}
-            aria-hidden="true"
-          >
-            <PanelLeftClose size={17} strokeWidth={2} />
-          </span>
-          <span
-            className={styles.toggleGlyph}
-            data-kind="open"
-            data-visible={sidebarCollapsed ? "true" : "false"}
-            aria-hidden="true"
-          >
-            <PanelLeftOpen size={17} strokeWidth={2} />
-          </span>
+          {sidebarCollapsed ? (
+            <PanelLeftOpen size={17} strokeWidth={2.1} />
+          ) : (
+            <PanelLeftClose size={17} strokeWidth={2.1} />
+          )}
         </button>
         <div className={styles.navGhost} aria-hidden="true">
           <span />
@@ -69,23 +68,21 @@ export function Titlebar({ title, sidebarCollapsed, onToggleSidebar, windowContr
         <div className={styles.title}>{title}</div>
       </div>
 
-      <div className={styles.actions}>
-        <button className={styles.iconButton} type="button" aria-label="更多">
-          <MoreHorizontal size={17} strokeWidth={2} />
-        </button>
-        <button className={styles.windowButton} type="button" aria-label="最小化" onClick={() => void controls.minimize()}>
-          <Minus size={15} strokeWidth={2} />
-        </button>
+      <div className={styles.right}>
         <button
-          className={styles.windowButton}
+          className={`${styles.iconButton} ${styles.sidebarToggle}`}
+          data-state={rightSidebarOpen ? "expanded" : "collapsed"}
+          data-icon={rightSidebarOpen ? "panel-right-close" : "panel-right-open"}
           type="button"
-          aria-label="最大化"
-          onClick={() => void controls.toggleMaximize()}
+          aria-label={rightSidebarOpen ? "折叠右侧栏" : "展开右侧栏"}
+          aria-pressed={rightSidebarOpen}
+          onClick={onToggleRightSidebar}
         >
-          <Maximize2 size={14} strokeWidth={2} />
-        </button>
-        <button className={styles.closeButton} type="button" aria-label="关闭" onClick={() => void controls.close()}>
-          <X size={15} strokeWidth={2} />
+          {rightSidebarOpen ? (
+            <PanelRightClose size={17} strokeWidth={2.1} />
+          ) : (
+            <PanelRightOpen size={17} strokeWidth={2.1} />
+          )}
         </button>
       </div>
     </header>

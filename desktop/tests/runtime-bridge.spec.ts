@@ -89,9 +89,9 @@ describe("RuntimeBridge", () => {
   it("routes workspace registry calls to the backend workspace API", async () => {
     const workspace = {
       id: "ws-1",
-      name: "codex-copy",
-      root_path: "D:/Pycharm Projects/codex-copy",
-      normalized_root_path: "d:/pycharm projects/codex-copy",
+      name: "keydex",
+      root_path: "D:/Pycharm Projects/keydex",
+      normalized_root_path: "d:/pycharm projects/keydex",
       type: "project",
       created_at: "2026-06-21T00:00:00Z",
       updated_at: "2026-06-21T00:00:00Z",
@@ -121,7 +121,7 @@ describe("RuntimeBridge", () => {
 
     await expect(runtime.workspaces.list()).resolves.toMatchObject({ total: 1, list: [{ id: "ws-1" }] });
     await expect(
-      runtime.workspaces.create({ rootPath: "D:/Pycharm Projects/codex-copy", name: "codex-copy" }),
+      runtime.workspaces.create({ rootPath: "D:/Pycharm Projects/keydex", name: "keydex" }),
     ).resolves.toMatchObject({ id: "ws-1" });
     await expect(runtime.workspaces.get("ws 1")).resolves.toMatchObject({ id: "ws 1" });
     await expect(runtime.workspaces.update("ws 1", { name: "repo", touch: true })).resolves.toMatchObject({
@@ -134,7 +134,7 @@ describe("RuntimeBridge", () => {
     }));
     expect(fetcher).toHaveBeenNthCalledWith(2, "http://127.0.0.1:8765/api/workspaces", expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ root_path: "D:/Pycharm Projects/codex-copy", name: "codex-copy" }),
+      body: JSON.stringify({ root_path: "D:/Pycharm Projects/keydex", name: "keydex" }),
     }));
     expect(fetcher).toHaveBeenNthCalledWith(
       3,

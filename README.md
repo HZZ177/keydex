@@ -1,6 +1,6 @@
-# codex-copy
+# keydex
 
-`codex-copy` 是一个面向 Windows 本地个人使用的 Codex-like 桌面 Agent。
+`keydex` 是一个面向 Windows 本地个人使用的 Codex-like 桌面 Agent。
 
 当前路线：
 
@@ -64,7 +64,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\dev-start.ps1 -Help
 
 ## 工作区与会话运行目录
 
-`codex-copy` 的 Agent 不应该运行在应用自身仓库目录下。当前实现把“工作区”作为一等实体：
+`keydex` 的 Agent 不应该运行在应用自身仓库目录下。当前实现把“工作区”作为一等实体：
 
 - `workspaces` 表保存用户添加的本机项目目录。
 - `session_type=workspace` 的会话必须绑定 `workspace_id`，并在创建时固化自己的 `cwd` 和 `workspace_roots`。
@@ -80,7 +80,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\dev-start.ps1 -Help
 3. 输入本机项目目录，例如 `D:\Pycharm Projects\my-project`，或在 exe 环境下使用浏览入口。
 4. 在该工作区下发送消息后，会话历史会归入对应项目分组。
 
-工作区被删除或路径不可访问时，历史会话仍保留，但页面会显示“工作区不可用”，并且不会回退到 `codex-copy` 应用目录。
+工作区被删除或路径不可访问时，历史会话仍保留，但页面会显示“工作区不可用”，并且不会回退到 `keydex` 应用目录。
 
 ## 测试
 

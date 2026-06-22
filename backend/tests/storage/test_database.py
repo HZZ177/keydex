@@ -91,7 +91,7 @@ def test_init_database_creates_workspace_schema_and_session_columns(tmp_path) ->
 
 def test_init_database_upgrades_legacy_session_schema_idempotently(tmp_path) -> None:
     db_path = tmp_path / "legacy.db"
-    default_root = tmp_path / "codex-copy"
+    default_root = tmp_path / "keydex"
     default_root.mkdir()
     with sqlite3.connect(db_path) as conn:
         conn.executescript(
@@ -172,7 +172,7 @@ def test_init_database_upgrades_legacy_session_schema_idempotently(tmp_path) -> 
     }.issubset(columns)
     assert row is not None
     assert len(workspaces) == 1
-    assert workspaces[0]["name"] == "codex-copy"
+    assert workspaces[0]["name"] == "keydex"
     assert workspaces[0]["root_path"] == str(default_root.resolve())
     assert row["workspace_id"] == workspaces[0]["id"]
     assert row["session_type"] == "workspace"
@@ -187,7 +187,7 @@ def test_init_database_upgrades_legacy_session_schema_idempotently(tmp_path) -> 
 
 def test_init_database_does_not_migrate_new_schema_pure_chat_sessions(tmp_path) -> None:
     db_path = tmp_path / "app.db"
-    default_root = tmp_path / "codex-copy"
+    default_root = tmp_path / "keydex"
     default_root.mkdir()
     db = init_database(db_path, default_workspace_root=default_root)
 

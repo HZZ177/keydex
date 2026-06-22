@@ -24,14 +24,14 @@ def test_app_settings_exposes_desktop_runtime_defaults(tmp_path) -> None:
 
 
 def test_app_settings_can_be_overridden_by_environment(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CODEX_COPY_HOST", "0.0.0.0")
-    monkeypatch.setenv("CODEX_COPY_PORT", "9900")
-    monkeypatch.setenv("CODEX_COPY_DATA_DIR", str(tmp_path / "custom-data"))
-    monkeypatch.setenv("CODEX_COPY_WORKSPACE_ROOT", str(tmp_path / "workspace"))
-    monkeypatch.setenv("CODEX_COPY_MAX_TOOL_CALLS", "12")
-    monkeypatch.setenv("CODEX_COPY_TOOL_TIMEOUT_SECONDS", "9.5")
-    monkeypatch.setenv("CODEX_COPY_E2E_MODEL_TRANSPORT", "true")
-    monkeypatch.setenv("CODEX_COPY_E2E_STREAM_DELAY_MS", "0")
+    monkeypatch.setenv("KEYDEX_HOST", "0.0.0.0")
+    monkeypatch.setenv("KEYDEX_PORT", "9900")
+    monkeypatch.setenv("KEYDEX_DATA_DIR", str(tmp_path / "custom-data"))
+    monkeypatch.setenv("KEYDEX_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("KEYDEX_MAX_TOOL_CALLS", "12")
+    monkeypatch.setenv("KEYDEX_TOOL_TIMEOUT_SECONDS", "9.5")
+    monkeypatch.setenv("KEYDEX_E2E_MODEL_TRANSPORT", "true")
+    monkeypatch.setenv("KEYDEX_E2E_STREAM_DELAY_MS", "0")
 
     settings = AppSettings()
 
@@ -51,4 +51,3 @@ def test_app_settings_reject_invalid_tool_limits() -> None:
 
     with pytest.raises(ValidationError):
         AppSettings(tool_timeout_seconds=0)
-
