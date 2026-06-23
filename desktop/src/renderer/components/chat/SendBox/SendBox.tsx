@@ -32,6 +32,7 @@ import {
   removeQuoteMarkerAtIndex,
   type QuoteMarkerQuoteSegment,
 } from "@/renderer/utils/quoteMarkers";
+import { useWorkspaceFileSearch, type WorkspaceFileSearchFn } from "@/renderer/hooks/useWorkspaceFileSearch";
 
 import styles from "./SendBox.module.css";
 import {
@@ -42,9 +43,6 @@ import {
   selectedFileFromWorkspace,
 } from "./fileSelection";
 import { useCompositionInput } from "./useCompositionInput";
-
-const AT_SEARCH_MIN_QUERY_LENGTH = 2;
-const AT_SEARCH_DEBOUNCE_MS = 180;
 
 export interface SendBoxProps {
   value: string;
@@ -68,7 +66,7 @@ export interface SendBoxProps {
   onOpenFileReference?: (file: SelectedFile) => void;
   onSlashCommand?: (command: SlashCommand) => void;
   onListWorkspaceDirectory?: (path: string) => Promise<WorkspaceSearchResult[]>;
-  onSearchWorkspace?: (query: string) => Promise<WorkspaceSearchResult[]>;
+  onSearchWorkspace?: WorkspaceFileSearchFn;
 }
 
 export function SendBox({
@@ -102,9 +100,10 @@ export function SendBox({
   const [atActiveIndex, setAtActiveIndex] = useState(0);
   const [dismissedAtValue, setDismissedAtValue] = useState<string | null>(null);
   const [atBrowseState, setAtBrowseState] = useState<{ path: string; value: string } | null>(null);
-  const [atResults, setAtResults] = useState<WorkspaceSearchResult[]>([]);
-  const [atLoading, setAtLoading] = useState(false);
-  const [atError, setAtError] = useState<string | null>(null);
+  const hadAtDirectoryRequestRef = useRef(false);
+  const [atDirectoryResults, setAtDirectoryResults] = useState<WorkspaceSearchResult[]>([]);
+  const [atDirectoryLoading, setAtDirectoryLoading] = useState(false);
+  const [atDirectoryError, setAtDirectoryError] = useState<string | null>(null);
   const [fileSelection, dispatchFileSelection] = useReducer(
     fileSelectionReducer,
     initialFileSelectionState,
@@ -141,14 +140,14 @@ export function SendBox({
   const atDirectoryPath =
     atOpen && onListWorkspaceDirectory && (atBrowsePath !== null || !atQuery) ? atBrowsePath ?? "" : null;
   const atSearchQuery = atDirectoryPath === null ? atQuery ?? "" : "";
-  const atSearchHint =
-    atOpen &&
-    atDirectoryPath === null &&
-    Boolean(onListWorkspaceDirectory) &&
-    atSearchQuery.trim().length > 0 &&
-    atSearchQuery.trim().length < AT_SEARCH_MIN_QUERY_LENGTH
-      ? `继续输入至少 ${AT_SEARCH_MIN_QUERY_LENGTH} 个字符搜索工作区`
-      : null;
+  const atSearchState = useWorkspaceFileSearch({
+    enabled: atOpen && atDirectoryPath === null && Boolean(onSearchWorkspace),
+    query: atSearchQuery,
+    search: onSearchWorkspace,
+  });
+  const atResults = atDirectoryPath === null ? atSearchState.results : atDirectoryResults;
+  const atLoading = atDirectoryPath === null ? atSearchState.loading : atDirectoryLoading;
+  const atError = atDirectoryPath === null ? atSearchState.error : atDirectoryError;
   const composition = useCompositionInput({
     disabled: inputDisabled || !canSubmit,
     onSubmit: requestSend,
@@ -176,68 +175,41 @@ export function SendBox({
 
   useEffect(() => {
     let active = true;
-    if (!atOpen) {
-      setAtResults([]);
-      setAtLoading(false);
-      setAtError(null);
-      return;
-    }
-    if (atSearchHint) {
-      setAtResults([]);
-      setAtLoading(false);
-      setAtError(null);
-      return;
-    }
-    const query = atQuery ?? "";
-
-    const runRequest = () => {
-      const request =
-        atDirectoryPath !== null && onListWorkspaceDirectory
-          ? onListWorkspaceDirectory(atDirectoryPath)
-          : onSearchWorkspace?.(query);
-      if (!request) {
-        setAtResults([]);
-        setAtLoading(false);
-        setAtError(null);
-        return;
+    if (!atOpen || atDirectoryPath === null || !onListWorkspaceDirectory) {
+      if (hadAtDirectoryRequestRef.current) {
+        hadAtDirectoryRequestRef.current = false;
+        setAtDirectoryResults([]);
+        setAtDirectoryLoading(false);
+        setAtDirectoryError(null);
       }
-      setAtLoading(true);
-      setAtError(null);
-      setAtResults([]);
-      void request
-        .then((results) => {
-          if (!active) {
-            return;
-          }
-          setAtResults(results);
-        })
-        .catch((reason: unknown) => {
-          if (!active) {
-            return;
-          }
-          setAtResults([]);
-          setAtError(errorMessage(reason));
-        })
-        .finally(() => {
-          if (active) {
-            setAtLoading(false);
-          }
-        });
-    };
-
-    const shouldDebounce = atDirectoryPath === null && query.trim().length >= AT_SEARCH_MIN_QUERY_LENGTH;
-    const timer = shouldDebounce ? window.setTimeout(runRequest, AT_SEARCH_DEBOUNCE_MS) : null;
-    if (!timer) {
-      runRequest();
+      return;
     }
+    hadAtDirectoryRequestRef.current = true;
+    setAtDirectoryResults([]);
+    setAtDirectoryLoading(true);
+    setAtDirectoryError(null);
+    void onListWorkspaceDirectory(atDirectoryPath)
+      .then((results) => {
+        if (active) {
+          setAtDirectoryResults(results);
+        }
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setAtDirectoryResults([]);
+          setAtDirectoryError(errorMessage(reason));
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAtDirectoryLoading(false);
+        }
+      });
 
     return () => {
       active = false;
-      if (timer) {
-        window.clearTimeout(timer);
-      }
     };
-  }, [atDirectoryPath, atOpen, atQuery, atSearchHint, onListWorkspaceDirectory, onSearchWorkspace]);
+  }, [atDirectoryPath, atOpen, onListWorkspaceDirectory]);
 
   useLayoutEffect(() => {
     const input = inputRef.current;
@@ -491,7 +463,6 @@ export function SendBox({
           loading={atLoading}
           error={atError}
           directoryPath={atDirectoryPath}
-          hint={atSearchHint}
           query={atQuery ?? ""}
           onNavigateDirectory={navigateAtDirectory}
           onSelect={selectFile}

@@ -8,6 +8,7 @@ import { Layout } from "@/renderer/components/layout/Layout";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { ConversationPage } from "@/renderer/pages/conversation";
 import { clearQuickChatSendQueue, queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
+import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider } from "@/renderer/providers/PreviewProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
 import type {
@@ -34,6 +35,16 @@ describe("ConversationPage", () => {
       pageSize: 5,
     });
     expect(runtime.conversation.openChatChannel).toHaveBeenCalled();
+  });
+
+  it("shows history load failures as a top notification instead of an error message card", async () => {
+    const { runtime } = fakeRuntime({ historyError: new Error("会话不存在：ses-1") });
+
+    renderConversationWithNotifications(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("会话不存在：ses-1");
+    expect(screen.queryByTestId("error-item")).toBeNull();
+    expect((await screen.findByTestId("conversation-empty")).textContent).toBe("还没有消息，输入需求开始对话。");
   });
 
   it("does not show workspace picker in the bottom composer for a project session", async () => {
@@ -558,7 +569,11 @@ describe("ConversationPage", () => {
 
     expect(await screen.findByTestId("at-file-menu")).not.toBeNull();
     await waitFor(() => {
-      expect(workspaceSearch).toHaveBeenCalledWith({ sessionId: "ses-1" }, "READ");
+      expect(workspaceSearch).toHaveBeenCalledWith(
+        { sessionId: "ses-1" },
+        "READ",
+        expect.objectContaining({ signal: expect.any(Object) }),
+      );
     });
     expect(await screen.findByRole("option", { name: /README\.md/ })).not.toBeNull();
   });
@@ -790,10 +805,77 @@ describe("ConversationPage", () => {
     expect(screen.getByTestId("app-shell").dataset.rightSidebar).toBe("closed");
     expect(screen.queryByTestId("right-sidebar-initial-page")).toBeNull();
   });
+
+  it("restores the file panel preview when switching back to a session", async () => {
+    const sessionA = agentSession({
+      id: "ses-a",
+      title: "会话 A",
+      session_type: "workspace",
+      workspace_id: "ws-a",
+      workspace: workspace("ws-a", "repo-a", "D:/repo/a"),
+      cwd: "D:/repo/a",
+    });
+    const sessionB = agentSession({
+      id: "ses-b",
+      title: "会话 B",
+      session_type: "workspace",
+      workspace_id: "ws-b",
+      workspace: workspace("ws-b", "repo-b", "D:/repo/b"),
+      cwd: "D:/repo/b",
+    });
+    const { runtime: runtimeA } = fakeRuntime({
+      session: sessionA,
+      workspaceEntriesByPath: {
+        "": [workspaceEntry("README.md", "README.md", "file", 64)],
+      },
+      workspaceFilesByPath: {
+        "README.md": "# 会话 A 文件\n\nA 内容",
+      },
+    });
+    const { runtime: runtimeB } = fakeRuntime({
+      session: sessionB,
+      workspaceEntriesByPath: {
+        "": [workspaceEntry("README.md", "README.md", "file", 64)],
+      },
+      workspaceFilesByPath: {
+        "README.md": "# 会话 B 文件\n\nB 内容",
+      },
+    });
+
+    const view = renderConversationInLayout(<ConversationPage threadId="ses-a" runtime={runtimeA} />);
+
+    await screen.findByLabelText("继续输入");
+    fireEvent.click(screen.getByLabelText("展开右侧栏"));
+    fireEvent.click(await screen.findByRole("button", { name: "文件" }));
+    fireEvent.click(await screen.findByRole("button", { name: "选择文件 README.md" }));
+    expect(await screen.findByRole("heading", { name: "会话 A 文件" })).not.toBeNull();
+
+    view.rerender(conversationInLayout(<ConversationPage threadId="ses-b" runtime={runtimeB} />));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-shell").dataset.rightSidebar).toBe("open");
+      expect(screen.queryByRole("heading", { name: "会话 A 文件" })).toBeNull();
+      expect(screen.getByTestId("right-sidebar-initial-page")).not.toBeNull();
+    });
+
+    view.rerender(conversationInLayout(<ConversationPage threadId="ses-a" runtime={runtimeA} />));
+
+    expect(await screen.findByRole("tab", { name: "文件" })).not.toBeNull();
+    expect(await screen.findByRole("heading", { name: "会话 A 文件" })).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser-preview")).not.toBeNull();
+  });
 });
 
 function renderConversation(ui: ReactElement) {
   return render(<PreviewProvider>{ui}</PreviewProvider>);
+}
+
+function renderConversationWithNotifications(ui: ReactElement) {
+  return render(
+    <NotificationProvider>
+      <PreviewProvider>{ui}</PreviewProvider>
+    </NotificationProvider>,
+  );
 }
 
 function renderConversationInLayout(ui: ReactElement) {
@@ -839,6 +921,7 @@ function fakeRuntime({
   workspaceFilesByPath = {},
   wsStatus = "open",
   model = "qwen-coder",
+  historyError,
 }: {
   history?: AgentChatMessagePayload[];
   session?: AgentSession;
@@ -849,6 +932,7 @@ function fakeRuntime({
   workspaceFilesByPath?: Record<string, string>;
   wsStatus?: WsConnectionStatus;
   model?: string;
+  historyError?: Error;
 } = {}) {
   let handler: ((event: AgentActionEnvelope) => void) | null = null;
   const channel: ChatChannel = {
@@ -865,7 +949,9 @@ function fakeRuntime({
   };
   const runtime = {
     conversation: {
-      loadHistory: vi.fn().mockResolvedValue(historyResponse(session, history)),
+      loadHistory: historyError
+        ? vi.fn().mockRejectedValue(historyError)
+        : vi.fn().mockResolvedValue(historyResponse(session, history)),
       openChatChannel: vi.fn((onEvent: (event: AgentActionEnvelope) => void, options?: { onStatus?: (status: WsConnectionStatus) => void }) => {
         handler = onEvent;
         options?.onStatus?.(wsStatus);

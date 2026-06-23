@@ -5,6 +5,7 @@ import { SendBox, type SelectedFile } from "@/renderer/components/chat/SendBox";
 import { RuntimeModelSelector, useRuntimeModelSelection } from "@/renderer/components/model";
 import { WorkspaceSelector, type WorkspaceSelection } from "@/renderer/components/workspace";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalPreview } from "@/renderer/providers/PreviewProvider";
 import { prepareComposerMessage, type RuntimeParamsWithInjection } from "@/renderer/utils/messageInjection";
 import type { AgentContextItem, Workspace } from "@/types/protocol";
@@ -30,12 +31,12 @@ export function HomePage({
 }: HomePageProps) {
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceSelection, setWorkspaceSelection] = useState<WorkspaceSelection>({ type: "chat" });
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const selectionTouchedRef = useRef(false);
   const modelSelection = useRuntimeModelSelection(runtime);
+  const notifications = useNotifications();
   const previewContext = useOptionalPreview();
 
   useEffect(() => {
@@ -57,7 +58,7 @@ export function HomePage({
       })
       .catch((reason: unknown) => {
         if (active) {
-          setError(errorMessage(reason));
+          notifications.error(errorMessage(reason));
         }
       })
       .finally(() => {
@@ -68,7 +69,7 @@ export function HomePage({
     return () => {
       active = false;
     };
-  }, [initialWorkspaceId, runtime]);
+  }, [initialWorkspaceId, notifications, runtime]);
 
   const canSubmit =
     draft.trim().length > 0 && !submitting && !workspaceLoading && modelSelection.modelLoadState !== "loading";
@@ -78,7 +79,8 @@ export function HomePage({
       : "我们应该聊些什么？";
   const searchWorkspace =
     workspaceSelection.type === "workspace"
-      ? (query: string) => runtime.workspace.search({ workspaceId: workspaceSelection.workspace.id }, query)
+      ? (query: string, options?: { signal?: AbortSignal }) =>
+          runtime.workspace.search({ workspaceId: workspaceSelection.workspace.id }, query, options)
       : undefined;
   const listWorkspaceDirectory =
     workspaceSelection.type === "workspace"
@@ -120,11 +122,10 @@ export function HomePage({
     }
 
     setSubmitting(true);
-    setError(null);
     try {
       const model = modelSelection.selectedModel.trim();
       if (!model) {
-        setError("请先在设置中选择模型");
+        notifications.error("请先在设置中选择模型");
         onOpenModelSettings();
         return false;
       }
@@ -159,7 +160,7 @@ export function HomePage({
       }
       return true;
     } catch (reason) {
-      setError(errorMessage(reason));
+      notifications.error(errorMessage(reason));
       return false;
     } finally {
       setSubmitting(false);
@@ -223,12 +224,6 @@ export function HomePage({
           onStop={() => undefined}
           onOpenFileReference={openFileReference}
         />
-
-        {error ? (
-          <div className={styles.error} role="alert">
-            {error}
-          </div>
-        ) : null}
       </section>
     </main>
   );

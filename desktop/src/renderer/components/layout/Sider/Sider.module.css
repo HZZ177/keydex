@@ -450,17 +450,6 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   font-size: 11px;
 }
 
-.error {
-  margin: 0 5px 10px;
-  border: 1px solid color-mix(in srgb, var(--color-danger) 22%, transparent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-danger) 7%, var(--surface-bg));
-  color: var(--color-danger);
-  font-size: 11px;
-  line-height: 1.45;
-  padding: 7px 8px;
-}
-
 .searchOverlay {
   position: fixed;
   inset: var(--titlebar-height) 0 0;

@@ -28,6 +28,21 @@ import styles from "./Layout.module.css";
 import type { SiderEntry } from "./Sider";
 
 const FILES_PANEL_ID = "right-sidebar:files";
+const GLOBAL_RIGHT_SIDEBAR_SCOPE = "global";
+
+interface RightSidebarScopePanelState {
+  filesOpen: boolean;
+  activePanelId: string | null;
+  filePreviewPath: string | null;
+  filePreviewRequestId: number;
+}
+
+const EMPTY_RIGHT_SIDEBAR_SCOPE_STATE: RightSidebarScopePanelState = {
+  filesOpen: false,
+  activePanelId: null,
+  filePreviewPath: null,
+  filePreviewRequestId: 0,
+};
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => unknown;
@@ -352,6 +367,7 @@ function RightSidebarPanel({
   onRestore: () => void;
 }) {
   const previewContext = useOptionalPreview();
+  const activeScopeKey = previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
   const request = previewContext?.open ? previewContext.request : null;
   const renderContext = previewContext?.activeRenderContext;
   const rawFilePanelRequest = previewContext?.filePanelRequest ?? null;
@@ -362,8 +378,12 @@ function RightSidebarPanel({
   const filePanelRenderContext = filePanelRequest?.renderContext ?? renderContext;
   const entries = previewContext?.entries ?? [];
   const activeEntryId = previewContext?.activeEntryId ?? null;
-  const [filesOpen, setFilesOpen] = useState(false);
-  const [activePanelId, setActivePanelId] = useState<string | null>(null);
+  const [panelStateByScope, setPanelStateByScope] = useState<Record<string, RightSidebarScopePanelState>>({});
+  const scopedPanelState = panelStateByScope[activeScopeKey] ?? EMPTY_RIGHT_SIDEBAR_SCOPE_STATE;
+  const filesOpen = scopedPanelState.filesOpen;
+  const activePanelId = scopedPanelState.activePanelId;
+  const filePreviewPath = scopedPanelState.filePreviewPath;
+  const filePreviewRequestId = scopedPanelState.filePreviewRequestId;
   const canOpenFiles = Boolean(
     filePanelRenderContext?.workspaceAvailable &&
       filePanelRenderContext?.runtime &&
@@ -382,54 +402,70 @@ function RightSidebarPanel({
       ? activePreviewEntry?.id ?? (resolvedActivePanelId === activeEntryId ? activeEntryId : null)
       : null;
 
+  const updateActiveScopePanelState = useCallback(
+    (updater: (state: RightSidebarScopePanelState) => RightSidebarScopePanelState) => {
+      setPanelStateByScope((current) => {
+        const previous = current[activeScopeKey] ?? EMPTY_RIGHT_SIDEBAR_SCOPE_STATE;
+        const next = updater(previous);
+        if (sameRightSidebarScopePanelState(previous, next)) {
+          return current;
+        }
+        return { ...current, [activeScopeKey]: next };
+      });
+    },
+    [activeScopeKey],
+  );
+
   useEffect(() => {
     previewContext?.setPreviewPanelOpen(open, panelActivePreviewEntryId);
   }, [open, panelActivePreviewEntryId, previewContext]);
 
   useEffect(() => {
-    setFilesOpen(false);
-    setActivePanelId(activeEntryId ?? null);
-  }, [previewContext?.activeScopeKey]);
-
-  useEffect(() => {
     if (activeEntryId) {
-      setActivePanelId(activeEntryId);
+      updateActiveScopePanelState((current) => ({ ...current, activePanelId: activeEntryId }));
     }
-  }, [activeEntryId, previewContext?.activeEntry?.openedAt]);
+  }, [activeEntryId, previewContext?.activeEntry?.openedAt, updateActiveScopePanelState]);
 
   useEffect(() => {
     if (canOpenFiles || !filesOpen) {
       return;
     }
-    setFilesOpen(false);
-    setActivePanelId(activeEntryId ?? null);
-  }, [activeEntryId, canOpenFiles, filesOpen]);
+    updateActiveScopePanelState((current) => ({ ...current, filesOpen: false, activePanelId: activeEntryId ?? null }));
+  }, [activeEntryId, canOpenFiles, filesOpen, updateActiveScopePanelState]);
 
   useEffect(() => {
     const filePanelRequestId = filePanelRequest?.requestId ?? 0;
     if (!filePanelRequestId || !canOpenFiles) {
       return;
     }
-    setFilesOpen(true);
-    setActivePanelId(FILES_PANEL_ID);
-  }, [canOpenFiles, filePanelRequest?.requestId]);
+    updateActiveScopePanelState((current) => ({
+      ...current,
+      filesOpen: true,
+      activePanelId: FILES_PANEL_ID,
+      filePreviewPath: filePanelRequest?.path ?? null,
+      filePreviewRequestId: Math.max(current.filePreviewRequestId + 1, filePanelRequestId),
+    }));
+  }, [canOpenFiles, filePanelRequest?.path, filePanelRequest?.requestId, updateActiveScopePanelState]);
 
   const openFilesPanel = useCallback(() => {
     if (!canOpenFiles) {
       return;
     }
-    setFilesOpen(true);
-    setActivePanelId(FILES_PANEL_ID);
-  }, [canOpenFiles]);
+    updateActiveScopePanelState((current) => ({ ...current, filesOpen: true, activePanelId: FILES_PANEL_ID }));
+  }, [canOpenFiles, updateActiveScopePanelState]);
 
   const closeFilesPanel = useCallback(() => {
     const shouldCloseSidebar = entries.length === 0;
-    setFilesOpen(false);
-    setActivePanelId((current) => (current === FILES_PANEL_ID ? activeEntryId ?? entries[0]?.id ?? null : current));
+    updateActiveScopePanelState((current) => ({
+      ...current,
+      filesOpen: false,
+      activePanelId:
+        current.activePanelId === FILES_PANEL_ID ? activeEntryId ?? entries[0]?.id ?? null : current.activePanelId,
+    }));
     if (shouldCloseSidebar) {
       onClose();
     }
-  }, [activeEntryId, entries, onClose]);
+  }, [activeEntryId, entries, onClose, updateActiveScopePanelState]);
 
   const closePreviewEntry = useCallback(
     (entryId: string) => {
@@ -437,19 +473,42 @@ function RightSidebarPanel({
       const remainingEntries = entries.filter((entry) => entry.id !== entryId);
       const shouldCloseSidebar = remainingEntries.length === 0 && !filesOpen;
       previewContext?.closePreviewEntry(entryId);
-      setActivePanelId((current) => {
-        if (current !== entryId) {
+      updateActiveScopePanelState((current) => {
+        if (current.activePanelId !== entryId) {
           return current;
         }
         const nextEntry =
           remainingEntries[Math.max(0, Math.min(closedIndex - 1, remainingEntries.length - 1))] ?? null;
-        return nextEntry?.id ?? (filesOpen ? FILES_PANEL_ID : null);
+        return { ...current, activePanelId: nextEntry?.id ?? (filesOpen ? FILES_PANEL_ID : null) };
       });
       if (shouldCloseSidebar) {
         onClose();
       }
     },
-    [entries, filesOpen, onClose, previewContext],
+    [entries, filesOpen, onClose, previewContext, updateActiveScopePanelState],
+  );
+
+  const openPanelEntry = useCallback(
+    (entryId: string) => {
+      updateActiveScopePanelState((current) => ({ ...current, activePanelId: entryId }));
+      previewContext?.switchPreview(entryId);
+    },
+    [previewContext, updateActiveScopePanelState],
+  );
+
+  const activateFilesPanel = useCallback(() => {
+    updateActiveScopePanelState((current) => ({ ...current, activePanelId: FILES_PANEL_ID }));
+  }, [updateActiveScopePanelState]);
+
+  const updateFilePanelPreviewPath = useCallback(
+    (path: string | null) => {
+      updateActiveScopePanelState((current) => ({
+        ...current,
+        filePreviewPath: path,
+        filePreviewRequestId: current.filePreviewRequestId + 1,
+      }));
+    },
+    [updateActiveScopePanelState],
   );
 
   const controls = (
@@ -477,7 +536,7 @@ function RightSidebarPanel({
                     role="tab"
                     aria-selected={showFilesPanel}
                     title="文件"
-                    onClick={() => setActivePanelId(FILES_PANEL_ID)}
+                    onClick={activateFilesPanel}
                   >
                     <Folder size={12} />
                     <span>文件</span>
@@ -506,10 +565,7 @@ function RightSidebarPanel({
                       role="tab"
                       aria-selected={active}
                       title={entry.sourceLabel}
-                      onClick={() => {
-                        setActivePanelId(entry.id);
-                        previewContext?.switchPreview(entry.id);
-                      }}
+                      onClick={() => openPanelEntry(entry.id)}
                     >
                       <FileText size={12} />
                       <span>{entry.title}</span>
@@ -541,8 +597,9 @@ function RightSidebarPanel({
                 runtime={filePanelRenderContext.runtime}
                 workspaceId={filePanelRenderContext.workspaceId}
                 sessionId={filePanelRenderContext.sessionId}
-                previewPath={filePanelRequest?.path ?? null}
-                previewRequestId={filePanelRequest?.requestId ?? 0}
+                previewPath={filePreviewPath}
+                previewRequestId={filePreviewRequestId}
+                onPreviewPathChange={updateFilePanelPreviewPath}
               />
             </div>
           ) : activeRequest ? (
@@ -569,6 +626,18 @@ function RightSidebarPanel({
         </>
       ) : null}
     </aside>
+  );
+}
+
+function sameRightSidebarScopePanelState(
+  left: RightSidebarScopePanelState,
+  right: RightSidebarScopePanelState,
+): boolean {
+  return (
+    left.filesOpen === right.filesOpen &&
+    left.activePanelId === right.activePanelId &&
+    left.filePreviewPath === right.filePreviewPath &&
+    left.filePreviewRequestId === right.filePreviewRequestId
   );
 }
 

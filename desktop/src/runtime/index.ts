@@ -58,6 +58,7 @@ export type {
   WorkspaceMediaResponse,
   WorkspaceRuntime,
   WorkspaceScope,
+  WorkspaceSearchOptions,
   WorkspaceSearchResult,
   WorkspaceTreeResponse,
 } from "./workspace";

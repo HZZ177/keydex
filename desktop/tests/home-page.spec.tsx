@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge, WorkspaceEntry, WorkspaceTreeResponse } from "@/runtime";
 import { HomePage } from "@/renderer/pages/home";
+import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import type { AgentSession, ModelInfo, Workspace } from "@/types/protocol";
 
 describe("HomePage", () => {
@@ -112,7 +113,11 @@ describe("HomePage", () => {
 
     expect(await screen.findByTestId("at-file-menu")).not.toBeNull();
     await waitFor(() => {
-      expect(workspaceSearch).toHaveBeenCalledWith({ workspaceId: "ws-1" }, "READ");
+      expect(workspaceSearch).toHaveBeenCalledWith(
+        { workspaceId: "ws-1" },
+        "READ",
+        expect.objectContaining({ signal: expect.any(Object) }),
+      );
     });
     expect(await screen.findByRole("option", { name: /README\.md/ })).not.toBeNull();
   });
@@ -342,11 +347,13 @@ describe("HomePage", () => {
     const onOpenModelSettings = vi.fn();
 
     render(
-      <HomePage
-        runtime={runtime}
-        onNavigateToConversation={vi.fn()}
-        onOpenModelSettings={onOpenModelSettings}
-      />,
+      <NotificationProvider>
+        <HomePage
+          runtime={runtime}
+          onNavigateToConversation={vi.fn()}
+          onOpenModelSettings={onOpenModelSettings}
+        />
+      </NotificationProvider>,
     );
 
     await screen.findByRole("button", { name: "打开模型设置" });
@@ -354,6 +361,7 @@ describe("HomePage", () => {
     fireEvent.click(screen.getByLabelText("发送"));
 
     expect((await screen.findByRole("alert")).textContent).toBe("请先在设置中选择模型");
+    expect(screen.getByTestId("notification-item")).not.toBeNull();
     expect(onOpenModelSettings).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "打开模型设置" })).not.toBeNull();
     expect(runtime.conversation.createSession).not.toHaveBeenCalled();

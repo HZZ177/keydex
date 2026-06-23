@@ -116,16 +116,6 @@
   opacity: 0.42;
 }
 
-.error {
-  align-self: center;
-  max-width: 100%;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-bg-elevated));
-  color: var(--color-danger);
-  font-size: 12px;
-}
-
 @media (max-width: 860px) {
   .home {
     padding: 44px 14px 80px;

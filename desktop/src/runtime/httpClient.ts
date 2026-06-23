@@ -11,6 +11,7 @@ export interface RequestOptions {
   method?: string;
   body?: unknown;
   headers?: Record<string, string>;
+  signal?: AbortSignal;
   silentStatuses?: number[];
 }
 
@@ -46,11 +47,16 @@ export class HttpClient {
 
     this.logger?.debug("[runtime/http]", method, path, hasBody ? redactForLog(options.body) : "(no body)");
 
-    const response = await this.fetcher(`${this.baseUrl}${path}`, {
+    const init: RequestInit = {
       method,
       headers,
       body: hasBody ? JSON.stringify(options.body) : undefined,
-    });
+    };
+    if (options.signal) {
+      init.signal = options.signal;
+    }
+
+    const response = await this.fetcher(`${this.baseUrl}${path}`, init);
 
     if (!response.ok) {
       const { body, rawText } = await readResponseBody(response);

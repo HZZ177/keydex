@@ -14,6 +14,7 @@ import { SendBox, type SelectedFile } from "@/renderer/components/chat/SendBox";
 import { RuntimeModelSelector, type RuntimeModelSelection, useRuntimeModelSelection } from "@/renderer/components/model";
 import { useRuntimeTypingMetrics } from "@/renderer/hooks/useRuntimeTypingSpeed";
 import { usePreview } from "@/renderer/providers/PreviewProvider";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import type { PreviewRequest } from "@/renderer/providers/previewTypes";
 import {
@@ -65,6 +66,7 @@ export function ConversationPage({
   const quickSendConsumedRef = useRef<string | null>(null);
   const scrollToBottomRef = useRef<((behavior?: ScrollBehavior) => void) | null>(null);
   const { openFilePanel, openPreview: openPreviewRequest, setPreviewHostContext } = usePreview();
+  const notifications = useNotifications();
   const modelSelection = useRuntimeModelSelection(runtime, initialModel);
   const state = sharedRuntimeContext?.state ?? localState;
   const dispatch = sharedRuntimeContext?.dispatch ?? localDispatch;
@@ -86,7 +88,8 @@ export function ConversationPage({
   const workspaceLabel = session?.workspace?.root_path ?? session?.workspace?.name ?? session?.cwd ?? undefined;
   const searchWorkspace =
     session?.session_type === "workspace" && session.workspace && !workspaceUnavailable
-      ? (query: string) => runtime.workspace.search({ sessionId: threadId }, query)
+      ? (query: string, options?: { signal?: AbortSignal }) =>
+          runtime.workspace.search({ sessionId: threadId }, query, options)
       : undefined;
   const listWorkspaceDirectory =
     session?.session_type === "workspace" && session.workspace && !workspaceUnavailable
@@ -186,8 +189,9 @@ export function ConversationPage({
           return;
         }
         const message = errorMessage(reason);
-        setRuntimeDetail(publicRuntimeDetail(message));
-        appendLocalError(dispatch, threadId, message);
+        const publicMessage = publicRuntimeDetail(message);
+        setRuntimeDetail(publicMessage);
+        notifications.error(publicMessage);
       } finally {
         if (active) {
           setLoading(false);
@@ -199,7 +203,7 @@ export function ConversationPage({
     return () => {
       active = false;
     };
-  }, [dispatch, runtime, setRuntimeDetail, sharedBindSession, threadId, usingSharedRuntime]);
+  }, [dispatch, notifications, runtime, setRuntimeDetail, sharedBindSession, threadId, usingSharedRuntime]);
 
   useEffect(() => {
     if (usingSharedRuntime) {
@@ -254,8 +258,9 @@ export function ConversationPage({
           return;
         }
         const message = errorMessage(reason);
-        setRuntimeDetail(publicRuntimeDetail(message));
-        appendLocalError(dispatch, threadId, message);
+        const publicMessage = publicRuntimeDetail(message);
+        setRuntimeDetail(publicMessage);
+        notifications.error(publicMessage);
       } finally {
         if (active) {
           setLoading(false);
@@ -271,7 +276,7 @@ export function ConversationPage({
         channelRef.current = null;
       }
     };
-  }, [dispatch, runtime, setRuntimeDetail, threadId, usingSharedRuntime]);
+  }, [dispatch, notifications, runtime, setRuntimeDetail, threadId, usingSharedRuntime]);
 
   const loadOlderHistory = useCallback(async () => {
     const cursor = sessionViewState?.historyCursor;
@@ -288,12 +293,15 @@ export function ConversationPage({
       dispatch({ type: "history/olderLoaded", sessionId: threadId, history });
     } catch (reason) {
       const message = errorMessage(reason);
-      setRuntimeDetail(publicRuntimeDetail(message));
+      const publicMessage = publicRuntimeDetail(message);
+      setRuntimeDetail(publicMessage);
+      notifications.error(publicMessage);
     } finally {
       setLoadingOlderHistory(false);
     }
   }, [
     loadingOlderHistory,
+    notifications,
     runtime,
     sessionViewState?.historyCursor,
     sessionViewState?.historyHasMoreOlder,
@@ -319,12 +327,14 @@ export function ConversationPage({
       if (!trimmedModel) {
         const message = "请先选择模型";
         setRuntimeDetail(message);
+        notifications.error(message);
         onOpenModelSettings?.();
         return false;
       }
       if (wsStatus !== "open") {
         const message = "对话连接尚未就绪";
         setRuntimeDetail(message);
+        notifications.warning(message);
         return false;
       }
 
@@ -363,7 +373,16 @@ export function ConversationPage({
         return false;
       }
     },
-    [dispatch, onOpenModelSettings, runtimeState, setRuntimeDetail, sharedRuntimeContext, threadId, wsStatus],
+    [
+      dispatch,
+      notifications,
+      onOpenModelSettings,
+      runtimeState,
+      setRuntimeDetail,
+      sharedRuntimeContext,
+      threadId,
+      wsStatus,
+    ],
   );
 
   const send = (files: SelectedFile[] = []) => {
@@ -422,7 +441,9 @@ export function ConversationPage({
       return;
     }
     if (wsStatus !== "open") {
-      setRuntimeDetail("对话连接尚未就绪");
+      const message = "对话连接尚未就绪";
+      setRuntimeDetail(message);
+      notifications.warning(message);
       return;
     }
 
@@ -546,7 +567,7 @@ function ConversationComposer({
   canStop: boolean;
   connectionReady: boolean;
   modelSelection: RuntimeModelSelection;
-  onSearchWorkspace?: (query: string) => Promise<WorkspaceSearchResult[]>;
+  onSearchWorkspace?: (query: string, options?: { signal?: AbortSignal }) => Promise<WorkspaceSearchResult[]>;
   onListWorkspaceDirectory?: (path: string) => Promise<WorkspaceSearchResult[]>;
   onOpenModelSettings?: () => void;
   onChange: (value: string) => void;

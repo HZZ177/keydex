@@ -69,6 +69,7 @@ export interface FilePreviewProps {
   onClose?: () => void;
   chrome?: "default" | "panel";
   breadcrumbRootLabel?: string;
+  hideBreadcrumbs?: boolean;
 }
 
 export function FilePreview({
@@ -80,6 +81,7 @@ export function FilePreview({
   onClose,
   chrome = "default",
   breadcrumbRootLabel,
+  hideBreadcrumbs = false,
 }: FilePreviewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const panelChrome = chrome === "panel";
@@ -380,10 +382,16 @@ export function FilePreview({
           })}
         </div>
       ) : null}
-      <header className={styles.header} data-chrome={chrome}>
-        <div className={styles.breadcrumbGroup}>
-          <PathBreadcrumbs path={sourceLabel} rootLabel={breadcrumbRootLabel} />
-        </div>
+      <header
+        className={styles.header}
+        data-chrome={chrome}
+        data-breadcrumbs-hidden={hideBreadcrumbs ? "true" : "false"}
+      >
+        {!hideBreadcrumbs ? (
+          <div className={styles.breadcrumbGroup}>
+            <PathBreadcrumbs path={sourceLabel} rootLabel={breadcrumbRootLabel} />
+          </div>
+        ) : null}
         {renderActions()}
       </header>
 

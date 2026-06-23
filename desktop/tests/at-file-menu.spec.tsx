@@ -38,7 +38,7 @@ describe("AtFileMenu", () => {
     );
 
     await screen.findByText("main.ts");
-    expect(onSearchWorkspace).toHaveBeenCalledWith("ma");
+    expectWorkspaceSearch(onSearchWorkspace, "ma");
 
     fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "Enter" });
 
@@ -75,7 +75,7 @@ describe("AtFileMenu", () => {
       );
 
       expect(await screen.findByRole("option", { name: /README\.md/ })).not.toBeNull();
-      expect(onSearchWorkspace).toHaveBeenCalledWith("");
+      expectWorkspaceSearch(onSearchWorkspace, "");
       expect(screen.queryByText("继续输入文件名")).toBeNull();
 
       scrollIntoView.mockClear();
@@ -184,13 +184,15 @@ describe("AtFileMenu", () => {
 
     input.textContent = "@m";
     fireEvent.input(input);
-    expect(await screen.findByText("继续输入至少 2 个字符搜索工作区")).not.toBeNull();
-    expect(onSearchWorkspace).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expectWorkspaceSearch(onSearchWorkspace, "m");
+    });
+    expect(await screen.findByRole("option", { name: "选择文件 src/main.ts" })).not.toBeNull();
 
     input.textContent = "@ma";
     fireEvent.input(input);
     await waitFor(() => {
-      expect(onSearchWorkspace).toHaveBeenCalledWith("ma");
+      expectWorkspaceSearch(onSearchWorkspace, "ma");
     });
     expect(await screen.findByRole("option", { name: "选择文件 src/main.ts" })).not.toBeNull();
 
@@ -201,6 +203,41 @@ describe("AtFileMenu", () => {
     });
     expect(await screen.findByRole("option", { name: "选择文件 README.md" })).not.toBeNull();
   });
+
+  it("cancels stale workspace searches when the file mention query changes", async () => {
+    const pending = new Map<string, Deferred<WorkspaceSearchResult[]>>();
+    const onSearchWorkspace = vi.fn((query: string, _options?: { signal?: AbortSignal }) => {
+      const deferred = createDeferred<WorkspaceSearchResult[]>();
+      pending.set(query, deferred);
+      return deferred.promise;
+    });
+
+    render(<StatefulSendBox initialValue="@m" onSearchWorkspace={onSearchWorkspace} />);
+
+    const input = screen.getByLabelText("继续输入");
+    await waitFor(() => {
+      expect(pending.has("m")).toBe(true);
+    });
+    const firstSignal = onSearchWorkspace.mock.calls[0]?.[1]?.signal;
+
+    input.textContent = "@ma";
+    fireEvent.input(input);
+
+    await waitFor(() => {
+      expect(pending.has("ma")).toBe(true);
+    });
+    expect(firstSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      pending.get("ma")?.resolve([{ path: "src/main.ts", name: "main.ts", type: "file" }]);
+    });
+    expect(await screen.findByRole("option", { name: "选择文件 src/main.ts" })).not.toBeNull();
+
+    await act(async () => {
+      pending.get("m")?.resolve([{ path: "src/old.ts", name: "old.ts", type: "file" }]);
+    });
+    expect(screen.queryByRole("option", { name: "选择文件 src/old.ts" })).toBeNull();
+  });
 });
 
 function StatefulSendBox({
@@ -210,7 +247,7 @@ function StatefulSendBox({
 }: {
   initialValue: string;
   onListWorkspaceDirectory?: (path: string) => Promise<WorkspaceSearchResult[]>;
-  onSearchWorkspace?: (query: string) => Promise<WorkspaceSearchResult[]>;
+  onSearchWorkspace?: (query: string, options?: { signal?: AbortSignal }) => Promise<WorkspaceSearchResult[]>;
 }) {
   const [value, setValue] = useState(initialValue);
   return (
@@ -226,4 +263,21 @@ function StatefulSendBox({
       onSearchWorkspace={onSearchWorkspace}
     />
   );
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
+function expectWorkspaceSearch(search: ReturnType<typeof vi.fn>, query: string) {
+  expect(search).toHaveBeenCalledWith(query, expect.objectContaining({ signal: expect.any(Object) }));
 }

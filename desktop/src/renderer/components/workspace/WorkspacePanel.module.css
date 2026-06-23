@@ -8,8 +8,8 @@
   height: 100%;
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 12px 12px 14px;
+  gap: 6px;
+  padding: 8px 8px 12px;
   box-sizing: border-box;
   background: var(--color-bg-elevated);
 }
@@ -82,23 +82,42 @@
   white-space: nowrap;
 }
 
+.searchRow {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
 .searchBox {
   display: grid;
-  height: 42px;
+  height: 28px;
   min-width: 0;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 14px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-elevated);
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 92%, var(--surface-muted));
   color: var(--color-text-tertiary);
-  padding: 0 12px;
+  padding: 0 8px;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease-standard),
+    background-color var(--motion-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-fast) var(--motion-ease-standard);
+}
+
+.searchBox svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
 }
 
 .searchBox:focus-within {
-  border-color: color-mix(in srgb, var(--color-accent) 72%, var(--color-border-subtle));
-  background: color-mix(in srgb, var(--color-accent) 4%, var(--color-bg-elevated));
+  border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border-subtle));
+  background: var(--color-bg-elevated);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 9%, transparent);
 }
 
 .searchBox input {
@@ -108,7 +127,8 @@
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .searchBox input::placeholder {
@@ -124,7 +144,7 @@
 .panel[data-chrome="panel"] .tree {
   align-content: start;
   overflow: auto;
-  padding: 2px 0 12px;
+  padding: 1px 0 12px;
   scrollbar-width: thin;
 }
 
@@ -177,6 +197,19 @@
 .panel[data-chrome="panel"] .nodeButton {
   min-height: 32px;
   font-size: 14px;
+}
+
+.tree[data-mode="search"] .nodeButton {
+  grid-template-columns: 16px 16px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  row-gap: 1px;
+}
+
+.tree[data-mode="search"] .nodeButton em {
+  grid-column: 3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nodeButton:hover,

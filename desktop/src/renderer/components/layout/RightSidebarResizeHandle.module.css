@@ -93,6 +93,10 @@
     transform var(--motion-fast) var(--motion-ease-standard);
 }
 
+.root[data-placement="left"] .swapButton {
+  left: 4.5px;
+}
+
 .swapButton:hover,
 .swapButton:focus-visible {
   background: var(--surface-bg);
@@ -116,7 +120,7 @@
   width: 11px;
   height: 11px;
   pointer-events: none;
-  transform: translate(-50%, -50%) translateX(-0.5px);
+  transform: translate(-50%, -50%);
 }
 
 @media (prefers-reduced-motion: reduce) {

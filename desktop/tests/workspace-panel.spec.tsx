@@ -83,8 +83,16 @@ describe("WorkspacePanel", () => {
 
     fireEvent.change(screen.getByRole("searchbox", { name: "筛选文件" }), { target: { value: "package" } });
 
+    await waitFor(() => {
+      expect(runtime.workspace.search).toHaveBeenCalledWith(
+        { sessionId: "ses-1" },
+        "package",
+        expect.objectContaining({ signal: expect.any(Object) }),
+      );
+    });
+    expect(screen.getByRole("tree", { name: "工作区搜索结果" })).not.toBeNull();
+    expect(await screen.findByRole("button", { name: "选择文件 package.json" })).not.toBeNull();
     expect(screen.queryByText("desktop")).toBeNull();
-    expect(screen.getByText("package.json")).not.toBeNull();
   });
 
   it("supports parent-controlled file selection and type icons", async () => {
@@ -120,7 +128,8 @@ describe("WorkspacePanel", () => {
 
     render(<WorkspaceFileBrowser sessionId="ses-1" label="D:/repo" runtime={runtime} />);
 
-    expect(await screen.findByText("README.md")).not.toBeNull();
+    expect(await screen.findByRole("button", { name: "选择文件 README.md" })).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser-pathbar").textContent).toContain("/");
     expect(screen.queryByTestId("workspace-file-browser-preview")).toBeNull();
     expect(screen.queryByRole("separator", { name: "调整文件树宽度" })).toBeNull();
 
@@ -133,7 +142,8 @@ describe("WorkspacePanel", () => {
     await waitFor(() => {
       expect(screen.getByTestId("workspace-file-browser").getAttribute("data-preview-layout-open")).toBe("true");
     });
-    expect(screen.getByTitle("repo / README.md")).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser-pathbar").textContent).toContain("/README.md");
+    expect(screen.queryByTitle("repo / README.md")).toBeNull();
     expect(screen.getByTestId("workspace-file-browser-preview")).not.toBeNull();
     expect(screen.getByRole("separator", { name: "调整文件树宽度" })).not.toBeNull();
     expect(screen.getByRole("tree", { name: "工作区目录" })).not.toBeNull();
@@ -151,6 +161,98 @@ describe("WorkspacePanel", () => {
       expect(screen.queryByRole("separator", { name: "调整文件树宽度" })).toBeNull();
     });
     expect(screen.getByRole("tree", { name: "工作区目录" })).not.toBeNull();
+  });
+
+  it("collapses the file tree to an empty file prompt when no preview is open", async () => {
+    const runtime = fakeRuntime({
+      "": [entry("README.md", "README.md", "file", 12)],
+    });
+
+    render(<WorkspaceFileBrowser sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+
+    const browser = await screen.findByTestId("workspace-file-browser");
+    expect(await screen.findByText("README.md")).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser-pathbar").textContent).toContain("/");
+    expect(screen.getByRole("button", { name: "收起文件树" }).querySelector(".lucide-folder-open")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "收起文件树" }));
+
+    expect(browser.getAttribute("data-tree-collapsed")).toBe("true");
+    expect(screen.getByRole("button", { name: "展开文件树" }).querySelector(".lucide-folder")).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser-tree").getAttribute("data-collapsed")).toBe("true");
+    expect(screen.queryByRole("tree", { name: "工作区目录" })).toBeNull();
+    expect(screen.getByTestId("workspace-file-browser-empty").getAttribute("data-visible")).toBe("true");
+    expect(screen.getByTestId("workspace-file-browser-empty").textContent).toContain("打开文件");
+    expect(screen.getByText("从工作区目录树中选择文件")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开文件树" }));
+
+    expect(browser.getAttribute("data-tree-collapsed")).toBe("false");
+    expect(screen.getByTestId("workspace-file-browser-tree").getAttribute("data-collapsed")).toBe("false");
+    expect(screen.getByTestId("workspace-file-browser-empty").getAttribute("data-visible")).toBe("false");
+    expect(await screen.findByRole("button", { name: "选择文件 README.md" })).not.toBeNull();
+    expect(screen.getByRole("tree", { name: "工作区目录" })).not.toBeNull();
+  });
+
+  it("collapses the file tree while keeping an open preview visible", async () => {
+    const runtime = fakeRuntime(
+      {
+        "": [entry("README.md", "README.md", "file", 12)],
+      },
+      {
+        "README.md": "# Project\n\nRead me",
+      },
+    );
+
+    render(<WorkspaceFileBrowser sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+
+    const browser = await screen.findByTestId("workspace-file-browser");
+    await screen.findByText("README.md");
+    fireEvent.click(screen.getByRole("button", { name: "选择文件 README.md" }));
+
+    expect(await screen.findByRole("heading", { name: "Project" })).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser-pathbar").textContent).toContain("/README.md");
+    await waitFor(() => {
+      expect(browser.getAttribute("data-preview-open")).toBe("true");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "收起文件树" }));
+
+    expect(browser.getAttribute("data-tree-collapsed")).toBe("true");
+    expect(screen.queryByRole("tree", { name: "工作区目录" })).toBeNull();
+    expect(screen.queryByRole("separator", { name: "调整文件树宽度" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Project" })).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser-preview")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "展开文件树" })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开文件树" }));
+
+    expect(browser.getAttribute("data-tree-collapsed")).toBe("false");
+    expect(await screen.findByRole("button", { name: "选择文件 README.md" })).not.toBeNull();
+    expect(screen.getByRole("tree", { name: "工作区目录" })).not.toBeNull();
+    expect(screen.getByRole("separator", { name: "调整文件树宽度" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Project" })).not.toBeNull();
+  });
+
+  it("marks the rightmost breadcrumb segment as the primary visible file name", async () => {
+    const runtime = fakeRuntime(
+      {
+        "": [entry("test_entrypoints_with_long_name.ts", "src/components/test_entrypoints_with_long_name.ts", "file", 12)],
+      },
+      {
+        "src/components/test_entrypoints_with_long_name.ts": "export const ok = true;",
+      },
+    );
+
+    render(<WorkspaceFileBrowser sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+
+    await screen.findByText("test_entrypoints_with_long_name.ts");
+    fireEvent.click(screen.getByRole("button", { name: "选择文件 src/components/test_entrypoints_with_long_name.ts" }));
+
+    expect(await screen.findByTestId("file-source-viewer")).not.toBeNull();
+    const pathbar = screen.getByTestId("workspace-file-browser-pathbar");
+    expect(pathbar.textContent).toContain("/src/components/test_entrypoints_with_long_name.ts");
+    expect(pathbar.querySelector('[data-last="true"]')?.textContent).toBe("/test_entrypoints_with_long_name.ts");
   });
 
   it("resizes the file tree pane through a CSS variable", async () => {
@@ -235,10 +337,29 @@ function fakeRuntime(
     }
     return Promise.resolve({ path, content: fileContents[path] ?? "", encoding: "utf-8" });
   });
+  const search = vi.fn((_scope: unknown, query: string) => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const seen = new Set<string>();
+    const entries = Object.values(entriesByPath)
+      .flat()
+      .filter((item) => {
+        if (seen.has(item.path)) {
+          return false;
+        }
+        seen.add(item.path);
+        return (
+          !normalizedQuery ||
+          item.name.toLowerCase().includes(normalizedQuery) ||
+          item.path.toLowerCase().includes(normalizedQuery)
+        );
+      });
+    return Promise.resolve(entries);
+  });
   return {
     workspace: {
       listDirectory,
       readFile,
+      search,
     },
   } as unknown as RuntimeBridge;
 }

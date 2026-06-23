@@ -32,6 +32,10 @@ export interface WorkspaceSearchResult {
   type: "file" | "directory";
 }
 
+export interface WorkspaceSearchOptions {
+  signal?: AbortSignal;
+}
+
 export type WorkspaceScope =
   | { workspaceId: string; sessionId?: never }
   | { sessionId: string; workspaceId?: never };
@@ -40,7 +44,7 @@ export interface WorkspaceRuntime {
   listDirectory(scope: WorkspaceScope, path?: string): Promise<WorkspaceTreeResponse>;
   readFile(scope: WorkspaceScope, path: string): Promise<WorkspaceFileResponse>;
   readMedia(scope: WorkspaceScope, path: string): Promise<WorkspaceMediaResponse>;
-  search(scope: WorkspaceScope, query: string): Promise<WorkspaceSearchResult[]>;
+  search(scope: WorkspaceScope, query: string, options?: WorkspaceSearchOptions): Promise<WorkspaceSearchResult[]>;
 }
 
 export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
@@ -60,9 +64,10 @@ export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
         `${workspaceBasePath(scope)}/media?path=${encodeURIComponent(path)}`,
       );
     },
-    search(scope, query) {
+    search(scope, query, options = {}) {
       return http.request<WorkspaceSearchResult[]>(
         `${workspaceBasePath(scope)}/search?q=${encodeURIComponent(query)}`,
+        { signal: options.signal },
       );
     },
   };

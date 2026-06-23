@@ -1,7 +1,14 @@
 import { ChevronRight, RefreshCw, Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import type { RuntimeBridge, WorkspaceEntry, WorkspaceScope } from "@/runtime";
+import type {
+  RuntimeBridge,
+  WorkspaceEntry,
+  WorkspaceScope,
+  WorkspaceSearchOptions,
+  WorkspaceSearchResult,
+} from "@/runtime";
+import { useWorkspaceFileSearch } from "@/renderer/hooks/useWorkspaceFileSearch";
 
 import { resolveMaterialFileIcon, resolveMaterialFolderIcon } from "./materialIconTheme";
 import styles from "./WorkspacePanel.module.css";
@@ -37,6 +44,15 @@ export function WorkspacePanel({
   const [filterQuery, setFilterQuery] = useState("");
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const scopeLabel = label ?? workspaceId ?? sessionId ?? "未绑定工作区";
+  const searchWorkspace = useCallback(
+    (query: string, options?: WorkspaceSearchOptions) => {
+      if (!scope) {
+        return Promise.resolve([]);
+      }
+      return runtime.workspace.search(scope, query, options);
+    },
+    [runtime, scope],
+  );
 
   useEffect(() => {
     let active = true;
@@ -78,9 +94,15 @@ export function WorkspacePanel({
 
   const rootEntries = entriesByPath[""] ?? [];
   const normalizedFilter = filterQuery.trim().toLowerCase();
+  const searchActive = normalizedFilter.length > 0;
+  const searchState = useWorkspaceFileSearch({
+    enabled: searchActive && Boolean(scope),
+    query: filterQuery,
+    search: searchWorkspace,
+  });
   const visibleRootEntries = useMemo(
-    () => filterEntries(rootEntries, entriesByPath, normalizedFilter),
-    [entriesByPath, normalizedFilter, rootEntries],
+    () => filterEntries(rootEntries, entriesByPath, searchActive ? "" : normalizedFilter),
+    [entriesByPath, normalizedFilter, rootEntries, searchActive],
   );
   const rootLoading = loadingPaths.has("");
   const rootError = errorsByPath[""];
@@ -121,6 +143,19 @@ export function WorkspacePanel({
     onSelectFile?.(path);
   }
 
+  async function openSearchDirectory(path: string) {
+    setFilterQuery("");
+    const paths = directoryRevealPaths(path);
+    setExpandedPaths((expanded) => {
+      const next = new Set(expanded);
+      paths.forEach((entryPath) => next.add(entryPath));
+      return next;
+    });
+    for (const entryPath of paths) {
+      await loadDirectory(entryPath);
+    }
+  }
+
   return (
     <section className={styles.panel} data-chrome={chrome} aria-label="工作区文件树">
       {chrome === "default" ? (
@@ -142,39 +177,58 @@ export function WorkspacePanel({
         </div>
       ) : null}
 
-      <label className={styles.searchBox}>
-        <Search size={16} />
-        <input
-          aria-label="筛选文件"
-          placeholder="筛选文件..."
-          type="search"
-          value={filterQuery}
-          onChange={(event) => setFilterQuery(event.target.value)}
-        />
-      </label>
-
-      {rootError ? <div className={styles.error} role="alert">{rootError}</div> : null}
-      {rootLoading && !rootEntries.length ? <p className={styles.muted}>正在读取工作区</p> : null}
-
-      <div className={styles.tree} role="tree" aria-label="工作区目录">
-        {visibleRootEntries.map((entry) => (
-          <TreeNode
-            entriesByPath={entriesByPath}
-            entry={entry}
-            errorsByPath={errorsByPath}
-            expandedPaths={expandedPaths}
-            filterQuery={normalizedFilter}
-            key={entry.path}
-            loadingPaths={loadingPaths}
-            onSelectFile={selectFile}
-            onToggleDirectory={(path) => void toggleDirectory(path)}
-            selectedPath={effectiveSelectedPath}
+      <div className={styles.searchRow}>
+        <label className={styles.searchBox}>
+          <Search size={16} />
+          <input
+            aria-label="筛选文件"
+            placeholder="筛选文件..."
+            type="search"
+            value={filterQuery}
+            onChange={(event) => setFilterQuery(event.target.value)}
           />
-        ))}
+        </label>
       </div>
 
-      {!rootLoading && !rootError && !rootEntries.length ? <p className={styles.muted}>工作区为空</p> : null}
-      {!rootLoading && !rootError && rootEntries.length > 0 && !visibleRootEntries.length ? (
+      {rootError ? <div className={styles.error} role="alert">{rootError}</div> : null}
+      {!searchActive && rootLoading && !rootEntries.length ? <p className={styles.muted}>正在读取工作区</p> : null}
+      {searchActive && searchState.loading ? <p className={styles.muted}>正在搜索工作区</p> : null}
+      {searchActive && searchState.error ? <div className={styles.error} role="alert">{searchState.error}</div> : null}
+
+      <div
+        className={styles.tree}
+        data-mode={searchActive ? "search" : "tree"}
+        role="tree"
+        aria-label={searchActive ? "工作区搜索结果" : "工作区目录"}
+      >
+        {searchActive
+          ? searchState.results.map((entry) => (
+              <SearchResultNode
+                entry={entry}
+                key={entry.path}
+                onOpenDirectory={(path) => void openSearchDirectory(path)}
+                onSelectFile={selectFile}
+                selectedPath={effectiveSelectedPath}
+              />
+            ))
+          : visibleRootEntries.map((entry) => (
+              <TreeNode
+                entriesByPath={entriesByPath}
+                entry={entry}
+                errorsByPath={errorsByPath}
+                expandedPaths={expandedPaths}
+                filterQuery={normalizedFilter}
+                key={entry.path}
+                loadingPaths={loadingPaths}
+                onSelectFile={selectFile}
+                onToggleDirectory={(path) => void toggleDirectory(path)}
+                selectedPath={effectiveSelectedPath}
+              />
+            ))}
+      </div>
+
+      {!searchActive && !rootLoading && !rootError && !rootEntries.length ? <p className={styles.muted}>工作区为空</p> : null}
+      {searchActive && !searchState.loading && !searchState.error && !searchState.results.length ? (
         <p className={styles.muted}>没有匹配的文件</p>
       ) : null}
     </section>
@@ -283,6 +337,41 @@ function TreeNode({
           ) : null}
         </AnimatedTreeGroup>
       ) : null}
+    </div>
+  );
+}
+
+function SearchResultNode({
+  entry,
+  onOpenDirectory,
+  onSelectFile,
+  selectedPath,
+}: {
+  entry: WorkspaceSearchResult;
+  onOpenDirectory: (path: string) => void;
+  onSelectFile: (path: string) => void;
+  selectedPath: string | null;
+}) {
+  const isDirectory = entry.type === "directory";
+
+  return (
+    <div className={styles.node} role="treeitem" aria-expanded={isDirectory ? false : undefined}>
+      <button
+        aria-label={isDirectory ? `打开目录 ${entry.path}` : `选择文件 ${entry.path}`}
+        className={styles.nodeButton}
+        data-selected={!isDirectory && selectedPath === entry.path ? "true" : "false"}
+        onClick={() => (isDirectory ? onOpenDirectory(entry.path) : onSelectFile(entry.path))}
+        type="button"
+      >
+        {isDirectory ? (
+          <ChevronRight className={styles.chevron} size={14} />
+        ) : (
+          <span className={styles.fileSpacer} />
+        )}
+        <MaterialEntryIcon path={entry.path || entry.name} type={entry.type} />
+        <span>{entry.name}</span>
+        <em title={entry.path}>{entry.path}</em>
+      </button>
     </div>
   );
 }
@@ -403,6 +492,11 @@ function removeKey(values: ErrorMap, key: string): ErrorMap {
   const next = { ...values };
   delete next[key];
   return next;
+}
+
+function directoryRevealPaths(path: string): string[] {
+  const parts = path.split("/").filter(Boolean);
+  return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
 }
 
 function formatSize(size: number): string {

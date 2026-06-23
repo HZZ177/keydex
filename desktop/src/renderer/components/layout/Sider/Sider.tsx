@@ -5,6 +5,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { subscribeSessionCreated } from "@/renderer/events/sessionEvents";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useTheme } from "@/renderer/providers/ThemeProvider";
 import type { AgentSession } from "@/types/protocol";
 
@@ -59,6 +60,7 @@ export function Sider({
   onNavigate,
 }: SiderProps) {
   const { theme, toggleTheme } = useTheme();
+  const notifications = useNotifications();
   const optionalAgentRuntime = useOptionalAgentSessionRuntime();
   const sharedSessionState =
     optionalAgentRuntime?.runtime === runtime ? optionalAgentRuntime.state.sessionStateById : {};
@@ -67,7 +69,6 @@ export function Sider({
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const canMutateConversations =
@@ -113,7 +114,6 @@ export function Sider({
     }
     let active = true;
     setLoadingHistory(true);
-    setHistoryError(null);
     void runtime.conversation
       .listSessions({ pageSize: 50 })
       .then((response) => {
@@ -123,7 +123,7 @@ export function Sider({
       })
       .catch((reason) => {
         if (active) {
-          setHistoryError(errorMessage(reason));
+          notifications.error(errorMessage(reason));
         }
       })
       .finally(() => {
@@ -134,7 +134,7 @@ export function Sider({
     return () => {
       active = false;
     };
-  }, [controlled, runtime]);
+  }, [controlled, notifications, runtime]);
 
   useEffect(() => {
     if (controlled) {
@@ -148,38 +148,38 @@ export function Sider({
   async function renameConversation(id: string, title: string) {
     const cleaned = title.trim();
     if (!cleaned) {
-      setHistoryError("会话标题不能为空");
+      notifications.warning("会话标题不能为空");
       return;
     }
-    setHistoryError(null);
     if (!canMutateConversations) {
-      setHistoryError("当前后端不支持重命名会话");
+      notifications.warning("当前后端不支持重命名会话");
       return;
     }
     try {
       const updated = await runtime.conversation.updateSession(id, { title: cleaned });
       setLoadedSessions((items) => upsertSession(items, updated));
       setEditing(null);
+      notifications.success("已重命名会话");
     } catch (reason) {
-      setHistoryError(errorMessage(reason));
+      notifications.error(errorMessage(reason));
     }
   }
 
   async function deleteConversation(id: string) {
-    setHistoryError(null);
     if (!canMutateConversations) {
-      setHistoryError("当前后端不支持删除会话");
+      notifications.warning("当前后端不支持删除会话");
       return;
     }
     try {
       await runtime.conversation.deleteSession(id);
       setLoadedSessions((items) => items.filter((item) => item.id !== id));
       setConfirmDeleteId(null);
+      notifications.success("已删除会话");
       if (isActivePath(activePath, conversationPath(id))) {
         onNavigate?.("/guid");
       }
     } catch (reason) {
-      setHistoryError(errorMessage(reason));
+      notifications.error(errorMessage(reason));
     }
   }
 
@@ -205,7 +205,6 @@ export function Sider({
       </nav>
 
       <div className={styles.history} aria-label="会话历史">
-        {historyError && !collapsed ? <div className={styles.error} role="alert">{historyError}</div> : null}
         {historyGroups.length === 0 && !collapsed ? (
           <SiderSection title="对话" items={[]} collapsed={collapsed} emptyText={loadingHistory ? "正在加载会话" : "暂无会话"} />
         ) : null}

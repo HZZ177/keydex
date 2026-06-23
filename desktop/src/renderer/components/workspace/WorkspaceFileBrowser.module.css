@@ -7,22 +7,119 @@
   --workspace-file-tree-current-width: min(var(--workspace-file-tree-width), calc(100% - 287px));
   position: relative;
   display: grid;
-  grid-template-columns: 100% 0 0;
+  grid-template-rows: 40px minmax(0, 1fr);
   height: 100%;
   min-width: 0;
   min-height: 0;
   background: var(--color-bg-elevated);
   color: var(--color-text-primary);
   overflow: hidden;
+}
+
+.pathHeader {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  background: var(--color-bg-elevated);
+  padding: 0 8px 0 14px;
+}
+
+.pathBreadcrumbs {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.pathRoot,
+.pathSeparator {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--color-text-tertiary) 78%, transparent);
+}
+
+.pathCrumb {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 136px;
+  flex: 0 9999 auto;
+  align-items: center;
+  color: var(--color-text-tertiary);
+}
+
+.pathCrumb[data-last="true"] {
+  max-width: 100%;
+  flex: 0 1 auto;
+  color: var(--color-text-primary);
+  font-weight: 550;
+}
+
+.pathSeparator {
+  margin: 0 2px;
+}
+
+.pathName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treeToggleButton {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  justify-self: end;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-standard),
+    color var(--motion-fast) var(--motion-ease-standard);
+}
+
+.treeToggleButton:hover,
+.treeToggleButton:focus-visible {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.browserBody {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: 100% 0 0;
+  overflow: hidden;
   transition: grid-template-columns var(--workspace-file-motion) cubic-bezier(0.2, 0, 0, 1);
 }
 
 .browser[data-preview-mounted="true"][data-preview-open="true"] {
   --workspace-file-motion: var(--workspace-file-open-motion);
+}
+
+.browser[data-preview-mounted="true"][data-preview-open="true"] .browserBody {
   grid-template-columns:
     var(--workspace-file-tree-current-width)
     var(--workspace-file-divider-width)
     calc(100% - var(--workspace-file-tree-current-width) - var(--workspace-file-divider-width));
+}
+
+.browser[data-tree-collapsed="true"][data-preview-mounted="true"][data-preview-open="true"] .browserBody {
+  grid-template-columns: 0 0 100%;
+}
+
+.browser[data-tree-collapsed="true"][data-preview-mounted="false"] .browserBody {
+  grid-template-columns: 0 0 100%;
 }
 
 .treePane,
@@ -35,6 +132,19 @@
 
 .treePane {
   grid-column: 1;
+  opacity: 1;
+  transition:
+    opacity 140ms var(--motion-ease-standard),
+    visibility 0ms linear;
+}
+
+.treePane[data-collapsed="true"] {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity 110ms var(--motion-ease-standard),
+    visibility 0ms linear var(--workspace-file-motion);
 }
 
 .resizeHandle {
@@ -80,12 +190,70 @@
 .browser[data-resizing="true"] {
   cursor: col-resize;
   user-select: none;
+}
+
+.browser[data-resizing="true"] .browserBody {
   transition: none;
 }
 
 .previewPane {
   grid-column: 3;
   background: var(--color-bg-elevated);
+}
+
+.collapsedEmptyState {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-column: 3;
+  align-content: center;
+  justify-items: center;
+  gap: 7px;
+  border: 0;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-tertiary);
+  font: inherit;
+  line-height: 1.45;
+  opacity: 0;
+  padding: 28px;
+  pointer-events: none;
+  text-align: center;
+  transform: translateY(4px);
+  transition:
+    opacity 150ms var(--motion-ease-standard),
+    transform 180ms var(--motion-ease-standard);
+}
+
+.collapsedEmptyState[data-visible="true"] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.collapsedEmptyState strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.collapsedEmptyState span {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.collapsedEmptyIcon {
+  color: var(--color-text-tertiary);
+}
+
+.collapsedEmptyState:hover .collapsedEmptyIcon,
+.collapsedEmptyState:focus-visible .collapsedEmptyIcon {
+  color: var(--color-text-secondary);
+}
+
+.collapsedEmptyState:focus-visible {
+  outline: none;
 }
 
 .browser:not([data-preview-open="true"]) .previewPane {
@@ -99,10 +267,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .browser,
+  .browserBody,
   .treePane,
   .resizeHandle,
-  .previewPane {
+  .previewPane,
+  .treeToggleButton,
+  .collapsedEmptyState {
     transition: none;
   }
 
