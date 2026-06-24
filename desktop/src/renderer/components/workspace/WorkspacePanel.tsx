@@ -198,7 +198,7 @@ export function WorkspacePanel({
     if (!target) {
       return;
     }
-    target.scrollIntoView?.({ block: "center", inline: "nearest" });
+    target.scrollIntoView?.({ behavior: "smooth", block: "center", inline: "nearest" });
     target.focus({ preventScroll: true });
     setLocateRequest(null);
   }, [entriesByPath, expandedPaths, locateRequest, searchActive]);

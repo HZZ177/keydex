@@ -119,35 +119,53 @@ describe("WorkspacePanel", () => {
   });
 
   it("locates the current file by expanding its parent directories", async () => {
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
     const runtime = fakeRuntime({
       "": [entry("src", "src", "directory")],
       src: [entry("components", "src/components", "directory")],
       "src/components": [entry("main.py", "src/components/main.py", "file", 24)],
     });
 
-    render(
-      <WorkspacePanel
-        chrome="panel"
-        selectedPath="src/components/main.py"
-        sessionId="ses-1"
-        runtime={runtime}
-      />,
-    );
+    try {
+      render(
+        <WorkspacePanel
+          chrome="panel"
+          selectedPath="src/components/main.py"
+          sessionId="ses-1"
+          runtime={runtime}
+        />,
+      );
 
-    expect(await screen.findByRole("button", { name: "展开 src" })).not.toBeNull();
-    expect(screen.queryByRole("button", { name: "选择文件 src/components/main.py" })).toBeNull();
+      expect(await screen.findByRole("button", { name: "展开 src" })).not.toBeNull();
+      expect(screen.queryByRole("button", { name: "选择文件 src/components/main.py" })).toBeNull();
 
-    const locateButton = screen.getByRole("button", { name: "定位当前文件" }) as HTMLButtonElement;
-    expect(locateButton.disabled).toBe(false);
-    fireEvent.click(locateButton);
+      const locateButton = screen.getByRole("button", { name: "定位当前文件" }) as HTMLButtonElement;
+      expect(locateButton.disabled).toBe(false);
+      fireEvent.click(locateButton);
 
-    const selected = await screen.findByRole("button", { name: "选择文件 src/components/main.py" });
-    expect(selected.getAttribute("data-selected")).toBe("true");
-    expect(document.activeElement).toBe(selected);
-    await waitFor(() => {
-      expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ sessionId: "ses-1" }, "src");
-      expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ sessionId: "ses-1" }, "src/components");
-    });
+      const selected = await screen.findByRole("button", { name: "选择文件 src/components/main.py" });
+      expect(selected.getAttribute("data-selected")).toBe("true");
+      expect(document.activeElement).toBe(selected);
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "center",
+        inline: "nearest",
+      });
+      await waitFor(() => {
+        expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ sessionId: "ses-1" }, "src");
+        expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ sessionId: "ses-1" }, "src/components");
+      });
+    } finally {
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        configurable: true,
+        value: originalScrollIntoView,
+      });
+    }
   });
 
   it("opens selected files in a right-hand preview while keeping the tree visible", async () => {
