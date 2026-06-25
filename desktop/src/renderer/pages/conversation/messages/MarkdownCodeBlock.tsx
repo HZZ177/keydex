@@ -775,7 +775,7 @@ function MermaidPreview({
         renderHost.setAttribute("data-mermaid-render-host", "true");
         renderHost.style.cssText =
           "position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;";
-        previewRef.current?.appendChild(renderHost);
+        document.body.appendChild(renderHost);
         try {
           return await mermaid.render(renderId, code, renderHost);
         } finally {

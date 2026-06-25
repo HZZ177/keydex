@@ -763,9 +763,17 @@ describe("MessageText", () => {
   });
 
   it("normalizes fullscreen Mermaid SVG dimensions before zooming", async () => {
-    vi.mocked(mermaid.render).mockResolvedValueOnce({
-      diagramType: "flowchart-v2",
-      svg: '<svg role="img" aria-label="complex chart" width="100%" style="max-width: 320px;" viewBox="0 0 2400 1200"></svg>',
+    let renderHostParent: Element | null = null;
+    let renderHostWasInsidePreview = false;
+    vi.mocked(mermaid.render).mockImplementationOnce(async (_id, _definition, renderHost) => {
+      expect(renderHost).toBeInstanceOf(Element);
+      const host = renderHost as Element;
+      renderHostParent = host.parentElement;
+      renderHostWasInsidePreview = Boolean(host.closest('[data-testid="mermaid-preview"]'));
+      return {
+        diagramType: "flowchart-v2",
+        svg: '<svg role="img" aria-label="complex chart" width="100%" style="max-width: 320px;" viewBox="0 0 2400 1200"></svg>',
+      };
     });
 
     render(
@@ -784,6 +792,9 @@ describe("MessageText", () => {
     const svg = await within(dialog).findByLabelText("complex chart");
     const chart = svg.parentElement as HTMLDivElement;
 
+    expect(renderHostParent).toBe(document.body);
+    expect(renderHostWasInsidePreview).toBe(false);
+    expect(document.body.querySelector('[data-mermaid-render-host="true"]')).toBeNull();
     expect(chart.getAttribute("data-sized")).toBe("true");
     expect(chart.style.getPropertyValue("--mermaid-render-width")).toBe("2400px");
     expect(chart.style.getPropertyValue("--mermaid-render-height")).toBe("1200px");
