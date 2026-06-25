@@ -1,21 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 import httpx
 from langchain_core.messages import SystemMessage
 
-from backend.app.agent.factory import AgentFactory, agent_factory, load_system_prompt
+from backend.app.agent.factory import AgentFactory, agent_factory
 from backend.app.agent.langchain_tools import registry_to_langchain_tools
 from backend.app.agent.middleware import build_default_middleware
+from backend.app.agent.system_prompt import DEFAULT_SYSTEM_PROMPT
 from backend.app.core.logger import logger
 from backend.app.model import ModelSettings
 from backend.app.tools import ToolExecutionContext, ToolRegistry
 
-DEFAULT_SYSTEM_PROMPT_PATH = Path(__file__).with_name("system_prompt.md")
-DEFAULT_SYSTEM_PROMPT = load_system_prompt(DEFAULT_SYSTEM_PROMPT_PATH)
 ModelHttpTransportProvider = Callable[
     [],
     httpx.BaseTransport | httpx.AsyncBaseTransport | None,

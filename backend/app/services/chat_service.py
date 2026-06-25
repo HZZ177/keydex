@@ -11,6 +11,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from backend.app.agent import AgentRunner
 from backend.app.agent.event_processor import AgentEventResult, process_agent_events
+from backend.app.command_approval import ApprovalService
 from backend.app.core.config import AppSettings
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
@@ -334,6 +335,13 @@ class ChatService:
                     f"[ChatTurn] 用户取消本轮 | session_id={session.id} | "
                     f"turn_index={turn_index} | trace_id={trace_id} | duration_ms={duration_ms}"
                 )
+                await ApprovalService(
+                    repositories=self.repositories,
+                    dispatcher=dispatcher,
+                ).cancel_pending_for_session(
+                    session.id,
+                    user_id=request.user_id or session.user_id,
+                )
                 payload = aggregator.build_cancelled_data(
                     session_id=session.id,
                     trace_id=trace_id,
@@ -429,6 +437,13 @@ class ChatService:
                 reason="user",
             )
             try:
+                await ApprovalService(
+                    repositories=self.repositories,
+                    dispatcher=dispatcher,
+                ).cancel_pending_for_session(
+                    session.id,
+                    user_id=request.user_id or session.user_id,
+                )
                 await dispatcher.emit_event(
                     event_type=DomainEventType.TURN_CANCELLED.value,
                     source="chat_service",
@@ -504,6 +519,8 @@ class ChatService:
             trace_id=trace_id,
             turn_index=turn_index,
         )
+        tool_context.metadata["repositories"] = self.repositories
+        tool_context.metadata["dispatcher"] = dispatcher
         workspace_root_label = str(tool_context.workspace_root) if enable_tools else "-"
         logger.info(
             f"[AgentLoop] 创建 agent | session_id={session.id} | turn_index={turn_index} | "

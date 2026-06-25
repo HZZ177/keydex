@@ -36,16 +36,16 @@ async def test_shell_tool_runs_successful_command(tmp_path) -> None:
     assert result.result["cwd"] == "."
 
 
-async def test_shell_tool_returns_structured_failure(tmp_path) -> None:
+async def test_shell_tool_returns_nonzero_exit_as_completed_result(tmp_path) -> None:
     result = await _run(
         {"command": _python_command("import sys; print('bad', file=sys.stderr); sys.exit(3)")},
         tmp_path,
     )
 
-    assert result.ok is False
-    assert result.error["code"] == "command_failed"
-    assert result.error["details"]["exit_code"] == 3
-    assert "bad" in result.error["details"]["stderr"]
+    assert result.ok is True
+    assert result.result["status"] == "completed"
+    assert result.result["exit_code"] == 3
+    assert "bad" in result.result["stderr"]
 
 
 async def test_shell_tool_times_out(tmp_path) -> None:
@@ -57,8 +57,9 @@ async def test_shell_tool_times_out(tmp_path) -> None:
         tmp_path,
     )
 
-    assert result.ok is False
-    assert result.error["code"] == "command_timeout"
+    assert result.ok is True
+    assert result.result["status"] == "timed_out"
+    assert result.result["timed_out"] is True
 
 
 async def test_shell_tool_rejects_cwd_outside_workspace(tmp_path) -> None:

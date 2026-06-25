@@ -225,7 +225,9 @@ async def test_apply_patch_rejects_context_mismatch(tmp_path) -> None:
     assert target.read_text(encoding="utf-8") == "current\n"
 
 
-async def test_apply_patch_preflight_rejects_second_operation_without_partial_write(tmp_path) -> None:
+async def test_apply_patch_preflight_rejects_second_operation_without_partial_write(
+    tmp_path,
+) -> None:
     first = tmp_path / "a.txt"
     first.write_text("old\n", encoding="utf-8")
 

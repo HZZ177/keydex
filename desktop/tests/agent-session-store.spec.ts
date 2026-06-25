@@ -7,6 +7,7 @@ import {
   type AgentChatMessage,
   type AgentHistoryResponse,
   type AgentSession,
+  type CommandApprovalRequest,
 } from "@/types/protocol";
 import {
   agentConversationReducer,
@@ -39,6 +40,8 @@ describe("agentSessionStore reducer", () => {
       "session_closed",
       "task_result",
       "reasoning",
+      "approval_requested",
+      "approval_resolved",
     ]);
 
     expect([...coveredActions].sort()).toEqual([...AGENT_CHAT_ACTIONS].sort());
@@ -102,6 +105,32 @@ describe("agentSessionStore reducer", () => {
     ]);
     expect(selectAgentSessionState(state, "ses-1")?.hydrated).toBe(true);
     expect(selectAgentRuntimeState(state, "ses-1")).toBe("idle");
+  });
+
+  it("restores pending command approval from history", () => {
+    const approval = commandApproval("approval-history");
+    const state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        { role: "user", content: "运行测试" },
+        {
+          role: "approval",
+          content: "等待批准执行命令: pnpm test",
+          approval,
+          status: "pending",
+        },
+      ]),
+    });
+
+    const view = selectAgentSessionState(state, "ses-1");
+    expect(view?.pendingApproval).toMatchObject({ id: "approval-history", status: "pending" });
+    expect(view?.runtimeState).toBe("waiting_approval");
+    expect(selectAgentMessages(state, "ses-1").at(-1)).toMatchObject({
+      role: "approval",
+      status: "pending",
+      approval: { details: { command: "pnpm test" } },
+    });
   });
 
   it("prepends older history pages without replacing the latest page", () => {
@@ -284,6 +313,67 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentRuntimeState(state, "ses-a")).toBe("idle");
     expect(selectAgentSessionState(state, "ses-b")).toMatchObject({ runtimeState: "running", isStreaming: true });
     expect(selectAgentSessionState(state, "ses-c")).toMatchObject({ runtimeState: "running", isStreaming: true });
+  });
+
+  it("tracks command approval request and resumes after approval resolution", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [session("ses-1", "2026-06-18T08:00:00Z")],
+    });
+    state = agentConversationReducer(state, { type: "session/select", sessionId: "ses-1" });
+
+    state = reduceAgentWsEvent(state, approvalRequested("ses-1", commandApproval("approval-1")));
+
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      runtimeState: "waiting_approval",
+      isStreaming: false,
+      pendingApproval: { id: "approval-1", status: "pending" },
+    });
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        role: "approval",
+        status: "pending",
+        content: "等待批准执行命令: pnpm test",
+      },
+    ]);
+    expect(selectAgentSessions(state)[0]).toMatchObject({ id: "ses-1", status: "waiting_approval" });
+
+    state = reduceAgentWsEvent(state, approvalResolved("ses-1", { ...commandApproval("approval-1"), status: "approved" }));
+
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      runtimeState: "running",
+      isStreaming: true,
+      pendingApproval: null,
+    });
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        role: "approval",
+        status: "approved",
+        content: "已允许执行命令: pnpm test",
+      },
+    ]);
+  });
+
+  it("marks sessions from waiting_approval status payload without unread side effects", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [session("ses-a", "2026-06-18T08:00:00Z"), session("ses-b", "2026-06-18T09:00:00Z")],
+    });
+    state = agentConversationReducer(state, { type: "session/select", sessionId: "ses-a" });
+
+    state = reduceAgentWsEvent(state, {
+      action: "status",
+      data: {
+        status: "idle",
+        waiting_approval_sessions: [{ session_id: "ses-b" }],
+      },
+    });
+
+    expect(selectAgentSessionState(state, "ses-b")).toMatchObject({
+      runtimeState: "waiting_approval",
+      isStreaming: false,
+      hasUnread: false,
+    });
   });
 
   it("keeps reasoning panels in event order when tools interleave", () => {
@@ -797,6 +887,40 @@ function toolStart(sessionId: string, runId: string, toolName: string): AgentAct
       tool_name: toolName,
       params: { path: "README.md" },
     },
+  };
+}
+
+function commandApproval(id: string, status: CommandApprovalRequest["status"] = "pending"): CommandApprovalRequest {
+  return {
+    id,
+    session_id: "ses-1",
+    thread_id: "ses-1",
+    turn_id: "turn-1",
+    item_id: "item-command",
+    call_id: "call-command",
+    run_id: "run-command",
+    tool_name: "run_command",
+    kind: "exec",
+    title: "是否允许执行命令？",
+    description: "请求执行命令。",
+    details: { command: "pnpm test", cwd: "D:/repo" },
+    status,
+    created_at: "2026-06-18T08:00:01Z",
+    resolved_at: status === "pending" ? null : "2026-06-18T08:00:02Z",
+  };
+}
+
+function approvalRequested(sessionId: string, approval: CommandApprovalRequest): AgentActionEnvelope {
+  return {
+    action: "approval_requested",
+    data: { session_id: sessionId, approval },
+  };
+}
+
+function approvalResolved(sessionId: string, approval: CommandApprovalRequest): AgentActionEnvelope {
+  return {
+    action: "approval_resolved",
+    data: { session_id: sessionId, approval },
   };
 }
 

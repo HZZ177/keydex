@@ -153,9 +153,84 @@ export interface AppearanceSettings {
   font_family: AppFontFamily;
 }
 
+export interface CommandSettings {
+  command_enabled: boolean;
+  require_approval_for_untrusted: boolean;
+  allow_persistent_trust: boolean;
+  default_timeout_seconds: number;
+  max_timeout_seconds: number;
+  max_output_chars: number;
+}
+
+export type TrustedCommandRuleMatchType = "exact" | "prefix";
+
+export interface TrustedCommandRule {
+  id: string;
+  command_pattern: string;
+  normalized_command: string;
+  match_type: TrustedCommandRuleMatchType;
+  shell: string;
+  workspace_root: string;
+  cwd_pattern: string;
+  enabled: boolean;
+  created_from_approval_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_used_at?: string | null;
+}
+
+export type CommandApprovalDecisionValue = "approved" | "rejected";
+export type CommandApprovalTrustScope = "once" | "persistent";
+
+export interface CommandApprovalRequest {
+  id: string;
+  session_id: string;
+  thread_id?: string;
+  turn_id?: string;
+  item_id?: string;
+  call_id?: string;
+  run_id?: string | null;
+  tool_name: string;
+  kind: "exec" | string;
+  title: string;
+  description: string;
+  details: Record<string, unknown>;
+  status: ApprovalStatus;
+  decision?: CommandApprovalDecisionValue | null;
+  trust_scope?: CommandApprovalTrustScope | null;
+  rule_match_type?: TrustedCommandRuleMatchType | null;
+  reject_message?: string | null;
+  trusted_rule_id?: string | null;
+  created_at: string;
+  resolved_at?: string | null;
+}
+
+export interface CommandApprovalDecisionPayload {
+  decision: CommandApprovalDecisionValue;
+  trust_scope?: CommandApprovalTrustScope;
+  rule_match_type?: TrustedCommandRuleMatchType | null;
+  reject_message?: string;
+}
+
+export interface CommandApprovalAuditRecord {
+  id: string;
+  approval_id: string;
+  session_id: string;
+  command: string;
+  cwd: string;
+  decision: CommandApprovalDecisionValue;
+  trust_scope?: CommandApprovalTrustScope | null;
+  rule_match_type?: TrustedCommandRuleMatchType | null;
+  trusted_rule_id?: string | null;
+  reject_message?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface SettingsResponse {
   model: PublicModelSettings;
   appearance: AppearanceSettings;
+  command: CommandSettings;
 }
 
 export interface ModelInfo {
@@ -273,6 +348,8 @@ export const AGENT_CHAT_ACTIONS = [
   "tool_start",
   "tool_progress",
   "tool_end",
+  "approval_requested",
+  "approval_resolved",
   "subagent_start",
   "subagent_end",
   "subagent_error",
@@ -293,6 +370,8 @@ export const AGENT_REPLAY_ACTIONS = [
   "stream_batch",
   "tool_start",
   "tool_end",
+  "approval_requested",
+  "approval_resolved",
   "subagent_start",
   "subagent_end",
   "subagent_error",
@@ -324,6 +403,7 @@ export const AGENT_INBOUND_ACTIONS = [
   "scheduled_chat",
   "close_session",
   "cancel",
+  "approval_decision",
   "ping",
   "get_status",
 ] as const;
@@ -331,8 +411,8 @@ export const AGENT_INBOUND_ACTIONS = [
 export type AgentInboundAction = (typeof AGENT_INBOUND_ACTIONS)[number];
 
 export type AgentSessionType = "chat" | "workspace";
-export type AgentSessionStatus = "active" | "running" | "closed" | "failed";
-export type AgentChatRole = "user" | "assistant" | "tool" | "system" | "subagent" | "reasoning" | "error";
+export type AgentSessionStatus = "active" | "running" | "waiting_approval" | "closed" | "failed";
+export type AgentChatRole = "user" | "assistant" | "tool" | "system" | "subagent" | "reasoning" | "approval" | "error";
 export type AgentToolStatus = "running" | "completed" | "error" | "cancelled";
 export type AgentReasoningKind = "initial_response" | "status_update" | "progress_fact" | (string & {});
 
@@ -509,10 +589,11 @@ export interface AgentChatMessage {
   toolDurationMs?: number;
   toolError?: string;
   toolErrorType?: string;
-  status?: AgentToolStatus | AgentSessionStatus | "streaming";
+  status?: AgentToolStatus | AgentSessionStatus | ApprovalStatus | "streaming";
   uiPayload?: Record<string, unknown>;
   fileChanges?: AgentFileChange[];
   metadata?: Record<string, unknown>;
+  approval?: CommandApprovalRequest;
   subagentName?: string;
   subagentId?: string;
   subagentRunId?: string;

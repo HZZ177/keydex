@@ -30,6 +30,7 @@ export const DEV_AGENT_CONNECTION: AgentConnection = {
   base_url: "http://127.0.0.1:8765",
   data_dir: "",
 };
+export const DEV_AGENT_BASE_URL_STORAGE_KEY = "keydex:agent-base-url";
 
 export async function configureAgentConnection(
   options: AgentConnectionOptions = {},
@@ -51,7 +52,7 @@ export async function resolveAgentConnection(
   options: AgentConnectionOptions = {},
 ): Promise<AgentConnection> {
   if (!(options.isTauriRuntime ?? isTauriRuntime)()) {
-    return DEV_AGENT_CONNECTION;
+    return resolveDevAgentConnection();
   }
 
   let invoke: TauriInvoke | null = null;
@@ -76,6 +77,32 @@ export async function resolveAgentConnection(
     }
     throw new Error(`启动 Keydex 本地服务失败：${formatErrorMessage(error)}`);
   }
+}
+
+function resolveDevAgentConnection(): AgentConnection {
+  const baseUrl = readDevAgentBaseUrl();
+  if (!baseUrl) {
+    return DEV_AGENT_CONNECTION;
+  }
+  try {
+    const url = new URL(baseUrl);
+    const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+    return {
+      host: url.hostname,
+      port,
+      base_url: url.toString().replace(/\/$/, ""),
+      data_dir: "",
+    };
+  } catch {
+    return DEV_AGENT_CONNECTION;
+  }
+}
+
+function readDevAgentBaseUrl(): string {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return "";
+  }
+  return window.localStorage.getItem(DEV_AGENT_BASE_URL_STORAGE_KEY)?.trim() ?? "";
 }
 
 export async function waitForAgentHealth(

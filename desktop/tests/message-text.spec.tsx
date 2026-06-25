@@ -513,7 +513,7 @@ describe("MessageText", () => {
     render(<MessageText message={message("assistant", "已经输出的部分内容", "cancelled")} />);
 
     expect(screen.getByText("已经输出的部分内容")).not.toBeNull();
-    expect(screen.getByText("已中断")).not.toBeNull();
+    expect(screen.getByText("已取消")).not.toBeNull();
   });
 
   it("copies code blocks and keeps running messages quiet", async () => {
@@ -836,8 +836,10 @@ describe("MessageText", () => {
       expect(within(dialog).getByText("10%")).not.toBeNull();
       expect(chart.style.getPropertyValue("--mermaid-render-width")).toBe("2000px");
       expect(chart.style.getPropertyValue("--mermaid-render-height")).toBe("1000px");
-      expect(preview.scrollLeft).toBe(400);
-      expect(preview.scrollTop).toBe(100);
+      expect(preview.style.getPropertyValue("--mermaid-canvas-padding-x")).toBe("600px");
+      expect(preview.style.getPropertyValue("--mermaid-canvas-padding-y")).toBe("400px");
+      expect(preview.scrollLeft).toBe(1000);
+      expect(preview.scrollTop).toBe(500);
     });
   });
 

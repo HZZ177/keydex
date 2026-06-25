@@ -6,9 +6,12 @@ import {
   LoaderCircle,
   MessageCircle,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Search,
   Settings,
+  ShieldCheck,
   SquarePen,
   Sun,
   Trash2,
@@ -46,12 +49,17 @@ interface SiderGroup {
 interface SessionIndicator {
   isStreaming: boolean;
   hasUnread: boolean;
+  waitingApproval: boolean;
 }
 
 const EMPTY_SESSION_INDICATOR: SessionIndicator = {
   isStreaming: false,
   hasUnread: false,
+  waitingApproval: false,
 };
+
+const WORKSPACE_SESSION_PREVIEW_LIMIT = 5;
+const WORKSPACE_SESSION_HISTORY_PAGE_SIZE = 100;
 
 export interface SiderProps {
   collapsed?: boolean;
@@ -59,6 +67,7 @@ export interface SiderProps {
   conversations?: SiderEntry[];
   runtime?: RuntimeBridge;
   activePath?: string;
+  onToggleSidebar?: () => void;
   onNavigate?: (path: string) => void;
 }
 
@@ -73,6 +82,7 @@ export function Sider({
   conversations,
   runtime = runtimeBridge,
   activePath = "",
+  onToggleSidebar,
   onNavigate,
 }: SiderProps) {
   const { theme, toggleTheme } = useTheme();
@@ -88,9 +98,11 @@ export function Sider({
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingWorkspaceHistoryIds, setLoadingWorkspaceHistoryIds] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
+  const loadedWorkspaceHistoryIdsRef = useRef<Set<string>>(new Set());
   const [showFooterFeather, setShowFooterFeather] = useState(false);
   const canMutateConversations =
     typeof runtime.conversation.updateSession === "function" && typeof runtime.conversation.deleteSession === "function";
@@ -129,12 +141,15 @@ export function Sider({
   const sessionIndicators = useMemo<Record<string, SessionIndicator>>(() => {
     return Object.fromEntries(
       Object.entries(sharedSessionState).map(([sessionId, state]) => {
-        const isStreaming = state.runtimeState === "running" || state.runtimeState === "cancelling" || state.isStreaming;
+        const waitingApproval = state.runtimeState === "waiting_approval" || Boolean(state.pendingApproval);
+        const isStreaming =
+          !waitingApproval && (state.runtimeState === "running" || state.runtimeState === "cancelling" || state.isStreaming);
         return [
           sessionId,
           {
             isStreaming,
-            hasUnread: state.hasUnread && !isStreaming && !isActivePath(activePath, conversationPath(sessionId)),
+            waitingApproval,
+            hasUnread: state.hasUnread && !isStreaming && !waitingApproval && !isActivePath(activePath, conversationPath(sessionId)),
           },
         ];
       }),
@@ -256,6 +271,47 @@ export function Sider({
     }
   }
 
+  const loadWorkspaceSessions = useCallback(
+    async (workspaceId: string) => {
+      if (controlled || loadedWorkspaceHistoryIdsRef.current.has(workspaceId) || loadingWorkspaceHistoryIds.has(workspaceId)) {
+        return;
+      }
+      setLoadingWorkspaceHistoryIds((current) => {
+        const next = new Set(current);
+        next.add(workspaceId);
+        return next;
+      });
+      try {
+        const sessions: AgentSession[] = [];
+        let page = 1;
+        while (true) {
+          const response = await runtime.conversation.listSessions({
+            sessionType: "workspace",
+            workspaceId,
+            page,
+            pageSize: WORKSPACE_SESSION_HISTORY_PAGE_SIZE,
+          });
+          sessions.push(...response.list);
+          if (response.list.length === 0 || sessions.length >= response.total) {
+            break;
+          }
+          page += 1;
+        }
+        setLoadedSessions((items) => mergeSessions(items, sessions));
+        loadedWorkspaceHistoryIdsRef.current.add(workspaceId);
+      } catch (reason) {
+        notifications.error(errorMessage(reason));
+      } finally {
+        setLoadingWorkspaceHistoryIds((current) => {
+          const next = new Set(current);
+          next.delete(workspaceId);
+          return next;
+        });
+      }
+    },
+    [controlled, loadingWorkspaceHistoryIds, notifications, runtime],
+  );
+
   return (
     <aside
       className={styles.sider}
@@ -264,6 +320,24 @@ export function Sider({
       data-footer-feather={showFooterFeather ? "true" : "false"}
     >
       <nav className={styles.nav} aria-label="主导航">
+        {onToggleSidebar ? (
+          <button
+            className={styles.navItem}
+            data-state={collapsed ? "collapsed" : "expanded"}
+            data-icon={collapsed ? "panel-left-open" : "panel-left-close"}
+            type="button"
+            aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}
+            title={collapsed ? "展开侧边栏" : ""}
+            onClick={onToggleSidebar}
+          >
+            {collapsed ? (
+              <PanelLeftOpen size={17} strokeWidth={2.1} />
+            ) : (
+              <PanelLeftClose size={17} strokeWidth={2.1} />
+            )}
+            <span>{collapsed ? "展开侧边栏" : "折叠侧边栏"}</span>
+          </button>
+        ) : null}
         {mainEntries.map((item) => {
           const Icon = item.icon;
           return (
@@ -314,8 +388,13 @@ export function Sider({
                 canMutate={canMutateConversations}
                 sessionIndicators={sessionIndicators}
                 workspaceId={group.workspaceId}
+                historyExpansionLoading={Boolean(group.workspaceId && loadingWorkspaceHistoryIds.has(group.workspaceId))}
+                historyPreviewLimit={WORKSPACE_SESSION_PREVIEW_LIMIT}
                 key={group.id}
                 onDelete={(id) => void deleteConversation(id)}
+                onLoadHistoryExpansion={
+                  group.workspaceId && !controlled ? () => loadWorkspaceSessions(group.workspaceId as string) : undefined
+                }
                 onCancelDelete={() => setConfirmDeleteId(null)}
                 onCancelRename={() => setEditing(null)}
                 onConfirmDelete={setConfirmDeleteId}
@@ -348,8 +427,13 @@ export function Sider({
                   canMutate={canMutateConversations}
                   sessionIndicators={sessionIndicators}
                   workspaceId={group.workspaceId}
+                  historyExpansionLoading={Boolean(group.workspaceId && loadingWorkspaceHistoryIds.has(group.workspaceId))}
+                  historyPreviewLimit={WORKSPACE_SESSION_PREVIEW_LIMIT}
                   key={group.id}
                   onDelete={(id) => void deleteConversation(id)}
+                  onLoadHistoryExpansion={
+                    group.workspaceId && !controlled ? () => loadWorkspaceSessions(group.workspaceId as string) : undefined
+                  }
                   onCancelDelete={() => setConfirmDeleteId(null)}
                   onCancelRename={() => setEditing(null)}
                   onConfirmDelete={setConfirmDeleteId}
@@ -512,10 +596,13 @@ interface SiderSectionProps {
   canMutate?: boolean;
   sessionIndicators?: Record<string, SessionIndicator>;
   workspaceId?: string;
+  historyExpansionLoading?: boolean;
+  historyPreviewLimit?: number;
   onDelete?: (id: string) => void;
   onCancelDelete?: () => void;
   onCancelRename?: () => void;
   onConfirmDelete?: (id: string) => void;
+  onLoadHistoryExpansion?: () => Promise<void> | void;
   onNavigate?: (path: string) => void;
   onRename?: (id: string, title: string) => void;
   onStartRename?: (item: SiderEntry) => void;
@@ -589,10 +676,13 @@ function SiderSection({
   canMutate = false,
   sessionIndicators = {},
   workspaceId,
+  historyExpansionLoading = false,
+  historyPreviewLimit,
   onDelete,
   onCancelDelete,
   onCancelRename,
   onConfirmDelete,
+  onLoadHistoryExpansion,
   onNavigate,
   onRename,
   onStartRename,
@@ -601,9 +691,17 @@ function SiderSection({
   const [hoveredSession, setHoveredSession] = useState<CollapsedSessionCard | null>(null);
   const [hoveredProject, setHoveredProject] = useState<CollapsedProjectCard | null>(null);
   const [sectionExpanded, setSectionExpanded] = useState(true);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [localHistoryExpansionLoading, setLocalHistoryExpansionLoading] = useState(false);
   const sectionItemsId = useId();
   const previousActivePathRef = useRef(activePath);
   const canToggleSection = kind === "workspace";
+  const normalizedHistoryLimit = Math.max(0, historyPreviewLimit ?? 0);
+  const canPreviewWorkspaceHistory = !collapsed && kind === "workspace" && !hideTitle && normalizedHistoryLimit > 0;
+  const shouldLimitHistory = canPreviewWorkspaceHistory && items.length > normalizedHistoryLimit;
+  const previewItems = shouldLimitHistory ? items.slice(0, normalizedHistoryLimit) : items;
+  const extraItems = shouldLimitHistory ? items.slice(normalizedHistoryLimit) : [];
+  const historyToggleLoading = historyExpansionLoading || localHistoryExpansionLoading;
 
   useEffect(() => {
     const activePathChanged = previousActivePathRef.current !== activePath;
@@ -615,6 +713,29 @@ function SiderSection({
       setSectionExpanded(true);
     }
   }, [activePath, canToggleSection, items]);
+
+  useEffect(() => {
+    if (!shouldLimitHistory && historyExpanded) {
+      setHistoryExpanded(false);
+    }
+  }, [historyExpanded, shouldLimitHistory]);
+
+  async function toggleHistoryExpansion() {
+    if (historyExpanded) {
+      setHistoryExpanded(false);
+      return;
+    }
+    setHistoryExpanded(true);
+    if (!onLoadHistoryExpansion) {
+      return;
+    }
+    setLocalHistoryExpansionLoading(true);
+    try {
+      await onLoadHistoryExpansion();
+    } finally {
+      setLocalHistoryExpansionLoading(false);
+    }
+  }
 
   const showCollapsedCard = (item: SiderEntry, active: boolean, target: HTMLElement) => {
     const rect = target.getBoundingClientRect();
@@ -638,6 +759,82 @@ function SiderSection({
       expanded: sectionExpanded,
       top: Math.round(rect.top + rect.height / 2),
     });
+  };
+
+  const renderHistoryRow = (item: SiderEntry) => {
+    const path = conversationPath(item.id);
+    const active = isActivePath(activePath, path);
+    const indicator = sessionIndicators[item.id] ?? EMPTY_SESSION_INDICATOR;
+    const showUpdatedTime = Boolean(
+      item.updatedAt && !indicator.isStreaming && !indicator.hasUnread && !indicator.waitingApproval,
+    );
+    const hasMeta = Boolean(showUpdatedTime || indicator.isStreaming || indicator.hasUnread || indicator.waitingApproval);
+    return (
+      <div className={styles.historyRow} key={item.id}>
+        {editing?.id === item.id ? (
+          <form
+            className={styles.renameForm}
+            onSubmit={(event) => {
+              event.preventDefault();
+              onRename?.(item.id, editing.title);
+            }}
+          >
+            <input
+              aria-label={`重命名 ${item.title}`}
+              onChange={(event) => onUpdateRename?.(event.target.value)}
+              value={editing.title}
+            />
+            <button aria-label="保存重命名" type="submit">
+              <Check size={13} />
+            </button>
+            <button aria-label="取消重命名" onClick={onCancelRename} type="button">
+              <X size={13} />
+            </button>
+          </form>
+        ) : confirmDeleteId === item.id ? (
+          <div className={styles.confirmRow}>
+            <span>确认删除？</span>
+            <button onClick={onCancelDelete} type="button">
+              取消
+            </button>
+            <button onClick={() => onDelete?.(item.id)} type="button">
+              确认
+            </button>
+          </div>
+        ) : (
+          <>
+            <button
+              className={styles.historyItem}
+              type="button"
+              aria-label={item.title}
+              aria-current={active ? "page" : undefined}
+              data-active={active ? "true" : "false"}
+              onClick={() => onNavigate?.(path)}
+            >
+              <span className={styles.historyTitle}>{item.title}</span>
+              {hasMeta ? (
+                <span className={styles.historyMeta}>
+                  {showUpdatedTime && item.updatedAt ? (
+                    <time dateTime={item.updatedAt}>{formatRelativeTime(item.updatedAt)}</time>
+                  ) : null}
+                  <SessionStatusIndicators indicator={indicator} />
+                </span>
+              ) : null}
+            </button>
+            {canMutate ? (
+              <div className={styles.historyActions}>
+                <button aria-label={`重命名 ${item.title}`} onClick={() => onStartRename?.(item)} type="button">
+                  <Pencil size={13} />
+                </button>
+                <button aria-label={`删除 ${item.title}`} onClick={() => onConfirmDelete?.(item.id)} type="button">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
+    );
   };
 
   if (collapsed) {
@@ -692,7 +889,7 @@ function SiderSection({
                   onMouseLeave={() => setHoveredSession(null)}
                   type="button"
                 >
-                  {indicator.isStreaming ? (
+                  {indicator.isStreaming && !indicator.waitingApproval ? (
                     <span
                       className={styles.collapsedSessionLoading}
                       data-collapsed-loading="true"
@@ -771,79 +968,32 @@ function SiderSection({
               <div className={styles.empty}>{emptyText}</div>
             )
           ) : (
-            items.map((item) => {
-              const path = conversationPath(item.id);
-              const active = isActivePath(activePath, path);
-              const indicator = sessionIndicators[item.id] ?? EMPTY_SESSION_INDICATOR;
-              const showUpdatedTime = Boolean(item.updatedAt && !indicator.isStreaming && !indicator.hasUnread);
-              const hasMeta = Boolean(showUpdatedTime || indicator.isStreaming || indicator.hasUnread);
-              return (
-                <div className={styles.historyRow} key={item.id}>
-                  {editing?.id === item.id ? (
-                    <form
-                      className={styles.renameForm}
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        onRename?.(item.id, editing.title);
-                      }}
-                    >
-                      <input
-                        aria-label={`重命名 ${item.title}`}
-                        onChange={(event) => onUpdateRename?.(event.target.value)}
-                        value={editing.title}
-                      />
-                      <button aria-label="保存重命名" type="submit">
-                        <Check size={13} />
-                      </button>
-                      <button aria-label="取消重命名" onClick={onCancelRename} type="button">
-                        <X size={13} />
-                      </button>
-                    </form>
-                  ) : confirmDeleteId === item.id ? (
-                    <div className={styles.confirmRow}>
-                      <span>确认删除？</span>
-                      <button onClick={onCancelDelete} type="button">
-                        取消
-                      </button>
-                      <button onClick={() => onDelete?.(item.id)} type="button">
-                        确认
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <button
-                        className={styles.historyItem}
-                        type="button"
-                        aria-label={item.title}
-                        aria-current={active ? "page" : undefined}
-                        data-active={active ? "true" : "false"}
-                        onClick={() => onNavigate?.(path)}
-                      >
-                        <span className={styles.historyTitle}>{item.title}</span>
-                        {hasMeta ? (
-                          <span className={styles.historyMeta}>
-                            {showUpdatedTime && item.updatedAt ? (
-                              <time dateTime={item.updatedAt}>{formatRelativeTime(item.updatedAt)}</time>
-                            ) : null}
-                            <SessionStatusIndicators indicator={indicator} />
-                          </span>
-                        ) : null}
-                      </button>
-                      {canMutate ? (
-                        <div className={styles.historyActions}>
-                          <button aria-label={`重命名 ${item.title}`} onClick={() => onStartRename?.(item)} type="button">
-                            <Pencil size={13} />
-                          </button>
-                          <button aria-label={`删除 ${item.title}`} onClick={() => onConfirmDelete?.(item.id)} type="button">
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              );
-            })
+            <>
+              {previewItems.map(renderHistoryRow)}
+              {shouldLimitHistory ? (
+                <>
+                  <div
+                    className={styles.historyExtraItems}
+                    aria-hidden={!historyExpanded}
+                    data-history-extra-items="true"
+                    data-expanded={historyExpanded ? "true" : "false"}
+                  >
+                    <div className={styles.historyExtraItemsInner}>{extraItems.map(renderHistoryRow)}</div>
+                  </div>
+                  <button
+                    aria-expanded={historyExpanded}
+                    aria-label={`${historyExpanded ? "折叠" : "展开"} ${title} 会话历史`}
+                    className={styles.historyToggleButton}
+                    disabled={historyToggleLoading}
+                    onClick={() => void toggleHistoryExpansion()}
+                    type="button"
+                  >
+                    {historyToggleLoading ? <LoaderCircle size={12} strokeWidth={2} aria-hidden="true" /> : null}
+                    <span>{historyToggleLoading ? "加载中" : historyExpanded ? "折叠会话" : "展开会话"}</span>
+                  </button>
+                </>
+              ) : null}
+            </>
           )}
         </div>
       </div>
@@ -858,7 +1008,7 @@ function SessionStatusIndicators({
   indicator: SessionIndicator;
   collapsed?: boolean;
 }) {
-  if (!indicator.isStreaming && !indicator.hasUnread) {
+  if (!indicator.isStreaming && !indicator.hasUnread && !indicator.waitingApproval) {
     return null;
   }
   return (
@@ -868,9 +1018,20 @@ function SessionStatusIndicators({
       data-session-indicators="true"
       data-streaming={indicator.isStreaming ? "true" : "false"}
       data-unread={indicator.hasUnread ? "true" : "false"}
-      aria-hidden="true"
+      data-waiting-approval={indicator.waitingApproval ? "true" : "false"}
+      aria-hidden={collapsed ? "true" : undefined}
     >
-      {indicator.isStreaming ? <span className={styles.historyStreamingSpinner} /> : null}
+      {indicator.waitingApproval ? (
+        collapsed ? (
+          <span className={styles.historyApprovalDot} title="等待批准" />
+        ) : (
+          <span className={styles.historyApprovalBadge}>
+            <ShieldCheck size={12} />
+            <span>等待批准</span>
+          </span>
+        )
+      ) : null}
+      {indicator.isStreaming && !indicator.waitingApproval ? <span className={styles.historyStreamingSpinner} /> : null}
       {indicator.hasUnread ? <span className={styles.historyUnreadDot} /> : null}
     </span>
   );
@@ -1023,9 +1184,18 @@ function sessionGroupMeta(session: AgentSession): Pick<SiderGroup, "id" | "title
 }
 
 function upsertSession(sessions: AgentSession[], session: AgentSession): AgentSession[] {
-  return [session, ...sessions.filter((item) => item.id !== session.id)].sort((left, right) =>
-    right.updated_at.localeCompare(left.updated_at),
-  );
+  return mergeSessions(sessions, [session]);
+}
+
+function mergeSessions(sessions: AgentSession[], incoming: AgentSession[]): AgentSession[] {
+  const byId = new Map<string, AgentSession>();
+  for (const session of sessions) {
+    byId.set(session.id, session);
+  }
+  for (const session of incoming) {
+    byId.set(session.id, session);
+  }
+  return [...byId.values()].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
 }
 
 function compareGroupUpdatedAt(left: SiderGroup, right: SiderGroup): number {

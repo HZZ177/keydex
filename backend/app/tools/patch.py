@@ -44,11 +44,14 @@ patch 必须使用以下文件操作头；不接受普通 unified diff 文件头
 +新标题
 *** End Patch
 
-禁止写法：不要写 `*** docs/file.md`、`--- docs/file.md`、`+++ docs/file.md`，也不要只写普通 unified diff hunk，例如 `@@ -1,2 +1,3 @@`。"""
+禁止写法：不要写 `*** docs/file.md`、`--- docs/file.md`、`+++ docs/file.md`，
+也不要只写普通 unified diff hunk，例如 `@@ -1,2 +1,3 @@`。"""
 
-PATCH_PARAMETER_DESCRIPTION = """完整 patch 文本。必须以 `*** Begin Patch` 开始，并以 `*** End Patch` 结束。
+PATCH_PARAMETER_DESCRIPTION = """完整 patch 文本。必须以 `*** Begin Patch` 开始，
+并以 `*** End Patch` 结束。
 每个文件操作必须使用 `*** Update File: <path>` 或 `*** Delete File: <path>`。
-Update File 内容行必须以空格、+、-、@@、`*** Move to: <path>` 或 `*** End of File` 开头；上下文行必须保留前导空格。"""
+Update File 内容行必须以空格、+、-、@@、`*** Move to: <path>` 或
+`*** End of File` 开头；上下文行必须保留前导空格。"""
 
 PATCH_EXPECTED_HEADERS = [
     "*** Update File: <path>",
@@ -251,7 +254,11 @@ def _plan_update(
             code="patch_target_exists",
             details={"path": _relative_missing(destination, context)},
         )
-    updated = _apply_update_hunks(original, operation.lines, path=_relative_missing(target, context))
+    updated = _apply_update_hunks(
+        original,
+        operation.lines,
+        path=_relative_missing(target, context),
+    )
     state[target] = None
     state[destination] = updated
     return PlannedChange(

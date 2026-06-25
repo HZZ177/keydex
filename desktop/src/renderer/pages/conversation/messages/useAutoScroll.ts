@@ -129,6 +129,10 @@ export function useAutoScroll({ deps, itemCount = 0 }: UseAutoScrollOptions): Us
     if (!scrollElement || userPinnedRef.current || isExpansionScrollLocked(scrollElement)) {
       return;
     }
+    if (scrollAnimationFrameRef.current !== null) {
+      updateBottomState(scrollElement);
+      return;
+    }
     if (frameRef.current !== null) {
       window.cancelAnimationFrame(frameRef.current);
     }
@@ -137,6 +141,10 @@ export function useAutoScroll({ deps, itemCount = 0 }: UseAutoScrollOptions): Us
       frameRef.current = null;
       const nextScrollElement = getScrollElement();
       if (!nextScrollElement || userPinnedRef.current || isExpansionScrollLocked(nextScrollElement)) {
+        return;
+      }
+      if (scrollAnimationFrameRef.current !== null) {
+        updateBottomState(nextScrollElement);
         return;
       }
       if (getBottomGap(nextScrollElement) > FOLLOW_BOTTOM_THRESHOLD_PX) {

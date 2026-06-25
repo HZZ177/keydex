@@ -1,4 +1,4 @@
-import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+﻿import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge } from "@/runtime";
@@ -323,7 +323,7 @@ describe("MessageList", () => {
     expect(screen.queryByText(/"path": "README\.md"/)).toBeNull();
     expect(screen.queryByText("文件内容")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
-    expect(screen.getByLabelText("工具参数").textContent).toContain('"path": "README.md"');
+    expect(screen.getByLabelText("工具入参").textContent).toContain('"path": "README.md"');
     expect(screen.getByText("文件内容")).not.toBeNull();
   });
 
@@ -402,7 +402,7 @@ describe("MessageList", () => {
     const updatedButton = screen.getByRole("button", { name: "读取了 1 个文件，已运行 1 条命令详情" });
     expect(updatedButton.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByTestId("tool-call-block")).not.toBeNull();
-    expect(screen.getByText("已中断")).not.toBeNull();
+    expect(screen.getByText("已取消")).not.toBeNull();
   });
 
   it("keeps the grouped tool header anchored while details expand near the top", () => {
@@ -697,10 +697,11 @@ describe("MessageList", () => {
     });
 
     expect(scroller.scrollTop).toBe(120);
-    expect(scrollTo).toHaveBeenLastCalledWith({
-      behavior: "smooth",
-      top: 800,
+    expect(scrollTo).not.toHaveBeenCalled();
+    act(() => {
+      result.current.handleTotalListHeightChanged();
     });
+    expect(scroller.scrollTop).toBe(120);
     expect(scrollToIndex).not.toHaveBeenCalled();
 
     act(() => {
@@ -708,7 +709,7 @@ describe("MessageList", () => {
     });
 
     expect(scroller.scrollTop).toBe(800);
-    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).not.toHaveBeenCalled();
     expect(scrollToIndex).not.toHaveBeenCalled();
   });
 

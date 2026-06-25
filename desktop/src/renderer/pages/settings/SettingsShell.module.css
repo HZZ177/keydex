@@ -42,6 +42,7 @@
 
 .backButton,
 .menuItem,
+.sidebarToggle,
 .themeButton {
   display: inline-flex;
   min-width: 0;
@@ -50,6 +51,52 @@
   background: transparent;
   color: var(--color-text-secondary);
   text-align: left;
+}
+
+.topActions {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.sidebarToggle {
+  width: 100%;
+  height: 30px;
+  gap: 9px;
+  border-radius: 7px;
+  color: var(--color-text-2);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 9px;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--motion-ease-standard);
+}
+
+.sidebarToggle svg {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, currentColor 82%, transparent);
+}
+
+.sidebarToggle span {
+  display: inline-flex;
+  min-height: 18px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarToggle:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.sidebarToggle:active {
+  transform: scale(0.94);
 }
 
 .backButton {
@@ -216,19 +263,22 @@
 .shell[data-sidebar="collapsed"] .sidebar {
   width: var(--sidebar-collapsed-width);
   flex-basis: var(--sidebar-collapsed-width);
-  padding: 12px 7px 10px;
+  padding: 12px 0 10px 10px;
 }
 
 .shell[data-sidebar="collapsed"] .backButton,
 .shell[data-sidebar="collapsed"] .menuItem,
+.shell[data-sidebar="collapsed"] .sidebarToggle,
+.shell[data-sidebar="collapsed"] .topActions,
 .shell[data-sidebar="collapsed"] .themeButton {
-  width: 100%;
+  width: 30px;
   justify-content: center;
   padding: 0;
 }
 
 .shell[data-sidebar="collapsed"] .backButton span,
 .shell[data-sidebar="collapsed"] .menuItem span,
+.shell[data-sidebar="collapsed"] .sidebarToggle span,
 .shell[data-sidebar="collapsed"] .themeButton span,
 .shell[data-sidebar="collapsed"] .groupLabel,
 .shell[data-sidebar="collapsed"] .searchBox input {
@@ -237,6 +287,7 @@
 
 .backButton:focus-visible,
 .menuItem:focus-visible,
+.sidebarToggle:focus-visible,
 .themeButton:focus-visible,
 .searchBox:focus-within {
   outline: 0;
@@ -244,6 +295,7 @@
 }
 
 .shell[data-sidebar="collapsed"] .searchBox {
+  width: 30px;
   height: 30px;
   grid-template-columns: 1fr;
   place-items: center;
@@ -260,5 +312,13 @@
 @media (prefers-reduced-motion: reduce) {
   .shell[data-sidebar-motion="true"] .sidebar {
     transition: none;
+  }
+
+  .sidebarToggle {
+    transition: none;
+  }
+
+  .sidebarToggle:active {
+    transform: none;
   }
 }

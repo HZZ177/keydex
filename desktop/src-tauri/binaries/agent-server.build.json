@@ -11,7 +11,7 @@
     "backend/app/agent/langchain_tools.py",
     "backend/app/agent/middleware.py",
     "backend/app/agent/runner.py",
-    "backend/app/agent/system_prompt.md",
+    "backend/app/agent/system_prompt.py",
     "backend/app/agent/tool_call_progress.py",
     "backend/app/api/__init__.py",
     "backend/app/api/dependencies.py",

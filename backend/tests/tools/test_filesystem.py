@@ -65,7 +65,11 @@ async def test_read_file_tool_supports_line_window_and_indentation_mode(tmp_path
         encoding="utf-8",
     )
 
-    window = await _run("read_file", {"path": "src/app.py", "start_line": 3, "max_lines": 1}, tmp_path)
+    window = await _run(
+        "read_file",
+        {"path": "src/app.py", "start_line": 3, "max_lines": 1},
+        tmp_path,
+    )
     block = await _run(
         "read_file",
         {"path": "src/app.py", "mode": "indentation", "anchor_line": 2, "max_lines": 10},
@@ -113,7 +117,12 @@ async def test_write_file_tool_creates_new_file_inside_workspace(tmp_path) -> No
     assert result.result["files"][0]["path"] == "out/result.txt"
     assert result.result["files"][0]["operation"] == "add"
     assert result.result["files"][0]["additions"] == 1
-    assert result.result["files"][0]["diff"] == "--- /dev/null\n+++ b/out/result.txt\n@@ -0,0 +1 @@\n+hello"
+    assert result.result["files"][0]["diff"] == (
+        "--- /dev/null\n"
+        "+++ b/out/result.txt\n"
+        "@@ -0,0 +1 @@\n"
+        "+hello"
+    )
     assert (tmp_path / "out" / "result.txt").read_text(encoding="utf-8") == "hello"
 
 

@@ -30,7 +30,7 @@ graph TB
     BE_API_FILES["health.py / sessions.py / settings.py<br/>models.py / model_providers.py<br/>usage.py / workspace.py / workspaces.py<br/>websocket.py / dependencies.py"]
 
     BE_AGENT["agent/<br/><small>Agent 编排核心</small>"]
-    BE_AGENT_FILES["__init__.py / factory.py / runner.py<br/>checkpoint.py / middleware.py<br/>event_processor.py / tool_call_progress.py<br/>langchain_tools.py / system_prompt.md"]
+    BE_AGENT_FILES["__init__.py / factory.py / runner.py<br/>checkpoint.py / middleware.py<br/>event_processor.py / tool_call_progress.py<br/>langchain_tools.py / system_prompt.py"]
 
     BE_MODEL["model/<br/><small>LLM 抽象层</small>"]
     BE_MODEL_FILES["base.py / provider_client.py<br/>e2e_transport.py"]
@@ -198,7 +198,7 @@ graph TB
 |------|------|----------|
 | `core/` | **基础设施** — 配置、环境变量、日志、异常处理、ID 生成、路径解析、请求上下文 | `config.py`, `logger.py`, `exception_handler.py`, `middleware.py`, `ids.py`, `file_path.py`, `env.py`, `time.py`, `request_context.py` |
 | `api/` | **API 路由层** — REST 端点 + WebSocket，供前端调用 | `health.py`, `sessions.py`, `settings.py`, `models.py`, `model_providers.py`, `usage.py`, `workspace.py`, `workspaces.py`, `websocket.py`, `dependencies.py` |
-| `agent/` | **Agent 编排核心** — Agent 工厂、运行器、LangGraph 检查点、事件处理、工具调用进度追踪 | `factory.py`, `runner.py`, `checkpoint.py`, `event_processor.py`, `tool_call_progress.py`, `middleware.py`, `langchain_tools.py`, `system_prompt.md` |
+| `agent/` | **Agent 编排核心** — Agent 工厂、运行器、LangGraph 检查点、事件处理、工具调用进度追踪 | `factory.py`, `runner.py`, `checkpoint.py`, `event_processor.py`, `tool_call_progress.py`, `middleware.py`, `langchain_tools.py`, `system_prompt.py` |
 | `model/` | **LLM 抽象层** — 多 Provider 客户端适配（OpenAI 兼容），端到端加密传输 | `base.py`, `provider_client.py`, `e2e_transport.py` |
 | `tools/` | **工具系统** — 文件系统读写、搜索、Shell 执行、Patch 应用、Plan 管理、工具注册与编排 | `filesystem.py`, `search.py`, `shell.py`, `patch.py`, `plan.py`, `orchestrator.py`, `registry.py`, `base.py`, `factory.py` |
 | `storage/` | **持久化层** — SQLite 数据库、Blob 存储、Repository 数据访问模式 | `db.py`, `blobs.py`, `repositories.py`（~60KB 核心逻辑） |
@@ -259,7 +259,7 @@ keydex/
 │   │   ├── main.py                 # FastAPI 入口
 │   │   ├── core/                   # 基础设施 (11 文件)
 │   │   ├── api/                    # API 路由 (12 文件)
-│   │   ├── agent/                  # Agent 编排 (9 文件 + 1 md)
+│   │   ├── agent/                  # Agent 编排 (10 文件)
 │   │   ├── model/                  # LLM 抽象 (3 文件)
 │   │   ├── tools/                  # 工具系统 (11 文件)
 │   │   ├── storage/                # 持久化 (3 文件)

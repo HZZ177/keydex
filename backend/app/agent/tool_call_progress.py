@@ -501,13 +501,25 @@ def tool_state_match_score(state: ToolCallChunkState, params: dict[str, Any]) ->
 
     score = 0
     for key in ("patch", "content"):
-        if key in state.args and key in params and jsonable_equal(state.args.get(key), params.get(key)):
+        if (
+            key in state.args
+            and key in params
+            and jsonable_equal(state.args.get(key), params.get(key))
+        ):
             score += 300
-    if "path" in state.args and "path" in params and string_value(state.args.get("path")) == string_value(params.get("path")):
+    if (
+        "path" in state.args
+        and "path" in params
+        and string_value(state.args.get("path")) == string_value(params.get("path"))
+    ):
         score += 200
     state_patch_paths = patch_paths(string_value(state.args.get("patch")))
     params_patch_paths = patch_paths(string_value(params.get("patch")))
-    if state_patch_paths and params_patch_paths and state_patch_paths.intersection(params_patch_paths):
+    if (
+        state_patch_paths
+        and params_patch_paths
+        and state_patch_paths.intersection(params_patch_paths)
+    ):
         score += 120
     return score
 

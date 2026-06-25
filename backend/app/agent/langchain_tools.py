@@ -27,7 +27,7 @@ def local_tool_to_langchain_tool(
         result = await tool.run(dict(kwargs), context_factory())
         if result.ok:
             return _json_result(result.result)
-        return _json_result(result.error or {"code": "tool_failed", "message": "工具执行失败"})
+        return _json_result(_failed_tool_payload(tool.name, result.error))
 
     _run.__name__ = tool.name
     _run.__doc__ = tool.description or tool.name
@@ -37,6 +37,25 @@ def local_tool_to_langchain_tool(
         description=tool.description or tool.name,
         args_schema=tool.parameters,
     )
+
+
+def _failed_tool_payload(tool_name: str, error: dict[str, Any] | None) -> dict[str, Any]:
+    normalized_error = error or {"code": "tool_failed", "message": "工具执行失败", "details": {}}
+    code = str(normalized_error.get("code") or "tool_failed")
+    message = str(normalized_error.get("message") or "工具执行失败")
+    details = normalized_error.get("details")
+    if not isinstance(details, dict):
+        details = {}
+    return {
+        "tool": tool_name,
+        "ok": False,
+        "status": "failed",
+        "code": code,
+        "message": message,
+        "details": details,
+        "error": normalized_error,
+        "tool_summary": f"工具 {tool_name} 执行失败：{message}（错误码：{code}）。",
+    }
 
 
 def registry_to_langchain_tools(

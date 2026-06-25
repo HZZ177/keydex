@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { parseUnifiedDiffDisplayLines, type UnifiedDiffDisplayLine } from "@/renderer/utils/unifiedDiff";
 
+import { formatErrorText, readableErrorText } from "./errorText";
 import styles from "./FileChangeBlock.module.css";
 import { LineChangeTicker } from "./LineChangeTicker";
 import { useDeferredUnmount } from "./useDeferredUnmount";
@@ -405,11 +406,11 @@ function errorMessageFromPayload(
   message: ConversationMessage,
   result: Record<string, unknown> | null,
 ): string {
-  const resultError = errorText(result?.error);
+  const resultError = formatErrorText(result?.error);
   if (resultError) {
     return resultError;
   }
-  const payloadError = errorText(message.payload.error);
+  const payloadError = formatErrorText(message.payload.error);
   if (payloadError) {
     return payloadError;
   }
@@ -439,39 +440,6 @@ function paramsTextFromPayload(message: ConversationMessage): string {
     return params.trim();
   }
   return stringifyJson(params);
-}
-
-function errorText(value: unknown): string {
-  if (typeof value === "string") {
-    return readableErrorText(value);
-  }
-  const record = asRecord(value);
-  if (!record) {
-    return "";
-  }
-  const message = stringValue(record.message);
-  const code = stringValue(record.code);
-  if (message && code) {
-    return `${message} (${code})`;
-  }
-  return message || code;
-}
-
-function readableErrorText(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "";
-  }
-  try {
-    const parsed = JSON.parse(trimmed);
-    const parsedText = errorText(parsed);
-    if (parsedText) {
-      return parsedText;
-    }
-  } catch {
-    // Non-JSON errors are already readable.
-  }
-  return trimmed;
 }
 
 function stringifyJson(value: unknown): string {

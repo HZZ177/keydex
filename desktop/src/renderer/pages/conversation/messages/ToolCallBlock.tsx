@@ -23,24 +23,28 @@ export interface ToolCallBlockProps {
   message: ConversationMessage;
 }
 
+type CopyTarget = "input" | "output";
+type CopyStatus = "idle" | "copied" | "failed";
+
 export function ToolCallBlock({ message }: ToolCallBlockProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [copyState, setCopyState] = useState<{ target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null>(null);
   const tool = useMemo(() => parseToolPayload(message), [message]);
   const running = message.status === "pending" || message.status === "running";
   const failed = message.status === "failed" || tool.resultStatus === "error";
-  const resultLabel = failed ? "错误" : "结果";
   const detailsMotion = useDeferredUnmount<HTMLDivElement>(detailsOpen);
   const captureExpansionAnchor = useExpansionScrollAnchor();
 
-  const handleCopyResult = async () => {
+  const handleCopy = async (target: CopyTarget, text: string) => {
     try {
-      await copyText(tool.resultText);
-      setCopyState("copied");
+      await copyText(text);
+      setCopyState({ target, status: "copied" });
     } catch {
-      setCopyState("failed");
+      setCopyState({ target, status: "failed" });
     }
   };
+  const inputCopyStatus = copyStatus(copyState, "input");
+  const outputCopyStatus = copyStatus(copyState, "output");
 
   return (
     <article
@@ -89,23 +93,46 @@ export function ToolCallBlock({ message }: ToolCallBlockProps) {
           aria-label="工具详情"
         >
           <div className={styles.detailsInner}>
-            <section className={styles.detailSection} aria-label="工具参数">
-              <h3>Input</h3>
-              <pre className={styles.args}>{tool.argsText}</pre>
+            <section className={styles.detailSection} aria-label="工具入参">
+              <div className={styles.sectionHeader} data-kind="input">
+                <div className={styles.outputHeader}>入参</div>
+                <button
+                  className={styles.copyButton}
+                  type="button"
+                  aria-label={copyAriaLabel("入参", inputCopyStatus)}
+                  title={copyAriaLabel("入参", inputCopyStatus)}
+                  onClick={() => void handleCopy("input", tool.argsText)}
+                >
+                  {inputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
+                </button>
+              </div>
+              <div className={styles.codeViewport}>
+                <pre className={styles.args}>{tool.argsText}</pre>
+              </div>
             </section>
 
-            <section className={styles.detailSection} aria-label={failed ? "工具错误" : "工具结果"}>
-              <h3>{resultLabel}</h3>
+            <section className={styles.detailSection} aria-label={failed ? "工具错误" : "工具输出"}>
+              <div className={styles.sectionHeader} data-kind="output">
+                <div className={styles.outputHeader}>输出</div>
+                <button
+                  className={styles.copyButton}
+                  type="button"
+                  aria-label={copyAriaLabel("输出", outputCopyStatus)}
+                  title={copyAriaLabel("输出", outputCopyStatus)}
+                  onClick={() => void handleCopy("output", tool.resultText)}
+                  disabled={!tool.resultText}
+                >
+                  {outputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
+                </button>
+              </div>
               {tool.resultText ? (
-                <>
+                <div className={styles.codeViewport}>
                   <pre data-kind={failed ? "error" : "result"}>{tool.resultText}</pre>
-                  <button className={styles.copyButton} type="button" aria-label="复制工具结果" onClick={handleCopyResult}>
-                    {copyState === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
-                    <span>{copyState === "failed" ? "复制失败" : copyState === "copied" ? "已复制" : "复制结果"}</span>
-                  </button>
-                </>
+                </div>
               ) : (
-                <p className={styles.emptyResult}>{running ? "工具正在执行" : "暂无结果"}</p>
+                <div className={styles.codeViewport}>
+                  <p className={styles.emptyResult}>{running ? "工具正在执行" : "暂无输出"}</p>
+                </div>
               )}
             </section>
           </div>
@@ -113,6 +140,23 @@ export function ToolCallBlock({ message }: ToolCallBlockProps) {
       ) : null}
     </article>
   );
+}
+
+function copyStatus(
+  state: { target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null,
+  target: CopyTarget,
+): CopyStatus {
+  return state?.target === target ? state.status : "idle";
+}
+
+function copyAriaLabel(label: "入参" | "输出", status: CopyStatus): string {
+  if (status === "copied") {
+    return `已复制${label}`;
+  }
+  if (status === "failed") {
+    return `复制${label}失败`;
+  }
+  return `复制${label}`;
 }
 
 interface ParsedToolPayload {

@@ -23,7 +23,7 @@ describe("ModelSettingsPage", () => {
 
     render(<ModelSettingsPage runtime={runtime} />);
 
-    expect(screen.getByRole("heading", { name: "模型配置" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "供应商" })).not.toBeNull();
     expect(await screen.findByText("默认模型服务")).not.toBeNull();
     expect(screen.getByText("https://api.example.com/v1")).not.toBeNull();
     expect(screen.getByText("3 个模型")).not.toBeNull();

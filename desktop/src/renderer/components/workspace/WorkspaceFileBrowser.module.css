@@ -17,6 +17,7 @@
   min-width: 0;
   min-height: 0;
   background: var(--color-bg-elevated);
+  contain: layout paint style;
   color: var(--color-text-primary);
   overflow: hidden;
 }
@@ -137,12 +138,18 @@
 
 .treePane {
   position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   grid-column: 1;
   background: var(--sidebar-bg);
   opacity: 1;
   transition:
     opacity 140ms var(--motion-ease-standard),
     visibility 0ms linear;
+}
+
+.treePane[data-outline-available="true"] {
+  grid-template-rows: 38px minmax(0, 1fr);
 }
 
 .treePane[data-collapsed="true"] {
@@ -152,6 +159,225 @@
   transition:
     opacity 110ms var(--motion-ease-standard),
     visibility 0ms linear var(--workspace-file-motion);
+}
+
+.navigationTabs {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  height: 28px;
+  align-items: center;
+  gap: 0;
+  margin: 5px 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 70%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  padding: 2px;
+}
+
+.navigationTabs::before {
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 2);
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: var(--color-bg-elevated);
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 8%),
+    inset 0 0 0 1px color-mix(in srgb, var(--color-border-subtle) 68%, transparent);
+  content: "";
+  transform: translateX(0);
+  transition: transform 160ms var(--motion-ease-out);
+}
+
+.navigationTabs[data-mode="outline"]::before {
+  transform: translateX(100%);
+}
+
+.navigationTabs button {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  height: 22px;
+  min-width: 0;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: 11px;
+}
+
+.navigationTabs button:hover {
+  color: var(--color-text-primary);
+}
+
+.navigationTabs button[aria-pressed="true"] {
+  color: var(--color-text-primary);
+}
+
+.navigationTabs button:focus-visible {
+  outline: none;
+}
+
+.treeContent,
+.outlinePane {
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.treePane[data-outline-available="true"] .treeContent,
+.treePane[data-outline-available="true"] .outlinePane {
+  grid-row: 2;
+}
+
+.treeContent[data-active="false"],
+.outlinePane[data-active="false"] {
+  display: none;
+}
+
+.treeContent > [data-workspace-panel-root="true"] {
+  height: 100%;
+}
+
+.outlinePanel {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--sidebar-bg);
+}
+
+.outlineList {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  overflow: auto;
+  padding: 6px 8px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-text-4) 34%, transparent) transparent;
+}
+
+.outlineList::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.outlineList::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.outlineList::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-4) 32%, transparent);
+  background-clip: padding-box;
+}
+
+.outlineItem {
+  --workspace-outline-indent: 0px;
+  display: grid;
+  max-height: 30px;
+  min-width: 0;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  opacity: 1;
+  overflow: hidden;
+  padding-left: calc(4px + var(--workspace-outline-indent));
+  transform: translateY(0);
+  transition:
+    max-height 180ms var(--motion-ease-standard),
+    opacity 140ms var(--motion-ease-standard),
+    transform 180ms var(--motion-ease-standard);
+}
+
+.outlineItem[data-visible="false"] {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+}
+
+.outlineToggle,
+.outlineJump {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.outlineToggle,
+.outlineToggleSpacer {
+  display: inline-grid;
+  width: 22px;
+  height: 24px;
+  place-items: center;
+}
+
+.outlineToggle {
+  border-radius: var(--radius-xs);
+  color: var(--color-text-tertiary);
+}
+
+.outlineToggle svg {
+  transition: transform var(--motion-fast) var(--motion-ease-standard);
+}
+
+.outlineItem[data-collapsed="false"] .outlineToggle svg {
+  transform: rotate(90deg);
+}
+
+.outlineJump {
+  display: grid;
+  height: 28px;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  padding: 0 8px 0 4px;
+  text-align: left;
+}
+
+.outlineToggle:hover,
+.outlineToggle:focus-visible,
+.outlineJump:hover,
+.outlineJump:focus-visible {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.outlineTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outlineState {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 24px;
+  text-align: center;
 }
 
 .resizeHandle {
@@ -210,8 +436,7 @@
 }
 
 .browser[data-resizing="true"] .previewPane [data-file-preview-root="true"] {
-  content-visibility: hidden;
-  contain-intrinsic-size: 720px;
+  display: none;
   pointer-events: none;
 }
 
@@ -338,6 +563,10 @@
   .treePane,
   .resizeHandle,
   .previewPane,
+  .navigationTabs::before,
+  .navigationTabs button,
+  .outlineItem,
+  .outlineToggle svg,
   .treeToggleButton,
   .collapsedEmptyState {
     transition: none;

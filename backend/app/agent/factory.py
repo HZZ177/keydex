@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import threading
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -337,10 +336,6 @@ def _normalize_base_url(base_url: str) -> str:
     if not url.endswith("/v1"):
         url = f"{url}/v1"
     return url
-
-
-def load_system_prompt(path: Path) -> str:
-    return path.read_text(encoding="utf-8").strip()
 
 
 agent_factory = AgentFactory()

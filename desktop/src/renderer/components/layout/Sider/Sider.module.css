@@ -438,6 +438,71 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   white-space: nowrap;
 }
 
+.historyExtraItems {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    grid-template-rows 180ms var(--motion-ease-standard),
+    opacity 140ms ease;
+}
+
+.historyExtraItems[data-expanded="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.historyExtraItemsInner {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.historyToggleButton {
+  display: inline-flex;
+  width: fit-content;
+  max-width: calc(100% - 17px);
+  height: 24px;
+  align-items: center;
+  gap: 5px;
+  justify-self: start;
+  margin: 5px 0 4px 17px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-4);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 6px;
+  transition:
+    color var(--motion-fast) ease,
+    opacity var(--motion-fast) ease;
+}
+
+.historyToggleButton:hover,
+.historyToggleButton:focus-visible {
+  outline: none;
+  background: transparent;
+  color: var(--color-text-2);
+}
+
+.historyToggleButton:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.historyToggleButton svg {
+  flex: 0 0 auto;
+  animation: historySpinner 1100ms linear infinite;
+}
+
 .historyMeta {
   display: inline-flex;
   min-width: max-content;
@@ -453,13 +518,13 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
 
 .historyIndicators {
   display: inline-flex;
-  width: 15px;
+  width: auto;
   height: 15px;
   min-width: 0;
   align-items: center;
   justify-content: center;
   gap: 3px;
-  flex: 0 0 15px;
+  flex: 0 0 auto;
 }
 
 .historyIndicators[data-collapsed="true"] {
@@ -479,6 +544,31 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   border-radius: var(--radius-pill);
   background: #f97316;
   box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--sidebar-bg) 88%, transparent);
+}
+
+.historyApprovalBadge {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-success-6) 34%, transparent);
+  border-radius: var(--radius-pill);
+  padding: 0 7px 0 6px;
+  background: color-mix(in srgb, var(--color-success-6) 10%, var(--surface-bg));
+  color: var(--color-success-6);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.historyApprovalDot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid color-mix(in srgb, var(--sidebar-bg) 90%, transparent);
+  border-radius: var(--radius-pill);
+  background: var(--color-success-6);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-success-6) 22%, transparent);
 }
 
 .historyStreamingSpinner {

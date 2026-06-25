@@ -32,7 +32,14 @@ import ReactMarkdown from "react-markdown";
 
 import { useOptionalPreview } from "@/renderer/providers/PreviewProvider";
 import type { PreviewRequest } from "@/renderer/providers/previewTypes";
-import { formatMermaidCssPixels, normalizeMermaidSvgDimensions, type SvgDimensions } from "@/renderer/utils/mermaidSvg";
+import {
+  centerMermaidViewport,
+  formatMermaidCssPixels,
+  normalizeMermaidSvgDimensions,
+  preserveMermaidZoomAnchor,
+  syncMermaidCanvasPadding,
+  type SvgDimensions,
+} from "@/renderer/utils/mermaidSvg";
 
 import { LineChangeTicker } from "./LineChangeTicker";
 import { MarkdownTable } from "./MarkdownTable";
@@ -288,7 +295,12 @@ export function MarkdownCodeBlock({ children, defaultViewMode = "source", stream
   };
 
   return (
-    <div ref={containerRef} className={styles.codeBlock} data-language={language}>
+    <div
+      ref={containerRef}
+      className={styles.codeBlock}
+      data-has-text-footer={showCollapseControls || showStreamingLineStatus ? "true" : "false"}
+      data-language={language}
+    >
       <div className={styles.codeHeader}>
         <span className={styles.codeLanguage}>{language}</span>
         <div className={styles.codeActions}>
@@ -829,6 +841,7 @@ function MermaidPreview({
     if (!viewport) {
       return false;
     }
+    syncMermaidCanvasPadding(viewport);
     const next = calculateMermaidFitScale(viewport, state.dimensions);
     if (next === null) {
       return false;
@@ -1075,32 +1088,8 @@ function calculateMermaidFitScale(viewport: HTMLElement, dimensions: SvgDimensio
   return clampMermaidScale(Math.min(availableWidth / dimensions.width, availableHeight / dimensions.height));
 }
 
-function centerMermaidViewport(viewport: HTMLElement, dimensions: SvgDimensions, scale: number) {
-  viewport.scrollLeft = Math.max(0, (dimensions.width * scale - viewport.clientWidth) / 2);
-  viewport.scrollTop = Math.max(0, (dimensions.height * scale - viewport.clientHeight) / 2);
-}
-
 function formatMermaidScale(value: number): string {
   return `${Math.round(value * 100)}%`;
-}
-
-function preserveMermaidZoomAnchor(
-  viewport: HTMLElement,
-  currentScale: number,
-  nextScale: number,
-  focus: { clientX: number; clientY: number },
-) {
-  const rect = viewport.getBoundingClientRect();
-  const viewportX = focus.clientX - rect.left;
-  const viewportY = focus.clientY - rect.top;
-  const anchorX = viewport.scrollLeft + viewportX;
-  const anchorY = viewport.scrollTop + viewportY;
-  const ratio = nextScale / currentScale;
-
-  window.requestAnimationFrame(() => {
-    viewport.scrollLeft = Math.max(0, anchorX * ratio - viewportX);
-    viewport.scrollTop = Math.max(0, anchorY * ratio - viewportY);
-  });
 }
 
 function pointerIdValue(event: ReactPointerEvent<HTMLElement>): number {

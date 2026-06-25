@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
+import { formatErrorText, readableErrorText } from "./errorText";
 import { copyText } from "./markdown";
 import styles from "./CommandExecutionBlock.module.css";
 import { useDeferredUnmount } from "./useDeferredUnmount";
@@ -14,31 +15,38 @@ export interface CommandExecutionBlockProps {
   message: ConversationMessage;
 }
 
+type CopyTarget = "input" | "output";
+type CopyStatus = "idle" | "copied" | "failed";
+
 export function CommandExecutionBlock({ message }: CommandExecutionBlockProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [copyState, setCopyState] = useState<{ target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null>(null);
   const command = useMemo(() => parseCommandPayload(message), [message]);
   const running = message.status === "pending" || message.status === "running";
-  const failed = message.status === "failed" || (typeof command.exitCode === "number" && command.exitCode !== 0);
-  const statusKind = failed ? "failed" : running ? "running" : "done";
+  const rejected = command.status === "rejected";
+  const failed = message.status === "failed" || command.status === "timed_out" || command.status === "disabled";
+  const negative = rejected || failed;
+  const statusKind = negative ? "failed" : running ? "running" : "done";
   const combinedOutput = [command.stdout, command.stderr].filter(Boolean).join(command.stdout && command.stderr ? "\n" : "");
   const outputMotion = useDeferredUnmount<HTMLElement>(detailsOpen);
   const captureExpansionAnchor = useExpansionScrollAnchor();
 
-  const handleCopy = async () => {
+  const handleCopy = async (target: CopyTarget, text: string) => {
     try {
-      await copyText(combinedOutput || command.inputText || command.command);
-      setCopyState("copied");
+      await copyText(text);
+      setCopyState({ target, status: "copied" });
     } catch {
-      setCopyState("failed");
+      setCopyState({ target, status: "failed" });
     }
   };
+  const inputCopyStatus = copyStatus(copyState, "input");
+  const outputCopyStatus = copyStatus(copyState, "output");
 
   return (
     <article
       className={styles.block}
       data-collapsed={detailsOpen ? "false" : "true"}
-      data-status={failed ? "failed" : message.status}
+      data-status={negative ? "failed" : message.status}
       data-testid="command-execution-block"
     >
       <button
@@ -52,7 +60,7 @@ export function CommandExecutionBlock({ message }: CommandExecutionBlockProps) {
         }}
       >
         <span className={styles.icon} aria-hidden="true">
-          {failed ? <XCircle size={16} /> : running ? <LoaderCircle size={16} /> : <SquareTerminal size={16} />}
+          {negative ? <XCircle size={16} /> : running ? <LoaderCircle size={16} /> : <SquareTerminal size={16} />}
         </span>
         <div className={styles.titleGroup}>
           <div className={styles.command}>{command.title}</div>
@@ -63,10 +71,17 @@ export function CommandExecutionBlock({ message }: CommandExecutionBlockProps) {
             {command.duration ? <span>{command.duration}</span> : null}
             {command.cwd ? <span>{command.cwd}</span> : null}
             {typeof command.exitCode === "number" ? <span>退出码 {command.exitCode}</span> : null}
+            {command.statusLabel ? <span>{command.statusLabel}</span> : null}
+            {command.truncated ? <span>输出已截断</span> : null}
+            {command.trustedRuleId ? <span>已信任规则</span> : null}
           </div>
         </div>
         <ChevronDown className={styles.chevron} size={14} />
       </button>
+
+      {rejected && command.rejectMessage ? (
+        <p className={styles.rejectMessage}>拒绝说明：{command.rejectMessage}</p>
+      ) : null}
 
       {outputMotion.shouldRender ? (
         <section
@@ -79,29 +94,69 @@ export function CommandExecutionBlock({ message }: CommandExecutionBlockProps) {
         >
           <div className={styles.outputInner}>
             <section className={styles.detailSection} aria-label="命令入参">
-              <div className={styles.outputHeader}>Input</div>
-              <pre data-stream="input">{command.inputText}</pre>
+              <div className={styles.sectionHeader} data-kind="input">
+                <div className={styles.outputHeader}>入参</div>
+                <button
+                  className={styles.copyButton}
+                  type="button"
+                  aria-label={copyAriaLabel("入参", inputCopyStatus)}
+                  title={copyAriaLabel("入参", inputCopyStatus)}
+                  onClick={() => void handleCopy("input", command.inputText)}
+                >
+                  {inputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
+                </button>
+              </div>
+              <div className={styles.codeViewport}>
+                <pre data-stream="input">{command.inputText}</pre>
+              </div>
             </section>
             <section className={styles.detailSection} aria-label="命令输出">
-              <div className={styles.outputHeader}>Output</div>
-            {combinedOutput ? (
-              <>
-                {command.stdout ? <pre data-stream="stdout">{command.stdout}</pre> : null}
-                {command.stderr ? <pre data-stream="stderr">{command.stderr}</pre> : null}
-                <button className={styles.copyButton} type="button" aria-label="复制命令输出" onClick={handleCopy}>
-                  {copyState === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
-                  <span>{copyState === "failed" ? "复制失败" : copyState === "copied" ? "已复制" : "复制输出"}</span>
+              <div className={styles.sectionHeader} data-kind="output">
+                <div className={styles.outputHeader}>输出</div>
+                <button
+                  className={styles.copyButton}
+                  type="button"
+                  aria-label={copyAriaLabel("输出", outputCopyStatus)}
+                  title={copyAriaLabel("输出", outputCopyStatus)}
+                  onClick={() => void handleCopy("output", combinedOutput)}
+                  disabled={!combinedOutput}
+                >
+                  {outputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
                 </button>
-              </>
-            ) : (
-              <p className={styles.emptyOutput}>{running ? "等待命令输出" : "无输出"}</p>
-            )}
+              </div>
+              {combinedOutput ? (
+                <div className={styles.codeViewport}>
+                  {command.stdout ? <pre data-stream="stdout">{command.stdout}</pre> : null}
+                  {command.stderr ? <pre data-stream="stderr">{command.stderr}</pre> : null}
+                </div>
+              ) : (
+                <div className={styles.codeViewport}>
+                  <p className={styles.emptyOutput}>{running ? "等待命令输出" : "无输出"}</p>
+                </div>
+              )}
             </section>
           </div>
         </section>
       ) : null}
     </article>
   );
+}
+
+function copyStatus(
+  state: { target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null,
+  target: CopyTarget,
+): CopyStatus {
+  return state?.target === target ? state.status : "idle";
+}
+
+function copyAriaLabel(label: "入参" | "输出", status: CopyStatus): string {
+  if (status === "copied") {
+    return `已复制${label}`;
+  }
+  if (status === "failed") {
+    return `复制${label}失败`;
+  }
+  return `复制${label}`;
 }
 
 interface ParsedCommandPayload {
@@ -113,24 +168,59 @@ interface ParsedCommandPayload {
   stderr: string;
   exitCode: number | null;
   duration: string;
+  status: string;
+  statusLabel: string;
+  truncated: boolean;
+  trustedRuleId: string;
+  rejectMessage: string;
 }
 
 function parseCommandPayload(message: ConversationMessage): ParsedCommandPayload {
   const result = asRecord(message.payload.result);
-  const merged = { ...message.payload, ...(result?.ui_payload && typeof result.ui_payload === "object" ? result.ui_payload : {}) };
+  const resultUiPayload = asRecord(result?.ui_payload);
+  const merged = { ...message.payload, ...(resultUiPayload ?? {}) };
   const input = commandInput(merged);
   const command = stringValue(merged.command) || stringValue(input.command);
   const exitCode = numberValue(merged.exit_code ?? merged.exitCode);
+  const status = stringValue(merged.status) || String(message.status ?? "");
+  const approval = asRecord(merged.approval);
+  const stdout = stringValue(merged.stdout) || (message.content && !stringValue(merged.stderr) ? message.content : "");
+  const stderr = stringValue(merged.stderr) || fallbackErrorText(message, result, merged);
   return {
     command,
     inputText: stringifyInput(input),
-    title: commandTitleFromInput(inputTitle(input, command), message.status, exitCode),
+    title: commandTitleFromInput(inputTitle(input, command), message.status, status),
     cwd: stringValue(merged.cwd),
-    stdout: stringValue(merged.stdout) || (message.content && !stringValue(merged.stderr) ? message.content : ""),
-    stderr: stringValue(merged.stderr),
+    stdout,
+    stderr,
     exitCode,
     duration: formatDuration(merged.duration_ms ?? merged.durationMs),
+    status,
+    statusLabel: commandStatusLabel(status),
+    truncated: Boolean(merged.truncated),
+    trustedRuleId: stringValue(approval?.trusted_rule_id),
+    rejectMessage: stringValue(approval?.reject_message),
   };
+}
+
+function fallbackErrorText(
+  message: ConversationMessage,
+  result: Record<string, unknown> | null,
+  merged: Record<string, unknown>,
+): string {
+  if (message.status !== "failed") {
+    return "";
+  }
+  return firstText([
+    formatErrorText(merged),
+    formatErrorText(merged.error),
+    formatErrorText(result?.error),
+    formatErrorText(message.payload.error),
+    readableErrorText(stringValue(result?.model_content)),
+    readableErrorText(stringValue(message.payload.model_content)),
+    readableErrorText(stringValue(message.payload.result_text)),
+    readableErrorText(stringValue(message.payload.result)),
+  ]);
 }
 
 function commandInput(payload: Record<string, unknown>): Record<string, unknown> {
@@ -175,9 +265,18 @@ function truncateTitle(value: string): string {
 function commandTitleFromInput(
   input: string,
   status: ConversationMessage["status"],
-  exitCode: number | null,
+  commandStatus: string,
 ): string {
-  if (status === "failed" || (typeof exitCode === "number" && exitCode !== 0)) {
+  if (commandStatus === "rejected") {
+    return `已拒绝 ${input}`;
+  }
+  if (commandStatus === "timed_out") {
+    return `命令超时 ${input}`;
+  }
+  if (commandStatus === "disabled") {
+    return `命令已禁用 ${input}`;
+  }
+  if (status === "failed") {
     return `执行失败 ${input}`;
   }
   if (status === "running" || status === "pending") {
@@ -187,6 +286,19 @@ function commandTitleFromInput(
     return `已取消 ${input}`;
   }
   return `已执行 ${input}`;
+}
+
+function commandStatusLabel(status: string): string {
+  switch (status) {
+    case "rejected":
+      return "已拒绝";
+    case "timed_out":
+      return "已超时";
+    case "disabled":
+      return "已禁用";
+    default:
+      return "";
+  }
 }
 
 function formatDuration(value: unknown): string {
@@ -211,4 +323,8 @@ function stringValue(value: unknown): string {
 
 function numberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function firstText(values: string[]): string {
+  return values.find((value) => value.trim()) ?? "";
 }

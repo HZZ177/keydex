@@ -24,7 +24,15 @@ export function useVirtuosoAutoScroll(itemCount: number): UseVirtuosoAutoScrollR
   const atBottomRef = useRef(true);
   const userPinnedRef = useRef(false);
   const userInputActiveRef = useRef(false);
+  const scrollAnimationFrameRef = useRef<number | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+
+  const cancelScrollAnimation = useCallback(() => {
+    if (scrollAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollAnimationFrameRef.current);
+      scrollAnimationFrameRef.current = null;
+    }
+  }, []);
 
   const updateBottomState = useCallback(() => {
     const scroller = scrollerRef.current;
@@ -64,6 +72,7 @@ export function useVirtuosoAutoScroll(itemCount: number): UseVirtuosoAutoScrollR
         return;
       }
 
+      cancelScrollAnimation();
       userPinnedRef.current = false;
       userInputActiveRef.current = false;
       atBottomRef.current = true;
@@ -76,8 +85,12 @@ export function useVirtuosoAutoScroll(itemCount: number): UseVirtuosoAutoScrollR
         return;
       }
 
-      if (scroller && typeof scroller.scrollTo === "function") {
-        scroller.scrollTo({ top: bottomScrollTop(scroller), behavior: scrollBehavior });
+      if (scroller && scrollBehavior === "smooth") {
+        animateScrollToBottom({
+          scroller,
+          frameRef: scrollAnimationFrameRef,
+          onDone: updateBottomState,
+        });
         return;
       }
 
@@ -87,7 +100,7 @@ export function useVirtuosoAutoScroll(itemCount: number): UseVirtuosoAutoScrollR
         index: itemCount - 1,
       });
     },
-    [itemCount],
+    [cancelScrollAnimation, itemCount, updateBottomState],
   );
 
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
@@ -101,6 +114,10 @@ export function useVirtuosoAutoScroll(itemCount: number): UseVirtuosoAutoScrollR
 
   const handleTotalListHeightChanged = useCallback(() => {
     if (scrollerRef.current && isExpansionScrollLocked(scrollerRef.current)) {
+      updateBottomState();
+      return;
+    }
+    if (scrollAnimationFrameRef.current !== null) {
       updateBottomState();
       return;
     }
@@ -126,6 +143,7 @@ export function useVirtuosoAutoScroll(itemCount: number): UseVirtuosoAutoScrollR
       updateBottomState();
     };
     const handleUserInput = () => {
+      cancelScrollAnimation();
       userInputActiveRef.current = true;
     };
 
@@ -137,10 +155,11 @@ export function useVirtuosoAutoScroll(itemCount: number): UseVirtuosoAutoScrollR
       scroller.removeEventListener("wheel", handleUserInput);
       scroller.removeEventListener("pointerdown", handleUserInput);
     };
-  }, [scroller, updateBottomState]);
+  }, [cancelScrollAnimation, scroller, updateBottomState]);
 
   useEffect(() => {
     if (itemCount === 0) {
+      cancelScrollAnimation();
       setShowScrollToBottom(false);
       atBottomRef.current = true;
       userPinnedRef.current = false;
@@ -151,7 +170,11 @@ export function useVirtuosoAutoScroll(itemCount: number): UseVirtuosoAutoScrollR
     if (!userPinnedRef.current && atBottomRef.current) {
       scrollToBottom("auto");
     }
-  }, [itemCount, scrollToBottom]);
+  }, [cancelScrollAnimation, itemCount, scrollToBottom]);
+
+  useEffect(() => {
+    return () => cancelScrollAnimation();
+  }, [cancelScrollAnimation]);
 
   return {
     virtuosoRef,
@@ -178,6 +201,46 @@ function toVirtuosoScrollBehavior(behavior: ScrollBehavior): VirtuosoScrollBehav
 
 function isExpansionScrollLocked(element: HTMLElement): boolean {
   return element.hasAttribute(EXPANSION_SCROLL_LOCK_ATTR);
+}
+
+function animateScrollToBottom({
+  scroller,
+  frameRef,
+  onDone,
+}: {
+  scroller: HTMLElement;
+  frameRef: { current: number | null };
+  onDone: () => void;
+}) {
+  const startTop = scroller.scrollTop;
+  const initialTargetTop = bottomScrollTop(scroller);
+  const distance = Math.abs(initialTargetTop - startTop);
+  const duration = Math.min(420, Math.max(180, distance * 0.28));
+  let startedAt: number | null = null;
+
+  const step = (timestamp: number) => {
+    startedAt ??= timestamp;
+    const targetTop = bottomScrollTop(scroller);
+    const elapsed = timestamp - startedAt;
+    const progress = Math.min(1, Math.max(0, elapsed / duration));
+    const eased = easeOutCubic(progress);
+    scroller.scrollTop = startTop + (targetTop - startTop) * eased;
+
+    if (progress < 1 && getBottomGap(scroller) > 1) {
+      frameRef.current = window.requestAnimationFrame(step);
+      return;
+    }
+
+    frameRef.current = null;
+    scroller.scrollTop = bottomScrollTop(scroller);
+    onDone();
+  };
+
+  frameRef.current = window.requestAnimationFrame(step);
+}
+
+function easeOutCubic(value: number): number {
+  return 1 - Math.pow(1 - value, 3);
 }
 
 function prefersReducedMotion(): boolean {

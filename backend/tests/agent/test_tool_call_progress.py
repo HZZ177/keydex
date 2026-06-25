@@ -67,7 +67,14 @@ def test_apply_patch_file_change_parser_tracks_move_to() -> None:
             "removed_lines": 1,
             "additions": 1,
             "deletions": 1,
-            "diff": "--- a/docs/old.md\n+++ b/docs/new.md\n*** Move to: docs/new.md\n@@\n-old\n+new",
+            "diff": (
+                "--- a/docs/old.md\n"
+                "+++ b/docs/new.md\n"
+                "*** Move to: docs/new.md\n"
+                "@@\n"
+                "-old\n"
+                "+new"
+            ),
         }
     ]
 
@@ -81,7 +88,10 @@ def test_pipeline_emits_progress_for_streamed_apply_patch_chunks() -> None:
                 "id": "call_patch",
                 "index": 0,
                 "name": "apply_patch",
-                "args": '{"patch":"*** Begin Patch\\n*** Update File: src/app.py\\n@@\\n-old\\n+one',
+                "args": (
+                    '{"patch":"*** Begin Patch\\n*** Update File: src/app.py'
+                    '\\n@@\\n-old\\n+one'
+                ),
             }
         ],
     )
@@ -264,4 +274,3 @@ def test_pipeline_marks_write_file_progress_as_create_for_new_targets() -> None:
     assert file_change["added_lines"] == 1
     assert file_change["deleted_lines"] == 0
     assert file_change["diff"] == "--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+hello"
-

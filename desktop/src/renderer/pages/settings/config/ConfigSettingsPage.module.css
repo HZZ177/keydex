@@ -1,0 +1,420 @@
+.page {
+  width: min(760px, calc(100% - 96px));
+  margin: 0 auto;
+  padding: 76px 0 116px;
+  color: var(--color-text-primary);
+}
+
+.header,
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.header {
+  margin-bottom: 20px;
+}
+
+.header h1,
+.approvalHeader h2,
+.subsection h2 {
+  margin: 0;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.header h1 {
+  font-size: 24px;
+}
+
+.approvalHeader h2 {
+  font-size: 16px;
+}
+
+.subsection h2 {
+  font-size: 16px;
+}
+
+.approvalBox {
+  overflow: visible;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 18px 48px rgb(15 23 42 / 4%);
+}
+
+.approvalHeader {
+  padding: 17px 18px 15px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
+}
+
+.approvalHeader p {
+  margin: 7px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.policyBlock {
+  padding: 16px 18px 17px;
+}
+
+.policyRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
+  gap: 22px;
+  align-items: center;
+}
+
+.policyText {
+  min-width: 0;
+}
+
+.policyText h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.policyText p,
+.policyHint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.policyMenu {
+  position: relative;
+  min-width: 0;
+}
+
+.policyTrigger {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 46px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  padding: 8px 10px 8px 12px;
+  background: color-mix(in srgb, var(--surface-bg) 92%, var(--surface-muted));
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.policyTrigger:hover {
+  border-color: var(--color-border-default);
+  background: color-mix(in srgb, var(--surface-hover) 64%, var(--surface-bg));
+}
+
+.policyTrigger:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.policyTrigger:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--color-accent) 44%, var(--color-border-default));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+
+.policyTrigger svg {
+  color: var(--color-text-tertiary);
+  transition: transform 140ms ease;
+}
+
+.policyTrigger svg[data-open="true"] {
+  transform: rotate(180deg);
+}
+
+.policyTriggerText {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.policyTriggerText strong,
+.policyOption strong {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.policyTriggerText span,
+.policyOption small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.policyDropdown {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  width: min(360px, calc(100vw - 72px));
+  gap: 3px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  border-radius: 10px;
+  background: var(--color-bg-elevated);
+  box-shadow:
+    0 18px 46px rgb(15 23 42 / 14%),
+    0 2px 8px rgb(15 23 42 / 5%);
+  padding: 5px;
+}
+
+.policyOption {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-primary);
+  padding: 9px 9px 9px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.policyOption > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.policyOption:hover,
+.policyOption:focus-visible {
+  background: color-mix(in srgb, var(--surface-hover) 78%, transparent);
+  outline: none;
+}
+
+.policyOption[aria-selected="true"] {
+  background: color-mix(in srgb, var(--surface-active) 82%, transparent);
+}
+
+.policyOption svg {
+  color: var(--color-accent);
+}
+
+.policyHint {
+  margin-top: 12px;
+  max-width: 620px;
+}
+
+.subsection {
+  padding: 17px 18px 18px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
+}
+
+.iconButton,
+.rowActions button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--surface-bg);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.table {
+  display: grid;
+  gap: 0;
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+}
+
+.tableHeader,
+.tableRow {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.7fr) 80px minmax(90px, 0.8fr) 70px 120px;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.tableHeader {
+  background: color-mix(in srgb, var(--surface-bg) 86%, var(--surface-muted));
+  color: var(--color-text-tertiary);
+  font-weight: 650;
+}
+
+.tableRow {
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--surface-bg);
+}
+
+.tableRow code,
+.historyItem code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.rowActions button {
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
+.historyList {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.historyItem {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-bg);
+  font-size: 12px;
+}
+
+.historyItem > div {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.historyItem p {
+  margin: 0;
+  color: var(--color-text-tertiary);
+}
+
+.inlineStatus {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.pagination > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pagination button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 80%, transparent);
+  border-radius: var(--radius-pill);
+  background: var(--surface-bg);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.pagination button:not(:disabled):hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.pagination button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
+}
+
+.pagination button:disabled {
+  cursor: default;
+  opacity: 0.46;
+}
+
+.empty,
+.loading,
+.error,
+.success {
+  margin-top: 12px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.empty,
+.loading {
+  border: 1px dashed var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.error {
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--surface-bg));
+  color: var(--color-danger);
+}
+
+.success {
+  background: color-mix(in srgb, var(--color-success-6) 9%, var(--surface-bg));
+  color: var(--color-success-6);
+}
+
+@media (max-width: 680px) {
+  .page {
+    width: min(100% - 32px, 760px);
+    padding: 42px 0 84px;
+  }
+
+  .policyRow {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .policyDropdown {
+    left: 0;
+    right: auto;
+    width: min(100%, calc(100vw - 32px));
+  }
+
+  .pagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

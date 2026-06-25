@@ -1,54 +1,71 @@
 .block {
   display: grid;
-  gap: 9px;
+  gap: 7px;
+  min-width: 0;
   max-width: 100%;
-  border: 1px solid color-mix(in srgb, var(--color-danger) 26%, var(--inline-block-border));
-  border-radius: var(--radius-md);
-  background: var(--inline-block-bg);
-  color: var(--color-text-secondary);
-  padding: 10px 12px;
+  color: var(--color-text-primary);
 }
 
 .header {
-  display: flex;
+  display: grid;
+  width: 100%;
   min-width: 0;
-  align-items: center;
-  gap: 9px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 7px;
+  color: var(--color-text-tertiary);
+  padding: 2px 0;
 }
 
 .icon {
   display: inline-grid;
-  flex: 0 0 auto;
+  width: 18px;
+  height: 22px;
   place-items: center;
-  color: currentColor;
+  color: color-mix(in srgb, var(--color-danger) 68%, currentColor);
 }
 
 .titleGroup {
+  display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
 .title {
-  color: var(--color-text-primary);
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.45;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 520;
+  line-height: 1.5;
 }
 
 .meta {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 1px;
-  color: var(--color-text-tertiary);
+  gap: 6px;
+  color: var(--color-text-4);
   font-family: var(--font-mono);
   font-size: 11px;
-  line-height: 1.35;
+  line-height: 1.45;
+}
+
+.meta span + span::before {
+  margin-right: 6px;
+  content: "\00b7";
 }
 
 .actions {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 6px;
+  justify-content: end;
+  gap: 2px;
+  opacity: 0.78;
+  transition: opacity var(--motion-fast) ease;
+}
+
+.block:hover .actions,
+.block:focus-within .actions {
+  opacity: 1;
 }
 
 .actionButton {
@@ -60,14 +77,16 @@
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-4);
   font-size: 11px;
   padding: 0 6px;
 }
 
-.actionButton:hover {
-  background: var(--surface-hover);
-  color: var(--color-text-primary);
+.actionButton:hover,
+.actionButton:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--surface-hover) 78%, transparent);
+  color: var(--color-text-secondary);
 }
 
 .actionButton svg {
@@ -79,16 +98,41 @@
 }
 
 .details {
-  max-width: 100%;
-  margin: 0;
+  max-width: min(760px, calc(100% - 25px));
+  box-sizing: border-box;
+  margin: 0 0 0 25px;
   overflow-x: auto;
   overflow-y: visible;
-  border-radius: var(--radius-sm);
-  background: var(--code-bg);
-  color: var(--color-text-primary);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 84%, transparent);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 44%),
+    inset 0 0 0 1px color-mix(in srgb, var(--color-border-default) 34%, transparent),
+    0 8px 22px rgb(15 23 42 / 5%),
+    0 1px 2px rgb(15 23 42 / 5%);
+  color: var(--color-text-secondary);
   font-family: var(--font-mono);
   font-size: 11px;
-  line-height: 1.55;
-  padding: 9px;
+  line-height: 1.58;
+  padding: 8px 9px;
   white-space: pre-wrap;
+}
+
+:global(html[data-theme="dark"]) .details {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 4%),
+    inset 0 0 0 1px color-mix(in srgb, var(--color-border-default) 42%, transparent),
+    0 10px 26px rgb(0 0 0 / 18%);
+}
+
+@media (max-width: 640px) {
+  .header {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .actions {
+    grid-column: 2;
+    justify-content: start;
+  }
 }

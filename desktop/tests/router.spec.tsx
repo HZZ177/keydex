@@ -54,7 +54,7 @@ describe("AppRouter", () => {
     fireEvent.click(screen.getByText("设置"));
     expect(await screen.findByTestId("settings-shell", undefined, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByTestId("settings-sidebar")).not.toBeNull();
-    expect(screen.getByRole("heading", { name: "常规配置" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "外观" })).not.toBeNull();
     expect(screen.queryByLabelText("侧边栏")).toBeNull();
     expect(screen.queryByText("新对话")).toBeNull();
 
@@ -67,8 +67,8 @@ describe("AppRouter", () => {
 
     expect(await screen.findByTestId("settings-shell", undefined, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByRole("heading", { name: "用量统计" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "常规配置" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "模型配置" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "外观" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "供应商" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "用量统计" })).not.toBeNull();
     fireEvent.click(screen.getByText("返回应用"));
     expect(await screen.findByTestId("home-page", undefined, { timeout: 10000 })).not.toBeNull();
@@ -77,7 +77,7 @@ describe("AppRouter", () => {
   it("opens the general settings route", async () => {
     renderRouter(["/settings/general"]);
 
-    expect(await screen.findByRole("heading", { name: "常规配置" }, { timeout: 10000 })).not.toBeNull();
+    expect(await screen.findByRole("heading", { name: "外观" }, { timeout: 10000 })).not.toBeNull();
     fireEvent.click(screen.getByText("返回应用"));
     expect(await screen.findByTestId("home-page", undefined, { timeout: 10000 })).not.toBeNull();
   });

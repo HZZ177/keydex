@@ -3,8 +3,9 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from backend.app.core.logger import logger
 from backend.app.security.workspace import WorkspacePathError, resolve_workspace_path
@@ -28,17 +29,18 @@ MAX_FILE_BYTES = 512 * 1024
 
 SEARCH_TEXT_DESCRIPTION = (
     "在工作区文本文件中搜索具体匹配行，返回 path、line、snippet 和可选上下文。"
-    "需要精确匹配行时使用 search_text；如果只是先发现可能相关的文件路径，优先使用 grep_files。"
+    "当需要确认某段文本、符号、错误信息或关键词出现在哪些行时使用。"
 )
 
 SEARCH_FILES_DESCRIPTION = (
     "只按工作区文件名、目录名或相对路径搜索，不搜索文件内容。"
-    "需要内容搜索时使用 grep_files 或 search_text。"
+    "当用户给出文件名、目录名、路径片段或约定资源名称但完整路径不确定时使用。"
 )
 
 GREP_FILES_DESCRIPTION = (
-    "查找内容匹配正则或固定字符串的工作区文件，并返回匹配文件路径。"
-    "读取文件前可先用此工具发现候选文件；需要具体匹配行时使用 search_text。"
+    "查找内容匹配正则或固定字符串的工作区文件，发现候选文件并返回匹配文件路径。"
+    "当目标是查找某段内容、符号、错误信息或关键词分布在哪些文件中时使用；"
+    "如果用户给出的是文件名或路径片段，应使用 search_files 或 read_file。"
 )
 
 
@@ -52,7 +54,11 @@ def create_search_tools() -> list[FunctionTool]:
                 "properties": {
                     "query": {"type": "string", "description": "要搜索的文本或正则表达式。"},
                     "path": {"type": "string", "description": "搜索目录，默认工作区根目录。"},
-                    "regex": {"type": "boolean", "default": False, "description": "是否将 query 当作正则表达式。"},
+                    "regex": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "是否将 query 当作正则表达式。",
+                    },
                     "case_sensitive": {"type": "boolean", "default": False},
                     "limit": {
                         "type": "integer",
@@ -64,7 +70,9 @@ def create_search_tools() -> list[FunctionTool]:
                     "include": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "可选的文件包含 glob 模式，例如 ['*.py','backend/**/*.py']。",
+                        "description": (
+                            "可选的文件包含 glob 模式，例如 ['*.py','backend/**/*.py']。"
+                        ),
                     },
                     "exclude": {
                         "type": "array",
@@ -89,9 +97,18 @@ def create_search_tools() -> list[FunctionTool]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "要在文件内容中搜索的正则表达式或固定字符串。"},
+                    "query": {
+                        "type": "string",
+                        "description": "要在文件内容中搜索的正则表达式或固定字符串。",
+                    },
                     "path": {"type": "string", "description": "搜索目录，默认工作区根目录。"},
-                    "regex": {"type": "boolean", "default": True, "description": "是否将 query 当作正则表达式。设为 false 时执行固定字符串搜索。"},
+                    "regex": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": (
+                            "是否将 query 当作正则表达式。设为 false 时执行固定字符串搜索。"
+                        ),
+                    },
                     "case_sensitive": {"type": "boolean", "default": False},
                     "limit": {
                         "type": "integer",
@@ -121,9 +138,17 @@ def create_search_tools() -> list[FunctionTool]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "文件名或相对路径关键字；不会搜索文件内容。"},
+                    "query": {
+                        "type": "string",
+                        "description": "文件名或相对路径关键字；不会搜索文件内容。",
+                    },
                     "path": {"type": "string", "description": "搜索目录，默认工作区根目录。"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SEARCH_LIMIT, "default": DEFAULT_SEARCH_LIMIT},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_SEARCH_LIMIT,
+                        "default": DEFAULT_SEARCH_LIMIT,
+                    },
                     "include_hidden": {"type": "boolean", "default": False},
                 },
                 "required": ["query"],
@@ -169,8 +194,18 @@ async def search_text_tool(
                 "snippet": line.strip(),
             }
             if context_lines:
-                result["before_context"] = _context_window(lines, index, before=context_lines, after=0)
-                result["after_context"] = _context_window(lines, index, before=0, after=context_lines)
+                result["before_context"] = _context_window(
+                    lines,
+                    index,
+                    before=context_lines,
+                    after=0,
+                )
+                result["after_context"] = _context_window(
+                    lines,
+                    index,
+                    before=0,
+                    after=context_lines,
+                )
             results.append(result)
             if len(results) >= limit:
                 return _search_text_result(
@@ -197,7 +232,10 @@ async def grep_files_tool(
 ) -> dict[str, Any]:
     query = _require_non_empty_text(args.get("query"), "query")
     root = _resolve_search_root(args.get("path") or ".", context)
-    limit = min(_positive_int(args.get("limit"), default=DEFAULT_GREP_FILE_LIMIT), MAX_GREP_FILE_LIMIT)
+    limit = min(
+        _positive_int(args.get("limit"), default=DEFAULT_GREP_FILE_LIMIT),
+        MAX_GREP_FILE_LIMIT,
+    )
     regex = bool(args.get("regex", True))
     case_sensitive = bool(args.get("case_sensitive", False))
     include = _normalize_globs(args.get("include"))
@@ -271,7 +309,11 @@ async def search_files_tool(
         current = Path(current_text)
         candidates = [
             *(current / name for name in dir_names),
-            *(current / name for name in sorted(file_names, key=str.lower) if _include_path_name(name, include_hidden=include_hidden)),
+            *(
+                current / name
+                for name in sorted(file_names, key=str.lower)
+                if _include_path_name(name, include_hidden=include_hidden)
+            ),
         ]
         for candidate in sorted(
             candidates,
@@ -448,14 +490,26 @@ def _normalize_globs(value: Any) -> list[str]:
 
 
 def _included(path: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(Path(path).name, pattern) for pattern in patterns)
+    return any(
+        fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(Path(path).name, pattern)
+        for pattern in patterns
+    )
 
 
 def _excluded(path: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(Path(path).name, pattern) for pattern in patterns)
+    return any(
+        fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(Path(path).name, pattern)
+        for pattern in patterns
+    )
 
 
-def _context_window(lines: list[str], line_number: int, *, before: int, after: int) -> list[dict[str, Any]]:
+def _context_window(
+    lines: list[str],
+    line_number: int,
+    *,
+    before: int,
+    after: int,
+) -> list[dict[str, Any]]:
     if before:
         start = max(1, line_number - before)
         end = line_number - 1

@@ -60,6 +60,8 @@ class DelayedSSEStream(httpx.AsyncByteStream):
 
 def _chat_chunks(payload: dict[str, Any]) -> list[str]:
     user_message = _last_user_message(payload)
+    if "命令审批" in user_message:
+        return _command_approval_chunks(payload, user_message)
     if "编辑进度" in user_message:
         return _file_edit_progress_chunks(payload)
     if "工具时序" in user_message:
@@ -113,6 +115,74 @@ def _chat_chunks(payload: dict[str, Any]) -> list[str]:
         "最终检查点：Markdown、代码块和长文本已经完整显示。"
     )
     return _content_chunks(payload, markdown, usage={"prompt_tokens": 11, "completion_tokens": 38})
+
+
+def _command_approval_chunks(payload: dict[str, Any], user_message: str) -> list[str]:
+    if _has_tool_message(payload):
+        return _content_chunks(
+            payload,
+            "命令审批场景已经完成，工具结果已返回给模型。",
+            usage={"prompt_tokens": 18, "completion_tokens": 12},
+        )
+    command = _command_for_approval_prompt(user_message)
+    return [
+        _chat_sse(
+            payload,
+            delta={"reasoning_content": "准备执行命令审批 E2E 场景。"},
+        ),
+        _chat_sse(
+            payload,
+            delta={
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call_e2e_command_approval",
+                        "type": "function",
+                        "function": {
+                            "name": "run_command",
+                            "arguments": json.dumps(
+                                {
+                                    "command": command,
+                                    "cwd": ".",
+                                    "timeout_seconds": 5,
+                                },
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                        },
+                    }
+                ]
+            },
+            finish_reason="tool_calls",
+        ),
+        _sse_done(),
+    ]
+
+
+def _command_for_approval_prompt(user_message: str) -> str:
+    scenarios = {
+        "allow-once": "echo e2e-approval-once",
+        "reject": "echo e2e-approval-reject",
+        "exact-different": "echo e2e-approval-exact-different",
+        "exact": "echo e2e-approval-exact",
+        "prefix-more": "echo e2e-approval-prefix more",
+        "prefix-other": "echo e2e-approval-other",
+        "prefix": "echo e2e-approval-prefix",
+        "no-persistent": "echo e2e-no-persistent",
+        "never-ask": "echo e2e-never-ask",
+        "disabled": "echo e2e-disabled-command",
+        "rule-disable": "echo e2e-rule-disable",
+        "rule-delete": "echo e2e-rule-delete",
+        "waiting": "echo e2e-waiting-badge",
+        "composer-only": "echo e2e-composer-only",
+        "nonzero": "cmd /c exit 3",
+        "timeout": "ping -n 3 127.0.0.1 > nul",
+        "truncated": "echo e2e-long-output-abcdefghijklmnopqrstuvwxyz",
+    }
+    for key, command in scenarios.items():
+        if key in user_message:
+            return command
+    return "echo e2e-approval-default"
 
 
 def _tool_sequence_chunks(payload: dict[str, Any]) -> list[str]:
@@ -348,9 +418,15 @@ def _last_user_message(payload: dict[str, Any]) -> str:
 
 def _has_tool_message(payload: dict[str, Any]) -> bool:
     messages = payload.get("messages")
-    return isinstance(messages, list) and any(
+    if not isinstance(messages, list):
+        return False
+    last_user_index = -1
+    for index, message in enumerate(messages):
+        if isinstance(message, dict) and message.get("role") == "user":
+            last_user_index = index
+    return any(
         isinstance(message, dict) and message.get("role") == "tool"
-        for message in messages
+        for message in messages[last_user_index + 1 :]
     )
 
 

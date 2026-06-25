@@ -93,6 +93,17 @@ async function mockBackend(page: Page, options: MockBackendOptions) {
           api_key_set: true,
           api_key_preview: "sk-***",
         },
+        appearance: {
+          font_family: "system",
+        },
+        command: {
+          command_enabled: true,
+          require_approval_for_untrusted: true,
+          allow_persistent_trust: true,
+          default_timeout_seconds: 120,
+          max_timeout_seconds: 600,
+          max_output_chars: 65536,
+        },
       });
     }
 

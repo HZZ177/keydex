@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
+import { useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Layout } from "@/renderer/components/layout/Layout";
+import type { RuntimeBridge } from "@/runtime";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { MessageText } from "@/renderer/pages/conversation/messages";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
@@ -390,6 +392,57 @@ describe("Layout", () => {
     });
     expect(screen.getByRole("tab", { name: "Markdown 预览" }).getAttribute("aria-selected")).toBe("true");
   });
+  it("does not reopen a collapsed preview sidebar after the layout remounts", async () => {
+    renderLayoutWithPreview(<RightSidebarRemountHarness />);
+
+    fireEvent.click(screen.getByRole("button", { name: /HTML/ }));
+
+    const shell = screen.getByTestId("app-shell");
+    expect(shell.dataset.rightSidebar).toBe("open");
+
+    closeRightSidebarByIcon();
+    expect(shell.dataset.rightSidebar).toBe("closed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Unmount layout" }));
+    expect(screen.queryByTestId("app-shell")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remount layout" }));
+    const remountedShell = await screen.findByTestId("app-shell");
+    await settleEffects();
+
+    expect(remountedShell.dataset.rightSidebar).toBe("closed");
+
+    fireEvent.click(screen.getByRole("button", { name: /Markdown/ }));
+    expect(remountedShell.dataset.rightSidebar).toBe("open");
+  });
+
+  it("does not reopen a collapsed file sidebar after the layout remounts", async () => {
+    renderLayoutWithPreview(<RightSidebarFilePanelRemountHarness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open file panel" }));
+
+    const shell = screen.getByTestId("app-shell");
+    await waitFor(() => {
+      expect(shell.dataset.rightSidebar).toBe("open");
+    });
+
+    closeRightSidebarByIcon();
+    expect(shell.dataset.rightSidebar).toBe("closed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Unmount layout" }));
+    expect(screen.queryByTestId("app-shell")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remount layout" }));
+    const remountedShell = await screen.findByTestId("app-shell");
+    await settleEffects();
+
+    expect(remountedShell.dataset.rightSidebar).toBe("closed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open file panel" }));
+    await waitFor(() => {
+      expect(remountedShell.dataset.rightSidebar).toBe("open");
+    });
+  });
 });
 
 function RightSidebarPreviewHarness() {
@@ -425,6 +478,137 @@ function RightSidebarPreviewHarness() {
       </button>
     </div>
   );
+}
+
+function RightSidebarRemountHarness() {
+  const preview = usePreview();
+  const [mounted, setMounted] = useState(true);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() =>
+          preview.openPreview(
+            {
+              type: "content",
+              title: "HTML window",
+              content: "<main><h1>HTML window</h1></main>",
+              contentType: "html",
+            },
+            sessionPreviewContext(),
+          )
+        }
+      >
+        Open scoped HTML
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          preview.openPreview(
+            {
+              type: "content",
+              title: "Markdown window",
+              content: "# Markdown window",
+              contentType: "markdown",
+            },
+            sessionPreviewContext(),
+          )
+        }
+      >
+        Open scoped Markdown
+      </button>
+      <button type="button" onClick={() => setMounted(false)}>
+        Unmount layout
+      </button>
+      <button type="button" onClick={() => setMounted(true)}>
+        Remount layout
+      </button>
+      {mounted ? (
+        <ScopedConversationLayout />
+      ) : null}
+    </>
+  );
+}
+
+function RightSidebarFilePanelRemountHarness() {
+  const preview = usePreview();
+  const [mounted, setMounted] = useState(true);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => preview.openFilePanel("README.md", sessionPreviewContext())}
+      >
+        Open file panel
+      </button>
+      <button type="button" onClick={() => setMounted(false)}>
+        Unmount layout
+      </button>
+      <button type="button" onClick={() => setMounted(true)}>
+        Remount layout
+      </button>
+      {mounted ? (
+        <ScopedConversationLayout />
+      ) : null}
+    </>
+  );
+}
+
+function ScopedConversationLayout() {
+  const { setPreviewHostContext } = usePreview();
+
+  useEffect(() => {
+    setPreviewHostContext(sessionPreviewContext());
+    return () => setPreviewHostContext(null);
+  }, [setPreviewHostContext]);
+
+  return (
+    <Layout contentMode="full">
+      <div>Content</div>
+    </Layout>
+  );
+}
+
+const filePanelRuntime = {
+  workspace: {
+    listDirectory: () =>
+      Promise.resolve({
+        root: "D:/repo",
+        entries: [{ name: "README.md", path: "README.md", type: "file", size: 12, modified_at: null }],
+      }),
+    readFile: (_scope: unknown, path: string) => Promise.resolve({ path, content: "# README", encoding: "utf-8" }),
+    readMedia: () => Promise.reject(new Error("not implemented")),
+    search: () => Promise.resolve([]),
+    listAnnotations: () => Promise.resolve([]),
+    createAnnotation: () => Promise.reject(new Error("not implemented")),
+    updateAnnotation: () => Promise.reject(new Error("not implemented")),
+    deleteAnnotation: () => Promise.resolve(),
+  },
+} as unknown as RuntimeBridge;
+
+function sessionPreviewContext() {
+  return {
+    runtime: filePanelRuntime,
+    sessionId: "session-1",
+    workspaceAvailable: true,
+    workspaceLabel: "repo",
+  };
+}
+
+function closeRightSidebarByIcon() {
+  const closeButton = document.querySelector<HTMLButtonElement>("[data-icon='panel-right-close']");
+  expect(closeButton).not.toBeNull();
+  fireEvent.click(closeButton!);
+}
+
+async function settleEffects() {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 0);
+    });
+  });
 }
 
 function message(

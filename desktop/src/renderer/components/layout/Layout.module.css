@@ -516,8 +516,7 @@
 
 .shell[data-right-sidebar-resizing="true"] .rightSidebarBody[data-content="preview"] [data-file-preview-root="true"],
 .shell[data-right-sidebar-resizing="true"] .rightSidebarBody[data-content="files"] [data-workspace-file-preview-pane="true"] [data-file-preview-root="true"] {
-  content-visibility: hidden;
-  contain-intrinsic-size: 720px;
+  display: none;
   pointer-events: none;
 }
 

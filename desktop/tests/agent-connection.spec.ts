@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  DEV_AGENT_BASE_URL_STORAGE_KEY,
   DEV_AGENT_CONNECTION,
   configureAgentConnection,
   resolveAgentConnection,
@@ -10,6 +11,10 @@ import {
 } from "@/runtime/agentConnection";
 
 describe("agentConnection", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it("uses the fixed local backend in dev web mode", async () => {
     const runtime = fakeRuntime();
 
@@ -21,6 +26,25 @@ describe("agentConnection", () => {
 
     expect(connection).toEqual(DEV_AGENT_CONNECTION);
     expect(runtime.setBaseUrl).toHaveBeenCalledWith("http://127.0.0.1:8765");
+    expect(runtime.health).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the E2E local backend override in dev web mode", async () => {
+    localStorage.setItem(DEV_AGENT_BASE_URL_STORAGE_KEY, "http://127.0.0.1:18765/");
+    const runtime = fakeRuntime();
+
+    const connection = await configureAgentConnection({
+      runtime,
+      isTauriRuntime: () => false,
+      sleep: async () => undefined,
+    });
+
+    expect(connection).toMatchObject({
+      host: "127.0.0.1",
+      port: 18765,
+      base_url: "http://127.0.0.1:18765",
+    });
+    expect(runtime.setBaseUrl).toHaveBeenCalledWith("http://127.0.0.1:18765");
     expect(runtime.health).toHaveBeenCalledTimes(1);
   });
 

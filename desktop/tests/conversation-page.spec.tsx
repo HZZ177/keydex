@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+﻿import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,6 +16,7 @@ import type {
   AgentChatMessagePayload,
   AgentHistoryResponse,
   AgentSession,
+  CommandApprovalRequest,
   Workspace,
 } from "@/types/protocol";
 
@@ -109,6 +110,38 @@ describe("ConversationPage", () => {
     expect(screen.queryByTestId("conversation-empty")).toBeNull();
   });
 
+  it("renders command approval as the composer instead of a conversation message", async () => {
+    const { runtime, emit } = fakeRuntime();
+
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await readyComposer();
+    act(() => {
+      emit(agentEvent("approval_requested", {
+        session_id: "ses-1",
+        approval: commandApproval("approval-1"),
+      }));
+    });
+
+    const dock = screen.getByTestId("conversation-composer");
+    expect(within(dock).getByTestId("composer-approval-card")).not.toBeNull();
+    expect(within(dock).getByText("是否允许执行命令？")).not.toBeNull();
+    expect(screen.getByTestId("message-surface").textContent).not.toContain("是否允许执行命令？");
+    expect(screen.getByTestId("message-surface").textContent).not.toContain("pnpm test");
+    expect(screen.queryByLabelText("继续输入")).toBeNull();
+
+    fireEvent.click(within(dock).getByRole("button", { name: "是，仅允许本次" }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("composer-approval-card")).toBeNull();
+    });
+    expect(await screen.findByLabelText("继续输入")).not.toBeNull();
+    expect(runtime.settings.resolveApproval).toHaveBeenCalledWith("approval-1", {
+      decision: "approved",
+      trust_scope: "once",
+    });
+  });
+
   it("restores injected follow context items with user history messages", async () => {
     const { runtime } = fakeRuntime({
       history: [
@@ -200,6 +233,33 @@ describe("ConversationPage", () => {
     });
 
     fireEvent.click(scrollButton);
+    await waitFor(() => {
+      expect(scroller.scrollTop).toBe(800);
+    });
+  });
+
+  it("scrolls back to the bottom when sending after reading older messages", async () => {
+    const { runtime } = fakeRuntime({
+      history: [historyMessage("assistant", "历史回答")],
+    });
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await readyComposer();
+    const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+    mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 120 });
+    fireEvent.wheel(scroller, { deltaY: -120 });
+    fireEvent.scroll(scroller);
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("滚动到底") as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    typeComposer("继续");
+    await waitSendEnabled();
+    fireEvent.click(screen.getByLabelText("发送"));
+
+    expect(scroller.scrollTop).toBe(120);
+
     await waitFor(() => {
       expect(scroller.scrollTop).toBe(800);
     });
@@ -558,7 +618,7 @@ describe("ConversationPage", () => {
     expect((await screen.findByTestId("tool-call-block")).getAttribute("data-collapsed")).toBe("true");
     expect(screen.getByText("已读取文件 README.md")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
-    expect(screen.getByLabelText("工具参数").textContent).toContain('"path": "README.md"');
+    expect(screen.getByLabelText("工具入参").textContent).toContain('"path": "README.md"');
     expect(screen.getByText("文件内容")).not.toBeNull();
   });
 
@@ -584,7 +644,7 @@ describe("ConversationPage", () => {
     expect(screen.queryByText("trace-history")).toBeNull();
     expect(screen.queryByText(/^token /)).toBeNull();
     expect(screen.getByText("模型请求失败")).not.toBeNull();
-    expect(screen.getByText("已中断")).not.toBeNull();
+    expect(screen.getByText("已取消")).not.toBeNull();
   });
 
   it("streams assistant text from websocket events", async () => {
@@ -896,7 +956,7 @@ describe("ConversationPage", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("发送")).not.toBeNull();
     });
-    expect(screen.getByText("已中断")).not.toBeNull();
+    expect(screen.getByText("已取消")).not.toBeNull();
   });
 
   it("quotes selected assistant text into the composer", async () => {
@@ -1518,6 +1578,7 @@ function fakeRuntime({
     bindSession: vi.fn(),
     unbindSession: vi.fn(),
     chat,
+    approvalDecision: vi.fn(),
     cancel,
     requestStatus: vi.fn(),
     ping: vi.fn(),
@@ -1542,7 +1603,25 @@ function fakeRuntime({
           api_key_set: true,
           api_key_preview: "sk-***",
         },
+        appearance: { font_family: "system" },
+        command: {
+          command_enabled: true,
+          require_approval_for_untrusted: true,
+          allow_persistent_trust: true,
+          default_timeout_seconds: 120,
+          max_timeout_seconds: 600,
+          max_output_chars: 65536,
+        },
       }),
+      resolveApproval: vi.fn((approvalId: string) =>
+        Promise.resolve({
+          ...commandApproval(approvalId),
+          status: "approved",
+          decision: "approved",
+          trust_scope: "once",
+          resolved_at: "2026-06-17T10:00:03Z",
+        }),
+      ),
     },
     models: {
       listModels: vi.fn().mockResolvedValue({ models: model ? [{ id: model }] : [], cached: true }),
@@ -1652,6 +1731,31 @@ function workspaceEntry(
 
 function agentEvent(action: AgentActionEnvelope["action"], data: Record<string, unknown>): AgentActionEnvelope {
   return { action, data } as AgentActionEnvelope;
+}
+
+function commandApproval(id: string): CommandApprovalRequest {
+  return {
+    id,
+    session_id: "ses-1",
+    thread_id: "ses-1",
+    turn_id: "turn-1",
+    item_id: "item-command",
+    call_id: "call-command",
+    run_id: "run-command",
+    tool_name: "run_command",
+    kind: "exec",
+    title: "是否允许执行命令？",
+    description: "请求执行命令。",
+    details: {
+      command: "pnpm test",
+      cwd: "D:/repo",
+      suggested_exact_rule: "pnpm test",
+      suggested_prefix_rule: "pnpm",
+    },
+    status: "pending",
+    created_at: "2026-06-17T10:00:02Z",
+    resolved_at: null,
+  };
 }
 
 async function showSelectionToolbar(container: Element, text: string) {

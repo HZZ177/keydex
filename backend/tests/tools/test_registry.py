@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from backend.app.agent.langchain_tools import registry_to_langchain_tools
@@ -111,6 +113,62 @@ async def test_function_tool_executes_and_wraps_errors(tmp_path) -> None:
     }
 
 
+@pytest.mark.asyncio
+async def test_function_tool_uses_exception_type_when_exception_message_is_empty(tmp_path) -> None:
+    def failing_handler(args, context):
+        raise NotImplementedError()
+
+    failed = await FunctionTool(
+        name="failing_tool",
+        description="失败工具",
+        parameters={"type": "object", "properties": {}},
+        handler=failing_handler,
+    ).run({}, _context(tmp_path))
+
+    assert failed.ok is False
+    assert failed.error == {
+        "code": "tool_execution_failed",
+        "message": "NotImplementedError",
+        "details": {"tool": "failing_tool", "type": "NotImplementedError"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_langchain_tool_failure_payload_includes_tool_context(tmp_path) -> None:
+    async def failing_handler(args, context):
+        raise ToolExecutionError(
+            "无法读取",
+            code="file_read_failed",
+            details={"path": args["path"]},
+        )
+
+    registry = ToolRegistry()
+    registry.register(
+        FunctionTool(
+            name="read_file",
+            description="读取文件",
+            parameters={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+            handler=failing_handler,
+        )
+    )
+    langchain_tool = registry_to_langchain_tools(
+        registry,
+        context_factory=lambda: _context(tmp_path),
+    )[0]
+
+    payload = json.loads(await langchain_tool.ainvoke({"path": "missing.txt"}))
+
+    assert payload["tool"] == "read_file"
+    assert payload["status"] == "failed"
+    assert payload["code"] == "file_read_failed"
+    assert payload["details"] == {"path": "missing.txt"}
+    assert "工具 read_file 执行失败" in payload["tool_summary"]
+
+
 def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> None:
     registry = create_default_tool_registry()
 
@@ -135,7 +193,10 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
     assert "*** Move to: <path>" in specs["apply_patch"].description
     assert "一次性 shell 命令" in specs["run_command"].description
     assert "最多只能有一个步骤处于 in_progress" in specs["update_plan"].description
-    assert "failed" in specs["update_plan"].parameters["properties"]["plan"]["items"]["properties"]["status"]["enum"]
+    status_enum = specs["update_plan"].parameters["properties"]["plan"]["items"]["properties"][
+        "status"
+    ]["enum"]
+    assert "failed" in status_enum
     assert specs["list_dir"].parameters["properties"]["depth"]["maximum"] == 5
     assert "mode" not in specs["write_file"].parameters["properties"]
     assert "append" not in specs["write_file"].parameters["properties"]
@@ -147,4 +208,5 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
         context_factory=lambda: _context(tmp_path),
     )
     assert {tool.name for tool in langchain_tools} == set(specs)
-    assert next(tool for tool in langchain_tools if tool.name == "grep_files").description == specs["grep_files"].description
+    grep_tool = next(tool for tool in langchain_tools if tool.name == "grep_files")
+    assert grep_tool.description == specs["grep_files"].description

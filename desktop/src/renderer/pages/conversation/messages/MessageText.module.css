@@ -57,14 +57,24 @@
   width: fit-content;
   align-items: center;
   gap: 5px;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 88%, transparent);
   border-radius: var(--radius-pill);
-  background: var(--surface-muted);
-  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--surface-hover) 86%, var(--color-bg-elevated));
+  color: var(--color-text-secondary);
   font-size: 11px;
   line-height: 1;
   margin-top: 8px;
   padding: 5px 9px;
+}
+
+.cancelledBadge::before {
+  display: block;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--color-warning-6);
+  content: "";
 }
 
 .contextItems {
@@ -370,20 +380,21 @@
 }
 
 .codeBlock {
-  --message-code-panel-bg: color-mix(in srgb, var(--color-bg-elevated) 58%, var(--surface-muted));
-  --message-code-content-bg: color-mix(in srgb, var(--color-bg-elevated) 22%, var(--surface-muted));
+  --message-code-panel-bg: var(--surface-muted);
+  --message-code-content-bg: var(--color-bg-elevated);
   --message-code-control-bg: color-mix(in srgb, var(--color-bg-elevated) 18%, var(--surface-muted));
   --message-code-control-hover-bg: color-mix(in srgb, var(--color-bg-elevated) 12%, var(--surface-hover));
-  --message-code-border: color-mix(in srgb, var(--color-border-default) 88%, transparent);
-  --message-code-content-highlight: rgb(255 255 255 / 54%);
+  --message-code-border: color-mix(in srgb, var(--color-border-default) 84%, transparent);
+  --message-code-content-highlight: rgb(255 255 255 / 44%);
   --message-code-divider: color-mix(in srgb, var(--color-border-default) 64%, transparent);
+  --message-code-inner-edge: color-mix(in srgb, var(--color-border-default) 34%, transparent);
   position: relative;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--message-code-border);
   border-radius: 8px;
-  background: var(--message-code-panel-bg);
+  background: var(--message-code-content-bg);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 72%),
     0 8px 22px rgb(15 23 42 / 5%),
@@ -391,13 +402,14 @@
 }
 
 :global(html[data-theme="dark"]) .codeBlock {
-  --message-code-panel-bg: color-mix(in srgb, var(--color-bg-elevated) 90%, var(--surface-muted));
-  --message-code-content-bg: color-mix(in srgb, var(--color-bg-elevated) 74%, var(--surface-muted));
+  --message-code-panel-bg: var(--surface-muted);
+  --message-code-content-bg: var(--color-bg-elevated);
   --message-code-control-bg: color-mix(in srgb, var(--surface-muted) 72%, transparent);
   --message-code-control-hover-bg: color-mix(in srgb, var(--surface-hover) 82%, transparent);
   --message-code-border: color-mix(in srgb, var(--color-border-default) 88%, transparent);
   --message-code-content-highlight: rgb(255 255 255 / 4%);
   --message-code-divider: color-mix(in srgb, var(--color-border-default) 78%, transparent);
+  --message-code-inner-edge: color-mix(in srgb, var(--color-border-default) 42%, transparent);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 4%),
     0 10px 26px rgb(0 0 0 / 18%);
@@ -526,10 +538,19 @@
   max-width: 100%;
   border-top: 1px solid var(--message-code-divider);
   background: var(--message-code-content-bg);
-  box-shadow: inset 0 1px 0 var(--message-code-content-highlight);
+  box-shadow:
+    inset 0 1px 0 var(--message-code-content-highlight),
+    inset 0 0 0 1px var(--message-code-inner-edge);
   overflow-x: auto;
   overflow-y: visible;
   contain: layout paint style;
+}
+
+.codeBlock[data-has-text-footer="true"] .codeViewport {
+  box-shadow:
+    inset 0 1px 0 var(--message-code-content-highlight),
+    inset 1px 0 0 var(--message-code-inner-edge),
+    inset -1px 0 0 var(--message-code-inner-edge);
 }
 
 .codeViewport[data-collapsed="true"] {
@@ -548,6 +569,9 @@
   gap: 12px;
   border-top: 1px solid var(--message-code-divider);
   background: var(--message-code-content-bg);
+  box-shadow:
+    inset 0 1px 0 var(--message-code-content-highlight),
+    inset 0 0 0 1px var(--message-code-inner-edge);
   padding: 22px 16px;
 }
 
@@ -581,35 +605,42 @@
 
 .codeFooter {
   display: flex;
-  width: 100%;
-  min-height: 32px;
+  width: fit-content;
+  min-height: 24px;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  border: 1px solid var(--message-code-divider);
-  border-right: 0;
-  border-bottom: 0;
-  border-left: 0;
-  background: var(--message-code-panel-bg);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  box-shadow: none;
   color: var(--color-text-tertiary);
   font-size: 11px;
-  padding: 0 12px;
+  line-height: 1;
+  margin: 4px auto 6px;
+  padding: 0 8px;
 }
 
 .codeFooter:hover {
-  background: var(--message-code-control-bg);
+  background: transparent;
   color: var(--color-text-primary);
+}
+
+.codeFooter:focus-visible {
+  outline: none;
 }
 
 .codeGenerationFooter {
   display: flex;
-  width: 100%;
-  min-height: 32px;
+  width: fit-content;
+  min-height: 24px;
   align-items: center;
   justify-content: center;
-  border-top: 1px solid var(--message-code-divider);
-  background: var(--message-code-panel-bg);
-  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  margin: 4px auto 6px;
+  padding: 0 8px;
 }
 
 .codeCopyError {
@@ -715,7 +746,10 @@
   min-height: 0;
   overflow: auto;
   margin: 0;
-  background: var(--code-bg);
+  background: var(--color-bg-elevated);
+  box-shadow:
+    inset 0 1px 0 var(--message-code-content-highlight),
+    inset 0 0 0 1px var(--message-code-inner-edge);
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
   font-size: 12px;
@@ -733,7 +767,10 @@
   max-height: 420px;
   overflow: hidden;
   border-top: 1px solid var(--color-border-subtle);
-  background: #fff;
+  background: var(--color-bg-elevated);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 44%),
+    inset 0 0 0 1px var(--message-code-inner-edge);
 }
 
 .htmlPreview[data-size="fullscreen"] {
@@ -749,7 +786,7 @@
   min-height: 220px;
   height: min(420px, 48vh);
   border: 0;
-  background: #fff;
+  background: var(--color-bg-elevated);
 }
 
 .htmlPreviewFrame[data-size="fullscreen"] {
@@ -761,6 +798,9 @@
   overflow-x: auto;
   border-top: 1px solid var(--color-border-subtle);
   background: var(--color-bg-elevated);
+  box-shadow:
+    inset 0 1px 0 var(--message-code-content-highlight),
+    inset 0 0 0 1px var(--message-code-inner-edge);
   padding: 14px 16px;
   color: var(--color-text-primary);
 }
@@ -802,21 +842,24 @@
   overflow-y: visible;
   border-top: 1px solid var(--color-border-subtle);
   background: var(--color-bg-elevated);
+  box-shadow:
+    inset 0 1px 0 var(--message-code-content-highlight),
+    inset 0 0 0 1px var(--message-code-inner-edge);
   padding: 16px;
 }
 
 .mermaidPreview[data-size="fullscreen"] {
+  --mermaid-canvas-padding-x: 160px;
+  --mermaid-canvas-padding-y: 120px;
+
   display: grid;
   height: 100%;
   min-height: 0;
   overflow: auto;
   place-items: safe center;
-  scroll-padding: 32px;
+  scroll-padding: var(--mermaid-canvas-padding-y) var(--mermaid-canvas-padding-x);
   border-top: 0;
-  background:
-    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--color-text-tertiary) 16%, transparent) 1px, transparent 0)
-      0 0 / 22px 22px,
-    var(--surface-bg);
+  background: var(--color-bg-elevated);
   padding: 0;
 }
 
@@ -864,17 +907,17 @@
 }
 
 .mermaidPreview[data-size="fullscreen"] .mermaidSvg {
+  box-sizing: content-box;
   width: max-content;
   height: max-content;
   min-height: 0;
-  padding: 48px;
+  padding: var(--mermaid-canvas-padding-y) var(--mermaid-canvas-padding-x);
   transform-origin: top center;
 }
 
 .mermaidPreview[data-size="fullscreen"] .mermaidSvg[data-sized="true"] {
   width: var(--mermaid-render-width);
   height: var(--mermaid-render-height);
-  padding: 0;
 }
 
 .mermaidPreview[data-size="fullscreen"] .mermaidSvg[data-sized="false"] {

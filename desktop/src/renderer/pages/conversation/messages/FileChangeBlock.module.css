@@ -315,17 +315,32 @@
 .previewBlock {
   display: grid;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 84%, transparent);
   border-radius: 8px;
   background: var(--color-bg-elevated);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 70%),
+    0 8px 22px rgb(15 23 42 / 5%),
+    0 1px 2px rgb(15 23 42 / 5%);
 }
 
 .errorBlock {
   display: grid;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 84%, transparent);
   border-radius: 8px;
   background: var(--color-bg-elevated);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 70%),
+    0 8px 22px rgb(15 23 42 / 5%),
+    0 1px 2px rgb(15 23 42 / 5%);
+}
+
+:global(html[data-theme="dark"]) .previewBlock,
+:global(html[data-theme="dark"]) .errorBlock {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 4%),
+    0 10px 26px rgb(0 0 0 / 18%);
 }
 
 .previewHeader {
@@ -336,7 +351,7 @@
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
-  background: color-mix(in srgb, var(--surface-muted) 48%, var(--color-bg-elevated));
+  background: var(--surface-muted);
   padding: 0 8px 0 12px;
 }
 
@@ -348,7 +363,7 @@
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
-  background: color-mix(in srgb, var(--surface-muted) 48%, var(--color-bg-elevated));
+  background: var(--surface-muted);
   color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 1.4;
@@ -471,15 +486,26 @@
   max-width: 100%;
   overflow-x: auto;
   overflow-y: visible;
-  background: color-mix(in srgb, var(--code-bg) 72%, var(--color-bg-elevated));
+  background: var(--color-bg-elevated);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 44%),
+    inset 0 0 0 1px color-mix(in srgb, var(--color-border-default) 34%, transparent);
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.55;
   padding: 8px 0;
 }
 
+:global(html[data-theme="dark"]) .diff,
+:global(html[data-theme="dark"]) .diffPreview {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 4%),
+    inset 0 0 0 1px color-mix(in srgb, var(--color-border-default) 42%, transparent);
+}
+
 .diff {
   margin: 4px 0 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 84%, transparent);
   border-radius: 8px;
 }
 

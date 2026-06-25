@@ -20,6 +20,8 @@ class ChatProjection:
         DomainEventType.LLM_TOOL_PROGRESS: ChatAction.TOOL_PROGRESS,
         DomainEventType.LLM_TOOL_FINISHED: ChatAction.TOOL_END,
         DomainEventType.LLM_TOOL_FAILED: ChatAction.TOOL_END,
+        DomainEventType.APPROVAL_REQUESTED: ChatAction.APPROVAL_REQUESTED,
+        DomainEventType.APPROVAL_RESOLVED: ChatAction.APPROVAL_RESOLVED,
         DomainEventType.SUBAGENT_STARTED: ChatAction.SUBAGENT_START,
         DomainEventType.SUBAGENT_FINISHED: ChatAction.SUBAGENT_END,
         DomainEventType.SUBAGENT_FAILED: ChatAction.SUBAGENT_ERROR,

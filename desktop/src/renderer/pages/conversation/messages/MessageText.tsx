@@ -177,7 +177,7 @@ export function MessageText({
         ) : (
           <div ref={contentRef} />
         )}
-        {cancelled ? <div className={styles.cancelledBadge}>已中断</div> : null}
+        {cancelled ? <div className={styles.cancelledBadge}>已取消</div> : null}
         {onQuoteSelection ? (
           <SelectionToolbar
             selectedText={selection.selectedText}

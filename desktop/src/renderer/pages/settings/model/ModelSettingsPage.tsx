@@ -52,7 +52,7 @@ export function ModelSettingsPage({
     <main className={styles.page} data-testid="model-settings-page">
       <header className={styles.header}>
         <div>
-          <h1>模型配置</h1>
+          <h1>供应商</h1>
           <p>配置本地智能体可调用的 OpenAI 兼容模型服务</p>
         </div>
         <button className={styles.primaryButton} type="button" onClick={() => openCreate(onCreateProvider, setModal)}>

@@ -31,6 +31,8 @@ class PersistenceProjection:
         DomainEventType.LLM_TOOL_STARTED: ReplayAction.TOOL_START,
         DomainEventType.LLM_TOOL_FINISHED: ReplayAction.TOOL_END,
         DomainEventType.LLM_TOOL_FAILED: ReplayAction.TOOL_END,
+        DomainEventType.APPROVAL_REQUESTED: ReplayAction.APPROVAL_REQUESTED,
+        DomainEventType.APPROVAL_RESOLVED: ReplayAction.APPROVAL_RESOLVED,
         DomainEventType.SUBAGENT_STARTED: ReplayAction.SUBAGENT_START,
         DomainEventType.SUBAGENT_FINISHED: ReplayAction.SUBAGENT_END,
         DomainEventType.SUBAGENT_FAILED: ReplayAction.SUBAGENT_ERROR,

@@ -25,6 +25,27 @@ describe("ErrorItem", () => {
     expect(screen.getByText(/openai-compatible/)).not.toBeNull();
   });
 
+  it("summarizes verbose gateway rate-limit errors and folds the raw payload", () => {
+    render(
+      <ErrorItem
+        message={errorMessage({
+          code: "runtime_error",
+          message:
+            "Error code: 429 - {'error': {'code': '429001', 'message': 'rate limit exceeded on dimension: rpm', 'type': 'gateway_error', 'request_id': 'efa584bd-cc5e-403c-8202-61ece18f8b7f'}}",
+          status: undefined,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("请求过于频繁（rpm 限流），请稍后再试")).not.toBeNull();
+    expect(screen.getByText("429001")).not.toBeNull();
+    expect(screen.getByText("HTTP 429")).not.toBeNull();
+    expect(screen.queryByText(/rate limit exceeded on dimension/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "错误详情" }));
+    expect(screen.getByText(/rate limit exceeded on dimension/)).not.toBeNull();
+  });
+
   it("copies structured error payload", async () => {
     const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
     render(<ErrorItem message={errorMessage()} />);

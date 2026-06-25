@@ -105,11 +105,40 @@ describe("style foundation", () => {
     expect(messageText).not.toMatch(/content-visibility:\s*auto/);
     expect(messageText).not.toContain("contain-intrinsic-size");
     expect(messageText).toMatch(/\.codeViewport\[data-animating="true"\]\s*{[^}]*will-change:\s*height/s);
+    expect(messageText).toContain("--message-code-panel-bg: var(--surface-muted)");
+    expect(messageText).toContain("--message-code-content-bg: var(--color-bg-elevated)");
+    expect(messageText).toContain("--message-code-border: color-mix(in srgb, var(--color-border-default) 84%, transparent)");
+    expect(messageText).toContain("--message-code-inner-edge");
+    expect(messageText).toMatch(/\.codeHeader\s*{[^}]*background:\s*var\(--message-code-panel-bg\)/s);
+    expect(messageText).toMatch(/\.codeBlock\s*{[^}]*background:\s*var\(--message-code-content-bg\)/s);
+    expect(messageText).toMatch(/\.codeViewport\s*{[^}]*background:\s*var\(--message-code-content-bg\)/s);
+    expect(messageText).toMatch(/\.codeFooter\s*{[^}]*width:\s*fit-content/s);
+    expect(messageText).toMatch(/\.codeFooter\s*{[^}]*border:\s*0/s);
+    expect(messageText).toMatch(/\.codeFooter\s*{[^}]*background:\s*transparent/s);
+    expect(messageText).toMatch(/\.codeFooter\s*{[^}]*box-shadow:\s*none/s);
+    expect(messageText).not.toMatch(/\.codeFooter\s*{[^}]*background:\s*var\(--message-code-panel-bg\)/s);
+    expect(messageText).toMatch(/\.codeGenerationFooter\s*{[^}]*width:\s*fit-content/s);
+    expect(messageText).toMatch(/\.codeGenerationFooter\s*{[^}]*border:\s*0/s);
+    expect(messageText).toMatch(/\.codeGenerationFooter\s*{[^}]*background:\s*transparent/s);
+    expect(messageText).not.toMatch(/\.codeGenerationFooter\s*{[^}]*border-top:/s);
+    expect(messageText).not.toMatch(/\.codeGenerationFooter\s*{[^}]*background:\s*var\(--message-code-panel-bg\)/s);
+    expect(messageText).toMatch(
+      /\.codeBlock\[data-has-text-footer="true"\]\s+\.codeViewport\s*{[^}]*inset 1px 0 0 var\(--message-code-inner-edge\)[^}]*inset -1px 0 0 var\(--message-code-inner-edge\)/s,
+    );
+    expect(messageText).toMatch(/\.codeViewport\s*{[^}]*inset 0 0 0 1px var\(--message-code-inner-edge\)/s);
+    [".htmlPreview", ".mathPreview", ".mermaidPreview"].forEach((selector) => {
+      expect(messageText).toMatch(new RegExp(`${escapeRegExp(selector)}\\s*{[^}]*background:\\s*var\\(--color-bg-elevated\\)`, "s"));
+      expect(messageText).toMatch(new RegExp(`${escapeRegExp(selector)}\\s*{[^}]*inset 0 0 0 1px var\\(--message-code-inner-edge\\)`, "s"));
+    });
     expect(messageText).toContain(".codeViewLoading");
     expect(messageText).toMatch(/\.codeViewSwitch\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\)/s);
     expect(messageText).toMatch(/\.codeViewSwitch::before\s*{[^}]*transition:\s*transform 160ms var\(--motion-ease-standard\)/s);
     expect(messageText).toMatch(/\.mermaidFullscreenShell\s*{[^}]*position:\s*relative/s);
     expect(messageText).toMatch(/\.mermaidFullscreenShell\s+\.mermaidControls\s*{[^}]*position:\s*absolute/s);
+    expect(messageText).toMatch(/\.mermaidPreview\[data-size="fullscreen"\]\s*{[^}]*--mermaid-canvas-padding-x:\s*160px/s);
+    expect(messageText).toMatch(
+      /\.mermaidPreview\[data-size="fullscreen"\]\s+\.mermaidSvg\s*{[^}]*padding:\s*var\(--mermaid-canvas-padding-y\) var\(--mermaid-canvas-padding-x\)/s,
+    );
     expect(messageText).not.toContain(".codeTextButton");
     expect(messageText).not.toContain('data-placement="detached"');
     expect(messageText).toMatch(/\.actions\[data-message-kind="assistant"\]\s+\.actionButton\s*{[^}]*width:\s*24px/s);
@@ -119,16 +148,28 @@ describe("style foundation", () => {
     expect(filePreview).toMatch(/\.mermaidSvg\s*{[^}]*place-items:\s*start center/s);
     expect(filePreview).toMatch(/\.mermaidSvg\s*{[^}]*align-items:\s*safe center/s);
     expect(filePreview).toMatch(/\.mermaidSvg\s*{[^}]*justify-items:\s*safe center/s);
+    expect(filePreview).toMatch(/\.mermaidSvg\s*{[^}]*--mermaid-canvas-padding-x:\s*160px/s);
+    expect(filePreview).toMatch(/\.mermaidSvg\s*{[^}]*scroll-padding:\s*var\(--mermaid-canvas-padding-y\) var\(--mermaid-canvas-padding-x\)/s);
     expect(filePreview).toMatch(/\.mermaidSvg\[data-interactive="true"\]\s*{[^}]*cursor:\s*grab/s);
     expect(filePreview).toMatch(/\.mermaidSvg\[data-interactive="true"\]\s*{[^}]*touch-action:\s*none/s);
     expect(filePreview).toMatch(/\.mermaidSvg\[data-dragging="true"\]\s*{[^}]*cursor:\s*grabbing/s);
     expect(filePreview).not.toMatch(/\.mermaidSvgContent\s*{[^}]*zoom:\s*var\(--mermaid-scale,\s*1\)/s);
+    expect(filePreview).toMatch(
+      /\.mermaidSvgContent\s*{[^}]*margin:\s*var\(--mermaid-canvas-padding-y\) var\(--mermaid-canvas-padding-x\)/s,
+    );
     expect(filePreview).toMatch(/\.mermaidSvgContent\[data-sized="false"\]\s*{[^}]*zoom:\s*var\(--mermaid-scale,\s*1\)/s);
     expect(filePreview).toMatch(/\.mermaidSvgContent\[data-sized="true"\]\s*{[^}]*width:\s*var\(--mermaid-render-width\)/s);
     expect(filePreview).toMatch(/\.mermaidSvgContent\[data-sized="true"\]\s+svg\s*{[^}]*width:\s*100% !important/s);
     expect(filePreview).not.toMatch(/\.mermaidSvgContent svg\s*{[^}]*width:\s*auto !important/s);
     expect(filePreview).toMatch(/\.mermaidSvgContent svg\s*{[^}]*max-width:\s*none !important/s);
     expect(filePreview).toMatch(/\.mermaidControls\s*{[^}]*position:\s*absolute/s);
+    expect(filePreview).toMatch(/\.markdownCodeFrame\s*{[^}]*background:\s*var\(--surface-muted\)/s);
+    expect(filePreview).toMatch(/\.markdownCodeBlock\s*{[^}]*background:\s*var\(--color-bg-elevated\)/s);
+    expect(filePreview).toMatch(/\.sourceViewer\s*{[^}]*background:\s*var\(--color-bg-elevated\)/s);
+    expect(filePreview).toMatch(/\.sourceLineNumbers\s*{[^}]*background:\s*var\(--surface-muted\)/s);
+    expect(filePreview).toMatch(/\.diffPane\s*{[^}]*background:\s*var\(--color-bg-elevated\)/s);
+    expect(filePreview).not.toContain("background: var(--code-bg)");
+    expect(filePreview).not.toContain("background: #fff");
     expect(sider).toMatch(/\.historyMeta\s*{[^}]*white-space:\s*nowrap/s);
     expect(sider).toMatch(/\.historyItem\s*{[^}]*position:\s*relative/s);
     expect(sider).toMatch(/\.historyItem\[data-active="true"\]\s*{[^}]*background:\s*color-mix/s);
@@ -150,10 +191,32 @@ describe("style foundation", () => {
     expect(sendBox).toMatch(/\.contextBar\s*{[^}]*border-bottom-left-radius:\s*19px/s);
     expect(sendBox).toMatch(/\.contextBar\s*{[^}]*inset 0 -1px 0/s);
 
-    [commandBlock, toolBlock, fileChangeBlock, errorBlock].forEach((css) => {
+    [fileChangeBlock, errorBlock].forEach((css) => {
       expect(css).not.toMatch(/overflow-y\s*:\s*(auto|scroll)/);
       expect(css).toContain("overflow-y: visible");
     });
+    [commandBlock, toolBlock].forEach((css) => {
+      expect(css).toMatch(/\.codeViewport\s*{[^}]*max-height:\s*196px/s);
+      expect(css).toMatch(/\.sectionHeader\[data-kind="output"\]\s+\+\s+\.codeViewport\s*{[^}]*max-height:\s*260px/s);
+      expect(css).toMatch(/\.sectionHeader\s*{[^}]*background:\s*var\(--surface-muted\)/s);
+      expect(css).toMatch(/\.outputHeader\s*{[^}]*color:\s*var\(--color-text-tertiary\)/s);
+      expect(css).not.toContain("var(--color-accent) 54%");
+      expect(css).not.toContain("var(--color-success-6) 56%");
+      expect(css).toMatch(/\.codeViewport\s*{[^}]*overflow-y:\s*auto/s);
+      expect(css).toMatch(/\.codeViewport\s*{[^}]*background:\s*var\(--color-bg-elevated\)/s);
+      expect(css).toMatch(/\.codeViewport\s*{[^}]*inset 0 0 0 1px color-mix\(in srgb, var\(--color-border-default\) 34%, transparent\)/s);
+      expect(css).toContain("overflow: visible");
+      expect(css).not.toContain("background: var(--code-bg)");
+    });
+    expect(commandBlock).toMatch(/\.outputInner\s*{[^}]*background:\s*var\(--color-bg-elevated\)/s);
+    expect(toolBlock).toMatch(/\.detailsInner\s*{[^}]*background:\s*var\(--color-bg-elevated\)/s);
+    expect(commandBlock).toMatch(/\.outputInner\s*{[^}]*0 8px 22px rgb\(15 23 42 \/ 5%\)/s);
+    expect(toolBlock).toMatch(/\.detailsInner\s*{[^}]*0 8px 22px rgb\(15 23 42 \/ 5%\)/s);
+    expect(fileChangeBlock).toMatch(/\.previewHeader\s*{[^}]*background:\s*var\(--surface-muted\)/s);
+    expect(fileChangeBlock).toMatch(/\.errorHeader\s*{[^}]*background:\s*var\(--surface-muted\)/s);
+    expect(fileChangeBlock).toMatch(/\.diff,\s*\.diffPreview\s*{[^}]*background:\s*var\(--color-bg-elevated\)/s);
+    expect(fileChangeBlock).toMatch(/\.previewBlock\s*{[^}]*0 8px 22px rgb\(15 23 42 \/ 5%\)/s);
+    expect(fileChangeBlock).toMatch(/\.diff,\s*\.diffPreview\s*{[^}]*inset 0 0 0 1px color-mix\(in srgb, var\(--color-border-default\) 34%, transparent\)/s);
     expect(commandBlock).not.toContain("max-height: 280px");
     expect(fileChangeBlock).not.toContain("max-height: 320px");
     expect(messageGroup).toContain("border: 0");
@@ -234,6 +297,10 @@ describe("style foundation", () => {
     }
   });
 });
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function readSource(relativePath: string): string {
   return readFileSync(resolve(srcDir, relativePath), "utf8");

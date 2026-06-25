@@ -30,11 +30,12 @@ import {
 } from "@/renderer/stores/agentSessionStore";
 import type { ConversationMessage, ConversationRuntimeState } from "@/renderer/stores/conversationStore";
 import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
-import type { AgentActionEnvelope, AgentChatMessage } from "@/types/protocol";
+import type { AgentActionEnvelope, AgentChatMessage, CommandApprovalDecisionPayload } from "@/types/protocol";
 
 import { ChatLayout } from "./ChatLayout";
 import { ConversationComposerAccessory } from "./ComposerAccessory";
 import { MessageList, type FileChangePreview, type MessageListScrollControls } from "./messages";
+import { ComposerApprovalCard } from "./ComposerApprovalCard";
 import { consumeQuickChatSend } from "./quickSend";
 
 export interface ConversationPageProps {
@@ -64,9 +65,13 @@ export function ConversationPage({
   const [requestState, setRequestState] = useState<AgentSessionRuntimeState | null>(null);
   const [localRuntimeDetail, setLocalRuntimeDetail] = useState<string | null>(null);
   const [localWsStatus, setLocalWsStatus] = useState<WsConnectionStatus>("idle");
+  const [allowPersistentTrust, setAllowPersistentTrust] = useState(true);
+  const [approvalSubmitting, setApprovalSubmitting] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const channelRef = useRef<ChatChannel | null>(null);
   const quickSendConsumedRef = useRef<string | null>(null);
+  const sendScrollFrameRef = useRef<number | null>(null);
   const scrollToBottomRef = useRef<((behavior?: ScrollBehavior) => void) | null>(null);
   const { openFilePanel, openPreview: openPreviewRequest, setPreviewHostContext } = usePreview();
   const notifications = useNotifications();
@@ -81,8 +86,12 @@ export function ConversationPage({
 
   const session = state.sessionsById[threadId] ?? null;
   const sessionViewState = selectAgentSessionState(state, threadId);
+  const pendingApproval = sessionViewState?.pendingApproval ?? null;
   const agentMessages = selectAgentMessages(state, threadId);
-  const messages = useMemo(() => agentMessages.map(agentMessageToConversationMessage), [agentMessages]);
+  const messages = useMemo(
+    () => agentMessages.filter((message) => message.role !== "approval").map(agentMessageToConversationMessage),
+    [agentMessages],
+  );
   const runtimeState = toConversationRuntimeState(requestState ?? selectAgentRuntimeState(state, threadId));
   const title = session?.title || (threadId ? `对话 ${threadId}` : "对话");
   const messageWorkspaceScope = useMemo(() => ({ sessionId: threadId }), [threadId]);
@@ -113,6 +122,27 @@ export function ConversationPage({
 
   const scrollToBottom = useCallback(() => {
     scrollToBottomRef.current?.("smooth");
+  }, []);
+
+  const scrollToBottomAfterSend = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (sendScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(sendScrollFrameRef.current);
+    }
+    sendScrollFrameRef.current = window.requestAnimationFrame(() => {
+      sendScrollFrameRef.current = null;
+      scrollToBottomRef.current?.("smooth");
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (sendScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(sendScrollFrameRef.current);
+      }
+    };
   }, []);
 
   const quoteSelection = useCallback((request: string | PreviewQuoteSelectionRequest) => {
@@ -199,6 +229,25 @@ export function ConversationPage({
     workspaceAvailable,
     workspaceLabel,
   ]);
+
+  useEffect(() => {
+    let active = true;
+    void runtime.settings
+      .getSettings()
+      .then((settings) => {
+        if (active) {
+          setAllowPersistentTrust(settings.command.allow_persistent_trust);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAllowPersistentTrust(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [runtime]);
 
   const openPreview = useCallback(
     (request: PreviewRequest) => {
@@ -448,6 +497,7 @@ export function ConversationPage({
           }
           channel.chat(payload);
         }
+        scrollToBottomAfterSend();
         if (options.clearDraft) {
           setDraft("");
         }
@@ -466,6 +516,7 @@ export function ConversationPage({
       runtimeState,
       setRuntimeDetail,
       sharedRuntimeContext,
+      scrollToBottomAfterSend,
       threadId,
       wsStatus,
     ],
@@ -556,6 +607,37 @@ export function ConversationPage({
     }
   };
 
+  const submitApproval = useCallback(
+    async (decision: CommandApprovalDecisionPayload) => {
+      if (!pendingApproval) {
+        return;
+      }
+      setApprovalSubmitting(true);
+      setApprovalError(null);
+      try {
+        const approval = await runtime.settings.resolveApproval(pendingApproval.id, decision);
+        dispatch({
+          type: "event/receive",
+          event: {
+            action: "approval_resolved",
+            data: {
+              id: approval.id,
+              approval_id: approval.id,
+              session_id: approval.session_id,
+              approval,
+            },
+          },
+        });
+      } catch (reason) {
+        const message = errorMessage(reason);
+        setApprovalError(publicRuntimeDetail(message));
+      } finally {
+        setApprovalSubmitting(false);
+      }
+    },
+    [dispatch, pendingApproval, runtime],
+  );
+
   return (
     <ChatLayout
       title={title}
@@ -569,23 +651,33 @@ export function ConversationPage({
         />
       }
       composer={
-        <ConversationComposer
-          value={draft}
-          runtimeState={runtimeState}
-          canSend={canSend}
-          canStop={canStop}
-          connectionReady={connectionReady}
-          modelSelection={modelSelection}
-          onListWorkspaceDirectory={listWorkspaceDirectory}
-          onSearchWorkspace={searchWorkspace}
-          onOpenModelSettings={onOpenModelSettings}
-          onChange={setDraft}
-          onSend={send}
-          onStop={stop}
-          onOpenFileReference={openFileReference}
-          externalFileRequest={fileChipRequest}
-          externalQuoteRequest={quoteChipRequest}
-        />
+        pendingApproval ? (
+          <ComposerApprovalCard
+            allowPersistentTrust={allowPersistentTrust}
+            approval={pendingApproval}
+            error={approvalError}
+            submitting={approvalSubmitting}
+            onSubmit={submitApproval}
+          />
+        ) : (
+          <ConversationComposer
+            value={draft}
+            runtimeState={runtimeState}
+            canSend={canSend}
+            canStop={canStop}
+            connectionReady={connectionReady}
+            modelSelection={modelSelection}
+            onListWorkspaceDirectory={listWorkspaceDirectory}
+            onSearchWorkspace={searchWorkspace}
+            onOpenModelSettings={onOpenModelSettings}
+            onChange={setDraft}
+            onSend={send}
+            onStop={stop}
+            onOpenFileReference={openFileReference}
+            externalFileRequest={fileChipRequest}
+            externalQuoteRequest={quoteChipRequest}
+          />
+        )
       }
     >
       <MessageList
@@ -752,6 +844,9 @@ function conversationKindFromAgent(message: AgentChatMessage): ConversationMessa
     }
     return message.toolName === "run_command" ? "command" : "tool";
   }
+  if (message.role === "approval") {
+    return "approval";
+  }
   if (message.role === "error") {
     return "error";
   }
@@ -770,6 +865,9 @@ function conversationStatusFromAgent(message: AgentChatMessage): ConversationMes
   }
   if (message.status === "cancelled") {
     return "cancelled";
+  }
+  if (message.role === "approval") {
+    return message.status === "pending" ? "pending" : "completed";
   }
   if (message.role === "tool" || message.role === "assistant" || message.role === "reasoning" || message.role === "subagent") {
     return "completed";
@@ -811,6 +909,13 @@ function payloadFromAgentMessage(message: AgentChatMessage): Record<string, unkn
       files: message.fileChanges ?? fileChangesFromUiPayload(message.uiPayload),
       duration_ms: message.toolDurationMs,
       metadata: message.metadata,
+    };
+  }
+
+  if (message.role === "approval") {
+    return {
+      ...base,
+      approval: message.approval,
     };
   }
 
@@ -863,6 +968,9 @@ function fileChangesFromUiPayload(uiPayload: Record<string, unknown> | undefined
 function toConversationRuntimeState(state: AgentSessionRuntimeState): ConversationRuntimeState {
   if (state === "running") {
     return "running";
+  }
+  if (state === "waiting_approval") {
+    return "waiting_approval";
   }
   if (state === "cancelling") {
     return "cancelling";

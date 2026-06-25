@@ -1,4 +1,16 @@
-import { ArrowLeft, BarChart3, Moon, Search, Settings2, SlidersHorizontal, Sun, type LucideIcon } from "lucide-react";
+import {
+  ArrowLeft,
+  BarChart3,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  Settings2,
+  SlidersHorizontal,
+  Sun,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 import type { CSSProperties, PropsWithChildren } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -11,11 +23,12 @@ import { useTheme } from "@/renderer/providers/ThemeProvider";
 
 import styles from "./SettingsShell.module.css";
 
-export type SettingsSection = "general" | "model" | "usage";
+export type SettingsSection = "general" | "model" | "config" | "usage";
 
 const settingsItems = [
-  { id: "general", label: "常规配置", path: "/settings/general", icon: SlidersHorizontal },
-  { id: "model", label: "模型配置", path: "/settings/model", icon: Settings2 },
+  { id: "general", label: "外观", path: "/settings/general", icon: SlidersHorizontal },
+  { id: "model", label: "供应商", path: "/settings/model", icon: Settings2 },
+  { id: "config", label: "配置", path: "/settings/config", icon: Wrench },
   { id: "usage", label: "用量统计", path: "/settings/usage", icon: BarChart3 },
 ] satisfies Array<{ id: SettingsSection; label: string; path: string; icon: LucideIcon }>;
 
@@ -57,13 +70,31 @@ export function SettingsShell({
       data-sidebar-motion={sidebarMotion ? "true" : "false"}
       style={{ "--sidebar-width": `${state.sidebarWidth}px` } as CSSProperties}
     >
-      <Titlebar title="" sidebarCollapsed={state.sidebarCollapsed} onToggleSidebar={toggleSidebar} />
+      <Titlebar title="" />
       <main className={styles.body}>
         <aside className={styles.sidebar} aria-label="设置菜单" data-testid="settings-sidebar">
-          <button className={styles.backButton} type="button" onClick={() => void navigate(from)}>
-            <ArrowLeft size={17} strokeWidth={2} />
-            <span>返回应用</span>
-          </button>
+          <nav className={styles.topActions} aria-label="设置快捷操作">
+            <button
+              className={styles.sidebarToggle}
+              data-state={state.sidebarCollapsed ? "collapsed" : "expanded"}
+              data-icon={state.sidebarCollapsed ? "panel-left-open" : "panel-left-close"}
+              type="button"
+              aria-label={state.sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
+              title={state.sidebarCollapsed ? "展开侧边栏" : ""}
+              onClick={toggleSidebar}
+            >
+              {state.sidebarCollapsed ? (
+                <PanelLeftOpen size={17} strokeWidth={2.1} />
+              ) : (
+                <PanelLeftClose size={17} strokeWidth={2.1} />
+              )}
+              <span>{state.sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}</span>
+            </button>
+            <button className={styles.backButton} type="button" onClick={() => void navigate(from)}>
+              <ArrowLeft size={17} strokeWidth={2} />
+              <span>返回应用</span>
+            </button>
+          </nav>
 
           <label className={styles.searchBox}>
             <Search size={17} strokeWidth={2} />

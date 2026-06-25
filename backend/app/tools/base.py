@@ -229,14 +229,15 @@ class FunctionTool:
             return ToolExecutionResult.failed(exc)
         except Exception as exc:
             duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+            error_message = str(exc).strip() or type(exc).__name__
             logger.opt(exception=True).error(
                 f"[Tool] 执行异常 | tool={self.name} | session_id={context.session_id} | "
                 f"turn_index={context.turn_index} | trace_id={context.trace_id or '-'} | "
-                f"duration_ms={duration_ms} | error={exc}"
+                f"duration_ms={duration_ms} | error={error_message}"
             )
             return ToolExecutionResult.failed(
                 ToolExecutionError(
-                    str(exc),
+                    error_message,
                     details={"tool": self.name, "type": type(exc).__name__},
                 )
             )

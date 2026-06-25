@@ -122,7 +122,7 @@
   margin: 0;
   overflow: auto;
   border-radius: var(--radius-sm);
-  background: var(--code-bg);
+  background: var(--color-bg-elevated);
   color: var(--color-text-primary);
   font-family: var(--font-mono);
   font-size: 11px;

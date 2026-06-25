@@ -27,7 +27,11 @@ async def test_local_workspace_tool_loop_search_read_create_patch_verify(tmp_pat
     listed = await _run("list_dir", {"path": ".", "depth": 2}, tmp_path)
     grep = await _run("grep_files", {"query": "LOOP_MARKER", "regex": False}, tmp_path)
     searched = await _run("search_text", {"query": "VALUE", "include": ["*.py"]}, tmp_path)
-    read_before = await _run("read_file", {"path": "src/app.py", "start_line": 1, "max_lines": 2}, tmp_path)
+    read_before = await _run(
+        "read_file",
+        {"path": "src/app.py", "start_line": 1, "max_lines": 2},
+        tmp_path,
+    )
     created = await _run(
         "write_file",
         {"path": "docs/result.md", "content": "# Result\n\nCreated by loop.\n"},
@@ -46,7 +50,11 @@ async def test_local_workspace_tool_loop_search_read_create_patch_verify(tmp_pat
         },
         tmp_path,
     )
-    read_after = await _run("read_file", {"path": "src/app.py", "start_line": 1, "max_lines": 2}, tmp_path)
+    read_after = await _run(
+        "read_file",
+        {"path": "src/app.py", "start_line": 1, "max_lines": 2},
+        tmp_path,
+    )
 
     assert listed.ok is True
     assert "src/" in listed.result["tree"]

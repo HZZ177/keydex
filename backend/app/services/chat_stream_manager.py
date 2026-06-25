@@ -161,12 +161,36 @@ class ChatStreamManager:
                 if not run.task.done()
             }
         cleaned = (session_id or "").strip()
+        repositories = getattr(self._chat_service, "repositories", None)
+        pending = (
+            repositories.command_approvals.list_pending(session_id=cleaned or None)
+            if repositories is not None and hasattr(repositories, "command_approvals")
+            else []
+        )
+        waiting_session_ids = sorted({approval.session_id for approval in pending})
+        status = "idle"
+        if cleaned and cleaned in waiting_session_ids:
+            status = "waiting_approval"
+        elif cleaned and cleaned in running:
+            status = "running"
         return {
             "session_id": cleaned or None,
-            "status": "running" if cleaned and cleaned in running else "idle",
+            "status": status,
             "running_sessions": [
                 {"session_id": key, "started_at_ms": run.started_at_ms}
                 for key, run in sorted(running.items())
+            ],
+            "waiting_approval_sessions": [
+                {"session_id": key}
+                for key in waiting_session_ids
+            ],
+            "pending_approvals": [
+                {
+                    "session_id": approval.session_id,
+                    "approval_id": approval.id,
+                    "status": approval.status,
+                }
+                for approval in pending
             ],
         }
 

@@ -29,6 +29,9 @@ class DomainEventType(StrEnum):
     LLM_TOOL_FINISHED = "llm.tool.finished"
     LLM_TOOL_FAILED = "llm.tool.failed"
 
+    APPROVAL_REQUESTED = "approval.requested"
+    APPROVAL_RESOLVED = "approval.resolved"
+
     SUBAGENT_STARTED = "subagent.started"
     SUBAGENT_FINISHED = "subagent.finished"
     SUBAGENT_FAILED = "subagent.failed"
@@ -74,6 +77,8 @@ CORE_EVENT_TYPES = frozenset(
         DomainEventType.LLM_TOOL_PROGRESS,
         DomainEventType.LLM_TOOL_FINISHED,
         DomainEventType.LLM_TOOL_FAILED,
+        DomainEventType.APPROVAL_REQUESTED,
+        DomainEventType.APPROVAL_RESOLVED,
         DomainEventType.SUBAGENT_STARTED,
         DomainEventType.SUBAGENT_FINISHED,
         DomainEventType.SUBAGENT_FAILED,

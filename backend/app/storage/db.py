@@ -144,6 +144,84 @@ create index if not exists idx_message_events_session_seq on message_events(sess
 create unique index if not exists idx_message_events_session_seq_unique
   on message_events(session_id, seq);
 
+create table if not exists command_approval_requests (
+  id text primary key,
+  session_id text not null,
+  trace_id text,
+  turn_index integer,
+  run_id text,
+  tool_name text not null default 'run_command',
+  kind text not null default 'exec',
+  title text not null,
+  description text not null default '',
+  command text not null,
+  cwd text not null default '.',
+  shell text not null default 'shell',
+  workspace_root text not null default '',
+  details_json text not null default '{}',
+  status text not null,
+  decision text,
+  trust_scope text,
+  rule_match_type text,
+  reject_message text,
+  trusted_rule_id text,
+  created_at text not null,
+  resolved_at text,
+  updated_at text not null,
+  is_deleted integer not null default 0,
+  foreign key(session_id) references sessions(id) on delete cascade
+);
+
+create index if not exists idx_command_approval_requests_session_status
+  on command_approval_requests(session_id, status, created_at desc);
+create index if not exists idx_command_approval_requests_status_created
+  on command_approval_requests(status, created_at desc);
+
+create table if not exists trusted_command_rules (
+  id text primary key,
+  command_pattern text not null,
+  normalized_command text not null,
+  match_type text not null,
+  shell text not null default 'shell',
+  workspace_root text not null default '',
+  cwd_pattern text not null default '.',
+  enabled integer not null default 1,
+  created_from_approval_id text,
+  created_at text not null,
+  updated_at text not null,
+  last_used_at text,
+  is_deleted integer not null default 0,
+  foreign key(created_from_approval_id) references command_approval_requests(id) on delete set null
+);
+
+create index if not exists idx_trusted_command_rules_lookup
+  on trusted_command_rules(workspace_root, cwd_pattern, shell, match_type, enabled, is_deleted);
+create index if not exists idx_trusted_command_rules_created
+  on trusted_command_rules(created_at desc);
+
+create table if not exists command_approval_audit (
+  id text primary key,
+  approval_id text not null,
+  session_id text not null,
+  command text not null,
+  cwd text not null default '.',
+  decision text not null,
+  trust_scope text,
+  rule_match_type text,
+  trusted_rule_id text,
+  reject_message text,
+  metadata_json text not null default '{}',
+  created_at text not null,
+  foreign key(approval_id) references command_approval_requests(id) on delete cascade,
+  foreign key(session_id) references sessions(id) on delete cascade,
+  foreign key(trusted_rule_id) references trusted_command_rules(id) on delete set null
+);
+
+create index if not exists idx_command_approval_audit_created
+  on command_approval_audit(created_at desc);
+create index if not exists idx_command_approval_audit_session_created
+  on command_approval_audit(session_id, created_at desc);
+
 create table if not exists trace_record (
   trace_id text primary key,
   session_id text not null,
@@ -300,6 +378,18 @@ create index if not exists idx_sessions_workspace_updated
   on sessions(workspace_id, updated_at desc);
 create index if not exists idx_sessions_type_updated
   on sessions(session_type, updated_at desc);
+create index if not exists idx_command_approval_requests_session_status
+  on command_approval_requests(session_id, status, created_at desc);
+create index if not exists idx_command_approval_requests_status_created
+  on command_approval_requests(status, created_at desc);
+create index if not exists idx_trusted_command_rules_lookup
+  on trusted_command_rules(workspace_root, cwd_pattern, shell, match_type, enabled, is_deleted);
+create index if not exists idx_trusted_command_rules_created
+  on trusted_command_rules(created_at desc);
+create index if not exists idx_command_approval_audit_created
+  on command_approval_audit(created_at desc);
+create index if not exists idx_command_approval_audit_session_created
+  on command_approval_audit(session_id, created_at desc);
 """
 
 
@@ -309,9 +399,12 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("pragma foreign_keys = on")
+        conn.execute("pragma busy_timeout = 30000")
+        conn.execute("pragma journal_mode = wal")
+        conn.execute("pragma synchronous = normal")
         return conn
 
     def init_schema(self, *, default_workspace_root: Path | str | None = None) -> None:

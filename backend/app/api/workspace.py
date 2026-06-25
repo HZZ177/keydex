@@ -477,19 +477,41 @@ def _update_annotation(
         )
     _resolve(scope, existing.path)
     fields = _payload_field_set(payload)
+    anchor_type = (
+        payload.anchor_type
+        if "anchor_type" in fields and payload.anchor_type is not None
+        else existing.anchor_type
+    )
+    comment = (
+        payload.comment
+        if "comment" in fields and payload.comment is not None
+        else existing.comment
+    )
     try:
         updated = repositories.workspace_file_annotations.update(
             annotation_id,
             scope_type=scope_type,
             scope_id=scope_id,
-            anchor_type=payload.anchor_type if "anchor_type" in fields and payload.anchor_type is not None else existing.anchor_type,
-            comment=payload.comment if "comment" in fields and payload.comment is not None else existing.comment,
-            selected_text=payload.selected_text if "selected_text" in fields else existing.selected_text,
+            anchor_type=anchor_type,
+            comment=comment,
+            selected_text=(
+                payload.selected_text
+                if "selected_text" in fields
+                else existing.selected_text
+            ),
             line_start=payload.line_start if "line_start" in fields else existing.line_start,
             line_end=payload.line_end if "line_end" in fields else existing.line_end,
-            column_start=payload.column_start if "column_start" in fields else existing.column_start,
+            column_start=(
+                payload.column_start
+                if "column_start" in fields
+                else existing.column_start
+            ),
             column_end=payload.column_end if "column_end" in fields else existing.column_end,
-            content_hash=payload.content_hash if "content_hash" in fields else existing.content_hash,
+            content_hash=(
+                payload.content_hash
+                if "content_hash" in fields
+                else existing.content_hash
+            ),
             anchor_json=(
                 _annotation_anchor_payload(payload.anchor_json)
                 if "anchor_json" in fields
@@ -546,9 +568,17 @@ def _delete_annotation(
 def _annotation_file_path(scope: WorkspaceRuntimeContext, path: str) -> str:
     target = _resolve(scope, path)
     if not target.exists():
-        raise _workspace_error(status.HTTP_404_NOT_FOUND, "workspace_path_not_found", "File does not exist")
+        raise _workspace_error(
+            status.HTTP_404_NOT_FOUND,
+            "workspace_path_not_found",
+            "File does not exist",
+        )
     if not target.is_file():
-        raise _workspace_error(status.HTTP_400_BAD_REQUEST, "workspace_not_file", "Path is not a file")
+        raise _workspace_error(
+            status.HTTP_400_BAD_REQUEST,
+            "workspace_not_file",
+            "Path is not a file",
+        )
     return _relative_path(scope, target)
 
 
@@ -559,7 +589,9 @@ def _payload_field_set(payload: BaseModel) -> set[str]:
     return set(getattr(payload, "__fields_set__", set()))
 
 
-def _annotation_anchor_payload(anchor: WorkspaceFileAnnotationAnchorV2 | None) -> dict[str, Any] | None:
+def _annotation_anchor_payload(
+    anchor: WorkspaceFileAnnotationAnchorV2 | None,
+) -> dict[str, Any] | None:
     if anchor is None:
         return None
     return anchor.model_dump()

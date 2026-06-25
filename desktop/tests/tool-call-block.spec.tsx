@@ -25,7 +25,7 @@ describe("ToolCallBlock", () => {
     expect(screen.queryByText("工具正在执行")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
-    expect(screen.getByLabelText("工具参数").textContent).toContain('"path": "README.md"');
+    expect(screen.getByLabelText("工具入参").textContent).toContain('"path": "README.md"');
     expect(screen.getByText("工具正在执行")).not.toBeNull();
   });
 
@@ -37,14 +37,19 @@ describe("ToolCallBlock", () => {
     expect(screen.getByText("1.3s")).not.toBeNull();
     expect(screen.queryByText("文件内容")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
-    fireEvent.click(screen.getByRole("button", { name: "复制工具结果" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "复制入参" }));
+    await waitFor(() => {
+      expect(clipboard).toHaveBeenLastCalledWith('{\n  "path": "README.md"\n}');
+    });
+    expect(screen.getByRole("button", { name: "已复制入参" })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "复制输出" }));
 
     await waitFor(() => {
-      expect(clipboard).toHaveBeenCalledWith("文件内容");
+      expect(clipboard).toHaveBeenLastCalledWith("文件内容");
     });
-    await waitFor(() => {
-      expect(screen.getByText("已复制")).not.toBeNull();
-    });
+    expect(screen.getByRole("button", { name: "已复制输出" })).not.toBeNull();
   });
 
   it("formats sub-second tool durations as milliseconds", () => {

@@ -34,7 +34,7 @@ IGNORED_DIRS = {
 
 READ_FILE_DESCRIPTION = (
     "读取当前工作区内的 UTF-8 文本文件，支持从 1 开始的行号窗口。"
-    "编辑文件前应先使用此工具查看精确上下文。返回原始 content、带行号的 numbered_content、"
+    "当目标文件已知或已定位时使用。返回原始 content、带行号的 numbered_content、"
     "总行数、截断信息和用于继续分页的 next_start_line。"
 )
 
@@ -44,9 +44,10 @@ WRITE_FILE_DESCRIPTION = (
 )
 
 LIST_DIR_DESCRIPTION = (
-    "以有界目录树形式列出工作区目录。搜索或读取文件前，可先用此工具浏览本地项目结构。"
+    "以有界目录树形式列出工作区目录。适合了解陌生目录、项目布局或目录下有哪些资源。"
     "支持 depth、offset、limit，返回结构化 entries 和便于模型阅读的 tree 文本。"
 )
+
 
 @dataclass(frozen=True)
 class DirectoryEntry:
@@ -76,7 +77,10 @@ def create_filesystem_tools() -> list[FunctionTool]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "工作区相对路径，或位于工作区内的绝对文件路径。"},
+                    "path": {
+                        "type": "string",
+                        "description": "工作区相对路径，或位于工作区内的绝对文件路径。",
+                    },
                     "start_line": {
                         "type": "integer",
                         "minimum": 1,
@@ -94,7 +98,10 @@ def create_filesystem_tools() -> list[FunctionTool]:
                         "type": "string",
                         "enum": ["window", "indentation"],
                         "default": "window",
-                        "description": "window 返回指定行范围；indentation 会围绕 anchor_line 扩展同缩进代码块。",
+                        "description": (
+                            "window 返回指定行范围；"
+                            "indentation 会围绕 anchor_line 扩展同缩进代码块。"
+                        ),
                     },
                     "anchor_line": {
                         "type": "integer",
@@ -112,7 +119,10 @@ def create_filesystem_tools() -> list[FunctionTool]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "工作区相对路径，或位于工作区内的绝对文件路径。"},
+                    "path": {
+                        "type": "string",
+                        "description": "工作区相对路径，或位于工作区内的绝对文件路径。",
+                    },
                     "content": {"type": "string", "description": "要写入的 UTF-8 文本内容。"},
                 },
                 "required": ["path", "content"],
@@ -201,7 +211,11 @@ async def read_file_tool(
 
     if mode == "indentation" and lines:
         anchor_line = _positive_int(args.get("anchor_line"), default=start_line)
-        start_line, max_lines = _indentation_window(lines, anchor_line=anchor_line, max_lines=max_lines)
+        start_line, max_lines = _indentation_window(
+            lines,
+            anchor_line=anchor_line,
+            max_lines=max_lines,
+        )
 
     selected, returned_lines, next_start_line = _select_lines(
         lines,

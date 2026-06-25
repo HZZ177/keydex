@@ -13,7 +13,6 @@ WINDOWS_TAURI_TRIPLE = "x86_64-pc-windows-msvc"
 MANIFEST_VERSION = 1
 ROOT = Path(__file__).resolve().parents[2]
 ENTRY_POINT = ROOT / "backend" / "packaging" / "agent_server_entry.py"
-SYSTEM_PROMPT = ROOT / "backend" / "app" / "agent" / "system_prompt.md"
 SIDECAR_INPUT_ROOTS = (
     ROOT / "backend" / "app",
     ROOT / "backend" / "packaging",
@@ -34,11 +33,6 @@ def copy_with_retry(source: Path, target: Path, attempts: int = 10) -> None:
             time.sleep(0.5)
     if last_error is not None:
         raise last_error
-
-
-def pyinstaller_data_arg(source: Path, target: str) -> str:
-    separator = ";" if sys.platform == "win32" else ":"
-    return f"{source}{separator}{target}"
 
 
 def expected_binary(output_dir: Path) -> Path:
@@ -72,9 +66,9 @@ def iter_sidecar_inputs() -> list[Path]:
 
 def sidecar_fingerprint() -> tuple[str, list[str]]:
     digest = hashlib.sha256()
-    digest.update(f"manifest_version={MANIFEST_VERSION}\n".encode("utf-8"))
-    digest.update(f"python={sys.version}\n".encode("utf-8"))
-    digest.update(f"platform={sys.platform}\n".encode("utf-8"))
+    digest.update(f"manifest_version={MANIFEST_VERSION}\n".encode())
+    digest.update(f"python={sys.version}\n".encode())
+    digest.update(f"platform={sys.platform}\n".encode())
     paths: list[str] = []
     for path in iter_sidecar_inputs():
         relative = path.relative_to(ROOT).as_posix()
@@ -122,8 +116,6 @@ def build_with_pyinstaller(
     clean: bool = False,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    if not SYSTEM_PROMPT.is_file():
-        raise FileNotFoundError(f"未找到系统提示词文件：{SYSTEM_PROMPT}")
     fingerprint, inputs = sidecar_fingerprint()
     reusable_binary = expected_binary(output_dir)
     if reuse_if_current and not clean and is_current_build(output_dir, fingerprint):
@@ -142,8 +134,6 @@ def build_with_pyinstaller(
             "--noconsole",
             "--name",
             "agent-server",
-            "--add-data",
-            pyinstaller_data_arg(SYSTEM_PROMPT, "backend/app/agent"),
             "--distpath",
             str(output_dir),
             str(ENTRY_POINT),
@@ -166,7 +156,11 @@ def build_with_pyinstaller(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="构建 Keydex 智能体服务端可执行文件。")
     parser.add_argument("--output-dir", default="desktop/src-tauri/binaries")
-    parser.add_argument("--reuse-if-current", action="store_true", help="输入未变化时复用已有 sidecar。")
+    parser.add_argument(
+        "--reuse-if-current",
+        action="store_true",
+        help="输入未变化时复用已有 sidecar。",
+    )
     parser.add_argument("--clean", action="store_true", help="清理 PyInstaller 缓存后重新构建。")
     args = parser.parse_args(argv)
     binary = build_with_pyinstaller(

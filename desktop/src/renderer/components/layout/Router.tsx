@@ -33,6 +33,11 @@ const UsageStatsPage = lazy(() =>
     default: module.UsageStatsPage,
   })),
 );
+const ConfigSettingsPage = lazy(() =>
+  import("@/renderer/pages/settings/config/ConfigSettingsPage").then((module) => ({
+    default: module.ConfigSettingsPage,
+  })),
+);
 
 export interface AppRouterProps {
   runtime?: RuntimeBridge;
@@ -47,6 +52,7 @@ export function AppRouter({ runtime = runtimeBridge }: AppRouterProps = {}) {
         <Route path="/conversation/:threadId" element={<ConversationRoute runtime={runtime} />} />
         <Route path="/__dev/event-replay" element={<EventReplayRoute />} />
         <Route path="/settings/model" element={<ModelSettingsRoute runtime={runtime} />} />
+        <Route path="/settings/config" element={<ConfigSettingsRoute runtime={runtime} />} />
         <Route path="/settings/usage" element={<UsageSettingsRoute runtime={runtime} />} />
         <Route path="/settings/general" element={<GeneralSettingsRoute />} />
         <Route path="*" element={<Navigate to="/guid" replace />} />
@@ -179,6 +185,14 @@ function UsageSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
   return (
     <SettingsShell activeSection="usage">
       <UsageStatsPage runtime={runtime} />
+    </SettingsShell>
+  );
+}
+
+function ConfigSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
+  return (
+    <SettingsShell activeSection="config">
+      <ConfigSettingsPage runtime={runtime} />
     </SettingsShell>
   );
 }

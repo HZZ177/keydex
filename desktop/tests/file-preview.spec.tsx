@@ -1,10 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import mermaid, { type ParseResult, type RenderResult } from "mermaid";
 
 import type { RuntimeBridge, WorkspaceFileAnnotationAnchorV2 } from "@/runtime";
-import { FilePreview } from "@/renderer/components/workspace";
+import { FilePreview, type MarkdownOutlineItem, type MarkdownOutlineRevealRequest } from "@/renderer/components/workspace";
 import { createSourceRangeAnchor } from "@/renderer/components/workspace/filePreviewAnnotations";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 
@@ -151,6 +151,64 @@ describe("FilePreview", () => {
     expect(screen.getByLabelText("源码内容").textContent).toContain("# Guide");
     expect(screen.getByLabelText("渲染预览").textContent).toContain("正文");
     expect(screen.getByRole("button", { name: "分屏" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("reveals markdown outline targets in both source and preview panes while split", async () => {
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    const scrollToDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTo");
+    const scrollIntoView = vi.fn();
+    const scrollTo = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "guide.md",
+        content: "# Guide\n\nIntro\n\n## Setup\n\nRun it.",
+        encoding: "utf-8",
+      }),
+    });
+
+    try {
+      render(<MarkdownOutlineRevealHarness runtime={runtime} />);
+
+      expect(await screen.findByRole("heading", { name: "Guide" })).not.toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "分屏" }));
+      expect(screen.getByTestId("preview-split-pane")).not.toBeNull();
+
+      const revealButton = await screen.findByRole("button", { name: "定位 Setup 大纲" });
+      await waitFor(() => {
+        expect((revealButton as HTMLButtonElement).disabled).toBe(false);
+      });
+      fireEvent.click(revealButton);
+
+      await waitFor(() => {
+        expect(scrollIntoView).toHaveBeenCalledWith({
+          block: "center",
+          inline: "nearest",
+          behavior: "smooth",
+        });
+      });
+      await waitFor(() => {
+        expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+      });
+    } finally {
+      if (scrollDescriptor) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", scrollDescriptor);
+      } else {
+        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
+      }
+      if (scrollToDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, "scrollTo", scrollToDescriptor);
+      } else {
+        delete (HTMLElement.prototype as { scrollTo?: HTMLElement["scrollTo"] }).scrollTo;
+      }
+    }
   });
 
   it("renders html files in a sandboxed preview frame", async () => {
@@ -371,6 +429,8 @@ describe("FilePreview", () => {
     });
     expect(chart.style.getPropertyValue("--mermaid-render-width")).toBe("1128px");
     expect(chart.style.getPropertyValue("--mermaid-render-height")).toBe("564px");
+    expect(chart.style.getPropertyValue("--mermaid-canvas-padding-x")).toBe("600px");
+    expect(chart.style.getPropertyValue("--mermaid-canvas-padding-y")).toBe("300px");
     expect(vi.mocked(mermaid.initialize)).toHaveBeenCalledWith(expect.objectContaining({
       flowchart: {
         useMaxWidth: false,
@@ -1863,6 +1923,41 @@ describe("FilePreview", () => {
     });
   });
 });
+
+function MarkdownOutlineRevealHarness({ runtime }: { runtime: RuntimeBridge }) {
+  const [outline, setOutline] = useState<MarkdownOutlineItem[]>([]);
+  const [revealRequest, setRevealRequest] = useState<MarkdownOutlineRevealRequest | null>(null);
+  const request = useMemo(() => ({ type: "file", path: "guide.md" }) as const, []);
+  const setupHeading = outline.find((item) => item.title === "Setup");
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={!setupHeading}
+        onClick={() => {
+          if (!setupHeading) {
+            return;
+          }
+          setRevealRequest((current) => ({
+            requestId: (current?.requestId ?? 0) + 1,
+            id: setupHeading.id,
+            line: setupHeading.line,
+          }));
+        }}
+      >
+        定位 Setup 大纲
+      </button>
+      <FilePreview
+        request={request}
+        sessionId="ses-1"
+        runtime={runtime}
+        outlineRevealRequest={revealRequest}
+        onMarkdownOutlineChange={setOutline}
+      />
+    </>
+  );
+}
 
 function fakeRuntime(overrides: Partial<RuntimeBridge["workspace"]> = {}): RuntimeBridge {
   return {

@@ -42,7 +42,7 @@ async def validation_exception_handler(
         f"method={request.method} | path={request.url.path} | errors={len(errors)}"
     )
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         content={
             "code": "request_validation_failed",
             "message": "请求参数校验失败",

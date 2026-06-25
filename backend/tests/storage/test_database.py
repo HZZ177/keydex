@@ -38,6 +38,19 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
     assert expected.issubset(second)
 
 
+def test_database_connections_use_busy_timeout_and_wal(tmp_path) -> None:
+    db = init_database(tmp_path / "app.db")
+
+    with db.connect() as conn:
+        busy_timeout = conn.execute("pragma busy_timeout").fetchone()
+        journal_mode = conn.execute("pragma journal_mode").fetchone()
+
+    assert busy_timeout is not None
+    assert busy_timeout[0] >= 30000
+    assert journal_mode is not None
+    assert str(journal_mode[0]).lower() == "wal"
+
+
 def test_init_database_creates_workspace_schema_and_session_columns(tmp_path) -> None:
     db = init_database(tmp_path / "app.db")
 

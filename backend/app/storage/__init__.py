@@ -2,6 +2,8 @@
 
 from backend.app.storage.db import Database, init_database
 from backend.app.storage.repositories import (
+    CommandApprovalAuditRecord,
+    CommandApprovalRequestRecord,
     LLMRequestLogRecord,
     MessageEventRecord,
     ModelDefaultRecord,
@@ -10,6 +12,7 @@ from backend.app.storage.repositories import (
     StorageRepositories,
     TraceEventLogRecord,
     TraceRecord,
+    TrustedCommandRuleRecord,
     WorkspaceFileAnnotationRecord,
     WorkspaceRecord,
     WorkspacesRepository,
@@ -18,6 +21,8 @@ from backend.app.storage.repositories import (
 
 __all__ = [
     "Database",
+    "CommandApprovalAuditRecord",
+    "CommandApprovalRequestRecord",
     "LLMRequestLogRecord",
     "MessageEventRecord",
     "ModelDefaultRecord",
@@ -26,6 +31,7 @@ __all__ = [
     "StorageRepositories",
     "TraceEventLogRecord",
     "TraceRecord",
+    "TrustedCommandRuleRecord",
     "WorkspaceFileAnnotationRecord",
     "WorkspaceRecord",
     "WorkspacesRepository",

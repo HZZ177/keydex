@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Copy, XCircle } from "lucide-react";
+import { Check, ChevronDown, CircleAlert, Copy } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
@@ -31,7 +31,7 @@ export function ErrorItem({ message }: ErrorItemProps) {
     <article className={styles.block} data-testid="error-item">
       <header className={styles.header}>
         <span className={styles.icon} aria-hidden="true">
-          <XCircle size={16} />
+          <CircleAlert size={16} />
         </span>
         <div className={styles.titleGroup}>
           <div className={styles.title}>{error.message}</div>
@@ -40,25 +40,24 @@ export function ErrorItem({ message }: ErrorItemProps) {
             {error.status ? <span>HTTP {error.status}</span> : null}
           </div>
         </div>
-      </header>
-
-      <div className={styles.actions}>
-        {hasDetails ? (
-          <button
-            className={styles.actionButton}
-            type="button"
-            aria-expanded={detailsOpen}
-            onClick={() => setDetailsOpen((value) => !value)}
-          >
-            <ChevronDown size={14} data-expanded={detailsOpen ? "true" : "false"} />
-            <span>错误详情</span>
+        <div className={styles.actions}>
+          {hasDetails ? (
+            <button
+              className={styles.actionButton}
+              type="button"
+              aria-expanded={detailsOpen}
+              onClick={() => setDetailsOpen((value) => !value)}
+            >
+              <ChevronDown size={14} data-expanded={detailsOpen ? "true" : "false"} />
+              <span>错误详情</span>
+            </button>
+          ) : null}
+          <button className={styles.actionButton} type="button" aria-label="复制错误" onClick={handleCopy}>
+            {copyState === "copied" ? <Check size={13} /> : <Copy size={13} />}
+            <span>{copyState === "failed" ? "复制失败" : copyState === "copied" ? "已复制" : "复制错误"}</span>
           </button>
-        ) : null}
-        <button className={styles.actionButton} type="button" aria-label="复制错误" onClick={handleCopy}>
-          {copyState === "copied" ? <Check size={13} /> : <Copy size={13} />}
-          <span>{copyState === "failed" ? "复制失败" : copyState === "copied" ? "已复制" : "复制错误"}</span>
-        </button>
-      </div>
+        </div>
+      </header>
 
       {detailsOpen ? <pre className={styles.details}>{detailsText}</pre> : null}
     </article>
@@ -72,14 +71,16 @@ interface ParsedError extends TurnError {
 function parseError(message: ConversationMessage): ParsedError {
   const source = asRecord(message.payload.error) ?? message.payload;
   const rawMessage = stringValue(source.message) || message.content || "运行时错误";
-  const publicMessage = publicErrorMessage(rawMessage);
+  const gatewayError = parseGatewayError(rawMessage);
+  const publicMessage = gatewayPublicMessage(gatewayError) ?? publicErrorMessage(rawMessage);
   const details = asRecord(source.details) ?? {};
   const safeDetails = publicMessage === rawMessage ? details : { ...details, raw_message: rawMessage };
+  const sourceCode = stringValue(source.code);
   return {
-    code: stringValue(source.code) || "runtime_error",
+    code: meaningfulCode(sourceCode, gatewayError?.code),
     message: publicMessage,
     details: safeDetails,
-    status: numberValue(source.status),
+    status: numberValue(source.status) ?? gatewayError?.status,
   };
 }
 
@@ -109,6 +110,48 @@ function isStackTraceLine(line: string): boolean {
     /^\s*at\s+\S+/i.test(line) ||
     /^[A-Za-z_][\w.]*Error:/.test(line)
   );
+}
+
+function meaningfulCode(sourceCode: string, parsedCode: string | undefined): string {
+  if (parsedCode && (!sourceCode || sourceCode === "runtime_error")) {
+    return parsedCode;
+  }
+  return sourceCode || parsedCode || "runtime_error";
+}
+
+interface ParsedGatewayError {
+  status?: number;
+  code?: string;
+  message?: string;
+}
+
+function parseGatewayError(value: string): ParsedGatewayError | null {
+  const statusMatch = /^Error code:\s*(\d+)/i.exec(value.trim());
+  const messageMatch = /['"]message['"]\s*:\s*(['"])(.*?)\1/i.exec(value);
+  const codeMatch = /['"]code['"]\s*:\s*(['"])(.*?)\1/i.exec(value);
+  if (!statusMatch && !messageMatch && !codeMatch) {
+    return null;
+  }
+  return {
+    status: statusMatch ? Number(statusMatch[1]) : undefined,
+    code: codeMatch?.[2],
+    message: messageMatch?.[2],
+  };
+}
+
+function gatewayPublicMessage(error: ParsedGatewayError | null): string | null {
+  if (!error) {
+    return null;
+  }
+  const message = error.message?.trim() ?? "";
+  if (error.status === 429 || /rate limit exceeded/i.test(message)) {
+    const dimension = /dimension:\s*([a-z0-9_-]+)/i.exec(message)?.[1];
+    return dimension ? `请求过于频繁（${dimension} 限流），请稍后再试` : "请求过于频繁，请稍后再试";
+  }
+  if (message) {
+    return message;
+  }
+  return error.status ? `请求失败：HTTP ${error.status}` : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

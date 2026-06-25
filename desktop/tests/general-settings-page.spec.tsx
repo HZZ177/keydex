@@ -53,7 +53,7 @@ describe("GeneralSettingsPage", () => {
   it("offers system and Maple Mono font choices", () => {
     renderPage();
 
-    expect(screen.getByRole("heading", { name: "常规配置" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "外观" })).not.toBeNull();
     expect(screen.getByRole("radio", { name: /系统默认/ }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("radio", { name: /Maple Mono/ }).getAttribute("aria-checked")).toBe("false");
     expect(screen.getByText("点击下载到本地后使用")).not.toBeNull();

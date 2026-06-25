@@ -30,23 +30,144 @@ describe("CommandExecutionBlock", () => {
     const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
     render(<CommandExecutionBlock message={commandMessage("completed", { stdout: "ok\n", stderr: "warn\n" })} />);
 
-    expect(screen.queryByRole("button", { name: "复制命令输出" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "复制输出" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
-    fireEvent.click(screen.getByRole("button", { name: "复制命令输出" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "复制入参" }));
+    await waitFor(() => {
+      expect(clipboard).toHaveBeenLastCalledWith('{\n  "command": "pytest backend/tests",\n  "cwd": "D:/repo"\n}');
+    });
+    expect(screen.getByRole("button", { name: "已复制入参" })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "复制输出" }));
 
     await waitFor(() => {
-      expect(clipboard).toHaveBeenCalledWith("ok\n\nwarn\n");
+      expect(clipboard).toHaveBeenLastCalledWith("ok\n\nwarn\n");
     });
-    expect(screen.getByText("已复制")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "已复制输出" })).not.toBeNull();
   });
 
-  it("marks non-zero exit code as failed and is used by MessageList", () => {
+  it("keeps non-zero exit code as completed structured output and is used by MessageList", () => {
     render(<MessageList messages={[commandMessage("completed", { stderr: "failed", exit_code: 1 })]} />);
 
     expect(screen.getByTestId("command-execution-block")).not.toBeNull();
     expect(screen.getByText("退出码 1")).not.toBeNull();
-    expect(screen.getByText("执行失败 pytest backend/tests")).not.toBeNull();
+    expect(screen.getByText("已执行 pytest backend/tests")).not.toBeNull();
     expect(screen.queryByText("failed")).toBeNull();
+  });
+
+  it("shows tool error details when failed command output is empty", () => {
+    render(
+      <CommandExecutionBlock
+        message={commandMessage("failed", {
+          stdout: "",
+          stderr: "",
+          result: {
+            status: "error",
+            model_content: "",
+            error: {
+              code: "tool_execution_failed",
+              message: "NotImplementedError",
+              details: { tool: "run_command", type: "NotImplementedError" },
+            },
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("执行失败 pytest backend/tests")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
+    const text = screen.getByTestId("command-execution-block").textContent ?? "";
+    expect(text).toContain("NotImplementedError");
+    expect(text).toContain("错误码：tool_execution_failed");
+    expect(text).toContain('"tool": "run_command"');
+    expect(text).toContain('"type": "NotImplementedError"');
+    expect(screen.queryByText("无输出")).toBeNull();
+  });
+
+  it("shows command error payload returned as ui payload", () => {
+    render(
+      <CommandExecutionBlock
+        message={commandMessage("failed", {
+          stdout: "",
+          stderr: "",
+          result: {
+            status: "error",
+            ui_payload: {
+              code: "invalid_tool_args",
+              message: "command 必须是非空字符串",
+            },
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
+    const text = screen.getByTestId("command-execution-block").textContent ?? "";
+    expect(text).toContain("command 必须是非空字符串");
+    expect(text).toContain("错误码：invalid_tool_args");
+  });
+
+  it("uses error details when command error message is empty", () => {
+    render(
+      <CommandExecutionBlock
+        message={commandMessage("failed", {
+          stdout: "",
+          stderr: "",
+          result: {
+            status: "error",
+            ui_payload: {
+              code: "tool_execution_failed",
+              message: "",
+              details: {
+                tool: "run_command",
+                type: "NotImplementedError",
+              },
+            },
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
+    const text = screen.getByTestId("command-execution-block").textContent ?? "";
+    expect(text).toContain("错误码：tool_execution_failed");
+    expect(text).toContain('"tool": "run_command"');
+    expect(text).toContain('"type": "NotImplementedError"');
+  });
+
+  it("renders rejected, timed out and disabled command result states", () => {
+    const { rerender } = render(
+      <CommandExecutionBlock message={commandMessage("completed", { status: "rejected", approval: { reject_message: "不执行" } })} />,
+    );
+
+    expect(screen.getByText("已拒绝 pytest backend/tests")).not.toBeNull();
+    expect(screen.getByText("已拒绝")).not.toBeNull();
+    expect(screen.getByText("拒绝说明：不执行")).not.toBeNull();
+    expect(screen.getByTestId("command-execution-block").dataset.status).toBe("failed");
+
+    rerender(<CommandExecutionBlock message={commandMessage("completed", { status: "timed_out" })} />);
+    expect(screen.getByText("命令超时 pytest backend/tests")).not.toBeNull();
+    expect(screen.getByText("已超时")).not.toBeNull();
+
+    rerender(<CommandExecutionBlock message={commandMessage("completed", { status: "disabled" })} />);
+    expect(screen.getByText("命令已禁用 pytest backend/tests")).not.toBeNull();
+    expect(screen.getByText("已禁用")).not.toBeNull();
+  });
+
+  it("shows truncated output and trusted command rule metadata", () => {
+    render(
+      <CommandExecutionBlock
+        message={commandMessage("completed", {
+          stdout: "ok\n",
+          truncated: true,
+          approval: { trusted_rule_id: "rule-1" },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("输出已截断")).not.toBeNull();
+    expect(screen.getByText("已信任规则")).not.toBeNull();
   });
 
   it("formats sub-second command durations as milliseconds", () => {
@@ -76,6 +197,8 @@ describe("CommandExecutionBlock", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
     expect(screen.getByLabelText("命令入参").textContent).toContain("print(1);");
     expect(screen.getByLabelText("命令入参").textContent).toContain("timeout_seconds");
+    expect(screen.getByText("入参")).not.toBeNull();
+    expect(screen.getByText("输出")).not.toBeNull();
     expect(screen.getByText("等待命令输出")).not.toBeNull();
   });
 });

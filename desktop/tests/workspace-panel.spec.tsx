@@ -296,6 +296,71 @@ describe("WorkspacePanel", () => {
     expect(screen.getByRole("tree", { name: "工作区目录" })).not.toBeNull();
   });
 
+  it("switches markdown file navigation to document outline and jumps to headings", async () => {
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const runtime = fakeRuntime(
+      {
+        "": [entry("README.md", "README.md", "file", 12)],
+      },
+      {
+        "README.md": "# Project\n\nIntro\n\n## Setup\n\nRun it.\n\n### Details\n\nMore.",
+      },
+    );
+
+    try {
+      render(<WorkspaceFileBrowser sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+
+      expect(await screen.findByRole("button", { name: "选择文件 README.md" })).not.toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "选择文件 README.md" }));
+
+      expect(await screen.findByRole("heading", { name: "Project" })).not.toBeNull();
+      expect(screen.getByRole("button", { name: "文件" }).getAttribute("aria-pressed")).toBe("true");
+
+      fireEvent.click(screen.getByRole("button", { name: "大纲" }));
+
+      expect(await screen.findByRole("navigation", { name: "Markdown 文档大纲" })).not.toBeNull();
+      expect(screen.queryByRole("tree", { name: "工作区目录" })).toBeNull();
+      expect(screen.getByRole("button", { name: "跳转到 Setup" }).textContent).toBe("Setup");
+      expect(screen.getByRole("button", { name: "跳转到 Details" })).not.toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: "折叠 Setup" }));
+
+      expect(screen.getByRole("button", { name: "展开 Setup" }).getAttribute("aria-expanded")).toBe("false");
+      expect(screen.queryByRole("button", { name: "跳转到 Details" })).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: "展开 Setup" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "跳转到 Details" }));
+
+      await waitFor(() => {
+        expect(scrollIntoView).toHaveBeenCalledWith({
+          block: "center",
+          inline: "nearest",
+          behavior: "smooth",
+        });
+      });
+      const scrolledElement = scrollIntoView.mock.contexts[
+        scrollIntoView.mock.contexts.length - 1
+      ] as HTMLElement;
+      expect(scrolledElement.dataset.markdownOutlineId).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: "文件" }));
+
+      expect(screen.getByRole("tree", { name: "工作区目录" })).not.toBeNull();
+      expect(screen.getByRole("button", { name: "文件" }).getAttribute("aria-pressed")).toBe("true");
+    } finally {
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        configurable: true,
+        value: originalScrollIntoView,
+      });
+    }
+  });
+
   it("collapses the file tree to an empty file prompt when no preview is open", async () => {
     const runtime = fakeRuntime({
       "": [entry("README.md", "README.md", "file", 12)],

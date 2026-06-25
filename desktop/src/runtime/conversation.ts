@@ -2,6 +2,7 @@ import type {
   AgentContextItem,
   AgentActionEnvelope,
   AgentChatMessagePayload,
+  CommandApprovalDecisionPayload,
   AgentHistoryResponse,
   AgentSession,
   AgentSessionType,
@@ -85,6 +86,7 @@ export interface ChatChannel {
   bindSession(sessionId: string): void;
   unbindSession(sessionId?: string): void;
   chat(payload: ChatPayload): void;
+  approvalDecision(approvalId: string, decision: CommandApprovalDecisionPayload): void;
   cancel(sessionId?: string): void;
   requestStatus(sessionId?: string): void;
   ping(): void;
@@ -171,6 +173,11 @@ export function createConversationRuntime(
         bindSession: (sessionId) => client.bindSession(sessionId),
         unbindSession: (sessionId) => client.unbindSession(sessionId),
         chat: (payload) => client.chat(payload),
+        approvalDecision: (approvalId, decision) =>
+          client.sendAction("approval_decision", {
+            approval_id: approvalId,
+            ...decision,
+          }),
         cancel: (sessionId) => client.cancel(sessionId),
         requestStatus: (sessionId) => client.requestStatus(sessionId),
         ping: () => client.ping(),

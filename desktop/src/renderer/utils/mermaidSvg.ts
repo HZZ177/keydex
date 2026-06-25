@@ -3,6 +3,16 @@ export interface SvgDimensions {
   height: number;
 }
 
+interface MermaidCanvasPadding {
+  x: number;
+  y: number;
+}
+
+const MERMAID_CANVAS_MIN_PADDING_X = 160;
+const MERMAID_CANVAS_MIN_PADDING_Y = 120;
+const MERMAID_CANVAS_PADDING_X_VAR = "--mermaid-canvas-padding-x";
+const MERMAID_CANVAS_PADDING_Y_VAR = "--mermaid-canvas-padding-y";
+
 export function normalizeMermaidSvgDimensions(svg: string): { svg: string; dimensions: SvgDimensions | null } {
   const rawDimensions = extractSvgDimensions(svg);
   if (!svg.trim() || typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") {
@@ -43,6 +53,51 @@ export function normalizeMermaidSvgDimensions(svg: string): { svg: string; dimen
 export function formatMermaidCssPixels(value: number): string {
   const rounded = Math.round(value * 100) / 100;
   return `${Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/\.?0+$/, "")}px`;
+}
+
+export function syncMermaidCanvasPadding(viewport: HTMLElement): MermaidCanvasPadding {
+  const padding = calculateMermaidCanvasPadding(viewport);
+  viewport.style.setProperty(MERMAID_CANVAS_PADDING_X_VAR, formatMermaidCssPixels(padding.x));
+  viewport.style.setProperty(MERMAID_CANVAS_PADDING_Y_VAR, formatMermaidCssPixels(padding.y));
+  return padding;
+}
+
+export function centerMermaidViewport(viewport: HTMLElement, dimensions: SvgDimensions, scale: number) {
+  const padding = syncMermaidCanvasPadding(viewport);
+  const expectedWidth = dimensions.width * scale + padding.x * 2;
+  const expectedHeight = dimensions.height * scale + padding.y * 2;
+  const scrollWidth = Math.max(viewport.scrollWidth, expectedWidth);
+  const scrollHeight = Math.max(viewport.scrollHeight, expectedHeight);
+  viewport.scrollLeft = Math.max(0, (scrollWidth - viewport.clientWidth) / 2);
+  viewport.scrollTop = Math.max(0, (scrollHeight - viewport.clientHeight) / 2);
+}
+
+export function preserveMermaidZoomAnchor(
+  viewport: HTMLElement,
+  currentScale: number,
+  nextScale: number,
+  focus: { clientX: number; clientY: number },
+) {
+  const padding = syncMermaidCanvasPadding(viewport);
+  const rect = viewport.getBoundingClientRect();
+  const viewportX = focus.clientX - rect.left;
+  const viewportY = focus.clientY - rect.top;
+  const anchorX = viewport.scrollLeft + viewportX - padding.x;
+  const anchorY = viewport.scrollTop + viewportY - padding.y;
+  const ratio = nextScale / currentScale;
+
+  window.requestAnimationFrame(() => {
+    const nextPadding = syncMermaidCanvasPadding(viewport);
+    viewport.scrollLeft = Math.max(0, anchorX * ratio + nextPadding.x - viewportX);
+    viewport.scrollTop = Math.max(0, anchorY * ratio + nextPadding.y - viewportY);
+  });
+}
+
+function calculateMermaidCanvasPadding(viewport: HTMLElement): MermaidCanvasPadding {
+  return {
+    x: Math.max(MERMAID_CANVAS_MIN_PADDING_X, viewport.clientWidth / 2),
+    y: Math.max(MERMAID_CANVAS_MIN_PADDING_Y, viewport.clientHeight / 2),
+  };
 }
 
 function extractSvgDimensions(svg: string): SvgDimensions | null {

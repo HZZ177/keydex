@@ -42,7 +42,7 @@ export function GeneralSettingsPage() {
     <main className={styles.page} data-testid="general-settings-page">
       <header className={styles.header}>
         <div>
-          <h1>常规配置</h1>
+          <h1>外观</h1>
           <p>管理本地应用偏好</p>
         </div>
       </header>

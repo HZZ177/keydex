@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.agent import AgentRunner
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
+from backend.app.api.approvals import router as approvals_router
 from backend.app.api.health import router as health_router
 from backend.app.api.model_providers import router as model_providers_router
 from backend.app.api.models import router as models_router
@@ -101,6 +102,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         f"protocol_version={resolved_settings.protocol_version}"
     )
     app.include_router(health_router)
+    app.include_router(approvals_router)
     app.include_router(settings_router)
     app.include_router(model_providers_router)
     app.include_router(models_router)

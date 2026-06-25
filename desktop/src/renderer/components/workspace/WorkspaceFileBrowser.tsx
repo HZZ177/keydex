@@ -1,4 +1,4 @@
-import { Folder, FolderOpen } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, FolderTree, ListTree } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -15,7 +15,7 @@ import type {
   PreviewQuoteSelectionRequest,
 } from "@/renderer/providers/PreviewProvider";
 
-import { FilePreview } from "./FilePreview";
+import { FilePreview, type MarkdownOutlineItem, type MarkdownOutlineRevealRequest } from "./FilePreview";
 import { WorkspacePanel } from "./WorkspacePanel";
 import styles from "./WorkspaceFileBrowser.module.css";
 
@@ -36,6 +36,8 @@ const MIN_TREE_WIDTH = 180;
 const MAX_TREE_WIDTH_RATIO = 0.7;
 const MIN_PREVIEW_WIDTH = 280;
 const FILE_PREVIEW_CLOSE_MS = 180;
+
+type BrowserNavigationMode = "files" | "outline";
 
 interface ResizeState {
   pointerId: number;
@@ -66,11 +68,17 @@ export function WorkspaceFileBrowser({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_WIDTH);
+  const [navigationMode, setNavigationMode] = useState<BrowserNavigationMode>("files");
+  const [markdownOutline, setMarkdownOutline] = useState<MarkdownOutlineItem[]>([]);
+  const [markdownOutlineReady, setMarkdownOutlineReady] = useState(false);
+  const [outlineRevealRequest, setOutlineRevealRequest] = useState<MarkdownOutlineRevealRequest | null>(null);
   const previewRequest = useMemo(
     () => (mountedPreviewPath ? ({ type: "file", path: mountedPreviewPath } as const) : null),
     [mountedPreviewPath],
   );
   const previewMounted = Boolean(previewRequest);
+  const outlineAvailable = Boolean(mountedPreviewPath && isMarkdownPath(mountedPreviewPath));
+  const outlineVisible = outlineAvailable && navigationMode === "outline";
   const currentPathLabel = formatBrowserPath(mountedPreviewPath);
   const toggleTreeCollapsed = useCallback(() => setTreeCollapsed((collapsed) => !collapsed), []);
 
@@ -177,6 +185,28 @@ export function WorkspaceFileBrowser({
   }, [clearPreviewOpenFrame, clearPreviewUnmountTimer, onPreviewPathChange]);
 
   useEffect(() => {
+    setMarkdownOutline([]);
+    setMarkdownOutlineReady(false);
+    setOutlineRevealRequest(null);
+    if (!mountedPreviewPath || !isMarkdownPath(mountedPreviewPath)) {
+      setNavigationMode("files");
+    }
+  }, [mountedPreviewPath]);
+
+  const handleMarkdownOutlineChange = useCallback((outline: MarkdownOutlineItem[]) => {
+    setMarkdownOutline(outline);
+    setMarkdownOutlineReady(true);
+  }, []);
+
+  const revealMarkdownOutlineItem = useCallback((item: MarkdownOutlineItem) => {
+    setOutlineRevealRequest((current) => ({
+      requestId: (current?.requestId ?? 0) + 1,
+      id: item.id,
+      line: item.line,
+    }));
+  }, []);
+
+  useEffect(() => {
     if (!previewPath || !previewRequestId || handledPreviewRequestIdRef.current === previewRequestId) {
       return;
     }
@@ -260,19 +290,45 @@ export function WorkspaceFileBrowser({
         <div
           className={styles.treePane}
           data-collapsed={treeCollapsed ? "true" : "false"}
+          data-outline-available={outlineAvailable ? "true" : "false"}
+          data-navigation-mode={outlineVisible ? "outline" : "files"}
           data-testid="workspace-file-browser-tree"
           aria-hidden={treeCollapsed ? true : undefined}
           inert={treeCollapsed ? true : undefined}
         >
-          <WorkspacePanel
-            chrome="panel"
-            label={label}
-            runtime={runtime}
-            workspaceId={workspaceId}
-            sessionId={sessionId}
-            selectedPath={selectedPath}
-            onSelectFile={openPreview}
-          />
+          {outlineAvailable ? (
+            <BrowserNavigationTabs mode={navigationMode} onModeChange={setNavigationMode} />
+          ) : null}
+          <div
+            className={styles.treeContent}
+            data-active={outlineVisible ? "false" : "true"}
+            aria-hidden={outlineVisible ? true : undefined}
+            inert={outlineVisible ? true : undefined}
+          >
+            <WorkspacePanel
+              chrome="panel"
+              label={label}
+              runtime={runtime}
+              workspaceId={workspaceId}
+              sessionId={sessionId}
+              selectedPath={selectedPath}
+              onSelectFile={openPreview}
+            />
+          </div>
+          {outlineAvailable ? (
+            <div
+              className={styles.outlinePane}
+              data-active={outlineVisible ? "true" : "false"}
+              aria-hidden={outlineVisible ? undefined : true}
+              inert={outlineVisible ? undefined : true}
+            >
+              <MarkdownOutlinePanel
+                outline={markdownOutline}
+                ready={markdownOutlineReady}
+                onReveal={revealMarkdownOutlineItem}
+              />
+            </div>
+          ) : null}
         </div>
         {previewRequest ? (
           <>
@@ -309,6 +365,8 @@ export function WorkspaceFileBrowser({
                 runtime={runtime}
                 chrome="panel"
                 hideBreadcrumbs
+                outlineRevealRequest={outlineRevealRequest}
+                onMarkdownOutlineChange={handleMarkdownOutlineChange}
                 onQuoteSelection={onQuoteSelection}
                 onStartChatFromAnnotation={onStartChatFromAnnotation}
                 onClose={closePreview}
@@ -321,6 +379,138 @@ export function WorkspaceFileBrowser({
       </div>
     </section>
   );
+}
+
+function BrowserNavigationTabs({
+  mode,
+  onModeChange,
+}: {
+  mode: BrowserNavigationMode;
+  onModeChange: (mode: BrowserNavigationMode) => void;
+}) {
+  return (
+    <div className={styles.navigationTabs} role="group" aria-label="文件导航模式" data-mode={mode}>
+      <button
+        type="button"
+        aria-pressed={mode === "files"}
+        onClick={() => onModeChange("files")}
+      >
+        <FolderTree size={14} strokeWidth={1.8} />
+        <span>文件</span>
+      </button>
+      <button
+        type="button"
+        aria-pressed={mode === "outline"}
+        onClick={() => onModeChange("outline")}
+      >
+        <ListTree size={14} strokeWidth={1.8} />
+        <span>大纲</span>
+      </button>
+    </div>
+  );
+}
+
+function MarkdownOutlinePanel({
+  outline,
+  ready,
+  onReveal,
+}: {
+  outline: MarkdownOutlineItem[];
+  ready: boolean;
+  onReveal: (item: MarkdownOutlineItem) => void;
+}) {
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    setCollapsedIds(new Set());
+  }, [outline]);
+  const rows = useMemo(
+    () => markdownOutlineRows(outline, collapsedIds),
+    [collapsedIds, outline],
+  );
+  const toggleItem = useCallback((id: string) => {
+    setCollapsedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  if (!ready) {
+    return <div className={styles.outlineState}>正在读取文档大纲</div>;
+  }
+  if (!outline.length) {
+    return <div className={styles.outlineState}>当前 Markdown 没有标题</div>;
+  }
+  return (
+    <nav className={styles.outlinePanel} aria-label="Markdown 文档大纲">
+      <div className={styles.outlineList}>
+        {rows.map(({ collapsed, hasChildren, hidden, item }) => (
+          <div
+            key={item.id}
+            className={styles.outlineItem}
+            data-collapsed={collapsed ? "true" : "false"}
+            data-has-children={hasChildren ? "true" : "false"}
+            data-visible={hidden ? "false" : "true"}
+            aria-hidden={hidden ? true : undefined}
+            inert={hidden ? true : undefined}
+            style={{ "--workspace-outline-indent": `${Math.max(0, item.level - 1) * 12}px` } as CSSProperties}
+          >
+            {hasChildren ? (
+              <button
+                className={styles.outlineToggle}
+                type="button"
+                aria-label={`${collapsed ? "展开" : "折叠"} ${item.title}`}
+                aria-expanded={!collapsed}
+                onClick={() => toggleItem(item.id)}
+              >
+                <ChevronRight size={13} strokeWidth={1.9} />
+              </button>
+            ) : (
+              <span className={styles.outlineToggleSpacer} aria-hidden="true" />
+            )}
+            <button
+              className={styles.outlineJump}
+              type="button"
+              aria-label={`跳转到 ${item.title}`}
+              onClick={() => onReveal(item)}
+            >
+              <span className={styles.outlineTitle}>{item.title}</span>
+            </button>
+          </div>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+interface MarkdownOutlineRow {
+  item: MarkdownOutlineItem;
+  hasChildren: boolean;
+  collapsed: boolean;
+  hidden: boolean;
+}
+
+function markdownOutlineRows(
+  outline: MarkdownOutlineItem[],
+  collapsedIds: Set<string>,
+): MarkdownOutlineRow[] {
+  const collapsedAncestorLevels: number[] = [];
+  return outline.map((item, index) => {
+    while (collapsedAncestorLevels.length > 0 && item.level <= collapsedAncestorLevels[collapsedAncestorLevels.length - 1]) {
+      collapsedAncestorLevels.pop();
+    }
+    const hidden = collapsedAncestorLevels.length > 0;
+    const hasChildren = (outline[index + 1]?.level ?? 0) > item.level;
+    const collapsed = hasChildren && collapsedIds.has(item.id);
+    if (collapsed) {
+      collapsedAncestorLevels.push(item.level);
+    }
+    return { item, hasChildren, collapsed, hidden };
+  });
 }
 
 function PathBreadcrumbs({ path, title }: { path: string | null; title: string }) {
@@ -370,6 +560,11 @@ function pathSegments(path: string | null): string[] {
     return [];
   }
   return path.replace(/\\/g, "/").split("/").filter(Boolean);
+}
+
+function isMarkdownPath(path: string): boolean {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  return ext === "md" || ext === "mdx" || ext === "markdown";
 }
 
 function clamp(value: number, min: number, max: number): number {

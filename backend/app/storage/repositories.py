@@ -241,6 +241,67 @@ class LLMRequestLogRecord:
     is_deleted: bool = False
 
 
+@dataclass(frozen=True)
+class CommandApprovalRequestRecord:
+    id: str
+    session_id: str
+    tool_name: str
+    kind: str
+    title: str
+    description: str
+    command: str
+    cwd: str
+    shell: str
+    workspace_root: str
+    details: dict[str, Any]
+    status: str
+    created_at: str
+    updated_at: str
+    trace_id: str | None = None
+    turn_index: int | None = None
+    run_id: str | None = None
+    decision: str | None = None
+    trust_scope: str | None = None
+    rule_match_type: str | None = None
+    reject_message: str | None = None
+    trusted_rule_id: str | None = None
+    resolved_at: str | None = None
+    is_deleted: bool = False
+
+
+@dataclass(frozen=True)
+class TrustedCommandRuleRecord:
+    id: str
+    command_pattern: str
+    normalized_command: str
+    match_type: str
+    shell: str
+    workspace_root: str
+    cwd_pattern: str
+    enabled: bool
+    created_at: str
+    updated_at: str
+    created_from_approval_id: str | None = None
+    last_used_at: str | None = None
+    is_deleted: bool = False
+
+
+@dataclass(frozen=True)
+class CommandApprovalAuditRecord:
+    id: str
+    approval_id: str
+    session_id: str
+    command: str
+    cwd: str
+    decision: str
+    created_at: str
+    trust_scope: str | None = None
+    rule_match_type: str | None = None
+    trusted_rule_id: str | None = None
+    reject_message: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
 class SettingsRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -582,7 +643,7 @@ class WorkspacesRepository:
 
 
 class SessionsRepository:
-    VALID_STATUSES = {"active", "closed", "failed", "running"}
+    VALID_STATUSES = {"active", "closed", "failed", "running", "waiting_approval"}
     VALID_SESSION_TYPES = {"workspace", "chat"}
 
     def __init__(self, db: Database) -> None:
@@ -885,7 +946,11 @@ class WorkspaceFileAnnotationsRepository:
                     values["column_start"],
                     values["column_end"],
                     values["content_hash"],
-                    _json_dumps(values["anchor_json"]) if values["anchor_json"] is not None else None,
+                    (
+                        _json_dumps(values["anchor_json"])
+                        if values["anchor_json"] is not None
+                        else None
+                    ),
                     now,
                     now,
                 ),
@@ -1002,7 +1067,11 @@ class WorkspaceFileAnnotationsRepository:
                     values["column_start"],
                     values["column_end"],
                     values["content_hash"],
-                    _json_dumps(values["anchor_json"]) if values["anchor_json"] is not None else None,
+                    (
+                        _json_dumps(values["anchor_json"])
+                        if values["anchor_json"] is not None
+                        else None
+                    ),
                     now,
                     annotation_id,
                     values["scope_type"],
@@ -1085,14 +1154,22 @@ class WorkspaceFileAnnotationsRepository:
             if resolved_selected_text and resolved_selected_text != anchor_selected_text:
                 raise ValueError("Annotation selected_text must match anchor_json.selectedText")
             resolved_selected_text = anchor_selected_text
-            line_start = cls._same_or_default(line_start, normalized_anchor_json["lineStart"], "line_start")
+            line_start = cls._same_or_default(
+                line_start,
+                normalized_anchor_json["lineStart"],
+                "line_start",
+            )
             line_end = cls._same_or_default(line_end, normalized_anchor_json["lineEnd"], "line_end")
             column_start = cls._same_or_default(
                 column_start,
                 normalized_anchor_json["columnStart"],
                 "column_start",
             )
-            column_end = cls._same_or_default(column_end, normalized_anchor_json["columnEnd"], "column_end")
+            column_end = cls._same_or_default(
+                column_end,
+                normalized_anchor_json["columnEnd"],
+                "column_end",
+            )
             anchor_content_hash = normalized_anchor_json["contentHash"]
             if content_hash and str(content_hash).strip() != anchor_content_hash:
                 raise ValueError("Annotation content_hash must match anchor_json.contentHash")
@@ -2115,6 +2192,486 @@ class LLMRequestLogsRepository:
         )
 
 
+class CommandApprovalRequestsRepository:
+    VALID_STATUSES = {"pending", "approved", "rejected", "expired", "cancelled"}
+
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def create(
+        self,
+        *,
+        approval_id: str,
+        session_id: str,
+        command: str,
+        cwd: str,
+        title: str,
+        description: str = "",
+        trace_id: str | None = None,
+        turn_index: int | None = None,
+        run_id: str | None = None,
+        tool_name: str = "run_command",
+        kind: str = "exec",
+        shell: str = "shell",
+        workspace_root: str = "",
+        details: dict[str, Any] | None = None,
+    ) -> CommandApprovalRequestRecord:
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                insert into command_approval_requests (
+                  id, session_id, trace_id, turn_index, run_id, tool_name, kind,
+                  title, description, command, cwd, shell, workspace_root, details_json,
+                  status, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    approval_id,
+                    session_id,
+                    trace_id,
+                    turn_index,
+                    run_id,
+                    tool_name,
+                    kind,
+                    title,
+                    description,
+                    command,
+                    cwd,
+                    shell,
+                    workspace_root,
+                    _json_dumps(details or {}),
+                    now,
+                    now,
+                ),
+            )
+        record = self.get(approval_id)
+        if record is None:
+            raise RuntimeError(f"创建 command 审批后无法读取: {approval_id}")
+        return record
+
+    def get(
+        self,
+        approval_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> CommandApprovalRequestRecord | None:
+        query = "select * from command_approval_requests where id = ?"
+        params: list[Any] = [approval_id]
+        if not include_deleted:
+            query += " and is_deleted = 0"
+        with self.db.connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        return self._from_row(row) if row else None
+
+    def list_pending(
+        self,
+        *,
+        session_id: str | None = None,
+        limit: int = 100,
+    ) -> list[CommandApprovalRequestRecord]:
+        filters = ["status = 'pending'", "is_deleted = 0"]
+        params: list[Any] = []
+        if session_id:
+            filters.append("session_id = ?")
+            params.append(session_id)
+        params.append(max(1, min(limit, 500)))
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                select * from command_approval_requests
+                where {' and '.join(filters)}
+                order by created_at asc, id asc
+                limit ?
+                """,
+                params,
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def list_history(
+        self,
+        *,
+        session_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[CommandApprovalRequestRecord], int]:
+        filters = ["is_deleted = 0"]
+        params: list[Any] = []
+        if session_id:
+            filters.append("session_id = ?")
+            params.append(session_id)
+        where = f"where {' and '.join(filters)}"
+        resolved_limit = max(1, min(limit, 500))
+        resolved_offset = max(0, offset)
+        with self.db.connect() as conn:
+            total = conn.execute(
+                f"select count(*) as total from command_approval_requests {where}",
+                params,
+            ).fetchone()
+            rows = conn.execute(
+                f"""
+                select * from command_approval_requests
+                {where}
+                order by created_at desc, id desc
+                limit ? offset ?
+                """,
+                [*params, resolved_limit, resolved_offset],
+            ).fetchall()
+        return [self._from_row(row) for row in rows], int(total["total"])
+
+    def resolve(
+        self,
+        approval_id: str,
+        *,
+        status: str,
+        decision: str | None,
+        trust_scope: str | None = None,
+        rule_match_type: str | None = None,
+        reject_message: str | None = None,
+        trusted_rule_id: str | None = None,
+    ) -> CommandApprovalRequestRecord | None:
+        self._validate_status(status)
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                update command_approval_requests set
+                  status = ?,
+                  decision = ?,
+                  trust_scope = ?,
+                  rule_match_type = ?,
+                  reject_message = ?,
+                  trusted_rule_id = ?,
+                  resolved_at = ?,
+                  updated_at = ?
+                where id = ? and is_deleted = 0
+                """,
+                (
+                    status,
+                    decision,
+                    trust_scope,
+                    rule_match_type,
+                    reject_message,
+                    trusted_rule_id,
+                    now,
+                    now,
+                    approval_id,
+                ),
+            )
+        return self.get(approval_id)
+
+    def cancel_pending_for_session(self, session_id: str) -> int:
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                update command_approval_requests set
+                  status = 'cancelled',
+                  decision = 'rejected',
+                  reject_message = coalesce(reject_message, '本轮对话已取消'),
+                  resolved_at = ?,
+                  updated_at = ?
+                where session_id = ? and status = 'pending' and is_deleted = 0
+                """,
+                (now, now, session_id),
+            )
+        return int(cursor.rowcount or 0)
+
+    @classmethod
+    def _validate_status(cls, status: str) -> None:
+        if status not in cls.VALID_STATUSES:
+            raise ValueError(f"不支持的 command 审批状态: {status}")
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> CommandApprovalRequestRecord:
+        return CommandApprovalRequestRecord(
+            id=row["id"],
+            session_id=row["session_id"],
+            trace_id=row["trace_id"],
+            turn_index=row["turn_index"],
+            run_id=row["run_id"],
+            tool_name=row["tool_name"],
+            kind=row["kind"],
+            title=row["title"],
+            description=row["description"],
+            command=row["command"],
+            cwd=row["cwd"],
+            shell=row["shell"],
+            workspace_root=row["workspace_root"],
+            details=_json_loads(row["details_json"], {}),
+            status=row["status"],
+            decision=row["decision"],
+            trust_scope=row["trust_scope"],
+            rule_match_type=row["rule_match_type"],
+            reject_message=row["reject_message"],
+            trusted_rule_id=row["trusted_rule_id"],
+            created_at=row["created_at"],
+            resolved_at=row["resolved_at"],
+            updated_at=row["updated_at"],
+            is_deleted=bool(row["is_deleted"]),
+        )
+
+
+class TrustedCommandRulesRepository:
+    VALID_MATCH_TYPES = {"exact", "prefix"}
+
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def create(
+        self,
+        *,
+        rule_id: str,
+        command_pattern: str,
+        normalized_command: str,
+        match_type: str,
+        shell: str,
+        workspace_root: str,
+        cwd_pattern: str,
+        created_from_approval_id: str | None = None,
+        enabled: bool = True,
+    ) -> TrustedCommandRuleRecord:
+        self._validate_match_type(match_type)
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                insert into trusted_command_rules (
+                  id, command_pattern, normalized_command, match_type, shell,
+                  workspace_root, cwd_pattern, enabled, created_from_approval_id,
+                  created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    rule_id,
+                    command_pattern,
+                    normalized_command,
+                    match_type,
+                    shell,
+                    workspace_root,
+                    cwd_pattern,
+                    int(enabled),
+                    created_from_approval_id,
+                    now,
+                    now,
+                ),
+            )
+        record = self.get(rule_id)
+        if record is None:
+            raise RuntimeError(f"创建已信任命令后无法读取: {rule_id}")
+        return record
+
+    def get(
+        self,
+        rule_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> TrustedCommandRuleRecord | None:
+        query = "select * from trusted_command_rules where id = ?"
+        params: list[Any] = [rule_id]
+        if not include_deleted:
+            query += " and is_deleted = 0"
+        with self.db.connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        return self._from_row(row) if row else None
+
+    def list(
+        self,
+        *,
+        include_disabled: bool = True,
+        include_deleted: bool = False,
+        limit: int = 200,
+    ) -> list[TrustedCommandRuleRecord]:
+        filters: list[str] = []
+        if not include_disabled:
+            filters.append("enabled = 1")
+        if not include_deleted:
+            filters.append("is_deleted = 0")
+        where = f"where {' and '.join(filters)}" if filters else ""
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                select * from trusted_command_rules
+                {where}
+                order by created_at desc, id desc
+                limit ?
+                """,
+                (max(1, min(limit, 500)),),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def set_enabled(self, rule_id: str, enabled: bool) -> TrustedCommandRuleRecord | None:
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                update trusted_command_rules set
+                  enabled = ?,
+                  updated_at = ?
+                where id = ? and is_deleted = 0
+                """,
+                (int(enabled), now, rule_id),
+            )
+        return self.get(rule_id)
+
+    def delete(self, rule_id: str) -> bool:
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                update trusted_command_rules set
+                  is_deleted = 1,
+                  enabled = 0,
+                  updated_at = ?
+                where id = ? and is_deleted = 0
+                """,
+                (now, rule_id),
+            )
+        return int(cursor.rowcount or 0) > 0
+
+    def touch_last_used(self, rule_id: str) -> TrustedCommandRuleRecord | None:
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                update trusted_command_rules set
+                  last_used_at = ?,
+                  updated_at = ?
+                where id = ? and is_deleted = 0
+                """,
+                (now, now, rule_id),
+            )
+        return self.get(rule_id)
+
+    @classmethod
+    def _validate_match_type(cls, match_type: str) -> None:
+        if match_type not in cls.VALID_MATCH_TYPES:
+            raise ValueError(f"不支持的命令匹配类型: {match_type}")
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> TrustedCommandRuleRecord:
+        return TrustedCommandRuleRecord(
+            id=row["id"],
+            command_pattern=row["command_pattern"],
+            normalized_command=row["normalized_command"],
+            match_type=row["match_type"],
+            shell=row["shell"],
+            workspace_root=row["workspace_root"],
+            cwd_pattern=row["cwd_pattern"],
+            enabled=bool(row["enabled"]),
+            created_from_approval_id=row["created_from_approval_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            last_used_at=row["last_used_at"],
+            is_deleted=bool(row["is_deleted"]),
+        )
+
+
+class CommandApprovalAuditRepository:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def create(
+        self,
+        *,
+        audit_id: str,
+        approval_id: str,
+        session_id: str,
+        command: str,
+        cwd: str,
+        decision: str,
+        trust_scope: str | None = None,
+        rule_match_type: str | None = None,
+        trusted_rule_id: str | None = None,
+        reject_message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> CommandApprovalAuditRecord:
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                insert into command_approval_audit (
+                  id, approval_id, session_id, command, cwd, decision, trust_scope,
+                  rule_match_type, trusted_rule_id, reject_message, metadata_json, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    audit_id,
+                    approval_id,
+                    session_id,
+                    command,
+                    cwd,
+                    decision,
+                    trust_scope,
+                    rule_match_type,
+                    trusted_rule_id,
+                    reject_message,
+                    _json_dumps(_sanitize_metadata(metadata or {})),
+                    now,
+                ),
+            )
+        record = self.get(audit_id)
+        if record is None:
+            raise RuntimeError(f"创建 command 审批审计后无法读取: {audit_id}")
+        return record
+
+    def get(self, audit_id: str) -> CommandApprovalAuditRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "select * from command_approval_audit where id = ?",
+                (audit_id,),
+            ).fetchone()
+        return self._from_row(row) if row else None
+
+    def list(
+        self,
+        *,
+        session_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[CommandApprovalAuditRecord], int]:
+        filters: list[str] = []
+        params: list[Any] = []
+        if session_id:
+            filters.append("session_id = ?")
+            params.append(session_id)
+        where = f"where {' and '.join(filters)}" if filters else ""
+        resolved_limit = max(1, min(limit, 500))
+        resolved_offset = max(0, offset)
+        with self.db.connect() as conn:
+            total = conn.execute(
+                f"select count(*) as total from command_approval_audit {where}",
+                params,
+            ).fetchone()
+            rows = conn.execute(
+                f"""
+                select * from command_approval_audit
+                {where}
+                order by created_at desc, id desc
+                limit ? offset ?
+                """,
+                [*params, resolved_limit, resolved_offset],
+            ).fetchall()
+        return [self._from_row(row) for row in rows], int(total["total"])
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> CommandApprovalAuditRecord:
+        return CommandApprovalAuditRecord(
+            id=row["id"],
+            approval_id=row["approval_id"],
+            session_id=row["session_id"],
+            command=row["command"],
+            cwd=row["cwd"],
+            decision=row["decision"],
+            trust_scope=row["trust_scope"],
+            rule_match_type=row["rule_match_type"],
+            trusted_rule_id=row["trusted_rule_id"],
+            reject_message=row["reject_message"],
+            metadata=_json_loads(row["metadata_json"], {}),
+            created_at=row["created_at"],
+        )
+
+
 def _validate_timezone_offset(value: int) -> None:
     if value < -14 * 60 or value > 14 * 60:
         raise ValueError("时区偏移必须在 -840 到 840 分钟之间")
@@ -2151,6 +2708,9 @@ class StorageRepositories:
         self.sessions = SessionsRepository(db)
         self.workspace_file_annotations = WorkspaceFileAnnotationsRepository(db)
         self.message_events = MessageEventsRepository(db)
+        self.command_approvals = CommandApprovalRequestsRepository(db)
+        self.trusted_command_rules = TrustedCommandRulesRepository(db)
+        self.command_approval_audit = CommandApprovalAuditRepository(db)
         self.trace_records = TraceRecordsRepository(db)
         self.trace_event_logs = TraceEventLogsRepository(db)
         self.llm_request_logs = LLMRequestLogsRepository(db)

@@ -22,6 +22,7 @@ class MessageEventService:
         messages: list[dict[str, Any]] = []
         active_subagents: dict[str, int] = {}
         tool_run_map: dict[str, tuple[int, int | None]] = {}
+        approval_message_map: dict[str, int] = {}
         pending_context_items: list[dict[str, Any]] = []
 
         for event in events:
@@ -94,6 +95,24 @@ class MessageEventService:
 
             if action == ReplayAction.TOOL_END.value:
                 self._apply_tool_end(messages, tool_run_map, data)
+                continue
+
+            if action == ReplayAction.APPROVAL_REQUESTED.value:
+                self._append_or_update_approval(
+                    messages,
+                    approval_message_map,
+                    data,
+                    self._event_timestamp_ms(event),
+                )
+                continue
+
+            if action == ReplayAction.APPROVAL_RESOLVED.value:
+                self._append_or_update_approval(
+                    messages,
+                    approval_message_map,
+                    data,
+                    self._event_timestamp_ms(event),
+                )
                 continue
 
             if action == ReplayAction.SUBAGENT_START.value:
@@ -350,6 +369,58 @@ class MessageEventService:
         target["status"] = "error" if error else "completed"
         if error:
             target["toolError"] = error
+
+    @staticmethod
+    def _append_or_update_approval(
+        messages: list[dict[str, Any]],
+        approval_message_map: dict[str, int],
+        data: dict[str, Any],
+        timestamp: int,
+    ) -> None:
+        approval = data.get("approval")
+        if not isinstance(approval, dict):
+            return
+        approval_id = str(approval.get("id") or "")
+        if not approval_id:
+            return
+        content = MessageEventService._approval_content(approval)
+        message = {
+            "role": "approval",
+            "content": content,
+            "approval": approval,
+            "status": approval.get("status", "pending"),
+            "timestamp": timestamp,
+        }
+        idx = approval_message_map.get(approval_id)
+        if idx is None:
+            for index, item in enumerate(messages):
+                item_approval = item.get("approval")
+                if isinstance(item_approval, dict) and item_approval.get("id") == approval_id:
+                    idx = index
+                    break
+        if idx is None:
+            approval_message_map[approval_id] = len(messages)
+            messages.append(message)
+            return
+        approval_message_map[approval_id] = idx
+        messages[idx].update(message)
+
+    @staticmethod
+    def _approval_content(approval: dict[str, Any]) -> str:
+        status = str(approval.get("status") or "pending")
+        details = approval.get("details") if isinstance(approval.get("details"), dict) else {}
+        command = str(details.get("command") or "").strip()
+        if status == "approved":
+            prefix = "已允许执行命令"
+        elif status == "rejected":
+            prefix = "已拒绝执行命令"
+        elif status == "cancelled":
+            prefix = "已取消命令审批"
+        elif status == "expired":
+            prefix = "命令审批已超时"
+        else:
+            prefix = str(approval.get("title") or "等待确认命令执行")
+        return f"{prefix}: {command}" if command else prefix
 
     @staticmethod
     def _tool_ui_payload(data: dict[str, Any]) -> dict[str, Any] | None:

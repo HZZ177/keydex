@@ -4,6 +4,7 @@ import type {
   AgentChatMessagePayload,
   AgentCompletedPayload,
   AgentErrorData,
+  CommandApprovalRequest,
   AgentGhostStats,
   AgentHistoryResponse,
   AgentReasoningData,
@@ -22,7 +23,7 @@ import type {
   Workspace,
 } from "@/types/protocol";
 
-export type AgentSessionRuntimeState = "idle" | "running" | "cancelling" | "failed" | "closed";
+export type AgentSessionRuntimeState = "idle" | "running" | "waiting_approval" | "cancelling" | "failed" | "closed";
 
 export interface AgentSessionViewState {
   sessionId: string;
@@ -39,6 +40,7 @@ export interface AgentSessionViewState {
   historyCursor: string | null;
   historyHasMoreOlder: boolean;
   hasUnread: boolean;
+  pendingApproval: CommandApprovalRequest | null;
   stale: boolean;
 }
 
@@ -138,6 +140,12 @@ export function reduceAgentWsEvent(
       break;
     case "tool_end":
       next = handleToolEnd(state, event.data as unknown as AgentToolEventData);
+      break;
+    case "approval_requested":
+      next = handleApprovalRequested(state, event.data);
+      break;
+    case "approval_resolved":
+      next = handleApprovalResolved(state, event.data);
       break;
     case "subagent_start":
       next = handleSubagentStart(state, event.data);
@@ -239,7 +247,12 @@ function markUnreadFromEvent(
     return state;
   }
   const currentView = state.sessionStateById[sessionId];
-  if (currentView?.isStreaming || currentView?.runtimeState === "running" || currentView?.runtimeState === "cancelling") {
+  if (
+    currentView?.isStreaming ||
+    currentView?.runtimeState === "running" ||
+    currentView?.runtimeState === "waiting_approval" ||
+    currentView?.runtimeState === "cancelling"
+  ) {
     return state;
   }
   const next = cloneState(state);
@@ -249,6 +262,24 @@ function markUnreadFromEvent(
 
 function runningSessionIdsFromStatus(data: Record<string, unknown>): string[] {
   const value = data.running_sessions;
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+      if (item && typeof item === "object") {
+        return stringValue((item as { session_id?: unknown }).session_id);
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+function waitingApprovalSessionIdsFromStatus(data: Record<string, unknown>): string[] {
+  const value = data.waiting_approval_sessions;
   if (!Array.isArray(value)) {
     return [];
   }
@@ -311,7 +342,11 @@ function loadHistory(
   view.hasUnread = false;
   view.stale = false;
   view.isStreaming = view.messages.some((message) => Boolean(message.streaming));
+  view.pendingApproval = latestPendingApproval(view.messages);
   view.runtimeState = view.isStreaming ? "running" : runtimeStateFromSessionStatus(view.status);
+  if (view.pendingApproval) {
+    view.runtimeState = "waiting_approval";
+  }
   return next;
 }
 
@@ -333,7 +368,11 @@ function prependHistory(
   view.hydrated = true;
   view.stale = false;
   view.isStreaming = view.messages.some((message) => Boolean(message.streaming));
+  view.pendingApproval = latestPendingApproval(view.messages);
   view.runtimeState = view.isStreaming ? "running" : runtimeStateFromSessionStatus(view.status);
+  if (view.pendingApproval) {
+    view.runtimeState = "waiting_approval";
+  }
   return next;
 }
 
@@ -435,6 +474,60 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
   }
   view.isStreaming = true;
   markTurnInProgress(view);
+  return next;
+}
+
+function handleApprovalRequested(
+  state: AgentConversationState,
+  data: Record<string, unknown>,
+): AgentConversationState {
+  const approval = approvalFromData(data);
+  const sessionId = approval?.session_id || sessionIdFromData(data) || state.selectedSessionId || "";
+  if (!sessionId || !approval) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  view.pendingApproval = approval;
+  view.runtimeState = "waiting_approval";
+  view.isStreaming = false;
+  view.isCancelling = false;
+  upsertApprovalMessage(next, view, approval);
+  const existing = next.sessionsById[sessionId];
+  if (existing) {
+    next.sessionsById = {
+      ...next.sessionsById,
+      [sessionId]: { ...existing, status: "waiting_approval" },
+    };
+  }
+  return next;
+}
+
+function handleApprovalResolved(
+  state: AgentConversationState,
+  data: Record<string, unknown>,
+): AgentConversationState {
+  const approval = approvalFromData(data);
+  const sessionId = approval?.session_id || sessionIdFromData(data) || state.selectedSessionId || "";
+  if (!sessionId || !approval) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  if (view.pendingApproval?.id === approval.id) {
+    view.pendingApproval = null;
+  }
+  view.runtimeState = "running";
+  view.isStreaming = true;
+  view.isCancelling = false;
+  upsertApprovalMessage(next, view, approval);
+  const existing = next.sessionsById[sessionId];
+  if (existing) {
+    next.sessionsById = {
+      ...next.sessionsById,
+      [sessionId]: { ...existing, status: "running" },
+    };
+  }
   return next;
 }
 
@@ -715,6 +808,7 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
   view.isStreaming = false;
   view.isCancelling = false;
   view.stale = false;
+  view.pendingApproval = null;
   view.runtimeState = payload.status === "failed" ? "failed" : "idle";
   return next;
 }
@@ -766,6 +860,7 @@ function handleCancelled(state: AgentConversationState, data: Record<string, unk
   }
   view.isStreaming = false;
   view.isCancelling = false;
+  view.pendingApproval = null;
   view.runtimeState = "idle";
   return next;
 }
@@ -794,6 +889,7 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
   }
   view.isStreaming = false;
   view.isCancelling = false;
+  view.pendingApproval = null;
   view.runtimeState = "failed";
   return next;
 }
@@ -804,9 +900,17 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
   const runningSessionIds = runningSessionIdsFromStatus(data);
   for (const runningSessionId of runningSessionIds) {
     const runningView = ensureSessionState(next, runningSessionId);
-    runningView.runtimeState = "running";
-    runningView.isStreaming = true;
+    if (!runningView.pendingApproval) {
+      runningView.runtimeState = "running";
+      runningView.isStreaming = true;
+    }
     runningView.isCancelling = false;
+  }
+  for (const waitingSessionId of waitingApprovalSessionIdsFromStatus(data)) {
+    const waitingView = ensureSessionState(next, waitingSessionId);
+    waitingView.runtimeState = "waiting_approval";
+    waitingView.isStreaming = false;
+    waitingView.isCancelling = false;
   }
   if (!sessionId) {
     return next;
@@ -1020,10 +1124,93 @@ function ensureSessionState(
     historyCursor: meta.historyCursor ?? null,
     historyHasMoreOlder: meta.historyHasMoreOlder ?? false,
     hasUnread: meta.hasUnread ?? false,
+    pendingApproval: meta.pendingApproval ?? null,
     stale: meta.stale ?? false,
   };
   state.sessionStateById[sessionId] = created;
   return created;
+}
+
+function approvalFromData(data: Record<string, unknown>): CommandApprovalRequest | null {
+  const approval = asRecord(data.approval);
+  if (!approval) {
+    return null;
+  }
+  const id = stringValue(approval.id);
+  const sessionId = stringValue(approval.session_id) || stringValue(approval.thread_id);
+  if (!id || !sessionId) {
+    return null;
+  }
+  return {
+    id,
+    session_id: sessionId,
+    thread_id: stringValue(approval.thread_id) || sessionId,
+    turn_id: stringValue(approval.turn_id),
+    item_id: stringValue(approval.item_id),
+    call_id: stringValue(approval.call_id),
+    run_id: nullableString(approval.run_id),
+    tool_name: stringValue(approval.tool_name) || "run_command",
+    kind: stringValue(approval.kind) || "exec",
+    title: stringValue(approval.title) || "是否允许执行命令？",
+    description: stringValue(approval.description),
+    details: asRecord(approval.details) ?? {},
+    status: isApprovalStatus(stringValue(approval.status)) ? stringValue(approval.status) : "pending",
+    decision: isApprovalDecision(stringValue(approval.decision)) ? stringValue(approval.decision) : null,
+    trust_scope: isTrustScope(stringValue(approval.trust_scope)) ? stringValue(approval.trust_scope) : null,
+    rule_match_type: isRuleMatchType(stringValue(approval.rule_match_type)) ? stringValue(approval.rule_match_type) : null,
+    reject_message: nullableString(approval.reject_message),
+    trusted_rule_id: nullableString(approval.trusted_rule_id),
+    created_at: stringValue(approval.created_at) || new Date().toISOString(),
+    resolved_at: nullableString(approval.resolved_at),
+  };
+}
+
+function latestPendingApproval(messages: AgentChatMessage[]): CommandApprovalRequest | null {
+  for (const message of [...messages].reverse()) {
+    if (message.role === "approval" && message.approval?.status === "pending") {
+      return message.approval;
+    }
+  }
+  return null;
+}
+
+function upsertApprovalMessage(
+  state: AgentConversationState,
+  view: AgentSessionViewState,
+  approval: CommandApprovalRequest,
+) {
+  const existing = view.messages.find((message) => message.role === "approval" && message.approval?.id === approval.id);
+  const patch: Partial<AgentChatMessage> = {
+    role: "approval",
+    content: approvalContent(approval),
+    approval,
+    status: approval.status,
+    timestamp: Date.parse(approval.resolved_at || approval.created_at) || Date.now(),
+  };
+  if (existing) {
+    Object.assign(existing, patch);
+    return;
+  }
+  view.messages.push({
+    id: nextMessageId(state, "approval", view.sessionId),
+    sessionId: view.sessionId,
+    content: approvalContent(approval),
+    timestamp: Date.parse(approval.created_at) || Date.now(),
+    role: "approval",
+    approval,
+    status: approval.status,
+  });
+}
+
+function approvalContent(approval: CommandApprovalRequest): string {
+  const command = stringValue(approval.details.command);
+  if (approval.status === "approved") {
+    return command ? `已允许执行命令: ${command}` : "已允许执行命令";
+  }
+  if (approval.status === "rejected") {
+    return command ? `已拒绝执行命令: ${command}` : "已拒绝执行命令";
+  }
+  return command ? `等待批准执行命令: ${command}` : approval.title;
 }
 
 function ensureSubagentMessage(
@@ -1472,6 +1659,9 @@ function runtimeStateFromSessionStatus(status: AgentSessionStatus): AgentSession
   if (status === "running") {
     return "running";
   }
+  if (status === "waiting_approval") {
+    return "waiting_approval";
+  }
   if (status === "failed") {
     return "failed";
   }
@@ -1512,6 +1702,7 @@ function cloneState(state: AgentConversationState): AgentConversationState {
 function cloneMessage(message: AgentChatMessage): AgentChatMessage {
   return {
     ...message,
+    approval: message.approval ? { ...message.approval, details: { ...message.approval.details } } : undefined,
     attachments: message.attachments ? [...message.attachments] : undefined,
     subagentToolCalls: message.subagentToolCalls?.map((tool) => ({ ...tool })),
     subagentItems: message.subagentItems?.map((item) => ({ ...item })),
@@ -1572,11 +1763,27 @@ function isAgentSessionType(value: string): value is AgentSessionType {
 }
 
 function isAgentSessionStatus(value: string): value is AgentSessionStatus {
-  return value === "active" || value === "running" || value === "closed" || value === "failed";
+  return value === "active" || value === "running" || value === "waiting_approval" || value === "closed" || value === "failed";
 }
 
 function isRuntimeState(value: string): value is AgentSessionRuntimeState {
-  return value === "idle" || value === "running" || value === "cancelling" || value === "failed" || value === "closed";
+  return value === "idle" || value === "running" || value === "waiting_approval" || value === "cancelling" || value === "failed" || value === "closed";
+}
+
+function isApprovalStatus(value: string): value is CommandApprovalRequest["status"] {
+  return ["pending", "approved", "rejected", "expired", "cancelled"].includes(value);
+}
+
+function isApprovalDecision(value: string): value is NonNullable<CommandApprovalRequest["decision"]> {
+  return value === "approved" || value === "rejected";
+}
+
+function isTrustScope(value: string): value is NonNullable<CommandApprovalRequest["trust_scope"]> {
+  return value === "once" || value === "persistent";
+}
+
+function isRuleMatchType(value: string): value is NonNullable<CommandApprovalRequest["rule_match_type"]> {
+  return value === "exact" || value === "prefix";
 }
 
 function isDefined<T>(value: T | null | undefined): value is T {

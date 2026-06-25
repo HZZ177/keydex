@@ -7,6 +7,13 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from backend.app.command_approval import (
+    ApprovalService,
+    CommandApprovalDecision,
+    CommandApprovalError,
+    approval_to_payload,
+    load_command_settings,
+)
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.request_context import trace_id_var
@@ -184,6 +191,40 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     logger.info(
                         f"[WebSocket] 收到取消请求 | trace_id={connection_trace_id} | "
                         f"session_id={session_id or '-'} | cancelled={cancelled}"
+                    )
+                    continue
+
+                if action == "approval_decision":
+                    approval_id = str(payload.get("approval_id") or payload.get("id") or "").strip()
+                    if not approval_id:
+                        await send_error("missing_approval", "approval_id 必填")
+                        continue
+                    try:
+                        decision = CommandApprovalDecision(
+                            decision=str(payload.get("decision") or ""),
+                            trust_scope=str(payload.get("trust_scope") or "once"),
+                            rule_match_type=payload.get("rule_match_type"),
+                            reject_message=str(payload.get("reject_message") or ""),
+                        )
+                        record = await ApprovalService(repositories=repositories).resolve(
+                            approval_id,
+                            decision,
+                            settings=load_command_settings(repositories),
+                            user_id=str(payload.get("user_id") or settings.default_user_id),
+                        )
+                    except CommandApprovalError as exc:
+                        await send_error("invalid_approval_decision", str(exc))
+                        continue
+                    approval = approval_to_payload(record)
+                    await stream_manager.broadcast(
+                        session_id=record.session_id,
+                        action="approval_resolved",
+                        data={
+                            "id": record.id,
+                            "approval_id": record.id,
+                            "session_id": record.session_id,
+                            "approval": approval,
+                        },
                     )
                     continue
 

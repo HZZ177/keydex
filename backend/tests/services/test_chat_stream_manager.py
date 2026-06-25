@@ -105,6 +105,8 @@ async def test_chat_stream_manager_unsubscribe_does_not_cancel_running_turn() ->
         "session_id": "ses-a",
         "status": "idle",
         "running_sessions": [],
+        "waiting_approval_sessions": [],
+        "pending_approvals": [],
     }
 
 
@@ -162,4 +164,6 @@ async def test_chat_stream_manager_cancel_interrupts_running_task() -> None:
         "session_id": "ses-a",
         "status": "idle",
         "running_sessions": [],
+        "waiting_approval_sessions": [],
+        "pending_approvals": [],
     }

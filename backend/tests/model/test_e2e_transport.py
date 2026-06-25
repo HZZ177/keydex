@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from backend.app.agent.factory import AgentFactory
@@ -47,3 +48,28 @@ async def test_e2e_transport_can_drive_langchain_chat_completions_stream() -> No
 
     assert text.startswith("# 流式 Markdown 验收")
     assert "最终检查点：Markdown、代码块和长文本已经完整显示。" in text
+
+
+@pytest.mark.asyncio
+async def test_e2e_transport_command_approval_ignores_old_tool_messages() -> None:
+    async with httpx.AsyncClient(
+        base_url="http://e2e-model.test",
+        transport=create_e2e_model_transport(delay_ms=0),
+    ) as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "messages": [
+                    {"role": "user", "content": "命令审批 exact"},
+                    {"role": "tool", "content": "old result", "tool_call_id": "old-call"},
+                    {"role": "user", "content": "命令审批 exact-different"},
+                ],
+            },
+        )
+
+    body = response.text
+    assert response.status_code == 200
+    assert "run_command" in body
+    assert "e2e-approval-exact-different" in body

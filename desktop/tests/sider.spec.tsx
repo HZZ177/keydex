@@ -2,13 +2,13 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ChatChannel, RuntimeBridge, WsConnectionStatus } from "@/runtime";
+import type { ChatChannel, ListSessionsOptions, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import { Sider } from "@/renderer/components/layout/Sider";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider";
 import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectionProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
-import type { AgentActionEnvelope, AgentSession, Workspace } from "@/types/protocol";
+import type { AgentActionEnvelope, AgentSession, CommandApprovalRequest, Workspace } from "@/types/protocol";
 
 function renderSider(ui: ReactElement) {
   return render(<ThemeProvider>{ui}</ThemeProvider>);
@@ -101,12 +101,32 @@ describe("Sider", () => {
   });
 
   it("uses icon-only collapsed affordances", () => {
-    renderSider(<Sider collapsed />);
+    renderSider(<Sider collapsed conversations={[]} />);
 
     expect(screen.getByTitle("新对话")).not.toBeNull();
     expect(screen.getByTitle("搜索")).not.toBeNull();
     expect(screen.getByTitle("切换主题")).not.toBeNull();
     expect(screen.getByTitle("设置")).not.toBeNull();
+  });
+
+  it("renders the sidebar collapse control in the main navigation list", () => {
+    const onToggleSidebar = vi.fn();
+    const { rerender } = renderSider(<Sider conversations={[]} onToggleSidebar={onToggleSidebar} />);
+
+    const collapseButton = screen.getByRole("button", { name: "折叠侧边栏" });
+    expect(collapseButton.getAttribute("data-icon")).toBe("panel-left-close");
+    expect(collapseButton.parentElement?.getAttribute("aria-label")).toBe("主导航");
+
+    fireEvent.click(collapseButton);
+    expect(onToggleSidebar).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ThemeProvider>
+        <Sider collapsed conversations={[]} onToggleSidebar={onToggleSidebar} />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "展开侧边栏" }).getAttribute("data-icon")).toBe("panel-left-open");
   });
 
   it("hides the footer feather when the history list is scrolled to the bottom", () => {
@@ -270,6 +290,62 @@ describe("Sider", () => {
     expect(screen.getByRole("button", { name: "项目会话 A" })).not.toBeNull();
   });
 
+  it("limits workspace session history to five rows until expanded", async () => {
+    const allWorkspaceThreads = Array.from({ length: 7 }, (_, index) =>
+      thread({
+        id: `workspace-${index + 1}`,
+        title: `项目会话 ${index + 1}`,
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "keydex"),
+        updated_at: `2026-06-17T10:${String(59 - index).padStart(2, "0")}:00Z`,
+      }),
+    );
+    const initialThreads = allWorkspaceThreads.slice(0, 6);
+    const listSessions = vi.fn((options?: ListSessionsOptions) => {
+      const list = options?.workspaceId === "ws-1" ? allWorkspaceThreads : initialThreads;
+      return Promise.resolve({
+        list,
+        total: list.length,
+        page: options?.page ?? 1,
+        page_size: options?.pageSize ?? 50,
+      });
+    });
+    const runtime = fakeRuntime(initialThreads);
+    runtime.conversation.listSessions = listSessions;
+
+    renderSider(<Sider runtime={runtime} />);
+
+    const group = await screen.findByRole("region", { name: "keydex" });
+    expect(within(group).getByRole("button", { name: "项目会话 5" })).not.toBeNull();
+    expect(within(group).queryByRole("button", { name: "项目会话 6" })).toBeNull();
+    expect(within(group).queryByRole("button", { name: "项目会话 7" })).toBeNull();
+
+    const expandButton = within(group).getByRole("button", { name: "展开 keydex 会话历史" });
+    expect(expandButton.textContent).toContain("展开会话");
+    expect(group.querySelector('[data-history-extra-items="true"]')?.getAttribute("data-expanded")).toBe("false");
+    fireEvent.click(expandButton);
+
+    await waitFor(() => {
+      expect(listSessions).toHaveBeenCalledWith({
+        sessionType: "workspace",
+        workspaceId: "ws-1",
+        page: 1,
+        pageSize: 100,
+      });
+    });
+    expect(await within(group).findByRole("button", { name: "项目会话 7" })).not.toBeNull();
+    expect(group.querySelector('[data-history-extra-items="true"]')?.getAttribute("data-expanded")).toBe("true");
+
+    const collapseButton = within(group).getByRole("button", { name: "折叠 keydex 会话历史" });
+    expect(collapseButton.textContent).toContain("折叠会话");
+    fireEvent.click(collapseButton);
+
+    expect(group.querySelector('[data-history-extra-items="true"]')?.getAttribute("data-expanded")).toBe("false");
+    expect(within(group).queryByRole("button", { name: "项目会话 6" })).toBeNull();
+    expect(within(group).queryByRole("button", { name: "项目会话 7" })).toBeNull();
+  });
+
   it("collapses history buckets and starts the requested new chat type", async () => {
     const onNavigate = vi.fn();
     const runtime = fakeRuntime([
@@ -364,6 +440,7 @@ describe("Sider", () => {
       bindSession: vi.fn(),
       unbindSession: vi.fn(),
       chat: vi.fn(),
+      approvalDecision: vi.fn(),
       cancel: vi.fn(),
       requestStatus,
       ping: vi.fn(),
@@ -410,6 +487,71 @@ describe("Sider", () => {
     expect(screen.getByRole("button", { name: "当前会话" }).querySelector('[data-unread="true"]')).toBeNull();
   });
 
+  it("keeps waiting approval indicator visible until approval is resolved", async () => {
+    let emit: (event: AgentActionEnvelope) => void = () => undefined;
+    const onNavigate = vi.fn();
+    const runtime = fakeRuntime([
+      thread({ id: "thread-a", title: "当前会话" }),
+      thread({ id: "thread-b", title: "待审批会话" }),
+    ]);
+    const channel: ChatChannel = {
+      close: vi.fn(),
+      getStatus: vi.fn<() => WsConnectionStatus>(() => "open"),
+      getSessionId: vi.fn(() => null),
+      createSession: vi.fn(),
+      bindSession: vi.fn(),
+      unbindSession: vi.fn(),
+      chat: vi.fn(),
+      approvalDecision: vi.fn(),
+      cancel: vi.fn(),
+      requestStatus: vi.fn(),
+      ping: vi.fn(),
+    };
+    runtime.conversation.openChatChannel = vi.fn((onEvent, options?: { onStatus?: (status: "open") => void }) => {
+      emit = onEvent;
+      options?.onStatus?.("open");
+      return channel;
+    });
+
+    renderSider(
+      <AgentSessionProvider runtime={runtime}>
+        <Sider runtime={runtime} activePath="/conversation/thread-a" onNavigate={onNavigate} />
+      </AgentSessionProvider>,
+    );
+
+    await screen.findByText("待审批会话");
+
+    act(() => {
+      emit({
+        action: "approval_requested",
+        data: { session_id: "thread-b", approval: commandApproval("thread-b", "approval-1") },
+      });
+    });
+
+    const backgroundRow = screen.getByRole("button", { name: "待审批会话" });
+    let indicator = backgroundRow.querySelector('[data-session-indicators="true"]');
+    expect(indicator?.getAttribute("data-waiting-approval")).toBe("true");
+    expect(indicator?.textContent).toContain("等待批准");
+    expect(backgroundRow.querySelector("time")).toBeNull();
+
+    fireEvent.click(backgroundRow);
+    expect(onNavigate).toHaveBeenCalledWith("/conversation/thread-b");
+    indicator = backgroundRow.querySelector('[data-session-indicators="true"]');
+    expect(indicator?.getAttribute("data-waiting-approval")).toBe("true");
+
+    act(() => {
+      emit({
+        action: "approval_resolved",
+        data: {
+          session_id: "thread-b",
+          approval: { ...commandApproval("thread-b", "approval-1"), status: "approved" },
+        },
+      });
+    });
+
+    expect(backgroundRow.querySelector('[data-waiting-approval="true"]')).toBeNull();
+  });
+
   it("renders collapsed background loading in the session button center", async () => {
     let emit: (event: AgentActionEnvelope) => void = () => undefined;
     const runtime = fakeRuntime([
@@ -424,6 +566,7 @@ describe("Sider", () => {
       bindSession: vi.fn(),
       unbindSession: vi.fn(),
       chat: vi.fn(),
+      approvalDecision: vi.fn(),
       cancel: vi.fn(),
       requestStatus: vi.fn(),
       ping: vi.fn(),
@@ -627,6 +770,26 @@ function workspace(id: string, name: string): Workspace {
     updated_at: "2026-06-21T00:00:00Z",
     last_opened_at: null,
     is_deleted: false,
+  };
+}
+
+function commandApproval(sessionId: string, id: string): CommandApprovalRequest {
+  return {
+    id,
+    session_id: sessionId,
+    thread_id: sessionId,
+    turn_id: "turn-1",
+    item_id: "item-command",
+    call_id: "call-command",
+    run_id: "run-command",
+    tool_name: "run_command",
+    kind: "exec",
+    title: "是否允许执行命令？",
+    description: "请求执行命令。",
+    details: { command: "pnpm test", cwd: "D:/repo" },
+    status: "pending",
+    created_at: "2026-06-17T10:00:01Z",
+    resolved_at: null,
   };
 }
 

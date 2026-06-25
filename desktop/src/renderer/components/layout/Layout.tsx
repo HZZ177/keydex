@@ -101,14 +101,17 @@ export function Layout({
   onNavigate,
 }: LayoutProps) {
   const shellRef = useRef<HTMLDivElement>(null);
-  const lastPreviewOpenStampRef = useRef<string | null>(null);
-  const lastPreviewCollapseRequestRef = useRef(0);
-  const lastFilePanelOpenRequestRef = useRef(0);
+  const previewContext = useOptionalPreview();
+  const lastPreviewOpenStampRef = useRef<string | null>(
+    previewContext?.open ? previewOpenStamp(previewContext.activeEntry) : null,
+  );
+  const lastPreviewCollapseRequestRef = useRef(previewContext?.collapseRequestId ?? 0);
+  const lastFilePanelOpenRequestRef = useRef(previewContext?.filePanelRequest?.requestId ?? 0);
+  const lastPreviewScopeKeyRef = useRef<string | null>(previewContext?.activeScopeKey ?? null);
   const lastRightSidebarResetKeyRef = useRef<string | null>(null);
   const [rightSidebarMode, setRightSidebarMode] = useState<"split" | "maximized">("split");
   const [shellWidth, setShellWidth] = useState(() => (typeof window === "undefined" ? 0 : window.innerWidth));
   const { state, actions } = useLayoutState();
-  const previewContext = useOptionalPreview();
   const runtimeConnection = useOptionalRuntimeConnection();
   const collapsed = state.sidebarCollapsed;
   const { sidebarMotion, toggleSidebar } = useSidebarCollapseMotion(actions.toggleSidebar);
@@ -179,11 +182,34 @@ export function Layout({
   }, []);
 
   useEffect(() => {
+    const activeScopeKey = previewContext?.activeScopeKey ?? null;
+    if (lastPreviewScopeKeyRef.current === activeScopeKey) {
+      return;
+    }
+    lastPreviewScopeKeyRef.current = activeScopeKey;
+
+    if (previewContext?.open) {
+      lastPreviewOpenStampRef.current = previewOpenStamp(previewContext.activeEntry);
+    }
+
+    const filePanelRequest = previewContext?.filePanelRequest ?? null;
+    if (filePanelRequest?.requestId && filePanelRequest.scopeKey === activeScopeKey) {
+      lastFilePanelOpenRequestRef.current = filePanelRequest.requestId;
+    }
+  }, [
+    previewContext?.activeEntry,
+    previewContext?.activeScopeKey,
+    previewContext?.filePanelRequest?.requestId,
+    previewContext?.filePanelRequest?.scopeKey,
+    previewContext?.open,
+  ]);
+
+  useEffect(() => {
     const activeEntry = previewContext?.open ? previewContext.activeEntry : null;
     if (!activeEntry) {
       return;
     }
-    const openedStamp = `${activeEntry.id}:${activeEntry.openedAt}`;
+    const openedStamp = previewOpenStamp(activeEntry);
     if (openedStamp === lastPreviewOpenStampRef.current) {
       return;
     }
@@ -335,11 +361,7 @@ export function Layout({
         } as CSSProperties
       }
     >
-      <Titlebar
-        title={title}
-        sidebarCollapsed={collapsed}
-        onToggleSidebar={toggleSidebar}
-      />
+      <Titlebar title={title} />
 
       {showRuntimeStatus && runtimeConnection ? (
         <ConnectionStatus
@@ -356,6 +378,7 @@ export function Layout({
           collapsed={collapsed}
           projects={projects}
           conversations={conversations}
+          onToggleSidebar={toggleSidebar}
           onNavigate={navigateFromShell}
         />
         <SidebarResizeHandle
@@ -952,6 +975,10 @@ function RightSidebarLoading({ label }: { label: string }) {
       <span>{label}</span>
     </div>
   );
+}
+
+function previewOpenStamp(entry: { id: string; openedAt: number } | null): string | null {
+  return entry ? `${entry.id}:${entry.openedAt}` : null;
 }
 
 function ResizePreviewSkeleton({ className }: { className: string }) {
