@@ -298,5 +298,6 @@ docs/superpowers/prototype
 /desktop/.npm-cache/
 /desktop/dist/
 /desktop/src-tauri/target/
-/desktop/src-tauri/binaries/agent-server.exe
+/desktop/src-tauri/binaries/*
+!/desktop/src-tauri/binaries/.gitkeep
 /backend/app/.data/
