@@ -7,6 +7,8 @@ from typing import Any
 from backend.app.events.actions import CompletedEventItemAction, ReplayAction
 from backend.app.storage import MessageEventRecord
 
+_TOOL_PREVIEW_TEXT_LIMIT = 1000
+
 
 class MessageEventService:
     def __init__(self, repository) -> None:
@@ -500,7 +502,7 @@ class MessageEventService:
     ) -> None:
         target["toolDurationMs"] = data.get("duration_ms")
         ui_payload = MessageEventService._tool_ui_payload(data)
-        error = data.get("error") or MessageEventService._tool_result_error(data.get("result"))
+        error = MessageEventService._tool_error_summary(data, ui_payload)
         target["status"] = "error" if error else "completed"
         if error:
             target["toolError"] = error
@@ -519,6 +521,10 @@ class MessageEventService:
             target["uiPayload"] = MessageEventService._tool_plan_summary(ui_payload)
         elif tool_name == "load_skill" and ui_payload:
             target["uiPayload"] = MessageEventService._tool_skill_summary(ui_payload)
+        elif tool_name == "run_command" and ui_payload:
+            command_summary = MessageEventService._tool_command_summary(ui_payload)
+            if command_summary:
+                target["uiPayload"] = command_summary
         files = MessageEventService._tool_file_summaries(
             MessageEventService._tool_files(data, ui_payload)
         )
@@ -685,7 +691,10 @@ class MessageEventService:
             if key in params and _is_summary_value(params[key]):
                 summary[key] = params[key]
         target = _tool_target(params)
-        if target and "path" not in summary and "file" not in summary:
+        has_explicit_target = any(
+            key in summary for key in ("path", "file", "command", "query", "pattern")
+        )
+        if target and not has_explicit_target:
             summary["path"] = target
         return summary
 
@@ -740,6 +749,97 @@ class MessageEventService:
                 summary["metadata"] = {"locator": locator}
         return summary
 
+    @staticmethod
+    def _tool_command_summary(ui_payload: dict[str, Any]) -> dict[str, Any]:
+        summary: dict[str, Any] = {}
+        for key in (
+            "command",
+            "cwd",
+            "status",
+            "exit_code",
+            "exitCode",
+            "duration_ms",
+            "durationMs",
+            "timed_out",
+            "timedOut",
+            "truncated",
+            "timeout_seconds",
+            "timeoutSeconds",
+        ):
+            value = ui_payload.get(key)
+            if _is_summary_value(value):
+                summary[key] = value
+
+        approval = ui_payload.get("approval")
+        if isinstance(approval, dict):
+            approval_summary: dict[str, Any] = {}
+            for key in ("trusted_rule_id", "reject_message", "decision", "status"):
+                value = approval.get(key)
+                if _is_summary_value(value):
+                    approval_summary[key] = value
+            if approval_summary:
+                summary["approval"] = approval_summary
+
+        error_text = MessageEventService._command_preview_error(ui_payload)
+        if error_text:
+            summary["stderr"] = error_text
+
+        execution_error = ui_payload.get("execution_error")
+        if isinstance(execution_error, dict):
+            execution_summary: dict[str, Any] = {}
+            for key in ("type", "message"):
+                value = execution_error.get(key)
+                if _is_summary_value(value):
+                    execution_summary[key] = value
+            if execution_summary:
+                summary["execution_error"] = execution_summary
+
+        tool_summary = ui_payload.get("tool_summary")
+        if isinstance(tool_summary, str) and tool_summary.strip():
+            summary["tool_summary"] = _preview_text(tool_summary)
+
+        return summary
+
+    @staticmethod
+    def _command_preview_error(ui_payload: dict[str, Any]) -> str:
+        status = str(ui_payload.get("status") or "").strip()
+        exit_code = ui_payload.get("exit_code", ui_payload.get("exitCode"))
+        failed_status = status in {"failed", "error", "timed_out", "disabled", "rejected"}
+        failed_exit = (
+            isinstance(exit_code, int)
+            and not isinstance(exit_code, bool)
+            and exit_code != 0
+        )
+        if not failed_status and not failed_exit:
+            return ""
+
+        stderr = str(ui_payload.get("stderr") or "").strip()
+        if stderr:
+            return _preview_text(stderr)
+
+        execution_error = ui_payload.get("execution_error")
+        if isinstance(execution_error, dict):
+            error_type = str(execution_error.get("type") or "").strip()
+            message = str(execution_error.get("message") or "").strip()
+            text = ": ".join(part for part in (error_type, message) if part)
+            if text:
+                return _preview_text(text)
+
+        if failed_exit:
+            return f"命令退出码 {exit_code}"
+        if status == "timed_out":
+            return "命令执行超时"
+        if status == "disabled":
+            return "命令行工具已禁用"
+        if status == "rejected":
+            approval = ui_payload.get("approval")
+            if isinstance(approval, dict):
+                reject_message = str(approval.get("reject_message") or "").strip()
+                if reject_message:
+                    return _preview_text(reject_message)
+            return "命令审批已拒绝"
+        return "命令执行失败"
+
     def _load_tool_event(
         self,
         session_id: str,
@@ -766,9 +866,7 @@ class MessageEventService:
         data = {**start_data, **end_data}
         ui_payload = MessageEventService._tool_ui_payload(end_data)
         files = MessageEventService._tool_files(end_data, ui_payload)
-        error = end_data.get("error") or MessageEventService._tool_result_error(
-            end_data.get("result")
-        )
+        error = MessageEventService._tool_error_summary(end_data, ui_payload)
         detail_ref = {
             "startEventId": start_event.id if start_event else None,
             "endEventId": end_event.id if end_event else None,
@@ -832,8 +930,57 @@ class MessageEventService:
         code = payload.get("code")
         message = payload.get("message")
         if isinstance(code, str) and code.strip() and isinstance(message, str):
-            return message
+            if message.strip():
+                return message
+            details = payload.get("details")
+            if isinstance(details, dict) and details:
+                return json.dumps(details, ensure_ascii=False)
         return ""
+
+    @staticmethod
+    def _tool_error_summary(
+        data: dict[str, Any],
+        ui_payload: dict[str, Any] | None,
+    ) -> str:
+        for value in (data.get("error"), data.get("message")):
+            error = MessageEventService._tool_error_text(value, allow_plain_text=True)
+            if error:
+                return _preview_text(error)
+        for value in (ui_payload, data.get("result")):
+            error = MessageEventService._tool_error_text(value, allow_plain_text=False)
+            if error:
+                return _preview_text(error)
+        return ""
+
+    @staticmethod
+    def _tool_error_text(value: Any, *, allow_plain_text: bool) -> str:
+        if isinstance(value, dict):
+            message = MessageEventService._tool_error_message(value)
+            if message:
+                return message
+            nested = value.get("error")
+            if nested is not value:
+                return MessageEventService._tool_error_text(
+                    nested,
+                    allow_plain_text=allow_plain_text,
+                )
+            return ""
+        if not isinstance(value, str):
+            return ""
+        stripped = value.strip()
+        if not stripped:
+            return ""
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            return stripped if allow_plain_text else ""
+        parsed_error = MessageEventService._tool_error_text(
+            parsed,
+            allow_plain_text=allow_plain_text,
+        )
+        if parsed_error:
+            return parsed_error
+        return stripped if allow_plain_text else ""
 
     @staticmethod
     def _append_cancelled_marker(
@@ -962,6 +1109,13 @@ def _is_summary_value(value: Any) -> bool:
     if isinstance(value, bool | int | float):
         return True
     return isinstance(value, str) and len(value) <= 512
+
+
+def _preview_text(value: Any, limit: int = _TOOL_PREVIEW_TEXT_LIMIT) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1]}…"
 
 
 def _tool_target(params: dict[str, Any]) -> str:

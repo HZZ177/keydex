@@ -213,3 +213,122 @@
   background: var(--surface-hover);
   color: var(--color-text-primary);
 }
+
+.turnNavigator {
+  position: absolute;
+  top: 50%;
+  right: 20px;
+  z-index: 12;
+  width: 52px;
+  height: var(--turn-navigator-height);
+  transform: translateY(-50%);
+}
+
+.turnNavigatorRail {
+  position: relative;
+  width: 100%;
+  height: var(--turn-navigator-height);
+}
+
+.turnNavigatorMarker {
+  position: absolute;
+  top: var(--turn-marker-top);
+  right: 0;
+  display: flex;
+  width: 44px;
+  height: 14px;
+  align-items: center;
+  justify-content: flex-end;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  padding: 0 8px 0 0;
+}
+
+.turnNavigatorMarker span {
+  display: block;
+  width: var(--turn-marker-width);
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-tertiary) 36%, transparent);
+  transition:
+    background 120ms ease,
+    opacity 120ms ease;
+}
+
+.turnNavigatorMarker:hover span,
+.turnNavigatorMarker:focus-visible span,
+.turnNavigatorMarker[data-active="true"] span {
+  background: color-mix(in srgb, var(--color-text-primary) 82%, transparent);
+}
+
+.turnNavigatorMarker:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-text-tertiary) 58%, transparent);
+  outline-offset: 1px;
+}
+
+.turnNavigatorCard {
+  position: absolute;
+  top: var(--turn-card-top);
+  right: 48px;
+  display: grid;
+  width: min(340px, calc(100vw - 96px));
+  max-width: 340px;
+  gap: 7px;
+  transform: translateY(-50%);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 96%, transparent);
+  box-shadow: var(--shadow-popover);
+  color: var(--color-text-primary);
+  padding: 11px 12px 12px;
+  pointer-events: none;
+  animation: turnNavigatorCardIn 120ms ease both;
+}
+
+.turnNavigatorCard strong {
+  display: block;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turnNavigatorCard span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+@keyframes turnNavigatorCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-50% + 3px));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%);
+  }
+}
+
+@media (max-width: 960px) {
+  .turnNavigator {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turnNavigatorMarker span,
+  .turnNavigatorCard {
+    animation: none;
+    transition: none;
+  }
+}

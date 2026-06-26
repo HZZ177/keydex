@@ -150,6 +150,100 @@ def test_message_event_service_can_defer_tool_payloads_for_history(tmp_path) -> 
     ]
 
 
+def test_message_event_service_keeps_deferred_command_error_preview(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_cmd_start",
+        "tool_start",
+        {
+            "tool": "run_command",
+            "params": {"command": "pytest backend/tests", "cwd": "D:/repo"},
+            "run_id": "tool_cmd",
+            "tool_call_id": "call_cmd",
+        },
+    )
+    _append(
+        repositories,
+        "evt_cmd_end",
+        "tool_end",
+        {
+            "run_id": "tool_cmd",
+            "tool_call_id": "call_cmd",
+            "result": "x" * 5000,
+            "duration_ms": 18,
+            "ui_payload": {
+                "command": "pytest backend/tests",
+                "cwd": "D:/repo",
+                "status": "completed",
+                "stdout": "x" * 5000,
+                "stderr": "ModuleNotFoundError: No module named app\n" + "y" * 5000,
+                "exit_code": 1,
+                "duration_ms": 18,
+                "truncated": True,
+            },
+        },
+    )
+
+    messages = service.get_display_messages("ses_history", include_tool_details=False)
+
+    assert messages[0]["role"] == "tool"
+    assert messages[0]["toolName"] == "run_command"
+    assert messages[0]["toolDetailsDeferred"] is True
+    assert messages[0]["toolParams"] == {
+        "command": "pytest backend/tests",
+        "cwd": "D:/repo",
+    }
+    assert "toolResult" not in messages[0]
+    assert messages[0]["uiPayload"]["exit_code"] == 1
+    assert messages[0]["uiPayload"]["truncated"] is True
+    assert messages[0]["uiPayload"]["stderr"].startswith("ModuleNotFoundError")
+    assert len(messages[0]["uiPayload"]["stderr"]) <= 1000
+    assert "stdout" not in messages[0]["uiPayload"]
+
+
+def test_message_event_service_keeps_deferred_tool_error_summary(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_start",
+        "tool_start",
+        {
+            "tool": "read_file",
+            "params": {"path": "missing.txt"},
+            "run_id": "tool_error",
+            "tool_call_id": "call_error",
+        },
+    )
+    _append(
+        repositories,
+        "evt_end",
+        "tool_end",
+        {
+            "run_id": "tool_error",
+            "tool_call_id": "call_error",
+            "result": (
+                '{"code":"file_not_found","message":"文件不存在",'
+                '"details":{"path":"missing.txt","content":"'
+                + "x" * 5000
+                + '"}}'
+            ),
+            "duration_ms": 12,
+        },
+    )
+
+    messages = service.get_display_messages("ses_history", include_tool_details=False)
+
+    assert messages[0]["role"] == "tool"
+    assert messages[0]["status"] == "error"
+    assert messages[0]["toolError"] == "文件不存在"
+    assert "toolResult" not in messages[0]
+
+
 def test_message_event_service_loads_full_deferred_tool_detail(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)

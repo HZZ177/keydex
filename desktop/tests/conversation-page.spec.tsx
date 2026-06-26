@@ -33,8 +33,9 @@ describe("ConversationPage", () => {
 
     expect((await screen.findByTestId("conversation-empty")).textContent).toBe("还没有消息，输入需求开始对话。");
     expect(runtime.conversation.loadHistory).toHaveBeenCalledWith("ses-1", {
+      allTurns: true,
       direction: "older",
-      pageSize: 5,
+      pageSize: undefined,
     });
     expect(runtime.conversation.openChatChannel).toHaveBeenCalled();
   });

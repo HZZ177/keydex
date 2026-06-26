@@ -20,6 +20,8 @@ import { useLazyToolDetails, type ToolDetailsLoader } from "./useLazyToolDetails
 import { useDeferredUnmount } from "./useDeferredUnmount";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
 
+const INLINE_ERROR_MAX_CHARS = 240;
+
 export interface ToolCallBlockProps {
   message: ConversationMessage;
   onLoadDetails?: ToolDetailsLoader;
@@ -90,6 +92,10 @@ export function ToolCallBlock({ message, onLoadDetails }: ToolCallBlockProps) {
         </div>
         <ChevronDown className={styles.chevron} size={14} />
       </button>
+
+      {failed && tool.errorPreview ? (
+        <p className={styles.errorMessage}>错误信息：{tool.errorPreview}</p>
+      ) : null}
 
       {detailsMotion.shouldRender ? (
         <div
@@ -186,6 +192,7 @@ interface ParsedToolPayload {
   resultText: string;
   resultStatus: string | null;
   duration: string;
+  errorPreview: string;
 }
 
 function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
@@ -207,6 +214,7 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
     resultText: resultText(result, message.payload),
     resultStatus,
     duration: formatDuration(result?.duration_ms ?? result?.durationMs ?? message.payload.duration_ms ?? message.payload.durationMs),
+    errorPreview: truncateInlineError(resultText(result, message.payload)),
   };
 }
 
@@ -432,4 +440,12 @@ function stringify(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function truncateInlineError(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= INLINE_ERROR_MAX_CHARS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, INLINE_ERROR_MAX_CHARS - 1)}…`;
 }

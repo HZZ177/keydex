@@ -403,6 +403,23 @@ def test_session_service_pages_history_by_turn_without_splitting_messages(tmp_pa
     assert older["next_cursor"] is None
     assert [message["turnIndex"] for message in older["list"]] == [1, 1, 1]
 
+    all_history = service.get_history(
+        GetHistoryRequest(session_id="ses_turn_pages", all_turns=True)
+    )
+
+    assert all_history["turn_indexes"] == [1, 2, 3, 4, 5, 6]
+    assert all_history["total"] == 6
+    assert all_history["has_more_older"] is False
+    assert all_history["next_cursor"] is None
+    assert [message["turnIndex"] for message in all_history["list"] if message["role"] == "user"] == [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+    ]
+
 
 def test_session_service_updates_session_terminal_status(tmp_path) -> None:
     repositories = _repositories(tmp_path)

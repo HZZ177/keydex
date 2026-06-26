@@ -55,6 +55,7 @@ export interface LoadHistoryOptions {
   order?: "asc" | "desc";
   cursor?: string | null;
   direction?: "older" | "newer";
+  allTurns?: boolean;
 }
 
 export type LoadToolDetailsOptions = AgentToolDetailRef;
@@ -227,6 +228,7 @@ function historyQuery(options: LoadHistoryOptions) {
   appendParam(params, "order", options.order);
   appendParam(params, "cursor", options.cursor);
   appendParam(params, "direction", options.direction);
+  appendParam(params, "all_turns", options.allTurns ? "true" : undefined);
   const query = params.toString();
   return query ? `?${query}` : "";
 }

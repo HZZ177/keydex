@@ -226,6 +226,7 @@ def get_session_messages(
     order: str = "desc",
     cursor: str | None = None,
     direction: str = "older",
+    all_turns: bool = False,
     repositories: StorageRepositories = RepositoriesDep,
 ) -> SessionHistoryResponse:
     return _history_response(
@@ -238,6 +239,7 @@ def get_session_messages(
             order=order,
             cursor=cursor,
             direction=direction,
+            all_turns=all_turns,
         ),
     )
 
@@ -251,6 +253,7 @@ def get_session_history(
     order: str = "desc",
     cursor: str | None = None,
     direction: str = "older",
+    all_turns: bool = False,
     repositories: StorageRepositories = RepositoriesDep,
 ) -> SessionHistoryResponse:
     return _history_response(
@@ -263,6 +266,7 @@ def get_session_history(
             order=order,
             cursor=cursor,
             direction=direction,
+            all_turns=all_turns,
         ),
     )
 

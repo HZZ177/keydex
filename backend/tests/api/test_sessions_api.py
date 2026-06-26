@@ -267,6 +267,27 @@ def test_sessions_api_filters_turn_history(tmp_path) -> None:
     assert response.json()["turn_indexes"] == [2]
 
 
+def test_sessions_api_can_return_all_turn_history(tmp_path) -> None:
+    client = _client(tmp_path)
+    app = client.app
+    session_id = client.post("/api/sessions", json={}).json()["session"]["id"]
+    for turn in range(1, 7):
+        app.state.repositories.message_events.append(
+            event_id=f"evt_all_{turn}",
+            session_id=session_id,
+            turn_index=turn,
+            action="user_message",
+            data={"content": f"第 {turn} 轮"},
+        )
+
+    response = client.get(f"/api/sessions/{session_id}/history?all_turns=true")
+
+    assert response.status_code == 200
+    assert response.json()["turn_indexes"] == [1, 2, 3, 4, 5, 6]
+    assert response.json()["has_more_older"] is False
+    assert response.json()["next_cursor"] is None
+
+
 def test_sessions_api_updates_title_and_soft_deletes_session(tmp_path) -> None:
     client = _client(tmp_path)
     session_id = client.post("/api/sessions", json={"title": "旧标题"}).json()["session"]["id"]

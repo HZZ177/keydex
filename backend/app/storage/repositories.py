@@ -1460,7 +1460,7 @@ class MessageEventsRepository:
         *,
         cursor_turn_index: int | None = None,
         direction: str = "older",
-        limit: int = 5,
+        limit: int | None = 5,
         offset: int = 0,
         include_deleted: bool = False,
     ) -> list[int]:
@@ -1475,8 +1475,10 @@ class MessageEventsRepository:
                 query += " and turn_index < ?"
             params.append(cursor_turn_index)
         order = "asc" if direction == "newer" else "desc"
-        query += f" group by turn_index order by turn_index {order} limit ? offset ?"
-        params.extend([max(1, min(limit, 101)), max(0, offset)])
+        query += f" group by turn_index order by turn_index {order}"
+        if limit is not None:
+            query += " limit ? offset ?"
+            params.extend([max(1, min(limit, 101)), max(0, offset)])
         with self.db.connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [int(row["turn_index"]) for row in rows]

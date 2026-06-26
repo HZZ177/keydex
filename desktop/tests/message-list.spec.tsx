@@ -26,6 +26,51 @@ describe("MessageList", () => {
     expect(screen.getAllByRole("button", { name: "复制消息" }).length).toBe(2);
   });
 
+  it("renders a turn navigator with hover summary and static turn jumping", () => {
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    try {
+      render(
+        <MessageList
+          messages={[
+            message("m1", "user", "第一轮问题"),
+            message("m2", "assistant", "第一行\n第二行\n第三行\n第四行"),
+            message("m3", "user", "第二轮问题"),
+            message("m4", "assistant", "第二轮回答"),
+          ]}
+        />,
+      );
+
+      expect(screen.getByTestId("conversation-turn-navigator")).not.toBeNull();
+      const markers = screen.getAllByRole("button", { name: /跳转到第 \d+ 轮/ });
+      expect(markers).toHaveLength(2);
+
+      fireEvent.focus(markers[1]);
+      expect(screen.getByTestId("conversation-turn-navigator-card").textContent).toContain("第二轮问题");
+      expect(screen.getByTestId("conversation-turn-navigator-card").textContent).toContain("第二轮回答");
+
+      fireEvent.click(markers[1]);
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        block: "center",
+        behavior: "smooth",
+      });
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", {
+          configurable: true,
+          value: originalScrollIntoView,
+        });
+      } else {
+        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
+      }
+    }
+  });
+
   it("keeps compact lists on the static renderer while processing", () => {
     const originalResizeObserver = globalThis.ResizeObserver;
     const originalUserAgent = navigator.userAgent;

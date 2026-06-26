@@ -217,6 +217,41 @@ describe("CommandExecutionBlock", () => {
     });
   });
 
+  it("shows deferred command error preview before expansion", () => {
+    const onLoadDetails = vi.fn();
+    render(
+      <CommandExecutionBlock
+        message={{
+          ...commandMessage("completed", {}),
+          payload: {
+            call: {
+              name: "run_command",
+              arguments: { command: "pytest backend/tests", cwd: "D:/repo" },
+            },
+            result: {
+              status: "success",
+              ui_payload: {
+                command: "pytest backend/tests",
+                cwd: "D:/repo",
+                status: "completed",
+                exit_code: 1,
+                stderr: "ModuleNotFoundError: No module named app",
+                truncated: true,
+              },
+            },
+            toolDetailsDeferred: true,
+          },
+        }}
+        onLoadDetails={onLoadDetails}
+      />,
+    );
+
+    expect(screen.getByText("退出码 1")).not.toBeNull();
+    expect(screen.getByText("输出已截断")).not.toBeNull();
+    expect(screen.getByText("错误信息：ModuleNotFoundError: No module named app")).not.toBeNull();
+    expect(onLoadDetails).not.toHaveBeenCalled();
+  });
+
   it("formats sub-second command durations as milliseconds", () => {
     render(<CommandExecutionBlock message={commandMessage("completed", { stdout: "ok\n", duration_ms: 86 })} />);
 

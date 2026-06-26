@@ -66,6 +66,7 @@ export interface UseAgentSessionControllerOptions {
   runtime: RuntimeBridge;
   sessionId?: string;
   historyPageSize?: number;
+  loadFullHistory?: boolean;
   onRuntimeEvent?: (event: AgentActionEnvelope) => void;
   onRuntimeError?: (reason: unknown) => boolean | void;
   onNotice?: (message: string, level: AgentSessionControllerNoticeLevel) => void;
@@ -120,6 +121,7 @@ export function useAgentSessionController({
   runtime,
   sessionId = "",
   historyPageSize = 5,
+  loadFullHistory = true,
   onRuntimeEvent,
   onRuntimeError,
   onNotice,
@@ -223,8 +225,9 @@ export function useAgentSessionController({
     const loadHistory = async () => {
       try {
         const history = await runtime.conversation.loadHistory(sessionId, {
+          allTurns: loadFullHistory,
           direction: "older",
-          pageSize: historyPageSize,
+          pageSize: loadFullHistory ? undefined : historyPageSize,
         });
         if (active) {
           dispatch({ type: "history/loaded", sessionId, history });
@@ -257,6 +260,7 @@ export function useAgentSessionController({
     dispatch,
     handleRuntimeEvent,
     historyPageSize,
+    loadFullHistory,
     onNotice,
     runtime,
     sessionId,

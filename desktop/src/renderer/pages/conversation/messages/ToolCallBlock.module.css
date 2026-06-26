@@ -103,6 +103,15 @@
   transform: rotate(180deg);
 }
 
+.errorMessage {
+  max-width: min(760px, 100%);
+  margin: -1px 0 0 25px;
+  color: color-mix(in srgb, var(--color-danger) 72%, var(--color-text-secondary));
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
 .details {
   display: grid;
   width: min(760px, calc(100% - 25px));

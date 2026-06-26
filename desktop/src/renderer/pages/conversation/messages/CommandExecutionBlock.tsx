@@ -11,6 +11,7 @@ import { useDeferredUnmount } from "./useDeferredUnmount";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
 
 const TITLE_INPUT_MAX_CHARS = 96;
+const INLINE_ERROR_MAX_CHARS = 240;
 
 export interface CommandExecutionBlockProps {
   message: ConversationMessage;
@@ -89,6 +90,8 @@ export function CommandExecutionBlock({ message, onLoadDetails }: CommandExecuti
 
       {rejected && command.rejectMessage ? (
         <p className={styles.rejectMessage}>拒绝说明：{command.rejectMessage}</p>
+      ) : command.errorPreview ? (
+        <p className={styles.rejectMessage}>错误信息：{command.errorPreview}</p>
       ) : null}
 
       {outputMotion.shouldRender ? (
@@ -190,6 +193,7 @@ interface ParsedCommandPayload {
   truncated: boolean;
   trustedRuleId: string;
   rejectMessage: string;
+  errorPreview: string;
 }
 
 function parseCommandPayload(message: ConversationMessage): ParsedCommandPayload {
@@ -203,6 +207,7 @@ function parseCommandPayload(message: ConversationMessage): ParsedCommandPayload
   const approval = asRecord(merged.approval);
   const stdout = stringValue(merged.stdout) || (message.content && !stringValue(merged.stderr) ? message.content : "");
   const stderr = stringValue(merged.stderr) || fallbackErrorText(message, result, merged);
+  const errorPreview = commandErrorPreview(message, status, exitCode, stderr);
   return {
     command,
     inputText: stringifyInput(input),
@@ -217,7 +222,27 @@ function parseCommandPayload(message: ConversationMessage): ParsedCommandPayload
     truncated: Boolean(merged.truncated),
     trustedRuleId: stringValue(approval?.trusted_rule_id),
     rejectMessage: stringValue(approval?.reject_message),
+    errorPreview,
   };
+}
+
+function commandErrorPreview(
+  message: ConversationMessage,
+  commandStatus: string,
+  exitCode: number | null,
+  stderr: string,
+): string {
+  if (!stderr.trim()) {
+    return "";
+  }
+  const failed =
+    message.status === "failed" ||
+    commandStatus === "failed" ||
+    commandStatus === "error" ||
+    commandStatus === "timed_out" ||
+    commandStatus === "disabled" ||
+    (exitCode !== null && exitCode !== 0);
+  return failed ? truncateInlineError(stderr) : "";
 }
 
 function fallbackErrorText(
@@ -295,6 +320,9 @@ function commandTitleFromInput(
   if (commandStatus === "disabled") {
     return `命令已禁用 ${input}`;
   }
+  if (commandStatus === "failed" || commandStatus === "error") {
+    return `执行失败 ${input}`;
+  }
   if (status === "failed") {
     return `执行失败 ${input}`;
   }
@@ -315,9 +343,20 @@ function commandStatusLabel(status: string): string {
       return "已超时";
     case "disabled":
       return "已禁用";
+    case "failed":
+    case "error":
+      return "执行失败";
     default:
       return "";
   }
+}
+
+function truncateInlineError(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= INLINE_ERROR_MAX_CHARS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, INLINE_ERROR_MAX_CHARS - 1)}…`;
 }
 
 function formatDuration(value: unknown): string {

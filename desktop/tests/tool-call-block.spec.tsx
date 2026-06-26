@@ -117,7 +117,7 @@ describe("ToolCallBlock", () => {
     render(<ToolCallBlock message={toolMessage("failed", { status: "error", model_content: "", error: "读取失败" })} />);
 
     expect(screen.getByText("读取文件失败 README.md")).not.toBeNull();
-    expect(screen.queryByText("读取失败")).toBeNull();
+    expect(screen.getByText("错误信息：读取失败")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
     expect(screen.getByRole("region", { name: "工具错误" })).not.toBeNull();
     expect(screen.getByText("读取失败")).not.toBeNull();

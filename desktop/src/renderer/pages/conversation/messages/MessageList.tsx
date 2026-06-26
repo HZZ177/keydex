@@ -26,6 +26,7 @@ import type { ConversationRuntimeState } from "@/renderer/stores/conversationSto
 import styles from "./MessageList.module.css";
 import { ApprovalPrompt, type ApprovalDecisionHandler } from "./ApprovalPrompt";
 import { CommandExecutionBlock } from "./CommandExecutionBlock";
+import { ConversationTurnNavigator, type ConversationTurnNavigationItem } from "./ConversationTurnNavigator";
 import { ErrorItem } from "./ErrorItem";
 import { FileChangeBlock, type FileChangePreview } from "./FileChangeBlock";
 import { MessageGroupBlock } from "./MessageGroupBlock";
@@ -93,6 +94,7 @@ export function MessageList({
   const olderLoadRequestedRef = useRef(false);
   const olderLoadArmedRef = useRef(false);
   const virtualScrollerRef = useRef<HTMLElement | null>(null);
+  const staticTurnRefsRef = useRef<Array<HTMLDivElement | null>>([]);
   const [showOlderTrigger, setShowOlderTrigger] = useState(false);
   const visibleMessages = useMemo(() => messages.filter((message) => message.kind !== "plan"), [messages]);
   const processedMessages = useMemo(() => processMessages(visibleMessages), [visibleMessages]);
@@ -117,6 +119,7 @@ export function MessageList({
     ];
   }, [pendingAssistantMessage, processedMessages]);
   const displayTurns = useMemo(() => groupDisplayItemsByTurn(displayItems), [displayItems]);
+  const turnNavigationItems = useMemo(() => buildTurnNavigationItems(displayTurns), [displayTurns]);
   const assistantTurnFooters = useMemo(
     () => collectAssistantTurnFooters(visibleMessages, displayItems, isProcessing),
     [displayItems, isProcessing, visibleMessages],
@@ -281,6 +284,31 @@ export function MessageList({
     });
   }, [onScrollControlsChange, scrollControls.scrollToBottom, scrollControls.showScrollToBottom]);
 
+  const navigateToTurn = useCallback(
+    (index: number) => {
+      if (index < 0 || index >= displayTurns.length) {
+        return;
+      }
+      if (!useStaticList) {
+        autoScroll.virtuosoRef.current?.scrollToIndex({
+          align: "center",
+          behavior: prefersReducedMotion() ? "auto" : "smooth",
+          index,
+        });
+        return;
+      }
+
+      const target = staticTurnRefsRef.current[index];
+      if (typeof target?.scrollIntoView === "function") {
+        target.scrollIntoView({
+          block: "center",
+          behavior: prefersReducedMotion() ? "auto" : "smooth",
+        });
+      }
+    },
+    [autoScroll.virtuosoRef, displayTurns.length, useStaticList],
+  );
+
   const messageListContent = useStaticList ? (
     <div
       ref={staticAutoScroll.containerRef}
@@ -293,8 +321,15 @@ export function MessageList({
     >
       <div ref={staticAutoScroll.contentRef} className={styles.list} role="list" aria-label="Messages">
         {olderLoader}
-        {displayTurns.map((turn) => (
-          <div className={styles.turnGroup} data-testid="message-turn" key={turn.id}>
+        {displayTurns.map((turn, index) => (
+          <div
+            className={styles.turnGroup}
+            data-testid="message-turn"
+            key={turn.id}
+            ref={(node) => {
+              staticTurnRefsRef.current[index] = node;
+            }}
+          >
             {renderMessageTurn({
               turn,
               renderMessage,
@@ -372,6 +407,10 @@ export function MessageList({
           <ArrowDown size={15} />
           <span>滚动到底</span>
         </button>
+      ) : null}
+
+      {visibleMessages.length ? (
+        <ConversationTurnNavigator turns={turnNavigationItems} onNavigate={navigateToTurn} />
       ) : null}
     </section>
   );
@@ -702,6 +741,52 @@ function turnIdFromItems(items: ProcessedMessageItem[]): string {
   return `turn:${firstUserItem?.id ?? items[0].id}`;
 }
 
+function buildTurnNavigationItems(turns: MessageTurn[]): ConversationTurnNavigationItem[] {
+  return turns.flatMap((turn, index) => {
+    const messages = turn.items.flatMap(messagesFromProcessedItem);
+    const userMessage = messages.find((message) => message.kind === "user");
+    if (!userMessage) {
+      return [];
+    }
+    const assistantLines = messages
+      .filter((message) => message.kind === "assistant")
+      .flatMap((message) => previewLines(message.content, 3))
+      .slice(0, 3);
+    return [
+      {
+        id: turn.id,
+        targetIndex: index,
+        userPreview: previewLine(userMessage.content) || `第 ${index + 1} 轮对话`,
+        assistantPreview: assistantLines,
+      },
+    ];
+  });
+}
+
+function messagesFromProcessedItem(item: ProcessedMessageItem): ConversationMessage[] {
+  return item.type === "message" ? [item.message] : item.messages;
+}
+
+function previewLine(content: string): string {
+  return normalizePreviewText(content).split("\n").find(Boolean) ?? "";
+}
+
+function previewLines(content: string, limit: number): string[] {
+  return normalizePreviewText(content).split("\n").filter(Boolean).slice(0, limit);
+}
+
+function normalizePreviewText(content: string): string {
+  return content
+    .replace(/```[\s\S]*?```/g, "代码块")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[[^\]]*]\(([^)]+)\)/g, "$1")
+    .replace(/[#*_>~-]+/g, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 function collectAssistantTurnFooters(
   messages: ConversationMessage[],
   displayItems: ProcessedMessageItem[],
@@ -830,6 +915,10 @@ function createPendingAssistantMessage(messages: ConversationMessage[]): Convers
 
 function isStreamingStatus(status: ConversationMessage["status"]): boolean {
   return status === "pending" || status === "running";
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function MessageSkeleton() {

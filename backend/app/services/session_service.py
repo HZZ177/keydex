@@ -49,6 +49,7 @@ class GetHistoryRequest:
     order: str = "desc"
     cursor: str | None = None
     direction: str = "older"
+    all_turns: bool = False
 
 
 class SessionService:
@@ -228,7 +229,24 @@ class SessionService:
         direction = request.direction if request.direction in {"older", "newer"} else "older"
         cursor_turn_index = decode_turn_cursor(request.cursor)
 
-        if request.turn_index is None:
+        if request.turn_index is None and request.all_turns:
+            turn_indexes = self._message_events.list_turn_indexes(
+                request.session_id,
+                direction="newer",
+                limit=None,
+            )
+            messages = self._messages_for_turns(
+                request.session_id,
+                turn_indexes,
+                include_tool_details=False,
+            )
+            event_total = self._message_events.count_by_session(request.session_id)
+            total = len(turn_indexes)
+            next_cursor = None
+            prev_cursor = None
+            has_more_older = False
+            page_size = total
+        elif request.turn_index is None:
             offset = 0 if request.cursor else (page - 1) * page_size
             page_turn_indexes = self._message_events.list_turn_indexes(
                 request.session_id,
