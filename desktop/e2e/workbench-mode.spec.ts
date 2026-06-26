@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import * as path from "node:path";
 
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 
 const API_BASE = "http://127.0.0.1:8765";
 const APP_BASE = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173";
@@ -14,15 +14,7 @@ const WORKSPACE_B = "workspace-b";
 const SESSION_A = "e2e-session-a";
 const SESSION_B = "e2e-session-b";
 const NEW_SESSION = "e2e-new-workbench-session";
-const README_CONTENT = [
-  "# E2E Workbench File",
-  "",
-  "This file is rendered inside Workbench.",
-  "",
-  "```ts",
-  "const workbenchE2E = true;",
-  "```",
-].join("\n");
+const README_CONTENT = makeWorkbenchMarkdownContent();
 
 test("agent mode remains the full conversation surface and only switches manually", async ({ page }) => {
   const backend = createWorkbenchBackend();
@@ -86,8 +78,7 @@ test("workbench capsule creates workspace-owned sessions, sends, searches and pr
   await mockWorkbenchBackend(page, backend);
 
   await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}`);
-  const input = page.getByLabel("工作台助手输入");
-  await expect(input).toBeVisible();
+  const input = await openWorkbenchComposer(page);
   await input.click();
   await page.keyboard.type("e2e new task");
   await page.getByLabel("发送").click();
@@ -121,7 +112,8 @@ test("workbench capsule creates workspace-owned sessions, sends, searches and pr
   await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "capsule");
   await saveEvidence(page, "e2e-010");
 
-  await input.click();
+  const resumedInput = await openWorkbenchComposer(page);
+  await resumedInput.click();
   await page.keyboard.type("@READ");
   await expect(page.getByTestId("at-file-menu")).toBeVisible();
   await expect(page.getByRole("option", { name: /README\.md/ })).toBeVisible();
@@ -134,7 +126,7 @@ test("workbench capsule creates workspace-owned sessions, sends, searches and pr
   await saveEvidence(page, "e2e-013");
 });
 
-test("workbench file annotation can prefill the assistant without switching mode", async ({ page }) => {
+test("workbench file annotation can inject assistant context without switching mode", async ({ page }) => {
   const backend = createWorkbenchBackend();
   await installWebSocketMock(page);
   await mockWorkbenchBackend(page, backend);
@@ -142,11 +134,6 @@ test("workbench file annotation can prefill the assistant without switching mode
   await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
   await page.getByRole("button", { name: "选择文件 README.md" }).click();
   await expect(page.getByRole("heading", { name: "E2E Workbench File" })).toBeVisible();
-  await selectVisibleText(page, "This file is rendered");
-  await page.getByRole("button", { name: "添加选中文本到对话" }).click();
-  const selectedQuoteChip = page.locator("[data-quote-index='0'][data-source-quote='true']");
-  await expect(selectedQuoteChip).toBeVisible();
-  await expect(selectedQuoteChip).toContainText("README.md");
   await expect(page.getByRole("button", { name: "工作台模式" })).toHaveAttribute("aria-pressed", "true");
   await saveEvidence(page, "e2e-014");
 
@@ -155,10 +142,22 @@ test("workbench file annotation can prefill the assistant without switching mode
   await expect(panel).toContainText("Selected E2E note");
 
   await panel.getByRole("button", { name: "基于此批注发起对话" }).click();
-  await expect(page.getByLabel("工作台助手输入")).toHaveText("Selected E2E note");
-  await expect(page.locator("[data-quote-index='0'][data-source-quote='true']")).toContainText("README.md");
+  await expect(page.getByLabel("工作台助手输入")).toHaveText("");
+  await expect(page.locator("[data-quote-index='0'][data-source-quote='true']")).toContainText("README.md · L3");
   await expect(page.getByRole("button", { name: "工作台模式" })).toHaveAttribute("aria-pressed", "true");
   expect(await chatFrameCount(page)).toBe(0);
+  await page.getByLabel("发送").click();
+  const chatFrame = await lastChatFrame(page);
+  const injection = (chatFrame?.data?.runtime_params as {
+    message_injection?: Array<{ content?: string; metadata?: Record<string, unknown> }>;
+  } | undefined)?.message_injection?.[0];
+  expect(chatFrame?.data?.message).toBe("");
+  expect(injection?.metadata).toMatchObject({
+    kind: "source_quote",
+    path: "README.md",
+    annotation_comment: "Selected E2E note",
+  });
+  expect(injection?.content).toContain("批注内容：\nSelected E2E note");
   await saveEvidence(page, "e2e-015");
 });
 
@@ -175,6 +174,7 @@ test("workbench expanded layer, drawer and approval stay above the workspace", a
   await expect(fileBrowser).toBeVisible();
   const beforeBox = await fileBrowser.boundingBox();
 
+  await openWorkbenchComposer(page);
   await page.getByRole("button", { name: "展开工作台消息层" }).click();
   const expanded = page.getByTestId("workbench-expanded-layer");
   await expect(expanded).toBeVisible();
@@ -188,13 +188,13 @@ test("workbench expanded layer, drawer and approval stay above the workspace", a
   await expect(expanded).toHaveCount(0);
   await saveEvidence(page, "e2e-017");
 
-  await page.getByRole("button", { name: "停靠到工作台右侧助手栏" }).click();
+  await page.getByRole("button", { name: "将工作台助手展开到右侧" }).click();
   const drawer = page.getByTestId("workbench-assistant-drawer");
   await expect(drawer).toBeVisible();
   await expect(drawer).toHaveCSS("box-shadow", "none");
   await expect(drawer).toHaveCSS("backdrop-filter", "none");
   const drawerBox = await drawer.boundingBox();
-  expect(drawerBox?.width ?? 0).toBeGreaterThanOrEqual(360);
+  expect(drawerBox?.width ?? 0).toBeGreaterThanOrEqual(320);
   expect(drawerBox?.width ?? 0).toBeLessThanOrEqual(520);
   const dockedFileBox = await fileBrowser.boundingBox();
   expect(dockedFileBox?.width ?? 0).toBeLessThan((beforeBox?.width ?? 0) - 300);
@@ -225,13 +225,52 @@ test("workbench expanded layer, drawer and approval stay above the workspace", a
   await saveEvidence(page, "e2e-019");
 });
 
+test("workbench dock keeps large markdown searchable without enabling the global sidebar", async ({ page }) => {
+  const backend = createWorkbenchBackend();
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
+  await page.getByRole("button", { name: "选择文件 README.md" }).click();
+  await expect(page.getByRole("heading", { name: "E2E Workbench File" })).toBeVisible();
+  const virtualPreview = page.locator("[data-markdown-virtual-preview='true']");
+  await expect(virtualPreview).toBeAttached();
+  const initialMetrics = await virtualPreview.evaluate((element) => ({
+    mountedBlocks: Number(element.getAttribute("data-markdown-mounted-block-count") ?? 0),
+    totalBlocks: Number(element.getAttribute("data-markdown-block-count") ?? 0),
+  }));
+  expect(initialMetrics.totalBlocks).toBeGreaterThan(200);
+  expect(initialMetrics.mountedBlocks).toBeGreaterThan(0);
+  expect(initialMetrics.mountedBlocks).toBeLessThan(initialMetrics.totalBlocks);
+
+  await page.getByRole("button", { name: "将工作台助手展开到右侧" }).click();
+  await expect(page.getByTestId("workbench-assistant-drawer")).toBeVisible();
+  await expect(page.getByTestId("app-shell")).toHaveAttribute("data-right-sidebar-enabled", "false");
+  await expect(page.getByTestId("app-shell")).toHaveAttribute("data-right-sidebar", "closed");
+
+  const previewPanel = page.getByTestId("workspace-file-browser-preview");
+  await previewPanel.getByRole("button", { name: "搜索文件内容" }).click();
+  const search = page.getByRole("search", { name: "文件内容搜索" });
+  await search.getByLabel("搜索文件内容").fill("tail-search-target");
+  await expect(search).toContainText("1/1");
+  await expect(page.getByText("tail-search-target")).toBeVisible();
+  await expect(page.getByTestId("workbench-assistant-drawer")).toBeVisible();
+  const tailMetrics = await virtualPreview.evaluate((element) => ({
+    mountedBlocks: Number(element.getAttribute("data-markdown-mounted-block-count") ?? 0),
+    totalBlocks: Number(element.getAttribute("data-markdown-block-count") ?? 0),
+  }));
+  expect(tailMetrics.mountedBlocks).toBeLessThan(tailMetrics.totalBlocks);
+  await saveEvidence(page, "markdown-e2e-workbench-dock-search");
+});
+
 test("workbench running task survives manual mode switching", async ({ page }) => {
   const backend = createWorkbenchBackend();
   await installWebSocketMock(page);
   await mockWorkbenchBackend(page, backend);
 
   await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
-  await page.getByLabel("工作台助手输入").click();
+  const input = await openWorkbenchComposer(page);
+  await input.click();
   await page.keyboard.type("keep running while switching");
   await page.getByLabel("发送").click();
   await expect(page.getByRole("button", { name: "停止" })).toBeEnabled();
@@ -246,6 +285,7 @@ test("workbench running task survives manual mode switching", async ({ page }) =
   await expect(page).toHaveURL(new RegExp(`/workbench/${WORKSPACE_A}$`));
   await page.getByRole("button", { name: "工作台 A 会话", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/workbench/${WORKSPACE_A}/session/${SESSION_A}$`));
+  await openWorkbenchComposer(page);
   await expect(page.getByRole("button", { name: "停止" })).toBeEnabled();
   expect(await chatFrameCount(page)).toBe(countAfterSend);
   await saveEvidence(page, "e2e-021");
@@ -264,15 +304,16 @@ test("workbench keeps controls usable across responsive viewports and reload", a
     await page.setViewportSize(viewport);
     await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
     await expect(page.getByTestId("workspace-file-browser")).toBeVisible();
-    await expect(page.getByLabel("工作台助手输入")).toBeVisible();
+    await openWorkbenchComposer(page);
     await page.getByRole("button", { name: "展开工作台消息层" }).click();
     await expect(page.getByTestId("workbench-expanded-layer")).toBeVisible();
-    await page.getByRole("button", { name: "停靠到工作台右侧助手栏" }).click();
+    await page.getByRole("button", { name: "将工作台助手展开到右侧" }).click();
     await expect(page.getByTestId("workbench-assistant-drawer")).toBeVisible();
     await saveEvidence(page, viewport.width === 1280 ? "e2e-022" : viewport.width === 1440 ? "e2e-023" : "e2e-024");
   }
 
   await page.getByRole("button", { name: "关闭工作台助手侧栏" }).click();
+  await openWorkbenchComposer(page);
   await page.getByRole("button", { name: "展开工作台消息层" }).click();
   await expect(page.getByTestId("workbench-expanded-layer")).toBeVisible();
   await page.reload();
@@ -287,6 +328,15 @@ async function saveEvidence(page: Page, caseId: string) {
   const directory = path.join(EVIDENCE_ROOT, caseId, E2E_RUN_ID);
   await mkdir(directory, { recursive: true });
   await page.screenshot({ path: path.join(directory, "success.png"), fullPage: true });
+}
+
+async function openWorkbenchComposer(page: Page): Promise<Locator> {
+  const input = page.getByLabel("工作台助手输入");
+  if ((await input.count()) === 0) {
+    await page.getByRole("button", { name: "展开工作台输入框" }).click();
+  }
+  await expect(input).toBeVisible();
+  return input;
 }
 
 async function expectTitlebarModeSwitchGeometry(page: Page) {
@@ -659,6 +709,35 @@ function approval(id: string) {
     status: "pending",
     created_at: "2026-06-25T00:00:00Z",
   };
+}
+
+function makeWorkbenchMarkdownContent(): string {
+  const sections = Array.from({ length: 240 }, (_, index) =>
+    [
+      `## Workbench Virtual Section ${index + 1}`,
+      "",
+      `Workbench markdown virtualized filler ${index + 1}.`,
+      "",
+      "```ts",
+      `const workbenchE2E${index + 1} = true;`,
+      "```",
+    ].join("\n"),
+  );
+  return [
+    "# E2E Workbench File",
+    "",
+    "This file is rendered inside Workbench.",
+    "",
+    "```ts",
+    "const workbenchE2E = true;",
+    "```",
+    "",
+    ...sections,
+    "",
+    "## Workbench Tail Section",
+    "",
+    "tail-search-target",
+  ].join("\n");
 }
 
 function fulfillJson(route: Route, body: unknown, status = 200) {

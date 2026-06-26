@@ -28,9 +28,12 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import ReactMarkdown from "react-markdown";
 
 import { LoadingSkeleton } from "@/renderer/components/loading";
+import {
+  MarkdownDocumentModelCache,
+  MarkdownDocumentView,
+} from "@/renderer/components/workspace/markdownPreviewEngine";
 import { useOptionalPreview } from "@/renderer/providers/PreviewProvider";
 import type { PreviewRequest } from "@/renderer/providers/previewTypes";
 import {
@@ -43,8 +46,7 @@ import {
 } from "@/renderer/utils/mermaidSvg";
 
 import { LineChangeTicker } from "./LineChangeTicker";
-import { MarkdownTable } from "./MarkdownTable";
-import { copyText, markdownRehypePlugins, markdownRemarkPlugins, normalizeMarkdownContent } from "./markdown";
+import { copyText, normalizeMarkdownContent } from "./markdown";
 import styles from "./MessageText.module.css";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
 
@@ -75,6 +77,7 @@ const MERMAID_MAX_SCALE = 10;
 const MERMAID_SCALE_STEP = 0.1;
 const MERMAID_FIT_PADDING = 64;
 const MERMAID_AUTO_FIT_FRAMES = 40;
+const fullscreenMarkdownModelCache = new MarkdownDocumentModelCache(24);
 type ContentPreviewRequest = Extract<PreviewRequest, { type: "content" }>;
 type SyntaxHighlighterRuntimeProps = {
   language: string;
@@ -534,11 +537,9 @@ function PreviewFullscreenDialog({
   );
 }
 
-function CodeViewLoading({ targetMode }: { targetMode: "source" | "preview" | null }) {
-  const ariaLabel =
-    targetMode === "source" ? "正在切换到源码视图" : targetMode === "preview" ? "正在切换到预览视图" : "正在切换代码视图";
+function CodeViewLoading({ targetMode: _targetMode }: { targetMode: "source" | "preview" | null }) {
   return (
-    <LoadingSkeleton aria-label={ariaLabel} className={styles.codeViewLoading} lineCount={3} width="compact" />
+    <LoadingSkeleton aria-label="正在切换代码视图" className={styles.codeViewLoading} lineCount={3} width="compact" />
   );
 }
 
@@ -570,24 +571,31 @@ function FullscreenPreviewContent({
     );
   }
   if (contentType === "markdown") {
-    return (
-      <div className={styles.fullscreenMarkdown}>
-        <div className="keydex-markdown">
-          <ReactMarkdown
-            remarkPlugins={markdownRemarkPlugins}
-            rehypePlugins={markdownRehypePlugins}
-            components={{ table: MarkdownTable }}
-          >
-            {normalizeMarkdownContent(text || "内容为空")}
-          </ReactMarkdown>
-        </div>
-      </div>
-    );
+    return <FullscreenMarkdownPreview source={text || "内容为空"} />;
   }
   return (
     <pre className={styles.fullscreenSource} data-kind={contentType === "diff" ? "diff" : "source"}>
       {text || "内容为空"}
     </pre>
+  );
+}
+
+function FullscreenMarkdownPreview({ source }: { source: string }) {
+  const normalizedSource = useMemo(() => normalizeMarkdownContent(source), [source]);
+  const model = useMemo(
+    () =>
+      fullscreenMarkdownModelCache.getOrCreate({
+        cacheKey: "message-code-fullscreen",
+        idPrefix: "message-code-fullscreen",
+        source: normalizedSource,
+      }),
+    [normalizedSource],
+  );
+
+  return (
+    <div className={styles.fullscreenMarkdown}>
+      <MarkdownDocumentView model={model} />
+    </div>
   );
 }
 

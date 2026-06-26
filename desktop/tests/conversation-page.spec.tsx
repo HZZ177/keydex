@@ -766,18 +766,19 @@ describe("ConversationPage", () => {
     renderConversation(
       <>
         <ConversationPage threadId="ses-1" runtime={runtime} />
-        <AnnotationPrefillHarness />
+        <AnnotationChatHarness />
       </>,
     );
 
     const input = await readyComposer();
-    fireEvent.click(await screen.findByRole("button", { name: "触发批注预填" }));
+    fireEvent.click(await screen.findByRole("button", { name: "触发批注会话" }));
 
     expect(await screen.findByText("main.ts · L3-L4")).not.toBeNull();
     expect(document.querySelector("[data-quote-index='0']")).not.toBeNull();
     expect(input.textContent?.trim()).toBe("");
     expect(input.textContent).not.toContain("文件：");
     expect(input.textContent).not.toContain("引用位置：");
+    expect(input.textContent).not.toContain("Check this branch");
     expect(channel.chat).not.toHaveBeenCalled();
 
     await waitSendEnabled();
@@ -1547,7 +1548,7 @@ function conversationInLayout(ui: ReactElement) {
   );
 }
 
-function AnnotationPrefillHarness() {
+function AnnotationChatHarness() {
   const preview = usePreview();
   return (
     <button
@@ -1564,7 +1565,7 @@ function AnnotationPrefillHarness() {
         })
       }
     >
-      触发批注预填
+      触发批注会话
     </button>
   );
 }

@@ -6,17 +6,24 @@ import {
   useMemo,
   useRef,
   useState,
-  type AnchorHTMLAttributes,
   type ButtonHTMLAttributes,
   type CSSProperties,
   type FocusEvent,
+  type MutableRefObject,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 
 import type { RuntimeBridge, WorkspaceScope } from "@/runtime";
 import { ContextChipIcon } from "@/renderer/components/chat/ContextChipIcon";
+import {
+  MarkdownBlockView,
+  MarkdownDocumentModelCache,
+  type MarkdownBlock,
+  type MarkdownBlockRendererProps,
+  type MarkdownBlockRendererRegistry,
+  type MarkdownInlineImageProps,
+} from "@/renderer/components/workspace/markdownPreviewEngine";
 import { useOptionalPreview } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { AgentContextItem } from "@/types/protocol";
@@ -24,13 +31,10 @@ import type { AgentContextItem } from "@/types/protocol";
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { MessageGhostFooter, type MessageGhostFooterData } from "./MessageGhostFooter";
 import { MarkdownImage } from "./MarkdownImage";
-import { MarkdownTable } from "./MarkdownTable";
 import { SelectionToolbar } from "./SelectionToolbar";
 import {
   copyText,
   formatMessageTime,
-  markdownRehypePlugins,
-  markdownRemarkPlugins,
   normalizeMarkdownContent,
   redactTextualToolProtocol,
   stripThinkTags,
@@ -40,6 +44,8 @@ import { previewRenderContextFromWorkspaceScope } from "./previewRenderContext";
 import { useTextSelection } from "./useTextSelection";
 import { useTypingAnimation } from "./useTypingAnimation";
 import styles from "./MessageText.module.css";
+
+const messageMarkdownModelCache = new MarkdownDocumentModelCache(96);
 
 export interface MessageTextProps {
   message: ConversationMessage;
@@ -96,6 +102,15 @@ export function MessageText({
     () => normalizeMarkdownContent(displayedContent, { streaming: !isUser && visuallyStreaming }),
     [displayedContent, isUser, visuallyStreaming],
   );
+  const markdownModel = useMemo(
+    () =>
+      messageMarkdownModelCache.getOrCreate({
+        cacheKey: `message:${message.id}`,
+        idPrefix: `message-${message.id}`,
+        source: renderedContent || " ",
+      }),
+    [message.id, renderedContent],
+  );
   const activeStreamingFence = useMemo(
     () => (!isUser && visuallyStreaming ? findActiveStreamingFence(displayedContent) : null),
     [displayedContent, isUser, visuallyStreaming],
@@ -113,27 +128,39 @@ export function MessageText({
   const showStreamingCursor =
     !suppressStreamingCursor && !isUser && isStreaming && !isAnimating && !hasPendingDisplayBacklog && !cancelled;
   const markdownComponents = useMemo(
-    () => ({
-      pre: ({ node, ...props }: MarkdownPreProps) => {
-        const renderState = markdownRenderStateRef.current;
-        return (
-          <MarkdownCodeBlock
-            {...props}
-            streaming={
-              !renderState.isUser &&
-              renderState.visuallyStreaming &&
-              isNodeInsideActiveFence(node, renderState.activeStreamingFence)
-            }
-          />
-        );
-      },
-      table: MarkdownTable,
-      a: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => <MarkdownAnchor {...props} />,
-      img: (props: Parameters<typeof MarkdownImage>[0]) => (
-        <MarkdownImage {...props} runtime={workspaceRuntime} workspaceScope={workspaceScope} />
-      ),
-    }),
+    () =>
+      ({
+        code: (props: MarkdownBlockRendererProps) => (
+          <MessageMarkdownCodeBlock {...props} renderStateRef={markdownRenderStateRef} />
+        ),
+        fence: (props: MarkdownBlockRendererProps) => (
+          <MessageMarkdownCodeBlock {...props} renderStateRef={markdownRenderStateRef} />
+        ),
+      }) satisfies MarkdownBlockRendererRegistry,
+    [],
+  );
+  const renderMarkdownImage = useCallback(
+    (props: MarkdownInlineImageProps) => (
+      <MarkdownImage
+        alt={props.alt}
+        runtime={workspaceRuntime}
+        src={props.src}
+        workspaceScope={workspaceScope}
+      />
+    ),
     [workspaceRuntime, workspaceScope],
+  );
+  const markdownBlocks = useMemo(
+    () =>
+      markdownModel.blocks.map((block) => (
+        <MarkdownBlockView
+          block={block}
+          key={messageMarkdownBlockKey(message.id, block)}
+          registry={markdownComponents}
+          renderImage={renderMarkdownImage}
+        />
+      )),
+    [markdownComponents, markdownModel.blocks, message.id, renderMarkdownImage],
   );
   const openContextFile = useCallback(
     (item: AgentContextItem) => {
@@ -175,14 +202,7 @@ export function MessageText({
           {inlineContextItems ? <MessageContextItems items={contextItems} onOpenFile={openContextFile} /> : null}
           {renderedContent || !userContextItems ? (
             <div className="keydex-markdown" ref={contentRef}>
-              <ReactMarkdown
-                remarkPlugins={markdownRemarkPlugins}
-                rehypePlugins={markdownRehypePlugins}
-                components={markdownComponents}
-                urlTransform={markdownUrlTransform}
-              >
-                {renderedContent}
-              </ReactMarkdown>
+              {markdownBlocks}
               {showStreamingCursor ? (
                 <StreamingCursor />
               ) : null}
@@ -216,6 +236,36 @@ export function StreamingCursor() {
       <span className={styles.streamingDot} />
     </span>
   );
+}
+
+interface MessageMarkdownRenderState {
+  activeStreamingFence: ActiveStreamingFence | null;
+  isUser: boolean;
+  visuallyStreaming: boolean;
+}
+
+function MessageMarkdownCodeBlock({
+  block,
+  renderStateRef,
+}: MarkdownBlockRendererProps & {
+  renderStateRef: MutableRefObject<MessageMarkdownRenderState>;
+}) {
+  const language = block.metadata.language;
+  const renderState = renderStateRef.current;
+  const streaming =
+    !renderState.isUser &&
+    renderState.visuallyStreaming &&
+    isBlockInsideActiveFence(block, renderState.activeStreamingFence);
+
+  return (
+    <MarkdownCodeBlock streaming={streaming}>
+      <code className={language ? `language-${language}` : undefined}>{block.textContent}</code>
+    </MarkdownCodeBlock>
+  );
+}
+
+function messageMarkdownBlockKey(messageId: string, block: MarkdownBlock): string {
+  return `${messageId}:${block.index}:${block.type}:${block.sourceStart}`;
 }
 
 function MessageContextItems({
@@ -546,14 +596,6 @@ function contextItemsFromPayload(payload: Record<string, unknown>): AgentContext
   });
 }
 
-function MarkdownAnchor({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
-  return (
-    <a href={href} {...props}>
-      {children}
-    </a>
-  );
-}
-
 interface FloatingQuotePosition {
   left: number;
   top: number;
@@ -791,10 +833,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
-function markdownUrlTransform(url: string): string | null | undefined {
-  return defaultUrlTransform(url);
-}
-
 function ghostFooterFromPayload(payload: Record<string, unknown>): MessageGhostFooterData | null {
   const footer: MessageGhostFooterData = {
     duration: formatDuration(payload.duration_ms ?? payload.durationMs),
@@ -822,26 +860,6 @@ function stringValue(value: unknown): string {
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-}
-
-interface MarkdownPreProps {
-  children?: ReactNode;
-  node?: MarkdownNode;
-}
-
-interface MarkdownNode {
-  position?: MarkdownNodePosition;
-}
-
-interface MarkdownNodePosition {
-  start?: {
-    line?: number;
-    offset?: number;
-  };
-  end?: {
-    line?: number;
-    offset?: number;
-  };
 }
 
 interface ActiveStreamingFence {
@@ -899,27 +917,15 @@ function findActiveStreamingFence(content: string): ActiveStreamingFence | null 
   return activeFence;
 }
 
-function isNodeInsideActiveFence(node: MarkdownNode | undefined, fence: ActiveStreamingFence | null): boolean {
+function isBlockInsideActiveFence(block: MarkdownBlock, fence: ActiveStreamingFence | null): boolean {
   if (!fence) {
     return false;
   }
 
-  const position = node?.position;
-  const startOffset = position?.start?.offset;
-  const endOffset = position?.end?.offset;
-  if (isFiniteNumber(startOffset) && isFiniteNumber(endOffset)) {
-    return startOffset <= fence.contentStartOffset && endOffset >= fence.startOffset;
-  }
-
-  const startLine = position?.start?.line;
-  const endLine = position?.end?.line;
-  if (isFiniteNumber(startLine) && isFiniteNumber(endLine)) {
-    return startLine <= fence.contentStartLine && endLine >= fence.startLine;
-  }
-
-  return false;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+  return (
+    block.sourceStart <= fence.startOffset &&
+    block.sourceEnd >= fence.contentStartOffset &&
+    block.lineStart <= fence.startLine &&
+    block.lineEnd >= fence.contentStartLine
+  );
 }

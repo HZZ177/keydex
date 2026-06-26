@@ -133,6 +133,11 @@ describe("FilePreview", () => {
         expect(within(search).getByText("2/2")).not.toBeNull();
         expect(body.querySelectorAll("[data-file-preview-find-match='true']")).toHaveLength(2);
         expect(body.querySelectorAll("[data-file-preview-find-match='true'][data-active='true']")).toHaveLength(1);
+        expect(
+          Array.from(body.querySelectorAll("[data-file-preview-find-match='true']")).every((mark) =>
+            mark.className.includes("findMark"),
+          ),
+        ).toBe(true);
         expect(body.querySelectorAll("[data-file-preview-find-match='true']")[0].getAttribute("data-active")).toBe(
           "false",
         );
@@ -162,11 +167,19 @@ describe("FilePreview", () => {
       await waitFor(() => {
         expect(body.querySelectorAll("[data-file-preview-find-match='true']")).toHaveLength(2);
       });
+      await act(async () => {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+      });
+      scrollIntoView.mockClear();
       fireEvent.click(within(search).getByRole("button", { name: "下一个搜索结果" }));
       await waitFor(() => {
         expect(within(search).getByText("1/2")).not.toBeNull();
         expect(body.querySelectorAll("[data-file-preview-find-match='true'][data-active='true']")).toHaveLength(1);
       });
+      await act(async () => {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+      });
+      expect(scrollIntoView).not.toHaveBeenCalled();
 
       (input as HTMLInputElement).blur();
       act(() => {
@@ -246,6 +259,62 @@ describe("FilePreview", () => {
         delete (Range.prototype as { getBoundingClientRect?: Range["getBoundingClientRect"] }).getBoundingClientRect;
       }
     }
+  });
+
+  it("keeps preview annotation styling while highlighting search matches in annotated blocks", async () => {
+    const content = "# Guide\n\nAlpha beta alpha";
+    const anchor = sourceAnchor(content, "beta", "beta", "preview");
+    const annotation = fileAnnotation({
+      id: "ann-beta",
+      path: "README.md",
+      anchor_type: "selection",
+      selected_text: "beta",
+      line_start: anchor.lineStart,
+      line_end: anchor.lineEnd,
+      column_start: anchor.columnStart,
+      column_end: anchor.columnEnd,
+      content_hash: anchor.contentHash,
+      anchor_json: anchor,
+      comment: "Explain beta",
+    });
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "README.md",
+        content,
+        encoding: "utf-8",
+      }),
+      listAnnotations: vi.fn().mockResolvedValue([annotation]),
+    });
+
+    render(<FilePreview request={{ type: "file", path: "README.md" }} sessionId="ses-1" runtime={runtime} />);
+
+    const body = await screen.findByLabelText("预览内容");
+    await waitFor(() => {
+      const marker = body.querySelector<HTMLElement>('[data-preview-annotation-id="ann-beta"]');
+      expect(marker).not.toBeNull();
+      expect(marker?.className).toContain("previewAnnotationMark");
+    });
+
+    fireEvent.mouseEnter(body);
+    act(() => {
+      document.dispatchEvent(
+        new CustomEvent(APP_FIND_SHORTCUT_EVENT, {
+          detail: {
+            sourceTarget: body,
+          },
+        }),
+      );
+    });
+
+    const search = await screen.findByRole("search", { name: "文件内容搜索" });
+    const input = within(search).getByLabelText("搜索文件内容");
+    fireEvent.change(input, { target: { value: "alpha" } });
+
+    await waitFor(() => {
+      expect(within(search).getByText(/\d\/2/)).not.toBeNull();
+      expect(body.querySelectorAll("[data-file-preview-find-match='true']")).toHaveLength(2);
+      expect(body.querySelectorAll("[data-file-preview-find-match='true'][data-active='true']")).toHaveLength(1);
+    });
   });
 
   it("prefills search from selected rendered markdown inline code", async () => {
@@ -363,6 +432,87 @@ describe("FilePreview", () => {
   });
 
   it("highlights source search matches and the active source hit", async () => {
+    const rangeClientRectsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+    const scrollToDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTo");
+    const scrollTo = vi.fn();
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [testRect({ left: 0, right: 120, top: 0, bottom: 20, width: 120, height: 20 })],
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "README.md",
+        content: "# Guide\n\nAlpha beta\n\nalpha",
+        encoding: "utf-8",
+      }),
+    });
+
+    try {
+      render(<FilePreview request={{ type: "file", path: "README.md" }} sessionId="ses-1" runtime={runtime} />);
+
+      await screen.findByRole("heading", { name: "Guide" });
+      fireEvent.click(screen.getByRole("button", { name: "源码" }));
+      const body = screen.getByLabelText("预览内容");
+      fireEvent.mouseEnter(body);
+      act(() => {
+        document.dispatchEvent(
+          new CustomEvent(APP_FIND_SHORTCUT_EVENT, {
+            detail: {
+              sourceTarget: body,
+            },
+          }),
+        );
+      });
+
+      const search = await screen.findByRole("search", { name: "文件内容搜索" });
+      const input = within(search).getByLabelText("搜索文件内容");
+      fireEvent.change(input, { target: { value: "alpha" } });
+
+      await waitFor(() => {
+        expect(within(search).getByText("1/2")).not.toBeNull();
+        expect(document.querySelectorAll("[data-file-preview-source-find-match='true']")).toHaveLength(2);
+        expect(document.querySelectorAll("[data-file-preview-source-find-match='true'][data-active='true']")).toHaveLength(1);
+        expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+      });
+
+      scrollTo.mockClear();
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(within(search).getByText("2/2")).not.toBeNull();
+        expect(document.querySelectorAll("[data-file-preview-source-find-match='true'][data-active='true']")).toHaveLength(1);
+        expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+      });
+    } finally {
+      if (rangeClientRectsDescriptor) {
+        Object.defineProperty(Range.prototype, "getClientRects", rangeClientRectsDescriptor);
+      } else {
+        delete (Range.prototype as { getClientRects?: Range["getClientRects"] }).getClientRects;
+      }
+      if (scrollToDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, "scrollTo", scrollToDescriptor);
+      } else {
+        delete (HTMLElement.prototype as { scrollTo?: HTMLElement["scrollTo"] }).scrollTo;
+      }
+    }
+  });
+
+  it("does not vertically recenter source search when stepping between hits on the same line", async () => {
+    const rangeClientRectsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+    const scrollToDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTo");
+    const scrollTo = vi.fn();
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [testRect({ left: 0, right: 120, top: 0, bottom: 20, width: 120, height: 20 })],
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
     const runtime = fakeRuntime({
       readFile: vi.fn().mockResolvedValue({
         path: "README.md",
@@ -371,31 +521,165 @@ describe("FilePreview", () => {
       }),
     });
 
-    render(<FilePreview request={{ type: "file", path: "README.md" }} sessionId="ses-1" runtime={runtime} />);
+    try {
+      render(<FilePreview request={{ type: "file", path: "README.md" }} sessionId="ses-1" runtime={runtime} />);
 
-    await screen.findByRole("heading", { name: "Guide" });
-    fireEvent.click(screen.getByRole("button", { name: "源码" }));
-    const body = screen.getByLabelText("预览内容");
-    fireEvent.mouseEnter(body);
-    act(() => {
-      document.dispatchEvent(
-        new CustomEvent(APP_FIND_SHORTCUT_EVENT, {
-          detail: {
-            sourceTarget: body,
-          },
-        }),
-      );
+      await screen.findByRole("heading", { name: "Guide" });
+      fireEvent.click(screen.getByRole("button", { name: "源码" }));
+      const body = screen.getByLabelText("预览内容");
+      fireEvent.mouseEnter(body);
+      act(() => {
+        document.dispatchEvent(
+          new CustomEvent(APP_FIND_SHORTCUT_EVENT, {
+            detail: {
+              sourceTarget: body,
+            },
+          }),
+        );
+      });
+
+      const search = await screen.findByRole("search", { name: "文件内容搜索" });
+      const input = within(search).getByLabelText("搜索文件内容");
+      fireEvent.change(input, { target: { value: "alpha" } });
+
+      await waitFor(() => {
+        expect(within(search).getByText("1/2")).not.toBeNull();
+        expect(document.querySelectorAll("[data-file-preview-source-find-match='true'][data-active='true']")).toHaveLength(1);
+        expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+      });
+      await act(async () => {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+      });
+      scrollTo.mockClear();
+
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(within(search).getByText("2/2")).not.toBeNull();
+        expect(document.querySelectorAll("[data-file-preview-source-find-match='true'][data-active='true']")).toHaveLength(1);
+      });
+      await act(async () => {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+      });
+      expect(scrollTo).not.toHaveBeenCalled();
+    } finally {
+      if (rangeClientRectsDescriptor) {
+        Object.defineProperty(Range.prototype, "getClientRects", rangeClientRectsDescriptor);
+      } else {
+        delete (Range.prototype as { getClientRects?: Range["getClientRects"] }).getClientRects;
+      }
+      if (scrollToDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, "scrollTo", scrollToDescriptor);
+      } else {
+        delete (HTMLElement.prototype as { scrollTo?: HTMLElement["scrollTo"] }).scrollTo;
+      }
+    }
+  });
+
+  it("deduplicates source and preview find matches while split and keeps both panes active", async () => {
+    const rangeClientRectsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+    const rangeRectDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+    const elementRectDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "getBoundingClientRect");
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [testRect({ left: 0, right: 120, top: 0, bottom: 20, width: 120, height: 20 })],
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => testRect({ left: 0, right: 120, top: 0, bottom: 20, width: 120, height: 20 }),
+    });
+    Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => testRect({ left: 0, right: 320, top: 0, bottom: 240, width: 320, height: 240 }),
+    });
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "README.md",
+        content: "# Guide\n\nAlpha beta alpha",
+        encoding: "utf-8",
+      }),
     });
 
-    const search = await screen.findByRole("search", { name: "文件内容搜索" });
-    const input = within(search).getByLabelText("搜索文件内容");
-    fireEvent.change(input, { target: { value: "alpha" } });
+    try {
+      render(<FilePreview request={{ type: "file", path: "README.md" }} sessionId="ses-1" runtime={runtime} />);
 
-    await waitFor(() => {
-      expect(within(search).getByText("1/2")).not.toBeNull();
-      expect(document.querySelectorAll("[data-file-preview-source-find-match='true']")).toHaveLength(2);
-      expect(document.querySelectorAll("[data-file-preview-source-find-match='true'][data-active='true']")).toHaveLength(1);
-    });
+      await screen.findByRole("heading", { name: "Guide" });
+      fireEvent.click(screen.getByRole("button", { name: "分屏" }));
+      const body = screen.getByLabelText("预览内容");
+      expect(screen.getByTestId("preview-split-pane")).not.toBeNull();
+      fireEvent.mouseEnter(body);
+      act(() => {
+        document.dispatchEvent(
+          new CustomEvent(APP_FIND_SHORTCUT_EVENT, {
+            detail: {
+              sourceTarget: body,
+            },
+          }),
+        );
+      });
+
+      const search = await screen.findByRole("search", { name: "文件内容搜索" });
+      const input = within(search).getByLabelText("搜索文件内容");
+      fireEvent.change(input, { target: { value: "alpha" } });
+
+      await waitFor(() => {
+        expect(within(search).getByText("1/2")).not.toBeNull();
+        expect(body.querySelectorAll("[data-file-preview-find-match='true']")).toHaveLength(2);
+        expect(document.querySelectorAll("[data-file-preview-source-find-match='true']")).toHaveLength(2);
+        expect(body.querySelectorAll("[data-file-preview-find-match='true'][data-active='true']")).toHaveLength(1);
+        expect(document.querySelectorAll("[data-file-preview-source-find-match='true'][data-active='true']")).toHaveLength(1);
+      });
+      const activePreviewBefore = body.querySelector("[data-file-preview-find-match='true'][data-active='true']");
+      const activeSourceBefore = document.querySelector("[data-file-preview-source-find-match='true'][data-active='true']");
+      expect(activePreviewBefore).not.toBeNull();
+      expect(activeSourceBefore).not.toBeNull();
+      const activePreviewIdBefore = activePreviewBefore?.getAttribute("data-find-match-id");
+      const activeSourceStartBefore = activeSourceBefore?.getAttribute("data-source-start");
+
+      fireEvent.click(within(search).getByRole("button", { name: "下一个搜索结果" }));
+
+      await waitFor(() => {
+        expect(within(search).getByText("2/2")).not.toBeNull();
+        expect(body.querySelectorAll("[data-file-preview-find-match='true'][data-active='true']")).toHaveLength(1);
+        expect(document.querySelectorAll("[data-file-preview-source-find-match='true'][data-active='true']")).toHaveLength(1);
+        expect(
+          body.querySelector("[data-file-preview-find-match='true'][data-active='true']")?.getAttribute("data-find-match-id"),
+        ).not.toBe(activePreviewIdBefore);
+        expect(
+          document
+            .querySelector("[data-file-preview-source-find-match='true'][data-active='true']")
+            ?.getAttribute("data-source-start"),
+        ).not.toBe(
+          activeSourceStartBefore,
+        );
+      });
+    } finally {
+      if (rangeClientRectsDescriptor) {
+        Object.defineProperty(Range.prototype, "getClientRects", rangeClientRectsDescriptor);
+      } else {
+        delete (Range.prototype as { getClientRects?: Range["getClientRects"] }).getClientRects;
+      }
+      if (rangeRectDescriptor) {
+        Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeRectDescriptor);
+      } else {
+        delete (Range.prototype as { getBoundingClientRect?: Range["getBoundingClientRect"] }).getBoundingClientRect;
+      }
+      if (elementRectDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", elementRectDescriptor);
+      } else {
+        delete (HTMLElement.prototype as { getBoundingClientRect?: HTMLElement["getBoundingClientRect"] }).getBoundingClientRect;
+      }
+      if (scrollDescriptor) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", scrollDescriptor);
+      } else {
+        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
+      }
+    }
   });
 
   it("renders code files with CodeMirror source viewer and line numbers", async () => {
@@ -1615,10 +1899,10 @@ describe("FilePreview", () => {
     await waitFor(() => {
       expect(document.querySelectorAll('[data-preview-annotation-id="ann-repeat"]').length).toBe(1);
     });
-    expect(document.querySelector('[data-preview-annotation-id="ann-repeat"]')?.textContent).toBe("Target text");
-    expect(document.querySelector('[data-preview-annotation-id="ann-repeat"]')?.closest("p")?.previousElementSibling?.textContent).toBe(
-      "Target text",
-    );
+    const marker = document.querySelector('[data-preview-annotation-id="ann-repeat"]');
+    const paragraphs = Array.from(document.querySelectorAll("p"));
+    expect(marker?.textContent).toBe("Target text");
+    expect(paragraphs.findIndex((paragraph) => paragraph.contains(marker))).toBe(1);
   });
 
   it("marks rendered cross-block annotations in source view with markdown syntax between selected words", async () => {
@@ -1902,11 +2186,11 @@ describe("FilePreview", () => {
         "true",
       );
       expect(document.querySelector('[data-file-annotation-id="ann-split"]')?.getAttribute("data-active")).toBe("true");
+      expect(document.querySelector('[data-preview-annotation-id="ann-split"]')?.getAttribute("data-flash")).toBe(
+        "true",
+      );
+      expect(document.querySelector('[data-file-annotation-id="ann-split"]')?.getAttribute("data-flash")).toBe("true");
     });
-    expect(document.querySelector('[data-preview-annotation-id="ann-split"]')?.getAttribute("data-flash")).toBe(
-      "false",
-    );
-    expect(document.querySelector('[data-file-annotation-id="ann-split"]')?.getAttribute("data-flash")).toBe("false");
   });
 
   it("shows a locate failure without switching views when an anchor is missing", async () => {

@@ -1,10 +1,3 @@
-import rehypeKatex from "rehype-katex";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
-
-export const markdownRemarkPlugins = [remarkGfm, remarkBreaks, remarkMath];
-export const markdownRehypePlugins = [rehypeKatex];
 export const textualToolProtocolNotice = "模型输出了文本形式的工具协议，已隐藏；该内容不是后端真实工具执行结果。";
 
 const TEXTUAL_TOOL_PROTOCOL_BLOCK_PATTERN =

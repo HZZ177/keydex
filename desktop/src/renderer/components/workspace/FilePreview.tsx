@@ -58,19 +58,14 @@ import {
   useMemo,
   useRef,
   useState,
-  cloneElement,
-  isValidElement,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactElement,
-  type ReactNode,
   type RefObject,
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import ReactMarkdown, { type Components } from "react-markdown";
 
 import type {
   RuntimeBridge,
@@ -80,14 +75,8 @@ import type {
   WorkspaceScope,
 } from "@/runtime";
 import { MarkdownImage } from "@/renderer/pages/conversation/messages/MarkdownImage";
-import { MarkdownTable } from "@/renderer/pages/conversation/messages/MarkdownTable";
 import { SelectionToolbar } from "@/renderer/pages/conversation/messages/SelectionToolbar";
-import {
-  copyText,
-  markdownRehypePlugins,
-  markdownRemarkPlugins,
-  normalizeMarkdownContent,
-} from "@/renderer/pages/conversation/messages/markdown";
+import { copyText } from "@/renderer/pages/conversation/messages/markdown";
 import { useTextSelection, type SelectionPosition } from "@/renderer/pages/conversation/messages/useTextSelection";
 import {
   APP_FIND_SHORTCUT_EVENT,
@@ -113,6 +102,15 @@ import {
 import { parseUnifiedDiffDisplayLines } from "@/renderer/utils/unifiedDiff";
 
 import { createSourceRangeAnchor, validateSourceRangeAnchor } from "./filePreviewAnnotations";
+import {
+  buildMarkdownAnnotationIndex,
+  buildMarkdownFindIndex,
+  defaultMarkdownBlockRenderers,
+  markdownDocumentModelCache,
+  VirtualMarkdownPreview,
+  type MarkdownBlockRendererRegistry,
+  type VirtualMarkdownPreviewHandle,
+} from "./markdownPreviewEngine";
 import styles from "./FilePreview.module.css";
 
 export type FilePreviewRequest = PreviewRequest;
@@ -172,6 +170,7 @@ export function FilePreview({
 }: FilePreviewProps) {
   const previewRootRef = useRef<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const markdownPreviewRef = useRef<VirtualMarkdownPreviewHandle | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const panelChrome = chrome === "panel";
   const kind = useMemo(() => detectPreviewKind(request), [request]);
@@ -239,6 +238,7 @@ export function FilePreview({
   const [findFocusRequestId, setFindFocusRequestId] = useState(0);
   const [findMatchCount, setFindMatchCount] = useState(0);
   const [findMatchIndex, setFindMatchIndex] = useState(-1);
+  const [activeMarkdownFindMatchId, setActiveMarkdownFindMatchId] = useState<string | null>(null);
   const [sourceFindState, setSourceFindState] = useState<CodeMirrorFindState | null>(null);
   const [annotationPanelOpen, setAnnotationPanelOpen] = useState(false);
   const [annotationPanelClosing, setAnnotationPanelClosing] = useState(false);
@@ -256,6 +256,7 @@ export function FilePreview({
   const panelMarkdownRenderTimerRef = useRef<number | null>(null);
   const transientRevealAnnotationRef = useRef<WorkspaceFileAnnotation | null>(null);
   const handledSourceRevealRequestIdRef = useRef(0);
+  const lastFindScrollLineRef = useRef<FilePreviewFindScrollLine | null>(null);
 
   const clearTransientReveal = useCallback(() => {
     const annotationId = transientRevealAnnotationRef.current?.id ?? null;
@@ -546,21 +547,58 @@ export function FilePreview({
   const canSplit = kind === "markdown" || kind === "html";
   const sourceLabel = previewSourceLabel(request);
   const formattedSource = useMemo(() => formatSource(renderedPreviewContent, kind), [kind, renderedPreviewContent]);
-  const markdownOutline = useMemo(
-    () => (kind === "markdown" && !previewRenderDeferred ? extractMarkdownOutline(renderedPreviewContent) : []),
-    [kind, previewRenderDeferred, renderedPreviewContent],
+  const markdownModel = useMemo(
+    () =>
+      kind === "markdown" && !previewRenderDeferred
+        ? markdownDocumentModelCache.getOrCreate({
+          cacheKey: sourceLabel,
+          idPrefix: "file-preview",
+          source: renderedPreviewContent,
+        })
+        : null,
+    [kind, previewRenderDeferred, renderedPreviewContent, sourceLabel],
   );
-  const markdownComponents = useMemo(
-    () => ({
-      pre: PreviewMarkdownCodeBlock,
-      table: MarkdownTable,
-      img: (props: Parameters<typeof MarkdownImage>[0]) => (
-        <MarkdownImage {...props} workspaceScope={scope} runtime={runtime} sourcePath={sourceLabel} />
-      ),
-    }),
-    [scope, runtime, sourceLabel],
+  const markdownOutline = useMemo(
+    () =>
+      markdownModel
+        ? markdownModel.outline.map((item) => ({
+          id: item.id,
+          level: item.level,
+          line: item.lineStart,
+          title: item.title,
+        }))
+        : [],
+    [markdownModel],
   );
   const markdownContent = renderedPreviewContent || "文件为空";
+  const renderMarkdownImage = useCallback(
+    ({ alt, src }: { alt: string; src: string }) => (
+      <MarkdownImage
+        alt={alt}
+        src={src}
+        workspaceScope={scope}
+        runtime={runtime}
+        sourcePath={sourceLabel}
+      />
+    ),
+    [runtime, scope, sourceLabel],
+  );
+  const markdownRendererRegistry = useMemo<MarkdownBlockRendererRegistry>(
+    () => ({
+      fence: (props) => {
+        const language = props.block.metadata.language?.toLowerCase() ?? "";
+        if (language.startsWith("mermaid")) {
+          return (
+            <div {...props.blockAttributes}>
+              <NativeMermaidPreview code={props.block.textContent} layout="document" />
+            </div>
+          );
+        }
+        return defaultMarkdownBlockRenderers.fence?.(props) ?? null;
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     if (!onMarkdownOutlineChange) {
@@ -593,6 +631,10 @@ export function FilePreview({
     [activeAnnotationPopover?.annotationId, annotations],
   );
   const activeAnnotationId = activeAnnotationPopover?.annotationId ?? focusedAnnotationId;
+  const markdownAnnotationIndex = useMemo(
+    () => (markdownModel ? buildMarkdownAnnotationIndex(markdownModel, selectionAnnotations) : []),
+    [markdownModel, selectionAnnotations],
+  );
 
   const activateAnnotation = useCallback(
     (annotation: WorkspaceFileAnnotation, position: AnnotationClientPosition) => {
@@ -915,18 +957,22 @@ export function FilePreview({
         if (previewElement) {
           scrollAnnotationElementIntoView(annotation, previewElement, { flash: false });
           located = true;
+        } else if (kind === "markdown" && markdownPreviewRef.current?.scrollToAnnotation(annotation.id, "center")) {
+          setFocusedAnnotationId(annotation.id);
+          located = true;
         }
       }
       if (viewMode === "source" || splitMode) {
         located = revealAnnotationLine(annotation, { flash: false }) || located;
       }
       if (located) {
+        flashAnnotation(annotation.id);
         setLocateError(null);
         return;
       }
       setLocateError("当前视图无法定位该批注片段。");
     },
-    [revealAnnotationLine, scrollAnnotationElementIntoView, splitMode, viewMode],
+    [flashAnnotation, kind, revealAnnotationLine, scrollAnnotationElementIntoView, splitMode, viewMode],
   );
 
   useEffect(() => {
@@ -942,8 +988,13 @@ export function FilePreview({
       scrollAnnotationElementIntoView(annotation, element);
       return;
     }
+    if (kind === "markdown" && markdownPreviewRef.current?.scrollToAnnotation(annotation.id, "center")) {
+      setFocusedAnnotationId(annotation.id);
+      flashAnnotation(annotation.id);
+      return;
+    }
     revealAnnotationLine(annotation);
-  }, [annotations, previewRevealRequest, revealAnnotationLine, scrollAnnotationElementIntoView]);
+  }, [annotations, flashAnnotation, kind, previewRevealRequest, revealAnnotationLine, scrollAnnotationElementIntoView]);
 
   useEffect(() => {
     clearTransientReveal();
@@ -993,6 +1044,12 @@ export function FilePreview({
       if (element) {
         element.scrollIntoView?.(FILE_PREVIEW_TRANSIENT_REVEAL_SCROLL_OPTIONS);
         located = true;
+      } else if (kind === "markdown" && markdownPreviewRef.current?.scrollToAnnotation(transientRevealAnnotation.id, "center")) {
+        window.requestAnimationFrame(() => {
+          findPreviewAnnotationElement(bodyRef.current, transientRevealAnnotation.id)
+            ?.scrollIntoView?.(FILE_PREVIEW_TRANSIENT_REVEAL_SCROLL_OPTIONS);
+        });
+        located = true;
       }
     }
     if (viewMode === "source" || splitMode) {
@@ -1001,7 +1058,7 @@ export function FilePreview({
     if (located) {
       setLocateError(null);
     }
-  }, [renderedPreviewContent, revealAnnotationLine, splitMode, transientRevealAnnotation, viewMode]);
+  }, [kind, renderedPreviewContent, revealAnnotationLine, splitMode, transientRevealAnnotation, viewMode]);
 
   useLayoutEffect(() => {
     updatePreviewAnnotationMarkState(bodyRef.current, activeAnnotationId, flashAnnotationId);
@@ -1011,10 +1068,21 @@ export function FilePreview({
     if (!outlineRevealRequest || kind !== "markdown") {
       return;
     }
+    const outlineItem = markdownModel?.outline.find((item) => item.id === outlineRevealRequest.id) ?? null;
     if (viewMode !== "source" || splitMode) {
-      const heading = findMarkdownOutlineHeading(bodyRef.current, outlineRevealRequest.id);
-      if (heading) {
-        heading.scrollIntoView?.(FILE_PREVIEW_REVEAL_SCROLL_OPTIONS);
+      if (outlineItem) {
+        const heading = findMarkdownOutlineBlockHeading(bodyRef.current, outlineItem.blockId);
+        if (heading) {
+          heading.dataset.markdownOutlineId = outlineItem.id;
+          heading.scrollIntoView?.(FILE_PREVIEW_REVEAL_SCROLL_OPTIONS);
+        } else {
+          markdownPreviewRef.current?.scrollToBlock(outlineItem.blockId, "start");
+        }
+      } else {
+        const heading = findMarkdownOutlineHeading(bodyRef.current, outlineRevealRequest.id);
+        if (heading) {
+          heading.scrollIntoView?.(FILE_PREVIEW_REVEAL_SCROLL_OPTIONS);
+        }
       }
     }
     if (viewMode === "preview" && !splitMode) {
@@ -1024,13 +1092,35 @@ export function FilePreview({
       requestId: (current?.requestId ?? 0) + 1,
       position: sourcePositionForLine(formattedSource, outlineRevealRequest.line),
     }));
-  }, [formattedSource, kind, outlineRevealRequest, splitMode, viewMode]);
+  }, [formattedSource, kind, markdownModel, outlineRevealRequest, splitMode, viewMode]);
 
   const findMode: FilePreviewFindMode = splitMode && canSplit
     ? "split"
     : viewMode === "source" || !canRenderPreview
       ? "source"
       : "preview";
+  const markdownFindIndex = useMemo(
+    () =>
+      kind === "markdown" &&
+      markdownModel &&
+      findOpen &&
+      findQuery.trim() &&
+      (findMode === "preview" || findMode === "split")
+        ? buildMarkdownFindIndex(markdownModel, findQuery)
+        : null,
+    [findMode, findOpen, findQuery, kind, markdownModel],
+  );
+  const markdownFindMatches = useMemo<MarkdownPreviewFindMatch[]>(
+    () =>
+      (markdownFindIndex?.matches ?? []).map((match) => ({
+        blockId: match.blockId,
+        id: match.id,
+        sourceEnd: match.sourceEnd,
+        sourceStart: match.sourceStart,
+        type: "markdown",
+      })),
+    [markdownFindIndex],
+  );
 
   const openFind = useCallback(
     (sourceTarget: EventTarget | null) => {
@@ -1060,7 +1150,8 @@ export function FilePreview({
     setFindQuery("");
     setFindMatchCount(0);
     setFindMatchIndex(-1);
-    clearDomFindHighlights(bodyRef.current);
+    setActiveMarkdownFindMatchId(null);
+    clearDomFindHighlights(bodyRef.current, { includeControlledMarks: true });
   }, []);
 
   const activateFindRoot = useCallback(() => {
@@ -1136,13 +1227,18 @@ export function FilePreview({
   );
 
   useLayoutEffect(() => {
-    clearDomFindHighlights(bodyRef.current);
+    const useDomMarkdownFind = kind === "markdown" && /\s/.test(findQuery);
+    clearDomFindHighlights(bodyRef.current, {
+      includeControlledMarks: kind !== "markdown" || useDomMarkdownFind || !findOpen || !findQuery.trim(),
+    });
     const shouldSearchSource = Boolean(sourceEditorView && (findMode === "source" || findMode === "split"));
     if (!findOpen || !findQuery.trim()) {
       sourceEditorView?.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "" })) });
       setSourceFindState((current) => (current ? null : current));
       setFindMatchCount(0);
       setFindMatchIndex(-1);
+      setActiveMarkdownFindMatchId(null);
+      lastFindScrollLineRef.current = null;
       return;
     }
     if (!shouldSearchSource) {
@@ -1154,17 +1250,29 @@ export function FilePreview({
       sourceEditorView && shouldSearchSource
         ? collectCodeMirrorFindMatches(sourceEditorView, query)
         : [];
-    const domMatches = collectDomFindMatches(filePreviewFindContainers(bodyRef.current, findMode, Boolean(sourceEditorView)), findQuery);
-    const matches: FilePreviewFindMatch[] = [...codeMirrorMatches, ...domMatches];
+    const domMatches = kind !== "markdown" || useDomMarkdownFind
+      ? collectDomFindMatches(filePreviewFindContainers(bodyRef.current, findMode, Boolean(sourceEditorView)), findQuery)
+      : [];
+    const previewMarkdownMatches = useDomMarkdownFind ? [] : markdownFindMatches;
+    const matches = mergeFilePreviewFindMatches(findMode, codeMirrorMatches, previewMarkdownMatches, domMatches);
     const nextIndex = preferredFindMatchIndex(findMatchIndex, matches, bodyRef.current, sourceEditorView);
     setFindMatchCount(matches.length);
     if (nextIndex !== findMatchIndex) {
       setFindMatchIndex(nextIndex);
     }
     const activeMatch = matches[nextIndex] ?? null;
+    const activeScrollLine = findMatchScrollLine(activeMatch, {
+      findMode,
+      query: findQuery,
+      source: renderedPreviewContent,
+      sourceEditorView,
+    });
+    const shouldRecenterActiveMatch = !sameFindScrollLine(lastFindScrollLineRef.current, activeScrollLine);
+    lastFindScrollLineRef.current = activeScrollLine;
+    setActiveMarkdownFindMatchId(activeMarkdownFindMatch(activeMatch)?.id ?? null);
     applyDomFindHighlights(domMatches, activeMatch?.type === "dom" ? activeMatch.id : null);
     if (sourceEditorView && (findMode === "source" || findMode === "split")) {
-      const activeCodeMirrorMatch = activeMatch?.type === "codemirror" ? activeMatch : null;
+      const activeCodeMirrorMatch = activeCodeMirrorFindMatch(activeMatch);
       const nextSourceFindState: CodeMirrorFindState = {
         query: findQuery,
         activeFrom: activeCodeMirrorMatch?.from ?? null,
@@ -1176,7 +1284,7 @@ export function FilePreview({
       sourceEditorView.dispatch({
         effects: [
           setSearchQuery.of(new SearchQuery({ search: "" })),
-          ...(activeCodeMirrorMatch
+          ...(activeCodeMirrorMatch && shouldRecenterActiveMatch
             ? [
                 EditorView.scrollIntoView(
                   EditorSelection.range(activeCodeMirrorMatch.from, activeCodeMirrorMatch.to),
@@ -1189,11 +1297,16 @@ export function FilePreview({
           ? EditorSelection.range(activeCodeMirrorMatch.from, activeCodeMirrorMatch.to)
           : undefined,
       });
+      if (activeCodeMirrorMatch && shouldRecenterActiveMatch) {
+        smoothScrollCodeMirrorPositionIntoView(sourceEditorView, activeCodeMirrorMatch.from, "center");
+      }
     }
-    scrollFindMatchIntoView(activeMatch);
-  }, [findMatchIndex, findMode, findOpen, findQuery, renderedPreviewContent, sourceEditorView]);
+    if (shouldRecenterActiveMatch) {
+      scrollFindMatchIntoView(activeMatch, markdownPreviewRef.current);
+    }
+  }, [findMatchIndex, findMode, findOpen, findQuery, kind, markdownFindMatches, renderedPreviewContent, sourceEditorView]);
 
-  useEffect(() => () => clearDomFindHighlights(bodyRef.current), []);
+  useEffect(() => () => clearDomFindHighlights(bodyRef.current, { includeControlledMarks: true }), []);
 
   const renderSourcePane = () => (
     <SourceViewer
@@ -1212,20 +1325,61 @@ export function FilePreview({
     />
   );
 
+  const handleMarkdownPreviewClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const marker = target?.closest<HTMLElement>("[data-preview-annotation-id]");
+      const annotationId = marker?.dataset.previewAnnotationId;
+      if (!annotationId || isTransientRevealAnnotationId(annotationId)) {
+        return;
+      }
+      const annotation = annotations.find((item) => item.id === annotationId);
+      if (!annotation) {
+        return;
+      }
+      const rect = marker.getBoundingClientRect();
+      event.preventDefault();
+      event.stopPropagation();
+      activateAnnotation(annotation, {
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top,
+        width: rect.width,
+        height: rect.height,
+        anchorElement: marker,
+      });
+    },
+    [activateAnnotation, annotations],
+  );
+
   const renderPreviewPane = () => {
     if (kind === "mermaid") {
       return <NativeMermaidPreview code={renderedPreviewContent || ""} />;
     }
 
     if (kind === "markdown") {
+      if (!markdownModel || markdownModel.blocks.length === 0) {
+        return (
+          <div className={styles.markdownPane}>
+            <div className="keydex-markdown">
+              <p>{markdownContent}</p>
+            </div>
+          </div>
+        );
+      }
       return (
-        <MemoizedAnnotatedMarkdownPreview
-          annotations={selectionAnnotations}
-          components={markdownComponents}
-          content={markdownContent}
-          outline={markdownOutline}
-          onAnnotationActivate={activateAnnotation}
-        />
+        <div className={styles.markdownPane} onClick={handleMarkdownPreviewClick}>
+          <VirtualMarkdownPreview
+            ref={markdownPreviewRef}
+            activeAnnotationId={activeAnnotationId}
+            activeFindMatchId={activeMarkdownFindMatchId}
+            annotationIndex={markdownAnnotationIndex}
+            findIndex={markdownFindIndex}
+            flashAnnotationId={flashAnnotationId}
+            model={markdownModel}
+            registry={markdownRendererRegistry}
+            renderImage={renderMarkdownImage}
+          />
+        </div>
       );
     }
 
@@ -1718,7 +1872,29 @@ interface CodeMirrorFindMatch {
   to: number;
 }
 
-type FilePreviewFindMatch = DomFindMatch | CodeMirrorFindMatch;
+interface MarkdownPreviewFindMatch {
+  id: string;
+  type: "markdown";
+  blockId: string;
+  sourceEnd: number;
+  sourceStart: number;
+}
+
+interface SplitFindMatch {
+  id: string;
+  type: "split";
+  codeMirror: CodeMirrorFindMatch;
+  markdown: MarkdownPreviewFindMatch;
+}
+
+type FilePreviewFindMatch = DomFindMatch | CodeMirrorFindMatch | MarkdownPreviewFindMatch | SplitFindMatch;
+
+interface FilePreviewFindScrollLine {
+  findMode: FilePreviewFindMode;
+  line: number;
+  query: string;
+  surface: "source" | "markdown" | "split";
+}
 
 const HIGHLIGHT_MAX_CHARS = 120_000;
 const HIGHLIGHT_MAX_LINES = 2_000;
@@ -1733,6 +1909,7 @@ const ANNOTATION_POPOVER_GAP = 10;
 const FILE_PREVIEW_SELECTION_EXCLUDE_SELECTOR = "[data-file-preview-selection-excluded='true']";
 const FILE_PREVIEW_ANNOTATION_POPOVER_SELECTOR = "[data-file-preview-annotation-popover='true']";
 const FILE_PREVIEW_FIND_MARK_SELECTOR = "[data-file-preview-find-match='true']";
+const FILE_PREVIEW_DOM_FIND_MARK_SELECTOR = "[data-file-preview-dom-find-match='true']";
 const FILE_PREVIEW_FIND_SELECTION_EXCLUDE_SELECTOR = [
   "[data-file-preview-search='true']",
   "[data-file-preview-selection-excluded='true']",
@@ -2595,6 +2772,13 @@ function findMarkdownOutlineHeading(container: HTMLElement | null, headingId: st
   return Array.from(elements).find((element) => element.dataset.markdownOutlineId === headingId) ?? null;
 }
 
+function findMarkdownOutlineBlockHeading(container: HTMLElement | null, blockId: string): HTMLElement | null {
+  if (!container) {
+    return null;
+  }
+  return container.querySelector<HTMLElement>(`[data-markdown-outline-block-id='${cssString(blockId)}']`);
+}
+
 function updatePreviewAnnotationMarkState(
   container: HTMLElement | null,
   activeAnnotationId: string | null,
@@ -2944,6 +3128,160 @@ function collectCodeMirrorFindMatches(view: EditorView, query: SearchQuery): Cod
   return matches;
 }
 
+function mergeFilePreviewFindMatches(
+  mode: FilePreviewFindMode,
+  codeMirrorMatches: CodeMirrorFindMatch[],
+  markdownMatches: MarkdownPreviewFindMatch[],
+  domMatches: DomFindMatch[],
+): FilePreviewFindMatch[] {
+  if (mode !== "split") {
+    return [...codeMirrorMatches, ...markdownMatches, ...domMatches];
+  }
+
+  const markdownBySourceRange = new Map<string, MarkdownPreviewFindMatch>();
+  markdownMatches.forEach((match) => {
+    markdownBySourceRange.set(findSourceRangeKey(match.sourceStart, match.sourceEnd), match);
+  });
+
+  const merged: FilePreviewFindMatch[] = [];
+  const usedMarkdownIds = new Set<string>();
+  codeMirrorMatches.forEach((codeMirrorMatch) => {
+    const markdownMatch = markdownBySourceRange.get(findSourceRangeKey(codeMirrorMatch.from, codeMirrorMatch.to));
+    if (!markdownMatch) {
+      merged.push(codeMirrorMatch);
+      return;
+    }
+    usedMarkdownIds.add(markdownMatch.id);
+    merged.push({
+      id: `split-${codeMirrorMatch.from}-${codeMirrorMatch.to}`,
+      type: "split",
+      codeMirror: codeMirrorMatch,
+      markdown: markdownMatch,
+    });
+  });
+  markdownMatches.forEach((match) => {
+    if (!usedMarkdownIds.has(match.id)) {
+      merged.push(match);
+    }
+  });
+
+  return [...merged.sort(compareSourceMappedFindMatches), ...domMatches];
+}
+
+function findSourceRangeKey(start: number, end: number): string {
+  return `${start}:${end}`;
+}
+
+function compareSourceMappedFindMatches(left: FilePreviewFindMatch, right: FilePreviewFindMatch): number {
+  return sourceMappedFindStart(left) - sourceMappedFindStart(right);
+}
+
+function sourceMappedFindStart(match: FilePreviewFindMatch): number {
+  if (match.type === "codemirror") {
+    return match.from;
+  }
+  if (match.type === "markdown") {
+    return match.sourceStart;
+  }
+  if (match.type === "split") {
+    return match.codeMirror.from;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function activeMarkdownFindMatch(match: FilePreviewFindMatch | null): MarkdownPreviewFindMatch | null {
+  if (match?.type === "markdown") {
+    return match;
+  }
+  if (match?.type === "split") {
+    return match.markdown;
+  }
+  return null;
+}
+
+function activeCodeMirrorFindMatch(match: FilePreviewFindMatch | null): CodeMirrorFindMatch | null {
+  if (match?.type === "codemirror") {
+    return match;
+  }
+  if (match?.type === "split") {
+    return match.codeMirror;
+  }
+  return null;
+}
+
+function findMatchScrollLine(
+  match: FilePreviewFindMatch | null,
+  context: {
+    findMode: FilePreviewFindMode;
+    query: string;
+    source: string;
+    sourceEditorView: EditorView | null;
+  },
+): FilePreviewFindScrollLine | null {
+  if (!match) {
+    return null;
+  }
+  if (match.type === "codemirror") {
+    return {
+      findMode: context.findMode,
+      line: codeMirrorLineAtOffset(context.sourceEditorView, match.from) ?? lineNumberAtOffset(context.source, match.from),
+      query: context.query,
+      surface: "source",
+    };
+  }
+  if (match.type === "markdown") {
+    return {
+      findMode: context.findMode,
+      line: lineNumberAtOffset(context.source, match.sourceStart),
+      query: context.query,
+      surface: "markdown",
+    };
+  }
+  if (match.type === "split") {
+    return {
+      findMode: context.findMode,
+      line:
+        codeMirrorLineAtOffset(context.sourceEditorView, match.codeMirror.from) ??
+        lineNumberAtOffset(context.source, match.markdown.sourceStart),
+      query: context.query,
+      surface: "split",
+    };
+  }
+  return null;
+}
+
+function sameFindScrollLine(
+  previous: FilePreviewFindScrollLine | null,
+  next: FilePreviewFindScrollLine | null,
+): boolean {
+  return Boolean(
+    previous &&
+      next &&
+      previous.findMode === next.findMode &&
+      previous.line === next.line &&
+      previous.query === next.query &&
+      previous.surface === next.surface,
+  );
+}
+
+function codeMirrorLineAtOffset(view: EditorView | null, offset: number): number | null {
+  if (!view) {
+    return null;
+  }
+  return view.state.doc.lineAt(Math.max(0, Math.min(offset, view.state.doc.length))).number;
+}
+
+function lineNumberAtOffset(source: string, offset: number): number {
+  const target = Math.max(0, Math.min(offset, source.length));
+  let line = 1;
+  for (let index = 0; index < target; index += 1) {
+    if (source.charCodeAt(index) === 10) {
+      line += 1;
+    }
+  }
+  return line;
+}
+
 function clampFindIndex(index: number, count: number): number {
   if (count <= 0) {
     return -1;
@@ -2978,6 +3316,15 @@ function isFindMatchVisible(
   if (match.type === "codemirror") {
     return Boolean(sourceEditorView && codeMirrorMatchInViewport(sourceEditorView, match));
   }
+  if (match.type === "markdown") {
+    return markdownFindMatchInViewport(match, body);
+  }
+  if (match.type === "split") {
+    return (
+      Boolean(sourceEditorView && codeMirrorMatchInViewport(sourceEditorView, match.codeMirror)) ||
+      markdownFindMatchInViewport(match.markdown, body)
+    );
+  }
   return domFindMatchInViewport(match, body);
 }
 
@@ -3008,6 +3355,58 @@ function domFindMatchInViewport(match: DomFindMatch, body: HTMLElement | null): 
     return false;
   }
   return matchRect.bottom >= containerRect.top && matchRect.top <= containerRect.bottom;
+}
+
+function markdownFindMatchInViewport(match: MarkdownPreviewFindMatch, body: HTMLElement | null): boolean {
+  if (!body) {
+    return false;
+  }
+  const marker = body.querySelector<HTMLElement>(`[data-find-match-id='${cssString(match.id)}']`);
+  if (!marker) {
+    const block = body.querySelector<HTMLElement>(`[data-markdown-block-id='${cssString(match.blockId)}']`);
+    return markdownBlockMatchLikelyVisible(match, block);
+  }
+  const block = marker.closest<HTMLElement>("[data-markdown-block-id]");
+  const blockVisible = markdownBlockMatchLikelyVisible(match, block);
+  if (blockVisible) {
+    return true;
+  }
+  const container = marker.closest<HTMLElement>("[data-virtuoso-scroller='true']") ?? body;
+  const containerRect = container.getBoundingClientRect();
+  const textNode = firstTextNode(marker);
+  if (!textNode) {
+    return false;
+  }
+  const range = document.createRange();
+  range.setStart(textNode, 0);
+  range.setEnd(textNode, textNode.textContent?.length ?? 0);
+  if (typeof range.getBoundingClientRect !== "function") {
+    range.detach();
+    return true;
+  }
+  const matchRect = range.getBoundingClientRect();
+  range.detach();
+  if (matchRect.width === 0 && matchRect.height === 0) {
+    return false;
+  }
+  return matchRect.bottom >= containerRect.top && matchRect.top <= containerRect.bottom;
+}
+
+function markdownBlockMatchLikelyVisible(match: MarkdownPreviewFindMatch, block: HTMLElement | null): boolean {
+  const blockStart = dataInteger(block?.dataset.markdownSourceStart);
+  if (blockStart === null) {
+    return false;
+  }
+  return match.sourceStart > blockStart;
+}
+
+function firstTextNode(element: HTMLElement): Text | null {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  return walker.nextNode() as Text | null;
+}
+
+function cssString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
 function applyDomFindHighlights(matches: DomFindMatch[], activeId: string | null): void {
@@ -3044,6 +3443,7 @@ function applyDomFindHighlights(matches: DomFindMatch[], activeId: string | null
         }
         const mark = document.createElement("mark");
         mark.className = styles.findMark;
+        mark.dataset.filePreviewDomFindMatch = "true";
         mark.dataset.filePreviewFindMatch = "true";
         mark.dataset.active = range.match.id === activeId ? "true" : "false";
         mark.textContent = text.slice(range.start, range.end);
@@ -3125,11 +3525,15 @@ function selectionRangeTouchesExcludedElement(range: Range): boolean {
   });
 }
 
-function clearDomFindHighlights(container: HTMLElement | null): void {
+function clearDomFindHighlights(
+  container: HTMLElement | null,
+  options: { includeControlledMarks?: boolean } = {},
+): void {
   if (!container) {
     return;
   }
-  Array.from(container.querySelectorAll<HTMLElement>(FILE_PREVIEW_FIND_MARK_SELECTOR)).forEach((mark) => {
+  const selector = options.includeControlledMarks ? FILE_PREVIEW_FIND_MARK_SELECTOR : FILE_PREVIEW_DOM_FIND_MARK_SELECTOR;
+  Array.from(container.querySelectorAll<HTMLElement>(selector)).forEach((mark) => {
     const parent = mark.parentNode;
     if (!parent) {
       return;
@@ -3142,857 +3546,41 @@ function clearDomFindHighlights(container: HTMLElement | null): void {
   });
 }
 
-function scrollFindMatchIntoView(match: FilePreviewFindMatch | null): void {
-  if (match?.type !== "dom") {
+function scrollFindMatchIntoView(
+  match: FilePreviewFindMatch | null,
+  markdownPreview: VirtualMarkdownPreviewHandle | null,
+): void {
+  if (match?.type === "dom") {
+    match.element.scrollIntoView?.(FILE_PREVIEW_FIND_SCROLL_OPTIONS);
     return;
   }
-  match.element.scrollIntoView?.(FILE_PREVIEW_FIND_SCROLL_OPTIONS);
-}
-
-function AnnotatedMarkdownPreview({
-  annotations,
-  components,
-  content,
-  outline,
-  onAnnotationActivate,
-}: {
-  annotations: WorkspaceFileAnnotation[];
-  components: Components;
-  content: string;
-  outline: MarkdownOutlineItem[];
-  onAnnotationActivate: (annotation: WorkspaceFileAnnotation, position: AnnotationClientPosition) => void;
-}) {
-  const annotationCandidates = useMemo(
-    () => markdownAnnotationCandidates(content, annotations),
-    [annotations, content],
-  );
-  const headingPlugin = useMemo(
-    () => createMarkdownHeadingPlugin(outline),
-    [outline],
-  );
-  const annotationPlugin = useMemo(
-    () => createMarkdownAnnotationPlugin(content, annotationCandidates),
-    [annotationCandidates, content],
-  );
-  const normalizedContent = useMemo(() => normalizeMarkdownContent(content), [content]);
-  const handleClick = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
-      const target = event.target instanceof Element ? event.target : null;
-      const marker = target?.closest<HTMLElement>("[data-preview-annotation-id]");
-      const annotationId = marker?.dataset.previewAnnotationId;
-      if (!annotationId) {
-        return;
-      }
-      const annotation = annotations.find((item) => item.id === annotationId);
-      if (!annotation) {
-        return;
-      }
-      const rect = marker.getBoundingClientRect();
-      event.preventDefault();
-      event.stopPropagation();
-      onAnnotationActivate(annotation, {
-        clientX: rect.left + rect.width / 2,
-        clientY: rect.top,
-        width: rect.width,
-        height: rect.height,
-        anchorElement: marker,
-      });
-    },
-    [annotations, onAnnotationActivate],
-  );
-
-  return (
-    <div className={styles.markdownPane} onClick={handleClick}>
-      <div className="keydex-markdown">
-        <ReactMarkdown
-          remarkPlugins={markdownRemarkPlugins}
-          rehypePlugins={[...markdownRehypePlugins, headingPlugin, annotationPlugin]}
-          components={components}
-        >
-          {normalizedContent}
-        </ReactMarkdown>
-      </div>
-    </div>
-  );
-}
-
-const MemoizedAnnotatedMarkdownPreview = memo(AnnotatedMarkdownPreview);
-
-function createMarkdownHeadingPlugin(outline: MarkdownOutlineItem[]) {
-  return () => (tree: unknown) => {
-    annotateMarkdownHeadings(tree, outline, { index: 0 });
-  };
-}
-
-function annotateMarkdownHeadings(
-  node: unknown,
-  outline: MarkdownOutlineItem[],
-  state: { index: number },
-): void {
-  if (!isMarkdownAnnotationNode(node)) {
+  if (match?.type === "markdown") {
+    scrollMarkdownFindMatchIntoView(match.id, markdownPreview);
     return;
   }
-  if (isMarkdownHeadingNode(node)) {
-    const item = outline[state.index];
-    state.index += 1;
-    if (item) {
-      node.properties = {
-        ...node.properties,
-        id: item.id,
-        "data-markdown-outline-id": item.id,
-      };
-    }
+  if (match?.type === "split") {
+    scrollMarkdownFindMatchIntoView(match.markdown.id, markdownPreview);
   }
-  if (!Array.isArray(node.children)) {
+}
+
+function scrollMarkdownFindMatchIntoView(
+  matchId: string,
+  markdownPreview: VirtualMarkdownPreviewHandle | null,
+): void {
+  if (scrollMarkdownFindMarkerIntoView(matchId)) {
     return;
   }
-  node.children.forEach((child) => annotateMarkdownHeadings(child, outline, state));
-}
-
-function isMarkdownHeadingNode(node: MarkdownAnnotationNode): boolean {
-  return /^h[1-6]$/.test(node.tagName ?? "");
-}
-
-function createMarkdownAnnotationPlugin(
-  source: string,
-  candidates: MarkdownAnnotationCandidate[],
-) {
-  return () => (tree: unknown) => {
-    annotateMarkdownTextNodes(source, tree, candidates);
-  };
-}
-
-function markdownAnnotationCandidates(
-  source: string,
-  annotations: WorkspaceFileAnnotation[],
-): MarkdownAnnotationCandidate[] {
-  return annotations
-    .map((annotation) => {
-      const validation = validateSourceRangeAnchor(source, annotation.anchor_json);
-      return validation.valid && validation.anchor
-        ? { annotation, anchor: validation.anchor }
-        : null;
-    })
-    .filter((candidate): candidate is MarkdownAnnotationCandidate => Boolean(candidate));
-}
-
-function annotateMarkdownTextNodes(
-  source: string,
-  tree: unknown,
-  candidates: MarkdownAnnotationCandidate[],
-): void {
-  if (!isMarkdownAnnotationNode(tree)) {
+  if (!markdownPreview?.scrollToFindMatch(matchId, "center")) {
     return;
   }
-  const refs: MarkdownTextRef[] = [];
-  collectMarkdownTextRefs(source, tree, null, refs);
-  const rangesByRef = new Map<number, MarkdownTextAnnotationRange[]>();
-  for (const candidate of candidates) {
-    addMarkdownAnnotationRanges(refs, candidate, rangesByRef);
-  }
-  applyMarkdownAnnotationRanges(refs, rangesByRef);
+  window.requestAnimationFrame(() => scrollMarkdownFindMarkerIntoView(matchId));
+  window.setTimeout(() => scrollMarkdownFindMarkerIntoView(matchId), 80);
 }
 
-function collectMarkdownTextRefs(
-  source: string,
-  node: MarkdownAnnotationNode,
-  block: MarkdownAnnotationNode | null,
-  refs: MarkdownTextRef[],
-): void {
-  if (!isMarkdownAnnotationNode(node)) {
-    return;
-  }
-  if (!Array.isArray(node.children) || shouldSkipMarkdownAnnotationNode(node)) {
-    return;
-  }
-  const currentBlock = markdownBlockTagNames.has(node.tagName || "") ? node : block;
-  node.children.forEach((child, index) => {
-    if (isMarkdownTextNode(child)) {
-      const sourceRange = markdownTextSourceRange(source, child, node, currentBlock);
-      if (sourceRange) {
-        refs.push({ block: currentBlock, index, node: child, parent: node, ...sourceRange });
-      }
-      return;
-    }
-    if (isMarkdownAnnotationNode(child)) {
-      collectMarkdownTextRefs(source, child, currentBlock, refs);
-    }
-  });
-}
-
-function addMarkdownAnnotationRanges(
-  refs: MarkdownTextRef[],
-  candidate: MarkdownAnnotationCandidate,
-  rangesByRef: Map<number, MarkdownTextAnnotationRange[]>,
-): void {
-  refs.forEach((ref, refIndex) => {
-    const overlapStart = Math.max(ref.sourceStart, candidate.anchor.sourceStart);
-    const overlapEnd = Math.min(ref.sourceEnd, candidate.anchor.sourceEnd);
-    if (overlapEnd <= overlapStart) {
-      return;
-    }
-    const range = {
-      start: Math.max(0, overlapStart - ref.sourceStart),
-      end: Math.min(ref.node.value.length, overlapEnd - ref.sourceStart),
-    };
-    if (range.end <= range.start) {
-      return;
-    }
-    const list = rangesByRef.get(refIndex) ?? [];
-    list.push({ ...range, candidate });
-    rangesByRef.set(refIndex, list);
-  });
-}
-
-function markdownTextSourceRange(
-  source: string,
-  node: MarkdownAnnotationNode,
-  parent: MarkdownAnnotationNode | null,
-  block: MarkdownAnnotationNode | null,
-): { sourceEnd: number; sourceStart: number } | null {
-  const value = typeof node.value === "string" ? node.value : "";
-  if (!value || !value.trim()) {
-    return null;
-  }
-  const ranges = [node.position, parent?.position, block?.position]
-    .map(markdownPositionOffsets)
-    .filter((range): range is { end: number; start: number } => Boolean(range));
-  for (const range of ranges) {
-    const direct = normalizeOffsetRange(source, range.start, range.end);
-    if (direct && source.slice(direct.from, direct.to) === value) {
-      return { sourceStart: direct.from, sourceEnd: direct.to };
-    }
-    const start = source.indexOf(value, range.start);
-    if (start >= 0 && start + value.length <= range.end) {
-      return { sourceStart: start, sourceEnd: start + value.length };
-    }
-  }
-  return null;
-}
-
-function markdownPositionOffsets(
-  position: MarkdownNodePosition | undefined,
-): { end: number; start: number } | null {
-  const start = position?.start?.offset;
-  const end = position?.end?.offset;
-  if (
-    typeof start !== "number" ||
-    typeof end !== "number" ||
-    !Number.isFinite(start) ||
-    !Number.isFinite(end) ||
-    end <= start
-  ) {
-    return null;
-  }
-  return { start, end };
-}
-
-function markdownNodeLanguage(node: MarkdownAnnotationNode): string | null {
-  const className = node.properties?.className;
-  const values = Array.isArray(className) ? className : typeof className === "string" ? [className] : [];
-  for (const value of values) {
-    const match = /^language-([\w+-]+)$/.exec(String(value));
-    if (match) {
-      return match[1].toLowerCase();
-    }
-  }
-  return null;
-}
-
-function shouldSkipMarkdownAnnotationNode(node: MarkdownAnnotationNode): boolean {
-  if (node.tagName === "script" || node.tagName === "style") {
-    return true;
-  }
-  if (node.tagName === "code" && markdownNodeLanguage(node) === "mermaid") {
-    return true;
-  }
-  return false;
-}
-
-function isMarkdownTextNode(node: unknown): node is MarkdownAnnotationNode & { type: "text"; value: string } {
-  return isMarkdownAnnotationNode(node) && node.type === "text" && typeof node.value === "string";
-}
-
-function isMarkdownAnnotationNode(node: unknown): node is MarkdownAnnotationNode {
-  return Boolean(node && typeof node === "object");
-}
-
-interface MarkdownAnnotationCandidate {
-  annotation: WorkspaceFileAnnotation;
-  anchor: WorkspaceFileAnnotationAnchorV2;
-}
-
-interface MarkdownAnnotationNode {
-  type?: string;
-  tagName?: string;
-  value?: string;
-  position?: MarkdownNodePosition;
-  properties?: Record<string, unknown>;
-  children?: unknown[];
-}
-
-interface MarkdownNodePosition {
-  start?: {
-    offset?: number;
-  };
-  end?: {
-    offset?: number;
-  };
-}
-
-function applyMarkdownAnnotationRanges(
-  refs: MarkdownTextRef[],
-  rangesByRef: Map<number, MarkdownTextAnnotationRange[]>,
-): void {
-  const replacementsByParent = new Map<MarkdownAnnotationNode, Array<{ index: number; nodes: unknown[] }>>();
-  refs.forEach((ref, refIndex) => {
-    const ranges = rangesByRef.get(refIndex) ?? [];
-    const nodes = splitMarkdownTextNodeByRanges(ref, ranges);
-    if (nodes.length === 1 && nodes[0] === ref.node) {
-      return;
-    }
-    const replacements = replacementsByParent.get(ref.parent) ?? [];
-    replacements.push({ index: ref.index, nodes });
-    replacementsByParent.set(ref.parent, replacements);
-  });
-  for (const [parent, replacements] of replacementsByParent) {
-    if (!Array.isArray(parent.children)) {
-      continue;
-    }
-    replacements
-      .sort((left, right) => right.index - left.index)
-      .forEach((replacement) => {
-        parent.children?.splice(replacement.index, 1, ...replacement.nodes);
-      });
-  }
-}
-
-function splitMarkdownTextNodeByRanges(
-  ref: MarkdownTextRef,
-  ranges: MarkdownTextAnnotationRange[],
-): unknown[] {
-  const value = ref.node.value;
-  const nodes: unknown[] = [];
-  let cursor = 0;
-  const orderedRanges = ranges
-    .map((range) => ({
-      ...range,
-      end: Math.max(0, Math.min(value.length, range.end)),
-      start: Math.max(0, Math.min(value.length, range.start)),
-    }))
-    .filter((range) => range.end > range.start)
-    .sort((left, right) => left.start - right.start || right.end - left.end);
-  for (const range of orderedRanges) {
-    if (range.start < cursor) {
-      continue;
-    }
-    if (range.start > cursor) {
-      nodes.push(markdownSourceSpanNode(value.slice(cursor, range.start), ref.sourceStart + cursor, ref.sourceStart + range.start));
-    }
-    nodes.push(markdownAnnotationMarkNode(
-      value.slice(range.start, range.end),
-      range.candidate,
-      ref.sourceStart + range.start,
-      ref.sourceStart + range.end,
-    ));
-    cursor = range.end;
-  }
-  if (!nodes.length) {
-    return [markdownSourceSpanNode(value, ref.sourceStart, ref.sourceEnd)];
-  }
-  if (cursor < value.length) {
-    nodes.push(markdownSourceSpanNode(value.slice(cursor), ref.sourceStart + cursor, ref.sourceEnd));
-  }
-  return nodes;
-}
-
-function markdownSourceSpanNode(value: string, sourceStart: number, sourceEnd: number): unknown {
-  return {
-    type: "element",
-    tagName: "span",
-    properties: {
-      "data-preview-source-start": sourceStart,
-      "data-preview-source-end": sourceEnd,
-    },
-    children: [{ type: "text", value }],
-  };
-}
-
-function markdownAnnotationMarkNode(
-  value: string,
-  candidate: MarkdownAnnotationCandidate,
-  sourceStart: number,
-  sourceEnd: number,
-): unknown {
-  return {
-    type: "element",
-    tagName: "mark",
-    properties: {
-      className: [styles.previewAnnotationMark],
-      "data-preview-annotation-id": candidate.annotation.id,
-      "data-preview-source-start": sourceStart,
-      "data-preview-source-end": sourceEnd,
-      "data-active": "false",
-      "data-flash": "false",
-      "data-transient-reveal": isTransientRevealAnnotationId(candidate.annotation.id) ? "true" : "false",
-      title: candidate.annotation.comment,
-    },
-    children: [{ type: "text", value }],
-  };
-}
-
-const markdownBlockTagNames = new Set([
-  "blockquote",
-  "dd",
-  "div",
-  "dt",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "li",
-  "ol",
-  "p",
-  "section",
-  "td",
-  "th",
-  "ul",
-]);
-
-interface MarkdownTextAnnotationRange {
-  candidate: MarkdownAnnotationCandidate;
-  end: number;
-  start: number;
-}
-
-interface MarkdownTextRef {
-  block: MarkdownAnnotationNode | null;
-  index: number;
-  node: { type: "text"; value: string };
-  parent: MarkdownAnnotationNode;
-  sourceEnd: number;
-  sourceStart: number;
-}
-
-function PreviewMarkdownCodeBlock({ children }: { children?: ReactNode }) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  const codeChild = getCodeChild(children);
-  const language = codeBlockLanguage(codeChild?.props?.className);
-  const codeChildren = codeChild?.props?.children ?? children;
-  const text = stripTrailingNewline(extractMarkdownText(codeChildren));
-  const highlightedChildren = useMemo(
-    () => highlightMarkdownCodeChildren(codeChildren, text, language),
-    [codeChildren, language, text],
-  );
-
-  useEffect(() => {
-    setCopyState("idle");
-  }, [text]);
-
-  if (language === "mermaid") {
-    return <NativeMermaidPreview code={text} layout="document" />;
-  }
-
-  const handleCopy = async () => {
-    try {
-      await copyText(text);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
-  };
-
-  return (
-    <div className={styles.markdownCodeFrame} data-language={language}>
-      <div className={styles.markdownCodeHeader}>
-        <span className={styles.markdownCodeLanguage}>{language || "text"}</span>
-        <button
-          type="button"
-          className={styles.markdownCodeButton}
-          aria-label="复制代码"
-          title="复制代码"
-          onClick={handleCopy}
-        >
-          {copyState === "copied" ? <Check size={14} /> : <Copy size={14} />}
-        </button>
-      </div>
-      <pre className={styles.markdownCodeBlock} data-scroll-axis="x" data-testid="markdown-code-viewport">
-        <code>{highlightedChildren || " "}</code>
-      </pre>
-      {copyState === "failed" ? <span className={styles.markdownCodeCopyError}>复制失败</span> : null}
-    </div>
-  );
-}
-
-type MarkdownCodeTokenKind =
-  | "attribute"
-  | "comment"
-  | "function"
-  | "keyword"
-  | "literal"
-  | "number"
-  | "property"
-  | "string"
-  | "tag";
-
-interface MarkdownCodeTokenRange {
-  end: number;
-  kind: MarkdownCodeTokenKind;
-  priority: number;
-  start: number;
-}
-
-const MARKDOWN_CODE_HIGHLIGHT_LIMIT = 180_000;
-const markdownCodeKeywordGroups: Record<string, string[]> = {
-  css: ["@media", "@keyframes", "@supports", "and", "from", "important", "not", "only", "to"],
-  html: ["DOCTYPE"],
-  javascript: [
-    "as",
-    "async",
-    "await",
-    "break",
-    "case",
-    "catch",
-    "class",
-    "const",
-    "continue",
-    "default",
-    "delete",
-    "do",
-    "else",
-    "export",
-    "extends",
-    "finally",
-    "for",
-    "from",
-    "function",
-    "if",
-    "import",
-    "in",
-    "instanceof",
-    "let",
-    "new",
-    "of",
-    "return",
-    "static",
-    "super",
-    "switch",
-    "this",
-    "throw",
-    "try",
-    "typeof",
-    "var",
-    "void",
-    "while",
-    "with",
-    "yield",
-  ],
-  python: [
-    "and",
-    "as",
-    "assert",
-    "async",
-    "await",
-    "break",
-    "class",
-    "continue",
-    "def",
-    "del",
-    "elif",
-    "else",
-    "except",
-    "finally",
-    "for",
-    "from",
-    "global",
-    "if",
-    "import",
-    "in",
-    "is",
-    "lambda",
-    "nonlocal",
-    "not",
-    "or",
-    "pass",
-    "raise",
-    "return",
-    "try",
-    "while",
-    "with",
-    "yield",
-  ],
-  sql: [
-    "alter",
-    "and",
-    "as",
-    "by",
-    "case",
-    "create",
-    "delete",
-    "desc",
-    "distinct",
-    "drop",
-    "else",
-    "end",
-    "from",
-    "group",
-    "having",
-    "in",
-    "insert",
-    "into",
-    "join",
-    "left",
-    "limit",
-    "not",
-    "null",
-    "on",
-    "or",
-    "order",
-    "right",
-    "select",
-    "set",
-    "table",
-    "then",
-    "update",
-    "values",
-    "when",
-    "where",
-  ],
-  typescript: [
-    "abstract",
-    "as",
-    "async",
-    "await",
-    "break",
-    "case",
-    "catch",
-    "class",
-    "const",
-    "continue",
-    "default",
-    "delete",
-    "do",
-    "else",
-    "enum",
-    "export",
-    "extends",
-    "finally",
-    "for",
-    "from",
-    "function",
-    "if",
-    "implements",
-    "import",
-    "in",
-    "instanceof",
-    "interface",
-    "let",
-    "namespace",
-    "new",
-    "of",
-    "private",
-    "protected",
-    "public",
-    "readonly",
-    "return",
-    "satisfies",
-    "static",
-    "super",
-    "switch",
-    "this",
-    "throw",
-    "try",
-    "type",
-    "typeof",
-    "var",
-    "void",
-    "while",
-    "with",
-    "yield",
-  ],
-};
-
-function highlightMarkdownCodeChildren(children: ReactNode, text: string, language: string): ReactNode {
-  if (!text || text.length > MARKDOWN_CODE_HIGHLIGHT_LIMIT) {
-    return children;
-  }
-  const tokens = markdownCodeTokenRanges(text, language);
-  if (!tokens.length) {
-    return children;
-  }
-  const cursor = { current: 0 };
-  return highlightMarkdownCodeNode(children, tokens, cursor);
-}
-
-function highlightMarkdownCodeNode(
-  node: ReactNode,
-  tokens: MarkdownCodeTokenRange[],
-  cursor: { current: number },
-): ReactNode {
-  if (typeof node === "string" || typeof node === "number") {
-    const value = String(node);
-    const start = cursor.current;
-    cursor.current += value.length;
-    return highlightMarkdownCodeText(value, start, tokens);
-  }
-  if (Array.isArray(node)) {
-    return node.map((child) => highlightMarkdownCodeNode(child, tokens, cursor));
-  }
-  if (isValidElement(node)) {
-    const element = node as ReactElement<{ children?: ReactNode }>;
-    const nextChildren = highlightMarkdownCodeNode(element.props.children, tokens, cursor);
-    return cloneElement(element, undefined, nextChildren);
-  }
-  return node;
-}
-
-function highlightMarkdownCodeText(value: string, absoluteStart: number, tokens: MarkdownCodeTokenRange[]): ReactNode {
-  if (!value) {
-    return value;
-  }
-  const absoluteEnd = absoluteStart + value.length;
-  const overlaps = tokens.filter((token) => token.end > absoluteStart && token.start < absoluteEnd);
-  if (!overlaps.length) {
-    return value;
-  }
-  const nodes: ReactNode[] = [];
-  let cursor = 0;
-  overlaps.forEach((token, index) => {
-    const start = Math.max(0, token.start - absoluteStart);
-    const end = Math.min(value.length, token.end - absoluteStart);
-    if (end <= start || start < cursor) {
-      return;
-    }
-    if (start > cursor) {
-      nodes.push(value.slice(cursor, start));
-    }
-    nodes.push(
-      <span className={markdownCodeTokenClass(token.kind)} key={`${absoluteStart}-${index}-${start}-${end}`}>
-        {value.slice(start, end)}
-      </span>,
-    );
-    cursor = end;
-  });
-  if (cursor < value.length) {
-    nodes.push(value.slice(cursor));
-  }
-  return nodes;
-}
-
-function markdownCodeTokenRanges(text: string, language: string): MarkdownCodeTokenRange[] {
-  const normalizedLanguage = normalizeMarkdownCodeLanguage(language);
-  const candidates: MarkdownCodeTokenRange[] = [];
-  addMarkdownCodeMatches(candidates, text, /<!--[\s\S]*?-->/g, "comment", 10);
-  addMarkdownCodeMatches(candidates, text, /\/\*[\s\S]*?\*\//g, "comment", 10);
-  addMarkdownCodeMatches(candidates, text, /\/\/[^\n\r]*/g, "comment", 10);
-  if (["bash", "python", "shell", "sh", "yaml"].includes(normalizedLanguage)) {
-    addMarkdownCodeMatches(candidates, text, /(^|[\s{[(;])#[^\n\r]*/gm, "comment", 10, 1);
-  }
-  addMarkdownCodeMatches(candidates, text, /`(?:\\[\s\S]|[^`\\])*`|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g, "string", 9);
-  addMarkdownCodeMatches(candidates, text, /\b(?:0x[\da-f]+|\d+(?:\.\d+)?(?:e[+-]?\d+)?)\b/gi, "number", 4);
-  addMarkdownCodeMatches(candidates, text, /\b(?:true|false|null|undefined|none)\b/gi, "literal", 5);
-  addMarkdownCodeMatches(candidates, text, /\b[A-Za-z_$][\w$-]*(?=\s*\()/g, "function", 2);
-  if (["css", "javascript", "json", "typescript", "yaml"].includes(normalizedLanguage)) {
-    addMarkdownCodeMatches(candidates, text, /\b[A-Za-z_$][\w$-]*(?=\s*:)/g, "property", 2);
-  }
-  if (["html", "xml"].includes(normalizedLanguage)) {
-    addMarkdownCodeMatches(candidates, text, /<\/?([A-Za-z][\w:-]*)/g, "tag", 6, 1);
-    addMarkdownCodeMatches(candidates, text, /\s([A-Za-z_:][\w:.-]*)(?=\s*=)/g, "attribute", 5, 1);
-  }
-  const keywords = markdownCodeKeywords(normalizedLanguage);
-  if (keywords.length) {
-    const keywordPattern = new RegExp(`\\b(?:${keywords.map(escapeRegExp).join("|")})\\b`, "gi");
-    addMarkdownCodeMatches(candidates, text, keywordPattern, "keyword", 6);
-  }
-  return selectNonOverlappingMarkdownCodeTokens(candidates);
-}
-
-function addMarkdownCodeMatches(
-  tokens: MarkdownCodeTokenRange[],
-  text: string,
-  pattern: RegExp,
-  kind: MarkdownCodeTokenKind,
-  priority: number,
-  captureIndex = 0,
-): void {
-  for (const match of text.matchAll(pattern)) {
-    const matched = captureIndex === 0 ? match[0] : match[captureIndex];
-    if (!matched) {
-      continue;
-    }
-    const matchIndex = match.index ?? 0;
-    const captureOffset = captureIndex === 0 ? 0 : match[0].indexOf(matched);
-    const start = matchIndex + Math.max(0, captureOffset);
-    const end = start + matched.length;
-    if (end > start) {
-      tokens.push({ end, kind, priority, start });
-    }
-  }
-}
-
-function selectNonOverlappingMarkdownCodeTokens(candidates: MarkdownCodeTokenRange[]): MarkdownCodeTokenRange[] {
-  const accepted: MarkdownCodeTokenRange[] = [];
-  candidates
-    .sort((left, right) => right.priority - left.priority || left.start - right.start || right.end - left.end)
-    .forEach((candidate) => {
-      if (accepted.some((token) => token.start < candidate.end && candidate.start < token.end)) {
-        return;
-      }
-      accepted.push(candidate);
-    });
-  return accepted.sort((left, right) => left.start - right.start || left.end - right.end);
-}
-
-function markdownCodeKeywords(language: string): string[] {
-  if (["js", "jsx", "mjs", "cjs"].includes(language)) {
-    return markdownCodeKeywordGroups.javascript;
-  }
-  if (["ts", "tsx"].includes(language)) {
-    return markdownCodeKeywordGroups.typescript;
-  }
-  if (["py"].includes(language)) {
-    return markdownCodeKeywordGroups.python;
-  }
-  if (["htm"].includes(language)) {
-    return markdownCodeKeywordGroups.html;
-  }
-  if (["scss", "sass", "less"].includes(language)) {
-    return markdownCodeKeywordGroups.css;
-  }
-  return markdownCodeKeywordGroups[language] ?? [];
-}
-
-function normalizeMarkdownCodeLanguage(language: string): string {
-  return language.trim().toLowerCase() || "text";
-}
-
-function markdownCodeTokenClass(kind: MarkdownCodeTokenKind): string {
-  switch (kind) {
-    case "attribute":
-      return styles.markdownCodeTokenAttribute;
-    case "comment":
-      return styles.markdownCodeTokenComment;
-    case "function":
-      return styles.markdownCodeTokenFunction;
-    case "keyword":
-      return styles.markdownCodeTokenKeyword;
-    case "literal":
-      return styles.markdownCodeTokenLiteral;
-    case "number":
-      return styles.markdownCodeTokenNumber;
-    case "property":
-      return styles.markdownCodeTokenProperty;
-    case "string":
-      return styles.markdownCodeTokenString;
-    case "tag":
-      return styles.markdownCodeTokenTag;
-  }
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function scrollMarkdownFindMarkerIntoView(matchId: string): boolean {
+  const marker = document.querySelector<HTMLElement>(`[data-find-match-id='${cssString(matchId)}']`);
+  marker?.scrollIntoView?.(FILE_PREVIEW_FIND_SCROLL_OPTIONS);
+  return Boolean(marker);
 }
 
 const SourceViewer = memo(function SourceViewer({
@@ -4327,6 +3915,8 @@ function codeMirrorFindExtension(source: string, findState: CodeMirrorFindState 
       class: "cm-fileFindMark",
       attributes: {
         "data-file-preview-source-find-match": "true",
+        "data-source-end": String(to),
+        "data-source-start": String(from),
         "data-active": active ? "true" : "false",
       },
     }).range(from, to),
@@ -4579,6 +4169,9 @@ function codeMirrorTheme(theme: "light" | "dark"): Extension {
         outlineOffset: "1px",
         boxShadow: "0 0 0 4px rgb(250 204 21 / 28%), inset 0 -2px 0 rgb(250 204 21 / 95%)",
         fontWeight: "700",
+      },
+      ".cm-selectionMatch": {
+        backgroundColor: "rgb(250 204 21 / 34%)",
       },
       ".cm-fileFindMark": {
         borderRadius: "3px",
@@ -5093,38 +4686,6 @@ function pointerIdValue(event: ReactPointerEvent<HTMLElement>): number {
 
 function pointerCoordinate(value: number): number {
   return Number.isFinite(value) ? value : 0;
-}
-
-function getCodeChild(node: ReactNode): { props?: { className?: string; children?: ReactNode } } | null {
-  if (Array.isArray(node)) {
-    return getCodeChild(node[0]);
-  }
-  if (node && typeof node === "object" && "props" in node) {
-    return node as { props?: { className?: string; children?: ReactNode } };
-  }
-  return null;
-}
-
-function codeBlockLanguage(className?: string): string {
-  const match = /language-([\w+-]+)/.exec(className ?? "");
-  return match?.[1]?.toLowerCase() ?? "text";
-}
-
-function extractMarkdownText(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") {
-    return String(node);
-  }
-  if (Array.isArray(node)) {
-    return node.map(extractMarkdownText).join("");
-  }
-  if (node && typeof node === "object" && "props" in node) {
-    return extractMarkdownText((node as { props?: { children?: ReactNode } }).props?.children);
-  }
-  return "";
-}
-
-function stripTrailingNewline(text: string): string {
-  return text.replace(/\n$/, "");
 }
 
 function getTheme(): "light" | "dark" {

@@ -20,6 +20,7 @@ const README_CONTENT = [
   "Repeated anchor first.",
   "Repeated anchor second.",
 ].join("\n");
+const LARGE_MARKDOWN_CONTENT = makeLargeMarkdownContent("E2E Large Markdown Title");
 
 test("right sidebar files tab opens and resizes a read-only file preview", async ({ page }) => {
   await installWebSocketMock(page);
@@ -75,6 +76,50 @@ test("right sidebar files tab opens and resizes a read-only file preview", async
   }
 });
 
+test("right sidebar markdown preview stays virtualized and deduplicates split find matches", async ({ page }) => {
+  await installWebSocketMock(page);
+  await mockBackend(page);
+
+  await page.goto(`${APP_BASE}/#/conversation/${SESSION_ID}`);
+
+  await expect(page.getByLabel("继续输入")).toBeVisible();
+  await page.getByLabel("展开右侧栏").click();
+  await page.getByRole("button", { name: "文件" }).click();
+  await page.getByRole("button", { name: "选择文件 e2e-large-markdown.md" }).click();
+
+  await expect(page.getByRole("heading", { name: "E2E Large Markdown Title" })).toBeVisible();
+  const virtualPreview = page.locator("[data-markdown-virtual-preview='true']");
+  await expect(virtualPreview).toBeAttached();
+  const initialMetrics = await virtualPreview.evaluate((element) => ({
+    mountedBlocks: Number(element.getAttribute("data-markdown-mounted-block-count") ?? 0),
+    totalBlocks: Number(element.getAttribute("data-markdown-block-count") ?? 0),
+  }));
+  expect(initialMetrics.totalBlocks).toBeGreaterThan(200);
+  expect(initialMetrics.mountedBlocks).toBeGreaterThan(0);
+  expect(initialMetrics.mountedBlocks).toBeLessThan(initialMetrics.totalBlocks);
+
+  await page.getByRole("button", { name: "搜索文件内容" }).click();
+  const search = page.getByRole("search", { name: "文件内容搜索" });
+  await expect(search).toBeVisible();
+  await search.getByLabel("搜索文件内容").fill("tail-search-target");
+  await expect(search).toContainText("1/1");
+  await expect(page.getByText("tail-search-target")).toBeVisible();
+  const tailMetrics = await virtualPreview.evaluate((element) => ({
+    mountedBlocks: Number(element.getAttribute("data-markdown-mounted-block-count") ?? 0),
+    totalBlocks: Number(element.getAttribute("data-markdown-block-count") ?? 0),
+  }));
+  expect(tailMetrics.mountedBlocks).toBeLessThan(tailMetrics.totalBlocks);
+
+  await page.getByRole("button", { name: "分屏" }).click();
+  await expect(page.getByTestId("preview-split-pane")).toBeVisible();
+  await search.getByLabel("搜索文件内容").fill("split-shared-target");
+  await expect(search).toContainText("1/1");
+  await expect(page.locator("[data-file-preview-find-match='true']")).toHaveCount(1);
+  await expect(page.locator("[data-file-preview-source-find-match='true']")).toHaveCount(1);
+  await expect(page.locator("[data-file-preview-find-match='true'][data-active='true']")).toHaveCount(1);
+  await expect(page.locator("[data-file-preview-source-find-match='true'][data-active='true']")).toHaveCount(1);
+});
+
 test("selected at-file reference sends as a hidden follow injection", async ({ page }) => {
   await installWebSocketMock(page);
   await mockBackend(page);
@@ -127,7 +172,7 @@ test("selected at-file reference sends as a hidden follow injection", async ({ p
   await expect(page.getByTestId("message-text").first()).toContainText("@README.md");
 });
 
-test("file preview annotations can be created edited deleted and used to prefill chat", async ({ page }) => {
+test("file preview annotations can be created edited deleted and used as structured chat context", async ({ page }) => {
   const annotations: E2EAnnotation[] = [];
   await installWebSocketMock(page);
   await mockBackend(page, annotations);
@@ -170,7 +215,7 @@ test("file preview annotations can be created edited deleted and used to prefill
   const quoteChip = page.locator("[data-quote-index='0'][data-source-quote='true']");
   await expect(quoteChip).toBeVisible();
   await expect(quoteChip).toContainText("README.md · L3");
-  await expect(input).toHaveText("Selected E2E note");
+  await expect(input).toHaveText("");
 
   const chatCount = await page.evaluate(() => {
     const sentMessages = (window as Window & { __wsSentMessages?: Array<{ action?: string }> }).__wsSentMessages ?? [];
@@ -178,9 +223,13 @@ test("file preview annotations can be created edited deleted and used to prefill
   });
   expect(chatCount).toBe(0);
 
-  const updatedFileAnnotation = panel.locator("article").filter({ hasText: "Updated file-level E2E note" });
+  await expect(panel).toHaveCount(0);
+  await page.getByRole("button", { name: /文件批注/ }).click();
+  const reopenedPanel = page.getByRole("complementary", { name: "文件批注" });
+  await expect(reopenedPanel).toBeVisible();
+  const updatedFileAnnotation = reopenedPanel.locator("article").filter({ hasText: "Updated file-level E2E note" });
   await updatedFileAnnotation.getByRole("button", { name: "删除批注" }).click();
-  await expect(panel).not.toContainText("Updated file-level E2E note");
+  await expect(reopenedPanel).not.toContainText("Updated file-level E2E note");
 
   if (process.env.E2E_ANNOTATION_EVIDENCE_PATH) {
     await page.screenshot({ path: process.env.E2E_ANNOTATION_EVIDENCE_PATH, fullPage: true });
@@ -382,6 +431,7 @@ async function mockBackend(page: Page, annotations: E2EAnnotation[] = []) {
       root: "D:/repo/e2e",
       entries: [
         { name: "README.md", path: "README.md", type: "file", size: 35, modified_at: null },
+        { name: "e2e-large-markdown.md", path: "e2e-large-markdown.md", type: "file", size: LARGE_MARKDOWN_CONTENT.length, modified_at: null },
         { name: "package.json", path: "package.json", type: "file", size: 80, modified_at: null },
         { name: "huge.log", path: "huge.log", type: "file", size: 800000, modified_at: null },
       ],
@@ -397,9 +447,43 @@ async function mockBackend(page: Page, annotations: E2EAnnotation[] = []) {
       encoding: "utf-8",
     }),
   );
+  await page.route(`${API_BASE}/api/sessions/${SESSION_ID}/workspace/read?path=e2e-large-markdown.md`, (route) =>
+    fulfillJson(route, {
+      path: "e2e-large-markdown.md",
+      content: LARGE_MARKDOWN_CONTENT,
+      encoding: "utf-8",
+    }),
+  );
   await page.route(`${API_BASE}/api/sessions/${SESSION_ID}/workspace/annotations**`, async (route) =>
     fulfillAnnotationRoute(route, annotations),
   );
+}
+
+function makeLargeMarkdownContent(title: string): string {
+  const sections = Array.from({ length: 260 }, (_, index) =>
+    [
+      `## Virtual Section ${index + 1}`,
+      "",
+      `This virtualized section ${index + 1} keeps the markdown preview heavy enough for E2E.`,
+      "",
+      "| Key | Value |",
+      "| --- | --- |",
+      `| Row ${index + 1} | split filler ${index + 1} |`,
+    ].join("\n"),
+  );
+  return [
+    `# ${title}`,
+    "",
+    "The first viewport should render quickly without mounting every block.",
+    "",
+    ...sections,
+    "",
+    "## E2E Tail Section",
+    "",
+    "tail-search-target",
+    "",
+    "split-shared-target",
+  ].join("\n");
 }
 
 function makeAnnotation(overrides: Partial<E2EAnnotation> & { id: string; comment: string }): E2EAnnotation {
