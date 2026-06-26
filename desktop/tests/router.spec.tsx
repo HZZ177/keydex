@@ -299,7 +299,7 @@ describe("AppRouter", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭工作台助手侧栏" }));
     expect(screen.queryByTestId("workbench-assistant-drawer")).toBeNull();
     expect(surface.getAttribute("data-surface-mode")).toBe("composer");
-    expect(surface.getAttribute("data-dock-layout")).toBe("inline");
+    expect(surface.getAttribute("data-dock-layout")).toBe("overlay");
     expect(surface.getAttribute("data-dock-transition")).toBe("dock-out");
     expect(workspaceShell.getAttribute("data-dock-transitioning")).toBe("true");
     expect(canvasContent.getAttribute("data-render-paused")).toBe("true");

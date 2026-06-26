@@ -89,7 +89,7 @@ export function WorkbenchAssistantSurface({
   const selectedModel = modelSelection.selectedModel.trim();
   const workspaceLabel = workspace?.root_path ?? workspace?.name ?? workspaceId;
   const drawerWidth = layout.state.workbenchAssistantDrawerWidth;
-  const dockLayout = surfaceMode === "drawer" || dockTransition?.phase === "dock-out" ? "inline" : "overlay";
+  const dockLayout = surfaceMode === "drawer" ? "inline" : "overlay";
 
   const finishDockTransition = useCallback(() => {
     if (dockTransitionTimerRef.current !== null && typeof window !== "undefined") {
@@ -469,7 +469,7 @@ function measureDockOutTargetRect(
   mode: AssistantSurfaceMode,
   fallback: DockMorphRect,
 ): DockMorphRect {
-  return fallbackBottomRect(surface, mode, fallback);
+  return measureCapsuleTargetRect(surface, mode, fallback);
 }
 
 function measureDockTargetRect(

@@ -22,13 +22,8 @@
   pointer-events: auto;
 }
 
-.surface[data-dock-transition="dock-in"] {
+.surface[data-dock-layout="inline"][data-dock-transition="dock-in"] {
   animation: dockColumnIn 240ms cubic-bezier(0.2, 0.86, 0.22, 1) both;
-}
-
-.surface[data-dock-transition="dock-out"] {
-  border-left-color: transparent;
-  animation: dockColumnOut 320ms cubic-bezier(0.2, 0.86, 0.22, 1) both;
 }
 
 .surface[data-dock-transition="dock-in"] .drawer {
@@ -535,19 +530,6 @@
     width: var(--workbench-assistant-dock-inline-size);
     flex-basis: var(--workbench-assistant-dock-inline-size);
     opacity: 1;
-  }
-}
-
-@keyframes dockColumnOut {
-  from {
-    width: var(--workbench-assistant-dock-inline-size);
-    flex-basis: var(--workbench-assistant-dock-inline-size);
-    opacity: 1;
-  }
-  to {
-    width: 0;
-    flex-basis: 0;
-    opacity: 0;
   }
 }
 
