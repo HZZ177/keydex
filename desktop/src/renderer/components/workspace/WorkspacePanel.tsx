@@ -1,5 +1,15 @@
 import { ChevronRight, Crosshair, RefreshCw, Search } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 
 import type {
@@ -158,9 +168,13 @@ export function WorkspacePanel({
       setExpandedPaths((paths) => removeFromSet(paths, path));
       return;
     }
-    setExpandedPaths((paths) => addToSet(paths, path));
+    if (entriesByPath[path]) {
+      setExpandedPaths((paths) => addToSet(paths, path));
+      return;
+    }
     await loadDirectory(path);
-  }, [expandedPaths, loadDirectory]);
+    setExpandedPaths((paths) => addToSet(paths, path));
+  }, [entriesByPath, expandedPaths, loadDirectory]);
 
   const selectFile = useCallback((path: string) => {
     setSelectedPath(path);
@@ -608,43 +622,97 @@ const EllipsizedEntryName = memo(function EllipsizedEntryName({ name }: { name: 
 function AnimatedTreeGroup({ children, expanded }: { children: ReactNode; expanded: boolean }) {
   const [mounted, setMounted] = useState(expanded);
   const [open, setOpen] = useState(expanded);
+  const [height, setHeight] = useState(expanded ? "auto" : "0px");
+  const groupRef = useRef<HTMLDivElement | null>(null);
+  const innerRef = useRef<HTMLDivElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
-  const openFrameRef = useRef<number | null>(null);
+  const frameRefs = useRef<number[]>([]);
+  const expandTimerRef = useRef<number | null>(null);
+  const pendingExpandAnimationRef = useRef(false);
+  const initializedRef = useRef(false);
 
-  useEffect(() => {
+  const clearAnimationHandles = () => {
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
     }
-    if (openFrameRef.current !== null) {
-      window.cancelAnimationFrame(openFrameRef.current);
-      openFrameRef.current = null;
+    if (expandTimerRef.current !== null) {
+      window.clearTimeout(expandTimerRef.current);
+      expandTimerRef.current = null;
     }
+    frameRefs.current.forEach((frame) => window.cancelAnimationFrame(frame));
+    frameRefs.current = [];
+  };
 
-    if (expanded) {
-      setMounted(true);
-      openFrameRef.current = window.requestAnimationFrame(() => {
-        openFrameRef.current = null;
-        setOpen(true);
-      });
+  const scheduleFrame = (callback: () => void) => {
+    const frame = window.requestAnimationFrame(() => {
+      frameRefs.current = frameRefs.current.filter((item) => item !== frame);
+      callback();
+    });
+    frameRefs.current.push(frame);
+  };
+
+  useLayoutEffect(() => {
+    clearAnimationHandles();
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      setMounted(expanded);
+      setOpen(expanded);
+      setHeight(expanded ? "auto" : "0px");
       return;
     }
 
+    if (expanded) {
+      pendingExpandAnimationRef.current = true;
+      if (!mounted) {
+        setHeight("0px");
+        setOpen(false);
+        setMounted(true);
+      }
+      return;
+    }
+
+    pendingExpandAnimationRef.current = false;
+    if (!mounted) {
+      setOpen(false);
+      setHeight("0px");
+      return;
+    }
+
+    const currentHeight = groupRef.current?.getBoundingClientRect().height ?? innerRef.current?.scrollHeight ?? 0;
+    setHeight(`${currentHeight}px`);
     setOpen(false);
+    scheduleFrame(() => setHeight("0px"));
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
       setMounted(false);
+      setHeight("0px");
     }, TREE_GROUP_TRANSITION_MS);
   }, [expanded]);
 
+  useLayoutEffect(() => {
+    if (!mounted || !expanded || !pendingExpandAnimationRef.current) {
+      return;
+    }
+
+    pendingExpandAnimationRef.current = false;
+    const targetHeight = innerRef.current?.scrollHeight ?? 0;
+    setHeight("0px");
+    scheduleFrame(() => {
+      scheduleFrame(() => {
+        setOpen(true);
+        setHeight(`${targetHeight}px`);
+      });
+    });
+    expandTimerRef.current = window.setTimeout(() => {
+      expandTimerRef.current = null;
+      setHeight("auto");
+    }, TREE_GROUP_TRANSITION_MS);
+  }, [expanded, mounted]);
+
   useEffect(
     () => () => {
-      if (closeTimerRef.current !== null) {
-        window.clearTimeout(closeTimerRef.current);
-      }
-      if (openFrameRef.current !== null) {
-        window.cancelAnimationFrame(openFrameRef.current);
-      }
+      clearAnimationHandles();
     },
     [],
   );
@@ -658,9 +726,11 @@ function AnimatedTreeGroup({ children, expanded }: { children: ReactNode; expand
       aria-hidden={open ? undefined : true}
       className={styles.nodeGroup}
       data-open={open ? "true" : "false"}
+      ref={groupRef}
       role="group"
+      style={{ "--tree-group-height": height } as CSSProperties}
     >
-      <div className={styles.nodeGroupInner}>{children}</div>
+      <div className={styles.nodeGroupInner} ref={innerRef}>{children}</div>
     </div>
   );
 }

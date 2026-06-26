@@ -12,7 +12,7 @@
   gap: 6px;
   padding: 8px 8px 12px;
   box-sizing: border-box;
-  background: var(--sidebar-bg);
+  background: var(--surface-bg);
 }
 
 .header {
@@ -187,6 +187,7 @@
 
 .panel[data-chrome="panel"] .content {
   min-height: 0;
+  background: var(--surface-bg);
 }
 
 .tree {
@@ -204,6 +205,7 @@
 
 .panel[data-chrome="panel"] .tree {
   height: 100%;
+  background: var(--surface-bg);
 }
 
 .tree::-webkit-scrollbar {
@@ -252,21 +254,21 @@
 }
 
 .nodeGroup {
-  display: grid;
+  display: block;
   min-width: 0;
-  grid-template-rows: 0fr;
+  height: var(--tree-group-height, 0px);
   opacity: 0;
+  overflow: hidden;
   pointer-events: none;
   transform: translateY(-4px);
   transform-origin: top;
   transition:
-    grid-template-rows 340ms var(--motion-ease-standard),
+    height 340ms var(--motion-ease-standard),
     opacity 220ms var(--motion-ease-standard),
     transform 340ms var(--motion-ease-standard);
 }
 
 .nodeGroup[data-open="true"] {
-  grid-template-rows: 1fr;
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);

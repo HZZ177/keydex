@@ -30,6 +30,41 @@ describe("WorkspacePanel", () => {
     expect(onSelectFile).toHaveBeenCalledWith("src/main.py");
   });
 
+  it("waits for the first directory load before mounting expanded content", async () => {
+    const srcDirectory = deferred<WorkspaceTreeResponse>();
+    const runtime = {
+      workspace: {
+        listDirectory: vi.fn((_scope: unknown, path = "") => {
+          if (path === "") {
+            return Promise.resolve({
+              root: "D:/repo",
+              entries: [entry("src", "src", "directory")],
+            });
+          }
+          return srcDirectory.promise;
+        }),
+        readFile: vi.fn(),
+        search: vi.fn(),
+      },
+    } as unknown as RuntimeBridge;
+
+    render(<WorkspacePanel sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+
+    const srcButton = await screen.findByRole("button", { name: "展开 src" });
+    fireEvent.click(srcButton);
+
+    expect(screen.getByRole("button", { name: "展开 src" }).textContent).toContain("读取中");
+    expect(screen.queryByText("main.py")).toBeNull();
+
+    srcDirectory.resolve({
+      root: "D:/repo",
+      entries: [entry("main.py", "src/main.py", "file", 24)],
+    });
+
+    expect(await screen.findByText("main.py")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "折叠 src" })).not.toBeNull();
+  });
+
   it("keeps loaded directory content stable across collapse and expand", async () => {
     const runtime = fakeRuntime({
       "": [entry("src", "src", "directory")],
@@ -645,6 +680,16 @@ function dispatchPointer(target: Element, type: string, props: Record<string, nu
     Object.defineProperty(event, key, { configurable: true, value });
   }
   fireEvent(target, event);
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, reject, resolve };
 }
 
 function entryIconId(button: HTMLElement): string | null {
