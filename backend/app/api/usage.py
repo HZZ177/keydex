@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from backend.app.api.dependencies import get_repositories
-from backend.app.services import (
+from backend.app.services.usage_service import (
     UsageRequestNotFoundError,
     UsageRequestQuery,
     UsageService,

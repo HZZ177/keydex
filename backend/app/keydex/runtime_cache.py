@@ -38,7 +38,11 @@ class KeydexWorkspaceRuntimeCache:
         with self._lock:
             current_fingerprint = self._fingerprint_builder(root).digest()
             cached = self._snapshots.get(cache_key)
-            if cached is not None and not force_reload and cached.fingerprint == current_fingerprint:
+            if (
+                cached is not None
+                and not force_reload
+                and cached.fingerprint == current_fingerprint
+            ):
                 return cached
 
             snapshot = self._snapshot_builder(root)

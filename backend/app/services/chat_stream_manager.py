@@ -7,7 +7,7 @@ from typing import Any
 
 from backend.app.core.logger import logger
 from backend.app.events import ChatProjectionAdapter
-from backend.app.services.chat_service import ChatCancellationToken, ChatRequest, ChatService
+from backend.app.services.chat_types import ChatCancellationToken, ChatRequest
 
 
 class ChatStreamError(Exception):
@@ -46,7 +46,7 @@ class BroadcastChatAdapter:
 class ChatStreamManager:
     """Owns chat task lifecycle independently from individual websocket connections."""
 
-    def __init__(self, chat_service: ChatService) -> None:
+    def __init__(self, chat_service: Any) -> None:
         self._chat_service = chat_service
         self._runs: dict[str, ChatStreamRun] = {}
         self._subscribers: dict[str, set[ChatProjectionAdapter]] = {}

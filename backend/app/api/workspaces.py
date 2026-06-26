@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
 from backend.app.api.dependencies import get_repositories
-from backend.app.services import WorkspaceService, WorkspaceServiceError
+from backend.app.services.workspace_service import WorkspaceService, WorkspaceServiceError
 from backend.app.storage import StorageRepositories
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])

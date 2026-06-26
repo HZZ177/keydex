@@ -63,7 +63,10 @@ def build_keydex_workspace_fingerprint(workspace_root: str | Path) -> KeydexWork
     skills_dir_stat = skills_dir.stat() if skills_dir.is_dir() else None
     entries: list[tuple[str, int, int]] = []
     if skills_dir.is_dir():
-        for skill_md in sorted(skills_dir.glob("*/SKILL.md"), key=lambda path: path.as_posix().lower()):
+        for skill_md in sorted(
+            skills_dir.glob("*/SKILL.md"),
+            key=lambda path: path.as_posix().lower(),
+        ):
             if not skill_md.is_file():
                 continue
             stat = skill_md.stat()

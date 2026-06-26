@@ -75,7 +75,9 @@ class ToolCallPresetMiddleware(AgentMiddleware):
         return AIMessage(content="", tool_calls=tool_calls)
 
     def _validate_force_target(self, calls: list[ToolCallPresetItem]) -> None:
-        invalid_names = sorted({call.name for call in calls if call.name not in self.allowed_force_tools})
+        invalid_names = sorted(
+            {call.name for call in calls if call.name not in self.allowed_force_tools}
+        )
         if not invalid_names:
             return
         consume_tool_call_preset()

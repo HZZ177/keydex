@@ -305,7 +305,7 @@ export function ComposerApprovalCard({
               aria-label={choice.label}
               className={styles.choice}
               data-selected={selected ? "true" : "false"}
-              data-tone={choice.id === "reject" ? "danger" : "default"}
+              data-tone="default"
               data-approval-choice={choice.id}
               disabled={submitting}
               key={choice.id}

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import sys
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 if __package__ in {None, ""}:
@@ -9,8 +12,6 @@ if __package__ in {None, ""}:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.app.agent import AgentRunner
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.api.approvals import router as approvals_router
 from backend.app.api.health import router as health_router
 from backend.app.api.model_providers import router as model_providers_router
@@ -31,18 +32,36 @@ from backend.app.keydex.watcher import KeydexWorkspaceWatcher
 from backend.app.model import OpenAICompatibleProviderClient
 from backend.app.model.e2e_transport import create_e2e_model_transport
 from backend.app.runtime import create_desktop_runtime
-from backend.app.services import ChatService, ChatStreamManager
+from backend.app.services.agent_runtime import AgentRuntimeProvider, LazyChatService
+from backend.app.services.chat_stream_manager import ChatStreamManager
 from backend.app.storage import StorageRepositories, init_database
 from backend.app.tools import create_default_tool_registry
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
+    create_started = time.perf_counter()
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level, log_dir=resolved_settings.data_dir / "logs")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async def run_warmup() -> None:
+            try:
+                await app.state.agent_runtime_provider.warmup_async()
+            except Exception:
+                pass
+
+        warmup_task = asyncio.create_task(run_warmup())
+        try:
+            yield
+        finally:
+            if not warmup_task.done():
+                warmup_task.cancel()
 
     app = FastAPI(
         title=resolved_settings.app_name,
         version=resolved_settings.version,
+        lifespan=lifespan,
     )
     register_exception_handlers(app)
     app.add_middleware(RequestLoggingMiddleware)
@@ -65,7 +84,6 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         default_workspace_root=resolved_settings.workspace_root,
     )
     app.state.repositories = StorageRepositories(app.state.database)
-    app.state.checkpointer = SQLiteCheckpointSaver(app.state.database)
     if resolved_settings.e2e_model_transport:
         app.state.model_http_transport = create_e2e_model_transport(
             delay_ms=resolved_settings.e2e_stream_delay_ms
@@ -76,17 +94,32 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     )
     app.state.tool_registry = create_default_tool_registry()
     app.state.keydex_runtime_cache = KeydexWorkspaceRuntimeCache()
-    app.state.agent_runner = AgentRunner(
-        model_settings_provider=lambda: load_effective_model_settings(app.state.repositories),
-        model_http_transport_provider=lambda: getattr(app.state, "model_http_transport", None),
-        checkpointer=app.state.checkpointer,
-        tool_registry=app.state.tool_registry,
-    )
-    app.state.chat_service = ChatService(
-        settings=resolved_settings,
+
+    def build_chat_service():
+        from backend.app.agent import AgentRunner
+        from backend.app.agent.checkpoint import SQLiteCheckpointSaver
+        from backend.app.services.chat_service import ChatService
+
+        checkpointer = SQLiteCheckpointSaver(app.state.database)
+        agent_runner = AgentRunner(
+            model_settings_provider=lambda: load_effective_model_settings(app.state.repositories),
+            model_http_transport_provider=lambda: getattr(app.state, "model_http_transport", None),
+            checkpointer=checkpointer,
+            tool_registry=app.state.tool_registry,
+        )
+        app.state.checkpointer = checkpointer
+        app.state.agent_runner = agent_runner
+        return ChatService(
+            settings=resolved_settings,
+            repositories=app.state.repositories,
+            agent_runner=agent_runner,
+            keydex_runtime_cache=app.state.keydex_runtime_cache,
+        )
+
+    app.state.agent_runtime_provider = AgentRuntimeProvider(build_chat_service)
+    app.state.chat_service = LazyChatService(
+        app.state.agent_runtime_provider,
         repositories=app.state.repositories,
-        agent_runner=app.state.agent_runner,
-        keydex_runtime_cache=app.state.keydex_runtime_cache,
     )
     app.state.chat_stream_manager = ChatStreamManager(app.state.chat_service)
     app.state.keydex_workspace_watcher = KeydexWorkspaceWatcher(
@@ -111,7 +144,8 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         f"host={resolved_settings.host} | port={resolved_settings.port} | "
         f"data_dir={resolved_settings.data_dir} | "
         f"workspace_root={resolved_settings.workspace_root} | "
-        f"protocol_version={resolved_settings.protocol_version}"
+        f"protocol_version={resolved_settings.protocol_version} | "
+        f"duration_ms={int((time.perf_counter() - create_started) * 1000)}"
     )
     app.include_router(health_router)
     app.include_router(approvals_router)

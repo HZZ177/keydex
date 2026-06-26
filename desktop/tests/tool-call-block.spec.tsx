@@ -29,7 +29,7 @@ describe("ToolCallBlock", () => {
     expect(screen.getByText("工具正在执行")).not.toBeNull();
   });
 
-  it("copies completed tool results", async () => {
+  it("copies completed tool arguments", async () => {
     const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
     render(<ToolCallBlock message={toolMessage("completed", { status: "success", model_content: "文件内容", duration_ms: 1250 })} />);
 
@@ -43,13 +43,19 @@ describe("ToolCallBlock", () => {
       expect(clipboard).toHaveBeenLastCalledWith('{\n  "path": "README.md"\n}');
     });
     expect(screen.getByRole("button", { name: "已复制入参" })).not.toBeNull();
+  });
 
+  it("copies completed tool results", async () => {
+    const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
+    render(<ToolCallBlock message={toolMessage("completed", { status: "success", model_content: "文件内容", duration_ms: 1250 })} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
     fireEvent.click(screen.getByRole("button", { name: "复制输出" }));
 
     await waitFor(() => {
       expect(clipboard).toHaveBeenLastCalledWith("文件内容");
+      expect(screen.getByRole("button", { name: "已复制输出" })).not.toBeNull();
     });
-    expect(screen.getByRole("button", { name: "已复制输出" })).not.toBeNull();
   });
 
   it("formats sub-second tool durations as milliseconds", () => {

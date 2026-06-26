@@ -17,13 +17,17 @@ from backend.app.command_approval import (
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.request_context import trace_id_var
-from backend.app.services import (
-    ChatRequest,
+from backend.app.services.chat_stream_manager import (
     ChatStreamAlreadyRunningError,
     ChatStreamMissingSessionError,
+)
+from backend.app.services.chat_types import ChatRequest
+from backend.app.services.session_service import (
     SessionNotFoundError,
     SessionService,
     SessionValidationError,
+)
+from backend.app.services.workspace_service import (
     WorkspaceServiceError,
 )
 

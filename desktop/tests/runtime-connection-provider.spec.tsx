@@ -73,6 +73,38 @@ describe("RuntimeConnectionProvider", () => {
     expect(starter).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("backend-capability").textContent).toBe("ready");
   });
+
+  it("keeps backend ready and records a top-level agent warmup failure", async () => {
+    const starter = vi.fn<() => Promise<AgentConnection>>().mockResolvedValue({
+      host: "127.0.0.1",
+      port: 9234,
+      base_url: "http://127.0.0.1:9234",
+      data_dir: "D:/Keydex",
+    });
+    const runtime = {
+      health: vi.fn().mockResolvedValue({
+        status: "ok",
+        version: "0.1.0",
+        agent_status: "failed",
+        agent_error: "langchain import failed",
+        agent_warmup_duration_ms: 123,
+      }),
+    } as unknown as RuntimeBridge;
+
+    render(
+      <RuntimeConnectionProvider
+        runtime={runtime}
+        starter={starter}
+        isDesktopRuntime={() => true}
+      >
+        <RuntimeProbe />
+      </RuntimeConnectionProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("connection-status-value").textContent).toBe("ready"));
+    await waitFor(() => expect(screen.getByTestId("connection-error").textContent).toBe("langchain import failed"));
+    expect(screen.getByTestId("backend-capability").textContent).toBe("ready");
+  });
 });
 
 function RuntimeProbe() {

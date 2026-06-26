@@ -15,7 +15,11 @@ from backend.app.api.dependencies import get_repositories
 from backend.app.core.logger import logger
 from backend.app.keydex.schemas import WorkspaceSkillsResponse, workspace_skills_response
 from backend.app.security.workspace import WorkspacePathError, resolve_workspace_path
-from backend.app.services import WorkspaceRuntimeContext, WorkspaceService, WorkspaceServiceError
+from backend.app.services.workspace_service import (
+    WorkspaceRuntimeContext,
+    WorkspaceService,
+    WorkspaceServiceError,
+)
 from backend.app.storage import StorageRepositories
 
 router = APIRouter(tags=["workspace"])

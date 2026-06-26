@@ -10,16 +10,13 @@ from langchain_core.messages import RemoveMessage, SystemMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from backend.app.agent import AgentRunner
-from backend.app.agent.tool_call_preset import ToolCallPreset, ToolCallPresetItem
 from backend.app.agent.event_processor import AgentEventResult, process_agent_events
+from backend.app.agent.tool_call_preset import ToolCallPreset, ToolCallPresetItem
 from backend.app.command_approval import ApprovalService
 from backend.app.core.config import AppSettings
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.request_context import reset_request_context, set_request_context
-from backend.app.keydex import KeydexWorkspaceRuntimeCache
-from backend.app.keydex.runtime import KeydexWorkspaceRuntimeSnapshot
-from backend.app.keydex.skills import SkillCatalog
 from backend.app.events import (
     ChatProjection,
     ChatProjectionAdapter,
@@ -28,21 +25,14 @@ from backend.app.events import (
     PersistenceProjection,
     TurnCompletedAggregator,
 )
+from backend.app.keydex import KeydexWorkspaceRuntimeCache
+from backend.app.keydex.runtime import KeydexWorkspaceRuntimeSnapshot
+from backend.app.keydex.skills import SkillCatalog
+from backend.app.services.chat_types import ChatCancellationToken, ChatRequest, ChatTurnResult
 from backend.app.services.message_event_service import MessageEventService
 from backend.app.services.workspace_service import WorkspaceService
 from backend.app.storage import SessionRecord, StorageRepositories
 from backend.app.tools import ToolExecutionContext
-
-
-class ChatCancellationToken:
-    def __init__(self) -> None:
-        self._cancelled = False
-
-    def cancel(self) -> None:
-        self._cancelled = True
-
-    def is_cancelled(self) -> bool:
-        return self._cancelled
 
 
 class NullChatProjectionAdapter:
@@ -88,27 +78,6 @@ class SkillActivationError(ValueError):
         self.code = code
         self.message = message
         self.details = details or {}
-
-
-@dataclass(frozen=True)
-class ChatRequest:
-    message: str
-    session_id: str | None = None
-    user_id: str | None = None
-    scene_id: str | None = None
-    model: str = ""
-    system_prompt: str | None = None
-    runtime_params: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class ChatTurnResult:
-    session_id: str
-    trace_id: str
-    turn_index: int
-    status: str
-    final_content: str = ""
-    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -680,7 +649,9 @@ class ChatService:
             if request.message.strip():
                 messages_to_send.append({"role": "user", "content": request.message})
             if not messages_to_send:
-                messages_to_send.append({"role": "user", "content": "请根据已附加的上下文继续处理。"})
+                messages_to_send.append(
+                    {"role": "user", "content": "请根据已附加的上下文继续处理。"}
+                )
             event_stream = agent.astream_events(
                 {"messages": messages_to_send},
                 config=run_config,

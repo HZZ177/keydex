@@ -67,7 +67,9 @@ def test_skill_activation_parser_exposes_stable_error_codes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_skill_turn_failure_uses_stable_code_without_absolute_paths(tmp_path: Path) -> None:
+async def test_missing_skill_turn_failure_uses_stable_code_without_absolute_paths(
+    tmp_path: Path,
+) -> None:
     service, repositories = _service(tmp_path)
     workspace_root = tmp_path / "repo"
     workspace_root.mkdir()

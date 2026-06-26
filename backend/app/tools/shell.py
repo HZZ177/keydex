@@ -393,14 +393,19 @@ def _run_subprocess(
             command,
             cwd=cwd,
             shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=timeout_seconds,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        stdout, stdout_truncated = _decode_output(_output_bytes(exc.output), max_chars=max_capture_chars)
-        stderr, stderr_truncated = _decode_output(_output_bytes(exc.stderr), max_chars=max_capture_chars)
+        stdout, stdout_truncated = _decode_output(
+            _output_bytes(exc.output),
+            max_chars=max_capture_chars,
+        )
+        stderr, stderr_truncated = _decode_output(
+            _output_bytes(exc.stderr),
+            max_chars=max_capture_chars,
+        )
         return CommandProcessResult(
             stdout=stdout,
             stderr=stderr,

@@ -41,9 +41,9 @@ def set_request_context(
     session_id: str | None = None,
     active_session_id: str | None = None,
     user_id: str | None = None,
-    tool_call_preset: "ToolCallPreset | None" = None,
-    skill_catalog: "SkillCatalog | None" = None,
-    keydex_snapshot: "KeydexWorkspaceRuntimeSnapshot | None" = None,
+    tool_call_preset: ToolCallPreset | None = None,
+    skill_catalog: SkillCatalog | None = None,
+    keydex_snapshot: KeydexWorkspaceRuntimeSnapshot | None = None,
 ) -> RequestContextToken:
     return RequestContextToken(
         trace_id=trace_id_var.set(trace_id) if trace_id is not None else None,
@@ -95,18 +95,18 @@ def get_user_id() -> str:
     return user_id_var.get()
 
 
-def set_tool_call_preset(preset: "ToolCallPreset") -> Token[Any | None]:
+def set_tool_call_preset(preset: ToolCallPreset) -> Token[Any | None]:
     return tool_call_preset_var.set(_ToolCallPresetSlot(preset))
 
 
-def get_tool_call_preset() -> "ToolCallPreset | None":
+def get_tool_call_preset() -> ToolCallPreset | None:
     value = tool_call_preset_var.get()
     if isinstance(value, _ToolCallPresetSlot):
         return None if value.consumed else value.preset
     return value
 
 
-def consume_tool_call_preset() -> "ToolCallPreset | None":
+def consume_tool_call_preset() -> ToolCallPreset | None:
     value = tool_call_preset_var.get()
     if isinstance(value, _ToolCallPresetSlot):
         if value.consumed:
@@ -119,9 +119,9 @@ def consume_tool_call_preset() -> "ToolCallPreset | None":
     return value
 
 
-def get_skill_catalog() -> "SkillCatalog | None":
+def get_skill_catalog() -> SkillCatalog | None:
     return skill_catalog_var.get()
 
 
-def get_keydex_snapshot() -> "KeydexWorkspaceRuntimeSnapshot | None":
+def get_keydex_snapshot() -> KeydexWorkspaceRuntimeSnapshot | None:
     return keydex_snapshot_var.get()

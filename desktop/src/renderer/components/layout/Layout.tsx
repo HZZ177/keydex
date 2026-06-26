@@ -351,7 +351,7 @@ export function Layout({
   const rightSidebarOnLeft = state.rightSidebarPlacement === "left";
   const openRightSidebarLabel = rightSidebarOnLeft ? "展开左侧栏" : "展开右侧栏";
   const OpenRightSidebarIcon = rightSidebarOnLeft ? PanelLeftOpen : PanelRightOpen;
-  const showRuntimeStatus = Boolean(runtimeConnection && runtimeConnection.status === "error");
+  const showRuntimeStatus = Boolean(runtimeConnection?.error);
 
   return (
     <div

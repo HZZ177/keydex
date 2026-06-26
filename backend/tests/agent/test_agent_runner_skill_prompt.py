@@ -35,7 +35,9 @@ class RecordingAgentFactory(AgentFactory):
         name: str = "desktop_agent",
     ) -> Any:
         self.system_prompts.append(
-            system_prompt.content if isinstance(system_prompt, SystemMessage) else str(system_prompt)
+            system_prompt.content
+            if isinstance(system_prompt, SystemMessage)
+            else str(system_prompt)
         )
         return {
             "model": model,

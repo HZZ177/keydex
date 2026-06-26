@@ -121,8 +121,8 @@
 
 .policyTrigger:focus-visible {
   outline: none;
-  border-color: color-mix(in srgb, var(--color-accent) 44%, var(--color-border-default));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-border-strong) 68%, var(--color-border-default));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-border-strong) 18%, transparent);
 }
 
 .policyTrigger svg {

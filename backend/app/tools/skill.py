@@ -19,6 +19,7 @@ from backend.app.keydex.skills import (
     ensure_skill_file_size,
     resolve_skill_resource_path,
 )
+from backend.app.tools.skill_activation_messages import build_skill_activation_content
 
 LOAD_SKILL_TOOL_NAME = "load_skill"
 
@@ -127,7 +128,7 @@ async def run_load_skill(
 
     try:
         activation_content = _build_activation_content(skill, skill_md_content)
-    except Exception as exc:
+    except Exception:
         logger.opt(exception=True).error(
             f"[load_skill] failed to build skill activation content | skill={requested_skill}"
         )
@@ -271,27 +272,10 @@ def _load_skill_resource(
 
 
 def _build_activation_content(skill: SkillDefinition, skill_md_content: str) -> str:
-    metadata: dict[str, Any] = {
-        "skill_name": skill.name,
-        "source": skill.source,
-        "entry": skill.relative_entry,
-        "resource_access": {
-            "tool": LOAD_SKILL_TOOL_NAME,
-            "mode": "resource_path",
-            "path_rule": "resource_path is relative to the skill root and must stay inside it",
-        },
-    }
-    return (
-        "[skill activated]\n"
-        f"You are now using the workspace skill: {skill.name}.\n"
-        "The following SKILL.md content is authoritative for this task.\n"
-        "If you need an additional skill resource, call "
-        f'{LOAD_SKILL_TOOL_NAME}(skill_name="{skill.name}", resource_path="<relative path>").\n'
-        "--------\n"
-        "Skill metadata:\n"
-        f"{json.dumps(metadata, ensure_ascii=False, indent=2)}\n"
-        "--------\n"
-        f"{skill_md_content}"
+    return build_skill_activation_content(
+        skill=skill,
+        skill_md_content=skill_md_content,
+        load_skill_tool_name=LOAD_SKILL_TOOL_NAME,
     )
 
 

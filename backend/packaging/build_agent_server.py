@@ -20,6 +20,11 @@ SIDECAR_INPUT_ROOTS = (
     ROOT / "pyproject.toml",
 )
 SIDECAR_INPUT_SUFFIXES = {".py", ".md", ".txt", ".toml", ".lock"}
+PYINSTALLER_COLLECT_SUBMODULES = (
+    "backend.app.agent",
+    "backend.app.services",
+    "backend.app.tools",
+)
 
 
 def copy_with_retry(source: Path, target: Path, attempts: int = 10) -> None:
@@ -128,6 +133,8 @@ def build_with_pyinstaller(
     ]
     if clean:
         command.append("--clean")
+    for package_name in PYINSTALLER_COLLECT_SUBMODULES:
+        command.extend(["--collect-submodules", package_name])
     command.extend(
         [
             "--onefile",

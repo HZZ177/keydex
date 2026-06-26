@@ -111,7 +111,10 @@ async def test_run_command_preserves_approval_when_executor_fails(tmp_path, monk
     monkeypatch.setattr("backend.app.tools.shell._run_subprocess", raise_not_implemented)
     tool = _registry().require("run_command")
     task = asyncio.create_task(
-        tool.run({"command": "echo approved-before-executor-failure"}, _context(tmp_path, repositories))
+        tool.run(
+            {"command": "echo approved-before-executor-failure"},
+            _context(tmp_path, repositories),
+        )
     )
 
     approval = await _wait_for_pending(repositories)

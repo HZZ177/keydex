@@ -82,7 +82,9 @@ class KeydexWorkspaceWatcher:
                 self._watched.pop(key, None)
         for task in tasks_to_cancel:
             task.cancel()
-        logger.debug(f"[KeydexWatcher] 注销 workspace skill watcher | session_id={cleaned_session_id}")
+        logger.debug(
+            f"[KeydexWatcher] 注销 workspace skill watcher | session_id={cleaned_session_id}"
+        )
 
     async def handle_path_change(
         self,
@@ -96,7 +98,9 @@ class KeydexWorkspaceWatcher:
             return False
 
         key = _workspace_key(root)
-        current_fingerprint = observed_fingerprint or build_keydex_workspace_fingerprint(root).digest()
+        current_fingerprint = (
+            observed_fingerprint or build_keydex_workspace_fingerprint(root).digest()
+        )
         now = time.monotonic()
         async with self._lock:
             watched = self._watched.get(key)
@@ -182,9 +186,9 @@ def _changed_path_payload(workspace_root: Path, changed_path: str | Path | None)
     if changed_path is None:
         return None
     raw_changed = Path(changed_path).expanduser()
-    target = (workspace_root / raw_changed if not raw_changed.is_absolute() else raw_changed).resolve(
-        strict=False
-    )
+    target = (
+        workspace_root / raw_changed if not raw_changed.is_absolute() else raw_changed
+    ).resolve(strict=False)
     try:
         return target.relative_to(workspace_root).as_posix()
     except ValueError:

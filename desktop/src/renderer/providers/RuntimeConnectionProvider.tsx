@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type MutableRefObject,
   type PropsWithChildren,
 } from "react";
 
@@ -16,6 +17,7 @@ import {
   isTauriRuntime,
   runtimeBridge,
   type AgentConnection,
+  type HealthResponse,
   type RuntimeBridge,
   type WsConnectionStatus,
 } from "@/runtime";
@@ -107,6 +109,7 @@ export function RuntimeConnectionProvider({
         }
         setLifecycle({ status: "ready", connection });
         dispatchRuntime({ type: "connection/setStatus", source: "health", status: "connected" });
+        void monitorAgentWarmup(runtime, dispatchRuntime, runSeqRef, runSeq);
       } catch (reason) {
         if (runSeqRef.current !== runSeq) {
           return;
@@ -202,6 +205,58 @@ export function RuntimeConnectionProvider({
   );
 
   return <RuntimeConnectionContext.Provider value={value}>{children}</RuntimeConnectionContext.Provider>;
+}
+
+async function monitorAgentWarmup(
+  runtime: RuntimeBridge,
+  dispatchRuntime: Dispatch<RuntimeAction>,
+  runSeqRef: MutableRefObject<number>,
+  runSeq: number,
+) {
+  if (typeof runtime.health !== "function") {
+    return;
+  }
+  dispatchRuntime({ type: "error/clearSource", source: "agent" });
+  for (let index = 0; index < 20; index += 1) {
+    if (runSeqRef.current !== runSeq) {
+      return;
+    }
+    let health: HealthResponse;
+    try {
+      health = await runtime.health();
+    } catch {
+      return;
+    }
+
+    if (health.agent_status === "failed") {
+      dispatchRuntime({
+        type: "error/record",
+        source: "agent",
+        id: "agent:warmup",
+        error: {
+          code: "agent_warmup_failed",
+          message: health.agent_error || "智能体初始化失败",
+          details: {
+            duration_ms: health.agent_warmup_duration_ms ?? null,
+          },
+        },
+      });
+      return;
+    }
+
+    if (health.agent_status === "ready") {
+      dispatchRuntime({ type: "error/clearSource", source: "agent" });
+      dispatchRuntime({ type: "connection/setStatus", source: "agent", status: "connected" });
+      return;
+    }
+
+    dispatchRuntime({ type: "connection/setStatus", source: "agent", status: "checking" });
+    await sleep(1000);
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 export function useRuntimeConnection() {

@@ -16,7 +16,7 @@ describe("React root", () => {
 
     expect(await screen.findByTestId("home-page")).not.toBeNull();
     expect(screen.getByLabelText("输入需求")).not.toBeNull();
-    expect(screen.getByTestId("connection-status").textContent).toContain("正在启动本地服务");
+    expect(screen.queryByTestId("connection-status")).toBeNull();
     expect(starter).toHaveBeenCalledTimes(1);
   });
 });

@@ -2056,7 +2056,11 @@ class LLMRequestLogsRepository:
             else None
         )
         effective_start_time = _max_iso_time(start_time, cursor_start_time)
-        where, params = self._filters(start_time=effective_start_time, end_time=end_time, model=model)
+        where, params = self._filters(
+            start_time=effective_start_time,
+            end_time=end_time,
+            model=model,
+        )
         bucket_expression = _usage_bucket_sql_expression(bucket)
         timezone_modifier = _sqlite_timezone_modifier(timezone_offset_minutes)
         query_params: list[Any] = [timezone_modifier, *params]

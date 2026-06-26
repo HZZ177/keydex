@@ -41,4 +41,20 @@ describe("ConnectionStatus", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
+
+  it("renders agent warmup failures as a top-level runtime error", () => {
+    const state = runtimeReducer(createInitialRuntimeState(), {
+      type: "error/record",
+      source: "agent",
+      id: "agent:warmup",
+      now: "2026-06-17T10:00:00Z",
+      error: { code: "agent_warmup_failed", message: "智能体初始化失败" },
+    });
+
+    render(<ConnectionStatus state={state} />);
+
+    expect(screen.getByTestId("connection-status").dataset.status).toBe("error");
+    expect(screen.getByText("智能体异常")).not.toBeNull();
+    expect(screen.getByText("智能体初始化失败")).not.toBeNull();
+  });
 });

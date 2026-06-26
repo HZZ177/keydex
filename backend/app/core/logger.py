@@ -75,10 +75,12 @@ def configure_logging(
     resolved_log_dir = Path(log_dir or log_path).expanduser().resolve()
     resolved_log_dir.mkdir(parents=True, exist_ok=True)
     _configure_levels()
-    logger.configure(
-        handlers=[
+    handlers: list[dict[str, Any]] = []
+    console_sink = _resolve_console_sink()
+    if console_sink is not None:
+        handlers.append(
             {
-                "sink": sys.stdout,
+                "sink": console_sink,
                 "level": resolved_level,
                 "format": (
                     "<green>{time:YYYY-MM-DD HH:mm:ss.SSSS}</green> | "
@@ -91,22 +93,26 @@ def configure_logging(
                 "enqueue": False,
                 "filter": trace_id_filter,
             },
-            {
-                "sink": f"{resolved_log_dir}/{app_log_name}_{{time:YYYY-MM-DD_HH}}.log",
-                "level": resolved_level,
-                "format": (
-                    "{time:YYYY-MM-DD HH:mm:ss.SSSS} | traceId:{extra[trace_id]} | "
-                    "{module}:{line} | {level} | {message}"
-                ),
-                "rotation": "1 hour",
-                "retention": "7 days",
-                "compression": "zip",
-                "backtrace": True,
-                "diagnose": True,
-                "enqueue": False,
-                "filter": trace_id_filter,
-            },
-        ]
+        )
+    handlers.append(
+        {
+            "sink": f"{resolved_log_dir}/{app_log_name}_{{time:YYYY-MM-DD_HH}}.log",
+            "level": resolved_level,
+            "format": (
+                "{time:YYYY-MM-DD HH:mm:ss.SSSS} | traceId:{extra[trace_id]} | "
+                "{module}:{line} | {level} | {message}"
+            ),
+            "rotation": "1 hour",
+            "retention": "7 days",
+            "compression": "zip",
+            "backtrace": True,
+            "diagnose": True,
+            "enqueue": False,
+            "filter": trace_id_filter,
+        }
+    )
+    logger.configure(
+        handlers=handlers
     )
     _quiet_third_party_loggers()
     _install_exception_hooks()
@@ -123,6 +129,14 @@ def _configure_levels() -> None:
     logger.level("WARNING", color="<yellow>")
     logger.level("ERROR", color="<red>")
     logger.level("CRITICAL", color="<bold><red>")
+
+
+def _resolve_console_sink() -> Any | None:
+    for stream_name in ("stdout", "__stdout__", "stderr", "__stderr__"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None:
+            return stream
+    return None
 
 
 def _quiet_third_party_loggers() -> None:

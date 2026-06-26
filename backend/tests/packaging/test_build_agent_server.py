@@ -18,6 +18,8 @@ def test_build_with_pyinstaller_embeds_system_prompt_in_code(monkeypatch, tmp_pa
     assert check is True
     assert "--clean" not in command
     assert "--add-data" not in command
+    for package_name in build_agent_server.PYINSTALLER_COLLECT_SUBMODULES:
+        assert_collect_submodules(command, package_name)
     assert str(build_agent_server.ENTRY_POINT) in command
 
 
@@ -52,3 +54,16 @@ def test_build_with_pyinstaller_reuses_current_sidecar(monkeypatch, tmp_path) ->
 
     assert result == binary
     assert calls == []
+
+
+def assert_collect_submodules(command: list[str], package_name: str) -> None:
+    assert "--collect-submodules" in command
+    option_index = command.index("--collect-submodules")
+    while option_index < len(command):
+        if command[option_index : option_index + 2] == ["--collect-submodules", package_name]:
+            return
+        try:
+            option_index = command.index("--collect-submodules", option_index + 1)
+        except ValueError:
+            break
+    raise AssertionError(f"missing --collect-submodules {package_name}")

@@ -1,7 +1,7 @@
 import { RuntimeError, RuntimeHttpError, type RuntimeErrorEnvelope } from "@/runtime/errors";
 import type { WsConnectionStatus } from "@/runtime/wsClient";
 
-export type RuntimeConnectionSource = "health" | "ws" | "model" | "settings";
+export type RuntimeConnectionSource = "health" | "ws" | "model" | "settings" | "agent";
 
 export type RuntimeConnectionStatus =
   | "idle"
@@ -45,6 +45,7 @@ const SOURCE_LABELS: Record<RuntimeConnectionSource, string> = {
   ws: "流式连接",
   model: "模型",
   settings: "设置",
+  agent: "智能体",
 };
 
 export function createInitialRuntimeState(): RuntimeState {
@@ -54,6 +55,7 @@ export function createInitialRuntimeState(): RuntimeState {
       ws: "idle",
       model: "idle",
       settings: "idle",
+      agent: "idle",
     },
     errorIds: [],
     errorsById: {},

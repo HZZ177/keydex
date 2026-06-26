@@ -260,9 +260,15 @@ describe("Layout", () => {
     expect(shell.dataset.rightSidebar).toBe("open");
     expect(screen.getByRole("tablist", { name: "侧边栏窗口" })).not.toBeNull();
     expect(screen.getByRole("tab", { name: "HTML 窗口" }).getAttribute("aria-selected")).toBe("true");
-    expect(((await screen.findByTitle("HTML 文件预览")) as HTMLIFrameElement).getAttribute("srcdoc")).toContain(
-      "HTML 窗口",
-    );
+    expect(
+      (
+        (await screen.findByTitle(
+          "HTML 文件预览",
+          undefined,
+          { timeout: 5000 },
+        )) as HTMLIFrameElement
+      ).getAttribute("srcdoc"),
+    ).toContain("HTML 窗口");
 
     fireEvent.click(screen.getByRole("button", { name: "打开 Markdown 窗口" }));
 

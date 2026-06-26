@@ -37,7 +37,10 @@ async def test_shell_tool_runs_successful_command(tmp_path) -> None:
     assert result.result["cwd"] == "."
 
 
-async def test_shell_tool_does_not_depend_on_asyncio_subprocess_support(tmp_path, monkeypatch) -> None:
+async def test_shell_tool_does_not_depend_on_asyncio_subprocess_support(
+    tmp_path,
+    monkeypatch,
+) -> None:
     async def raise_not_implemented(*args, **kwargs):
         raise NotImplementedError()
 

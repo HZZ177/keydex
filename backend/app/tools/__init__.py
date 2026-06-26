@@ -1,45 +1,47 @@
-"""Local desktop tool protocol and registry."""
+"""Local desktop tool protocol and registry.
 
-from backend.app.tools.base import (
-    FunctionTool,
-    LocalTool,
-    ToolDefinitionError,
-    ToolExecutionContext,
-    ToolExecutionError,
-    ToolExecutionResult,
-)
-from backend.app.tools.factory import create_default_tool_registry
-from backend.app.tools.filesystem import create_filesystem_tools, register_filesystem_tools
-from backend.app.tools.orchestrator import ToolOrchestrator
-from backend.app.tools.patch import create_patch_tools, register_patch_tools
-from backend.app.tools.plan import create_plan_tools, register_plan_tools
-from backend.app.tools.registry import ToolRegistry, ToolRegistryError
-from backend.app.tools.search import create_search_tools, register_search_tools
-from backend.app.tools.shell import create_shell_tools, register_shell_tools
-from backend.app.tools.skill import LOAD_SKILL_TOOL_NAME, load_skill, run_load_skill
+Exports are resolved lazily so the backend health path can register lightweight
+local tools without importing LangChain-only tool adapters.
+"""
 
-__all__ = [
-    "FunctionTool",
-    "LOAD_SKILL_TOOL_NAME",
-    "LocalTool",
-    "ToolDefinitionError",
-    "ToolExecutionContext",
-    "ToolExecutionError",
-    "ToolExecutionResult",
-    "ToolOrchestrator",
-    "ToolRegistry",
-    "ToolRegistryError",
-    "create_default_tool_registry",
-    "create_filesystem_tools",
-    "create_patch_tools",
-    "create_plan_tools",
-    "create_search_tools",
-    "create_shell_tools",
-    "load_skill",
-    "register_filesystem_tools",
-    "register_patch_tools",
-    "register_plan_tools",
-    "register_search_tools",
-    "register_shell_tools",
-    "run_load_skill",
-]
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
+
+_EXPORTS = {
+    "FunctionTool": ("backend.app.tools.base", "FunctionTool"),
+    "LocalTool": ("backend.app.tools.base", "LocalTool"),
+    "ToolDefinitionError": ("backend.app.tools.base", "ToolDefinitionError"),
+    "ToolExecutionContext": ("backend.app.tools.base", "ToolExecutionContext"),
+    "ToolExecutionError": ("backend.app.tools.base", "ToolExecutionError"),
+    "ToolExecutionResult": ("backend.app.tools.base", "ToolExecutionResult"),
+    "ToolRegistry": ("backend.app.tools.registry", "ToolRegistry"),
+    "ToolRegistryError": ("backend.app.tools.registry", "ToolRegistryError"),
+    "ToolOrchestrator": ("backend.app.tools.orchestrator", "ToolOrchestrator"),
+    "create_default_tool_registry": ("backend.app.tools.factory", "create_default_tool_registry"),
+    "create_filesystem_tools": ("backend.app.tools.filesystem", "create_filesystem_tools"),
+    "create_patch_tools": ("backend.app.tools.patch", "create_patch_tools"),
+    "create_plan_tools": ("backend.app.tools.plan", "create_plan_tools"),
+    "create_search_tools": ("backend.app.tools.search", "create_search_tools"),
+    "create_shell_tools": ("backend.app.tools.shell", "create_shell_tools"),
+    "register_filesystem_tools": ("backend.app.tools.filesystem", "register_filesystem_tools"),
+    "register_patch_tools": ("backend.app.tools.patch", "register_patch_tools"),
+    "register_plan_tools": ("backend.app.tools.plan", "register_plan_tools"),
+    "register_search_tools": ("backend.app.tools.search", "register_search_tools"),
+    "register_shell_tools": ("backend.app.tools.shell", "register_shell_tools"),
+    "LOAD_SKILL_TOOL_NAME": ("backend.app.tools.skill", "LOAD_SKILL_TOOL_NAME"),
+    "load_skill": ("backend.app.tools.skill", "load_skill"),
+    "run_load_skill": ("backend.app.tools.skill", "run_load_skill"),
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, export_name = _EXPORTS[name]
+    value = getattr(import_module(module_name), export_name)
+    globals()[name] = value
+    return value

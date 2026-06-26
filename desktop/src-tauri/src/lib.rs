@@ -117,7 +117,11 @@ fn kill_child(child: &mut Child) {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .creation_flags(CREATE_NO_WINDOW);
-        if command.status().map(|status| status.success()).unwrap_or(false) {
+        if command
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+        {
             let _ = child.wait();
             return;
         }

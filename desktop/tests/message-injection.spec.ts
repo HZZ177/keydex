@@ -30,16 +30,20 @@ describe("message injection composer helpers", () => {
       source: "follow",
     });
 
-    expect(prepared.runtimeParams?.message_injection).toHaveLength(2);
-    expect(prepared.runtimeParams?.message_injection[0]).toMatchObject({
+    const injections = prepared.runtimeParams?.message_injection;
+    expect(injections).toHaveLength(2);
+    if (!injections) {
+      throw new Error("message injection not created");
+    }
+    expect(injections[0]).toMatchObject({
       type: "follow",
       role: "HumanMessage",
       metadata: {
         kind: "quote",
       },
     });
-    expect(prepared.runtimeParams?.message_injection[0]?.content).toContain("selected text");
-    expect(prepared.runtimeParams?.message_injection[1]).toMatchObject({
+    expect(injections[0]?.content).toContain("selected text");
+    expect(injections[1]).toMatchObject({
       type: "follow",
       role: "HumanMessage",
       metadata: {
@@ -48,7 +52,7 @@ describe("message injection composer helpers", () => {
         fileType: "file",
       },
     });
-    expect(prepared.runtimeParams?.message_injection[1]?.content).toContain("src/main.ts");
+    expect(injections[1]?.content).toContain("src/main.ts");
   });
 
   it("allows file-only sends without polluting the visible message", () => {
@@ -95,8 +99,12 @@ describe("message injection composer helpers", () => {
         source_end: 31,
       },
     });
-    expect(prepared.runtimeParams?.message_injection).toHaveLength(1);
-    expect(prepared.runtimeParams?.message_injection[0]).toMatchObject({
+    const injections = prepared.runtimeParams?.message_injection;
+    expect(injections).toHaveLength(1);
+    if (!injections) {
+      throw new Error("message injection not created");
+    }
+    expect(injections[0]).toMatchObject({
       type: "follow",
       role: "HumanMessage",
       metadata: {
@@ -108,11 +116,11 @@ describe("message injection composer helpers", () => {
         source_end: 31,
       },
     });
-    expect(prepared.runtimeParams?.message_injection[0]?.content).toContain("README.md");
-    expect(prepared.runtimeParams?.message_injection[0]?.content).toContain("L3-L4");
-    expect(prepared.runtimeParams?.message_injection[0]?.content).toContain("18-31");
-    expect(prepared.runtimeParams?.message_injection[0]?.content).toContain("selected text");
-    expect(prepared.runtimeParams?.message_injection[0]?.content).not.toContain("comment stays visible");
+    expect(injections[0]?.content).toContain("README.md");
+    expect(injections[0]?.content).toContain("L3-L4");
+    expect(injections[0]?.content).toContain("18-31");
+    expect(injections[0]?.content).toContain("selected text");
+    expect(injections[0]?.content).not.toContain("comment stays visible");
   });
 
   it("keeps bracket syntax as ordinary user text", () => {

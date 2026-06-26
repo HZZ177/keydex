@@ -14,6 +14,10 @@ import type { HttpClient } from "./httpClient";
 export interface HealthResponse {
   status: string;
   version: string;
+  protocol_version?: string;
+  agent_status?: "idle" | "warming" | "ready" | "failed" | "unknown" | string;
+  agent_error?: string | null;
+  agent_warmup_duration_ms?: number | null;
 }
 
 export interface SettingsRuntime {

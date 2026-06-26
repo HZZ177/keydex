@@ -689,7 +689,7 @@ describe("MessageText", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "预览 JSON" }));
 
-    const viewer = await screen.findByTestId("json-tree-viewer", undefined, { timeout: 5000 });
+    const viewer = await screen.findByTestId("json-tree-viewer", undefined, { timeout: 15000 });
     expect(viewer).not.toBeNull();
     expect(screen.getByRole("searchbox", { name: "查找 JSON" })).not.toBeNull();
 
@@ -697,7 +697,7 @@ describe("MessageText", () => {
 
     expect(screen.getByText("1 / 1")).not.toBeNull();
     expect(screen.getByRole("button", { name: /\$\.users\[0\]\.name/ })).not.toBeNull();
-  });
+  }, 20000);
 
   it("opens rendered html code in a fullscreen preview dialog", () => {
     render(

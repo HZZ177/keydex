@@ -310,7 +310,12 @@ class MessageEventService:
         ).strip()
         label = str(data.get("label") or metadata.get("label") or f"/{skill_name}").strip()
         description = str(data.get("description") or metadata.get("description") or "").strip()
-        skill_source = str(data.get("skill_source") or data.get("skillSource") or metadata.get("source") or "workspace")
+        skill_source = str(
+            data.get("skill_source")
+            or data.get("skillSource")
+            or metadata.get("source")
+            or "workspace"
+        )
         return {
             "id": str(data.get("id") or metadata.get("id") or f"skill:{skill_name or event.id}"),
             "type": "skill",

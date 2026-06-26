@@ -66,6 +66,24 @@ def test_discovery_scans_only_first_level_skill_dirs(tmp_path: Path) -> None:
     assert catalog.diagnostics == []
 
 
+def test_discovery_lists_skill_resources_except_entry_file(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "repo"
+    skill_dir = workspace_root / ".keydex" / "skills" / "dev-plan"
+    _write_skill(skill_dir, name="dev-plan")
+    (skill_dir / "references").mkdir()
+    (skill_dir / "references" / "guide.md").write_text("guide", encoding="utf-8")
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.ps1").write_text("Write-Output ok", encoding="utf-8")
+    profile = load_keydex_workspace_profile(workspace_root)
+
+    catalog = discover_workspace_skills(profile)
+
+    assert catalog.skills["dev-plan"].resources == [
+        "references/guide.md",
+        "scripts/run.ps1",
+    ]
+
+
 def test_discovery_returns_stable_name_sorted_catalog(tmp_path: Path) -> None:
     workspace_root = tmp_path / "repo"
     skills_root = workspace_root / ".keydex" / "skills"
