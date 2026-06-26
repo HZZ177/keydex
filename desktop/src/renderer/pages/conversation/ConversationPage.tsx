@@ -25,9 +25,10 @@ import type { AgentActionEnvelope, AgentChatMessage, AgentErrorData } from "@/ty
 
 import { ChatLayout } from "./ChatLayout";
 import { ConversationComposerAccessory } from "./ComposerAccessory";
-import { MessageList, type FileChangePreview, type MessageListScrollControls } from "./messages";
+import { MessageList, type FileChangePreview, type MessageListScrollControls, type ToolDetailsLoader } from "./messages";
 import { ComposerApprovalCard } from "./ComposerApprovalCard";
 import { consumeQuickChatSend } from "./quickSend";
+import type { AgentToolDetailRef, AgentToolDetails } from "@/types/protocol";
 
 export interface ConversationPageProps {
   threadId: string;
@@ -54,6 +55,9 @@ export function ConversationPage({
   const scrollToBottomRef = useRef<((behavior?: ScrollBehavior) => void) | null>(null);
   const runtimeEventSideEffectsRef = useRef<(event: AgentActionEnvelope) => void>(() => undefined);
   const runtimeErrorRef = useRef<(reason: unknown) => boolean | void>(() => false);
+  const toolDetailCacheRef = useRef(
+    new Map<string, Promise<Partial<ConversationMessage>> | Partial<ConversationMessage>>(),
+  );
   const { openFilePanel, openPreview: openPreviewRequest, setPreviewHostContext } = usePreview();
   const notifications = useNotifications();
   const modelSelection = useRuntimeModelSelection(runtime, initialModel);
@@ -318,6 +322,37 @@ export function ConversationPage({
     [openFilePanel, quoteSelection, runtime, startChatFromAnnotation, threadId, workspaceAvailable, workspaceLabel],
   );
 
+  useEffect(() => {
+    toolDetailCacheRef.current.clear();
+  }, [runtime, threadId]);
+
+  const loadToolDetails = useCallback<ToolDetailsLoader>(
+    async (message) => {
+      const ref = toolDetailRefFromMessage(message);
+      if (!ref) {
+        return {};
+      }
+      const key = toolDetailCacheKey(threadId, ref);
+      const cached = toolDetailCacheRef.current.get(key);
+      if (cached) {
+        return cached instanceof Promise ? await cached : cached;
+      }
+      const promise = runtime.conversation
+        .loadToolDetails(threadId, ref)
+        .then((detail) => conversationPatchFromToolDetails(message, detail));
+      toolDetailCacheRef.current.set(key, promise);
+      try {
+        const patch = await promise;
+        toolDetailCacheRef.current.set(key, patch);
+        return patch;
+      } catch (error) {
+        toolDetailCacheRef.current.delete(key);
+        throw error;
+      }
+    },
+    [runtime, threadId],
+  );
+
   const send = useCallback(
     (files: SelectedFile[] = [], quotes: SelectedQuote[] = []) =>
       controller.send(files, quotes, modelSelection.selectedModel.trim()),
@@ -418,6 +453,7 @@ export function ConversationPage({
         workspaceRuntime={runtime}
         workspaceScope={messageWorkspaceScope}
         onFilePreview={openFileChangePreview}
+        onLoadToolDetails={loadToolDetails}
         onQuoteSelection={quoteSelection}
         hasMoreOlder={Boolean(sessionViewState?.historyHasMoreOlder)}
         loadingOlder={loadingOlderHistory}
@@ -601,6 +637,7 @@ function conversationStatusFromAgent(message: AgentChatMessage): ConversationMes
 
 function payloadFromAgentMessage(message: AgentChatMessage): Record<string, unknown> {
   const base: Record<string, unknown> = {
+    messageEventId: message.messageEventId,
     reasoningKind: message.reasoningKind,
     reasoning_kind: message.reasoningKind,
     ghostStats: message.ghostStats,
@@ -608,12 +645,16 @@ function payloadFromAgentMessage(message: AgentChatMessage): Record<string, unkn
     traceQueryContext: message.traceQueryContext,
     cancelled: message.cancelled,
     contextItems: message.contextItems,
+    toolDetailRef: message.toolDetailRef,
+    toolDetailsDeferred: message.toolDetailsDeferred,
+    toolSummary: message.toolSummary,
   };
 
   if (message.role === "tool") {
     return {
       ...base,
       call: {
+        id: message.toolCallId,
         name: message.toolName,
         arguments: message.toolParams ?? {},
       },
@@ -633,6 +674,12 @@ function payloadFromAgentMessage(message: AgentChatMessage): Record<string, unkn
       files: message.fileChanges ?? fileChangesFromUiPayload(message.uiPayload),
       duration_ms: message.toolDurationMs,
       metadata: message.metadata,
+      messageEventId: message.messageEventId,
+      toolCallId: message.toolCallId,
+      runId: message.runId,
+      toolDetailRef: message.toolDetailRef,
+      toolDetailsDeferred: message.toolDetailsDeferred,
+      toolSummary: message.toolSummary,
     };
   }
 
@@ -666,6 +713,91 @@ function payloadFromAgentMessage(message: AgentChatMessage): Record<string, unkn
   }
 
   return base;
+}
+
+function toolDetailRefFromMessage(message: ConversationMessage): AgentToolDetailRef | null {
+  const ref = asRecord(message.payload.toolDetailRef);
+  if (!ref) {
+    return null;
+  }
+  const startEventId = nullableString(ref.startEventId);
+  const endEventId = nullableString(ref.endEventId);
+  if (!startEventId && !endEventId) {
+    return null;
+  }
+  return {
+    startEventId,
+    endEventId,
+    runId: nullableString(ref.runId),
+    toolCallId: nullableString(ref.toolCallId),
+  };
+}
+
+function toolDetailCacheKey(sessionId: string, ref: AgentToolDetailRef): string {
+  return [
+    sessionId,
+    ref.startEventId ?? "",
+    ref.endEventId ?? "",
+    ref.runId ?? "",
+    ref.toolCallId ?? "",
+  ].join(":");
+}
+
+function conversationPatchFromToolDetails(
+  message: ConversationMessage,
+  detail: AgentToolDetails,
+): Partial<ConversationMessage> {
+  const currentCall = asRecord(message.payload.call);
+  const currentResult = asRecord(message.payload.result);
+  const status = conversationStatusFromToolDetail(detail, message.status);
+  const resultStatus =
+    detail.toolError || detail.status === "error" || detail.status === "failed"
+      ? "error"
+      : detail.status === "running"
+        ? "running"
+        : "success";
+  const payload: Record<string, unknown> = {
+    call: {
+      ...currentCall,
+      name: detail.toolName ?? stringValue(currentCall?.name),
+      arguments: detail.toolParams ?? currentCall?.arguments ?? {},
+    },
+    result: {
+      ...currentResult,
+      status: resultStatus,
+      model_content: detail.toolResult ?? "",
+      duration_ms: detail.toolDurationMs,
+      error: detail.toolError ?? undefined,
+      ui_payload: detail.uiPayload ?? undefined,
+      files: detail.fileChanges ?? [],
+    },
+    files: detail.fileChanges ?? [],
+    duration_ms: detail.toolDurationMs,
+    metadata: detail.metadata ?? message.payload.metadata,
+    toolDetailRef: detail.detailRef ?? message.payload.toolDetailRef,
+    toolDetailsDeferred: false,
+    toolSummary: message.payload.toolSummary,
+  };
+  return {
+    status,
+    payload,
+  };
+}
+
+function conversationStatusFromToolDetail(
+  detail: AgentToolDetails,
+  fallback: ConversationMessage["status"],
+): ConversationMessage["status"] {
+  if (detail.status === "running") {
+    return "running";
+  }
+  if (detail.status === "cancelled") {
+    return "cancelled";
+  }
+  if (detail.toolError || detail.status === "error" || detail.status === "failed") {
+    return "failed";
+  }
+  return fallback === "pending" || fallback === "running" ? fallback : "completed";
 }
 
 function isEditToolName(toolName: string | undefined): boolean {
@@ -750,6 +882,18 @@ function runtimeErrorCode(reason: unknown): string | null {
     return details.code;
   }
   return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {

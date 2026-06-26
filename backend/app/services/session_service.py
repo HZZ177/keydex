@@ -240,7 +240,11 @@ class SessionService:
             has_more = len(page_turn_indexes) > page_size
             selected_turn_indexes = page_turn_indexes[:page_size]
             turn_indexes = sorted(selected_turn_indexes)
-            messages = self._messages_for_turns(request.session_id, turn_indexes)
+            messages = self._messages_for_turns(
+                request.session_id,
+                turn_indexes,
+                include_tool_details=False,
+            )
             event_total = self._message_events.count_by_session(request.session_id)
             total = self._message_events.count_turns(request.session_id)
             next_cursor = (
@@ -258,6 +262,7 @@ class SessionService:
             messages = self._message_event_service.get_turn_messages(
                 request.session_id,
                 request.turn_index,
+                include_tool_details=False,
             )
             for message in messages:
                 message.setdefault("turnIndex", request.turn_index)
@@ -286,6 +291,25 @@ class SessionService:
             "prev_cursor": prev_cursor,
             "has_more_older": has_more_older,
         }
+
+    def get_tool_detail(
+        self,
+        session_id: str,
+        *,
+        start_event_id: str | None = None,
+        end_event_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._require_session(session_id)
+        if not start_event_id and not end_event_id:
+            raise SessionValidationError("工具详情事件 id 不能为空")
+        detail = self._message_event_service.get_tool_detail(
+            session_id=session_id,
+            start_event_id=start_event_id,
+            end_event_id=end_event_id,
+        )
+        if detail is None:
+            raise SessionValidationError("工具详情不存在或事件不匹配")
+        return detail
 
     def close_session(self, session_id: str) -> dict[str, Any]:
         self._require_session(session_id)
@@ -375,10 +399,20 @@ class SessionService:
         events = self._message_events.list_by_session(session_id)
         return sorted({event.turn_index for event in events})
 
-    def _messages_for_turns(self, session_id: str, turn_indexes: list[int]) -> list[dict[str, Any]]:
+    def _messages_for_turns(
+        self,
+        session_id: str,
+        turn_indexes: list[int],
+        *,
+        include_tool_details: bool,
+    ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
         for turn_index in turn_indexes:
-            turn_messages = self._message_event_service.get_turn_messages(session_id, turn_index)
+            turn_messages = self._message_event_service.get_turn_messages(
+                session_id,
+                turn_index,
+                include_tool_details=include_tool_details,
+            )
             for message in turn_messages:
                 message.setdefault("turnIndex", turn_index)
             messages.extend(turn_messages)

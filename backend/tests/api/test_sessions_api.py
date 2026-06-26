@@ -183,6 +183,64 @@ def test_sessions_api_returns_aggregated_messages(tmp_path) -> None:
     assert response.json()["turn_indexes"] == [1]
 
 
+def test_sessions_api_defers_tool_payloads_and_loads_details(tmp_path) -> None:
+    client = _client(tmp_path)
+    app = client.app
+    session_id = client.post("/api/sessions", json={"title": "工具历史"}).json()["session"]["id"]
+    app.state.repositories.message_events.append(
+        event_id="evt_tool_start",
+        session_id=session_id,
+        turn_index=1,
+        action="tool_start",
+        data={
+            "tool": "read_file",
+            "params": {"path": "README.md", "content": "x" * 5000},
+            "run_id": "run_tool",
+            "tool_call_id": "call_tool",
+        },
+    )
+    app.state.repositories.message_events.append(
+        event_id="evt_tool_end",
+        session_id=session_id,
+        turn_index=1,
+        action="tool_end",
+        data={
+            "run_id": "run_tool",
+            "tool_call_id": "call_tool",
+            "result": "full file content",
+            "duration_ms": 33,
+            "ui_payload": {"text": "full file content"},
+        },
+    )
+
+    history = client.get(f"/api/sessions/{session_id}/history")
+
+    assert history.status_code == 200
+    tool = history.json()["list"][0]
+    assert tool["role"] == "tool"
+    assert tool["toolDetailsDeferred"] is True
+    assert tool["toolParams"] == {"path": "README.md"}
+    assert "content" not in tool["toolParams"]
+    assert "toolResult" not in tool
+    assert tool["toolDetailRef"]["startEventId"] == "evt_tool_start"
+    assert tool["toolDetailRef"]["endEventId"] == "evt_tool_end"
+
+    detail = client.get(
+        f"/api/sessions/{session_id}/tool-details",
+        params={
+            "start_event_id": "evt_tool_start",
+            "end_event_id": "evt_tool_end",
+        },
+    )
+
+    assert detail.status_code == 200
+    payload = detail.json()["detail"]
+    assert payload["toolName"] == "read_file"
+    assert payload["toolParams"] == {"path": "README.md", "content": "x" * 5000}
+    assert payload["toolResult"] == "full file content"
+    assert payload["uiPayload"] == {"text": "full file content"}
+
+
 def test_sessions_api_filters_turn_history(tmp_path) -> None:
     client = _client(tmp_path)
     app = client.app

@@ -71,6 +71,10 @@ class SessionHistoryResponse(BaseModel):
     has_more_older: bool = False
 
 
+class ToolDetailResponse(BaseModel):
+    detail: dict[str, Any]
+
+
 @router.post("", response_model=SessionResponse)
 def create_session(
     payload: CreateSessionRequest,
@@ -261,6 +265,26 @@ def get_session_history(
             direction=direction,
         ),
     )
+
+
+@router.get("/{session_id}/tool-details", response_model=ToolDetailResponse)
+def get_session_tool_details(
+    session_id: str,
+    start_event_id: str | None = None,
+    end_event_id: str | None = None,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> ToolDetailResponse:
+    try:
+        detail = _service(repositories).get_tool_detail(
+            session_id,
+            start_event_id=start_event_id,
+            end_event_id=end_event_id,
+        )
+    except SessionNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except SessionValidationError as exc:
+        raise _bad_request("invalid_tool_detail", str(exc)) from exc
+    return ToolDetailResponse(detail=detail)
 
 
 def _history_response(

@@ -368,6 +368,17 @@ describe("RuntimeBridge", () => {
           }),
         );
       }
+      if (url.includes("/api/sessions/ses%201/tool-details?") && init.method === "GET") {
+        return Promise.resolve(
+          jsonResponse(200, {
+            detail: {
+              toolName: "read_file",
+              toolParams: { path: "README.md" },
+              toolResult: "content",
+            },
+          }),
+        );
+      }
       return jsonResponse(404, { detail: "not found" });
     });
     const runtime = createRuntimeBridge({ baseUrl: "http://127.0.0.1:8765", fetcher });
@@ -401,6 +412,15 @@ describe("RuntimeBridge", () => {
     await expect(runtime.conversation.loadHistory("ses 1", { turnIndex: 1, order: "asc" })).resolves.toMatchObject({
       list: [{ role: "assistant", content: "历史" }],
       turn_indexes: [1],
+    });
+    await expect(
+      runtime.conversation.loadToolDetails("ses 1", {
+        startEventId: "evt start",
+        endEventId: "evt end",
+      }),
+    ).resolves.toMatchObject({
+      toolName: "read_file",
+      toolResult: "content",
     });
 
     expect(fetcher).toHaveBeenNthCalledWith(
@@ -445,6 +465,11 @@ describe("RuntimeBridge", () => {
     expect(fetcher).toHaveBeenNthCalledWith(
       6,
       "http://127.0.0.1:8765/api/sessions/ses%201/history?turn_index=1&order=asc",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      7,
+      "http://127.0.0.1:8765/api/sessions/ses%201/tool-details?start_event_id=evt+start&end_event_id=evt+end",
       expect.objectContaining({ method: "GET" }),
     );
   });

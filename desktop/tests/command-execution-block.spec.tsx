@@ -170,6 +170,53 @@ describe("CommandExecutionBlock", () => {
     expect(screen.getByText("已信任规则")).not.toBeNull();
   });
 
+  it("loads deferred command output on expansion", async () => {
+    const onLoadDetails = vi.fn().mockResolvedValue({
+      payload: {
+        call: {
+          name: "run_command",
+          arguments: { command: "pytest backend/tests", cwd: "D:/repo" },
+        },
+        result: {
+          status: "success",
+          ui_payload: {
+            stdout: "lazy stdout\n",
+            stderr: "lazy stderr\n",
+            exit_code: 0,
+            duration_ms: 91,
+          },
+        },
+        duration_ms: 91,
+      },
+      status: "completed",
+    });
+    render(
+      <CommandExecutionBlock
+        message={{
+          ...commandMessage("completed", {
+            toolDetailsDeferred: true,
+            toolSummary: { command: "pytest backend/tests", cwd: "D:/repo" },
+          }),
+          payload: {
+            call: { name: "run_command", arguments: { command: "pytest backend/tests", cwd: "D:/repo" } },
+            toolDetailsDeferred: true,
+            toolSummary: { command: "pytest backend/tests", cwd: "D:/repo" },
+          },
+        }}
+        onLoadDetails={onLoadDetails}
+      />,
+    );
+
+    expect(screen.queryByText("lazy stdout")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
+
+    await waitFor(() => {
+      expect(onLoadDetails).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("lazy stdout")).not.toBeNull();
+      expect(screen.getByText("lazy stderr")).not.toBeNull();
+    });
+  });
+
   it("formats sub-second command durations as milliseconds", () => {
     render(<CommandExecutionBlock message={commandMessage("completed", { stdout: "ok\n", duration_ms: 86 })} />);
 

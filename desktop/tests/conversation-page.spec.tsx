@@ -16,6 +16,7 @@ import type {
   AgentChatMessagePayload,
   AgentHistoryResponse,
   AgentSession,
+  AgentToolDetails,
   CommandApprovalRequest,
   Workspace,
 } from "@/types/protocol";
@@ -656,6 +657,58 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
     expect(screen.getByLabelText("工具入参").textContent).toContain('"path": "README.md"');
     expect(screen.getByText("文件内容")).not.toBeNull();
+  });
+
+  it("loads deferred tool history details only when the panel is expanded", async () => {
+    const { runtime } = fakeRuntime({
+      history: [
+        historyMessage("tool", "", {
+          toolName: "read_file",
+          runId: "run-read",
+          toolParams: { path: "README.md" },
+          toolDetailsDeferred: true,
+          toolDetailRef: {
+            startEventId: "evt_start",
+            endEventId: "evt_end",
+            runId: "run-read",
+            toolCallId: "call-read",
+          },
+          status: "completed",
+        }),
+      ],
+      toolDetails: {
+        "evt_start:evt_end": {
+          toolName: "read_file",
+          runId: "run-read",
+          toolCallId: "call-read",
+          toolParams: { path: "README.md", content: "large input" },
+          toolResult: "完整文件内容",
+          toolDurationMs: 64,
+          status: "completed",
+        },
+      },
+    });
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    expect(await screen.findByText("已读取文件 README.md")).not.toBeNull();
+    expect(runtime.conversation.loadToolDetails).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
+
+    await waitFor(() => {
+      expect(runtime.conversation.loadToolDetails).toHaveBeenCalledWith("ses-1", {
+        startEventId: "evt_start",
+        endEventId: "evt_end",
+        runId: "run-read",
+        toolCallId: "call-read",
+      });
+      expect(screen.getByText("完整文件内容")).not.toBeNull();
+    });
+    expect(screen.getByLabelText("工具入参").textContent).toContain('"content": "large input"');
+
+    fireEvent.click(screen.getByRole("button", { name: "收起工具详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
+    expect(runtime.conversation.loadToolDetails).toHaveBeenCalledTimes(1);
   });
 
   it("restores hidden metadata, error and cancelled states from history", async () => {
@@ -1605,6 +1658,7 @@ function fakeRuntime({
   wsStatus = "open",
   model = "qwen-coder",
   historyError,
+  toolDetails = {},
 }: {
   history?: AgentChatMessagePayload[];
   session?: AgentSession;
@@ -1617,6 +1671,7 @@ function fakeRuntime({
   wsStatus?: WsConnectionStatus;
   model?: string;
   historyError?: Error;
+  toolDetails?: Record<string, AgentToolDetails>;
 } = {}) {
   let handler: ((event: AgentActionEnvelope) => void) | null = null;
   const channel: ChatChannel = {
@@ -1637,6 +1692,11 @@ function fakeRuntime({
       loadHistory: historyError
         ? vi.fn().mockRejectedValue(historyError)
         : vi.fn().mockResolvedValue(historyResponse(session, history)),
+      loadToolDetails: vi.fn((_sessionId: string, ref: { startEventId?: string | null; endEventId?: string | null }) => {
+        const key = `${ref.startEventId ?? ""}:${ref.endEventId ?? ""}`;
+        const detail = toolDetails[key];
+        return detail ? Promise.resolve(detail) : Promise.reject(new Error("tool detail missing"));
+      }),
       openChatChannel: vi.fn((onEvent: (event: AgentActionEnvelope) => void, options?: { onStatus?: (status: WsConnectionStatus) => void }) => {
         handler = onEvent;
         options?.onStatus?.(wsStatus);

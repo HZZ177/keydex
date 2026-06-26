@@ -7,12 +7,14 @@ import { parseUnifiedDiffDisplayLines, type UnifiedDiffDisplayLine } from "@/ren
 import { formatErrorText, readableErrorText } from "./errorText";
 import styles from "./FileChangeBlock.module.css";
 import { LineChangeTicker } from "./LineChangeTicker";
+import { useLazyToolDetails, type ToolDetailsLoader } from "./useLazyToolDetails";
 import { useDeferredUnmount } from "./useDeferredUnmount";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
 
 export interface FileChangeBlockProps {
   message: ConversationMessage;
   onPreviewFile?: (file: FileChangePreview) => void;
+  onLoadDetails?: ToolDetailsLoader;
 }
 
 export interface FileChangePreview {
@@ -20,11 +22,12 @@ export interface FileChangePreview {
   diff: string;
 }
 
-export function FileChangeBlock({ message, onPreviewFile }: FileChangeBlockProps) {
+export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileChangeBlockProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
-  const change = useMemo(() => parseFileChange(message), [message]);
-  const failed = message.status === "failed" || change.status === "failed";
+  const details = useLazyToolDetails(message, onLoadDetails);
+  const change = useMemo(() => parseFileChange(details.message), [details.message]);
+  const failed = details.message.status === "failed" || change.status === "failed";
   const statusKind = failed ? "failed" : change.status === "running" ? "running" : "done";
   const singleFile = change.files.length === 1 ? change.files[0] : null;
   const expandedFile = singleFile ? null : change.files.find((file) => file.path === expandedPath) ?? null;
@@ -37,7 +40,12 @@ export function FileChangeBlock({ message, onPreviewFile }: FileChangeBlockProps
   const captureExpansionAnchor = useExpansionScrollAnchor();
   const toggleDetails = (target: HTMLElement) => {
     captureExpansionAnchor(target);
-    setDetailsOpen((open) => !open);
+    setDetailsOpen((open) => {
+      if (!open) {
+        void details.load();
+      }
+      return !open;
+    });
   };
 
   return (
@@ -109,7 +117,11 @@ export function FileChangeBlock({ message, onPreviewFile }: FileChangeBlockProps
           aria-hidden={!detailsOpen}
         >
           <div className={styles.detailsInner}>
-            {singleFile ? (
+            {details.loading ? (
+              <ToolDetailNotice text="正在加载文件变更详情" />
+            ) : details.error ? (
+              <ToolDetailNotice text="文件变更详情加载失败" />
+            ) : singleFile ? (
               failed ? (
                 <FileChangeErrorPanel paramsText={change.paramsText} errorMessage={change.errorMessage} files={change.files} />
               ) : (
@@ -153,6 +165,16 @@ export function FileChangeBlock({ message, onPreviewFile }: FileChangeBlockProps
         </div>
       ) : null}
     </article>
+  );
+}
+
+function ToolDetailNotice({ text }: { text: string }) {
+  return (
+    <section className={styles.previewBlock} data-empty="true" aria-label={text}>
+      <header className={styles.previewHeader}>
+        <span className={styles.previewTitle}>{text}</span>
+      </header>
+    </section>
   );
 }
 

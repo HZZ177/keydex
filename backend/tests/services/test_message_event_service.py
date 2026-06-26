@@ -83,6 +83,117 @@ def test_message_event_service_aggregates_user_stream_tool_and_completed(tmp_pat
     assert isinstance(messages[2]["timestamp"], int)
 
 
+def test_message_event_service_can_defer_tool_payloads_for_history(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_start",
+        "tool_start",
+        {
+            "tool": "write_file",
+            "params": {
+                "path": "docs/large.md",
+                "content": "x" * 5000,
+            },
+            "run_id": "tool_large",
+            "tool_call_id": "call_large",
+        },
+    )
+    _append(
+        repositories,
+        "evt_end",
+        "tool_end",
+        {
+            "run_id": "tool_large",
+            "tool_call_id": "call_large",
+            "result": "large result",
+            "duration_ms": 18,
+            "files": [
+                {
+                    "path": "docs/large.md",
+                    "operation": "add",
+                    "additions": 1,
+                    "deletions": 0,
+                    "diff": "+x" * 5000,
+                }
+            ],
+            "ui_payload": {"stdout": "x" * 5000},
+        },
+    )
+
+    messages = service.get_display_messages("ses_history", include_tool_details=False)
+
+    assert messages[0]["role"] == "tool"
+    assert messages[0]["toolDetailsDeferred"] is True
+    assert messages[0]["messageEventId"] == "evt_start"
+    assert messages[0]["toolDetailRef"] == {
+        "startEventId": "evt_start",
+        "endEventId": "evt_end",
+        "runId": "tool_large",
+        "toolCallId": "call_large",
+    }
+    assert messages[0]["toolParams"] == {"path": "docs/large.md"}
+    assert "toolResult" not in messages[0]
+    assert "uiPayload" not in messages[0]
+    assert messages[0]["fileChanges"] == [
+        {
+            "path": "docs/large.md",
+            "operation": "add",
+            "added_lines": 1,
+            "deleted_lines": 0,
+            "removed_lines": 0,
+            "additions": 1,
+            "deletions": 0,
+        }
+    ]
+
+
+def test_message_event_service_loads_full_deferred_tool_detail(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_start",
+        "tool_start",
+        {
+            "tool": "read_file",
+            "params": {"path": "README.md"},
+            "run_id": "tool_1",
+            "tool_call_id": "call_1",
+        },
+    )
+    _append(
+        repositories,
+        "evt_end",
+        "tool_end",
+        {
+            "run_id": "tool_1",
+            "tool_call_id": "call_1",
+            "result": "full content",
+            "duration_ms": 21,
+            "ui_payload": {"text": "full content"},
+        },
+    )
+
+    detail = service.get_tool_detail(
+        session_id="ses_history",
+        start_event_id="evt_start",
+        end_event_id="evt_end",
+    )
+
+    assert detail is not None
+    assert detail["toolName"] == "read_file"
+    assert detail["toolParams"] == {"path": "README.md"}
+    assert detail["toolResult"] == "full content"
+    assert detail["toolDurationMs"] == 21
+    assert detail["uiPayload"] == {"text": "full content"}
+    assert detail["detailRef"]["startEventId"] == "evt_start"
+    assert detail["detailRef"]["endEventId"] == "evt_end"
+
+
 def test_message_event_service_handles_multi_turn_reasoning_error_and_cancel(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)

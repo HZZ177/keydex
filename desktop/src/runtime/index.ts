@@ -50,6 +50,7 @@ export type {
   CreateSessionPayload,
   ListSessionsOptions,
   LoadHistoryOptions,
+  LoadToolDetailsOptions,
   UpdateSessionPayload,
 } from "./conversation";
 export type {

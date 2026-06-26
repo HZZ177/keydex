@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { FileChangeBlock, MessageList } from "@/renderer/pages/conversation/messages";
@@ -200,6 +200,60 @@ describe("FileChangeBlock", () => {
     const diff = screen.getByLabelText("文件 diff");
     expect(diff.textContent).toContain("print('new')");
     expect(screen.queryByText("暂无 diff")).toBeNull();
+  });
+
+  it("loads deferred file diff on expansion", async () => {
+    const onLoadDetails = vi.fn().mockResolvedValue({
+      payload: {
+        call: { name: "apply_patch", arguments: { path: "src/main.py" } },
+        result: {
+          status: "success",
+          files: [
+            {
+              path: "src/main.py",
+              operation: "update",
+              added_lines: 4,
+              deleted_lines: 2,
+              diff: "--- a/src/main.py\n+++ b/src/main.py\n@@\n-old\n+lazy new",
+            },
+          ],
+        },
+        files: [
+          {
+            path: "src/main.py",
+            operation: "update",
+            added_lines: 4,
+            deleted_lines: 2,
+            diff: "--- a/src/main.py\n+++ b/src/main.py\n@@\n-old\n+lazy new",
+          },
+        ],
+      },
+      status: "completed",
+    });
+    render(
+      <FileChangeBlock
+        message={{
+          ...singleFileChangeMessage("completed", "update", false, "", "apply_patch"),
+          payload: {
+            call: { name: "apply_patch", arguments: { path: "src/main.py" } },
+            toolDetailsDeferred: true,
+            result: {
+              status: "success",
+              files: [{ path: "src/main.py", operation: "update", added_lines: 4, deleted_lines: 2 }],
+            },
+            files: [{ path: "src/main.py", operation: "update", added_lines: 4, deleted_lines: 2 }],
+          },
+        }}
+        onLoadDetails={onLoadDetails}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
+
+    await waitFor(() => {
+      expect(onLoadDetails).toHaveBeenCalledTimes(1);
+      expect(screen.getByLabelText("文件 diff").textContent).toContain("lazy new");
+    });
   });
 });
 

@@ -479,6 +479,33 @@ export interface AgentHistoryResponse {
   has_more_older?: boolean;
 }
 
+export interface AgentToolDetailRef {
+  startEventId?: string | null;
+  endEventId?: string | null;
+  runId?: string | null;
+  toolCallId?: string | null;
+}
+
+export interface AgentToolDetails {
+  detailRef?: AgentToolDetailRef;
+  runId?: string;
+  toolCallId?: string | null;
+  toolName?: string;
+  toolParams?: unknown;
+  toolResult?: string;
+  toolDurationMs?: number;
+  toolError?: string | null;
+  toolErrorType?: string | null;
+  status?: AgentToolStatus | "success" | "failed";
+  uiPayload?: Record<string, unknown> | null;
+  fileChanges?: AgentFileChange[];
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AgentToolDetailResponse {
+  detail: AgentToolDetails;
+}
+
 export interface AgentFileAttachment {
   type?: "image" | "document" | "sandbox" | "file" | (string & {});
   name?: string;
@@ -514,8 +541,12 @@ export interface AgentTraceQueryContext {
 
 export interface AgentToolCall {
   id?: string;
+  messageEventId?: string;
   runId: string;
   toolCallId?: string;
+  toolDetailRef?: AgentToolDetailRef;
+  toolDetailsDeferred?: boolean;
+  toolSummary?: Record<string, unknown>;
   parentRunId?: string | null;
   toolName: string;
   toolParams?: unknown;
@@ -578,6 +609,7 @@ export interface AgentContextItem {
 export interface AgentChatMessage {
   id: string;
   sessionId: string;
+  messageEventId?: string;
   turnIndex?: number | null;
   role: AgentChatRole;
   content: string;
@@ -590,6 +622,9 @@ export interface AgentChatMessage {
   traceQueryContext?: AgentTraceQueryContext;
   runId?: string;
   toolCallId?: string;
+  toolDetailRef?: AgentToolDetailRef;
+  toolDetailsDeferred?: boolean;
+  toolSummary?: Record<string, unknown>;
   toolName?: string;
   toolParams?: unknown;
   toolResult?: string;

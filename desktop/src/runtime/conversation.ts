@@ -2,6 +2,9 @@ import type {
   AgentContextItem,
   AgentActionEnvelope,
   AgentChatMessagePayload,
+  AgentToolDetailRef,
+  AgentToolDetailResponse,
+  AgentToolDetails,
   CommandApprovalDecisionPayload,
   AgentHistoryResponse,
   AgentSession,
@@ -53,6 +56,8 @@ export interface LoadHistoryOptions {
   cursor?: string | null;
   direction?: "older" | "newer";
 }
+
+export type LoadToolDetailsOptions = AgentToolDetailRef;
 
 export interface UpdateSessionPayload {
   title?: string | null;
@@ -107,6 +112,7 @@ export interface ConversationRuntime {
   updateSession(sessionId: string, payload: UpdateSessionPayload): Promise<AgentSession>;
   deleteSession(sessionId: string): Promise<void>;
   loadHistory(sessionId: string, options?: LoadHistoryOptions): Promise<AgentHistoryResponse>;
+  loadToolDetails(sessionId: string, ref: LoadToolDetailsOptions): Promise<AgentToolDetails>;
   openChatChannel(
     onEvent: (event: AgentActionEnvelope) => void,
     options?: ChatChannelOptions,
@@ -153,6 +159,13 @@ export function createConversationRuntime(
       return http.request<AgentHistoryResponse>(
         `/api/sessions/${encodeURIComponent(sessionId)}/history${historyQuery(historyOptions)}`,
       );
+    },
+    loadToolDetails(sessionId, ref) {
+      return http
+        .request<AgentToolDetailResponse>(
+          `/api/sessions/${encodeURIComponent(sessionId)}/tool-details${toolDetailsQuery(ref)}`,
+        )
+        .then((response) => response.detail);
     },
     openChatChannel(onEvent, channelOptions = {}) {
       const client = wsFactory({
@@ -214,6 +227,14 @@ function historyQuery(options: LoadHistoryOptions) {
   appendParam(params, "order", options.order);
   appendParam(params, "cursor", options.cursor);
   appendParam(params, "direction", options.direction);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function toolDetailsQuery(ref: LoadToolDetailsOptions) {
+  const params = new URLSearchParams();
+  appendParam(params, "start_event_id", ref.startEventId);
+  appendParam(params, "end_event_id", ref.endEventId);
   const query = params.toString();
   return query ? `?${query}` : "";
 }

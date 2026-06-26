@@ -18,3 +18,4 @@ export { SkillActivationBlock } from "./SkillActivationBlock";
 export type { SkillActivationBlockProps } from "./SkillActivationBlock";
 export { ToolCallBlock } from "./ToolCallBlock";
 export type { ToolCallBlockProps } from "./ToolCallBlock";
+export type { ToolDetailsLoader } from "./useLazyToolDetails";

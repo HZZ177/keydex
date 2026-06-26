@@ -6,6 +6,7 @@ import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { formatErrorText, readableErrorText } from "./errorText";
 import { copyText } from "./markdown";
 import styles from "./CommandExecutionBlock.module.css";
+import { useLazyToolDetails, type ToolDetailsLoader } from "./useLazyToolDetails";
 import { useDeferredUnmount } from "./useDeferredUnmount";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
 
@@ -13,18 +14,20 @@ const TITLE_INPUT_MAX_CHARS = 96;
 
 export interface CommandExecutionBlockProps {
   message: ConversationMessage;
+  onLoadDetails?: ToolDetailsLoader;
 }
 
 type CopyTarget = "input" | "output";
 type CopyStatus = "idle" | "copied" | "failed";
 
-export function CommandExecutionBlock({ message }: CommandExecutionBlockProps) {
+export function CommandExecutionBlock({ message, onLoadDetails }: CommandExecutionBlockProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [copyState, setCopyState] = useState<{ target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null>(null);
-  const command = useMemo(() => parseCommandPayload(message), [message]);
-  const running = message.status === "pending" || message.status === "running";
+  const details = useLazyToolDetails(message, onLoadDetails);
+  const command = useMemo(() => parseCommandPayload(details.message), [details.message]);
+  const running = details.message.status === "pending" || details.message.status === "running";
   const rejected = command.status === "rejected";
-  const failed = message.status === "failed" || command.status === "timed_out" || command.status === "disabled";
+  const failed = details.message.status === "failed" || command.status === "timed_out" || command.status === "disabled";
   const negative = rejected || failed;
   const statusKind = negative ? "failed" : running ? "running" : "done";
   const combinedOutput = [command.stdout, command.stderr].filter(Boolean).join(command.stdout && command.stderr ? "\n" : "");
@@ -46,7 +49,7 @@ export function CommandExecutionBlock({ message }: CommandExecutionBlockProps) {
     <article
       className={styles.block}
       data-collapsed={detailsOpen ? "false" : "true"}
-      data-status={negative ? "failed" : message.status}
+      data-status={negative ? "failed" : details.message.status}
       data-testid="command-execution-block"
     >
       <button
@@ -56,7 +59,12 @@ export function CommandExecutionBlock({ message }: CommandExecutionBlockProps) {
         aria-label={detailsOpen ? "收起命令详情" : "展开命令详情"}
         onClick={(event) => {
           captureExpansionAnchor(event.currentTarget);
-          setDetailsOpen((open) => !open);
+          setDetailsOpen((open) => {
+            if (!open) {
+              void details.load();
+            }
+            return !open;
+          });
         }}
       >
         <span className={styles.icon} aria-hidden="true">
@@ -102,12 +110,13 @@ export function CommandExecutionBlock({ message }: CommandExecutionBlockProps) {
                   aria-label={copyAriaLabel("入参", inputCopyStatus)}
                   title={copyAriaLabel("入参", inputCopyStatus)}
                   onClick={() => void handleCopy("input", command.inputText)}
+                  disabled={details.loading}
                 >
                   {inputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
                 </button>
               </div>
               <div className={styles.codeViewport}>
-                <pre data-stream="input">{command.inputText}</pre>
+                <pre data-stream="input">{details.loading ? "正在加载命令详情" : command.inputText}</pre>
               </div>
             </section>
             <section className={styles.detailSection} aria-label="命令输出">
@@ -119,12 +128,20 @@ export function CommandExecutionBlock({ message }: CommandExecutionBlockProps) {
                   aria-label={copyAriaLabel("输出", outputCopyStatus)}
                   title={copyAriaLabel("输出", outputCopyStatus)}
                   onClick={() => void handleCopy("output", combinedOutput)}
-                  disabled={!combinedOutput}
+                  disabled={!combinedOutput || details.loading}
                 >
                   {outputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
                 </button>
               </div>
-              {combinedOutput ? (
+              {details.loading ? (
+                <div className={styles.codeViewport}>
+                  <p className={styles.emptyOutput}>正在加载命令详情</p>
+                </div>
+              ) : details.error ? (
+                <div className={styles.codeViewport}>
+                  <p className={styles.emptyOutput}>命令详情加载失败</p>
+                </div>
+              ) : combinedOutput ? (
                 <div className={styles.codeViewport}>
                   {command.stdout ? <pre data-stream="stdout">{command.stdout}</pre> : null}
                   {command.stderr ? <pre data-stream="stderr">{command.stderr}</pre> : null}
@@ -225,8 +242,10 @@ function fallbackErrorText(
 
 function commandInput(payload: Record<string, unknown>): Record<string, unknown> {
   const call = asRecord(payload.call);
+  const summary = asRecord(payload.toolSummary);
   const args = asRecord(call?.arguments) ?? asRecord(payload.arguments) ?? asRecord(payload.params) ?? {};
   return {
+    ...(summary ?? {}),
     ...args,
     ...(stringValue(payload.command) ? { command: stringValue(payload.command) } : {}),
     ...(stringValue(payload.cwd) ? { cwd: stringValue(payload.cwd) } : {}),

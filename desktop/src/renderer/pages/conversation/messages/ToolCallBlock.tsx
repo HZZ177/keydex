@@ -16,22 +16,25 @@ import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
 import { copyText } from "./markdown";
 import styles from "./ToolCallBlock.module.css";
+import { useLazyToolDetails, type ToolDetailsLoader } from "./useLazyToolDetails";
 import { useDeferredUnmount } from "./useDeferredUnmount";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
 
 export interface ToolCallBlockProps {
   message: ConversationMessage;
+  onLoadDetails?: ToolDetailsLoader;
 }
 
 type CopyTarget = "input" | "output";
 type CopyStatus = "idle" | "copied" | "failed";
 
-export function ToolCallBlock({ message }: ToolCallBlockProps) {
+export function ToolCallBlock({ message, onLoadDetails }: ToolCallBlockProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [copyState, setCopyState] = useState<{ target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null>(null);
-  const tool = useMemo(() => parseToolPayload(message), [message]);
-  const running = message.status === "pending" || message.status === "running";
-  const failed = message.status === "failed" || tool.resultStatus === "error";
+  const details = useLazyToolDetails(message, onLoadDetails);
+  const tool = useMemo(() => parseToolPayload(details.message), [details.message]);
+  const running = details.message.status === "pending" || details.message.status === "running";
+  const failed = details.message.status === "failed" || tool.resultStatus === "error";
   const detailsMotion = useDeferredUnmount<HTMLDivElement>(detailsOpen);
   const captureExpansionAnchor = useExpansionScrollAnchor();
 
@@ -50,7 +53,7 @@ export function ToolCallBlock({ message }: ToolCallBlockProps) {
     <article
       className={styles.block}
       data-collapsed={detailsOpen ? "false" : "true"}
-      data-status={failed ? "failed" : message.status}
+      data-status={failed ? "failed" : details.message.status}
       data-testid="tool-call-block"
     >
       <button
@@ -60,7 +63,12 @@ export function ToolCallBlock({ message }: ToolCallBlockProps) {
         aria-label={detailsOpen ? "收起工具详情" : "展开工具详情"}
         onClick={(event) => {
           captureExpansionAnchor(event.currentTarget);
-          setDetailsOpen((open) => !open);
+          setDetailsOpen((open) => {
+            if (!open) {
+              void details.load();
+            }
+            return !open;
+          });
         }}
       >
         <span className={styles.icon} aria-hidden="true">
@@ -102,12 +110,13 @@ export function ToolCallBlock({ message }: ToolCallBlockProps) {
                   aria-label={copyAriaLabel("入参", inputCopyStatus)}
                   title={copyAriaLabel("入参", inputCopyStatus)}
                   onClick={() => void handleCopy("input", tool.argsText)}
+                  disabled={details.loading}
                 >
                   {inputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
                 </button>
               </div>
               <div className={styles.codeViewport}>
-                <pre className={styles.args}>{tool.argsText}</pre>
+                <pre className={styles.args}>{details.loading ? "正在加载工具详情" : tool.argsText}</pre>
               </div>
             </section>
 
@@ -120,12 +129,20 @@ export function ToolCallBlock({ message }: ToolCallBlockProps) {
                   aria-label={copyAriaLabel("输出", outputCopyStatus)}
                   title={copyAriaLabel("输出", outputCopyStatus)}
                   onClick={() => void handleCopy("output", tool.resultText)}
-                  disabled={!tool.resultText}
+                  disabled={!tool.resultText || details.loading}
                 >
                   {outputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
                 </button>
               </div>
-              {tool.resultText ? (
+              {details.loading ? (
+                <div className={styles.codeViewport}>
+                  <p className={styles.emptyResult}>正在加载工具详情</p>
+                </div>
+              ) : details.error ? (
+                <div className={styles.codeViewport}>
+                  <p className={styles.emptyResult}>工具详情加载失败</p>
+                </div>
+              ) : tool.resultText ? (
                 <div className={styles.codeViewport}>
                   <pre data-kind={failed ? "error" : "result"}>{tool.resultText}</pre>
                 </div>
@@ -175,9 +192,10 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
   const call = asRecord(message.payload.call);
   const result = asRecord(message.payload.result);
   const args = asRecord(call?.arguments) ?? asRecord(message.payload.arguments) ?? {};
+  const summary = asRecord(message.payload.toolSummary) ?? {};
   const name = stringValue(call?.name) || stringValue(message.payload.tool) || stringValue(message.payload.tool_name) || message.content || "未知工具";
   const resultStatus = stringValue(result?.status);
-  const target = toolTarget(args, message.payload);
+  const target = toolTarget(args, message.payload, summary);
   const actionLabel = toolActionLabel(name, message.status, resultStatus);
   return {
     name,
@@ -349,14 +367,23 @@ interface ToolAction {
   cancelled: string;
 }
 
-function toolTarget(args: Record<string, unknown>, payload: Record<string, unknown>): string {
+function toolTarget(
+  args: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  summary: Record<string, unknown>,
+): string {
   return (
     stringValue(args.path) ||
     stringValue(args.file) ||
     patchFileTarget(stringValue(args.patch) || stringValue(args.diff) || stringValue(args.content) || stringValue(payload.patch)) ||
     stringValue(args.query) ||
     stringValue(args.pattern) ||
-    stringValue(payload.path)
+    stringValue(payload.path) ||
+    stringValue(summary.target) ||
+    stringValue(summary.path) ||
+    stringValue(summary.file) ||
+    stringValue(summary.query) ||
+    stringValue(summary.pattern)
   );
 }
 

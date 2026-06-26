@@ -34,6 +34,7 @@ import { MessageActionFooter, MessageText, StreamingCursor } from "./MessageText
 import { SkillActivationBlock } from "./SkillActivationBlock";
 import { ToolCallBlock } from "./ToolCallBlock";
 import { processMessages, type ProcessedMessageItem } from "./processMessages";
+import type { ToolDetailsLoader } from "./useLazyToolDetails";
 import { useAutoScroll } from "./useAutoScroll";
 import { useVirtuosoAutoScroll } from "./useVirtuosoAutoScroll";
 
@@ -55,6 +56,7 @@ export interface MessageListProps {
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onFilePreview?: (file: FileChangePreview) => void;
+  onLoadToolDetails?: ToolDetailsLoader;
   onQuoteSelection?: (text: string) => void;
   hasMoreOlder?: boolean;
   loadingOlder?: boolean;
@@ -79,6 +81,7 @@ export function MessageList({
   workspaceScope,
   onApprovalDecision,
   onFilePreview,
+  onLoadToolDetails,
   onQuoteSelection,
   hasMoreOlder = false,
   loadingOlder = false,
@@ -301,6 +304,7 @@ export function MessageList({
               workspaceScope,
               onApprovalDecision,
               onFilePreview,
+              onLoadToolDetails,
               onQuoteSelection,
             })}
           </div>
@@ -335,6 +339,7 @@ export function MessageList({
           workspaceScope,
           onApprovalDecision,
           onFilePreview,
+          onLoadToolDetails,
           onQuoteSelection,
         })
       }
@@ -450,6 +455,7 @@ function renderMessageTurn({
   workspaceScope,
   onApprovalDecision,
   onFilePreview,
+  onLoadToolDetails,
   onQuoteSelection,
 }: {
   turn: MessageTurn;
@@ -460,6 +466,7 @@ function renderMessageTurn({
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onFilePreview?: (file: FileChangePreview) => void;
+  onLoadToolDetails?: ToolDetailsLoader;
   onQuoteSelection?: (text: string) => void;
 }) {
   return turn.items.map((item) => (
@@ -474,6 +481,7 @@ function renderMessageTurn({
         workspaceScope,
         onApprovalDecision,
         onFilePreview,
+        onLoadToolDetails,
         onQuoteSelection,
       })}
     </div>
@@ -490,6 +498,7 @@ function renderMessageItem({
   workspaceScope,
   onApprovalDecision,
   onFilePreview,
+  onLoadToolDetails,
   onQuoteSelection,
 }: {
   item: ProcessedMessageItem;
@@ -501,6 +510,7 @@ function renderMessageItem({
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onFilePreview?: (file: FileChangePreview) => void;
+  onLoadToolDetails?: ToolDetailsLoader;
   onQuoteSelection?: (text: string) => void;
 }) {
   if (item.type === "message") {
@@ -514,6 +524,7 @@ function renderMessageItem({
         workspaceScope={workspaceScope}
         onApprovalDecision={onApprovalDecision}
         onFilePreview={onFilePreview}
+        onLoadToolDetails={onLoadToolDetails}
         onQuoteSelection={onQuoteSelection}
       />
     );
@@ -534,6 +545,7 @@ function renderMessageItem({
           workspaceScope={workspaceScope}
           onApprovalDecision={onApprovalDecision}
           onFilePreview={onFilePreview}
+          onLoadToolDetails={onLoadToolDetails}
           onQuoteSelection={onQuoteSelection}
           key={message.id}
         />
@@ -578,6 +590,7 @@ function DefaultMessage({
   workspaceScope,
   onApprovalDecision,
   onFilePreview,
+  onLoadToolDetails,
   onQuoteSelection,
 }: {
   message: ConversationMessage;
@@ -586,13 +599,14 @@ function DefaultMessage({
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onFilePreview?: (file: FileChangePreview) => void;
+  onLoadToolDetails?: ToolDetailsLoader;
   onQuoteSelection?: (text: string) => void;
 }) {
   if (message.kind === "thinking") {
     return <MessageThinking message={message} />;
   }
   if (message.kind === "tool") {
-    return <ToolCallBlock message={message} />;
+    return <ToolCallBlock message={message} onLoadDetails={onLoadToolDetails} />;
   }
   if (message.kind === "skill") {
     return (
@@ -605,10 +619,10 @@ function DefaultMessage({
     );
   }
   if (message.kind === "command") {
-    return <CommandExecutionBlock message={message} />;
+    return <CommandExecutionBlock message={message} onLoadDetails={onLoadToolDetails} />;
   }
   if (message.kind === "file_change") {
-    return <FileChangeBlock message={message} onPreviewFile={onFilePreview} />;
+    return <FileChangeBlock message={message} onPreviewFile={onFilePreview} onLoadDetails={onLoadToolDetails} />;
   }
   if (message.kind === "approval") {
     return <ApprovalPrompt message={message} onDecision={onApprovalDecision} />;

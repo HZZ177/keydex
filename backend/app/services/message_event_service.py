@@ -12,13 +12,61 @@ class MessageEventService:
     def __init__(self, repository) -> None:
         self._repository = repository
 
-    def get_display_messages(self, session_id: str) -> list[dict[str, Any]]:
-        return self._aggregate_events(self._repository.list_by_session(session_id))
+    def get_display_messages(
+        self,
+        session_id: str,
+        *,
+        include_tool_details: bool = True,
+    ) -> list[dict[str, Any]]:
+        return self._aggregate_events(
+            self._repository.list_by_session(session_id),
+            include_tool_details=include_tool_details,
+        )
 
-    def get_turn_messages(self, session_id: str, turn_index: int) -> list[dict[str, Any]]:
-        return self._aggregate_events(self._repository.list_by_turn(session_id, turn_index))
+    def get_turn_messages(
+        self,
+        session_id: str,
+        turn_index: int,
+        *,
+        include_tool_details: bool = True,
+    ) -> list[dict[str, Any]]:
+        return self._aggregate_events(
+            self._repository.list_by_turn(session_id, turn_index),
+            include_tool_details=include_tool_details,
+        )
 
-    def _aggregate_events(self, events: list[MessageEventRecord]) -> list[dict[str, Any]]:
+    def get_tool_detail(
+        self,
+        *,
+        session_id: str,
+        start_event_id: str | None = None,
+        end_event_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        start_event = self._load_tool_event(
+            session_id,
+            start_event_id,
+            expected_action=ReplayAction.TOOL_START.value,
+        )
+        end_event = self._load_tool_event(
+            session_id,
+            end_event_id,
+            expected_action=ReplayAction.TOOL_END.value,
+        )
+        if start_event is None and end_event is None:
+            return None
+        if start_event is not None and end_event is not None:
+            start_data = self._visible_data(start_event)
+            end_data = self._visible_data(end_event)
+            if not _same_tool_call(start_data, end_data):
+                return None
+        return self._tool_detail_from_events(start_event, end_event)
+
+    def _aggregate_events(
+        self,
+        events: list[MessageEventRecord],
+        *,
+        include_tool_details: bool,
+    ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
         active_subagents: dict[str, int] = {}
         tool_run_map: dict[str, tuple[int, int | None]] = {}
@@ -94,13 +142,21 @@ class MessageEventService:
                     messages,
                     active_subagents,
                     tool_run_map,
+                    event,
                     data,
                     self._event_timestamp_ms(event),
+                    include_tool_details=include_tool_details,
                 )
                 continue
 
             if action == ReplayAction.TOOL_END.value:
-                self._apply_tool_end(messages, tool_run_map, data)
+                self._apply_tool_end(
+                    messages,
+                    tool_run_map,
+                    event,
+                    data,
+                    include_tool_details=include_tool_details,
+                )
                 continue
 
             if action == ReplayAction.APPROVAL_REQUESTED.value:
@@ -362,17 +418,39 @@ class MessageEventService:
         messages: list[dict[str, Any]],
         active_subagents: dict[str, int],
         tool_run_map: dict[str, tuple[int, int | None]],
+        event: MessageEventRecord,
         data: dict[str, Any],
         timestamp: int,
+        *,
+        include_tool_details: bool,
     ) -> None:
         run_id = str(data.get("run_id") or "")
+        tool_call_id = str(data.get("tool_call_id") or "")
+        tool_name = data.get("tool", data.get("tool_name", ""))
+        detail_ref = {
+            "startEventId": event.id,
+            "endEventId": None,
+            "runId": run_id,
+            "toolCallId": tool_call_id,
+        }
         tool_call = {
-            "toolName": data.get("tool", data.get("tool_name", "")),
-            "toolParams": data.get("params"),
+            "id": f"tool:{event.id}",
+            "messageEventId": event.id,
+            "toolName": tool_name,
             "runId": run_id,
             "status": "running",
             "timestamp": timestamp,
+            "toolCallId": tool_call_id or None,
+            "toolDetailRef": detail_ref,
+            "toolSummary": MessageEventService._tool_start_summary(data),
         }
+        if include_tool_details:
+            tool_call["toolParams"] = data.get("params")
+        else:
+            summary_params = MessageEventService._tool_params_summary(data)
+            if summary_params:
+                tool_call["toolParams"] = summary_params
+            tool_call["toolDetailsDeferred"] = True
         subagent_id = str(data.get("subagent_id") or "")
         if data.get("is_subagent") and subagent_id in active_subagents:
             msg_idx = active_subagents[subagent_id]
@@ -388,7 +466,10 @@ class MessageEventService:
     def _apply_tool_end(
         messages: list[dict[str, Any]],
         tool_run_map: dict[str, tuple[int, int | None]],
+        event: MessageEventRecord,
         data: dict[str, Any],
+        *,
+        include_tool_details: bool,
     ) -> None:
         run_id = str(data.get("run_id") or "")
         if run_id not in tool_run_map:
@@ -399,23 +480,50 @@ class MessageEventService:
             if tool_idx is not None
             else messages[msg_idx]
         )
-        target["toolResult"] = data.get("result", "")
-        MessageEventService._apply_tool_payload_to_message(target, data)
+        detail_ref = target.setdefault("toolDetailRef", {})
+        if isinstance(detail_ref, dict):
+            detail_ref["endEventId"] = event.id
+            detail_ref["runId"] = detail_ref.get("runId") or run_id
+            detail_ref["toolCallId"] = detail_ref.get("toolCallId") or data.get("tool_call_id")
+        MessageEventService._apply_tool_payload_to_message(
+            target,
+            data,
+            include_tool_details=include_tool_details,
+        )
 
     @staticmethod
-    def _apply_tool_payload_to_message(target: dict[str, Any], data: dict[str, Any]) -> None:
-        target["toolResult"] = data.get("result", "")
+    def _apply_tool_payload_to_message(
+        target: dict[str, Any],
+        data: dict[str, Any],
+        *,
+        include_tool_details: bool = True,
+    ) -> None:
         target["toolDurationMs"] = data.get("duration_ms")
         ui_payload = MessageEventService._tool_ui_payload(data)
-        if ui_payload:
-            target["uiPayload"] = ui_payload
-        files = MessageEventService._tool_files(data, ui_payload)
-        if files:
-            target["fileChanges"] = files
         error = data.get("error") or MessageEventService._tool_result_error(data.get("result"))
         target["status"] = "error" if error else "completed"
         if error:
             target["toolError"] = error
+        if include_tool_details:
+            target["toolResult"] = data.get("result", "")
+            if ui_payload:
+                target["uiPayload"] = ui_payload
+            files = MessageEventService._tool_files(data, ui_payload)
+            if files:
+                target["fileChanges"] = files
+            return
+
+        target["toolDetailsDeferred"] = True
+        tool_name = str(target.get("toolName") or data.get("tool") or data.get("tool_name") or "")
+        if tool_name == "update_plan" and ui_payload:
+            target["uiPayload"] = MessageEventService._tool_plan_summary(ui_payload)
+        elif tool_name == "load_skill" and ui_payload:
+            target["uiPayload"] = MessageEventService._tool_skill_summary(ui_payload)
+        files = MessageEventService._tool_file_summaries(
+            MessageEventService._tool_files(data, ui_payload)
+        )
+        if files:
+            target["fileChanges"] = files
 
     @staticmethod
     def _append_or_update_approval(
@@ -504,6 +612,188 @@ class MessageEventService:
                 continue
             files.append(MessageEventService._normalize_file_change(item))
         return files
+
+    @staticmethod
+    def _tool_file_summaries(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        summaries: list[dict[str, Any]] = []
+        for file in files:
+            summary: dict[str, Any] = {}
+            for key in (
+                "path",
+                "operation",
+                "added_lines",
+                "deleted_lines",
+                "removed_lines",
+                "additions",
+                "deletions",
+                "applied",
+                "rejected",
+            ):
+                if file.get(key) is not None:
+                    summary[key] = file.get(key)
+            if summary:
+                summaries.append(summary)
+        return summaries
+
+    @staticmethod
+    def _tool_start_summary(data: dict[str, Any]) -> dict[str, Any]:
+        params = MessageEventService._params_record(data)
+        target = _tool_target(params)
+        summary: dict[str, Any] = {}
+        if target:
+            summary["target"] = target
+        for key in (
+            "path",
+            "file",
+            "query",
+            "pattern",
+            "command",
+            "cwd",
+            "skill_name",
+            "skillName",
+            "resource_path",
+            "resourcePath",
+        ):
+            value = params.get(key)
+            if isinstance(value, str) and value.strip():
+                summary[key] = value
+        for key in ("timeout_seconds", "timeoutSeconds", "regex"):
+            value = params.get(key)
+            if isinstance(value, bool | int | float | str):
+                summary[key] = value
+        return summary
+
+    @staticmethod
+    def _tool_params_summary(data: dict[str, Any]) -> dict[str, Any]:
+        params = MessageEventService._params_record(data)
+        summary: dict[str, Any] = {}
+        for key in (
+            "path",
+            "file",
+            "query",
+            "pattern",
+            "command",
+            "cwd",
+            "skill_name",
+            "skillName",
+            "resource_path",
+            "resourcePath",
+            "timeout_seconds",
+            "timeoutSeconds",
+            "regex",
+        ):
+            if key in params and _is_summary_value(params[key]):
+                summary[key] = params[key]
+        target = _tool_target(params)
+        if target and "path" not in summary and "file" not in summary:
+            summary["path"] = target
+        return summary
+
+    @staticmethod
+    def _params_record(data: dict[str, Any]) -> dict[str, Any]:
+        params = data.get("params")
+        if isinstance(params, dict):
+            return params
+        input_data = data.get("input_data")
+        if isinstance(input_data, dict):
+            args = input_data.get("args")
+            if isinstance(args, dict):
+                return args
+            return input_data
+        return {}
+
+    @staticmethod
+    def _tool_plan_summary(ui_payload: dict[str, Any]) -> dict[str, Any]:
+        summary: dict[str, Any] = {}
+        entries = ui_payload.get("entries")
+        if isinstance(entries, list):
+            summary["entries"] = entries
+        explanation = ui_payload.get("explanation")
+        if isinstance(explanation, str):
+            summary["explanation"] = explanation
+        return summary
+
+    @staticmethod
+    def _tool_skill_summary(ui_payload: dict[str, Any]) -> dict[str, Any]:
+        summary: dict[str, Any] = {}
+        for key in (
+            "skill_name",
+            "skillName",
+            "resource_path",
+            "resourcePath",
+            "entry_file",
+            "entryFile",
+            "locator",
+            "skill_root",
+            "skillRoot",
+            "loaded",
+            "injected",
+            "message",
+        ):
+            value = ui_payload.get(key)
+            if _is_summary_value(value):
+                summary[key] = value
+        metadata = ui_payload.get("metadata")
+        if isinstance(metadata, dict):
+            locator = metadata.get("locator")
+            if isinstance(locator, str) and locator.strip():
+                summary["metadata"] = {"locator": locator}
+        return summary
+
+    def _load_tool_event(
+        self,
+        session_id: str,
+        event_id: str | None,
+        *,
+        expected_action: str,
+    ) -> MessageEventRecord | None:
+        if not event_id:
+            return None
+        event = self._repository.get(event_id)
+        if event is None or event.session_id != session_id:
+            return None
+        if self._canonical_action(event) != expected_action:
+            return None
+        return event
+
+    @staticmethod
+    def _tool_detail_from_events(
+        start_event: MessageEventRecord | None,
+        end_event: MessageEventRecord | None,
+    ) -> dict[str, Any]:
+        start_data = MessageEventService._visible_data(start_event) if start_event else {}
+        end_data = MessageEventService._visible_data(end_event) if end_event else {}
+        data = {**start_data, **end_data}
+        ui_payload = MessageEventService._tool_ui_payload(end_data)
+        files = MessageEventService._tool_files(end_data, ui_payload)
+        error = end_data.get("error") or MessageEventService._tool_result_error(
+            end_data.get("result")
+        )
+        detail_ref = {
+            "startEventId": start_event.id if start_event else None,
+            "endEventId": end_event.id if end_event else None,
+            "runId": data.get("run_id"),
+            "toolCallId": data.get("tool_call_id"),
+        }
+        status = end_data.get("status") or start_data.get("status") or "completed"
+        if not end_event and status == "completed":
+            status = "running"
+        detail: dict[str, Any] = {
+            "detailRef": detail_ref,
+            "runId": data.get("run_id"),
+            "toolCallId": data.get("tool_call_id"),
+            "toolName": data.get("tool", data.get("tool_name", "")),
+            "toolParams": start_data.get("params", start_data.get("input_data")),
+            "toolResult": end_data.get("result", ""),
+            "toolDurationMs": end_data.get("duration_ms"),
+            "toolError": error or None,
+            "toolErrorType": end_data.get("error_type"),
+            "status": "error" if error else status,
+            "uiPayload": ui_payload,
+            "fileChanges": files,
+            "metadata": data.get("metadata"),
+        }
+        return {key: value for key, value in detail.items() if value is not None}
 
     @staticmethod
     def _normalize_file_change(item: dict[str, Any]) -> dict[str, Any]:
@@ -654,3 +944,53 @@ def _default_context_label(item_type: str, content: str) -> str:
         return "会话上下文"
     cleaned = " ".join(content.split())
     return cleaned[:16] if cleaned else "上下文"
+
+
+def _same_tool_call(start_data: dict[str, Any], end_data: dict[str, Any]) -> bool:
+    start_run = str(start_data.get("run_id") or "")
+    end_run = str(end_data.get("run_id") or "")
+    if start_run and end_run and start_run != end_run:
+        return False
+    start_call = str(start_data.get("tool_call_id") or "")
+    end_call = str(end_data.get("tool_call_id") or "")
+    if start_call and end_call and start_call != end_call:
+        return False
+    return True
+
+
+def _is_summary_value(value: Any) -> bool:
+    if isinstance(value, bool | int | float):
+        return True
+    return isinstance(value, str) and len(value) <= 512
+
+
+def _tool_target(params: dict[str, Any]) -> str:
+    for key in ("path", "file", "query", "pattern", "command"):
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for key in ("patch", "diff", "content"):
+        value = params.get(key)
+        if isinstance(value, str):
+            target = _patch_file_target(value)
+            if target:
+                return target
+    return ""
+
+
+def _patch_file_target(value: str) -> str:
+    if not value:
+        return ""
+    for raw_line in value.splitlines():
+        line = raw_line.strip()
+        for prefix in (
+            "*** Add File:",
+            "*** Update File:",
+            "*** Delete File:",
+        ):
+            if line.startswith(prefix):
+                return line[len(prefix) :].strip()
+        for prefix in ("+++ b/", "--- a/"):
+            if line.startswith(prefix):
+                return line[len(prefix) :].strip()
+    return ""
