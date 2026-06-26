@@ -65,6 +65,8 @@ export function WorkbenchAssistantSurface({
   const layout = useLayoutState();
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const dockTransitionTimerRef = useRef<number | null>(null);
+  const handledFileChipRequestIdRef = useRef(controller.fileChipRequest?.requestId ?? 0);
+  const handledQuoteChipRequestIdRef = useRef(controller.quoteChipRequest?.requestId ?? 0);
   const [surfaceMode, setSurfaceMode] = useState<AssistantSurfaceMode>("capsule");
   const [composerFocusSeq, setComposerFocusSeq] = useState(0);
   const [dockTransition, setDockTransition] = useState<DockMorphState | null>(null);
@@ -121,6 +123,8 @@ export function WorkbenchAssistantSurface({
   useEffect(() => {
     finishDockTransition();
     setSurfaceMode("capsule");
+    handledFileChipRequestIdRef.current = controller.fileChipRequest?.requestId ?? 0;
+    handledQuoteChipRequestIdRef.current = controller.quoteChipRequest?.requestId ?? 0;
   }, [finishDockTransition, workspaceId]);
 
   useEffect(() => () => finishDockTransition(), [finishDockTransition]);
@@ -130,6 +134,23 @@ export function WorkbenchAssistantSurface({
       setSurfaceMode("composer");
     }
   }, [controller.draft, surfaceMode]);
+
+  useEffect(() => {
+    const fileRequestId = controller.fileChipRequest?.requestId ?? 0;
+    const quoteRequestId = controller.quoteChipRequest?.requestId ?? 0;
+    const hasNewContextRequest =
+      fileRequestId > handledFileChipRequestIdRef.current ||
+      quoteRequestId > handledQuoteChipRequestIdRef.current;
+    handledFileChipRequestIdRef.current = Math.max(handledFileChipRequestIdRef.current, fileRequestId);
+    handledQuoteChipRequestIdRef.current = Math.max(handledQuoteChipRequestIdRef.current, quoteRequestId);
+    if (!hasNewContextRequest || surfaceMode === "drawer") {
+      return;
+    }
+    if (surfaceMode === "capsule") {
+      setSurfaceMode("composer");
+    }
+    setComposerFocusSeq((seq) => seq + 1);
+  }, [controller.fileChipRequest?.requestId, controller.quoteChipRequest?.requestId, surfaceMode]);
 
   useEffect(() => {
     if (pendingApproval) {

@@ -2278,6 +2278,41 @@ describe("FilePreview", () => {
     });
   });
 
+  it("closes the annotation panel when clicking the preview body", async () => {
+    const annotation = fileAnnotation({
+      id: "ann-line",
+      path: "guide.md",
+      anchor_type: "selection",
+      selected_text: "Target text",
+      line_start: 3,
+      line_end: 3,
+      comment: "Explain this paragraph",
+    });
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "guide.md",
+        content: "# Guide\n\nTarget text",
+        encoding: "utf-8",
+      }),
+      listAnnotations: vi.fn().mockResolvedValue([annotation]),
+    });
+
+    render(<FilePreview request={{ type: "file", path: "guide.md" }} sessionId="ses-1" runtime={runtime} />);
+
+    const body = await screen.findByLabelText("预览内容");
+    fireEvent.click(await screen.findByRole("button", { name: "文件批注 1" }));
+    const panel = await screen.findByLabelText("文件批注");
+
+    fireEvent.pointerDown(panel);
+    expect(screen.getByLabelText("文件批注")).not.toBeNull();
+
+    fireEvent.pointerDown(body);
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText("文件批注")).toBeNull();
+    });
+  });
+
   it("starts chat from a line-backed annotation without sending automatically", async () => {
     const onStartChatFromAnnotation = vi.fn();
     const annotation = fileAnnotation({
@@ -2320,6 +2355,9 @@ describe("FilePreview", () => {
       lineEnd: 2,
       sourceStart: null,
       sourceEnd: null,
+    });
+    await waitFor(() => {
+      expect(screen.queryByLabelText("文件批注")).toBeNull();
     });
   });
 });

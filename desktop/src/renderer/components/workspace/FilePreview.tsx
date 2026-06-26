@@ -405,6 +405,21 @@ export function FilePreview({
   }, [closeAnnotationPanel, openAnnotationPanel]);
 
   useEffect(() => {
+    if (!annotationPanelOpen || annotationPanelClosing) {
+      return;
+    }
+    const closePanelOnOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target || target.closest(FILE_PREVIEW_SELECTION_EXCLUDE_SELECTOR)) {
+        return;
+      }
+      closeAnnotationPanel();
+    };
+    document.addEventListener("pointerdown", closePanelOnOutsidePointerDown, true);
+    return () => document.removeEventListener("pointerdown", closePanelOnOutsidePointerDown, true);
+  }, [annotationPanelClosing, annotationPanelOpen, closeAnnotationPanel]);
+
+  useEffect(() => {
     let active = true;
     setError(null);
     setMedia(null);
@@ -1325,6 +1340,7 @@ export function FilePreview({
         <button
           className={styles.annotationToggle}
           type="button"
+          data-file-preview-selection-excluded="true"
           aria-label={`文件批注 ${annotations.length}`}
           aria-pressed={annotationPanelOpen && !annotationPanelClosing}
           title="文件批注"
@@ -2311,7 +2327,10 @@ function AnnotationPanel({
                   disabled={!canStartChat}
                   title="发起对话"
                   aria-label="基于此批注发起对话"
-                  onClick={() => onStartChat(annotation)}
+                  onClick={() => {
+                    onStartChat(annotation);
+                    onClose();
+                  }}
                 >
                   <Send size={13} />
                 </button>

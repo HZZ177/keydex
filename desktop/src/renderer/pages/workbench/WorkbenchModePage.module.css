@@ -69,26 +69,6 @@
   min-height: 0;
 }
 
-.workspace[data-dock-transitioning="true"] .canvasContent {
-  display: none;
-}
-
-.dockTransitionLoading {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  display: none;
-  height: 100%;
-  min-height: 100%;
-  background: var(--color-bg-elevated);
-  --loading-skeleton-padding: 24px;
-  --loading-skeleton-compact-stack-width: min(280px, 72%);
-}
-
-.workspace[data-dock-transitioning="true"] .dockTransitionLoading {
-  display: grid;
-}
-
 .assistantCapsule {
   position: absolute;
   left: 50%;

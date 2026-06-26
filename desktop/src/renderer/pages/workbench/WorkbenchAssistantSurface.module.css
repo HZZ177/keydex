@@ -23,6 +23,7 @@
 }
 
 .surface[data-dock-layout="inline"][data-dock-transition="dock-in"] {
+  z-index: 60;
   animation: dockColumnIn 240ms cubic-bezier(0.2, 0.86, 0.22, 1) both;
 }
 

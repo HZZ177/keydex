@@ -240,7 +240,8 @@ describe("AppRouter", () => {
     expect(surface.getAttribute("data-dock-layout")).toBe("overlay");
     expect(surface.getAttribute("data-dock-transition")).toBe("idle");
     expect(workspaceShell.getAttribute("data-dock-transitioning")).toBe("false");
-    expect(canvasContent.getAttribute("data-render-paused")).toBe("false");
+    expect(canvasContent.getAttribute("data-render-paused")).toBeNull();
+    expect(screen.queryByTestId("workbench-dock-transition-loading")).toBeNull();
     expect(screen.getByTestId("workbench-assistant-capsule")).not.toBeNull();
     expect(screen.getByLabelText("输入框状态")).not.toBeNull();
     expect(screen.queryByLabelText("工作台助手输入")).toBeNull();
@@ -278,8 +279,8 @@ describe("AppRouter", () => {
     expect(surface.getAttribute("data-dock-layout")).toBe("inline");
     expect(surface.getAttribute("data-dock-transition")).toBe("dock-in");
     expect(workspaceShell.getAttribute("data-dock-transitioning")).toBe("true");
-    expect(canvasContent.getAttribute("data-render-paused")).toBe("true");
-    expect(screen.getByTestId("workbench-dock-transition-loading")).not.toBeNull();
+    expect(canvasContent.isConnected).toBe(true);
+    expect(screen.queryByTestId("workbench-dock-transition-loading")).toBeNull();
     const dockInMorph = screen.getByTestId("workbench-assistant-dock-morph");
     expect(dockInMorph.getAttribute("data-active")).toBe("false");
     await waitFor(() => {
@@ -292,7 +293,7 @@ describe("AppRouter", () => {
       expect(surface.getAttribute("data-dock-transition")).toBe("idle");
     });
     expect(workspaceShell.getAttribute("data-dock-transitioning")).toBe("false");
-    expect(canvasContent.getAttribute("data-render-paused")).toBe("false");
+    expect(canvasContent.getAttribute("data-render-paused")).toBeNull();
     expect(screen.queryByTestId("workbench-dock-transition-loading")).toBeNull();
     expect(screen.queryByTestId("workbench-assistant-dock-morph")).toBeNull();
 
@@ -302,8 +303,8 @@ describe("AppRouter", () => {
     expect(surface.getAttribute("data-dock-layout")).toBe("overlay");
     expect(surface.getAttribute("data-dock-transition")).toBe("dock-out");
     expect(workspaceShell.getAttribute("data-dock-transitioning")).toBe("true");
-    expect(canvasContent.getAttribute("data-render-paused")).toBe("true");
-    expect(screen.getByTestId("workbench-dock-transition-loading")).not.toBeNull();
+    expect(canvasContent.isConnected).toBe(true);
+    expect(screen.queryByTestId("workbench-dock-transition-loading")).toBeNull();
     const dockOutMorph = screen.getByTestId("workbench-assistant-dock-morph");
     expect(dockOutMorph.getAttribute("data-active")).toBe("false");
     await waitFor(() => {
@@ -314,7 +315,7 @@ describe("AppRouter", () => {
     });
     expect(surface.getAttribute("data-dock-layout")).toBe("overlay");
     expect(workspaceShell.getAttribute("data-dock-transitioning")).toBe("false");
-    expect(canvasContent.getAttribute("data-render-paused")).toBe("false");
+    expect(canvasContent.getAttribute("data-render-paused")).toBeNull();
     expect(screen.queryByTestId("workbench-dock-transition-loading")).toBeNull();
     expect(screen.queryByTestId("workbench-assistant-dock-morph")).toBeNull();
   });

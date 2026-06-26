@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 
 import type { RuntimeBridge } from "@/runtime";
-import { LoadingSkeleton } from "@/renderer/components/loading";
 import { WorkspaceFileBrowser, WorkspaceSelector, type WorkspaceSelection } from "@/renderer/components/workspace";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
@@ -130,7 +129,6 @@ export function WorkbenchModePage({
             <div
               className={styles.canvasContent}
               data-testid="workbench-canvas-content"
-              data-render-paused={dockTransitioning ? "true" : "false"}
             >
               <WorkspaceFileBrowser
                 runtime={runtime}
@@ -140,14 +138,6 @@ export function WorkbenchModePage({
                 onStartChatFromAnnotation={assistantController.startChatFromAnnotation}
               />
             </div>
-            {dockTransitioning ? (
-              <LoadingSkeleton
-                className={styles.dockTransitionLoading}
-                testId="workbench-dock-transition-loading"
-                aria-label="工作台布局调整中"
-                width="compact"
-              />
-            ) : null}
           </div>
           <WorkbenchAssistantSurface
             runtime={runtime}

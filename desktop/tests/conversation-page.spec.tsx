@@ -754,7 +754,7 @@ describe("ConversationPage", () => {
     expect(screen.getByLabelText("发送")).not.toBeNull();
   });
 
-  it("prefills composer from an annotation chat request and sends source quote context", async () => {
+  it("adds annotation chat requests as source quote context without filling the composer", async () => {
     const projectSession = agentSession({
       session_type: "workspace",
       workspace_id: "ws-1",
@@ -775,7 +775,7 @@ describe("ConversationPage", () => {
 
     expect(await screen.findByText("main.ts · L3-L4")).not.toBeNull();
     expect(document.querySelector("[data-quote-index='0']")).not.toBeNull();
-    expect(input.textContent?.trim()).toBe("Check this branch");
+    expect(input.textContent?.trim()).toBe("");
     expect(input.textContent).not.toContain("文件：");
     expect(input.textContent).not.toContain("引用位置：");
     expect(channel.chat).not.toHaveBeenCalled();
@@ -788,7 +788,7 @@ describe("ConversationPage", () => {
       message?: string;
       runtime_params?: { message_injection?: Array<{ role?: string; content?: string; metadata?: Record<string, unknown> }> };
     };
-    expect(payload.message).toBe("Check this branch");
+    expect(payload.message).toBe("");
     expect(payload.runtime_params?.message_injection).toHaveLength(1);
     expect(payload.runtime_params?.message_injection?.[0]).toMatchObject({
       type: "follow",
@@ -800,13 +800,14 @@ describe("ConversationPage", () => {
         line_end: 4,
         source_start: 42,
         source_end: 66,
+        annotation_comment: "Check this branch",
       },
     });
     expect(payload.runtime_params?.message_injection?.[0]?.content).toContain("src/main.ts");
     expect(payload.runtime_params?.message_injection?.[0]?.content).toContain("L3-L4");
     expect(payload.runtime_params?.message_injection?.[0]?.content).toContain("42-66");
     expect(payload.runtime_params?.message_injection?.[0]?.content).toContain("if (enabled)");
-    expect(payload.runtime_params?.message_injection?.[0]?.content).not.toContain("Check this branch");
+    expect(payload.runtime_params?.message_injection?.[0]?.content).toContain("批注内容：\nCheck this branch");
   });
 
   it("sends the composer text through the bound chat channel", async () => {
