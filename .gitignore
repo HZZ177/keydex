@@ -301,3 +301,4 @@ docs/superpowers/prototype
 /desktop/src-tauri/binaries/*
 !/desktop/src-tauri/binaries/.gitkeep
 /backend/app/.data/
+/.ktaicoding/des/assets/
