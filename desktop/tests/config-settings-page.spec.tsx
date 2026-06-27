@@ -24,9 +24,12 @@ describe("ConfigSettingsPage", () => {
     expect(screen.getAllByText("pnpm test")).toHaveLength(2);
     expect(screen.getByText("精确")).not.toBeNull();
     expect(screen.getByText("已允许")).not.toBeNull();
+    expect(screen.getByText("已保存信任")).not.toBeNull();
+    expect(screen.getByText("精确匹配")).not.toBeNull();
+    expect(screen.getByText("已关联规则")).not.toBeNull();
     expect(screen.getAllByText("D:/repo")).toHaveLength(2);
     expect(screen.getByText("第 1 / 1 页，共 1 条")).not.toBeNull();
-    expect(runtime.settings.listCommandApprovalHistory).toHaveBeenCalledWith({ page: 1, pageSize: 30 });
+    expect(runtime.settings.listCommandApprovalHistory).toHaveBeenCalledWith({ page: 1, pageSize: 10 });
   });
 
   it("saves command settings from approval policy selection", async () => {
@@ -81,7 +84,7 @@ describe("ConfigSettingsPage", () => {
   it("paginates approval history without reloading command settings and trusted rules", async () => {
     const runtime = fakeRuntime({
       listCommandApprovalHistory: vi.fn((options: { page?: number; pageSize?: number } = {}) => {
-        const { page = 1, pageSize = 30 } = options;
+        const { page = 1, pageSize = 10 } = options;
         return Promise.resolve({
           list: [
             approvalHistory({
@@ -100,17 +103,17 @@ describe("ConfigSettingsPage", () => {
     render(<ConfigSettingsPage runtime={runtime} />);
 
     expect(await screen.findAllByText("pnpm test")).toHaveLength(2);
-    expect(screen.getByText("第 1 / 2 页，共 31 条")).not.toBeNull();
+    expect(screen.getByText("第 1 / 4 页，共 31 条")).not.toBeNull();
     expect(screen.getByRole("button", { name: "上一页审批记录" }).hasAttribute("disabled")).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "下一页审批记录" }));
 
     expect(await screen.findByText("npm run build")).not.toBeNull();
-    expect(screen.getByText("第 2 / 2 页，共 31 条")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "下一页审批记录" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("第 2 / 4 页，共 31 条")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "下一页审批记录" }).hasAttribute("disabled")).toBe(false);
     expect(runtime.settings.getSettings).toHaveBeenCalledTimes(1);
     expect(runtime.settings.listTrustedCommandRules).toHaveBeenCalledTimes(1);
-    expect(runtime.settings.listCommandApprovalHistory).toHaveBeenLastCalledWith({ page: 2, pageSize: 30 });
+    expect(runtime.settings.listCommandApprovalHistory).toHaveBeenLastCalledWith({ page: 2, pageSize: 10 });
   });
 });
 
@@ -128,7 +131,7 @@ function fakeRuntime(options: Partial<RuntimeBridge["settings"]> = {}): RuntimeB
         list: [approvalHistory()],
         total: 1,
         page: 1,
-        page_size: 30,
+        page_size: 10,
       }),
       ...options,
     },

@@ -101,6 +101,12 @@ export function ModelList({ provider, runtime, onProviderChange }: ModelListProp
         <p className={styles.empty}>尚未刷新模型列表</p>
       ) : (
         <div className={styles.rows} aria-label={`${provider.name} 模型列表`}>
+          <div className={styles.rowsHeader} aria-hidden="true">
+            <span />
+            <span>模型</span>
+            <span>健康</span>
+            <span>默认</span>
+          </div>
           {visibleModels.map((model) => {
             const enabled = provider.model_enabled[model] !== false;
             const isDefault = provider.default_model === model;

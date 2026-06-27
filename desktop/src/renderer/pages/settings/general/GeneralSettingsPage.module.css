@@ -1,8 +1,8 @@
 .page {
-  width: min(672px, calc(100% - 136px));
+  width: min(820px, calc(100% - 96px));
   min-height: 100%;
   margin: 0 auto;
-  padding: 92px 0 128px;
+  padding: 76px 0 116px;
   color: var(--color-text-primary);
 }
 
@@ -11,12 +11,12 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 24px;
+  margin-bottom: 18px;
 }
 
 .header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 650;
   letter-spacing: 0;
 }
@@ -29,28 +29,59 @@
 
 .section {
   display: grid;
-  gap: 14px;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
+  gap: 10px;
+}
+
+.groupTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.settingsPanel {
+  display: grid;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 58%, transparent);
   border-radius: var(--radius-md);
-  background: var(--color-bg-elevated);
-  box-shadow: 0 18px 48px rgb(15 23 42 / 4%);
-  padding: 16px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  box-shadow: none;
+  padding: 8px;
+  backdrop-filter: blur(18px);
+}
+
+.settingRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.42fr) minmax(320px, 1fr);
+  gap: 22px;
+  align-items: start;
+  min-height: 82px;
+  padding: 12px 14px;
 }
 
 .sectionHeader {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  min-width: 0;
+  padding: 2px 0;
 }
 
-.sectionHeader > svg {
-  margin-top: 1px;
+.settingIcon {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 52%, transparent);
+  border-radius: var(--radius-pill);
   color: var(--color-text-tertiary);
 }
 
-.sectionHeader h2 {
+.sectionHeader h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
   letter-spacing: 0;
 }
@@ -64,31 +95,34 @@
 
 .optionGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
 }
 
 .option {
   display: grid;
-  min-height: 72px;
-  grid-template-columns: 34px minmax(0, 1fr) 22px;
+  min-height: 48px;
+  grid-template-columns: 28px minmax(0, 1fr) 22px;
   align-items: center;
-  gap: 11px;
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-bg);
+  gap: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--color-text-primary);
-  padding: 12px;
+  padding: 8px 10px;
   text-align: left;
+  transition:
+    background var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out);
 }
 
 .option:hover:not(:disabled) {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
 }
 
 .option[data-selected="true"] {
-  border-color: color-mix(in srgb, var(--color-accent) 34%, var(--color-border-default));
-  background: color-mix(in srgb, var(--color-accent) 7%, var(--surface-bg));
+  background: color-mix(in srgb, var(--surface-active) 82%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-border-default) 68%, transparent);
 }
 
 .option:disabled {
@@ -103,10 +137,10 @@
 }
 
 .optionIcon {
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-md);
-  background: var(--surface-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background: transparent;
   color: var(--color-text-secondary);
 }
 
@@ -125,7 +159,7 @@
 .optionTitle {
   overflow: hidden;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 560;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -143,6 +177,8 @@
 .progress {
   display: grid;
   gap: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  padding: 10px 14px 12px;
 }
 
 .progressTrack {
@@ -171,9 +207,9 @@
 
 .error {
   margin: 0;
-  padding: 10px 12px;
+  padding: 9px 14px;
   border: 1px solid color-mix(in srgb, var(--color-danger) 22%, transparent);
-  border-radius: var(--radius-md);
+  border-radius: 8px;
   background: color-mix(in srgb, var(--color-danger) 7%, var(--surface-bg));
   color: var(--color-danger);
   font-size: 12px;
@@ -185,7 +221,8 @@
     padding: 42px 0 118px;
   }
 
-  .optionGrid {
+  .settingRow {
     grid-template-columns: 1fr;
+    gap: 10px;
   }
 }

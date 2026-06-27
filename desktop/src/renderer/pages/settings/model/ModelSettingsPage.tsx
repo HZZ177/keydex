@@ -71,17 +71,25 @@ export function ModelSettingsPage({
         </section>
       ) : null}
 
-      <section className={styles.providerList} aria-label="供应商列表">
-        {providers.map((provider) => (
-          <ProviderCard
-            onEdit={(item) => setModal({ mode: "edit", provider: item })}
-            onProviderChange={(item) => setProviders((items) => upsertProvider(items, item))}
-            provider={provider}
-            key={provider.id}
-            runtime={runtime}
-          />
-        ))}
-      </section>
+      {providers.length ? (
+        <section className={styles.settingsGroup} aria-labelledby="model-provider-title">
+          <div className={styles.groupHeader}>
+            <h2 id="model-provider-title">模型供应商</h2>
+            <span>{providers.length} 个来源</span>
+          </div>
+          <div className={styles.providerList} aria-label="供应商列表">
+            {providers.map((provider) => (
+              <ProviderCard
+                onEdit={(item) => setModal({ mode: "edit", provider: item })}
+                onProviderChange={(item) => setProviders((items) => upsertProvider(items, item))}
+                provider={provider}
+                key={provider.id}
+                runtime={runtime}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {modal ? (
         <ProviderModal
@@ -119,48 +127,60 @@ function ProviderCard({
 
   return (
     <article className={styles.card} data-testid="provider-card">
-      <button
-        aria-expanded={expanded}
-        className={styles.cardHeader}
-        onClick={() => setExpanded((value) => !value)}
-        type="button"
-      >
-        <span className={styles.chevron} data-expanded={expanded ? "true" : "false"}>
-          <ChevronDown size={15} />
-        </span>
-        <span className={styles.titleGroup}>
-          <strong>{provider.name}</strong>
-          <span>{provider.base_url}</span>
-        </span>
-        <span className={styles.metrics}>
-          <span>{provider.models.length} 个模型</span>
-          <span>{enabledModels.length} 个启用</span>
-        </span>
-        <span className={styles.switchTrack} aria-label={`${provider.name} 启用状态`} data-checked={provider.enabled ? "true" : "false"}>
-          <span />
-        </span>
-      </button>
+      <div className={styles.providerRow}>
+        <button
+          aria-expanded={expanded}
+          className={styles.cardHeader}
+          onClick={() => setExpanded((value) => !value)}
+          type="button"
+        >
+          <span className={styles.chevron} data-expanded={expanded ? "true" : "false"}>
+            <ChevronDown size={15} />
+          </span>
+          <span className={styles.titleGroup}>
+            <strong>{provider.name}</strong>
+            <span>{provider.base_url}</span>
+          </span>
+          <span className={styles.metrics}>
+            <span>{provider.models.length} 个模型</span>
+            <span>{enabledModels.length} 个启用</span>
+          </span>
+          <span
+            className={styles.switchTrack}
+            aria-label={`${provider.name} 启用状态`}
+            data-checked={provider.enabled ? "true" : "false"}
+          >
+            <span />
+          </span>
+        </button>
+        <div className={styles.rowActions} aria-label={`${provider.name} 操作`}>
+          <button aria-label={`编辑 ${provider.name}`} type="button" onClick={() => onEdit(provider)}>
+            <Settings2 size={14} />
+          </button>
+          <button aria-label={`删除 ${provider.name}`} type="button" onClick={() => onEdit(provider)}>
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
 
       {expanded ? (
         <div className={styles.cardBody}>
-          <div className={styles.metaGrid}>
-            <span>{provider.api_key_set ? `密钥 ${provider.api_key_preview ?? "已保存"}` : "未保存密钥"}</span>
-            <span>{provider.default_model ? `默认 ${provider.default_model}` : "未设置默认模型"}</span>
-            <span>{provider.enabled ? "供应商可用" : "供应商已停用"}</span>
-          </div>
+          <dl className={styles.metaGrid}>
+            <div>
+              <dt>密钥</dt>
+              <dd>{provider.api_key_set ? (provider.api_key_preview ?? "已保存") : "未保存"}</dd>
+            </div>
+            <div>
+              <dt>默认模型</dt>
+              <dd>{provider.default_model ?? "未设置"}</dd>
+            </div>
+            <div>
+              <dt>状态</dt>
+              <dd>{provider.enabled ? "供应商可用" : "供应商已停用"}</dd>
+            </div>
+          </dl>
 
           <ModelList onProviderChange={onProviderChange} provider={provider} runtime={runtime} />
-
-          <footer className={styles.actions}>
-            <button type="button" onClick={() => onEdit(provider)}>
-              <Settings2 size={14} />
-              <span>编辑</span>
-            </button>
-            <button type="button" onClick={() => onEdit(provider)}>
-              <Trash2 size={14} />
-              <span>删除</span>
-            </button>
-          </footer>
         </div>
       ) : null}
     </article>

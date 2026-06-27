@@ -28,8 +28,10 @@ describe("ModelSettingsPage", () => {
     expect(screen.getByText("https://api.example.com/v1")).not.toBeNull();
     expect(screen.getByText("3 个模型")).not.toBeNull();
     expect(screen.getByText("2 个启用")).not.toBeNull();
-    expect(screen.getByText("密钥 sk-***abcd")).not.toBeNull();
-    expect(screen.getByText("默认 qwen3-coder")).not.toBeNull();
+    expect(screen.getByText("密钥")).not.toBeNull();
+    expect(screen.getByText("sk-***abcd")).not.toBeNull();
+    expect(screen.getByText("默认模型")).not.toBeNull();
+    expect(screen.getAllByText("qwen3-coder")).not.toHaveLength(0);
     expect(screen.getByText("deepseek-coder")).not.toBeNull();
     expect(screen.getByLabelText("默认模型服务 启用状态")).not.toBeNull();
   });
@@ -52,7 +54,8 @@ describe("ModelSettingsPage", () => {
 
     render(<ModelSettingsPage runtime={runtime} />);
 
-    const cardHeader = await screen.findByRole("button", { name: /Provider One/ });
+    const providerName = await screen.findByText("Provider One");
+    const cardHeader = providerName.closest("button") as HTMLButtonElement;
     expect(screen.getByText("model-a")).not.toBeNull();
 
     fireEvent.click(cardHeader);
@@ -120,7 +123,8 @@ describe("ModelSettingsPage", () => {
     await waitFor(() => {
       expect(runtime.models.setDefaultModel).toHaveBeenCalledWith("provider-1", "deepseek-coder");
     });
-    expect(screen.getByText("默认 deepseek-coder")).not.toBeNull();
+    expect(screen.getByText("默认模型")).not.toBeNull();
+    expect(screen.getAllByText("deepseek-coder")).not.toHaveLength(0);
   });
 
   it("keeps saved key and local models visible when refresh fails", async () => {
@@ -138,12 +142,12 @@ describe("ModelSettingsPage", () => {
 
     render(<ModelSettingsPage runtime={runtime} />);
 
-    expect(await screen.findByText("密钥 sk-***abcd")).not.toBeNull();
+    expect(await screen.findByText("sk-***abcd")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "刷新模型" }));
 
     expect((await screen.findByRole("alert")).textContent).toBe("模型刷新失败：HTTP 401");
-    expect(screen.getByText("密钥 sk-***abcd")).not.toBeNull();
-    expect(screen.getByText("qwen3-coder")).not.toBeNull();
+    expect(screen.getByText("sk-***abcd")).not.toBeNull();
+    expect(screen.getAllByText("qwen3-coder")).not.toHaveLength(0);
   });
 });
 

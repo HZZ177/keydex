@@ -216,8 +216,91 @@ export function UsageStatsPage({ runtime = runtimeBridge }: UsageStatsPageProps)
           <h1>用量统计</h1>
           <p>查看本地智能体的模型请求与 Token 使用情况</p>
         </div>
-        <div className={styles.toolbar} aria-label="用量筛选">
+      </header>
+
+      <section className={styles.settingsGroup} aria-labelledby="usage-year-title">
+        <div className={styles.groupHeader}>
+          <h2 id="usage-year-title">年度概览</h2>
+          <span>最近 1 年{selectedModel ? ` · ${selectedModel}` : ""}</span>
+        </div>
+        <section className={styles.overviewGrid} aria-label="用量总览">
+          <section className={styles.chartPanel}>
+            <div className={styles.chartToolbar}>
+              <span className={styles.chartRange}>
+                最近 1 年
+                {selectedModel ? ` · ${selectedModel}` : ""}
+              </span>
+              <div className={styles.panelHeaderActions}>
+                <div className={styles.bucketToggle} aria-label="Token 热力粒度">
+                  <button
+                    data-active={heatBucket === "day" ? "true" : "false"}
+                    onClick={() => setHeatBucket("day")}
+                    type="button"
+                  >
+                    每日
+                  </button>
+                  <button
+                    data-active={heatBucket === "week" ? "true" : "false"}
+                    onClick={() => setHeatBucket("week")}
+                    type="button"
+                  >
+                    每周
+                  </button>
+                </div>
+                {heatLoading ? <Loader2 className={styles.spin} size={16} /> : null}
+              </div>
+            </div>
+            <TokenHeatWall points={heatTrend} bucket={heatBucket} />
+          </section>
+        </section>
+      </section>
+
+      <section className={styles.settingsGroup} aria-labelledby="usage-current-title">
+        <div className={styles.groupHeader}>
+          <h2 id="usage-current-title">数据统计</h2>
+          <span>
+            {formatRange(range.startTime, range.endTime)}
+            {selectedModel ? ` · ${selectedModel}` : ""}
+          </span>
+        </div>
+        <div className={styles.controlStrip} aria-label="用量筛选">
           <ModelFilter models={modelOptions} value={selectedModel} onChange={changeModel} />
+          <section className={styles.rangeBar} aria-label="时间范围">
+            <CalendarDays size={16} />
+            {(["today", "7d", "30d", "custom"] as RangePreset[]).map((item) => (
+              <button
+                data-active={rangePreset === item ? "true" : "false"}
+                key={item}
+                onClick={() => changeRange(item)}
+                type="button"
+              >
+                {rangeLabel(item)}
+              </button>
+            ))}
+            {rangePreset === "custom" ? (
+              <div className={styles.customRange}>
+                <input
+                  aria-label="开始时间"
+                  onChange={(event) => {
+                    setCustomStart(event.target.value);
+                    setPage(1);
+                  }}
+                  type="datetime-local"
+                  value={customStart}
+                />
+                <span>至</span>
+                <input
+                  aria-label="结束时间"
+                  onChange={(event) => {
+                    setCustomEnd(event.target.value);
+                    setPage(1);
+                  }}
+                  type="datetime-local"
+                  value={customEnd}
+                />
+              </div>
+            ) : null}
+          </section>
           <button
             className={styles.iconButton}
             type="button"
@@ -227,75 +310,7 @@ export function UsageStatsPage({ runtime = runtimeBridge }: UsageStatsPageProps)
             <span>刷新</span>
           </button>
         </div>
-      </header>
-
-      <section className={styles.chartPanel}>
-        <div className={styles.chartToolbar}>
-          <span className={styles.chartRange}>
-            最近 1 年
-            {selectedModel ? ` · ${selectedModel}` : ""}
-          </span>
-          <div className={styles.panelHeaderActions}>
-            <div className={styles.bucketToggle} aria-label="Token 热力粒度">
-              <button
-                data-active={heatBucket === "day" ? "true" : "false"}
-                onClick={() => setHeatBucket("day")}
-                type="button"
-              >
-                每日
-              </button>
-              <button
-                data-active={heatBucket === "week" ? "true" : "false"}
-                onClick={() => setHeatBucket("week")}
-                type="button"
-              >
-                每周
-              </button>
-            </div>
-            {heatLoading ? <Loader2 className={styles.spin} size={16} /> : null}
-          </div>
-        </div>
-        <TokenHeatWall points={heatTrend} bucket={heatBucket} />
-      </section>
-
-      <section className={styles.scopedStats} aria-label="时间范围统计">
-        <section className={styles.rangeBar} aria-label="时间范围">
-          <CalendarDays size={16} />
-          {(["today", "7d", "30d", "custom"] as RangePreset[]).map((item) => (
-            <button
-              data-active={rangePreset === item ? "true" : "false"}
-              key={item}
-              onClick={() => changeRange(item)}
-              type="button"
-            >
-              {rangeLabel(item)}
-            </button>
-          ))}
-          {rangePreset === "custom" ? (
-            <div className={styles.customRange}>
-              <input
-                aria-label="开始时间"
-                onChange={(event) => {
-                  setCustomStart(event.target.value);
-                  setPage(1);
-                }}
-                type="datetime-local"
-                value={customStart}
-              />
-              <span>至</span>
-              <input
-                aria-label="结束时间"
-                onChange={(event) => {
-                  setCustomEnd(event.target.value);
-                  setPage(1);
-                }}
-                type="datetime-local"
-                value={customEnd}
-              />
-            </div>
-          ) : null}
-        </section>
-
+        <section className={styles.scopedStats} aria-label="时间范围统计">
         {error ? (
           <section className={styles.error} role="alert">
             <span>{error}</span>
@@ -386,6 +401,7 @@ export function UsageStatsPage({ runtime = runtimeBridge }: UsageStatsPageProps)
             </button>
           </footer>
         </section>
+        </section>
       </section>
 
       <UsageDetailLayer requestId={detailId} runtime={runtime} onClose={() => setDetailId("")} />
@@ -404,13 +420,40 @@ function ModelFilter({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     return keyword ? models.filter((item) => item.toLowerCase().includes(keyword)) : models;
   }, [models, query]);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && rootRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
   return (
-    <div className={styles.modelFilter}>
+    <div className={styles.modelFilter} ref={rootRef}>
       <button className={styles.filterButton} onClick={() => setOpen((item) => !item)} type="button">
         <span>{value || "全部模型"}</span>
         <ChevronDown size={15} />

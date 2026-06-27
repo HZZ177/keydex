@@ -53,82 +53,89 @@ export function GeneralSettingsPage() {
         </div>
       </header>
 
-      <section className={styles.section} aria-labelledby="font-settings-title">
-        <header className={styles.sectionHeader}>
-          <Type size={17} />
-          <div>
-            <h2 id="font-settings-title">系统字体</h2>
-            <p>{fontStatusText(font.family, font.status)}</p>
-          </div>
-        </header>
+      <section className={styles.section} aria-labelledby="display-settings-title">
+        <h2 className={styles.groupTitle} id="display-settings-title">应用显示</h2>
+        <div className={styles.settingsPanel}>
+          <div className={styles.settingRow}>
+          <header className={styles.sectionHeader}>
+            <span className={styles.settingIcon} aria-hidden="true">
+              <Type size={17} />
+            </span>
+            <div>
+              <h3>UI 字体</h3>
+              <p>{fontStatusText(font.family, font.status)}</p>
+            </div>
+          </header>
 
-        <div className={styles.optionGrid} role="radiogroup" aria-label="系统字体">
-          {fontOptions.map((option) => {
-            const Icon = option.icon;
-            const selected = font.family === option.id;
-            const isFontAssetOption = option.id !== "system";
-            const cached = Boolean(font.cachedFamilies[option.id]);
-            const isOptionDownloading = isFontAssetOption && font.downloadingFamily === option.id && downloading;
-            const optionDescription = fontOptionDescription({
-              id: option.id,
-              selected,
-              downloading: isOptionDownloading,
-              cached,
-              progress: font.progress,
-            });
-            return (
-              <button
-                aria-checked={selected}
-                className={styles.option}
-                data-selected={selected ? "true" : "false"}
-                disabled={downloading}
-                key={option.id}
-                onClick={() => chooseFont(option.id)}
-                role="radio"
-                type="button"
-              >
-                <span className={styles.optionIcon}>
-                  <Icon size={17} />
-                </span>
-                <span className={styles.optionText}>
-                  <span className={styles.optionTitle}>{option.label}</span>
-                  <span className={styles.optionDescription}>{optionDescription}</span>
-                </span>
-                <span className={styles.optionState} aria-hidden="true">
-                  {selected ? (
-                    <Check size={15} />
-                  ) : isFontAssetOption && !cached ? (
-                    <Download size={15} />
-                  ) : null}
-                </span>
-              </button>
-            );
-          })}
+          <div className={styles.optionGrid} role="radiogroup" aria-label="系统字体">
+            {fontOptions.map((option) => {
+              const Icon = option.icon;
+              const selected = font.family === option.id;
+              const isFontAssetOption = option.id !== "system";
+              const cached = Boolean(font.cachedFamilies[option.id]);
+              const isOptionDownloading = isFontAssetOption && font.downloadingFamily === option.id && downloading;
+              const optionDescription = fontOptionDescription({
+                id: option.id,
+                selected,
+                downloading: isOptionDownloading,
+                cached,
+                progress: font.progress,
+              });
+              return (
+                <button
+                  aria-checked={selected}
+                  className={styles.option}
+                  data-selected={selected ? "true" : "false"}
+                  disabled={downloading}
+                  key={option.id}
+                  onClick={() => chooseFont(option.id)}
+                  role="radio"
+                  type="button"
+                >
+                  <span className={styles.optionIcon}>
+                    <Icon size={16} />
+                  </span>
+                  <span className={styles.optionText}>
+                    <span className={styles.optionTitle}>{option.label}</span>
+                    <span className={styles.optionDescription}>{optionDescription}</span>
+                  </span>
+                  <span className={styles.optionState} aria-hidden="true">
+                    {selected ? (
+                      <Check size={15} />
+                    ) : isFontAssetOption && !cached ? (
+                      <Download size={15} />
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          </div>
+
+          {showProgress ? (
+            <div
+              className={styles.progress}
+              aria-label="字体下载进度"
+              aria-valuemax={font.progress.totalBytes}
+              aria-valuemin={0}
+              aria-valuenow={font.progress.downloadedBytes}
+              role="progressbar"
+            >
+              <span className={styles.progressTrack}>
+                <span className={styles.progressValue} style={{ width: `${font.progress.percent}%` }} />
+              </span>
+              <span className={styles.progressText}>
+                {`已下载 ${formatBytes(font.progress.downloadedBytes)} / ${formatBytes(font.progress.totalBytes)}（${font.progress.downloadedAssets}/${font.progress.totalAssets}）`}
+              </span>
+            </div>
+          ) : null}
+
+          {font.error ? (
+            <p className={styles.error} role="alert">
+              {font.error}
+            </p>
+          ) : null}
         </div>
-
-        {showProgress ? (
-          <div
-            className={styles.progress}
-            aria-label="字体下载进度"
-            aria-valuemax={font.progress.totalBytes}
-            aria-valuemin={0}
-            aria-valuenow={font.progress.downloadedBytes}
-            role="progressbar"
-          >
-            <span className={styles.progressTrack}>
-              <span className={styles.progressValue} style={{ width: `${font.progress.percent}%` }} />
-            </span>
-            <span className={styles.progressText}>
-              {`已下载 ${formatBytes(font.progress.downloadedBytes)} / ${formatBytes(font.progress.totalBytes)}（${font.progress.downloadedAssets}/${font.progress.totalAssets}）`}
-            </span>
-          </div>
-        ) : null}
-
-        {font.error ? (
-          <p className={styles.error} role="alert">
-            {font.error}
-          </p>
-        ) : null}
       </section>
     </main>
   );

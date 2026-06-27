@@ -6,7 +6,7 @@ import type { CommandApprovalAuditRecord, CommandSettings, TrustedCommandRule } 
 
 import styles from "./ConfigSettingsPage.module.css";
 
-const APPROVAL_HISTORY_PAGE_SIZE = 30;
+const APPROVAL_HISTORY_PAGE_SIZE = 10;
 
 const DEFAULT_COMMAND_SETTINGS: CommandSettings = {
   command_enabled: true,
@@ -94,6 +94,9 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
 
   const updateApprovalPolicy = async (policy: ApprovalPolicy) => {
     setPolicyMenuOpen(false);
+    if (policy === currentPolicy || savingPolicy) {
+      return;
+    }
     const nextCommand = commandFromPolicy(command, policy);
     setCommand(nextCommand);
     setSavingPolicy(true);
@@ -163,6 +166,7 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
       <header className={styles.header}>
         <div>
           <h1>配置</h1>
+          <p>配置审批策略和命令执行权限</p>
         </div>
         <button className={styles.iconButton} type="button" aria-label="刷新配置" onClick={() => void load(history.page)}>
           <RefreshCcw size={16} />
@@ -173,89 +177,88 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
       {message ? <div className={styles.success}>{message}</div> : null}
       {loading ? <div className={styles.loading}>正在加载配置</div> : null}
 
-      <section className={styles.approvalBox} aria-label="命令行工具配置">
-        <div className={styles.approvalHeader}>
-          <div>
-            <h2>命令行工具</h2>
-            <p>配置命令执行审批策略、已信任命令和审批记录。</p>
+      <section className={`${styles.settingsGroup} ${styles.policyGroup}`} aria-labelledby="command-tools-title">
+        <h2 id="command-tools-title">命令行工具</h2>
+        <div className={styles.settingsPanel}>
+          <div className={styles.policyBlock}>
+          <div className={styles.policyText}>
+            <h3>批准策略</h3>
+            <p>{savingPolicy ? "正在保存策略" : currentPolicyOption.preview}</p>
+            <p className={styles.policyHint}>{currentPolicyOption.description}</p>
           </div>
-        </div>
-
-        <div className={styles.policyBlock}>
-          <div className={styles.policyRow}>
-            <div className={styles.policyText}>
-              <h3>批准策略</h3>
-              <p>选择智能体何时请求批准。</p>
-            </div>
-            <div
-              className={styles.policyMenu}
-              onBlur={(event) => {
-                const nextTarget = event.relatedTarget;
-                if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
-                  setPolicyMenuOpen(false);
-                }
-              }}
+          <div
+            className={styles.policyMenu}
+            onBlur={(event) => {
+              const nextTarget = event.relatedTarget;
+              if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+                setPolicyMenuOpen(false);
+              }
+            }}
+          >
+            <button
+              aria-expanded={policyMenuOpen}
+              aria-haspopup="listbox"
+              aria-label={`批准策略：${currentPolicyOption.label}`}
+              className={styles.policyTrigger}
+              disabled={loading || savingPolicy}
+              type="button"
+              onClick={() => setPolicyMenuOpen((open) => !open)}
             >
-              <button
-                aria-expanded={policyMenuOpen}
-                aria-haspopup="listbox"
-                aria-label={`批准策略：${currentPolicyOption.label}`}
-                className={styles.policyTrigger}
-                disabled={loading || savingPolicy}
-                type="button"
-                onClick={() => setPolicyMenuOpen((open) => !open)}
-              >
-                <span className={styles.policyTriggerText}>
-                  <strong>{currentPolicyOption.label}</strong>
-                  <span>{currentPolicyOption.preview}</span>
-                </span>
-                <ChevronDown aria-hidden="true" data-open={policyMenuOpen} size={16} />
-              </button>
-              {policyMenuOpen ? (
-                <div className={styles.policyDropdown} role="listbox" aria-label="批准策略选项">
-                  {APPROVAL_POLICIES.map((policy) => (
-                    <button
-                      aria-selected={policy.value === currentPolicy}
-                      className={styles.policyOption}
-                      key={policy.value}
-                      role="option"
-                      type="button"
-                      onClick={() => void updateApprovalPolicy(policy.value)}
-                    >
-                      <span>
-                        <strong>{policy.label}</strong>
-                        <small>{policy.preview}</small>
-                      </span>
-                      {policy.value === currentPolicy ? <Check aria-hidden="true" size={15} /> : null}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+              <span className={styles.policyTriggerText}>
+                <strong>{currentPolicyOption.label}</strong>
+              </span>
+              <ChevronDown aria-hidden="true" data-open={policyMenuOpen ? "true" : "false"} size={16} />
+            </button>
+            {policyMenuOpen ? (
+              <div className={styles.policyDropdown} role="listbox" aria-label="批准策略选项">
+                {APPROVAL_POLICIES.map((policy) => (
+                  <button
+                    aria-selected={policy.value === currentPolicy}
+                    className={styles.policyOption}
+                    data-active={policy.value === currentPolicy ? "true" : "false"}
+                    key={policy.value}
+                    role="option"
+                    type="button"
+                    onClick={() => void updateApprovalPolicy(policy.value)}
+                  >
+                    <span>
+                      <strong>{policy.label}</strong>
+                      <small>{policy.preview}</small>
+                    </span>
+                    {policy.value === currentPolicy ? <Check aria-hidden="true" size={15} /> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
-          <div className={styles.policyHint}>{savingPolicy ? "正在保存策略" : currentPolicyOption.description}</div>
+          </div>
         </div>
+      </section>
 
-        <section className={styles.subsection}>
+      <section className={styles.settingsGroup} aria-labelledby="trusted-command-title">
+        <div className={styles.groupHeader}>
+          <h2 id="trusted-command-title">已信任命令</h2>
+          <span>{sortedRules.length} 条</span>
+        </div>
+        <div className={styles.settingsPanel}>
           <div className={styles.sectionHeader}>
-            <h2>已信任命令</h2>
+            <span>命令</span>
+            <span>匹配方式与状态</span>
+            <span>操作</span>
           </div>
           {sortedRules.length ? (
-            <div className={styles.table}>
-              <div className={styles.tableHeader}>
-                <span>命令</span>
-                <span>匹配</span>
-                <span>目录</span>
-                <span>状态</span>
-                <span>操作</span>
-              </div>
+            <div className={styles.ruleList}>
               {sortedRules.map((rule) => (
-                <div className={styles.tableRow} key={rule.id}>
-                  <code title={rule.command_pattern}>{rule.command_pattern}</code>
-                  <span>{rule.match_type === "exact" ? "精确" : "前缀"}</span>
-                  <span title={rule.cwd_pattern}>{rule.cwd_pattern}</span>
-                  <span>{rule.enabled ? "启用" : "禁用"}</span>
-                  <span className={styles.rowActions}>
+                <article className={styles.ruleRow} key={rule.id}>
+                  <div className={styles.ruleMain}>
+                    <code title={rule.command_pattern}>{rule.command_pattern}</code>
+                    <span title={rule.cwd_pattern}>{rule.cwd_pattern}</span>
+                  </div>
+                  <div className={styles.ruleMeta}>
+                    <span>{rule.match_type === "exact" ? "精确" : "前缀"}</span>
+                    <span>{rule.enabled ? "启用" : "禁用"}</span>
+                  </div>
+                  <div className={styles.rowActions}>
                     <button
                       aria-label={`${rule.enabled ? "禁用" : "启用"} ${rule.command_pattern}`}
                       type="button"
@@ -270,33 +273,47 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
                     >
                       <Trash2 size={14} />
                     </button>
-                  </span>
-                </div>
+                  </div>
+                </article>
               ))}
             </div>
           ) : (
             <div className={styles.empty}>暂无已信任命令</div>
           )}
-        </section>
+        </div>
+      </section>
 
-        <section className={styles.subsection}>
+      <section className={styles.settingsGroup} aria-labelledby="approval-history-title">
+        <div className={styles.groupHeader}>
+          <h2 id="approval-history-title">审批记录</h2>
+          <span>{historyLoading ? "正在加载" : `${history.total} 条`}</span>
+        </div>
+        <div className={styles.settingsPanel}>
           <div className={styles.sectionHeader}>
-            <h2>审批记录</h2>
-            {historyLoading ? <span className={styles.inlineStatus}>正在加载</span> : null}
+            <span>结果</span>
+            <span>命令与目录</span>
+            <span>来源</span>
           </div>
           {history.list.length ? (
             <div className={styles.historyList}>
               {history.list.map((item) => (
-                <article className={styles.historyItem} key={item.id}>
-                  <div>
-                    <strong>{item.decision === "approved" ? "已允许" : "已拒绝"}</strong>
-                    <code>{item.command}</code>
-                  </div>
-                  <div>
-                    <span>{item.cwd || "."}</span>
+                <article className={styles.historyItem} data-decision={item.decision} key={item.id}>
+                  <div className={styles.historyStatus}>
+                    <span className={styles.decisionBadge} data-decision={item.decision}>
+                      {decisionLabel(item.decision)}
+                    </span>
                     <time dateTime={item.created_at}>{formatDate(item.created_at)}</time>
                   </div>
-                  {item.reject_message ? <p>{item.reject_message}</p> : null}
+                  <div className={styles.historyMain}>
+                    <code title={item.command}>{item.command}</code>
+                    <span title={item.cwd || "."}>{item.cwd || "."}</span>
+                  </div>
+                  <div className={styles.historyMeta} aria-label="审批记录元信息">
+                    {item.trust_scope ? <span>{trustScopeLabel(item.trust_scope)}</span> : null}
+                    {item.rule_match_type ? <span>{ruleMatchLabel(item.rule_match_type)}</span> : null}
+                    {item.trusted_rule_id ? <span>已关联规则</span> : null}
+                  </div>
+                  {item.reject_message ? <p className={styles.historyReason}>拒绝原因：{item.reject_message}</p> : null}
                 </article>
               ))}
             </div>
@@ -328,7 +345,7 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
               </div>
             </div>
           ) : null}
-        </section>
+        </div>
       </section>
     </div>
   );
@@ -345,6 +362,18 @@ function formatDate(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function decisionLabel(value: CommandApprovalAuditRecord["decision"]): string {
+  return value === "approved" ? "已允许" : "已拒绝";
+}
+
+function trustScopeLabel(value: NonNullable<CommandApprovalAuditRecord["trust_scope"]>): string {
+  return value === "persistent" ? "已保存信任" : "仅本次";
+}
+
+function ruleMatchLabel(value: NonNullable<CommandApprovalAuditRecord["rule_match_type"]>): string {
+  return value === "exact" ? "精确匹配" : "前缀匹配";
 }
 
 function errorMessage(reason: unknown): string {

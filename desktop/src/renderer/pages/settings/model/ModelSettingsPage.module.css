@@ -1,8 +1,8 @@
 .page {
-  width: min(672px, calc(100% - 136px));
+  width: min(860px, calc(100% - 96px));
   min-height: 100%;
   margin: 0 auto;
-  padding: 92px 0 128px;
+  padding: 76px 0 116px;
   color: var(--color-text-primary);
 }
 
@@ -11,12 +11,12 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 24px;
+  margin-bottom: 18px;
 }
 
 .header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 650;
   letter-spacing: 0;
 }
@@ -29,7 +29,7 @@
 
 .primaryButton,
 .empty button,
-.actions button {
+.rowActions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -45,7 +45,7 @@
   padding: 0 13px;
   background: var(--color-text-primary);
   color: var(--color-bg-elevated);
-  box-shadow: 0 8px 18px rgb(15 23 42 / 8%);
+  box-shadow: none;
 }
 
 .primaryButton:hover {
@@ -76,9 +76,9 @@
   align-items: center;
   justify-content: center;
   gap: 12px;
-  border: 1px dashed var(--color-border-default);
+  border: 1px dashed color-mix(in srgb, var(--color-border-default) 72%, transparent);
   border-radius: var(--radius-md);
-  background: var(--surface-muted);
+  background: transparent;
   color: var(--color-text-tertiary);
 }
 
@@ -90,21 +90,83 @@
 .empty button {
   height: 30px;
   padding: 0 12px;
-  background: var(--color-bg-elevated);
+  background: var(--surface-muted);
   color: var(--color-text-primary);
 }
 
-.providerList {
+.settingsGroup {
   display: grid;
   gap: 10px;
 }
 
+.groupHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.groupHeader h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.groupHeader span {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: var(--ui-line-height-tight);
+  padding-top: 2px;
+  white-space: nowrap;
+}
+
+.providerList {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 58%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.listHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: var(--ui-line-height-tight);
+  padding: 9px 14px;
+}
+
 .card {
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-elevated);
-  box-shadow: 0 18px 48px rgb(15 23 42 / 4%);
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.card:first-child {
+  border-top: 0;
+}
+
+.providerRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 58px;
+  padding-right: 8px;
+  transition: background var(--motion-fast) var(--motion-ease-out);
+}
+
+.providerRow:hover {
+  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
 }
 
 .cardHeader {
@@ -112,16 +174,17 @@
   width: 100%;
   grid-template-columns: 20px minmax(220px, 1fr) auto auto;
   align-items: center;
-  gap: 13px;
+  gap: 12px;
   border: 0;
   background: transparent;
-  padding: 15px 16px;
+  padding: 12px 14px;
   color: inherit;
   text-align: left;
+  transition: background var(--motion-fast) var(--motion-ease-out);
 }
 
 .cardHeader:hover {
-  background: color-mix(in srgb, var(--surface-hover) 62%, transparent);
+  background: transparent;
 }
 
 .chevron {
@@ -147,7 +210,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 560;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -176,8 +239,9 @@
   display: inline-flex;
   height: 24px;
   align-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
   border-radius: var(--radius-pill);
-  background: var(--surface-muted);
+  background: transparent;
   padding: 0 8px;
 }
 
@@ -210,28 +274,44 @@
 
 .cardBody {
   display: grid;
-  gap: 13px;
-  border-top: 1px solid var(--color-border-default);
-  padding: 14px 16px 16px 49px;
+  gap: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  padding: 12px 14px 14px 46px;
 }
 
 .metaGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+  margin: 0;
 }
 
-.metaGrid span {
+.metaGrid div {
   min-width: 0;
   overflow: hidden;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface-bg));
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: var(--radius-pill);
+  background: transparent;
   color: var(--color-text-secondary);
   font-size: 11px;
   line-height: 1.4;
-  padding: 8px 9px;
+  padding: 6px 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.metaGrid dt,
+.metaGrid dd {
+  display: inline;
+  margin: 0;
+}
+
+.metaGrid dt {
+  color: var(--color-text-tertiary);
+}
+
+.metaGrid dt::after {
+  content: " ";
 }
 
 .modelList {
@@ -246,9 +326,9 @@
   max-width: 280px;
   min-height: 26px;
   align-items: center;
-  border: 1px solid var(--inline-block-border);
+  border: 1px solid color-mix(in srgb, var(--inline-block-border) 74%, transparent);
   border-radius: var(--radius-pill);
-  background: var(--surface-muted);
+  background: transparent;
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -272,22 +352,22 @@
   color: var(--color-text-tertiary);
 }
 
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
-.actions button {
+.rowActions button {
+  width: 30px;
   height: 30px;
-  gap: 6px;
-  padding: 0 10px;
+  padding: 0;
   background: transparent;
   color: var(--color-text-secondary);
 }
 
-.actions button:hover {
-  background: var(--surface-hover);
+.rowActions button:hover {
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
   color: var(--color-text-primary);
 }
 
@@ -311,6 +391,15 @@
 
   .cardBody {
     padding-left: 16px;
+  }
+
+  .providerRow {
+    grid-template-columns: minmax(0, 1fr);
+    padding-right: 0;
+  }
+
+  .rowActions {
+    padding: 0 12px 10px 46px;
   }
 
   .metaGrid {

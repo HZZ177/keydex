@@ -1,6 +1,6 @@
 .root {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .toolbar {
@@ -14,12 +14,12 @@
   display: inline-flex;
   min-width: 0;
   flex: 1 1 auto;
-  height: 32px;
+  height: 30px;
   align-items: center;
   gap: 7px;
-  border: 1px solid var(--color-border-default);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 62%, transparent);
   border-radius: var(--radius-pill);
-  background: var(--surface-bg);
+  background: transparent;
   color: var(--color-text-tertiary);
   padding: 0 10px;
 }
@@ -55,13 +55,13 @@
   flex: 0 0 auto;
   gap: 6px;
   padding: 0 10px;
-  background: var(--surface-muted);
+  background: transparent;
   color: var(--color-text-secondary);
 }
 
 .toolbar button:hover:not(:disabled),
 .defaultButton:hover:not(:disabled) {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
   color: var(--color-text-primary);
 }
 
@@ -88,7 +88,17 @@
 
 .rows {
   display: grid;
-  gap: 6px;
+  gap: 2px;
+}
+
+.rowsHeader {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) minmax(92px, auto) auto;
+  gap: 8px;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: var(--ui-line-height-tight);
+  padding: 0 8px 4px;
 }
 
 .row {
@@ -97,10 +107,15 @@
   grid-template-columns: 38px minmax(0, 1fr) minmax(92px, auto) auto;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-bg);
-  padding: 4px 7px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 4px 8px;
+  transition: background var(--motion-fast) var(--motion-ease-out);
+}
+
+.row:hover {
+  background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
 }
 
 .row[data-disabled="true"] {
@@ -159,8 +174,9 @@
   height: 26px;
   align-items: center;
   gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-accent) 10%, var(--surface-bg));
+  background: transparent;
   color: var(--color-accent);
   font-size: 11px;
   padding: 0 9px;
@@ -193,6 +209,10 @@
 
   .row {
     grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .rowsHeader {
+    display: none;
   }
 
   .healthCell,

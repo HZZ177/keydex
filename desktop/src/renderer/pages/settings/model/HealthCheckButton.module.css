@@ -11,9 +11,9 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  border: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 50%, transparent);
   border-radius: var(--radius-pill);
-  background: var(--surface-muted);
+  background: transparent;
   color: var(--color-text-tertiary);
   font-size: 11px;
   line-height: var(--ui-line-height-tight);
@@ -22,17 +22,19 @@
 }
 
 .button:hover:not(:disabled) {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
   color: var(--color-text-primary);
 }
 
 .button[data-status="healthy"] {
-  background: color-mix(in srgb, var(--color-success-6) 10%, var(--surface-bg));
+  border-color: color-mix(in srgb, var(--color-success-6) 26%, transparent);
+  background: transparent;
   color: var(--color-success-6);
 }
 
 .button[data-status="unhealthy"] {
-  background: color-mix(in srgb, var(--color-danger) 9%, var(--surface-bg));
+  border-color: color-mix(in srgb, var(--color-danger) 24%, transparent);
+  background: transparent;
   color: var(--color-danger);
 }
 

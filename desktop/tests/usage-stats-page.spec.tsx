@@ -142,6 +142,32 @@ describe("UsageStatsPage", () => {
     });
   });
 
+  it("closes the model filter menu from outside interactions", async () => {
+    const runtime = fakeRuntime();
+
+    render(<UsageStatsPage runtime={runtime} />);
+
+    await screen.findByText("24");
+    fireEvent.click(screen.getByRole("button", { name: /全部模型/ }));
+
+    expect(screen.getByRole("dialog", { name: "选择模型" })).not.toBeNull();
+
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "选择模型" })).toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /全部模型/ }));
+    expect(screen.getByRole("dialog", { name: "选择模型" })).not.toBeNull();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "选择模型" })).toBeNull();
+    });
+  });
+
   it("uses progressive trend loading for large hourly ranges", async () => {
     const runtime = fakeRuntime();
 
