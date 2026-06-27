@@ -40,10 +40,17 @@ export interface WorkbenchAssistantDockTransitionState {
   reservedWidth: number;
 }
 
-const DOCK_TRANSITION_DURATION_MS = 1200;
+const COMPOSE_TRANSITION_DURATION_MS = 420;
+const DOCK_IN_TRANSITION_DURATION_MS = 420;
+const DOCK_OUT_TRANSITION_DURATION_MS = 650;
 const WORKBENCH_ASSISTANT_MOTION_TRANSITION = {
   type: "tween",
-  duration: 1.2,
+  duration: COMPOSE_TRANSITION_DURATION_MS / 1000,
+  ease: [0.2, 0.82, 0.22, 1],
+} as const;
+const WORKBENCH_ASSISTANT_DOCK_OUT_MOTION_TRANSITION = {
+  type: "tween",
+  duration: DOCK_OUT_TRANSITION_DURATION_MS / 1000,
   ease: [0.2, 0.82, 0.22, 1],
 } as const;
 const WORKBENCH_EXPANDED_PANEL_TRANSITION = {
@@ -135,6 +142,10 @@ export function WorkbenchAssistantSurface({
   const renderMorphContent = dockTransitionPhase !== null;
   const renderBottomContent = true;
   const reducedMotion = prefersReducedMotion();
+  const assistantMotionTransition =
+    dockTransitionPhase === "dock-out"
+      ? WORKBENCH_ASSISTANT_DOCK_OUT_MOTION_TRANSITION
+      : WORKBENCH_ASSISTANT_MOTION_TRANSITION;
   const visualComposeOpen = composeOpen || dockOutCollapsingToCapsule;
   const enableDockChildLayout = !reducedMotion && dockTransitionPhase === null;
   const geometryMode: AssistantSurfaceMode =
@@ -182,11 +193,12 @@ export function WorkbenchAssistantSurface({
       finishComposeCollapse();
       return;
     }
-    composeCollapseTimerRef.current = window.setTimeout(finishComposeCollapse, DOCK_TRANSITION_DURATION_MS);
+    composeCollapseTimerRef.current = window.setTimeout(finishComposeCollapse, COMPOSE_TRANSITION_DURATION_MS);
   }, [finishComposeCollapse, reducedMotion]);
 
   const beginDockTransition = useCallback(
     (phase: DockTransitionPhase, onComplete: () => void) => {
+      const durationMs = phase === "dock-out" ? DOCK_OUT_TRANSITION_DURATION_MS : DOCK_IN_TRANSITION_DURATION_MS;
       const transitionRunId = dockTransitionRunIdRef.current + 1;
       dockTransitionRunIdRef.current = transitionRunId;
       if (dockTransitionTimerRef.current !== null && typeof window !== "undefined") {
@@ -222,7 +234,7 @@ export function WorkbenchAssistantSurface({
       dockTransitionTimerRef.current = window.setTimeout(() => {
         dockTransitionTimerRef.current = null;
         completeTransition();
-      }, DOCK_TRANSITION_DURATION_MS);
+      }, durationMs);
     },
     [dockInlineWidth, finishDockTransition, onDockTransitionChange, onDockTransitionLayoutChange, reducedMotion],
   );
@@ -589,7 +601,7 @@ export function WorkbenchAssistantSurface({
           <motion.div
             className={styles.capsule}
             layout={enableDockChildLayout ? "position" : false}
-            transition={reducedMotion ? { duration: 0 } : WORKBENCH_ASSISTANT_MOTION_TRANSITION}
+            transition={reducedMotion ? { duration: 0 } : assistantMotionTransition}
             data-compose-open={visualComposeOpen ? "true" : "false"}
             data-compose-collapsing={collapsingComposer ? "true" : "false"}
             data-testid="workbench-assistant-capsule"
@@ -597,7 +609,7 @@ export function WorkbenchAssistantSurface({
             <motion.div
               className={styles.composerFrame}
               layout={enableDockChildLayout}
-              transition={reducedMotion ? { duration: 0 } : WORKBENCH_ASSISTANT_MOTION_TRANSITION}
+              transition={reducedMotion ? { duration: 0 } : assistantMotionTransition}
               data-compose-open={visualComposeOpen ? "true" : "false"}
               data-compose-collapsing={collapsingComposer ? "true" : "false"}
               data-testid={renderDrawerContent ? "workbench-assistant-drawer-composer-frame" : "workbench-assistant-composer-frame"}
@@ -645,7 +657,7 @@ export function WorkbenchAssistantSurface({
               <motion.div
                 className={styles.inputSurface}
                 layout={enableDockChildLayout}
-                transition={reducedMotion ? { duration: 0 } : WORKBENCH_ASSISTANT_MOTION_TRANSITION}
+                transition={reducedMotion ? { duration: 0 } : assistantMotionTransition}
                 data-compose-open={visualComposeOpen ? "true" : "false"}
                 data-compose-collapsing={collapsingComposer ? "true" : "false"}
                 data-testid={renderDrawerContent ? "workbench-assistant-drawer-input-surface" : "workbench-assistant-input-surface"}
@@ -693,6 +705,10 @@ function WorkbenchAssistantShell({
 }) {
   const chromeLayout =
     reducedMotion || transitionPhase !== "idle" ? false : "position";
+  const chromeMotionTransition =
+    transitionPhase === "dock-out"
+      ? WORKBENCH_ASSISTANT_DOCK_OUT_MOTION_TRANSITION
+      : WORKBENCH_ASSISTANT_MOTION_TRANSITION;
 
   return (
     <div
@@ -711,7 +727,7 @@ function WorkbenchAssistantShell({
         data-geometry-mode={geometryMode}
         data-shell-mode={mode}
         layout={chromeLayout}
-        transition={reducedMotion ? { duration: 0 } : WORKBENCH_ASSISTANT_MOTION_TRANSITION}
+        transition={reducedMotion ? { duration: 0 } : chromeMotionTransition}
       >
         {children}
       </motion.div>

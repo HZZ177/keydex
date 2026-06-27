@@ -38,6 +38,10 @@ describe("workbenchAssistantReducer", () => {
       focusSeq: 3,
     });
     expect(workbenchAssistantReducer({ mode: "expanded", focusSeq: 4 }, { type: "toggle-expanded", hasDraft: false })).toEqual({
+      mode: "capsule",
+      focusSeq: 4,
+    });
+    expect(workbenchAssistantReducer({ mode: "expanded", focusSeq: 4 }, { type: "toggle-expanded", hasDraft: true })).toEqual({
       mode: "composer",
       focusSeq: 5,
     });
@@ -63,8 +67,8 @@ describe("workbenchAssistantReducer", () => {
     state = workbenchAssistantReducer(state, { type: "toggle-expanded", hasDraft: false });
 
     expect(state).toEqual({
-      mode: "composer",
-      focusSeq: 5,
+      mode: "capsule",
+      focusSeq: 4,
     });
   });
 

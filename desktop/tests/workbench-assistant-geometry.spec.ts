@@ -87,6 +87,9 @@ describe("workbench assistant geometry", () => {
     expect(css).toMatch(/\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="capsule"\]\s*\{[\s\S]*left: var\(--workbench-assistant-bottom-left\)/);
     expect(css).toMatch(/\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="capsule"\]\s*\{[\s\S]*width: var\(--workbench-assistant-dock-out-target-width\)/);
     expect(css).toContain(".surface[data-dock-transition=\"dock-out\"] .morphPanel");
+    expect(css).toContain("--workbench-assistant-compose-duration: 420ms");
+    expect(css).toContain("--workbench-assistant-dock-out-duration: 650ms");
+    expect(css).toMatch(/\.surface\[data-dock-transition="dock-out"\]\s*\{[\s\S]*--workbench-assistant-compose-duration: var\(--workbench-assistant-dock-out-duration\)/);
     expect(css).toContain("animation: morphPanelConcealToCapsule var(--workbench-assistant-compose-duration)");
     expect(css).toMatch(/@keyframes morphPanelConcealToCapsule\s*\{[\s\S]*clip-path: inset\(50% 0 50% 0 round 18px\)/);
     expect(css).toMatch(/\.chrome\s*\{[\s\S]*transition:\s*[\s\S]*left var\(--workbench-assistant-compose-duration\)/);
@@ -102,6 +105,39 @@ describe("workbench assistant geometry", () => {
     expect(css).toMatch(/\.surface\[data-dock-transition="dock-out"\] \.morphPanel\[data-panel-mode="morph"\] \.morphMiddle\s*\{[\s\S]*transform-origin: bottom center/);
     expect(css).toMatch(/\.surface\[data-dock-transition="dock-out"\] \.capsule,\s*\.surface\[data-dock-transition="dock-out"\] \.composerFrame,\s*\.surface\[data-dock-transition="dock-out"\] \.inputSurface\s*\{[\s\S]*transform-origin: bottom center/);
     expect(css).not.toContain("morphPanelDockOut");
+  });
+
+  it("keeps a bottom-only liquid glass support layer for the assistant capsule controls", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/workbench/WorkbenchAssistantSurface.module.css"),
+      "utf8",
+    );
+
+    expect(css).toContain("--workbench-assistant-glass-bg");
+    expect(css).toContain("--workbench-assistant-control-glass-bg");
+    expect(css).toMatch(/\.chrome::before\s*\{[\s\S]*backdrop-filter/);
+    expect(css).toMatch(/\.chrome\[data-shell-mode="capsule"\]::before,\s*\.chrome\[data-shell-mode="composer"\]::before,\s*\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="capsule"\]::before,\s*\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="composer"\]::before\s*\{[\s\S]*opacity: 1/);
+    expect(css).toMatch(/\.chrome\[data-shell-mode="capsule"\]::before,\s*\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="capsule"\]::before\s*\{[\s\S]*inset: -14px -24px -12px/);
+    expect(css).toMatch(/\.chrome\[data-shell-mode="capsule"\]::before,\s*\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="capsule"\]::before\s*\{[\s\S]*border-radius: 34px/);
+    expect(css).not.toMatch(/\.chrome\[data-shell-mode="drawer"\]::before/);
+    expect(css).not.toMatch(/\.chrome\[data-shell-mode="dock-morph"\]::before/);
+    expect(css).toMatch(/\.composerFrameAccessory :global\(\[aria-label="输入框状态"\] \[data-selected-item\]\)\s*\{[\s\S]*var\(--workbench-assistant-control-glass-bg\)/);
+    expect(css).toMatch(/\.dockHandle\s*\{[\s\S]*var\(--workbench-assistant-control-glass-bg\)/);
+    expect(css).toMatch(/\.headerActionButton\s*\{[\s\S]*var\(--workbench-assistant-control-glass-bg\)/);
+    expect(css).toMatch(/@supports not \(\(backdrop-filter: blur\(1px\)\) or \(-webkit-backdrop-filter: blur\(1px\)\)\)/);
+  });
+
+  it("keeps the workbench canvas dock-out layout animation slightly slower than dock-in", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/workbench/WorkbenchModePage.module.css"),
+      "utf8",
+    );
+
+    expect(css).toContain("--workbench-dock-layout-duration: 420ms");
+    expect(css).toContain("--workbench-dock-layout-out-duration: 650ms");
+    expect(css).toMatch(/\.workspace\[data-dock-transition-phase="dock-out"\]\s*\{[\s\S]*--workbench-dock-layout-duration: var\(--workbench-dock-layout-out-duration\)/);
+    expect(css).toMatch(/\.workspace\[data-dock-transition-phase="dock-in"\] \.canvas\s*\{[\s\S]*animation: workbenchCanvasDockIn var\(--workbench-dock-layout-duration\)/);
+    expect(css).toMatch(/\.workspace\[data-dock-transition-phase="dock-out"\] \.canvas\s*\{[\s\S]*animation: workbenchCanvasDockOut var\(--workbench-dock-layout-duration\)/);
   });
 
   it("keeps the base chrome as the single morphing shell for bottom and drawer states", () => {

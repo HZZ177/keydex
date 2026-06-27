@@ -295,11 +295,13 @@ test("workbench assistant bottom chrome stays centered after repeated overlay an
 
     await page.getByRole("button", { name: "收起工作台消息层" }).click();
     await expect(page.getByTestId("workbench-expanded-layer")).toHaveCount(0);
-    await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "composer");
+    await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "capsule");
+    await expect(page.getByLabel("工作台助手输入")).toHaveCount(0);
     await expect
       .poll(() => page.evaluate(bottomAssistantCenterDelta), { timeout: 3000 })
       .toBeLessThanOrEqual(3);
 
+    await openWorkbenchComposer(page);
     await page.getByRole("button", { name: "将工作台助手展开到右侧" }).click();
     await expect(page.getByTestId("workbench-assistant-drawer")).toBeVisible();
     await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-dock-transition", "idle");

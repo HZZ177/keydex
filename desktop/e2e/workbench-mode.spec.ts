@@ -188,22 +188,27 @@ test("workbench expanded layer, drawer and approval stay above the workspace", a
 
   await expanded.click({ position: { x: 12, y: 12 } });
   await expect(expanded).toHaveCount(0);
-  await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "composer");
+  await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "capsule");
+  await expect(page.getByLabel("工作台助手输入")).toHaveCount(0);
+  await openWorkbenchComposer(page);
   await page.getByRole("button", { name: "展开工作台消息层" }).click();
   await expect(expanded).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(expanded).toHaveCount(0);
-  await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "composer");
+  await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "capsule");
+  await expect(page.getByLabel("工作台助手输入")).toHaveCount(0);
+  await openWorkbenchComposer(page);
   await page.getByRole("button", { name: "展开工作台消息层" }).click();
   await expect(expanded).toBeVisible();
 
   await page.getByRole("button", { name: "收起工作台消息层" }).click();
   await expect(expanded).toHaveCount(0);
-  await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "composer");
-  await expect(page.getByTestId("workbench-assistant-chrome")).toHaveAttribute("data-shell-mode", "composer");
-  await expect(page.getByLabel("工作台助手输入")).toBeVisible();
+  await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "capsule");
+  await expect(page.getByTestId("workbench-assistant-chrome")).toHaveAttribute("data-shell-mode", "capsule");
+  await expect(page.getByLabel("工作台助手输入")).toHaveCount(0);
   await saveEvidence(page, "e2e-017");
 
+  await openWorkbenchComposer(page);
   await page.getByRole("button", { name: "将工作台助手展开到右侧" }).click();
   const drawer = page.getByTestId("workbench-assistant-drawer");
   await expect(drawer).toBeVisible();

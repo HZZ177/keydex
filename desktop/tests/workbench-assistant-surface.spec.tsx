@@ -331,6 +331,52 @@ describe("WorkbenchAssistantSurface", () => {
     expect(screen.getByRole("textbox", { name: "工作台助手输入" }).textContent).toContain("保留展开层草稿");
   });
 
+  it("closes the expanded overlay and empty composer from backdrop and Escape", async () => {
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchDraftHarness />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    const surface = screen.getByTestId("workbench-assistant-surface");
+    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    await screen.findByRole("textbox", { name: "工作台助手输入" });
+
+    fireEvent.click(screen.getByRole("button", { name: "展开工作台消息层" }));
+    await waitFor(() => {
+      expect(surface.getAttribute("data-surface-mode")).toBe("expanded");
+    });
+
+    fireEvent.click(screen.getByTestId("workbench-expanded-layer"));
+    await waitFor(() => {
+      expect(surface.getAttribute("data-surface-mode")).toBe("capsule");
+    });
+    await waitFor(
+      () => {
+        expect(screen.queryByRole("textbox", { name: "工作台助手输入" })).toBeNull();
+      },
+      { timeout: 2000 },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    await screen.findByRole("textbox", { name: "工作台助手输入" });
+    fireEvent.click(screen.getByRole("button", { name: "展开工作台消息层" }));
+    await waitFor(() => {
+      expect(surface.getAttribute("data-surface-mode")).toBe("expanded");
+    });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => {
+      expect(surface.getAttribute("data-surface-mode")).toBe("capsule");
+    });
+    await waitFor(
+      () => {
+        expect(screen.queryByRole("textbox", { name: "工作台助手输入" })).toBeNull();
+      },
+      { timeout: 2000 },
+    );
+  });
+
   it("opens the composer when an external quote chip is injected", async () => {
     render(
       <WorkbenchSurfaceTestProviders>

@@ -2,8 +2,32 @@
   --workbench-assistant-dock-inline-size: min(clamp(320px, var(--workbench-assistant-dock-width), 520px), 46vw);
   --workbench-assistant-transition-bg: var(--color-bg-elevated);
   --workbench-assistant-drawer-radius: 18px;
-  --workbench-assistant-compose-duration: 1200ms;
+  --workbench-assistant-compose-duration: 420ms;
+  --workbench-assistant-dock-out-duration: 650ms;
   --workbench-assistant-compose-ease: cubic-bezier(0.2, 0.82, 0.22, 1);
+  --workbench-assistant-glass-bg:
+    radial-gradient(circle at 18% 0%, rgb(255 255 255 / 78%), transparent 38%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-bg-elevated) 76%, transparent),
+      color-mix(in srgb, var(--color-bg-elevated) 48%, transparent)
+    );
+  --workbench-assistant-glass-border: color-mix(in srgb, var(--color-border-subtle) 62%, rgb(255 255 255 / 70%));
+  --workbench-assistant-glass-shadow:
+    0 20px 56px rgb(15 23 42 / 11%),
+    0 8px 20px rgb(15 23 42 / 6%),
+    inset 0 1px 0 rgb(255 255 255 / 68%),
+    inset 0 -1px 0 rgb(15 23 42 / 5%);
+  --workbench-assistant-control-glass-bg:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-bg-elevated) 90%, rgb(255 255 255 / 72%)),
+      color-mix(in srgb, var(--color-bg-elevated) 68%, transparent)
+    );
+  --workbench-assistant-control-glass-shadow:
+    0 8px 20px rgb(15 23 42 / 9%),
+    0 1px 2px rgb(15 23 42 / 5%),
+    inset 0 1px 0 rgb(255 255 255 / 72%);
   --workbench-assistant-accessory-height: 30px;
   --workbench-assistant-input-open-height: 102px;
   --workbench-assistant-input-closed-height: 34px;
@@ -16,6 +40,10 @@
   inset: 0;
   z-index: 50;
   pointer-events: none;
+}
+
+.surface[data-dock-transition="dock-out"] {
+  --workbench-assistant-compose-duration: var(--workbench-assistant-dock-out-duration);
 }
 
 .surface[data-dock-out-target="composer"] {
@@ -104,6 +132,7 @@
   box-shadow:
     0 14px 42px rgb(15 23 42 / 9%),
     0 1px 2px rgb(15 23 42 / 5%);
+  isolation: isolate;
   pointer-events: auto;
   backdrop-filter: blur(18px);
   translate: -50% 0;
@@ -123,6 +152,58 @@
     background var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
     box-shadow var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease);
   will-change: left, bottom, width, height, translate, border-radius;
+}
+
+.chrome::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  z-index: 0;
+  border: 1px solid transparent;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0;
+  pointer-events: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transition:
+    opacity var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
+    border-color var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
+    background var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
+    box-shadow var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease);
+}
+
+.chrome[data-shell-mode="capsule"]::before,
+.chrome[data-shell-mode="composer"]::before,
+.chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="capsule"]::before,
+.chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="composer"]::before {
+  border-color: var(--workbench-assistant-glass-border);
+  background: var(--workbench-assistant-glass-bg);
+  box-shadow: var(--workbench-assistant-glass-shadow);
+  opacity: 1;
+  backdrop-filter: blur(24px) saturate(1.45);
+  -webkit-backdrop-filter: blur(24px) saturate(1.45);
+}
+
+.chrome[data-shell-mode="capsule"]::before,
+.chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="capsule"]::before {
+  inset: -14px -24px -12px;
+  border-radius: 34px;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .chrome[data-shell-mode="capsule"]::before,
+  .chrome[data-shell-mode="composer"]::before,
+  .chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="capsule"]::before,
+  .chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="composer"]::before {
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--color-bg-elevated) 88%, rgb(255 255 255 / 70%)),
+        color-mix(in srgb, var(--color-bg-elevated) 74%, transparent)
+      );
+  }
 }
 
 .chrome[data-shell-mode="capsule"] {
@@ -228,6 +309,8 @@
 }
 
 .capsule {
+  position: relative;
+  z-index: 1;
   width: 100%;
   min-width: 0;
   pointer-events: auto;
@@ -322,6 +405,7 @@
   min-width: 0;
   max-width: min(300px, 42vw);
   flex: 0 1 auto;
+  --composer-bg: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
   transition:
     max-width var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
     transform var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease);
@@ -337,6 +421,14 @@
 
 .composerFrameAccessory :global([aria-label="输入框状态"] > span) {
   max-width: 100%;
+}
+
+.composerFrameAccessory :global([aria-label="输入框状态"] [data-selected-item]) {
+  border-color: color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  background: var(--workbench-assistant-control-glass-bg);
+  box-shadow: var(--workbench-assistant-control-glass-shadow);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
 }
 
 .inputSurface {
@@ -441,21 +533,27 @@
   width: 30px;
   height: 30px;
   flex: 0 0 30px;
-  background: color-mix(in srgb, var(--surface-hover) 62%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
   border-radius: 50%;
+  background: var(--workbench-assistant-control-glass-bg);
+  box-shadow: var(--workbench-assistant-control-glass-shadow);
   margin-bottom: 0;
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
   transition:
     background var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease,
     color var(--motion-fast) ease,
     transform var(--motion-fast) var(--motion-ease-standard);
 }
 
 .headerActionButton {
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
-  background: color-mix(in srgb, var(--color-bg-elevated) 96%, #fff);
-  box-shadow:
-    0 5px 14px rgb(15 23 42 / 8%),
-    0 1px 2px rgb(15 23 42 / 5%);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  background: var(--workbench-assistant-control-glass-bg);
+  box-shadow: var(--workbench-assistant-control-glass-shadow);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
 }
 
 .composerFrame[data-compose-open="true"] .dockHandle {
@@ -974,6 +1072,7 @@
   .composerFrame,
   .inputSurface,
   .composerFrameAccessory,
+  .chrome::before,
   .expandedLayer,
   .expandedPanelFrame,
   .morphPanel > .drawerHeader,
