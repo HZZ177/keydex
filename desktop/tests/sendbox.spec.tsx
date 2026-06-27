@@ -180,6 +180,53 @@ describe("SendBox", () => {
     expect(input.style.height).toBe("82px");
   });
 
+  it("respects the computed input max height when resizing multiline content", () => {
+    const props = {
+      runtimeState: "idle" as const,
+      canSend: true,
+      canStop: false,
+      onChange: vi.fn(),
+      onSend: vi.fn(),
+      onStop: vi.fn(),
+      variant: "keydex" as const,
+    };
+    const { rerender } = render(<SendBox value="短文本" {...props} />);
+    const input = screen.getByLabelText("继续输入") as HTMLDivElement;
+    input.style.maxHeight = "96px";
+
+    Object.defineProperty(input, "scrollHeight", { configurable: true, value: 220 });
+    rerender(<SendBox value={"第一行\n第二行\n第三行\n第四行\n第五行"} {...props} />);
+
+    expect(input.style.height).toBe("96px");
+  });
+
+  it("resizes immediately while editing and shrinks after clearing content", () => {
+    const onChange = vi.fn();
+    render(
+      <SendBox
+        value=""
+        runtimeState="idle"
+        canSend={false}
+        canStop={false}
+        onChange={onChange}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByLabelText("继续输入") as HTMLDivElement;
+    Object.defineProperty(input, "scrollHeight", { configurable: true, value: 188 });
+    input.textContent = "第一行\n第二行\n第三行";
+    fireEvent.input(input);
+    expect(input.style.height).toBe("188px");
+
+    Object.defineProperty(input, "scrollHeight", { configurable: true, value: 44 });
+    input.textContent = "";
+    fireEvent.input(input);
+    expect(input.style.height).toBe("44px");
+    expect(onChange).toHaveBeenLastCalledWith("");
+  });
+
   it("reports plain contenteditable text changes", () => {
     const onChange = vi.fn();
     render(

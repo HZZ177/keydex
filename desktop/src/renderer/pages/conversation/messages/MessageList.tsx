@@ -53,6 +53,7 @@ export interface MessageListProps {
   isProcessing?: boolean;
   variant?: MessageListVariant;
   turnNavigatorMode?: MessageListTurnNavigatorMode;
+  turnNavigationRequest?: MessageListTurnNavigationRequest | null;
   emptyText?: string;
   emptyTestId?: string;
   runtimeState?: ConversationRuntimeState;
@@ -78,6 +79,10 @@ export interface MessageListScrollControls {
 
 export type MessageListVariant = "full" | "compact" | "overlay";
 export type MessageListTurnNavigatorMode = "auto" | "hidden";
+export interface MessageListTurnNavigationRequest {
+  requestId: number;
+  targetIndex: number;
+}
 
 export function MessageList({
   messages,
@@ -85,6 +90,7 @@ export function MessageList({
   isProcessing = false,
   variant = "full",
   turnNavigatorMode,
+  turnNavigationRequest,
   emptyText = "暂无消息",
   emptyTestId = "message-empty",
   renderMessage,
@@ -411,6 +417,20 @@ export function MessageList({
     },
     [autoScroll.virtuosoRef, displayTurns.length, useStaticList],
   );
+
+  useEffect(() => {
+    if (!turnNavigationRequest) {
+      return;
+    }
+    if (typeof window === "undefined") {
+      navigateToTurn(turnNavigationRequest.targetIndex);
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      navigateToTurn(turnNavigationRequest.targetIndex);
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [navigateToTurn, turnNavigationRequest]);
 
   const messageListContent = useStaticList ? (
     <div
@@ -824,6 +844,10 @@ function isAtScrollTop(scroller: HTMLElement): boolean {
 
 function isAtScrollBottom(scroller: HTMLElement): boolean {
   return scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - SCROLL_BOUNDARY_EPSILON_PX;
+}
+
+export function buildTurnNavigationItemsFromMessages(messages: ConversationMessage[]): ConversationTurnNavigationItem[] {
+  return buildTurnNavigationItems(groupDisplayItemsByTurn(processMessages(messages)));
 }
 
 function findActiveTurnNavigationIndex(items: ConversationTurnNavigationItem[], activeTurnIndex: number): number | null {

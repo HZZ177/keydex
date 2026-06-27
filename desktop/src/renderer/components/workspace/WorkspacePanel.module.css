@@ -199,7 +199,7 @@
   background: var(--sidebar-bg);
   overflow: auto;
   padding: 1px 0 12px;
-  scrollbar-width: thin;
+  scrollbar-width: auto;
   scrollbar-color: color-mix(in srgb, var(--color-text-4) 34%, transparent) transparent;
 }
 
@@ -373,6 +373,7 @@
 }
 
 .nodeButton:hover,
+.nodeButton[data-keyboard-active="true"],
 .nodeButton[data-selected="true"] {
   background: var(--surface-hover);
   color: var(--color-text-primary);

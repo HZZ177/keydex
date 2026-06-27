@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { SendBox } from "@/renderer/components/chat/SendBox";
 import {
   buildSlashCommands,
-  defaultSlashCommands,
   filterSlashCommands,
   filterSlashSkills,
   getSlashQuery,
@@ -14,16 +13,17 @@ import {
 
 describe("SlashCommandMenu", () => {
   it("parses and filters slash commands", () => {
+    const rootCommands = buildSlashCommands();
+
     expect(getSlashQuery("/")).toBe("");
     expect(getSlashQuery("请 /mod")).toBe("mod");
     expect(getSlashQuery("没有命令")).toBeNull();
-    expect(filterSlashCommands(defaultSlashCommands, "model")).toEqual([]);
-    expect(filterSlashCommands(defaultSlashCommands, "clear").map((command) => command.id)).toEqual(["clear"]);
-    expect(replaceSlashQuery("请 /cle", "/clear ")).toBe("请 /clear ");
+    expect(filterSlashCommands(rootCommands, "model")).toEqual([]);
+    expect(replaceSlashQuery("请 /dev", "")).toBe("请 ");
     expect(removeSlashQuery("请 /dev")).toBe("请");
   });
 
-  it("builds a top-level workspace skill command and filters skills locally", () => {
+  it("builds a fixed top-level skill command and filters skills locally", () => {
     const skills = [
       {
         name: "dev-plan",
@@ -33,39 +33,37 @@ describe("SlashCommandMenu", () => {
         locator: ".keydex/skills/dev-plan/SKILL.md",
       },
     ];
-    const commands = buildSlashCommands([
-      ...skills,
-    ]);
+    const commands = buildSlashCommands(skills);
+    const emptyCommands = buildSlashCommands();
 
-    expect(commands.map((command) => command.id)).toEqual(["skill", "clear"]);
+    expect(commands.map((command) => command.id)).toEqual(["skill"]);
+    expect(emptyCommands.map((command) => command.id)).toEqual(["skill"]);
+    expect(emptyCommands[0]?.childCount).toBe(0);
     expect(filterSlashCommands(commands, "plan").map((command) => command.id)).toEqual(["skill"]);
-    expect(filterSlashCommands(commands, "clear").map((command) => command.id)).toEqual(["clear"]);
     expect(filterSlashSkills(skills, "plan").map((skill) => skill.name)).toEqual(["dev-plan"]);
   });
 
-  it("opens from SendBox and selects commands with keyboard", () => {
-    const onChange = vi.fn();
+  it("keeps Skill visible without workspace skills and shows the project empty state inside it", () => {
     render(
       <SendBox
         value="/"
         runtimeState="idle"
         canSend
         canStop={false}
-        onChange={onChange}
+        workspaceSkills={[]}
+        onChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
       />,
     );
 
     expect(screen.getByTestId("slash-command-menu")).not.toBeNull();
-    expect(screen.getByText("/clear")).not.toBeNull();
+    expect(screen.getByRole("option", { name: /Skill/ })).not.toBeNull();
 
-    const input = screen.getByLabelText("继续输入");
-    fireEvent.keyDown(input, { key: "ArrowDown" });
-    fireEvent.keyDown(input, { key: "ArrowDown" });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "Enter" });
 
-    expect(onChange).toHaveBeenCalledWith("");
+    expect(screen.getByText("当前项目无 Skill")).not.toBeNull();
+    expect(screen.queryByText("没有匹配的命令")).toBeNull();
   });
 
   it("opens again after the dismissed slash query is removed and typed again", () => {

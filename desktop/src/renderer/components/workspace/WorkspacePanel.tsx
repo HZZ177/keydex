@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -19,6 +20,7 @@ import type {
   WorkspaceSearchOptions,
   WorkspaceSearchResult,
 } from "@/runtime";
+import { APP_FIND_SHORTCUT_EVENT, type AppFindShortcutDetail } from "@/renderer/events/findShortcut";
 import { useWorkspaceFileSearch } from "@/renderer/hooks/useWorkspaceFileSearch";
 import { WORKSPACE_FILE_SEARCH_BUDGET_HINT } from "@/renderer/utils/workspaceFileSearchBudget";
 import { LoadingSkeleton } from "@/renderer/components/loading";
@@ -39,6 +41,7 @@ export interface WorkspacePanelProps {
 
 type EntryMap = Record<string, WorkspaceEntry[]>;
 type ErrorMap = Record<string, string>;
+type KeyboardTreeEntry = Pick<WorkspaceEntry, "path" | "type">;
 const TREE_GROUP_TRANSITION_MS = 180;
 const ENTRY_NAME_TOOLTIP_DELAY_MS = 500;
 const SUBTREE_EXPAND_OPTIONS = {
@@ -58,7 +61,9 @@ export function WorkspacePanel({
   revealSelectedPathRequestId = 0,
   onSelectFile,
 }: WorkspacePanelProps) {
+  const panelRef = useRef<HTMLElement | null>(null);
   const treeRef = useRef<HTMLDivElement | null>(null);
+  const filterInputRef = useRef<HTMLInputElement | null>(null);
   const handledRevealSelectedPathRequestIdRef = useRef(0);
   const [entriesByPath, setEntriesByPath] = useState<EntryMap>({});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([""]));
@@ -68,6 +73,7 @@ export function WorkspacePanel({
   const [errorsByPath, setErrorsByPath] = useState<ErrorMap>({});
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
+  const [keyboardActivePath, setKeyboardActivePath] = useState<string | null>(null);
   const [locateRequest, setLocateRequest] = useState<{ id: number; path: string } | null>(null);
   const onSelectFileRef = useRef(onSelectFile);
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
@@ -152,10 +158,33 @@ export function WorkspacePanel({
     () => collectFullyExpandedDirectoryPaths(entriesByPath, expandedPaths),
     [entriesByPath, expandedPaths],
   );
+  const keyboardEntries = useMemo(
+    () =>
+      searchActive
+        ? searchState.results.map((entry) => ({ path: entry.path, type: entry.type }))
+        : flattenVisibleTreeEntries(visibleRootEntries, entriesByPath, expandedPaths),
+    [entriesByPath, expandedPaths, searchActive, searchState.results, visibleRootEntries],
+  );
 
   useEffect(() => {
     onSelectFileRef.current = onSelectFile;
   }, [onSelectFile]);
+
+  useEffect(() => {
+    if (!keyboardEntries.length) {
+      setKeyboardActivePath(null);
+      return;
+    }
+    setKeyboardActivePath((current) => {
+      if (current && keyboardEntries.some((entry) => entry.path === current)) {
+        return current;
+      }
+      if (effectiveSelectedPath && keyboardEntries.some((entry) => entry.path === effectiveSelectedPath)) {
+        return effectiveSelectedPath;
+      }
+      return keyboardEntries[0]?.path ?? null;
+    });
+  }, [effectiveSelectedPath, keyboardEntries]);
 
   const loadDirectory = useCallback(async (path: string, force = false): Promise<WorkspaceEntry[] | null> => {
     if (!force && entriesByPath[path]) {
@@ -287,6 +316,82 @@ export function WorkspacePanel({
     await revealFilePath(path);
   }
 
+  const focusFileFilter = useCallback(() => {
+    filterInputRef.current?.focus();
+    filterInputRef.current?.select();
+  }, []);
+
+  const handlePanelKeyDownCapture = useCallback((event: KeyboardEvent<HTMLElement>) => {
+    if (!isFileFilterShortcut(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    focusFileFilter();
+  }, [focusFileFilter]);
+
+  const moveKeyboardActiveEntry = useCallback((direction: 1 | -1) => {
+    if (!keyboardEntries.length) {
+      return;
+    }
+    setKeyboardActivePath((current) => {
+      const currentIndex = current ? keyboardEntries.findIndex((entry) => entry.path === current) : -1;
+      const base = currentIndex >= 0 ? currentIndex : direction > 0 ? -1 : 0;
+      return keyboardEntries[(base + direction + keyboardEntries.length) % keyboardEntries.length]?.path ?? null;
+    });
+  }, [keyboardEntries]);
+
+  const activateKeyboardEntry = useCallback(() => {
+    const activeEntry = keyboardActivePath
+      ? keyboardEntries.find((entry) => entry.path === keyboardActivePath)
+      : null;
+    if (!activeEntry) {
+      return;
+    }
+    if (activeEntry.type === "directory") {
+      if (searchActive) {
+        void openSearchDirectory(activeEntry.path);
+      } else {
+        void toggleDirectory(activeEntry.path);
+      }
+      return;
+    }
+    if (searchActive) {
+      void openSearchFile(activeEntry.path);
+      return;
+    }
+    selectFile(activeEntry.path);
+  }, [keyboardActivePath, keyboardEntries, searchActive, selectFile, toggleDirectory]);
+
+  const handleFilterInputKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveKeyboardActiveEntry(1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveKeyboardActiveEntry(-1);
+      return;
+    }
+    if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      activateKeyboardEntry();
+    }
+  }, [activateKeyboardEntry, moveKeyboardActiveEntry]);
+
+  useEffect(() => {
+    const handleFindShortcut = (event: Event) => {
+      const sourceTarget = (event as CustomEvent<AppFindShortcutDetail>).detail?.sourceTarget ?? null;
+      if (!shouldFocusFileFilterForSource(panelRef.current, sourceTarget)) {
+        return;
+      }
+      focusFileFilter();
+    };
+    document.addEventListener(APP_FIND_SHORTCUT_EVENT, handleFindShortcut);
+    return () => document.removeEventListener(APP_FIND_SHORTCUT_EVENT, handleFindShortcut);
+  }, [focusFileFilter]);
+
   useEffect(() => {
     const path = effectiveSelectedPath?.trim();
     if (
@@ -313,8 +418,25 @@ export function WorkspacePanel({
     setLocateRequest(null);
   }, [entriesByPath, expandedPaths, locateRequest, searchActive]);
 
+  useEffect(() => {
+    if (!keyboardActivePath) {
+      return;
+    }
+    findTreeEntryButton(treeRef.current, keyboardActivePath)?.scrollIntoView?.({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [entriesByPath, expandedPaths, keyboardActivePath, searchActive, searchState.results]);
+
   return (
-    <section className={styles.panel} data-chrome={chrome} data-workspace-panel-root="true" aria-label="工作区文件树">
+    <section
+      ref={panelRef}
+      className={styles.panel}
+      data-chrome={chrome}
+      data-workspace-panel-root="true"
+      aria-label="工作区文件树"
+      onKeyDownCapture={handlePanelKeyDownCapture}
+    >
       {chrome === "default" ? (
         <header className={styles.header}>
           <div className={styles.rootInfo}>
@@ -340,9 +462,11 @@ export function WorkspacePanel({
           <input
             aria-label="筛选文件"
             placeholder="筛选文件..."
+            ref={filterInputRef}
             type="search"
             value={filterQuery}
             onChange={(event) => setFilterQuery(event.target.value)}
+            onKeyDown={handleFilterInputKeyDown}
           />
         </label>
         <button
@@ -378,6 +502,7 @@ export function WorkspacePanel({
                     key={entry.path}
                     onOpenDirectory={(path) => void openSearchDirectory(path)}
                     onSelectFile={(path) => void openSearchFile(path)}
+                    keyboardActivePath={keyboardActivePath}
                     selectedPath={effectiveSelectedPath}
                   />
                 ))
@@ -395,6 +520,7 @@ export function WorkspacePanel({
                     onSelectFile={selectFile}
                     onToggleSubtree={(path, collapse) => void toggleDirectorySubtree(path, collapse)}
                     onToggleDirectory={(path) => void toggleDirectory(path)}
+                    keyboardActivePath={keyboardActivePath}
                     selectedPath={effectiveSelectedPath}
                     subtreeBusyPaths={subtreeBusyPaths}
                   />
@@ -407,6 +533,43 @@ export function WorkspacePanel({
       </div>
     </section>
   );
+}
+
+function isFileFilterShortcut(event: KeyboardEvent<HTMLElement>): boolean {
+  if (event.defaultPrevented || event.altKey || event.shiftKey) {
+    return false;
+  }
+  return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f";
+}
+
+function shouldFocusFileFilterForSource(panel: HTMLElement | null, sourceTarget: EventTarget | null): boolean {
+  if (!panel) {
+    return false;
+  }
+  if (sourceTarget instanceof Node) {
+    return panel.contains(sourceTarget);
+  }
+  const activeElement = document.activeElement;
+  return activeElement instanceof Node && panel.contains(activeElement);
+}
+
+function flattenVisibleTreeEntries(
+  rootEntries: WorkspaceEntry[],
+  entriesByPath: EntryMap,
+  expandedPaths: Set<string>,
+): KeyboardTreeEntry[] {
+  const entries: KeyboardTreeEntry[] = [];
+  const visit = (entry: WorkspaceEntry) => {
+    entries.push({ path: entry.path, type: entry.type });
+    if (entry.type !== "directory" || !expandedPaths.has(entry.path)) {
+      return;
+    }
+    for (const child of entriesByPath[entry.path] ?? []) {
+      visit(child);
+    }
+  };
+  rootEntries.forEach(visit);
+  return entries;
 }
 
 function WorkspacePanelLoading({ label }: { label: string }) {
@@ -457,6 +620,7 @@ interface TreeNodeProps {
   onSelectFile: (path: string) => void;
   onToggleSubtree: (path: string, collapse: boolean) => void;
   onToggleDirectory: (path: string) => void;
+  keyboardActivePath: string | null;
   selectedPath: string | null;
   subtreeBusyPaths: Set<string>;
   depth?: number;
@@ -474,6 +638,7 @@ const TreeNode = memo(function TreeNode({
   onSelectFile,
   onToggleSubtree,
   onToggleDirectory,
+  keyboardActivePath,
   selectedPath,
   subtreeBusyPaths,
   depth = 0,
@@ -497,6 +662,8 @@ const TreeNode = memo(function TreeNode({
           <button
             aria-label={`${expanded ? "折叠" : "展开"} ${entry.name}`}
             className={styles.nodeButton}
+            data-entry-path={entry.path}
+            data-keyboard-active={keyboardActivePath === entry.path ? "true" : undefined}
             onClick={() => onToggleDirectory(entry.path)}
             style={{ paddingLeft }}
             type="button"
@@ -523,6 +690,7 @@ const TreeNode = memo(function TreeNode({
           className={styles.nodeButton}
           data-selected={selectedPath === entry.path ? "true" : "false"}
           data-entry-path={entry.path}
+          data-keyboard-active={keyboardActivePath === entry.path ? "true" : undefined}
           onClick={() => onSelectFile(entry.path)}
           style={{ paddingLeft }}
           type="button"
@@ -550,6 +718,7 @@ const TreeNode = memo(function TreeNode({
               onSelectFile={onSelectFile}
               onToggleSubtree={onToggleSubtree}
               onToggleDirectory={onToggleDirectory}
+              keyboardActivePath={keyboardActivePath}
               selectedPath={selectedPath}
               subtreeBusyPaths={subtreeBusyPaths}
               depth={depth + 1}
@@ -577,6 +746,7 @@ function areTreeNodePropsEqual(previous: TreeNodeProps, next: TreeNodeProps): bo
     previous.onSelectFile !== next.onSelectFile ||
     previous.onToggleSubtree !== next.onToggleSubtree ||
     previous.onToggleDirectory !== next.onToggleDirectory ||
+    previous.keyboardActivePath !== next.keyboardActivePath ||
     previous.subtreeBusyPaths !== next.subtreeBusyPaths ||
     previous.depth !== next.depth
   ) {
@@ -648,11 +818,13 @@ const SearchResultNode = memo(function SearchResultNode({
   entry,
   onOpenDirectory,
   onSelectFile,
+  keyboardActivePath,
   selectedPath,
 }: {
   entry: WorkspaceSearchResult;
   onOpenDirectory: (path: string) => void;
   onSelectFile: (path: string) => void;
+  keyboardActivePath: string | null;
   selectedPath: string | null;
 }) {
   const isDirectory = entry.type === "directory";
@@ -663,7 +835,8 @@ const SearchResultNode = memo(function SearchResultNode({
         aria-label={isDirectory ? `打开目录 ${entry.path}` : `选择文件 ${entry.path}`}
         className={styles.nodeButton}
         data-selected={!isDirectory && selectedPath === entry.path ? "true" : "false"}
-        data-entry-path={!isDirectory ? entry.path : undefined}
+        data-entry-path={entry.path}
+        data-keyboard-active={keyboardActivePath === entry.path ? "true" : undefined}
         onClick={() => (isDirectory ? onOpenDirectory(entry.path) : onSelectFile(entry.path))}
         type="button"
       >

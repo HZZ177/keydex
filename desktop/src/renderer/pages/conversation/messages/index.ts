@@ -2,12 +2,19 @@ export { ApprovalPrompt } from "./ApprovalPrompt";
 export type { ApprovalDecisionHandler, ApprovalPromptProps } from "./ApprovalPrompt";
 export { CommandExecutionBlock } from "./CommandExecutionBlock";
 export type { CommandExecutionBlockProps } from "./CommandExecutionBlock";
+export { ConversationTurnNavigator } from "./ConversationTurnNavigator";
 export { ErrorItem } from "./ErrorItem";
 export type { ErrorItemProps } from "./ErrorItem";
 export { FileChangeBlock } from "./FileChangeBlock";
 export type { FileChangeBlockProps, FileChangePreview } from "./FileChangeBlock";
-export { MessageList } from "./MessageList";
-export type { MessageListProps, MessageListScrollControls, MessageListTurnNavigatorMode } from "./MessageList";
+export { buildTurnNavigationItemsFromMessages, MessageList } from "./MessageList";
+export type {
+  MessageListProps,
+  MessageListScrollControls,
+  MessageListTurnNavigationRequest,
+  MessageListTurnNavigatorMode,
+} from "./MessageList";
+export type { ConversationTurnNavigationItem } from "./ConversationTurnNavigator";
 export { MessageAgentStatus } from "./MessageAgentStatus";
 export type { MessageAgentStatusProps } from "./MessageAgentStatus";
 export { MessageThinking } from "./MessageThinking";

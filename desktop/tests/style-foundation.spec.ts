@@ -49,6 +49,20 @@ describe("style foundation", () => {
     }
   });
 
+  it("keeps collapsed workbench history scrollbar outside session buttons", () => {
+    const sider = readSource("renderer/components/layout/Sider/Sider.module.css");
+
+    expect(sider).toMatch(/\.sider\[data-collapsed="true"\]\s+\.workbenchHistory\s*{[^}]*width:\s*100%/s);
+    expect(sider).toMatch(/\.sider\[data-collapsed="true"\]\s+\.workbenchHistory\s*{[^}]*justify-self:\s*stretch/s);
+  });
+
+  it("covers full collapsed session buttons with the footer feather", () => {
+    const sider = readSource("renderer/components/layout/Sider/Sider.module.css");
+
+    expect(sider).toMatch(/\.footer::before\s*{[^}]*right:\s*12px/s);
+    expect(sider).toMatch(/\.sider\[data-collapsed="true"\]\s+\.footer::before\s*{[^}]*right:\s*0/s);
+  });
+
   it("keeps conversation vertical scrolling inside the message document area", () => {
     const layout = readSource("renderer/components/layout/Layout.module.css");
     const sider = readSource("renderer/components/layout/Sider/Sider.module.css");

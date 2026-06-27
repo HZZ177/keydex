@@ -30,7 +30,7 @@ export function SlashCommandMenu({
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const showingSkills = mode === "skills";
   const itemCount = showingSkills ? skills.length : commands.length;
-  const emptyText = showingSkills ? "没有匹配的 Skill" : "没有匹配的命令";
+  const emptyText = showingSkills ? (query ? "没有匹配的 Skill" : "当前项目无 Skill") : "没有匹配的命令";
   const filterLabel = showingSkills ? "筛选 Skill" : "筛选命令";
 
   useEffect(() => {

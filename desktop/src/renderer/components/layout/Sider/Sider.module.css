@@ -1,5 +1,8 @@
 .sider {
   --sidebar-footer-feather-height: 38px;
+  --sidebar-pill-hover: color-mix(in srgb, var(--surface-hover) 82%, transparent);
+  --sidebar-pill-active: color-mix(in srgb, var(--surface-active) 90%, var(--surface-hover));
+  --sidebar-pill-ring: inset 0 0 0 1px color-mix(in srgb, var(--color-text-1) 6%, transparent);
 
   position: relative;
   width: var(--sidebar-width);
@@ -84,21 +87,10 @@
 .workbenchHistory {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 10px;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
   min-height: 0;
   overflow: visible;
-}
-
-.workbenchWorkspaceSwitcher {
-  position: relative;
-  z-index: 6;
-  min-width: 0;
-  padding: 5px 5px 0 0;
-}
-
-.workbenchHistory .history {
-  padding-top: 0;
 }
 
 .history::-webkit-scrollbar {
@@ -171,7 +163,7 @@
   gap: 6px;
   overflow: hidden;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-2);
   font: inherit;
@@ -188,7 +180,7 @@
 .historyBucketNewButton:hover,
 .historyBucketNewButton:focus-visible {
   outline: none;
-  background: color-mix(in srgb, var(--surface-hover) 86%, transparent);
+  background: var(--sidebar-pill-hover);
   color: var(--color-text-1);
 }
 
@@ -218,7 +210,7 @@
   height: 28px;
   place-items: center;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-3);
   cursor: pointer;
@@ -267,7 +259,7 @@
   align-items: center;
   gap: 7px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-pill);
   background: transparent;
   padding: 0 9px 7px;
   color: var(--color-text-4);
@@ -314,7 +306,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
 .sectionNewButton:hover,
 .sectionNewButton:focus-visible {
   outline: none;
-  background: color-mix(in srgb, var(--surface-hover) 86%, transparent);
+  background: var(--sidebar-pill-hover);
   color: var(--color-text-1);
 }
 
@@ -324,7 +316,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   height: 28px;
   place-items: center;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-3);
   cursor: pointer;
@@ -421,7 +413,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   align-items: center;
   gap: 9px;
   padding: 0 9px;
-  border-radius: 7px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-2);
   font-size: 13px;
@@ -430,7 +422,8 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   transition:
     background-color var(--motion-fast) ease,
     color var(--motion-fast) ease,
-    opacity var(--motion-fast) ease;
+    opacity var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
 }
 
 .navItem svg,
@@ -451,21 +444,22 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   display: block;
   min-width: 0;
   align-items: center;
-  border-radius: 7px;
+  border-radius: var(--radius-pill);
   --history-row-edge: 8px;
 }
 
 .navItem:hover,
 .historyItem:hover,
 .historyRow:focus-within {
-  background: color-mix(in srgb, var(--surface-hover) 86%, transparent);
+  background: var(--sidebar-pill-hover);
   color: var(--color-text-1);
 }
 
 .navItem[data-active="true"],
 .historyItem[data-active="true"] {
-  background: color-mix(in srgb, var(--surface-active) 94%, var(--surface-hover));
+  background: var(--sidebar-pill-active);
   color: var(--color-text-1);
+  box-shadow: var(--sidebar-pill-ring);
 }
 
 .historyItem {
@@ -520,7 +514,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   justify-self: start;
   margin: 5px 0 4px 17px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-4);
   font: inherit;
@@ -535,7 +529,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
 .historyToggleButton:hover,
 .historyToggleButton:focus-visible {
   outline: none;
-  background: transparent;
+  background: color-mix(in srgb, var(--surface-hover) 54%, transparent);
   color: var(--color-text-2);
 }
 
@@ -684,7 +678,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   min-width: 0;
   height: 28px;
   border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   outline: 0;
   background: var(--surface-bg);
   color: var(--color-text-1);
@@ -699,7 +693,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 4px;
-  border-radius: 7px;
+  border-radius: 14px;
   background: color-mix(in srgb, var(--color-danger) 6%, transparent);
   padding: 4px 5px 4px 10px;
 }
@@ -805,7 +799,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   height: 30px;
   place-items: center;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-tertiary);
 }
@@ -827,7 +821,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   min-width: 0;
   align-items: center;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-secondary);
 }
@@ -884,10 +878,18 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
 }
 
 .sider[data-collapsed="true"] .nav,
-.sider[data-collapsed="true"] .workbenchHistory,
 .sider[data-collapsed="true"] .footer {
   width: 30px;
   justify-self: start;
+}
+
+.sider[data-collapsed="true"] .workbenchHistory {
+  width: 100%;
+  justify-self: stretch;
+}
+
+.sider[data-collapsed="true"] .footer::before {
+  right: 0;
 }
 
 .sider[data-collapsed="true"] .navItem span,
@@ -919,7 +921,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   height: 30px;
   place-items: center;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-3);
   cursor: pointer;
@@ -934,9 +936,9 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
 .collapsedProjectButton:focus-visible,
 .collapsedProjectButton[data-active="true"] {
   outline: 0;
-  background: color-mix(in srgb, var(--surface-active) 86%, var(--surface-hover));
+  background: var(--sidebar-pill-active);
   color: var(--color-text-1);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text-1) 7%, transparent);
+  box-shadow: var(--sidebar-pill-ring);
 }
 
 .collapsedProjectButton:hover {
@@ -997,7 +999,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   height: 30px;
   place-items: center;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-3);
   transition:
@@ -1011,9 +1013,9 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
 .collapsedSessionButton:focus-visible,
 .collapsedSessionButton[data-active="true"] {
   outline: 0;
-  background: color-mix(in srgb, var(--surface-active) 86%, var(--surface-hover));
+  background: var(--sidebar-pill-active);
   color: var(--color-text-1);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text-1) 7%, transparent);
+  box-shadow: var(--sidebar-pill-ring);
 }
 
 .collapsedSessionButton:hover {
@@ -1025,7 +1027,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   width: 19px;
   height: 19px;
   place-items: center;
-  border-radius: 7px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, currentColor 8%, transparent);
   font-size: 11px;
   font-weight: 600;
@@ -1049,7 +1051,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   width: 224px;
   gap: 6px;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 82%, transparent);
-  border-radius: 11px;
+  border-radius: 14px;
   background: color-mix(in srgb, var(--color-bg-elevated) 96%, transparent);
   box-shadow:
     0 14px 34px rgb(15 23 42 / 12%),

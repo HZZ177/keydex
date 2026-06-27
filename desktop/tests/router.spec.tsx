@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentActionEnvelope } from "@/types/protocol";
@@ -15,7 +16,7 @@ import { AppRouter } from "@/renderer/components/layout/Router";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
-import { PreviewProvider } from "@/renderer/providers/PreviewProvider";
+import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectionProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
 import { FontProvider } from "@/renderer/providers/FontProvider";
@@ -23,9 +24,10 @@ import type { AgentSession, CommandApprovalRequest, Workspace } from "@/types/pr
 
 function renderRouter(
   initialEntries: Array<string | { pathname: string; state?: unknown }>,
-  options: FakeRuntimeOptions = {},
+  options: RenderRouterOptions = {},
 ) {
-  const runtime = fakeRuntime(options);
+  const { extra, ...runtimeOptions } = options;
+  const runtime = fakeRuntime(runtimeOptions);
   const result = render(
     <ThemeProvider>
       <FontProvider>
@@ -34,6 +36,7 @@ function renderRouter(
             <RuntimeConnectionProvider runtime={runtime} starter={() => Promise.resolve(agentConnection())}>
               <AgentSessionProvider runtime={runtime}>
                 <PreviewProvider>
+                  {extra}
                   <MemoryRouter initialEntries={initialEntries}>
                     <AppRouter runtime={runtime} />
                   </MemoryRouter>
@@ -137,7 +140,7 @@ describe("AppRouter", () => {
 
     expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("workspace A");
-    expect(screen.getByTestId("workbench-sidebar-workspace-selector")).not.toBeNull();
+    expect(screen.getByTestId("workbench-titlebar-workspace-selector")).not.toBeNull();
     expect(
       within(screen.getByRole("main", { name: "工作台" })).queryByRole("button", { name: "选择工作区" }),
     ).toBeNull();
@@ -199,6 +202,47 @@ describe("AppRouter", () => {
       session_id: "new-workbench-session",
       message: "生成验收说明",
       model: "qwen-coder",
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("workbench-mode-page").getAttribute("data-selected-session-id")).toBe(
+        "new-workbench-session",
+      );
+    });
+  });
+
+  it("routes workbench file-open requests into the main workspace browser", async () => {
+    const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"], {
+      extra: <WorkbenchFileOpenProbe />,
+    });
+
+    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    const shell = screen.getByTestId("app-shell");
+    expect(shell.dataset.rightSidebarEnabled).toBe("false");
+    expect(shell.dataset.rightSidebar).toBe("closed");
+
+    fireEvent.click(screen.getByRole("button", { name: "测试打开工作台文件" }));
+
+    expect(await screen.findByTestId("workspace-file-browser-preview", undefined, { timeout: 10000 })).not.toBeNull();
+    await waitFor(() => {
+      expect(runtime.workspace.readFile).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "README.md");
+    });
+    expect(screen.getByTestId("workspace-file-browser-pathbar").textContent).toContain("/README.md");
+    expect(shell.dataset.rightSidebar).toBe("closed");
+    expect(screen.queryByLabelText("展开右侧栏")).toBeNull();
+  });
+
+  it("creates a blank workspace-owned session from the workbench assistant new-session button", async () => {
+    const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新会话" }, { timeout: 10000 }));
+
+    await waitFor(() => {
+      expect(runtime.conversation.createSession).toHaveBeenCalledWith({
+        title: "新会话",
+        session_tag: "chat",
+        sessionType: "workspace",
+        workspaceId: "workspace A",
+      });
     });
     await waitFor(() => {
       expect(screen.getByTestId("workbench-mode-page").getAttribute("data-selected-session-id")).toBe(
@@ -467,6 +511,10 @@ describe("AppRouter", () => {
   });
 });
 
+interface RenderRouterOptions extends FakeRuntimeOptions {
+  extra?: ReactNode;
+}
+
 interface FakeRuntimeOptions {
   sessionWorkspaceId?: string;
   workspaceSearch?: ReturnType<typeof vi.fn>;
@@ -550,6 +598,10 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
     },
     workspace: {
       listDirectory,
+      readFile: vi.fn((_scope: unknown, path: string) =>
+        Promise.resolve({ path, content: "# Workbench file\n\n主区域文件内容", encoding: "utf-8" }),
+      ),
+      readMedia: vi.fn(),
       search: workspaceSearch,
     },
     desktopPicker: {
@@ -599,6 +651,15 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
       getRequestDetail: () => Promise.reject(new Error("not implemented")),
     },
   } as unknown as TestRuntimeBridge;
+}
+
+function WorkbenchFileOpenProbe() {
+  const preview = usePreview();
+  return (
+    <button type="button" onClick={() => preview.openFilePanel("README.md")}>
+      测试打开工作台文件
+    </button>
+  );
 }
 
 function fakeChannel(onStatus?: (status: WsConnectionStatus) => void, chat: ReturnType<typeof vi.fn> = vi.fn()): ChatChannel {

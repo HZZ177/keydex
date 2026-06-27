@@ -28,13 +28,17 @@
     0 8px 20px rgb(15 23 42 / 9%),
     0 1px 2px rgb(15 23 42 / 5%),
     inset 0 1px 0 rgb(255 255 255 / 72%);
+  --workbench-assistant-title-height: 18px;
   --workbench-assistant-accessory-height: 30px;
+  --workbench-assistant-message-trigger-height: 34px;
   --workbench-assistant-input-open-height: 102px;
+  --workbench-assistant-input-open-max-height: 172px;
   --workbench-assistant-input-closed-height: 34px;
   --workbench-assistant-bottom-left: 50%;
   --workbench-assistant-dock-out-target-width: min(420px, calc(100% - 56px));
   --workbench-assistant-dock-out-target-height: calc(
-    var(--workbench-assistant-accessory-height) + var(--workbench-assistant-input-closed-height) + 6px
+    var(--workbench-assistant-title-height) + var(--workbench-assistant-accessory-height) +
+      var(--workbench-assistant-input-closed-height) + 9px
   );
   position: absolute;
   inset: 0;
@@ -46,10 +50,21 @@
   --workbench-assistant-compose-duration: var(--workbench-assistant-dock-out-duration);
 }
 
+.surface[data-message-trigger-state="streaming"],
+.surface[data-message-trigger-state="completed"],
+.surface[data-message-trigger-state="failed"],
+.surface[data-message-trigger-state="priming"] {
+  --workbench-assistant-dock-out-target-height: calc(
+    var(--workbench-assistant-title-height) + var(--workbench-assistant-accessory-height) +
+      var(--workbench-assistant-message-trigger-height) + var(--workbench-assistant-input-closed-height) + 21px
+  );
+}
+
 .surface[data-dock-out-target="composer"] {
   --workbench-assistant-dock-out-target-width: min(640px, calc(100% - 96px));
   --workbench-assistant-dock-out-target-height: calc(
-    var(--workbench-assistant-accessory-height) + var(--workbench-assistant-input-open-height) + 8px
+    var(--workbench-assistant-title-height) + var(--workbench-assistant-accessory-height) +
+      var(--workbench-assistant-input-open-height) + 12px
   );
 }
 
@@ -186,6 +201,11 @@
   -webkit-backdrop-filter: blur(24px) saturate(1.45);
 }
 
+.chrome[data-shell-mode="composer"]::before {
+  inset: -12px -18px -10px;
+  border-radius: 32px;
+}
+
 .chrome[data-shell-mode="capsule"]::before,
 .chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="capsule"]::before {
   inset: -14px -24px -12px;
@@ -227,7 +247,12 @@
   bottom: 16px;
   width: min(640px, calc(100% - 96px));
   max-width: min(640px, calc(100% - 96px));
-  height: calc(var(--workbench-assistant-accessory-height) + var(--workbench-assistant-input-open-height) + 8px);
+  height: auto;
+  min-height: calc(
+    var(--workbench-assistant-title-height) + var(--workbench-assistant-accessory-height) +
+      var(--workbench-assistant-input-open-height) + 12px
+  );
+  max-height: calc(100% - 32px);
   border-color: transparent;
   background: transparent;
   box-shadow: none;
@@ -280,7 +305,10 @@
   bottom: 16px;
   width: min(640px, calc(100% - 96px));
   max-width: min(640px, calc(100% - 96px));
-  height: calc(var(--workbench-assistant-accessory-height) + var(--workbench-assistant-input-open-height) + 8px);
+  height: calc(
+    var(--workbench-assistant-title-height) + var(--workbench-assistant-accessory-height) +
+      var(--workbench-assistant-input-open-height) + 12px
+  );
   border-color: transparent;
   border-right-color: transparent;
   border-radius: 20px;
@@ -362,46 +390,211 @@
 }
 
 .composerFrame {
+  position: relative;
   display: grid;
   width: min(640px, calc(100vw - 96px));
   min-width: 0;
   max-width: 100%;
   grid-template-areas:
-    "header"
-    "input";
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--workbench-assistant-accessory-height) var(--workbench-assistant-input-open-height);
+    "title title title title title miniNavigator"
+    ". messageButton accessory dock . miniNavigator"
+    "messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier miniNavigator"
+    "input input input input input miniNavigator";
+  grid-template-columns: minmax(0, 1fr) 30px minmax(0, auto) 30px minmax(0, 1fr) 44px;
+  grid-template-rows:
+    var(--workbench-assistant-title-height)
+    var(--workbench-assistant-accessory-height)
+    0
+    var(--workbench-assistant-input-open-height);
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  column-gap: 6px;
+  row-gap: 4px;
   pointer-events: auto;
   transition:
     width var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
+    grid-template-columns var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
     grid-template-rows var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
-    gap var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease);
+    row-gap var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
+    column-gap var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease);
+}
+
+.chrome[data-shell-mode="composer"] .composerFrame {
+  grid-template-rows:
+    var(--workbench-assistant-title-height)
+    var(--workbench-assistant-accessory-height)
+    0
+    minmax(
+      var(--workbench-assistant-input-open-height),
+      auto
+    );
 }
 
 .composerFrame[data-compose-open="false"] {
   width: min(420px, calc(100vw - 56px));
   grid-template-areas:
-    "header"
-    "input";
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--workbench-assistant-accessory-height) var(--workbench-assistant-input-closed-height);
-  gap: 6px 8px;
+    "title title title title title miniNavigator"
+    ". messageButton accessory dock . miniNavigator"
+    "messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier miniNavigator"
+    "input input input input input miniNavigator";
+  grid-template-columns: minmax(0, 1fr) 30px minmax(0, auto) 30px minmax(0, 1fr) 44px;
+  grid-template-rows:
+    var(--workbench-assistant-title-height)
+    var(--workbench-assistant-accessory-height)
+    0
+    var(--workbench-assistant-input-closed-height);
+  column-gap: 6px;
+  row-gap: 3px;
+}
+
+.composerFrame[data-message-trigger-visible="false"] {
+  grid-template-areas:
+    "title title title title title miniNavigator"
+    ". messageButton accessory dock . miniNavigator"
+    "messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier miniNavigator"
+    "input input input input input miniNavigator";
+  grid-template-columns: minmax(0, 1fr) 0 minmax(0, auto) 30px minmax(0, 1fr) 44px;
+  column-gap: 4px;
+}
+
+.composerFrame[data-compose-open="false"][data-message-trigger-state="streaming"],
+.composerFrame[data-compose-open="false"][data-message-trigger-state="completed"],
+.composerFrame[data-compose-open="false"][data-message-trigger-state="failed"],
+.composerFrame[data-compose-open="false"][data-message-trigger-state="priming"] {
+  grid-template-rows:
+    var(--workbench-assistant-title-height)
+    var(--workbench-assistant-accessory-height)
+    var(--workbench-assistant-message-trigger-height)
+    var(--workbench-assistant-input-closed-height);
+  row-gap: 7px;
+}
+
+.composerFrame[data-new-session-enabled="true"] {
+  grid-template-areas:
+    "title title title title title title miniNavigator"
+    ". newSession messageButton accessory dock . miniNavigator"
+    "messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier miniNavigator"
+    "input input input input input input miniNavigator";
+  grid-template-columns: minmax(0, 1fr) 30px 30px minmax(0, auto) 30px minmax(0, 1fr) 44px;
+}
+
+.composerFrame[data-compose-open="false"][data-new-session-enabled="true"] {
+  grid-template-areas:
+    "title title title title title title miniNavigator"
+    ". newSession messageButton accessory dock . miniNavigator"
+    "messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier miniNavigator"
+    "input input input input input input miniNavigator";
+  grid-template-columns: minmax(0, 1fr) 30px 30px minmax(0, auto) 30px minmax(0, 1fr) 44px;
+}
+
+.composerFrame[data-new-session-enabled="true"][data-message-trigger-visible="false"] {
+  grid-template-areas:
+    "title title title title title title miniNavigator"
+    ". newSession messageButton accessory dock . miniNavigator"
+    "messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier miniNavigator"
+    "input input input input input input miniNavigator";
+  grid-template-columns: minmax(0, 1fr) 30px 0 minmax(0, auto) 30px minmax(0, 1fr) 44px;
+  column-gap: 4px;
+}
+
+.composerFrame[data-compose-open="false"][data-new-session-enabled="true"][data-message-trigger-state="streaming"],
+.composerFrame[data-compose-open="false"][data-new-session-enabled="true"][data-message-trigger-state="completed"],
+.composerFrame[data-compose-open="false"][data-new-session-enabled="true"][data-message-trigger-state="failed"],
+.composerFrame[data-compose-open="false"][data-new-session-enabled="true"][data-message-trigger-state="priming"] {
+  grid-template-rows:
+    var(--workbench-assistant-title-height)
+    var(--workbench-assistant-accessory-height)
+    var(--workbench-assistant-message-trigger-height)
+    var(--workbench-assistant-input-closed-height);
+  row-gap: 7px;
+}
+
+.composerFrame[data-mini-navigator-visible="false"] {
+  grid-template-areas:
+    "title title title title title"
+    ". messageButton accessory dock ."
+    "messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier"
+    "input input input input input";
+  grid-template-columns: minmax(0, 1fr) 30px minmax(0, auto) 30px minmax(0, 1fr);
+}
+
+.composerFrame[data-mini-navigator-visible="false"][data-message-trigger-visible="false"] {
+  grid-template-columns: minmax(0, 1fr) 0 minmax(0, auto) 30px minmax(0, 1fr);
+}
+
+.composerFrame[data-mini-navigator-visible="false"][data-new-session-enabled="true"] {
+  grid-template-areas:
+    "title title title title title title"
+    ". newSession messageButton accessory dock ."
+    "messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier"
+    "input input input input input input";
+  grid-template-columns: minmax(0, 1fr) 30px 30px minmax(0, auto) 30px minmax(0, 1fr);
+}
+
+.composerFrame[data-mini-navigator-visible="false"][data-new-session-enabled="true"][data-message-trigger-visible="false"] {
+  grid-template-columns: minmax(0, 1fr) 30px 0 minmax(0, auto) 30px minmax(0, 1fr);
+}
+
+.chrome[data-shell-mode="drawer"] .composerFrame,
+.chrome[data-shell-mode="dock-morph"] .composerFrame {
+  grid-template-areas:
+    "title title title title title"
+    ". messageButton accessory dock ."
+    "messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier"
+    "input input input input input";
+  grid-template-columns: minmax(0, 1fr) 30px minmax(0, auto) 30px minmax(0, 1fr);
+}
+
+.chrome[data-shell-mode="drawer"] .composerFrame[data-message-trigger-visible="false"],
+.chrome[data-shell-mode="dock-morph"] .composerFrame[data-message-trigger-visible="false"] {
+  grid-template-columns: minmax(0, 1fr) 0 minmax(0, auto) 30px minmax(0, 1fr);
+}
+
+.chrome[data-shell-mode="drawer"] .composerFrame[data-new-session-enabled="true"],
+.chrome[data-shell-mode="dock-morph"] .composerFrame[data-new-session-enabled="true"] {
+  grid-template-areas:
+    "title title title title title title"
+    ". newSession messageButton accessory dock ."
+    "messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier messageCarrier"
+    "input input input input input input";
+  grid-template-columns: minmax(0, 1fr) 30px 30px minmax(0, auto) 30px minmax(0, 1fr);
+}
+
+.chrome[data-shell-mode="drawer"] .composerFrame[data-new-session-enabled="true"][data-message-trigger-visible="false"],
+.chrome[data-shell-mode="dock-morph"] .composerFrame[data-new-session-enabled="true"][data-message-trigger-visible="false"] {
+  grid-template-columns: minmax(0, 1fr) 30px 0 minmax(0, auto) 30px minmax(0, 1fr);
 }
 
 .composerFrameHeader {
-  display: inline-flex;
+  display: contents;
+}
+
+.composerFrameTitle {
+  grid-area: title;
   min-width: 0;
-  max-width: 100%;
-  grid-area: header;
-  align-items: center;
+  max-width: min(360px, 76%);
+  align-self: center;
   justify-self: center;
-  gap: 6px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--color-text-secondary) 76%, transparent);
+  font-size: 11px;
+  font-weight: 560;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    color var(--motion-fast) ease,
+    opacity var(--motion-fast) ease;
+}
+
+.composerFrameTitle[data-empty="true"] {
+  opacity: 0;
 }
 
 .composerFrameAccessory {
+  grid-area: accessory;
   min-width: 0;
   max-width: min(300px, 42vw);
   flex: 0 1 auto;
@@ -457,6 +650,13 @@
     background var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease);
 }
 
+.chrome[data-shell-mode="composer"] .inputSurface {
+  height: auto;
+  min-height: var(--workbench-assistant-input-open-height);
+  max-height: var(--workbench-assistant-input-open-max-height);
+  overflow: visible;
+}
+
 .inputSurface[data-compose-open="false"] {
   width: 100%;
   min-width: 0;
@@ -483,6 +683,7 @@
   cursor: text;
   font-size: 13px;
   line-height: var(--ui-line-height-compact);
+  overflow: hidden;
   padding: 0 14px;
   text-align: left;
   transition:
@@ -494,6 +695,9 @@
 }
 
 .miniComposer span {
+  display: block;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
   line-height: inherit;
   text-overflow: ellipsis;
@@ -504,13 +708,16 @@
 .miniComposer:focus-visible {
   background: color-mix(in srgb, var(--surface-hover) 48%, transparent);
   box-shadow: none;
-  color: var(--color-text-1);
+  color: color-mix(in srgb, var(--color-text-tertiary) 68%, transparent);
   outline: none;
   transform: none;
 }
 
+.newSessionButton,
+.messageButton,
 .dockHandle,
 .headerActionButton {
+  grid-area: message;
   display: inline-grid;
   width: 30px;
   height: 30px;
@@ -529,7 +736,406 @@
     transform var(--motion-fast) var(--motion-ease-standard);
 }
 
+.newSessionButton {
+  grid-area: newSession;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  border-radius: 50%;
+  background: var(--workbench-assistant-control-glass-bg);
+  box-shadow: var(--workbench-assistant-control-glass-shadow);
+  color: var(--color-text-3);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+}
+
+.newSessionButton:hover,
+.newSessionButton:focus-visible {
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.newSessionButton:disabled {
+  cursor: default;
+  opacity: 0.45;
+  transform: none;
+}
+
+.messageButton {
+  grid-area: messageButton;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  border-radius: 50%;
+  background: var(--workbench-assistant-control-glass-bg);
+  box-shadow: var(--workbench-assistant-control-glass-shadow);
+  color: var(--color-text-3);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+}
+
+.messageButtonIcon {
+  display: inline-grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+}
+
+.miniTurnNavigator {
+  grid-area: miniNavigator;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  width: 44px;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) 13px;
+  align-items: stretch;
+  align-self: stretch;
+  justify-items: center;
+  justify-content: center;
+  overflow: visible;
+  color: var(--color-text-3);
+  transition:
+    color var(--motion-fast) ease,
+    opacity var(--motion-fast) ease;
+}
+
+.miniTurnNavigator[data-disabled="true"] {
+  opacity: 0.52;
+  pointer-events: none;
+}
+
+.miniTurnNavigatorViewport {
+  position: relative;
+  display: block;
+  width: 44px;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.miniTurnNavigatorViewport::-webkit-scrollbar {
+  display: none;
+}
+
+.miniTurnNavigatorViewport[data-scrollable="true"] {
+  mask-image: linear-gradient(180deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+}
+
+.miniTurnNavigatorRail {
+  position: relative;
+  width: 44px;
+  min-height: 100%;
+  height: max(100%, var(--mini-turn-rail-height));
+}
+
+.miniTurnNavigatorMarker {
+  position: absolute;
+  top: var(--mini-turn-marker-top);
+  right: 0;
+  display: flex;
+  width: 44px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.miniTurnNavigatorMarker span {
+  display: block;
+  width: var(--mini-turn-marker-width);
+  height: 2px;
+  transform-origin: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-tertiary) 38%, transparent);
+  transition:
+    background 120ms ease,
+    opacity 120ms ease;
+}
+
+.miniTurnNavigatorMarker[data-current="true"] span {
+  background: transparent;
+}
+
+.miniTurnNavigatorMarker:not([data-current="true"]):hover span,
+.miniTurnNavigatorMarker:not([data-current="true"]):focus-visible span,
+.miniTurnNavigatorMarker:not([data-current="true"])[data-active="true"] span {
+  background: color-mix(in srgb, var(--color-text-primary) 78%, transparent);
+}
+
+.miniTurnNavigatorMarker:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-text-tertiary) 58%, transparent);
+  outline-offset: 1px;
+}
+
+.miniTurnNavigatorCurrentIndicator {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  width: 44px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(calc(var(--mini-turn-current-marker-top) - 50%));
+  pointer-events: none;
+  transition: transform 180ms var(--motion-ease-standard);
+}
+
+.miniTurnNavigatorCurrentIndicator span {
+  display: block;
+  width: var(--mini-turn-current-marker-width);
+  height: 2.5px;
+  transform-origin: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, #f59e0b 88%, var(--color-text-primary) 12%);
+}
+
+.miniTurnNavigatorCard {
+  position: absolute;
+  top: var(--mini-turn-card-top);
+  right: calc(100% + 10px);
+  z-index: 8;
+  display: grid;
+  width: 248px;
+  max-width: min(248px, calc(100vw - 96px));
+  transform: translateY(-50%);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 68%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 74%, transparent);
+  box-shadow: 0 16px 38px rgb(15 23 42 / 12%), 0 2px 10px rgb(15 23 42 / 7%);
+  color: var(--color-text-primary);
+  gap: 5px;
+  padding: 10px 12px;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(18px) saturate(1.14);
+  backdrop-filter: blur(18px) saturate(1.14);
+  animation: miniTurnNavigatorCardIn 120ms ease both;
+}
+
+.miniTurnNavigatorCard strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.miniTurnNavigatorCard span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@keyframes miniTurnNavigatorCardIn {
+  from {
+    opacity: 0;
+    transform: translate(4px, -50%) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(0, -50%) scale(1);
+  }
+}
+
+.miniTurnNavigatorCount {
+  display: grid;
+  min-width: 0;
+  align-self: center;
+  justify-self: center;
+  place-items: center;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--color-text-tertiary) 72%, transparent);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.dockHandle:disabled,
+.messageButton:disabled,
+.messageCarrier:disabled,
+.miniTurnNavigator[data-disabled="true"] {
+  cursor: default;
+  transform: none;
+}
+
+.messageCarrier {
+  --workbench-message-signal: var(--color-text-3);
+  --workbench-message-signal-soft: color-mix(in srgb, var(--color-text-3) 24%, transparent);
+
+  box-sizing: border-box;
+  position: relative;
+  grid-area: messageCarrier;
+  display: inline-grid;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  align-self: stretch;
+  justify-self: stretch;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  border-radius: var(--radius-pill);
+  background: var(--workbench-assistant-control-glass-bg);
+  box-shadow: var(--workbench-assistant-control-glass-shadow);
+  color: var(--color-text-2);
+  cursor: pointer;
+  opacity: 1;
+  padding: 0 12px;
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  transition:
+    background var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--motion-ease-standard);
+  clip-path: inset(0 0 0 0 round var(--radius-pill));
+  animation: workbenchMessageCarrierUnfurl 260ms cubic-bezier(0.2, 0.82, 0.22, 1) both;
+  will-change: clip-path, opacity;
+}
+
+.messageCarrier[data-state="streaming"],
+.messageCarrier[data-state="priming"] {
+  --workbench-message-signal: rgb(59 130 246);
+  --workbench-message-signal-soft: rgb(59 130 246 / 28%);
+}
+
+.messageCarrier[data-state="completed"] {
+  --workbench-message-signal: rgb(34 197 94);
+  --workbench-message-signal-soft: rgb(34 197 94 / 28%);
+}
+
+.messageCarrier[data-state="failed"] {
+  --workbench-message-signal: rgb(239 68 68);
+  --workbench-message-signal-soft: rgb(239 68 68 / 30%);
+}
+
+.messageCarrier:hover,
+.messageCarrier:focus-visible {
+  background: var(--workbench-assistant-control-glass-bg);
+  border-color: color-mix(in srgb, var(--color-border-default) 74%, transparent);
+  box-shadow:
+    var(--workbench-assistant-control-glass-shadow),
+    0 7px 18px rgb(15 23 42 / 8%);
+  color: var(--color-text-1);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.messageCarrier[data-state="streaming"]:hover,
+.messageCarrier[data-state="streaming"]:focus-visible,
+.messageCarrier[data-state="completed"]:hover,
+.messageCarrier[data-state="completed"]:focus-visible,
+.messageCarrier[data-state="failed"]:hover,
+.messageCarrier[data-state="failed"]:focus-visible,
+.messageCarrier[data-state="priming"]:hover,
+.messageCarrier[data-state="priming"]:focus-visible {
+  transform: translateY(-1px);
+}
+
+.messageCarrier[data-expanded="true"] {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-1);
+}
+
+.messageCarrierIcon {
+  display: inline-grid;
+  width: 22px;
+  height: 100%;
+  flex: 0 0 22px;
+  align-self: center;
+  line-height: 0;
+  place-items: center;
+}
+
+.messageCarrierText {
+  display: block;
+  min-width: 0;
+  align-self: center;
+  overflow: hidden;
+  opacity: 1;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  letter-spacing: 0;
+  line-height: var(--ui-line-height-compact);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messageCarrierLineTicker {
+  --line-change-added: color-mix(in srgb, var(--diff-added-text) 88%, var(--color-text-2));
+  --line-change-added-glow: color-mix(in srgb, var(--diff-added-glow) 68%, transparent);
+  --line-change-removed: color-mix(in srgb, var(--diff-removed-text) 88%, var(--color-text-2));
+  --line-change-removed-glow: color-mix(in srgb, var(--diff-removed-glow) 68%, transparent);
+
+  max-width: 100%;
+  color: inherit;
+}
+
+.messageCarrierLineTicker :global(span) {
+  line-height: inherit;
+}
+
+.messageCarrierDot {
+  position: relative;
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--workbench-message-signal);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--workbench-assistant-transition-bg) 88%, transparent);
+  opacity: 1;
+}
+
+.messageCarrier[data-state="streaming"] .messageCarrierDot,
+.messageCarrier[data-state="priming"] .messageCarrierDot {
+  animation: workbenchMessageTriggerPulse 1.6s cubic-bezier(0.2, 0.82, 0.22, 1) infinite;
+}
+
+.messageCarrier[data-state="completed"],
+.messageCarrier[data-state="failed"] {
+  border-color: color-mix(in srgb, var(--workbench-message-signal) 42%, var(--color-border-subtle));
+  box-shadow:
+    var(--workbench-assistant-control-glass-shadow),
+    0 0 0 1px color-mix(in srgb, var(--workbench-message-signal) 18%, transparent),
+    0 0 24px color-mix(in srgb, var(--workbench-message-signal) 14%, transparent);
+}
+
 .dockHandle {
+  grid-area: dock;
   width: 30px;
   height: 30px;
   flex: 0 0 30px;
@@ -562,6 +1168,8 @@
 
 .dockHandle:hover,
 .dockHandle:focus-visible,
+.messageButton:hover,
+.messageButton:focus-visible,
 .headerActionButton:hover,
 .headerActionButton:focus-visible {
   background: var(--surface-hover);
@@ -569,6 +1177,31 @@
   color: var(--color-text-1);
   outline: none;
   transform: translateY(-1px);
+}
+
+.miniTurnNavigator:hover,
+.miniTurnNavigator:focus-within {
+  color: var(--color-text-1);
+  outline: none;
+}
+
+.miniTurnNavigator:hover .miniTurnNavigatorCount,
+.miniTurnNavigator:focus-within .miniTurnNavigatorCount {
+  color: color-mix(in srgb, var(--color-text-secondary) 84%, transparent);
+}
+
+.dockHandle:disabled:hover,
+.dockHandle:disabled:focus-visible,
+.messageButton:disabled:hover,
+.messageButton:disabled:focus-visible,
+.miniTurnNavigator[data-disabled="true"]:hover,
+.miniTurnNavigator[data-disabled="true"]:focus-within,
+.messageCarrier:disabled:hover,
+.messageCarrier:disabled:focus-visible {
+  background: var(--workbench-assistant-control-glass-bg);
+  border-color: color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  color: var(--color-text-3);
+  transform: none;
 }
 
 .headerActionButton[data-expanded="true"] {
@@ -620,36 +1253,42 @@
   box-shadow: none !important;
   --composer-bg: transparent;
   --composer-border: transparent;
-  --sendbox-keydex-min-height: 82px;
+  --sendbox-keydex-min-height: var(--workbench-assistant-input-open-height);
   --sendbox-keydex-input-min-height: 28px;
+  --sendbox-keydex-input-max-height: 96px;
   --sendbox-keydex-input-font-size: 13px;
   --sendbox-keydex-input-line-height: 1.42;
-  --sendbox-keydex-padding: 7px 12px 0;
+  --sendbox-keydex-padding: 6px 12px 0;
   --sendbox-keydex-toolbar-min-height: 32px;
-  --sendbox-keydex-toolbar-padding-bottom: 6px;
+  --sendbox-keydex-toolbar-padding-bottom: 4px;
   --sendbox-keydex-send-button-size: 30px;
   --sendbox-keydex-action-gap: 6px;
   --sendbox-keydex-shadow: none;
 }
 
+.chrome[data-shell-mode="composer"] .composerShell,
+.chrome[data-shell-mode="composer"] .composer {
+  height: auto;
+}
+
 .composer :global([aria-label="运行模型"]) {
-  width: 164px;
-  max-width: 164px;
-  flex: 0 0 164px;
+  width: auto;
+  max-width: min(240px, 36vw);
+  flex: 0 1 auto;
 }
 
 .composer :global([aria-label="运行模型"] > div),
 .composer :global([aria-label="运行模型"] button[aria-label="选择模型"]) {
-  width: 100%;
+  width: auto;
   max-width: 100%;
 }
 
 .composer :global([aria-label="运行模型"] button[aria-label="选择模型"]) {
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
 .composer :global([aria-label="运行模型"] button[aria-label="选择模型"] > span) {
-  max-width: 126px;
+  max-width: none;
 }
 
 .expandedLayer {
@@ -663,7 +1302,9 @@
   align-items: flex-end;
   padding: 0 0 160px;
   pointer-events: auto;
-  backdrop-filter: blur(5px);
+  background: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  backdrop-filter: blur(18px) saturate(1.18);
+  -webkit-backdrop-filter: blur(18px) saturate(1.18);
 }
 
 .expandedPanelFrame {
@@ -956,12 +1597,20 @@
 
 @keyframes dockOutComposerFrameToCapsule {
   0% {
-    grid-template-rows: var(--workbench-assistant-accessory-height) var(--workbench-assistant-input-open-height);
+    grid-template-rows:
+      var(--workbench-assistant-title-height)
+      var(--workbench-assistant-accessory-height)
+      0
+      var(--workbench-assistant-input-open-height);
     gap: 8px;
   }
 
   100% {
-    grid-template-rows: var(--workbench-assistant-accessory-height) var(--workbench-assistant-input-closed-height);
+    grid-template-rows:
+      var(--workbench-assistant-title-height)
+      var(--workbench-assistant-accessory-height)
+      0
+      var(--workbench-assistant-input-closed-height);
     gap: 6px;
   }
 }
@@ -1068,6 +1717,34 @@
   }
 }
 
+@keyframes workbenchMessageTriggerPulse {
+  0%,
+  100% {
+    opacity: 0.64;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes workbenchMessageCarrierUnfurl {
+  0% {
+    opacity: 0;
+    clip-path: inset(0 48% 0 48% round var(--radius-pill));
+  }
+
+  62% {
+    opacity: 1;
+    clip-path: inset(0 8% 0 8% round var(--radius-pill));
+  }
+
+  100% {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round var(--radius-pill));
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .composerFrame,
   .inputSurface,
@@ -1086,10 +1763,23 @@
   }
 
   .dockHandle,
+  .newSessionButton,
   .headerActionButton,
+  .messageButton,
+  .messageCarrier,
+  .messageCarrierText,
+  .miniTurnNavigator,
   .capsule,
   .miniComposer {
     transition: none;
+  }
+
+  .messageCarrierDot {
+    animation: none;
+  }
+
+  .messageCarrier {
+    clip-path: inset(0 0 0 0 round var(--radius-pill));
   }
 
 }

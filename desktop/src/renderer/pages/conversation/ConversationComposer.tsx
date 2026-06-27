@@ -21,6 +21,7 @@ export interface ConversationComposerProps {
   onSkillChange: (skill: WorkspaceSkillSummary | null) => void;
   onSend: (files?: SelectedFile[], quotes?: SelectedQuote[]) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
+  onEscape?: () => void;
   onOpenFileReference?: (file: SelectedFile) => void;
   externalFileRequest: { requestId: number; file: SelectedFile } | null;
   externalQuoteRequest: { requestId: number; quote: SelectedQuote } | null;
@@ -49,6 +50,7 @@ export function ConversationComposer({
   onSkillChange,
   onSend,
   onStop,
+  onEscape,
   onOpenFileReference,
   externalFileRequest,
   externalQuoteRequest,
@@ -92,6 +94,7 @@ export function ConversationComposer({
       onSkillChange={onSkillChange}
       onSend={onSend}
       onStop={onStop}
+      onEscape={onEscape}
       onOpenFileReference={onOpenFileReference}
       externalFileRequest={externalFileRequest}
       externalQuoteRequest={externalQuoteRequest}

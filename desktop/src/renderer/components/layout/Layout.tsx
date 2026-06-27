@@ -47,7 +47,8 @@ import { SidebarResizeHandle } from "./SidebarResizeHandle";
 import { Sider } from "./Sider";
 import { Titlebar } from "./Titlebar";
 import styles from "./Layout.module.css";
-import type { SiderEntry, WorkbenchWorkspaceSelectorProps } from "./Sider";
+import type { SiderEntry } from "./Sider";
+import type { WorkbenchWorkspaceSelectorProps } from "./workbenchWorkspaceSelector";
 
 const LazyWorkspaceFileBrowser = lazy(() =>
   import("@/renderer/components/workspace/WorkspaceFileBrowser").then((module) => ({
@@ -498,6 +499,7 @@ export function Layout({
           currentMode: appMode,
           onModeChange: switchAppMode,
         }}
+        workbenchWorkspaceSelector={workbenchWorkspaceSelector}
       />
 
       {showRuntimeStatus && runtimeConnection ? (
@@ -521,7 +523,6 @@ export function Layout({
           deleteActiveFallbackPath={deleteActiveFallbackPath}
           getSessionPath={getSessionPath}
           getWorkspaceNewConversationPath={getWorkspaceNewConversationPath}
-          workbenchWorkspaceSelector={workbenchWorkspaceSelector}
           onToggleSidebar={toggleSidebar}
           onNavigate={navigateFromShell}
         />

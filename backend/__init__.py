@@ -1,2 +1,2 @@
-"""Backend package for the local Codex-like agent server."""
+"""Backend package for the local agent server."""
 

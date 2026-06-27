@@ -12,6 +12,7 @@
   display: flex;
   align-items: center;
   gap: max(8px, calc(var(--sidebar-collapsed-width) - 40px));
+  min-width: 0;
 }
 
 .right {
@@ -88,6 +89,12 @@
 
 .modeButton[data-active="true"] {
   color: var(--color-text-1);
+}
+
+.workbenchWorkspaceSelector {
+  display: flex;
+  width: min(286px, 30vw);
+  min-width: 172px;
 }
 
 .dragRegion {

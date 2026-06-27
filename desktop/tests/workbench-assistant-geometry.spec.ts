@@ -173,6 +173,67 @@ describe("workbench assistant geometry", () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*\.drawerPanel/);
   });
 
+  it("keeps the live workbench message carrier separate from the header trigger", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/workbench/WorkbenchAssistantSurface.module.css"),
+      "utf8",
+    );
+    expect(css).toContain("messageButton");
+    expect(css).toContain("messageCarrier");
+    expect(css).toMatch(/\.messageButton\s*\{[\s\S]*grid-area: messageButton/);
+    expect(css).toMatch(/\.messageCarrier\s*\{[\s\S]*grid-area: messageCarrier/);
+    expect(css).toMatch(/\.messageCarrier\s*\{[\s\S]*box-sizing: border-box/);
+    expect(css).toMatch(/\.messageCarrier\s*\{[\s\S]*width: 100%/);
+    expect(css).toMatch(/\.messageCarrier\s*\{[\s\S]*height: 100%/);
+    expect(css).toMatch(/\.messageCarrier\s*\{[\s\S]*animation: workbenchMessageCarrierUnfurl/);
+    expect(css).toMatch(/@keyframes workbenchMessageCarrierUnfurl\s*\{[\s\S]*clip-path: inset\(0 48% 0 48% round var\(--radius-pill\)\)/);
+    expect(css).toMatch(/@keyframes workbenchMessageCarrierUnfurl\s*\{[\s\S]*clip-path: inset\(0 0 0 0 round var\(--radius-pill\)\)/);
+    expect(css).not.toContain("width: min(66%, 280px)");
+    expect(css).not.toContain("--workbench-message-trigger-enter-duration");
+    expect(css).not.toContain("transition-duration: 560ms");
+    expect(css).not.toMatch(/\.messageTrigger\[data-state="priming"\]/);
+  });
+
+  it("keeps the workbench message carrier hover as a lift state without a gray fill", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/workbench/WorkbenchAssistantSurface.module.css"),
+      "utf8",
+    );
+    const hoverRule = css.match(/\.messageCarrier:hover,\s*\.messageCarrier:focus-visible\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? "";
+
+    expect(hoverRule).toContain("background: var(--workbench-assistant-control-glass-bg)");
+    expect(hoverRule).not.toContain("background: var(--surface-hover)");
+    expect(hoverRule).toContain("transform: translateY(-1px)");
+  });
+
+  it("keeps the workbench message carrier dot and text vertically centered", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/workbench/WorkbenchAssistantSurface.module.css"),
+      "utf8",
+    );
+    const iconRule = css.match(/\.messageCarrierIcon\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? "";
+    const textRule = css.match(/\.messageCarrierText\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? "";
+    const dotRule = css.match(/\.messageCarrierDot\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? "";
+
+    expect(iconRule).toContain("align-self: center");
+    expect(iconRule).toContain("line-height: 0");
+    expect(textRule).toContain("align-self: center");
+    expect(dotRule).toContain("display: block");
+  });
+
+  it("keeps live workbench message carrier text free of fade refresh animation", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/workbench/WorkbenchAssistantSurface.module.css"),
+      "utf8",
+    );
+    const textRule = css.match(/\.messageCarrierText\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? "";
+
+    expect(css).not.toContain("data-refresh-animation");
+    expect(css).not.toContain("workbenchMessageCarrierTextRefresh");
+    expect(textRule).not.toContain("opacity 180ms");
+    expect(textRule).not.toContain("animation:");
+  });
+
   it("keeps the settled drawer chrome visually aligned with the morph endpoint", () => {
     const css = readFileSync(
       resolve(process.cwd(), "src/renderer/pages/workbench/WorkbenchAssistantSurface.module.css"),

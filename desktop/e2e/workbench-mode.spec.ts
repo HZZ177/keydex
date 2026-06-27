@@ -50,7 +50,8 @@ test("workbench picker, workspace switch and scoped session list stay workspace-
   await expect(page).toHaveURL(/\/workbench\/workspace-a$/);
   await expect(page.getByTestId("workbench-workspace-shell")).toBeVisible();
   await expect(page.getByTestId("workspace-file-browser")).toBeVisible();
-  await expect(page.getByTestId("workbench-sidebar-workspace-selector")).toBeVisible();
+  await expect(page.getByTestId("workbench-titlebar-workspace-selector")).toBeVisible();
+  await expect(page.getByTestId("workbench-titlebar-workspace-selector")).toContainText("keydex");
   await expect(page.getByRole("main", { name: "工作台" }).getByRole("button", { name: "选择工作区" })).toHaveCount(0);
   await expect(page.getByText("工作台 A 会话")).toBeVisible();
   await expect(page.getByText("工作台 B 会话")).toHaveCount(0);
@@ -58,7 +59,7 @@ test("workbench picker, workspace switch and scoped session list stay workspace-
   await saveEvidence(page, "e2e-004");
   await saveEvidence(page, "e2e-006");
 
-  await page.getByTestId("workbench-sidebar-workspace-selector").getByRole("button", { name: "选择工作区" }).click();
+  await page.getByTestId("workbench-titlebar-workspace-selector").getByRole("button", { name: "选择工作区" }).click();
   await page.getByRole("option", { name: /other/ }).click();
   await expect(page).toHaveURL(/\/workbench\/workspace-b$/);
   await expect(page.getByTestId("workbench-mode-page")).toHaveAttribute("data-workspace-id", WORKSPACE_B);

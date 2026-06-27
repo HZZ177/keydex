@@ -12,6 +12,7 @@ export interface ConversationTurnNavigationItem {
 export interface ConversationTurnNavigatorProps {
   turns: ConversationTurnNavigationItem[];
   activeIndex?: number | null;
+  layout?: "floating" | "contained";
   onNavigate: (index: number) => void;
 }
 
@@ -23,7 +24,12 @@ const MARKER_STEP_PX = 12;
 const MARKER_HIT_HEIGHT_PX = 14;
 const SCROLL_EDGE_PX = 24;
 
-export function ConversationTurnNavigator({ turns, activeIndex, onNavigate }: ConversationTurnNavigatorProps) {
+export function ConversationTurnNavigator({
+  turns,
+  activeIndex,
+  layout = "floating",
+  onNavigate,
+}: ConversationTurnNavigatorProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLDivElement>(null);
   const currentIndicatorRef = useRef<HTMLDivElement>(null);
@@ -224,8 +230,15 @@ export function ConversationTurnNavigator({ turns, activeIndex, onNavigate }: Co
       onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
       onClick={navigateHoveredTurn}
+      data-layout={layout}
       data-testid="conversation-turn-navigator"
-      style={{ "--turn-navigator-height": `${railHeight}px` } as CSSProperties}
+      style={
+        {
+          "--turn-navigator-height": layout === "contained" ? "100%" : `${railHeight}px`,
+          "--turn-navigator-rail-height": `${railHeight}px`,
+          ...(layout === "contained" ? { "--turn-navigator-width": "44px" } : {}),
+        } as CSSProperties
+      }
     >
       <div
         className={styles.turnNavigatorViewport}

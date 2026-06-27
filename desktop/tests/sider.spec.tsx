@@ -72,21 +72,13 @@ describe("Sider", () => {
         newConversationPath="/workbench/ws-1"
         getSessionPath={(sessionId) => `/workbench/ws-1/session/${sessionId}`}
         getWorkspaceNewConversationPath={(workspaceId) => `/workbench/${workspaceId ?? "ws-1"}`}
-        workbenchWorkspaceSelector={{
-          value: { type: "workspace", workspace: workspace("ws-1", "keydex") },
-          workspaces: [workspace("ws-1", "keydex"), workspace("ws-2", "kt-agent-framework")],
-          loading: false,
-          allowProjectFreeChat: false,
-          onSelectWorkspace: vi.fn(),
-        }}
         deleteActiveFallbackPath="/workbench/ws-1"
         onNavigate={onNavigate}
       />,
     );
 
     expect(runtime.conversation.listSessions).not.toHaveBeenCalled();
-    expect(screen.getByTestId("workbench-sidebar-workspace-selector")).not.toBeNull();
-    expect(screen.getByLabelText("选择工作区").textContent).toContain("keydex");
+    expect(screen.queryByLabelText("选择工作区")).toBeNull();
     expect(screen.getByRole("button", { name: "工作台会话" }).getAttribute("aria-current")).toBe("page");
     expect(screen.queryByRole("region", { name: "项目" })).toBeNull();
     expect(screen.queryByRole("region", { name: "对话" })).toBeNull();

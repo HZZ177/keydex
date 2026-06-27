@@ -3,6 +3,8 @@ import type { MouseEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { AppMode } from "@/renderer/components/layout/appMode";
+import type { WorkbenchWorkspaceSelectorProps } from "@/renderer/components/layout/workbenchWorkspaceSelector";
+import { WorkspaceSelector } from "@/renderer/components/workspace";
 
 import styles from "./Titlebar.module.css";
 import { createWindowControls } from "./windowControls";
@@ -17,14 +19,18 @@ export interface TitlebarProps {
     currentMode: AppMode;
     onModeChange: (mode: AppMode) => void;
   };
+  workbenchWorkspaceSelector?: WorkbenchWorkspaceSelectorProps;
 }
 
 export function Titlebar({
   title,
   modeSwitch,
+  workbenchWorkspaceSelector,
   windowControls,
 }: TitlebarProps) {
   const controls = useMemo(() => windowControls ?? createWindowControls(), [windowControls]);
+  const titlebarWorkspaceSelector =
+    modeSwitch?.currentMode === "workbench" ? workbenchWorkspaceSelector : undefined;
 
   const handleDrag = (event: MouseEvent<HTMLElement>) => {
     if (event.button !== 0 || isInteractiveTitlebarTarget(event.target)) {
@@ -52,6 +58,20 @@ export function Titlebar({
           <img alt="" draggable={false} src={APP_ICON_SRC} />
         </div>
         {modeSwitch ? <ModeSwitch modeSwitch={modeSwitch} /> : null}
+        {titlebarWorkspaceSelector ? (
+          <div
+            className={styles.workbenchWorkspaceSelector}
+            data-testid="workbench-titlebar-workspace-selector"
+            data-titlebar-interactive="true"
+          >
+            <WorkspaceSelector
+              {...titlebarWorkspaceSelector}
+              allowProjectFreeChat={false}
+              placement="bottom"
+              variant="titlebar"
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className={styles.dragRegion} data-tauri-drag-region>

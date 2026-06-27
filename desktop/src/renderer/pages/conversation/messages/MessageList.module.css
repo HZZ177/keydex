@@ -46,13 +46,37 @@
 
 .root[data-message-list-variant="overlay"] {
   --message-list-bottom-buffer: 96px;
-  --message-list-inline-padding: 22px;
-  --message-list-max-width: min(760px, 100%);
-  --message-user-bubble-max-width: min(620px, calc(100% - 36px));
+  --message-list-inline-padding: 26px;
+  --message-list-max-width: min(720px, 100%);
+  --message-user-bubble-max-width: min(600px, calc(100% - 36px));
   --message-context-chip-max-width: min(320px, 100%);
   --message-notice-max-width: min(720px, 100%);
   --message-inline-tool-detail-width: min(720px, 100%);
   --message-tool-detail-width: min(720px, calc(100% - 28px));
+  --message-user-bubble-bg:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-bg-elevated) 54%, transparent),
+      color-mix(in srgb, var(--color-bg-elevated) 38%, transparent)
+    );
+  --message-user-bubble-border: 1px solid color-mix(in srgb, var(--color-border-subtle) 58%, transparent);
+  --message-user-bubble-shadow: 0 12px 32px rgb(15 23 42 / 8%), 0 1px 4px rgb(15 23 42 / 4%);
+  --message-user-bubble-backdrop-filter: blur(18px) saturate(1.16);
+  --message-assistant-bubble-bg:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-bg-elevated) 46%, transparent),
+      color-mix(in srgb, var(--color-bg-elevated) 30%, transparent)
+    );
+  --message-assistant-bubble-border: 1px solid color-mix(in srgb, var(--color-border-subtle) 52%, transparent);
+  --message-assistant-bubble-radius: 15px;
+  --message-assistant-bubble-shadow: 0 14px 36px rgb(15 23 42 / 8%), 0 1px 5px rgb(15 23 42 / 4%);
+  --message-assistant-bubble-padding: 11px 13px;
+  --message-assistant-bubble-backdrop-filter: blur(20px) saturate(1.18);
+  --turn-navigator-content-right: max(26px, calc((100cqw - 720px) / 2 + 26px));
+  --turn-navigator-edge: 12px;
+  --turn-navigator-gap: 10px;
+  --turn-navigator-width: 48px;
   background: transparent;
 }
 
@@ -222,6 +246,24 @@
   text-align: center;
 }
 
+.root[data-message-list-variant="overlay"] .empty {
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 58%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-bg-elevated) 44%, transparent);
+  box-shadow: 0 12px 34px rgb(15 23 42 / 7%);
+  padding: 10px 16px;
+  -webkit-backdrop-filter: blur(18px) saturate(1.14);
+  backdrop-filter: blur(18px) saturate(1.14);
+}
+
+.root[data-message-list-variant="overlay"] .item[data-kind="user"] .content {
+  border: var(--message-user-bubble-border);
+  background: var(--message-user-bubble-bg);
+  box-shadow: var(--message-user-bubble-shadow);
+  -webkit-backdrop-filter: var(--message-user-bubble-backdrop-filter);
+  backdrop-filter: var(--message-user-bubble-backdrop-filter);
+}
+
 .skeletonWrap {
   width: min(var(--message-list-max-width), calc(100% - (var(--message-list-inline-padding) * 2)));
   min-width: 0;
@@ -274,6 +316,16 @@
   overflow: visible;
 }
 
+.turnNavigator[data-layout="contained"] {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: var(--turn-navigator-width, 44px);
+  height: 100%;
+  max-height: 100%;
+  transform: none;
+}
+
 .turnNavigatorViewport {
   position: relative;
   width: 100%;
@@ -292,12 +344,20 @@
   -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
 }
 
+.turnNavigator[data-layout="contained"] .turnNavigatorViewport {
+  height: 100%;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .turnNavigatorRail {
   --turn-marker-line-height: 2px;
   --turn-marker-line-radius: var(--radius-pill);
   position: relative;
   width: 100%;
-  height: var(--turn-navigator-height);
+  height: var(--turn-navigator-rail-height, var(--turn-navigator-height));
 }
 
 .turnNavigatorMarker {
@@ -371,6 +431,28 @@
   background: color-mix(in srgb, #f59e0b 88%, var(--color-text-primary) 12%);
 }
 
+.turnNavigator[data-layout="contained"] .turnNavigatorMarker,
+.turnNavigator[data-layout="contained"] .turnNavigatorCurrentIndicator {
+  justify-content: center;
+  padding: 0;
+}
+
+.turnNavigator[data-layout="contained"] .turnNavigatorMarker span,
+.turnNavigator[data-layout="contained"] .turnNavigatorCurrentIndicator span {
+  transform-origin: center;
+}
+
+.turnNavigator[data-layout="contained"] .turnNavigatorCard {
+  right: calc(100% + 10px);
+  width: 248px;
+  max-width: min(248px, calc(100vw - 96px));
+  border-color: color-mix(in srgb, var(--color-border-subtle) 68%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 74%, transparent);
+  box-shadow: 0 16px 38px rgb(15 23 42 / 12%), 0 2px 10px rgb(15 23 42 / 7%);
+  -webkit-backdrop-filter: blur(18px) saturate(1.14);
+  backdrop-filter: blur(18px) saturate(1.14);
+}
+
 .turnNavigatorCurrentIndicator[data-entering="true"] span {
   animation: turnNavigatorMarkerGrow 180ms var(--motion-ease-out) both;
 }
@@ -392,6 +474,18 @@
   padding: 11px 12px 12px;
   pointer-events: none;
   animation: turnNavigatorCardIn 120ms ease both;
+}
+
+.root[data-message-list-variant="overlay"] .turnNavigatorMarker span {
+  background: color-mix(in srgb, var(--color-text-secondary) 54%, transparent);
+}
+
+.root[data-message-list-variant="overlay"] .turnNavigatorCard {
+  border-color: color-mix(in srgb, var(--color-border-subtle) 68%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 68%, transparent);
+  box-shadow: 0 18px 44px rgb(15 23 42 / 12%), 0 2px 10px rgb(15 23 42 / 6%);
+  -webkit-backdrop-filter: blur(20px) saturate(1.16);
+  backdrop-filter: blur(20px) saturate(1.16);
 }
 
 .turnNavigatorCard strong {

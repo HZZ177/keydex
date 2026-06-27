@@ -15,6 +15,8 @@ export interface RuntimeModelSelectorProps {
   onOpenModelSettings?: () => void;
 }
 
+const MENU_EXIT_ANIMATION_MS = 120;
+
 export function RuntimeModelSelector({
   model,
   modelOptions,
@@ -28,7 +30,9 @@ export function RuntimeModelSelector({
   const menuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const menuCloseTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
+  const [menuClosing, setMenuClosing] = useState(false);
   const [query, setQuery] = useState("");
   const [activeModelIndex, setActiveModelIndex] = useState(-1);
   const hasModels = modelOptions.length > 0;
@@ -48,18 +52,49 @@ export function RuntimeModelSelector({
     return modelOptions.filter((modelId) => modelId.toLowerCase().includes(keyword));
   }, [modelOptions, query]);
 
+  const clearMenuCloseTimer = () => {
+    if (menuCloseTimerRef.current !== null) {
+      window.clearTimeout(menuCloseTimerRef.current);
+      menuCloseTimerRef.current = null;
+    }
+  };
+
+  const openMenu = () => {
+    clearMenuCloseTimer();
+    setMenuClosing(false);
+    setQuery("");
+    setOpen(true);
+  };
+
+  const closeMenu = () => {
+    if (!open && !menuClosing) {
+      return;
+    }
+    clearMenuCloseTimer();
+    setOpen(false);
+    if (prefersReducedMotion()) {
+      setMenuClosing(false);
+      return;
+    }
+    setMenuClosing(true);
+    menuCloseTimerRef.current = window.setTimeout(() => {
+      setMenuClosing(false);
+      menuCloseTimerRef.current = null;
+    }, MENU_EXIT_ANIMATION_MS);
+  };
+
   useEffect(() => {
     if (!open) {
       return;
     }
     const handlePointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
+        closeMenu();
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setOpen(false);
+        closeMenu();
       }
     };
     document.addEventListener("pointerdown", handlePointerDown);
@@ -72,11 +107,13 @@ export function RuntimeModelSelector({
 
   useEffect(() => {
     if (disabledButton) {
-      setOpen(false);
+      closeMenu();
       setQuery("");
       setActiveModelIndex(-1);
     }
   }, [disabledButton]);
+
+  useEffect(() => () => clearMenuCloseTimer(), []);
 
   useEffect(() => {
     if (!open) {
@@ -105,18 +142,17 @@ export function RuntimeModelSelector({
 
   const toggleMenu = () => {
     if (open) {
-      setOpen(false);
+      closeMenu();
       return;
     }
-    setQuery("");
-    setOpen(true);
+    openMenu();
   };
 
   const chooseModel = (modelId: string) => {
     onModelChange(modelId);
     setQuery("");
     setActiveModelIndex(-1);
-    setOpen(false);
+    closeMenu();
   };
 
   const moveActiveModel = (direction: 1 | -1) => {
@@ -150,7 +186,7 @@ export function RuntimeModelSelector({
     }
     if (event.key === "Escape") {
       event.preventDefault();
-      setOpen(false);
+      closeMenu();
     }
   };
 
@@ -158,6 +194,7 @@ export function RuntimeModelSelector({
     open && activeModelIndex >= 0 && filteredModels[activeModelIndex]
       ? `${menuId}-option-${activeModelIndex}`
       : undefined;
+  const menuVisible = open || menuClosing;
 
   return (
     <div className={styles.modelCluster} ref={rootRef} aria-label="运行模型">
@@ -177,8 +214,13 @@ export function RuntimeModelSelector({
           <ChevronDown size={15} strokeWidth={1.9} aria-hidden="true" />
         </button>
 
-        {open ? (
-          <div className={styles.menu} data-placement={placement}>
+        {menuVisible ? (
+          <div
+            className={styles.menu}
+            data-placement={placement}
+            data-state={menuClosing ? "closing" : "open"}
+            aria-hidden={menuClosing ? "true" : undefined}
+          >
             <div className={styles.menuLabel}>模型</div>
             <label className={styles.searchBox}>
               <Search size={13} strokeWidth={1.9} aria-hidden="true" />
@@ -235,6 +277,14 @@ export function RuntimeModelSelector({
         </button>
       ) : null}
     </div>
+  );
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
 }
 

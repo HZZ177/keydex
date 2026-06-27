@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge, WorkspaceEntry, WorkspaceSubtreeResponse, WorkspaceTreeResponse } from "@/runtime";
 import { WorkspaceFileBrowser, WorkspacePanel } from "@/renderer/components/workspace";
+import { APP_FIND_SHORTCUT_EVENT } from "@/renderer/events/findShortcut";
 
 describe("WorkspacePanel", () => {
   it("renders cwd, expands directories and selects files", async () => {
@@ -177,6 +178,70 @@ describe("WorkspacePanel", () => {
     expect((screen.getByRole("searchbox", { name: "筛选文件" }) as HTMLInputElement).value).toBe("");
     expect(screen.getByRole("button", { name: "选择文件 package.json" }).getAttribute("data-selected")).toBe("true");
     expect(screen.getByText("desktop")).not.toBeNull();
+  });
+
+  it("focuses the file filter from the tree with Ctrl+F", async () => {
+    const runtime = fakeRuntime({
+      "": [
+        entry("desktop", "desktop", "directory"),
+        entry("package.json", "package.json", "file", 12),
+      ],
+    });
+
+    render(<WorkspacePanel chrome="panel" sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+
+    const treeButton = await screen.findByRole("button", { name: "展开 desktop" });
+    const filterInput = screen.getByRole("searchbox", { name: "筛选文件" });
+    treeButton.focus();
+    expect(document.activeElement).toBe(treeButton);
+
+    fireEvent.keyDown(treeButton, { key: "f", ctrlKey: true });
+
+    expect(document.activeElement).toBe(filterInput);
+
+    treeButton.focus();
+    expect(document.activeElement).toBe(treeButton);
+    act(() => {
+      document.dispatchEvent(
+        new CustomEvent(APP_FIND_SHORTCUT_EVENT, {
+          detail: { sourceTarget: treeButton },
+        }),
+      );
+    });
+
+    expect(document.activeElement).toBe(filterInput);
+  });
+
+  it("navigates visible file tree entries from the focused file filter", async () => {
+    const runtime = fakeRuntime({
+      "": [
+        entry("desktop", "desktop", "directory"),
+        entry("package.json", "package.json", "file", 12),
+      ],
+    });
+    const onSelectFile = vi.fn();
+
+    render(<WorkspacePanel chrome="panel" sessionId="ses-1" label="D:/repo" runtime={runtime} onSelectFile={onSelectFile} />);
+
+    const filterInput = (await screen.findByRole("searchbox", { name: "筛选文件" })) as HTMLInputElement;
+    filterInput.focus();
+    const directoryButton = screen.getByRole("button", { name: "展开 desktop" });
+    const fileButton = screen.getByRole("button", { name: "选择文件 package.json" });
+
+    await waitFor(() => {
+      expect(directoryButton.getAttribute("data-keyboard-active")).toBe("true");
+    });
+
+    fireEvent.keyDown(filterInput, { key: "ArrowDown" });
+
+    expect(fileButton.getAttribute("data-keyboard-active")).toBe("true");
+    expect(directoryButton.getAttribute("data-keyboard-active")).toBeNull();
+
+    expect(document.activeElement).toBe(filterInput);
+
+    fireEvent.keyDown(filterInput, { key: "Enter" });
+
+    expect(onSelectFile).toHaveBeenCalledWith("package.json");
   });
 
   it("supports parent-controlled file selection and type icons", async () => {

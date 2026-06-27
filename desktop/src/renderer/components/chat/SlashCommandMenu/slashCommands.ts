@@ -11,16 +11,6 @@ export interface SlashCommand {
   searchText?: string;
 }
 
-export const defaultSlashCommands: SlashCommand[] = [
-  {
-    id: "clear",
-    kind: "builtin",
-    label: "/clear",
-    title: "清空输入",
-    description: "清空当前输入框内容",
-  },
-];
-
 export function skillGroupSlashCommand(skills: WorkspaceSkillSummary[] = []): SlashCommand {
   return {
     id: "skill",
@@ -47,7 +37,7 @@ export function skillToSlashCommand(skill: WorkspaceSkillSummary): SlashCommand 
 }
 
 export function buildSlashCommands(skills: WorkspaceSkillSummary[] = []): SlashCommand[] {
-  return skills.length ? [skillGroupSlashCommand(skills), ...defaultSlashCommands] : [...defaultSlashCommands];
+  return [skillGroupSlashCommand(skills)];
 }
 
 export function getSlashQuery(value: string): string | null {

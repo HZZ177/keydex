@@ -83,6 +83,7 @@ export interface SendBoxProps {
   onChange: (value: string) => void;
   onSend: (files: SelectedFile[], quotes: SelectedQuote[]) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
+  onEscape?: () => void;
   onOpenFileReference?: (file: SelectedFile) => void;
   onSlashCommand?: (command: SlashCommand) => void;
   onListWorkspaceDirectory?: (path: string) => Promise<WorkspaceSearchResult[]>;
@@ -126,6 +127,7 @@ export function SendBox({
   onChange,
   onSend,
   onStop,
+  onEscape,
   onOpenFileReference,
   onSlashCommand,
   onListWorkspaceDirectory,
@@ -233,12 +235,6 @@ export function SendBox({
       setSlashMode("root");
     }
   }, [dismissedSlashValue, slashMode, slashQuery]);
-
-  useEffect(() => {
-    if (slashMode === "skills" && workspaceSkills.length === 0) {
-      setSlashMode("root");
-    }
-  }, [slashMode, workspaceSkills.length]);
 
   useEffect(() => {
     setAtActiveIndex(0);
@@ -352,14 +348,6 @@ export function SendBox({
     onSlashCommand?.(command);
     if (command.kind === "skill" && command.skill) {
       selectSlashSkill(command.skill);
-      return;
-    }
-    if (command.id === "clear") {
-      setDismissedSlashValue(editorValue);
-      setSlashMode("root");
-      onChange("");
-      dispatchQuoteSelection({ type: "clear" });
-      setSelectedSkill(null);
       return;
     }
     onChange(replaceSlashQuery(editorValue, `${command.label} `));
@@ -518,6 +506,12 @@ export function SendBox({
         return;
       }
     }
+    if (event.key === "Escape" && onEscape) {
+      event.preventDefault();
+      event.stopPropagation();
+      onEscape();
+      return;
+    }
     if (event.key === "Enter" && event.shiftKey) {
       event.preventDefault();
       insertPlainText("\n");
@@ -536,6 +530,7 @@ export function SendBox({
       syncEditableChange(event.currentTarget, (nextValue) => {
         onChange(nextValue);
       });
+      resizeEditableInput(event.currentTarget);
     },
     [onChange],
   );
@@ -1242,8 +1237,16 @@ function normalizeEditorText(text: string): string {
 }
 
 function resizeEditableInput(input: HTMLElement) {
+  const computedStyle = window.getComputedStyle(input);
+  const minHeight = parseCssPixelValue(computedStyle.minHeight, 44);
+  const maxHeight = parseCssPixelValue(computedStyle.maxHeight, 188);
   input.style.height = "0px";
-  input.style.height = `${Math.min(Math.max(input.scrollHeight, 44), 188)}px`;
+  input.style.height = `${Math.min(Math.max(input.scrollHeight, minHeight), maxHeight)}px`;
+}
+
+function parseCssPixelValue(value: string, fallback: number): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function scrollEditableToBottom(input: HTMLElement) {

@@ -33,6 +33,14 @@ describe("workspace file browser layout", () => {
     expect(browser).toMatch(/\.outlineItem\s*{[^}]*transition:[^}]*max-height/s);
     expect(browser).toMatch(/\.outlineItem\[data-visible="false"\]\s*{[^}]*max-height:\s*0/s);
   });
+
+  it("keeps the directory tree scrollbar aligned with the main sidebar", () => {
+    const panel = readSource("renderer/components/workspace/WorkspacePanel.module.css");
+
+    expect(panel).toMatch(/\.tree\s*{[^}]*scrollbar-width:\s*auto/s);
+    expect(panel).toMatch(/\.tree::-webkit-scrollbar\s*{[^}]*width:\s*10px/s);
+    expect(panel).toMatch(/\.tree::-webkit-scrollbar\s*{[^}]*height:\s*10px/s);
+  });
 });
 
 function readSource(relativePath: string): string {

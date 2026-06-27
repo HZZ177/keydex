@@ -28,10 +28,15 @@
 
 .userMessage .bubble {
   max-width: var(--message-user-bubble-max-width, min(568px, calc(100% - 36px)));
+  border: var(--message-user-bubble-border, 0);
   border-radius: var(--radius-lg);
-  background: var(--surface-muted);
+  background: var(--message-user-bubble-bg, var(--surface-muted));
+  background-clip: padding-box;
+  box-shadow: var(--message-user-bubble-shadow, none);
   color: var(--color-text-primary);
   padding: 10px 14px;
+  -webkit-backdrop-filter: var(--message-user-bubble-backdrop-filter, none);
+  backdrop-filter: var(--message-user-bubble-backdrop-filter, none);
 }
 
 .userMessage .bubble:empty {
@@ -40,6 +45,14 @@
 
 .assistantMessage .bubble {
   width: 100%;
+  border: var(--message-assistant-bubble-border, 0);
+  border-radius: var(--message-assistant-bubble-radius, 0);
+  background: var(--message-assistant-bubble-bg, transparent);
+  background-clip: padding-box;
+  box-shadow: var(--message-assistant-bubble-shadow, none);
+  padding: var(--message-assistant-bubble-padding, 0);
+  -webkit-backdrop-filter: var(--message-assistant-bubble-backdrop-filter, none);
+  backdrop-filter: var(--message-assistant-bubble-backdrop-filter, none);
 }
 
 .protocolNotice {

@@ -17,7 +17,7 @@ export interface WorkspaceSelectorProps {
   readOnly?: boolean;
   loading?: boolean;
   placement?: "top" | "bottom";
-  variant?: "default" | "sidebar";
+  variant?: "default" | "sidebar" | "titlebar";
   allowProjectFreeChat?: boolean;
   onSelectChat?: () => void;
   onSelectWorkspace?: (workspace: Workspace) => void;
@@ -28,6 +28,7 @@ export interface WorkspaceSelectorProps {
 type WorkspaceMenuOption = { type: "workspace"; key: string; workspace: Workspace } | { type: "chat"; key: string };
 
 const chatOptionKey = "chat";
+const MENU_EXIT_ANIMATION_MS = 120;
 
 export function WorkspaceSelector({
   value,
@@ -47,7 +48,9 @@ export function WorkspaceSelector({
   const rootRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const addMenuCloseTimerRef = useRef<number | null>(null);
+  const menuCloseTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
+  const [menuClosing, setMenuClosing] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [manualPathOpen, setManualPathOpen] = useState(false);
   const [manualPath, setManualPath] = useState("");
@@ -102,6 +105,44 @@ export function WorkspaceSelector({
     }
   };
 
+  const clearMenuCloseTimer = () => {
+    if (menuCloseTimerRef.current !== null) {
+      window.clearTimeout(menuCloseTimerRef.current);
+      menuCloseTimerRef.current = null;
+    }
+  };
+
+  const openMenu = () => {
+    clearMenuCloseTimer();
+    setMenuClosing(false);
+    setQuery("");
+    setAddError(null);
+    setAddMenuOpen(false);
+    setManualPathOpen(false);
+    setManualPath("");
+    setOpen(true);
+  };
+
+  const closeMenu = () => {
+    clearAddMenuCloseTimer();
+    setAddMenuOpen(false);
+    setManualPathOpen(false);
+    if (!open && !menuClosing) {
+      return;
+    }
+    clearMenuCloseTimer();
+    setOpen(false);
+    if (prefersReducedMotion()) {
+      setMenuClosing(false);
+      return;
+    }
+    setMenuClosing(true);
+    menuCloseTimerRef.current = window.setTimeout(() => {
+      setMenuClosing(false);
+      menuCloseTimerRef.current = null;
+    }, MENU_EXIT_ANIMATION_MS);
+  };
+
   const openAddMenu = () => {
     clearAddMenuCloseTimer();
     setAddMenuOpen(true);
@@ -137,12 +178,12 @@ export function WorkspaceSelector({
     }
     const handlePointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
+        closeMenu();
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setOpen(false);
+        closeMenu();
       }
     };
     document.addEventListener("pointerdown", handlePointerDown);
@@ -155,7 +196,7 @@ export function WorkspaceSelector({
 
   useEffect(() => {
     if (!canOpen) {
-      setOpen(false);
+      closeMenu();
       setActiveOptionIndex(-1);
     }
   }, [canOpen]);
@@ -192,35 +233,33 @@ export function WorkspaceSelector({
     optionRefs.current.get(activeOption.key)?.scrollIntoView?.({ block: "nearest" });
   }, [activeOptionIndex, open, selectableOptions]);
 
-  useEffect(() => () => clearAddMenuCloseTimer(), []);
+  useEffect(
+    () => () => {
+      clearAddMenuCloseTimer();
+      clearMenuCloseTimer();
+    },
+    [],
+  );
 
   const toggleOpen = () => {
     if (!canOpen) {
       return;
     }
-    setOpen((current) => {
-      const next = !current;
-      if (next) {
-        setQuery("");
-        setAddError(null);
-        setAddMenuOpen(false);
-        setManualPathOpen(false);
-        setManualPath("");
-      }
-      return next;
-    });
+    if (open) {
+      closeMenu();
+      return;
+    }
+    openMenu();
   };
 
   const chooseChat = () => {
     onSelectChat?.();
-    closeAddMenu();
-    setOpen(false);
+    closeMenu();
   };
 
   const chooseWorkspace = (workspace: Workspace) => {
     onSelectWorkspace?.(workspace);
-    closeAddMenu();
-    setOpen(false);
+    closeMenu();
   };
 
   const chooseActiveOption = () => {
@@ -269,8 +308,7 @@ export function WorkspaceSelector({
     try {
       await onAddWorkspace(selectedPath);
       setQuery("");
-      closeAddMenu();
-      setOpen(false);
+      closeMenu();
     } catch (reason) {
       setAddError(errorMessage(reason));
     } finally {
@@ -292,8 +330,7 @@ export function WorkspaceSelector({
     try {
       await onAddWorkspace(trimmed);
       setManualPath("");
-      closeAddMenu();
-      setOpen(false);
+      closeMenu();
     } catch (reason) {
       setAddError(errorMessage(reason));
     } finally {
@@ -328,7 +365,7 @@ export function WorkspaceSelector({
     }
     if (event.key === "Escape") {
       event.preventDefault();
-      setOpen(false);
+      closeMenu();
     }
   };
 
@@ -337,6 +374,7 @@ export function WorkspaceSelector({
       ? `${menuId}-option-${activeOptionIndex}`
       : undefined;
   const chatSelectableIndex = selectableOptions.findIndex((option) => option.key === chatOptionKey);
+  const menuVisible = open || menuClosing;
 
   return (
     <div className={styles.root} ref={rootRef} data-readonly={readOnly ? "true" : "false"} data-variant={variant}>
@@ -360,8 +398,16 @@ export function WorkspaceSelector({
         {!readOnly ? <ChevronDown size={14} strokeWidth={1.9} aria-hidden="true" /> : null}
       </button>
 
-      {open ? (
-        <div className={styles.menu} data-placement={placement} id={menuId} role="dialog" aria-label="工作区选择">
+      {menuVisible ? (
+        <div
+          className={styles.menu}
+          data-placement={placement}
+          data-state={menuClosing ? "closing" : "open"}
+          id={menuId}
+          role="dialog"
+          aria-label="工作区选择"
+          aria-hidden={menuClosing ? "true" : undefined}
+        >
           <div className={styles.menuLabel}>工作区</div>
           <label className={styles.searchBox}>
             <Search size={13} strokeWidth={1.9} aria-hidden="true" />
@@ -556,4 +602,12 @@ function errorMessage(reason: unknown): string {
     return (reason as { message: string }).message;
   }
   return "添加工作区失败";
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
 }

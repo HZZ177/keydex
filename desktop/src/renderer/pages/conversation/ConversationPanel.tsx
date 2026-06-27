@@ -1,7 +1,7 @@
 import type { RuntimeBridge } from "@/runtime";
 import { ConversationComposerAccessory } from "@/renderer/pages/conversation/ComposerAccessory";
 
-import { MessageList, type MessageListTurnNavigatorMode } from "./messages";
+import { MessageList, type MessageListTurnNavigationRequest, type MessageListTurnNavigatorMode } from "./messages";
 import type { ConversationPanelModel } from "./useConversationPanelModel";
 
 import styles from "./ConversationPanel.module.css";
@@ -16,6 +16,7 @@ export interface ConversationPanelProps {
   emptyTestId?: string;
   scrollButtonMode?: "inline" | "external";
   turnNavigatorMode?: MessageListTurnNavigatorMode;
+  turnNavigationRequest?: MessageListTurnNavigationRequest | null;
   className?: string;
 }
 
@@ -27,6 +28,7 @@ export function ConversationPanel({
   emptyTestId = "message-empty",
   scrollButtonMode = "inline",
   turnNavigatorMode,
+  turnNavigationRequest,
   className = "",
 }: ConversationPanelProps) {
   return (
@@ -52,6 +54,7 @@ export function ConversationPanel({
         onLoadOlder={model.loadOlderHistory}
         scrollButtonMode={scrollButtonMode}
         turnNavigatorMode={turnNavigatorMode}
+        turnNavigationRequest={turnNavigationRequest}
         onScrollControlsChange={model.updateScrollControls}
         emptyText={emptyText}
         emptyTestId={emptyTestId}

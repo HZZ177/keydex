@@ -16,7 +16,8 @@ import {
   WORKBENCH_PATH,
 } from "./appMode";
 import { Layout } from "./Layout";
-import type { SiderEntry, WorkbenchWorkspaceSelectorProps } from "./Sider";
+import type { SiderEntry } from "./Sider";
+import type { WorkbenchWorkspaceSelectorProps } from "./workbenchWorkspaceSelector";
 
 const EventReplayHarness = lazy(() =>
   import("@/renderer/devtools/EventReplayHarness").then((module) => ({ default: module.EventReplayHarness })),

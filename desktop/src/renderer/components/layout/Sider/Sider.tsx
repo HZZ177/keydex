@@ -22,7 +22,6 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import type { AppMode } from "@/renderer/components/layout/appMode";
-import { WorkspaceSelector, type WorkspaceSelectorProps } from "@/renderer/components/workspace";
 import { subscribeSessionCreated } from "@/renderer/events/sessionEvents";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
@@ -63,17 +62,6 @@ const EMPTY_SESSION_INDICATOR: SessionIndicator = {
 const WORKSPACE_SESSION_PREVIEW_LIMIT = 5;
 const WORKSPACE_SESSION_HISTORY_PAGE_SIZE = 100;
 
-export type WorkbenchWorkspaceSelectorProps = Pick<
-  WorkspaceSelectorProps,
-  | "value"
-  | "workspaces"
-  | "loading"
-  | "allowProjectFreeChat"
-  | "onSelectWorkspace"
-  | "onAddWorkspace"
-  | "onPickWorkspacePath"
->;
-
 export interface SiderProps {
   collapsed?: boolean;
   appMode?: AppMode;
@@ -86,7 +74,6 @@ export interface SiderProps {
   deleteActiveFallbackPath?: string;
   getSessionPath?: (sessionId: string) => string;
   getWorkspaceNewConversationPath?: (workspaceId?: string) => string;
-  workbenchWorkspaceSelector?: WorkbenchWorkspaceSelectorProps;
   onToggleSidebar?: () => void;
   onNavigate?: (path: string) => void;
 }
@@ -103,7 +90,6 @@ export function Sider({
   deleteActiveFallbackPath = "/guid",
   getSessionPath = conversationPath,
   getWorkspaceNewConversationPath = newWorkspaceConversationPath,
-  workbenchWorkspaceSelector,
   onToggleSidebar,
   onNavigate,
 }: SiderProps) {
@@ -396,16 +382,6 @@ export function Sider({
 
       {appMode === "workbench" ? (
         <div className={styles.workbenchHistory} aria-label="工作台会话历史">
-          {!collapsed && workbenchWorkspaceSelector ? (
-            <div className={styles.workbenchWorkspaceSwitcher} data-testid="workbench-sidebar-workspace-selector">
-              <WorkspaceSelector
-                {...workbenchWorkspaceSelector}
-                allowProjectFreeChat={false}
-                placement="bottom"
-                variant="sidebar"
-              />
-            </div>
-          ) : null}
           <div
             className={styles.history}
             aria-label="会话历史"

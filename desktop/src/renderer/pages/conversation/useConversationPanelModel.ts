@@ -151,15 +151,19 @@ export function useConversationPanelModel({
     if (!controller.selectedSkill) {
       return;
     }
+    if (!workspaceAvailable) {
+      controller.setSelectedSkill(null);
+      return;
+    }
     if (
-      !workspaceAvailable ||
+      workspaceSkillsState.status === "ready" &&
       !workspaceSkills.some(
         (skill) => skill.name === controller.selectedSkill?.name && skill.source === controller.selectedSkill?.source,
       )
     ) {
       controller.setSelectedSkill(null);
     }
-  }, [controller, workspaceAvailable, workspaceSkills]);
+  }, [controller, workspaceAvailable, workspaceSkills, workspaceSkillsState.status]);
 
   useEffect(() => {
     return () => {
