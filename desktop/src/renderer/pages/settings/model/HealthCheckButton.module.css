@@ -19,11 +19,24 @@
   line-height: var(--ui-line-height-tight);
   padding: 0 8px;
   white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
 }
 
 .button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
   color: var(--color-text-primary);
+  transform: translateY(-1px);
+}
+
+.button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
 }
 
 .button[data-status="healthy"] {

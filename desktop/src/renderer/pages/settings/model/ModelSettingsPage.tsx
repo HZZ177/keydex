@@ -123,8 +123,25 @@ function ProviderCard({
   provider: ModelProvider;
   runtime: RuntimeBridge;
 }) {
+  const notifications = useNotifications();
   const [expanded, setExpanded] = useState(false);
+  const [updatingEnabled, setUpdatingEnabled] = useState(false);
   const enabledModels = provider.models.filter((model) => provider.model_enabled[model] !== false);
+
+  async function toggleProviderEnabled() {
+    if (updatingEnabled) {
+      return;
+    }
+    setUpdatingEnabled(true);
+    try {
+      const updated = await runtime.models.updateProvider(provider.id, { enabled: !provider.enabled });
+      onProviderChange(updated);
+    } catch (reason) {
+      notifications.error(errorMessage(reason));
+    } finally {
+      setUpdatingEnabled(false);
+    }
+  }
 
   return (
     <article className={styles.card} data-testid="provider-card">
@@ -146,11 +163,18 @@ function ProviderCard({
             <span>{provider.models.length} 个模型</span>
             <span>{enabledModels.length} 个启用</span>
           </span>
-          <span
-            className={styles.switchTrack}
-            aria-label={`${provider.name} 启用状态`}
-            data-checked={provider.enabled ? "true" : "false"}
-          >
+        </button>
+        <button
+          aria-checked={provider.enabled}
+          aria-label={`${provider.name} 启用状态`}
+          className={styles.providerSwitch}
+          data-updating={updatingEnabled ? "true" : "false"}
+          disabled={updatingEnabled}
+          onClick={() => void toggleProviderEnabled()}
+          role="switch"
+          type="button"
+        >
+          <span className={styles.switchTrack} data-checked={provider.enabled ? "true" : "false"}>
             <span />
           </span>
         </button>

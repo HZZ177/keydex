@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ModelHealth, ModelProvider, RuntimeBridge } from "@/runtime";
 import { HealthCheckButton } from "@/renderer/pages/settings/model";
+import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 
 describe("HealthCheckButton", () => {
   it("runs health check and displays healthy latency", async () => {
@@ -18,7 +20,7 @@ describe("HealthCheckButton", () => {
     });
     const onProviderChange = vi.fn();
 
-    render(
+    renderHealthCheckButton(
       <HealthCheckButton
         model="qwen3-coder"
         onProviderChange={onProviderChange}
@@ -47,7 +49,7 @@ describe("HealthCheckButton", () => {
       checkModelHealth: vi.fn().mockResolvedValue({ provider: provider(), health }),
     });
 
-    render(
+    renderHealthCheckButton(
       <HealthCheckButton
         model="qwen3-coder"
         onProviderChange={vi.fn()}
@@ -67,7 +69,7 @@ describe("HealthCheckButton", () => {
       checkModelHealth: vi.fn().mockRejectedValue(new Error("供应商不存在")),
     });
 
-    render(
+    renderHealthCheckButton(
       <HealthCheckButton
         model="qwen3-coder"
         onProviderChange={vi.fn()}
@@ -81,6 +83,10 @@ describe("HealthCheckButton", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("供应商不存在");
   });
 });
+
+function renderHealthCheckButton(ui: ReactElement) {
+  return render(<NotificationProvider>{ui}</NotificationProvider>);
+}
 
 function provider(overrides: Partial<ModelProvider> = {}): ModelProvider {
   return {

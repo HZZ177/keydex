@@ -615,9 +615,10 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2.25px solid color-mix(in srgb, var(--color-text-4) 44%, transparent);
-  border-top-color: color-mix(in srgb, var(--color-text-2) 84%, transparent);
+  border: 2.25px solid color-mix(in srgb, var(--color-text-3) 62%, transparent);
+  border-top-color: color-mix(in srgb, var(--color-text-1) 90%, transparent);
   border-radius: var(--radius-pill);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sidebar-bg) 62%, transparent);
   animation: historySpinner 1100ms linear infinite;
 }
 
@@ -1039,7 +1040,7 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   width: 19px;
   height: 19px;
   place-items: center;
-  color: currentColor;
+  color: var(--color-text-2);
 }
 
 .collapsedSessionCard {

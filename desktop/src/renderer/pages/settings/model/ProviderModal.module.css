@@ -56,6 +56,11 @@
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
 }
 
 .iconButton:hover {
@@ -92,6 +97,15 @@
   font: inherit;
   font-size: 12px;
   padding: 0 10px;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
+}
+
+.field input:hover {
+  border-color: color-mix(in srgb, var(--color-border-default) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-hover) 42%, transparent);
 }
 
 .field input:focus {
@@ -115,6 +129,15 @@
   border-radius: 8px;
   background: transparent;
   padding: 11px 12px;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out);
+}
+
+.toggleRow:hover {
+  border-color: color-mix(in srgb, var(--color-border-default) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-hover) 42%, transparent);
 }
 
 .toggleRow span {
@@ -164,6 +187,12 @@
   border-radius: var(--radius-pill);
   padding: 0 10px;
   font-size: 11px;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
 }
 
 .confirmBox button:first-child {
@@ -199,6 +228,12 @@
   font-size: 12px;
   line-height: var(--ui-line-height-tight);
   padding: 0 13px;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
 }
 
 .primaryButton {
@@ -219,7 +254,36 @@
 .primaryButton:hover:not(:disabled),
 .secondaryButton:hover:not(:disabled),
 .dangerButton:hover:not(:disabled) {
-  filter: brightness(0.96);
+  filter: none;
+  transform: translateY(-1px);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text-primary) 88%, #fff);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
+  color: var(--color-text-primary);
+}
+
+.dangerButton:hover:not(:disabled),
+.confirmBox button:first-child:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 88%, #fff);
+}
+
+.confirmBox button:last-child:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
+  color: var(--color-text-primary);
+}
+
+.iconButton:focus-visible,
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible,
+.dangerButton:focus-visible,
+.confirmBox button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
 }
 
 .primaryButton:disabled,

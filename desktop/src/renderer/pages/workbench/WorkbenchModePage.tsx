@@ -26,6 +26,7 @@ export interface WorkbenchModePageProps {
   onPickWorkspacePath?: () => Promise<string | null>;
   onSessionSelected?: (sessionId: string) => void;
   onSessionCreated?: (session: AgentSession) => void;
+  onRequestNewSession?: () => void;
 }
 
 interface WorkbenchFilePreviewRequest {
@@ -47,6 +48,7 @@ export function WorkbenchModePage({
   onPickWorkspacePath,
   onSessionSelected,
   onSessionCreated,
+  onRequestNewSession,
 }: WorkbenchModePageProps) {
   const previewContext = useOptionalPreview();
   const handledFilePanelRequestIdRef = useRef(previewContext?.filePanelRequest?.requestId ?? 0);
@@ -96,9 +98,12 @@ export function WorkbenchModePage({
     },
     [onSessionCreated, onSessionSelected, runtime, workspaceId],
   );
-  const createWorkbenchSession = useCallback(async () => {
-    await ensureWorkbenchSession({ title: "新会话" });
-  }, [ensureWorkbenchSession]);
+  const requestNewWorkbenchSession = useCallback(() => {
+    if (!workspaceId) {
+      return;
+    }
+    onRequestNewSession?.();
+  }, [onRequestNewSession, workspaceId]);
   const assistantController = useAgentSessionController({
     runtime,
     sessionId: selectedSessionId ?? "",
@@ -215,7 +220,7 @@ export function WorkbenchModePage({
             workspace={selectedWorkspace}
             controller={assistantController}
             creatingSession={creatingSession}
-            onCreateSession={createWorkbenchSession}
+            onRequestNewSession={onRequestNewSession ? requestNewWorkbenchSession : undefined}
             onDockTransitionChange={setDockTransitioning}
             onDockTransitionLayoutChange={setDockTransitionLayout}
           />

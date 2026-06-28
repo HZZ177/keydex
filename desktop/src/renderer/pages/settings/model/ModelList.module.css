@@ -21,6 +21,20 @@
   background: color-mix(in srgb, var(--surface-muted) 58%, transparent);
   color: var(--color-text-tertiary);
   padding: 0 10px;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
+}
+
+.search:hover,
+.search:focus-within {
+  border-color: color-mix(in srgb, var(--color-border-default) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-hover) 46%, var(--color-bg-elevated));
+}
+
+.search:focus-within {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 12%, transparent);
 }
 
 .search input {
@@ -54,11 +68,24 @@
   padding: 0 12px;
   background: var(--surface-muted);
   color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
 }
 
 .toolbar button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
   color: var(--color-text-primary);
+  transform: translateY(-1px);
+}
+
+.toolbar button:focus-visible,
+.switchButton:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
 }
 
 .toolbar button:disabled,
@@ -73,6 +100,25 @@
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--color-border-subtle) 76%, transparent);
   border-radius: 8px;
+}
+
+.loading {
+  display: flex;
+  min-height: 76px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-hover) 42%, transparent);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.loading svg {
+  color: var(--color-text-secondary);
+  animation: spin 0.9s linear infinite;
 }
 
 .row {
@@ -109,6 +155,15 @@
   border-radius: var(--radius-pill);
   background: var(--color-border-3);
   padding: 2px;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
+}
+
+.switchButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-border-default) 52%, var(--surface-hover));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text-primary) 7%, transparent);
 }
 
 .switchButton span {
@@ -122,6 +177,10 @@
 
 .switchButton[aria-pressed="true"] {
   background: var(--color-accent);
+}
+
+.switchButton[aria-pressed="true"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 88%, #fff);
 }
 
 .switchButton[aria-pressed="true"] span {
@@ -167,5 +226,11 @@
   .healthCell {
     grid-column: 1 / -1;
     justify-self: start;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }

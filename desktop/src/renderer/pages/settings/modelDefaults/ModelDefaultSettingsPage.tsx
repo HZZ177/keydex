@@ -194,13 +194,16 @@ function DefaultCard({
         <SearchableModelDropdown
           value={selected}
           options={modelOptions}
-          clearable={optional}
+          clearable={optional && modelOptions.length > 0}
           clearLabel="不配置"
-          disabled={!modelOptions.length}
           placeholder={optional ? "不配置" : "选择模型"}
           menuLabel={title}
           searchPlaceholder="搜索供应商或模型"
-          emptyText="没有匹配模型"
+          emptyText={
+            modelOptions.length
+              ? "没有匹配模型"
+              : "当前无可用模型，请先在供应商配置页面配置可用渠道"
+          }
           variant="field"
           onChange={(selection) => onModelChange(scope, selection)}
         />

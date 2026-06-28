@@ -1,3 +1,4 @@
+import { LoaderCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { ModelProvider, RuntimeBridge } from "@/runtime";
@@ -70,7 +71,12 @@ export function ModelList({ provider, runtime, onProviderChange }: ModelListProp
         </button>
       </div>
 
-      {!provider.models.length ? (
+      {refreshing ? (
+        <div className={styles.loading} role="status" aria-label="正在刷新模型列表">
+          <LoaderCircle size={14} aria-hidden="true" />
+          <span>正在刷新模型列表</span>
+        </div>
+      ) : !provider.models.length ? (
         <p className={styles.empty}>尚未刷新模型列表</p>
       ) : (
         <div className={styles.rows} aria-label={`${provider.name} 模型列表`}>

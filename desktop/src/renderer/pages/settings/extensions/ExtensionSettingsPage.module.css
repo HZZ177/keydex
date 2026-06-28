@@ -103,6 +103,7 @@
   width: 40px;
   height: 24px;
   align-items: center;
+  cursor: pointer;
 }
 
 .toggle input {
@@ -127,6 +128,15 @@
     box-shadow var(--motion-fast) var(--motion-ease-standard);
 }
 
+.toggle:hover .toggleTrack,
+.toggle input:focus-visible + .toggleTrack {
+  box-shadow: 0 0 0 3px color-mix(in srgb, #3399ff 16%, transparent);
+}
+
+.toggle:hover .toggleTrack {
+  background: color-mix(in srgb, var(--color-border-default) 52%, var(--surface-hover));
+}
+
 .toggleThumb {
   position: absolute;
   top: 3px;
@@ -143,24 +153,33 @@
   background: #3399ff;
 }
 
-.toggle input:checked + .toggleTrack .toggleThumb {
-  transform: translateX(16px);
+.toggle:hover input:checked + .toggleTrack {
+  background: color-mix(in srgb, #3399ff 88%, #fff);
 }
 
-.toggle input:focus-visible + .toggleTrack {
-  box-shadow: 0 0 0 3px color-mix(in srgb, #3399ff 24%, transparent);
+.toggle input:checked + .toggleTrack .toggleThumb {
+  transform: translateX(16px);
 }
 
 .numberInput {
   width: 160px;
   height: 34px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 10px;
   background: var(--surface-muted);
   color: var(--color-text-primary);
   font: inherit;
   font-size: 13px;
   padding: 0 11px;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
+}
+
+.numberInput:hover {
+  border-color: color-mix(in srgb, var(--color-border-default) 62%, transparent);
+  background: color-mix(in srgb, var(--surface-hover) 68%, var(--color-bg-elevated));
 }
 
 .numberInput:focus {
@@ -191,6 +210,22 @@
   color: var(--color-text-primary);
   font-size: 12px;
   padding: 0 10px;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.warning button:hover {
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
+  transform: translateY(-1px);
+}
+
+.warning button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
 }
 
 .fieldError {
@@ -218,6 +253,21 @@
   font-size: 13px;
   line-height: var(--ui-line-height-tight);
   padding: 0 18px;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.actions button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text-primary) 88%, #fff);
+  transform: translateY(-1px);
+}
+
+.actions button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
 }
 
 .actions button:disabled {

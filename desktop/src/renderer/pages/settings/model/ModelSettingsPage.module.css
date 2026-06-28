@@ -38,6 +38,13 @@
   border-radius: var(--radius-pill);
   font-size: 12px;
   line-height: var(--ui-line-height-tight);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
 }
 
 .primaryButton {
@@ -50,6 +57,15 @@
 
 .primaryButton:hover {
   background: color-mix(in srgb, var(--color-text-primary) 88%, #fff);
+  transform: translateY(-1px);
+}
+
+.primaryButton:focus-visible,
+.empty button:focus-visible,
+.rowActions button:focus-visible,
+.cardHeader:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 16%, transparent);
 }
 
 .muted {
@@ -83,6 +99,11 @@
   padding: 0 12px;
   background: var(--surface-muted);
   color: var(--color-text-primary);
+}
+
+.empty button:hover {
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
+  transform: translateY(-1px);
 }
 
 .settingsGroup {
@@ -148,7 +169,7 @@
 
 .providerRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   min-height: 58px;
@@ -163,7 +184,7 @@
 .cardHeader {
   display: grid;
   width: 100%;
-  grid-template-columns: 20px minmax(0, 1fr) auto auto;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   border: 0;
@@ -171,11 +192,17 @@
   padding: 12px 14px;
   color: inherit;
   text-align: left;
+  cursor: pointer;
   transition: background var(--motion-fast) var(--motion-ease-out);
 }
 
 .cardHeader:hover {
-  background: transparent;
+  background: color-mix(in srgb, var(--surface-hover) 46%, transparent);
+}
+
+.cardHeader:hover .chevron,
+.cardHeader:focus-visible .chevron {
+  color: var(--color-text-secondary);
 }
 
 .chevron {
@@ -241,6 +268,9 @@
   border-radius: var(--radius-pill);
   background: var(--color-border-3);
   padding: 2px;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
 }
 
 .switchTrack span {
@@ -258,6 +288,43 @@
 
 .switchTrack[data-checked="true"] span {
   transform: translateX(14px);
+}
+
+.providerSwitch {
+  display: inline-flex;
+  width: 42px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.providerSwitch:hover:not(:disabled),
+.providerSwitch:focus-visible {
+  outline: 0;
+  background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
+}
+
+.providerSwitch:hover:not(:disabled) .switchTrack,
+.providerSwitch:focus-visible .switchTrack {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+}
+
+.providerSwitch:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.providerSwitch:disabled {
+  cursor: default;
+  opacity: 0.58;
 }
 
 .cardBody {
@@ -357,6 +424,7 @@
 .rowActions button:hover {
   background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
   color: var(--color-text-primary);
+  transform: translateY(-1px);
 }
 
 @media (max-width: 760px) {
@@ -382,11 +450,12 @@
   }
 
   .providerRow {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     padding-right: 0;
   }
 
   .rowActions {
+    grid-column: 1 / -1;
     padding: 0 12px 10px 46px;
   }
 

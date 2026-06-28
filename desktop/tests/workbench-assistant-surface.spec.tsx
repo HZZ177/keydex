@@ -631,7 +631,7 @@ describe("WorkbenchAssistantSurface", () => {
   });
 
   it("renders a quick new session button beside the status capsule", async () => {
-    const createSession = vi.fn();
+    const requestNewSession = vi.fn();
     render(
       <WorkbenchSurfaceTestProviders>
         <WorkbenchAssistantSurface
@@ -639,7 +639,7 @@ describe("WorkbenchAssistantSurface", () => {
           workspaceId="ws-1"
           workspace={workspace()}
           controller={fakeController()}
-          onCreateSession={createSession}
+          onRequestNewSession={requestNewSession}
         />
       </WorkbenchSurfaceTestProviders>,
     );
@@ -648,7 +648,7 @@ describe("WorkbenchAssistantSurface", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "新会话" }));
 
-    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(requestNewSession).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "将工作台助手展开到右侧" }));
     await waitForSurfaceMode("drawer");
@@ -657,13 +657,13 @@ describe("WorkbenchAssistantSurface", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "新会话" }));
 
-    expect(createSession).toHaveBeenCalledTimes(2);
+    expect(requestNewSession).toHaveBeenCalledTimes(2);
     await act(async () => {
       await Promise.resolve();
     });
   });
 
-  it("keeps the drawer docked when creating a new session changes the bound session", async () => {
+  it("keeps the drawer docked when requesting a new session changes the bound session", async () => {
     render(
       <WorkbenchSurfaceTestProviders>
         <WorkbenchSessionSwitchHarness />
@@ -1482,7 +1482,7 @@ function WorkbenchSessionSwitchHarness() {
         workspaceId="ws-1"
         workspace={workspace()}
         controller={controller}
-        onCreateSession={() => setSessionId("ses-2")}
+        onRequestNewSession={() => setSessionId("ses-2")}
       />
     </>
   );

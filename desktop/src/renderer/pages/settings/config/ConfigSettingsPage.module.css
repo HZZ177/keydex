@@ -130,12 +130,23 @@
   color: var(--color-text-primary);
   padding: 0 9px 0 12px;
   text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
 }
 
 .policyTrigger:hover:not(:disabled),
 .policyTrigger:focus-visible {
   background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
+  border-color: color-mix(in srgb, var(--color-border-default) 64%, transparent);
   outline: none;
+}
+
+.policyTrigger:focus-visible {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
 }
 
 .policyTrigger:disabled {
@@ -255,6 +266,13 @@
 .rowActions button:hover {
   background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
   color: var(--color-text-primary);
+  transform: translateY(-1px);
+}
+
+.iconButton:focus-visible,
+.rowActions button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
 }
 
 .table {

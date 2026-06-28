@@ -42,6 +42,22 @@ describe("ModelDefaultSettingsPage", () => {
     expect(screen.getAllByLabelText("选择模型")[1].textContent).toContain("不配置");
   });
 
+  it("keeps model default dropdowns openable when no models are available", async () => {
+    const runtime = fakeRuntime([provider({ models: [] })]);
+
+    renderWithNotifications(<ModelDefaultSettingsPage runtime={runtime} />);
+
+    expect(await screen.findByText("默认值")).not.toBeNull();
+    expect(screen.getByText("1 个供应商 · 0 个可用模型")).not.toBeNull();
+
+    const trigger = screen.getAllByLabelText("选择模型")[0] as HTMLButtonElement;
+    expect(trigger.disabled).toBe(false);
+    fireEvent.click(trigger);
+
+    expect(screen.getByRole("listbox", { name: "默认对话模型" })).not.toBeNull();
+    expect(screen.getByText("当前无可用模型，请先在供应商配置页面配置可用渠道")).not.toBeNull();
+  });
+
   it("saves chat and fast model defaults", async () => {
     const saveModelDefaults = vi.fn((payload: UpdateModelDefaultsPayload) =>
       Promise.resolve(modelDefaultsResponse(payload.defaults.default_chat, payload.defaults.fast)),

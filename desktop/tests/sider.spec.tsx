@@ -522,6 +522,52 @@ describe("Sider", () => {
     expect(screen.getByRole("button", { name: "当前会话" }).querySelector('[data-unread="true"]')).toBeNull();
   });
 
+  it("updates loaded session titles from realtime title update events", async () => {
+    let emit: (event: AgentActionEnvelope) => void = () => undefined;
+    const runtime = fakeRuntime([thread({ id: "thread-a", title: "临时标题", title_source: "auto_candidate" })]);
+    const channel: ChatChannel = {
+      close: vi.fn(),
+      getStatus: vi.fn<() => WsConnectionStatus>(() => "open"),
+      getSessionId: vi.fn(() => null),
+      createSession: vi.fn(),
+      bindSession: vi.fn(),
+      unbindSession: vi.fn(),
+      chat: vi.fn(),
+      approvalDecision: vi.fn(),
+      cancel: vi.fn(),
+      requestStatus: vi.fn(),
+      ping: vi.fn(),
+    };
+    runtime.conversation.openChatChannel = vi.fn((onEvent, options?: { onStatus?: (status: "open") => void }) => {
+      emit = onEvent;
+      options?.onStatus?.("open");
+      return channel;
+    });
+
+    renderSider(
+      <AgentSessionProvider runtime={runtime}>
+        <Sider runtime={runtime} activePath="/conversation/thread-a" />
+      </AgentSessionProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "临时标题" })).not.toBeNull();
+
+    act(() => {
+      emit({
+        action: "session_title_updated",
+        data: {
+          session_id: "thread-a",
+          title: "自动标题",
+          title_source: "auto",
+          updated_at: "2026-06-17T11:00:00Z",
+        },
+      });
+    });
+
+    expect(screen.getByRole("button", { name: "自动标题" })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "临时标题" })).toBeNull();
+  });
+
   it("keeps waiting approval indicator visible until approval is resolved", async () => {
     let emit: (event: AgentActionEnvelope) => void = () => undefined;
     const onNavigate = vi.fn();

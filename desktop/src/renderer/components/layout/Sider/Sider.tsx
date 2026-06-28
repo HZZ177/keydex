@@ -22,7 +22,11 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import type { AppMode } from "@/renderer/components/layout/appMode";
-import { subscribeSessionCreated } from "@/renderer/events/sessionEvents";
+import {
+  subscribeSessionCreated,
+  subscribeSessionUpdated,
+  type AgentSessionUpdate,
+} from "@/renderer/events/sessionEvents";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
@@ -253,6 +257,15 @@ export function Sider({
     }
     return subscribeSessionCreated((session) => {
       setLoadedSessions((items) => upsertSession(items, session));
+    });
+  }, [controlled]);
+
+  useEffect(() => {
+    if (controlled) {
+      return;
+    }
+    return subscribeSessionUpdated((session) => {
+      setLoadedSessions((items) => mergeSessionUpdate(items, session));
     });
   }, [controlled]);
 
@@ -1275,6 +1288,18 @@ function sessionGroupMeta(session: AgentSession): Pick<SiderGroup, "id" | "title
 
 function upsertSession(sessions: AgentSession[], session: AgentSession): AgentSession[] {
   return mergeSessions(sessions, [session]);
+}
+
+function mergeSessionUpdate(sessions: AgentSession[], update: AgentSessionUpdate): AgentSession[] {
+  const existing = sessions.find((session) => session.id === update.id);
+  if (!existing) {
+    return sessions;
+  }
+  return mergeSessions(sessions, [{ ...existing, ...definedSessionUpdate(update) }]);
+}
+
+function definedSessionUpdate(update: AgentSessionUpdate): AgentSessionUpdate {
+  return Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined)) as AgentSessionUpdate;
 }
 
 function mergeSessions(sessions: AgentSession[], incoming: AgentSession[]): AgentSession[] {

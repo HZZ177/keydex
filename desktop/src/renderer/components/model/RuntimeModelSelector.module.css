@@ -10,9 +10,12 @@
   color: var(--color-text-tertiary);
   font-size: 13px;
   line-height: 1.28;
+  cursor: pointer;
   transition:
     background var(--motion-fast) ease,
-    color var(--motion-fast) ease;
+    color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease,
+    transform var(--motion-fast) ease;
 }
 
 .modelPill:hover,
@@ -24,6 +27,7 @@
 .modelPill:focus-within,
 .settingsButton:focus-visible {
   outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
 }
 
 .modelCluster {
@@ -193,6 +197,7 @@
   line-height: 1.28;
   padding: 0 7px;
   text-align: left;
+  cursor: pointer;
 }
 
 .option:hover,

@@ -13,6 +13,7 @@ import {
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
 import type { RuntimeSelectedModel } from "@/renderer/components/model";
+import { emitSessionEventsFromRuntimeEvent } from "@/renderer/events/sessionEvents";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import {
   agentConversationReducer,
@@ -169,6 +170,7 @@ export function useAgentSessionController({
     (event: AgentActionEnvelope) => {
       onRuntimeEvent?.(event);
       dispatch({ type: "event/receive", event });
+      emitSessionEventsFromRuntimeEvent(event);
     },
     [dispatch, onRuntimeEvent],
   );

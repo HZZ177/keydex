@@ -355,6 +355,12 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
     },
     [decodedWorkspaceId, navigate],
   );
+  const handleWorkbenchNewSessionRequested = useCallback(() => {
+    if (!decodedWorkspaceId) {
+      return;
+    }
+    void navigate(workbenchPath(decodedWorkspaceId));
+  }, [decodedWorkspaceId, navigate]);
 
   return (
     <RoutedLayout
@@ -394,6 +400,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
         onPickWorkspacePath={pickWorkspacePath}
         onSessionSelected={handleWorkbenchSessionSelected}
         onSessionCreated={handleWorkbenchSessionCreated}
+        onRequestNewSession={handleWorkbenchNewSessionRequested}
       />
     </RoutedLayout>
   );

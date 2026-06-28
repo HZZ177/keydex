@@ -62,7 +62,7 @@ export function SearchableModelDropdown({
     ? options.find((option) => optionKey(option.providerId, option.model) === selectedKey)
     : null;
   const displayLabel = selectedOption ? selectedOption.model : placeholder;
-  const disabledButton = disabled || (!clearable && !options.length);
+  const disabledButton = disabled;
 
   const filteredModels = useMemo(() => {
     const keyword = query.trim().toLowerCase();

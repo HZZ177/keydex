@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -22,6 +22,34 @@ describe("ModelList", () => {
       expect(runtime.models.refreshProviderModels).toHaveBeenCalledWith("provider-1");
     });
     expect(onProviderChange).toHaveBeenCalledWith(updated);
+  });
+
+  it("shows model list loading immediately while refreshing models", async () => {
+    const updated = provider({ models: ["qwen3-coder", "deepseek-coder"] });
+    const deferred = createDeferred<ModelProvider>();
+    const runtime = fakeRuntime({ refreshProviderModels: vi.fn(() => deferred.promise) });
+    const onProviderChange = vi.fn();
+
+    renderWithNotifications(
+      <ModelList
+        onProviderChange={onProviderChange}
+        provider={provider({ models: ["qwen3-coder"] })}
+        runtime={runtime}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新模型" }));
+
+    expect(screen.getByRole("status", { name: "正在刷新模型列表" })).not.toBeNull();
+    expect(screen.queryByText("qwen3-coder")).toBeNull();
+
+    await act(async () => {
+      deferred.resolve(updated);
+      await deferred.promise;
+    });
+    await waitFor(() => {
+      expect(onProviderChange).toHaveBeenCalledWith(updated);
+    });
   });
 
   it("filters refreshed model list by search keyword", () => {
@@ -110,4 +138,14 @@ function fakeRuntime(overrides: Partial<RuntimeBridge["models"]> = {}): RuntimeB
       ...overrides,
     },
   } as unknown as RuntimeBridge;
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
 }

@@ -19,6 +19,7 @@ import {
   type WsConnectionStatus,
 } from "@/runtime";
 import type { AgentActionEnvelope } from "@/types/protocol";
+import { emitSessionEventsFromRuntimeEvent } from "@/renderer/events/sessionEvents";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import {
   agentConversationReducer,
@@ -90,6 +91,7 @@ export function AgentSessionProvider({
 
   const receiveRuntimeEvent = useCallback((event: AgentActionEnvelope) => {
     dispatch({ type: "event/receive", event });
+    emitSessionEventsFromRuntimeEvent(event);
     for (const listener of eventListenersRef.current) {
       listener(event);
     }

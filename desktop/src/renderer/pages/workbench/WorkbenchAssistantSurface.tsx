@@ -108,7 +108,7 @@ export interface WorkbenchAssistantSurfaceProps {
   workspace?: Workspace | null;
   controller: AgentSessionController;
   creatingSession?: boolean;
-  onCreateSession?: () => Promise<void> | void;
+  onRequestNewSession?: () => Promise<void> | void;
   onDockTransitionChange?: (transitioning: boolean) => void;
   onDockTransitionLayoutChange?: (state: WorkbenchAssistantDockTransitionState) => void;
 }
@@ -118,7 +118,7 @@ export function WorkbenchAssistantSurface({
   workspaceId,
   controller,
   creatingSession = false,
-  onCreateSession,
+  onRequestNewSession,
   onDockTransitionChange,
   onDockTransitionLayoutChange,
 }: WorkbenchAssistantSurfaceProps) {
@@ -709,9 +709,9 @@ export function WorkbenchAssistantSurface({
     [controller.draft, finishMessageTriggerPriming, surfaceMode],
   );
 
-  const createSessionFromCapsule = useCallback(() => {
-    void onCreateSession?.();
-  }, [onCreateSession]);
+  const requestNewSessionFromCapsule = useCallback(() => {
+    void onRequestNewSession?.();
+  }, [onRequestNewSession]);
 
   const closeExpandedLayer = useCallback(() => {
     if (surfaceMode !== "expanded") {
@@ -971,7 +971,7 @@ export function WorkbenchAssistantSurface({
               data-message-trigger-state={messageTriggerLayoutState}
               data-message-trigger-visible={messageButtonVisible ? "true" : "false"}
               data-mini-navigator-visible={showMiniTurnNavigator ? "true" : "false"}
-              data-new-session-enabled={onCreateSession ? "true" : "false"}
+              data-new-session-enabled={onRequestNewSession ? "true" : "false"}
               data-session-title-visible={sessionTitleVisible ? "true" : "false"}
               data-testid={renderDrawerContent ? "workbench-assistant-drawer-composer-frame" : "workbench-assistant-composer-frame"}
             >
@@ -989,14 +989,14 @@ export function WorkbenchAssistantSurface({
                 >
                   {accessory}
                 </motion.div>
-                {onCreateSession ? (
+                {onRequestNewSession ? (
                   <motion.button
                     className={styles.newSessionButton}
                     type="button"
                     aria-label="新会话"
                     title="新会话"
                     disabled={creatingSession}
-                    onClick={createSessionFromCapsule}
+                    onClick={requestNewSessionFromCapsule}
                   >
                     <SquarePen size={14} />
                   </motion.button>

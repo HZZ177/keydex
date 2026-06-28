@@ -66,6 +66,23 @@
   font-size: 12px;
   line-height: var(--ui-line-height-tight);
   padding: 0 12px;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.empty button:hover {
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
+  color: var(--color-text-primary);
+  transform: translateY(-1px);
+}
+
+.empty button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
 }
 
 .settingsGroup {
@@ -113,10 +130,16 @@
   min-height: 64px;
   border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
   padding: 12px 14px;
+  transition: background-color var(--motion-fast) var(--motion-ease-out);
+}
+
+.defaultCard:hover {
+  background: color-mix(in srgb, var(--surface-hover) 38%, transparent);
 }
 
 .defaultCard:focus-within {
   z-index: 20;
+  background: color-mix(in srgb, var(--surface-hover) 42%, transparent);
 }
 
 .defaultCard:first-child {
@@ -166,6 +189,21 @@
   font-size: 12px;
   line-height: var(--ui-line-height-tight);
   padding: 0 14px;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.actions button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text-primary) 88%, #fff);
+  transform: translateY(-1px);
+}
+
+.actions button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
 }
 
 .actions button:disabled {

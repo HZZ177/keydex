@@ -260,24 +260,16 @@ describe("AppRouter", () => {
     expect(screen.queryByLabelText("展开右侧栏")).toBeNull();
   });
 
-  it("creates a blank workspace-owned session from the workbench assistant new-session button", async () => {
+  it("enters a blank workbench session route from the assistant new-session button", async () => {
     const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"]);
 
     fireEvent.click(await screen.findByRole("button", { name: "新会话" }, { timeout: 10000 }));
 
     await waitFor(() => {
-      expect(runtime.conversation.createSession).toHaveBeenCalledWith({
-        title: "新会话",
-        session_tag: "chat",
-        sessionType: "workspace",
-        workspaceId: "workspace A",
-      });
+      expect(screen.getByTestId("workbench-mode-page").getAttribute("data-selected-session-id")).toBe("");
     });
-    await waitFor(() => {
-      expect(screen.getByTestId("workbench-mode-page").getAttribute("data-selected-session-id")).toBe(
-        "new-workbench-session",
-      );
-    });
+    expect(runtime.conversation.createSession).not.toHaveBeenCalled();
+    expect(screen.getByTestId("workbench-assistant-session-title").getAttribute("data-empty")).toBe("true");
   });
 
   it("searches files from the workbench assistant with the current workspace scope", async () => {

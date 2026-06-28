@@ -74,6 +74,28 @@ describe("ModelSettingsPage", () => {
     expect(cardHeader.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("toggles provider enabled state without expanding the provider card", async () => {
+    const updated = provider({ enabled: false });
+    const runtime = fakeRuntime([provider()], { updateProvider: vi.fn().mockResolvedValue(updated) });
+
+    renderWithNotifications(<ModelSettingsPage runtime={runtime} />);
+
+    const providerName = await screen.findByText("默认模型服务");
+    const cardHeader = providerName.closest("button") as HTMLButtonElement;
+    expect(cardHeader.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(screen.getByRole("switch", { name: "默认模型服务 启用状态" }));
+
+    await waitFor(() => {
+      expect(runtime.models.updateProvider).toHaveBeenCalledWith("provider-1", { enabled: false });
+    });
+    expect(cardHeader.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("密钥")).toBeNull();
+    expect(screen.getByRole("switch", { name: "默认模型服务 启用状态" }).getAttribute("aria-checked")).toBe(
+      "false",
+    );
+  });
+
   it("renders empty state and create action", async () => {
     const onCreateProvider = vi.fn();
     const runtime = fakeRuntime([]);
