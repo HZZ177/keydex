@@ -77,8 +77,12 @@ function Set-RustBuildJobs {
         [int]$Jobs
     )
     $env:CARGO_BUILD_JOBS = [string]$Jobs
+    $env:CARGO_PROFILE_RELEASE_OPT_LEVEL = "1"
+    $env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16"
+    $env:CARGO_PROFILE_RELEASE_LTO = "false"
     Write-Host ""
     Write-Host "Rust 构建并发：CARGO_BUILD_JOBS=$env:CARGO_BUILD_JOBS"
+    Write-Host "Rust release 低内存配置：opt-level=$env:CARGO_PROFILE_RELEASE_OPT_LEVEL, codegen-units=$env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS, lto=$env:CARGO_PROFILE_RELEASE_LTO"
 }
 
 function Clear-RustCrateArtifacts {
@@ -116,6 +120,33 @@ function Clear-RustCrateArtifacts {
                 }
         }
     }
+}
+
+function Test-LocalNsisCache {
+    param(
+        [string]$NsisDir
+    )
+    $requiredFiles = @(
+        "makensis.exe",
+        "Bin\makensis.exe",
+        "Stubs\lzma-x86-unicode",
+        "Stubs\lzma_solid-x86-unicode",
+        "Include\MUI2.nsh",
+        "Include\FileFunc.nsh",
+        "Include\x64.nsh",
+        "Include\nsDialogs.nsh",
+        "Include\WinMessages.nsh",
+        "Include\Win\COM.nsh",
+        "Include\Win\Propkey.nsh",
+        "Include\Win\RestartManager.nsh",
+        "Plugins\x86-unicode\additional\nsis_tauri_utils.dll"
+    )
+    foreach ($relativePath in $requiredFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $NsisDir $relativePath))) {
+            return $false
+        }
+    }
+    return $true
 }
 
 function Stop-ArtifactProcesses {
@@ -267,7 +298,7 @@ if (-not $SkipTests) {
     Invoke-Step "运行桌面端测试" {
         Push-Location $DesktopDir
         try {
-            Invoke-NativeCommand "npm.cmd" @("run", "test")
+            Invoke-NativeCommand "npm.cmd" @("run", "test", "--", "--maxWorkers", "1", "--minWorkers", "1")
         } finally {
             Pop-Location
         }
@@ -308,18 +339,25 @@ if (-not $SkipRustChecks) {
 Invoke-Step "清理可能损坏的 Tauri Rust 缓存" {
     Clear-RustCrateArtifacts `
         -TargetProfileDir (Join-Path $TauriDir "target\release") `
-        -CrateNames @("tauri-utils", "tauri-plugin-fs")
+        -CrateNames @("tauri-utils", "tauri-plugin-fs", "keydex-desktop", "keydex_desktop_lib")
 }
 
 Invoke-Step "构建 Tauri NSIS 安装包" {
     Push-Location $DesktopDir
+    $previousTauriConfig = $env:TAURI_CONFIG
     try {
+        $localNsisDir = Join-Path $TauriDir "target\.tauri\NSIS"
+        if ((Test-LocalNsisCache -NsisDir $localNsisDir) -and [string]::IsNullOrWhiteSpace($env:TAURI_CONFIG)) {
+            $env:TAURI_CONFIG = '{"bundle":{"useLocalToolsDir":true}}'
+            Write-Host "检测到本机 Tauri NSIS 缓存，临时使用项目内工具目录：$localNsisDir"
+        }
         $args = @("run", "tauri:build", "--", "--ci")
         if ($NoSign) {
             $args += "--no-sign"
         }
         Invoke-NativeCommand "npm.cmd" $args
     } finally {
+        $env:TAURI_CONFIG = $previousTauriConfig
         Pop-Location
     }
 }

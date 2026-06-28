@@ -292,6 +292,7 @@ docs/superpowers/prototype
 
 # Python Codex local runtime/build artifacts
 /.data/
+/.tmp/
 /artifacts/
 /agent-server.spec
 /desktop/.npm-cache/
