@@ -277,7 +277,6 @@ admin_frontend/.cache/
 # CLI e2e test fixtures (contain sensitive tokens)
 .dev/test/e2e/cli_fixtures.json
 .dev/test/e2e/ktagentcli.yaml
-skills/
 scripts
 /.playwright-mcp/
 
