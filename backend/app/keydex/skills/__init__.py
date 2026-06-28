@@ -1,3 +1,4 @@
+from backend.app.keydex.skills.discovery import discover_workspace_skills
 from backend.app.keydex.skills.frontmatter import (
     parse_skill_frontmatter,
     parse_skill_frontmatter_text,
@@ -15,7 +16,6 @@ from backend.app.keydex.skills.prompt import (
     SkillIndexBuilder,
     build_skill_index,
 )
-from backend.app.keydex.skills.discovery import discover_workspace_skills
 from backend.app.keydex.skills.security import (
     KEYDEX_SKILL_MAX_ENTRY_BYTES,
     KEYDEX_SKILL_MAX_RESOURCE_BYTES,

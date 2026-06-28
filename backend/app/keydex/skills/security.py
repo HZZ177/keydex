@@ -36,6 +36,11 @@ def resolve_skill_resource_path(skill: SkillDefinition, resource_path: str | Pat
     return resolved
 
 
-def ensure_skill_file_size(path: Path, *, max_bytes: int, code: str = "skill_file_too_large") -> None:
+def ensure_skill_file_size(
+    path: Path,
+    *,
+    max_bytes: int,
+    code: str = "skill_file_too_large",
+) -> None:
     if path.stat().st_size > max_bytes:
         raise SkillResourcePathError(code, f"skill file exceeds {max_bytes} bytes")

@@ -132,7 +132,11 @@ def _parse_yaml_subset(lines: list[str], *, path: str | None) -> dict[str, str]:
             )
 
         if value in {"|", ">", "|-", ">-", "|+", ">+"}:
-            block_value, index = _consume_block_scalar(lines, index + 1, folded=value.startswith(">"))
+            block_value, index = _consume_block_scalar(
+                lines,
+                index + 1,
+                folded=value.startswith(">"),
+            )
             fields[key] = block_value
             continue
 
