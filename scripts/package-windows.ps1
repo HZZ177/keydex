@@ -7,15 +7,20 @@
     [switch]$Fast,
     [switch]$Full,
     [switch]$NoSign = $true,
-    [ValidateRange(1, 16)]
-    [int]$RustJobs = 1,
+    [ValidateRange(0, 64)]
+    [int]$RustJobs = 0,
+    [ValidateRange(0, 64)]
+    [int]$TestWorkers = 0,
+    [switch]$SerialTests,
+    [switch]$LowMemoryRust,
+    [switch]$CleanRustCache,
     [switch]$Help
 )
 
 $ErrorActionPreference = "Stop"
 
 if ($Help) {
-    Write-Host "用法：powershell.exe -ExecutionPolicy Bypass -File .\scripts\package-windows.ps1 [-Fast|-Full] [-SkipInstall] [-SkipTests] [-SkipRustChecks] [-RebuildSidecar] [-CleanSidecar] [-NoSign] [-RustJobs 1]"
+    Write-Host "用法：powershell.exe -ExecutionPolicy Bypass -File .\scripts\package-windows.ps1 [-Fast|-Full] [-SkipInstall] [-SkipTests] [-SkipRustChecks] [-RebuildSidecar] [-CleanSidecar] [-NoSign] [-RustJobs N] [-TestWorkers N] [-SerialTests] [-LowMemoryRust] [-CleanRustCache]"
     Write-Host ""
     Write-Host "说明："
     Write-Host "- 仅在需要 Windows exe 时执行。日常开发不要默认打包。"
@@ -27,7 +32,11 @@ if ($Help) {
     Write-Host "- -SkipInstall 跳过依赖安装；-SkipTests 跳过测试。"
     Write-Host "- -SkipRustChecks 跳过 cargo fmt/check 预检查；Tauri release build 仍会编译 Rust。"
     Write-Host "- -RebuildSidecar 强制重建 sidecar；-CleanSidecar 清理 PyInstaller 缓存后重建。"
-    Write-Host "- -RustJobs 设置 Cargo 编译并发；默认 1，避免 Windows 页面文件不足导致 Rust 产物损坏。"
+    Write-Host "- -RustJobs 设置 Cargo 编译并发；默认 0 表示按本机 CPU 自动并发。"
+    Write-Host "- -TestWorkers 设置 Vitest 最大 worker 数；默认 0 使用 Vitest 默认并行。"
+    Write-Host "- -SerialTests 强制桌面端测试单 worker 运行，适合低资源或排查不稳定测试。"
+    Write-Host "- -LowMemoryRust 使用低内存 Rust release 配置：默认 RustJobs=1、opt-level=1、codegen-units=16、lto=false。"
+    Write-Host "- -CleanRustCache 清理可能损坏的 Tauri Rust 缓存；默认不清理以复用增量编译。"
     return
 }
 
@@ -72,17 +81,56 @@ function Assert-Path {
     }
 }
 
-function Set-RustBuildJobs {
+function Resolve-RustBuildJobs {
     param(
-        [int]$Jobs
+        [int]$Jobs,
+        [bool]$LowMemory
     )
-    $env:CARGO_BUILD_JOBS = [string]$Jobs
-    $env:CARGO_PROFILE_RELEASE_OPT_LEVEL = "1"
-    $env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16"
-    $env:CARGO_PROFILE_RELEASE_LTO = "false"
+
+    if ($Jobs -gt 0) {
+        return $Jobs
+    }
+    if ($LowMemory) {
+        return 1
+    }
+    return [Math]::Max(1, [Environment]::ProcessorCount)
+}
+
+function Set-RustBuildProfile {
+    param(
+        [int]$Jobs,
+        [bool]$LowMemory
+    )
+    $resolvedJobs = Resolve-RustBuildJobs -Jobs $Jobs -LowMemory $LowMemory
+    $env:CARGO_BUILD_JOBS = [string]$resolvedJobs
+
+    if ($LowMemory) {
+        $env:CARGO_PROFILE_RELEASE_OPT_LEVEL = "1"
+        $env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16"
+        $env:CARGO_PROFILE_RELEASE_LTO = "false"
+    } else {
+        Remove-Item Env:CARGO_PROFILE_RELEASE_OPT_LEVEL -ErrorAction SilentlyContinue
+        Remove-Item Env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS -ErrorAction SilentlyContinue
+        Remove-Item Env:CARGO_PROFILE_RELEASE_LTO -ErrorAction SilentlyContinue
+    }
+
     Write-Host ""
     Write-Host "Rust 构建并发：CARGO_BUILD_JOBS=$env:CARGO_BUILD_JOBS"
-    Write-Host "Rust release 低内存配置：opt-level=$env:CARGO_PROFILE_RELEASE_OPT_LEVEL, codegen-units=$env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS, lto=$env:CARGO_PROFILE_RELEASE_LTO"
+    if ($LowMemory) {
+        Write-Host "Rust release 配置：低内存模式 opt-level=$env:CARGO_PROFILE_RELEASE_OPT_LEVEL, codegen-units=$env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS, lto=$env:CARGO_PROFILE_RELEASE_LTO"
+    } else {
+        Write-Host "Rust release 配置：使用 Cargo 默认 release 优化，不覆盖 opt-level/codegen-units/lto。"
+    }
+}
+
+function Resolve-DesktopTestArguments {
+    if ($SerialTests) {
+        return @("run", "test", "--", "--maxWorkers", "1", "--minWorkers", "1")
+    }
+    if ($TestWorkers -gt 0) {
+        return @("run", "test", "--", "--maxWorkers", [string]$TestWorkers)
+    }
+    return @("run", "test")
 }
 
 function Clear-RustCrateArtifacts {
@@ -252,7 +300,7 @@ function Copy-DirectoryArtifact {
 
 $PackageMode = Resolve-PackageMode
 Apply-PackageMode -Mode $PackageMode
-Set-RustBuildJobs -Jobs $RustJobs
+Set-RustBuildProfile -Jobs $RustJobs -LowMemory $LowMemoryRust.IsPresent
 
 Assert-Path $BackendPython "未找到 Python 虚拟环境：$BackendPython。打包前请先创建 .venv。"
 
@@ -298,7 +346,7 @@ if (-not $SkipTests) {
     Invoke-Step "运行桌面端测试" {
         Push-Location $DesktopDir
         try {
-            Invoke-NativeCommand "npm.cmd" @("run", "test", "--", "--maxWorkers", "1", "--minWorkers", "1")
+            Invoke-NativeCommand "npm.cmd" (Resolve-DesktopTestArguments)
         } finally {
             Pop-Location
         }
@@ -336,10 +384,12 @@ if (-not $SkipRustChecks) {
     }
 }
 
-Invoke-Step "清理可能损坏的 Tauri Rust 缓存" {
-    Clear-RustCrateArtifacts `
-        -TargetProfileDir (Join-Path $TauriDir "target\release") `
-        -CrateNames @("tauri-utils", "tauri-plugin-fs", "keydex-desktop", "keydex_desktop_lib")
+if ($CleanRustCache) {
+    Invoke-Step "清理可能损坏的 Tauri Rust 缓存" {
+        Clear-RustCrateArtifacts `
+            -TargetProfileDir (Join-Path $TauriDir "target\release") `
+            -CrateNames @("tauri-utils", "tauri-plugin-fs", "keydex-desktop", "keydex_desktop_lib")
+    }
 }
 
 Invoke-Step "构建 Tauri NSIS 安装包" {

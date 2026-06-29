@@ -21,8 +21,11 @@ export interface SearchableModelDropdownProps {
   clearable?: boolean;
   clearLabel?: string;
   disabled?: boolean;
+  emptyActionLabel?: string;
+  emptyActionSuffix?: string;
   emptyText?: string;
   menuLabel?: string;
+  onEmptyAction?: () => void;
   placeholder?: string;
   placement?: "top" | "bottom";
   searchPlaceholder?: string;
@@ -38,8 +41,11 @@ export function SearchableModelDropdown({
   clearLabel = "不配置",
   containerLabel,
   disabled = false,
+  emptyActionLabel,
+  emptyActionSuffix,
   emptyText = "没有匹配模型",
   menuLabel = "模型",
+  onEmptyAction,
   onChange,
   options,
   placeholder = "选择模型",
@@ -241,6 +247,11 @@ export function SearchableModelDropdown({
     }
   };
 
+  const handleEmptyAction = () => {
+    closeMenu();
+    onEmptyAction?.();
+  };
+
   const activeOptionId =
     open && activeChoiceIndex >= 0 ? `${menuId}-option-${activeChoiceIndex}` : undefined;
   const menuVisible = open || menuClosing;
@@ -337,12 +348,42 @@ export function SearchableModelDropdown({
                   );
                 })
               ) : (
-                <div className={styles.empty}>{emptyText}</div>
+                <EmptyState
+                  actionLabel={emptyActionLabel}
+                  actionSuffix={emptyActionSuffix}
+                  onAction={onEmptyAction ? handleEmptyAction : undefined}
+                  text={emptyText}
+                />
               )}
             </div>
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function EmptyState({
+  actionLabel,
+  actionSuffix,
+  onAction,
+  text,
+}: {
+  actionLabel?: string;
+  actionSuffix?: string;
+  onAction?: () => void;
+  text: string;
+}) {
+  if (!actionLabel || !onAction) {
+    return <div className={styles.empty}>{text}</div>;
+  }
+  return (
+    <div className={styles.empty} data-action="true">
+      <span>{text}</span>
+      <button type="button" onClick={onAction}>
+        {actionLabel}
+      </button>
+      {actionSuffix ? <span>{actionSuffix}</span> : null}
     </div>
   );
 }

@@ -129,6 +129,7 @@ export function ModelDefaultSettingsPage({
               scope="default_chat"
               title="默认对话模型"
               description="新建 session 时默认选中，主要用于对话与主要任务"
+              onOpenProviderSettings={onOpenProviderSettings}
               onModelChange={(scope, selection) =>
                 updateDraft(scope, {
                   providerId: selection?.providerId ?? "",
@@ -144,6 +145,7 @@ export function ModelDefaultSettingsPage({
               title="快速模型"
               description="轻量辅助任务默认使用的模型"
               optional
+              onOpenProviderSettings={onOpenProviderSettings}
               onModelChange={(scope, selection) =>
                 updateDraft(scope, {
                   providerId: selection?.providerId ?? "",
@@ -172,11 +174,13 @@ function DefaultCard({
   modelOptions,
   scope,
   title,
+  onOpenProviderSettings,
 }: {
   description: string;
   model: string;
   modelOptions: SearchableModelDropdownOption[];
   onModelChange: (scope: ModelDefaultScope, model: { providerId: string; model: string } | null) => void;
+  onOpenProviderSettings?: () => void;
   optional?: boolean;
   providerId: string;
   scope: ModelDefaultScope;
@@ -199,11 +203,16 @@ function DefaultCard({
           placeholder={optional ? "不配置" : "选择模型"}
           menuLabel={title}
           searchPlaceholder="搜索供应商或模型"
+          emptyActionLabel={!modelOptions.length && onOpenProviderSettings ? "供应商配置页面" : undefined}
+          emptyActionSuffix={!modelOptions.length && onOpenProviderSettings ? "配置可用渠道" : undefined}
           emptyText={
             modelOptions.length
               ? "没有匹配模型"
-              : "当前无可用模型，请先在供应商配置页面配置可用渠道"
+              : onOpenProviderSettings
+                ? "当前无可用模型，请先在"
+                : "当前无可用模型，请先在供应商配置页面配置可用渠道"
           }
+          onEmptyAction={!modelOptions.length ? onOpenProviderSettings : undefined}
           variant="field"
           onChange={(selection) => onModelChange(scope, selection)}
         />

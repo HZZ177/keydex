@@ -266,6 +266,34 @@
   padding: 0 7px;
 }
 
+.empty[data-action="true"] {
+  display: flex;
+  min-height: 32px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  line-height: 1.45;
+  padding: 6px 7px;
+}
+
+.empty button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  line-height: 1.45;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.empty button:hover,
+.empty button:focus-visible {
+  outline: 0;
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  color: color-mix(in srgb, var(--color-accent) 84%, var(--color-text-primary));
+}
+
 @media (max-width: 680px) {
   .root,
   .picker,
