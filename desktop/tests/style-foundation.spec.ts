@@ -114,7 +114,7 @@ describe("style foundation", () => {
       /\.list\s*{[^}]*padding:\s*22px var\(--turn-navigator-list-padding-right,\s*0px\) var\(--message-list-bottom-buffer\) 0/s,
     );
     expect(messageList).toMatch(/--turn-navigator-edge:\s*clamp\(8px/s);
-    expect(messageList).toMatch(/--turn-navigator-gap:\s*clamp\(4px/s);
+    expect(messageList).toMatch(/--turn-navigator-gap:\s*clamp\(8px/s);
     expect(messageList).toMatch(/--turn-navigator-right:\s*max\(\s*var\(--turn-navigator-edge\)/s);
     expect(messageList).not.toContain("@container (max-width: 1052px)");
     expect(messageList).toMatch(/\.virtualList\s*{[^}]*padding-bottom:\s*0/s);
@@ -196,13 +196,15 @@ describe("style foundation", () => {
     expect(filePreview).not.toContain("background: var(--code-bg)");
     expect(filePreview).not.toContain("background: #fff");
     expect(sider).toMatch(/\.historyMeta\s*{[^}]*white-space:\s*nowrap/s);
-    expect(sider).toMatch(/\.historyItem\s*{[^}]*position:\s*relative/s);
-    expect(sider).toMatch(/\.historyItem\[data-active="true"\]\s*{[^}]*background:\s*var\(--sidebar-pill-active\)/s);
+    expect(sider).toMatch(/\.historyRow\s*{[^}]*position:\s*relative/s);
+    expect(sider).toMatch(/\.historyRow\[data-active="true"\]\s*{[^}]*background:\s*var\(--sidebar-pill-active\)/s);
     expect(sider).toMatch(/\.sectionChevron\s*{[^}]*transition:\s*transform 160ms var\(--motion-ease-standard\)/s);
     expect(sider).toMatch(/\.sectionTitle\[aria-expanded="false"\]\s+\.sectionChevron\s*{[^}]*transform:\s*rotate\(-90deg\)/s);
     expect(sider).toMatch(/\.sectionItems\s*{[^}]*grid-template-rows:\s*1fr/s);
     expect(sider).toMatch(/\.sectionItems\[data-expanded="false"\]\s*{[^}]*grid-template-rows:\s*0fr/s);
-    expect(sider).toMatch(/\.section\[data-kind="workspace"\]\s+\.historyItem\s*{[^}]*padding-left:\s*31px/s);
+    expect(sider).toMatch(
+      /\.section\[data-kind="workspace"\]\s+\.historyItem,[\s\S]*?\.section\[data-kind="pinned"\]\s+\.historyItem\s*{[^}]*padding-left:\s*31px/s,
+    );
     expect(sider).toMatch(/--sidebar-footer-feather-height:\s*38px/);
     expect(sider).not.toMatch(/\.history\s*{[^}]*mask-image/s);
     expect(sider).toMatch(/\.sider\[data-collapsed="true"\]\s+\.history\s*{[^}]*overflow-x:\s*hidden/s);
@@ -292,7 +294,10 @@ describe("style foundation", () => {
     expect(titlebar).not.toMatch(/\.titlebar\s*{[^}]*border-bottom/s);
     expect(titlebar).toMatch(/\.titlebar\s*{[^}]*background:\s*var\(--sidebar-bg\)/s);
     expect(titlebar).toMatch(
-      /\.modeSwitch\s*{[^}]*width:\s*max\(\s*176px,\s*calc\(\s*var\(--sidebar-width\)\s*-\s*var\(--titlebar-left-padding\)\s*-\s*var\(--titlebar-brand-size\)\s*-\s*var\(--titlebar-left-gap\)\s*\)\s*\)/s,
+      /--titlebar-mode-switch-width:\s*calc\(\s*var\(--sidebar-default-width\)\s*-\s*var\(--sidebar-collapsed-width\)\s*\)/s,
+    );
+    expect(titlebar).toMatch(
+      /\.modeSwitch\s*{[^}]*width:\s*max\(\s*176px,\s*var\(--titlebar-mode-switch-width\)\s*\)/s,
     );
     expect(titlebar).toMatch(
       /\.modeSwitch\s*{[^}]*background:\s*color-mix\(in srgb,\s*var\(--surface-active\) 74%,\s*var\(--sidebar-bg\)\)/s,

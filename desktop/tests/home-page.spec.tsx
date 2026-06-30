@@ -548,7 +548,7 @@ describe("HomePage", () => {
     expect((screen.getByLabelText("选择模型") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "正在准备发送" }) as HTMLButtonElement).disabled).toBe(true);
     expect(runtime.workspaces.list).not.toHaveBeenCalled();
-    expect(runtime.settings.getSettings).not.toHaveBeenCalled();
+    expect(runtime.settings.getSettings).toHaveBeenCalledTimes(1);
     expect(runtime.models.listProviders).not.toHaveBeenCalled();
 
     await act(async () => {

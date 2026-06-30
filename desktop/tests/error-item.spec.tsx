@@ -21,7 +21,7 @@ describe("ErrorItem", () => {
     expect(screen.getByText("HTTP 400")).not.toBeNull();
     expect(screen.queryByText(/openai-compatible/)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "错误详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开错误详情" }));
     expect(screen.getByText(/openai-compatible/)).not.toBeNull();
   });
 
@@ -42,7 +42,7 @@ describe("ErrorItem", () => {
     expect(screen.getByText("HTTP 429")).not.toBeNull();
     expect(screen.queryByText(/rate limit exceeded on dimension/)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "错误详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开错误详情" }));
     expect(screen.getByText(/rate limit exceeded on dimension/)).not.toBeNull();
   });
 
@@ -71,7 +71,7 @@ describe("ErrorItem", () => {
     expect(screen.getByText("运行失败，详细信息已折叠")).not.toBeNull();
     expect(screen.queryByText(/app.py/)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "错误详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开错误详情" }));
     expect(screen.getByText(/app.py/)).not.toBeNull();
   });
 
@@ -91,7 +91,7 @@ describe("ErrorItem", () => {
     expect(screen.getByText("tool_call_limit_exceeded")).not.toBeNull();
     expect(screen.queryByText(/Traceback/u)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "错误详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开错误详情" }));
     expect(screen.getByText(/max_tool_calls/u)).not.toBeNull();
   });
 
