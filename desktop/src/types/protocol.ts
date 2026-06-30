@@ -211,6 +211,12 @@ export interface AppearanceSettings {
   font_family: AppFontFamily;
 }
 
+export type CloseWindowBehavior = "exit" | "minimize_to_tray";
+
+export interface GeneralSettings {
+  close_window_behavior: CloseWindowBehavior | null;
+}
+
 export type FileAccessMode = "no_file_access" | "workspace_read_only" | "workspace_trusted" | "full_access";
 
 export interface CommandSettings {
@@ -290,6 +296,7 @@ export interface CommandApprovalAuditRecord {
 
 export interface SettingsResponse {
   model: PublicModelSettings;
+  general: GeneralSettings;
   appearance: AppearanceSettings;
   command: CommandSettings;
 }

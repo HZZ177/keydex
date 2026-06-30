@@ -224,16 +224,21 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
     <div className={styles.page} data-testid="config-settings-page">
       <header className={styles.header}>
         <div>
-          <h1>配置</h1>
-          <p>配置审批策略和命令执行权限</p>
+          <h1>策略配置</h1>
+          <p>管理审批策略和命令执行权限</p>
         </div>
-        <button className={styles.iconButton} type="button" aria-label="刷新配置" onClick={() => void load(history.page)}>
+        <button
+          className={styles.iconButton}
+          type="button"
+          aria-label="刷新策略配置"
+          onClick={() => void load(history.page)}
+        >
           <RefreshCcw size={16} />
         </button>
       </header>
 
       {error ? <div className={styles.error}>{error}</div> : null}
-      {loading ? <div className={styles.loading}>正在加载配置</div> : null}
+      {loading ? <div className={styles.loading}>正在加载策略配置</div> : null}
 
       <section className={`${styles.settingsGroup} ${styles.policyGroup}`} aria-labelledby="command-tools-title">
         <h2 id="command-tools-title">命令行工具</h2>
@@ -495,7 +500,7 @@ function errorMessage(reason: unknown): string {
   if (reason && typeof reason === "object" && typeof (reason as { message?: unknown }).message === "string") {
     return (reason as { message: string }).message;
   }
-  return "配置操作失败";
+  return "策略配置操作失败";
 }
 
 function emptyApprovalHistoryPage(page = 1): ApprovalHistoryPage {

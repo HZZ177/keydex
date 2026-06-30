@@ -1,17 +1,19 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { RuntimeBridge } from "@/runtime";
 import { GeneralSettingsPage } from "@/renderer/pages/settings/general";
 import { FontProvider } from "@/renderer/providers/FontProvider";
+import type { GeneralSettings } from "@/types/protocol";
 import { installIndexedDbMock } from "./helpers/indexedDbMock";
 
 const MAPLE_FONT_CSS = '@font-face{font-family:"Maple Mono CN";src:local("Maple Mono CN"),url("./font.woff2")format("woff2");font-style:normal;font-display:swap;font-weight:400;unicode-range:U+4E00-9FFF;}';
 const JETBRAINS_FONT_CSS = "@font-face{font-family:'JetBrains Mono';font-style:normal;font-display:swap;font-weight:400;src:url(./files/jetbrains-mono-latin-400-normal.woff2) format('woff2');unicode-range:U+0000-00FF;}";
 
-function renderPage() {
+function renderPage(runtime: RuntimeBridge = fakeRuntime()) {
   return render(
     <FontProvider>
-      <GeneralSettingsPage />
+      <GeneralSettingsPage runtime={runtime} />
     </FontProvider>,
   );
 }
@@ -59,10 +61,14 @@ describe("GeneralSettingsPage", () => {
     });
   });
 
-  it("offers system, Maple Mono, and JetBrains Mono font choices", () => {
+  it("offers system, Maple Mono, and JetBrains Mono font choices", async () => {
     renderPage();
 
     expect(screen.getByTestId("general-settings-page")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "常规" })).not.toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /关闭窗口后行为/ }).hasAttribute("disabled")).toBe(false),
+    );
     const radios = screen.getAllByRole("radio");
     expect(radios).toHaveLength(3);
     expect(radios[0].getAttribute("aria-checked")).toBe("true");
@@ -147,4 +153,59 @@ describe("GeneralSettingsPage", () => {
     expect(fetch).toHaveBeenCalledTimes(8);
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
+
+  it("saves the close window behavior from the general page", async () => {
+    const runtime = fakeRuntime();
+
+    renderPage(runtime);
+
+    const trigger = await screen.findByRole("button", { name: /关闭窗口后行为/ });
+    fireEvent.click(trigger);
+
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(2);
+    expect(screen.queryByRole("option", { name: /未设置/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("option", { name: /最小化到托盘/ }));
+
+    await waitFor(() =>
+      expect(runtime.settings.saveGeneralSettings).toHaveBeenCalledWith({
+        close_window_behavior: "minimize_to_tray",
+      }),
+    );
+    expect(screen.getByRole("button", { name: /最小化到托盘/ })).not.toBeNull();
+  });
 });
+
+function fakeRuntime(general: GeneralSettings = { close_window_behavior: null }): RuntimeBridge {
+  const response = {
+    model: {
+      base_url: "",
+      model: "",
+      timeout_seconds: 60,
+      api_key_set: false,
+      api_key_preview: null,
+    },
+    general,
+    appearance: {
+      font_family: "system" as const,
+    },
+    command: {
+      command_enabled: true,
+      require_approval_for_untrusted: true,
+      allow_persistent_trust: true,
+      file_access_mode: "workspace_trusted" as const,
+      default_timeout_seconds: 60,
+      max_timeout_seconds: 600,
+      max_output_chars: 20000,
+    },
+  };
+  return {
+    settings: {
+      getSettings: vi.fn(() => Promise.resolve(response)),
+      saveGeneralSettings: vi.fn((nextGeneral: GeneralSettings) =>
+        Promise.resolve({ ...response, general: nextGeneral }),
+      ),
+    },
+  } as unknown as RuntimeBridge;
+}

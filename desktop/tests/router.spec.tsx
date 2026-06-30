@@ -13,6 +13,7 @@ import {
   workbenchPath,
 } from "@/renderer/components/layout/appMode";
 import { AppRouter } from "@/renderer/components/layout/Router";
+import { emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
@@ -93,7 +94,7 @@ describe("AppRouter", () => {
     fireEvent.click(screen.getByText("设置"));
     expect(await screen.findByTestId("settings-shell", undefined, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByTestId("settings-sidebar")).not.toBeNull();
-    expect(screen.getByRole("heading", { name: "外观" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "常规" })).not.toBeNull();
     expect(screen.queryByLabelText("侧边栏")).toBeNull();
     expect(screen.queryByText("新对话")).toBeNull();
 
@@ -106,10 +107,12 @@ describe("AppRouter", () => {
 
     expect(await screen.findByTestId("settings-shell", undefined, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByRole("heading", { name: "用量统计" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "常规" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "外观" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "供应商配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "模型配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "扩展功能" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "策略配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "用量统计" })).not.toBeNull();
     fireEvent.click(screen.getByText("返回应用"));
     expect(await screen.findByTestId("home-page", undefined, { timeout: 10000 })).not.toBeNull();
@@ -139,12 +142,27 @@ describe("AppRouter", () => {
     expect(screen.getByRole("heading", { name: "上下文压缩" })).not.toBeNull();
   });
 
+  it("opens the strategy configuration settings route", async () => {
+    renderRouter(["/settings/policy-config"]);
+
+    expect(await screen.findByRole("heading", { name: "策略配置" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("config-settings-page")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "命令行工具" })).not.toBeNull();
+  });
+
   it("opens the general settings route", async () => {
     renderRouter(["/settings/general"]);
 
-    expect(await screen.findByRole("heading", { name: "外观" }, { timeout: 10000 })).not.toBeNull();
+    expect(await screen.findByRole("heading", { name: "常规" }, { timeout: 10000 })).not.toBeNull();
     fireEvent.click(screen.getByText("返回应用"));
     expect(await screen.findByTestId("home-page", undefined, { timeout: 10000 })).not.toBeNull();
+  });
+
+  it("opens the appearance settings route", async () => {
+    renderRouter(["/settings/appearance"]);
+
+    expect(await screen.findByRole("heading", { name: "外观" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("appearance-settings-page")).not.toBeNull();
   });
 
   it("opens the workbench picker route", async () => {
@@ -187,6 +205,55 @@ describe("AppRouter", () => {
       workspaceId: "workspace A",
       pageSize: 50,
     });
+  });
+
+  it("keeps pinned workbench sessions in the sidebar pinned section", async () => {
+    renderRouter(["/workbench/workspace%20A"], {
+      sessions: [
+        agentSession({
+          id: "workbench-pinned",
+          title: "置顶工作台会话",
+          session_type: "workspace",
+          workspace_id: "workspace A",
+          workspace: workspace("workspace A", "keydex"),
+          pinned: true,
+          pinned_at: "2026-06-17T11:00:00Z",
+          updated_at: "2026-06-17T10:20:00Z",
+        }),
+        agentSession({
+          id: "workbench-regular",
+          title: "普通工作台会话",
+          session_type: "workspace",
+          workspace_id: "workspace A",
+          workspace: workspace("workspace A", "keydex"),
+          updated_at: "2026-06-17T10:10:00Z",
+        }),
+      ],
+    });
+
+    const pinned = await screen.findByRole("region", { name: "置顶" }, { timeout: 10000 });
+    const flatList = screen.getByRole("region", { name: "keydex列表" });
+    expect(within(pinned).getByRole("button", { name: "置顶工作台会话" })).not.toBeNull();
+    expect(within(flatList).getByRole("button", { name: "普通工作台会话" })).not.toBeNull();
+    expect(within(flatList).queryByRole("button", { name: "置顶工作台会话" })).toBeNull();
+
+    act(() => {
+      emitSessionUpdated({
+        id: "workbench-pinned",
+        pinned: false,
+        pinned_at: null,
+        updated_at: "2026-06-17T11:30:00Z",
+      });
+    });
+
+    await waitFor(() => {
+      expect(within(screen.getByRole("region", { name: "置顶" })).getByText("暂无置顶")).not.toBeNull();
+    });
+    expect(
+      within(screen.getByRole("region", { name: "keydex列表" })).getByRole("button", {
+        name: "置顶工作台会话",
+      }),
+    ).not.toBeNull();
   });
 
   it("drops a mismatched workbench session without switching workspace", async () => {
@@ -569,6 +636,7 @@ interface RenderRouterOptions extends FakeRuntimeOptions {
 
 interface FakeRuntimeOptions {
   sessionWorkspaceId?: string;
+  sessions?: AgentSession[];
   workspaceSearch?: ReturnType<typeof vi.fn>;
 }
 
@@ -584,22 +652,41 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
   const workspaceSearch = options.workspaceSearch ?? vi.fn().mockResolvedValue([]);
   let emit: (event: AgentActionEnvelope) => void = () => undefined;
   const chat = vi.fn();
+  let sessions =
+    options.sessions ??
+    [
+      agentSession({
+        id: "session 1",
+        title: "工作台会话",
+        session_type: "workspace",
+        workspace_id: sessionWorkspaceId,
+        workspace: workspace(sessionWorkspaceId, sessionWorkspaceId === "workspace A" ? "keydex" : "other"),
+      }),
+    ];
   const listSessions = vi.fn(() =>
     Promise.resolve({
-      list: [
-        agentSession({
-          id: "session 1",
-          title: "工作台会话",
-          session_type: "workspace",
-          workspace_id: sessionWorkspaceId,
-          workspace: workspace(sessionWorkspaceId, sessionWorkspaceId === "workspace A" ? "keydex" : "other"),
-        }),
-      ],
-      total: 1,
+      list: sessions,
+      total: sessions.length,
       page: 1,
       page_size: 50,
     }),
   );
+  const updateSession = vi.fn((sessionId: string, patch: Partial<AgentSession>) => {
+    const current = sessions.find((session) => session.id === sessionId) ?? agentSession({ id: sessionId });
+    const updated = {
+      ...current,
+      ...patch,
+      pinned_at:
+        patch.pinned === true
+          ? current.pinned_at ?? "2026-06-17T11:30:00Z"
+          : patch.pinned === false
+            ? null
+            : current.pinned_at,
+      updated_at: "2026-06-17T11:30:00Z",
+    };
+    sessions = [updated, ...sessions.filter((session) => session.id !== sessionId)];
+    return Promise.resolve(updated);
+  });
   const listDirectory = vi.fn(() =>
     Promise.resolve({
       root: "",
@@ -630,7 +717,34 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
             api_key_set: true,
             api_key_preview: "sk-***",
           },
+          general: {
+            close_window_behavior: null,
+          },
+          appearance: {
+            font_family: "system",
+          },
+          command: {
+            command_enabled: true,
+            require_approval_for_untrusted: true,
+            allow_persistent_trust: true,
+            file_access_mode: "workspace_trusted",
+            default_timeout_seconds: 120,
+            max_timeout_seconds: 600,
+            max_output_chars: 65536,
+          },
         }),
+      saveGeneralSettings: vi.fn(),
+      saveAppearanceSettings: vi.fn(),
+      saveCommandSettings: vi.fn(),
+      listTrustedCommandRules: vi.fn().mockResolvedValue([]),
+      updateTrustedCommandRule: vi.fn(),
+      deleteTrustedCommandRule: vi.fn(),
+      listCommandApprovalHistory: vi.fn().mockResolvedValue({
+        list: [],
+        total: 0,
+        page: 1,
+        page_size: 10,
+      }),
       getModelDefaults: () =>
         Promise.resolve({
           defaults: {
@@ -720,6 +834,8 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
             workspace: workspace(sessionWorkspaceId, sessionWorkspaceId === "workspace A" ? "keydex" : "other"),
           }),
         ),
+      updateSession,
+      deleteSession: vi.fn().mockResolvedValue(undefined),
       openChatChannel: vi.fn((onEvent: (event: AgentActionEnvelope) => void, options?: ChatChannelOptions) => {
         emit = onEvent;
         const channel = fakeChannel(options?.onStatus, chat);

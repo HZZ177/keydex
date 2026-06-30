@@ -5,6 +5,7 @@ import type {
   CommandApprovalDecisionPayload,
   CommandApprovalRequest,
   CommandSettings,
+  GeneralSettings,
   ModelDefaultsResponse,
   UpdateModelDefaultsPayload,
   ModelSettings,
@@ -31,6 +32,7 @@ export interface SettingsRuntime {
   getExtensionSettings(): Promise<AgentRuntimeSettings>;
   saveExtensionSettings(payload: AgentRuntimeSettings): Promise<AgentRuntimeSettings>;
   saveSettings(model: ModelSettings): Promise<SettingsResponse>;
+  saveGeneralSettings(general: GeneralSettings): Promise<SettingsResponse>;
   saveAppearanceSettings(appearance: AppearanceSettings): Promise<SettingsResponse>;
   saveCommandSettings(command: CommandSettings): Promise<SettingsResponse>;
   listTrustedCommandRules(): Promise<TrustedCommandRule[]>;
@@ -75,6 +77,12 @@ export function createSettingsRuntime(http: HttpClient): SettingsRuntime {
       return http.request<SettingsResponse>("/api/settings", {
         method: "PUT",
         body: { model },
+      });
+    },
+    saveGeneralSettings(general) {
+      return http.request<SettingsResponse>("/api/settings", {
+        method: "PUT",
+        body: { general },
       });
     },
     saveAppearanceSettings(appearance) {

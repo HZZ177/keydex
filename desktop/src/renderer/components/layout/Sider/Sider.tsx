@@ -30,6 +30,7 @@ import type { AppMode } from "@/renderer/components/layout/appMode";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import {
+  emitSessionUpdated,
   subscribeSessionCreated,
   subscribeSessionUpdated,
   type AgentSessionUpdate,
@@ -145,8 +146,7 @@ export function Sider({
     () => (conversations ? buildControlledPinnedEntries(projects, conversations) : loadedPinnedItems),
     [conversations, loadedPinnedItems, projects],
   );
-  const regularHistoryGroups = useMemo(() => withoutPinnedItems(historyGroups), [historyGroups]);
-  const displayHistoryGroups = appMode === "workbench" ? historyGroups : regularHistoryGroups;
+  const displayHistoryGroups = useMemo(() => withoutPinnedItems(historyGroups), [historyGroups]);
   const historyEmptyText = useMemo(() => {
     if (controlled) {
       return "暂无会话";
@@ -178,11 +178,8 @@ export function Sider({
     workspaceId: projects[0]?.id,
   };
   const historyItems = useMemo(
-    () =>
-      appMode === "workbench"
-        ? displayHistoryGroups.flatMap((group) => group.items)
-        : [...pinnedItems, ...displayHistoryGroups.flatMap((group) => group.items)],
-    [appMode, displayHistoryGroups, pinnedItems],
+    () => [...pinnedItems, ...displayHistoryGroups.flatMap((group) => group.items)],
+    [displayHistoryGroups, pinnedItems],
   );
   const deleteCandidate = useMemo(
     () => (confirmDeleteId ? historyItems.find((item) => item.id === confirmDeleteId) ?? null : null),
@@ -321,6 +318,7 @@ export function Sider({
     try {
       const updated = await runtime.conversation.updateSession(id, { title: cleaned });
       setLoadedSessions((items) => upsertSession(items, updated));
+      emitSessionUpdated(updated);
       setEditing(null);
       notifications.success("已重命名会话");
     } catch (reason) {
@@ -366,6 +364,7 @@ export function Sider({
     try {
       const updated = await runtime.conversation.updateSession(item.id, { pinned });
       setLoadedSessions((items) => upsertSession(items, updated));
+      emitSessionUpdated(updated);
       notifications.success(pinned ? "已置顶会话" : "已取消置顶");
     } catch (reason) {
       notifications.error(errorMessage(reason));
@@ -476,28 +475,49 @@ export function Sider({
                 <SessionHistorySkeleton />
               </div>
             ) : (
-              <SiderSection
-                title={workbenchGroup.title}
-                kind="workspace"
-                items={workbenchGroup.items}
-                collapsed={collapsed}
-                emptyText={historyEmptyText}
-                emptyLoading={historyEmptyLoading}
-                activePath={activePath}
-                editing={editing}
-                confirmDeleteId={confirmDeleteId}
-                canMutate={canMutateConversations}
-                sessionIndicators={sessionIndicators}
-                workspaceId={workbenchGroup.workspaceId}
-                disableSectionToggle
-                flat
-                hideTitle
-                getSessionPath={getSessionPath}
-                onConfirmDelete={startDeleteConversation}
-                onStartRename={startRenameConversation}
-                onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
-                onNavigate={navigateTo}
-              />
+              <>
+                <SiderSection
+                  title="置顶"
+                  kind="pinned"
+                  items={pinnedItems}
+                  collapsed={collapsed}
+                  emptyText="暂无置顶"
+                  emptyLoading={false}
+                  activePath={activePath}
+                  editing={editing}
+                  confirmDeleteId={confirmDeleteId}
+                  canMutate={canMutateConversations}
+                  sessionIndicators={sessionIndicators}
+                  historyPreviewLimit={WORKSPACE_SESSION_PREVIEW_LIMIT}
+                  getSessionPath={getSessionPath}
+                  onConfirmDelete={startDeleteConversation}
+                  onStartRename={startRenameConversation}
+                  onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
+                  onNavigate={navigateTo}
+                />
+                <SiderSection
+                  title={workbenchGroup.title}
+                  kind="workspace"
+                  items={workbenchGroup.items}
+                  collapsed={collapsed}
+                  emptyText={historyEmptyText}
+                  emptyLoading={historyEmptyLoading}
+                  activePath={activePath}
+                  editing={editing}
+                  confirmDeleteId={confirmDeleteId}
+                  canMutate={canMutateConversations}
+                  sessionIndicators={sessionIndicators}
+                  workspaceId={workbenchGroup.workspaceId}
+                  disableSectionToggle
+                  flat
+                  hideTitle
+                  getSessionPath={getSessionPath}
+                  onConfirmDelete={startDeleteConversation}
+                  onStartRename={startRenameConversation}
+                  onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
+                  onNavigate={navigateTo}
+                />
+              </>
             )}
           </div>
         </div>

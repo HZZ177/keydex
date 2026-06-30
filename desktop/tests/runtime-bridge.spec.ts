@@ -21,10 +21,14 @@ describe("RuntimeBridge", () => {
             appearance: {
               font_family: "maple-mono",
             },
+            general: {
+              close_window_behavior: null,
+            },
           }),
         );
       }
       if (url.endsWith("/api/settings") && init.method === "PUT") {
+        const body = JSON.parse(String(init.body));
         return Promise.resolve(
           jsonResponse(200, {
             model: {
@@ -34,7 +38,12 @@ describe("RuntimeBridge", () => {
               api_key_set: true,
               api_key_preview: "sk-***",
             },
-            appearance: JSON.parse(String(init.body)).appearance,
+            appearance: body.appearance ?? {
+              font_family: "maple-mono",
+            },
+            general: body.general ?? {
+              close_window_behavior: null,
+            },
           }),
         );
       }
@@ -61,9 +70,15 @@ describe("RuntimeBridge", () => {
     await expect(runtime.settings.getSettings()).resolves.toMatchObject({
       model: { model: "qwen-coder", api_key_set: true },
       appearance: { font_family: "maple-mono" },
+      general: { close_window_behavior: null },
     });
     await expect(runtime.settings.saveAppearanceSettings({ font_family: "system" })).resolves.toMatchObject({
       appearance: { font_family: "system" },
+    });
+    await expect(
+      runtime.settings.saveGeneralSettings({ close_window_behavior: "minimize_to_tray" }),
+    ).resolves.toMatchObject({
+      general: { close_window_behavior: "minimize_to_tray" },
     });
     await expect(runtime.models.refreshModels({ model: "qwen-coder" })).resolves.toEqual({
       models: [{ id: "qwen-coder" }],
@@ -87,13 +102,18 @@ describe("RuntimeBridge", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ appearance: { font_family: "system" } }),
     });
-    expect(fetcher).toHaveBeenNthCalledWith(3, "http://127.0.0.1:8765/api/models/refresh", {
+    expect(fetcher).toHaveBeenNthCalledWith(3, "http://127.0.0.1:8765/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ general: { close_window_behavior: "minimize_to_tray" } }),
+    });
+    expect(fetcher).toHaveBeenNthCalledWith(4, "http://127.0.0.1:8765/api/models/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: { model: "qwen-coder" } }),
     });
     expect(fetcher).toHaveBeenNthCalledWith(
-      4,
+      5,
       "http://127.0.0.1:8765/api/sessions/ses-1/workspace/search?q=main",
       {
         method: "GET",
@@ -102,7 +122,7 @@ describe("RuntimeBridge", () => {
       },
     );
     expect(fetcher).toHaveBeenNthCalledWith(
-      5,
+      6,
       "http://127.0.0.1:8765/api/workspaces/ws-1/media?path=docs%2Fassets%2Fpixel.png",
       {
         method: "GET",

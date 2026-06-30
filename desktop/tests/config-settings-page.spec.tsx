@@ -17,6 +17,7 @@ describe("ConfigSettingsPage", () => {
 
     renderConfigSettingsPage(runtime);
 
+    expect(await screen.findByRole("heading", { name: "策略配置" })).not.toBeNull();
     expect(await screen.findByText("批准策略")).not.toBeNull();
     expect(screen.getByRole("button", { name: "批准策略：按请求" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "文件访问权限：工作区内信任" })).not.toBeNull();
@@ -200,6 +201,7 @@ function settingsResponse(command: CommandSettings): SettingsResponse {
       api_key_set: true,
       api_key_preview: "sk-***",
     },
+    general: { close_window_behavior: null },
     appearance: { font_family: "system" },
     command,
   };

@@ -10,6 +10,7 @@ def test_settings_api_reads_and_writes_model_settings(tmp_path) -> None:
         initial = client.get("/api/settings")
         assert initial.status_code == 200
         assert initial.json()["model"]["api_key_set"] is False
+        assert initial.json()["general"]["close_window_behavior"] is None
         assert initial.json()["appearance"]["font_family"] == "system"
 
         response = client.put(
@@ -46,6 +47,22 @@ def test_settings_api_reads_and_writes_appearance_settings(tmp_path) -> None:
         persisted = client.get("/api/settings")
         assert persisted.status_code == 200
         assert persisted.json()["appearance"]["font_family"] == "maple-mono"
+
+
+def test_settings_api_reads_and_writes_general_settings(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+    with TestClient(app) as client:
+        response = client.put(
+            "/api/settings",
+            json={"general": {"close_window_behavior": "minimize_to_tray"}},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["general"]["close_window_behavior"] == "minimize_to_tray"
+
+        persisted = client.get("/api/settings")
+        assert persisted.status_code == 200
+        assert persisted.json()["general"]["close_window_behavior"] == "minimize_to_tray"
 
 
 def test_settings_api_reads_and_writes_jetbrains_mono_appearance_settings(tmp_path) -> None:

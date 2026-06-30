@@ -3,6 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type PropsWi
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import type { RuntimeSelectedModel } from "@/renderer/components/model";
+import { subscribeSessionUpdated, type AgentSessionUpdate } from "@/renderer/events/sessionEvents";
 import { queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import type { WorkspaceSelection } from "@/renderer/components/workspace";
@@ -40,6 +41,11 @@ const SettingsShell = lazy(() =>
 const GeneralSettingsPage = lazy(() =>
   import("@/renderer/pages/settings/general/GeneralSettingsPage").then((module) => ({
     default: module.GeneralSettingsPage,
+  })),
+);
+const AppearanceSettingsPage = lazy(() =>
+  import("@/renderer/pages/settings/appearance/AppearanceSettingsPage").then((module) => ({
+    default: module.AppearanceSettingsPage,
   })),
 );
 const ModelSettingsPage = lazy(() =>
@@ -86,9 +92,10 @@ export function AppRouter({ runtime = runtimeBridge }: AppRouterProps = {}) {
         <Route path="/settings/providers" element={<ProviderSettingsRoute runtime={runtime} />} />
         <Route path="/settings/model-defaults" element={<ModelDefaultSettingsRoute runtime={runtime} />} />
         <Route path="/settings/extensions" element={<ExtensionSettingsRoute runtime={runtime} />} />
-        <Route path="/settings/config" element={<ConfigSettingsRoute runtime={runtime} />} />
+        <Route path="/settings/policy-config" element={<ConfigSettingsRoute runtime={runtime} />} />
         <Route path="/settings/usage" element={<UsageSettingsRoute runtime={runtime} />} />
-        <Route path="/settings/general" element={<GeneralSettingsRoute />} />
+        <Route path="/settings/general" element={<GeneralSettingsRoute runtime={runtime} />} />
+        <Route path="/settings/appearance" element={<AppearanceSettingsRoute />} />
         <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
       </Routes>
     </Suspense>
@@ -249,6 +256,15 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   }, [decodedWorkspaceId, runtime]);
 
   useEffect(() => {
+    if (!decodedWorkspaceId) {
+      return undefined;
+    }
+    return subscribeSessionUpdated((session) => {
+      setWorkspaceSessions((current) => mergeWorkspaceSessionUpdate(current, session, decodedWorkspaceId));
+    });
+  }, [decodedWorkspaceId]);
+
+  useEffect(() => {
     if (!decodedWorkspaceId || !decodedSessionId) {
       return;
     }
@@ -296,6 +312,8 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
         id: session.id,
         title: session.title || session.id,
         updatedAt: session.updated_at,
+        pinnedAt: session.pinned_at ?? (session.pinned ? session.updated_at : undefined),
+        forked: Boolean(session.fork_source),
       })),
     [workspaceSessions],
   );
@@ -417,6 +435,27 @@ function safeDecodeParam(value: string | undefined): string | undefined {
   }
 }
 
+function mergeWorkspaceSessionUpdate(
+  sessions: AgentSession[],
+  update: AgentSessionUpdate,
+  workspaceId: string,
+): AgentSession[] {
+  const existing = sessions.find((session) => session.id === update.id);
+  if (!existing) {
+    return sessions;
+  }
+  const merged = { ...existing, ...definedSessionUpdate(update) };
+  const next =
+    merged.session_type === "workspace" && merged.workspace_id === workspaceId
+      ? [merged, ...sessions.filter((session) => session.id !== update.id)]
+      : sessions.filter((session) => session.id !== update.id);
+  return next.sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+}
+
+function definedSessionUpdate(update: AgentSessionUpdate): AgentSessionUpdate {
+  return Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined)) as AgentSessionUpdate;
+}
+
 function errorMessage(reason: unknown): string {
   if (reason instanceof Error && reason.message) {
     return reason.message;
@@ -499,10 +538,18 @@ function ConversationRoute({ runtime }: { runtime: RuntimeBridge }) {
   );
 }
 
-function GeneralSettingsRoute() {
+function GeneralSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
   return (
     <SettingsShell activeSection="general">
-      <GeneralSettingsPage />
+      <GeneralSettingsPage runtime={runtime} />
+    </SettingsShell>
+  );
+}
+
+function AppearanceSettingsRoute() {
+  return (
+    <SettingsShell activeSection="appearance">
+      <AppearanceSettingsPage />
     </SettingsShell>
   );
 }

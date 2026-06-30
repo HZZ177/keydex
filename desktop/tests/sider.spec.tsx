@@ -97,6 +97,57 @@ describe("Sider", () => {
     expect(onNavigate).toHaveBeenNthCalledWith(2, "/workbench/ws-1");
   });
 
+  it("keeps pinned controls in the flat workbench session list", async () => {
+    const onNavigate = vi.fn();
+    const runtime = fakeRuntime([]);
+
+    renderSider(
+      <Sider
+        appMode="workbench"
+        activePath="/workbench/ws-1/session/workbench-pinned"
+        runtime={runtime}
+        projects={[{ id: "ws-1", title: "keydex" }]}
+        conversations={[
+          {
+            id: "workbench-pinned",
+            title: "置顶工作台会话",
+            updatedAt: "2026-06-17T10:30:00Z",
+            pinnedAt: "2026-06-17T11:00:00Z",
+          },
+          {
+            id: "workbench-regular",
+            title: "普通工作台会话",
+            updatedAt: "2026-06-17T10:20:00Z",
+          },
+        ]}
+        showChatBucket={false}
+        newConversationPath="/workbench/ws-1"
+        getSessionPath={(sessionId) => `/workbench/ws-1/session/${sessionId}`}
+        onNavigate={onNavigate}
+      />,
+    );
+
+    const pinned = screen.getByRole("region", { name: "置顶" });
+    const flatList = screen.getByRole("region", { name: "keydex列表" });
+    expect(within(pinned).getByRole("button", { name: "置顶工作台会话" })).not.toBeNull();
+    expect(within(pinned).queryByRole("button", { name: "普通工作台会话" })).toBeNull();
+    expect(within(flatList).getByRole("button", { name: "普通工作台会话" })).not.toBeNull();
+    expect(within(flatList).queryByRole("button", { name: "置顶工作台会话" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "项目" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "对话" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "收起项目 keydex" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "置顶 普通工作台会话" }));
+    await waitFor(() => {
+      expect(runtime.conversation.updateSession).toHaveBeenCalledWith("workbench-regular", { pinned: true });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "取消置顶 置顶工作台会话" }));
+    await waitFor(() => {
+      expect(runtime.conversation.updateSession).toHaveBeenLastCalledWith("workbench-pinned", { pinned: false });
+    });
+  });
+
   it("opens a new chat page scoped to a project from the project header", () => {
     const onNavigate = vi.fn();
     renderSider(

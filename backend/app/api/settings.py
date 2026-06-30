@@ -33,14 +33,20 @@ AppSettingsDep = Depends(get_app_settings)
 
 MODEL_SETTINGS_KEY = "model_settings"
 APPEARANCE_SETTINGS_KEY = "appearance_settings"
+GENERAL_SETTINGS_KEY = "general_settings"
 
 
 class AppearanceSettings(BaseModel):
     font_family: Literal["system", "maple-mono", "jetbrains-mono"] = "system"
 
 
+class GeneralSettings(BaseModel):
+    close_window_behavior: Literal["exit", "minimize_to_tray"] | None = None
+
+
 class SettingsResponse(BaseModel):
     model: dict[str, Any]
+    general: GeneralSettings
     appearance: AppearanceSettings
     command: CommandSettings
 
@@ -79,6 +85,7 @@ class UpdateModelDefaultsRequest(BaseModel):
 
 class UpdateSettingsRequest(BaseModel):
     model: ModelSettings | None = None
+    general: GeneralSettings | None = None
     appearance: AppearanceSettings | None = None
     command: CommandSettings | None = None
 
@@ -119,6 +126,11 @@ def load_appearance_settings(repositories: StorageRepositories) -> AppearanceSet
     if isinstance(settings, dict) and settings.get("font_family") in {"segoe-ui", "misans"}:
         settings = {**settings, "font_family": "system"}
     return AppearanceSettings(**settings)
+
+
+def load_general_settings(repositories: StorageRepositories) -> GeneralSettings:
+    settings = repositories.settings.get(GENERAL_SETTINGS_KEY, default={})
+    return GeneralSettings(**settings)
 
 
 def load_effective_model_settings(repositories: StorageRepositories) -> ModelSettings:
@@ -250,9 +262,10 @@ async def get_settings(
         "[SettingsAPI] 读取模型设置 | "
         f"base_url={settings.get('base_url', '')} | model={settings.get('model', '')}"
     )
+    general = load_general_settings(repositories)
     appearance = load_appearance_settings(repositories)
     command = load_command_settings(repositories)
-    return SettingsResponse(model=settings, appearance=appearance, command=command)
+    return SettingsResponse(model=settings, general=general, appearance=appearance, command=command)
 
 
 @router.put("", response_model=SettingsResponse)
@@ -275,6 +288,15 @@ async def put_settings(
             request.appearance.model_dump(mode="json"),
         )
         logger.info(f"[SettingsAPI] 更新外观设置 | font_family={request.appearance.font_family}")
+    if request.general is not None:
+        repositories.settings.set(
+            GENERAL_SETTINGS_KEY,
+            request.general.model_dump(mode="json"),
+        )
+        logger.info(
+            "[SettingsAPI] 更新常规设置 | "
+            f"close_window_behavior={request.general.close_window_behavior}"
+        )
     if request.command is not None:
         save_command_settings(repositories, request.command)
         logger.info(
@@ -283,9 +305,10 @@ async def put_settings(
             f"allow_persistent_trust={request.command.allow_persistent_trust}"
         )
     settings = load_model_settings(repositories).public_dict()
+    general = load_general_settings(repositories)
     appearance = load_appearance_settings(repositories)
     command = load_command_settings(repositories)
-    return SettingsResponse(model=settings, appearance=appearance, command=command)
+    return SettingsResponse(model=settings, general=general, appearance=appearance, command=command)
 
 
 @router.get("/model-defaults", response_model=ModelDefaultsResponse)

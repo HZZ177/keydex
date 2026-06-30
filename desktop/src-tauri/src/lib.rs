@@ -9,13 +9,22 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager, State,
+};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+const WINDOW_CLOSE_REQUESTED_EVENT: &str = "keydex://window-close-requested";
+const TRAY_ID: &str = "keydex-tray";
+const TRAY_SHOW_ID: &str = "show_main_window";
+const TRAY_EXIT_ID: &str = "exit_app";
 
 #[derive(Default)]
 struct SidecarState {
@@ -187,36 +196,109 @@ fn stop_sidecar(state: State<'_, SidecarState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn hide_main_window(window: tauri::Window) -> Result<(), String> {
+    window.hide().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn request_app_exit(app: tauri::AppHandle, state: State<'_, SidecarState>) -> Result<(), String> {
+    request_exit(&app, &state)
+}
+
+fn request_exit(app: &tauri::AppHandle, state: &SidecarState) -> Result<(), String> {
+    if state.closing.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    let child = state.child.lock().map_err(|err| err.to_string())?.take();
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(mut child) = child {
+            kill_child(&mut child);
+        }
+        app.exit(0);
+    });
+    Ok(())
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let show_item = MenuItem::with_id(app, TRAY_SHOW_ID, "显示主界面", true, None::<&str>)?;
+    let exit_item = MenuItem::with_id(app, TRAY_EXIT_ID, "退出程序", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &exit_item])?;
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
+        .menu(&menu)
+        .tooltip("Keydex")
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| {
+            let id = event.id().0.as_str();
+            if id == TRAY_SHOW_ID {
+                show_main_window(app);
+                return;
+            }
+            if id == TRAY_EXIT_ID {
+                let state = app.state::<SidecarState>();
+                let _ = request_exit(app, &state);
+            }
+        })
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                ..
+            }
+            | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => show_main_window(tray.app_handle()),
+            _ => {}
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray.build(app)?;
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(SidecarState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
+        .setup(|app| {
+            setup_tray(app.handle())?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             allocate_port,
             start_sidecar,
             stop_sidecar,
-            wait_for_health
+            wait_for_health,
+            hide_main_window,
+            request_app_exit
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.state::<SidecarState>();
-                if state.closing.swap(true, Ordering::SeqCst) {
+                if state.closing.load(Ordering::SeqCst) {
                     return;
                 }
 
                 api.prevent_close();
-                let app = window.app_handle().clone();
-                let child = state.child.lock().ok().and_then(|mut child| child.take());
-                let _ = window.hide();
-
-                tauri::async_runtime::spawn_blocking(move || {
-                    if let Some(mut child) = child {
-                        kill_child(&mut child);
-                    }
-                    app.exit(0);
-                });
+                let _ = window.emit(WINDOW_CLOSE_REQUESTED_EVENT, ());
             }
         })
         .run(tauri::generate_context!())
