@@ -524,8 +524,18 @@ class Database:
             self._ensure_column(conn, "sessions", "context_window_usage_json", "text")
             self._ensure_column(conn, "sessions", "pinned_at", "text")
             self._ensure_column(conn, "sessions", "title_source", "text not null default 'manual'")
-            self._ensure_column(conn, "session_forks", "target_message_event_id", "text not null default ''")
-            self._ensure_column(conn, "session_forks", "target_turn_index", "integer not null default 0")
+            self._ensure_column(
+                conn,
+                "session_forks",
+                "target_message_event_id",
+                "text not null default ''",
+            )
+            self._ensure_column(
+                conn,
+                "session_forks",
+                "target_turn_index",
+                "integer not null default 0",
+            )
             conn.execute(
                 """
                 create index if not exists idx_session_forks_target_message

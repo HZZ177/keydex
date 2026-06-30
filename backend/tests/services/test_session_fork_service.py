@@ -141,8 +141,14 @@ def test_session_fork_service_allows_multiple_forks_from_same_message(tmp_path) 
     assert {record.source_message_event_id for record in fork_records} == {"evt_ai_1"}
     assert len({record.target_message_event_id for record in fork_records}) == 2
     assert repositories.sessions.get("ses_source").child_session_id is None
-    assert saver.get_tuple({"configurable": {"thread_id": first.id, "checkpoint_ns": ""}}) is not None
-    assert saver.get_tuple({"configurable": {"thread_id": second.id, "checkpoint_ns": ""}}) is not None
+    assert (
+        saver.get_tuple({"configurable": {"thread_id": first.id, "checkpoint_ns": ""}})
+        is not None
+    )
+    assert (
+        saver.get_tuple({"configurable": {"thread_id": second.id, "checkpoint_ns": ""}})
+        is not None
+    )
 
 
 def test_session_fork_service_allows_target_session_tag_override(tmp_path) -> None:
@@ -177,9 +183,10 @@ def test_session_reverse_rolls_back_same_session_to_user_turn_input_checkpoint(t
     assert result.source.checkpoint_id == "ckpt_1"
     assert result.source.turn_index == 2
     assert repositories.message_events.count_by_session("ses_source") == 2
-    assert [trace.trace_id for trace in repositories.trace_records.list_by_session("ses_source")] == [
-        "trace_1"
+    trace_ids = [
+        trace.trace_id for trace in repositories.trace_records.list_by_session("ses_source")
     ]
+    assert trace_ids == ["trace_1"]
     rolled_back_checkpoint = saver.get_tuple(
         {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
     )
@@ -210,7 +217,10 @@ def test_session_reverse_first_turn_clears_history_and_checkpoints(tmp_path) -> 
     assert result.source.checkpoint_id is None
     assert repositories.message_events.count_by_session("ses_source") == 0
     assert repositories.trace_records.list_by_session("ses_source") == []
-    assert saver.get_tuple({"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}) is None
+    assert (
+        saver.get_tuple({"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}})
+        is None
+    )
 
 
 def test_session_reverse_rejects_assistant_message_source(tmp_path) -> None:

@@ -77,7 +77,9 @@ def test_session_fork_api_returns_new_session_and_source_metadata(tmp_path) -> N
         )
         source_history_response = client.get("/api/sessions/ses_source/history?all_turns=true")
         forked_session_id = response.json()["session"]["id"]
-        forked_history_response = client.get(f"/api/sessions/{forked_session_id}/history?all_turns=true")
+        forked_history_response = client.get(
+            f"/api/sessions/{forked_session_id}/history?all_turns=true"
+        )
 
     assert response.status_code == 200
     body = response.json()
@@ -94,7 +96,10 @@ def test_session_fork_api_returns_new_session_and_source_metadata(tmp_path) -> N
     assert all("forkSource" not in item for item in source_messages)
     forked_messages = forked_history_response.json()["list"]
     marker_message = next(
-        item for item in forked_messages if item["messageEventId"] == body["session"]["fork_source"]["target_message_event_id"]
+        item
+        for item in forked_messages
+        if item["messageEventId"]
+        == body["session"]["fork_source"]["target_message_event_id"]
     )
     assert marker_message["forkSource"]["source_session_id"] == "ses_source"
 

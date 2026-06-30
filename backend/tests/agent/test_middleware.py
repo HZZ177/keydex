@@ -357,7 +357,9 @@ async def test_context_compression_wrap_model_emits_usage_context_window_snapsho
 
 
 @pytest.mark.asyncio
-async def test_context_compression_wrap_model_skips_snapshot_without_usage_metadata(tmp_path) -> None:
+async def test_context_compression_wrap_model_skips_snapshot_without_usage_metadata(
+    tmp_path,
+) -> None:
     repositories = _repositories(tmp_path)
     session = repositories.sessions.create(
         session_id="ses_window_snapshot_without_usage",
