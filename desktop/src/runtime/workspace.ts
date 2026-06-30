@@ -50,6 +50,7 @@ export interface WorkspaceSearchResult {
   path: string;
   name: string;
   type: "file" | "directory";
+  size?: number | null;
 }
 
 export interface WorkspaceSearchOptions {

@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from backend.app.core.logger import logger
-from backend.app.core.ripgrep import BUNDLED_RIPGREP_BINARY_NAME, resolve_ripgrep_binary
+from backend.app.core.ripgrep import (
+    BUNDLED_RIPGREP_BINARY_NAME,
+    open_ripgrep_process,
+    resolve_ripgrep_binary,
+    run_ripgrep_process,
+)
 from backend.app.tools.base import FunctionTool, ToolExecutionContext, ToolExecutionError
 from backend.app.tools.file_access import relative_tool_path, resolve_file_access_path
 from backend.app.tools.registry import ToolRegistry
@@ -432,15 +437,7 @@ def _run_ripgrep_path_list_blocking(
 ) -> RipgrepPathListResult:
     rg = _require_ripgrep_binary()
     try:
-        process = subprocess.Popen(
-            [str(rg), *args],
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        process = open_ripgrep_process([rg, *args], cwd=cwd)
     except OSError as exc:
         raise ToolExecutionError(
             f"启动 ripgrep 失败：{exc}",
@@ -515,15 +512,7 @@ def _run_ripgrep_file_search_blocking(
 ) -> RipgrepFileSearchResult:
     rg = _require_ripgrep_binary()
     try:
-        process = subprocess.Popen(
-            [str(rg), *args],
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        process = open_ripgrep_process([rg, *args], cwd=cwd)
     except OSError as exc:
         raise ToolExecutionError(
             f"启动 ripgrep 失败：{exc}",
@@ -697,16 +686,7 @@ def _run_ripgrep_blocking(
 ) -> tuple[int, str, str]:
     rg = _require_ripgrep_binary()
     try:
-        completed = subprocess.run(
-            [str(rg), *args],
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_seconds,
-            check=False,
-        )
+        completed = run_ripgrep_process([rg, *args], cwd=cwd, timeout_seconds=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         raise ToolExecutionError(
             f"ripgrep 搜索超过 {timeout_seconds} 秒，已停止",
@@ -767,15 +747,7 @@ def _run_ripgrep_json_matches_blocking(
 ) -> RipgrepJsonResult:
     rg = _require_ripgrep_binary()
     try:
-        process = subprocess.Popen(
-            [str(rg), *args],
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        process = open_ripgrep_process([rg, *args], cwd=cwd)
     except OSError as exc:
         raise ToolExecutionError(
             f"启动 ripgrep 失败：{exc}",

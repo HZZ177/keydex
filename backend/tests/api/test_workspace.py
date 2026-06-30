@@ -36,8 +36,10 @@ def test_workspace_bound_tree_read_and_search(tmp_path) -> None:
     root = tmp_path / "workspace"
     src = root / "src"
     src.mkdir(parents=True)
-    (src / "main.py").write_text("print('ok')\n", encoding="utf-8")
-    (root / "README.md").write_text("# Hello\n", encoding="utf-8")
+    main_path = src / "main.py"
+    readme_path = root / "README.md"
+    main_path.write_text("print('ok')\n", encoding="utf-8")
+    readme_path.write_text("# Hello\n", encoding="utf-8")
 
     with _client(tmp_path) as client:
         workspace = _create_workspace(client, root)
@@ -71,12 +73,15 @@ def test_workspace_bound_tree_read_and_search(tmp_path) -> None:
         "path": "src/main.py",
         "name": "main.py",
         "type": "file",
+        "size": main_path.stat().st_size,
     }
     assert default_search_response.status_code == 200
     assert [entry["path"] for entry in default_search_response.json()[:2]] == [
         "src",
         "README.md",
     ]
+    assert "size" not in default_search_response.json()[0]
+    assert default_search_response.json()[1]["size"] == readme_path.stat().st_size
 
 
 def test_workspace_subtree_returns_entries_map(tmp_path) -> None:

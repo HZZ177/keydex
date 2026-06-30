@@ -360,15 +360,23 @@
 }
 
 .tree[data-mode="search"] .nodeButton {
-  grid-template-columns: 16px 16px minmax(0, 1fr);
+  grid-template-columns: 16px 16px minmax(0, 1fr) auto;
   grid-template-rows: auto auto;
   row-gap: 1px;
 }
 
-.tree[data-mode="search"] .nodeButton em {
+.searchResultPath {
   grid-column: 3;
+  grid-row: 2;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchResultSize {
+  grid-column: 4;
+  grid-row: 1;
+  align-self: center;
   white-space: nowrap;
 }
 

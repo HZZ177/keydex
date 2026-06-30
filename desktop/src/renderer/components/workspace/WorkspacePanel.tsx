@@ -426,7 +426,7 @@ export function WorkspacePanel({
       block: "nearest",
       inline: "nearest",
     });
-  }, [entriesByPath, expandedPaths, keyboardActivePath, searchActive, searchState.results]);
+  }, [keyboardActivePath]);
 
   return (
     <section
@@ -828,6 +828,7 @@ const SearchResultNode = memo(function SearchResultNode({
   selectedPath: string | null;
 }) {
   const isDirectory = entry.type === "directory";
+  const sizeLabel = !isDirectory && typeof entry.size === "number" ? formatSize(entry.size) : null;
 
   return (
     <div className={styles.node} role="treeitem" aria-expanded={isDirectory ? false : undefined}>
@@ -847,7 +848,8 @@ const SearchResultNode = memo(function SearchResultNode({
         )}
         <MaterialEntryIcon path={entry.path || entry.name} type={entry.type} />
         <EllipsizedEntryName name={entry.name} />
-        <em title={entry.path}>{entry.path}</em>
+        <em className={styles.searchResultPath} title={entry.path}>{entry.path}</em>
+        {sizeLabel ? <em className={styles.searchResultSize}>{sizeLabel}</em> : null}
       </button>
     </div>
   );

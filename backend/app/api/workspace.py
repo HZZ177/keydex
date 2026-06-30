@@ -15,7 +15,11 @@ from pydantic import BaseModel
 
 from backend.app.api.dependencies import get_repositories
 from backend.app.core.logger import logger
-from backend.app.core.ripgrep import BUNDLED_RIPGREP_BINARY_NAME, resolve_ripgrep_binary
+from backend.app.core.ripgrep import (
+    BUNDLED_RIPGREP_BINARY_NAME,
+    open_ripgrep_process,
+    resolve_ripgrep_binary,
+)
 from backend.app.keydex.schemas import WorkspaceSkillsResponse, workspace_skills_response
 from backend.app.security.workspace import WorkspacePathError, resolve_workspace_path
 from backend.app.services.workspace_service import (
@@ -132,6 +136,7 @@ class WorkspaceSearchResult(BaseModel):
     path: str
     name: str
     type: str
+    size: int | None = None
 
 
 class WorkspaceFileAnnotationAnchorV2(BaseModel):
@@ -247,7 +252,11 @@ async def read_workspace_media(
     return _read_media(scope, path)
 
 
-@router.get("/api/workspaces/{workspace_id}/search", response_model=list[WorkspaceSearchResult])
+@router.get(
+    "/api/workspaces/{workspace_id}/search",
+    response_model=list[WorkspaceSearchResult],
+    response_model_exclude_none=True,
+)
 async def search_workspace(
     workspace_id: str,
     q: str = Query("", min_length=0),
@@ -408,6 +417,7 @@ async def read_session_workspace_media(
 @router.get(
     "/api/sessions/{session_id}/workspace/search",
     response_model=list[WorkspaceSearchResult],
+    response_model_exclude_none=True,
 )
 async def search_session_workspace(
     session_id: str,
@@ -963,7 +973,7 @@ def _search(scope: WorkspaceRuntimeContext, q: str, limit: int) -> list[Workspac
         )
 
     file_paths, truncated, visited = _workspace_rg_file_paths(base)
-    results = _workspace_search_results_from_paths(file_paths, q, limit)
+    results = _workspace_search_results_from_paths(base, file_paths, q, limit)
     if truncated:
         logger.info(
             "[WorkspaceAPI] 搜索达到预算提前返回 | "
@@ -989,15 +999,7 @@ def _workspace_rg_file_paths(base: Path) -> tuple[list[str], bool, int]:
             {"engine": "ripgrep", "required_binary": BUNDLED_RIPGREP_BINARY_NAME},
         )
     try:
-        process = subprocess.Popen(
-            [str(rg), *_workspace_rg_file_args()],
-            cwd=str(base),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        process = open_ripgrep_process([rg, *_workspace_rg_file_args()], cwd=base)
     except OSError as exc:
         raise _workspace_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1061,6 +1063,7 @@ def _workspace_rg_file_args() -> list[str]:
 
 
 def _workspace_search_results_from_paths(
+    base: Path,
     file_paths: list[str],
     q: str,
     limit: int,
@@ -1072,10 +1075,29 @@ def _workspace_search_results_from_paths(
         name = path.rsplit("/", 1)[-1]
         if query not in name.lower():
             continue
-        results.append(WorkspaceSearchResult(path=path, name=name, type=entry_type))
+        results.append(
+            WorkspaceSearchResult(
+                path=path,
+                name=name,
+                type=entry_type,
+                size=_workspace_search_result_size(base, path, entry_type),
+            )
+        )
         if len(results) >= limit:
             return results
     return results
+
+
+def _workspace_search_result_size(base: Path, path: str, entry_type: str) -> int | None:
+    if entry_type != "file":
+        return None
+    try:
+        target = base / Path(path)
+        if not target.is_file():
+            return None
+        return target.stat().st_size
+    except OSError:
+        return None
 
 
 def _workspace_search_entries_from_paths(file_paths: list[str]) -> dict[str, str]:

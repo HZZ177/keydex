@@ -91,6 +91,45 @@ describe("WorkspacePanel", () => {
     });
   });
 
+  it("does not scroll back to the keyboard active row after mouse-expanding a directory", async () => {
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const runtime = fakeRuntime({
+      "": [
+        entry("alpha", "alpha", "directory"),
+        entry("target", "target", "directory"),
+      ],
+      alpha: [entry("alpha.ts", "alpha/alpha.ts", "file", 12)],
+      target: [entry("item.ts", "target/item.ts", "file", 24)],
+    });
+
+    try {
+      render(<WorkspacePanel sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+
+      const targetButton = await screen.findByRole("button", { name: "展开 target" });
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "展开 alpha" }).getAttribute("data-keyboard-active")).toBe(
+          "true",
+        );
+      });
+      scrollIntoView.mockClear();
+
+      fireEvent.click(targetButton);
+
+      expect(await screen.findByRole("button", { name: "选择文件 target/item.ts" })).not.toBeNull();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        configurable: true,
+        value: originalScrollIntoView,
+      });
+    }
+  });
+
   it("toggles all descendant directories from the right edge control", async () => {
     const runtime = fakeRuntime({
       "": [entry("src", "src", "directory")],
@@ -170,6 +209,7 @@ describe("WorkspacePanel", () => {
     expect(screen.getByRole("tree", { name: "工作区搜索结果" })).not.toBeNull();
     const result = await screen.findByRole("button", { name: "选择文件 package.json" });
     expect(result).not.toBeNull();
+    expect(within(result).getByText("12 B")).not.toBeNull();
     expect(screen.queryByText("desktop")).toBeNull();
 
     fireEvent.click(result);
