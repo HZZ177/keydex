@@ -39,23 +39,31 @@ describe("MessageList", () => {
   it("shows branch actions only for persisted completed messages", () => {
     const fork = vi.fn();
     const reverse = vi.fn();
-    const branchable = {
+    const branchableAssistant = {
       ...message("m1", "assistant", "可以从这里继续"),
       payload: { messageEventId: "evt-ai-1" },
     };
+    const reversibleUser = {
+      ...message("m2", "user", "回退这一轮"),
+      payload: { messageEventId: "evt-user-1" },
+    };
     const running = {
-      ...message("m2", "assistant", "还在输出"),
+      ...message("m3", "assistant", "还在输出"),
       status: "running" as const,
       payload: { messageEventId: "evt-ai-2" },
     };
     const { rerender } = render(
-      <MessageList messages={[branchable]} onForkFromMessage={fork} onReverseFromMessage={reverse} />,
+      <MessageList
+        messages={[reversibleUser, branchableAssistant]}
+        onForkFromMessage={fork}
+        onReverseFromMessage={reverse}
+      />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "从这里继续" }));
     fireEvent.click(screen.getByRole("button", { name: "回退到这里继续" }));
-    expect(fork).toHaveBeenCalledWith(branchable);
-    expect(reverse).toHaveBeenCalledWith(branchable);
+    expect(fork).toHaveBeenCalledWith(branchableAssistant);
+    expect(reverse).toHaveBeenCalledWith(reversibleUser);
 
     rerender(<MessageList messages={[message("m3", "assistant", "没有事件")]} onForkFromMessage={fork} />);
     expect(screen.queryByRole("button", { name: "从这里继续" })).toBeNull();

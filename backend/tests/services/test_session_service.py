@@ -69,9 +69,30 @@ def test_session_service_lists_sessions_with_sort_filter_and_current_marker(tmp_
     assert [item["id"] for item in result["list"]] == [second.id, first.id]
     assert result["list"][0]["is_current"] is True
     assert result["list"][1]["is_current"] is False
+    assert result["list"][0]["pinned"] is False
+    assert result["list"][0]["pinned_at"] is None
 
     filtered = service.list_sessions(ListSessionsRequest(title="旧"))
     assert [item["id"] for item in filtered["list"]] == [first.id]
+
+
+def test_session_service_sets_pinned_state(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    repositories.sessions.create(
+        session_id="ses_pin",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="置顶会话",
+    )
+    service = _service(repositories)
+
+    pinned = service.set_session_pinned("ses_pin", pinned=True)
+    unpinned = service.set_session_pinned("ses_pin", pinned=False)
+
+    assert pinned["pinned"] is True
+    assert pinned["pinned_at"]
+    assert unpinned["pinned"] is False
+    assert unpinned["pinned_at"] is None
 
 
 def test_session_service_groups_sessions_by_workspace_and_chat(tmp_path) -> None:

@@ -481,7 +481,11 @@ async def test_file_access_blocked_tools_emit_failed_tool_events(
         chat_adapter=chat_adapter,
     )
 
-    tool_events = [item for item in chat_adapter.sent if item["action"] in {"tool_start", "tool_end"}]
+    tool_events = [
+        item
+        for item in chat_adapter.sent
+        if item["action"] in {"tool_start", "tool_end"}
+    ]
     assert [item["action"] for item in tool_events] == ["tool_start", "tool_end"]
     assert tool_events[0]["data"]["tool"] == tool_name
     assert tool_events[1]["data"]["tool"] == tool_name
@@ -558,15 +562,27 @@ async def test_file_access_blocked_sequential_tools_each_emit_failed_events(tmp_
         chat_adapter=chat_adapter,
     )
 
-    tool_events = [item for item in chat_adapter.sent if item["action"] in {"tool_start", "tool_end"}]
-    assert [item["action"] for item in tool_events] == ["tool_start", "tool_end", "tool_start", "tool_end"]
+    tool_events = [
+        item
+        for item in chat_adapter.sent
+        if item["action"] in {"tool_start", "tool_end"}
+    ]
+    assert [item["action"] for item in tool_events] == [
+        "tool_start",
+        "tool_end",
+        "tool_start",
+        "tool_end",
+    ]
     assert [item["data"]["tool"] for item in tool_events] == [
         "search_files",
         "search_files",
         "create_file",
         "create_file",
     ]
-    assert [tool_events[1]["data"]["status"], tool_events[3]["data"]["status"]] == ["failed", "failed"]
+    assert [
+        tool_events[1]["data"]["status"],
+        tool_events[3]["data"]["status"],
+    ] == ["failed", "failed"]
     assert "file_access_disabled" in tool_events[1]["data"]["result"]
     assert "file_access_disabled" in tool_events[3]["data"]["result"]
     assert result.status == "completed"

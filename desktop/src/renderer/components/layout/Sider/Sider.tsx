@@ -9,6 +9,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
+  Pin,
   Search,
   Settings,
   ShieldCheck,
@@ -22,6 +23,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import type { AppMode } from "@/renderer/components/layout/appMode";
+import { LoadingSkeleton } from "@/renderer/components/loading";
 import {
   subscribeSessionCreated,
   subscribeSessionUpdated,
@@ -39,13 +41,14 @@ export interface SiderEntry {
   id: string;
   title: string;
   updatedAt?: string;
+  pinnedAt?: string;
   groupTitle?: string;
 }
 
 interface SiderGroup {
   id: string;
   title: string;
-  kind: "workspace" | "chat";
+  kind: "workspace" | "chat" | "pinned";
   items: SiderEntry[];
   latestUpdatedAt?: string;
   workspaceId?: string;
@@ -109,7 +112,7 @@ export function Sider({
   const [loadedSessions, setLoadedSessions] = useState<AgentSession[]>([]);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(() => conversations === undefined && backendReady && !backendError);
   const [loadingWorkspaceHistoryIds, setLoadingWorkspaceHistoryIds] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -121,10 +124,17 @@ export function Sider({
 
   const controlled = conversations !== undefined;
   const loadedGroups = useMemo(() => buildSessionGroups(loadedSessions), [loadedSessions]);
+  const loadedPinnedItems = useMemo(() => buildPinnedEntries(loadedSessions), [loadedSessions]);
   const historyGroups = useMemo(
     () => (conversations ? buildControlledGroups(projects, conversations) : loadedGroups),
     [conversations, loadedGroups, projects],
   );
+  const pinnedItems = useMemo(
+    () => (conversations ? buildControlledPinnedEntries(projects, conversations) : loadedPinnedItems),
+    [conversations, loadedPinnedItems, projects],
+  );
+  const regularHistoryGroups = useMemo(() => withoutPinnedItems(historyGroups), [historyGroups]);
+  const displayHistoryGroups = appMode === "workbench" ? historyGroups : regularHistoryGroups;
   const historyEmptyText = useMemo(() => {
     if (controlled) {
       return "暂无会话";
@@ -138,8 +148,14 @@ export function Sider({
     return "暂无会话";
   }, [backendError, backendReady, controlled, loadingHistory]);
   const historyEmptyLoading = !controlled && !backendError && (!backendReady || loadingHistory);
-  const workspaceGroups = useMemo(() => historyGroups.filter((group) => group.kind === "workspace"), [historyGroups]);
-  const chatGroup = useMemo(() => historyGroups.find((group) => group.kind === "chat") ?? null, [historyGroups]);
+  const workspaceGroups = useMemo(
+    () => displayHistoryGroups.filter((group) => group.kind === "workspace"),
+    [displayHistoryGroups],
+  );
+  const chatGroup = useMemo(
+    () => displayHistoryGroups.find((group) => group.kind === "chat") ?? null,
+    [displayHistoryGroups],
+  );
   const chatItems = chatGroup?.items ?? [];
   const firstWorkspaceId = workspaceGroups.find((group) => group.workspaceId)?.workspaceId ?? projects[0]?.id;
   const workbenchGroup = workspaceGroups[0] ?? {
@@ -149,7 +165,14 @@ export function Sider({
     items: [],
     workspaceId: projects[0]?.id,
   };
-  const historyItems = useMemo(() => historyGroups.flatMap((group) => group.items), [historyGroups]);
+  const historyItems = useMemo(
+    () =>
+      appMode === "workbench"
+        ? displayHistoryGroups.flatMap((group) => group.items)
+        : [...pinnedItems, ...displayHistoryGroups.flatMap((group) => group.items)],
+    [appMode, displayHistoryGroups, pinnedItems],
+  );
+  const showInitialHistorySkeleton = historyEmptyLoading && !collapsed && historyItems.length === 0;
   const searchResults = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     if (!keyword) {
@@ -307,6 +330,20 @@ export function Sider({
     }
   }
 
+  async function togglePinnedConversation(item: SiderEntry, pinned: boolean) {
+    if (!canMutateConversations) {
+      notifications.warning("当前后端不支持置顶会话");
+      return;
+    }
+    try {
+      const updated = await runtime.conversation.updateSession(item.id, { pinned });
+      setLoadedSessions((items) => upsertSession(items, updated));
+      notifications.success(pinned ? "已置顶会话" : "已取消置顶");
+    } catch (reason) {
+      notifications.error(errorMessage(reason));
+    }
+  }
+
   const loadWorkspaceSessions = useCallback(
     async (workspaceId: string) => {
       if (controlled || loadedWorkspaceHistoryIdsRef.current.has(workspaceId) || loadingWorkspaceHistoryIds.has(workspaceId)) {
@@ -398,49 +435,85 @@ export function Sider({
           <div
             className={styles.history}
             aria-label="会话历史"
+            data-loading={showInitialHistorySkeleton ? "true" : "false"}
             ref={historyRef}
             onScroll={updateFooterFeather}
             onTransitionEnd={updateFooterFeather}
           >
-            <SiderSection
-              title={workbenchGroup.title}
-              kind="workspace"
-              items={workbenchGroup.items}
-              collapsed={collapsed}
-              emptyText={historyEmptyText}
-              emptyLoading={historyEmptyLoading}
-              activePath={activePath}
-              editing={editing}
-              confirmDeleteId={confirmDeleteId}
-              canMutate={canMutateConversations}
-              sessionIndicators={sessionIndicators}
-              workspaceId={workbenchGroup.workspaceId}
-              disableSectionToggle
-              flat
-              hideTitle
-              getSessionPath={getSessionPath}
-              onDelete={(id) => void deleteConversation(id)}
-              onCancelDelete={() => setConfirmDeleteId(null)}
-              onCancelRename={() => setEditing(null)}
-              onConfirmDelete={setConfirmDeleteId}
-              onRename={(id, title) => void renameConversation(id, title)}
-              onStartRename={(item) => setEditing({ id: item.id, title: item.title })}
-              onUpdateRename={(title) => setEditing((value) => (value ? { ...value, title } : value))}
-              onNavigate={navigateTo}
-            />
+            {showInitialHistorySkeleton ? (
+              <div className={styles.historyLoadingState} data-testid="sidebar-session-skeleton-shell">
+                <SessionHistorySkeleton />
+              </div>
+            ) : (
+              <SiderSection
+                title={workbenchGroup.title}
+                kind="workspace"
+                items={workbenchGroup.items}
+                collapsed={collapsed}
+                emptyText={historyEmptyText}
+                emptyLoading={historyEmptyLoading}
+                activePath={activePath}
+                editing={editing}
+                confirmDeleteId={confirmDeleteId}
+                canMutate={canMutateConversations}
+                sessionIndicators={sessionIndicators}
+                workspaceId={workbenchGroup.workspaceId}
+                disableSectionToggle
+                flat
+                hideTitle
+                getSessionPath={getSessionPath}
+                onDelete={(id) => void deleteConversation(id)}
+                onCancelDelete={() => setConfirmDeleteId(null)}
+                onCancelRename={() => setEditing(null)}
+                onConfirmDelete={setConfirmDeleteId}
+                onRename={(id, title) => void renameConversation(id, title)}
+                onStartRename={(item) => setEditing({ id: item.id, title: item.title })}
+                onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
+                onUpdateRename={(title) => setEditing((value) => (value ? { ...value, title } : value))}
+                onNavigate={navigateTo}
+              />
+            )}
           </div>
         </div>
       ) : (
         <div
           className={styles.history}
           aria-label="会话历史"
+          data-loading={showInitialHistorySkeleton ? "true" : "false"}
           ref={historyRef}
           onScroll={updateFooterFeather}
           onTransitionEnd={updateFooterFeather}
         >
-          {collapsed ? (
+          {showInitialHistorySkeleton ? (
+            <div className={styles.historyLoadingState} data-testid="sidebar-session-skeleton-shell">
+              <SessionHistorySkeleton />
+            </div>
+          ) : collapsed ? (
             <>
-              {historyGroups.length === 0 ? (
+              <SiderSection
+                title="置顶"
+                kind="pinned"
+                items={pinnedItems}
+                collapsed={collapsed}
+                emptyText="暂无置顶"
+                emptyLoading={false}
+                activePath={activePath}
+                editing={editing}
+                confirmDeleteId={confirmDeleteId}
+                canMutate={canMutateConversations}
+                sessionIndicators={sessionIndicators}
+                getSessionPath={getSessionPath}
+                onDelete={(id) => void deleteConversation(id)}
+                onCancelDelete={() => setConfirmDeleteId(null)}
+                onCancelRename={() => setEditing(null)}
+                onConfirmDelete={setConfirmDeleteId}
+                onRename={(id, title) => void renameConversation(id, title)}
+                onStartRename={(item) => setEditing({ id: item.id, title: item.title })}
+                onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
+                onUpdateRename={(title) => setEditing((value) => (value ? { ...value, title } : value))}
+                onNavigate={navigateTo}
+              />
+              {displayHistoryGroups.length === 0 && pinnedItems.length === 0 ? (
                 <SiderSection
                   title="对话"
                   items={[]}
@@ -449,7 +522,7 @@ export function Sider({
                   emptyLoading={historyEmptyLoading}
                 />
               ) : null}
-              {historyGroups.map((group) => (
+              {displayHistoryGroups.map((group) => (
                 <SiderSection
                   title={group.title}
                   kind={group.kind}
@@ -477,6 +550,7 @@ export function Sider({
                   onConfirmDelete={setConfirmDeleteId}
                   onRename={(id, title) => void renameConversation(id, title)}
                   onStartRename={(item) => setEditing({ id: item.id, title: item.title })}
+                  onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                   onUpdateRename={(title) => setEditing((value) => (value ? { ...value, title } : value))}
                   onNavigate={navigateTo}
                 />
@@ -484,6 +558,30 @@ export function Sider({
             </>
           ) : (
             <>
+              <SiderSection
+                title="置顶"
+                kind="pinned"
+                items={pinnedItems}
+                collapsed={collapsed}
+                emptyText="暂无置顶"
+                emptyLoading={false}
+                activePath={activePath}
+                editing={editing}
+                confirmDeleteId={confirmDeleteId}
+                canMutate={canMutateConversations}
+                sessionIndicators={sessionIndicators}
+                historyPreviewLimit={WORKSPACE_SESSION_PREVIEW_LIMIT}
+                getSessionPath={getSessionPath}
+                onDelete={(id) => void deleteConversation(id)}
+                onCancelDelete={() => setConfirmDeleteId(null)}
+                onCancelRename={() => setEditing(null)}
+                onConfirmDelete={setConfirmDeleteId}
+                onRename={(id, title) => void renameConversation(id, title)}
+                onStartRename={(item) => setEditing({ id: item.id, title: item.title })}
+                onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
+                onUpdateRename={(title) => setEditing((value) => (value ? { ...value, title } : value))}
+                onNavigate={navigateTo}
+              />
               <HistoryBucket
                 title="项目"
                 kind="workspace"
@@ -522,6 +620,7 @@ export function Sider({
                     onConfirmDelete={setConfirmDeleteId}
                     onRename={(id, title) => void renameConversation(id, title)}
                     onStartRename={(item) => setEditing({ id: item.id, title: item.title })}
+                    onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                     onUpdateRename={(title) => setEditing((value) => (value ? { ...value, title } : value))}
                     onNavigate={navigateTo}
                   />
@@ -554,6 +653,7 @@ export function Sider({
                     onConfirmDelete={setConfirmDeleteId}
                     onRename={(id, title) => void renameConversation(id, title)}
                     onStartRename={(item) => setEditing({ id: item.id, title: item.title })}
+                    onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                     onUpdateRename={(title) => setEditing((value) => (value ? { ...value, title } : value))}
                     onNavigate={navigateTo}
                   />
@@ -599,6 +699,18 @@ export function Sider({
         />
       ) : null}
     </aside>
+  );
+}
+
+function SessionHistorySkeleton() {
+  return (
+    <LoadingSkeleton
+      aria-label="正在加载会话"
+      className={styles.sessionHistorySkeleton}
+      lineCount={8}
+      testId="sidebar-session-skeleton"
+      width="compact"
+    />
   );
 }
 
@@ -674,7 +786,7 @@ function SessionSearchDialog({
 
 interface SiderSectionProps {
   title: string;
-  kind?: "workspace" | "chat";
+  kind?: SiderGroup["kind"];
   items: SiderEntry[];
   collapsed: boolean;
   emptyText: string;
@@ -700,6 +812,7 @@ interface SiderSectionProps {
   onNavigate?: (path: string) => void;
   onRename?: (id: string, title: string) => void;
   onStartRename?: (item: SiderEntry) => void;
+  onTogglePinned?: (item: SiderEntry, pinned: boolean) => void;
   onUpdateRename?: (title: string) => void;
 }
 
@@ -784,6 +897,7 @@ function SiderSection({
   onNavigate,
   onRename,
   onStartRename,
+  onTogglePinned,
   onUpdateRename,
 }: SiderSectionProps) {
   const [hoveredSession, setHoveredSession] = useState<SessionHoverCard | null>(null);
@@ -793,9 +907,11 @@ function SiderSection({
   const [localHistoryExpansionLoading, setLocalHistoryExpansionLoading] = useState(false);
   const sectionItemsId = useId();
   const previousActivePathRef = useRef(activePath);
-  const canToggleSection = kind === "workspace" && !disableSectionToggle;
+  const canToggleSection = (kind === "workspace" || kind === "pinned") && !disableSectionToggle;
+  const sectionToggleLabel = kind === "pinned" ? "置顶区域" : `项目 ${title}`;
   const normalizedHistoryLimit = Math.max(0, historyPreviewLimit ?? 0);
-  const canPreviewWorkspaceHistory = !collapsed && kind === "workspace" && !hideTitle && normalizedHistoryLimit > 0;
+  const canPreviewWorkspaceHistory =
+    !collapsed && (kind === "workspace" || kind === "pinned") && !hideTitle && normalizedHistoryLimit > 0;
   const shouldLimitHistory = canPreviewWorkspaceHistory && items.length > normalizedHistoryLimit;
   const previewItems = shouldLimitHistory ? items.slice(0, normalizedHistoryLimit) : items;
   const extraItems = shouldLimitHistory ? items.slice(normalizedHistoryLimit) : [];
@@ -854,6 +970,7 @@ function SiderSection({
     setHoveredSession(null);
     setHoveredProject({
       title,
+      kind,
       active,
       expanded: sectionExpanded,
       top: Math.round(rect.top + rect.height / 2),
@@ -944,6 +1061,17 @@ function SiderSection({
             {canMutate ? (
               <div className={styles.historyActions}>
                 <button
+                  aria-label={`${item.pinnedAt ? "取消置顶" : "置顶"} ${item.title}`}
+                  data-pinned={item.pinnedAt ? "true" : "false"}
+                  onClick={() => {
+                    setHoveredSession(null);
+                    onTogglePinned?.(item, !item.pinnedAt);
+                  }}
+                  type="button"
+                >
+                  <Pin size={13} />
+                </button>
+                <button
                   aria-label={`重命名 ${item.title}`}
                   onClick={() => {
                     setHoveredSession(null);
@@ -974,6 +1102,7 @@ function SiderSection({
   if (collapsed) {
     const collapsedProjectActive =
       canToggleSection && items.some((item) => isActivePath(activePath, getSessionPath(item.id)));
+    const CollapsedSectionIcon = sectionExpanded ? FolderOpen : Folder;
     return (
       <section className={styles.collapsedSection} aria-label={title} data-kind={kind}>
         {canToggleSection ? (
@@ -982,7 +1111,7 @@ function SiderSection({
             type="button"
             aria-controls={sectionItemsId}
             aria-expanded={sectionExpanded}
-            aria-label={`${sectionExpanded ? "收起" : "展开"}项目 ${title}`}
+            aria-label={`${sectionExpanded ? "收起" : "展开"}${sectionToggleLabel}`}
             data-active={collapsedProjectActive ? "true" : "false"}
             onBlur={() => setHoveredProject(null)}
             onClick={() => setSectionExpanded((expanded) => !expanded)}
@@ -990,10 +1119,10 @@ function SiderSection({
             onMouseEnter={(event) => showProjectCard(collapsedProjectActive, event.currentTarget)}
             onMouseLeave={() => setHoveredProject(null)}
           >
-            {sectionExpanded ? (
-              <FolderOpen className={styles.collapsedProjectFolder} size={16} strokeWidth={1.8} aria-hidden="true" />
+            {kind === "pinned" ? (
+              <span className={styles.collapsedPinnedMarker}>置</span>
             ) : (
-              <Folder className={styles.collapsedProjectFolder} size={16} strokeWidth={1.8} aria-hidden="true" />
+              <CollapsedSectionIcon className={styles.collapsedProjectFolder} size={16} strokeWidth={1.8} aria-hidden="true" />
             )}
             <ChevronDown className={styles.collapsedProjectChevron} size={10} strokeWidth={2.15} aria-hidden="true" />
           </button>
@@ -1062,11 +1191,11 @@ function SiderSection({
             type="button"
             aria-controls={sectionItemsId}
             aria-expanded={sectionExpanded}
-            aria-label={`${sectionExpanded ? "收起" : "展开"}项目 ${title}`}
+            aria-label={`${sectionExpanded ? "收起" : "展开"}${sectionToggleLabel}`}
             data-kind={kind}
             onClick={() => setSectionExpanded((expanded) => !expanded)}
           >
-            {sectionExpanded ? (
+            {kind === "pinned" ? null : sectionExpanded ? (
               <FolderOpen size={15} strokeWidth={1.75} aria-hidden="true" />
             ) : (
               <Folder size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -1189,12 +1318,14 @@ interface SessionHoverCard {
 
 interface ProjectHoverCard {
   title: string;
+  kind: SiderGroup["kind"];
   active: boolean;
   expanded: boolean;
   top: number;
 }
 
 function ProjectHoverCardView({ project }: { project: ProjectHoverCard }) {
+  const typeLabel = project.kind === "pinned" ? "置顶" : project.active ? "当前项目" : "项目";
   return (
     <div
       className={styles.collapsedSessionCard}
@@ -1203,7 +1334,7 @@ function ProjectHoverCardView({ project }: { project: ProjectHoverCard }) {
     >
       <div className={styles.collapsedSessionCardTitle}>{project.title}</div>
       <div className={styles.collapsedSessionCardMeta}>
-        <span>{project.active ? "当前项目" : "项目"}</span>
+        <span>{typeLabel}</span>
         <span aria-hidden="true">·</span>
         <span>{project.expanded ? "已展开" : "已收起"}</span>
       </div>
@@ -1246,12 +1377,25 @@ function hoverCardStyle(top: number, left?: number): CSSProperties {
 }
 
 function sessionToEntry(session: AgentSession, groupTitle: string): SiderEntry {
+  const pinnedAt = session.pinned_at ?? (session.pinned ? session.updated_at : undefined);
   return {
     id: session.id,
     title: session.title || session.id,
     updatedAt: session.updated_at,
+    pinnedAt,
     groupTitle,
   };
+}
+
+function buildPinnedEntries(sessions: AgentSession[]): SiderEntry[] {
+  return sessions
+    .filter((session) => session.pinned || session.pinned_at)
+    .slice()
+    .sort(comparePinnedSessions)
+    .map((session) => {
+      const meta = sessionGroupMeta(session);
+      return sessionToEntry(session, meta.title);
+    });
 }
 
 function buildSessionGroups(sessions: AgentSession[]): SiderGroup[] {
@@ -1308,6 +1452,23 @@ function buildControlledGroups(projects: SiderEntry[], conversations: SiderEntry
   ];
 }
 
+function buildControlledPinnedEntries(projects: SiderEntry[], conversations: SiderEntry[]): SiderEntry[] {
+  const title = projects[0]?.title ?? "对话";
+  return conversations
+    .filter((item) => item.pinnedAt)
+    .map((item) => ({ ...item, groupTitle: item.groupTitle ?? title }))
+    .sort(comparePinnedEntries);
+}
+
+function withoutPinnedItems(groups: SiderGroup[]): SiderGroup[] {
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => !item.pinnedAt),
+    }))
+    .filter((group) => group.kind === "workspace" || group.items.length > 0);
+}
+
 function sessionGroupMeta(session: AgentSession): Pick<SiderGroup, "id" | "title" | "kind" | "workspaceId"> {
   if (session.session_type === "workspace") {
     if (session.workspace) {
@@ -1360,6 +1521,21 @@ function mergeSessions(sessions: AgentSession[], incoming: AgentSession[]): Agen
 
 function compareGroupUpdatedAt(left: SiderGroup, right: SiderGroup): number {
   return (right.latestUpdatedAt ?? "").localeCompare(left.latestUpdatedAt ?? "");
+}
+
+function comparePinnedSessions(left: AgentSession, right: AgentSession): number {
+  return compareTimeDesc(
+    left.pinned_at ?? (left.pinned ? left.updated_at : undefined),
+    right.pinned_at ?? (right.pinned ? right.updated_at : undefined),
+  );
+}
+
+function comparePinnedEntries(left: SiderEntry, right: SiderEntry): number {
+  return compareTimeDesc(left.pinnedAt, right.pinnedAt);
+}
+
+function compareTimeDesc(left: string | undefined, right: string | undefined): number {
+  return (right ?? "").localeCompare(left ?? "");
 }
 
 function maxTime(left: string | undefined, right: string | undefined): string | undefined {

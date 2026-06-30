@@ -414,7 +414,11 @@ class ChatService:
         message_injection_items = _build_message_injection_items(request.runtime_params)
         skill_activation = _build_skill_activation_request(request.runtime_params)
         has_request_attachments = bool(request.attachments)
-        if not request.message.strip() and not message_injection_items and not has_request_attachments:
+        if (
+            not request.message.strip()
+            and not message_injection_items
+            and not has_request_attachments
+        ):
             if skill_activation is not None:
                 raise ValueError("请输入要使用该 Skill 处理的内容")
             raise ValueError("用户消息不能为空")
@@ -428,6 +432,10 @@ class ChatService:
         root_node_id = f"{trace_id}-root"
         started_at = time.perf_counter()
         active_session_id = session.active_session_id or session.id
+        input_checkpoint_config = await self._get_latest_checkpoint_config(
+            thread_id=active_session_id,
+            checkpoint_ns="",
+        )
         context_token = set_request_context(
             trace_id=trace_id,
             session_id=session.id,
@@ -455,6 +463,8 @@ class ChatService:
             turn_index=turn_index,
             root_node_id=root_node_id,
             user_message_preview=request.message[:200],
+            input_checkpoint_id=input_checkpoint_config.get("checkpoint_id"),
+            input_checkpoint_ns=str(input_checkpoint_config.get("checkpoint_ns") or ""),
             metadata=runtime_metadata,
         )
 
@@ -785,7 +795,9 @@ class ChatService:
         )
         tool_context.metadata["repositories"] = self.repositories
         tool_context.metadata["dispatcher"] = dispatcher
-        tool_context.metadata["file_access_mode"] = load_command_settings(self.repositories).file_access_mode
+        tool_context.metadata["file_access_mode"] = load_command_settings(
+            self.repositories
+        ).file_access_mode
         workspace_root_label = str(tool_context.workspace_root) if enable_tools else "-"
         logger.info(
             f"[AgentLoop] 创建 agent | session_id={session.id} | turn_index={turn_index} | "
@@ -972,7 +984,6 @@ class ChatService:
         aggregator: TurnCompletedAggregator,
     ) -> EventDispatcher:
         dispatcher = EventDispatcher()
-        dispatcher.register_projection(ChatProjection(chat_adapter or NullChatProjectionAdapter()))
         dispatcher.register_projection(
             PersistenceProjection(
                 repository=self.repositories.message_events,
@@ -980,6 +991,7 @@ class ChatService:
                 turn_index=turn_index,
             )
         )
+        dispatcher.register_projection(ChatProjection(chat_adapter or NullChatProjectionAdapter()))
         dispatcher.register_projection(aggregator)
         return dispatcher
 
@@ -1211,6 +1223,17 @@ class ChatService:
             f"user_id={created.user_id} | scene_id={created.scene_id}"
         )
         return created
+
+    async def _get_latest_checkpoint_config(
+        self,
+        *,
+        thread_id: str,
+        checkpoint_ns: str,
+    ) -> dict[str, Any]:
+        get_latest = getattr(self.agent_runner, "get_latest_checkpoint_config", None)
+        if get_latest is None:
+            return {"checkpoint_id": None, "checkpoint_ns": checkpoint_ns}
+        return await get_latest(thread_id=thread_id, checkpoint_ns=checkpoint_ns)
 
     def _finish_trace_from_usage(
         self,

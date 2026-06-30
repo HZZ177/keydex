@@ -34,6 +34,7 @@ def test_session_repository_create_get_and_list(tmp_path) -> None:
     assert first.active_session_id == "ses_first"
     assert first.session_type == "chat"
     assert first.title_source == "auto_candidate"
+    assert first.pinned_at is None
     assert first.workspace_id is None
     assert first.cwd is None
     assert first.workspace_roots == []
@@ -42,6 +43,36 @@ def test_session_repository_create_get_and_list(tmp_path) -> None:
     sessions = repositories.sessions.list(user_id="local-user", scene_id="desktop-agent")
     assert [session.id for session in sessions] == [second.id, first.id]
     assert repositories.sessions.list(status="running") == [second]
+
+
+def test_session_repository_pins_sessions_without_touching_updated_at(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    old = repositories.sessions.create(
+        session_id="ses_old",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="旧会话",
+    )
+    time.sleep(0.001)
+    new = repositories.sessions.create(
+        session_id="ses_new",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="新会话",
+    )
+
+    pinned = repositories.sessions.set_pinned(old.id, True)
+
+    assert pinned is not None
+    assert pinned.pinned_at is not None
+    assert pinned.updated_at == old.updated_at
+    assert [session.id for session in repositories.sessions.list()] == [old.id, new.id]
+
+    unpinned = repositories.sessions.set_pinned(old.id, False)
+
+    assert unpinned is not None
+    assert unpinned.pinned_at is None
+    assert [session.id for session in repositories.sessions.list()] == [new.id, old.id]
 
 
 def test_session_repository_persists_workspace_runtime_fields(tmp_path) -> None:

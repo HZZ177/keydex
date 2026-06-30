@@ -53,7 +53,8 @@ MAX_CONTEXT_FILE_BYTES = 512 * 1024
 RIPGREP_TIMEOUT_SECONDS = 30
 
 SEARCH_TEXT_DESCRIPTION = (
-    "在文件访问权限允许范围内的目录或单个文本文件中搜索具体匹配行，返回 path、line、snippet 和可选上下文。"
+    "在文件访问权限允许范围内的目录或单个文本文件中搜索具体匹配行，"
+    "返回 path、line、snippet 和可选上下文。"
     "当需要确认某段文本、符号、错误信息或关键词出现在哪些行时使用；"
     "如果只需要在某个已知文件内搜索，可将 path 设为该文件路径。"
 )
@@ -82,7 +83,10 @@ def create_search_tools() -> list[FunctionTool]:
                     "query": {"type": "string", "description": "要搜索的文本或正则表达式。"},
                     "path": {
                         "type": "string",
-                        "description": "搜索目录或单个文件，默认工作区根目录；完全访问时也可使用绝对路径。",
+                        "description": (
+                            "搜索目录或单个文件，默认工作区根目录；"
+                            "完全访问时也可使用绝对路径。"
+                        ),
                     },
                     "regex": {
                         "type": "boolean",
@@ -133,7 +137,10 @@ def create_search_tools() -> list[FunctionTool]:
                     },
                     "path": {
                         "type": "string",
-                        "description": "搜索目录或单个文件，默认工作区根目录；完全访问时也可使用绝对路径。",
+                        "description": (
+                            "搜索目录或单个文件，默认工作区根目录；"
+                            "完全访问时也可使用绝对路径。"
+                        ),
                     },
                     "regex": {
                         "type": "boolean",

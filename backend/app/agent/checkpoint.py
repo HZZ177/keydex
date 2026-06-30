@@ -323,6 +323,70 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
             conn.execute("delete from checkpoint_writes_v2 where thread_id = ?", (thread_id,))
             conn.execute("delete from checkpoints_v2 where thread_id = ?", (thread_id,))
 
+    def rollback_thread_to_checkpoint(
+        self,
+        *,
+        thread_id: str,
+        checkpoint_id: str | None,
+        checkpoint_ns: str = "",
+    ) -> None:
+        if not thread_id.strip():
+            raise ValueError("thread_id must not be empty")
+        cleaned_checkpoint_id = (checkpoint_id or "").strip()
+        if not cleaned_checkpoint_id:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    "delete from checkpoint_writes_v2 where thread_id = ? and checkpoint_ns = ?",
+                    (thread_id, checkpoint_ns),
+                )
+                conn.execute(
+                    "delete from checkpoints_v2 where thread_id = ? and checkpoint_ns = ?",
+                    (thread_id, checkpoint_ns),
+                )
+            return
+
+        source_rows = self._load_checkpoint_chain(
+            thread_id=thread_id,
+            checkpoint_ns=checkpoint_ns,
+            checkpoint_id=cleaned_checkpoint_id,
+        )
+        if not source_rows:
+            raise ValueError(
+                f"checkpoint not found: thread_id={thread_id} "
+                f"checkpoint_ns={checkpoint_ns} checkpoint_id={cleaned_checkpoint_id}"
+            )
+
+        checkpoint_ids = [str(row["checkpoint_id"]) for row in source_rows]
+        placeholders = ", ".join("?" for _ in checkpoint_ids)
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"""
+                delete from checkpoint_writes_v2
+                where thread_id = ?
+                  and checkpoint_ns = ?
+                  and checkpoint_id not in ({placeholders})
+                """,
+                (thread_id, checkpoint_ns, *checkpoint_ids),
+            )
+            conn.execute(
+                f"""
+                delete from checkpoints_v2
+                where thread_id = ?
+                  and checkpoint_ns = ?
+                  and checkpoint_id not in ({placeholders})
+                """,
+                (thread_id, checkpoint_ns, *checkpoint_ids),
+            )
+            conn.execute(
+                """
+                update checkpoints_v2
+                set created_at = ?
+                where thread_id = ? and checkpoint_ns = ? and checkpoint_id = ?
+                """,
+                (now, thread_id, checkpoint_ns, cleaned_checkpoint_id),
+            )
+
     def clone_checkpoint_to_thread(
         self,
         *,

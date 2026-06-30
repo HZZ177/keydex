@@ -73,6 +73,49 @@ export function ConversationPanel({
         emptyText={emptyText}
         emptyTestId={emptyTestId}
       />
+      {model.reverseConfirmation ? (
+        <ReverseConfirmDialog
+          preview={model.reverseConfirmation.content}
+          onCancel={model.cancelReverseFromMessage}
+          onConfirm={model.confirmReverseFromMessage}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ReverseConfirmDialog({
+  preview,
+  onCancel,
+  onConfirm,
+}: {
+  preview: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const summary = preview.trim().split(/\r?\n/u).find(Boolean) ?? "这一轮对话";
+  return (
+    <div className={styles.confirmBackdrop} role="presentation">
+      <section
+        aria-labelledby="reverse-confirm-title"
+        aria-modal="true"
+        className={styles.confirmPanel}
+        role="dialog"
+      >
+        <header className={styles.confirmHeader}>
+          <h2 id="reverse-confirm-title">确认回退到这一轮？</h2>
+          <p>会删除这条用户消息以及之后的回复、工具调用和后续消息，并恢复到这一轮发送前的上下文。</p>
+        </header>
+        <div className={styles.confirmPreview}>{summary}</div>
+        <div className={styles.confirmActions}>
+          <button className={styles.confirmSecondary} type="button" onClick={onCancel}>
+            取消
+          </button>
+          <button className={styles.confirmDanger} type="button" onClick={onConfirm}>
+            确认回退
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

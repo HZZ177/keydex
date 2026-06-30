@@ -61,6 +61,50 @@ def test_message_events_append_and_query_by_session_and_turn(tmp_path) -> None:
     assert repositories.message_events.get_max_seq_and_turn("ses_events") == (3, 2)
 
 
+def test_message_events_delete_from_turn_allows_rewriting_rolled_back_turn(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+
+    repositories.message_events.append(
+        event_id="evt_user_1",
+        session_id="ses_events",
+        turn_index=1,
+        action="user_message",
+        data={"content": "第一轮"},
+    )
+    repositories.message_events.append(
+        event_id="evt_ai_1",
+        session_id="ses_events",
+        turn_index=1,
+        action="ai_message",
+        data={"content": "第一轮回复"},
+    )
+    repositories.message_events.append(
+        event_id="evt_user_2_old",
+        session_id="ses_events",
+        turn_index=2,
+        action="user_message",
+        data={"content": "旧第二轮"},
+    )
+
+    assert repositories.message_events.delete_from_turn("ses_events", 2) == 1
+
+    rewritten = repositories.message_events.append(
+        event_id="evt_user_2_new",
+        session_id="ses_events",
+        turn_index=2,
+        action="user_message",
+        data={"content": "新第二轮"},
+    )
+
+    assert rewritten.seq == 3
+    assert repositories.message_events.get("evt_user_2_old", include_deleted=True) is None
+    assert [event.id for event in repositories.message_events.list_by_session("ses_events")] == [
+        "evt_user_1",
+        "evt_ai_1",
+        "evt_user_2_new",
+    ]
+
+
 def test_message_events_empty_session_returns_empty(tmp_path) -> None:
     repositories = _repositories(tmp_path)
 

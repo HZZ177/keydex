@@ -84,6 +84,11 @@
   scrollbar-color: color-mix(in srgb, var(--color-text-4) 34%, transparent) transparent;
 }
 
+.history[data-loading="true"] {
+  grid-template-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+
 .workbenchHistory {
   position: relative;
   display: grid;
@@ -282,7 +287,8 @@ button.sectionTitle {
   cursor: pointer;
 }
 
-.sectionTitle[data-kind="workspace"] {
+.sectionTitle[data-kind="workspace"],
+.sectionTitle[data-kind="pinned"] {
   min-height: 30px;
   padding: 0 9px;
   color: var(--color-text-2);
@@ -303,6 +309,8 @@ button.sectionTitle {
 
 button.sectionTitle[data-kind="workspace"]:hover,
 button.sectionTitle[data-kind="workspace"]:focus-visible,
+button.sectionTitle[data-kind="pinned"]:hover,
+button.sectionTitle[data-kind="pinned"]:focus-visible,
 .sectionNewButton:hover,
 .sectionNewButton:focus-visible {
   outline: none;
@@ -379,19 +387,35 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   overflow: hidden;
 }
 
-.section[data-kind="workspace"] .historyItem {
+.section[data-kind="workspace"] .historyItem,
+.section[data-kind="chat"] .historyItem,
+.section[data-kind="pinned"] .historyItem {
   padding-left: 31px;
 }
 
-.section[data-kind="workspace"] .renameForm {
+.section[data-kind="workspace"] .empty,
+.section[data-kind="chat"] .empty,
+.section[data-kind="pinned"] .empty {
   padding-left: 31px;
 }
 
-.section[data-kind="workspace"] .confirmRow {
+.section[data-kind="workspace"] .renameForm,
+.section[data-kind="chat"] .renameForm,
+.section[data-kind="pinned"] .renameForm {
+  padding-left: 31px;
+}
+
+.section[data-kind="workspace"] .confirmRow,
+.section[data-kind="chat"] .confirmRow,
+.section[data-kind="pinned"] .confirmRow {
   padding-left: 31px;
 }
 
 .section[data-kind="workspace"][data-flat="true"] .historyItem {
+  padding-left: 10px;
+}
+
+.section[data-kind="workspace"][data-flat="true"] .empty {
   padding-left: 10px;
 }
 
@@ -666,6 +690,10 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
   color: var(--color-text-1);
 }
 
+.historyActions button[data-pinned="true"] {
+  color: var(--color-primary-6);
+}
+
 .renameForm {
   display: grid;
   grid-column: 1 / -1;
@@ -740,6 +768,26 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
 
 .emptyLoading svg {
   animation: historySpinner 1100ms linear infinite;
+}
+
+.historyLoadingState {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  align-self: stretch;
+  align-items: stretch;
+  justify-items: stretch;
+}
+
+.sessionHistorySkeleton {
+  --loading-skeleton-padding: 0 10px 0 4px;
+  --loading-skeleton-compact-stack-width: 100%;
+  --loading-skeleton-line-gap: 11px;
+
+  align-content: center;
+  justify-items: stretch;
+  height: 100%;
+  min-height: 0;
 }
 
 .searchOverlay {
@@ -952,6 +1000,18 @@ button.sectionTitle[data-kind="workspace"]:focus-visible,
 
 .collapsedProjectFolder {
   transform: translateY(-2px);
+}
+
+.collapsedPinnedMarker {
+  display: inline-grid;
+  width: 19px;
+  height: 19px;
+  place-items: center;
+  transform: translateY(-2px);
+  color: currentColor;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: var(--ui-line-height-tight);
 }
 
 .collapsedProjectChevron {

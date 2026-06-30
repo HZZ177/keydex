@@ -66,6 +66,7 @@ export type LoadToolDetailsOptions = AgentToolDetailRef;
 
 export interface UpdateSessionPayload {
   title?: string | null;
+  pinned?: boolean | null;
   current_model_provider_id?: string | null;
   current_model?: string | null;
 }

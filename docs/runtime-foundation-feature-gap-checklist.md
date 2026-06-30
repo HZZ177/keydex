@@ -11,7 +11,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 - 模型默认值配置：默认对话模型 `default_chat`、快速模型 `fast`。供应商配置只决定供应商/模型启用范围；对话每轮必须显式传 `provider_id + model`，不做自动降级或隐式回退。
 - 扩展功能配置：自动标题、单轮工具调用上限、重复工具调用保护、上下文压缩。
 - 会话自动标题：由快速模型异步生成，失败不影响主对话。
-- checkpoint / fork / reverse：完成态 trace 可从 checkpoint 派生分支，也可通过 reverse 创建新的 active branch。
+- checkpoint / fork / reverse：完成态 trace 可从 checkpoint 派生分支；reverse 在原 session 内回退到用户消息发送前的 checkpoint。
 - 上下文压缩：以 checkpoint-safe 的 active session fork 方式实现，不原地裁剪原会话历史。
 - 系统消息可见性：系统提示进入实时投影与历史回放，用于压缩成功/失败、Skill 激活等轻量提示。
 
@@ -31,7 +31,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 | 工具调用上限 | `AppSettings.max_tool_calls` 只影响 LangGraph `recursion_limit`；有重复同参数工具调用保护 | `backend/app/core/config.py`, `backend/app/services/chat_service.py`, `backend/app/agent/middleware.py` | 不是严格工具预算，配置也不在 UI |
 | 自动标题 | 新 session 用用户消息截断成标题；支持手动重命名 | `backend/app/services/chat_service.py`, `backend/app/services/session_service.py` | 缺 LLM 标题中间件 |
 | checkpoint 存储 | 已有 SQLite LangGraph checkpointer 与 `checkpoints_v2`/`checkpoint_writes_v2` | `backend/app/agent/checkpoint.py`, `backend/app/storage/db.py` | 底座已有 |
-| trace 输出 checkpoint | 每轮完成/取消/失败会写 `output_checkpoint_id` 到 trace_record | `backend/app/services/chat_service.py`, `backend/app/storage/repositories.py` | fork/reverse 的数据条件已具备 |
+| trace 输入/输出 checkpoint | 每轮开始前写 `input_checkpoint_id`，完成/取消/失败后写 `output_checkpoint_id` 到 trace_record | `backend/app/services/chat_service.py`, `backend/app/storage/repositories.py` | fork 使用输出 checkpoint；reverse 使用输入 checkpoint |
 | session 链路字段 | 表结构已有 `active_session_id`、`parent_session_id`、`child_session_id`、`source_checkpoint_id` 等 | `backend/app/storage/db.py`, `backend/app/storage/repositories.py` | 字段存在但业务语义未闭环 |
 | session fork | 无对外 API/服务，无法从 turn/trace/checkpoint 派生 | `backend/app/api/sessions.py` | 缺失 |
 | reverse / undo | 无 checkpoint 管理与恢复操作 | 当前 API 未暴露 checkpoint | 缺失 |
@@ -148,7 +148,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 - [x] 新增 session fork API：从指定 trace/turn 派生新 session。
 - [x] fork 时复制 checkpoint，并复制 fork 点之前的 message_events。
 - [x] 新增 UI 操作：“从这里继续”。
-- [x] 新增 reverse 语义：默认不做破坏性删除，而是从目标 checkpoint 创建新的 active branch。
+- [x] 新增 reverse 语义：从用户消息所在轮次的 input checkpoint 回退，并删除该轮及之后的事件/trace。
 - [x] 会话详情保留 branch 来源字段：source trace、source checkpoint、parent/child。
 
 验收标准：
@@ -156,7 +156,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 - 任意完成 turn 后可以从该 turn 派生新会话继续问。
 - 原会话历史不被破坏。
 - fork 后续聊使用 fork 点 checkpoint，而不是重新拼历史。
-- reverse 后仍可回到原分支或查看原分支。
+- reverse 后当前 session 历史截断到目标轮之前，并可继续在同一 session 对话。
 
 ### P1: 上下文压缩
 
@@ -198,7 +198,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 ## 7. 已确认决策
 
 - 快速模型未配置时不回退主模型。标题生成缺失 fast 时跳过或失败记录，不影响主对话；压缩缺失 fast 时显示压缩失败并继续使用当前上下文。
-- reverse 的用户语义采用“从目标 checkpoint 创建新分支并切为 active”，不破坏原会话历史。
+- reverse 的用户语义采用“回退到用户消息发送前”，在当前 session 内删除该轮及之后的消息/trace，不创建分支。
 - 上下文压缩已引入手动 `context_window_tokens`，本期不做 provider 自动上下文窗口探测。
 - 辅助/观察模型不进入本期 scope。Keydex 不需要对标企业基座和 C 端 observer 响应链路。
 - 系统提示采用轻量实时 `system_message` + 历史回放，不做企业级 middleware trace 看板。
@@ -211,7 +211,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 - 扩展功能页管理自动标题、单轮工具调用上限、重复工具调用保护、上下文压缩。
 - 自动标题和上下文压缩使用快速模型 side task。
 - 工具调用上限在单轮内严格阻断，阻断后本轮失败可见。
-- Session fork/reverse 基于完成态 trace/checkpoint 创建新分支，不破坏原历史。
+- Session fork 基于完成态 trace/checkpoint 创建新分支；reverse 基于 input checkpoint 在当前 session 内真实回退。
 - 上下文压缩基于 active session fork：源会话记录压缩成功/失败提示，压缩分支写入摘要并保留最近轮次。
 - E2E fake model transport 在 `KEYDEX_E2E_MODEL_TRANSPORT=true` 时启用，覆盖主链路流式输出和快速模型非流式 side task。
 

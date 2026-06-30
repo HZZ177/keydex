@@ -100,7 +100,7 @@ export class ApiClient {
 
   async updateThread(
     threadId: string,
-    patch: { title?: string | null; archived?: boolean },
+    patch: { title?: string | null; archived?: boolean; pinned?: boolean | null },
   ): Promise<Thread> {
     return this.request(`/api/sessions/${encodeURIComponent(threadId)}`, {
       method: "PATCH",

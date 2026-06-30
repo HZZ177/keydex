@@ -1750,6 +1750,7 @@ function normalizeSession(data: Record<string, unknown>): AgentSession {
   const now = new Date(0).toISOString();
   const status = stringValue(data.status);
   const sessionType = stringValue(data.session_type);
+  const pinnedAt = nullableString(data.pinned_at);
   return {
     id: stringValue(data.id) || stringValue(data.session_id),
     user_id: stringValue(data.user_id) || "local-user",
@@ -1777,6 +1778,8 @@ function normalizeSession(data: Record<string, unknown>): AgentSession {
     is_current: Boolean(data.is_current),
     current_model_provider_id: nullableString(data.current_model_provider_id),
     current_model: nullableString(data.current_model),
+    pinned: data.pinned === true || Boolean(pinnedAt),
+    pinned_at: pinnedAt,
     scene_version_seq: typeof data.scene_version_seq === "number" ? data.scene_version_seq : null,
   };
 }

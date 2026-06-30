@@ -38,7 +38,10 @@ def _prepare_source(tmp_path):
         {},
     )
     saver.put(first_config, _checkpoint("ckpt_2"), {"step": 2}, {})
-    for turn_index, checkpoint_id in [(1, "ckpt_1"), (2, "ckpt_2")]:
+    for turn_index, input_checkpoint_id, output_checkpoint_id in [
+        (1, None, "ckpt_1"),
+        (2, "ckpt_1", "ckpt_2"),
+    ]:
         trace_id = f"trace_{turn_index}"
         repositories.trace_records.create(
             trace_id=trace_id,
@@ -48,11 +51,13 @@ def _prepare_source(tmp_path):
             user_id=source.user_id,
             turn_index=turn_index,
             root_node_id=f"root_{turn_index}",
+            input_checkpoint_id=input_checkpoint_id,
+            input_checkpoint_ns="",
         )
         repositories.trace_records.finish(
             trace_id,
             status="completed",
-            output_checkpoint_id=checkpoint_id,
+            output_checkpoint_id=output_checkpoint_id,
             output_checkpoint_ns="",
         )
         repositories.message_events.append(
@@ -102,20 +107,120 @@ def test_session_fork_service_clones_checkpoint_and_copies_history_until_source(
     assert cloned_checkpoint.config["configurable"]["checkpoint_id"] == "ckpt_1"
 
 
-def test_session_reverse_creates_non_destructive_active_branch(tmp_path) -> None:
+def test_session_reverse_rolls_back_same_session_to_user_turn_input_checkpoint(tmp_path) -> None:
     repositories, saver = _prepare_source(tmp_path)
     service = SessionForkService(repositories, checkpointer=saver)
 
     result = service.reverse_session(
         session_id="ses_source",
         user_id="local-user",
-        trace_id="trace_1",
+        message_event_id="evt_user_2",
     )
 
     source = repositories.sessions.get("ses_source")
-    assert source.active_session_id == result.session.id
-    assert repositories.message_events.count_by_session("ses_source") == 4
-    assert repositories.message_events.count_by_session(result.session.id) == 2
+    assert result.session.id == "ses_source"
+    assert source.active_session_id == "ses_source"
+    assert result.source.checkpoint_id == "ckpt_1"
+    assert result.source.turn_index == 2
+    assert repositories.message_events.count_by_session("ses_source") == 2
+    assert [trace.trace_id for trace in repositories.trace_records.list_by_session("ses_source")] == [
+        "trace_1"
+    ]
+    rolled_back_checkpoint = saver.get_tuple(
+        {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
+    )
+    assert rolled_back_checkpoint.config["configurable"]["checkpoint_id"] == "ckpt_1"
+
+    rewritten = repositories.message_events.append(
+        event_id="evt_user_2_new",
+        session_id="ses_source",
+        trace_record_id="trace_2_new",
+        turn_index=2,
+        action="user_message",
+        data={"session_id": "ses_source", "content": "新的第二轮"},
+    )
+    assert rewritten.seq == 3
+
+
+def test_session_reverse_first_turn_clears_history_and_checkpoints(tmp_path) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+    service = SessionForkService(repositories, checkpointer=saver)
+
+    result = service.reverse_session(
+        session_id="ses_source",
+        user_id="local-user",
+        message_event_id="evt_user_1",
+    )
+
+    assert result.session.id == "ses_source"
+    assert result.source.checkpoint_id is None
+    assert repositories.message_events.count_by_session("ses_source") == 0
+    assert repositories.trace_records.list_by_session("ses_source") == []
+    assert saver.get_tuple({"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}) is None
+
+
+def test_session_reverse_rejects_assistant_message_source(tmp_path) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+    service = SessionForkService(repositories, checkpointer=saver)
+
+    with pytest.raises(SessionForkServiceError) as exc_info:
+        service.reverse_session(
+            session_id="ses_source",
+            user_id="local-user",
+            message_event_id="evt_ai_2",
+        )
+
+    assert exc_info.value.code == "reverse_source_must_be_user_message"
+
+
+def test_session_reverse_rejects_missing_input_checkpoint_when_history_exists(tmp_path) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+    repositories.trace_records.create(
+        trace_id="trace_legacy",
+        session_id="ses_source",
+        active_session_id="ses_source",
+        scene_id="desktop-agent",
+        user_id="local-user",
+        turn_index=3,
+        root_node_id="root_legacy",
+    )
+    repositories.trace_records.finish(
+        "trace_legacy",
+        status="completed",
+        output_checkpoint_id="ckpt_2",
+        output_checkpoint_ns="",
+    )
+    repositories.message_events.append(
+        event_id="evt_user_legacy",
+        session_id="ses_source",
+        trace_record_id="trace_legacy",
+        turn_index=3,
+        action="user_message",
+        data={"session_id": "ses_source", "content": "旧格式问题"},
+    )
+    repositories.message_events.append(
+        event_id="evt_ai_legacy",
+        session_id="ses_source",
+        trace_record_id="trace_legacy",
+        turn_index=3,
+        action="ai_message",
+        data={"session_id": "ses_source", "content": "旧格式回答"},
+    )
+    service = SessionForkService(repositories, checkpointer=saver)
+
+    with pytest.raises(SessionForkServiceError) as exc_info:
+        service.reverse_session(
+            session_id="ses_source",
+            user_id="local-user",
+            message_event_id="evt_user_legacy",
+        )
+
+    assert exc_info.value.code == "reverse_input_checkpoint_missing"
+    assert repositories.message_events.count_by_session("ses_source") == 6
+    latest_checkpoint = saver.get_tuple(
+        {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
+    )
+    assert latest_checkpoint.config["configurable"]["checkpoint_id"] == "ckpt_2"
 
 
 def test_session_fork_service_rolls_back_when_clone_fails(tmp_path) -> None:

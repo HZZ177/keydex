@@ -2,10 +2,10 @@
 
 from backend.app.storage.db import Database, init_database
 from backend.app.storage.repositories import (
-    AttachmentRecord,
     MODEL_DEFAULT_CHAT,
     MODEL_DEFAULT_FAST,
     MODEL_DEFAULT_SCOPES,
+    AttachmentRecord,
     CommandApprovalAuditRecord,
     CommandApprovalRequestRecord,
     CompressionStagingRecord,

@@ -19,8 +19,17 @@ def _registry() -> ToolRegistry:
     return register_filesystem_tools(ToolRegistry())
 
 
-async def _run(name: str, args: dict, tmp_path, *, file_access_mode: str | None = None):
-    return await _registry().require(name).run(args, _context(tmp_path, file_access_mode=file_access_mode))
+async def _run(
+    name: str,
+    args: dict,
+    tmp_path,
+    *,
+    file_access_mode: str | None = None,
+):
+    return await _registry().require(name).run(
+        args,
+        _context(tmp_path, file_access_mode=file_access_mode),
+    )
 
 
 async def test_read_file_tool_reads_utf8_text_with_line_window(tmp_path) -> None:

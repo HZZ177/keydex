@@ -511,6 +511,8 @@ export interface AgentSession {
   workspace: Workspace | null;
   current_model_provider_id: string | null;
   current_model: string | null;
+  pinned?: boolean;
+  pinned_at?: string | null;
   active_session_id: string | null;
   parent_session_id: string | null;
   child_session_id: string | null;
@@ -533,7 +535,7 @@ export interface AgentSessionResponse {
 export interface AgentSessionBranchSource {
   session_id: string;
   active_session_id: string;
-  checkpoint_id: string;
+  checkpoint_id: string | null;
   checkpoint_ns: string;
   trace_id: string | null;
   turn_index: number | null;

@@ -952,6 +952,15 @@ class ContextCompressionMiddleware(AgentMiddleware):
         threshold_token_count = max(int(context_window * trigger_fraction), 1)
         threshold_usage_fraction = token_count / threshold_token_count
         remaining_to_threshold_tokens = threshold_token_count - token_count
+        call_phase_label = _compression_display_label(
+            str(extra_payload.get("call_phase") or "-")
+        )
+        call_status_label = _compression_display_label(
+            str(extra_payload.get("call_status") or "-")
+        )
+        token_source_label = _compression_display_label(
+            str(extra_payload.get("token_source") or "-")
+        )
         logger.debug(
             "[ContextCompressionMiddleware] 上下文窗口状态事件 | "
             f"钩子={_compression_display_label(hook)} | 原始会话ID={original_session_id} | "
@@ -962,9 +971,9 @@ class ContextCompressionMiddleware(AgentMiddleware):
             f"距离常规阈值令牌数={remaining_to_threshold_tokens} | "
             f"紧急阈值={emergency_fraction:.4f} | 总消息数={total_message_count} | "
             f"压缩区消息数={compression_count} | 保留区消息数={retain_count} | "
-            f"调用阶段={_compression_display_label(str(extra_payload.get('call_phase') or '-'))} | "
-            f"调用状态={_compression_display_label(str(extra_payload.get('call_status') or '-'))} | "
-            f"令牌来源={_compression_display_label(str(extra_payload.get('token_source') or '-'))}"
+            f"调用阶段={call_phase_label} | "
+            f"调用状态={call_status_label} | "
+            f"令牌来源={token_source_label}"
         )
         await self._emit_middleware_progress(
             stage="context_window_snapshot",

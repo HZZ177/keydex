@@ -21,7 +21,12 @@ from backend.app.storage import (
 COMMAND_SETTINGS_KEY = "command_settings"
 DEFAULT_APPROVAL_WAIT_SECONDS = 24 * 60 * 60
 BROAD_PREFIX_COMMANDS = {"powershell", "pwsh", "cmd", "python", "node", "npm", "pnpm", "git"}
-FileAccessMode = Literal["no_file_access", "workspace_read_only", "workspace_trusted", "full_access"]
+FileAccessMode = Literal[
+    "no_file_access",
+    "workspace_read_only",
+    "workspace_trusted",
+    "full_access",
+]
 
 
 class CommandSettings(BaseModel):

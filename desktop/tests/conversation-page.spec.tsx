@@ -344,7 +344,7 @@ describe("ConversationPage", () => {
       forkSession,
     });
 
-    renderConversation(
+    renderConversationWithNotifications(
       <ConversationPage threadId="ses-1" runtime={runtime} onNavigateToConversation={navigateToConversation} />,
     );
 
@@ -356,35 +356,65 @@ describe("ConversationPage", () => {
     });
   });
 
-  it("reverses a restored message by creating and opening a branch session", async () => {
+  it("confirms and reverses a restored user message in the current session", async () => {
     const navigateToConversation = vi.fn();
+    const session = agentSession({ id: "ses-1", title: "源会话" });
+    const initialHistory = [
+      historyMessage("user", "历史问题", { messageEventId: "evt-user-1" }),
+      historyMessage("assistant", "历史回答", { messageEventId: "evt-ai-1" }),
+    ];
+    const loadHistory = vi
+      .fn()
+      .mockResolvedValueOnce(historyResponse(session, initialHistory))
+      .mockResolvedValue(historyResponse(session, []));
     const reverseSession = vi.fn().mockResolvedValue({
-      session: agentSession({
-        id: "ses-reverse",
-        title: "回退分支",
-        parent_session_id: "ses-1",
-        source_checkpoint_id: "checkpoint-1",
-      }),
-      source: branchSource({ message_event_id: "evt-ai-1" }),
+      session,
+      source: branchSource({ message_event_id: "evt-user-1", checkpoint_id: null }),
     });
     const { runtime } = fakeRuntime({
-      history: [
-        historyMessage("user", "历史问题", { messageEventId: "evt-user-1" }),
-        historyMessage("assistant", "历史回答", { messageEventId: "evt-ai-1" }),
-      ],
+      session,
+      loadHistory,
       reverseSession,
     });
 
-    renderConversation(
+    renderConversationWithNotifications(
       <ConversationPage threadId="ses-1" runtime={runtime} onNavigateToConversation={navigateToConversation} />,
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "回退到这里继续" }));
 
+    expect(reverseSession).not.toHaveBeenCalled();
+    expect(await screen.findByRole("dialog", { name: "确认回退到这一轮？" })).not.toBeNull();
+    expect(screen.getAllByText("历史问题").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "确认回退" }));
+
     await waitFor(() => {
-      expect(reverseSession).toHaveBeenCalledWith("ses-1", { messageEventId: "evt-ai-1" });
-      expect(navigateToConversation).toHaveBeenCalledWith("ses-reverse");
+      expect(reverseSession).toHaveBeenCalledWith("ses-1", { messageEventId: "evt-user-1" });
+      expect(navigateToConversation).not.toHaveBeenCalled();
+      expect(loadHistory).toHaveBeenCalledTimes(2);
     });
+    expect((await screen.findByTestId("notification-item")).textContent).toContain("回退成功");
+  });
+
+  it("shows reverse failure copy with a reverse-specific prefix", async () => {
+    const session = agentSession({ id: "ses-1", title: "源会话" });
+    const reverseSession = vi.fn().mockRejectedValue({
+      detail: { message: "该轮缺少输入前 checkpoint，不能安全回退" },
+    });
+    const { runtime } = fakeRuntime({
+      session,
+      history: [historyMessage("user", "历史问题", { messageEventId: "evt-user-1" })],
+      reverseSession,
+    });
+
+    renderConversationWithNotifications(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "回退到这里继续" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认回退" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "回退失败：该轮缺少输入前 checkpoint，不能安全回退",
+    );
   });
 
   it("renders command approval as the composer instead of a conversation message", async () => {
@@ -1003,6 +1033,43 @@ describe("ConversationPage", () => {
     expect(await screen.findByText("来自事件的回答")).not.toBeNull();
     expect(screen.getByText(expectedTime)).not.toBeNull();
     expect(screen.queryByText("08:00")).toBeNull();
+  });
+
+  it("syncs persisted history after realtime completion so branch actions are available", async () => {
+    const session = agentSession();
+    const loadHistory = vi
+      .fn()
+      .mockResolvedValueOnce(historyResponse(session, []))
+      .mockResolvedValue(
+        historyResponse(session, [
+          historyMessage("user", "实时问题", { messageEventId: "evt-user-1", turnIndex: 1 }),
+          historyMessage("assistant", "实时回答", { messageEventId: "evt-ai-1", turnIndex: 1 }),
+        ]),
+      );
+    const { runtime, emit } = fakeRuntime({ session, loadHistory });
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await readyComposer();
+    typeComposer("实时问题");
+    await waitSendEnabled();
+    fireEvent.click(screen.getByLabelText("发送"));
+    expect(screen.queryByRole("button", { name: "回退到这里继续" })).toBeNull();
+
+    await act(async () => {
+      emit(agentEvent("stream", { id: "evt-stream-realtime-actions", session_id: "ses-1", content: "实时回答" }));
+      emit(agentEvent("completed", {
+        id: "evt-completed-realtime-actions",
+        session_id: "ses-1",
+        status: "completed",
+        events: [],
+      }));
+    });
+
+    expect(await screen.findByRole("button", { name: "回退到这里继续" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "从这里继续" })).not.toBeNull();
+    await waitFor(() => {
+      expect(loadHistory).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("keeps the pending cursor visible after a tool result until completion", async () => {
@@ -1967,9 +2034,10 @@ function fakeRuntime({
     source: branchSource(),
   }),
   reverseSession = vi.fn().mockResolvedValue({
-    session: agentSession({ id: "ses-reverse", parent_session_id: session.id }),
+    session,
     source: branchSource(),
   }),
+  loadHistory,
   workspaceSearch = vi.fn().mockResolvedValue([]),
   workspaceListSkills = vi.fn().mockResolvedValue({
     workspace_root: "D:/repo",
@@ -1991,6 +2059,7 @@ function fakeRuntime({
   cancel?: ReturnType<typeof vi.fn>;
   forkSession?: ReturnType<typeof vi.fn>;
   reverseSession?: ReturnType<typeof vi.fn>;
+  loadHistory?: ReturnType<typeof vi.fn>;
   workspaceSearch?: ReturnType<typeof vi.fn>;
   workspaceListSkills?: ReturnType<typeof vi.fn>;
   workspaceEntriesByPath?: Record<string, WorkspaceEntry[]>;
@@ -2021,9 +2090,11 @@ function fakeRuntime({
       updateSession: vi.fn().mockImplementation((_sessionId: string, patch: Partial<AgentSession>) =>
         Promise.resolve({ ...session, ...patch }),
       ),
-      loadHistory: historyError
-        ? vi.fn().mockRejectedValue(historyError)
-        : vi.fn().mockResolvedValue(historyResponse(session, history)),
+      loadHistory:
+        loadHistory ??
+        (historyError
+          ? vi.fn().mockRejectedValue(historyError)
+          : vi.fn().mockResolvedValue(historyResponse(session, history))),
       loadToolDetails: vi.fn((_sessionId: string, ref: { startEventId?: string | null; endEventId?: string | null }) => {
         const key = `${ref.startEventId ?? ""}:${ref.endEventId ?? ""}`;
         const detail = toolDetails[key];

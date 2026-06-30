@@ -11,7 +11,11 @@ from backend.app.agent.tool_call_progress import (
 )
 from backend.app.core.logger import logger
 from backend.app.tools.base import FunctionTool, ToolExecutionContext, ToolExecutionError
-from backend.app.tools.file_access import FileAccessOperation, relative_tool_path, resolve_file_access_path
+from backend.app.tools.file_access import (
+    FileAccessOperation,
+    relative_tool_path,
+    resolve_file_access_path,
+)
 from backend.app.tools.registry import ToolRegistry
 
 MAX_READ_BYTES = 512 * 1024
@@ -143,7 +147,10 @@ def create_filesystem_tools() -> list[FunctionTool]:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "工作区目录路径，默认工作区根目录；完全访问时也可使用绝对目录路径。",
+                        "description": (
+                            "工作区目录路径，默认工作区根目录；"
+                            "完全访问时也可使用绝对目录路径。"
+                        ),
                     },
                     "depth": {
                         "type": "integer",
@@ -352,7 +359,12 @@ async def list_dir_tool(
     return result
 
 
-def _resolve(raw_path: Any, context: ToolExecutionContext, *, operation: FileAccessOperation) -> Path:
+def _resolve(
+    raw_path: Any,
+    context: ToolExecutionContext,
+    *,
+    operation: FileAccessOperation,
+) -> Path:
     return resolve_file_access_path(raw_path, context, operation=operation)
 
 

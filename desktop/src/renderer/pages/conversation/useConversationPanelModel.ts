@@ -58,6 +58,7 @@ export function useConversationPanelModel({
 }: UseConversationPanelModelOptions) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [contextWindowUsage, setContextWindowUsage] = useState<ContextWindowUsageStatus | null>(null);
+  const [reverseCandidate, setReverseCandidate] = useState<ConversationMessage | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const scrollToBottomRef = useRef<((behavior?: ScrollBehavior) => void) | null>(null);
   const toolDetailCacheRef = useRef(
@@ -260,6 +261,7 @@ export function useConversationPanelModel({
 
   useEffect(() => {
     setContextWindowUsage(null);
+    setReverseCandidate(null);
   }, [sessionId]);
 
   const loadToolDetails = useCallback<ToolDetailsLoader>(
@@ -293,7 +295,7 @@ export function useConversationPanelModel({
     async (message: ConversationMessage, mode: "fork" | "reverse") => {
       const messageEventId = typeof message.payload.messageEventId === "string" ? message.payload.messageEventId : "";
       if (!messageEventId) {
-        notifications.warning("该消息还不能从这里继续");
+        notifications.warning(mode === "fork" ? "该消息还不能从这里继续" : "该消息还不能回退");
         return;
       }
 
@@ -302,13 +304,18 @@ export function useConversationPanelModel({
           mode === "fork"
             ? await runtime.conversation.forkSession(sessionId, { messageEventId })
             : await runtime.conversation.reverseSession(sessionId, { messageEventId });
-        notifications.success(mode === "fork" ? "已创建分支会话" : "已回退到新分支");
-        onBranchSessionCreated?.(response.session.id);
+        notifications.success(mode === "fork" ? "已创建分支会话" : "回退成功");
+        if (mode === "fork") {
+          onBranchSessionCreated?.(response.session.id);
+        } else {
+          controller.dispatch({ type: "session/upsert", session: response.session });
+          await controller.reloadHistory();
+        }
       } catch (reason) {
-        notifications.error(errorMessage(reason));
+        notifications.error(branchActionErrorMessage(mode, reason));
       }
     },
-    [notifications, onBranchSessionCreated, runtime, sessionId],
+    [controller, notifications, onBranchSessionCreated, runtime, sessionId],
   );
 
   const forkFromMessage = useCallback(
@@ -320,10 +327,23 @@ export function useConversationPanelModel({
 
   const reverseFromMessage = useCallback(
     (message: ConversationMessage) => {
-      void branchFromMessage(message, "reverse");
+      setReverseCandidate(message);
     },
-    [branchFromMessage],
+    [],
   );
+
+  const cancelReverseFromMessage = useCallback(() => {
+    setReverseCandidate(null);
+  }, []);
+
+  const confirmReverseFromMessage = useCallback(() => {
+    const message = reverseCandidate;
+    if (!message) {
+      return;
+    }
+    setReverseCandidate(null);
+    void branchFromMessage(message, "reverse");
+  }, [branchFromMessage, reverseCandidate]);
 
   return {
     messages,
@@ -358,6 +378,9 @@ export function useConversationPanelModel({
     contextWindowUsage,
     forkFromMessage,
     reverseFromMessage,
+    reverseConfirmation: reverseCandidate,
+    cancelReverseFromMessage,
+    confirmReverseFromMessage,
   };
 }
 
@@ -474,6 +497,14 @@ function errorMessage(reason: unknown): string {
     return detail.message;
   }
   return "操作失败";
+}
+
+function branchActionErrorMessage(mode: "fork" | "reverse", reason: unknown): string {
+  const message = errorMessage(reason);
+  if (mode === "fork") {
+    return message;
+  }
+  return message === "操作失败" ? "回退失败" : `回退失败：${message}`;
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {

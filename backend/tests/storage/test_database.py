@@ -85,6 +85,7 @@ def test_init_database_creates_workspace_schema_and_session_columns(tmp_path) ->
         "session_type",
         "cwd",
         "workspace_roots_json",
+        "pinned_at",
     }.issubset(session_columns)
     assert {
         "idx_workspaces_normalized_root_active",
@@ -96,6 +97,7 @@ def test_init_database_creates_workspace_schema_and_session_columns(tmp_path) ->
         "idx_sessions_session_type",
         "idx_sessions_workspace_updated",
         "idx_sessions_type_updated",
+        "idx_sessions_pinned_at",
     }.issubset(session_indexes)
 
 
@@ -178,6 +180,7 @@ def test_init_database_upgrades_legacy_session_schema_idempotently(tmp_path) -> 
         "session_type",
         "cwd",
         "workspace_roots_json",
+        "pinned_at",
     }.issubset(columns)
     assert row is not None
     assert len(workspaces) == 1

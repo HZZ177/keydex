@@ -832,6 +832,7 @@ function renderMessageItem({
         onFilePreview={onFilePreview}
         onLoadToolDetails={onLoadToolDetails}
         onQuoteSelection={onQuoteSelection}
+        onReverseFromMessage={onReverseFromMessage}
       />
     );
     return withTurnEndStreamingCursor(
@@ -856,6 +857,7 @@ function renderMessageItem({
           onFilePreview={onFilePreview}
           onLoadToolDetails={onLoadToolDetails}
           onQuoteSelection={onQuoteSelection}
+          onReverseFromMessage={onReverseFromMessage}
           key={message.id}
         />
       ))}
@@ -914,6 +916,7 @@ function DefaultMessage({
   onFilePreview,
   onLoadToolDetails,
   onQuoteSelection,
+  onReverseFromMessage,
 }: {
   message: ConversationMessage;
   suppressStreamingCursor?: boolean;
@@ -923,6 +926,7 @@ function DefaultMessage({
   onFilePreview?: (file: FileChangePreview) => void;
   onLoadToolDetails?: ToolDetailsLoader;
   onQuoteSelection?: (text: string) => void;
+  onReverseFromMessage?: (message: ConversationMessage) => void;
 }) {
   if (message.kind === "thinking") {
     return <MessageThinking message={message} />;
@@ -966,6 +970,7 @@ function DefaultMessage({
       workspaceRuntime={workspaceRuntime}
       workspaceScope={workspaceScope}
       onQuoteSelection={onQuoteSelection}
+      onReverseFromMessage={onReverseFromMessage}
     />
   );
 }

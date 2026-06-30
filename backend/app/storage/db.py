@@ -83,6 +83,7 @@ create table if not exists sessions (
   workspace_roots_json text not null default '[]',
   current_model_provider_id text,
   current_model text,
+  pinned_at text,
   title text,
   title_source text not null default 'manual',
   created_at text not null,
@@ -291,6 +292,8 @@ create table if not exists trace_record (
   total_tokens integer not null default 0,
   total_cache_read_tokens integer not null default 0,
   user_message_preview text,
+  input_checkpoint_id text,
+  input_checkpoint_ns text,
   output_checkpoint_id text,
   output_checkpoint_ns text,
   metadata_json text,
@@ -428,6 +431,9 @@ create index if not exists idx_sessions_workspace_updated
   on sessions(workspace_id, updated_at desc);
 create index if not exists idx_sessions_type_updated
   on sessions(session_type, updated_at desc);
+create index if not exists idx_sessions_pinned_at
+  on sessions(pinned_at desc)
+  where pinned_at is not null and is_deleted = 0;
 create index if not exists idx_command_approval_requests_session_status
   on command_approval_requests(session_id, status, created_at desc);
 create index if not exists idx_command_approval_requests_status_created
@@ -484,11 +490,14 @@ class Database:
             )
             self._ensure_column(conn, "sessions", "current_model_provider_id", "text")
             self._ensure_column(conn, "sessions", "current_model", "text")
+            self._ensure_column(conn, "sessions", "pinned_at", "text")
             self._ensure_column(conn, "sessions", "title_source", "text not null default 'manual'")
             self._migrate_model_default_scopes(conn)
             self._ensure_column(conn, "llm_request_logs", "gateway_thread_id", "text")
             self._ensure_column(conn, "llm_request_logs", "gateway_trace_id", "text")
             self._ensure_column(conn, "workspace_file_annotations", "anchor_json", "text")
+            self._ensure_column(conn, "trace_record", "input_checkpoint_id", "text")
+            self._ensure_column(conn, "trace_record", "input_checkpoint_ns", "text")
             conn.executescript(SCHEMA_UPGRADE_SQL)
             if should_migrate_legacy_sessions:
                 self._migrate_legacy_sessions_to_default_workspace(

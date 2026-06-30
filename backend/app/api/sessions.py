@@ -46,6 +46,7 @@ class CreateSessionRequest(BaseModel):
 class UpdateSessionRequest(BaseModel):
     title: str | None = None
     archived: bool | None = None
+    pinned: bool | None = None
     current_model_provider_id: str | None = None
     current_model: str | None = None
 
@@ -218,6 +219,12 @@ def update_session(
             session = service.delete_session(session_id)
         elif "title" in payload.model_fields_set:
             session = service.rename_session(session_id, payload.title or "")
+        elif "pinned" in payload.model_fields_set:
+            session = service.set_session_pinned(
+                session_id,
+                pinned=bool(payload.pinned),
+                current_session_id=current_session_id,
+            )
         elif {"current_model_provider_id", "current_model"} & payload.model_fields_set:
             session = service.update_session_model(
                 session_id,
@@ -434,11 +441,15 @@ def _branch_error(exc: SessionForkServiceError) -> HTTPException:
         "checkpoint_not_found": status.HTTP_404_NOT_FOUND,
         "checkpoint_source_ambiguous": status.HTTP_400_BAD_REQUEST,
         "checkpoint_id_empty": status.HTTP_400_BAD_REQUEST,
+        "reverse_checkpoint_source_unsupported": status.HTTP_400_BAD_REQUEST,
+        "reverse_source_must_be_user_message": status.HTTP_400_BAD_REQUEST,
         "trace_session_mismatch": status.HTTP_400_BAD_REQUEST,
         "trace_not_completed": status.HTTP_400_BAD_REQUEST,
         "trace_checkpoint_missing": status.HTTP_400_BAD_REQUEST,
         "message_event_checkpoint_missing": status.HTTP_400_BAD_REQUEST,
         "turn_checkpoint_missing": status.HTTP_400_BAD_REQUEST,
+        "reverse_input_checkpoint_missing": status.HTTP_400_BAD_REQUEST,
+        "session_reverse_failed": status.HTTP_400_BAD_REQUEST,
     }.get(exc.code, status.HTTP_400_BAD_REQUEST)
     return HTTPException(
         status_code=status_code,

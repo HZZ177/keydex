@@ -9,3 +9,92 @@
 .panel[data-conversation-panel-variant="overlay"] {
   background: transparent;
 }
+
+.confirmBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: grid;
+  place-items: center;
+  background: rgb(15 23 42 / 18%);
+  padding: 18px;
+}
+
+.confirmPanel {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 14px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--surface-bg);
+  box-shadow: var(--shadow-popover);
+  padding: 18px;
+}
+
+.confirmHeader {
+  display: grid;
+  gap: 7px;
+}
+
+.confirmHeader h2 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: var(--ui-line-height-tight);
+}
+
+.confirmHeader p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.confirmPreview {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 9px 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirmSecondary,
+.confirmDanger {
+  height: 30px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  padding: 0 12px;
+}
+
+.confirmSecondary {
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+}
+
+.confirmSecondary:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.confirmDanger {
+  border: 1px solid color-mix(in srgb, var(--color-danger) 72%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-bg-elevated));
+  color: color-mix(in srgb, var(--color-danger) 86%, var(--color-text-primary));
+}
+
+.confirmDanger:hover {
+  background: color-mix(in srgb, var(--color-danger) 18%, var(--color-bg-elevated));
+}

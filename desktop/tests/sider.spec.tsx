@@ -276,7 +276,14 @@ describe("Sider", () => {
       </RuntimeConnectionProvider>,
     );
 
-    expect(screen.getByRole("status", { name: "正在加载会话" })).not.toBeNull();
+    const loadingState = screen.getByRole("status", { name: "正在加载会话" });
+    expect(screen.getByTestId("sidebar-session-skeleton")).toBe(loadingState);
+    const loadingShell = screen.getByTestId("sidebar-session-skeleton-shell");
+    expect(loadingShell.contains(loadingState)).toBe(true);
+    expect(loadingShell.closest('[aria-label="会话历史"]')?.getAttribute("data-loading")).toBe("true");
+    expect(loadingState.querySelector("svg")).toBeNull();
+    expect(screen.queryByRole("region", { name: "项目" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "对话" })).toBeNull();
     expect(screen.queryByText("正在连接本地服务")).toBeNull();
     expect(runtime.conversation.listSessions).not.toHaveBeenCalled();
 
@@ -397,6 +404,75 @@ describe("Sider", () => {
     expect(group.querySelector('[data-history-extra-items="true"]')?.getAttribute("data-expanded")).toBe("false");
     expect(within(group).queryByRole("button", { name: "项目会话 6" })).toBeNull();
     expect(within(group).queryByRole("button", { name: "项目会话 7" })).toBeNull();
+  });
+
+  it("renders pinned sessions above project groups without duplicating them", async () => {
+    const pinnedThreads = Array.from({ length: 6 }, (_, index) =>
+      thread({
+        id: `pinned-${index + 1}`,
+        title: `置顶会话 ${index + 1}`,
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "keydex"),
+        pinned: true,
+        pinned_at: `2026-06-17T11:${String(59 - index).padStart(2, "0")}:00Z`,
+        updated_at: `2026-06-17T10:${String(59 - index).padStart(2, "0")}:00Z`,
+      }),
+    );
+    const runtime = fakeRuntime([
+      ...pinnedThreads,
+      thread({
+        id: "regular-1",
+        title: "普通项目会话",
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "keydex"),
+      }),
+    ]);
+
+    renderSider(<Sider runtime={runtime} />);
+
+    const pinned = await screen.findByRole("region", { name: "置顶" });
+    const project = await screen.findByRole("region", { name: "keydex" });
+    expect(within(pinned).getByRole("button", { name: "收起置顶区域" }).querySelector(".lucide-pin")).toBeNull();
+    expect(Boolean(pinned.compareDocumentPosition(project) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(within(pinned).getByRole("button", { name: "置顶会话 1" })).not.toBeNull();
+    expect(within(pinned).getByRole("button", { name: "置顶会话 5" })).not.toBeNull();
+    expect(within(pinned).queryByRole("button", { name: "置顶会话 6" })).toBeNull();
+    expect(within(project).queryByRole("button", { name: "置顶会话 1" })).toBeNull();
+    expect(within(project).getByRole("button", { name: "普通项目会话" })).not.toBeNull();
+
+    fireEvent.click(within(pinned).getByRole("button", { name: "展开 置顶 会话历史" }));
+    expect(within(pinned).getByRole("button", { name: "置顶会话 6" })).not.toBeNull();
+
+    fireEvent.click(within(pinned).getByRole("button", { name: "收起置顶区域" }));
+    expect(within(pinned).queryByRole("button", { name: "置顶会话 1" })).toBeNull();
+  });
+
+  it("pins and unpins a session through updateSession", async () => {
+    const runtime = fakeRuntime([thread({ id: "thread-pin", title: "待置顶会话" })]);
+
+    renderSider(<Sider runtime={runtime} />);
+
+    const emptyPinned = await screen.findByRole("region", { name: "置顶" });
+    expect(within(emptyPinned).getByText("暂无置顶")).not.toBeNull();
+    expect(within(emptyPinned).getByRole("button", { name: "收起置顶区域" }).querySelector(".lucide-pin")).toBeNull();
+    await screen.findByRole("button", { name: "待置顶会话" });
+    fireEvent.click(screen.getByRole("button", { name: "置顶 待置顶会话" }));
+
+    await waitFor(() => {
+      expect(runtime.conversation.updateSession).toHaveBeenCalledWith("thread-pin", { pinned: true });
+    });
+    const pinned = await screen.findByRole("region", { name: "置顶" });
+    expect(within(pinned).getByRole("button", { name: "待置顶会话" })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "取消置顶 待置顶会话" }));
+    await waitFor(() => {
+      expect(runtime.conversation.updateSession).toHaveBeenLastCalledWith("thread-pin", { pinned: false });
+    });
+    const emptyPinnedAgain = screen.getByRole("region", { name: "置顶" });
+    expect(within(emptyPinnedAgain).getByText("暂无置顶")).not.toBeNull();
+    expect(within(emptyPinnedAgain).queryByRole("button", { name: "待置顶会话" })).toBeNull();
   });
 
   it("collapses history buckets and starts the requested new chat type", async () => {

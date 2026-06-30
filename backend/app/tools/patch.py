@@ -15,7 +15,8 @@ from backend.app.tools.base import FunctionTool, ToolExecutionContext, ToolExecu
 from backend.app.tools.file_access import relative_tool_path, resolve_file_access_path
 from backend.app.tools.registry import ToolRegistry
 
-EDIT_FILE_USAGE = """在文件访问权限允许范围内修改、删除或移动已有 UTF-8 文本文件，并返回文件变更 diff。
+EDIT_FILE_USAGE = """在文件访问权限允许范围内修改、删除或移动已有 UTF-8 文本文件，
+并返回文件变更 diff。
 
 patch 必须使用以下文件操作头；不接受普通 unified diff 文件头：
 - *** Update File: <path>

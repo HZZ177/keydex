@@ -33,6 +33,36 @@ class SessionForkResult:
     source: CheckpointSource
 
 
+@dataclass(frozen=True)
+class SessionReverseSource:
+    session_id: str
+    active_session_id: str
+    checkpoint_id: str | None
+    checkpoint_ns: str
+    trace_id: str
+    turn_index: int
+    message_event_id: str | None = None
+    source_type: str = "message_event"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "active_session_id": self.active_session_id,
+            "checkpoint_id": self.checkpoint_id,
+            "checkpoint_ns": self.checkpoint_ns,
+            "trace_id": self.trace_id,
+            "turn_index": self.turn_index,
+            "message_event_id": self.message_event_id,
+            "source_type": self.source_type,
+        }
+
+
+@dataclass(frozen=True)
+class SessionReverseResult:
+    session: SessionRecord
+    source: SessionReverseSource
+
+
 class SessionForkService:
     def __init__(
         self,
@@ -140,18 +170,60 @@ class SessionForkService:
         trace_id: str | None = None,
         message_event_id: str | None = None,
         turn_index: int | None = None,
-    ) -> SessionForkResult:
-        return self.fork_session(
-            session_id=session_id,
-            user_id=user_id,
-            title=title,
+    ) -> SessionReverseResult:
+        _ = user_id, title, checkpoint_ns
+        source_session = self._require_session(session_id)
+        source = self._resolve_reverse_source(
+            source_session=source_session,
             checkpoint_id=checkpoint_id,
-            checkpoint_ns=checkpoint_ns,
             trace_id=trace_id,
             message_event_id=message_event_id,
             turn_index=turn_index,
-            make_active=True,
         )
+        try:
+            self.checkpointer.rollback_thread_to_checkpoint(
+                thread_id=source.active_session_id,
+                checkpoint_id=source.checkpoint_id,
+                checkpoint_ns=source.checkpoint_ns,
+            )
+            deleted_events = self.repositories.message_events.delete_from_turn(
+                source_session.id,
+                source.turn_index,
+            )
+            deleted_traces = self.repositories.trace_records.soft_delete_from_turn(
+                source_session.id,
+                source.turn_index,
+            )
+            updated = self.repositories.sessions.update(
+                source_session.id,
+                active_session_id=source.active_session_id,
+                status="active",
+            )
+            if updated is None:
+                raise SessionForkServiceError(
+                    "session_not_found",
+                    "session 不存在",
+                    {"session_id": source_session.id},
+                )
+            logger.info(
+                "[SessionForkService] 回退 session 到历史轮次 | "
+                f"session_id={source_session.id} | active_session_id={source.active_session_id} | "
+                f"turn_index={source.turn_index} | checkpoint_id={source.checkpoint_id or '-'} | "
+                f"deleted_events={deleted_events} | deleted_traces={deleted_traces}"
+            )
+            return SessionReverseResult(session=updated, source=source)
+        except Exception as exc:
+            if isinstance(exc, SessionForkServiceError):
+                raise
+            raise SessionForkServiceError(
+                "session_reverse_failed",
+                "回退 session 失败",
+                {
+                    "session_id": source_session.id,
+                    "turn_index": source.turn_index,
+                    "checkpoint_id": source.checkpoint_id,
+                },
+            ) from exc
 
     def _copy_visible_history(
         self,
@@ -200,6 +272,230 @@ class SessionForkService:
             return cleaned
         base = (source_session.title or "新会话").strip() or "新会话"
         return f"{base} 分支"
+
+    def _resolve_reverse_source(
+        self,
+        *,
+        source_session: SessionRecord,
+        checkpoint_id: str | None,
+        trace_id: str | None,
+        message_event_id: str | None,
+        turn_index: int | None,
+    ) -> SessionReverseSource:
+        if (checkpoint_id or "").strip():
+            raise SessionForkServiceError(
+                "reverse_checkpoint_source_unsupported",
+                "reverse 必须从用户消息、trace 或回合定位，不能只提供 checkpoint_id",
+                {"session_id": source_session.id, "checkpoint_id": checkpoint_id},
+            )
+        provided = [
+            bool((trace_id or "").strip()),
+            bool((message_event_id or "").strip()),
+            turn_index is not None,
+        ]
+        if sum(1 for value in provided if value) != 1:
+            raise SessionForkServiceError(
+                "checkpoint_source_ambiguous",
+                "必须且只能提供一种 reverse 来源",
+                {
+                    "trace_id": trace_id,
+                    "message_event_id": message_event_id,
+                    "turn_index": turn_index,
+                },
+            )
+        if message_event_id:
+            return self._resolve_reverse_message_event(
+                source_session=source_session,
+                message_event_id=message_event_id,
+            )
+        if trace_id:
+            trace = self._require_trace(trace_id)
+            if trace.session_id != source_session.id:
+                raise SessionForkServiceError(
+                    "trace_session_mismatch",
+                    "trace 不属于当前 session",
+                    {
+                        "session_id": source_session.id,
+                        "trace_id": trace_id,
+                        "trace_session_id": trace.session_id,
+                    },
+                )
+            return self._reverse_source_from_trace(
+                source_session=source_session,
+                trace=trace,
+                source_type="trace",
+            )
+        if turn_index is None:
+            raise AssertionError("unreachable reverse source state")
+        return self._resolve_reverse_turn(source_session=source_session, turn_index=turn_index)
+
+    def _resolve_reverse_message_event(
+        self,
+        *,
+        source_session: SessionRecord,
+        message_event_id: str,
+    ) -> SessionReverseSource:
+        event = self.repositories.message_events.get(message_event_id)
+        if event is None or event.session_id != source_session.id:
+            raise SessionForkServiceError(
+                "message_event_not_found",
+                "消息事件不存在",
+                {"session_id": source_session.id, "message_event_id": message_event_id},
+            )
+        if self._event_action(event) != "user_message":
+            raise SessionForkServiceError(
+                "reverse_source_must_be_user_message",
+                "reverse 只能从用户消息回退",
+                {
+                    "session_id": source_session.id,
+                    "message_event_id": message_event_id,
+                    "action": self._event_action(event),
+                },
+            )
+        if not event.trace_record_id:
+            raise SessionForkServiceError(
+                "message_event_checkpoint_missing",
+                "该消息没有可用 checkpoint",
+                {"message_event_id": event.id, "turn_index": event.turn_index},
+            )
+        trace = self._require_trace(event.trace_record_id)
+        return self._reverse_source_from_trace(
+            source_session=source_session,
+            trace=trace,
+            message_event_id=event.id,
+            source_type="message_event",
+        )
+
+    def _resolve_reverse_turn(
+        self,
+        *,
+        source_session: SessionRecord,
+        turn_index: int,
+    ) -> SessionReverseSource:
+        events = self.repositories.message_events.list_by_turn(source_session.id, int(turn_index))
+        for event in events:
+            if self._event_action(event) == "user_message" and event.trace_record_id:
+                trace = self._require_trace(event.trace_record_id)
+                return self._reverse_source_from_trace(
+                    source_session=source_session,
+                    trace=trace,
+                    message_event_id=event.id,
+                    source_type="turn",
+                )
+        raise SessionForkServiceError(
+            "turn_checkpoint_missing",
+            "该回合没有可用 checkpoint",
+            {"session_id": source_session.id, "turn_index": turn_index},
+        )
+
+    def _reverse_source_from_trace(
+        self,
+        *,
+        source_session: SessionRecord,
+        trace,
+        message_event_id: str | None = None,
+        source_type: str,
+    ) -> SessionReverseSource:
+        if trace.session_id != source_session.id:
+            raise SessionForkServiceError(
+                "trace_session_mismatch",
+                "trace 不属于当前 session",
+                {
+                    "session_id": source_session.id,
+                    "trace_id": trace.trace_id,
+                    "trace_session_id": trace.session_id,
+                },
+            )
+        if trace.status == "running":
+            raise SessionForkServiceError(
+                "trace_not_completed",
+                "运行中的回合不能 reverse",
+                {"trace_id": trace.trace_id, "status": trace.status},
+            )
+        active_session_id = (
+            trace.active_session_id
+            or source_session.active_session_id
+            or source_session.id
+        )
+        checkpoint_id = (trace.input_checkpoint_id or "").strip() or None
+        checkpoint_ns = trace.input_checkpoint_ns or ""
+        if checkpoint_id is None and self._has_visible_history_before_turn(
+            source_session.id,
+            trace.turn_index,
+        ):
+            raise SessionForkServiceError(
+                "reverse_input_checkpoint_missing",
+                "该轮缺少输入前 checkpoint，不能安全回退",
+                {
+                    "session_id": source_session.id,
+                    "trace_id": trace.trace_id,
+                    "turn_index": trace.turn_index,
+                },
+            )
+        if checkpoint_id and not self._checkpoint_exists(
+            active_session_id,
+            checkpoint_ns,
+            checkpoint_id,
+        ):
+            raise SessionForkServiceError(
+                "checkpoint_not_found",
+                "checkpoint 不存在",
+                {
+                    "session_id": source_session.id,
+                    "active_session_id": active_session_id,
+                    "checkpoint_id": checkpoint_id,
+                    "checkpoint_ns": checkpoint_ns,
+                },
+            )
+        return SessionReverseSource(
+            session_id=source_session.id,
+            active_session_id=active_session_id,
+            checkpoint_id=checkpoint_id,
+            checkpoint_ns=checkpoint_ns,
+            trace_id=trace.trace_id,
+            turn_index=trace.turn_index,
+            message_event_id=message_event_id,
+            source_type=source_type,
+        )
+
+    def _require_trace(self, trace_id: str):
+        trace = self.repositories.trace_records.get(trace_id)
+        if trace is None:
+            raise SessionForkServiceError(
+                "trace_not_found",
+                "trace 不存在",
+                {"trace_id": trace_id},
+            )
+        return trace
+
+    def _has_visible_history_before_turn(self, session_id: str, turn_index: int) -> bool:
+        previous_turns = self.repositories.message_events.list_turn_indexes(
+            session_id,
+            cursor_turn_index=int(turn_index),
+            direction="older",
+            limit=1,
+        )
+        return bool(previous_turns)
+
+    def _checkpoint_exists(self, thread_id: str, checkpoint_ns: str, checkpoint_id: str) -> bool:
+        with self.repositories.db.connect() as conn:
+            row = conn.execute(
+                """
+                select 1
+                from checkpoints_v2
+                where thread_id = ? and checkpoint_ns = ? and checkpoint_id = ?
+                limit 1
+                """,
+                (thread_id, checkpoint_ns, checkpoint_id),
+            ).fetchone()
+        return row is not None
+
+    @staticmethod
+    def _event_action(event: MessageEventRecord) -> str:
+        canonical = (event.data or {}).get("_canonical")
+        if isinstance(canonical, dict) and canonical.get("action"):
+            return str(canonical["action"])
+        return event.action
 
     def _require_session(self, session_id: str) -> SessionRecord:
         session = self.repositories.sessions.get(session_id)

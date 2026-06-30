@@ -86,22 +86,25 @@ def test_session_fork_api_returns_new_session_and_source_metadata(tmp_path) -> N
     assert body["source"]["checkpoint_id"] == "ckpt_1"
 
 
-def test_session_reverse_api_preserves_original_and_switches_active_branch(tmp_path) -> None:
+def test_session_reverse_api_rolls_back_same_session(tmp_path) -> None:
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
     _prepare_source(app)
 
     with TestClient(app) as client:
         response = client.post(
             "/api/sessions/ses_source/reverse",
-            json={"trace_id": "trace_1"},
+            json={"message_event_id": "evt_user_1"},
         )
         source_response = client.get("/api/sessions/ses_source")
+        history_response = client.get("/api/sessions/ses_source/history?all_turns=true")
 
     assert response.status_code == 200
-    child_id = response.json()["session"]["id"]
-    assert child_id != "ses_source"
-    assert source_response.json()["session"]["active_session_id"] == child_id
-    assert source_response.json()["session"]["child_session_id"] == child_id
+    body = response.json()
+    assert body["session"]["id"] == "ses_source"
+    assert body["source"]["checkpoint_id"] is None
+    assert body["source"]["message_event_id"] == "evt_user_1"
+    assert source_response.json()["session"]["active_session_id"] == "ses_source"
+    assert history_response.json()["list"] == []
 
 
 def test_session_fork_api_rejects_failed_trace(tmp_path) -> None:

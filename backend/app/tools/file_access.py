@@ -4,7 +4,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from backend.app.command_approval import FileAccessMode, load_command_settings
-from backend.app.security.workspace import WorkspacePathError, is_relative_to, resolve_workspace_path
+from backend.app.security.workspace import (
+    WorkspacePathError,
+    is_relative_to,
+    resolve_workspace_path,
+)
 from backend.app.storage import StorageRepositories
 from backend.app.tools.base import ToolExecutionContext, ToolExecutionError
 

@@ -401,7 +401,7 @@ describe("RuntimeBridge", () => {
       if (url.endsWith("/api/sessions/ses%201/reverse") && init.method === "POST") {
         return Promise.resolve(
           jsonResponse(200, {
-            session: { ...session, id: "ses-reverse", parent_session_id: "ses 1" },
+            session: { ...session, id: "ses 1" },
             source: {
               session_id: "ses 1",
               active_session_id: "ses 1",
@@ -468,7 +468,7 @@ describe("RuntimeBridge", () => {
       runtime.conversation.reverseSession("ses 1", {
         traceId: "trace_1",
       }),
-    ).resolves.toMatchObject({ session: { id: "ses-reverse" }, source: { trace_id: "trace_1" } });
+    ).resolves.toMatchObject({ session: { id: "ses 1" }, source: { trace_id: "trace_1" } });
 
     expect(fetcher).toHaveBeenNthCalledWith(
       1,

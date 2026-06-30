@@ -105,6 +105,7 @@ export interface AgentSessionController {
   usingSharedRuntime: boolean;
   quoteSelection: (request: string | AgentSessionControllerQuoteSelectionRequest) => void;
   startChatFromAnnotation: (request: AgentSessionControllerAnnotationRequest) => void;
+  reloadHistory: () => Promise<void>;
   loadOlderHistory: () => Promise<void>;
   sendText: (
     text: string,
@@ -155,6 +156,7 @@ export function useAgentSessionController({
   const [approvalSubmitting, setApprovalSubmitting] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const channelRef = useRef<ChatChannel | null>(null);
+  const syncPersistedHistoryRef = useRef<() => void>(() => undefined);
   const state = sharedRuntimeContext?.state ?? localState;
   const dispatch = sharedRuntimeContext?.dispatch ?? localDispatch;
   const wsStatus = sharedRuntimeContext?.wsStatus ?? localWsStatus;
@@ -179,16 +181,24 @@ export function useAgentSessionController({
       onRuntimeEvent?.(event);
       dispatch({ type: "event/receive", event });
       emitSessionEventsFromRuntimeEvent(event);
+      if (shouldSyncHistoryAfterRuntimeEvent(event, sessionId)) {
+        syncPersistedHistoryRef.current();
+      }
     },
-    [dispatch, onRuntimeEvent],
+    [dispatch, onRuntimeEvent, sessionId],
   );
 
   useEffect(() => {
-    if (!usingSharedRuntime || !sharedSubscribeEvent || !onRuntimeEvent) {
+    if (!usingSharedRuntime || !sharedSubscribeEvent) {
       return;
     }
-    return sharedSubscribeEvent(onRuntimeEvent);
-  }, [onRuntimeEvent, sharedSubscribeEvent, usingSharedRuntime]);
+    return sharedSubscribeEvent((event) => {
+      onRuntimeEvent?.(event);
+      if (shouldSyncHistoryAfterRuntimeEvent(event, sessionId)) {
+        syncPersistedHistoryRef.current();
+      }
+    });
+  }, [onRuntimeEvent, sessionId, sharedSubscribeEvent, usingSharedRuntime]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -280,6 +290,70 @@ export function useAgentSessionController({
     sharedBindSession,
     usingSharedRuntime,
   ]);
+
+  const reloadHistory = useCallback(async () => {
+    if (!sessionId) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const history = await runtime.conversation.loadHistory(sessionId, {
+        allTurns: loadFullHistory,
+        direction: "older",
+        pageSize: loadFullHistory ? undefined : historyPageSize,
+      });
+      dispatch({ type: "history/loaded", sessionId, history });
+    } catch (reason) {
+      const message = publicRuntimeDetail(errorMessage(reason));
+      setRuntimeDetail(message);
+      onNotice?.(message, "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    dispatch,
+    historyPageSize,
+    loadFullHistory,
+    onNotice,
+    runtime,
+    sessionId,
+    setRuntimeDetail,
+  ]);
+
+  const syncPersistedHistory = useCallback(async () => {
+    if (!sessionId) {
+      return;
+    }
+    try {
+      const history = await runtime.conversation.loadHistory(sessionId, {
+        allTurns: loadFullHistory,
+        direction: "older",
+        pageSize: loadFullHistory ? undefined : historyPageSize,
+      });
+      if (history.list.length === 0) {
+        return;
+      }
+      dispatch({ type: "history/loaded", sessionId, history });
+    } catch (reason) {
+      const message = publicRuntimeDetail(errorMessage(reason));
+      setRuntimeDetail(message);
+      onNotice?.(message, "error");
+    }
+  }, [
+    dispatch,
+    historyPageSize,
+    loadFullHistory,
+    onNotice,
+    runtime,
+    sessionId,
+    setRuntimeDetail,
+  ]);
+
+  useEffect(() => {
+    syncPersistedHistoryRef.current = () => {
+      void syncPersistedHistory();
+    };
+  }, [syncPersistedHistory]);
 
   const loadOlderHistory = useCallback(async () => {
     const cursor = sessionViewState?.historyCursor;
@@ -621,6 +695,7 @@ export function useAgentSessionController({
       usingSharedRuntime,
       quoteSelection,
       startChatFromAnnotation,
+      reloadHistory,
       loadOlderHistory,
       sendText,
       send,
@@ -645,6 +720,7 @@ export function useAgentSessionController({
       pendingApproval,
       quoteChipRequest,
       quoteSelection,
+      reloadHistory,
       runtimeDetail,
       runtimeState,
       selectedSkill,
@@ -729,4 +805,18 @@ function publicRuntimeDetail(message: string): string {
     .map((line) => line.trim())
     .filter(Boolean);
   return lines[0] || "对话操作失败";
+}
+
+function shouldSyncHistoryAfterRuntimeEvent(event: AgentActionEnvelope, sessionId: string): boolean {
+  if (!sessionId || !["completed", "cancelled", "error"].includes(event.action)) {
+    return false;
+  }
+  const dataSessionId = runtimeEventSessionId(event);
+  return dataSessionId === sessionId;
+}
+
+function runtimeEventSessionId(event: AgentActionEnvelope): string {
+  const data = event.data;
+  const value = data.session_id ?? data.id;
+  return typeof value === "string" ? value : "";
 }

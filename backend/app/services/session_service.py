@@ -240,6 +240,22 @@ class SessionService:
         )
         return self._serialize_session(record, current_session_id=current_session_id)
 
+    def set_session_pinned(
+        self,
+        session_id: str,
+        *,
+        pinned: bool,
+        current_session_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._require_session(session_id)
+        record = self._sessions.set_pinned(session_id, pinned)
+        if record is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        logger.info(
+            f"[SessionService] {'置顶' if pinned else '取消置顶'}会话 | session_id={session_id}"
+        )
+        return self._serialize_session(record, current_session_id=current_session_id)
+
     def delete_session(self, session_id: str) -> dict[str, Any]:
         self._require_session(session_id)
         record = self._sessions.soft_delete(session_id)
@@ -492,6 +508,8 @@ class SessionService:
             "workspace_roots": record.workspace_roots,
             "current_model_provider_id": record.current_model_provider_id,
             "current_model": record.current_model,
+            "pinned": record.pinned_at is not None,
+            "pinned_at": record.pinned_at,
             "workspace": workspace,
             "created_at": record.created_at,
             "updated_at": record.updated_at,

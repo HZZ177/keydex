@@ -1,4 +1,4 @@
-import { Check, Copy, GitBranch, RotateCcw } from "lucide-react";
+import { Check, Copy, GitBranch, Undo2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -68,6 +68,7 @@ export interface MessageTextProps {
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
   onQuoteSelection?: (text: string) => void;
+  onReverseFromMessage?: (message: ConversationMessage) => void;
 }
 
 export function MessageText({
@@ -77,6 +78,7 @@ export function MessageText({
   workspaceRuntime,
   workspaceScope,
   onQuoteSelection,
+  onReverseFromMessage,
 }: MessageTextProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const previewContext = useOptionalPreview();
@@ -283,7 +285,7 @@ export function MessageText({
       <MessageGhostFooter footer={ghostFooter} />
 
       {!visuallyStreaming && showActionRow ? (
-        <MessageActionFooter message={message} />
+        <MessageActionFooter message={message} onReverseFromMessage={onReverseFromMessage} />
       ) : null}
     </article>
   );
@@ -719,7 +721,9 @@ export function MessageActionFooter({
 }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const time = formatMessageTime(message.updatedAt || message.createdAt);
-  const canBranch = typeof message.payload.messageEventId === "string" && message.status !== "running";
+  const hasPersistedEvent = typeof message.payload.messageEventId === "string" && message.status !== "running";
+  const canFork = hasPersistedEvent && message.kind === "assistant";
+  const canReverse = hasPersistedEvent && message.kind === "user";
 
   const handleCopy = async () => {
     try {
@@ -741,7 +745,7 @@ export function MessageActionFooter({
         {copyState === "copied" ? <Check size={13} /> : <Copy size={13} />}
         <span>{copyState === "failed" ? "复制失败" : copyState === "copied" ? "已复制" : "复制"}</span>
       </button>
-      {canBranch && onForkFromMessage ? (
+      {canFork && onForkFromMessage ? (
         <button
           className={styles.actionButton}
           type="button"
@@ -752,14 +756,14 @@ export function MessageActionFooter({
           <span>从这里继续</span>
         </button>
       ) : null}
-      {canBranch && onReverseFromMessage ? (
+      {canReverse && onReverseFromMessage ? (
         <button
           className={styles.actionButton}
           type="button"
           aria-label="回退到这里继续"
           onClick={() => onReverseFromMessage(message)}
         >
-          <RotateCcw size={13} />
+          <Undo2 size={13} />
           <span>回退到这里继续</span>
         </button>
       ) : null}

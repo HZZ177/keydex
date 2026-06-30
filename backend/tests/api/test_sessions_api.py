@@ -28,6 +28,8 @@ def test_sessions_api_creates_lists_and_reads_detail(tmp_path) -> None:
     assert listed.status_code == 200
     assert listed.json()["total"] == 1
     assert listed.json()["list"][0]["id"] == session_id
+    assert listed.json()["list"][0]["pinned"] is False
+    assert listed.json()["list"][0]["pinned_at"] is None
     assert detail.json()["session"]["title"] == "会话一"
 
 
@@ -306,6 +308,24 @@ def test_sessions_api_updates_title_and_soft_deletes_session(tmp_path) -> None:
     assert deleted.status_code == 204
     assert listed_after_delete.json()["total"] == 0
     assert detail_after_delete.status_code == 404
+
+
+def test_sessions_api_updates_pinned_state(tmp_path) -> None:
+    client = _client(tmp_path)
+    old_id = client.post("/api/sessions", json={"title": "旧会话"}).json()["session"]["id"]
+    new_id = client.post("/api/sessions", json={"title": "新会话"}).json()["session"]["id"]
+
+    pinned = client.patch(f"/api/sessions/{old_id}", json={"pinned": True})
+    listed_pinned = client.get("/api/sessions")
+    unpinned = client.patch(f"/api/sessions/{old_id}", json={"pinned": False})
+
+    assert pinned.status_code == 200
+    assert pinned.json()["session"]["pinned"] is True
+    assert pinned.json()["session"]["pinned_at"]
+    assert [item["id"] for item in listed_pinned.json()["list"]] == [old_id, new_id]
+    assert unpinned.status_code == 200
+    assert unpinned.json()["session"]["pinned"] is False
+    assert unpinned.json()["session"]["pinned_at"] is None
 
 
 def test_sessions_api_rejects_empty_title_and_archives_from_patch(tmp_path) -> None:

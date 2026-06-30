@@ -126,6 +126,7 @@ class SessionRecord:
     workspace_roots: list[str] = field(default_factory=list)
     current_model_provider_id: str | None = None
     current_model: str | None = None
+    pinned_at: str | None = None
     is_deleted: bool = False
     title_source: str = "manual"
 
@@ -221,6 +222,8 @@ class TraceRecord:
     total_tokens: int = 0
     total_cache_read_tokens: int = 0
     user_message_preview: str | None = None
+    input_checkpoint_id: str | None = None
+    input_checkpoint_ns: str | None = None
     output_checkpoint_id: str | None = None
     output_checkpoint_ns: str | None = None
     metadata: dict[str, Any] | None = None
@@ -830,7 +833,12 @@ class SessionsRepository:
                 f"""
                 select * from sessions
                 {where}
-                order by updated_at desc, created_at desc, id desc
+                order by
+                  pinned_at is null,
+                  pinned_at desc,
+                  updated_at desc,
+                  created_at desc,
+                  id desc
                 limit ?
                 """,
                 params,
@@ -965,6 +973,21 @@ class SessionsRepository:
             )
         return self.get(session_id)
 
+    def set_pinned(self, session_id: str, pinned: bool) -> SessionRecord | None:
+        pinned_at = to_iso_z(utc_now()) if pinned else None
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                update sessions
+                set pinned_at = ?
+                where id = ? and is_deleted = 0
+                """,
+                (pinned_at, session_id),
+            )
+        if cursor.rowcount == 0:
+            return None
+        return self.get(session_id)
+
     def close(self, session_id: str) -> SessionRecord | None:
         return self.update(session_id, status="closed")
 
@@ -1024,6 +1047,7 @@ class SessionsRepository:
             workspace_roots=_json_loads(row["workspace_roots_json"], []),
             current_model_provider_id=row["current_model_provider_id"],
             current_model=row["current_model"],
+            pinned_at=row["pinned_at"],
             title=row["title"],
             title_source=row["title_source"],
             created_at=row["created_at"],
@@ -1744,6 +1768,33 @@ class MessageEventsRepository:
             row = conn.execute(query, params).fetchone()
         return int(row["count"] if row else 0)
 
+    def soft_delete_from_turn(self, session_id: str, turn_index: int) -> int:
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                update message_events
+                set is_deleted = 1, updated_at = ?
+                where session_id = ?
+                  and turn_index >= ?
+                  and is_deleted = 0
+                """,
+                (now, session_id, int(turn_index)),
+            )
+        return int(cursor.rowcount)
+
+    def delete_from_turn(self, session_id: str, turn_index: int) -> int:
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                delete from message_events
+                where session_id = ?
+                  and turn_index >= ?
+                """,
+                (session_id, int(turn_index)),
+            )
+        return int(cursor.rowcount)
+
     def list_turn_indexes(
         self,
         session_id: str,
@@ -2025,6 +2076,8 @@ class TraceRecordsRepository:
         scene_name: str | None = None,
         scene_version_seq: int | None = None,
         user_message_preview: str | None = None,
+        input_checkpoint_id: str | None = None,
+        input_checkpoint_ns: str | None = None,
         metadata: dict[str, Any] | None = None,
         status: str = "running",
     ) -> TraceRecord:
@@ -2036,8 +2089,9 @@ class TraceRecordsRepository:
                 insert into trace_record (
                   trace_id, session_id, active_session_id, scene_id, scene_name,
                   scene_version_seq, user_id, turn_index, root_node_id, status,
-                  start_time, user_message_preview, metadata_json, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  start_time, user_message_preview, input_checkpoint_id,
+                  input_checkpoint_ns, metadata_json, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trace_id,
@@ -2052,6 +2106,8 @@ class TraceRecordsRepository:
                     status,
                     now,
                     user_message_preview,
+                    input_checkpoint_id,
+                    input_checkpoint_ns,
                     _json_dumps(metadata or {}),
                     now,
                     now,
@@ -2082,6 +2138,21 @@ class TraceRecordsRepository:
                 (session_id,),
             ).fetchall()
         return [self._from_row(row) for row in rows]
+
+    def soft_delete_from_turn(self, session_id: str, turn_index: int) -> int:
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                update trace_record
+                set is_deleted = 1, updated_at = ?
+                where session_id = ?
+                  and turn_index >= ?
+                  and is_deleted = 0
+                """,
+                (now, session_id, int(turn_index)),
+            )
+        return int(cursor.rowcount)
 
     def finish(
         self,
@@ -2159,6 +2230,8 @@ class TraceRecordsRepository:
             total_tokens=int(row["total_tokens"]),
             total_cache_read_tokens=int(row["total_cache_read_tokens"]),
             user_message_preview=row["user_message_preview"],
+            input_checkpoint_id=row["input_checkpoint_id"],
+            input_checkpoint_ns=row["input_checkpoint_ns"],
             output_checkpoint_id=row["output_checkpoint_id"],
             output_checkpoint_ns=row["output_checkpoint_ns"],
             metadata=_json_loads(row["metadata_json"], {}),
