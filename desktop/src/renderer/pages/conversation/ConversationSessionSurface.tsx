@@ -15,6 +15,7 @@ import { ConversationComposer } from "./ConversationComposer";
 import { ConversationPanel, ConversationPanelComposerAccessory } from "./ConversationPanel";
 import { useConversationPanelModel } from "./useConversationPanelModel";
 import { ComposerApprovalCard } from "./ComposerApprovalCard";
+import { countLoadedConversationTurns } from "./conversationForkSource";
 import { consumeQuickChatSend } from "./quickSend";
 import styles from "./ConversationSessionSurface.module.css";
 
@@ -137,6 +138,14 @@ export function ConversationSessionSurface({
     }
     return panelModel.messages.filter((message) => !sidecarHiddenHistoryMessageIds.has(message.id));
   }, [isSidecar, panelModel.messages, sidecarHiddenHistoryMessageIds]);
+  const sidecarLoadedHistoryTurnCount = useMemo(() => {
+    if (!isSidecar || !sidecarHiddenHistoryMessageIds) {
+      return 0;
+    }
+    return countLoadedConversationTurns(
+      panelModel.messages.filter((message) => sidecarHiddenHistoryMessageIds.has(message.id)),
+    );
+  }, [isSidecar, panelModel.messages, sidecarHiddenHistoryMessageIds]);
   const sidecarPanelModel = useMemo(() => {
     if (!isSidecar) {
       return panelModel;
@@ -158,13 +167,13 @@ export function ConversationSessionSurface({
     () =>
       isSidecar
         ? {
-            content: "该会话历史消息已加载",
+            content: `该会话前置${sidecarLoadedHistoryTurnCount}轮历史消息已加载`,
             tone: "success" as const,
             testId: "btw-conversation-history-notice",
-            title: "该会话历史消息已加载",
+            title: `该会话前置${sidecarLoadedHistoryTurnCount}轮历史消息已加载`,
           }
         : null,
-    [isSidecar],
+    [isSidecar, sidecarLoadedHistoryTurnCount],
   );
   const title = session?.title || (threadId ? `对话 ${threadId}` : "对话");
   const workspaceMeta = conversationWorkspaceMeta(session);

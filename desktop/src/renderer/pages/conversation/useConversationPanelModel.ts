@@ -39,6 +39,7 @@ export interface UseConversationPanelModelOptions {
   registerPreviewHost?: boolean;
   previewPanelScopeKey?: string | null;
   emitForkSessionCreated?: boolean;
+  validateSelectedSkill?: boolean;
   onBranchSessionCreated?: (sessionId: string) => void;
   onForkSessionCreated?: (session: AgentSession) => void;
   onNavigateToForkSource?: (fork: AgentSessionFork) => void;
@@ -70,6 +71,7 @@ export function useConversationPanelModel({
   registerPreviewHost = false,
   previewPanelScopeKey = null,
   emitForkSessionCreated = true,
+  validateSelectedSkill = true,
   onBranchSessionCreated,
   onForkSessionCreated,
   onNavigateToForkSource,
@@ -262,6 +264,9 @@ export function useConversationPanelModel({
   }, [handleRuntimeEventSideEffects, sharedSubscribeEvent]);
 
   useEffect(() => {
+    if (!validateSelectedSkill) {
+      return;
+    }
     if (!controller.selectedSkill) {
       return;
     }
@@ -277,7 +282,7 @@ export function useConversationPanelModel({
     ) {
       controller.setSelectedSkill(null);
     }
-  }, [controller, workspaceAvailable, workspaceSkills, workspaceSkillsState.status]);
+  }, [controller, validateSelectedSkill, workspaceAvailable, workspaceSkills, workspaceSkillsState.status]);
 
   useEffect(() => {
     return () => {

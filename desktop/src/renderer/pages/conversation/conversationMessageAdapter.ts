@@ -82,6 +82,8 @@ export function conversationStatusFromAgent(message: AgentChatMessage): Conversa
 export function payloadFromAgentMessage(message: AgentChatMessage): Record<string, unknown> {
   const base: Record<string, unknown> = {
     messageEventId: message.messageEventId,
+    turnIndex: message.turnIndex,
+    turn_index: message.turnIndex,
     reasoningKind: message.reasoningKind,
     reasoning_kind: message.reasoningKind,
     ghostStats: message.ghostStats,

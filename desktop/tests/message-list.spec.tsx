@@ -101,6 +101,41 @@ describe("MessageList", () => {
     expect(screen.getByRole("button", { name: "从该轮派生对话" })).not.toBeNull();
   });
 
+  it("renders divider notices as text-only rows without leading icons", () => {
+    const forkSource = {
+      id: "fork-1",
+      source_session_id: "source-session",
+      target_session_id: "target-session",
+      source_message_event_id: "source-event",
+      target_message_event_id: "target-event",
+    };
+    const compressionNotice = message("m1", "context_compression", "上下文已自动压缩");
+    const cancelledNotice = message("m2", "cancelled", "对话已取消");
+    const forkedAssistant = {
+      ...message("m3", "assistant", "派生后的回答"),
+      payload: {
+        messageEventId: "target-event",
+        forkSource,
+      },
+    };
+
+    render(
+      <MessageList
+        messages={[compressionNotice, cancelledNotice, forkedAssistant]}
+        topNotice={{
+          content: "该会话前置1轮历史消息已加载",
+          tone: "success",
+          testId: "btw-conversation-history-notice",
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("btw-conversation-history-notice").querySelector("svg")).toBeNull();
+    expect(screen.getByTestId("context-compression-notice").querySelector("svg")).toBeNull();
+    expect(screen.getByTestId("conversation-cancelled-notice").querySelector("svg")).toBeNull();
+    expect(screen.getByTestId("message-fork-marker").querySelector("svg")).toBeNull();
+  });
+
   it("exposes the requested density variant on the list root and scroll surface", () => {
     render(<MessageList messages={[]} variant="compact" />);
 

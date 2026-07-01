@@ -44,6 +44,7 @@ import styles from "./SendBox.module.css";
 import {
   fileSelectionReducer,
   initialFileSelectionState,
+  type FileSelectionAction,
   type SelectedFile,
   type SelectedFileSource,
   selectedFileFromFile,
@@ -59,6 +60,7 @@ import {
 import {
   initialQuoteSelectionState,
   quoteSelectionReducer,
+  type QuoteSelectionAction,
   type SelectedQuote,
 } from "./quoteSelection";
 import { useCompositionInput } from "./useCompositionInput";
@@ -96,10 +98,14 @@ export interface SendBoxProps {
   workspaceRoots?: string[];
   externalFileRequest?: SendBoxExternalFileRequest | null;
   externalQuoteRequest?: SendBoxExternalQuoteRequest | null;
+  selectedFiles?: SelectedFile[];
+  selectedQuotes?: SelectedQuote[];
   leftHint?: ReactNode;
   allowBypassConversationSlashCommand?: boolean;
   workspaceSkills?: WorkspaceSkillSummary[];
   selectedSkill?: WorkspaceSkillSummary | null;
+  onSelectedFilesChange?: (files: SelectedFile[]) => void;
+  onSelectedQuotesChange?: (quotes: SelectedQuote[]) => void;
   onSkillChange?: (skill: WorkspaceSkillSummary | null) => void;
   onChange: (value: string) => void;
   onSend: (
@@ -127,6 +133,10 @@ export interface SendBoxExternalQuoteRequest {
   quote: SelectedQuote;
 }
 
+type SlashMenuItem =
+  | { type: "command"; command: SlashCommand }
+  | { type: "skill"; skill: WorkspaceSkillSummary };
+
 export function SendBox({
   value,
   runtimeState,
@@ -149,10 +159,14 @@ export function SendBox({
   workspaceRoots = [],
   externalFileRequest = null,
   externalQuoteRequest = null,
+  selectedFiles: controlledSelectedFiles,
+  selectedQuotes: controlledSelectedQuotes,
   leftHint = null,
   allowBypassConversationSlashCommand = true,
   workspaceSkills = [],
   selectedSkill: controlledSelectedSkill,
+  onSelectedFilesChange,
+  onSelectedQuotesChange,
   onSkillChange,
   onChange,
   onSend,
@@ -188,11 +202,11 @@ export function SendBox({
   const [activeImagePreview, setActiveImagePreview] = useState<SelectedImageAttachment | null>(null);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [uncontrolledSelectedSkill, setUncontrolledSelectedSkill] = useState<WorkspaceSkillSummary | null>(null);
-  const [fileSelection, dispatchFileSelection] = useReducer(
+  const [uncontrolledFileSelection, dispatchUncontrolledFileSelection] = useReducer(
     fileSelectionReducer,
     initialFileSelectionState,
   );
-  const [quoteSelection, dispatchQuoteSelection] = useReducer(
+  const [uncontrolledQuoteSelection, dispatchUncontrolledQuoteSelection] = useReducer(
     quoteSelectionReducer,
     initialQuoteSelectionState,
   );
@@ -204,6 +218,42 @@ export function SendBox({
   const filePickerAllowsGlobalPaths = fileAccessMode === "full_access";
   const fileAccessHint = fileAccessMessage(fileAccessMode);
   const selectedSkill = controlledSelectedSkill !== undefined ? controlledSelectedSkill : uncontrolledSelectedSkill;
+  const fileSelection =
+    controlledSelectedFiles === undefined
+      ? uncontrolledFileSelection
+      : { ...uncontrolledFileSelection, files: controlledSelectedFiles };
+  const quoteSelection =
+    controlledSelectedQuotes === undefined
+      ? uncontrolledQuoteSelection
+      : { quotes: controlledSelectedQuotes };
+  const dispatchFileSelection = useCallback(
+    (action: FileSelectionAction) => {
+      if (controlledSelectedFiles === undefined) {
+        dispatchUncontrolledFileSelection(action);
+        return;
+      }
+      const next = fileSelectionReducer(fileSelection, action);
+      dispatchUncontrolledFileSelection({ type: "dragging", dragging: next.dragging });
+      dispatchUncontrolledFileSelection({ type: "error", error: next.error });
+      if (next.files !== fileSelection.files) {
+        onSelectedFilesChange?.(next.files);
+      }
+    },
+    [controlledSelectedFiles, fileSelection, onSelectedFilesChange],
+  );
+  const dispatchQuoteSelection = useCallback(
+    (action: QuoteSelectionAction) => {
+      if (controlledSelectedQuotes === undefined) {
+        dispatchUncontrolledQuoteSelection(action);
+        return;
+      }
+      const next = quoteSelectionReducer(quoteSelection, action);
+      if (next.quotes !== quoteSelection.quotes) {
+        onSelectedQuotesChange?.(next.quotes);
+      }
+    },
+    [controlledSelectedQuotes, onSelectedQuotesChange, quoteSelection],
+  );
   const setSelectedSkill = useCallback(
     (skill: WorkspaceSkillSummary | null) => {
       if (controlledSelectedSkill === undefined) {
@@ -295,8 +345,15 @@ export function SendBox({
     () => (slashQuery === null ? [] : filterSlashSkills(workspaceSkills, slashQuery)),
     [slashQuery, workspaceSkills],
   );
+  const slashRootItems = useMemo<SlashMenuItem[]>(
+    () => [
+      ...slashCommands.map((command) => ({ type: "command" as const, command })),
+      ...slashSkills.map((skill) => ({ type: "skill" as const, skill })),
+    ],
+    [slashCommands, slashSkills],
+  );
   const slashOpen = slashQuery !== null && dismissedSlashValue !== editorValue && !busy;
-  const slashItemCount = slashMode === "skills" ? slashSkills.length : slashCommands.length;
+  const slashItemCount = slashMode === "skills" ? slashSkills.length : slashRootItems.length;
   const visibleSlashActiveIndex = Math.min(slashActiveIndex, Math.max(slashItemCount - 1, 0));
   const atQuery = getAtQuery(editorValue);
   const atBrowsePath = atBrowseState && atBrowseState.value === editorValue ? atBrowseState.path : null;
@@ -327,8 +384,9 @@ export function SendBox({
   });
 
   useEffect(() => {
-    setSlashActiveIndex(0);
-  }, [slashMode, slashQuery]);
+    const directSkillIndex = slashMode === "root" && slashQuery && slashSkills.length ? slashCommands.length : 0;
+    setSlashActiveIndex(directSkillIndex);
+  }, [slashCommands.length, slashMode, slashQuery, slashSkills.length]);
 
   useEffect(() => {
     return () => {
@@ -494,16 +552,16 @@ export function SendBox({
       }
       return;
     }
+    if (command.kind === "skill" && command.skill) {
+      selectSlashSkill(command.skill);
+      return;
+    }
     onSlashCommand?.(command);
     if (command.kind === "builtin") {
       setSlashMode("root");
       const nextValue = removeSlashQuery(editorValue);
       setDismissedSlashValue(nextValue);
       onChange(nextValue);
-      return;
-    }
-    if (command.kind === "skill" && command.skill) {
-      selectSlashSkill(command.skill);
       return;
     }
     onChange(replaceSlashQuery(editorValue, `${command.label} `));
@@ -855,9 +913,12 @@ export function SendBox({
             selectSlashSkill(skill);
           }
         } else {
-          const command = slashCommands[visibleSlashActiveIndex];
-          if (command) {
-            selectSlashCommand(command);
+          const item = slashRootItems[visibleSlashActiveIndex];
+          if (item?.type === "command") {
+            selectSlashCommand(item.command);
+          }
+          if (item?.type === "skill") {
+            selectSlashSkill(item.skill);
           }
         }
         return;

@@ -21,11 +21,35 @@ test("skill list and capsule selection", async ({ page }) => {
   await page.getByRole("option", { name: /\/demo/ }).click();
 
   await expect(input).toHaveText("");
-  await expect(page.getByText("/demo")).toBeVisible();
-  await expect(page.getByText("Demo workspace skill")).toBeVisible();
+  await expect(page.getByLabel("删除 Skill /demo")).toBeVisible();
 
   await page.getByLabel("删除 Skill /demo").click();
-  await expect(page.getByText("/demo")).toHaveCount(0);
+  await expect(page.getByLabel("删除 Skill /demo")).toHaveCount(0);
+});
+
+test("slash root search can select a concrete skill directly", async ({ page }) => {
+  const state = mockState({ skills: [demoSkill(), reviewSkill()] });
+  await installWebSocketMock(page);
+  await mockBackend(page, state);
+
+  await page.goto(`${APP_BASE}/#/conversation/${SESSION_ID}`);
+
+  const input = page.getByLabel("继续输入");
+  await expect(input).toBeVisible();
+  await input.click();
+  await page.keyboard.type("/review");
+
+  const menu = page.getByTestId("slash-command-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.getByTestId("slash-skill-section")).toContainText("Skill");
+  const reviewOption = page.getByRole("option", { name: /选择 Skill \/review/ });
+  await expect(reviewOption).toBeVisible();
+  await expect(reviewOption).toHaveAttribute("data-active", "true");
+
+  await page.keyboard.press("Enter");
+
+  await expect(input).toHaveText("");
+  await expect(page.getByLabel("删除 Skill /review")).toBeVisible();
 });
 
 test("skill activation payload keeps skill out of message injection", async ({ page }) => {
@@ -46,7 +70,7 @@ test("skill activation payload keeps skill out of message injection", async ({ p
   await page.keyboard.type("拆 issues /demo");
   await page.getByRole("option", { name: /\/demo/ }).click();
   await expect(input).toHaveText("拆 issues");
-  await expect(page.getByText("/demo")).toBeVisible();
+  await expect(page.getByLabel("删除 Skill /demo")).toBeVisible();
 
   await page.getByLabel("发送").click();
   const skillFrame = await chatFrameAt(page, 0);
@@ -124,8 +148,7 @@ test("skill capsule history rendering", async ({ page }) => {
 
   const message = page.getByTestId("message-text").first();
   await expect(message).toContainText("历史里继续拆 issues");
-  await expect(message).toContainText("/demo");
-  await expect(message).toContainText("Skill");
+  await expect(message).toContainText("demo");
   await expect(message).toContainText("@README.md");
   await expect(message).toContainText("引用片段");
   await expect(page.getByRole("button", { name: "打开文件引用 /demo" })).toHaveCount(0);
@@ -156,7 +179,7 @@ test("workspace skills refreshes after change event and skill_not_found", async 
   await expect(page.getByRole("option", { name: /\/review/ })).toBeVisible();
   await expect(page.getByRole("option", { name: /\/demo/ })).toHaveCount(0);
   await page.getByRole("option", { name: /\/review/ }).click();
-  await expect(page.getByText("/review")).toBeVisible();
+  await expect(page.getByLabel("删除 Skill /review")).toBeVisible();
 
   state.skills = [];
   await dispatchAgentEvent(page, "error", {
@@ -169,7 +192,7 @@ test("workspace skills refreshes after change event and skill_not_found", async 
   await expect.poll(() => state.skillRequestUrls.length).toBeGreaterThanOrEqual(3);
   expect(state.skillRequestUrls.at(-1)).toContain("force_reload=true");
   await expect(page.getByText("已刷新 Skill 列表")).toBeVisible();
-  await expect(page.getByText("/review")).toHaveCount(0);
+  await expect(page.getByLabel("删除 Skill /review")).toHaveCount(0);
 });
 
 async function installWebSocketMock(page: Page) {
@@ -272,8 +295,14 @@ async function mockBackend(page: Page, state: MockBackendState) {
         },
       });
     }
+    if (url.pathname === "/api/settings/model-defaults") {
+      return fulfillJson(route, modelDefaultsResponse());
+    }
     if (url.pathname === "/api/models") {
       return fulfillJson(route, { models: [{ id: "qwen-coder" }], cached: true });
+    }
+    if (url.pathname === "/api/model-providers") {
+      return fulfillJson(route, modelProvidersResponse());
     }
     if (url.pathname === "/api/sessions") {
       return fulfillJson(route, {
@@ -363,6 +392,51 @@ function skillsResponse(skills: WorkspaceSkillSummary[], sequence: number) {
     loaded_at: "2026-06-25T00:00:00Z",
     skills,
     diagnostics: [],
+  };
+}
+
+function modelDefaultsResponse() {
+  return {
+    defaults: {
+      default_chat: {
+        scope: "default_chat",
+        configured: true,
+        provider_id: "provider-1",
+        provider_name: "默认模型服务",
+        model: "qwen-coder",
+        provider_enabled: true,
+        model_enabled: true,
+        missing_reason: null,
+      },
+      fast: {
+        scope: "fast",
+        configured: false,
+        provider_id: null,
+        provider_name: null,
+        model: null,
+        provider_enabled: null,
+        model_enabled: null,
+        missing_reason: "not_configured",
+      },
+    },
+  };
+}
+
+function modelProvidersResponse() {
+  return {
+    providers: [
+      {
+        id: "provider-1",
+        name: "默认模型服务",
+        base_url: "https://api.example/v1",
+        enabled: true,
+        api_key_set: true,
+        api_key_preview: "sk-***",
+        models: ["qwen-coder"],
+        model_enabled: { "qwen-coder": true },
+        health: {},
+      },
+    ],
   };
 }
 

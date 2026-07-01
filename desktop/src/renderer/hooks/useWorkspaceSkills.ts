@@ -69,10 +69,10 @@ export function useWorkspaceSkills({
           return;
         }
         setState({
-          workspaceRoot: response.workspace_root,
-          skills: response.skills,
-          diagnostics: response.diagnostics,
-          fingerprint: response.fingerprint,
+          workspaceRoot: response.workspace_root || "",
+          skills: Array.isArray(response.skills) ? response.skills : [],
+          diagnostics: Array.isArray(response.diagnostics) ? response.diagnostics : [],
+          fingerprint: response.fingerprint || null,
           status: "ready",
           loadedAt: loadedAtMs(response.loaded_at),
           error: null,

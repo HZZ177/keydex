@@ -67,7 +67,7 @@ describe("ConversationPanel", () => {
         model={panelModel()}
         workspaceRuntime={fakeRuntime()}
         topNotice={{
-          content: "该会话历史消息已加载",
+          content: "该会话前置2轮历史消息已加载",
           tone: "success",
           testId: "btw-conversation-history-notice",
         }}
@@ -76,8 +76,9 @@ describe("ConversationPanel", () => {
     );
 
     const notice = screen.getByTestId("btw-conversation-history-notice");
-    expect(notice.textContent).toContain("该会话历史消息已加载");
+    expect(notice.textContent).toContain("该会话前置2轮历史消息已加载");
     expect(notice.getAttribute("data-state")).toBe("success");
+    expect(notice.querySelector("svg")).toBeNull();
     expect(screen.getByTestId("message-empty").textContent).toBe("旁路对话暂无消息");
   });
 

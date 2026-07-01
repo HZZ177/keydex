@@ -54,7 +54,7 @@ describe("WorkbenchAssistantSurface", () => {
       </WorkbenchSurfaceTestProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    openWorkbenchComposerIfCollapsed();
 
     const indicator = await screen.findByTestId("context-window-indicator");
     await waitFor(() => {
@@ -90,6 +90,41 @@ describe("WorkbenchAssistantSurface", () => {
     });
   });
 
+  it("renders a workbench bypass drawer as a temporary conversation panel", async () => {
+    const onCloseBtwConversation = vi.fn();
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={fakeController({
+            session: session("btw-1", { title: "旁路对话", session_tag: "btw" }),
+            agentMessages: [
+              agentMessage({ id: "history-user", role: "user", content: "历史用户消息" }),
+              agentMessage({ id: "history-assistant", role: "assistant", content: "历史助手消息" }),
+            ],
+          })}
+          btwActive
+          onCloseBtwConversation={onCloseBtwConversation}
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "将工作台助手展开到右侧" }));
+    await waitForSurfaceMode("drawer", 8000);
+
+    const notice = await screen.findByTestId("btw-conversation-history-notice");
+    expect(notice.textContent).toContain("该会话前置1轮历史消息已加载");
+    expect(notice.querySelector("svg")).toBeNull();
+    expect(screen.queryByText("历史用户消息")).toBeNull();
+    expect(screen.queryByText("历史助手消息")).toBeNull();
+
+    const header = screen.getByTestId("workbench-assistant-drawer-header");
+    fireEvent.click(within(header).getByRole("button", { name: "返回主对话" }));
+    expect(onCloseBtwConversation).toHaveBeenCalledTimes(1);
+  });
+
   it("updates context window usage in the workbench composer from live runtime snapshots", async () => {
     const { runtime, emit } = fakeRuntimeWithEvents();
     render(
@@ -105,7 +140,7 @@ describe("WorkbenchAssistantSurface", () => {
       </WorkbenchSurfaceTestProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    openWorkbenchComposerIfCollapsed();
     const indicator = await screen.findByTestId("context-window-indicator");
     expect(indicator.getAttribute("aria-label")).toContain("等待下一次模型调用");
 
@@ -1115,7 +1150,7 @@ describe("WorkbenchAssistantSurface", () => {
     );
 
     const surface = screen.getByTestId("workbench-assistant-surface");
-    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    openWorkbenchComposerIfCollapsed();
     await screen.findByRole("textbox", { name: "工作台助手输入" });
 
     fireEvent.click(screen.getByRole("button", { name: "展开工作台消息层" }));
@@ -1134,7 +1169,7 @@ describe("WorkbenchAssistantSurface", () => {
       { timeout: 2000 },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    openWorkbenchComposerIfCollapsed();
     await screen.findByRole("textbox", { name: "工作台助手输入" });
     fireEvent.click(screen.getByRole("button", { name: "展开工作台消息层" }));
     await waitFor(() => {
@@ -1282,7 +1317,7 @@ describe("WorkbenchAssistantSurface", () => {
     );
 
     const surface = screen.getByTestId("workbench-assistant-surface");
-    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    openWorkbenchComposerIfCollapsed();
     const emptyInput = await screen.findByLabelText("工作台助手输入");
     fireEvent.pointerDown(screen.getByTestId("outside-workspace"));
 
@@ -1351,7 +1386,7 @@ describe("WorkbenchAssistantSurface", () => {
     );
 
     const surface = screen.getByTestId("workbench-assistant-surface");
-    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    openWorkbenchComposerIfCollapsed();
     const input = await screen.findByRole("textbox", { name: "工作台助手输入" });
 
     fireEvent.keyDown(input, { key: "Escape" });
@@ -1458,7 +1493,7 @@ describe("WorkbenchAssistantSurface", () => {
     );
 
     const surface = screen.getByTestId("workbench-assistant-surface");
-    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    openWorkbenchComposerIfCollapsed();
     await waitFor(() => {
       expect(screen.getByLabelText("已添加上下文").textContent).toContain("main.ts");
       expect(screen.getByLabelText("已添加上下文").textContent).toContain("guide.md · L7");
@@ -1476,9 +1511,8 @@ describe("WorkbenchAssistantSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭工作台助手侧栏" }));
     expect(surface.getAttribute("data-surface-mode")).toBe("drawer");
     expect(surface.getAttribute("data-visual-mode")).toBe("dock-out-morph");
-    expect(surface.getAttribute("data-geometry-mode")).toBe("capsule");
-    await waitForSurfaceMode("capsule");
-    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    expect(surface.getAttribute("data-geometry-mode")).toBe("composer");
+    await waitForSurfaceMode("composer");
     await waitFor(() => {
       expect(screen.getByLabelText("已添加上下文").textContent).toContain("main.ts");
       expect(screen.getByLabelText("已添加上下文").textContent).toContain("guide.md · L7");
@@ -1527,7 +1561,7 @@ describe("WorkbenchAssistantSurface", () => {
       </WorkbenchSurfaceTestProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    openWorkbenchComposerIfCollapsed();
 
     const fileChip = (await screen.findByRole("button", {
       name: "打开文件引用 src/main.ts",
@@ -1564,7 +1598,7 @@ describe("WorkbenchAssistantSurface", () => {
       </WorkbenchSurfaceTestProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "展开工作台输入框" }));
+    openWorkbenchComposerIfCollapsed();
 
     await waitFor(() => {
       expect(screen.getByLabelText("已添加上下文").textContent).toContain("dev-plan");
@@ -1678,6 +1712,13 @@ async function waitForSurfaceMode(mode: string, timeout = 2000) {
     },
     { timeout },
   );
+}
+
+function openWorkbenchComposerIfCollapsed() {
+  const openButton = screen.queryByRole("button", { name: "展开工作台输入框" });
+  if (openButton) {
+    fireEvent.click(openButton);
+  }
 }
 
 async function waitForDockTransitionIdle() {

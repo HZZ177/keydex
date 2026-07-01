@@ -29,9 +29,13 @@ export interface ConversationComposerProps {
   fileAccessMode?: FileAccessMode;
   workspaceRoots?: string[];
   allowBypassConversationSlashCommand?: boolean;
+  selectedFiles?: SelectedFile[];
+  selectedQuotes?: SelectedQuote[];
   onSearchWorkspace?: (query: string, options?: { signal?: AbortSignal }) => Promise<WorkspaceSearchResult[]>;
   onListWorkspaceDirectory?: (path: string) => Promise<WorkspaceSearchResult[]>;
   onOpenModelSettings?: () => void;
+  onSelectedFilesChange?: (files: SelectedFile[]) => void;
+  onSelectedQuotesChange?: (quotes: SelectedQuote[]) => void;
   onChange: (value: string) => void;
   onSkillChange: (skill: WorkspaceSkillSummary | null) => void;
   onSend: (
@@ -69,9 +73,13 @@ export function ConversationComposer({
   fileAccessMode = "workspace_trusted",
   workspaceRoots = [],
   allowBypassConversationSlashCommand = true,
+  selectedFiles,
+  selectedQuotes,
   onSearchWorkspace,
   onListWorkspaceDirectory,
   onOpenModelSettings,
+  onSelectedFilesChange,
+  onSelectedQuotesChange,
   onChange,
   onSkillChange,
   onSend,
@@ -122,7 +130,11 @@ export function ConversationComposer({
       onChange={onChange}
       workspaceSkills={workspaceSkills}
       allowBypassConversationSlashCommand={allowBypassConversationSlashCommand}
+      selectedFiles={selectedFiles}
+      selectedQuotes={selectedQuotes}
       selectedSkill={selectedSkill}
+      onSelectedFilesChange={onSelectedFilesChange}
+      onSelectedQuotesChange={onSelectedQuotesChange}
       onSkillChange={onSkillChange}
       onSend={onSend}
       onStop={onStop}

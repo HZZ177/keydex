@@ -459,7 +459,7 @@
 
 .root[data-variant="keydex"] .toolbar {
   min-height: var(--sendbox-keydex-toolbar-min-height, 40px);
-  margin-top: 0;
+  margin-top: var(--sendbox-keydex-toolbar-margin-top, 0);
   padding-bottom: var(--sendbox-keydex-toolbar-padding-bottom, 8px);
 }
 

@@ -374,12 +374,19 @@
   width: 100%;
   max-width: none;
   align-self: end;
-  padding: 8px 10px 16px;
+  padding: 8px 10px;
 }
 
 .chrome[data-shell-mode="drawer"] .composerFrame,
 .chrome[data-shell-mode="dock-morph"] .composerFrame {
+  box-sizing: border-box;
   width: 100%;
+  grid-template-rows:
+    var(--workbench-assistant-title-height)
+    var(--workbench-assistant-accessory-height)
+    0
+    minmax(108px, auto);
+  padding-bottom: 2px;
 }
 
 .chrome[data-shell-mode="capsule"] .composerFrame,
@@ -687,6 +694,11 @@
   height: auto;
   min-height: var(--workbench-assistant-input-open-height);
   max-height: min(420px, calc(100vh - 180px));
+}
+
+.chrome[data-shell-mode="drawer"] .inputSurface[data-compose-open="true"] {
+  height: auto;
+  min-height: 108px;
 }
 
 .inputSurface[data-compose-open="false"] {
@@ -1275,6 +1287,24 @@
   pointer-events: none;
 }
 
+.composerShell :global([data-sendbox-context-chips="true"]) {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: left top;
+  transition:
+    opacity 140ms ease,
+    transform 180ms var(--motion-ease-standard),
+    filter 180ms ease;
+  will-change: opacity, transform;
+}
+
+.composerShell[data-collapsing="true"] :global([data-sendbox-context-chips="true"]) {
+  opacity: 0;
+  filter: blur(0.5px);
+  pointer-events: none;
+  transform: translateY(-5px) scale(0.985);
+}
+
 .composerShell[data-pending-approval="true"] {
   height: auto;
 }
@@ -1308,12 +1338,21 @@
   --sendbox-keydex-input-max-height: 96px;
   --sendbox-keydex-input-font-size: 13px;
   --sendbox-keydex-input-line-height: 1.42;
-  --sendbox-keydex-padding: 6px 12px 0;
-  --sendbox-keydex-toolbar-min-height: 32px;
-  --sendbox-keydex-toolbar-padding-bottom: 4px;
+  --sendbox-keydex-padding: 8px 12px 4px;
+  --sendbox-keydex-toolbar-min-height: 34px;
+  --sendbox-keydex-toolbar-margin-top: 2px;
+  --sendbox-keydex-toolbar-padding-bottom: 6px;
   --sendbox-keydex-send-button-size: 30px;
   --sendbox-keydex-action-gap: 6px;
   --sendbox-keydex-shadow: none;
+}
+
+.chrome[data-shell-mode="drawer"] .composer {
+  --sendbox-keydex-min-height: 104px;
+  --sendbox-keydex-padding: 8px 12px 4px;
+  --sendbox-keydex-toolbar-min-height: 34px;
+  --sendbox-keydex-toolbar-margin-top: 2px;
+  --sendbox-keydex-toolbar-padding-bottom: 6px;
 }
 
 .chrome[data-shell-mode="composer"] .composerShell,
@@ -1405,6 +1444,11 @@
   will-change: opacity, transform, clip-path;
 }
 
+.expandedPanelFrame[data-btw-active="true"] {
+  display: grid;
+  grid-template-rows: 38px minmax(0, 1fr);
+}
+
 .expandedPanelFrame > .overlayPanel {
   width: 100%;
   height: 100%;
@@ -1417,6 +1461,24 @@
   max-height: 100%;
   min-height: 0;
   pointer-events: auto;
+}
+
+.btwOverlayHeader {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 74%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 78%, transparent);
+  color: var(--color-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--ui-line-height-compact);
+  padding: 0 12px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .panelLoading {
@@ -1561,6 +1623,7 @@
 .drawerTitle {
   display: grid;
   min-width: 0;
+  flex: 1 1 auto;
   gap: 1px;
 }
 
@@ -1600,6 +1663,36 @@
 .drawerHeader button[data-visible="false"] {
   visibility: hidden;
   pointer-events: none;
+}
+
+.btwBackButton,
+.drawerHeader .btwBackButton {
+  width: auto;
+  min-width: 0;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-3);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 560;
+  line-height: var(--ui-line-height-compact);
+  padding: 0 6px;
+}
+
+.btwBackButton:hover,
+.btwBackButton:focus-visible,
+.drawerHeader .btwBackButton:hover,
+.drawerHeader .btwBackButton:focus-visible {
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+  outline: none;
 }
 
 .drawerResizeHandle {

@@ -49,9 +49,7 @@ import { LoadingSkeleton } from "@/renderer/components/loading";
 import type { AppMode } from "@/renderer/components/layout/appMode";
 import {
   BTW_CONVERSATION_TITLE,
-  BTW_FORK_HISTORY_PAGE_SIZE,
-  BTW_SESSION_TAG,
-  latestCompleteForkSource,
+  createBtwConversationFromSession,
 } from "@/renderer/pages/conversation/conversationForkSource";
 import type { AgentSession } from "@/types/protocol";
 
@@ -513,26 +511,18 @@ export function Layout({
         return null;
       }
       try {
-        const history = await requestRuntime.conversation.loadHistory(cleanedSessionId, {
-          pageSize: BTW_FORK_HISTORY_PAGE_SIZE,
-        });
-        const source = latestCompleteForkSource(history.list);
-        if (!source) {
-          notifications.warning("没有可派生的完整轮次");
+        const result = await createBtwConversationFromSession(requestRuntime, cleanedSessionId);
+        if ("error" in result) {
+          notifications.warning(result.message);
           return null;
         }
-        const response = await requestRuntime.conversation.forkSession(cleanedSessionId, {
-          ...source,
-          sessionTag: BTW_SESSION_TAG,
-          title: BTW_CONVERSATION_TITLE,
-        });
         openConversationPanel({
-          session: response.session,
+          session: result.session,
           sourceSessionId: cleanedSessionId,
-          title: response.session.title || BTW_CONVERSATION_TITLE,
+          title: result.session.title || BTW_CONVERSATION_TITLE,
         });
         notifications.success("已打开旁路对话");
-        return response.session;
+        return result.session;
       } catch (reason) {
         notifications.error(`旁路对话创建失败：${errorMessage(reason)}`);
         return null;

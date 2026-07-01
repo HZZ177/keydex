@@ -29,7 +29,8 @@ export function SlashCommandMenu({
 }: SlashCommandMenuProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const showingSkills = mode === "skills";
-  const itemCount = showingSkills ? skills.length : commands.length;
+  const rootItemCount = commands.length + skills.length;
+  const itemCount = showingSkills ? skills.length : rootItemCount;
   const emptyText = showingSkills ? (query ? "没有匹配的 Skill" : "当前项目无 Skill") : "没有匹配的命令";
   const filterLabel = showingSkills ? "筛选 Skill" : "筛选命令";
 
@@ -88,19 +89,42 @@ export function SlashCommandMenu({
               />
             ))
           ) : (
-            commands.map((command, index) => (
-              <CommandItem
-                key={command.id}
-                command={command}
-                active={activeIndex === index}
-                onSelect={onSelectCommand}
-              />
-            ))
+            <>
+              {commands.map((command, index) => (
+                <CommandItem
+                  key={command.id}
+                  command={command}
+                  active={activeIndex === index}
+                  onSelect={onSelectCommand}
+                />
+              ))}
+              {skills.length ? (
+                <>
+                  <SkillSectionDivider />
+                  {skills.map((skill, index) => (
+                    <SkillItem
+                      key={skill.name}
+                      skill={skill}
+                      active={activeIndex === commands.length + index}
+                      onSelect={onSelectSkill}
+                    />
+                  ))}
+                </>
+              ) : null}
+            </>
           )
         ) : (
           <div className={styles.empty}>{emptyText}</div>
         )}
       </div>
+    </div>
+  );
+}
+
+function SkillSectionDivider() {
+  return (
+    <div className={styles.sectionDivider} data-testid="slash-skill-section" role="presentation">
+      <span>Skill</span>
     </div>
   );
 }

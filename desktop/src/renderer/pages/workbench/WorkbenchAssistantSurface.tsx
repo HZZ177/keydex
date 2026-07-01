@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Minimize2, SquareArrowOutUpRight, SquarePen, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Minimize2, SquareArrowOutUpRight, SquarePen, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   useCallback,
@@ -25,6 +25,7 @@ import {
   type SelectedImageAttachment,
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
+import type { SlashCommand } from "@/renderer/components/chat/SlashCommandMenu";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import { useRafPanelResize } from "@/renderer/components/layout/useRafPanelResize";
 import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
@@ -39,6 +40,10 @@ import { ComposerApprovalCard } from "@/renderer/pages/conversation/ComposerAppr
 import { ConversationComposer } from "@/renderer/pages/conversation/ConversationComposer";
 import { ConversationPanel, ConversationPanelComposerAccessory } from "@/renderer/pages/conversation/ConversationPanel";
 import {
+  BTW_CONVERSATION_TITLE,
+  countLoadedConversationTurns,
+} from "@/renderer/pages/conversation/conversationForkSource";
+import {
   buildTurnNavigationItemsFromMessages,
   type ConversationTurnNavigationItem,
   type MessageListTurnNavigationRequest,
@@ -49,11 +54,13 @@ import {
   useConversationPanelModel,
   type ContextWindowUsageStatus,
 } from "@/renderer/pages/conversation/useConversationPanelModel";
+import { usePreview, type PreviewFileRevealTarget, type PreviewRenderContext } from "@/renderer/providers/PreviewProvider";
 import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
 import { prefersReducedMotion } from "@/renderer/utils/motionPreference";
 import type {
   AgentChatMessage,
   AgentFileChange,
+  AgentSession,
   CommandApprovalRequest,
   FileAccessMode,
   Workspace,
@@ -130,6 +137,9 @@ export interface WorkbenchAssistantSurfaceProps {
   onDrawerWidthCommit?: (width: number) => void;
   onDockTransitionChange?: (transitioning: boolean) => void;
   onDockTransitionLayoutChange?: (state: WorkbenchAssistantDockTransitionState) => void;
+  btwActive?: boolean;
+  onOpenBtwConversation?: () => Promise<AgentSession | null> | AgentSession | null;
+  onCloseBtwConversation?: () => void;
 }
 
 export function WorkbenchAssistantSurface({
@@ -145,6 +155,9 @@ export function WorkbenchAssistantSurface({
   onDrawerWidthCommit,
   onDockTransitionChange,
   onDockTransitionLayoutChange,
+  btwActive = false,
+  onOpenBtwConversation,
+  onCloseBtwConversation,
 }: WorkbenchAssistantSurfaceProps) {
   const layout = useLayoutState();
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -178,6 +191,12 @@ export function WorkbenchAssistantSurface({
   const [uncontrolledDrawerWidthPreview, setUncontrolledDrawerWidthPreview] = useState<number | null>(null);
   const [overlayTurnNavigationRequest, setOverlayTurnNavigationRequest] =
     useState<MessageListTurnNavigationRequest | null>(null);
+  const [btwHistorySnapshot, setBtwHistorySnapshot] = useState<{
+    sessionId: string;
+    messageIds: Set<string>;
+  } | null>(null);
+  const [composerFiles, setComposerFiles] = useState<SelectedFile[]>([]);
+  const [composerQuotes, setComposerQuotes] = useState<SelectedQuote[]>([]);
   const modelSelection = useRuntimeModelSelection(runtime, null);
   const workspaceSkillScope = useMemo(() => ({ workspaceId }), [workspaceId]);
   const { state: workspaceSkillsState } = useWorkspaceSkills({
@@ -185,7 +204,9 @@ export function WorkbenchAssistantSurface({
     scope: workspaceSkillScope,
     enabled: Boolean(workspaceId),
   });
-  const workspaceSkills = workspaceSkillsState.skills;
+  const workspaceSkills = Array.isArray(workspaceSkillsState.skills) ? workspaceSkillsState.skills : [];
+  const previewContext = usePreview();
+  const workbenchWorkspaceLabel = workspace?.root_path ?? workspace?.name ?? workspaceId;
   const pendingApproval = controller.pendingApproval;
   const panelSessionId = controller.session?.id ?? "";
   const currentFileChipRequestId = controller.fileChipRequest?.requestId ?? 0;
@@ -210,14 +231,110 @@ export function WorkbenchAssistantSurface({
     runtime,
     sessionId: panelSessionId,
     controller,
+    validateSelectedSkill: false,
   });
-  const panelMessageCount = panelModel.messages.length;
+  useEffect(() => {
+    if (!btwActive && btwHistorySnapshot !== null) {
+      setBtwHistorySnapshot(null);
+    }
+  }, [btwActive, btwHistorySnapshot]);
+  useEffect(() => {
+    if (!btwActive || !panelSessionId || controller.loading) {
+      return;
+    }
+    setBtwHistorySnapshot((current) => {
+      if (current?.sessionId === panelSessionId) {
+        return current;
+      }
+      return {
+        sessionId: panelSessionId,
+        messageIds: new Set(panelModel.messages.map((message) => message.id)),
+      };
+    });
+  }, [btwActive, controller.loading, panelModel.messages, panelSessionId]);
+  const btwHiddenHistoryMessageIds =
+    btwActive && btwHistorySnapshot?.sessionId === panelSessionId ? btwHistorySnapshot.messageIds : null;
+  const displayPanelMessages = useMemo(() => {
+    if (!btwActive) {
+      return panelModel.messages;
+    }
+    if (!btwHiddenHistoryMessageIds) {
+      return [];
+    }
+    return panelModel.messages.filter((message) => !btwHiddenHistoryMessageIds.has(message.id));
+  }, [btwActive, btwHiddenHistoryMessageIds, panelModel.messages]);
+  const btwLoadedHistoryTurnCount = useMemo(() => {
+    if (!btwActive || !btwHiddenHistoryMessageIds) {
+      return 0;
+    }
+    return countLoadedConversationTurns(
+      panelModel.messages.filter((message) => btwHiddenHistoryMessageIds.has(message.id)),
+    );
+  }, [btwActive, btwHiddenHistoryMessageIds, panelModel.messages]);
+  const displayPanelModel = useMemo(() => {
+    if (!btwActive) {
+      return panelModel;
+    }
+    return {
+      ...panelModel,
+      messages: displayPanelMessages,
+      loading: false,
+      loadingOlderHistory: false,
+      sessionViewState: panelModel.sessionViewState
+        ? {
+            ...panelModel.sessionViewState,
+            historyHasMoreOlder: false,
+          }
+        : panelModel.sessionViewState,
+    };
+  }, [btwActive, displayPanelMessages, panelModel]);
+  const workbenchPreviewRenderContext = useMemo<PreviewRenderContext>(
+    () => ({
+      workspaceId,
+      workspaceAvailable: Boolean(workspaceId),
+      workspaceLabel: workbenchWorkspaceLabel,
+      runtime,
+      onQuoteSelection: controller.quoteSelection,
+      onStartChatFromAnnotation: controller.startChatFromAnnotation,
+    }),
+    [
+      controller.quoteSelection,
+      controller.startChatFromAnnotation,
+      runtime,
+      workbenchWorkspaceLabel,
+      workspaceId,
+    ],
+  );
+  const openWorkbenchFileReference = useCallback(
+    (file: SelectedFile) => {
+      if (!workspaceId || !file.path) {
+        return;
+      }
+      previewContext.openFilePanel(file.path, workbenchPreviewRenderContext, selectedFileRevealTarget(file));
+    },
+    [previewContext, workbenchPreviewRenderContext, workspaceId],
+  );
+  const btwHistoryNotice = useMemo(
+    () =>
+      btwActive
+        ? {
+            content: `该会话前置${btwLoadedHistoryTurnCount}轮历史消息已加载`,
+            tone: "success" as const,
+            testId: "btw-conversation-history-notice",
+            title: `该会话前置${btwLoadedHistoryTurnCount}轮历史消息已加载`,
+          }
+        : null,
+    [btwActive, btwLoadedHistoryTurnCount],
+  );
+  const panelMessageCount = displayPanelModel.messages.length;
   panelMessageCountRef.current = panelMessageCount;
   const runtimeState = controller.runtimeState;
   const connectionReady = controller.connectionReady;
   const canSend = controller.canSend && !creatingSession && Boolean(workspaceId);
   const canStop = controller.canStop;
   const selectedModel = modelSelection.selectedModel;
+  const hasComposerContext = Boolean(controller.selectedSkill || composerFiles.length || composerQuotes.length);
+  const hasComposerContent = Boolean(controller.draft.trim() || hasComposerContext);
   const drawerWidth =
     controlledDrawerWidth ?? uncontrolledDrawerWidthPreview ?? layout.state.workbenchAssistantDrawerWidth;
   const dockInlineWidth =
@@ -291,10 +408,11 @@ export function WorkbenchAssistantSurface({
     },
     [controller, modelSelection, runtime],
   );
-  const currentSessionTitle = controller.session?.title?.trim() || controller.session?.id?.trim() || "";
+  const currentSessionTitle =
+    (btwActive ? BTW_CONVERSATION_TITLE : controller.session?.title?.trim() || controller.session?.id?.trim()) || "";
   const sessionTitleVisible = Boolean(currentSessionTitle);
   const collapsedDraftPreview = controller.draft.replace(/\s+/g, " ").trim();
-  const collapsedComposerLabel = collapsedDraftPreview || "要求后续变更";
+  const collapsedComposerLabel = collapsedDraftPreview || (hasComposerContext ? "已添加上下文" : "要求后续变更");
   const composeOpen = bottomSurfaceMode !== "capsule";
   const dockOutCollapsingToCapsule = dockTransitionPhase === "dock-out" && dockOutTargetMode === "capsule";
   const showFullComposerContent = composeOpen || keepComposerContentDuringCollapse || dockOutCollapsingToCapsule;
@@ -483,8 +601,8 @@ export function WorkbenchAssistantSurface({
   const messageCarrierVisible = messageTriggerLayoutState !== "idle";
   const messageButtonVisible = !hideMessageTriggerInHeader && !messageCarrierVisible;
   const turnNavigationItems = useMemo(
-    () => buildTurnNavigationItemsFromMessages(panelModel.messages),
-    [panelModel.messages],
+    () => buildTurnNavigationItemsFromMessages(displayPanelModel.messages),
+    [displayPanelModel.messages],
   );
   const showMiniTurnNavigator =
     surfaceMode !== "expanded" &&
@@ -618,6 +736,8 @@ export function WorkbenchAssistantSurface({
     setUnreadAssistantMessageKey(null);
     previousRuntimeStateRef.current = runtimeState;
     dispatchAssistantState({ type: "workspace-reset" });
+    setComposerFiles([]);
+    setComposerQuotes([]);
     handledFileChipRequestIdRef.current = controller.fileChipRequest?.requestId ?? 0;
     handledQuoteChipRequestIdRef.current = controller.quoteChipRequest?.requestId ?? 0;
   }, [finishDockTransition, finishMessageTriggerPriming, workspaceId]);
@@ -626,6 +746,8 @@ export function WorkbenchAssistantSurface({
     finishMessageTriggerPriming();
     setUnreadAssistantMessageKey(null);
     previousRuntimeStateRef.current = runtimeState;
+    setComposerFiles([]);
+    setComposerQuotes([]);
     handledFileChipRequestIdRef.current = controller.fileChipRequest?.requestId ?? 0;
     handledQuoteChipRequestIdRef.current = controller.quoteChipRequest?.requestId ?? 0;
   }, [finishMessageTriggerPriming, panelSessionId]);
@@ -722,8 +844,8 @@ export function WorkbenchAssistantSurface({
   ]);
 
   useEffect(() => {
-    dispatchAssistantState({ type: "draft-changed", hasDraft: Boolean(controller.draft.trim()) });
-  }, [controller.draft]);
+    dispatchAssistantState({ type: "draft-changed", hasDraft: hasComposerContent });
+  }, [hasComposerContent]);
 
   useEffect(() => {
     const fileRequestId = controller.fileChipRequest?.requestId ?? 0;
@@ -740,7 +862,7 @@ export function WorkbenchAssistantSurface({
   }, [controller.fileChipRequest?.requestId, controller.quoteChipRequest?.requestId, surfaceMode]);
 
   useEffect(() => {
-    if (surfaceMode !== "composer" || controller.draft.trim()) {
+    if (surfaceMode !== "composer" || hasComposerContent) {
       return;
     }
     const collapseOnOutsidePointer = (event: PointerEvent) => {
@@ -753,7 +875,7 @@ export function WorkbenchAssistantSurface({
     };
     document.addEventListener("pointerdown", collapseOnOutsidePointer);
     return () => document.removeEventListener("pointerdown", collapseOnOutsidePointer);
-  }, [beginComposeCollapse, controller.draft, surfaceMode]);
+  }, [beginComposeCollapse, hasComposerContent, surfaceMode]);
 
   useEffect(() => {
     if (
@@ -832,21 +954,27 @@ export function WorkbenchAssistantSurface({
   }, [dockTransitionPhase, openComposer, surfaceMode]);
 
   const closeDrawer = useCallback(() => {
-    const hasDraft = Boolean(controller.draft.trim());
+    if (btwActive) {
+      onCloseBtwConversation?.();
+    }
+    const hasDraft = !btwActive && hasComposerContent;
     setDockReturnMode(hasDraft ? "composer" : "capsule");
     beginDockTransition("dock-out", () => {
       dispatchAssistantState({ type: "close-drawer", hasDraft });
       setDockReturnMode(null);
     });
-  }, [beginDockTransition, controller.draft]);
+  }, [beginDockTransition, btwActive, hasComposerContent, onCloseBtwConversation]);
 
   const collapseDrawerToCapsule = useCallback(() => {
+    if (btwActive) {
+      onCloseBtwConversation?.();
+    }
     setDockReturnMode("capsule");
     beginDockTransition("dock-out", () => {
       dispatchAssistantState({ type: "close-drawer", hasDraft: false });
       setDockReturnMode(null);
     });
-  }, [beginDockTransition]);
+  }, [beginDockTransition, btwActive, onCloseBtwConversation]);
 
   const handleComposerEscape = useCallback(() => {
     if (surfaceMode === "drawer") {
@@ -864,15 +992,39 @@ export function WorkbenchAssistantSurface({
     });
   }, [beginDockTransition, finishMessageTriggerPriming]);
 
+  const openBtwConversation = useCallback(() => {
+    if (!onOpenBtwConversation || btwActive) {
+      return;
+    }
+    void Promise.resolve(onOpenBtwConversation()).then((session) => {
+      if (!session || surfaceMode === "drawer" || surfaceMode === "expanded") {
+        return;
+      }
+      dockToDrawer();
+    });
+  }, [btwActive, dockToDrawer, onOpenBtwConversation, surfaceMode]);
+
+  const handleSlashCommand = useCallback(
+    (command: SlashCommand) => {
+      if (command.id === "bypass-conversation") {
+        openBtwConversation();
+      }
+    },
+    [openBtwConversation],
+  );
+
   const toggleExpandedLayer = useCallback(() => {
     finishMessageTriggerPriming();
     setUnreadAssistantMessageKey(null);
     if (surfaceMode === "expanded") {
+      if (btwActive) {
+        onCloseBtwConversation?.();
+      }
       dispatchAssistantState({ type: "close-expanded", returnMode: "composer" });
       return;
     }
-    dispatchAssistantState({ type: "toggle-expanded", hasDraft: Boolean(controller.draft.trim()) });
-  }, [controller.draft, finishMessageTriggerPriming, surfaceMode]);
+    dispatchAssistantState({ type: "toggle-expanded", hasDraft: hasComposerContent });
+  }, [btwActive, finishMessageTriggerPriming, hasComposerContent, onCloseBtwConversation, surfaceMode]);
 
   const openExpandedLayerAtTurn = useCallback(
     (targetIndex: number) => {
@@ -883,10 +1035,10 @@ export function WorkbenchAssistantSurface({
         targetIndex,
       }));
       if (surfaceMode !== "expanded") {
-        dispatchAssistantState({ type: "toggle-expanded", hasDraft: Boolean(controller.draft.trim()) });
+        dispatchAssistantState({ type: "toggle-expanded", hasDraft: hasComposerContent });
       }
     },
-    [controller.draft, finishMessageTriggerPriming, surfaceMode],
+    [finishMessageTriggerPriming, hasComposerContent, surfaceMode],
   );
 
   const requestNewSessionFromCapsule = useCallback(() => {
@@ -897,11 +1049,14 @@ export function WorkbenchAssistantSurface({
     if (surfaceMode !== "expanded") {
       return;
     }
+    if (btwActive) {
+      onCloseBtwConversation?.();
+    }
     dispatchAssistantState({
       type: "close-expanded",
-      returnMode: controller.draft.trim() ? "composer" : "capsule",
+      returnMode: btwActive || hasComposerContent ? "composer" : "capsule",
     });
-  }, [controller.draft, surfaceMode]);
+  }, [btwActive, hasComposerContent, onCloseBtwConversation, surfaceMode]);
 
   useEffect(() => {
     if (surfaceMode !== "expanded") {
@@ -928,6 +1083,8 @@ export function WorkbenchAssistantSurface({
       connectionReady={connectionReady}
       modelSelection={{ ...modelSelection, setSelectedModel: changeModel }}
       workspaceSkills={workspaceSkills}
+      selectedFiles={composerFiles}
+      selectedQuotes={composerQuotes}
       selectedSkill={controller.selectedSkill}
       runtime={runtime}
       sessionId={panelSessionId}
@@ -939,8 +1096,11 @@ export function WorkbenchAssistantSurface({
       approvalError={controller.approvalError}
       fileChipRequest={composerFileChipRequest}
       quoteChipRequest={composerQuoteChipRequest}
-      contextWindowUsage={panelModel.contextWindowUsage}
+      contextWindowUsage={displayPanelModel.contextWindowUsage}
+      allowBypassConversationSlashCommand={!btwActive && Boolean(onOpenBtwConversation)}
       autoFocusKey={surfaceMode === "capsule" ? undefined : `workbench-composer:${composerFocusSeq}`}
+      onSelectedFilesChange={setComposerFiles}
+      onSelectedQuotesChange={setComposerQuotes}
       onChange={controller.setDraft}
       onSkillChange={controller.setSelectedSkill}
       onSubmitApproval={controller.submitApproval}
@@ -949,15 +1109,16 @@ export function WorkbenchAssistantSurface({
       onEscape={handleComposerEscape}
       onSearchWorkspace={searchWorkspace}
       onListWorkspaceDirectory={listWorkspaceDirectory}
-      onOpenFileReference={panelModel.openFileReference}
+      onOpenFileReference={openWorkbenchFileReference}
+      onSlashCommand={handleSlashCommand}
     />
   );
 
-  const accessory = <ConversationPanelComposerAccessory model={panelModel} showScrollButton={false} />;
+  const accessory = <ConversationPanelComposerAccessory model={displayPanelModel} showScrollButton={false} />;
 
   const hasCodeBlockMessages = useMemo(
-    () => panelModel.messages.some((message) => valueContainsMarkdownCodeFence(message)),
-    [panelModel.messages],
+    () => displayPanelModel.messages.some((message) => valueContainsMarkdownCodeFence(message)),
+    [displayPanelModel.messages],
   );
   useEffect(() => {
     if (!hasCodeBlockMessages) {
@@ -983,13 +1144,16 @@ export function WorkbenchAssistantSurface({
         : undefined;
   const stableConversationPanel = shouldMountStablePanel && stablePanelContentReady ? (
     <ConversationPanel
-      model={panelModel}
+      model={displayPanelModel}
       workspaceRuntime={runtime}
       variant="compact"
-      emptyText="当前工作空间还没有助手消息。"
+      emptyText={btwActive ? "旁路对话暂无消息" : "当前工作空间还没有助手消息。"}
       emptyTestId={`workbench-${stablePanelMode === "drawer" ? "drawer" : "morph"}-message-empty`}
       scrollButtonMode="external"
       turnNavigatorMode="auto"
+      topNotice={btwHistoryNotice}
+      showForkSourceMarkers={!btwActive}
+      showForkActions={!btwActive}
       className={styles.drawerPanel}
     />
   ) : null;
@@ -1008,15 +1172,18 @@ export function WorkbenchAssistantSurface({
   const overlayConversationPanel =
     overlayPanelContentReady ? (
       <ConversationPanel
-        model={panelModel}
+        model={displayPanelModel}
         workspaceRuntime={runtime}
         variant="overlay"
         emptyLayout="center"
-        emptyText="当前工作空间还没有助手消息。"
+        emptyText={btwActive ? "旁路对话暂无消息" : "当前工作空间还没有助手消息。"}
         emptyTestId="workbench-expanded-message-empty"
         scrollButtonMode="external"
         turnNavigatorMode="auto"
         turnNavigationRequest={overlayTurnNavigationRequest}
+        topNotice={btwHistoryNotice}
+        showForkSourceMarkers={!btwActive}
+        showForkActions={!btwActive}
         className={styles.overlayPanel}
       />
     ) : null;
@@ -1063,6 +1230,17 @@ export function WorkbenchAssistantSurface({
       aria-label={stablePanelMode === "drawer" ? "工作台助手" : "工作台助手过渡面板"}
     >
       <header className={styles.drawerHeader} data-testid={stablePanelHeaderTestId}>
+        {btwActive ? (
+          <button
+            type="button"
+            className={styles.btwBackButton}
+            aria-label="返回主对话"
+            onClick={onCloseBtwConversation}
+          >
+            <ArrowLeft size={14} />
+            <span>主对话</span>
+          </button>
+        ) : null}
         <div className={styles.drawerTitle}>
           <span title={currentSessionTitle || undefined}>{currentSessionTitle || "助手"}</span>
           <small>{drawerStatusText(runtimeState, pendingApproval)}</small>
@@ -1100,6 +1278,7 @@ export function WorkbenchAssistantSurface({
       data-dock-layout={dockLayout}
       data-dock-transition={dockTransitionPhase ?? "idle"}
       data-drawer-resizing={drawerResize.dragging ? "true" : "false"}
+      data-btw-active={btwActive ? "true" : "false"}
       data-message-trigger-state={messageTriggerLayoutState}
       data-session-title-visible={bottomSessionTitleVisible ? "true" : "false"}
       data-running={runtimeState === "running" ? "true" : "false"}
@@ -1130,6 +1309,7 @@ export function WorkbenchAssistantSurface({
           >
             <motion.div
               className={styles.expandedPanelFrame}
+              data-btw-active={btwActive ? "true" : "false"}
               data-testid="workbench-expanded-panel-frame"
               initial={{ opacity: 0, y: 16, clipPath: "inset(100% 0 0 0 round 18px)" }}
               animate={{ opacity: 1, y: 0, clipPath: "inset(0% 0 0 0 round 18px)" }}
@@ -1137,6 +1317,20 @@ export function WorkbenchAssistantSurface({
               transition={reducedMotion ? { duration: 0 } : WORKBENCH_EXPANDED_PANEL_TRANSITION}
               onClick={(event) => event.stopPropagation()}
             >
+              {btwActive ? (
+                <div className={styles.btwOverlayHeader} data-testid="workbench-btw-overlay-header">
+                  <button
+                    type="button"
+                    className={styles.btwBackButton}
+                    onClick={onCloseBtwConversation}
+                    aria-label="返回主对话"
+                  >
+                    <ArrowLeft size={14} />
+                    <span>主对话</span>
+                  </button>
+                  <span>{BTW_CONVERSATION_TITLE}</span>
+                </div>
+              ) : null}
               {overlayConversationPanel ?? overlayLoadingPanel}
             </motion.div>
           </motion.div>
@@ -2090,6 +2284,8 @@ function WorkbenchComposer({
   connectionReady,
   modelSelection,
   workspaceSkills,
+  selectedFiles,
+  selectedQuotes,
   selectedSkill,
   runtime,
   sessionId,
@@ -2102,7 +2298,10 @@ function WorkbenchComposer({
   fileChipRequest,
   quoteChipRequest,
   contextWindowUsage,
+  allowBypassConversationSlashCommand,
   autoFocusKey,
+  onSelectedFilesChange,
+  onSelectedQuotesChange,
   onChange,
   onSkillChange,
   onSubmitApproval,
@@ -2112,6 +2311,7 @@ function WorkbenchComposer({
   onSearchWorkspace,
   onListWorkspaceDirectory,
   onOpenFileReference,
+  onSlashCommand,
 }: {
   value: string;
   runtimeState: ConversationRuntimeState;
@@ -2120,6 +2320,8 @@ function WorkbenchComposer({
   connectionReady: boolean;
   modelSelection: ReturnType<typeof useRuntimeModelSelection>;
   workspaceSkills: WorkspaceSkillSummary[];
+  selectedFiles: SelectedFile[];
+  selectedQuotes: SelectedQuote[];
   selectedSkill: WorkspaceSkillSummary | null;
   runtime: RuntimeBridge;
   sessionId?: string | null;
@@ -2132,7 +2334,10 @@ function WorkbenchComposer({
   fileChipRequest: AgentSessionController["fileChipRequest"];
   quoteChipRequest: AgentSessionController["quoteChipRequest"];
   contextWindowUsage: ContextWindowUsageStatus | null;
+  allowBypassConversationSlashCommand?: boolean;
   autoFocusKey?: string;
+  onSelectedFilesChange: (files: SelectedFile[]) => void;
+  onSelectedQuotesChange: (quotes: SelectedQuote[]) => void;
   onChange: (value: string) => void;
   onSkillChange: (skill: WorkspaceSkillSummary | null) => void;
   onSubmitApproval: AgentSessionController["submitApproval"];
@@ -2146,6 +2351,7 @@ function WorkbenchComposer({
   onSearchWorkspace: (query: string, options?: { signal?: AbortSignal }) => Promise<WorkspaceSearchResult[]>;
   onListWorkspaceDirectory: (path: string) => Promise<WorkspaceSearchResult[]>;
   onOpenFileReference: (file: SelectedFile) => void;
+  onSlashCommand?: (command: SlashCommand) => void;
 }) {
   if (pendingApproval) {
     return (
@@ -2170,11 +2376,14 @@ function WorkbenchComposer({
       connectionReady={connectionReady}
       modelSelection={modelSelection}
       workspaceSkills={workspaceSkills}
+      selectedFiles={selectedFiles}
+      selectedQuotes={selectedQuotes}
       selectedSkill={selectedSkill}
       runtime={runtime}
       sessionId={sessionId}
       fileAccessMode={fileAccessMode}
       workspaceRoots={workspaceRoots}
+      allowBypassConversationSlashCommand={allowBypassConversationSlashCommand}
       autoFocusKey={autoFocusKey}
       className={styles.composer}
       placeholder="要求后续变更"
@@ -2184,6 +2393,8 @@ function WorkbenchComposer({
       contextWindowUsage={contextWindowUsage}
       externalFileRequest={fileChipRequest}
       externalQuoteRequest={quoteChipRequest}
+      onSelectedFilesChange={onSelectedFilesChange}
+      onSelectedQuotesChange={onSelectedQuotesChange}
       onChange={onChange}
       onSkillChange={onSkillChange}
       onSend={onSend}
@@ -2192,6 +2403,7 @@ function WorkbenchComposer({
       onSearchWorkspace={onSearchWorkspace}
       onListWorkspaceDirectory={onListWorkspaceDirectory}
       onOpenFileReference={onOpenFileReference}
+      onSlashCommand={onSlashCommand}
     />
   );
 }
@@ -2202,6 +2414,19 @@ function workspaceEntriesToSearchResults(entries: WorkspaceEntry[]): WorkspaceSe
     name: entry.name,
     type: entry.type,
   }));
+}
+
+function selectedFileRevealTarget(file: SelectedFile): PreviewFileRevealTarget | null {
+  if (!file.lineStart && !file.lineEnd && file.sourceStart == null && file.sourceEnd == null) {
+    return null;
+  }
+  return {
+    selectedText: file.selectedText ?? null,
+    lineStart: file.lineStart ?? null,
+    lineEnd: file.lineEnd ?? null,
+    sourceStart: file.sourceStart ?? null,
+    sourceEnd: file.sourceEnd ?? null,
+  };
 }
 
 function workspaceRootsForWorkbench(workspace: Workspace | null | undefined): string[] {

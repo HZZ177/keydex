@@ -3,6 +3,8 @@ import * as path from "node:path";
 
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 
+import type { WorkspaceSkillSummary } from "@/runtime";
+
 const API_BASE = "http://127.0.0.1:8765";
 const APP_BASE = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173";
 const EVIDENCE_ROOT =
@@ -125,6 +127,136 @@ test("workbench capsule creates workspace-owned sessions, sends, searches and pr
   await expect(page.getByRole("heading", { name: "E2E Workbench File" })).toBeVisible();
   expect(backend.workspaceReadRequests.at(-1)).toMatchObject({ workspaceId: WORKSPACE_A, path: "README.md" });
   await saveEvidence(page, "e2e-013");
+});
+
+test("workbench slash skill selection creates a composer capsule", async ({ page }) => {
+  const backend = createWorkbenchBackend({
+    skills: [
+      {
+        name: "dev-plan",
+        label: "/dev-plan",
+        source: "workspace",
+        description: "计划拆分",
+        locator: ".keydex/skills/dev-plan/SKILL.md",
+      },
+    ],
+  });
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
+  const input = await openWorkbenchComposer(page);
+  await input.click();
+  await page.keyboard.type("/dev-plan");
+
+  const skillOption = page.getByRole("option", { name: /选择 Skill \/dev-plan/ });
+  await expect(skillOption).toBeVisible();
+  await expect(skillOption).toHaveAttribute("data-active", "true");
+  await page.keyboard.press("Enter");
+
+  await expect(input).toHaveText("");
+  await expect(page.getByLabel("删除 Skill /dev-plan")).toBeVisible();
+  await page.getByLabel("打开 Skill dev-plan").click();
+
+  await expect(page.getByRole("heading", { name: "E2E Workbench File" })).toBeVisible();
+  expect(backend.workspaceReadRequests.at(-1)).toMatchObject({
+    workspaceId: WORKSPACE_A,
+    path: ".keydex/skills/dev-plan/SKILL.md",
+  });
+});
+
+test("workbench composer preserves context chips after collapsing to capsule", async ({ page }) => {
+  const backend = createWorkbenchBackend({
+    skills: [
+      {
+        name: "dev-plan",
+        label: "/dev-plan",
+        source: "workspace",
+        description: "计划拆分",
+        locator: ".keydex/skills/dev-plan/SKILL.md",
+      },
+    ],
+  });
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
+  const input = await openWorkbenchComposer(page);
+  await input.click();
+  await page.keyboard.type("retain context @READ");
+  await page.getByRole("option", { name: /README\.md/ }).click();
+  await input.click();
+  await page.keyboard.type(" /dev-plan");
+  await expect(page.getByRole("option", { name: /选择 Skill \/dev-plan/ })).toBeVisible();
+  await page.keyboard.press("Enter");
+
+  await expect(input).toHaveText("retain context");
+  await expect(page.getByLabel("移除文件引用 README.md")).toBeVisible();
+  await expect(page.getByLabel("删除 Skill /dev-plan")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "capsule");
+  await expect(page.getByLabel("工作台助手输入")).toHaveCount(0);
+
+  const reopenedInput = await openWorkbenchComposer(page);
+  await expect(reopenedInput).toHaveText("retain context");
+  await expect(page.getByLabel("移除文件引用 README.md")).toBeVisible();
+  await expect(page.getByLabel("删除 Skill /dev-plan")).toBeVisible();
+});
+
+test("workbench drawer composer keeps toolbar inset with context chips", async ({ page }) => {
+  const backend = createWorkbenchBackend({
+    skills: [
+      {
+        name: "dev-plan",
+        label: "/dev-plan",
+        source: "workspace",
+        description: "计划拆分",
+        locator: ".keydex/skills/dev-plan/SKILL.md",
+      },
+    ],
+  });
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
+  const input = await openWorkbenchComposer(page);
+  await input.click();
+  await page.keyboard.type("layout check @READ");
+  await page.getByRole("option", { name: /README\.md/ }).click();
+  await input.click();
+  await page.keyboard.type(" /dev-plan");
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByLabel("移除文件引用 README.md")).toBeVisible();
+  await expect(page.getByLabel("删除 Skill /dev-plan")).toBeVisible();
+  await page.getByRole("button", { name: "将工作台助手展开到右侧" }).click();
+  await expect(page.getByTestId("workbench-assistant-surface")).toHaveAttribute("data-surface-mode", "drawer");
+
+  const layoutInsets = await page.getByTestId("workbench-assistant-drawer-input-surface").evaluate((surface) => {
+    const sendButton = surface.querySelector<HTMLButtonElement>("button[aria-label='发送']");
+    const frame = surface.closest<HTMLElement>("[data-testid='workbench-assistant-drawer-composer-frame']");
+    const capsule = frame?.closest<HTMLElement>("[data-testid='workbench-assistant-capsule']");
+    if (!sendButton) {
+      throw new Error("Send button was not rendered inside drawer composer.");
+    }
+    if (!frame) {
+      throw new Error("Drawer composer frame was not rendered.");
+    }
+    if (!capsule) {
+      throw new Error("Drawer composer capsule was not rendered.");
+    }
+    return {
+      buttonBottomInset: surface.getBoundingClientRect().bottom - sendButton.getBoundingClientRect().bottom,
+      inputBottomInset: frame.getBoundingClientRect().bottom - surface.getBoundingClientRect().bottom,
+      capsuleBottomInset: capsule.getBoundingClientRect().bottom - frame.getBoundingClientRect().bottom,
+    };
+  });
+  expect(layoutInsets.buttonBottomInset).toBeGreaterThanOrEqual(6);
+  expect(layoutInsets.inputBottomInset).toBeGreaterThanOrEqual(2);
+  expect(layoutInsets.inputBottomInset).toBeLessThanOrEqual(6);
+  expect(layoutInsets.capsuleBottomInset).toBeGreaterThanOrEqual(6);
+  expect(layoutInsets.capsuleBottomInset).toBeLessThanOrEqual(10);
 });
 
 test("workbench file annotation can inject assistant context without switching mode", async ({ page }) => {
@@ -441,6 +573,7 @@ interface MockBackendState {
   workspaceSearchRequests: Array<{ workspaceId: string; query: string }>;
   workspaceReadRequests: Array<{ workspaceId: string; path: string }>;
   approvalDecisions: Array<{ approvalId: string; body: Record<string, unknown> }>;
+  skills: WorkspaceSkillSummary[];
 }
 
 interface E2ESession {
@@ -457,7 +590,7 @@ interface E2EWorkspace {
   root_path: string;
 }
 
-function createWorkbenchBackend(): MockBackendState {
+function createWorkbenchBackend({ skills = [] }: { skills?: WorkspaceSkillSummary[] } = {}): MockBackendState {
   return {
     sessions: {
       [SESSION_A]: session(SESSION_A, "工作台 A 会话", WORKSPACE_A),
@@ -468,6 +601,7 @@ function createWorkbenchBackend(): MockBackendState {
     workspaceSearchRequests: [],
     workspaceReadRequests: [],
     approvalDecisions: [],
+    skills,
   };
 }
 
@@ -494,8 +628,14 @@ async function mockWorkbenchBackend(page: Page, backend: MockBackendState) {
         },
       });
     }
+    if (path === "/api/settings/model-defaults") {
+      return fulfillJson(route, modelDefaultsResponse());
+    }
     if (path === "/api/models") {
       return fulfillJson(route, { models: [{ id: "qwen-coder" }], cached: true });
+    }
+    if (path === "/api/model-providers") {
+      return fulfillJson(route, modelProvidersResponse());
     }
     if (path === "/api/workspaces" && method === "GET") {
       return fulfillJson(route, { list: [workspace(WORKSPACE_A, "keydex"), workspace(WORKSPACE_B, "other")], total: 2 });
@@ -584,7 +724,7 @@ async function mockWorkbenchBackend(page: Page, backend: MockBackendState) {
           workspace_root: workspace(workspaceId, workspaceId).root_path,
           fingerprint: "e2e",
           loaded_at: "2026-06-25T00:00:00Z",
-          skills: [],
+          skills: backend.skills,
           diagnostics: [],
         });
       }
@@ -620,6 +760,51 @@ async function mockWorkbenchBackend(page: Page, backend: MockBackendState) {
     }
     return fulfillJson(route, {});
   });
+}
+
+function modelDefaultsResponse() {
+  return {
+    defaults: {
+      default_chat: {
+        scope: "default_chat",
+        configured: true,
+        provider_id: "provider-1",
+        provider_name: "默认模型服务",
+        model: "qwen-coder",
+        provider_enabled: true,
+        model_enabled: true,
+        missing_reason: null,
+      },
+      fast: {
+        scope: "fast",
+        configured: false,
+        provider_id: null,
+        provider_name: null,
+        model: null,
+        provider_enabled: null,
+        model_enabled: null,
+        missing_reason: "not_configured",
+      },
+    },
+  };
+}
+
+function modelProvidersResponse() {
+  return {
+    providers: [
+      {
+        id: "provider-1",
+        name: "默认模型服务",
+        base_url: "https://api.example/v1",
+        enabled: true,
+        api_key_set: true,
+        api_key_preview: "sk-***",
+        models: ["qwen-coder"],
+        model_enabled: { "qwen-coder": true },
+        health: {},
+      },
+    ],
+  };
 }
 
 async function installWebSocketMock(page: Page) {

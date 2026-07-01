@@ -231,30 +231,11 @@
   min-width: 0;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   text-align: center;
-}
-
-.contextCompressionNoticeIcon {
-  display: inline-grid;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-  place-items: center;
-  color: currentColor;
-  line-height: 0;
-}
-
-.contextCompressionNoticeIcon svg {
-  display: block;
 }
 
 .contextCompressionNotice[data-state="running"] {
   color: color-mix(in srgb, var(--color-text-secondary) 86%, var(--color-info-6));
-}
-
-.contextCompressionNotice[data-state="running"] .contextCompressionNoticeIcon {
-  animation: context-compression-spin 920ms linear infinite;
 }
 
 .contextCompressionNotice[data-state="failed"] {
@@ -310,12 +291,6 @@
 .forkSourceButton:focus-visible {
   color: var(--color-info-6);
   text-decoration-color: currentColor;
-}
-
-@keyframes context-compression-spin {
-  to {
-    transform: rotate(1turn);
-  }
 }
 
 .turnGroup:hover .turnActionRow,

@@ -1,4 +1,4 @@
-import { ArrowDown, CheckCircle2, GitBranch, Loader2, TriangleAlert } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import {
   forwardRef,
   type ReactNode,
@@ -791,9 +791,6 @@ function renderTopNotice(notice: MessageListTopNotice | null): ReactNode {
       title={notice.title}
     >
       <span className={styles.contextCompressionNoticeLabel}>
-        <span className={styles.contextCompressionNoticeIcon} aria-hidden="true">
-          <CheckCircle2 size={14} />
-        </span>
         <span>{notice.content}</span>
       </span>
     </div>
@@ -996,9 +993,6 @@ function ForkMarker({
       title="从源会话中派生"
     >
       <span className={styles.contextCompressionNoticeLabel}>
-        <span className={styles.contextCompressionNoticeIcon} aria-hidden="true">
-          <GitBranch size={13} />
-        </span>
         <span>
           从「
           {onNavigateToForkSource ? (
@@ -1146,9 +1140,6 @@ function ContextCompressionNotice({ message }: { message: ConversationMessage })
       aria-live="polite"
     >
       <span className={styles.contextCompressionNoticeLabel}>
-        <span className={styles.contextCompressionNoticeIcon} aria-hidden="true">
-          {state === "running" ? <Loader2 size={14} /> : state === "failed" ? <TriangleAlert size={14} /> : <CheckCircle2 size={14} />}
-        </span>
         <span>{message.content}</span>
       </span>
     </div>

@@ -6,7 +6,9 @@ import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { clampWorkbenchAssistantDrawerWidth } from "@/renderer/hooks/layout/layoutStore";
 import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
+import { createBtwConversationFromSession } from "@/renderer/pages/conversation/conversationForkSource";
 import { useOptionalPreview, type PreviewFileRevealTarget } from "@/renderer/providers/PreviewProvider";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { AgentSession, Workspace } from "@/types/protocol";
 
 import {
@@ -53,11 +55,13 @@ export function WorkbenchModePage({
   onSessionCreated,
   onRequestNewSession,
 }: WorkbenchModePageProps) {
+  const notifications = useNotifications();
   const previewContext = useOptionalPreview();
   const layout = useLayoutState();
   const workspaceShellRef = useRef<HTMLElement | null>(null);
   const handledFilePanelRequestIdRef = useRef(previewContext?.filePanelRequest?.requestId ?? 0);
   const [creatingSession, setCreatingSession] = useState(false);
+  const [btwSession, setBtwSession] = useState<AgentSession | null>(null);
   const [dockTransitioning, setDockTransitioning] = useState(false);
   const [dockTransitionLayout, setDockTransitionLayout] = useState<WorkbenchAssistantDockTransitionState>({
     phase: "idle",
@@ -142,10 +146,44 @@ export function WorkbenchModePage({
     sessionId: selectedSessionId ?? "",
     ensureSession: ensureWorkbenchSession,
   });
+  const btwController = useAgentSessionController({
+    runtime,
+    sessionId: btwSession?.id ?? "",
+    historyPageSize: 2,
+    loadFullHistory: false,
+  });
+  const btwActive = Boolean(btwSession?.id);
+  const activeAssistantController = btwActive ? btwController : assistantController;
+
+  const openWorkbenchBtwConversation = useCallback(async () => {
+    const sourceSessionId = assistantController.session?.id?.trim() || selectedSessionId?.trim() || "";
+    if (!sourceSessionId) {
+      notifications.warning("当前会话无法开启旁路对话");
+      return null;
+    }
+    try {
+      const result = await createBtwConversationFromSession(runtime, sourceSessionId);
+      if ("error" in result) {
+        notifications.warning(result.message);
+        return null;
+      }
+      setBtwSession(result.session);
+      notifications.success("已打开旁路对话");
+      return result.session;
+    } catch (reason) {
+      notifications.error(`旁路对话创建失败：${errorMessage(reason)}`);
+      return null;
+    }
+  }, [assistantController.session?.id, notifications, runtime, selectedSessionId]);
+
+  const closeWorkbenchBtwConversation = useCallback(() => {
+    setBtwSession(null);
+  }, []);
 
   useEffect(() => {
     handledFilePanelRequestIdRef.current = previewContext?.filePanelRequest?.requestId ?? 0;
     setWorkspacePreviewRequest({ path: null, requestId: 0, revealTarget: null });
+    setBtwSession(null);
   }, [selectedSessionId, workspaceId]);
 
   useEffect(() => {
@@ -245,8 +283,8 @@ export function WorkbenchModePage({
                 previewPath={workspacePreviewRequest.path}
                 previewRequestId={workspacePreviewRequest.requestId}
                 previewRevealTarget={workspacePreviewRequest.revealTarget}
-                onQuoteSelection={assistantController.quoteSelection}
-                onStartChatFromAnnotation={assistantController.startChatFromAnnotation}
+                onQuoteSelection={activeAssistantController.quoteSelection}
+                onStartChatFromAnnotation={activeAssistantController.startChatFromAnnotation}
               />
             </div>
           </div>
@@ -254,11 +292,14 @@ export function WorkbenchModePage({
             runtime={runtime}
             workspaceId={workspaceId}
             workspace={selectedWorkspace}
-            controller={assistantController}
-            creatingSession={creatingSession}
+            controller={activeAssistantController}
+            creatingSession={btwActive ? false : creatingSession}
             drawerInlineWidth={drawerInlineWidth}
             drawerWidth={drawerWidth}
-            onRequestNewSession={onRequestNewSession ? requestNewWorkbenchSession : undefined}
+            btwActive={btwActive}
+            onOpenBtwConversation={openWorkbenchBtwConversation}
+            onCloseBtwConversation={closeWorkbenchBtwConversation}
+            onRequestNewSession={!btwActive && onRequestNewSession ? requestNewWorkbenchSession : undefined}
             onDrawerWidthCommit={commitDrawerWidth}
             onDrawerWidthPreview={previewDrawerWidth}
             onDockTransitionChange={setDockTransitioning}
@@ -268,6 +309,10 @@ export function WorkbenchModePage({
       )}
     </div>
   );
+}
+
+function errorMessage(reason: unknown): string {
+  return reason instanceof Error ? reason.message : String(reason);
 }
 
 function WorkbenchAssistantPlaceholder({ disabled = false, label }: { disabled?: boolean; label: string }) {
