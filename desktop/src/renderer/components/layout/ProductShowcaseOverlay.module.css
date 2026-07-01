@@ -126,94 +126,26 @@
   display: grid;
   justify-items: center;
   align-content: center;
-  min-width: 260px;
-  min-height: 260px;
-  transform: translateY(-10px);
-  animation: showcaseBrandFloat 3.6s ease-in-out infinite;
-}
-
-.logoSystem {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  width: 284px;
-  height: 284px;
-  transform: translate(-50%, -50%);
-}
-
-.logoRing {
-  position: absolute;
-  inset: 0;
-  border: 1px solid rgb(17 24 39 / 10%);
-  border-radius: 50%;
-  animation: showcaseOrbitSpin 15s linear infinite;
-}
-
-.logoRing[data-ring="inner"] {
-  inset: 44px;
-  border-color: rgb(22 119 255 / 16%);
-  animation-duration: 10s;
-  animation-direction: reverse;
-}
-
-.orbitNode {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: rgb(17 24 39 / 36%);
-  box-shadow: 0 0 0 4px rgb(22 119 255 / 5%);
-  transform:
-    translate(-50%, -50%)
-    rotate(calc(var(--orbit-index) * 30deg))
-    translateY(-142px);
-  animation: showcaseNodeBlink 2.4s ease-in-out infinite;
-  animation-delay: calc(var(--orbit-index) * 110ms);
+  min-width: 160px;
+  min-height: 160px;
 }
 
 .logoTile {
   position: relative;
   display: grid;
-  width: 96px;
-  height: 96px;
+  width: 128px;
+  height: 128px;
   place-items: center;
-  border: 1px solid rgb(17 24 39 / 8%);
-  border-radius: 22px;
-  background: rgb(255 255 255 / 92%);
-  box-shadow:
-    0 22px 70px rgb(17 24 39 / 10%),
-    inset 0 1px 0 rgb(255 255 255 / 88%);
-}
-
-.logoTile::before {
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  background: linear-gradient(135deg, rgb(22 119 255 / 22%), transparent 32%, rgb(17 24 39 / 12%) 68%, transparent);
-  content: "";
-  mask: linear-gradient(#000000 0 0) content-box, linear-gradient(#000000 0 0);
-  mask-composite: exclude;
-  padding: 1px;
-  animation: showcaseTileTrace 3s linear infinite;
 }
 
 .logoTile img {
   display: block;
-  width: 58px;
-  height: 58px;
+  width: 118px;
+  height: 118px;
   object-fit: contain;
   user-select: none;
   -webkit-user-drag: none;
-}
-
-.wordmark {
-  margin: 18px 0 0;
-  color: #111111;
-  font-size: 42px;
-  font-weight: 650;
-  letter-spacing: 0;
-  line-height: 1.08;
+  filter: drop-shadow(0 24px 56px rgb(17 24 39 / 12%));
 }
 
 .returnButton {
@@ -363,54 +295,6 @@
   }
 }
 
-@keyframes showcaseBrandFloat {
-  0%,
-  100% {
-    transform: translateY(-10px);
-  }
-
-  50% {
-    transform: translateY(-18px);
-  }
-}
-
-@keyframes showcaseOrbitSpin {
-  0% {
-    transform: rotate(0deg);
-  }
-
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes showcaseNodeBlink {
-  0%,
-  100% {
-    opacity: 0.26;
-  }
-
-  45% {
-    opacity: 0.9;
-  }
-}
-
-@keyframes showcaseTileTrace {
-  0% {
-    opacity: 0.38;
-    transform: rotate(0deg);
-  }
-
-  50% {
-    opacity: 0.85;
-  }
-
-  100% {
-    opacity: 0.38;
-    transform: rotate(360deg);
-  }
-}
-
 @media (max-width: 640px) {
   .signalFrame {
     inset: 26px;
@@ -421,31 +305,14 @@
     height: 360px;
   }
 
-  .logoSystem {
-    width: 228px;
-    height: 228px;
-  }
-
-  .orbitNode {
-    transform:
-      translate(-50%, -50%)
-      rotate(calc(var(--orbit-index) * 30deg))
-      translateY(-114px);
-  }
-
   .logoTile {
-    width: 84px;
-    height: 84px;
-    border-radius: 20px;
+    width: 104px;
+    height: 104px;
   }
 
   .logoTile img {
-    width: 50px;
-    height: 50px;
-  }
-
-  .wordmark {
-    font-size: 34px;
+    width: 96px;
+    height: 96px;
   }
 
   .returnButton {
@@ -460,11 +327,7 @@
   .topRail,
   .scanBeam,
   .signalFrame,
-  .stream,
-  .brandLockup,
-  .logoRing,
-  .orbitNode,
-  .logoTile::before {
+  .stream {
     animation: none;
   }
 

@@ -6,7 +6,6 @@ import { prefersReducedMotion } from "@/renderer/utils/motionPreference";
 import styles from "./ProductShowcaseOverlay.module.css";
 
 const SHOWCASE_ICON_SRC = "/apple-touch-icon.png";
-const ORBIT_ITEMS = Array.from({ length: 12 }, (_, index) => index);
 const STREAM_ITEMS = Array.from({ length: 8 }, (_, index) => index);
 
 function cssVar(name: string, value: number): CSSProperties {
@@ -64,7 +63,7 @@ export function ProductShowcaseOverlay({
       data-testid="product-showcase-overlay"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="product-showcase-title"
+      aria-label="Keydex"
       onAnimationEnd={handleAnimationEnd}
     >
       <div className={styles.motionStage} aria-hidden="true">
@@ -81,19 +80,9 @@ export function ProductShowcaseOverlay({
       </div>
 
       <div className={styles.brandLockup}>
-        <div className={styles.logoSystem} aria-hidden="true">
-          <div className={styles.logoRing} data-ring="outer" />
-          <div className={styles.logoRing} data-ring="inner" />
-          {ORBIT_ITEMS.map((item) => (
-            <span className={styles.orbitNode} style={cssVar("--orbit-index", item)} key={item} />
-          ))}
-        </div>
-        <div className={styles.logoTile}>
+        <div className={styles.logoTile} aria-hidden="true">
           <img alt="" draggable={false} src={SHOWCASE_ICON_SRC} />
         </div>
-        <h1 className={styles.wordmark} id="product-showcase-title">
-          keydex
-        </h1>
       </div>
 
       <button ref={returnButtonRef} className={styles.returnButton} type="button" onClick={onRequestClose}>
