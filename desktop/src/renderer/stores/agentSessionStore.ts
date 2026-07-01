@@ -450,6 +450,9 @@ function isEquivalentHydratedMessage(candidate: AgentChatMessage, localMessage: 
       Boolean(candidate.messageEventId || candidate.id.startsWith("hist:"))
     );
   }
+  if (localMessage.role === "approval") {
+    return Boolean(localMessage.approval?.id && candidate.approval?.id === localMessage.approval.id);
+  }
   if (localMessage.runId && candidate.runId === localMessage.runId) {
     return true;
   }
@@ -461,7 +464,7 @@ function isEquivalentHydratedMessage(candidate: AgentChatMessage, localMessage: 
 
 function applyHydratedRuntimeState(view: AgentSessionViewState, previousView?: AgentSessionViewState): void {
   const hasStreamingMessage = view.messages.some((message) => Boolean(message.streaming));
-  const pendingApproval = latestPendingApproval(view.messages);
+  const pendingApproval = pendingApprovalForHydratedView(view.messages, previousView);
   let runtimeState = pendingApproval
     ? "waiting_approval"
     : hasStreamingMessage
@@ -469,12 +472,11 @@ function applyHydratedRuntimeState(view: AgentSessionViewState, previousView?: A
       : runtimeStateFromSessionStatus(view.status);
 
   if (runtimeState === "idle" && previousView && isActiveRuntimeState(previousView.runtimeState)) {
-    runtimeState = previousView.runtimeState;
+    runtimeState = previousView.runtimeState === "waiting_approval" ? runtimeState : previousView.runtimeState;
   }
 
   view.runtimeState = runtimeState;
-  view.pendingApproval =
-    pendingApproval ?? (runtimeState === "waiting_approval" ? previousView?.pendingApproval ?? null : null);
+  view.pendingApproval = pendingApproval;
   view.isStreaming = hasStreamingMessage || (runtimeState === "running" && previousView?.isStreaming === true);
   view.isCancelling = runtimeState === "cancelling";
 }
@@ -682,16 +684,16 @@ function handleApprovalRequested(
   }
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
-  view.pendingApproval = approval;
-  view.runtimeState = "waiting_approval";
-  view.isStreaming = false;
-  view.isCancelling = false;
   upsertApprovalMessage(next, view, approval);
+  view.pendingApproval = firstPendingApproval(view.messages);
+  view.runtimeState = view.pendingApproval ? "waiting_approval" : "running";
+  view.isStreaming = !view.pendingApproval;
+  view.isCancelling = false;
   const existing = next.sessionsById[sessionId];
   if (existing) {
     next.sessionsById = {
       ...next.sessionsById,
-      [sessionId]: { ...existing, status: "waiting_approval" },
+      [sessionId]: { ...existing, status: view.pendingApproval ? "waiting_approval" : "running" },
     };
   }
   return next;
@@ -708,18 +710,16 @@ function handleApprovalResolved(
   }
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
-  if (view.pendingApproval?.id === approval.id) {
-    view.pendingApproval = null;
-  }
-  view.runtimeState = "running";
-  view.isStreaming = true;
-  view.isCancelling = false;
   upsertApprovalMessage(next, view, approval);
+  view.pendingApproval = firstPendingApproval(view.messages);
+  view.runtimeState = view.pendingApproval ? "waiting_approval" : "running";
+  view.isStreaming = !view.pendingApproval;
+  view.isCancelling = false;
   const existing = next.sessionsById[sessionId];
   if (existing) {
     next.sessionsById = {
       ...next.sessionsById,
-      [sessionId]: { ...existing, status: "running" },
+      [sessionId]: { ...existing, status: view.pendingApproval ? "waiting_approval" : "running" },
     };
   }
   return next;
@@ -1393,13 +1393,35 @@ function approvalFromData(data: Record<string, unknown>): CommandApprovalRequest
   };
 }
 
-function latestPendingApproval(messages: AgentChatMessage[]): CommandApprovalRequest | null {
-  for (const message of [...messages].reverse()) {
+function pendingApprovalForHydratedView(
+  messages: AgentChatMessage[],
+  previousView?: AgentSessionViewState,
+): CommandApprovalRequest | null {
+  const pendingApproval = firstPendingApproval(messages);
+  if (pendingApproval) {
+    return pendingApproval;
+  }
+  const previousApproval = previousView?.pendingApproval;
+  if (!previousApproval || previousApproval.status !== "pending") {
+    return null;
+  }
+  if (hasApprovalMessage(messages, previousApproval.id)) {
+    return null;
+  }
+  return previousApproval;
+}
+
+function firstPendingApproval(messages: AgentChatMessage[]): CommandApprovalRequest | null {
+  for (const message of messages) {
     if (message.role === "approval" && message.approval?.status === "pending") {
       return message.approval;
     }
   }
   return null;
+}
+
+function hasApprovalMessage(messages: AgentChatMessage[], approvalId: string): boolean {
+  return messages.some((message) => message.role === "approval" && message.approval?.id === approvalId);
 }
 
 function upsertApprovalMessage(

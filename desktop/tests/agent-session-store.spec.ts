@@ -5,6 +5,7 @@ import {
   type AgentActionEnvelope,
   type AgentChatAction,
   type AgentChatMessage,
+  type AgentChatMessagePayload,
   type AgentHistoryResponse,
   type AgentSession,
   type CommandApprovalRequest,
@@ -490,6 +491,78 @@ describe("agentSessionStore reducer", () => {
         content: "已允许执行命令: pnpm test",
       },
     ]);
+  });
+
+  it("keeps concurrent command approvals queued in arrival order", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [session("ses-1", "2026-06-18T08:00:00Z")],
+    });
+    state = agentConversationReducer(state, { type: "session/select", sessionId: "ses-1" });
+
+    state = reduceAgentWsEvent(state, approvalRequested("ses-1", commandApproval("approval-1")));
+    state = reduceAgentWsEvent(state, approvalRequested("ses-1", commandApproval("approval-2")));
+    state = reduceAgentWsEvent(state, approvalRequested("ses-1", commandApproval("approval-3")));
+
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      runtimeState: "waiting_approval",
+      isStreaming: false,
+      pendingApproval: { id: "approval-1", status: "pending" },
+    });
+
+    state = reduceAgentWsEvent(state, approvalResolved("ses-1", { ...commandApproval("approval-1"), status: "approved" }));
+
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      runtimeState: "waiting_approval",
+      isStreaming: false,
+      pendingApproval: { id: "approval-2", status: "pending" },
+    });
+    expect(selectAgentSessions(state)[0]).toMatchObject({ id: "ses-1", status: "waiting_approval" });
+
+    state = reduceAgentWsEvent(state, approvalResolved("ses-1", { ...commandApproval("approval-2"), status: "approved" }));
+
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      runtimeState: "waiting_approval",
+      isStreaming: false,
+      pendingApproval: { id: "approval-3", status: "pending" },
+    });
+
+    state = reduceAgentWsEvent(state, approvalResolved("ses-1", { ...commandApproval("approval-3"), status: "rejected" }));
+
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      runtimeState: "running",
+      isStreaming: true,
+      pendingApproval: null,
+    });
+  });
+
+  it("does not restore a stale local pending approval when history has resolved it", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [session("ses-1", "2026-06-18T08:00:00Z")],
+    });
+    state = agentConversationReducer(state, { type: "session/select", sessionId: "ses-1" });
+    state = reduceAgentWsEvent(state, approvalRequested("ses-1", commandApproval("approval-1")));
+
+    state = agentConversationReducer(state, {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        approvalHistoryMessage({ ...commandApproval("approval-1"), status: "approved" }),
+        approvalHistoryMessage(commandApproval("approval-2")),
+      ]),
+    });
+
+    const view = selectAgentSessionState(state, "ses-1");
+    expect(view).toMatchObject({
+      runtimeState: "waiting_approval",
+      pendingApproval: { id: "approval-2", status: "pending" },
+    });
+    expect(
+      selectAgentMessages(state, "ses-1").filter(
+        (message) => message.role === "approval" && message.approval?.id === "approval-1" && message.status === "pending",
+      ),
+    ).toHaveLength(0);
   });
 
   it("marks sessions from waiting_approval status payload without unread side effects", () => {
@@ -1167,6 +1240,15 @@ function contextWindowUsage(sessionId: string, tokenCount: number): NonNullable<
     threshold_token_count: 160000,
     threshold_usage_fraction: tokenCount / 160000,
     token_source: "usage_metadata",
+  };
+}
+
+function approvalHistoryMessage(approval: CommandApprovalRequest): AgentChatMessagePayload {
+  return {
+    role: "approval",
+    content: approval.status === "pending" ? "等待批准执行命令: pnpm test" : "已处理命令审批",
+    approval,
+    status: approval.status,
   };
 }
 
