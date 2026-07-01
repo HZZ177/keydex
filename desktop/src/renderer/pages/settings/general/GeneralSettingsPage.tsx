@@ -6,6 +6,8 @@ import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { useFontPreference, type AppFontFamily, type FontDownloadProgress } from "@/renderer/providers/FontProvider";
 import type { CloseWindowBehavior, GeneralSettings } from "@/types/protocol";
 import { SettingsSelect } from "@/renderer/pages/settings/components";
+import { closeWindowBehaviorStore } from "@/runtime/closeWindowBehaviorStore";
+import { isCloseWindowBehavior } from "@/runtime/windowLifecycle";
 
 import styles from "./GeneralSettingsPage.module.css";
 
@@ -76,7 +78,9 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
         if (!active) {
           return;
         }
-        setGeneral(settings.general ?? DEFAULT_GENERAL_SETTINGS);
+        const nextGeneral = settings.general ?? DEFAULT_GENERAL_SETTINGS;
+        setGeneral(nextGeneral);
+        syncCloseBehaviorSnapshot(nextGeneral.close_window_behavior);
       })
       .catch((reason) => {
         if (active) {
@@ -105,7 +109,9 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
     void runtime.settings
       .saveGeneralSettings(nextGeneral)
       .then((settings) => {
-        setGeneral(settings.general ?? nextGeneral);
+        const savedGeneral = settings.general ?? nextGeneral;
+        setGeneral(savedGeneral);
+        syncCloseBehaviorSnapshot(savedGeneral.close_window_behavior);
       })
       .catch((reason) => {
         setGeneral(previousGeneral);
@@ -250,6 +256,14 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
       </section>
     </main>
   );
+}
+
+function syncCloseBehaviorSnapshot(behavior: CloseWindowBehavior | null): void {
+  if (isCloseWindowBehavior(behavior)) {
+    closeWindowBehaviorStore.write(behavior);
+    return;
+  }
+  closeWindowBehaviorStore.clear();
 }
 
 function fontOptionDescription({

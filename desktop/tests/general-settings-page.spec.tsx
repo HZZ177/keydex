@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge } from "@/runtime";
+import { CLOSE_WINDOW_BEHAVIOR_STORAGE_KEY } from "@/runtime/closeWindowBehaviorStore";
 import { GeneralSettingsPage } from "@/renderer/pages/settings/general";
 import { FontProvider } from "@/renderer/providers/FontProvider";
 import type { GeneralSettings } from "@/types/protocol";
@@ -173,6 +174,7 @@ describe("GeneralSettingsPage", () => {
         close_window_behavior: "minimize_to_tray",
       }),
     );
+    expect(localStorage.getItem(CLOSE_WINDOW_BEHAVIOR_STORAGE_KEY)).toBe("minimize_to_tray");
     expect(screen.getByRole("button", { name: /最小化到托盘/ })).not.toBeNull();
   });
 });

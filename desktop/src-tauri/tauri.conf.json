@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "Keydex",
-        "width": 1280,
-        "height": 820,
+        "width": 1445,
+        "height": 900,
         "center": true,
         "minWidth": 880,
         "minHeight": 620,

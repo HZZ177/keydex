@@ -348,6 +348,9 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .manage(SidecarState::default())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
