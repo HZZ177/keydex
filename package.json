@@ -14,6 +14,7 @@
     "test:e2e:settings": "node .dev/e2e/empty-input-settings.mjs",
     "test:e2e:stream": "node .dev/e2e/stream-markdown-scroll.mjs",
     "test:e2e:tools": "node .dev/e2e/tool-timeline.mjs",
+    "test:e2e:command-runtime": "node .dev/e2e/command-runtime-real.mjs",
     "test:e2e:edit-progress": "node .dev/e2e/tool-edit-progress.mjs",
     "test:e2e:workspace": "node .dev/e2e/workspace-session-redesign.mjs",
     "test:e2e:recovery": "node .dev/e2e/error-cancel-history.mjs",
