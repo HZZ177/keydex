@@ -1224,7 +1224,7 @@ def _context_compression_progress_content(data: dict[str, Any]) -> str:
         return "自动压缩失败"
     if stage == "emergency_completed":
         return "自动压缩成功"
-    return "上下文已自动压缩"
+    return "无感压缩已完成"
 
 
 def _context_compression_status(data: dict[str, Any]) -> str:

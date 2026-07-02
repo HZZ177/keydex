@@ -374,7 +374,7 @@ describe("ConversationPage", () => {
   it("renders context compression divider notices from history metadata", async () => {
     const { runtime } = fakeRuntime({
       history: [
-        historyMessage("system", "上下文已自动压缩", {
+        historyMessage("system", "无感压缩已完成", {
           messageEventId: "evt-compressed",
           turnIndex: 2,
           status: "completed",
@@ -393,7 +393,7 @@ describe("ConversationPage", () => {
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     const notice = await screen.findByTestId("context-compression-notice");
-    expect(notice.textContent).toContain("上下文已自动压缩");
+    expect(notice.textContent).toContain("无感压缩已完成");
   });
 
   it("updates emergency compression divider notices in place", async () => {
@@ -452,7 +452,7 @@ describe("ConversationPage", () => {
       );
     });
 
-    expect((await screen.findByRole("alert")).textContent).toContain("后台上下文压缩失败");
+    expect((await screen.findByRole("alert")).textContent).toContain("无感压缩失败");
     expect(screen.queryByTestId("context-compression-notice")).toBeNull();
   });
 

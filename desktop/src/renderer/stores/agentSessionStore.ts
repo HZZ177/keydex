@@ -2217,7 +2217,7 @@ function contextCompressionContent(stage: string): string {
   if (stage === "emergency_completed") {
     return "自动压缩成功";
   }
-  return "上下文已自动压缩";
+  return "无感压缩已完成";
 }
 
 function contextCompressionStatus(stage: string): AgentChatMessage["status"] {

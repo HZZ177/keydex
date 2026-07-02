@@ -752,7 +752,7 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentMessages(state, "ses-1")).toMatchObject([
       {
         role: "system",
-        content: "上下文已自动压缩",
+        content: "无感压缩已完成",
         status: "completed",
         metadata: {
           compression: {

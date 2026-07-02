@@ -109,7 +109,7 @@ describe("MessageList", () => {
       source_message_event_id: "source-event",
       target_message_event_id: "target-event",
     };
-    const compressionNotice = message("m1", "context_compression", "上下文已自动压缩");
+    const compressionNotice = message("m1", "context_compression", "无感压缩已完成");
     const cancelledNotice = message("m2", "cancelled", "对话已取消");
     const retryNotice = message("m4", "llm_retry", "LLM 请求正在重试 1/3");
     const forkedAssistant = {

@@ -618,13 +618,13 @@ function backgroundCompressionFailureMessage(data: AgentMiddlewareProgressData):
   }
   const stage = typeof data.stage === "string" ? data.stage : "";
   if (stage === "background_failed") {
-    return "后台上下文压缩失败，当前对话将继续使用未压缩上下文。";
+    return "无感压缩失败，当前对话将继续使用未压缩上下文。";
   }
   if (stage === "background_fork_failed") {
-    return "后台上下文压缩未能切换到压缩分支，当前对话将继续使用原上下文。";
+    return "无感压缩未能切换到压缩分支，当前对话将继续使用原上下文。";
   }
   if (stage === "staging_failed") {
-    return "上下文压缩结果应用失败，当前对话将继续使用原上下文。";
+    return "无感压缩结果应用失败，当前对话将继续使用原上下文。";
   }
   return "";
 }
