@@ -38,11 +38,13 @@ class PersistenceProjection:
         DomainEventType.MEMORY_RECALLED: ReplayAction.MEMORY_RECALLED,
         DomainEventType.TURN_CANCELLED: ReplayAction.CANCELLED,
         DomainEventType.TURN_FAILED: ReplayAction.ERROR,
+        DomainEventType.TURN_STARTED: ReplayAction.TURN_STARTED,
         DomainEventType.TURN_COMPLETED: ReplayAction.COMPLETED,
         DomainEventType.THREAD_TASK_UPDATED: ReplayAction.TASK_UPDATED,
         DomainEventType.THREAD_TASK_DELETED: ReplayAction.TASK_DELETED,
         DomainEventType.THREAD_TASK_RUN_STARTED: ReplayAction.TASK_RUN_STARTED,
         DomainEventType.THREAD_TASK_RUN_FINISHED: ReplayAction.TASK_RUN_FINISHED,
+        DomainEventType.THREAD_TASK_STATUS_UPDATED: ReplayAction.THREAD_TASK_STATUS,
         DomainEventType.REASONING_FINISHED: ReplayAction.REASONING,
         DomainEventType.MIDDLEWARE_PROGRESS: ReplayAction.MIDDLEWARE_PROGRESS,
     }

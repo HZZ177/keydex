@@ -16,11 +16,13 @@ import type {
   AgentStreamActionData,
   AgentSubagentItem,
   AgentSubagentToolItem,
+  AgentThreadTaskStatusData,
   AgentFileChange,
   AgentToolCall,
   AgentToolEventData,
   AgentToolProgressData,
   AgentToolStatus,
+  AgentTurnStartedData,
   TurnError,
   ThreadTask,
   ThreadTaskEventData,
@@ -143,6 +145,12 @@ export function reduceAgentWsEvent(
       break;
     case "stream":
       next = handleStream(state, event.data as unknown as AgentStreamActionData);
+      break;
+    case "turn_started":
+      next = handleTurnStarted(state, event.data as unknown as AgentTurnStartedData);
+      break;
+    case "thread_task_status":
+      next = handleThreadTaskStatus(state, event.data as unknown as AgentThreadTaskStatusData);
       break;
     case "system_message":
       next = handleSystemMessage(state, event.data);
@@ -515,7 +523,6 @@ function handleTaskRunStarted(state: AgentConversationState, data: ThreadTaskRun
   }
   view.runningTaskRun = cloneThreadTaskRun(run);
   view.recentTaskRun = cloneThreadTaskRun(run);
-  upsertThreadTaskBoundaryMessage(view, run, task, data);
   return next;
 }
 
@@ -536,62 +543,6 @@ function handleTaskRunFinished(state: AgentConversationState, data: ThreadTaskRu
   }
   view.recentTaskRun = cloneThreadTaskRun(run);
   return next;
-}
-
-function upsertThreadTaskBoundaryMessage(
-  view: AgentSessionViewState,
-  run: ThreadTaskRun,
-  task: ThreadTask | null,
-  data: ThreadTaskRunEventData,
-): void {
-  const taskType = task?.type || stringValue(asRecord(data.task)?.type) || "goal";
-  const threadTask: Record<string, unknown> = {
-    task_id: run.task_id,
-    run_id: run.id,
-    trigger: "task_continue",
-    type: taskType,
-  };
-  const reason = stringValue(data.reason) || stringValue(run.summary.reason);
-  const traceId = run.trace_id || stringValue(data.trace_id);
-  const turnIndex = run.turn_index ?? numberValue(data.turn_index);
-  if (reason) {
-    threadTask.reason = reason;
-  }
-  if (traceId) {
-    threadTask.trace_id = traceId;
-  }
-  if (turnIndex !== null) {
-    threadTask.turn_index = turnIndex;
-  }
-
-  const id = `thread-task-boundary:${run.id}`;
-  const metadata = {
-    kind: "thread_task_boundary",
-    thread_task: threadTask,
-    runtime_params: {
-      thread_task: threadTask,
-    },
-  };
-  const timestamp =
-    timestampFromIso(run.started_at) ?? timestampFromIso(run.created_at) ?? timestampFromData(data);
-  const existing = view.messages.find((message) => message.id === id);
-  if (existing) {
-    existing.content = "目标继续执行";
-    existing.timestamp = timestamp;
-    existing.metadata = metadata;
-    existing.status = "completed";
-    return;
-  }
-  view.messages.push({
-    id,
-    sessionId: run.session_id,
-    role: "system",
-    content: "目标继续执行",
-    timestamp,
-    metadata,
-    streaming: false,
-    status: "completed",
-  });
 }
 
 function mergeActiveLocalMessages(
@@ -621,9 +572,6 @@ function shouldPreserveActiveLocalMessage(message: AgentChatMessage): boolean {
   }
   if (message.id.startsWith("hist:")) {
     return false;
-  }
-  if (isThreadTaskBoundaryMessage(message)) {
-    return true;
   }
   if (message.role === "user") {
     return true;
@@ -750,6 +698,126 @@ function markChatBound(
   return next;
 }
 
+function handleTurnStarted(state: AgentConversationState, data: AgentTurnStartedData): AgentConversationState {
+  const sessionId = stringValue(data.session_id);
+  const turnIndex = numberValue(data.turn_index);
+  if (!sessionId || turnIndex === null) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  const traceId = nullableString(data.trace_id);
+  const threadTask = asRecord(data.thread_task);
+  const runtimeParams = asRecord(data.runtime_params);
+  const id = `turn:${sessionId}:${turnIndex}`;
+  const metadata = {
+    kind: "turn_started",
+    source: stringValue(data.source) || "user",
+    source_label: nullableString(data.source_label) ?? "",
+    thread_task: threadTask,
+    runtime_params: runtimeParams ?? (threadTask ? { thread_task: threadTask } : undefined),
+  };
+  const patch: Partial<AgentChatMessage> = {
+    role: "turn",
+    content: "",
+    timestamp: timestampFromData(data),
+    turnIndex,
+    traceId: traceId ?? undefined,
+    metadata,
+    streaming: false,
+    status: "completed",
+  };
+  const existing = view.messages.find(
+    (message) => message.id === id || (message.role === "turn" && message.turnIndex === turnIndex),
+  );
+  if (existing) {
+    Object.assign(existing, patch);
+  } else {
+    view.messages.push({
+      id,
+      sessionId,
+      role: "turn",
+      content: "",
+      timestamp: patch.timestamp ?? Date.now(),
+      turnIndex,
+      traceId: traceId ?? undefined,
+      metadata,
+      streaming: false,
+      status: "completed",
+    });
+  }
+  view.isStreaming = true;
+  markTurnInProgress(view);
+  return next;
+}
+
+function handleThreadTaskStatus(
+  state: AgentConversationState,
+  data: AgentThreadTaskStatusData,
+): AgentConversationState {
+  const sessionId = stringValue(data.session_id);
+  const turnIndex = numberValue(data.turn_index);
+  if (!sessionId || turnIndex === null) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  const task = threadTaskFromData(data.task);
+  if (task) {
+    upsertThreadTask(view, task);
+  }
+  const taskId = nullableString(data.task_id) ?? task?.id ?? "";
+  const runId = nullableString(data.run_id) ?? task?.current_run_id ?? "";
+  const status = stringValue(data.status) || task?.status || "";
+  const summary = stringValue(data.summary);
+  const id = ["thread-task-status", sessionId, turnIndex, runId || taskId || status].filter(Boolean).join(":");
+  const uiPayload = asRecord(data.ui_payload) ?? { task: data.task ?? task ?? null };
+  const toolParams = asRecord(data.payload) ?? {};
+  const metadata = {
+    kind: "thread_task_status",
+    task_id: taskId || undefined,
+    run_id: runId || undefined,
+    type: stringValue(data.type) || task?.type || "goal",
+    status,
+    summary,
+  };
+  const patch: Partial<AgentChatMessage> = {
+    role: "thread_task",
+    content: summary || status || "目标状态已更新",
+    timestamp: timestampFromData(data),
+    turnIndex,
+    traceId: nullableString(data.trace_id) ?? undefined,
+    toolName: "update_thread_task",
+    toolParams,
+    uiPayload,
+    status: "completed",
+    metadata,
+    streaming: false,
+  };
+  const existing = view.messages.find((message) => message.id === id);
+  if (existing) {
+    Object.assign(existing, patch);
+  } else {
+    view.messages.push({
+      id,
+      sessionId,
+      role: "thread_task",
+      content: patch.content ?? "",
+      timestamp: patch.timestamp ?? Date.now(),
+      turnIndex,
+      traceId: patch.traceId,
+      toolName: "update_thread_task",
+      toolParams,
+      uiPayload,
+      status: "completed",
+      metadata,
+      streaming: false,
+    });
+  }
+  view.isStreaming = hasStreamingMessage(view);
+  return next;
+}
+
 function handleStream(state: AgentConversationState, data: AgentStreamActionData): AgentConversationState {
   const sessionId = data.session_id;
   const content = stringValue(data.content) || stringValue(data.text);
@@ -759,6 +827,8 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
   const eventTimestamp = timestampFromData(data);
+  const turnIndex = numberValue(data.turn_index);
+  const traceId = stringValue(data.trace_id);
   if (data.is_subagent && data.subagent_id) {
     const message = ensureSubagentMessage(next, view, data.subagent_id, {
       subagentName: data.subagent_name ?? "",
@@ -769,9 +839,11 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
     appendSubagentTextItem(next, message, content, eventTimestamp);
   } else {
     const last = view.messages[view.messages.length - 1];
-    const message = last?.role === "assistant" && last.streaming ? last : undefined;
+    const message =
+      last?.role === "assistant" && last.streaming && isSameBusinessTurn(last, turnIndex) ? last : undefined;
     if (message) {
       message.content += content;
+      applyTurnFields(message, turnIndex, traceId);
     } else {
       closeTopLevelTextStreams(view);
       view.messages.push({
@@ -780,6 +852,8 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
         role: "assistant",
         content,
         timestamp: eventTimestamp,
+        turnIndex,
+        ...(traceId ? { traceId } : {}),
         streaming: true,
         status: "streaming",
       });
@@ -1028,6 +1102,8 @@ function handleReasoning(
 
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
+  const turnIndex = numberValue(data.turn_index);
+  const traceId = stringValue(data.trace_id);
   if (data.done) {
     closeReasoningStream(view, kind);
     view.isStreaming = hasStreamingMessage(view);
@@ -1040,8 +1116,9 @@ function handleReasoning(
     return next;
   }
   const last = view.messages[view.messages.length - 1];
-  if (last?.role === "reasoning" && last.reasoningKind === kind && last.streaming) {
+  if (last?.role === "reasoning" && last.reasoningKind === kind && last.streaming && isSameBusinessTurn(last, turnIndex)) {
     last.content += content;
+    applyTurnFields(last, turnIndex, traceId);
   } else {
     closeTopLevelTextStreams(view);
     view.messages.push({
@@ -1051,6 +1128,8 @@ function handleReasoning(
       content,
       reasoningKind: kind,
       timestamp: timestampFromData(data),
+      turnIndex,
+      ...(traceId ? { traceId } : {}),
       streaming: true,
       status: "streaming",
     });
@@ -1068,6 +1147,9 @@ function handleToolStart(state: AgentConversationState, data: AgentToolEventData
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
   const toolName = toolNameFromData(data);
+  if (isThreadTaskToolName(toolName)) {
+    return state;
+  }
   if (data.is_subagent && data.subagent_id) {
     const subagent = ensureSubagentMessage(next, view, data.subagent_id, {
       subagentName: data.subagent_name ?? "",
@@ -1097,6 +1179,7 @@ function handleToolStart(state: AgentConversationState, data: AgentToolEventData
     const patch = toolCallFromStart(data, toolName);
     if (existing) {
       Object.assign(existing, patch);
+      applyTurnFields(existing, numberValue(data.turn_index), stringValue(data.trace_id));
     } else {
       view.messages.push({
         id: nextMessageId(next, "tool", sessionId),
@@ -1104,6 +1187,8 @@ function handleToolStart(state: AgentConversationState, data: AgentToolEventData
         role: "tool",
         content: "",
         timestamp: timestampFromData(data),
+        turnIndex: numberValue(data.turn_index),
+        ...(stringValue(data.trace_id) ? { traceId: stringValue(data.trace_id) } : {}),
         ...patch,
       });
     }
@@ -1124,6 +1209,10 @@ function handleToolEnd(state: AgentConversationState, data: AgentToolEventData):
   const error = stringValue(data.error);
   const errorType = stringValue(data.error_type);
   const status = toolStatusFromEnd(data.status, error);
+  const toolName = toolNameFromData(data);
+  if (isThreadTaskToolName(toolName)) {
+    return state;
+  }
 
   if (data.is_subagent && data.subagent_id) {
     const subagent = view.messages.find(
@@ -1142,9 +1231,10 @@ function handleToolEnd(state: AgentConversationState, data: AgentToolEventData):
     }
   } else {
     const message = view.messages.find((item) => item.role === "tool" && item.runId === data.run_id);
-    const target = message ?? findMatchingProgressTool(view, data, toolNameFromData(data));
+    const target = message ?? findMatchingProgressTool(view, data, toolName);
     if (target) {
       applyToolEnd(target, result, data.duration_ms, status, error, errorType, data);
+      applyTurnFields(target, numberValue(data.turn_index), stringValue(data.trace_id));
     } else {
       view.messages.push({
         id: nextMessageId(next, "tool", sessionId),
@@ -1152,7 +1242,9 @@ function handleToolEnd(state: AgentConversationState, data: AgentToolEventData):
         role: "tool",
         content: "",
         timestamp: timestampFromData(data),
-        ...toolCallFromStart(data, toolNameFromData(data)),
+        turnIndex: numberValue(data.turn_index),
+        ...(stringValue(data.trace_id) ? { traceId: stringValue(data.trace_id) } : {}),
+        ...toolCallFromStart(data, toolName),
         status,
         toolResult: result,
         toolDurationMs: data.duration_ms,
@@ -1241,12 +1333,14 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
   const finalContent = stringValue(payload.final_content);
+  const payloadTurnIndex = numberValue(payload.turn_index);
   const target =
     [...view.messages]
       .reverse()
       .find(
         (message) =>
           message.role === "assistant" &&
+          isSameBusinessTurn(message, payloadTurnIndex) &&
           !message.cancelled &&
           message.status !== "cancelled" &&
           message.content.trim(),
@@ -1256,6 +1350,7 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
       .find(
         (message) =>
           message.role === "assistant" &&
+          isSameBusinessTurn(message, payloadTurnIndex) &&
           !message.cancelled &&
           message.status !== "cancelled",
       );
@@ -1268,6 +1363,8 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
       role: "assistant",
       content: finalContent,
       timestamp: timestampFromData(payload),
+      turnIndex: payloadTurnIndex,
+      ...(stringValue(payload.trace_id) ? { traceId: stringValue(payload.trace_id) } : {}),
       streaming: false,
     };
     view.messages.push(completedTarget);
@@ -1282,6 +1379,9 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
   }
   if (completedTarget && payload.trace_id && !completedTarget.traceId) {
     completedTarget.traceId = payload.trace_id;
+  }
+  if (completedTarget) {
+    applyTurnFields(completedTarget, payloadTurnIndex, stringValue(payload.trace_id));
   }
   const threadTask = threadTaskContextFromPayload(payload);
   if (completedTarget && threadTask) {
@@ -1338,11 +1438,13 @@ function handleCancelled(state: AgentConversationState, data: Record<string, unk
   }
   const last = view.messages.at(-1);
   const traceId = stringValue(data.trace_id);
+  const turnIndex = numberValue(data.turn_index);
   const threadTask = threadTaskContextFromPayload(data);
   if (last?.role === "assistant" && last.cancelled && last.status === "cancelled") {
     if (traceId && !last.traceId) {
       last.traceId = traceId;
     }
+    applyTurnFields(last, turnIndex, traceId);
     if (threadTask) {
       applyThreadTaskMetadata(last, threadTask);
     }
@@ -1354,6 +1456,7 @@ function handleCancelled(state: AgentConversationState, data: Record<string, unk
       role: "assistant",
       content: "",
       timestamp: timestampFromData(data),
+      turnIndex,
       status: "cancelled",
       cancelled: true,
       ...(traceId ? { traceId } : {}),
@@ -1404,10 +1507,11 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
   const view = ensureSessionState(next, sessionId);
   const error = turnErrorFromData(data);
   const traceId = stringValue(data.trace_id);
+  const turnIndex = numberValue(data.turn_index);
   const threadTask = threadTaskContextFromPayload(data);
   const activeTurnFailed = view.isStreaming || view.runtimeState === "running" || hasStreamingMessage(view);
   const attachedToAssistant =
-    activeTurnFailed && attachTurnErrorToLatestAssistant(view, error, traceId, threadTask);
+    activeTurnFailed && attachTurnErrorToLatestAssistant(view, error, traceId, threadTask, turnIndex);
   if (!attachedToAssistant) {
     const metadata = threadTask ? threadTaskMetadata(threadTask, { turnError: error }) : { turnError: error };
     view.messages.push({
@@ -1416,6 +1520,7 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
       role: "error",
       content: error.message,
       timestamp: timestampFromData(data),
+      turnIndex,
       ...(traceId ? { traceId } : {}),
       status: "failed",
       metadata,
@@ -1451,11 +1556,15 @@ function attachTurnErrorToLatestAssistant(
   error: TurnError,
   traceId: string,
   threadTask: Record<string, unknown> | null,
+  turnIndex: number | null,
 ): boolean {
   const message = [...view.messages]
     .reverse()
     .find((item) => {
       if (item.role !== "assistant" || item.cancelled || item.status === "cancelled") {
+        return false;
+      }
+      if (!isSameBusinessTurn(item, turnIndex)) {
         return false;
       }
       return normalizeMessageContent(item.content).trim().length > 0;
@@ -1468,6 +1577,7 @@ function attachTurnErrorToLatestAssistant(
   if (traceId) {
     message.traceId = traceId;
   }
+  applyTurnFields(message, turnIndex, traceId);
   message.metadata = {
     ...(message.metadata ?? {}),
     turnError: error,
@@ -1502,10 +1612,6 @@ function threadTaskMetadata(
       thread_task: context,
     },
   };
-}
-
-function isThreadTaskBoundaryMessage(message: AgentChatMessage): boolean {
-  return stringValue(message.metadata?.kind) === "thread_task_boundary";
 }
 
 function handleStatus(state: AgentConversationState, data: Record<string, unknown>): AgentConversationState {
@@ -1553,6 +1659,9 @@ function handleToolProgress(state: AgentConversationState, data: AgentToolProgre
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
   const toolName = toolNameFromData(data);
+  if (isThreadTaskToolName(toolName)) {
+    return state;
+  }
   const existing =
     view.messages.find(
       (message) =>
@@ -1566,6 +1675,7 @@ function handleToolProgress(state: AgentConversationState, data: AgentToolProgre
       return state;
     }
     applyToolProgress(existing, data, toolName);
+    applyTurnFields(existing, numberValue(data.turn_index), stringValue(data.trace_id));
   } else {
     const created: AgentChatMessage = {
       id: nextMessageId(next, "tool-progress", sessionId),
@@ -1573,6 +1683,8 @@ function handleToolProgress(state: AgentConversationState, data: AgentToolProgre
       role: "tool",
       content: "",
       timestamp: timestampFromData(data),
+      turnIndex: numberValue(data.turn_index),
+      ...(stringValue(data.trace_id) ? { traceId: stringValue(data.trace_id) } : {}),
       runId: progressRunId,
       toolCallId: data.tool_call_id,
       toolName,
@@ -2164,6 +2276,22 @@ function markTurnInProgress(view: AgentSessionViewState) {
   }
 }
 
+function isSameBusinessTurn(message: AgentChatMessage, turnIndex: number | null): boolean {
+  if (turnIndex === null || message.turnIndex === undefined || message.turnIndex === null) {
+    return true;
+  }
+  return message.turnIndex === turnIndex;
+}
+
+function applyTurnFields(message: AgentChatMessage, turnIndex: number | null, traceId: string): void {
+  if (turnIndex !== null && (message.turnIndex === undefined || message.turnIndex === null)) {
+    message.turnIndex = turnIndex;
+  }
+  if (traceId && !message.traceId) {
+    message.traceId = traceId;
+  }
+}
+
 function findSubagentTool(
   message: AgentChatMessage,
   runId: string,
@@ -2459,6 +2587,10 @@ function findMatchingProgressTool(
 
 function isCommandToolName(value: string): boolean {
   return value === "run_git_bash" || value === "run_cmd" || value === "run_powershell";
+}
+
+function isThreadTaskToolName(value: string): boolean {
+  return value === "update_thread_task" || value === "get_thread_task";
 }
 
 function commandParamsFromToolData(
@@ -3064,14 +3196,6 @@ function timestampFromData(data: object): number {
   const timestamp =
     realTimestampMs(record.messageTimeMs) ?? realTimestampMs(record.timestamp_ms) ?? realTimestampMs(record.timestamp);
   return timestamp ?? Date.now();
-}
-
-function timestampFromIso(value: unknown): number | null {
-  if (typeof value !== "string" || !value.trim()) {
-    return null;
-  }
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function realTimestampMs(value: unknown): number | null {

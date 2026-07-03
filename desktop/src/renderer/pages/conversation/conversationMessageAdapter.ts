@@ -23,8 +23,11 @@ export function agentMessageToConversationMessage(message: AgentChatMessage, ind
 }
 
 export function conversationKindFromAgent(message: AgentChatMessage): ConversationMessage["kind"] {
-  if (message.role === "system" && isThreadTaskBoundaryMessage(message)) {
-    return "thread_task_boundary";
+  if (message.role === "turn") {
+    return "turn_marker";
+  }
+  if (message.role === "thread_task") {
+    return "thread_task_status";
   }
   if (message.role === "system" && isLLMRetryMessage(message)) {
     return "llm_retry";
@@ -38,9 +41,6 @@ export function conversationKindFromAgent(message: AgentChatMessage): Conversati
     }
     if (message.toolName === "load_skill") {
       return "skill";
-    }
-    if (isThreadTaskToolName(message.toolName)) {
-      return "thread_task_status";
     }
     return isCommandToolName(message.toolName) ? "command" : "tool";
   }
@@ -69,10 +69,6 @@ function isCommandToolName(value: string | undefined): boolean {
   return value === "run_git_bash" || value === "run_cmd" || value === "run_powershell";
 }
 
-function isThreadTaskToolName(value: string | undefined): boolean {
-  return value === "update_thread_task" || value === "get_thread_task";
-}
-
 export function conversationStatusFromAgent(message: AgentChatMessage): ConversationMessage["status"] {
   if (message.cancelled) {
     return "cancelled";
@@ -92,7 +88,7 @@ export function conversationStatusFromAgent(message: AgentChatMessage): Conversa
   if (message.role === "system" && isContextCompressionMessage(message)) {
     return "completed";
   }
-  if (message.role === "system" && isThreadTaskBoundaryMessage(message)) {
+  if (message.role === "turn" || message.role === "thread_task") {
     return "completed";
   }
   if (message.role === "tool" || message.role === "assistant" || message.role === "reasoning" || message.role === "subagent") {
@@ -160,6 +156,34 @@ export function payloadFromAgentMessage(message: AgentChatMessage): Record<strin
     };
   }
 
+  if (message.role === "thread_task") {
+    const resultStatus =
+      message.status === "running" || message.streaming
+        ? "running"
+        : message.status === "cancelled"
+          ? "cancelled"
+          : message.status === "failed" || message.status === "error"
+            ? "error"
+            : "success";
+    return {
+      ...base,
+      call: {
+        id: message.toolCallId ?? message.runId,
+        name: message.toolName ?? "update_thread_task",
+        arguments: message.toolParams ?? {},
+      },
+      result: {
+        status: resultStatus,
+        model_content: "",
+        ui_payload: message.uiPayload,
+      },
+      ui_payload: message.uiPayload,
+      metadata: message.metadata,
+      messageEventId: message.messageEventId,
+      runId: message.runId,
+    };
+  }
+
   if (message.role === "approval") {
     return {
       ...base,
@@ -197,10 +221,6 @@ function isContextCompressionMessage(message: AgentChatMessage): boolean {
 function isLLMRetryMessage(message: AgentChatMessage): boolean {
   const retry = objectValue(message.metadata?.retry);
   return stringValue(retry?.kind) === "llm_retry";
-}
-
-function isThreadTaskBoundaryMessage(message: AgentChatMessage): boolean {
-  return stringValue(message.metadata?.kind) === "thread_task_boundary";
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {

@@ -263,6 +263,65 @@ async def test_context_compression_progress_projects_to_realtime_and_history(tmp
 
 
 @pytest.mark.asyncio
+async def test_thread_task_turn_markers_project_to_realtime_persistence_and_history(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    chat_adapter = RecordingChatAdapter()
+    events = [
+        _event(
+            DomainEventType.TURN_STARTED,
+            {
+                "source": "thread_task",
+                "source_label": "目标继续执行",
+                "thread_task": {
+                    "task_id": "task-1",
+                    "run_id": "run-1",
+                    "trigger": "task_continue",
+                    "type": "goal",
+                },
+            },
+            timestamp_ms=101,
+            run_id="run-1",
+            turn_index=2,
+        ),
+        _event(
+            DomainEventType.THREAD_TASK_STATUS_UPDATED,
+            {
+                "task_id": "task-1",
+                "run_id": "run-1",
+                "status": "complete",
+                "summary": "目标已完成",
+                "payload": {"status": "complete", "summary": "目标已完成"},
+                "task": {
+                    "id": "task-1",
+                    "session_id": SESSION_ID,
+                    "type": "goal",
+                    "type_label": "目标",
+                    "objective": "验证 goal 续跑",
+                    "status": "complete",
+                },
+                "ui_payload": {"task": {"id": "task-1", "type": "goal", "objective": "验证 goal 续跑"}},
+            },
+            timestamp_ms=102,
+            run_id="run-1",
+            turn_index=2,
+        ),
+    ]
+
+    await _project_events(events, repositories=repositories, chat_adapter=chat_adapter)
+
+    persisted_events = repositories.message_events.list_by_session(SESSION_ID)
+    messages = MessageEventService(repositories.message_events).get_display_messages(SESSION_ID)
+
+    assert [item["action"] for item in chat_adapter.sent] == ["turn_started", "thread_task_status"]
+    assert chat_adapter.sent[0]["data"]["thread_task"]["trigger"] == "task_continue"
+    assert chat_adapter.sent[1]["data"]["summary"] == "目标已完成"
+    assert [event.action for event in persisted_events] == ["turn_started", "thread_task_status"]
+    assert [message["role"] for message in messages] == ["turn", "thread_task"]
+    assert messages[0]["metadata"]["source"] == "thread_task"
+    assert messages[1]["metadata"]["status"] == "complete"
+
+
+@pytest.mark.asyncio
 async def test_realtime_persistence_and_history_keep_cancelled_sequence(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     chat_adapter = RecordingChatAdapter()

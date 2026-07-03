@@ -15,6 +15,7 @@ class DomainEventType(StrEnum):
     THREAD_TASK_DELETED = "thread_task.deleted"
     THREAD_TASK_RUN_STARTED = "thread_task.run.started"
     THREAD_TASK_RUN_FINISHED = "thread_task.run.finished"
+    THREAD_TASK_STATUS_UPDATED = "thread_task.status.updated"
 
     MESSAGE_USER_CREATED = "message.user.created"
     MESSAGE_SYSTEM_CREATED = "message.system.created"
@@ -100,6 +101,7 @@ CORE_EVENT_TYPES = frozenset(
         DomainEventType.THREAD_TASK_DELETED,
         DomainEventType.THREAD_TASK_RUN_STARTED,
         DomainEventType.THREAD_TASK_RUN_FINISHED,
+        DomainEventType.THREAD_TASK_STATUS_UPDATED,
         DomainEventType.MIDDLEWARE_PROGRESS,
     }
 )

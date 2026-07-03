@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from backend.app.events import DomainEvent, DomainEventType, EventDispatcher
 from backend.app.storage import StorageRepositories, init_database
 from backend.app.services import ThreadTaskService
 from backend.app.tools import ToolExecutionContext
@@ -28,15 +29,20 @@ def _context(
     repositories: StorageRepositories,
     session_id: str = "session-1",
     service: ThreadTaskService | None = None,
+    dispatcher: EventDispatcher | None = None,
+    trace_id: str | None = None,
 ):
     metadata = {"repositories": repositories}
     if service is not None:
         metadata["thread_task_service"] = service
+    if dispatcher is not None:
+        metadata["dispatcher"] = dispatcher
     return ToolExecutionContext(
         session_id=session_id,
         user_id="user-1",
         workspace_root=tmp_path,
         turn_index=3,
+        trace_id=trace_id,
         metadata=metadata,
     )
 
@@ -208,6 +214,55 @@ async def test_update_thread_task_complete_success_returns_ui_payload(tmp_path) 
     assert result.result["status"] == "complete"
     assert result.result["ui_payload"]["task"]["status"] == "complete"
     assert repositories.thread_tasks.get(task["id"]).status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_update_thread_task_complete_emits_semantic_status_event(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = ThreadTaskService(repositories)
+    task = service.create_task(session_id="session-1", type="goal", objective="完成目标")
+    run = repositories.thread_task_runs.create_running(
+        run_id="run-1",
+        task_id=task["id"],
+        session_id="session-1",
+        turn_index=3,
+        trace_id="trace-goal",
+    )
+    repositories.thread_tasks.update(task["id"], current_run_id=run.id)
+    events: list[DomainEvent] = []
+
+    async def record_event(event: DomainEvent) -> None:
+        events.append(event)
+
+    dispatcher = EventDispatcher([record_event])
+    tool = {tool.name: tool for tool in create_thread_task_tools()}["update_thread_task"]
+
+    result = await tool.run(
+        {
+            "status": "complete",
+            "summary": "目标已完成",
+            "checklist": [{"item": "目标", "status": "passed", "evidence": "pytest"}],
+            "evidence": [{"type": "test", "summary": "pytest passed"}],
+        },
+        _context(
+            tmp_path,
+            repositories,
+            service=service,
+            dispatcher=dispatcher,
+            trace_id="trace-goal",
+        ),
+    )
+
+    assert result.ok is True
+    assert len(events) == 1
+    assert events[0].event_type == DomainEventType.THREAD_TASK_STATUS_UPDATED.value
+    assert events[0].trace_id == "trace-goal"
+    assert events[0].turn_index == 3
+    assert events[0].run_id == run.id
+    assert events[0].payload["task_id"] == task["id"]
+    assert events[0].payload["run_id"] == run.id
+    assert events[0].payload["status"] == "complete"
+    assert events[0].payload["summary"] == "目标已完成"
 
 
 @pytest.mark.asyncio

@@ -94,6 +94,17 @@ async def test_persistence_projection_persists_thread_task_replay_actions(tmp_pa
             {"task_id": "task-1", "run_id": "run-1", "run": {"status": "succeeded"}},
         )
     )
+    await projection.handle(
+        _event(
+            DomainEventType.THREAD_TASK_STATUS_UPDATED,
+            {
+                "task_id": "task-1",
+                "run_id": "run-1",
+                "status": "complete",
+                "summary": "目标已完成",
+            },
+        )
+    )
 
     events = repositories.message_events.list_by_session("ses_persist")
 
@@ -102,11 +113,41 @@ async def test_persistence_projection_persists_thread_task_replay_actions(tmp_pa
         "task_updated",
         "task_run_started",
         "task_run_finished",
+        "thread_task_status",
     ]
     assert events[0].data["_canonical"]["event_type"] == "thread_task.deleted"
     assert events[1].data["task"]["status"] == "active"
     assert events[2].data["run_id"] == "run-1"
     assert events[3].data["run"]["status"] == "succeeded"
+    assert events[4].data["summary"] == "目标已完成"
+
+
+@pytest.mark.asyncio
+async def test_persistence_projection_persists_turn_started_for_history_markers(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    projection = PersistenceProjection(
+        repository=repositories.message_events,
+        session_id="ses_persist",
+        turn_index=1,
+    )
+
+    await projection.handle(
+        _event(
+            DomainEventType.TURN_STARTED,
+            {
+                "source": "thread_task",
+                "source_label": "目标继续执行",
+                "thread_task": {"trigger": "task_continue", "type": "goal", "task_id": "task-1"},
+            },
+        )
+    )
+
+    events = repositories.message_events.list_by_session("ses_persist")
+
+    assert [event.action for event in events] == ["turn_started"]
+    assert events[0].data["source"] == "thread_task"
+    assert events[0].data["thread_task"]["type"] == "goal"
+    assert events[0].data["_canonical"]["event_type"] == "turn.started"
 
 
 @pytest.mark.asyncio

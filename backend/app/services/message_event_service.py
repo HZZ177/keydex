@@ -116,6 +116,25 @@ class MessageEventService:
                 messages.append(message)
                 continue
 
+            if action == ReplayAction.TURN_STARTED.value:
+                messages.append(
+                    {
+                        "role": "turn",
+                        "content": "",
+                        "timestamp": self._event_timestamp_ms(event),
+                        "messageEventId": event.id,
+                        "turnIndex": event.turn_index,
+                        "traceId": data.get("trace_id"),
+                        "metadata": {
+                            "kind": "turn_started",
+                            "source": data.get("source") or "user",
+                            "source_label": data.get("source_label") or "",
+                            "thread_task": data.get("thread_task"),
+                        },
+                    }
+                )
+                continue
+
             if action == ReplayAction.SYSTEM_MESSAGE.value:
                 if self._is_hidden_internal_system_message(data):
                     continue
@@ -126,6 +145,30 @@ class MessageEventService:
                         "timestamp": self._event_timestamp_ms(event),
                         "messageEventId": event.id,
                         "turnIndex": event.turn_index,
+                    }
+                )
+                continue
+
+            if action == ReplayAction.THREAD_TASK_STATUS.value:
+                messages.append(
+                    {
+                        "role": "thread_task",
+                        "content": "",
+                        "timestamp": self._event_timestamp_ms(event),
+                        "messageEventId": event.id,
+                        "turnIndex": event.turn_index,
+                        "traceId": data.get("trace_id"),
+                        "toolName": "update_thread_task",
+                        "toolParams": data.get("payload") or {},
+                        "uiPayload": data.get("ui_payload") or {"task": data.get("task")},
+                        "status": "completed",
+                        "metadata": {
+                            "kind": "thread_task_status",
+                            "task_id": data.get("task_id"),
+                            "run_id": data.get("run_id"),
+                            "status": data.get("status"),
+                            "summary": data.get("summary"),
+                        },
                     }
                 )
                 continue

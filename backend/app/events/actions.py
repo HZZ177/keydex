@@ -29,6 +29,8 @@ class ChatAction(StrEnum):
     TASK_DELETED = "task_deleted"
     TASK_RUN_STARTED = "task_run_started"
     TASK_RUN_FINISHED = "task_run_finished"
+    TURN_STARTED = "turn_started"
+    THREAD_TASK_STATUS = "thread_task_status"
     REASONING = "reasoning"
     MIDDLEWARE_PROGRESS = "middleware_progress"
 
@@ -54,6 +56,8 @@ class ReplayAction(StrEnum):
     TASK_DELETED = "task_deleted"
     TASK_RUN_STARTED = "task_run_started"
     TASK_RUN_FINISHED = "task_run_finished"
+    TURN_STARTED = "turn_started"
+    THREAD_TASK_STATUS = "thread_task_status"
     REASONING = "reasoning"
     MIDDLEWARE_PROGRESS = "middleware_progress"
 

@@ -661,6 +661,7 @@ export function MessageList({
           >
             {renderMessageTurn({
               turn,
+              hideThreadTaskStatusSummary: isProcessing && index === displayTurns.length - 1,
               focusFlash: index === flashingTurnIndex,
               renderMessage,
               assistantTurnFooters,
@@ -708,6 +709,7 @@ export function MessageList({
       itemContent={(index, turn) =>
         renderMessageTurn({
           turn,
+          hideThreadTaskStatusSummary: isProcessing && index === displayTurns.length - 1,
           focusFlash: index === flashingTurnIndex,
           renderMessage,
           assistantTurnFooters,
@@ -882,6 +884,7 @@ function renderTopNotice(notice: MessageListTopNotice | null): ReactNode {
 
 function renderMessageTurn({
   turn,
+  hideThreadTaskStatusSummary = false,
   focusFlash = false,
   renderMessage,
   assistantTurnFooters,
@@ -900,6 +903,7 @@ function renderMessageTurn({
   onReverseFromMessage,
 }: {
   turn: MessageTurn;
+  hideThreadTaskStatusSummary?: boolean;
   focusFlash?: boolean;
   renderMessage?: (message: ConversationMessage) => ReactNode;
   assistantTurnFooters: AssistantTurnFooters;
@@ -917,8 +921,8 @@ function renderMessageTurn({
   showForkSourceMarkers: boolean;
   onReverseFromMessage?: (message: ConversationMessage) => void;
 }) {
-  const statusMessages = threadTaskStatusMessagesFromTurn(turn);
-  const renderableItems = turn.items.filter((item) => !isThreadTaskStatusItem(item));
+  const statusMessages = hideThreadTaskStatusSummary ? [] : threadTaskStatusMessagesFromTurn(turn);
+  const renderableItems = turn.items.filter((item) => !isThreadTaskStatusItem(item) && !isTurnMarkerItem(item));
   const focusAssistantItemId = focusFlash ? findLastAssistantItemId(renderableItems) : null;
   const renderedItems = renderableItems.map((item) => (
     <div
@@ -969,9 +973,9 @@ function renderMessageTurn({
   return [
     <div
       className={styles.item}
-      data-kind="thread_task_boundary"
+      data-kind="thread_task_continue"
       role="listitem"
-      key={`${turn.id}:thread-task-boundary`}
+      key={`${turn.id}:thread-task-continue`}
     >
       <ThreadTaskContinuationNotice />
     </div>,
@@ -1248,8 +1252,8 @@ function DefaultMessage({
   if (message.kind === "context_compression") {
     return <ContextCompressionNotice message={message} />;
   }
-  if (message.kind === "thread_task_boundary") {
-    return <ThreadTaskContinuationNotice />;
+  if (message.kind === "turn_marker") {
+    return null;
   }
   if (message.kind === "llm_retry") {
     return <LLMRetryNotice message={message} />;
@@ -1455,6 +1459,7 @@ function findVisibleTurnNavigationIndexes(
 interface MessageTurn {
   id: string;
   items: ProcessedMessageItem[];
+  turnMarker: ConversationMessage | null;
   showThreadTaskContinuationNotice: boolean;
 }
 
@@ -1471,54 +1476,60 @@ function groupDisplayItemsByTurn(displayItems: ProcessedMessageItem[]): MessageT
   const turns: MessageTurn[] = [];
   let items: ProcessedMessageItem[] = [];
   let turnBusinessIndex: number | null = null;
-  let hasThreadTaskContinuation = false;
-  let threadTaskContinuationKey: string | null = null;
+  let turnMarker: ConversationMessage | null = null;
 
   const flush = () => {
     if (!items.length) {
+      turnMarker = null;
+      turnBusinessIndex = null;
       return;
     }
     turns.push({
-      id: turnIdFromItems(items),
+      id: turnIdFromItems(items, turnMarker),
       items,
-      showThreadTaskContinuationNotice:
-        hasThreadTaskContinuation && !items.some(isThreadTaskBoundaryItem),
+      turnMarker,
+      showThreadTaskContinuationNotice: isGoalContinuationTurnMarker(turnMarker),
     });
     items = [];
     turnBusinessIndex = null;
-    hasThreadTaskContinuation = false;
-    threadTaskContinuationKey = null;
+    turnMarker = null;
   };
 
   displayItems.forEach((item) => {
-    if (isThreadTaskBoundaryItem(item)) {
-      flush();
-      items.push(item);
-      hasThreadTaskContinuation = true;
-      threadTaskContinuationKey = threadTaskContinuationKeyFromItem(item);
+    if (isTurnMarkerItem(item)) {
+      const markerTurnIndex = messageBusinessTurnIndex(item.message);
+      if (isGoalContinuationTurnMarker(item.message)) {
+        flush();
+        turnMarker = item.message;
+        turnBusinessIndex = markerTurnIndex;
+        return;
+      }
+      if (
+        items.length &&
+        markerTurnIndex !== null &&
+        turnBusinessIndex !== null &&
+        markerTurnIndex !== turnBusinessIndex
+      ) {
+        flush();
+      }
+      turnMarker = item.message;
+      if (markerTurnIndex !== null) {
+        turnBusinessIndex = markerTurnIndex;
+      }
       return;
     }
-    const itemTurnIndex = itemBusinessTurnIndex(item);
-    const itemThreadTaskContinuationKey = threadTaskContinuationKeyFromItem(item);
-    if (item.type === "message" && item.message.kind === "user") {
+
+    if (isUserItem(item)) {
       flush();
-    } else if (
+    }
+    const itemTurnIndex = itemBusinessTurnIndex(item);
+    if (
       items.length &&
       itemTurnIndex !== null &&
       turnBusinessIndex !== null &&
       itemTurnIndex !== turnBusinessIndex
     ) {
       flush();
-    } else if (
-      itemThreadTaskContinuationKey &&
-      items.some((candidate) => !isThreadTaskBoundaryItem(candidate)) &&
-      threadTaskContinuationKey !== itemThreadTaskContinuationKey
-    ) {
-      flush();
-    }
-    if (isThreadTaskContinuationItem(item)) {
-      hasThreadTaskContinuation = true;
-      threadTaskContinuationKey = itemThreadTaskContinuationKey;
     }
     items.push(item);
     if (itemTurnIndex !== null) {
@@ -1528,6 +1539,10 @@ function groupDisplayItemsByTurn(displayItems: ProcessedMessageItem[]): MessageT
   flush();
 
   return turns;
+}
+
+function isUserItem(item: ProcessedMessageItem): boolean {
+  return item.type === "message" && item.message.kind === "user";
 }
 
 function itemBusinessTurnIndex(item: ProcessedMessageItem): number | null {
@@ -1540,48 +1555,25 @@ function itemBusinessTurnIndex(item: ProcessedMessageItem): number | null {
   return null;
 }
 
-function isThreadTaskBoundaryItem(item: ProcessedMessageItem): boolean {
-  return item.type === "message" && item.message.kind === "thread_task_boundary";
+function isTurnMarkerItem(item: ProcessedMessageItem): item is Extract<ProcessedMessageItem, { type: "message" }> {
+  return item.type === "message" && item.message.kind === "turn_marker";
 }
 
-function isThreadTaskBoundaryMessage(message: ConversationMessage): boolean {
-  return message.kind === "thread_task_boundary";
-}
-
-function isThreadTaskContinuationItem(item: ProcessedMessageItem): boolean {
-  return messagesFromProcessedItem(item).some(isThreadTaskContinuationMessage);
-}
-
-function isThreadTaskContinuationMessage(message: ConversationMessage): boolean {
-  const threadTask = threadTaskContextFromMessage(message);
-  return stringRecordValue(threadTask?.trigger) === "task_continue";
-}
-
-function threadTaskContinuationKeyFromItem(item: ProcessedMessageItem): string {
-  for (const message of messagesFromProcessedItem(item)) {
-    const key = threadTaskContinuationKeyFromMessage(message);
-    if (key) {
-      return key;
-    }
+function isGoalContinuationTurnMarker(message: ConversationMessage | null): boolean {
+  if (!message || message.kind !== "turn_marker") {
+    return false;
   }
-  return "";
-}
-
-function threadTaskContinuationKeyFromMessage(message: ConversationMessage): string {
-  const threadTask = threadTaskContextFromMessage(message);
-  if (stringRecordValue(threadTask?.trigger) !== "task_continue") {
-    return "";
-  }
+  const metadata = recordValue(message.payload.metadata);
+  const source = stringRecordValue(metadata?.source) || stringRecordValue(message.payload.source);
+  const threadTask = turnMarkerThreadTaskContext(message);
   return (
-    stringRecordValue(threadTask?.run_id) ||
-    stringRecordValue(threadTask?.runId) ||
-    stringRecordValue(threadTask?.task_id) ||
-    stringRecordValue(threadTask?.taskId) ||
-    message.id
+    source === "thread_task" &&
+    stringRecordValue(threadTask?.trigger) === "task_continue" &&
+    stringRecordValue(threadTask?.type) === "goal"
   );
 }
 
-function threadTaskContextFromMessage(message: ConversationMessage): Record<string, unknown> | null {
+function turnMarkerThreadTaskContext(message: ConversationMessage): Record<string, unknown> | null {
   const metadata = recordValue(message.payload.metadata);
   const runtimeParams =
     recordValue(message.payload.runtime_params) ??
@@ -1598,9 +1590,9 @@ function threadTaskContextFromMessage(message: ConversationMessage): Record<stri
   );
 }
 
-function turnIdFromItems(items: ProcessedMessageItem[]): string {
+function turnIdFromItems(items: ProcessedMessageItem[], turnMarker?: ConversationMessage | null): string {
   const firstUserItem = items.find((item) => item.type === "message" && item.message.kind === "user");
-  return `turn:${firstUserItem?.id ?? items[0].id}`;
+  return `turn:${firstUserItem?.id ?? turnMarker?.id ?? items[0].id}`;
 }
 
 function buildTurnNavigationItems(turns: MessageTurn[]): ConversationTurnNavigationItem[] {
@@ -1870,7 +1862,12 @@ function collectTurnEndStreamingCursor(
   const itemIdByMessageId = mapMessageIdsToDisplayItems(activeTurn.items);
   const laterDisplayMessages = activeTurnMessages
     .slice(streamingAssistantIndex + 1)
-    .filter((message) => message.kind !== "thread_task_status" && itemIdByMessageId.has(message.id));
+    .filter(
+      (message) =>
+        message.kind !== "thread_task_status" &&
+        message.kind !== "turn_marker" &&
+        itemIdByMessageId.has(message.id),
+    );
   if (!laterDisplayMessages.length) {
     return empty;
   }
@@ -1897,7 +1894,7 @@ function lastFooterAnchorItemId(items: ProcessedMessageItem[]): string | null {
     }
     if (
       item.type === "message" &&
-      (item.message.kind === "thread_task_status" || isThreadTaskBoundaryMessage(item.message))
+      (item.message.kind === "thread_task_status" || item.message.kind === "turn_marker")
     ) {
       continue;
     }

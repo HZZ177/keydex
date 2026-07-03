@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.app.events import DomainEventType, EventDispatcher
 from backend.app.services.thread_task_service import (
     ThreadTaskService,
     ThreadTaskServiceError,
@@ -204,6 +205,14 @@ async def update_thread_task_tool(
             details={"session_id": context.session_id, "task_id": current["id"]},
         ) from exc
 
+    await _emit_thread_task_status_updated(
+        context=context,
+        task=task,
+        status=status,
+        summary=summary,
+        payload=payload,
+        run_id=str(current.get("current_run_id") or task.get("current_run_id") or ""),
+    )
     return {
         "task_id": task["id"],
         "status": task["status"],
@@ -212,6 +221,43 @@ async def update_thread_task_tool(
         "session_id": context.session_id,
         "turn_index": context.turn_index,
     }
+
+
+async def _emit_thread_task_status_updated(
+    *,
+    context: ToolExecutionContext,
+    task: dict[str, Any],
+    status: str,
+    summary: str,
+    payload: dict[str, Any],
+    run_id: str,
+) -> None:
+    dispatcher = context.metadata.get("dispatcher")
+    if not isinstance(dispatcher, EventDispatcher):
+        return
+    await dispatcher.emit_event(
+        event_type=DomainEventType.THREAD_TASK_STATUS_UPDATED.value,
+        source="thread_task_tool",
+        payload={
+            "session_id": context.session_id,
+            "turn_index": context.turn_index,
+            "trace_id": context.trace_id,
+            "task_id": task.get("id"),
+            "run_id": run_id or None,
+            "type": task.get("type") or "goal",
+            "status": status,
+            "summary": summary,
+            "payload": payload,
+            "task": task,
+            "ui_payload": {"task": task},
+        },
+        trace_id=context.trace_id,
+        user_id=context.user_id,
+        original_session_id=context.session_id,
+        active_session_id=context.session_id,
+        run_id=run_id or None,
+        turn_index=context.turn_index,
+    )
 
 
 def _repositories_from_context(context: ToolExecutionContext) -> Any:

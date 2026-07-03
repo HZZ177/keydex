@@ -71,17 +71,53 @@ async def test_chat_projection_maps_thread_task_events_to_task_actions() -> None
             {"task_id": "task-1", "run_id": "run-1", "run": {"status": "succeeded"}},
         )
     )
+    await projection.handle(
+        _event(
+            DomainEventType.THREAD_TASK_STATUS_UPDATED,
+            {
+                "task_id": "task-1",
+                "run_id": "run-1",
+                "status": "complete",
+                "summary": "目标已完成",
+            },
+        )
+    )
 
     assert [item["action"] for item in adapter.sent] == [
         "task_updated",
         "task_deleted",
         "task_run_started",
         "task_run_finished",
+        "thread_task_status",
     ]
     assert adapter.sent[0]["data"]["task"]["status"] == "active"
     assert adapter.sent[1]["data"]["task"]["deleted_at"] == "now"
     assert adapter.sent[2]["data"]["run"]["status"] == "running"
     assert adapter.sent[3]["data"]["run_id"] == "run-1"
+    assert adapter.sent[4]["data"]["summary"] == "目标已完成"
+
+
+@pytest.mark.asyncio
+async def test_chat_projection_maps_turn_started_to_realtime_turn_marker() -> None:
+    adapter = RecordingChatAdapter()
+    projection = ChatProjection(adapter)
+
+    await projection.handle(
+        _event(
+            DomainEventType.TURN_STARTED,
+            {
+                "source": "thread_task",
+                "source_label": "目标继续执行",
+                "thread_task": {"trigger": "task_continue", "type": "goal", "task_id": "task-1"},
+            },
+        )
+    )
+
+    assert adapter.sent[0]["action"] == "turn_started"
+    assert adapter.sent[0]["data"]["source"] == "thread_task"
+    assert adapter.sent[0]["data"]["source_label"] == "目标继续执行"
+    assert adapter.sent[0]["data"]["turn_index"] == 1
+    assert adapter.sent[0]["data"]["trace_id"] == "trace_1"
 
 
 @pytest.mark.asyncio

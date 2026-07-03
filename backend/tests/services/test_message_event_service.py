@@ -124,6 +124,64 @@ def test_message_event_service_splits_thread_task_continuation_turns(tmp_path) -
     }
 
 
+def test_message_event_service_restores_thread_task_semantic_events(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_turn",
+        "turn_started",
+        {
+            "source": "thread_task",
+            "source_label": "目标继续执行",
+            "thread_task": {
+                "task_id": "task-1",
+                "run_id": "run-1",
+                "trigger": "task_continue",
+                "type": "goal",
+            },
+            "trace_id": "trace-2",
+        },
+        turn=2,
+    )
+    _append(
+        repositories,
+        "evt_status",
+        "thread_task_status",
+        {
+            "task_id": "task-1",
+            "run_id": "run-1",
+            "status": "complete",
+            "summary": "目标已完成",
+            "payload": {"status": "complete", "summary": "目标已完成"},
+            "task": {
+                "id": "task-1",
+                "session_id": "ses_history",
+                "type": "goal",
+                "type_label": "目标",
+                "objective": "验证目标续跑",
+                "status": "complete",
+            },
+            "ui_payload": {"task": {"id": "task-1", "type": "goal", "objective": "验证目标续跑"}},
+            "trace_id": "trace-2",
+        },
+        turn=2,
+    )
+
+    messages = service.get_display_messages("ses_history")
+
+    assert [message["role"] for message in messages] == ["turn", "thread_task"]
+    assert messages[0]["turnIndex"] == 2
+    assert messages[0]["traceId"] == "trace-2"
+    assert messages[0]["metadata"]["source"] == "thread_task"
+    assert messages[0]["metadata"]["thread_task"]["trigger"] == "task_continue"
+    assert messages[1]["toolName"] == "update_thread_task"
+    assert messages[1]["toolParams"] == {"status": "complete", "summary": "目标已完成"}
+    assert messages[1]["uiPayload"]["task"]["objective"] == "验证目标续跑"
+    assert messages[1]["metadata"]["status"] == "complete"
+
+
 def test_message_event_service_restores_llm_retry_notice(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)

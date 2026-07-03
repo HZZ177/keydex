@@ -27,12 +27,14 @@ class ChatProjection:
         DomainEventType.SUBAGENT_FAILED: ChatAction.SUBAGENT_ERROR,
         DomainEventType.TURN_CANCELLED: ChatAction.CANCELLED,
         DomainEventType.TURN_FAILED: ChatAction.ERROR,
+        DomainEventType.TURN_STARTED: ChatAction.TURN_STARTED,
         DomainEventType.TURN_COMPLETED: ChatAction.COMPLETED,
         DomainEventType.TASK_FINISHED_CHAT: ChatAction.TASK_RESULT,
         DomainEventType.THREAD_TASK_UPDATED: ChatAction.TASK_UPDATED,
         DomainEventType.THREAD_TASK_DELETED: ChatAction.TASK_DELETED,
         DomainEventType.THREAD_TASK_RUN_STARTED: ChatAction.TASK_RUN_STARTED,
         DomainEventType.THREAD_TASK_RUN_FINISHED: ChatAction.TASK_RUN_FINISHED,
+        DomainEventType.THREAD_TASK_STATUS_UPDATED: ChatAction.THREAD_TASK_STATUS,
         DomainEventType.REASONING_STREAM: ChatAction.REASONING,
         DomainEventType.REASONING_FINISHED: ChatAction.REASONING,
         DomainEventType.SESSION_TITLE_UPDATED: ChatAction.SESSION_TITLE_UPDATED,
@@ -59,6 +61,8 @@ class ChatProjection:
 
         payload = dict(event.payload or {})
         payload.setdefault("session_id", session_id)
+        payload.setdefault("trace_id", event.trace_id)
+        payload.setdefault("turn_index", event.turn_index)
         payload.setdefault("timestamp_ms", event.timestamp_ms)
         sent = await self.adapter.send(session_id=session_id, action=action.value, data=payload)
         logger.debug(

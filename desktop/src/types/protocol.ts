@@ -452,6 +452,7 @@ export const AGENT_CHAT_ACTIONS = [
   "tool_start",
   "tool_progress",
   "tool_end",
+  "turn_started",
   "approval_requested",
   "approval_resolved",
   "subagent_start",
@@ -467,6 +468,7 @@ export const AGENT_CHAT_ACTIONS = [
   "task_deleted",
   "task_run_started",
   "task_run_finished",
+  "thread_task_status",
   "reasoning",
   "middleware_progress",
   "workspaceSkillsChanged",
@@ -482,6 +484,7 @@ export const AGENT_REPLAY_ACTIONS = [
   "stream_batch",
   "tool_start",
   "tool_end",
+  "turn_started",
   "approval_requested",
   "approval_resolved",
   "subagent_start",
@@ -496,6 +499,7 @@ export const AGENT_REPLAY_ACTIONS = [
   "task_deleted",
   "task_run_started",
   "task_run_finished",
+  "thread_task_status",
   "reasoning",
   "middleware_progress",
 ] as const;
@@ -530,7 +534,17 @@ export type AgentInboundAction = (typeof AGENT_INBOUND_ACTIONS)[number];
 
 export type AgentSessionType = "chat" | "workspace";
 export type AgentSessionStatus = "active" | "running" | "waiting_approval" | "closed" | "failed";
-export type AgentChatRole = "user" | "assistant" | "tool" | "system" | "subagent" | "reasoning" | "approval" | "error";
+export type AgentChatRole =
+  | "user"
+  | "assistant"
+  | "tool"
+  | "system"
+  | "subagent"
+  | "reasoning"
+  | "approval"
+  | "error"
+  | "turn"
+  | "thread_task";
 export type AgentToolStatus = "running" | "completed" | "error" | "cancelled";
 export type AgentReasoningKind = "initial_response" | "status_update" | "progress_fact" | (string & {});
 export type ThreadTaskType = "goal" | (string & {});
@@ -903,6 +917,7 @@ export interface AgentStreamActionData {
   subagent_id?: string | null;
   trace_id?: string;
   trace_record_id?: string;
+  turn_index?: number | null;
 }
 
 export interface AgentToolEventData {
@@ -926,9 +941,36 @@ export interface AgentToolEventData {
   subagent_id?: string | null;
   trace_id?: string;
   trace_record_id?: string;
+  turn_index?: number | null;
   node_id?: string;
   input_data?: Record<string, unknown>;
   output_data?: Record<string, unknown>;
+}
+
+export interface AgentTurnStartedData {
+  session_id: string;
+  turn_index: number;
+  trace_id?: string | null;
+  source?: "user" | "thread_task" | string;
+  source_label?: string | null;
+  thread_task?: Record<string, unknown> | null;
+  runtime_params?: Record<string, unknown>;
+  timestamp_ms?: number;
+}
+
+export interface AgentThreadTaskStatusData {
+  session_id: string;
+  turn_index: number;
+  trace_id?: string | null;
+  task_id?: string | null;
+  run_id?: string | null;
+  type?: ThreadTaskType;
+  status?: ThreadTaskStatus | "complete" | "blocked" | string;
+  summary?: string;
+  payload?: Record<string, unknown>;
+  task?: ThreadTask | Record<string, unknown> | null;
+  ui_payload?: Record<string, unknown>;
+  timestamp_ms?: number;
 }
 
 export interface AgentToolProgressData extends Omit<AgentToolEventData, "duration_ms" | "result"> {
@@ -945,6 +987,7 @@ export interface AgentReasoningData {
   text?: string;
   done?: boolean;
   trace_id?: string;
+  turn_index?: number | null;
   cancel_main?: boolean;
 }
 
@@ -1000,6 +1043,7 @@ export interface AgentCompletedPayload {
   user_id?: string;
   trace_id?: string;
   trace_record_id?: string;
+  turn_index?: number | null;
   status: "completed" | "cancelled" | "failed";
   events: AgentCompletedEventItem[];
   chain_token_usage?: AgentTokenUsage;
@@ -1026,6 +1070,7 @@ export interface AgentErrorData {
   error?: string;
   details?: Record<string, unknown>;
   trace_id?: string;
+  turn_index?: number | null;
   thread_task?: Record<string, unknown>;
   threadTask?: Record<string, unknown>;
 }

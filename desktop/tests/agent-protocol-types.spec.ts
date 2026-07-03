@@ -9,7 +9,9 @@ import {
   type AgentChatMessage,
   type AgentCompletedPayload,
   type AgentSession,
+  type AgentThreadTaskStatusData,
   type AgentToolEventData,
+  type AgentTurnStartedData,
   type ThreadTask,
   type ThreadTaskEventData,
   type ThreadTaskRun,
@@ -30,10 +32,14 @@ describe("agent protocol types", () => {
     expect(AGENT_CHAT_ACTIONS).toContain("task_deleted");
     expect(AGENT_CHAT_ACTIONS).toContain("task_run_started");
     expect(AGENT_CHAT_ACTIONS).toContain("task_run_finished");
+    expect(AGENT_CHAT_ACTIONS).toContain("turn_started");
+    expect(AGENT_CHAT_ACTIONS).toContain("thread_task_status");
     expect(AGENT_REPLAY_ACTIONS).toContain("stream_batch");
     expect(AGENT_REPLAY_ACTIONS).toContain("reasoning");
     expect(AGENT_REPLAY_ACTIONS).toContain("task_updated");
     expect(AGENT_REPLAY_ACTIONS).toContain("task_run_finished");
+    expect(AGENT_REPLAY_ACTIONS).toContain("turn_started");
+    expect(AGENT_REPLAY_ACTIONS).toContain("thread_task_status");
     expect(AGENT_COMPLETED_EVENT_ITEM_ACTIONS).toEqual([
       "ai_message",
       "tool_start",
@@ -114,6 +120,12 @@ describe("agent protocol types", () => {
       }),
       message("reasoning", "正在分析", { reasoningKind: "progress_fact" }),
       message("error", "模型失败", { traceId: "trace_failed" }),
+      message("turn", "", { turnIndex: 3, metadata: { kind: "turn_started", source: "thread_task" } }),
+      message("thread_task", "目标已完成", {
+        toolName: "update_thread_task",
+        toolParams: { status: "complete" },
+        uiPayload: { task: { id: "task_1", type: "goal" } },
+      }),
     ] satisfies AgentChatMessage[];
 
     expect(session.status).toBe("running");
@@ -125,6 +137,8 @@ describe("agent protocol types", () => {
       "subagent",
       "reasoning",
       "error",
+      "turn",
+      "thread_task",
     ]);
     expect(messages[0].attachments?.[0].name).toBe("REQ.md");
     expect(messages[1].ghostStats?.traceId).toBe("trace_1");
@@ -273,11 +287,40 @@ describe("agent protocol types", () => {
         turn_index: 3,
       },
     } satisfies AgentActionEnvelope<"task_run_finished", ThreadTaskRunEventData>;
+    const turnStarted = {
+      action: "turn_started",
+      data: {
+        session_id: "ses_1",
+        turn_index: 3,
+        trace_id: "trace_1",
+        source: "thread_task",
+        source_label: "目标继续执行",
+        thread_task: { task_id: task.id, run_id: run.id, trigger: "task_continue", type: "goal" },
+      },
+    } satisfies AgentActionEnvelope<"turn_started", AgentTurnStartedData>;
+    const statusUpdated = {
+      action: "thread_task_status",
+      data: {
+        session_id: "ses_1",
+        turn_index: 3,
+        trace_id: "trace_1",
+        task_id: task.id,
+        run_id: run.id,
+        type: "goal",
+        status: "complete",
+        summary: "目标已完成",
+        payload: { status: "complete", summary: "目标已完成" },
+        task: { ...task, status: "complete" },
+        ui_payload: { task: { ...task, status: "complete" } },
+      },
+    } satisfies AgentActionEnvelope<"thread_task_status", AgentThreadTaskStatusData>;
 
     expect(updated.data.task?.status).toBe("active");
     expect(runStarted.data.run.status).toBe("running");
     expect(deleted.data.task?.deleted_at).toBe("2026-07-03T00:02:00Z");
     expect(runFinished.data.run.status).toBe("succeeded");
+    expect(turnStarted.data.thread_task?.trigger).toBe("task_continue");
+    expect(statusUpdated.data.summary).toBe("目标已完成");
   });
 });
 

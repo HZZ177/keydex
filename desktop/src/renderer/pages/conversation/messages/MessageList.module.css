@@ -172,7 +172,7 @@
 }
 
 .item[data-kind="context_compression"],
-.item[data-kind="thread_task_boundary"],
+.item[data-kind="thread_task_continue"],
 .item[data-kind="llm_retry"],
 .item[data-kind="cancelled"] {
   padding-bottom: 18px;

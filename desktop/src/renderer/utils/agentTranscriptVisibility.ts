@@ -3,7 +3,7 @@ import type { AgentChatMessage, AgentChatMessagePayload } from "@/types/protocol
 type TranscriptMessage = AgentChatMessage | AgentChatMessagePayload;
 
 export function shouldDisplayAgentTranscriptMessage(message: TranscriptMessage): boolean {
-  return !isHiddenForTranscript(message) && !isTaskContinuationUserMessage(message);
+  return !isHiddenForTranscript(message) && !isTaskContinuationUserMessage(message) && !isThreadTaskToolMessage(message);
 }
 
 function isHiddenForTranscript(message: TranscriptMessage): boolean {
@@ -23,6 +23,24 @@ function isTaskContinuationUserMessage(message: TranscriptMessage): boolean {
   }
   const threadTask = threadTaskRuntimeContext(message);
   return stringValue(threadTask?.trigger) === "task_continue";
+}
+
+function isThreadTaskToolMessage(message: TranscriptMessage): boolean {
+  if (message.role !== "tool") {
+    return false;
+  }
+  const root = objectValue(message);
+  const payload = objectValue(root?.payload);
+  const call = objectValue(payload?.call);
+  const metadata = objectValue(message.metadata);
+  const toolName =
+    stringValue(root?.toolName) ||
+    stringValue(root?.tool_name) ||
+    stringValue(root?.tool) ||
+    stringValue(call?.name) ||
+    stringValue(metadata?.toolName) ||
+    stringValue(metadata?.tool_name);
+  return toolName === "update_thread_task" || toolName === "get_thread_task";
 }
 
 function threadTaskRuntimeContext(message: TranscriptMessage): Record<string, unknown> | null {

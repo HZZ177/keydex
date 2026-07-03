@@ -293,6 +293,10 @@ def _build_thread_task_runtime_context(
     }
 
 
+def _is_goal_thread_task_context(context: dict[str, Any] | None) -> bool:
+    return bool(context and context.get("trigger") == "task_continue" and context.get("type") == "goal")
+
+
 def _build_skill_activation_request(
     runtime_params: dict[str, Any] | None,
 ) -> SkillActivationRequest | None:
@@ -1557,6 +1561,9 @@ class ChatService:
         root_node_id: str,
         turn_index: int,
     ) -> None:
+        thread_task_context = _build_thread_task_runtime_context(request.runtime_params)
+        turn_source = "thread_task" if thread_task_context else "user"
+        source_label = "目标继续执行" if _is_goal_thread_task_context(thread_task_context) else ""
         await dispatcher.emit_event(
             event_type=DomainEventType.TURN_STARTED.value,
             source="chat_service",
@@ -1568,6 +1575,9 @@ class ChatService:
                 "scene_name": self.settings.default_scene_name,
                 "root_node_id": root_node_id,
                 "turn_index": turn_index,
+                "source": turn_source,
+                "source_label": source_label,
+                "thread_task": thread_task_context,
                 "user_id": request.user_id or session.user_id,
                 "user_message": request.message,
                 "runtime_params": request.runtime_params,

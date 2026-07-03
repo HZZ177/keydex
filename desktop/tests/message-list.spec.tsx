@@ -112,7 +112,7 @@ describe("MessageList", () => {
     const compressionNotice = message("m1", "context_compression", "无感压缩已完成");
     const cancelledNotice = message("m2", "cancelled", "对话已取消");
     const retryNotice = message("m4", "llm_retry", "LLM 请求正在重试 1/3");
-    const threadTaskNotice = message("m5", "thread_task_boundary", "目标继续执行");
+    const threadTaskNotice = goalTurnMarker("m5", 2);
     const forkedAssistant = {
       ...message("m3", "assistant", "派生后的回答"),
       payload: {
@@ -142,7 +142,7 @@ describe("MessageList", () => {
     expect(screen.getByTestId("message-fork-marker").querySelector("svg")).toBeNull();
   });
 
-  it("renders a goal continuation divider from historical assistant metadata", () => {
+  it("renders a goal continuation divider from a turn marker event", () => {
     render(
       <MessageList
         messages={[
@@ -154,6 +154,25 @@ describe("MessageList", () => {
             ...message("m2", "assistant", "第一轮回复"),
             payload: { turnIndex: 1, turn_index: 1 },
           },
+          goalTurnMarker("m3", 2),
+          {
+            ...message("m4", "assistant", "第二轮续跑回复"),
+            payload: { turnIndex: 2, turn_index: 2 },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
+    expect(screen.getAllByTestId("message-turn")).toHaveLength(2);
+  });
+
+  it("does not render a goal continuation divider from assistant metadata alone", () => {
+    render(
+      <MessageList
+        messages={[
+          message("m1", "user", "启动目标"),
+          message("m2", "assistant", "第一轮回复"),
           {
             ...message("m3", "assistant", "第二轮续跑回复"),
             payload: {
@@ -165,6 +184,7 @@ describe("MessageList", () => {
                     task_id: "task-1",
                     run_id: "run-1",
                     trigger: "task_continue",
+                    type: "goal",
                   },
                 },
               },
@@ -174,8 +194,7 @@ describe("MessageList", () => {
       />,
     );
 
-    expect(screen.getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
-    expect(screen.getAllByTestId("message-turn")).toHaveLength(2);
+    expect(screen.queryByTestId("thread-task-continuation-notice")).toBeNull();
   });
 
   it("keeps realtime goal continuation dividers inside the next agent turn", () => {
@@ -184,7 +203,7 @@ describe("MessageList", () => {
         messages={[
           message("m1", "user", "启动目标"),
           message("m2", "assistant", "第一轮回复"),
-          message("m3", "thread_task_boundary", "目标继续执行"),
+          goalTurnMarker("m3", 2),
           message("m4", "assistant", "第二轮续跑回复"),
         ]}
       />,
@@ -198,31 +217,32 @@ describe("MessageList", () => {
     expect(within(turns[1]).getByText("第二轮续跑回复")).not.toBeNull();
   });
 
-  it("synthesizes realtime goal continuation dividers from assistant metadata before the boundary arrives", () => {
+  it("does not show continuation dividers for ordinary user turn markers", () => {
+    render(
+      <MessageList
+        messages={[
+          message("m1", "user", "第一轮"),
+          message("m2", "assistant", "第一轮回复"),
+          userTurnMarker("m3", 2),
+          message("m4", "user", "第二轮"),
+          message("m5", "assistant", "第二轮回复"),
+        ]}
+      />,
+    );
+
+    expect(screen.queryByTestId("thread-task-continuation-notice")).toBeNull();
+    expect(screen.getAllByTestId("message-turn")).toHaveLength(2);
+  });
+
+  it("keeps realtime goal continuation dividers aligned to their turn markers while streaming", () => {
     const secondContinuation = {
       ...message("m4", "assistant", "第二轮续跑回复"),
-      payload: {
-        metadata: {
-          thread_task: {
-            task_id: "task-1",
-            run_id: "run-2",
-            trigger: "task_continue",
-          },
-        },
-      },
+      payload: { turnIndex: 2, turn_index: 2 },
     };
     const thirdContinuation = {
       ...message("m5", "assistant", "第三轮正在输出"),
       status: "running" as const,
-      payload: {
-        metadata: {
-          thread_task: {
-            task_id: "task-1",
-            run_id: "run-3",
-            trigger: "task_continue",
-          },
-        },
-      },
+      payload: { turnIndex: 3, turn_index: 3 },
     };
 
     render(
@@ -231,8 +251,9 @@ describe("MessageList", () => {
         messages={[
           message("m1", "user", "启动目标"),
           message("m2", "assistant", "第一轮回复"),
-          message("m3", "thread_task_boundary", "目标继续执行"),
+          goalTurnMarker("m3", 2),
           secondContinuation,
+          goalTurnMarker("m6", 3),
           thirdContinuation,
         ]}
       />,
@@ -262,9 +283,9 @@ describe("MessageList", () => {
         messages={[
           message("m1", "user", "启动目标"),
           { ...message("m2", "assistant", "第一轮回复"), payload: { messageEventId: "evt-goal-1" } },
-          message("m3", "thread_task_boundary", "目标继续执行"),
+          goalTurnMarker("m3", 2),
           secondContinuation,
-          message("m5", "thread_task_boundary", "目标继续执行"),
+          goalTurnMarker("m5", 3),
           thirdContinuation,
         ]}
         onForkFromMessage={vi.fn()}
@@ -278,6 +299,71 @@ describe("MessageList", () => {
     expect(within(turns[2]).getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
     expect(within(turns[2]).getByText("第三轮正在输出")).not.toBeNull();
     expect(within(turns[2]).queryByRole("button", { name: "从该轮派生对话" })).toBeNull();
+  });
+
+  it("places goal continuation turn markers before their run content and keeps goal status at turn end", () => {
+    const secondBoundary = at(goalTurnMarker("m3", 2), "2026-07-03T00:00:02.000Z");
+    const secondReply = at(message("m4", "assistant", "第二轮回复"), "2026-07-03T00:00:02.100Z");
+    const thirdReply = at(message("m5", "assistant", "第三轮前半段"), "2026-07-03T00:00:03.100Z");
+    const goalStatus = at(
+      {
+        ...message("m6", "thread_task_status", "update_thread_task"),
+        payload: {
+          call: {
+            id: "call-goal",
+            name: "update_thread_task",
+            arguments: {
+              status: "complete",
+              summary: "三轮目标已完成",
+            },
+          },
+          result: {
+            status: "success",
+            ui_payload: {
+              task: {
+                type: "goal",
+                type_label: "目标",
+                status: "complete",
+              },
+            },
+          },
+        },
+      },
+      "2026-07-03T00:00:03.200Z",
+    );
+    const thirdBoundary = at(
+      goalTurnMarker("m7", 3),
+      "2026-07-03T00:00:03.000Z",
+    );
+    const thirdSummary = at(message("m8", "assistant", "第三轮总结"), "2026-07-03T00:00:03.300Z");
+
+    render(
+      <MessageList
+        messages={[
+          at(message("m1", "user", "启动目标"), "2026-07-03T00:00:01.000Z"),
+          at(message("m2", "assistant", "第一轮回复"), "2026-07-03T00:00:01.100Z"),
+          secondBoundary,
+          secondReply,
+          thirdBoundary,
+          thirdReply,
+          goalStatus,
+          thirdSummary,
+        ]}
+      />,
+    );
+
+    const turns = screen.getAllByTestId("message-turn");
+    expect(turns).toHaveLength(3);
+    expect(within(turns[1]).getByText("第二轮回复")).not.toBeNull();
+    expect(within(turns[1]).queryByTestId("thread-task-status-summary")).toBeNull();
+    expect(within(turns[2]).getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
+    expect(within(turns[2]).getByText("第三轮前半段")).not.toBeNull();
+    expect(within(turns[2]).getByText("第三轮总结")).not.toBeNull();
+
+    const statusSummary = within(turns[2]).getByTestId("thread-task-status-summary");
+    expect(statusSummary.textContent).toContain("目标已完成");
+    expect(statusSummary.textContent).toContain("三轮目标已完成");
+    expect(within(turns[2]).getByText("第三轮总结").compareDocumentPosition(statusSummary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("renders goal status updates at the end of the turn instead of their raw tool position", () => {
@@ -326,6 +412,45 @@ describe("MessageList", () => {
     expect(block.textContent).toContain("目标执行完成");
     expect(block.textContent).not.toContain("update_thread_task");
     expect(block.textContent).not.toContain("23ms");
+  });
+
+  it("waits until the active turn completes before showing goal status summary", () => {
+    const messages = [
+      message("m1", "user", "启动目标"),
+      message("m2", "assistant", "准备标记目标"),
+      {
+        ...message("m3", "thread_task_status", "update_thread_task"),
+        payload: {
+          call: {
+            id: "call-goal",
+            name: "update_thread_task",
+            arguments: {
+              status: "complete",
+              summary: "目标执行完成",
+            },
+          },
+          result: {
+            status: "success",
+            ui_payload: {
+              task: {
+                type: "goal",
+                type_label: "目标",
+                status: "complete",
+              },
+            },
+          },
+        },
+      },
+    ];
+    const { rerender } = render(<MessageList messages={messages} isProcessing />);
+
+    expect(screen.queryByTestId("thread-task-status-summary")).toBeNull();
+    expect(screen.queryByText("目标已完成")).toBeNull();
+
+    rerender(<MessageList messages={messages} />);
+
+    expect(screen.getByTestId("thread-task-status-summary").textContent).toContain("目标已完成");
+    expect(screen.getByTestId("thread-task-status-summary").textContent).toContain("目标执行完成");
   });
 
   it("shows the final goal status result when a failed update is retried successfully", () => {
@@ -1637,6 +1762,49 @@ function message(
     payload: {},
     createdAt: `2026-06-17T10:00:0${id.slice(-1)}Z`,
     updatedAt: `2026-06-17T10:00:0${id.slice(-1)}Z`,
+  };
+}
+
+function goalTurnMarker(id: string, turnIndex: number): ConversationMessage {
+  return {
+    ...message(id, "turn_marker", ""),
+    payload: {
+      turnIndex,
+      turn_index: turnIndex,
+      metadata: {
+        kind: "turn_started",
+        source: "thread_task",
+        source_label: "目标继续执行",
+        thread_task: {
+          task_id: "task-1",
+          run_id: `run-${turnIndex}`,
+          trigger: "task_continue",
+          type: "goal",
+        },
+      },
+    },
+  };
+}
+
+function userTurnMarker(id: string, turnIndex: number): ConversationMessage {
+  return {
+    ...message(id, "turn_marker", ""),
+    payload: {
+      turnIndex,
+      turn_index: turnIndex,
+      metadata: {
+        kind: "turn_started",
+        source: "user",
+      },
+    },
+  };
+}
+
+function at(message: ConversationMessage, iso: string): ConversationMessage {
+  return {
+    ...message,
+    createdAt: iso,
+    updatedAt: iso,
   };
 }
 

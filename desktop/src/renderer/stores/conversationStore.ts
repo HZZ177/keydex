@@ -31,7 +31,7 @@ export type ConversationMessageKind =
   | "error"
   | "cancelled"
   | "context_compression"
-  | "thread_task_boundary"
+  | "turn_marker"
   | "thread_task_status"
   | "llm_retry"
   | "status";

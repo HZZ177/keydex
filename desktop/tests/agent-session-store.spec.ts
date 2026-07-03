@@ -52,6 +52,8 @@ describe("agentSessionStore reducer", () => {
       "task_deleted",
       "task_run_started",
       "task_run_finished",
+      "turn_started",
+      "thread_task_status",
       "reasoning",
       "middleware_progress",
       "workspaceSkillsChanged",
@@ -613,22 +615,7 @@ describe("agentSessionStore reducer", () => {
       runningTaskRun: { id: "run-1", status: "running" },
       recentTaskRun: { id: "run-1", status: "running" },
     });
-    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
-      {
-        id: "thread-task-boundary:run-1",
-        role: "system",
-        content: "目标继续执行",
-        metadata: {
-          kind: "thread_task_boundary",
-          thread_task: {
-            task_id: "task-1",
-            run_id: "run-1",
-            trigger: "task_continue",
-            type: "goal",
-          },
-        },
-      },
-    ]);
+    expect(selectAgentMessages(state, "ses-1")).toEqual([]);
 
     state = reduceAgentWsEvent(state, {
       action: "task_run_finished",
@@ -646,9 +633,134 @@ describe("agentSessionStore reducer", () => {
       runningTaskRun: null,
       recentTaskRun: { id: "run-1", status: "succeeded" },
     });
-    expect(selectAgentMessages(state, "ses-1").map((message) => [message.role, message.content])).toEqual([
-      ["system", "目标继续执行"],
+    expect(selectAgentMessages(state, "ses-1")).toEqual([]);
+  });
+
+  it("creates turn marker messages from turn_started events", () => {
+    const state = reduceAgentWsEvent(createInitialAgentConversationState(), {
+      action: "turn_started",
+      data: {
+        session_id: "ses-1",
+        turn_index: 3,
+        trace_id: "trace-goal-3",
+        source: "thread_task",
+        source_label: "目标继续执行",
+        thread_task: {
+          task_id: "task-1",
+          run_id: "run-1",
+          trigger: "task_continue",
+          type: "goal",
+        },
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        id: "turn:ses-1:3",
+        role: "turn",
+        content: "",
+        turnIndex: 3,
+        traceId: "trace-goal-3",
+        metadata: {
+          kind: "turn_started",
+          source: "thread_task",
+          source_label: "目标继续执行",
+          thread_task: {
+            task_id: "task-1",
+            run_id: "run-1",
+            trigger: "task_continue",
+            type: "goal",
+          },
+        },
+      },
     ]);
+  });
+
+  it("keeps assistant streams split by business turn index", () => {
+    let state = reduceAgentWsEvent(createInitialAgentConversationState(), {
+      action: "stream",
+      data: {
+        session_id: "ses-1",
+        content: "第二轮输出",
+        turn_index: 2,
+        trace_id: "trace-2",
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "stream",
+      data: {
+        session_id: "ses-1",
+        content: "第三轮输出",
+        turn_index: 3,
+        trace_id: "trace-3",
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      { role: "assistant", content: "第二轮输出", turnIndex: 2, traceId: "trace-2", streaming: false },
+      { role: "assistant", content: "第三轮输出", turnIndex: 3, traceId: "trace-3", streaming: true },
+    ]);
+  });
+
+  it("creates semantic thread task status messages", () => {
+    const state = reduceAgentWsEvent(createInitialAgentConversationState(), {
+      action: "thread_task_status",
+      data: {
+        session_id: "ses-1",
+        turn_index: 3,
+        trace_id: "trace-goal-3",
+        task_id: "task-1",
+        run_id: "run-1",
+        type: "goal",
+        status: "complete",
+        summary: "目标已完成",
+        payload: { status: "complete", summary: "目标已完成" },
+        task: threadTask("task-1", { status: "complete", is_open: false, is_terminal: true }),
+        ui_payload: { task: threadTask("task-1", { status: "complete", is_open: false, is_terminal: true }) },
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        role: "thread_task",
+        content: "目标已完成",
+        turnIndex: 3,
+        traceId: "trace-goal-3",
+        toolName: "update_thread_task",
+        toolParams: { status: "complete", summary: "目标已完成" },
+        metadata: {
+          kind: "thread_task_status",
+          task_id: "task-1",
+          run_id: "run-1",
+          status: "complete",
+        },
+      },
+    ]);
+    expect(selectAgentActiveThreadTask(state, "ses-1")).toBeNull();
+  });
+
+  it("does not add raw thread task tool lifecycle events to realtime messages", () => {
+    let state = reduceAgentWsEvent(createInitialAgentConversationState(), {
+      action: "tool_start",
+      data: {
+        session_id: "ses-1",
+        run_id: "tool-goal",
+        tool_name: "update_thread_task",
+        params: { status: "complete", summary: "目标已完成" },
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "tool_end",
+      data: {
+        session_id: "ses-1",
+        run_id: "tool-goal",
+        tool_name: "update_thread_task",
+        result: "",
+        status: "success",
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")).toEqual([]);
   });
 
   it("marks background sessions unread only after the turn reaches a terminal event", () => {

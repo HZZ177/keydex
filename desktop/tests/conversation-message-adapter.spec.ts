@@ -41,12 +41,12 @@ describe("conversation message adapter", () => {
     ).toBe("llm_retry");
     expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "update_plan" }))).toBe("plan");
     expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "load_skill" }))).toBe("skill");
-    expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "update_thread_task" }))).toBe(
+    expect(conversationKindFromAgent(agentMessage({ role: "turn" }))).toBe("turn_marker");
+    expect(conversationKindFromAgent(agentMessage({ role: "thread_task", toolName: "update_thread_task" }))).toBe(
       "thread_task_status",
     );
-    expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "get_thread_task" }))).toBe(
-      "thread_task_status",
-    );
+    expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "update_thread_task" }))).toBe("tool");
+    expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "get_thread_task" }))).toBe("tool");
     expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "run_cmd" }))).toBe("command");
     expect(
       conversationKindFromAgent(
@@ -111,6 +111,30 @@ describe("conversation message adapter", () => {
       result: {
         status: "cancelled",
         ui_payload: { command_id: "cmd-1", status: "cancelled", command: "ping" },
+      },
+    });
+  });
+
+  it("maps semantic thread task status messages to the target status panel payload", () => {
+    const payload = payloadFromAgentMessage(
+      agentMessage({
+        role: "thread_task",
+        toolName: "update_thread_task",
+        toolParams: { status: "complete", summary: "目标已完成" },
+        uiPayload: { task: { id: "task-1", type: "goal", objective: "验证目标", status: "complete" } },
+        turnIndex: 3,
+        traceId: "trace-goal-3",
+        metadata: { kind: "thread_task_status", status: "complete" },
+      }),
+    );
+
+    expect(payload).toMatchObject({
+      turnIndex: 3,
+      traceId: "trace-goal-3",
+      call: { name: "update_thread_task", arguments: { status: "complete", summary: "目标已完成" } },
+      result: {
+        status: "success",
+        ui_payload: { task: { id: "task-1", type: "goal", objective: "验证目标", status: "complete" } },
       },
     });
   });
@@ -207,6 +231,24 @@ describe("conversation message adapter", () => {
         }),
       ),
     ).toBe(true);
+    expect(
+      shouldDisplayAgentTranscriptMessage(
+        agentMessage({
+          role: "tool",
+          toolName: "update_thread_task",
+          content: "",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldDisplayAgentTranscriptMessage(
+        agentMessage({
+          role: "tool",
+          toolName: "get_thread_task",
+          content: "",
+        }),
+      ),
+    ).toBe(false);
   });
 });
 
