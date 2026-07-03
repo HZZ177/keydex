@@ -15,6 +15,7 @@ from backend.app.core.time import to_iso_z, utc_now
 from backend.app.model import ModelSettings
 from backend.app.services import ChatRequest, ChatService
 from backend.app.services.chat_service import (
+    _build_initial_thread_task_context,
     _build_message_context_items,
     _build_message_injection_items,
     _build_thread_task_runtime_context,
@@ -98,6 +99,10 @@ def _service(
         checkpointer,
         factory,
     )
+
+
+def _chat_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [message for message in history if message.get("role") != "turn"]
 
 
 def test_message_injection_parser_accepts_hidden_for_transcript() -> None:
@@ -235,6 +240,107 @@ def test_thread_task_runtime_context_requires_task_continue_trigger() -> None:
         )
 
 
+def test_initial_thread_task_context_accepts_task_start_payload() -> None:
+    context = _build_initial_thread_task_context(
+        {
+            "initial_thread_task": {
+                "task_id": "task-1",
+                "trigger": "task_start",
+                "type": "goal",
+            }
+        }
+    )
+
+    assert context == {
+        "task_id": "task-1",
+        "trigger": "task_start",
+        "type": "goal",
+    }
+
+
+def test_initial_thread_task_context_rejects_task_continue_trigger() -> None:
+    with pytest.raises(ValueError, match="task_start"):
+        _build_initial_thread_task_context(
+            {
+                "initial_thread_task": {
+                    "task_id": "task-1",
+                    "trigger": "task_continue",
+                    "type": "goal",
+                }
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_initial_thread_task_prompt_enters_first_goal_turn_without_transcript(
+    tmp_path: Path,
+) -> None:
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="首轮完成目标")])
+    service, repositories, checkpointer, _factory = _service(tmp_path, model)
+    session = repositories.sessions.create(
+        session_id="ses-task",
+        user_id="local-user",
+        scene_id="desktop-agent",
+    )
+    task = repositories.thread_tasks.create(
+        task_id="task-1",
+        session_id=session.id,
+        type="goal",
+        objective="整理目标方案",
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="请整理目标方案",
+            provider_id="provider-1",
+            model="qwen-coder",
+            runtime_params={
+                "initial_thread_task": {
+                    "task_id": task.id,
+                    "trigger": "task_start",
+                    "type": "goal",
+                },
+                "message_context_items": [
+                    {
+                        "id": "goal:abc",
+                        "type": "goal",
+                        "label": "目标",
+                        "content": "整理目标方案",
+                        "source": "goal",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert result.status == "completed"
+    history = _chat_messages(service.message_event_service.get_display_messages(session.id))
+    assert [message["role"] for message in history] == ["user", "assistant"]
+    assert history[0]["content"] == "请整理目标方案"
+    assert history[0]["contextItems"][0]["type"] == "goal"
+
+    checkpoint = await checkpointer.aget_tuple(
+        {"configurable": {"thread_id": session.id, "checkpoint_ns": ""}}
+    )
+    messages = checkpoint.checkpoint["channel_values"]["messages"]
+    assert "用户刚创建的长程目标任务" in messages[0].content
+    assert "必须调用 update_thread_task 并设置 status=complete" in messages[0].content
+    assert [message.content for message in messages[1:3]] == [
+        "请整理目标方案",
+        "首轮完成目标",
+    ]
+
+    trace = repositories.trace_records.get(result.trace_id)
+    assert trace is not None
+    assert trace.metadata["initial_thread_task"] == {
+        "task_id": task.id,
+        "trigger": "task_start",
+        "type": "goal",
+    }
+    assert "thread_task" not in trace.metadata
+
+
 @pytest.mark.asyncio
 async def test_hidden_thread_task_injection_enters_model_without_transcript(
     tmp_path: Path,
@@ -279,7 +385,7 @@ async def test_hidden_thread_task_injection_enters_model_without_transcript(
 
     assert result.status == "completed"
     assert factory.requested_models == ["qwen-coder"]
-    history = service.message_event_service.get_display_messages(session.id)
+    history = _chat_messages(service.message_event_service.get_display_messages(session.id))
     assert [message["role"] for message in history] == ["assistant"]
     assert history[0]["content"] == "继续处理目标"
 
@@ -343,7 +449,7 @@ async def test_hidden_thread_task_seed_message_enters_model_without_transcript(
     )
 
     assert result.status == "completed"
-    history = service.message_event_service.get_display_messages(session.id)
+    history = _chat_messages(service.message_event_service.get_display_messages(session.id))
     assert [message["role"] for message in history] == ["assistant"]
 
     checkpoint = await checkpointer.aget_tuple(
@@ -441,7 +547,7 @@ async def test_visible_message_injection_still_restores_context_item(
         )
     )
 
-    history = service.message_event_service.get_display_messages(result.session_id)
+    history = _chat_messages(service.message_event_service.get_display_messages(result.session_id))
     assert [message["role"] for message in history] == ["user", "assistant"]
     assert history[0]["content"] == "总结一下"
     assert history[0]["contextItems"][0]["type"] == "file"
@@ -489,7 +595,7 @@ async def test_message_context_items_restore_history_without_entering_model(
         )
     )
 
-    history = service.message_event_service.get_display_messages(result.session_id)
+    history = _chat_messages(service.message_event_service.get_display_messages(result.session_id))
     assert [message["role"] for message in history] == ["user", "assistant"]
     assert history[0]["content"] == "开启目标"
     assert history[0]["contextItems"][0] == {

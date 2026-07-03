@@ -689,7 +689,12 @@ describe("HomePage", () => {
             source: "goal",
           }),
         ],
-        runtimeParams: {
+        runtimeParams: expect.objectContaining({
+          initial_thread_task: {
+            task_id: "task-1",
+            type: "goal",
+            trigger: "task_start",
+          },
           message_context_items: [
             expect.objectContaining({
               type: "goal",
@@ -702,7 +707,7 @@ describe("HomePage", () => {
               }),
             }),
           ],
-        },
+        }),
       }),
     );
     await waitFor(() => {

@@ -1,8 +1,9 @@
-import type { AgentContextItem, AgentFileAttachment } from "@/types/protocol";
+import type { AgentContextItem, AgentFileAttachment, ThreadTask } from "@/types/protocol";
 import type { RuntimeParamsWithInjection } from "@/renderer/utils/messageInjection";
 
 export const GOAL_CONTEXT_ITEM_TYPE = "goal";
 export const GOAL_MESSAGE_CONTEXT_ITEMS_KEY = "message_context_items";
+export const GOAL_INITIAL_THREAD_TASK_KEY = "initial_thread_task";
 
 export function goalSeedContextMetadata({
   attachments,
@@ -58,6 +59,20 @@ export function runtimeParamsWithGoalContextItem(
     item,
   ];
   return next;
+}
+
+export function runtimeParamsWithInitialGoalTask(
+  runtimeParams: RuntimeParamsWithInjection | undefined,
+  task: ThreadTask,
+): RuntimeParamsWithInjection {
+  return {
+    ...(runtimeParams ?? {}),
+    [GOAL_INITIAL_THREAD_TASK_KEY]: {
+      task_id: task.id,
+      type: task.type || GOAL_CONTEXT_ITEM_TYPE,
+      trigger: "task_start",
+    },
+  };
 }
 
 function hashGoalContext(value: string): string {

@@ -29,11 +29,12 @@ import {
 } from "@/renderer/providers/PreviewProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { prepareComposerMessage, type RuntimeParamsWithInjection } from "@/renderer/utils/messageInjection";
-import type { AgentContextItem, AgentFileAttachment, FileAccessMode, Workspace } from "@/types/protocol";
+import type { AgentContextItem, AgentFileAttachment, FileAccessMode, ThreadTask, Workspace } from "@/types/protocol";
 import {
   goalContextItem,
   goalSeedContextMetadata,
   runtimeParamsWithGoalContextItem,
+  runtimeParamsWithInitialGoalTask,
 } from "@/renderer/pages/conversation/goalSeedContext";
 import styles from "./HomePage.module.css";
 
@@ -415,13 +416,10 @@ export function HomePage({
 
       const session = await runtime.conversation.createSession(sessionPayload);
       const goalItem = goalComposerOpen ? goalContextItem(text) : null;
-      const runtimeParams = goalItem
-        ? runtimeParamsWithGoalContextItem(prepared.runtimeParams, goalItem)
-        : prepared.runtimeParams;
-      const contextItems = goalItem ? [...prepared.contextItems, goalItem] : prepared.contextItems;
+      let goalTask: ThreadTask | null = null;
       if (goalComposerOpen) {
         try {
-          await runtime.conversation.createThreadTask(session.id, {
+          goalTask = await runtime.conversation.createThreadTask(session.id, {
             type: "goal",
             objective: text,
             metadata: goalSeedContextMetadata({
@@ -436,6 +434,15 @@ export function HomePage({
           return false;
         }
       }
+      const runtimeParams = goalItem && goalTask
+        ? runtimeParamsWithInitialGoalTask(
+            runtimeParamsWithGoalContextItem(prepared.runtimeParams, goalItem),
+            goalTask,
+          )
+        : goalItem
+          ? runtimeParamsWithGoalContextItem(prepared.runtimeParams, goalItem)
+          : prepared.runtimeParams;
+      const contextItems = goalItem ? [...prepared.contextItems, goalItem] : prepared.contextItems;
       emitSessionCreated(session);
       setDraft("");
       setSelectedSkill(null);

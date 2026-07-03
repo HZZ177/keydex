@@ -56,6 +56,7 @@ import {
   goalContextItem,
   goalSeedContextMetadata,
   runtimeParamsWithGoalContextItem,
+  runtimeParamsWithInitialGoalTask,
 } from "@/renderer/pages/conversation/goalSeedContext";
 import {
   buildTurnNavigationItemsFromMessages,
@@ -1035,7 +1036,10 @@ export function WorkbenchAssistantSurface({
           }),
         });
         const goalItem = goalContextItem(objective);
-        const runtimeParams = runtimeParamsWithGoalContextItem(prepared.runtimeParams, goalItem);
+        const runtimeParams = runtimeParamsWithInitialGoalTask(
+          runtimeParamsWithGoalContextItem(prepared.runtimeParams, goalItem),
+          task,
+        );
         controller.dispatch({
           type: "event/receive",
           event: {

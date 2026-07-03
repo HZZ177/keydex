@@ -30,7 +30,12 @@ import {
   type BtwConversationHistorySnapshot,
 } from "./conversationForkSource";
 import { consumeQuickChatSend, type QueuedQuickChatSend } from "./quickSend";
-import { goalContextItem, goalSeedContextMetadata, runtimeParamsWithGoalContextItem } from "./goalSeedContext";
+import {
+  goalContextItem,
+  goalSeedContextMetadata,
+  runtimeParamsWithGoalContextItem,
+  runtimeParamsWithInitialGoalTask,
+} from "./goalSeedContext";
 import styles from "./ConversationSessionSurface.module.css";
 
 export type ConversationSessionSurfaceMode = "main" | "sidecar";
@@ -400,7 +405,10 @@ export function ConversationSessionSurface({
         }),
       });
       const goalItem = goalContextItem(objective);
-      const runtimeParams = runtimeParamsWithGoalContextItem(prepared.runtimeParams, goalItem);
+      const runtimeParams = runtimeParamsWithInitialGoalTask(
+        runtimeParamsWithGoalContextItem(prepared.runtimeParams, goalItem),
+        task,
+      );
       controller.dispatch({
         type: "event/receive",
         event: {

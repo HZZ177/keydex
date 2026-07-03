@@ -47,6 +47,7 @@ from backend.app.keydex.skills import SkillCatalog
 from backend.app.model import ModelSelectionError, ResolvedModelSelection, resolve_model_selection
 from backend.app.services.chat_types import ChatCancellationToken, ChatRequest, ChatTurnResult
 from backend.app.services.message_event_service import MessageEventService
+from backend.app.services.thread_task_prompt import build_task_initial_prompt
 from backend.app.services.thread_task_service import ThreadTaskService
 from backend.app.services.workspace_service import WorkspaceService
 from backend.app.storage import AttachmentRecord, SessionRecord, StorageRepositories
@@ -288,6 +289,33 @@ def _build_thread_task_runtime_context(
     return {
         "task_id": task_id,
         "run_id": run_id,
+        "trigger": trigger,
+        "type": str(raw_context.get("type") or raw_context.get("task_type") or "").strip(),
+    }
+
+
+def _build_initial_thread_task_context(
+    runtime_params: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not runtime_params:
+        return None
+    if not isinstance(runtime_params, dict):
+        raise ValueError("runtime_params 必须是对象")
+    raw_context = runtime_params.get("initial_thread_task")
+    if raw_context is None:
+        raw_context = runtime_params.get("initialThreadTask")
+    if raw_context is None:
+        return None
+    if not isinstance(raw_context, dict):
+        raise ValueError("runtime_params.initial_thread_task 必须是对象")
+    task_id = str(raw_context.get("task_id") or raw_context.get("taskId") or "").strip()
+    trigger = str(raw_context.get("trigger") or "task_start").strip()
+    if not task_id:
+        raise ValueError("runtime_params.initial_thread_task.task_id 不能为空")
+    if trigger != "task_start":
+        raise ValueError("runtime_params.initial_thread_task.trigger 必须为 task_start")
+    return {
+        "task_id": task_id,
         "trigger": trigger,
         "type": str(raw_context.get("type") or raw_context.get("task_type") or "").strip(),
     }
@@ -901,6 +929,33 @@ class ChatService:
         self.workspace_service = WorkspaceService(repositories.workspaces)
         self.thread_task_service = thread_task_service or ThreadTaskService(repositories)
 
+    def _build_initial_thread_task_injection(
+        self,
+        *,
+        session: SessionRecord,
+        context: dict[str, Any],
+    ) -> InjectedMessage:
+        task_id = str(context.get("task_id") or "").strip()
+        task = self.repositories.thread_tasks.get(task_id)
+        if task is None or task.session_id != session.id:
+            raise ValueError("runtime_params.initial_thread_task.task_id 无效")
+        context_type = str(context.get("type") or "").strip()
+        if context_type and context_type != task.type:
+            raise ValueError("runtime_params.initial_thread_task.type 与任务类型不一致")
+        return InjectedMessage(
+            type=MessageInjectionType.FOLLOW,
+            role=MessageInjectionRole.HUMAN,
+            content=build_task_initial_prompt(task),
+            metadata={
+                "source": "thread_task",
+                "task_id": task.id,
+                "task_type": task.type,
+                "trigger": "task_start",
+                "hidden_for_transcript": True,
+            },
+            hidden_for_transcript=True,
+        )
+
     async def handle_chat(
         self,
         request: ChatRequest,
@@ -911,12 +966,14 @@ class ChatService:
         message_injection_items = _build_message_injection_items(request.runtime_params)
         message_context_items = _build_message_context_items(request.runtime_params)
         thread_task_context = _build_thread_task_runtime_context(request.runtime_params)
+        initial_thread_task_context = _build_initial_thread_task_context(request.runtime_params)
         skill_activation = _build_skill_activation_request(request.runtime_params)
         has_request_attachments = bool(request.attachments)
         if (
             not request.message.strip()
             and not message_injection_items
             and not has_request_attachments
+            and not initial_thread_task_context
         ):
             if skill_activation is not None:
                 raise ValueError("请输入要使用该 Skill 处理的内容")
@@ -924,6 +981,14 @@ class ChatService:
 
         token = cancellation or ChatCancellationToken()
         session = self._ensure_session(request)
+        if initial_thread_task_context:
+            message_injection_items = [
+                self._build_initial_thread_task_injection(
+                    session=session,
+                    context=initial_thread_task_context,
+                ),
+                *message_injection_items,
+            ]
         skill_activation_snapshot: KeydexWorkspaceRuntimeSnapshot | None = None
         _, max_turn = self.repositories.message_events.get_max_seq_and_turn(session.id)
         turn_index = max_turn + 1
@@ -946,6 +1011,8 @@ class ChatService:
         runtime_metadata = {"runtime": "desktop", "agent_runtime": "langchain"}
         if thread_task_context:
             runtime_metadata["thread_task"] = thread_task_context
+        if initial_thread_task_context:
+            runtime_metadata["initial_thread_task"] = initial_thread_task_context
         if request.runtime_params:
             runtime_metadata["runtime_params"] = request.runtime_params
 

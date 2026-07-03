@@ -48,7 +48,12 @@ describe("ConversationPage goal task creation", () => {
       message: "完成需求",
       provider_id: "provider-1",
       model: "qwen-coder",
-      runtime_params: {
+      runtime_params: expect.objectContaining({
+        initial_thread_task: {
+          task_id: "task-1",
+          type: "goal",
+          trigger: "task_start",
+        },
         message_context_items: [
           expect.objectContaining({
             type: "goal",
@@ -61,7 +66,7 @@ describe("ConversationPage goal task creation", () => {
             }),
           }),
         ],
-      },
+      }),
     });
     const goalContext = screen.getByLabelText("目标上下文");
     expect(within(goalContext).getByText("目标")).not.toBeNull();

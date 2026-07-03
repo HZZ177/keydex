@@ -153,6 +153,11 @@ describe("WorkbenchAssistantSurface", () => {
           }),
         ]),
         runtimeParams: expect.objectContaining({
+          initial_thread_task: {
+            task_id: "task-1",
+            type: "goal",
+            trigger: "task_start",
+          },
           message_context_items: expect.arrayContaining([
             expect.objectContaining({
               type: "goal",
@@ -234,6 +239,13 @@ describe("WorkbenchAssistantSurface", () => {
     expect(sendText.mock.calls[0][2]).toEqual(
       expect.objectContaining({
         targetSessionId: "ses-new",
+        runtimeParams: expect.objectContaining({
+          initial_thread_task: {
+            task_id: "task-1",
+            type: "goal",
+            trigger: "task_start",
+          },
+        }),
       }),
     );
   });
