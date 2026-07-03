@@ -8,15 +8,11 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.middleware.auto_title import AutoTitleMiddleware
 from backend.app.agent.middleware.builder import build_default_middleware
-from backend.app.agent.middleware.common import (
-    DuplicateToolForceStopError,
-    ToolCallLimitExceededError,
-)
+from backend.app.agent.middleware.common import DuplicateToolForceStopError
 from backend.app.agent.middleware.context_compression import ContextCompressionMiddleware
 from backend.app.agent.middleware.duplicate_tool_call_guard import (
     DuplicateToolCallGuardMiddleware,
 )
-from backend.app.agent.middleware.tool_call_limit import ToolCallLimitMiddleware
 from backend.app.agent.middleware.tool_error_handling import ToolErrorHandlingMiddleware
 from backend.app.agent.runtime_settings import (
     AgentRuntimeSettings,
@@ -83,51 +79,11 @@ async def test_duplicate_tool_call_guard_stops_repeated_same_args() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_call_limit_middleware_blocks_calls_after_limit() -> None:
-    middleware = ToolCallLimitMiddleware(max_tool_calls=2)
-
-    async def handler(request: ToolCallRequest) -> ToolMessage:
-        return ToolMessage(content="ok", tool_call_id="call_1")
-
-    await middleware.awrap_tool_call(_request(), handler)
-    await middleware.awrap_tool_call(_request(), handler)
-
-    with pytest.raises(ToolCallLimitExceededError) as exc_info:
-        await middleware.awrap_tool_call(_request(), handler)
-
-    assert exc_info.value.max_tool_calls == 2
-    assert exc_info.value.attempted_count == 3
-
-
-@pytest.mark.asyncio
-async def test_tool_call_limit_middleware_counts_failed_tool_calls() -> None:
-    middleware = ToolCallLimitMiddleware(max_tool_calls=1)
-
-    async def failing_handler(request: ToolCallRequest) -> ToolMessage:
-        raise RuntimeError("tool failed")
-
-    with pytest.raises(RuntimeError):
-        await middleware.awrap_tool_call(_request(), failing_handler)
-
-    with pytest.raises(ToolCallLimitExceededError) as exc_info:
-        await middleware.awrap_tool_call(_request(), failing_handler)
-
-    assert exc_info.value.max_tool_calls == 1
-    assert exc_info.value.attempted_count == 2
-
-
-@pytest.mark.asyncio
 async def test_tool_error_handling_does_not_swallow_force_stop_errors() -> None:
     middleware = ToolErrorHandlingMiddleware()
 
-    async def limit_handler(request: ToolCallRequest) -> ToolMessage:
-        raise ToolCallLimitExceededError(max_tool_calls=1, attempted_count=2)
-
     async def duplicate_handler(request: ToolCallRequest) -> ToolMessage:
         raise DuplicateToolForceStopError(tool_name="read_file", repeat_count=4)
-
-    with pytest.raises(ToolCallLimitExceededError):
-        await middleware.awrap_tool_call(_request(), limit_handler)
 
     with pytest.raises(DuplicateToolForceStopError):
         await middleware.awrap_tool_call(_request(), duplicate_handler)

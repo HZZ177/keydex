@@ -9,7 +9,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from backend.app.agent import AgentRunner
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.factory import AgentFactory
-from backend.app.agent.middleware.tool_call_limit import ToolCallLimitMiddleware
+from backend.app.agent.middleware.duplicate_tool_call_guard import DuplicateToolCallGuardMiddleware
 from backend.app.agent.runtime_settings import AgentRuntimeSettings
 from backend.app.model import ModelSettings
 from backend.app.storage import init_database
@@ -144,7 +144,7 @@ def test_agent_runner_uses_runtime_middleware_settings(tmp_path) -> None:
     runner, factory = _runner(
         tmp_path,
         runtime_settings_provider=lambda: AgentRuntimeSettings(
-            tool_call_limit={"enabled": True, "max_tool_calls": 3, "exit_behavior": "error"}
+            duplicate_tool_call_guard={"enabled": True, "max_repeats": 6}
         ),
     )
 
@@ -160,46 +160,17 @@ def test_agent_runner_uses_runtime_middleware_settings(tmp_path) -> None:
         ),
     )
 
-    tool_limit = next(
-        item for item in factory.created_middleware[-1] if isinstance(item, ToolCallLimitMiddleware)
+    duplicate_guard = next(
+        item
+        for item in factory.created_middleware[-1]
+        if isinstance(item, DuplicateToolCallGuardMiddleware)
     )
-    assert tool_limit.max_tool_calls == 3
+    assert duplicate_guard.max_repeats == 6
 
 
-def test_agent_runner_resets_tool_limit_middleware_between_agent_creations(tmp_path) -> None:
-    runner, factory = _runner(
-        tmp_path,
-        runtime_settings_provider=lambda: AgentRuntimeSettings(
-            tool_call_limit={"enabled": True, "max_tool_calls": 2, "exit_behavior": "error"}
-        ),
-    )
-    tool_context = ToolExecutionContext(
-        session_id="ses_1",
-        user_id="user_1",
-        workspace_root=tmp_path,
-        turn_index=1,
-        trace_id="trace_1",
-    )
-
-    runner.create_agent(model="qwen-coder", system_prompt=None, tool_context=tool_context)
-    first_tool_limit = next(
-        item for item in factory.created_middleware[-1] if isinstance(item, ToolCallLimitMiddleware)
-    )
-    first_tool_limit.tool_call_count = 2
-
-    runner.create_agent(model="qwen-coder", system_prompt=None, tool_context=tool_context)
-    second_tool_limit = next(
-        item for item in factory.created_middleware[-1] if isinstance(item, ToolCallLimitMiddleware)
-    )
-
-    assert second_tool_limit is not first_tool_limit
-    assert second_tool_limit.tool_call_count == 0
-    assert second_tool_limit.max_tool_calls == 2
-
-
-def test_agent_runner_applies_runtime_tool_limit_changes_on_next_agent(tmp_path) -> None:
+def test_agent_runner_applies_runtime_duplicate_guard_changes_on_next_agent(tmp_path) -> None:
     current_settings = AgentRuntimeSettings(
-        tool_call_limit={"enabled": True, "max_tool_calls": 2, "exit_behavior": "error"}
+        duplicate_tool_call_guard={"enabled": True, "max_repeats": 2}
     )
     runner, factory = _runner(
         tmp_path,
@@ -215,14 +186,14 @@ def test_agent_runner_applies_runtime_tool_limit_changes_on_next_agent(tmp_path)
 
     runner.create_agent(model="qwen-coder", system_prompt=None, tool_context=tool_context)
     current_settings = AgentRuntimeSettings(
-        tool_call_limit={"enabled": True, "max_tool_calls": 5, "exit_behavior": "error"}
+        duplicate_tool_call_guard={"enabled": True, "max_repeats": 5}
     )
     runner.create_agent(model="qwen-coder", system_prompt=None, tool_context=tool_context)
 
     limits = [
         next(
-            item for item in middleware if isinstance(item, ToolCallLimitMiddleware)
-        ).max_tool_calls
+            item for item in middleware if isinstance(item, DuplicateToolCallGuardMiddleware)
+        ).max_repeats
         for middleware in factory.created_middleware
     ]
     assert limits == [2, 5]

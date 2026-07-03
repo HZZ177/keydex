@@ -16,7 +16,6 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from backend.app.agent import AgentRunner
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.factory import AgentFactory
-from backend.app.agent.middleware.common import ToolCallLimitExceededError
 from backend.app.command_approval import CommandSettings, save_command_settings
 from backend.app.core.config import AppSettings
 from backend.app.core.time import to_iso_z, utc_now
@@ -108,18 +107,6 @@ class FakeAgentFactory(AgentFactory):
             state_schema=state_schema,
             name=name,
         )
-
-
-class ToolLimitFailingAgent:
-    async def astream_events(self, *_args, **_kwargs):
-        if False:
-            yield {}
-        raise ToolCallLimitExceededError(max_tool_calls=1, attempted_count=2)
-
-
-class ToolLimitFailingRunner:
-    def create_agent(self, **_kwargs) -> ToolLimitFailingAgent:
-        return ToolLimitFailingAgent()
 
 
 class CancellableStreamingAgent:
@@ -325,31 +312,6 @@ async def test_chat_service_agent_assembly_does_not_block_event_loop(tmp_path) -
 
     assert result.status == "completed"
     assert result.final_content == "完成"
-
-
-@pytest.mark.asyncio
-async def test_chat_service_projects_tool_call_limit_as_turn_failure(tmp_path) -> None:
-    model = ToolFriendlyFakeModel(responses=[AIMessage(content="不会输出")])
-    service, repositories, _checkpointer, _factory = _service(tmp_path, model)
-    service.agent_runner = ToolLimitFailingRunner()
-    chat_adapter = RecordingChatAdapter()
-
-    result = await service.handle_chat(
-        ChatRequest(message="请连续调用工具", provider_id="provider-1", model="qwen-coder"),
-        chat_adapter=chat_adapter,
-    )
-
-    assert result.status == "failed"
-    assert result.error == "本轮工具调用已达到上限 1 次，已阻止第 2 次工具调用"
-    assert repositories.sessions.get(result.session_id).status == "failed"
-    error_events = [item for item in chat_adapter.sent if item["action"] == "error"]
-    assert error_events
-    assert error_events[-1]["data"]["code"] == "tool_call_limit_exceeded"
-    assert error_events[-1]["data"]["message"] == result.error
-    assert error_events[-1]["data"]["details"] == {
-        "max_tool_calls": 1,
-        "attempted_count": 2,
-    }
 
 
 @pytest.mark.asyncio

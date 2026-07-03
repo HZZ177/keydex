@@ -15,8 +15,10 @@ import {
 import { type ReactNode, useMemo, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
+import { fileReviewChangesFromMessage, isFileMutationToolName } from "@/renderer/utils/fileReview";
 
 import type { MessageGroupKind } from "./processMessages";
+import { LineChangeTicker } from "./LineChangeTicker";
 import styles from "./MessageGroupBlock.module.css";
 import { useDeferredUnmount } from "./useDeferredUnmount";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
@@ -36,6 +38,7 @@ export function MessageGroupBlock({ groupKind, count, messages = [], sourceMessa
   const state = groupState(summaries);
   const label = groupLabel(groupKind, count, messages, state);
   const iconKind = groupIconKind(groupKind, messages, state);
+  const lineDeltas = useMemo(() => groupLineDeltas(groupKind, messages), [groupKind, messages]);
   const childrenMotion = useDeferredUnmount<HTMLDivElement>(expanded);
   const captureExpansionAnchor = useExpansionScrollAnchor();
 
@@ -54,7 +57,18 @@ export function MessageGroupBlock({ groupKind, count, messages = [], sourceMessa
         <span className={styles.icon} data-icon-kind={iconKind} aria-hidden="true">
           {groupIcon(iconKind)}
         </span>
-        <span className={styles.title}>{label}</span>
+        <span className={styles.titleGroup}>
+          <span className={styles.title}>{label}</span>
+          {hasLineDeltas(lineDeltas) ? (
+            <LineChangeTicker
+              className={styles.inlineTicker}
+              label=""
+              added={lineDeltas.added}
+              removed={lineDeltas.removed}
+              unit=""
+            />
+          ) : null}
+        </span>
         {expanded ? (
           <span className={styles.source} title={sourceText}>
             收起
@@ -390,6 +404,36 @@ type FileChangeOperation = "add" | "update" | "delete" | "append" | "write" | "u
 interface FileChangeSummary {
   path: string;
   operation: FileChangeOperation;
+}
+
+interface LineDeltas {
+  added: number;
+  removed: number;
+}
+
+function groupLineDeltas(kind: MessageGroupKind, messages: ConversationMessage[]): LineDeltas {
+  if (kind !== "tool_activity") {
+    return { added: 0, removed: 0 };
+  }
+
+  return messages.reduce<LineDeltas>((total, message) => {
+    if (message.kind !== "tool" || summarizeMessage(message).state === "failed") {
+      return total;
+    }
+    if (!isFileMutationToolName(toolNameFromMessage(message))) {
+      return total;
+    }
+
+    fileReviewChangesFromMessage(message).forEach((change) => {
+      total.added += change.additions;
+      total.removed += change.deletions;
+    });
+    return total;
+  }, { added: 0, removed: 0 });
+}
+
+function hasLineDeltas(deltas: LineDeltas): boolean {
+  return deltas.added > 0 || deltas.removed > 0;
 }
 
 function countPhrase(kind: ToolSummaryKind, count: number, state: CountState): string {

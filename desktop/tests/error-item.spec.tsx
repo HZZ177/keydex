@@ -75,26 +75,6 @@ describe("ErrorItem", () => {
     expect(screen.getByText(/app.py/)).not.toBeNull();
   });
 
-  it("renders tool call limit stop reason as the primary error text", () => {
-    render(
-      <ErrorItem
-        message={errorMessage({
-          code: "tool_call_limit_exceeded",
-          message: "本轮工具调用已达到上限 1 次，已阻止第 2 次工具调用",
-          status: undefined,
-          details: { max_tool_calls: 1, attempted_count: 2 },
-        })}
-      />,
-    );
-
-    expect(screen.getByText("本轮工具调用已达到上限 1 次，已阻止第 2 次工具调用")).not.toBeNull();
-    expect(screen.getByText("tool_call_limit_exceeded")).not.toBeNull();
-    expect(screen.queryByText(/Traceback/u)).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "展开错误详情" }));
-    expect(screen.getByText(/max_tool_calls/u)).not.toBeNull();
-  });
-
   it("is used by MessageList for error messages", () => {
     render(<MessageList messages={[errorMessage()]} />);
 

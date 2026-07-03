@@ -179,12 +179,6 @@ export interface AutoTitleRuntimeSettings {
   max_title_length: number;
 }
 
-export interface ToolCallLimitRuntimeSettings {
-  enabled: boolean;
-  max_tool_calls: number;
-  exit_behavior: "error";
-}
-
 export interface DuplicateToolCallGuardRuntimeSettings {
   enabled: boolean;
   max_repeats: number;
@@ -200,7 +194,6 @@ export interface ContextCompressionRuntimeSettings {
 
 export interface AgentRuntimeSettings {
   auto_title: AutoTitleRuntimeSettings;
-  tool_call_limit: ToolCallLimitRuntimeSettings;
   duplicate_tool_call_guard: DuplicateToolCallGuardRuntimeSettings;
   context_compression: ContextCompressionRuntimeSettings;
 }

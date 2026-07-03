@@ -8,10 +8,7 @@ from langchain.agents.middleware import AgentMiddleware, ToolCallRequest
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
-from backend.app.agent.middleware.common import (
-    DuplicateToolForceStopError,
-    ToolCallLimitExceededError,
-)
+from backend.app.agent.middleware.common import DuplicateToolForceStopError
 from backend.app.core.logger import logger
 
 
@@ -25,7 +22,7 @@ class ToolErrorHandlingMiddleware(AgentMiddleware):
     ) -> ToolMessage | Command[Any]:
         try:
             return await handler(request)
-        except (DuplicateToolForceStopError, ToolCallLimitExceededError):
+        except DuplicateToolForceStopError:
             raise
         except Exception as exc:
             tool_call = request.tool_call or {}

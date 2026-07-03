@@ -19,17 +19,6 @@ class DuplicateToolForceStopError(RuntimeError):
         self.repeat_count = repeat_count
 
 
-class ToolCallLimitExceededError(RuntimeError):
-    """本轮工具调用次数超过运行时上限。"""
-
-    def __init__(self, *, max_tool_calls: int, attempted_count: int) -> None:
-        super().__init__(
-            f"本轮工具调用已达到上限 {max_tool_calls} 次，已阻止第 {attempted_count} 次工具调用"
-        )
-        self.max_tool_calls = max_tool_calls
-        self.attempted_count = attempted_count
-
-
 def _tool_signature(tool_call: Any) -> str:
     name = str(tool_call.get("name") or "")
     args = tool_call.get("args") or {}

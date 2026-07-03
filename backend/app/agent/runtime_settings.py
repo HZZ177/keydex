@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
@@ -8,7 +8,7 @@ from pydantic_core import PydanticCustomError
 from backend.app.storage import StorageRepositories
 
 AGENT_RUNTIME_SETTINGS_KEY = "agent_runtime_settings"
-DEFAULT_RUNTIME_MAX_TOOL_CALLS = 80
+REMOVED_RUNTIME_SETTINGS_KEYS = {"tool_call_limit"}
 
 
 class AutoTitleRuntimeSettings(BaseModel):
@@ -17,14 +17,6 @@ class AutoTitleRuntimeSettings(BaseModel):
     enabled: bool = False
     only_when_default_title: bool = True
     max_title_length: int = Field(default=20, ge=4, le=50)
-
-
-class ToolCallLimitRuntimeSettings(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    enabled: bool = True
-    max_tool_calls: int = Field(default=DEFAULT_RUNTIME_MAX_TOOL_CALLS, ge=1, le=500)
-    exit_behavior: Literal["error"] = "error"
 
 
 class DuplicateToolCallGuardRuntimeSettings(BaseModel):
@@ -57,9 +49,6 @@ class AgentRuntimeSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     auto_title: AutoTitleRuntimeSettings = Field(default_factory=AutoTitleRuntimeSettings)
-    tool_call_limit: ToolCallLimitRuntimeSettings = Field(
-        default_factory=ToolCallLimitRuntimeSettings
-    )
     duplicate_tool_call_guard: DuplicateToolCallGuardRuntimeSettings = Field(
         default_factory=DuplicateToolCallGuardRuntimeSettings
     )
@@ -68,24 +57,15 @@ class AgentRuntimeSettings(BaseModel):
     )
 
 
-def default_agent_runtime_settings(
-    *,
-    default_max_tool_calls: int = DEFAULT_RUNTIME_MAX_TOOL_CALLS,
-) -> AgentRuntimeSettings:
-    return AgentRuntimeSettings(
-        tool_call_limit=ToolCallLimitRuntimeSettings(max_tool_calls=default_max_tool_calls)
-    )
+def default_agent_runtime_settings() -> AgentRuntimeSettings:
+    return AgentRuntimeSettings()
 
 
-def load_agent_runtime_settings(
-    repositories: StorageRepositories,
-    *,
-    default_max_tool_calls: int = DEFAULT_RUNTIME_MAX_TOOL_CALLS,
-) -> AgentRuntimeSettings:
+def load_agent_runtime_settings(repositories: StorageRepositories) -> AgentRuntimeSettings:
     raw = repositories.settings.get(AGENT_RUNTIME_SETTINGS_KEY)
     if raw is None:
-        return default_agent_runtime_settings(default_max_tool_calls=default_max_tool_calls)
-    return AgentRuntimeSettings.model_validate(raw)
+        return default_agent_runtime_settings()
+    return AgentRuntimeSettings.model_validate(_drop_removed_runtime_settings(raw))
 
 
 def save_agent_runtime_settings(
@@ -95,3 +75,13 @@ def save_agent_runtime_settings(
     validated = AgentRuntimeSettings.model_validate(settings.model_dump(mode="json"))
     repositories.settings.set(AGENT_RUNTIME_SETTINGS_KEY, validated.model_dump(mode="json"))
     return validated
+
+
+def _drop_removed_runtime_settings(raw: Any) -> Any:
+    if not isinstance(raw, dict):
+        return raw
+    return {
+        key: value
+        for key, value in raw.items()
+        if key not in REMOVED_RUNTIME_SETTINGS_KEYS
+    }

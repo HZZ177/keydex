@@ -147,7 +147,6 @@ describe("AppRouter", () => {
     expect(await screen.findByRole("heading", { name: "扩展功能" }, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByTestId("extension-settings-page")).not.toBeNull();
     expect(await screen.findByRole("heading", { name: "标题生成" }, { timeout: 10000 })).not.toBeNull();
-    expect(screen.getByRole("heading", { name: "单轮工具调用上限" })).not.toBeNull();
     expect(screen.getByRole("heading", { name: "上下文压缩" })).not.toBeNull();
   });
 
@@ -1002,11 +1001,6 @@ function defaultExtensionSettings() {
       enabled: false,
       only_when_default_title: true,
       max_title_length: 20,
-    },
-    tool_call_limit: {
-      enabled: true,
-      max_tool_calls: 80,
-      exit_behavior: "error" as const,
     },
     duplicate_tool_call_guard: {
       enabled: true,

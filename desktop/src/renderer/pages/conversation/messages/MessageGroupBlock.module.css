@@ -66,6 +66,14 @@
   color: currentColor;
 }
 
+.titleGroup {
+  display: inline-flex;
+  height: var(--ghost-row-height);
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
 .title {
   display: inline-flex;
   height: var(--ghost-row-height);
@@ -79,6 +87,27 @@
   text-overflow: ellipsis;
   transform: translateY(var(--ghost-text-offset-y));
   white-space: nowrap;
+}
+
+.inlineTicker {
+  flex: 0 0 auto;
+  min-height: var(--ghost-row-height);
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  transform: translateY(var(--ghost-text-offset-y));
+}
+
+.inlineTicker :global([data-kind="added"]),
+.inlineTicker :global([data-kind="removed"]) {
+  padding: 0;
+  background: transparent;
+  text-shadow: none;
+}
+
+.inlineTicker :global(.unit),
+.inlineTicker :global(.label) {
+  display: none;
 }
 
 .source {

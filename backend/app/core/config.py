@@ -27,7 +27,6 @@ class AppSettings(BaseSettings):
     default_scene_id: str = "desktop-agent"
     default_scene_name: str = "Keydex"
     max_history_messages: int = Field(default=40, ge=1)
-    max_tool_calls: int = Field(default=80, ge=1)
     tool_timeout_seconds: float = Field(default=120.0, gt=0)
     shell_timeout_seconds: float = Field(default=120.0, gt=0)
     log_level: str = "INFO"

@@ -23,10 +23,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from backend.app.agent import AgentRunner
 from backend.app.agent.event_processor import AgentEventResult, process_agent_events
-from backend.app.agent.middleware.common import (
-    DuplicateToolForceStopError,
-    ToolCallLimitExceededError,
-)
+from backend.app.agent.middleware.common import DuplicateToolForceStopError
 from backend.app.agent.tool_call_preset import ToolCallPreset, ToolCallPresetItem
 from backend.app.command_approval import ApprovalService, load_command_settings
 from backend.app.core.config import AppSettings
@@ -53,6 +50,11 @@ from backend.app.services.workspace_service import WorkspaceService
 from backend.app.storage import AttachmentRecord, SessionRecord, StorageRepositories
 from backend.app.tools import ToolExecutionContext
 from backend.app.tools.command_runtime import command_process_manager
+
+# LangGraph requires a positive integer recursion_limit and does not expose an
+# infinite value. 99999 is intentionally used as a practical no-limit sentinel
+# for desktop agent runs.
+PRACTICAL_NO_RECURSION_LIMIT = 99_999
 
 
 class NullChatProjectionAdapter:
@@ -322,7 +324,11 @@ def _build_initial_thread_task_context(
 
 
 def _is_goal_thread_task_context(context: dict[str, Any] | None) -> bool:
-    return bool(context and context.get("trigger") == "task_continue" and context.get("type") == "goal")
+    return bool(
+        context
+        and context.get("trigger") == "task_continue"
+        and context.get("type") == "goal"
+    )
 
 
 def _build_skill_activation_request(
@@ -396,15 +402,6 @@ def _chat_turn_error(exc: Exception) -> tuple[str, str, dict[str, Any]]:
         return exc.code, str(exc), exc.details
     if isinstance(exc, SkillActivationError):
         return exc.code, exc.message, exc.details
-    if isinstance(exc, ToolCallLimitExceededError):
-        return (
-            "tool_call_limit_exceeded",
-            str(exc),
-            {
-                "max_tool_calls": exc.max_tool_calls,
-                "attempted_count": exc.attempted_count,
-            },
-        )
     if isinstance(exc, DuplicateToolForceStopError):
         return (
             "duplicate_tool_call_stopped",
@@ -1438,7 +1435,7 @@ class ChatService:
                     "thread_id": active_session_id,
                     "checkpoint_ns": "",
                 },
-                "recursion_limit": max(4, self.settings.max_tool_calls * 2 + 4),
+                "recursion_limit": PRACTICAL_NO_RECURSION_LIMIT,
             }
             slot_items = [
                 item

@@ -10,7 +10,6 @@ from backend.app.agent.middleware.context_compression import ContextCompressionM
 from backend.app.agent.middleware.duplicate_tool_call_guard import (
     DuplicateToolCallGuardMiddleware,
 )
-from backend.app.agent.middleware.tool_call_limit import ToolCallLimitMiddleware
 from backend.app.agent.middleware.tool_error_handling import ToolErrorHandlingMiddleware
 from backend.app.agent.runtime_settings import (
     AgentRuntimeSettings,
@@ -63,12 +62,6 @@ def build_default_middleware(
                     http_transport=model_http_transport,
                 )
             )
-    if settings.tool_call_limit.enabled:
-        middlewares.append(
-            ToolCallLimitMiddleware(
-                max_tool_calls=settings.tool_call_limit.max_tool_calls,
-            )
-        )
     middlewares.append(ToolErrorHandlingMiddleware())
     if settings.duplicate_tool_call_guard.enabled:
         middlewares.append(

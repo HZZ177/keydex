@@ -9,7 +9,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 本期已经落地的基础层：
 
 - 模型默认值配置：默认对话模型 `default_chat`、快速模型 `fast`。供应商配置只决定供应商/模型启用范围；对话每轮必须显式传 `provider_id + model`，不做自动降级或隐式回退。
-- 扩展功能配置：自动标题、单轮工具调用上限、重复工具调用保护、上下文压缩。
+- 扩展功能配置：自动标题、重复工具调用保护、上下文压缩。
 - 会话自动标题：由快速模型异步生成，失败不影响主对话。
 - checkpoint / fork / reverse：完成态 trace 可从 checkpoint 派生分支；reverse 在原 session 内回退到用户消息发送前的 checkpoint。
 - 上下文压缩：以 checkpoint-safe 的 active session fork 方式实现，不原地裁剪原会话历史。
@@ -28,7 +28,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 | 对话模型运行选择 | 对话请求携带 `provider_id + model`，`AgentRunner` 用显式选择创建 ChatOpenAI；session 记住切换后的当前模型 | `backend/app/services/chat_service.py`, `backend/app/agent/runner.py`, `backend/app/agent/factory.py` | 主链路可用，缺参显式报错 |
 | 快速模型 | 独立默认值配置 `fast` | `model_defaults` 表、`backend/app/model/defaults.py`、`backend/app/agent/side_task_model.py` | 用于标题生成、上下文压缩等 side task |
 | 辅助/观察模型 | 无独立配置，无 observer/sidecar 运行链路 | 当前 runtime 仅主 agent event loop | 缺失 |
-| 工具调用上限 | `AppSettings.max_tool_calls` 只影响 LangGraph `recursion_limit`；有重复同参数工具调用保护 | `backend/app/core/config.py`, `backend/app/services/chat_service.py`, `backend/app/agent/middleware.py` | 不是严格工具预算，配置也不在 UI |
+| 单轮工具调用上限 | 已从当前产品形态中移除；仅保留重复同参数工具调用保护与内部 LangGraph recursion guard | `backend/app/services/chat_service.py`, `backend/app/agent/middleware/builder.py` | 不再作为用户可配置功能 |
 | 自动标题 | 新 session 用用户消息截断成标题；支持手动重命名 | `backend/app/services/chat_service.py`, `backend/app/services/session_service.py` | 缺 LLM 标题中间件 |
 | checkpoint 存储 | 已有 SQLite LangGraph checkpointer 与 `checkpoints_v2`/`checkpoint_writes_v2` | `backend/app/agent/checkpoint.py`, `backend/app/storage/db.py` | 底座已有 |
 | trace 输入/输出 checkpoint | 每轮开始前写 `input_checkpoint_id`，完成/取消/失败后写 `output_checkpoint_id` 到 trace_record | `backend/app/services/chat_service.py`, `backend/app/storage/repositories.py` | fork 使用输出 checkpoint；reverse 使用输入 checkpoint |
@@ -45,8 +45,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 | `fast_model_config` | scene 上配置 `{model_key, temperature, max_tokens, timeout}`；标题、压缩等旁路任务使用 fast model | Keydex 不引入 scene 表，改为模型默认值 `fast`；不做对话模型/默认对话模型 fallback，缺失时按功能语义显式失败或跳过 |
 | `observer_model` | 独立 observer 模型做 initial response、status update、progress fact，并把 observer 文案注入后续主链路 | Keydex 本期不做。个人 agent 助手可以接受主链路等待，不需要 C 端式快速 observer 响应 |
 | `MiddlewareBlueprint` | 静态 bundle 汇总压缩、共享工具预算、快速模型、A2UI 等运行时配置 | Keydex 可做轻量版 `RuntimeAgentConfig`，由 SQLite settings + model defaults 生成 |
-| ToolCallLimit | 在 `aafter_model` 检查模型输出工具调用，超过预算直接阻断 | Keydex 应补严格单轮工具预算，不再只靠 recursion_limit |
-| SharedToolCallLimit | 主 agent、subagent、dynamic subagent 共享同一 trace 预算 | Keydex 当前无 subagent，先按单 agent 实现，但配置字段预留 shared 语义 |
+| ToolCallLimit / SharedToolCallLimit | 在模型输出工具调用后按预算阻断 | 当前桌面 agent 产品形态不再采用单轮工具预算 |
 | AutoTitleMiddleware | 主回复完成后异步生成标题并发 session title update 事件 | Keydex 适合优先实现，收益高、风险低 |
 | ContextCompressionMiddleware | `abefore_model` 应用 staging/紧急压缩，`aafter_agent` 后台压缩；压缩后创建新 active session 并切换链路 | Keydex 应采用 checkpoint-safe fork 方案，避免原地改写 checkpoint 导致无法 reverse |
 | Trace fork | 从完成态 trace 的 output checkpoint 派生 debug session，复制 checkpoint 与 message_events | Keydex 可以简化成“从此处分支”，不需要 debug scene 语义 |
@@ -96,11 +95,6 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
     "only_when_default_title": true,
     "max_title_length": 40
   },
-  "tool_call_limit": {
-    "enabled": true,
-    "max_tool_calls": 80,
-    "exit_behavior": "error"
-  },
   "duplicate_tool_call_guard": {
     "enabled": true,
     "max_repeats": 3
@@ -128,9 +122,8 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 
 - [x] 新增 `agent_runtime_settings` schema、API、前端设置入口。
 - [x] 扩展模型设置为默认值：默认对话模型、快速模型。
-- [x] 新增严格单轮工具调用预算中间件。
 - [x] 将重复工具调用阈值配置化。
-- [x] 工具预算/重复阻断进入实时错误和历史回放。
+- [x] 重复阻断进入实时错误和历史回放。
 - [x] 新增 AutoTitle 服务/中间件：使用 fast model，异步写回 session title。
 - [x] WebSocket/前端补 `session.title_updated` 事件，侧栏标题实时更新。
 - [ ] LLM side task 请求分类统计可继续增强；当前 E2E fake transport 已覆盖标题/压缩 side task 的 deterministic 输出。
@@ -138,7 +131,6 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 验收标准：
 
 - 用户能在设置里配置默认对话模型和快速模型。
-- 超过工具调用上限时，本轮明确失败，历史里能看到原因。
 - 新会话首轮完成后标题可自动更新，失败不影响主回复。
 - 所有新增能力无 mock fallback，配置缺失时行为明确。
 
@@ -208,9 +200,8 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 本期实现范围：
 
 - 供应商配置与模型配置拆分；模型配置页管理 `main`/`fast` role。
-- 扩展功能页管理自动标题、单轮工具调用上限、重复工具调用保护、上下文压缩。
+- 扩展功能页管理自动标题、重复工具调用保护、上下文压缩。
 - 自动标题和上下文压缩使用快速模型 side task。
-- 工具调用上限在单轮内严格阻断，阻断后本轮失败可见。
 - Session fork 基于完成态 trace/checkpoint 创建新分支；reverse 基于 input checkpoint 在当前 session 内真实回退。
 - 上下文压缩基于 active session fork：源会话记录压缩成功/失败提示，压缩分支写入摘要并保留最近轮次。
 - E2E fake model transport 在 `KEYDEX_E2E_MODEL_TRANSPORT=true` 时启用，覆盖主链路流式输出和快速模型非流式 side task。

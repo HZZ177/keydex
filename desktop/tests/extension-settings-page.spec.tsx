@@ -45,7 +45,6 @@ describe("ExtensionSettingsPage", () => {
     await screen.findByText("标题生成");
     fireEvent.click(screen.getByRole("switch", { name: "启用标题生成" }));
     fireEvent.change(screen.getByLabelText("期望标题最大长度"), { target: { value: "50" } });
-    fireEvent.change(screen.getByLabelText("单轮最多工具调用"), { target: { value: "12" } });
     fireEvent.change(screen.getByLabelText("连续重复阈值"), { target: { value: "5" } });
     fireEvent.click(screen.getByRole("switch", { name: "启用上下文压缩" }));
     fireEvent.change(screen.getByLabelText("模型上下文窗口"), { target: { value: "64000" } });
@@ -63,11 +62,6 @@ describe("ExtensionSettingsPage", () => {
           enabled: true,
           only_when_default_title: true,
           max_title_length: 50,
-        },
-        tool_call_limit: {
-          enabled: true,
-          max_tool_calls: 12,
-          exit_behavior: "error",
         },
         duplicate_tool_call_guard: {
           enabled: true,
@@ -91,19 +85,13 @@ describe("ExtensionSettingsPage", () => {
 
     renderWithNotifications(<ExtensionSettingsPage runtime={runtime} />);
 
-    await screen.findByText("单轮工具调用上限");
-    fireEvent.click(screen.getByRole("switch", { name: "启用工具上限" }));
+    await screen.findByText("重复工具调用保护");
     fireEvent.click(screen.getByRole("switch", { name: "启用重复保护" }));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
       expect(saveExtensionSettings).toHaveBeenCalledWith({
         ...defaultExtensionSettings(),
-        tool_call_limit: {
-          enabled: false,
-          max_tool_calls: 80,
-          exit_behavior: "error",
-        },
         duplicate_tool_call_guard: {
           enabled: false,
           max_repeats: 3,
@@ -162,20 +150,6 @@ describe("ExtensionSettingsPage", () => {
     fireEvent.change(screen.getByLabelText("期望标题最大长度"), { target: { value: "51" } });
 
     expect(screen.getByText("期望标题最大长度必须在 4 到 50 之间")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true);
-    expect(saveExtensionSettings).not.toHaveBeenCalled();
-  });
-
-  it("disables page save when tool call limit is invalid", async () => {
-    const saveExtensionSettings = vi.fn();
-    const runtime = fakeRuntime({ saveExtensionSettings });
-
-    renderWithNotifications(<ExtensionSettingsPage runtime={runtime} />);
-
-    await screen.findByText("单轮工具调用上限");
-    fireEvent.change(screen.getByLabelText("单轮最多工具调用"), { target: { value: "0" } });
-
-    expect(screen.getByText("单轮最多工具调用必须在 1 到 500 之间")).not.toBeNull();
     expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true);
     expect(saveExtensionSettings).not.toHaveBeenCalled();
   });
@@ -262,7 +236,6 @@ function mergeSettings(
 ): AgentRuntimeSettings {
   return {
     auto_title: { ...base.auto_title, ...patch.auto_title },
-    tool_call_limit: { ...base.tool_call_limit, ...patch.tool_call_limit },
     duplicate_tool_call_guard: {
       ...base.duplicate_tool_call_guard,
       ...patch.duplicate_tool_call_guard,
@@ -277,11 +250,6 @@ function defaultExtensionSettings(): AgentRuntimeSettings {
       enabled: false,
       only_when_default_title: true,
       max_title_length: 20,
-    },
-    tool_call_limit: {
-      enabled: true,
-      max_tool_calls: 80,
-      exit_behavior: "error",
     },
     duplicate_tool_call_guard: {
       enabled: true,

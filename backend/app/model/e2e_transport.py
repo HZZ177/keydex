@@ -94,8 +94,6 @@ def _chat_chunks(payload: dict[str, Any]) -> list[str]:
         return _file_edit_progress_chunks(payload)
     if "工具时序" in user_message:
         return _tool_sequence_chunks(payload)
-    if "工具上限" in user_message:
-        return _tool_limit_chunks(payload)
     if "SessionFork第一轮" in user_message:
         return _content_chunks(
             payload,
@@ -349,68 +347,6 @@ def _tool_sequence_chunks(payload: dict[str, Any]) -> list[str]:
                             ),
                         },
                     },
-                ]
-            },
-            finish_reason="tool_calls",
-        ),
-        _sse_done(),
-    ]
-
-
-def _tool_limit_chunks(payload: dict[str, Any]) -> list[str]:
-    tool_message_count = _tool_message_count_since_last_user(payload)
-    if tool_message_count >= 2:
-        return _content_chunks(
-            payload,
-            "工具上限关闭后已经完成两次工具调用，新的请求已经恢复。",
-            usage={"prompt_tokens": 18, "completion_tokens": 12},
-        )
-    if tool_message_count == 1:
-        return [
-            _chat_sse(
-                payload,
-                delta={"reasoning_content": "继续请求第二个工具，用于触发单轮工具调用上限。"},
-            ),
-            _chat_sse(
-                payload,
-                delta={
-                    "tool_calls": [
-                        {
-                            "index": 0,
-                            "id": "call_e2e_tool_limit_list_dir",
-                            "type": "function",
-                            "function": {
-                                "name": "list_dir",
-                                "arguments": json.dumps(
-                                    {"path": ".", "depth": 1, "limit": 5},
-                                    separators=(",", ":"),
-                                ),
-                            },
-                        }
-                    ]
-                },
-                finish_reason="tool_calls",
-            ),
-            _sse_done(),
-        ]
-    return [
-        _chat_sse(
-            payload,
-            delta={"reasoning_content": "先请求第一个工具，随后将继续请求第二个工具。"},
-        ),
-        _chat_sse(
-            payload,
-            delta={
-                "tool_calls": [
-                    {
-                        "index": 0,
-                        "id": "call_e2e_tool_limit_read_file",
-                        "type": "function",
-                        "function": {
-                            "name": "read_file",
-                            "arguments": '{"path":"README.md","max_lines":4}',
-                        },
-                    }
                 ]
             },
             finish_reason="tool_calls",

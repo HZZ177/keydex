@@ -8,7 +8,7 @@ from backend.app.agent.runtime_settings import (
     load_agent_runtime_settings,
     save_agent_runtime_settings,
 )
-from backend.app.api.dependencies import get_app_settings, get_repositories
+from backend.app.api.dependencies import get_repositories
 from backend.app.command_approval import (
     CommandSettings,
     audit_to_payload,
@@ -16,7 +16,6 @@ from backend.app.command_approval import (
     rule_to_payload,
     save_command_settings,
 )
-from backend.app.core.config import AppSettings
 from backend.app.core.logger import logger
 from backend.app.model import ModelSettings
 from backend.app.storage import (
@@ -31,7 +30,6 @@ from backend.app.tools.command_runtime.models import CommandShell, CommandShellC
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 RepositoriesDep = Depends(get_repositories)
-AppSettingsDep = Depends(get_app_settings)
 
 MODEL_SETTINGS_KEY = "model_settings"
 APPEARANCE_SETTINGS_KEY = "appearance_settings"
@@ -364,13 +362,9 @@ async def put_model_defaults(
 @router.get("/extensions", response_model=AgentRuntimeSettings)
 async def get_extension_settings(
     repositories: StorageRepositories = RepositoriesDep,
-    app_settings: AppSettings = AppSettingsDep,
 ) -> AgentRuntimeSettings:
     try:
-        return load_agent_runtime_settings(
-            repositories,
-            default_max_tool_calls=app_settings.max_tool_calls,
-        )
+        return load_agent_runtime_settings(repositories)
     except ValidationError as exc:
         raise _agent_runtime_settings_invalid(exc) from exc
 
@@ -384,7 +378,6 @@ async def put_extension_settings(
     logger.info(
         "[SettingsAPI] 更新扩展功能配置 | "
         f"auto_title={saved.auto_title.enabled} | "
-        f"tool_call_limit={saved.tool_call_limit.enabled}:{saved.tool_call_limit.max_tool_calls} | "
         f"duplicate_tool_call_guard="
         f"{saved.duplicate_tool_call_guard.enabled}:"
         f"{saved.duplicate_tool_call_guard.max_repeats} | "
@@ -475,7 +468,12 @@ def _validated_command_settings(settings: CommandSettings) -> CommandSettings:
     manual_path = selected_config.shell_path or settings.shell_path
     if not str(manual_path or "").strip():
         return settings.model_copy(
-            update={"shell_path": "", "shell_label": "", "shell_edition": None, "shell_version": None}
+            update={
+                "shell_path": "",
+                "shell_label": "",
+                "shell_edition": None,
+                "shell_version": None,
+            }
         )
     result = discover_shell(
         settings.selected_shell,

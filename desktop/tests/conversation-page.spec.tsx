@@ -1728,7 +1728,7 @@ describe("ConversationPage", () => {
     });
   });
 
-  it("allows sending another message after a tool limit turn failure event", async () => {
+  it("allows sending another message after a duplicate tool failure event", async () => {
     const chat = vi.fn();
     const { runtime, emit } = fakeRuntime({ chat });
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
@@ -1737,14 +1737,16 @@ describe("ConversationPage", () => {
     await act(async () => {
       emit(agentEvent("error", {
         session_id: "ses-1",
-        code: "tool_call_limit_exceeded",
-        message: "本轮工具调用已达到上限 1 次，已阻止第 2 次工具调用",
-        trace_id: "trace-tool-limit",
-        details: { max_tool_calls: 1, attempted_count: 2 },
+        code: "duplicate_tool_call_stopped",
+        message: "工具 `read_file` 使用相同参数连续调用已达 4 次，已强制终止本轮对话",
+        trace_id: "trace-duplicate-tool",
+        details: { tool_name: "read_file", repeat_count: 4 },
       }));
     });
 
-    expect(await screen.findByText("本轮工具调用已达到上限 1 次，已阻止第 2 次工具调用")).not.toBeNull();
+    expect(
+      await screen.findByText("工具 `read_file` 使用相同参数连续调用已达 4 次，已强制终止本轮对话"),
+    ).not.toBeNull();
     typeComposer("调整后继续");
     await waitSendEnabled();
     fireEvent.click(screen.getByLabelText("发送"));

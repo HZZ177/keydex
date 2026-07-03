@@ -10,7 +10,6 @@ from backend.app.agent.middleware.context_compression import ContextCompressionM
 from backend.app.agent.middleware.duplicate_tool_call_guard import (
     DuplicateToolCallGuardMiddleware,
 )
-from backend.app.agent.middleware.tool_call_limit import ToolCallLimitMiddleware
 from backend.app.agent.middleware.tool_error_handling import ToolErrorHandlingMiddleware
 from backend.app.agent.runtime_settings import AgentRuntimeSettings
 from backend.app.agent.skill_activation_middleware import SkillActivationInjectionMiddleware
@@ -152,7 +151,6 @@ def test_default_middleware_order_matches_skill_design() -> None:
     assert [type(item) for item in middleware] == [
         ToolCallPresetMiddleware,
         SkillActivationInjectionMiddleware,
-        ToolCallLimitMiddleware,
         ToolErrorHandlingMiddleware,
         DuplicateToolCallGuardMiddleware,
     ]
@@ -170,36 +168,9 @@ def test_default_middleware_includes_context_compression_when_enabled(tmp_path) 
         ToolCallPresetMiddleware,
         SkillActivationInjectionMiddleware,
         ContextCompressionMiddleware,
-        ToolCallLimitMiddleware,
         ToolErrorHandlingMiddleware,
         DuplicateToolCallGuardMiddleware,
     ]
-
-
-def test_default_middleware_omits_tool_limit_when_disabled() -> None:
-    middleware = build_default_middleware(
-        AgentRuntimeSettings(
-            tool_call_limit={"enabled": False, "max_tool_calls": 80, "exit_behavior": "error"}
-        )
-    )
-
-    assert [type(item) for item in middleware] == [
-        ToolCallPresetMiddleware,
-        SkillActivationInjectionMiddleware,
-        ToolErrorHandlingMiddleware,
-        DuplicateToolCallGuardMiddleware,
-    ]
-
-
-def test_default_middleware_uses_configured_tool_limit() -> None:
-    middleware = build_default_middleware(
-        AgentRuntimeSettings(
-            tool_call_limit={"enabled": True, "max_tool_calls": 5, "exit_behavior": "error"}
-        )
-    )
-    tool_limit = next(item for item in middleware if isinstance(item, ToolCallLimitMiddleware))
-
-    assert tool_limit.max_tool_calls == 5
 
 
 def test_default_middleware_omits_duplicate_guard_when_disabled() -> None:

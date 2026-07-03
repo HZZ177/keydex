@@ -1206,6 +1206,26 @@ describe("MessageList", () => {
     expect(screen.getByText("文件内容")).not.toBeNull();
   });
 
+  it("shows aggregated edit deltas on grouped tool activity", () => {
+    const firstEdit = fileEditToolMessage("edit-1", "src/main.py", 4, 2, "running");
+    const secondEdit = fileEditToolMessage("edit-2", "src/app.py", 5, 1);
+    render(<MessageList messages={[firstEdit, secondEdit]} />);
+
+    const group = screen.getByTestId("message-group-block");
+    expect(screen.getByText("正在编辑 1 个文件，编辑了 1 个文件")).not.toBeNull();
+    expect(within(group).getByTestId("line-change-ticker").textContent).toContain("+9");
+    expect(within(group).getByTestId("line-change-ticker").textContent).toContain("-3");
+    expect(within(group).getByTestId("line-change-ticker").textContent).not.toContain("行");
+    expect(screen.queryByTestId("tool-call-block")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "正在编辑 1 个文件，编辑了 1 个文件详情" }));
+
+    expect(screen.getAllByTestId("tool-call-block")).toHaveLength(2);
+    expect(within(group).getAllByTestId("line-change-ticker")).toHaveLength(3);
+    expect(screen.getByText("正在编辑文件")).not.toBeNull();
+    expect(screen.getByText("已编辑文件")).not.toBeNull();
+  });
+
   it("summarizes mixed tool activity by natural-language tool categories", () => {
     render(
       <MessageList
@@ -1846,6 +1866,38 @@ function failedToolMessage(
       result: {
         status: "error",
         error: "失败",
+      },
+    },
+  };
+}
+
+function fileEditToolMessage(
+  id: string,
+  path: string,
+  additions: number,
+  deletions: number,
+  status: ConversationMessage["status"] = "completed",
+): ConversationMessage {
+  return {
+    ...toolMessage(id, "apply_patch", { path, patch: "*** Begin Patch" }),
+    status,
+    payload: {
+      call: {
+        id: `call-${id}`,
+        name: "apply_patch",
+        arguments: { path, patch: "*** Begin Patch" },
+      },
+      result: {
+        status: status === "running" ? "running" : "success",
+        model_content: status === "running" ? "" : "patched",
+        files: [
+          {
+            path,
+            operation: "update",
+            added_lines: additions,
+            deleted_lines: deletions,
+          },
+        ],
       },
     },
   };

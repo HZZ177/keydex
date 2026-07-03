@@ -1937,15 +1937,15 @@ describe("agentSessionStore reducer", () => {
       action: "error",
       data: {
         session_id: "ses-2",
-        code: "tool_call_limit_exceeded",
-        message: "本轮工具调用已达到上限 1 次，已阻止第 2 次工具调用",
+        code: "duplicate_tool_call_stopped",
+        message: "工具 `read_file` 使用相同参数连续调用已达 4 次，已强制终止本轮对话",
         trace_id: "trace-3",
-        details: { max_tool_calls: 1, attempted_count: 2 },
+        details: { tool_name: "read_file", repeat_count: 4 },
       },
     });
     expect(selectAgentMessages(state, "ses-2").at(-1)).toMatchObject({
       role: "error",
-      content: "本轮工具调用已达到上限 1 次，已阻止第 2 次工具调用",
+      content: "工具 `read_file` 使用相同参数连续调用已达 4 次，已强制终止本轮对话",
       traceId: "trace-3",
       status: "failed",
     });

@@ -6,7 +6,7 @@ from backend.app.main import create_app
 
 
 def test_extension_settings_api_returns_defaults_from_app_hard_default(tmp_path) -> None:
-    app = create_app(AppSettings(data_dir=tmp_path / "data", max_tool_calls=17))
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
     with TestClient(app) as client:
         response = client.get("/api/settings/extensions")
 
@@ -16,8 +16,7 @@ def test_extension_settings_api_returns_defaults_from_app_hard_default(tmp_path)
     assert body["auto_title"]["max_title_length"] == 20
     assert body["context_compression"]["enabled"] is False
     assert body["context_compression"]["context_window_tokens"] == 128000
-    assert body["tool_call_limit"]["enabled"] is True
-    assert body["tool_call_limit"]["max_tool_calls"] == 17
+    assert "tool_call_limit" not in body
     assert body["duplicate_tool_call_guard"]["enabled"] is True
     assert body["duplicate_tool_call_guard"]["max_repeats"] == 3
 
@@ -29,11 +28,6 @@ def test_extension_settings_api_saves_and_reads_full_config(tmp_path) -> None:
             "enabled": True,
             "only_when_default_title": False,
             "max_title_length": 50,
-        },
-        "tool_call_limit": {
-            "enabled": True,
-            "max_tool_calls": 9,
-            "exit_behavior": "error",
         },
         "duplicate_tool_call_guard": {
             "enabled": True,
@@ -57,10 +51,14 @@ def test_extension_settings_api_saves_and_reads_full_config(tmp_path) -> None:
     assert get_response.json() == payload
 
 
-def test_extension_settings_api_rejects_invalid_tool_limit(tmp_path) -> None:
+def test_extension_settings_api_rejects_removed_tool_limit_field(tmp_path) -> None:
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
     payload = _valid_payload()
-    payload["tool_call_limit"]["max_tool_calls"] = 0
+    payload["tool_call_limit"] = {
+        "enabled": True,
+        "max_tool_calls": 80,
+        "exit_behavior": "error",
+    }
 
     with TestClient(app) as client:
         response = client.put("/api/settings/extensions", json=payload)
@@ -94,7 +92,7 @@ def test_extension_settings_api_rejects_invalid_compression_thresholds(tmp_path)
 def test_extension_settings_api_rejects_unknown_fields(tmp_path) -> None:
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
     payload = _valid_payload()
-    payload["tool_call_limit"]["mode"] = "warn"
+    payload["duplicate_tool_call_guard"]["mode"] = "warn"
 
     with TestClient(app) as client:
         response = client.put("/api/settings/extensions", json=payload)
@@ -112,7 +110,6 @@ def test_extension_settings_api_fails_loudly_for_corrupt_persisted_config(tmp_pa
                 "only_when_default_title": True,
                 "max_title_length": 20,
             },
-            "tool_call_limit": {"enabled": True, "max_tool_calls": 8, "exit_behavior": "error"},
             "duplicate_tool_call_guard": {"enabled": True, "max_repeats": 3},
             "context_compression": {
                 "enabled": True,
@@ -137,11 +134,6 @@ def _valid_payload() -> dict:
             "enabled": False,
             "only_when_default_title": True,
             "max_title_length": 20,
-        },
-        "tool_call_limit": {
-            "enabled": True,
-            "max_tool_calls": 80,
-            "exit_behavior": "error",
         },
         "duplicate_tool_call_guard": {
             "enabled": True,

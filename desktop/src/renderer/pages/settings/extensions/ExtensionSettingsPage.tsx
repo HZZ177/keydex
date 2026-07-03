@@ -9,7 +9,6 @@ import type {
   ContextCompressionRuntimeSettings,
   DuplicateToolCallGuardRuntimeSettings,
   ModelDefaultsResponse,
-  ToolCallLimitRuntimeSettings,
 } from "@/types/protocol";
 
 import styles from "./ExtensionSettingsPage.module.css";
@@ -21,7 +20,6 @@ export interface ExtensionSettingsPageProps {
 
 type ExtensionDrafts = {
   autoTitle: AutoTitleRuntimeSettings;
-  toolLimit: ToolCallLimitRuntimeSettings;
   duplicateGuard: DuplicateToolCallGuardRuntimeSettings;
   compression: ContextCompressionRuntimeSettings;
 };
@@ -70,13 +68,11 @@ export function ExtensionSettingsPage({
 
   const fastConfigured = Boolean(defaults?.defaults.fast.configured);
   const titleDraft = drafts?.autoTitle ?? null;
-  const toolDraft = drafts?.toolLimit ?? null;
   const duplicateGuardDraft = drafts?.duplicateGuard ?? null;
   const compressionDraft = drafts?.compression ?? null;
   const titleDependencyMissing = Boolean(titleDraft?.enabled && !fastConfigured);
   const compressionDependencyMissing = Boolean(compressionDraft?.enabled && !fastConfigured);
   const titleLengthInvalid = titleDraft ? titleDraft.max_title_length < 4 || titleDraft.max_title_length > 50 : false;
-  const toolLimitInvalid = toolDraft ? toolDraft.max_tool_calls < 1 || toolDraft.max_tool_calls > 500 : false;
   const duplicateGuardInvalid = duplicateGuardDraft
     ? duplicateGuardDraft.max_repeats < 1 || duplicateGuardDraft.max_repeats > 20
     : false;
@@ -93,7 +89,6 @@ export function ExtensionSettingsPage({
     !titleDependencyMissing &&
     !compressionDependencyMissing &&
     !titleLengthInvalid &&
-    !toolLimitInvalid &&
     !duplicateGuardInvalid &&
     !compressionTriggerInvalid &&
     !compressionWindowInvalid;
@@ -104,10 +99,6 @@ export function ExtensionSettingsPage({
 
   const updateTitleDraft = (patch: Partial<AutoTitleRuntimeSettings>) => {
     updateDrafts((current) => ({ ...current, autoTitle: { ...current.autoTitle, ...patch } }));
-  };
-
-  const updateToolDraft = (patch: Partial<ToolCallLimitRuntimeSettings>) => {
-    updateDrafts((current) => ({ ...current, toolLimit: { ...current.toolLimit, ...patch } }));
   };
 
   const updateDuplicateGuardDraft = (patch: Partial<DuplicateToolCallGuardRuntimeSettings>) => {
@@ -148,7 +139,7 @@ export function ExtensionSettingsPage({
 
       {loading ? <div className={styles.muted} data-settings-muted>正在读取扩展功能配置</div> : null}
 
-      {!loading && drafts && titleDraft && toolDraft && duplicateGuardDraft && compressionDraft ? (
+      {!loading && drafts && titleDraft && duplicateGuardDraft && compressionDraft ? (
         <section className={styles.settingsGroup} data-settings-group aria-labelledby="extension-feature-title">
           <div className={styles.groupHeader} data-settings-group-header>
             <h2 id="extension-feature-title">功能模块</h2>
@@ -182,34 +173,6 @@ export function ExtensionSettingsPage({
             ) : null}
             {titleLengthInvalid ? (
               <div className={styles.fieldError}>期望标题最大长度必须在 4 到 50 之间</div>
-            ) : null}
-          </div>
-
-          <div className={styles.settingsPanel} data-settings-panel>
-            <FeatureSettingRow
-              title="单轮工具调用上限"
-              description="限制单轮对话中的真实工具调用次数"
-              controls={
-                <InlineNumberControl label="单轮最多工具调用">
-                  <NumberInput
-                    label="单轮最多工具调用"
-                    max={500}
-                    min={1}
-                    onChange={(max_tool_calls) => updateToolDraft({ max_tool_calls })}
-                    value={toolDraft.max_tool_calls}
-                  />
-                </InlineNumberControl>
-              }
-              switchControl={
-                <ToggleSwitch
-                  checked={toolDraft.enabled}
-                  label="启用工具上限"
-                  onChange={(enabled) => updateToolDraft({ enabled })}
-                />
-              }
-            />
-            {toolLimitInvalid ? (
-              <div className={styles.fieldError}>单轮最多工具调用必须在 1 到 500 之间</div>
             ) : null}
           </div>
 
@@ -614,7 +577,6 @@ function DependencyWarning({
 function draftsFromSettings(settings: AgentRuntimeSettings): ExtensionDrafts {
   return {
     autoTitle: { ...settings.auto_title, only_when_default_title: true },
-    toolLimit: settings.tool_call_limit,
     duplicateGuard: settings.duplicate_tool_call_guard,
     compression: withFixedCompressionPolicy(settings.context_compression),
   };
@@ -623,7 +585,6 @@ function draftsFromSettings(settings: AgentRuntimeSettings): ExtensionDrafts {
 function settingsFromDrafts(drafts: ExtensionDrafts): AgentRuntimeSettings {
   return {
     auto_title: { ...drafts.autoTitle, only_when_default_title: true },
-    tool_call_limit: drafts.toolLimit,
     duplicate_tool_call_guard: drafts.duplicateGuard,
     context_compression: withFixedCompressionPolicy(drafts.compression),
   };

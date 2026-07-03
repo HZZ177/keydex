@@ -18,9 +18,9 @@ from backend.app.api.health import router as health_router
 from backend.app.api.model_providers import router as model_providers_router
 from backend.app.api.models import router as models_router
 from backend.app.api.sessions import router as sessions_router
-from backend.app.api.thread_tasks import router as thread_tasks_router
 from backend.app.api.settings import load_effective_model_settings, load_model_settings
 from backend.app.api.settings import router as settings_router
+from backend.app.api.thread_tasks import router as thread_tasks_router
 from backend.app.api.usage import router as usage_router
 from backend.app.api.websocket import router as websocket_router
 from backend.app.api.workspace import router as workspace_router
@@ -121,10 +121,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         checkpointer = SQLiteCheckpointSaver(app.state.database)
         agent_runner = AgentRunner(
             model_settings_provider=lambda: load_model_settings(app.state.repositories),
-            runtime_settings_provider=lambda: load_agent_runtime_settings(
-                app.state.repositories,
-                default_max_tool_calls=resolved_settings.max_tool_calls,
-            ),
+            runtime_settings_provider=lambda: load_agent_runtime_settings(app.state.repositories),
             model_http_transport_provider=lambda: getattr(app.state, "model_http_transport", None),
             checkpointer=checkpointer,
             tool_registry=app.state.tool_registry,
