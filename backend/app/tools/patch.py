@@ -75,6 +75,7 @@ class PatchOperation:
     path: str
     lines: list[str] = field(default_factory=list)
     move_to: str | None = None
+    body_start_line: int = 0
 
 
 @dataclass(frozen=True)
@@ -180,13 +181,22 @@ def _collect_update_operation(
             raise ToolExecutionError("Move to 缺少路径", code="invalid_patch")
         index += 1
 
+    body_start_line = index + 1
     body: list[str] = []
     while index < len(lines) - 1 and not _is_file_operation_header(lines[index]):
         body.append(lines[index])
         index += 1
     if not body and not move_to:
         raise ToolExecutionError("Update File 缺少有效变更", code="invalid_patch")
-    operations.append(PatchOperation(kind="update", path=path, lines=body, move_to=move_to))
+    operations.append(
+        PatchOperation(
+            kind="update",
+            path=path,
+            lines=body,
+            move_to=move_to,
+            body_start_line=body_start_line,
+        )
+    )
     return index
 
 
@@ -258,6 +268,7 @@ def _plan_update(
         original,
         operation.lines,
         path=_relative_missing(target, context),
+        start_line=operation.body_start_line,
     )
     state[target] = None
     state[destination] = updated
@@ -335,10 +346,10 @@ def _state_content(
         ) from exc
 
 
-def _apply_update_hunks(original: str, lines: list[str], *, path: str) -> str:
+def _apply_update_hunks(original: str, lines: list[str], *, path: str, start_line: int) -> str:
     if not lines:
         return original
-    hunks = _parse_hunks(lines)
+    hunks = _parse_hunks(lines, start_line=start_line)
     current = original.splitlines()
     trailing_newline = original.endswith("\n")
     cursor = 0
@@ -365,31 +376,37 @@ def _apply_update_hunks(original: str, lines: list[str], *, path: str) -> str:
     return "\n".join(current) + ("\n" if trailing_newline else "")
 
 
-def _parse_hunks(lines: list[str]) -> list[PatchHunk]:
+def _parse_hunks(lines: list[str], *, start_line: int = 1) -> list[PatchHunk]:
     hunks: list[PatchHunk] = []
     header = "@@"
     body: list[str] = []
     end_of_file = False
     saw_hunk_header = False
-    for line in lines:
+    current_hunk_line_number = start_line
+    for offset, line in enumerate(lines):
+        line_number = start_line + offset
         if line == "*** End of File":
+            if not body:
+                _raise_empty_update_hunk_before_end_of_file(line_number)
             end_of_file = True
             continue
         if line == "@@" or line.startswith("@@ "):
+            if saw_hunk_header and not body:
+                _raise_empty_update_hunk(current_hunk_line_number)
             if saw_hunk_header or body:
                 hunks.append(PatchHunk(header=header, lines=body, end_of_file=end_of_file))
             header = line[2:].strip()
             body = []
             end_of_file = False
             saw_hunk_header = True
+            current_hunk_line_number = line_number
             continue
         normalized_line = _normalize_hunk_body_line(line)
         if normalized_line is None:
-            raise ToolExecutionError(
-                "Update File 内容行必须以空格、+、-、@@ 或 *** End of File 开头",
-                code="invalid_patch",
-            )
+            _raise_invalid_update_hunk_line(line, line_number)
         body.append(normalized_line)
+    if saw_hunk_header and not body:
+        _raise_empty_update_hunk(current_hunk_line_number)
     if saw_hunk_header or body:
         hunks.append(PatchHunk(header=header, lines=body, end_of_file=end_of_file))
     if not hunks:
@@ -403,6 +420,64 @@ def _normalize_hunk_body_line(line: str) -> str | None:
     if line == "":
         return " "
     return None
+
+
+def _raise_empty_update_hunk_before_end_of_file(line_number: int) -> None:
+    raise ToolExecutionError(
+        "Update hunk 缺少变更行，不能在空的 @@ 块后直接写 *** End of File",
+        code="invalid_patch",
+        details={
+            "line": "*** End of File",
+            "line_number": line_number,
+            "hint": (
+                "请先在 @@ 块内写至少一行以空格、+ 或 - 开头的内容；"
+                "如果只是追加到文件末尾，通常不需要写 *** End of File。"
+            ),
+        },
+    )
+
+
+def _raise_empty_update_hunk(line_number: int) -> None:
+    raise ToolExecutionError(
+        "Update hunk 缺少变更行",
+        code="invalid_patch",
+        details={
+            "line": "@@",
+            "line_number": line_number,
+            "hint": "每个 @@ 块内至少要有一行以空格、+ 或 - 开头的内容。",
+        },
+    )
+
+
+def _raise_invalid_update_hunk_line(line: str, line_number: int) -> None:
+    expected_prefixes = [" ", "+", "-", "@@", "*** End of File"]
+    hint = "上下文行必须以一个空格开头；新增行用 +，删除行用 -。"
+    message = "Update File 内容行缺少行类型前缀"
+    if line.startswith("*** Add File: "):
+        message = "Update File 正文中不能嵌入 *** Add File 文件操作头"
+        hint = "Keydex 当前新增文件应使用 create_file；edit_file 只用于修改、删除或移动已有文件。"
+    elif line.startswith("*** Update File: ") or line.startswith("*** Delete File: "):
+        message = "文件操作头位置错误"
+        hint = "文件操作头只能出现在文件操作层；如果要结束当前修改，请先完成当前 @@ 块。"
+    elif line.startswith("*** Move to: "):
+        message = "*** Move to 只能紧跟在 *** Update File 后面"
+        hint = "请把 *** Move to: <new-path> 放到 *** Update File: <path> 的下一行，不能放在 @@ 块内。"
+    elif line.startswith("*** "):
+        message = "无法识别或位置错误的 Update File 标记"
+        hint = "只有单独一行的 *** End of File 可以出现在 Update File 正文中，且前一个 @@ 块必须已有内容。"
+    elif line.startswith("--- ") or line.startswith("+++ "):
+        message = "Update File 正文不接受普通 unified diff 文件头"
+        hint = "不要写 ---/+++ 文件头；在 *** Update File: <path> 后直接写 @@ 和变更行。"
+    raise ToolExecutionError(
+        message,
+        code="invalid_patch",
+        details={
+            "line": line,
+            "line_number": line_number,
+            "expected_prefixes": expected_prefixes,
+            "hint": hint,
+        },
+    )
 
 
 def _hunk_lines(hunk: PatchHunk) -> tuple[list[str], list[str], int, int]:

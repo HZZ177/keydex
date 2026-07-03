@@ -150,6 +150,10 @@ alpha
 
     assert result.ok is False
     assert result.error["code"] == "invalid_patch"
+    assert result.error["message"] == "Update File 内容行缺少行类型前缀"
+    assert result.error["details"]["line"] == "alpha"
+    assert result.error["details"]["line_number"] == 4
+    assert "上下文行必须以一个空格开头" in result.error["details"]["hint"]
     assert target.read_text(encoding="utf-8") == "alpha\nold\n"
 
 
@@ -162,7 +166,7 @@ async def test_apply_patch_rejects_structural_marker_inside_update_body(tmp_path
         """*** Begin Patch
 *** Update File: src/app.py
 @@
-alpha
+ alpha
 *** Add File: src/new.py
 *** End Patch""",
         tmp_path,
@@ -170,6 +174,58 @@ alpha
 
     assert result.ok is False
     assert result.error["code"] == "invalid_patch"
+    assert result.error["message"] == "Update File 正文中不能嵌入 *** Add File 文件操作头"
+    assert result.error["details"]["line"] == "*** Add File: src/new.py"
+    assert result.error["details"]["line_number"] == 5
+    assert "create_file" in result.error["details"]["hint"]
+    assert result.error["details"]["expected_prefixes"] == [" ", "+", "-", "@@", "*** End of File"]
+    assert target.read_text(encoding="utf-8") == "alpha\n"
+
+
+async def test_apply_patch_rejects_empty_hunk_before_end_of_file_with_specific_hint(
+    tmp_path,
+) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("alpha\n", encoding="utf-8")
+
+    result = await _run(
+        """*** Begin Patch
+*** Update File: src/app.py
+@@
+*** End of File
+*** End Patch""",
+        tmp_path,
+    )
+
+    assert result.ok is False
+    assert result.error["code"] == "invalid_patch"
+    assert result.error["message"] == "Update hunk 缺少变更行，不能在空的 @@ 块后直接写 *** End of File"
+    assert result.error["details"]["line"] == "*** End of File"
+    assert result.error["details"]["line_number"] == 4
+    assert "通常不需要写 *** End of File" in result.error["details"]["hint"]
+    assert target.read_text(encoding="utf-8") == "alpha\n"
+
+
+async def test_apply_patch_rejects_empty_hunk_with_specific_hint(tmp_path) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("alpha\n", encoding="utf-8")
+
+    result = await _run(
+        """*** Begin Patch
+*** Update File: src/app.py
+@@
+*** End Patch""",
+        tmp_path,
+    )
+
+    assert result.ok is False
+    assert result.error["code"] == "invalid_patch"
+    assert result.error["message"] == "Update hunk 缺少变更行"
+    assert result.error["details"]["line"] == "@@"
+    assert result.error["details"]["line_number"] == 3
+    assert "至少要有一行" in result.error["details"]["hint"]
     assert target.read_text(encoding="utf-8") == "alpha\n"
 
 
