@@ -101,6 +101,9 @@ export function HomePage({
   const workspaceSkills = selectedWorkspaceId ? workspaceSkillsState.skills : [];
 
   useEffect(() => {
+    if (!backendReady) {
+      return;
+    }
     let active = true;
     void runtime.settings
       .getSettings()
@@ -117,7 +120,7 @@ export function HomePage({
     return () => {
       active = false;
     };
-  }, [runtime]);
+  }, [backendReady, runtime]);
 
   const upsertWorkspace = useCallback((workspace: Workspace) => {
     setWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);

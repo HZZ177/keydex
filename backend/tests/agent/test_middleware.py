@@ -258,11 +258,88 @@ async def test_context_compression_before_model_runs_emergency_compression(tmp_p
     assert result is not None
     messages = result["messages"]
     assert service.calls == ["initial"]
-    assert any("紧急摘要" in str(getattr(message, "content", "")) for message in messages)
-    assert [getattr(message, "content", "") for message in messages[-2:]] == [
+    assert len(service.materials) == 1
+    assert [message.content for message in service.materials[0].compression_zone_messages] == [
+        "旧问题",
+        "旧回答",
         "最近问题",
         "最近回答",
     ]
+    assert service.materials[0].retain_zone_messages == []
+    assert service.materials[0].anchor_message_id is None
+    assert service.materials[0].side_event_metadata["staging_strategy"] == "full_replacement"
+    assert any("紧急摘要" in str(getattr(message, "content", "")) for message in messages)
+    rendered = "\n".join(str(getattr(message, "content", "")) for message in messages)
+    assert "旧问题" not in rendered
+    assert "旧回答" not in rendered
+    assert "最近问题" not in rendered
+    assert "最近回答" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_context_compression_emergency_ignores_recent_turn_retention_floor(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    session = repositories.sessions.create(
+        session_id="ses_emergency_single_turn",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="源会话",
+    )
+    service = FakeCompressionService(l1="单轮紧急摘要")
+    token = set_request_context(
+        session_id=session.id, active_session_id=session.id, trace_id="trace_single_turn"
+    )
+    try:
+        middleware = ContextCompressionMiddleware(
+            settings=ContextCompressionRuntimeSettings(
+                enabled=True,
+                context_window_tokens=1000,
+                trigger_fraction=0.1,
+                emergency_fraction=0.5,
+                retain_rounds=2,
+            ),
+            repositories=repositories,
+            dispatcher=EventDispatcher(),
+            checkpointer=object(),
+            compression_service=service,
+        )
+        result = await middleware.abefore_model(
+            {
+                "messages": [
+                    HumanMessage(content="单轮用户输入", id="h1"),
+                    AIMessage(
+                        content="长程执行中的大量上下文",
+                        id="a1",
+                        usage_metadata={
+                            "input_tokens": 700,
+                            "output_tokens": 200,
+                            "total_tokens": 900,
+                        },
+                    ),
+                ]
+            },
+            runtime=None,
+        )
+    finally:
+        reset_request_context(token)
+
+    assert result is not None
+    assert service.calls == ["initial"]
+    assert len(service.materials) == 1
+    material = service.materials[0]
+    assert [message.content for message in material.compression_zone_messages] == [
+        "单轮用户输入",
+        "长程执行中的大量上下文",
+    ]
+    assert material.retain_zone_messages == []
+    assert material.anchor_message_id is None
+    assert material.side_event_metadata["staging_strategy"] == "full_replacement"
+    rendered = "\n".join(str(getattr(message, "content", "")) for message in result["messages"])
+    assert "单轮紧急摘要" in rendered
+    assert "单轮用户输入" not in rendered
+    assert "长程执行中的大量上下文" not in rendered
 
 
 @pytest.mark.asyncio
@@ -456,6 +533,7 @@ async def test_context_compression_after_agent_schedules_background_staging(tmp_
         scheduled.append(coro)
         return object()
 
+    service = FakeCompressionService(l1="后台摘要")
     token = set_request_context(
         session_id=session.id, active_session_id=session.id, trace_id="trace_bg"
     )
@@ -471,7 +549,7 @@ async def test_context_compression_after_agent_schedules_background_staging(tmp_
             repositories=repositories,
             dispatcher=EventDispatcher(),
             checkpointer=saver,
-            compression_service=FakeCompressionService(l1="后台摘要"),
+            compression_service=service,
             schedule_task=schedule,
         )
         await middleware.aafter_agent(
@@ -512,6 +590,8 @@ async def test_context_compression_after_agent_schedules_background_staging(tmp_
     assert staging is not None
     assert staging.anchor_message_id == "h2"
     assert staging.l1_content == "后台摘要"
+    assert len(service.materials) == 1
+    assert service.materials[0].side_event_metadata["staging_strategy"] == "anchor_replacement"
     cloned = saver.get_tuple(
         {
             "configurable": {
@@ -662,9 +742,11 @@ class FakeCompressionService:
         self.l1 = l1
         self.l2 = l2
         self.calls: list[str] = []
+        self.materials: list = []
 
     async def generate_compression_result(self, *, material):
         self.calls.append(material.phase)
+        self.materials.append(material)
         return CompressionGenerationResult(
             success=True,
             phase=material.phase,

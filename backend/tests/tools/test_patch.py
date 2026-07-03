@@ -28,6 +28,7 @@ def test_edit_file_tool_contract_documents_required_headers() -> None:
     assert "*** Delete File: <path>" in tool.description
     assert "不要写 `*** docs/file.md`" in tool.description
     assert "*** Update File: <path>" in tool.parameters["properties"]["patch"]["description"]
+    assert "空白上下文行" in tool.parameters["properties"]["patch"]["description"]
 
 
 async def test_apply_patch_rejects_add_file_to_keep_creation_separate(tmp_path) -> None:
@@ -105,6 +106,71 @@ async def test_apply_patch_updates_file_with_multiple_hunks(tmp_path) -> None:
     assert result.result["changes"][0]["added_lines"] == 2
     assert result.result["changes"][0]["deleted_lines"] == 2
     assert target.read_text(encoding="utf-8") == "alpha\nnew-a\nmiddle\nnew-b\nomega\n"
+
+
+async def test_apply_patch_accepts_bare_empty_context_lines_for_compatibility(tmp_path) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("alpha\nold\n\nomega\n", encoding="utf-8")
+
+    result = await _run(
+        """*** Begin Patch
+*** Update File: src/app.py
+@@
+ alpha
+-old
++new
+
+ omega
+*** End Patch""",
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert result.result["changes"][0]["added_lines"] == 1
+    assert result.result["changes"][0]["deleted_lines"] == 1
+    assert target.read_text(encoding="utf-8") == "alpha\nnew\n\nomega\n"
+
+
+async def test_apply_patch_rejects_unprefixed_non_empty_update_lines(tmp_path) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("alpha\nold\n", encoding="utf-8")
+
+    result = await _run(
+        """*** Begin Patch
+*** Update File: src/app.py
+@@
+alpha
+-old
++new
+*** End Patch""",
+        tmp_path,
+    )
+
+    assert result.ok is False
+    assert result.error["code"] == "invalid_patch"
+    assert target.read_text(encoding="utf-8") == "alpha\nold\n"
+
+
+async def test_apply_patch_rejects_structural_marker_inside_update_body(tmp_path) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("alpha\n", encoding="utf-8")
+
+    result = await _run(
+        """*** Begin Patch
+*** Update File: src/app.py
+@@
+alpha
+*** Add File: src/new.py
+*** End Patch""",
+        tmp_path,
+    )
+
+    assert result.ok is False
+    assert result.error["code"] == "invalid_patch"
+    assert target.read_text(encoding="utf-8") == "alpha\n"
 
 
 async def test_apply_patch_deletes_file_with_removed_line_count(tmp_path) -> None:

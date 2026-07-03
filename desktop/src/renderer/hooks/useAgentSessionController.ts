@@ -77,6 +77,7 @@ export interface AgentSessionControllerAnnotationRequest {
 export interface UseAgentSessionControllerOptions {
   runtime: RuntimeBridge;
   sessionId?: string;
+  enabled?: boolean;
   historyPageSize?: number;
   loadFullHistory?: boolean;
   onRuntimeEvent?: (event: AgentActionEnvelope) => void;
@@ -147,6 +148,7 @@ export interface AgentSessionController {
 export function useAgentSessionController({
   runtime,
   sessionId = "",
+  enabled = true,
   historyPageSize = 5,
   loadFullHistory = true,
   onRuntimeEvent,
@@ -197,7 +199,7 @@ export function useAgentSessionController({
   const canStop = runtimeState === "running" && connectionReady && Boolean(sessionId);
 
   const syncThreadTasksForSession = useCallback(async () => {
-    if (!sessionId || !syncThreadTasks) {
+    if (!enabled || !sessionId || !syncThreadTasks) {
       return;
     }
     if (typeof runtime.conversation.listThreadTasks !== "function") {
@@ -210,7 +212,7 @@ export function useAgentSessionController({
     } catch {
       dispatch({ type: "tasks/loaded", sessionId, tasks: [] });
     }
-  }, [dispatch, runtime, sessionId, syncThreadTasks]);
+  }, [dispatch, enabled, runtime, sessionId, syncThreadTasks]);
 
   useEffect(() => {
     syncThreadTasksRef.current = () => {
@@ -253,6 +255,14 @@ export function useAgentSessionController({
       setLoading(false);
       setLoadingOlderHistory(false);
       dispatch({ type: "session/select", sessionId: null });
+      return;
+    }
+
+    if (!enabled) {
+      setLoading(true);
+      setLoadingOlderHistory(false);
+      setRuntimeDetail(null);
+      dispatch({ type: "session/select", sessionId });
       return;
     }
 
@@ -329,6 +339,7 @@ export function useAgentSessionController({
     };
   }, [
     dispatch,
+    enabled,
     handleRuntimeEvent,
     historyPageSize,
     loadFullHistory,
@@ -342,7 +353,7 @@ export function useAgentSessionController({
   ]);
 
   const reloadHistory = useCallback(async () => {
-    if (!sessionId) {
+    if (!enabled || !sessionId) {
       return;
     }
     setLoading(true);
@@ -363,6 +374,7 @@ export function useAgentSessionController({
     }
   }, [
     dispatch,
+    enabled,
     historyPageSize,
     loadFullHistory,
     onNotice,
@@ -373,7 +385,7 @@ export function useAgentSessionController({
   ]);
 
   const syncPersistedHistory = useCallback(async () => {
-    if (!sessionId) {
+    if (!enabled || !sessionId) {
       return;
     }
     try {
@@ -393,6 +405,7 @@ export function useAgentSessionController({
     }
   }, [
     dispatch,
+    enabled,
     historyPageSize,
     loadFullHistory,
     onNotice,
@@ -409,7 +422,7 @@ export function useAgentSessionController({
 
   const loadOlderHistory = useCallback(async () => {
     const cursor = sessionViewState?.historyCursor;
-    if (!sessionId || !cursor || !sessionViewState?.historyHasMoreOlder || loadingOlderHistory) {
+    if (!enabled || !sessionId || !cursor || !sessionViewState?.historyHasMoreOlder || loadingOlderHistory) {
       return;
     }
     setLoadingOlderHistory(true);
@@ -429,6 +442,7 @@ export function useAgentSessionController({
     }
   }, [
     dispatch,
+    enabled,
     historyPageSize,
     loadingOlderHistory,
     onNotice,

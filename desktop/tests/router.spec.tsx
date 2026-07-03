@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentActionEnvelope } from "@/types/protocol";
-import type { ChatChannel, ChatChannelOptions, RuntimeBridge, WsConnectionStatus } from "@/runtime";
+import type { AgentConnection, ChatChannel, ChatChannelOptions, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import {
   appModeFromPath,
   conversationPath,
@@ -28,14 +28,14 @@ function renderRouter(
   initialEntries: Array<string | { pathname: string; state?: unknown }>,
   options: RenderRouterOptions = {},
 ) {
-  const { extra, ...runtimeOptions } = options;
+  const { extra, starter = () => Promise.resolve(agentConnection()), ...runtimeOptions } = options;
   const runtime = fakeRuntime(runtimeOptions);
   const result = render(
     <ThemeProvider>
       <FontProvider>
         <NotificationProvider>
           <LayoutStateProvider>
-            <RuntimeConnectionProvider runtime={runtime} starter={() => Promise.resolve(agentConnection())}>
+            <RuntimeConnectionProvider runtime={runtime} starter={starter}>
               <AgentSessionProvider runtime={runtime}>
                 <PreviewProvider>
                   {extra}
@@ -202,7 +202,7 @@ describe("AppRouter", () => {
 
     expect(await screen.findByTestId("workbench-workspace-picker", undefined, { timeout: 10000 })).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "选择工作区" }));
-    fireEvent.click(screen.getByRole("option", { name: /keydex/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /keydex/ }, { timeout: 10000 }));
 
     expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("workspace A");
@@ -254,7 +254,7 @@ describe("AppRouter", () => {
     });
 
     const pinned = await screen.findByRole("region", { name: "置顶" }, { timeout: 10000 });
-    const flatList = screen.getByRole("region", { name: "keydex列表" });
+    const flatList = await screen.findByRole("region", { name: "keydex列表" }, { timeout: 10000 });
     expect(within(pinned).getByRole("button", { name: "置顶工作台会话" })).not.toBeNull();
     expect(within(flatList).getByRole("button", { name: "普通工作台会话" })).not.toBeNull();
     expect(within(flatList).queryByRole("button", { name: "置顶工作台会话" })).toBeNull();
@@ -289,6 +289,85 @@ describe("AppRouter", () => {
     expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("workspace A");
     await waitFor(() => {
       expect(screen.getByTestId("workbench-mode-page").getAttribute("data-selected-session-id")).toBe("");
+    });
+  });
+
+  it("waits for the runtime connection before loading a direct conversation route", async () => {
+    const connection = createDeferred<AgentConnection>();
+    const starter = vi.fn(() => connection.promise);
+    const { runtime } = renderRouter(["/conversation/thread-1"], { starter });
+
+    await waitFor(() => expect(starter).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(runtime.conversation.openChatChannel).not.toHaveBeenCalled();
+    expect(runtime.conversation.loadHistory).not.toHaveBeenCalled();
+    expect(runtime.settings.getSettings).not.toHaveBeenCalled();
+    expect(runtime.settings.getModelDefaults).not.toHaveBeenCalled();
+    expect(runtime.models.listProviders).not.toHaveBeenCalled();
+
+    await act(async () => {
+      connection.resolve(agentConnection());
+      await connection.promise;
+    });
+
+    await waitFor(() => {
+      expect(runtime.conversation.loadHistory).toHaveBeenCalledWith("thread-1", {
+        allTurns: true,
+        direction: "older",
+        pageSize: undefined,
+      });
+    });
+    expect(runtime.conversation.openChatChannel).toHaveBeenCalled();
+    expect(runtime.settings.getSettings).toHaveBeenCalled();
+    expect(runtime.settings.getModelDefaults).toHaveBeenCalled();
+    expect(runtime.models.listProviders).toHaveBeenCalled();
+  });
+
+  it("waits for the runtime connection before loading a direct workbench session route", async () => {
+    const connection = createDeferred<AgentConnection>();
+    const starter = vi.fn(() => connection.promise);
+    const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"], { starter });
+
+    await waitFor(() => expect(starter).toHaveBeenCalledTimes(1));
+    expect(await screen.findByTestId("workbench-workspace-loading", undefined, { timeout: 10000 })).not.toBeNull();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(runtime.workspaces.list).not.toHaveBeenCalled();
+    expect(runtime.workspaces.get).not.toHaveBeenCalled();
+    expect(runtime.conversation.listSessions).not.toHaveBeenCalled();
+    expect(runtime.conversation.getSession).not.toHaveBeenCalled();
+    expect(runtime.conversation.loadHistory).not.toHaveBeenCalled();
+    expect(runtime.workspace.listDirectory).not.toHaveBeenCalled();
+
+    await act(async () => {
+      connection.resolve(agentConnection());
+      await connection.promise;
+    });
+
+    await waitFor(() => {
+      expect(runtime.workspaces.list).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(runtime.conversation.listSessions).toHaveBeenCalledWith({
+        sessionType: "workspace",
+        workspaceId: "workspace A",
+        pageSize: 50,
+      });
+    });
+    await waitFor(() => {
+      expect(runtime.conversation.loadHistory).toHaveBeenCalledWith("session 1", {
+        allTurns: true,
+        direction: "older",
+        pageSize: undefined,
+      });
+    });
+    await waitFor(() => {
+      expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "");
     });
   });
 
@@ -681,6 +760,7 @@ describe("AppRouter", () => {
 
 interface RenderRouterOptions extends FakeRuntimeOptions {
   extra?: ReactNode;
+  starter?: () => Promise<AgentConnection>;
 }
 
 interface FakeRuntimeOptions {
@@ -757,7 +837,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
   return {
     __spies: { chat, emit: (event: AgentActionEnvelope) => emit(event) },
     settings: {
-      getSettings: () =>
+      getSettings: vi.fn(() =>
         Promise.resolve({
           model: {
             base_url: "https://api.example/v1",
@@ -787,7 +867,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
             output_file_max_bytes: 8388608,
             progress_interval_ms: 500,
           },
-        }),
+        })),
       saveGeneralSettings: vi.fn(),
       saveAppearanceSettings: vi.fn(),
       saveCommandSettings: vi.fn(),
@@ -800,7 +880,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
         page: 1,
         page_size: 10,
       }),
-      getModelDefaults: () =>
+      getModelDefaults: vi.fn(() =>
         Promise.resolve({
           defaults: {
             default_chat: {
@@ -824,7 +904,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
               missing_reason: "not_configured",
             },
           },
-        }),
+        })),
       saveModelDefaults: vi.fn(),
       getExtensionSettings: () => Promise.resolve(defaultExtensionSettings()),
       saveExtensionSettings: vi.fn((payload) => Promise.resolve(payload)),
@@ -837,7 +917,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
       ),
     },
     models: {
-      listProviders: () =>
+      listProviders: vi.fn(() =>
         Promise.resolve([
           {
             id: "provider-1",
@@ -850,12 +930,12 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
             model_enabled: {},
             health: {},
           },
-        ]),
+        ])),
     },
     workspaces: {
-      list: () => Promise.resolve({ list: [workspace("workspace A", "keydex")], total: 1 }),
+      list: vi.fn(() => Promise.resolve({ list: [workspace("workspace A", "keydex")], total: 1 })),
       create: () => Promise.reject(new Error("not implemented")),
-      get: (workspaceId: string) => Promise.resolve(workspace(workspaceId, workspaceId)),
+      get: vi.fn((workspaceId: string) => Promise.resolve(workspace(workspaceId, workspaceId))),
     },
     workspace: {
       listDirectory,
@@ -871,15 +951,15 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
     },
     conversation: {
       listSessions,
-      loadHistory: () =>
+      loadHistory: vi.fn(() =>
         Promise.resolve({
           session: agentSession(),
           list: [],
           next_cursor: null,
           has_more_older: false,
-        }),
+        })),
       createSession,
-      getSession: () =>
+      getSession: vi.fn(() =>
         Promise.resolve(
           agentSession({
             id: "session 1",
@@ -888,7 +968,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
             workspace_id: sessionWorkspaceId,
             workspace: workspace(sessionWorkspaceId, sessionWorkspaceId === "workspace A" ? "keydex" : "other"),
           }),
-        ),
+        )),
       updateSession,
       deleteSession: vi.fn().mockResolvedValue(undefined),
       openChatChannel: vi.fn((onEvent: (event: AgentActionEnvelope) => void, options?: ChatChannelOptions) => {
@@ -1062,4 +1142,14 @@ function commandApproval(sessionId: string, id: string): CommandApprovalRequest 
     created_at: "2026-06-25T12:00:01Z",
     resolved_at: null,
   };
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
 }

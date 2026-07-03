@@ -14,6 +14,7 @@ import {
   type PreviewRenderContext,
 } from "@/renderer/providers/PreviewProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import type { PreviewRequest } from "@/renderer/providers/previewTypes";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import {
@@ -102,6 +103,8 @@ export function useConversationPanelModel({
     setPreviewHostContext,
   } = usePreview();
   const notifications = useNotifications();
+  const runtimeConnection = useOptionalRuntimeConnection();
+  const backendReady = runtimeConnection?.ready ?? true;
   const optionalAgentRuntime = useOptionalAgentSessionRuntime();
   const sharedSubscribeEvent = optionalAgentRuntime?.runtime === runtime ? optionalAgentRuntime.subscribeEvent : null;
 
@@ -125,7 +128,7 @@ export function useConversationPanelModel({
   const { state: workspaceSkillsState, refresh: refreshWorkspaceSkills } = useWorkspaceSkills({
     runtime,
     scope: workspaceSkillScope,
-    enabled: workspaceAvailable,
+    enabled: backendReady && workspaceAvailable,
   });
   const workspaceSkills = workspaceAvailable ? workspaceSkillsState.skills : [];
 

@@ -51,8 +51,10 @@ patch 必须使用以下文件操作头；不接受普通 unified diff 文件头
 PATCH_PARAMETER_DESCRIPTION = """完整的结构化文本编辑补丁。必须以 `*** Begin Patch` 开始，
 并以 `*** End Patch` 结束。
 每个文件操作必须使用 `*** Update File: <path>` 或 `*** Delete File: <path>`。
+Update File 正文只能写 patch hunk，不要直接粘贴修改后的完整文件内容。
 Update File 内容行必须以空格、+、-、@@、`*** Move to: <path>` 或
-`*** End of File` 开头；上下文行必须保留前导空格。"""
+`*** End of File` 开头；上下文行必须保留前导空格。空白上下文行写成一个空格，
+新增空白行写成 `+`，删除空白行写成 `-`。"""
 
 PATCH_EXPECTED_HEADERS = [
     "*** Update File: <path>",
@@ -381,17 +383,26 @@ def _parse_hunks(lines: list[str]) -> list[PatchHunk]:
             end_of_file = False
             saw_hunk_header = True
             continue
-        if not line.startswith((" ", "+", "-")):
+        normalized_line = _normalize_hunk_body_line(line)
+        if normalized_line is None:
             raise ToolExecutionError(
                 "Update File 内容行必须以空格、+、-、@@ 或 *** End of File 开头",
                 code="invalid_patch",
             )
-        body.append(line)
+        body.append(normalized_line)
     if saw_hunk_header or body:
         hunks.append(PatchHunk(header=header, lines=body, end_of_file=end_of_file))
     if not hunks:
         raise ToolExecutionError("Update File 缺少有效变更", code="invalid_patch")
     return hunks
+
+
+def _normalize_hunk_body_line(line: str) -> str | None:
+    if line.startswith((" ", "+", "-")):
+        return line
+    if line == "":
+        return " "
+    return None
 
 
 def _hunk_lines(hunk: PatchHunk) -> tuple[list[str], list[str], int, int]:

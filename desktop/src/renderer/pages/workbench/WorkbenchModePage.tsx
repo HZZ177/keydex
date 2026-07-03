@@ -12,6 +12,7 @@ import {
 import { createBtwConversationFromSession } from "@/renderer/pages/conversation/conversationForkSource";
 import { useOptionalPreview, type PreviewFileRevealTarget } from "@/renderer/providers/PreviewProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import type { AgentSession, Workspace } from "@/types/protocol";
 
 import {
@@ -59,6 +60,8 @@ export function WorkbenchModePage({
   onRequestNewSession,
 }: WorkbenchModePageProps) {
   const notifications = useNotifications();
+  const runtimeConnection = useOptionalRuntimeConnection();
+  const backendReady = runtimeConnection?.ready ?? true;
   const previewContext = useOptionalPreview();
   const layout = useLayoutState();
   const workspaceShellRef = useRef<HTMLElement | null>(null);
@@ -81,6 +84,7 @@ export function WorkbenchModePage({
     : { type: "chat" };
   const workspaceLabel = selectedWorkspace?.root_path ?? selectedWorkspace?.name ?? workspaceId;
   const showPicker = !workspaceId;
+  const showWorkspaceLoading = Boolean(workspaceId && workspaceLoading && !selectedWorkspace);
   const showWorkspaceUnavailable = Boolean(workspaceId && workspaceError && !selectedWorkspace);
   const drawerWidth = layout.state.workbenchAssistantDrawerWidth;
   const drawerInlineWidth = resolveWorkbenchAssistantDockInlineWidth(
@@ -148,11 +152,13 @@ export function WorkbenchModePage({
   const assistantController = useAgentSessionController({
     runtime,
     sessionId: selectedSessionId ?? "",
+    enabled: backendReady,
     ensureSession: ensureWorkbenchSession,
   });
   const btwController = useAgentSessionController({
     runtime,
     sessionId: btwSession?.id ?? "",
+    enabled: backendReady,
     historyPageSize: 2,
     loadFullHistory: false,
     syncThreadTasks: false,
@@ -244,6 +250,23 @@ export function WorkbenchModePage({
             {workspaceError ? <p className={styles.error} role="alert">{workspaceError}</p> : null}
           </div>
           <WorkbenchAssistantPlaceholder disabled label="选择工作空间后启用助手" />
+        </main>
+      ) : showWorkspaceLoading ? (
+        <main className={styles.picker} data-testid="workbench-workspace-loading" aria-label="工作台工作空间加载中">
+          <div className={styles.pickerContent}>
+            <span className={styles.label}>Workbench</span>
+            <h1>正在加载工作空间</h1>
+            <WorkspaceSelector
+              value={selectorValue}
+              workspaces={workspaces}
+              loading={workspaceLoading}
+              allowProjectFreeChat={false}
+              onSelectWorkspace={onSelectWorkspace}
+              onAddWorkspace={onAddWorkspace}
+              onPickWorkspacePath={onPickWorkspacePath}
+            />
+          </div>
+          <WorkbenchAssistantPlaceholder disabled label="工作空间加载中" />
         </main>
       ) : showWorkspaceUnavailable ? (
         <main className={styles.picker} data-testid="workbench-workspace-error" aria-label="工作台工作空间不可用">

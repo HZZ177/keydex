@@ -76,6 +76,7 @@ import {
   type ReviewPanelRequest,
 } from "@/renderer/providers/PreviewProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
 import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
 import { prefersReducedMotion } from "@/renderer/utils/motionPreference";
@@ -190,6 +191,8 @@ export function WorkbenchAssistantSurface({
 }: WorkbenchAssistantSurfaceProps) {
   const layout = useLayoutState();
   const notifications = useNotifications();
+  const runtimeConnection = useOptionalRuntimeConnection();
+  const backendReady = runtimeConnection?.ready ?? true;
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const assistantChromeRef = useRef<HTMLDivElement | null>(null);
   const dockTransitionTimerRef = useRef<number | null>(null);
@@ -227,12 +230,12 @@ export function WorkbenchAssistantSurface({
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
   const [goalCreating, setGoalCreating] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
-  const modelSelection = useRuntimeModelSelection(runtime, null);
+  const modelSelection = useRuntimeModelSelection(runtime, null, { enabled: backendReady });
   const workspaceSkillScope = useMemo(() => ({ workspaceId }), [workspaceId]);
   const { state: workspaceSkillsState, refresh: refreshWorkspaceSkills } = useWorkspaceSkills({
     runtime,
     scope: workspaceSkillScope,
-    enabled: Boolean(workspaceId),
+    enabled: backendReady && Boolean(workspaceId),
   });
   const workspaceSkills = Array.isArray(workspaceSkillsState.skills) ? workspaceSkillsState.skills : [];
   const previewContext = usePreview();
@@ -394,6 +397,9 @@ export function WorkbenchAssistantSurface({
   const composerFocusSeq = assistantState.focusSeq;
 
   useEffect(() => {
+    if (!backendReady) {
+      return;
+    }
     let active = true;
     void runtime.settings
       .getSettings()
@@ -412,7 +418,7 @@ export function WorkbenchAssistantSurface({
     return () => {
       active = false;
     };
-  }, [runtime]);
+  }, [backendReady, runtime]);
 
   useEffect(() => {
     const providerId = controller.session?.current_model_provider_id?.trim() ?? "";

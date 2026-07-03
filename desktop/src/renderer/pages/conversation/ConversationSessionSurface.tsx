@@ -14,6 +14,7 @@ import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/
 import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
 import { useOptionalRightSidebarConversation } from "@/renderer/components/layout/RightSidebarConversationContext";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
 import type { AgentActionEnvelope, AgentSession, AgentSessionFork } from "@/types/protocol";
 import type { FileAccessMode } from "@/types/protocol";
@@ -86,8 +87,10 @@ export function ConversationSessionSurface({
   const runtimeErrorRef = useRef<(reason: unknown) => boolean | void>(() => false);
   const [sidecarHistorySnapshot, setSidecarHistorySnapshot] = useState<BtwConversationHistorySnapshot | null>(null);
   const notifications = useNotifications();
+  const runtimeConnection = useOptionalRuntimeConnection();
+  const backendReady = runtimeConnection?.ready ?? true;
   const rightSidebarConversation = useOptionalRightSidebarConversation();
-  const modelSelection = useRuntimeModelSelection(runtime, initialModel);
+  const modelSelection = useRuntimeModelSelection(runtime, initialModel, { enabled: backendReady });
   const notifyRuntime = useCallback(
     (message: string, level: "error" | "warning") => {
       if (level === "warning") {
@@ -105,6 +108,7 @@ export function ConversationSessionSurface({
   const controller = useAgentSessionController({
     runtime,
     sessionId: threadId,
+    enabled: backendReady,
     historyPageSize: isSidecar ? 2 : 5,
     loadFullHistory: !isSidecar,
     onRuntimeEvent: handleControllerRuntimeEvent,
@@ -283,6 +287,9 @@ export function ConversationSessionSurface({
   }, [panelModel.handleRuntimeError, panelModel.handleRuntimeEventSideEffects]);
 
   useEffect(() => {
+    if (!backendReady) {
+      return;
+    }
     let active = true;
     void runtime.settings
       .getSettings()
@@ -301,7 +308,7 @@ export function ConversationSessionSurface({
     return () => {
       active = false;
     };
-  }, [runtime]);
+  }, [backendReady, runtime]);
 
   const send = useCallback(
     (files: SelectedFile[] = [], quotes: SelectedQuote[] = [], attachments: SelectedImageAttachment[] = []) =>

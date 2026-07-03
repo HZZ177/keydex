@@ -268,6 +268,21 @@ def apply_compression_anchor_replacement(
     )
 
 
+def apply_compression_full_replacement(
+    *,
+    l1_content: str,
+    l2_content: str | None = None,
+) -> AnchorReplaceResult:
+    return AnchorReplaceResult(
+        anchor_message_id=None,
+        replaced_messages=build_compression_context_messages(
+            l1_content=l1_content,
+            l2_content=l2_content,
+        ),
+        applied=True,
+    )
+
+
 def detect_compression_phase(snapshot: CompressionStateSnapshot) -> CompressionPhase:
     if snapshot.slots.existing_l1 is None:
         return "initial"
@@ -446,3 +461,15 @@ def split_and_prepare_compression(
     split_result = split_messages_by_recent_turns(snapshot.raw_messages, retain_rounds)
     anchor_message_id = select_anchor_message_id(split_result.retain_zone)
     return snapshot, split_result, anchor_message_id
+
+
+def split_and_prepare_emergency_compression(
+    *,
+    messages: Iterable[BaseMessage],
+) -> tuple[CompressionStateSnapshot, MessageSplitResult, str | None]:
+    snapshot = split_compression_prefix(messages)
+    split_result = MessageSplitResult(
+        compression_zone=list(snapshot.raw_messages),
+        retain_zone=[],
+    )
+    return snapshot, split_result, None

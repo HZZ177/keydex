@@ -6,6 +6,7 @@ import type { RuntimeSelectedModel } from "@/renderer/components/model";
 import { subscribeSessionUpdated, type AgentSessionUpdate } from "@/renderer/events/sessionEvents";
 import { queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
+import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import type { WorkspaceSelection } from "@/renderer/components/workspace";
 import type { AgentSession, Workspace } from "@/types/protocol";
 
@@ -195,6 +196,10 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const { workspaceId, sessionId } = useParams();
   const navigate = useNavigate();
   const layout = useLayoutState();
+  const runtimeConnection = useOptionalRuntimeConnection();
+  const backendReady = runtimeConnection?.ready ?? true;
+  const backendError = runtimeConnection?.status === "error";
+  const backendErrorMessage = runtimeConnection?.error?.message ?? "本地服务连接失败";
   const decodedWorkspaceId = safeDecodeParam(workspaceId);
   const decodedSessionId = safeDecodeParam(sessionId);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -203,6 +208,15 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const [workspaceSessions, setWorkspaceSessions] = useState<AgentSession[]>([]);
 
   useEffect(() => {
+    if (!backendReady) {
+      setWorkspaceLoading(!backendError);
+      setWorkspaceError(backendError ? backendErrorMessage : null);
+      if (backendError) {
+        setWorkspaces([]);
+      }
+      return;
+    }
+
     let active = true;
     setWorkspaceLoading(true);
     setWorkspaceError(null);
@@ -241,10 +255,10 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
     return () => {
       active = false;
     };
-  }, [decodedWorkspaceId, runtime]);
+  }, [backendError, backendErrorMessage, backendReady, decodedWorkspaceId, runtime]);
 
   useEffect(() => {
-    if (!decodedWorkspaceId) {
+    if (!backendReady || !decodedWorkspaceId) {
       setWorkspaceSessions([]);
       return;
     }
@@ -268,7 +282,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
     return () => {
       active = false;
     };
-  }, [decodedWorkspaceId, runtime]);
+  }, [backendReady, decodedWorkspaceId, runtime]);
 
   useEffect(() => {
     if (!decodedWorkspaceId) {
@@ -280,7 +294,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   }, [decodedWorkspaceId]);
 
   useEffect(() => {
-    if (!decodedWorkspaceId || !decodedSessionId) {
+    if (!backendReady || !decodedWorkspaceId || !decodedSessionId) {
       return;
     }
     let active = true;
@@ -302,7 +316,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
     return () => {
       active = false;
     };
-  }, [decodedSessionId, decodedWorkspaceId, navigate, runtime]);
+  }, [backendReady, decodedSessionId, decodedWorkspaceId, navigate, runtime]);
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === decodedWorkspaceId) ?? null,

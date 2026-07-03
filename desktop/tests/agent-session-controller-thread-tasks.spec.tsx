@@ -76,6 +76,44 @@ describe("useAgentSessionController thread tasks", () => {
     expect(listThreadTasks).not.toHaveBeenCalled();
     expect(result.current.activeTask).toBeNull();
   });
+
+  it("waits until enabled before opening the channel and loading session history", async () => {
+    const listThreadTasks = vi.fn().mockResolvedValue([threadTask("task-1")]);
+    const { runtime } = fakeRuntime({ listThreadTasks });
+
+    const { rerender, result } = renderHook(
+      ({ enabled }) =>
+        useAgentSessionController({
+          runtime,
+          sessionId: "ses-1",
+          enabled,
+        }),
+      { initialProps: { enabled: false } },
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.loading).toBe(true);
+    expect(runtime.conversation.openChatChannel).not.toHaveBeenCalled();
+    expect(runtime.conversation.loadHistory).not.toHaveBeenCalled();
+    expect(listThreadTasks).not.toHaveBeenCalled();
+
+    rerender({ enabled: true });
+
+    await waitFor(() => {
+      expect(runtime.conversation.loadHistory).toHaveBeenCalledWith("ses-1", {
+        allTurns: true,
+        direction: "older",
+        pageSize: undefined,
+      });
+    });
+    expect(runtime.conversation.openChatChannel).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(listThreadTasks).toHaveBeenCalledWith("ses-1");
+    });
+  });
 });
 
 function fakeRuntime({

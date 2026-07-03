@@ -39,6 +39,7 @@ describe("ConfigSettingsPage", () => {
     expect(screen.getByText("精确匹配")).not.toBeNull();
     expect(screen.getByText("已关联规则")).not.toBeNull();
     expect(screen.getAllByText("D:/repo")).toHaveLength(2);
+    expect(screen.getByText("第 1 / 1 页，共 1 条规则")).not.toBeNull();
     expect(screen.getByText("第 1 / 1 页，共 1 条")).not.toBeNull();
     expect(runtime.settings.listCommandApprovalHistory).toHaveBeenCalledWith({ page: 1, pageSize: 10 });
   });
@@ -176,6 +177,37 @@ describe("ConfigSettingsPage", () => {
     expect(screen.getByText("暂无已信任命令")).not.toBeNull();
   });
 
+  it("paginates trusted command rules locally", async () => {
+    const rules = Array.from({ length: 11 }, (_, index) => {
+      const ruleNumber = index + 1;
+      const command = `trusted command ${String(ruleNumber).padStart(2, "0")}`;
+      return trustedRule({
+        id: `rule-${ruleNumber}`,
+        command_pattern: command,
+        normalized_command: command,
+        created_at: `2026-06-24T10:${String(ruleNumber).padStart(2, "0")}:00Z`,
+        updated_at: `2026-06-24T10:${String(ruleNumber).padStart(2, "0")}:00Z`,
+      });
+    });
+    const runtime = fakeRuntime({
+      listTrustedCommandRules: vi.fn().mockResolvedValue(rules),
+    });
+
+    renderConfigSettingsPage(runtime);
+
+    expect(await screen.findByText("trusted command 11")).not.toBeNull();
+    expect(screen.queryByText("trusted command 01")).toBeNull();
+    expect(screen.getByText("第 1 / 2 页，共 11 条规则")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "上一页已信任命令" }).hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "下一页已信任命令" }));
+
+    expect(await screen.findByText("trusted command 01")).not.toBeNull();
+    expect(screen.queryByText("trusted command 11")).toBeNull();
+    expect(screen.getByText("第 2 / 2 页，共 11 条规则")).not.toBeNull();
+    expect(runtime.settings.listTrustedCommandRules).toHaveBeenCalledTimes(1);
+  });
+
   it("paginates approval history without reloading command settings and trusted rules", async () => {
     const runtime = fakeRuntime({
       listCommandApprovalHistory: vi.fn((options: { page?: number; pageSize?: number } = {}) => {
@@ -299,7 +331,7 @@ function settingsResponse(command: CommandSettings): SettingsResponse {
   };
 }
 
-function trustedRule(): TrustedCommandRule {
+function trustedRule(overrides: Partial<TrustedCommandRule> = {}): TrustedCommandRule {
   return {
     id: "rule-1",
     command_pattern: "pnpm test",
@@ -315,6 +347,7 @@ function trustedRule(): TrustedCommandRule {
     created_at: "2026-06-24T10:00:00Z",
     updated_at: "2026-06-24T10:00:00Z",
     last_used_at: null,
+    ...overrides,
   };
 }
 

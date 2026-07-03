@@ -17,6 +17,7 @@ import { SettingsSelect } from "@/renderer/pages/settings/components";
 import styles from "./ConfigSettingsPage.module.css";
 
 const APPROVAL_HISTORY_PAGE_SIZE = 10;
+const TRUSTED_COMMAND_RULE_PAGE_SIZE = 10;
 
 const DEFAULT_COMMAND_SETTINGS: CommandSettings = {
   command_enabled: false,
@@ -113,6 +114,7 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
   const notifications = useNotifications();
   const [command, setCommand] = useState<CommandSettings>(DEFAULT_COMMAND_SETTINGS);
   const [rules, setRules] = useState<TrustedCommandRule[]>([]);
+  const [rulesPage, setRulesPage] = useState(1);
   const [history, setHistory] = useState<ApprovalHistoryPage>(() => emptyApprovalHistoryPage());
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -347,9 +349,23 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
     () => [...rules].sort((left, right) => right.created_at.localeCompare(left.created_at)),
     [rules],
   );
+  const totalRulePages = Math.max(1, Math.ceil(sortedRules.length / TRUSTED_COMMAND_RULE_PAGE_SIZE));
+  const trustedRulesPage = Math.min(Math.max(1, rulesPage), totalRulePages);
+  const pagedRules = useMemo(() => {
+    const start = (trustedRulesPage - 1) * TRUSTED_COMMAND_RULE_PAGE_SIZE;
+    return sortedRules.slice(start, start + TRUSTED_COMMAND_RULE_PAGE_SIZE);
+  }, [sortedRules, trustedRulesPage]);
+  const canGoPrevRules = trustedRulesPage > 1;
+  const canGoNextRules = trustedRulesPage < totalRulePages;
   const totalHistoryPages = Math.max(1, Math.ceil(history.total / history.page_size));
   const canGoPrevHistory = history.page > 1 && !historyLoading;
   const canGoNextHistory = history.page < totalHistoryPages && !historyLoading;
+
+  useEffect(() => {
+    if (rulesPage !== trustedRulesPage) {
+      setRulesPage(trustedRulesPage);
+    }
+  }, [rulesPage, trustedRulesPage]);
 
   const loadHistoryPage = async (page: number) => {
     const nextPage = Math.min(Math.max(1, page), totalHistoryPages);
@@ -527,7 +543,7 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
               </div>
               {sortedRules.length ? (
                 <div className={styles.ruleList}>
-                  {sortedRules.map((rule) => (
+                  {pagedRules.map((rule) => (
                     <article className={styles.ruleRow} key={rule.id}>
                       <div className={styles.ruleMain}>
                         <code title={rule.command_pattern}>{rule.command_pattern}</code>
@@ -564,6 +580,33 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
               ) : (
                 <div className={styles.empty}>暂无已信任命令</div>
               )}
+              {sortedRules.length > 0 ? (
+                <div className={styles.pagination} aria-label="已信任命令分页">
+                  <span>
+                    第 {trustedRulesPage} / {totalRulePages} 页，共 {sortedRules.length} 条规则
+                  </span>
+                  <div>
+                    <button
+                      aria-label="上一页已信任命令"
+                      data-settings-secondary
+                      disabled={!canGoPrevRules}
+                      type="button"
+                      onClick={() => setRulesPage(trustedRulesPage - 1)}
+                    >
+                      上一页
+                    </button>
+                    <button
+                      aria-label="下一页已信任命令"
+                      data-settings-secondary
+                      disabled={!canGoNextRules}
+                      type="button"
+                      onClick={() => setRulesPage(trustedRulesPage + 1)}
+                    >
+                      下一页
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
 

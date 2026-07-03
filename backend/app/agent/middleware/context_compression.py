@@ -22,8 +22,10 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from backend.app.agent.context_compression_utils import (
     apply_compression_anchor_replacement,
+    apply_compression_full_replacement,
     extract_compression_material,
     split_and_prepare_compression,
+    split_and_prepare_emergency_compression,
 )
 from backend.app.agent.factory import AgentFactory, agent_factory
 from backend.app.agent.middleware.common import _compression_display_label, _state_messages
@@ -322,9 +324,8 @@ class ContextCompressionMiddleware(AgentMiddleware):
                         context_compression_epoch=context_compression_epoch,
                     )
 
-            _snapshot, split_result, _anchor_message_id = split_and_prepare_compression(
+            _snapshot, split_result, _anchor_message_id = split_and_prepare_emergency_compression(
                 messages=messages,
-                retain_rounds=self._get_retain_rounds(),
             )
             fraction_snapshot = (
                 self._calculate_message_fraction(messages)
@@ -630,9 +631,8 @@ class ContextCompressionMiddleware(AgentMiddleware):
         session = self.repositories.sessions.get(original_session_id)
         if session is None:
             return None
-        snapshot, split_result, anchor_message_id = split_and_prepare_compression(
+        snapshot, split_result, anchor_message_id = split_and_prepare_emergency_compression(
             messages=messages,
-            retain_rounds=self._get_retain_rounds(),
         )
         if not split_result.compression_zone:
             return None
@@ -641,7 +641,7 @@ class ContextCompressionMiddleware(AgentMiddleware):
             f"原始会话ID={original_session_id} | 活动会话ID={active_session_id} | "
             f"压缩区消息数={len(split_result.compression_zone)} | "
             f"保留区消息数={len(split_result.retain_zone)} | "
-            f"保留轮数={self._get_retain_rounds()}"
+            "保留轮数=0"
         )
         material = extract_compression_material(
             snapshot=snapshot,
@@ -675,9 +675,7 @@ class ContextCompressionMiddleware(AgentMiddleware):
                 reason=result.failure_reason,
             )
             return None
-        replacement = apply_compression_anchor_replacement(
-            messages=messages,
-            anchor_message_id=material.anchor_message_id,
+        replacement = apply_compression_full_replacement(
             l1_content=result.new_l1_content or "",
             l2_content=result.new_l2_content,
         )
@@ -686,13 +684,13 @@ class ContextCompressionMiddleware(AgentMiddleware):
                 "[ContextCompressionMiddleware] 紧急压缩替换失败 | "
                 f"原始会话ID={original_session_id} | "
                 f"活动会话ID={active_session_id} | "
-                "原因=未找到锚点"
+                "原因=无法生成全量替换上下文"
             )
             await self._emit_middleware_progress(
                 stage="emergency_replacement_failed",
                 original_session_id=original_session_id,
                 active_session_id=active_session_id,
-                reason="anchor_not_found",
+                reason="full_replacement_failed",
             )
             return None
         context_compression_epoch = self._mark_context_compressed(
@@ -1161,11 +1159,12 @@ class ContextCompressionMiddleware(AgentMiddleware):
         active_session_id: str,
     ) -> dict[str, Any]:
         background = mode == "background"
+        staging_strategy = "anchor_replacement" if background else "full_replacement"
         metadata = {
             "mode": mode,
             "background": background,
             "hook": hook,
-            "staging_strategy": "anchor_replacement",
+            "staging_strategy": staging_strategy,
             "previous_active_session_id": active_session_id,
             "original_session_id": original_session_id,
         }
