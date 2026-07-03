@@ -26,6 +26,8 @@ export { MessageText } from "./MessageText";
 export type { MessageTextProps } from "./MessageText";
 export { SkillActivationBlock } from "./SkillActivationBlock";
 export type { SkillActivationBlockProps } from "./SkillActivationBlock";
+export { ThreadTaskStatusBlock } from "./ThreadTaskStatusBlock";
+export type { ThreadTaskStatusBlockProps } from "./ThreadTaskStatusBlock";
 export { ToolCallBlock } from "./ToolCallBlock";
 export type { ToolCallBlockProps } from "./ToolCallBlock";
 export type { ToolDetailsLoader } from "./useLazyToolDetails";

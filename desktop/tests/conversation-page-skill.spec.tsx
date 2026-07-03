@@ -19,8 +19,10 @@ describe("ConversationPage skill activation", () => {
       expect(workspaceListSkills).toHaveBeenCalledWith({ sessionId: "ses-1" }, { forceReload: false });
     });
     typeComposer("/");
-    await screen.findByRole("option", { name: /Skill/ });
+    await screen.findByRole("option", { name: /^Skill\b/ });
     const input = screen.getByLabelText("继续输入");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
     await screen.findByRole("option", { name: /dev-plan/ });
     fireEvent.keyDown(input, { key: "Enter" });

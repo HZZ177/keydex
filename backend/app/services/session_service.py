@@ -514,6 +514,7 @@ class SessionService:
             "current_model_provider_id": record.current_model_provider_id,
             "current_model": record.current_model,
             "context_window_usage": record.context_window_usage,
+            "context_compression_epoch": record.context_compression_epoch,
             "pinned": record.pinned_at is not None,
             "pinned_at": record.pinned_at,
             "workspace": workspace,

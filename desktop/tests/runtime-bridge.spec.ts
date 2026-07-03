@@ -575,6 +575,140 @@ describe("RuntimeBridge", () => {
     );
   });
 
+  it("routes thread task calls through the conversation runtime API", async () => {
+    const task = {
+      id: "task 1",
+      session_id: "ses 1",
+      type: "goal",
+      type_label: "目标",
+      title: "长程目标",
+      objective: "完成目标",
+      status: "active",
+      metadata: { source: "menu" },
+      evidence: [],
+      blocked_audit: {},
+      system_stop_reason: null,
+      current_run_id: null,
+      turn_count: 0,
+      elapsed_seconds: 0,
+      token_usage: {},
+      created_at: "2026-07-03T00:00:00Z",
+      updated_at: "2026-07-03T00:00:00Z",
+      deleted_at: null,
+      is_open: true,
+      is_terminal: false,
+    };
+    const run = {
+      id: "run 1",
+      task_id: "task 1",
+      session_id: "ses 1",
+      turn_index: null,
+      trace_id: null,
+      status: "running",
+      summary: {},
+      error: {},
+      started_at: "2026-07-03T00:00:00Z",
+      finished_at: null,
+      created_at: "2026-07-03T00:00:00Z",
+      updated_at: "2026-07-03T00:00:00Z",
+      is_running: true,
+    };
+    const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
+      const url = requestUrl(input);
+      if (url.endsWith("/api/sessions/ses%201/tasks") && init.method === "GET") {
+        return Promise.resolve(jsonResponse(200, { list: [task] }));
+      }
+      if (url.endsWith("/api/sessions/ses%201/tasks") && init.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return Promise.resolve(jsonResponse(200, { task: { ...task, ...body } }));
+      }
+      if (url.endsWith("/api/sessions/ses%201/tasks/task%201") && init.method === "PATCH") {
+        const body = JSON.parse(String(init.body));
+        return Promise.resolve(jsonResponse(200, { task: { ...task, ...body } }));
+      }
+      if (url.endsWith("/api/sessions/ses%201/tasks/task%201") && init.method === "DELETE") {
+        return Promise.resolve(
+          jsonResponse(200, {
+            task: { ...task, status: "cancelled", deleted_at: "2026-07-03T00:01:00Z" },
+          }),
+        );
+      }
+      if (url.endsWith("/api/sessions/ses%201/tasks/task%201/runs") && init.method === "GET") {
+        return Promise.resolve(jsonResponse(200, { list: [run] }));
+      }
+      return jsonResponse(404, { detail: "not found" });
+    });
+    const runtime = createRuntimeBridge({ baseUrl: "http://127.0.0.1:8765", fetcher });
+
+    await expect(runtime.conversation.listThreadTasks("ses 1")).resolves.toMatchObject([{ id: "task 1" }]);
+    await expect(
+      runtime.conversation.createThreadTask("ses 1", {
+        type: "goal",
+        objective: "完成目标",
+        title: "长程目标",
+        metadata: { source: "menu" },
+      }),
+    ).resolves.toMatchObject({ objective: "完成目标", title: "长程目标" });
+    await expect(runtime.conversation.updateThreadTask("ses 1", "task 1", { status: "paused" })).resolves.toMatchObject({
+      status: "paused",
+    });
+    await expect(runtime.conversation.updateThreadTask("ses 1", "task 1", { status: "active" })).resolves.toMatchObject({
+      status: "active",
+    });
+    await expect(runtime.conversation.deleteThreadTask("ses 1", "task 1")).resolves.toMatchObject({
+      status: "cancelled",
+      deleted_at: "2026-07-03T00:01:00Z",
+    });
+    await expect(runtime.conversation.listThreadTaskRuns("ses 1", "task 1")).resolves.toMatchObject([
+      { id: "run 1", status: "running" },
+    ]);
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:8765/api/sessions/ses%201/tasks",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:8765/api/sessions/ses%201/tasks",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          type: "goal",
+          objective: "完成目标",
+          title: "长程目标",
+          metadata: { source: "menu" },
+        }),
+      }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      "http://127.0.0.1:8765/api/sessions/ses%201/tasks/task%201",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ status: "paused" }),
+      }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
+      "http://127.0.0.1:8765/api/sessions/ses%201/tasks/task%201",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ status: "active" }),
+      }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      5,
+      "http://127.0.0.1:8765/api/sessions/ses%201/tasks/task%201",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      6,
+      "http://127.0.0.1:8765/api/sessions/ses%201/tasks/task%201/runs",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("routes usage statistics calls to real backend paths", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
       const url = requestUrl(input);

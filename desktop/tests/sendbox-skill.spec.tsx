@@ -44,6 +44,7 @@ describe("SendBox skill capsule", () => {
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter" });
 
     expect(screen.getByText("dev-plan")).not.toBeNull();
     expect(screen.getByLabelText("删除 Skill /dev-plan")).not.toBeNull();

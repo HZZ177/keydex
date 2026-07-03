@@ -18,6 +18,7 @@ export interface RuntimeSkillActivation {
 
 export interface RuntimeParamsWithInjection extends Record<string, unknown> {
   message_injection?: RuntimeMessageInjectionItem[];
+  message_context_items?: AgentContextItem[];
   skill_activation?: RuntimeSkillActivation;
 }
 

@@ -7,12 +7,13 @@
 
 .header {
   --ghost-row-height: 20px;
-  --ghost-text-offset-y: -1px;
+  --ghost-icon-slot: 18px;
+  --ghost-text-offset-y: 1px;
 
   display: grid;
   width: fit-content;
   max-width: 100%;
-  grid-template-columns: 18px minmax(0, auto) auto 16px;
+  grid-template-columns: var(--ghost-icon-slot) minmax(0, auto) auto var(--ghost-icon-slot);
   grid-auto-rows: var(--ghost-row-height);
   align-items: center;
   gap: 7px;
@@ -20,6 +21,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--color-text-tertiary);
+  font: inherit;
   padding: 2px 0;
   text-align: left;
   transition: color 150ms ease;
@@ -38,7 +40,6 @@
   display: block;
   align-self: center;
   color: currentColor;
-  translate: 0 var(--ghost-text-offset-y);
   transition: transform 220ms var(--motion-ease-out);
 }
 
@@ -48,12 +49,12 @@
 
 .icon {
   display: inline-grid;
-  width: 18px;
-  height: 18px;
+  width: var(--ghost-icon-slot);
+  height: var(--ghost-row-height);
   align-self: center;
   place-items: center;
   color: currentColor;
-  translate: 0 var(--ghost-text-offset-y);
+  line-height: 0;
 }
 
 .block[data-state="running"] .icon,

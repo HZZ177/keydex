@@ -513,10 +513,17 @@ describe("ConversationPage", () => {
 
     const indicator = screen.getByTestId("context-window-indicator");
     expect(indicator.getAttribute("aria-label")).toContain("当前已使用上下文 700 tokens");
-    expect(indicator.getAttribute("aria-label")).toContain("93.3%");
+    expect(indicator.getAttribute("data-level")).toBe("warning");
+    expect(indicator.getAttribute("aria-label")).toContain("无感压缩进度 93.3%");
+    expect(indicator.getAttribute("aria-label")).toContain("阻塞压缩进度 77.8%");
     const tooltip = screen.getByRole("tooltip");
     expect(tooltip.textContent).toContain("当前已使用 700 tokens");
-    expect(tooltip.textContent).toContain("触发压缩进度 93.3%");
+    expect(tooltip.textContent).toContain("无感压缩进度 93.3%");
+    expect(tooltip.textContent).toContain("阻塞压缩进度 77.8%");
+    const tooltipText = tooltip.textContent ?? "";
+    expect(tooltipText.indexOf("无感压缩进度")).toBeLessThan(tooltipText.indexOf("阻塞压缩进度"));
+    expect(tooltip.querySelector('[data-progress-kind="ambient"]')?.getAttribute("data-level")).toBe("warning");
+    expect(tooltip.querySelector('[data-progress-kind="blocking"]')?.getAttribute("data-level")).toBe("normal");
     expect(tooltip.textContent).not.toContain("700 / 1,000 tokens");
     expect(tooltip.textContent).not.toContain("调用后 · 模型返回");
   });

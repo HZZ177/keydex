@@ -31,6 +31,7 @@ describe("ExtensionSettingsPage", () => {
     expect(screen.queryByText("紧急压缩 90%")).toBeNull();
     expect(screen.queryByLabelText("紧急阈值")).toBeNull();
     expect(screen.queryByLabelText("保留轮数")).toBeNull();
+    expect(screen.getByText("约 96,000 token 时触发无感压缩，115,200 token 时触发阻塞式压缩")).not.toBeNull();
     expect(screen.queryByText("快速模型未配置，标题生成不可用")).toBeNull();
     expect(screen.getAllByRole("button", { name: "保存" })).toHaveLength(1);
   });

@@ -95,6 +95,11 @@ class MessageEventService:
                         self._context_item_from_skill_activation(event, data)
                     )
                     continue
+                if self._is_message_context_item_event(event, data):
+                    pending_context_items.append(
+                        self._context_item_from_message_context_item(event, data)
+                    )
+                    continue
 
             if action == ReplayAction.USER_MESSAGE.value:
                 message = {
@@ -126,15 +131,15 @@ class MessageEventService:
                 continue
 
             if action == ReplayAction.AI_MESSAGE.value:
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": data.get("content", ""),
-                        "timestamp": self._event_timestamp_ms(event),
-                        "messageEventId": event.id,
-                        "turnIndex": event.turn_index,
-                    }
-                )
+                message = {
+                    "role": "assistant",
+                    "content": data.get("content", ""),
+                    "timestamp": self._event_timestamp_ms(event),
+                    "messageEventId": event.id,
+                    "turnIndex": event.turn_index,
+                }
+                self._apply_thread_task_metadata(message, data)
+                messages.append(message)
                 continue
 
             if action == ReplayAction.STREAM_BATCH.value:
@@ -377,6 +382,13 @@ class MessageEventService:
         )
 
     @staticmethod
+    def _is_message_context_item_event(event: MessageEventRecord, data: dict[str, Any]) -> bool:
+        return (
+            data.get("source") == "message_context_item"
+            or MessageEventService._canonical_source(event) == "message_context_item"
+        )
+
+    @staticmethod
     def _context_item_from_injected_message(
         event: MessageEventRecord,
         data: dict[str, Any],
@@ -400,6 +412,48 @@ class MessageEventService:
         for key in ("path", "name", "fileType", "file_type"):
             if metadata.get(key) is not None:
                 item[key] = metadata.get(key)
+        return item
+
+    @staticmethod
+    def _context_item_from_message_context_item(
+        event: MessageEventRecord,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        item_type = str(
+            data.get("context_type")
+            or data.get("contextType")
+            or metadata.get("kind")
+            or metadata.get("type")
+            or "follow"
+        )
+        label = str(
+            data.get("label")
+            or metadata.get("label")
+            or _default_context_label(item_type, "")
+        )
+        item: dict[str, Any] = {
+            "id": str(data.get("id") or metadata.get("id") or f"context:{event.id}"),
+            "type": item_type,
+            "label": label,
+            "content": str(data.get("content") or ""),
+            "role": str(data.get("role") or "HumanMessage"),
+            "source": str(data.get("item_source") or data.get("itemSource") or "runtime"),
+            "timestamp": MessageEventService._event_timestamp_ms(event),
+            "metadata": dict(metadata),
+        }
+        for key in (
+            "path",
+            "name",
+            "fileType",
+            "file_type",
+            "skill_name",
+            "skillName",
+            "description",
+            "locator",
+        ):
+            if data.get(key) is not None:
+                item[key] = data.get(key)
         return item
 
     @staticmethod
@@ -460,20 +514,22 @@ class MessageEventService:
             and messages[-1].get("role") == "assistant"
             and not messages[-1].get("cancelled")
             and messages[-1].get("status") != "cancelled"
+            and messages[-1].get("turnIndex") == event.turn_index
         ):
             messages[-1]["content"] += content
             messages[-1]["messageEventId"] = event.id
             messages[-1]["turnIndex"] = event.turn_index
+            MessageEventService._apply_thread_task_metadata(messages[-1], data)
             return
-        messages.append(
-            {
-                "role": "assistant",
-                "content": content,
-                "timestamp": timestamp,
-                "messageEventId": event.id,
-                "turnIndex": event.turn_index,
-            }
-        )
+        message = {
+            "role": "assistant",
+            "content": content,
+            "timestamp": timestamp,
+            "messageEventId": event.id,
+            "turnIndex": event.turn_index,
+        }
+        MessageEventService._apply_thread_task_metadata(message, data)
+        messages.append(message)
 
     @staticmethod
     def _append_tool_start(
@@ -581,6 +637,8 @@ class MessageEventService:
             target["uiPayload"] = MessageEventService._tool_plan_summary(ui_payload)
         elif tool_name == "load_skill" and ui_payload:
             target["uiPayload"] = MessageEventService._tool_skill_summary(ui_payload)
+        elif tool_name in {"update_thread_task", "get_thread_task"} and ui_payload:
+            target["uiPayload"] = MessageEventService._tool_thread_task_summary(ui_payload)
         elif tool_name in {"run_git_bash", "run_cmd", "run_powershell"} and ui_payload:
             command_summary = MessageEventService._tool_command_summary(ui_payload)
             if command_summary:
@@ -732,6 +790,9 @@ class MessageEventService:
     @staticmethod
     def _tool_params_summary(data: dict[str, Any]) -> dict[str, Any]:
         params = MessageEventService._params_record(data)
+        tool_name = str(data.get("tool") or data.get("tool_name") or "")
+        if tool_name == "update_thread_task":
+            return MessageEventService._tool_thread_task_params_summary(params)
         summary: dict[str, Any] = {}
         for key in (
             "path",
@@ -807,6 +868,47 @@ class MessageEventService:
             locator = metadata.get("locator")
             if isinstance(locator, str) and locator.strip():
                 summary["metadata"] = {"locator": locator}
+        return summary
+
+    @staticmethod
+    def _tool_thread_task_params_summary(params: dict[str, Any]) -> dict[str, Any]:
+        summary: dict[str, Any] = {}
+        for key in (
+            "status",
+            "summary",
+            "reason",
+            "blocked_reason",
+            "checklist",
+            "evidence",
+            "attempts",
+            "attempted_actions",
+        ):
+            value = params.get(key)
+            if _is_summary_value(value) or isinstance(value, list):
+                summary[key] = value
+        return summary
+
+    @staticmethod
+    def _tool_thread_task_summary(ui_payload: dict[str, Any]) -> dict[str, Any]:
+        task = ui_payload.get("task")
+        if not isinstance(task, dict):
+            return dict(ui_payload)
+        summary_task: dict[str, Any] = {}
+        for key in (
+            "id",
+            "type",
+            "type_label",
+            "objective",
+            "status",
+            "turn_count",
+            "elapsed_seconds",
+            "system_stop_reason",
+        ):
+            value = task.get(key)
+            if _is_summary_value(value):
+                summary_task[key] = value
+        summary = dict(ui_payload)
+        summary["task"] = summary_task
         return summary
 
     @staticmethod
@@ -1117,7 +1219,30 @@ class MessageEventService:
                 message["traceQueryContext"] = trace_query_context
             if trace_id:
                 message["traceId"] = trace_id
+            MessageEventService._apply_thread_task_metadata(message, data)
             return
+
+    @staticmethod
+    def _apply_thread_task_metadata(
+        message: dict[str, Any],
+        data: dict[str, Any],
+    ) -> None:
+        thread_task = data.get("thread_task") or data.get("threadTask")
+        if not isinstance(thread_task, dict):
+            return
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        runtime_params = metadata.get("runtime_params")
+        if not isinstance(runtime_params, dict):
+            runtime_params = {}
+        metadata = {
+            **metadata,
+            "thread_task": dict(thread_task),
+            "runtime_params": {
+                **runtime_params,
+                "thread_task": dict(thread_task),
+            },
+        }
+        message["metadata"] = metadata
 
     @staticmethod
     def _event_timestamp_ms(event: MessageEventRecord) -> int:

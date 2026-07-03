@@ -653,7 +653,7 @@
   max-width: 100%;
 }
 
-.composerFrameAccessory :global([aria-label="输入框状态"] [data-selected-item]) {
+.composerFrameAccessory :global([aria-label="输入框状态"] > [data-selected-item] > [data-selected-item]) {
   border-color: color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
   background: var(--workbench-assistant-control-glass-bg);
   box-shadow: var(--workbench-assistant-control-glass-shadow);

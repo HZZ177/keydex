@@ -9,15 +9,20 @@ import {
   type AgentHistoryResponse,
   type AgentSession,
   type CommandApprovalRequest,
+  type ThreadTask,
+  type ThreadTaskRun,
 } from "@/types/protocol";
 import {
   agentConversationReducer,
   createInitialAgentConversationState,
   reduceAgentWsEvent,
+  selectAgentActiveThreadTask,
   selectAgentMessages,
   selectAgentRuntimeState,
   selectAgentSessionState,
   selectAgentSessions,
+  selectAgentThreadTaskRuns,
+  selectAgentThreadTasks,
 } from "@/renderer/stores/agentSessionStore";
 
 describe("agentSessionStore reducer", () => {
@@ -43,6 +48,10 @@ describe("agentSessionStore reducer", () => {
       "session_closed",
       "session_title_updated",
       "task_result",
+      "task_updated",
+      "task_deleted",
+      "task_run_started",
+      "task_run_finished",
       "reasoning",
       "middleware_progress",
       "workspaceSkillsChanged",
@@ -432,6 +441,216 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentSessionState(state, "ses-1")?.status).toBe("closed");
   });
 
+  it("hydrates and upserts thread tasks without adding chat messages", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "tasks/loaded",
+      sessionId: "ses-1",
+      tasks: [threadTask("task-1", { objective: "旧目标", updated_at: "2026-07-03T00:00:00Z" })],
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "task_updated",
+      data: {
+        session_id: "ses-1",
+        task_id: "task-1",
+        task: threadTask("task-1", {
+          objective: "新目标",
+          updated_at: "2026-07-03T00:01:00Z",
+        }),
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "task_updated",
+      data: {
+        session_id: "ses-1",
+        task_id: "task-2",
+        task: threadTask("task-2", {
+          objective: "第二目标",
+          updated_at: "2026-07-03T00:02:00Z",
+        }),
+      },
+    });
+
+    expect(selectAgentThreadTasks(state, "ses-1").map((task) => task.id)).toEqual(["task-2", "task-1"]);
+    expect(selectAgentThreadTasks(state, "ses-1")[1].objective).toBe("新目标");
+    expect(selectAgentActiveThreadTask(state, "ses-1")).toMatchObject({ id: "task-2", objective: "第二目标" });
+    expect(selectAgentMessages(state, "ses-1")).toEqual([]);
+  });
+
+  it("filters hidden thread task continuation prompts from hydrated history", () => {
+    const state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        { role: "user", content: "用户真实输入" },
+        {
+          role: "user",
+          content: "<thread_task_context>继续目标</thread_task_context>",
+          metadata: {
+            hidden_for_transcript: true,
+            source: "thread_task",
+            task_id: "task-1",
+          },
+        } as AgentChatMessagePayload,
+        {
+          role: "user",
+          content: "legacy task continuation",
+          metadata: {
+            runtime_params: {
+              thread_task: {
+                task_id: "task-1",
+                run_id: "run-1",
+                trigger: "task_continue",
+              },
+            },
+          },
+        } as AgentChatMessagePayload,
+        {
+          role: "assistant",
+          content: "任务轮次的助手结果仍然可见",
+          metadata: {
+            runtime_params: {
+              thread_task: {
+                task_id: "task-1",
+                run_id: "run-1",
+                trigger: "task_continue",
+              },
+            },
+          },
+        } as AgentChatMessagePayload,
+      ]),
+    });
+
+    expect(selectAgentMessages(state, "ses-1").map((message) => [message.role, message.content])).toEqual([
+      ["user", "用户真实输入"],
+      ["assistant", "任务轮次的助手结果仍然可见"],
+    ]);
+  });
+
+  it("attaches thread task metadata from completed continuation turns", () => {
+    let state = reduceAgentWsEvent(createInitialAgentConversationState(), {
+      action: "stream",
+      data: { session_id: "ses-1", content: "自动续跑输出" },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "completed",
+      data: {
+        session_id: "ses-1",
+        status: "completed",
+        trace_id: "trace-goal-2",
+        events: [],
+        thread_task: {
+          task_id: "task-1",
+          run_id: "run-1",
+          trigger: "task_continue",
+          type: "goal",
+        },
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        role: "assistant",
+        traceId: "trace-goal-2",
+        metadata: {
+          thread_task: {
+            task_id: "task-1",
+            run_id: "run-1",
+            trigger: "task_continue",
+            type: "goal",
+          },
+          runtime_params: {
+            thread_task: {
+              task_id: "task-1",
+              run_id: "run-1",
+              trigger: "task_continue",
+              type: "goal",
+            },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("clears active thread task on delete events", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "tasks/loaded",
+      sessionId: "ses-1",
+      tasks: [threadTask("task-1")],
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "task_deleted",
+      data: { session_id: "ses-1", task_id: "task-1", task: threadTask("task-1", { deleted_at: "now" }) },
+    });
+
+    expect(selectAgentThreadTasks(state, "ses-1")).toEqual([]);
+    expect(selectAgentActiveThreadTask(state, "ses-1")).toBeNull();
+    expect(selectAgentMessages(state, "ses-1")).toEqual([]);
+  });
+
+  it("tracks thread task run start and finish events", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "tasks/loaded",
+      sessionId: "ses-1",
+      tasks: [threadTask("task-1")],
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "task_run_started",
+      data: {
+        session_id: "ses-1",
+        task_id: "task-1",
+        run_id: "run-1",
+        task: threadTask("task-1", { current_run_id: "run-1" }),
+        run: threadTaskRun("run-1", { status: "running", is_running: true }),
+      },
+    });
+
+    expect(selectAgentActiveThreadTask(state, "ses-1")?.current_run_id).toBe("run-1");
+    expect(selectAgentThreadTaskRuns(state, "ses-1")).toMatchObject({
+      runningTaskRun: { id: "run-1", status: "running" },
+      recentTaskRun: { id: "run-1", status: "running" },
+    });
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        id: "thread-task-boundary:run-1",
+        role: "system",
+        content: "目标继续执行",
+        metadata: {
+          kind: "thread_task_boundary",
+          thread_task: {
+            task_id: "task-1",
+            run_id: "run-1",
+            trigger: "task_continue",
+            type: "goal",
+          },
+        },
+      },
+    ]);
+
+    state = reduceAgentWsEvent(state, {
+      action: "task_run_finished",
+      data: {
+        session_id: "ses-1",
+        task_id: "task-1",
+        run_id: "run-1",
+        task: threadTask("task-1", { current_run_id: null, turn_count: 1 }),
+        run: threadTaskRun("run-1", { status: "succeeded", is_running: false, finished_at: "2026-07-03T00:03:00Z" }),
+      },
+    });
+
+    expect(selectAgentActiveThreadTask(state, "ses-1")?.current_run_id).toBeNull();
+    expect(selectAgentThreadTaskRuns(state, "ses-1")).toMatchObject({
+      runningTaskRun: null,
+      recentTaskRun: { id: "run-1", status: "succeeded" },
+    });
+    expect(selectAgentMessages(state, "ses-1").map((message) => [message.role, message.content])).toEqual([
+      ["system", "目标继续执行"],
+    ]);
+  });
+
   it("marks background sessions unread only after the turn reaches a terminal event", () => {
     let state = agentConversationReducer(createInitialAgentConversationState(), {
       type: "sessions/set",
@@ -807,6 +1026,31 @@ describe("agentSessionStore reducer", () => {
         streaming: false,
       },
     ]);
+  });
+
+  it("does not render internal message context system events as transcript messages", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "system_message",
+      data: {
+        session_id: "ses-1",
+        content: "完成这个目标",
+        source: "message_context_item",
+        message_event_id: "evt-context-1",
+        metadata: { kind: "goal", source: "message_context_item" },
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "system_message",
+      data: {
+        session_id: "ses-1",
+        content: "内部续跑提示",
+        source: "message_injection",
+        message_event_id: "evt-context-2",
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")).toEqual([]);
   });
 
   it("appends context compression notices when staging is applied", () => {
@@ -1222,7 +1466,7 @@ describe("agentSessionStore reducer", () => {
     expect(messages.map((message) => message.uiPayload?.command_id)).toEqual(commands.map((item) => item.commandId));
   });
 
-  it("marks command tools cancelled when the command termination event arrives", () => {
+  it("marks command tools cancelled without cancelling the active turn when the command termination event arrives", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, {
       action: "tool_progress",
@@ -1266,18 +1510,67 @@ describe("agentSessionStore reducer", () => {
       data: {
         session_id: "ses-1",
         command_id: "cmd-1",
-        terminated: true,
-        cancelled: true,
+        terminated: false,
+        cancelled: false,
       },
     });
 
-    expect(selectAgentRuntimeState(state, "ses-1")).toBe("idle");
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      status: "running",
+      uiPayload: {
+        command_id: "cmd-1",
+        status: "running",
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "tool_progress",
+      data: {
+        session_id: "ses-1",
+        run_id: "run-command",
+        tool_call_id: "call-command",
+        tool_name: "run_cmd",
+        kind: "command_progress",
+        command_id: "cmd-1",
+        status: "terminating",
+        cancel_reason: "user",
+        can_terminate: false,
+        combined_tail: "Pinging 127.0.0.1 ...",
+      },
+    });
+
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      status: "running",
+      uiPayload: {
+        command_id: "cmd-1",
+        status: "terminating",
+        cancel_reason: "user",
+        can_terminate: false,
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "command_terminated",
+      data: {
+        session_id: "ses-1",
+        command_id: "cmd-1",
+        terminated: true,
+        cancelled: false,
+      },
+    });
+
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
+    expect(selectAgentMessages(state, "ses-1")).toHaveLength(1);
     expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
       role: "tool",
       status: "cancelled",
       uiPayload: {
         command_id: "cmd-1",
         status: "cancelled",
+        cancel_reason: "user",
+        can_terminate: false,
       },
     });
 
@@ -1295,11 +1588,29 @@ describe("agentSessionStore reducer", () => {
       },
     });
 
+    state = reduceAgentWsEvent(state, {
+      action: "tool_progress",
+      data: {
+        session_id: "ses-1",
+        run_id: "run-command",
+        tool_call_id: "call-command",
+        tool_name: "run_cmd",
+        kind: "command_result",
+        command_id: "cmd-1",
+        status: "cancelled",
+        cancel_reason: "user",
+        duration_ms: 1200,
+        combined_tail: "Pinging 127.0.0.1 ...",
+      },
+    });
+
     expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
       status: "cancelled",
       uiPayload: {
         command_id: "cmd-1",
         status: "cancelled",
+        cancel_reason: "user",
+        duration_ms: 1200,
       },
     });
   });
@@ -1605,6 +1916,51 @@ function history(list: AgentHistoryResponse["list"]): AgentHistoryResponse {
     session: session("ses-1", "2026-06-18T08:00:00Z"),
     event_total: list.length,
     turn_indexes: [1],
+  };
+}
+
+function threadTask(id: string, patch: Partial<ThreadTask> = {}): ThreadTask {
+  return {
+    id,
+    session_id: "ses-1",
+    type: "goal",
+    type_label: "目标",
+    title: "目标",
+    objective: "完成目标",
+    status: "active",
+    metadata: {},
+    evidence: [],
+    blocked_audit: {},
+    system_stop_reason: null,
+    current_run_id: null,
+    turn_count: 0,
+    elapsed_seconds: 0,
+    token_usage: {},
+    created_at: "2026-07-03T00:00:00Z",
+    updated_at: "2026-07-03T00:00:00Z",
+    deleted_at: null,
+    is_open: true,
+    is_terminal: false,
+    ...patch,
+  };
+}
+
+function threadTaskRun(id: string, patch: Partial<ThreadTaskRun> = {}): ThreadTaskRun {
+  return {
+    id,
+    task_id: "task-1",
+    session_id: "ses-1",
+    turn_index: null,
+    trace_id: null,
+    status: "running",
+    summary: {},
+    error: {},
+    started_at: "2026-07-03T00:00:00Z",
+    finished_at: null,
+    created_at: "2026-07-03T00:00:00Z",
+    updated_at: "2026-07-03T00:00:00Z",
+    is_running: true,
+    ...patch,
   };
 }
 

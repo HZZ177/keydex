@@ -10,6 +10,10 @@ import {
   type AgentCompletedPayload,
   type AgentSession,
   type AgentToolEventData,
+  type ThreadTask,
+  type ThreadTaskEventData,
+  type ThreadTaskRun,
+  type ThreadTaskRunEventData,
 } from "@/types/protocol";
 
 describe("agent protocol types", () => {
@@ -22,8 +26,14 @@ describe("agent protocol types", () => {
     expect(AGENT_CHAT_ACTIONS).toContain("reasoning");
     expect(AGENT_CHAT_ACTIONS).toContain("completed");
     expect(AGENT_CHAT_ACTIONS).toContain("session_title_updated");
+    expect(AGENT_CHAT_ACTIONS).toContain("task_updated");
+    expect(AGENT_CHAT_ACTIONS).toContain("task_deleted");
+    expect(AGENT_CHAT_ACTIONS).toContain("task_run_started");
+    expect(AGENT_CHAT_ACTIONS).toContain("task_run_finished");
     expect(AGENT_REPLAY_ACTIONS).toContain("stream_batch");
     expect(AGENT_REPLAY_ACTIONS).toContain("reasoning");
+    expect(AGENT_REPLAY_ACTIONS).toContain("task_updated");
+    expect(AGENT_REPLAY_ACTIONS).toContain("task_run_finished");
     expect(AGENT_COMPLETED_EVENT_ITEM_ACTIONS).toEqual([
       "ai_message",
       "tool_start",
@@ -176,6 +186,98 @@ describe("agent protocol types", () => {
       "reasoning_message",
     ]);
     expect(completed.data.latest_llm_token_usage?.output_tokens).toBe(20);
+  });
+
+  it("constructs thread task websocket payloads", () => {
+    const task = {
+      id: "task_1",
+      session_id: "ses_1",
+      type: "goal",
+      type_label: "目标",
+      title: "目标",
+      objective: "完成目标",
+      status: "active",
+      metadata: {},
+      evidence: [],
+      blocked_audit: {},
+      system_stop_reason: null,
+      current_run_id: "run_1",
+      turn_count: 1,
+      elapsed_seconds: 2,
+      token_usage: { total_tokens: 42 },
+      created_at: "2026-07-03T00:00:00Z",
+      updated_at: "2026-07-03T00:01:00Z",
+      deleted_at: null,
+      is_open: true,
+      is_terminal: false,
+    } satisfies ThreadTask;
+    const run = {
+      id: "run_1",
+      task_id: "task_1",
+      session_id: "ses_1",
+      turn_index: 3,
+      trace_id: "trace_1",
+      status: "running",
+      summary: {},
+      error: {},
+      started_at: "2026-07-03T00:00:10Z",
+      finished_at: null,
+      created_at: "2026-07-03T00:00:10Z",
+      updated_at: "2026-07-03T00:00:10Z",
+      is_running: true,
+    } satisfies ThreadTaskRun;
+
+    const updated = {
+      action: "task_updated",
+      data: {
+        session_id: "ses_1",
+        task_id: task.id,
+        task,
+        run_id: run.id,
+        trace_id: "trace_1",
+        turn_index: 3,
+      },
+    } satisfies AgentActionEnvelope<"task_updated", ThreadTaskEventData>;
+    const runStarted = {
+      action: "task_run_started",
+      data: {
+        session_id: "ses_1",
+        task_id: task.id,
+        task,
+        run_id: run.id,
+        run,
+        status: "running",
+        reason: "auto_continue",
+        trace_id: null,
+        turn_index: null,
+      },
+    } satisfies AgentActionEnvelope<"task_run_started", ThreadTaskRunEventData>;
+    const deleted = {
+      action: "task_deleted",
+      data: {
+        session_id: "ses_1",
+        task_id: task.id,
+        task: { ...task, status: "cancelled", deleted_at: "2026-07-03T00:02:00Z" },
+      },
+    } satisfies AgentActionEnvelope<"task_deleted", ThreadTaskEventData>;
+    const runFinished = {
+      action: "task_run_finished",
+      data: {
+        session_id: "ses_1",
+        task_id: task.id,
+        task: { ...task, current_run_id: null },
+        run_id: run.id,
+        run: { ...run, status: "succeeded", is_running: false, finished_at: "2026-07-03T00:02:00Z" },
+        run_status: "succeeded",
+        trace_id: "trace_1",
+        turn_index: 3,
+      },
+    } satisfies AgentActionEnvelope<"task_run_finished", ThreadTaskRunEventData>;
+
+    expect(updated.data.task?.status).toBe("active");
+    expect(runStarted.data.run.status).toBe("running");
+    expect(deleted.data.task?.deleted_at).toBe("2026-07-03T00:02:00Z");
+    expect(runFinished.data.run.status).toBe("succeeded");
   });
 });
 

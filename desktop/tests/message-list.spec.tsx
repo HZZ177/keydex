@@ -112,6 +112,7 @@ describe("MessageList", () => {
     const compressionNotice = message("m1", "context_compression", "无感压缩已完成");
     const cancelledNotice = message("m2", "cancelled", "对话已取消");
     const retryNotice = message("m4", "llm_retry", "LLM 请求正在重试 1/3");
+    const threadTaskNotice = message("m5", "thread_task_boundary", "目标继续执行");
     const forkedAssistant = {
       ...message("m3", "assistant", "派生后的回答"),
       payload: {
@@ -122,7 +123,7 @@ describe("MessageList", () => {
 
     render(
       <MessageList
-        messages={[compressionNotice, retryNotice, cancelledNotice, forkedAssistant]}
+        messages={[compressionNotice, retryNotice, threadTaskNotice, cancelledNotice, forkedAssistant]}
         topNotice={{
           content: "该会话前置1轮历史消息已加载",
           tone: "success",
@@ -135,8 +136,318 @@ describe("MessageList", () => {
     expect(screen.getByTestId("context-compression-notice").querySelector("svg")).toBeNull();
     expect(screen.getByTestId("llm-retry-notice").querySelector("svg")).toBeNull();
     expect(screen.getByTestId("llm-retry-notice").getAttribute("data-notice-kind")).toBe("llm_retry");
+    expect(screen.getByTestId("thread-task-continuation-notice").querySelector("svg")).toBeNull();
+    expect(screen.getByTestId("thread-task-continuation-notice").getAttribute("data-notice-kind")).toBe("thread_task_continue");
     expect(screen.getByTestId("conversation-cancelled-notice").querySelector("svg")).toBeNull();
     expect(screen.getByTestId("message-fork-marker").querySelector("svg")).toBeNull();
+  });
+
+  it("renders a goal continuation divider from historical assistant metadata", () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            ...message("m1", "user", "启动目标"),
+            payload: { turnIndex: 1, turn_index: 1 },
+          },
+          {
+            ...message("m2", "assistant", "第一轮回复"),
+            payload: { turnIndex: 1, turn_index: 1 },
+          },
+          {
+            ...message("m3", "assistant", "第二轮续跑回复"),
+            payload: {
+              turnIndex: 2,
+              turn_index: 2,
+              metadata: {
+                runtime_params: {
+                  thread_task: {
+                    task_id: "task-1",
+                    run_id: "run-1",
+                    trigger: "task_continue",
+                  },
+                },
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
+    expect(screen.getAllByTestId("message-turn")).toHaveLength(2);
+  });
+
+  it("keeps realtime goal continuation dividers inside the next agent turn", () => {
+    render(
+      <MessageList
+        messages={[
+          message("m1", "user", "启动目标"),
+          message("m2", "assistant", "第一轮回复"),
+          message("m3", "thread_task_boundary", "目标继续执行"),
+          message("m4", "assistant", "第二轮续跑回复"),
+        ]}
+      />,
+    );
+
+    const turns = screen.getAllByTestId("message-turn");
+    expect(turns).toHaveLength(2);
+    expect(within(turns[0]).queryByTestId("thread-task-continuation-notice")).toBeNull();
+    expect(within(turns[0]).getByText("第一轮回复")).not.toBeNull();
+    expect(within(turns[1]).getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
+    expect(within(turns[1]).getByText("第二轮续跑回复")).not.toBeNull();
+  });
+
+  it("synthesizes realtime goal continuation dividers from assistant metadata before the boundary arrives", () => {
+    const secondContinuation = {
+      ...message("m4", "assistant", "第二轮续跑回复"),
+      payload: {
+        metadata: {
+          thread_task: {
+            task_id: "task-1",
+            run_id: "run-2",
+            trigger: "task_continue",
+          },
+        },
+      },
+    };
+    const thirdContinuation = {
+      ...message("m5", "assistant", "第三轮正在输出"),
+      status: "running" as const,
+      payload: {
+        metadata: {
+          thread_task: {
+            task_id: "task-1",
+            run_id: "run-3",
+            trigger: "task_continue",
+          },
+        },
+      },
+    };
+
+    render(
+      <MessageList
+        isProcessing
+        messages={[
+          message("m1", "user", "启动目标"),
+          message("m2", "assistant", "第一轮回复"),
+          message("m3", "thread_task_boundary", "目标继续执行"),
+          secondContinuation,
+          thirdContinuation,
+        ]}
+      />,
+    );
+
+    const turns = screen.getAllByTestId("message-turn");
+    expect(turns).toHaveLength(3);
+    expect(within(turns[1]).getByText("第二轮续跑回复")).not.toBeNull();
+    expect(within(turns[2]).getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
+    expect(within(turns[2]).getByText("第三轮正在输出")).not.toBeNull();
+  });
+
+  it("keeps completed goal continuation turns with action footers while the next turn is streaming", () => {
+    const secondContinuation = {
+      ...message("m4", "assistant", "第二轮续跑回复"),
+      payload: { messageEventId: "evt-goal-2" },
+    };
+    const thirdContinuation = {
+      ...message("m6", "assistant", "第三轮正在输出"),
+      status: "running" as const,
+      payload: { messageEventId: "evt-goal-3" },
+    };
+
+    render(
+      <MessageList
+        isProcessing
+        messages={[
+          message("m1", "user", "启动目标"),
+          { ...message("m2", "assistant", "第一轮回复"), payload: { messageEventId: "evt-goal-1" } },
+          message("m3", "thread_task_boundary", "目标继续执行"),
+          secondContinuation,
+          message("m5", "thread_task_boundary", "目标继续执行"),
+          thirdContinuation,
+        ]}
+        onForkFromMessage={vi.fn()}
+      />,
+    );
+
+    const turns = screen.getAllByTestId("message-turn");
+    expect(turns).toHaveLength(3);
+    expect(within(turns[1]).getByText("第二轮续跑回复")).not.toBeNull();
+    expect(within(turns[1]).getByRole("button", { name: "从该轮派生对话" })).not.toBeNull();
+    expect(within(turns[2]).getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
+    expect(within(turns[2]).getByText("第三轮正在输出")).not.toBeNull();
+    expect(within(turns[2]).queryByRole("button", { name: "从该轮派生对话" })).toBeNull();
+  });
+
+  it("renders goal status updates at the end of the turn instead of their raw tool position", () => {
+    render(
+      <MessageList
+        messages={[
+          message("m1", "user", "启动目标"),
+          {
+            ...message("m2", "thread_task_status", "update_thread_task"),
+            payload: {
+              call: {
+                id: "call-goal",
+                name: "update_thread_task",
+                arguments: {
+                  status: "complete",
+                  summary: "目标执行完成",
+                  checklist: [{ content: "完成自动续跑验证" }],
+                },
+              },
+              result: {
+                status: "success",
+                duration_ms: 23,
+                ui_payload: {
+                  task: {
+                    type: "goal",
+                    type_label: "目标",
+                    status: "complete",
+                    objective: "验证 goal 功能",
+                  },
+                },
+              },
+            },
+          },
+          message("m3", "assistant", "最终回复"),
+        ]}
+      />,
+    );
+
+    const assistantText = screen.getByText("最终回复");
+    const summary = screen.getByTestId("thread-task-status-summary");
+    const block = screen.getByTestId("thread-task-status-block");
+
+    expect(assistantText.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(summary.contains(block)).toBe(true);
+    expect(block.textContent).toContain("目标已完成");
+    expect(block.textContent).toContain("目标执行完成");
+    expect(block.textContent).not.toContain("update_thread_task");
+    expect(block.textContent).not.toContain("23ms");
+  });
+
+  it("shows the final goal status result when a failed update is retried successfully", () => {
+    render(
+      <MessageList
+        messages={[
+          message("m1", "user", "启动目标"),
+          {
+            ...message("m2", "thread_task_status", "update_thread_task"),
+            status: "failed",
+            payload: {
+              call: {
+                id: "call-goal-failed",
+                name: "update_thread_task",
+                arguments: {
+                  status: "complete",
+                  summary: "第一次更新失败",
+                },
+              },
+              result: {
+                status: "error",
+                error: "临时失败",
+              },
+            },
+          },
+          {
+            ...message("m3", "thread_task_status", "update_thread_task"),
+            payload: {
+              call: {
+                id: "call-goal-success",
+                name: "update_thread_task",
+                arguments: {
+                  status: "complete",
+                  summary: "目标执行完成",
+                },
+              },
+              result: {
+                status: "success",
+                ui_payload: {
+                  task: {
+                    type: "goal",
+                    type_label: "目标",
+                    status: "complete",
+                  },
+                },
+              },
+            },
+          },
+          message("m4", "assistant", "最终回复"),
+        ]}
+      />,
+    );
+
+    const blocks = screen.getAllByTestId("thread-task-status-block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].getAttribute("data-state")).toBe("success");
+    expect(blocks[0].textContent).toContain("目标已完成");
+    expect(blocks[0].textContent).toContain("重试后成功");
+    expect(blocks[0].textContent).toContain("目标执行完成");
+    expect(blocks[0].textContent).not.toContain("目标状态更新失败");
+    expect(blocks[0].textContent).not.toContain("第一次更新失败");
+  });
+
+  it("coalesces historical failed goal status attempts without task id into the later successful task result", () => {
+    render(
+      <MessageList
+        messages={[
+          message("m1", "user", "启动目标"),
+          {
+            ...message("m2", "thread_task_status", "update_thread_task"),
+            status: "failed",
+            payload: {
+              call: {
+                id: "call-goal-failed",
+                name: "update_thread_task",
+                arguments: {
+                  status: "complete",
+                  summary: "第一轮输出两句话后等待；第二轮输出确认等待；第三轮准备完成",
+                },
+              },
+              result: {
+                status: "error",
+                error: "临时失败",
+              },
+            },
+          },
+          {
+            ...message("m3", "thread_task_status", "update_thread_task"),
+            payload: {
+              call: {
+                id: "call-goal-success",
+                name: "update_thread_task",
+                arguments: {
+                  status: "complete",
+                  summary: "按计划在三轮对话后标记完成。",
+                },
+              },
+              result: {
+                status: "success",
+                ui_payload: {
+                  task: {
+                    id: "task-1",
+                    type: "goal",
+                    type_label: "目标",
+                    status: "complete",
+                  },
+                },
+              },
+            },
+          },
+          message("m4", "assistant", "最终回复"),
+        ]}
+      />,
+    );
+
+    const blocks = screen.getAllByTestId("thread-task-status-block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].getAttribute("data-state")).toBe("success");
+    expect(blocks[0].textContent).toContain("目标已完成");
+    expect(blocks[0].textContent).toContain("重试后成功");
+    expect(blocks[0].textContent).not.toContain("目标状态更新失败");
+    expect(blocks[0].textContent).not.toContain("第一轮输出两句话后等待");
   });
 
   it("exposes the requested density variant on the list root and scroll surface", () => {
@@ -290,7 +601,8 @@ describe("MessageList", () => {
       const request = { requestId: 1, targetIndex: 1 };
       const { rerender } = render(<MessageList messages={messages} loading turnNavigationRequest={request} />);
 
-      expect(screen.getByTestId("message-skeleton")).not.toBeNull();
+      expect(screen.queryByTestId("message-skeleton")).toBeNull();
+      expect(screen.getByText("第一轮问题")).not.toBeNull();
       expect(scrollIntoView).not.toHaveBeenCalled();
 
       rerender(<MessageList messages={messages} turnNavigationRequest={request} />);

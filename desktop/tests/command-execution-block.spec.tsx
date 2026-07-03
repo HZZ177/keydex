@@ -278,7 +278,13 @@ describe("CommandExecutionBlock", () => {
   });
 
   it("requests command termination by command id", async () => {
-    const onTerminateCommand = vi.fn().mockResolvedValue(undefined);
+    let releaseTerminate: () => void = () => undefined;
+    const onTerminateCommand = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseTerminate = resolve;
+        }),
+    );
     render(
       <CommandExecutionBlock
         message={commandMessage("running", {
@@ -289,16 +295,45 @@ describe("CommandExecutionBlock", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "终止本轮" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "终止命令" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
-    const terminateButton = screen.getByRole("button", { name: "终止本轮" });
+    const terminateButton = screen.getByRole("button", { name: "终止命令" });
     expect(terminateButton.textContent).toBe("");
+    expect(terminateButton.closest('[data-kind="input"]')).not.toBeNull();
     fireEvent.click(terminateButton);
 
     await waitFor(() => {
       expect(onTerminateCommand).toHaveBeenCalledWith("cmd-1");
     });
+    const terminatingButton = screen.getByRole("button", { name: "正在终止命令" });
+    expect((terminatingButton as HTMLButtonElement).disabled).toBe(true);
+    expect(terminatingButton.getAttribute("data-terminating")).toBe("true");
+    fireEvent.click(terminatingButton);
+    expect(onTerminateCommand).toHaveBeenCalledTimes(1);
+
+    releaseTerminate();
+  });
+
+  it("shows command termination in progress without exposing another terminate action", () => {
+    render(
+      <CommandExecutionBlock
+        message={commandMessage("running", {
+          status: "terminating",
+          can_terminate: false,
+          cancel_reason: "user",
+          description: "停止长命令",
+          stdout: "",
+        })}
+        onTerminateCommand={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("正在终止 停止长命令")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
+    expect(screen.getAllByText("正在终止").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "终止命令" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "正在终止命令" })).toBeNull();
   });
 
   it("shows simplified command input even when there is no output", () => {

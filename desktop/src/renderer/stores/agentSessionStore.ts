@@ -22,9 +22,14 @@ import type {
   AgentToolProgressData,
   AgentToolStatus,
   TurnError,
+  ThreadTask,
+  ThreadTaskEventData,
+  ThreadTaskRun,
+  ThreadTaskRunEventData,
   Workspace,
 } from "@/types/protocol";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
+import { shouldDisplayAgentTranscriptMessage } from "@/renderer/utils/agentTranscriptVisibility";
 
 export type AgentSessionRuntimeState = "idle" | "running" | "waiting_approval" | "cancelling" | "failed" | "closed";
 
@@ -44,6 +49,10 @@ export interface AgentSessionViewState {
   historyHasMoreOlder: boolean;
   hasUnread: boolean;
   pendingApproval: CommandApprovalRequest | null;
+  threadTasks: ThreadTask[];
+  activeTask: ThreadTask | null;
+  runningTaskRun: ThreadTaskRun | null;
+  recentTaskRun: ThreadTaskRun | null;
   stale: boolean;
 }
 
@@ -62,6 +71,7 @@ export type AgentConversationAction =
   | { type: "session/select"; sessionId: string | null }
   | { type: "history/loaded"; sessionId: string; history: AgentHistoryResponse }
   | { type: "history/olderLoaded"; sessionId: string; history: AgentHistoryResponse }
+  | { type: "tasks/loaded"; sessionId: string; tasks: ThreadTask[] }
   | {
       type: "message/addUser";
       sessionId: string;
@@ -100,6 +110,8 @@ export function agentConversationReducer(
       return loadHistory(state, action.sessionId, action.history);
     case "history/olderLoaded":
       return prependHistory(state, action.sessionId, action.history);
+    case "tasks/loaded":
+      return loadThreadTasks(state, action.sessionId, action.tasks);
     case "message/addUser":
       return addUserMessage(state, action);
     case "runtime/setState":
@@ -186,6 +198,18 @@ export function reduceAgentWsEvent(
     case "session_title_updated":
       next = handleSessionTitleUpdated(state, event.data);
       break;
+    case "task_updated":
+      next = handleTaskUpdated(state, event.data as unknown as ThreadTaskEventData);
+      break;
+    case "task_deleted":
+      next = handleTaskDeleted(state, event.data as unknown as ThreadTaskEventData);
+      break;
+    case "task_run_started":
+      next = handleTaskRunStarted(state, event.data as unknown as ThreadTaskRunEventData);
+      break;
+    case "task_run_finished":
+      next = handleTaskRunFinished(state, event.data as unknown as ThreadTaskRunEventData);
+      break;
     case "workspaceSkillsChanged":
       next = state;
       break;
@@ -235,6 +259,31 @@ export function selectAgentRuntimeState(
   sessionId = state.selectedSessionId ?? "",
 ): AgentSessionRuntimeState {
   return selectAgentSessionState(state, sessionId)?.runtimeState ?? "idle";
+}
+
+export function selectAgentThreadTasks(
+  state: AgentConversationState,
+  sessionId = state.selectedSessionId ?? "",
+): ThreadTask[] {
+  return selectAgentSessionState(state, sessionId)?.threadTasks ?? [];
+}
+
+export function selectAgentActiveThreadTask(
+  state: AgentConversationState,
+  sessionId = state.selectedSessionId ?? "",
+): ThreadTask | null {
+  return selectAgentSessionState(state, sessionId)?.activeTask ?? null;
+}
+
+export function selectAgentThreadTaskRuns(
+  state: AgentConversationState,
+  sessionId = state.selectedSessionId ?? "",
+): { runningTaskRun: ThreadTaskRun | null; recentTaskRun: ThreadTaskRun | null } {
+  const view = selectAgentSessionState(state, sessionId);
+  return {
+    runningTaskRun: view?.runningTaskRun ?? null,
+    recentTaskRun: view?.recentTaskRun ?? null,
+  };
 }
 
 function selectSession(state: AgentConversationState, sessionId: string | null): AgentConversationState {
@@ -366,7 +415,9 @@ function loadHistory(
   let next = upsertSession(state, history.session, { select: true });
   next = cloneState(next);
   const view = ensureSessionState(next, sessionId, metaFromSession(history.session));
-  const hydratedMessages = history.list.map((payload, index) => historyMessageFromPayload(sessionId, payload, index));
+  const hydratedMessages = history.list
+    .filter(shouldDisplayAgentTranscriptMessage)
+    .map((payload, index) => historyMessageFromPayload(sessionId, payload, index));
   view.messages = mergeActiveLocalMessages(hydratedMessages, previousView);
   view.hydrated = true;
   view.historyLoading = false;
@@ -387,7 +438,9 @@ function prependHistory(
   let next = upsertSession(state, history.session, { select: true });
   next = cloneState(next);
   const view = ensureSessionState(next, sessionId, metaFromSession(history.session));
-  const incoming = history.list.map((payload, index) => historyMessageFromPayload(sessionId, payload, index));
+  const incoming = history.list
+    .filter(shouldDisplayAgentTranscriptMessage)
+    .map((payload, index) => historyMessageFromPayload(sessionId, payload, index));
   const incomingIds = new Set(incoming.map((message) => message.id));
   view.messages = [...incoming, ...view.messages.filter((message) => !incomingIds.has(message.id))];
   view.historyCursor = history.next_cursor ?? null;
@@ -398,6 +451,147 @@ function prependHistory(
   view.stale = false;
   applyHydratedRuntimeState(view, previousView);
   return next;
+}
+
+function loadThreadTasks(
+  state: AgentConversationState,
+  sessionId: string,
+  tasks: ThreadTask[],
+): AgentConversationState {
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  view.threadTasks = sortThreadTasks(tasks.map(cloneThreadTask));
+  view.activeTask = firstOpenThreadTask(view.threadTasks);
+  if (view.runningTaskRun && !view.threadTasks.some((task) => task.id === view.runningTaskRun?.task_id)) {
+    view.runningTaskRun = null;
+  }
+  return next;
+}
+
+function handleTaskUpdated(state: AgentConversationState, data: ThreadTaskEventData): AgentConversationState {
+  const task = threadTaskFromData(data.task);
+  if (!task) {
+    return state;
+  }
+  const sessionId = stringValue(data.session_id) || task.session_id;
+  if (!sessionId) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  upsertThreadTask(view, task);
+  return next;
+}
+
+function handleTaskDeleted(state: AgentConversationState, data: ThreadTaskEventData): AgentConversationState {
+  const taskId = stringValue(data.task_id) || stringValue(data.task?.id);
+  const sessionId = stringValue(data.session_id) || stringValue(data.task?.session_id);
+  if (!sessionId || !taskId) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  view.threadTasks = view.threadTasks.filter((task) => task.id !== taskId);
+  if (view.activeTask?.id === taskId) {
+    view.activeTask = firstOpenThreadTask(view.threadTasks);
+  }
+  if (view.runningTaskRun?.task_id === taskId) {
+    view.runningTaskRun = null;
+  }
+  return next;
+}
+
+function handleTaskRunStarted(state: AgentConversationState, data: ThreadTaskRunEventData): AgentConversationState {
+  const run = threadTaskRunFromData(data.run);
+  const sessionId = stringValue(data.session_id) || run?.session_id || "";
+  if (!sessionId || !run) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  const task = threadTaskFromData(data.task);
+  if (task) {
+    upsertThreadTask(view, task);
+  }
+  view.runningTaskRun = cloneThreadTaskRun(run);
+  view.recentTaskRun = cloneThreadTaskRun(run);
+  upsertThreadTaskBoundaryMessage(view, run, task, data);
+  return next;
+}
+
+function handleTaskRunFinished(state: AgentConversationState, data: ThreadTaskRunEventData): AgentConversationState {
+  const run = threadTaskRunFromData(data.run);
+  const sessionId = stringValue(data.session_id) || run?.session_id || "";
+  if (!sessionId || !run) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  const task = threadTaskFromData(data.task);
+  if (task) {
+    upsertThreadTask(view, task);
+  }
+  if (view.runningTaskRun?.id === run.id) {
+    view.runningTaskRun = null;
+  }
+  view.recentTaskRun = cloneThreadTaskRun(run);
+  return next;
+}
+
+function upsertThreadTaskBoundaryMessage(
+  view: AgentSessionViewState,
+  run: ThreadTaskRun,
+  task: ThreadTask | null,
+  data: ThreadTaskRunEventData,
+): void {
+  const taskType = task?.type || stringValue(asRecord(data.task)?.type) || "goal";
+  const threadTask: Record<string, unknown> = {
+    task_id: run.task_id,
+    run_id: run.id,
+    trigger: "task_continue",
+    type: taskType,
+  };
+  const reason = stringValue(data.reason) || stringValue(run.summary.reason);
+  const traceId = run.trace_id || stringValue(data.trace_id);
+  const turnIndex = run.turn_index ?? numberValue(data.turn_index);
+  if (reason) {
+    threadTask.reason = reason;
+  }
+  if (traceId) {
+    threadTask.trace_id = traceId;
+  }
+  if (turnIndex !== null) {
+    threadTask.turn_index = turnIndex;
+  }
+
+  const id = `thread-task-boundary:${run.id}`;
+  const metadata = {
+    kind: "thread_task_boundary",
+    thread_task: threadTask,
+    runtime_params: {
+      thread_task: threadTask,
+    },
+  };
+  const timestamp =
+    timestampFromIso(run.started_at) ?? timestampFromIso(run.created_at) ?? timestampFromData(data);
+  const existing = view.messages.find((message) => message.id === id);
+  if (existing) {
+    existing.content = "目标继续执行";
+    existing.timestamp = timestamp;
+    existing.metadata = metadata;
+    existing.status = "completed";
+    return;
+  }
+  view.messages.push({
+    id,
+    sessionId: run.session_id,
+    role: "system",
+    content: "目标继续执行",
+    timestamp,
+    metadata,
+    streaming: false,
+    status: "completed",
+  });
 }
 
 function mergeActiveLocalMessages(
@@ -422,8 +616,14 @@ function mergeActiveLocalMessages(
 }
 
 function shouldPreserveActiveLocalMessage(message: AgentChatMessage): boolean {
+  if (!shouldDisplayAgentTranscriptMessage(message)) {
+    return false;
+  }
   if (message.id.startsWith("hist:")) {
     return false;
+  }
+  if (isThreadTaskBoundaryMessage(message)) {
+    return true;
   }
   if (message.role === "user") {
     return true;
@@ -596,6 +796,9 @@ function handleSystemMessage(state: AgentConversationState, data: Record<string,
   if (!sessionId || !content) {
     return state;
   }
+  if (isInternalTranscriptContextMessage(data)) {
+    return state;
+  }
   const messageEventId = stringValue(data.message_event_id) || stringValue(data.event_id) || stringValue(data.id);
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
@@ -616,6 +819,20 @@ function handleSystemMessage(state: AgentConversationState, data: Record<string,
   });
   view.isStreaming = hasStreamingMessage(view);
   return next;
+}
+
+function isInternalTranscriptContextMessage(data: Record<string, unknown>): boolean {
+  const source = stringValue(data.source);
+  const metadata = asRecord(data.metadata);
+  const metadataSource = metadata ? stringValue(metadata.source) : "";
+  return (
+    source === "message_context_item" ||
+    source === "message_injection" ||
+    source === "skill_activation" ||
+    metadataSource === "message_context_item" ||
+    metadataSource === "message_injection" ||
+    metadataSource === "skill_activation"
+  );
 }
 
 function handleMiddlewareProgress(
@@ -1063,6 +1280,13 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
     completedTarget.ghostStats = ghostStats;
     completedTarget.traceQueryContext = payload.trace_query_context ?? payload.ghost_footer?.trace_query_context;
   }
+  if (completedTarget && payload.trace_id && !completedTarget.traceId) {
+    completedTarget.traceId = payload.trace_id;
+  }
+  const threadTask = threadTaskContextFromPayload(payload);
+  if (completedTarget && threadTask) {
+    applyThreadTaskMetadata(completedTarget, threadTask);
+  }
 
   for (const message of view.messages) {
     message.streaming = false;
@@ -1113,8 +1337,17 @@ function handleCancelled(state: AgentConversationState, data: Record<string, unk
     }
   }
   const last = view.messages.at(-1);
-  if (!(last?.role === "assistant" && last.cancelled && last.status === "cancelled")) {
-    const traceId = stringValue(data.trace_id);
+  const traceId = stringValue(data.trace_id);
+  const threadTask = threadTaskContextFromPayload(data);
+  if (last?.role === "assistant" && last.cancelled && last.status === "cancelled") {
+    if (traceId && !last.traceId) {
+      last.traceId = traceId;
+    }
+    if (threadTask) {
+      applyThreadTaskMetadata(last, threadTask);
+    }
+  } else {
+    const metadata = threadTask ? threadTaskMetadata(threadTask) : undefined;
     view.messages.push({
       id: nextMessageId(next, "cancelled", sessionId),
       sessionId,
@@ -1124,6 +1357,7 @@ function handleCancelled(state: AgentConversationState, data: Record<string, unk
       status: "cancelled",
       cancelled: true,
       ...(traceId ? { traceId } : {}),
+      ...(metadata ? { metadata } : {}),
     });
   }
   view.isStreaming = false;
@@ -1136,13 +1370,10 @@ function handleCancelled(state: AgentConversationState, data: Record<string, unk
 function handleCommandTerminated(state: AgentConversationState, data: Record<string, unknown>): AgentConversationState {
   const sessionId = sessionIdFromData(data);
   const commandId = stringValue(data.command_id);
-  if (!sessionId) {
+  if (!sessionId || !commandId || data.terminated === false) {
     return state;
   }
-  const next = handleCancelled(state, data);
-  if (!commandId) {
-    return next;
-  }
+  const next = cloneState(state);
   const view = next.sessionStateById[sessionId];
   if (!view) {
     return next;
@@ -1158,6 +1389,8 @@ function handleCommandTerminated(state: AgentConversationState, data: Record<str
     ...(asRecord(command.uiPayload) ?? {}),
     command_id: commandId,
     status: "cancelled",
+    cancel_reason: "user",
+    can_terminate: false,
   };
   return next;
 }
@@ -1171,10 +1404,12 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
   const view = ensureSessionState(next, sessionId);
   const error = turnErrorFromData(data);
   const traceId = stringValue(data.trace_id);
+  const threadTask = threadTaskContextFromPayload(data);
   const activeTurnFailed = view.isStreaming || view.runtimeState === "running" || hasStreamingMessage(view);
   const attachedToAssistant =
-    activeTurnFailed && attachTurnErrorToLatestAssistant(view, error, traceId);
+    activeTurnFailed && attachTurnErrorToLatestAssistant(view, error, traceId, threadTask);
   if (!attachedToAssistant) {
+    const metadata = threadTask ? threadTaskMetadata(threadTask, { turnError: error }) : { turnError: error };
     view.messages.push({
       id: nextMessageId(next, "error", sessionId),
       sessionId,
@@ -1183,7 +1418,7 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
       timestamp: timestampFromData(data),
       ...(traceId ? { traceId } : {}),
       status: "failed",
-      metadata: { turnError: error },
+      metadata,
     });
   }
   for (const message of view.messages) {
@@ -1215,6 +1450,7 @@ function attachTurnErrorToLatestAssistant(
   view: AgentSessionViewState,
   error: TurnError,
   traceId: string,
+  threadTask: Record<string, unknown> | null,
 ): boolean {
   const message = [...view.messages]
     .reverse()
@@ -1236,7 +1472,40 @@ function attachTurnErrorToLatestAssistant(
     ...(message.metadata ?? {}),
     turnError: error,
   };
+  if (threadTask) {
+    applyThreadTaskMetadata(message, threadTask);
+  }
   return true;
+}
+
+function threadTaskContextFromPayload(payload: object): Record<string, unknown> | null {
+  const record = payload as Record<string, unknown>;
+  return asRecord(record.thread_task) ?? asRecord(record.threadTask);
+}
+
+function applyThreadTaskMetadata(message: AgentChatMessage, threadTask: Record<string, unknown>): void {
+  message.metadata = threadTaskMetadata(threadTask, message.metadata);
+}
+
+function threadTaskMetadata(
+  threadTask: Record<string, unknown>,
+  existingMetadata?: Record<string, unknown>,
+): Record<string, unknown> {
+  const metadata = existingMetadata ?? {};
+  const runtimeParams = asRecord(metadata.runtime_params) ?? {};
+  const context = { ...threadTask };
+  return {
+    ...metadata,
+    thread_task: context,
+    runtime_params: {
+      ...runtimeParams,
+      thread_task: context,
+    },
+  };
+}
+
+function isThreadTaskBoundaryMessage(message: AgentChatMessage): boolean {
+  return stringValue(message.metadata?.kind) === "thread_task_boundary";
 }
 
 function handleStatus(state: AgentConversationState, data: Record<string, unknown>): AgentConversationState {
@@ -1492,6 +1761,10 @@ function ensureSessionState(
       ...meta,
       runtimeState,
       messages: existing.messages.map(cloneMessage),
+      threadTasks: existing.threadTasks.map(cloneThreadTask),
+      activeTask: existing.activeTask ? cloneThreadTask(existing.activeTask) : null,
+      runningTaskRun: existing.runningTaskRun ? cloneThreadTaskRun(existing.runningTaskRun) : null,
+      recentTaskRun: existing.recentTaskRun ? cloneThreadTaskRun(existing.recentTaskRun) : null,
     };
     state.sessionStateById[sessionId] = cloned;
     return cloned;
@@ -1512,6 +1785,10 @@ function ensureSessionState(
     historyHasMoreOlder: meta.historyHasMoreOlder ?? false,
     hasUnread: meta.hasUnread ?? false,
     pendingApproval: meta.pendingApproval ?? null,
+    threadTasks: meta.threadTasks?.map(cloneThreadTask) ?? [],
+    activeTask: meta.activeTask ? cloneThreadTask(meta.activeTask) : null,
+    runningTaskRun: meta.runningTaskRun ? cloneThreadTaskRun(meta.runningTaskRun) : null,
+    recentTaskRun: meta.recentTaskRun ? cloneThreadTaskRun(meta.recentTaskRun) : null,
     stale: meta.stale ?? false,
   };
   state.sessionStateById[sessionId] = created;
@@ -2032,7 +2309,7 @@ function toolStatusFromCommandPayload(
   fallback: AgentToolEventData["status"],
 ): AgentToolStatus {
   const commandStatus = stringValue(payload?.status);
-  if (commandStatus === "running") {
+  if (commandStatus === "running" || commandStatus === "terminating") {
     return "running";
   }
   if (commandStatus === "cancelled") {
@@ -2061,7 +2338,7 @@ function shouldIgnoreLateCommandProgress(
   data: AgentToolProgressData,
 ): boolean {
   const payload = commandPayloadFromToolData(data);
-  if (!payload || stringValue(payload.status) !== "running") {
+  if (!payload || !["running", "terminating"].includes(stringValue(payload.status))) {
     return false;
   }
   return isTerminalToolStatus(target.status);
@@ -2529,6 +2806,124 @@ function cloneMessage(message: AgentChatMessage): AgentChatMessage {
   };
 }
 
+function cloneThreadTask(task: ThreadTask): ThreadTask {
+  return {
+    ...task,
+    metadata: { ...task.metadata },
+    evidence: [...task.evidence],
+    blocked_audit: { ...task.blocked_audit },
+    token_usage: { ...task.token_usage },
+  };
+}
+
+function cloneThreadTaskRun(run: ThreadTaskRun): ThreadTaskRun {
+  return {
+    ...run,
+    summary: { ...run.summary },
+    error: { ...run.error },
+  };
+}
+
+function upsertThreadTask(view: AgentSessionViewState, incoming: ThreadTask): void {
+  const task = cloneThreadTask(incoming);
+  const existingIndex = view.threadTasks.findIndex((item) => item.id === task.id);
+  if (existingIndex >= 0) {
+    view.threadTasks = view.threadTasks.map((item, index) => (index === existingIndex ? task : item));
+  } else {
+    view.threadTasks = [task, ...view.threadTasks];
+  }
+  view.threadTasks = sortThreadTasks(view.threadTasks);
+  view.activeTask = firstOpenThreadTask(view.threadTasks);
+}
+
+function sortThreadTasks(tasks: ThreadTask[]): ThreadTask[] {
+  return [...tasks].sort((left, right) => {
+    const updatedDiff = Date.parse(right.updated_at || "") - Date.parse(left.updated_at || "");
+    if (updatedDiff) {
+      return updatedDiff;
+    }
+    return right.id.localeCompare(left.id);
+  });
+}
+
+function firstOpenThreadTask(tasks: ThreadTask[]): ThreadTask | null {
+  return tasks.find(isOpenThreadTask) ?? null;
+}
+
+function isOpenThreadTask(task: ThreadTask): boolean {
+  return Boolean(task.is_open && !task.is_terminal && !task.deleted_at);
+}
+
+function threadTaskFromData(value: unknown): ThreadTask | null {
+  const data = asRecord(value);
+  if (!data) {
+    return null;
+  }
+  const id = stringValue(data.id);
+  const sessionId = stringValue(data.session_id);
+  const objective = stringValue(data.objective);
+  if (!id || !sessionId || !objective) {
+    return null;
+  }
+  const status = stringValue(data.status) as ThreadTask["status"];
+  const type = stringValue(data.type) as ThreadTask["type"];
+  const createdAt = stringValue(data.created_at) || new Date(0).toISOString();
+  const updatedAt = stringValue(data.updated_at) || createdAt;
+  return {
+    id,
+    session_id: sessionId,
+    type: type || "goal",
+    type_label: stringValue(data.type_label) || "任务",
+    title: nullableString(data.title),
+    objective,
+    status: status || "active",
+    metadata: asRecord(data.metadata) ?? {},
+    evidence: Array.isArray(data.evidence) ? [...data.evidence] : [],
+    blocked_audit: asRecord(data.blocked_audit) ?? {},
+    system_stop_reason: nullableString(data.system_stop_reason),
+    current_run_id: nullableString(data.current_run_id),
+    turn_count: numberValue(data.turn_count) ?? 0,
+    elapsed_seconds: numberValue(data.elapsed_seconds) ?? 0,
+    token_usage: asRecord(data.token_usage) ?? {},
+    created_at: createdAt,
+    updated_at: updatedAt,
+    deleted_at: nullableString(data.deleted_at),
+    is_open: data.is_open === undefined ? !Boolean(data.is_terminal) : Boolean(data.is_open),
+    is_terminal: Boolean(data.is_terminal),
+  };
+}
+
+function threadTaskRunFromData(value: unknown): ThreadTaskRun | null {
+  const data = asRecord(value);
+  if (!data) {
+    return null;
+  }
+  const id = stringValue(data.id);
+  const taskId = stringValue(data.task_id);
+  const sessionId = stringValue(data.session_id);
+  if (!id || !taskId || !sessionId) {
+    return null;
+  }
+  const status = stringValue(data.status) as ThreadTaskRun["status"];
+  const createdAt = stringValue(data.created_at) || new Date(0).toISOString();
+  const updatedAt = stringValue(data.updated_at) || createdAt;
+  return {
+    id,
+    task_id: taskId,
+    session_id: sessionId,
+    turn_index: numberValue(data.turn_index),
+    trace_id: nullableString(data.trace_id),
+    status: status || "running",
+    summary: asRecord(data.summary) ?? {},
+    error: asRecord(data.error) ?? {},
+    started_at: nullableString(data.started_at),
+    finished_at: nullableString(data.finished_at),
+    created_at: createdAt,
+    updated_at: updatedAt,
+    is_running: data.is_running === undefined ? status === "running" : Boolean(data.is_running),
+  };
+}
+
 function isVisibleCompressionProgressStage(stage: string): boolean {
   return [
     "staging_applied",
@@ -2669,6 +3064,14 @@ function timestampFromData(data: object): number {
   const timestamp =
     realTimestampMs(record.messageTimeMs) ?? realTimestampMs(record.timestamp_ms) ?? realTimestampMs(record.timestamp);
   return timestamp ?? Date.now();
+}
+
+function timestampFromIso(value: unknown): number | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function realTimestampMs(value: unknown): number | null {

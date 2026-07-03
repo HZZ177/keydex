@@ -22,11 +22,13 @@ export function processMessages(messages: ConversationMessage[]): ProcessedMessa
   const items: ProcessedMessageItem[] = [];
   let group: ConversationMessage[] = [];
   let groupKind: MessageGroupKind | null = null;
+  let groupTurnIndex: number | null = null;
 
   const flush = () => {
     if (!group.length || !groupKind) {
       group = [];
       groupKind = null;
+      groupTurnIndex = null;
       return;
     }
     if (group.length === 1) {
@@ -44,20 +46,29 @@ export function processMessages(messages: ConversationMessage[]): ProcessedMessa
     }
     group = [];
     groupKind = null;
+    groupTurnIndex = null;
   };
 
   for (const message of messages) {
     const nextKind = groupKindForMessage(message);
+    const nextTurnIndex = messageBusinessTurnIndex(message);
     if (!nextKind) {
       flush();
       items.push({ type: "message", id: message.id, message });
       continue;
     }
 
-    if (groupKind && groupKind !== nextKind) {
+    if (
+      groupKind &&
+      (groupKind !== nextKind ||
+        (groupTurnIndex !== null && nextTurnIndex !== null && groupTurnIndex !== nextTurnIndex))
+    ) {
       flush();
     }
     groupKind = nextKind;
+    if (groupTurnIndex === null && nextTurnIndex !== null) {
+      groupTurnIndex = nextTurnIndex;
+    }
     group.push(message);
   }
 
@@ -73,4 +84,9 @@ function groupKindForMessage(message: ConversationMessage): MessageGroupKind | n
     return "file_changes";
   }
   return null;
+}
+
+function messageBusinessTurnIndex(message: ConversationMessage): number | null {
+  const value = message.payload.turnIndex ?? message.payload.turn_index;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

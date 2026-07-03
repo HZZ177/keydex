@@ -302,17 +302,24 @@ class ContextCompressionMiddleware(AgentMiddleware):
                     self._mark_staging_applied(latest_staging.id)
                     messages = replacement.replaced_messages
                     staging_replacement_applied = True
+                    context_compression_epoch = self._mark_context_compressed(
+                        original_session_id=original_session_id,
+                        active_session_id=active_session_id,
+                        stage="staging_applied",
+                    )
                     logger.info(
                         "[ContextCompressionMiddleware] 压缩暂存应用成功 | "
                         f"原始会话ID={original_session_id} | "
                         f"活动会话ID={active_session_id} | "
-                        f"暂存记录ID={latest_staging.id}"
+                        f"暂存记录ID={latest_staging.id} | "
+                        f"压缩代次={context_compression_epoch}"
                     )
                     await self._emit_middleware_progress(
                         stage="staging_applied",
                         original_session_id=original_session_id,
                         active_session_id=active_session_id,
                         staging_id=latest_staging.id,
+                        context_compression_epoch=context_compression_epoch,
                     )
 
             _snapshot, split_result, _anchor_message_id = split_and_prepare_compression(
@@ -594,6 +601,25 @@ class ContextCompressionMiddleware(AgentMiddleware):
             failure_reason=reason,
         )
 
+    def _mark_context_compressed(
+        self,
+        *,
+        original_session_id: str,
+        active_session_id: str,
+        stage: str,
+    ) -> int:
+        increment = getattr(self.repositories.sessions, "increment_context_compression_epoch", None)
+        if not callable(increment):
+            return 0
+        epoch = int(increment(original_session_id) or 0)
+        logger.info(
+            "[ContextCompressionMiddleware] 上下文压缩代次已递增 | "
+            f"阶段={_compression_display_label(stage)} | "
+            f"原始会话ID={original_session_id} | "
+            f"活动会话ID={active_session_id} | 压缩代次={epoch}"
+        )
+        return epoch
+
     async def _run_sync_emergency_compression(
         self,
         *,
@@ -669,11 +695,17 @@ class ContextCompressionMiddleware(AgentMiddleware):
                 reason="anchor_not_found",
             )
             return None
+        context_compression_epoch = self._mark_context_compressed(
+            original_session_id=original_session_id,
+            active_session_id=active_session_id,
+            stage="emergency_completed",
+        )
         await self._emit_middleware_progress(
             stage="emergency_completed",
             original_session_id=original_session_id,
             active_session_id=active_session_id,
             anchor_message_id=replacement.anchor_message_id,
+            context_compression_epoch=context_compression_epoch,
         )
         return replacement.replaced_messages
 
@@ -806,6 +838,7 @@ class ContextCompressionMiddleware(AgentMiddleware):
             workspace_roots=previous_session.workspace_roots,
             current_model_provider_id=previous_session.current_model_provider_id,
             current_model=previous_session.current_model,
+            context_compression_epoch=previous_session.context_compression_epoch,
             title=previous_session.title,
             title_source=previous_session.title_source,
             parent_session_id=active_session_id,

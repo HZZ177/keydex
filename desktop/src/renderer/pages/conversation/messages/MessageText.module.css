@@ -193,6 +193,65 @@
   margin-bottom: 0;
 }
 
+.goalContextItems {
+  display: flex;
+  max-width: var(--message-user-bubble-max-width, min(568px, calc(100% - 36px)));
+  justify-content: flex-end;
+}
+
+.goalContextItemWrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.goalContextItem {
+  display: inline-flex;
+  min-width: 0;
+  width: max-content;
+  height: 22px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 58%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-muted) 54%, transparent);
+  color: var(--color-text-tertiary);
+  cursor: default;
+  font-size: 11px;
+  line-height: var(--ui-line-height-tight);
+  padding: 0 7px;
+  user-select: none;
+  transition:
+    background var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
+}
+
+.goalContextItem svg {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--color-text-tertiary) 80%, var(--color-text-secondary));
+}
+
+.goalContextItemWrapper:hover .goalContextItem,
+.goalContextItemWrapper[data-preview-open="true"] .goalContextItem,
+.goalContextItem:focus-visible {
+  border-color: color-mix(in srgb, var(--color-border-default) 82%, var(--color-text-tertiary));
+  color: var(--color-text-secondary);
+  box-shadow: 0 6px 16px rgb(15 23 42 / 7%);
+  outline: none;
+}
+
+.goalContextTitle {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-weight: 560;
+}
+
+.goalContextCard {
+  min-width: 180px;
+  max-width: min(360px, calc(100vw - 32px));
+}
+
 .messageImageAttachments {
   display: flex;
   flex-wrap: wrap;

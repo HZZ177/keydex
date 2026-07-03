@@ -23,9 +23,12 @@ import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessio
 import {
   agentConversationReducer,
   createInitialAgentConversationState,
+  selectAgentActiveThreadTask,
   selectAgentMessages,
   selectAgentRuntimeState,
   selectAgentSessionState,
+  selectAgentThreadTaskRuns,
+  selectAgentThreadTasks,
   type AgentConversationAction,
   type AgentSessionRuntimeState,
 } from "@/renderer/stores/agentSessionStore";
@@ -81,6 +84,7 @@ export interface UseAgentSessionControllerOptions {
   onNotice?: (message: string, level: AgentSessionControllerNoticeLevel) => void;
   onOpenModelSettings?: () => void;
   onAfterSend?: () => void;
+  syncThreadTasks?: boolean;
   ensureSession?: (request: AgentSessionControllerEnsureSessionRequest) => Promise<AgentSessionControllerEnsureSessionResult>;
 }
 
@@ -89,6 +93,9 @@ export interface AgentSessionController {
   dispatch: (action: AgentConversationAction) => void;
   session: AgentSession | null;
   sessionViewState: ReturnType<typeof selectAgentSessionState>;
+  threadTasks: ReturnType<typeof selectAgentThreadTasks>;
+  activeTask: ReturnType<typeof selectAgentActiveThreadTask>;
+  taskRunState: ReturnType<typeof selectAgentThreadTaskRuns>;
   agentMessages: ReturnType<typeof selectAgentMessages>;
   runtimeState: ConversationRuntimeState;
   pendingApproval: CommandApprovalRequest | null;
@@ -121,6 +128,7 @@ export interface AgentSessionController {
       attachments?: ChatPayload["attachments"];
       skipOptimistic?: boolean;
       allowWhileBusy?: boolean;
+      targetSessionId?: string | null;
     },
   ) => Promise<boolean>;
   send: (
@@ -146,6 +154,7 @@ export function useAgentSessionController({
   onNotice,
   onOpenModelSettings,
   onAfterSend,
+  syncThreadTasks = true,
   ensureSession,
 }: UseAgentSessionControllerOptions): AgentSessionController {
   const optionalAgentRuntime = useOptionalAgentSessionRuntime();
@@ -164,6 +173,7 @@ export function useAgentSessionController({
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const channelRef = useRef<ChatChannel | null>(null);
   const syncPersistedHistoryRef = useRef<() => void>(() => undefined);
+  const syncThreadTasksRef = useRef<() => void>(() => undefined);
   const state = sharedRuntimeContext?.state ?? localState;
   const dispatch = sharedRuntimeContext?.dispatch ?? localDispatch;
   const wsStatus = sharedRuntimeContext?.wsStatus ?? localWsStatus;
@@ -174,6 +184,9 @@ export function useAgentSessionController({
   const sharedSubscribeEvent = sharedRuntimeContext?.subscribeEvent;
   const session = sessionId ? state.sessionsById[sessionId] ?? null : null;
   const sessionViewState = sessionId ? selectAgentSessionState(state, sessionId) : null;
+  const threadTasks = sessionId ? selectAgentThreadTasks(state, sessionId) : [];
+  const activeTask = sessionId ? selectAgentActiveThreadTask(state, sessionId) : null;
+  const taskRunState = sessionId ? selectAgentThreadTaskRuns(state, sessionId) : { runningTaskRun: null, recentTaskRun: null };
   const pendingApproval = sessionViewState?.pendingApproval ?? null;
   const agentMessages = sessionId ? selectAgentMessages(state, sessionId) : [];
   const runtimeState = toConversationRuntimeState(
@@ -183,16 +196,41 @@ export function useAgentSessionController({
   const canSend = draft.trim().length > 0 && !isBusy(runtimeState) && connectionReady && Boolean(sessionId || ensureSession);
   const canStop = runtimeState === "running" && connectionReady && Boolean(sessionId);
 
+  const syncThreadTasksForSession = useCallback(async () => {
+    if (!sessionId || !syncThreadTasks) {
+      return;
+    }
+    if (typeof runtime.conversation.listThreadTasks !== "function") {
+      dispatch({ type: "tasks/loaded", sessionId, tasks: [] });
+      return;
+    }
+    try {
+      const tasks = await runtime.conversation.listThreadTasks(sessionId);
+      dispatch({ type: "tasks/loaded", sessionId, tasks });
+    } catch {
+      dispatch({ type: "tasks/loaded", sessionId, tasks: [] });
+    }
+  }, [dispatch, runtime, sessionId, syncThreadTasks]);
+
+  useEffect(() => {
+    syncThreadTasksRef.current = () => {
+      void syncThreadTasksForSession();
+    };
+  }, [syncThreadTasksForSession]);
+
   const handleRuntimeEvent = useCallback(
     (event: AgentActionEnvelope) => {
       onRuntimeEvent?.(event);
       dispatch({ type: "event/receive", event });
       emitSessionEventsFromRuntimeEvent(event);
+      if (syncThreadTasks && event.action === "bind_ok" && runtimeEventSessionId(event) === sessionId) {
+        syncThreadTasksRef.current();
+      }
       if (shouldSyncHistoryAfterRuntimeEvent(event, sessionId)) {
         syncPersistedHistoryRef.current();
       }
     },
-    [dispatch, onRuntimeEvent, sessionId],
+    [dispatch, onRuntimeEvent, sessionId, syncThreadTasks],
   );
 
   useEffect(() => {
@@ -201,11 +239,14 @@ export function useAgentSessionController({
     }
     return sharedSubscribeEvent((event) => {
       onRuntimeEvent?.(event);
+      if (syncThreadTasks && event.action === "bind_ok" && runtimeEventSessionId(event) === sessionId) {
+        syncThreadTasksRef.current();
+      }
       if (shouldSyncHistoryAfterRuntimeEvent(event, sessionId)) {
         syncPersistedHistoryRef.current();
       }
     });
-  }, [onRuntimeEvent, sessionId, sharedSubscribeEvent, usingSharedRuntime]);
+  }, [onRuntimeEvent, sessionId, sharedSubscribeEvent, syncThreadTasks, usingSharedRuntime]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -260,6 +301,7 @@ export function useAgentSessionController({
         });
         if (active) {
           dispatch({ type: "history/loaded", sessionId, history });
+          void syncThreadTasksForSession();
         }
       } catch (reason) {
         if (!active) {
@@ -295,6 +337,7 @@ export function useAgentSessionController({
     sessionId,
     setRuntimeDetail,
     sharedBindSession,
+    syncThreadTasksForSession,
     usingSharedRuntime,
   ]);
 
@@ -310,6 +353,7 @@ export function useAgentSessionController({
         pageSize: loadFullHistory ? undefined : historyPageSize,
       });
       dispatch({ type: "history/loaded", sessionId, history });
+      void syncThreadTasksForSession();
     } catch (reason) {
       const message = publicRuntimeDetail(errorMessage(reason));
       setRuntimeDetail(message);
@@ -325,6 +369,7 @@ export function useAgentSessionController({
     runtime,
     sessionId,
     setRuntimeDetail,
+    syncThreadTasksForSession,
   ]);
 
   const syncPersistedHistory = useCallback(async () => {
@@ -532,6 +577,7 @@ export function useAgentSessionController({
         attachments?: ChatPayload["attachments"];
         skipOptimistic?: boolean;
         allowWhileBusy?: boolean;
+        targetSessionId?: string | null;
       } = {},
     ) => {
       const trimmedText = text.trim();
@@ -556,7 +602,7 @@ export function useAgentSessionController({
         return false;
       }
 
-      let targetSessionId: string | null = sessionId || null;
+      let targetSessionId: string | null = options.targetSessionId?.trim() || sessionId || null;
       if (!targetSessionId) {
         try {
           targetSessionId = await resolveSessionId(trimmedText, contextItems, model);
@@ -699,10 +745,8 @@ export function useAgentSessionController({
         return;
       }
 
-      setRequestState("cancelling");
       setRuntimeDetail(null);
       try {
-        dispatch({ type: "runtime/setState", sessionId, runtimeState: "cancelling" });
         if (sharedRuntimeContext) {
           sharedRuntimeContext.terminateCommand(sessionId, commandId);
         } else {
@@ -716,8 +760,6 @@ export function useAgentSessionController({
         const message = errorMessage(reason);
         setRuntimeDetail(publicRuntimeDetail(message));
         appendLocalError(dispatch, sessionId, message);
-      } finally {
-        setRequestState(null);
       }
     },
     [dispatch, onNotice, sessionId, setRuntimeDetail, sharedRuntimeContext, wsStatus],
@@ -756,10 +798,13 @@ export function useAgentSessionController({
   return useMemo(
     () => ({
       state,
-      dispatch,
-      session,
-      sessionViewState,
-      agentMessages,
+    dispatch,
+    session,
+    sessionViewState,
+    threadTasks,
+    activeTask,
+    taskRunState,
+    agentMessages,
       runtimeState,
       pendingApproval,
       draft,

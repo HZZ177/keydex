@@ -89,6 +89,7 @@ export interface SendBoxProps {
   statusText?: string;
   controls?: ReactNode;
   rightControls?: ReactNode;
+  leftAccessory?: ReactNode;
   contextBar?: ReactNode;
   disabled?: boolean;
   sendLoading?: boolean;
@@ -103,6 +104,7 @@ export interface SendBoxProps {
   selectedQuotes?: SelectedQuote[];
   leftHint?: ReactNode;
   allowBypassConversationSlashCommand?: boolean;
+  allowGoalSlashCommand?: boolean;
   workspaceSkills?: WorkspaceSkillSummary[];
   selectedSkill?: WorkspaceSkillSummary | null;
   onSelectedFilesChange?: (files: SelectedFile[]) => void;
@@ -155,6 +157,7 @@ export function SendBox({
   statusText = "回车发送",
   controls,
   rightControls,
+  leftAccessory,
   contextBar,
   disabled = false,
   sendLoading = false,
@@ -169,6 +172,7 @@ export function SendBox({
   selectedQuotes: controlledSelectedQuotes,
   leftHint = null,
   allowBypassConversationSlashCommand = true,
+  allowGoalSlashCommand = true,
   workspaceSkills = [],
   selectedSkill: controlledSelectedSkill,
   onSelectedFilesChange,
@@ -344,8 +348,9 @@ export function SendBox({
     () =>
       buildSlashCommands(workspaceSkills, {
         includeBypassConversation: allowBypassConversationSlashCommand,
+        includeGoal: allowGoalSlashCommand,
       }),
-    [allowBypassConversationSlashCommand, workspaceSkills],
+    [allowBypassConversationSlashCommand, allowGoalSlashCommand, workspaceSkills],
   );
   const slashCommands = useMemo(
     () => (slashQuery === null ? [] : filterSlashCommands(availableSlashCommands, slashQuery)),
@@ -593,7 +598,7 @@ export function SendBox({
       return;
     }
     onSlashCommand?.(command);
-    if (command.kind === "builtin") {
+    if (command.kind === "builtin" || command.kind === "goal") {
       setSlashMode("root");
       const nextValue = removeSlashQuery(editorValue);
       setDismissedSlashValue(nextValue);
@@ -1220,6 +1225,7 @@ export function SendBox({
             </button>
           </div>
           {controls}
+          {leftAccessory}
           {leftHint}
         </div>
 

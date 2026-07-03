@@ -21,10 +21,12 @@ import {
   type WorkspaceSkillSummary,
 } from "@/runtime";
 import {
+  agentAttachmentFromSelected,
   type SelectedFile,
   type SelectedImageAttachment,
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
+import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
 import type { SlashCommand } from "@/renderer/components/chat/SlashCommandMenu";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import { useRafPanelResize } from "@/renderer/components/layout/useRafPanelResize";
@@ -36,7 +38,11 @@ import {
   clampWorkbenchAssistantDrawerWidth,
   DEFAULT_WORKBENCH_ASSISTANT_DRAWER_WIDTH,
 } from "@/renderer/hooks/layout/layoutStore";
-import type { AgentSessionController } from "@/renderer/hooks/useAgentSessionController";
+import type {
+  AgentSessionController,
+  AgentSessionControllerEnsureSessionRequest,
+  AgentSessionControllerEnsureSessionResult,
+} from "@/renderer/hooks/useAgentSessionController";
 import { ComposerApprovalCard } from "@/renderer/pages/conversation/ComposerApprovalCard";
 import { ConversationComposer } from "@/renderer/pages/conversation/ConversationComposer";
 import { ConversationPanel, ConversationPanelComposerAccessory } from "@/renderer/pages/conversation/ConversationPanel";
@@ -46,6 +52,11 @@ import {
   filterBtwConversationVisibleMessages,
   type BtwConversationHistorySnapshot,
 } from "@/renderer/pages/conversation/conversationForkSource";
+import {
+  goalContextItem,
+  goalSeedContextMetadata,
+  runtimeParamsWithGoalContextItem,
+} from "@/renderer/pages/conversation/goalSeedContext";
 import {
   buildTurnNavigationItemsFromMessages,
   type ConversationTurnNavigationItem,
@@ -63,10 +74,13 @@ import {
   type PreviewRenderContext,
   type ReviewPanelRequest,
 } from "@/renderer/providers/PreviewProvider";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
+import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
 import { prefersReducedMotion } from "@/renderer/utils/motionPreference";
 import type {
   AgentChatMessage,
+  AgentContextItem,
   AgentFileChange,
   AgentSession,
   CommandApprovalRequest,
@@ -140,6 +154,9 @@ export interface WorkbenchAssistantSurfaceProps {
   creatingSession?: boolean;
   drawerWidth?: number;
   drawerInlineWidth?: number;
+  onEnsureSession?: (
+    request: AgentSessionControllerEnsureSessionRequest,
+  ) => Promise<AgentSessionControllerEnsureSessionResult>;
   onRequestNewSession?: () => Promise<void> | void;
   onDrawerWidthPreview?: (width: number) => void;
   onDrawerWidthCommit?: (width: number) => void;
@@ -159,6 +176,7 @@ export function WorkbenchAssistantSurface({
   creatingSession = false,
   drawerWidth: controlledDrawerWidth,
   drawerInlineWidth: controlledDrawerInlineWidth,
+  onEnsureSession,
   onRequestNewSession,
   onDrawerWidthPreview,
   onDrawerWidthCommit,
@@ -170,6 +188,7 @@ export function WorkbenchAssistantSurface({
   onCloseBtwConversation,
 }: WorkbenchAssistantSurfaceProps) {
   const layout = useLayoutState();
+  const notifications = useNotifications();
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const assistantChromeRef = useRef<HTMLDivElement | null>(null);
   const dockTransitionTimerRef = useRef<number | null>(null);
@@ -204,6 +223,9 @@ export function WorkbenchAssistantSurface({
   const [btwHistorySnapshot, setBtwHistorySnapshot] = useState<BtwConversationHistorySnapshot | null>(null);
   const [composerFiles, setComposerFiles] = useState<SelectedFile[]>([]);
   const [composerQuotes, setComposerQuotes] = useState<SelectedQuote[]>([]);
+  const [goalComposerOpen, setGoalComposerOpen] = useState(false);
+  const [goalCreating, setGoalCreating] = useState(false);
+  const [goalError, setGoalError] = useState<string | null>(null);
   const modelSelection = useRuntimeModelSelection(runtime, null);
   const workspaceSkillScope = useMemo(() => ({ workspaceId }), [workspaceId]);
   const { state: workspaceSkillsState, refresh: refreshWorkspaceSkills } = useWorkspaceSkills({
@@ -343,7 +365,7 @@ export function WorkbenchAssistantSurface({
   const canStop = controller.canStop;
   const selectedModel = modelSelection.selectedModel;
   const hasComposerContext = Boolean(controller.selectedSkill || composerFiles.length || composerQuotes.length);
-  const hasComposerContent = Boolean(controller.draft.trim() || hasComposerContext);
+  const hasComposerContent = Boolean(controller.draft.trim() || hasComposerContext || goalComposerOpen);
   const drawerWidth =
     controlledDrawerWidth ?? uncontrolledDrawerWidthPreview ?? layout.state.workbenchAssistantDrawerWidth;
   const dockInlineWidth =
@@ -751,6 +773,9 @@ export function WorkbenchAssistantSurface({
     dispatchAssistantState({ type: "workspace-reset" });
     setComposerFiles([]);
     setComposerQuotes([]);
+    setGoalComposerOpen(false);
+    setGoalCreating(false);
+    setGoalError(null);
     handledFileChipRequestIdRef.current = controller.fileChipRequest?.requestId ?? 0;
     handledQuoteChipRequestIdRef.current = controller.quoteChipRequest?.requestId ?? 0;
   }, [finishDockTransition, finishMessageTriggerPriming, workspaceId]);
@@ -761,6 +786,9 @@ export function WorkbenchAssistantSurface({
     previousRuntimeStateRef.current = runtimeState;
     setComposerFiles([]);
     setComposerQuotes([]);
+    setGoalComposerOpen(false);
+    setGoalCreating(false);
+    setGoalError(null);
     handledFileChipRequestIdRef.current = controller.fileChipRequest?.requestId ?? 0;
     handledQuoteChipRequestIdRef.current = controller.quoteChipRequest?.requestId ?? 0;
   }, [finishMessageTriggerPriming, panelSessionId]);
@@ -920,13 +948,172 @@ export function WorkbenchAssistantSurface({
     dispatchAssistantState({ type: "workspace-reset" });
   }, [beginComposeCollapse]);
 
+  const handleComposerChange = useCallback(
+    (value: string) => {
+      controller.setDraft(value);
+      if (goalError) {
+        setGoalError(null);
+      }
+    },
+    [controller, goalError],
+  );
+
+  const closeGoalComposer = useCallback(() => {
+    if (goalCreating) {
+      return;
+    }
+    setGoalComposerOpen(false);
+    setGoalError(null);
+  }, [goalCreating]);
+
+  const ensureGoalSession = useCallback(
+    async (objective: string, contextItems: AgentContextItem[]) => {
+      if (panelSessionId) {
+        return panelSessionId;
+      }
+      if (!onEnsureSession) {
+        return null;
+      }
+      const ensured = await onEnsureSession({
+        title: sessionTitleFromPreparedMessage(objective, contextItems),
+        message: objective,
+        contextItems,
+        model: selectedModel,
+      });
+      if (!ensured) {
+        return null;
+      }
+      if (typeof ensured === "string") {
+        return ensured.trim() || null;
+      }
+      controller.dispatch({ type: "session/upsert", session: ensured });
+      return ensured.id?.trim() || null;
+    },
+    [controller, onEnsureSession, panelSessionId, selectedModel],
+  );
+
+  const createGoalTask = useCallback(
+    async (
+      files: SelectedFile[] = [],
+      quotes: SelectedQuote[] = [],
+      imageAttachments: SelectedImageAttachment[] = [],
+    ) => {
+      const prepared = prepareComposerMessage(controller.draft, files, {
+        quotes,
+        selectedSkill: controller.selectedSkill,
+      });
+      const attachments = imageAttachments.map(agentAttachmentFromSelected);
+      const objective = prepared.message;
+      if (!objective) {
+        setGoalError("目标不能为空");
+        return false;
+      }
+      if (secondaryPageActive) {
+        setGoalError("当前工作台面板无法创建目标");
+        return false;
+      }
+      if (controller.activeTask) {
+        setGoalError("当前已有进行中的目标");
+        return false;
+      }
+      setGoalCreating(true);
+      setGoalError(null);
+      try {
+        const targetSessionId = await ensureGoalSession(objective, prepared.contextItems);
+        if (!targetSessionId) {
+          setGoalError("当前会话无法创建目标");
+          return false;
+        }
+        const task = await runtime.conversation.createThreadTask(targetSessionId, {
+          type: "goal",
+          objective,
+          metadata: goalSeedContextMetadata({
+            message: prepared.message,
+            contextItems: prepared.contextItems,
+            runtimeParams: prepared.runtimeParams,
+            attachments,
+          }),
+        });
+        const goalItem = goalContextItem(objective);
+        const runtimeParams = runtimeParamsWithGoalContextItem(prepared.runtimeParams, goalItem);
+        controller.dispatch({
+          type: "event/receive",
+          event: {
+            action: "task_updated",
+            data: {
+              session_id: targetSessionId,
+              task_id: task.id,
+              task,
+            },
+          },
+        });
+        const sent = await controller.sendText(prepared.message, selectedModel, {
+          clearDraft: true,
+          contextItems: [...prepared.contextItems, goalItem],
+          runtimeParams,
+          attachments,
+          targetSessionId,
+        });
+        if (!sent) {
+          await runtime.conversation.deleteThreadTask(targetSessionId, task.id).catch(() => null);
+          controller.dispatch({
+            type: "event/receive",
+            event: {
+              action: "task_deleted",
+              data: {
+                session_id: targetSessionId,
+                task_id: task.id,
+                task,
+              },
+            },
+          });
+          setGoalError("目标消息发送失败，请处理发送问题后重试");
+          return false;
+        }
+        setGoalComposerOpen(false);
+        controller.setSelectedSkill(null);
+        notifications.success("目标已创建");
+        return true;
+      } catch (reason) {
+        if (isTaskAlreadyOpenError(reason)) {
+          const targetSessionId = panelSessionId || "";
+          if (targetSessionId) {
+            try {
+              const tasks = await runtime.conversation.listThreadTasks(targetSessionId);
+              controller.dispatch({ type: "tasks/loaded", sessionId: targetSessionId, tasks });
+            } catch {
+              // Keep the direct create error visible when task refresh also fails.
+            }
+          }
+          setGoalError("当前已有进行中的目标");
+          return false;
+        }
+        setGoalError(errorMessage(reason));
+        return false;
+      } finally {
+        setGoalCreating(false);
+      }
+    },
+    [
+      controller,
+      ensureGoalSession,
+      notifications,
+      panelSessionId,
+      runtime,
+      secondaryPageActive,
+      selectedModel,
+    ],
+  );
+
   const send = useCallback(
     (
       files: SelectedFile[] = [],
       quotes: SelectedQuote[] = [],
       attachments: SelectedImageAttachment[] = [],
     ) => {
-      const result = controller.send(files, quotes, attachments, selectedModel);
+      const result = goalComposerOpen
+        ? createGoalTask(files, quotes, attachments)
+        : controller.send(files, quotes, attachments, selectedModel);
       void Promise.resolve(result).then((sent) => {
         if (sent === false || surfaceMode !== "composer") {
           return;
@@ -936,7 +1123,15 @@ export function WorkbenchAssistantSurface({
       });
       return result;
     },
-    [beginMessageTriggerPriming, collapseBottomComposerToCapsule, controller, selectedModel, surfaceMode],
+    [
+      beginMessageTriggerPriming,
+      collapseBottomComposerToCapsule,
+      controller,
+      createGoalTask,
+      goalComposerOpen,
+      selectedModel,
+      surfaceMode,
+    ],
   );
 
   const openComposer = useCallback(() => {
@@ -1059,9 +1254,22 @@ export function WorkbenchAssistantSurface({
     (command: SlashCommand) => {
       if (command.id === "bypass-conversation") {
         openBtwConversation();
+        return;
+      }
+      if (command.id === "goal") {
+        if (secondaryPageActive) {
+          return;
+        }
+        if (controller.activeTask) {
+          notifications.warning("当前已有进行中的目标");
+          return;
+        }
+        setGoalComposerOpen(true);
+        setGoalError(null);
+        dispatchAssistantState({ type: "open-composer" });
       }
     },
-    [openBtwConversation],
+    [controller.activeTask, notifications, openBtwConversation, secondaryPageActive],
   );
 
   const toggleExpandedLayer = useCallback(() => {
@@ -1151,12 +1359,23 @@ export function WorkbenchAssistantSurface({
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [closeExpandedLayer, surfaceMode]);
 
+  const goalModeAccessory = useMemo(() => {
+    if (!goalComposerOpen || secondaryPageActive) {
+      return null;
+    }
+    return <GoalModeAccessory creating={goalCreating} error={goalError} onClose={closeGoalComposer} />;
+  }, [closeGoalComposer, goalComposerOpen, goalCreating, goalError, secondaryPageActive]);
+
   const composer = (
     <WorkbenchComposer
       key={panelSessionId || "empty-session"}
       value={controller.draft}
       runtimeState={creatingSession ? "starting" : runtimeState}
-      canSend={canSend}
+      canSend={
+        goalComposerOpen
+          ? Boolean(controller.draft.trim()) && !goalCreating && !secondaryPageActive && Boolean(panelSessionId || onEnsureSession)
+          : canSend
+      }
       canStop={canStop}
       connectionReady={connectionReady}
       modelSelection={{ ...modelSelection, setSelectedModel: changeModel }}
@@ -1176,6 +1395,7 @@ export function WorkbenchAssistantSurface({
       quoteChipRequest={composerQuoteChipRequest}
       contextWindowUsage={displayPanelModel.contextWindowUsage}
       allowBypassConversationSlashCommand={!secondaryPageActive && Boolean(onOpenBtwConversation)}
+      allowGoalSlashCommand={!secondaryPageActive}
       autoFocusKey={
         surfaceMode === "capsule"
           ? undefined
@@ -1183,7 +1403,7 @@ export function WorkbenchAssistantSurface({
       }
       onSelectedFilesChange={setComposerFiles}
       onSelectedQuotesChange={setComposerQuotes}
-      onChange={controller.setDraft}
+      onChange={handleComposerChange}
       onSkillChange={controller.setSelectedSkill}
       onSubmitApproval={controller.submitApproval}
       onSend={send}
@@ -1196,6 +1416,8 @@ export function WorkbenchAssistantSurface({
       onRefreshWorkspaceSkills={() => refreshWorkspaceSkills({ forceReload: true })}
       onExternalFileRequestHandled={markComposerFileRequestHandled}
       onExternalQuoteRequestHandled={markComposerQuoteRequestHandled}
+      leftAccessory={goalModeAccessory}
+      placeholder={goalComposerOpen ? "Keydex 应继续朝哪个目标努力？" : undefined}
     />
   );
 
@@ -2430,7 +2652,10 @@ function WorkbenchComposer({
   quoteChipRequest,
   contextWindowUsage,
   allowBypassConversationSlashCommand,
+  allowGoalSlashCommand,
   autoFocusKey,
+  leftAccessory,
+  placeholder,
   onSelectedFilesChange,
   onSelectedQuotesChange,
   onChange,
@@ -2469,7 +2694,10 @@ function WorkbenchComposer({
   quoteChipRequest: AgentSessionController["quoteChipRequest"];
   contextWindowUsage: ContextWindowUsageStatus | null;
   allowBypassConversationSlashCommand?: boolean;
+  allowGoalSlashCommand?: boolean;
   autoFocusKey?: string;
+  leftAccessory?: ReactNode;
+  placeholder?: string;
   onSelectedFilesChange: (files: SelectedFile[]) => void;
   onSelectedQuotesChange: (quotes: SelectedQuote[]) => void;
   onChange: (value: string) => void;
@@ -2521,9 +2749,11 @@ function WorkbenchComposer({
       fileAccessMode={fileAccessMode}
       workspaceRoots={workspaceRoots}
       allowBypassConversationSlashCommand={allowBypassConversationSlashCommand}
+      allowGoalSlashCommand={allowGoalSlashCommand}
       autoFocusKey={autoFocusKey}
       className={styles.composer}
-      placeholder="要求后续变更"
+      leftAccessory={leftAccessory}
+      placeholder={placeholder ?? "要求后续变更"}
       ariaLabel="工作台助手表单"
       inputLabel="工作台助手输入"
       modelSelectorPlacement="top"
@@ -2546,6 +2776,33 @@ function WorkbenchComposer({
       onExternalQuoteRequestHandled={onExternalQuoteRequestHandled}
     />
   );
+}
+
+function sessionTitleFromPreparedMessage(text: string, contextItems: AgentContextItem[]): string {
+  const title = text.trim() || contextItems[0]?.label || "工作台对话";
+  return title.slice(0, 32);
+}
+
+function errorMessage(reason: unknown): string {
+  if (reason instanceof Error && reason.message) {
+    return reason.message;
+  }
+  if (reason && typeof reason === "object" && typeof (reason as { message?: unknown }).message === "string") {
+    return (reason as { message: string }).message;
+  }
+  return "操作失败";
+}
+
+function isTaskAlreadyOpenError(reason: unknown): boolean {
+  if (!reason || typeof reason !== "object") {
+    return false;
+  }
+  const code = (reason as { code?: unknown }).code;
+  if (code === "task_already_open") {
+    return true;
+  }
+  const message = (reason as { message?: unknown }).message;
+  return typeof message === "string" && message.includes("task_already_open");
 }
 
 function workspaceEntriesToSearchResults(entries: WorkspaceEntry[]): WorkspaceSearchResult[] {

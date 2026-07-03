@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -37,6 +38,47 @@ MODEL_DEFAULT_CHAT = "default_chat"
 MODEL_DEFAULT_FAST = "fast"
 MODEL_DEFAULT_SCOPES = frozenset({MODEL_DEFAULT_CHAT, MODEL_DEFAULT_FAST})
 
+THREAD_TASK_TYPE_GOAL = "goal"
+THREAD_TASK_TYPES = frozenset({THREAD_TASK_TYPE_GOAL})
+THREAD_TASK_TYPE_MAX_CHARS = 64
+THREAD_TASK_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_:-]*$")
+THREAD_TASK_STATUS_ACTIVE = "active"
+THREAD_TASK_STATUS_PAUSED = "paused"
+THREAD_TASK_STATUS_BLOCKED = "blocked"
+THREAD_TASK_STATUS_COMPLETE = "complete"
+THREAD_TASK_STATUS_SYSTEM_STOPPED = "system_stopped"
+THREAD_TASK_STATUS_CANCELLED = "cancelled"
+THREAD_TASK_OPEN_STATUSES = frozenset(
+    {
+        THREAD_TASK_STATUS_ACTIVE,
+        THREAD_TASK_STATUS_PAUSED,
+        THREAD_TASK_STATUS_BLOCKED,
+    }
+)
+THREAD_TASK_TERMINAL_STATUSES = frozenset(
+    {
+        THREAD_TASK_STATUS_COMPLETE,
+        THREAD_TASK_STATUS_SYSTEM_STOPPED,
+        THREAD_TASK_STATUS_CANCELLED,
+    }
+)
+THREAD_TASK_STATUSES = THREAD_TASK_OPEN_STATUSES | THREAD_TASK_TERMINAL_STATUSES
+THREAD_TASK_RUN_STATUS_RUNNING = "running"
+THREAD_TASK_RUN_STATUS_SUCCEEDED = "succeeded"
+THREAD_TASK_RUN_STATUS_FAILED = "failed"
+THREAD_TASK_RUN_STATUS_SKIPPED = "skipped"
+THREAD_TASK_RUN_STATUS_CANCELLED = "cancelled"
+THREAD_TASK_RUN_STATUSES = frozenset(
+    {
+        THREAD_TASK_RUN_STATUS_RUNNING,
+        THREAD_TASK_RUN_STATUS_SUCCEEDED,
+        THREAD_TASK_RUN_STATUS_FAILED,
+        THREAD_TASK_RUN_STATUS_SKIPPED,
+        THREAD_TASK_RUN_STATUS_CANCELLED,
+    }
+)
+_UNSET = object()
+
 
 def _clip_text(value: str | None, limit: int = 4000) -> str | None:
     if value is None:
@@ -61,6 +103,30 @@ def _sanitize_metadata(value: Any) -> Any:
     if value is None or isinstance(value, str | int | float | bool):
         return value
     return str(value)
+
+
+def _json_object_loads(value: str | None, *, field_name: str) -> dict[str, Any]:
+    if value is None or value == "":
+        return {}
+    try:
+        loaded = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{field_name} 不是有效 JSON 对象") from exc
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{field_name} 必须是 JSON 对象")
+    return loaded
+
+
+def _json_array_loads(value: str | None, *, field_name: str) -> list[Any]:
+    if value is None or value == "":
+        return []
+    try:
+        loaded = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{field_name} 不是有效 JSON 数组") from exc
+    if not isinstance(loaded, list):
+        raise ValueError(f"{field_name} 必须是 JSON 数组")
+    return loaded
 
 
 @dataclass(frozen=True)
@@ -127,6 +193,7 @@ class SessionRecord:
     current_model_provider_id: str | None = None
     current_model: str | None = None
     context_window_usage: dict[str, Any] | None = None
+    context_compression_epoch: int = 0
     pinned_at: str | None = None
     is_deleted: bool = False
     title_source: str = "manual"
@@ -149,6 +216,101 @@ class SessionForkRecord:
     source_checkpoint_id: str | None = None
     source_checkpoint_ns: str = ""
     is_deleted: bool = False
+
+
+@dataclass(frozen=True)
+class ThreadTaskRecord:
+    id: str
+    session_id: str
+    type: str
+    objective: str
+    status: str
+    metadata: dict[str, Any]
+    evidence: list[Any]
+    blocked_audit: dict[str, Any]
+    turn_count: int
+    elapsed_seconds: int
+    token_usage: dict[str, Any]
+    created_at: str
+    updated_at: str
+    title: str | None = None
+    system_stop_reason: str | None = None
+    current_run_id: str | None = None
+    deleted_at: str | None = None
+
+    @property
+    def is_open(self) -> bool:
+        return self.deleted_at is None and self.status in THREAD_TASK_OPEN_STATUSES
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in THREAD_TASK_TERMINAL_STATUSES
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ThreadTaskRecord:
+        return cls(
+            id=row["id"],
+            session_id=row["session_id"],
+            type=row["type"],
+            title=row["title"],
+            objective=row["objective"],
+            status=row["status"],
+            metadata=_json_object_loads(row["metadata_json"], field_name="metadata_json"),
+            evidence=_json_array_loads(row["evidence_json"], field_name="evidence_json"),
+            blocked_audit=_json_object_loads(
+                row["blocked_audit_json"],
+                field_name="blocked_audit_json",
+            ),
+            system_stop_reason=row["system_stop_reason"],
+            current_run_id=row["current_run_id"],
+            turn_count=int(row["turn_count"]),
+            elapsed_seconds=int(row["elapsed_seconds"]),
+            token_usage=_json_object_loads(
+                row["token_usage_json"],
+                field_name="token_usage_json",
+            ),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            deleted_at=row["deleted_at"],
+        )
+
+
+@dataclass(frozen=True)
+class ThreadTaskRunRecord:
+    id: str
+    task_id: str
+    session_id: str
+    status: str
+    summary: dict[str, Any]
+    error: dict[str, Any]
+    started_at: str
+    created_at: str
+    updated_at: str
+    turn_index: int | None = None
+    trace_id: str | None = None
+    finished_at: str | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self.status == THREAD_TASK_RUN_STATUS_RUNNING
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ThreadTaskRunRecord:
+        raw_turn_index = row["turn_index"]
+        return cls(
+            id=row["id"],
+            task_id=row["task_id"],
+            session_id=row["session_id"],
+            turn_index=int(raw_turn_index) if raw_turn_index is not None else None,
+            trace_id=row["trace_id"],
+            status=row["status"],
+            summary=_json_object_loads(row["summary_json"], field_name="summary_json"),
+            error=_json_object_loads(row["error_json"], field_name="error_json"),
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
 
 @dataclass(frozen=True)
@@ -746,6 +908,7 @@ class SessionsRepository:
         workspace_roots: list[str] | None = None,
         current_model_provider_id: str | None = None,
         current_model: str | None = None,
+        context_compression_epoch: int = 0,
         title_source: str = "auto_candidate",
         parent_session_id: str | None = None,
         child_session_id: str | None = None,
@@ -766,10 +929,11 @@ class SessionsRepository:
                   id, user_id, scene_id, scene_version_seq, status, is_debug,
                   session_tag, active_session_id, workspace_id, session_type, cwd,
                   workspace_roots_json, current_model_provider_id, current_model,
-                  title, title_source, parent_session_id, child_session_id,
+                  context_compression_epoch, title, title_source,
+                  parent_session_id, child_session_id,
                   source_trace_id, source_active_session_id,
                   source_checkpoint_id, source_checkpoint_ns, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -786,6 +950,7 @@ class SessionsRepository:
                     _json_dumps(workspace_roots or []),
                     current_model_provider_id,
                     current_model,
+                    int(context_compression_epoch),
                     title,
                     title_source,
                     parent_session_id,
@@ -881,6 +1046,7 @@ class SessionsRepository:
         workspace_roots: list[str] | None = None,
         current_model_provider_id: str | None = None,
         current_model: str | None = None,
+        context_compression_epoch: int | None = None,
         title_source: str | None = None,
         parent_session_id: str | None = None,
         child_session_id: str | None = None,
@@ -924,6 +1090,9 @@ class SessionsRepository:
         if current_model is not None:
             assignments.append("current_model = ?")
             params.append(current_model)
+        if context_compression_epoch is not None:
+            assignments.append("context_compression_epoch = ?")
+            params.append(int(context_compression_epoch))
         if parent_session_id is not None:
             assignments.append("parent_session_id = ?")
             params.append(parent_session_id)
@@ -954,6 +1123,46 @@ class SessionsRepository:
                 params,
             )
         return self.get(session_id)
+
+    def get_context_compression_epoch(self, session_id: str) -> int:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """
+                select context_compression_epoch
+                from sessions
+                where id = ? and is_deleted = 0
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return 0
+        return int(row["context_compression_epoch"] or 0)
+
+    def increment_context_compression_epoch(self, session_id: str) -> int:
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                update sessions
+                set context_compression_epoch = context_compression_epoch + 1,
+                    updated_at = ?
+                where id = ? and is_deleted = 0
+                """,
+                (now, session_id),
+            )
+            if cursor.rowcount == 0:
+                return 0
+            row = conn.execute(
+                """
+                select context_compression_epoch
+                from sessions
+                where id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return 0
+        return int(row["context_compression_epoch"] or 0)
 
     def update_title_if_auto_allowed(
         self,
@@ -1090,6 +1299,7 @@ class SessionsRepository:
             current_model_provider_id=row["current_model_provider_id"],
             current_model=row["current_model"],
             context_window_usage=_json_loads(row["context_window_usage_json"], None),
+            context_compression_epoch=int(row["context_compression_epoch"] or 0),
             pinned_at=row["pinned_at"],
             title=row["title"],
             title_source=row["title_source"],
@@ -2052,6 +2262,360 @@ class MessageEventsRepository:
         )
 
 
+class ThreadTasksRepository:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def create(
+        self,
+        *,
+        session_id: str,
+        type: str,
+        objective: str,
+        task_id: str | None = None,
+        title: str | None = None,
+        status: str = THREAD_TASK_STATUS_ACTIVE,
+        metadata: dict[str, Any] | None = None,
+        evidence: list[Any] | None = None,
+        blocked_audit: dict[str, Any] | None = None,
+        system_stop_reason: str | None = None,
+        current_run_id: str | None = None,
+        turn_count: int = 0,
+        elapsed_seconds: int = 0,
+        token_usage: dict[str, Any] | None = None,
+    ) -> ThreadTaskRecord:
+        self._validate_type(type)
+        self._validate_status(status)
+        resolved_task_id = task_id or new_id()
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                insert into thread_tasks (
+                  id, session_id, type, title, objective, status,
+                  metadata_json, evidence_json, blocked_audit_json,
+                  system_stop_reason, current_run_id, turn_count,
+                  elapsed_seconds, token_usage_json, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    resolved_task_id,
+                    session_id,
+                    type,
+                    title,
+                    objective,
+                    status,
+                    _json_dumps(metadata or {}),
+                    _json_dumps(evidence or []),
+                    _json_dumps(blocked_audit or {}),
+                    system_stop_reason,
+                    current_run_id,
+                    int(turn_count),
+                    int(elapsed_seconds),
+                    _json_dumps(token_usage or {}),
+                    now,
+                    now,
+                ),
+            )
+        record = self.get(resolved_task_id)
+        if record is None:
+            raise RuntimeError(f"创建 thread task 后无法读取: {resolved_task_id}")
+        return record
+
+    def get(self, task_id: str, *, include_deleted: bool = False) -> ThreadTaskRecord | None:
+        query = "select * from thread_tasks where id = ?"
+        params: list[Any] = [task_id]
+        if not include_deleted:
+            query += " and deleted_at is null"
+        with self.db.connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        return ThreadTaskRecord.from_row(row) if row else None
+
+    def list_by_session(
+        self,
+        session_id: str,
+        *,
+        include_deleted: bool = False,
+        limit: int = 100,
+    ) -> list[ThreadTaskRecord]:
+        query = "select * from thread_tasks where session_id = ?"
+        params: list[Any] = [session_id]
+        if not include_deleted:
+            query += " and deleted_at is null"
+        query += " order by updated_at desc, created_at desc, id desc limit ?"
+        params.append(max(1, min(limit, 500)))
+        with self.db.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [ThreadTaskRecord.from_row(row) for row in rows]
+
+    def get_open_by_session(self, session_id: str) -> ThreadTaskRecord | None:
+        placeholders = ", ".join("?" for _ in THREAD_TASK_OPEN_STATUSES)
+        params: list[Any] = [session_id, *sorted(THREAD_TASK_OPEN_STATUSES)]
+        with self.db.connect() as conn:
+            row = conn.execute(
+                f"""
+                select * from thread_tasks
+                where session_id = ?
+                  and deleted_at is null
+                  and status in ({placeholders})
+                order by updated_at desc, created_at desc, id desc
+                limit 1
+                """,
+                params,
+            ).fetchone()
+        return ThreadTaskRecord.from_row(row) if row else None
+
+    def list_by_status(
+        self,
+        status: str,
+        *,
+        include_deleted: bool = False,
+        limit: int = 500,
+    ) -> list[ThreadTaskRecord]:
+        self._validate_status(status)
+        query = "select * from thread_tasks where status = ?"
+        params: list[Any] = [status]
+        if not include_deleted:
+            query += " and deleted_at is null"
+        query += " order by updated_at desc, created_at desc, id desc limit ?"
+        params.append(max(1, min(limit, 1000)))
+        with self.db.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [ThreadTaskRecord.from_row(row) for row in rows]
+
+    def update(
+        self,
+        task_id: str,
+        *,
+        title: str | None | object = _UNSET,
+        objective: str | None = None,
+        status: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        evidence: list[Any] | None = None,
+        blocked_audit: dict[str, Any] | None = None,
+        system_stop_reason: str | None | object = _UNSET,
+        current_run_id: str | None | object = _UNSET,
+        turn_count: int | None = None,
+        elapsed_seconds: int | None = None,
+        token_usage: dict[str, Any] | None = None,
+        deleted_at: str | None | object = _UNSET,
+    ) -> ThreadTaskRecord | None:
+        assignments: list[str] = []
+        params: list[Any] = []
+        if title is not _UNSET:
+            assignments.append("title = ?")
+            params.append(title)
+        if objective is not None:
+            assignments.append("objective = ?")
+            params.append(objective)
+        if status is not None:
+            self._validate_status(status)
+            assignments.append("status = ?")
+            params.append(status)
+        if metadata is not None:
+            assignments.append("metadata_json = ?")
+            params.append(_json_dumps(metadata))
+        if evidence is not None:
+            assignments.append("evidence_json = ?")
+            params.append(_json_dumps(evidence))
+        if blocked_audit is not None:
+            assignments.append("blocked_audit_json = ?")
+            params.append(_json_dumps(blocked_audit))
+        if system_stop_reason is not _UNSET:
+            assignments.append("system_stop_reason = ?")
+            params.append(system_stop_reason)
+        if current_run_id is not _UNSET:
+            assignments.append("current_run_id = ?")
+            params.append(current_run_id)
+        if turn_count is not None:
+            assignments.append("turn_count = ?")
+            params.append(int(turn_count))
+        if elapsed_seconds is not None:
+            assignments.append("elapsed_seconds = ?")
+            params.append(int(elapsed_seconds))
+        if token_usage is not None:
+            assignments.append("token_usage_json = ?")
+            params.append(_json_dumps(token_usage))
+        if deleted_at is not _UNSET:
+            assignments.append("deleted_at = ?")
+            params.append(deleted_at)
+        if not assignments:
+            return self.get(task_id)
+
+        assignments.append("updated_at = ?")
+        params.append(to_iso_z(utc_now()))
+        params.append(task_id)
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                f"""
+                update thread_tasks
+                set {', '.join(assignments)}
+                where id = ?
+                """,
+                params,
+            )
+        if cursor.rowcount == 0:
+            return None
+        return self.get(task_id, include_deleted=True)
+
+    def soft_delete(self, task_id: str) -> ThreadTaskRecord | None:
+        deleted_at = to_iso_z(utc_now())
+        return self.update(task_id, deleted_at=deleted_at)
+
+    @classmethod
+    def _validate_type(cls, type: str) -> None:
+        if (
+            not type
+            or len(type) > THREAD_TASK_TYPE_MAX_CHARS
+            or THREAD_TASK_TYPE_PATTERN.fullmatch(type) is None
+        ):
+            raise ValueError(f"不支持的 thread task 类型: {type}")
+
+    @classmethod
+    def _validate_status(cls, status: str) -> None:
+        if status not in THREAD_TASK_STATUSES:
+            raise ValueError(f"不支持的 thread task 状态: {status}")
+
+
+class ThreadTaskRunsRepository:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def create_running(
+        self,
+        *,
+        task_id: str,
+        session_id: str,
+        run_id: str | None = None,
+        turn_index: int | None = None,
+        trace_id: str | None = None,
+        summary: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> ThreadTaskRunRecord:
+        resolved_run_id = run_id or new_id()
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                insert into thread_task_runs (
+                  id, task_id, session_id, turn_index, trace_id, status,
+                  summary_json, error_json, started_at, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
+                """,
+                (
+                    resolved_run_id,
+                    task_id,
+                    session_id,
+                    turn_index,
+                    trace_id,
+                    _json_dumps(summary or {}),
+                    _json_dumps(error or {}),
+                    now,
+                    now,
+                    now,
+                ),
+            )
+        record = self.get(resolved_run_id)
+        if record is None:
+            raise RuntimeError(f"创建 thread task run 后无法读取: {resolved_run_id}")
+        return record
+
+    def get(self, run_id: str) -> ThreadTaskRunRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "select * from thread_task_runs where id = ?",
+                (run_id,),
+            ).fetchone()
+        return ThreadTaskRunRecord.from_row(row) if row else None
+
+    def list_by_task(self, task_id: str, *, limit: int = 100) -> list[ThreadTaskRunRecord]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                select * from thread_task_runs
+                where task_id = ?
+                order by started_at desc, created_at desc, id desc
+                limit ?
+                """,
+                (task_id, max(1, min(limit, 500))),
+            ).fetchall()
+        return [ThreadTaskRunRecord.from_row(row) for row in rows]
+
+    def get_running_by_task(self, task_id: str) -> ThreadTaskRunRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """
+                select * from thread_task_runs
+                where task_id = ? and status = ?
+                order by started_at desc, created_at desc, id desc
+                limit 1
+                """,
+                (task_id, THREAD_TASK_RUN_STATUS_RUNNING),
+            ).fetchone()
+        return ThreadTaskRunRecord.from_row(row) if row else None
+
+    def attach_turn(
+        self,
+        run_id: str,
+        *,
+        turn_index: int,
+        trace_id: str | None = None,
+    ) -> ThreadTaskRunRecord | None:
+        assignments = ["turn_index = ?", "updated_at = ?"]
+        params: list[Any] = [int(turn_index), to_iso_z(utc_now())]
+        if trace_id is not None:
+            assignments.insert(1, "trace_id = ?")
+            params.insert(1, trace_id)
+        params.append(run_id)
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                f"update thread_task_runs set {', '.join(assignments)} where id = ?",
+                params,
+            )
+        if cursor.rowcount == 0:
+            return None
+        return self.get(run_id)
+
+    def finish(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        summary: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> ThreadTaskRunRecord | None:
+        self._validate_finish_status(status)
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                update thread_task_runs
+                set status = ?,
+                    summary_json = ?,
+                    error_json = ?,
+                    finished_at = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (
+                    status,
+                    _json_dumps(summary or {}),
+                    _json_dumps(error or {}),
+                    now,
+                    now,
+                    run_id,
+                ),
+            )
+        if cursor.rowcount == 0:
+            return None
+        return self.get(run_id)
+
+    @classmethod
+    def _validate_finish_status(cls, status: str) -> None:
+        if status == THREAD_TASK_RUN_STATUS_RUNNING or status not in THREAD_TASK_RUN_STATUSES:
+            raise ValueError(f"不支持的 thread task run 完成状态: {status}")
+
+
 class CompressionStagingRepository:
     """压缩暂存记录仓储。
 
@@ -2365,7 +2929,7 @@ class TraceRecordsRepository:
                   total_cache_read_tokens = ?,
                   output_checkpoint_id = ?,
                   output_checkpoint_ns = ?,
-                  metadata_json = ?,
+                  metadata_json = coalesce(?, metadata_json),
                   updated_at = ?
                 where trace_id = ? and is_deleted = 0
                 """,
@@ -2379,7 +2943,7 @@ class TraceRecordsRepository:
                     total_cache_read_tokens,
                     output_checkpoint_id,
                     output_checkpoint_ns,
-                    _json_dumps(metadata or {}),
+                    None if metadata is None else _json_dumps(metadata),
                     now,
                     trace_id,
                 ),
@@ -3585,6 +4149,8 @@ class StorageRepositories:
         self.attachments = AttachmentsRepository(db)
         self.workspace_file_annotations = WorkspaceFileAnnotationsRepository(db)
         self.message_events = MessageEventsRepository(db)
+        self.thread_tasks = ThreadTasksRepository(db)
+        self.thread_task_runs = ThreadTaskRunsRepository(db)
         self.compression_staging = CompressionStagingRepository(db)
         self.command_approvals = CommandApprovalRequestsRepository(db)
         self.trusted_command_rules = TrustedCommandRulesRepository(db)

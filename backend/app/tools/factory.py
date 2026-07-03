@@ -6,6 +6,7 @@ from backend.app.tools.patch import register_patch_tools
 from backend.app.tools.plan import register_plan_tools
 from backend.app.tools.registry import ToolRegistry
 from backend.app.tools.search import register_search_tools
+from backend.app.tools.thread_task import register_thread_task_tools
 
 
 def create_default_tool_registry() -> ToolRegistry:
@@ -14,6 +15,7 @@ def create_default_tool_registry() -> ToolRegistry:
     register_search_tools(registry)
     register_patch_tools(registry)
     register_plan_tools(registry)
+    register_thread_task_tools(registry)
     logger.info(
         f"[ToolRegistry] 默认工具注册完成 | tools={','.join(registry.names(include_disabled=True))}"
     )

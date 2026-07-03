@@ -88,7 +88,10 @@ class CommandSettings(BaseModel):
             data["shells"] = migrated_shells
 
         if "command_enabled" not in data:
-            data["command_enabled"] = bool(str(data.get("shell_path") or "").strip() and str(data.get("shell_label") or "").strip())
+            data["command_enabled"] = bool(
+                str(data.get("shell_path") or "").strip()
+                and str(data.get("shell_label") or "").strip()
+            )
 
         if legacy_selected_shell == "bash":
             path = str(data.get("shell_path") or "")
@@ -259,6 +262,7 @@ class CommandRunResult:
     stderr_tail: str
     combined_tail: str
     approval: dict[str, Any]
+    cancel_reason: str | None = None
     error: dict[str, Any] | None = None
     run_id: str | None = None
     tool_call_id: str | None = None
@@ -288,6 +292,7 @@ class CommandRunResult:
             "stderr_tail": self.stderr_tail,
             "combined_tail": self.combined_tail,
             "approval": self.approval,
+            "cancel_reason": self.cancel_reason,
             "can_terminate": False,
             "run_id": self.run_id,
             "tool_call_id": self.tool_call_id,
@@ -307,7 +312,11 @@ def command_tool_summary(result: CommandRunResult) -> str:
     elif result.status == "timed_out":
         outcome = "命令超过超时时间，已终止。"
     elif result.status == "cancelled":
-        outcome = "命令已被用户终止，本轮对话已取消。"
+        duration = _format_duration_ms(result.duration_ms)
+        if result.cancel_reason == "user":
+            outcome = f"命令运行 {duration} 后被用户终止，本次工具调用已取消。"
+        else:
+            outcome = f"命令运行 {duration} 后被终止，本次工具调用已取消。"
     elif result.status == "rejected":
         outcome = "命令未执行，因为审批被拒绝。"
     elif result.status == "output_limit_exceeded":
@@ -319,3 +328,12 @@ def command_tool_summary(result: CommandRunResult) -> str:
     if result.output_truncated and result.output_path:
         outcome += f" 输出较长，仅返回尾部，完整输出见 {result.output_path}。"
     return outcome
+
+
+def _format_duration_ms(duration_ms: int) -> str:
+    if duration_ms < 1000:
+        return f"{duration_ms}ms"
+    seconds = duration_ms / 1000
+    if seconds < 10:
+        return f"{seconds:.1f}秒"
+    return f"{round(seconds)}秒"

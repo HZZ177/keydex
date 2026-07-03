@@ -24,11 +24,16 @@ _EXPORTS = {
     "create_patch_tools": ("backend.app.tools.patch", "create_patch_tools"),
     "create_plan_tools": ("backend.app.tools.plan", "create_plan_tools"),
     "create_search_tools": ("backend.app.tools.search", "create_search_tools"),
+    "create_thread_task_tools": ("backend.app.tools.thread_task", "create_thread_task_tools"),
     "create_command_tools": ("backend.app.tools.command_runtime.tools", "create_command_tools"),
     "register_filesystem_tools": ("backend.app.tools.filesystem", "register_filesystem_tools"),
     "register_patch_tools": ("backend.app.tools.patch", "register_patch_tools"),
     "register_plan_tools": ("backend.app.tools.plan", "register_plan_tools"),
     "register_search_tools": ("backend.app.tools.search", "register_search_tools"),
+    "register_thread_task_tools": (
+        "backend.app.tools.thread_task",
+        "register_thread_task_tools",
+    ),
     "register_command_tools": (
         "backend.app.tools.command_runtime.tools",
         "register_command_tools",

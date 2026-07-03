@@ -8,13 +8,17 @@
 
 .header {
   --ghost-row-height: 20px;
+  --ghost-icon-slot: 18px;
+  --ghost-icon-size: 16px;
+  --ghost-text-offset-y: 1px;
 
   display: inline-flex;
   width: fit-content;
   max-width: 100%;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   color: var(--color-text-tertiary);
+  font: inherit;
   padding: 2px 0;
   text-align: left;
   cursor: pointer;
@@ -34,8 +38,8 @@
 
 .icon {
   display: inline-grid;
-  width: 16px;
-  height: 16px;
+  width: var(--ghost-icon-size);
+  height: var(--ghost-icon-size);
   align-self: center;
   justify-self: center;
   place-items: center;
@@ -52,16 +56,16 @@
   min-width: 0;
   max-width: 100%;
   flex: 0 1 auto;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
 }
 
 .toggleGlyph,
 .chevronGlyph {
   display: inline-grid;
-  width: 18px;
+  width: var(--ghost-icon-slot);
   height: var(--ghost-row-height);
-  flex: 0 0 18px;
+  flex: 0 0 var(--ghost-icon-slot);
   place-items: center;
   border-radius: var(--radius-sm);
   color: inherit;
@@ -103,6 +107,7 @@
   flex: 0 1 auto;
   flex-wrap: wrap;
   gap: 4px 8px;
+  transform: translateY(var(--ghost-text-offset-y));
 }
 
 .statusMeta {

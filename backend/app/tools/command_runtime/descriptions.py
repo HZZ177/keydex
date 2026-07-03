@@ -8,7 +8,9 @@ def command_tool_description(runtime: CommandRuntime) -> str:
     base = (
         f"在用户本机 Windows 工作区以前台、阻塞、非交互方式执行一次 {shell_name} 命令。"
         "参数包含 command、description、cwd、timeout_seconds；不支持后台任务、stdin、PTY、"
-        "持久会话或交互式程序。输出会写入命令结果文件；短输出会 inline 返回，长输出只返回尾部和 output_path。"
+        "持久会话或交互式程序。输出会写入命令结果文件；短输出会 inline 返回，"
+        "长输出只返回尾部和 output_path。如果用户终止该命令，本次工具调用会返回 "
+        "status=cancelled，agent 应继续处理而不是视为整轮取消。"
     )
     if runtime.shell == "cmd":
         return (
@@ -23,7 +25,8 @@ def command_tool_description(runtime: CommandRuntime) -> str:
         return (
             "run_powershell: "
             + base
-            + f" command 必须使用 PowerShell 语法{edition_text}，例如 Get-ChildItem、Select-String、$env:VAR。"
+            + f" command 必须使用 PowerShell 语法{edition_text}，例如 "
+            "Get-ChildItem、Select-String、$env:VAR。"
             "不要混用 CMD 或 Git Bash 语法。"
         )
     return (
@@ -52,7 +55,9 @@ def command_system_prompt_section(
     syntax = {
         "cmd": "Windows CMD 语法，例如 dir、type、where、&&、%VAR%。",
         "powershell": "PowerShell 语法，例如 Get-ChildItem、Select-String、$env:VAR、管道对象。",
-        "git_bash": "Git for Windows 的 Git Bash 语法，例如 ls、cat、grep、$VAR、管道和重定向语义。",
+        "git_bash": (
+            "Git for Windows 的 Git Bash 语法，例如 ls、cat、grep、$VAR、管道和重定向语义。"
+        ),
     }[runtime.shell]
     environment = _public_shell_environment(runtime)
     approval = _approval_policy_text(settings)
@@ -67,7 +72,9 @@ def command_system_prompt_section(
         "命令工具主要用于运行项目脚本、测试、构建、环境诊断，或处理必须依赖 shell 的任务；"
         "不要为了普通文件操作绕过专用工具。\n"
         "输出会写入文件。短输出会直接返回；长输出只返回 tail、output_bytes 和 output_path，"
-        "不要要求工具把完整大输出回灌到对话。"
+        "不要要求工具把完整大输出回灌到对话。\n"
+        "如果命令工具返回 status=cancelled 且 cancel_reason=user，表示用户只终止了这一次工具调用，"
+        "不是取消整轮对话。不要自动重跑同一命令；应基于已有输出继续推理，或说明为什么需要用户确认后重试。"
     )
 
 

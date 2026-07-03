@@ -21,12 +21,14 @@ import {
   normalizeFileReviewChange,
   type FileReviewChange,
 } from "@/renderer/utils/fileReview";
+import { shouldDisplayAgentTranscriptMessage } from "@/renderer/utils/agentTranscriptVisibility";
 import type {
   AgentActionEnvelope,
   AgentErrorData,
   AgentMiddlewareProgressData,
   AgentSession,
   AgentSessionFork,
+  ThreadTask,
 } from "@/types/protocol";
 
 import { agentMessageToConversationMessage } from "./conversationMessageAdapter";
@@ -105,7 +107,10 @@ export function useConversationPanelModel({
 
   const session = controller.session;
   const messages = useMemo(
-    () => controller.agentMessages.filter((message) => message.role !== "approval").map(agentMessageToConversationMessage),
+    () =>
+      controller.agentMessages
+        .filter((message) => message.role !== "approval" && shouldDisplayAgentTranscriptMessage(message))
+        .map(agentMessageToConversationMessage),
     [controller.agentMessages],
   );
   const messageWorkspaceScope = useMemo(() => ({ sessionId }), [sessionId]);
@@ -531,10 +536,71 @@ export function useConversationPanelModel({
     void branchFromMessage(message, "reverse");
   }, [branchFromMessage, reverseCandidate]);
 
+  const upsertThreadTask = useCallback(
+    (task: ThreadTask) => {
+      controller.dispatch({
+        type: "event/receive",
+        event: {
+          action: "task_updated",
+          data: {
+            session_id: sessionId,
+            task_id: task.id,
+            task,
+          },
+        },
+      });
+    },
+    [controller, sessionId],
+  );
+
+  const updateThreadTask = useCallback(
+    async (
+      taskId: string,
+      payload: Parameters<RuntimeBridge["conversation"]["updateThreadTask"]>[2],
+    ) => {
+      try {
+        const task = await runtime.conversation.updateThreadTask(sessionId, taskId, payload);
+        upsertThreadTask(task);
+        return task;
+      } catch (reason) {
+        notifications.error(errorMessage(reason));
+        throw reason;
+      }
+    },
+    [notifications, runtime, sessionId, upsertThreadTask],
+  );
+
+  const deleteThreadTask = useCallback(
+    async (taskId: string) => {
+      try {
+        const task = await runtime.conversation.deleteThreadTask(sessionId, taskId);
+        controller.dispatch({
+          type: "event/receive",
+          event: {
+            action: "task_deleted",
+            data: {
+              session_id: sessionId,
+              task_id: task.id,
+              task,
+            },
+          },
+        });
+        return task;
+      } catch (reason) {
+        notifications.error(errorMessage(reason));
+        throw reason;
+      }
+    },
+    [controller, notifications, runtime, sessionId],
+  );
+
   return {
     messages,
     session,
     sessionViewState: controller.sessionViewState,
+    threadTasks: controller.threadTasks,
+    activeTask: controller.activeTask,
+    taskRunState: controller.taskRunState,
     pendingApproval: controller.pendingApproval,
     runtimeState: controller.runtimeState,
     runtimeDetail: controller.runtimeDetail,
@@ -573,6 +639,8 @@ export function useConversationPanelModel({
     reverseConfirmation: reverseCandidate,
     cancelReverseFromMessage,
     confirmReverseFromMessage,
+    updateThreadTask,
+    deleteThreadTask,
   };
 }
 

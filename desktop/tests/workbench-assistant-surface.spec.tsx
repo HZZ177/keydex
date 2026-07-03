@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useMemo, useState, type PropsWithChildren } from "react";
+import { useMemo, useState, type ComponentProps, type PropsWithChildren } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, RuntimeBridge, WorkspaceSkillSummary, WsConnectionStatus } from "@/runtime";
@@ -11,7 +11,14 @@ import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider"
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
-import type { AgentActionEnvelope, AgentChatMessage, AgentSession, CommandApprovalRequest, Workspace } from "@/types/protocol";
+import type {
+  AgentActionEnvelope,
+  AgentChatMessage,
+  AgentSession,
+  CommandApprovalRequest,
+  ThreadTask,
+  Workspace,
+} from "@/types/protocol";
 
 import { mockReducedMotionPreference } from "./helpers/motionPreference";
 
@@ -88,6 +95,147 @@ describe("WorkbenchAssistantSurface", () => {
       expect(label).toContain("5,371 tokens");
       expect(label).toContain("3.36%");
     });
+  });
+
+  it("creates a goal task from the workbench slash command and sends the seed turn", async () => {
+    const createThreadTask = vi.fn().mockResolvedValue(threadTask({ objective: "完成工作台目标" }));
+    const sendText = vi.fn().mockResolvedValue(true);
+    const runtime = fakeRuntime({ createThreadTask });
+
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchGoalHarness runtime={runtime} sendText={sendText} />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    openWorkbenchComposerIfCollapsed();
+    typeWorkbenchComposer("/目标");
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "工作台助手输入" }), { key: "Enter" });
+
+    expect(await screen.findByTestId("goal-mode-accessory")).not.toBeNull();
+
+    typeWorkbenchComposer("完成工作台目标");
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(createThreadTask).toHaveBeenCalled();
+    });
+    expect(createThreadTask).toHaveBeenCalledWith(
+      "ses-1",
+      expect.objectContaining({
+        type: "goal",
+        objective: "完成工作台目标",
+        metadata: {
+          seed_turn_context: expect.objectContaining({
+            schema_version: 1,
+            source: "goal_composer",
+            message: "完成工作台目标",
+            context_items: [],
+            runtime_params: {},
+            attachments: [],
+          }),
+        },
+      }),
+    );
+    await waitFor(() => {
+      expect(sendText).toHaveBeenCalled();
+    });
+    expect(sendText.mock.calls[0][0]).toBe("完成工作台目标");
+    expect(sendText.mock.calls[0][2]).toEqual(
+      expect.objectContaining({
+        clearDraft: true,
+        targetSessionId: "ses-1",
+        contextItems: expect.arrayContaining([
+          expect.objectContaining({
+            type: "goal",
+            label: "目标",
+            content: "完成工作台目标",
+          }),
+        ]),
+        runtimeParams: expect.objectContaining({
+          message_context_items: expect.arrayContaining([
+            expect.objectContaining({
+              type: "goal",
+              content: "完成工作台目标",
+            }),
+          ]),
+        }),
+        attachments: [],
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByTestId("goal-mode-accessory")).toBeNull();
+    });
+  });
+
+  it("keeps the workbench goal entry from opening when an active task already exists", async () => {
+    const createThreadTask = vi.fn();
+
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchGoalHarness
+          runtime={fakeRuntime({ createThreadTask })}
+          activeTask={threadTask({ objective: "已有目标" })}
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    openWorkbenchComposerIfCollapsed();
+    typeWorkbenchComposer("/目标");
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "工作台助手输入" }), { key: "Enter" });
+
+    expect(screen.queryByTestId("goal-mode-accessory")).toBeNull();
+    expect(createThreadTask).not.toHaveBeenCalled();
+  });
+
+  it("ensures a new workbench session before creating a goal task", async () => {
+    const ensuredSession = session("ses-new");
+    const onEnsureSession = vi.fn().mockResolvedValue(ensuredSession);
+    const createThreadTask = vi.fn().mockResolvedValue(threadTask({ objective: "新会话目标" }));
+    const sendText = vi.fn().mockResolvedValue(true);
+    const runtime = fakeRuntime({ createThreadTask });
+
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchGoalHarness
+          runtime={runtime}
+          sendText={sendText}
+          sessionValue={null}
+          onEnsureSession={onEnsureSession}
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    openWorkbenchComposerIfCollapsed();
+    typeWorkbenchComposer("/目标");
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "工作台助手输入" }), { key: "Enter" });
+    typeWorkbenchComposer("新会话目标");
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(onEnsureSession).toHaveBeenCalled();
+    });
+    expect(onEnsureSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "新会话目标",
+        message: "新会话目标",
+      }),
+    );
+    await waitFor(() => {
+      expect(createThreadTask).toHaveBeenCalledWith(
+        "ses-new",
+        expect.objectContaining({
+          type: "goal",
+          objective: "新会话目标",
+        }),
+      );
+    });
+    expect(sendText.mock.calls[0][0]).toBe("新会话目标");
+    expect(sendText.mock.calls[0][2]).toEqual(
+      expect.objectContaining({
+        targetSessionId: "ses-new",
+      }),
+    );
   });
 
   it("renders a workbench bypass drawer as a temporary conversation panel", async () => {
@@ -1896,6 +2044,13 @@ function openWorkbenchComposerIfCollapsed() {
   }
 }
 
+function typeWorkbenchComposer(value: string) {
+  const input = screen.getByRole("textbox", { name: "工作台助手输入" });
+  input.textContent = value;
+  fireEvent.input(input);
+  return input;
+}
+
 async function waitForDockTransitionIdle() {
   await waitFor(
     () => {
@@ -2131,12 +2286,52 @@ function WorkbenchRuntimeHarness() {
   );
 }
 
+function WorkbenchGoalHarness({
+  activeTask = null,
+  onEnsureSession,
+  runtime,
+  sendText = vi.fn().mockResolvedValue(true),
+  sessionValue = session(),
+}: {
+  activeTask?: ThreadTask | null;
+  onEnsureSession?: ComponentProps<typeof WorkbenchAssistantSurface>["onEnsureSession"];
+  runtime: RuntimeBridge;
+  sendText?: ReturnType<typeof vi.fn>;
+  sessionValue?: AgentSession | null;
+}) {
+  const [draft, setDraft] = useState("");
+  const [selectedSkill, setSelectedSkill] = useState<WorkspaceSkillSummary | null>(null);
+  const controller = fakeController({
+    activeTask,
+    draft,
+    selectedSkill,
+    session: sessionValue,
+    sendText,
+    setDraft,
+    setSelectedSkill,
+    threadTasks: activeTask ? [activeTask] : [],
+  });
+
+  return (
+    <WorkbenchAssistantSurface
+      runtime={runtime}
+      workspaceId="ws-1"
+      workspace={workspace()}
+      controller={controller}
+      onEnsureSession={onEnsureSession}
+    />
+  );
+}
+
 function fakeController(overrides: Partial<AgentSessionController> = {}): AgentSessionController {
   return {
     state: {},
     dispatch: vi.fn(),
     session: session(),
     sessionViewState: null,
+    threadTasks: [],
+    activeTask: null,
+    taskRunState: {},
     agentMessages: [],
     runtimeState: "idle" as ConversationRuntimeState,
     pendingApproval: null,
@@ -2206,7 +2401,17 @@ function approvalRequest(): CommandApprovalRequest {
   };
 }
 
-function fakeRuntime({ skills = [] }: { skills?: WorkspaceSkillSummary[] } = {}): RuntimeBridge {
+function fakeRuntime({
+  createThreadTask = vi.fn().mockResolvedValue(threadTask()),
+  deleteThreadTask = vi.fn().mockResolvedValue(threadTask({ deleted_at: "2026-07-03T00:00:00Z", is_open: false })),
+  listThreadTasks = vi.fn().mockResolvedValue([]),
+  skills = [],
+}: {
+  createThreadTask?: ReturnType<typeof vi.fn>;
+  deleteThreadTask?: ReturnType<typeof vi.fn>;
+  listThreadTasks?: ReturnType<typeof vi.fn>;
+  skills?: WorkspaceSkillSummary[];
+} = {}): RuntimeBridge {
   return {
     settings: {
       getSettings: () =>
@@ -2272,6 +2477,11 @@ function fakeRuntime({ skills = [] }: { skills?: WorkspaceSkillSummary[] } = {})
         }),
       search: vi.fn().mockResolvedValue([]),
       listDirectory: vi.fn().mockResolvedValue({ root: "", entries: [] }),
+    },
+    conversation: {
+      createThreadTask,
+      deleteThreadTask,
+      listThreadTasks,
     },
   } as unknown as RuntimeBridge;
 }
@@ -2354,6 +2564,32 @@ function session(id = "ses-1", patch: Partial<AgentSession> = {}): AgentSession 
     current_model: "qwen-coder",
     ...patch,
   } as AgentSession;
+}
+
+function threadTask(patch: Partial<ThreadTask> = {}): ThreadTask {
+  return {
+    id: "task-1",
+    session_id: "ses-1",
+    type: "goal",
+    type_label: "目标",
+    title: null,
+    objective: "目标",
+    status: "active",
+    metadata: {},
+    evidence: [],
+    blocked_audit: {},
+    system_stop_reason: null,
+    is_open: true,
+    is_terminal: false,
+    current_run_id: null,
+    turn_count: 0,
+    elapsed_seconds: 0,
+    token_usage: {},
+    created_at: "2026-07-03T00:00:00Z",
+    updated_at: "2026-07-03T00:00:00Z",
+    deleted_at: null,
+    ...patch,
+  } as ThreadTask;
 }
 
 function contextWindowUsage(sessionId: string, tokenCount: number): NonNullable<AgentSession["context_window_usage"]> {

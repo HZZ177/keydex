@@ -20,3 +20,14 @@
   padding: 8px 10px 10px;
   background: color-mix(in srgb, var(--surface-bg) 94%, var(--color-bg-elevated));
 }
+
+.composerStack {
+  display: grid;
+  width: min(var(--composer-width, 880px), 100%);
+  min-width: 0;
+  gap: 8px;
+}
+
+.composerStack > * {
+  width: 100%;
+}

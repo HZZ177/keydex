@@ -52,6 +52,8 @@ class CommandProcessManager:
     def terminate_command(self, command_id: str, *, reason: CancelReason = "user") -> bool:
         with self._lock:
             command = self._active.get(command_id)
+            if command is not None and command.cancel_event.is_set():
+                return False
         if command is None:
             return False
         self._terminate(command, reason=reason)

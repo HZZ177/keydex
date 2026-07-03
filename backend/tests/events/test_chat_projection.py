@@ -43,6 +43,48 @@ async def test_chat_projection_maps_llm_stream_to_stream_action() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_projection_maps_thread_task_events_to_task_actions() -> None:
+    adapter = RecordingChatAdapter()
+    projection = ChatProjection(adapter)
+
+    await projection.handle(
+        _event(
+            DomainEventType.THREAD_TASK_UPDATED,
+            {"task_id": "task-1", "task": {"id": "task-1", "status": "active"}},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.THREAD_TASK_DELETED,
+            {"task_id": "task-1", "task": {"id": "task-1", "deleted_at": "now"}},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.THREAD_TASK_RUN_STARTED,
+            {"task_id": "task-1", "run_id": "run-1", "run": {"status": "running"}},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.THREAD_TASK_RUN_FINISHED,
+            {"task_id": "task-1", "run_id": "run-1", "run": {"status": "succeeded"}},
+        )
+    )
+
+    assert [item["action"] for item in adapter.sent] == [
+        "task_updated",
+        "task_deleted",
+        "task_run_started",
+        "task_run_finished",
+    ]
+    assert adapter.sent[0]["data"]["task"]["status"] == "active"
+    assert adapter.sent[1]["data"]["task"]["deleted_at"] == "now"
+    assert adapter.sent[2]["data"]["run"]["status"] == "running"
+    assert adapter.sent[3]["data"]["run_id"] == "run-1"
+
+
+@pytest.mark.asyncio
 async def test_chat_projection_maps_tool_lifecycle_to_tool_actions() -> None:
     adapter = RecordingChatAdapter()
     projection = ChatProjection(adapter)

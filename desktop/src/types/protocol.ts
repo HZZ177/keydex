@@ -463,6 +463,10 @@ export const AGENT_CHAT_ACTIONS = [
   "session_closed",
   "session_title_updated",
   "task_result",
+  "task_updated",
+  "task_deleted",
+  "task_run_started",
+  "task_run_finished",
   "reasoning",
   "middleware_progress",
   "workspaceSkillsChanged",
@@ -488,6 +492,10 @@ export const AGENT_REPLAY_ACTIONS = [
   "cancelled",
   "error",
   "scheduled_task_result",
+  "task_updated",
+  "task_deleted",
+  "task_run_started",
+  "task_run_finished",
   "reasoning",
   "middleware_progress",
 ] as const;
@@ -525,6 +533,10 @@ export type AgentSessionStatus = "active" | "running" | "waiting_approval" | "cl
 export type AgentChatRole = "user" | "assistant" | "tool" | "system" | "subagent" | "reasoning" | "approval" | "error";
 export type AgentToolStatus = "running" | "completed" | "error" | "cancelled";
 export type AgentReasoningKind = "initial_response" | "status_update" | "progress_fact" | (string & {});
+export type ThreadTaskType = "goal" | (string & {});
+export type ThreadTaskStatus = "active" | "paused" | "blocked" | "complete" | "system_stopped" | "cancelled";
+export type ThreadTaskUserStatus = Extract<ThreadTaskStatus, "active" | "paused" | "cancelled">;
+export type ThreadTaskRunStatus = "running" | "succeeded" | "failed" | "skipped" | "cancelled";
 
 export interface Workspace {
   id: string;
@@ -554,6 +566,7 @@ export interface AgentSession {
   current_model_provider_id: string | null;
   current_model: string | null;
   context_window_usage?: AgentMiddlewareProgressData | null;
+  context_compression_epoch?: number;
   pinned?: boolean;
   pinned_at?: string | null;
   active_session_id: string | null;
@@ -570,6 +583,74 @@ export interface AgentSession {
   is_scheduled: boolean;
   is_current: boolean;
   scene_version_seq?: number | null;
+}
+
+export interface ThreadTask {
+  id: string;
+  session_id: string;
+  type: ThreadTaskType;
+  type_label: string;
+  title: string | null;
+  objective: string;
+  status: ThreadTaskStatus;
+  metadata: Record<string, unknown>;
+  evidence: unknown[];
+  blocked_audit: Record<string, unknown>;
+  system_stop_reason: string | null;
+  current_run_id: string | null;
+  turn_count: number;
+  elapsed_seconds: number;
+  token_usage: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  is_open: boolean;
+  is_terminal: boolean;
+}
+
+export interface ThreadTaskRun {
+  id: string;
+  task_id: string;
+  session_id: string;
+  turn_index: number | null;
+  trace_id: string | null;
+  status: ThreadTaskRunStatus;
+  summary: Record<string, unknown>;
+  error: Record<string, unknown>;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+  is_running: boolean;
+}
+
+export interface ThreadTaskResponse {
+  task: ThreadTask;
+}
+
+export interface ThreadTaskListResponse {
+  list: ThreadTask[];
+}
+
+export interface ThreadTaskRunsResponse {
+  list: ThreadTaskRun[];
+}
+
+export interface ThreadTaskEventData {
+  session_id: string;
+  task_id: string;
+  task?: ThreadTask | null;
+  run_id?: string | null;
+  trace_id?: string | null;
+  turn_index?: number | null;
+}
+
+export interface ThreadTaskRunEventData extends ThreadTaskEventData {
+  run_id: string;
+  run: ThreadTaskRun;
+  run_status?: ThreadTaskRunStatus;
+  status?: ThreadTaskRunStatus;
+  reason?: string;
 }
 
 export interface AgentSessionFork {
@@ -928,6 +1009,8 @@ export interface AgentCompletedPayload {
   reasoning_routed?: boolean;
   scene_name?: string;
   scene_version_seq?: number | null;
+  thread_task?: Record<string, unknown>;
+  threadTask?: Record<string, unknown>;
   ghost_footer?: {
     trace_id?: string;
     chain_token_usage?: AgentTokenUsage;
@@ -943,4 +1026,6 @@ export interface AgentErrorData {
   error?: string;
   details?: Record<string, unknown>;
   trace_id?: string;
+  thread_task?: Record<string, unknown>;
+  threadTask?: Record<string, unknown>;
 }

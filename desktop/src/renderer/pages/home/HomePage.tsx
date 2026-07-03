@@ -15,6 +15,8 @@ import {
   type SelectedImageAttachment,
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
+import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
+import type { SlashCommand } from "@/renderer/components/chat/SlashCommandMenu";
 import { RuntimeModelSelector, useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
 import { WorkspaceSelector, type WorkspaceSelection } from "@/renderer/components/workspace/WorkspaceSelector";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
@@ -28,6 +30,11 @@ import {
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { prepareComposerMessage, type RuntimeParamsWithInjection } from "@/renderer/utils/messageInjection";
 import type { AgentContextItem, AgentFileAttachment, FileAccessMode, Workspace } from "@/types/protocol";
+import {
+  goalContextItem,
+  goalSeedContextMetadata,
+  runtimeParamsWithGoalContextItem,
+} from "@/renderer/pages/conversation/goalSeedContext";
 import styles from "./HomePage.module.css";
 
 export interface HomePageProps {
@@ -63,6 +70,8 @@ export function HomePage({
 }: HomePageProps) {
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [goalComposerOpen, setGoalComposerOpen] = useState(false);
+  const [goalError, setGoalError] = useState<string | null>(null);
   const [quoteChipRequest, setQuoteChipRequest] = useState<{ requestId: number; quote: SelectedQuote } | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceSelection, setWorkspaceSelection] = useState<WorkspaceSelection>({ type: "chat" });
@@ -320,6 +329,36 @@ export function HomePage({
         }
       : undefined;
 
+  const handleDraftChange = useCallback((value: string) => {
+    setDraft(value);
+    if (goalError) {
+      setGoalError(null);
+    }
+  }, [goalError]);
+
+  const handleSlashCommand = useCallback((command: SlashCommand) => {
+    if (command.id !== "goal") {
+      return;
+    }
+    setGoalComposerOpen(true);
+    setGoalError(null);
+  }, []);
+
+  const closeGoalComposer = useCallback(() => {
+    if (submitting) {
+      return;
+    }
+    setGoalComposerOpen(false);
+    setGoalError(null);
+  }, [submitting]);
+
+  const goalModeAccessory = useMemo(() => {
+    if (!goalComposerOpen) {
+      return null;
+    }
+    return <GoalModeAccessory creating={submitting} error={goalError} onClose={closeGoalComposer} />;
+  }, [closeGoalComposer, goalComposerOpen, goalError, submitting]);
+
   const submit = async (
     files: SelectedFile[] = [],
     quotes: SelectedQuote[] = [],
@@ -375,13 +414,37 @@ export function HomePage({
             };
 
       const session = await runtime.conversation.createSession(sessionPayload);
+      const goalItem = goalComposerOpen ? goalContextItem(text) : null;
+      const runtimeParams = goalItem
+        ? runtimeParamsWithGoalContextItem(prepared.runtimeParams, goalItem)
+        : prepared.runtimeParams;
+      const contextItems = goalItem ? [...prepared.contextItems, goalItem] : prepared.contextItems;
+      if (goalComposerOpen) {
+        try {
+          await runtime.conversation.createThreadTask(session.id, {
+            type: "goal",
+            objective: text,
+            metadata: goalSeedContextMetadata({
+              message: text,
+              contextItems: prepared.contextItems,
+              runtimeParams: prepared.runtimeParams,
+              attachments,
+            }),
+          });
+        } catch (reason) {
+          setGoalError(errorMessage(reason));
+          return false;
+        }
+      }
       emitSessionCreated(session);
       setDraft("");
       setSelectedSkill(null);
-      const injectionOptions = prepared.runtimeParams || prepared.contextItems.length || attachments.length
+      setGoalComposerOpen(false);
+      setGoalError(null);
+      const injectionOptions = runtimeParams || contextItems.length || attachments.length
         ? {
-            runtimeParams: prepared.runtimeParams,
-            contextItems: prepared.contextItems,
+            runtimeParams,
+            contextItems,
             attachments,
           }
         : undefined;
@@ -422,6 +485,7 @@ export function HomePage({
           workspaceRoots={workspaceSelection.type === "workspace" ? [workspaceSelection.workspace.root_path] : []}
           workspaceSkills={workspaceSkills}
           selectedSkill={selectedSkill}
+          allowBypassConversationSlashCommand={false}
           onListWorkspaceDirectory={listWorkspaceDirectory}
           onSearchWorkspace={searchWorkspace}
           contextBar={
@@ -469,11 +533,13 @@ export function HomePage({
               onOpenModelSettings={onOpenModelSettings}
             />
           }
-          onChange={setDraft}
+          leftAccessory={goalModeAccessory}
+          onChange={handleDraftChange}
           onSkillChange={setSelectedSkill}
           onRefreshWorkspaceSkills={() => refreshWorkspaceSkills({ forceReload: true })}
           onSend={submit}
           onStop={() => undefined}
+          onSlashCommand={handleSlashCommand}
           runtime={runtime}
           onOpenFileReference={openFileReference}
           externalQuoteRequest={quoteChipRequest}

@@ -5,6 +5,7 @@ import {
   conversationKindFromAgent,
   payloadFromAgentMessage,
 } from "@/renderer/pages/conversation/conversationMessageAdapter";
+import { shouldDisplayAgentTranscriptMessage } from "@/renderer/utils/agentTranscriptVisibility";
 import type { AgentChatMessage } from "@/types/protocol";
 
 describe("conversation message adapter", () => {
@@ -40,6 +41,12 @@ describe("conversation message adapter", () => {
     ).toBe("llm_retry");
     expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "update_plan" }))).toBe("plan");
     expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "load_skill" }))).toBe("skill");
+    expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "update_thread_task" }))).toBe(
+      "thread_task_status",
+    );
+    expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "get_thread_task" }))).toBe(
+      "thread_task_status",
+    );
     expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "run_cmd" }))).toBe("command");
     expect(
       conversationKindFromAgent(
@@ -154,6 +161,52 @@ describe("conversation message adapter", () => {
       subagentTask: "check",
       subagentItems: [{ id: "item-1", type: "text", content: "ok", timestamp: 1 }],
     });
+  });
+
+  it("keeps task continuation prompts out of the visible transcript while preserving assistant output", () => {
+    expect(
+      shouldDisplayAgentTranscriptMessage(
+        agentMessage({
+          role: "user",
+          content: "<thread_task_context>继续目标</thread_task_context>",
+          metadata: { hidden_for_transcript: true, source: "thread_task" },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldDisplayAgentTranscriptMessage(
+        agentMessage({
+          role: "user",
+          content: "legacy task continuation",
+          metadata: {
+            runtime_params: {
+              thread_task: {
+                task_id: "task-1",
+                run_id: "run-1",
+                trigger: "task_continue",
+              },
+            },
+          },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldDisplayAgentTranscriptMessage(
+        agentMessage({
+          role: "assistant",
+          content: "任务轮次结果",
+          metadata: {
+            runtime_params: {
+              thread_task: {
+                task_id: "task-1",
+                run_id: "run-1",
+                trigger: "task_continue",
+              },
+            },
+          },
+        }),
+      ),
+    ).toBe(true);
   });
 });
 

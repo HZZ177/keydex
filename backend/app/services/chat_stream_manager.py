@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +27,7 @@ class ChatStreamMissingSessionError(ChatStreamError):
 @dataclass(slots=True)
 class ChatStreamRun:
     session_id: str
+    request: ChatRequest
     task: asyncio.Task
     cancellation: ChatCancellationToken
     started_at_ms: int
@@ -52,6 +54,17 @@ class ChatStreamManager:
         self._runs: dict[str, ChatStreamRun] = {}
         self._subscribers: dict[str, set[ChatProjectionAdapter]] = {}
         self._lock = asyncio.Lock()
+        self._thread_task_runtime: Any | None = None
+        self._after_run_finished_callback: Any | None = None
+
+    def set_thread_task_runtime(self, runtime: Any | None) -> None:
+        self._thread_task_runtime = runtime
+        bind = getattr(runtime, "bind_chat_stream_manager", None)
+        if callable(bind):
+            bind(self)
+
+    def set_after_run_finished_callback(self, callback: Any | None) -> None:
+        self._after_run_finished_callback = callback
 
     async def subscribe(self, session_id: str, adapter: ChatProjectionAdapter) -> None:
         cleaned = session_id.strip()
@@ -99,6 +112,7 @@ class ChatStreamManager:
             task = asyncio.create_task(self._run_chat(request, cancellation))
             self._runs[session_id] = ChatStreamRun(
                 session_id=session_id,
+                request=request,
                 task=task,
                 cancellation=cancellation,
                 started_at_ms=int(time.time() * 1000),
@@ -192,9 +206,9 @@ class ChatStreamManager:
             ],
         }
 
-    async def _run_chat(self, request: ChatRequest, cancellation: ChatCancellationToken) -> None:
+    async def _run_chat(self, request: ChatRequest, cancellation: ChatCancellationToken) -> Any:
         session_id = (request.session_id or "").strip()
-        await self._chat_service.handle_chat(
+        return await self._chat_service.handle_chat(
             request,
             chat_adapter=BroadcastChatAdapter(self, session_id),
             cancellation=cancellation,
@@ -209,18 +223,127 @@ class ChatStreamManager:
             )
 
     async def _finish_run(self, session_id: str, task: asyncio.Task) -> None:
+        removed_current = False
+        finished_run: ChatStreamRun | None = None
         async with self._lock:
             current = self._runs.get(session_id)
             if current is not None and current.task is task:
                 self._runs.pop(session_id, None)
+                removed_current = True
+                finished_run = current
 
+        result: Any | None = None
+        error: BaseException | None = None
         try:
-            task.result()
-        except asyncio.CancelledError:
+            result = task.result()
+        except asyncio.CancelledError as exc:
+            error = exc
             logger.info(f"[ChatStreamManager] 后台对话 task 已取消 | session_id={session_id}")
         except Exception as exc:
+            error = exc
             logger.opt(exception=True).error(
                 f"[ChatStreamManager] 后台对话 task 异常 | session_id={session_id} | error={exc}"
             )
         else:
             logger.info(f"[ChatStreamManager] 后台对话 task 完成 | session_id={session_id}")
+
+        if removed_current:
+            cancelled = self._is_cancelled_completion(result=result, error=error)
+            await self._notify_after_run_finished(
+                session_id,
+                request=finished_run.request if finished_run is not None else None,
+                result=result,
+                error=error,
+                cancelled=cancelled,
+            )
+
+    async def _notify_after_run_finished(
+        self,
+        session_id: str,
+        *,
+        request: ChatRequest | None = None,
+        result: Any | None = None,
+        error: BaseException | None = None,
+        cancelled: bool = False,
+    ) -> None:
+        runtime = self._thread_task_runtime
+        if runtime is not None:
+            handle_finished = getattr(runtime, "handle_chat_finished", None)
+            if callable(handle_finished):
+                try:
+                    finish_result = handle_finished(
+                        session_id,
+                        request=request,
+                        result=result,
+                        error=error,
+                    )
+                    if inspect.isawaitable(finish_result):
+                        await finish_result
+                except Exception as exc:
+                    logger.opt(exception=True).warning(
+                        "[ChatStreamManager] ThreadTaskRuntime finish 收尾失败 | "
+                        f"session_id={session_id} | error={exc}"
+                    )
+            if cancelled:
+                handle_cancelled = getattr(runtime, "handle_user_cancelled", None)
+                if callable(handle_cancelled):
+                    try:
+                        cancel_result = handle_cancelled(
+                            session_id,
+                            request=request,
+                            result=result,
+                            error=error,
+                        )
+                        if inspect.isawaitable(cancel_result):
+                            await cancel_result
+                    except Exception as exc:
+                        logger.opt(exception=True).warning(
+                            "[ChatStreamManager] ThreadTaskRuntime cancel 收尾失败 | "
+                            f"session_id={session_id} | error={exc}"
+                        )
+
+        callback = self._after_run_finished_callback
+        if callback is not None:
+            try:
+                result = callback(session_id)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    "[ChatStreamManager] after_run_finished 回调失败 | "
+                    f"session_id={session_id} | error={exc}"
+                )
+
+        if cancelled:
+            logger.info(
+                "[ChatStreamManager] 用户取消后跳过长程任务自动续跑 | "
+                f"session_id={session_id}"
+            )
+            return
+
+        if runtime is None:
+            return
+        continue_if_idle = getattr(runtime, "continue_if_idle", None)
+        if not callable(continue_if_idle):
+            return
+        try:
+            result = continue_if_idle(session_id, reason="run_finished")
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                "[ChatStreamManager] ThreadTaskRuntime idle 检查失败 | "
+                f"session_id={session_id} | error={exc}"
+            )
+
+    @staticmethod
+    def _is_cancelled_completion(
+        *,
+        result: Any | None = None,
+        error: BaseException | None = None,
+    ) -> bool:
+        if isinstance(error, asyncio.CancelledError):
+            return True
+        if error is not None and type(error).__name__ == "CancelledError":
+            return True
+        return str(getattr(result, "status", "") or "") == "cancelled"

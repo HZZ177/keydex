@@ -611,6 +611,105 @@ describe("HomePage", () => {
     expect(runtime.conversation.createSession).not.toHaveBeenCalled();
   });
 
+  it("creates a goal task from the new chat page and forwards the seed turn", async () => {
+    const createThreadTask = vi.fn().mockResolvedValue({
+      id: "task-1",
+      session_id: "ses-1",
+      type: "goal",
+      type_label: "目标",
+      title: null,
+      objective: "完成新会话目标",
+      status: "active",
+      is_open: true,
+      is_terminal: false,
+      created_at: "2026-07-03T00:00:00Z",
+      updated_at: "2026-07-03T00:00:00Z",
+      deleted_at: null,
+      completed_at: null,
+      metadata: {},
+      evidence: [],
+      blocked_audit: {},
+      token_usage: {},
+      turn_count: 0,
+      elapsed_seconds: 0,
+      last_run_id: null,
+      last_run_status: null,
+      last_run_at: null,
+    });
+    const runtime = fakeRuntime({ model: "qwen-coder", createThreadTask });
+    const onNavigateToConversation = vi.fn();
+
+    render(
+      <HomePage
+        runtime={runtime}
+        onNavigateToConversation={onNavigateToConversation}
+        onOpenModelSettings={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("选择模型").textContent).toContain("qwen-coder");
+    });
+    enterPrompt("/目标");
+    fireEvent.keyDown(screen.getByLabelText("输入需求"), { key: "Enter" });
+    expect((await screen.findByTestId("goal-mode-accessory")).textContent).toContain("目标");
+
+    enterPrompt("完成新会话目标");
+    fireEvent.click(screen.getByLabelText("发送"));
+
+    await waitFor(() => {
+      expect(runtime.conversation.createSession).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(createThreadTask).toHaveBeenCalledWith("ses-1", {
+        type: "goal",
+        objective: "完成新会话目标",
+        metadata: {
+          seed_turn_context: {
+            schema_version: 1,
+            source: "goal_composer",
+            message: "完成新会话目标",
+            context_items: [],
+            runtime_params: {},
+            attachments: [],
+          },
+        },
+      });
+    });
+    expect(onNavigateToConversation).toHaveBeenCalledWith(
+      "ses-1",
+      { providerId: "provider-1", model: "qwen-coder" },
+      "完成新会话目标",
+      expect.objectContaining({
+        contextItems: [
+          expect.objectContaining({
+            type: "goal",
+            label: "目标",
+            content: "完成新会话目标",
+            source: "goal",
+          }),
+        ],
+        runtimeParams: {
+          message_context_items: [
+            expect.objectContaining({
+              type: "goal",
+              label: "目标",
+              content: "完成新会话目标",
+              source: "goal",
+              metadata: expect.objectContaining({
+                kind: "goal",
+                objective: "完成新会话目标",
+              }),
+            }),
+          ],
+        },
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByTestId("goal-mode-accessory")).toBeNull();
+    });
+  });
+
   it("opens model settings and shows an error when no model is configured", async () => {
     const runtime = fakeRuntime({ model: "" });
     const onOpenModelSettings = vi.fn();
@@ -800,6 +899,7 @@ function fakeRuntime({
   workspaceFilesByPath = {},
   canPickDirectory = false,
   pickDirectory = vi.fn().mockResolvedValue(null),
+  createThreadTask = vi.fn(),
 }: {
   model: string;
   models?: string[];
@@ -809,6 +909,7 @@ function fakeRuntime({
   workspaceFilesByPath?: Record<string, string>;
   canPickDirectory?: boolean;
   pickDirectory?: ReturnType<typeof vi.fn>;
+  createThreadTask?: ReturnType<typeof vi.fn>;
 }): RuntimeBridge {
   const session: AgentSession = {
     id: "ses-1",
@@ -931,6 +1032,7 @@ function fakeRuntime({
     },
     conversation: {
       createSession: vi.fn().mockResolvedValue(session),
+      createThreadTask,
     },
   } as unknown as RuntimeBridge;
 }

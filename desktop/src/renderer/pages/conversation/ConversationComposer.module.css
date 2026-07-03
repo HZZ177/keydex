@@ -97,9 +97,11 @@
   transform-origin: right bottom;
   transition:
     opacity var(--motion-fast) ease,
-    transform var(--motion-fast) ease;
+    transform var(--motion-fast) ease,
+    visibility 0s linear var(--motion-fast);
   -webkit-user-select: text;
   user-select: text;
+  visibility: hidden;
   backdrop-filter: blur(14px);
 }
 
@@ -127,6 +129,8 @@
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0) scale(1);
+  transition-delay: 500ms, 500ms, 500ms;
+  visibility: visible;
 }
 
 .contextWindowTooltipTitle {
@@ -149,6 +153,19 @@
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+.contextWindowTooltipValue {
+  color: var(--color-text-secondary);
+  font-weight: 560;
+}
+
+.contextWindowTooltipValue[data-level="warning"] {
+  color: color-mix(in srgb, var(--color-warning) 88%, var(--color-text-secondary));
+}
+
+.contextWindowTooltipValue[data-level="danger"] {
+  color: color-mix(in srgb, var(--color-danger) 88%, var(--color-text-secondary));
 }
 
 @media (prefers-reduced-motion: reduce) {

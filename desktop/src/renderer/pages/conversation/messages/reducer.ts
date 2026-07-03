@@ -354,6 +354,9 @@ function kindFromItem(item: ThreadItem): ConversationMessageKind {
   if (item.type === "tool_call" && toolCallName(item) === "load_skill") {
     return "skill";
   }
+  if (item.type === "tool_call" && isThreadTaskToolName(toolCallName(item))) {
+    return "thread_task_status";
+  }
   return kindFromItemType(item.type);
 }
 
@@ -364,6 +367,10 @@ function toolCallName(item: ThreadItem): string | null {
   }
   const name = (call as { name?: unknown }).name;
   return typeof name === "string" ? name : null;
+}
+
+function isThreadTaskToolName(name: string | null): boolean {
+  return name === "update_thread_task" || name === "get_thread_task";
 }
 
 function extractDelta(payload: Record<string, unknown>): Record<string, unknown> {

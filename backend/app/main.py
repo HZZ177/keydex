@@ -18,6 +18,7 @@ from backend.app.api.health import router as health_router
 from backend.app.api.model_providers import router as model_providers_router
 from backend.app.api.models import router as models_router
 from backend.app.api.sessions import router as sessions_router
+from backend.app.api.thread_tasks import router as thread_tasks_router
 from backend.app.api.settings import load_effective_model_settings, load_model_settings
 from backend.app.api.settings import router as settings_router
 from backend.app.api.usage import router as usage_router
@@ -35,6 +36,10 @@ from backend.app.model.e2e_transport import create_e2e_model_transport
 from backend.app.runtime import create_desktop_runtime
 from backend.app.services.agent_runtime import AgentRuntimeProvider, LazyChatService
 from backend.app.services.chat_stream_manager import ChatStreamManager
+from backend.app.services.thread_task_elapsed_ticker import ThreadTaskElapsedTicker
+from backend.app.services.thread_task_events import ThreadTaskEventPublisher
+from backend.app.services.thread_task_runtime import ThreadTaskRuntime, ThreadTaskStateLocks
+from backend.app.services.thread_task_service import ThreadTaskService
 from backend.app.storage import StorageRepositories, init_database
 from backend.app.tools import create_default_tool_registry
 from backend.app.tools.command_runtime import command_process_manager
@@ -54,9 +59,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 pass
 
         warmup_task = asyncio.create_task(run_warmup())
+        app.state.thread_task_elapsed_ticker.start()
         try:
             yield
         finally:
+            await app.state.thread_task_elapsed_ticker.stop()
             if not warmup_task.done():
                 warmup_task.cancel()
             killed = command_process_manager.shutdown()
@@ -89,6 +96,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         default_workspace_root=resolved_settings.workspace_root,
     )
     app.state.repositories = StorageRepositories(app.state.database)
+    app.state.thread_task_state_locks = ThreadTaskStateLocks()
+    app.state.thread_task_service = ThreadTaskService(
+        app.state.repositories,
+        state_locks=app.state.thread_task_state_locks,
+    )
     if resolved_settings.e2e_model_transport:
         app.state.model_http_transport = create_e2e_model_transport(
             delay_ms=resolved_settings.e2e_stream_delay_ms
@@ -124,6 +136,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             repositories=app.state.repositories,
             agent_runner=agent_runner,
             keydex_runtime_cache=app.state.keydex_runtime_cache,
+            thread_task_service=app.state.thread_task_service,
         )
 
     app.state.agent_runtime_provider = AgentRuntimeProvider(build_chat_service)
@@ -132,6 +145,23 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         repositories=app.state.repositories,
     )
     app.state.chat_stream_manager = ChatStreamManager(app.state.chat_service)
+    app.state.thread_task_event_publisher = ThreadTaskEventPublisher(
+        repositories=app.state.repositories,
+        chat_stream_manager=app.state.chat_stream_manager,
+    )
+    app.state.thread_task_service.set_event_publisher(app.state.thread_task_event_publisher)
+    app.state.thread_task_runtime = ThreadTaskRuntime(
+        state_locks=app.state.thread_task_state_locks,
+        repositories=app.state.repositories,
+        thread_task_service=app.state.thread_task_service,
+        chat_stream_manager=app.state.chat_stream_manager,
+        event_publisher=app.state.thread_task_event_publisher,
+    )
+    app.state.thread_task_elapsed_ticker = ThreadTaskElapsedTicker(
+        thread_task_service=app.state.thread_task_service,
+        chat_stream_manager=app.state.chat_stream_manager,
+    )
+    app.state.chat_stream_manager.set_thread_task_runtime(app.state.thread_task_runtime)
     app.state.keydex_workspace_watcher = KeydexWorkspaceWatcher(
         runtime_cache=app.state.keydex_runtime_cache,
         notifier=lambda session_id, data: app.state.chat_stream_manager.broadcast(
@@ -164,6 +194,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(model_providers_router)
     app.include_router(models_router)
     app.include_router(sessions_router)
+    app.include_router(thread_tasks_router)
     app.include_router(usage_router)
     app.include_router(workspaces_router)
     app.include_router(workspace_router)

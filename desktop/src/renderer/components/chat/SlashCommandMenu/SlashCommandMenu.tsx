@@ -1,4 +1,4 @@
-import { Box, ChevronLeft, ChevronRight, Command, Search, Sparkles } from "lucide-react";
+import { Box, ChevronLeft, ChevronRight, Command, Search, Sparkles, Target } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import type { WorkspaceSkillSummary } from "@/runtime";
@@ -138,12 +138,13 @@ function CommandItem({
   active: boolean;
   onSelect: (command: SlashCommand) => void;
 }) {
-  const Icon = command.kind === "skill_group" ? Sparkles : Command;
+  const Icon = command.kind === "skill_group" ? Sparkles : command.kind === "goal" ? Target : Command;
   return (
     <button
       className={styles.item}
       type="button"
       role="option"
+      aria-label={command.kind === "goal" ? "创建目标" : undefined}
       aria-selected={active}
       data-active={active ? "true" : "false"}
       data-kind={command.kind}

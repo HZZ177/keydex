@@ -121,7 +121,8 @@ describe("workbench assistant geometry", () => {
     expect(css).toMatch(/\.chrome\[data-shell-mode="capsule"\]::before,\s*\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="capsule"\]::before\s*\{[\s\S]*border-radius: 34px/);
     expect(css).not.toMatch(/\.chrome\[data-shell-mode="drawer"\]::before/);
     expect(css).not.toMatch(/\.chrome\[data-shell-mode="dock-morph"\]::before/);
-    expect(css).toMatch(/\.composerFrameAccessory :global\(\[aria-label="输入框状态"\] \[data-selected-item\]\)\s*\{[\s\S]*var\(--workbench-assistant-control-glass-bg\)/);
+    expect(css).toMatch(/\.composerFrameAccessory :global\(\[aria-label="输入框状态"\] > \[data-selected-item\] > \[data-selected-item\]\)\s*\{[\s\S]*var\(--workbench-assistant-control-glass-bg\)/);
+    expect(css).not.toContain(':global([aria-label="输入框状态"] [data-selected-item])');
     expect(css).toMatch(/\.dockHandle\s*\{[\s\S]*var\(--workbench-assistant-control-glass-bg\)/);
     expect(css).toMatch(/\.headerActionButton\s*\{[\s\S]*var\(--workbench-assistant-control-glass-bg\)/);
     expect(css).toMatch(/@supports not \(\(backdrop-filter: blur\(1px\)\) or \(-webkit-backdrop-filter: blur\(1px\)\)\)/);

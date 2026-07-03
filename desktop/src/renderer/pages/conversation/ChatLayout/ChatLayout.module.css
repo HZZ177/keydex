@@ -231,16 +231,17 @@
 
 .composerAccessory {
   position: absolute;
-  right: var(--conversation-edge-padding);
   bottom: calc(100% + var(--composer-accessory-gap));
-  left: var(--conversation-edge-padding);
+  left: 50%;
   display: flex;
+  width: min(var(--composer-width, 880px), calc(100% - var(--conversation-edge-padding) - var(--conversation-edge-padding)));
   min-width: 0;
   align-items: center;
   justify-content: center;
   gap: 8px;
   margin: 0;
   pointer-events: auto;
+  transform: translateX(-50%);
 }
 
 .composerAccessory > * {

@@ -84,6 +84,7 @@ create table if not exists sessions (
   current_model_provider_id text,
   current_model text,
   context_window_usage_json text,
+  context_compression_epoch integer not null default 0,
   pinned_at text,
   title text,
   title_source text not null default 'manual',
@@ -103,6 +104,62 @@ create index if not exists idx_sessions_active_session_id on sessions(active_ses
 create index if not exists idx_sessions_parent_session_id on sessions(parent_session_id);
 create index if not exists idx_sessions_child_session_id on sessions(child_session_id);
 create index if not exists idx_sessions_updated_at on sessions(updated_at desc);
+
+create table if not exists thread_tasks (
+  id text primary key,
+  session_id text not null,
+  type text not null,
+  title text,
+  objective text not null,
+  status text not null
+    check (status in ('active', 'paused', 'blocked', 'complete', 'system_stopped', 'cancelled')),
+  metadata_json text not null default '{}',
+  evidence_json text not null default '[]',
+  blocked_audit_json text not null default '{}',
+  system_stop_reason text,
+  current_run_id text,
+  turn_count integer not null default 0,
+  elapsed_seconds integer not null default 0,
+  token_usage_json text not null default '{}',
+  created_at text not null,
+  updated_at text not null,
+  deleted_at text,
+  foreign key(session_id) references sessions(id) on delete cascade
+);
+
+create index if not exists idx_thread_tasks_session_updated
+  on thread_tasks(session_id, updated_at desc);
+create index if not exists idx_thread_tasks_session_status
+  on thread_tasks(session_id, status, updated_at desc)
+  where deleted_at is null;
+create unique index if not exists idx_thread_tasks_one_open_per_session
+  on thread_tasks(session_id)
+  where deleted_at is null and status in ('active', 'paused', 'blocked');
+
+create table if not exists thread_task_runs (
+  id text primary key,
+  task_id text not null,
+  session_id text not null,
+  turn_index integer,
+  trace_id text,
+  status text not null
+    check (status in ('running', 'succeeded', 'failed', 'skipped', 'cancelled')),
+  summary_json text not null default '{}',
+  error_json text not null default '{}',
+  started_at text not null,
+  finished_at text,
+  created_at text not null,
+  updated_at text not null,
+  foreign key(task_id) references thread_tasks(id) on delete cascade,
+  foreign key(session_id) references sessions(id) on delete cascade
+);
+
+create index if not exists idx_thread_task_runs_task_started
+  on thread_task_runs(task_id, started_at desc);
+create index if not exists idx_thread_task_runs_session_started
+  on thread_task_runs(session_id, started_at desc);
+create index if not exists idx_thread_task_runs_status_started
+  on thread_task_runs(status, started_at desc);
 
 create table if not exists session_forks (
   id text primary key,
@@ -279,7 +336,10 @@ create table if not exists trusted_command_rules (
 );
 
 create index if not exists idx_trusted_command_rules_lookup
-  on trusted_command_rules(workspace_root, cwd_pattern, tool_name, shell, shell_path, match_type, enabled, is_deleted);
+  on trusted_command_rules(
+    workspace_root, cwd_pattern, tool_name, shell, shell_path,
+    match_type, enabled, is_deleted
+  );
 create index if not exists idx_trusted_command_rules_created
   on trusted_command_rules(created_at desc);
 
@@ -473,7 +533,10 @@ create index if not exists idx_command_approval_requests_session_status
 create index if not exists idx_command_approval_requests_status_created
   on command_approval_requests(status, created_at desc);
 create index if not exists idx_trusted_command_rules_lookup
-  on trusted_command_rules(workspace_root, cwd_pattern, tool_name, shell, shell_path, match_type, enabled, is_deleted);
+  on trusted_command_rules(
+    workspace_root, cwd_pattern, tool_name, shell, shell_path,
+    match_type, enabled, is_deleted
+  );
 create index if not exists idx_trusted_command_rules_created
   on trusted_command_rules(created_at desc);
 create index if not exists idx_command_approval_audit_created
@@ -525,6 +588,12 @@ class Database:
             self._ensure_column(conn, "sessions", "current_model_provider_id", "text")
             self._ensure_column(conn, "sessions", "current_model", "text")
             self._ensure_column(conn, "sessions", "context_window_usage_json", "text")
+            self._ensure_column(
+                conn,
+                "sessions",
+                "context_compression_epoch",
+                "integer not null default 0",
+            )
             self._ensure_column(conn, "sessions", "pinned_at", "text")
             self._ensure_column(conn, "sessions", "title_source", "text not null default 'manual'")
             self._ensure_column(

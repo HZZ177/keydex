@@ -175,12 +175,14 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
     assert registry.names() == [
         "create_file",
         "edit_file",
+        "get_thread_task",
         "grep_files",
         "list_dir",
         "read_file",
         "search_files",
         "search_text",
         "update_plan",
+        "update_thread_task",
     ]
     specs = {spec.name: spec for spec in registry.to_tool_specs()}
     assert "带行号的 numbered_content" in specs["read_file"].description
@@ -193,6 +195,17 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
     assert "*** Move to: <path>" in specs["edit_file"].description
     assert "run_command" not in specs
     assert "最多只能有一个步骤处于 in_progress" in specs["update_plan"].description
+    assert specs["update_thread_task"].parameters["properties"]["status"]["enum"] == [
+        "complete",
+        "blocked",
+    ]
+    assert "title/detail/summary" in specs["update_thread_task"].description
+    evidence_schema = specs["update_thread_task"].parameters["properties"]["evidence"]
+    assert "非空证据数组" in evidence_schema["description"]
+    evidence_object_schema = evidence_schema["items"]["oneOf"][1]
+    assert {"title", "detail", "summary"}.issubset(evidence_object_schema["properties"].keys())
+    assert "content" not in evidence_object_schema["properties"]
+    assert "text" not in evidence_object_schema["properties"]
     status_enum = specs["update_plan"].parameters["properties"]["plan"]["items"]["properties"][
         "status"
     ]["enum"]

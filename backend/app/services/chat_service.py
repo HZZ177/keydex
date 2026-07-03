@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import mimetypes
 import time
 from dataclasses import dataclass, replace
@@ -11,7 +12,13 @@ from typing import Any
 
 import httpx
 import openai
-from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from backend.app.agent import AgentRunner
@@ -40,6 +47,7 @@ from backend.app.keydex.skills import SkillCatalog
 from backend.app.model import ModelSelectionError, ResolvedModelSelection, resolve_model_selection
 from backend.app.services.chat_types import ChatCancellationToken, ChatRequest, ChatTurnResult
 from backend.app.services.message_event_service import MessageEventService
+from backend.app.services.thread_task_service import ThreadTaskService
 from backend.app.services.workspace_service import WorkspaceService
 from backend.app.storage import AttachmentRecord, SessionRecord, StorageRepositories
 from backend.app.tools import ToolExecutionContext
@@ -69,6 +77,7 @@ class InjectedMessage:
     content: str
     message_time: str | None = None
     metadata: dict[str, Any] | None = None
+    hidden_for_transcript: bool = False
 
 
 @dataclass(frozen=True)
@@ -138,6 +147,18 @@ def _build_message_injection_items(runtime_params: dict[str, Any] | None) -> lis
         metadata = raw_item.get("metadata")
         if metadata is not None and not isinstance(metadata, dict):
             raise ValueError(f"message_injection[{index}].metadata 必须是对象")
+        raw_hidden_for_transcript = raw_item.get("hidden_for_transcript")
+        if raw_hidden_for_transcript is None:
+            raw_hidden_for_transcript = raw_item.get("hiddenForTranscript")
+        if raw_hidden_for_transcript is None and isinstance(metadata, dict):
+            raw_hidden_for_transcript = metadata.get("hidden_for_transcript")
+        if raw_hidden_for_transcript is None and isinstance(metadata, dict):
+            raw_hidden_for_transcript = metadata.get("hiddenForTranscript")
+        if raw_hidden_for_transcript is not None and not isinstance(
+            raw_hidden_for_transcript,
+            bool,
+        ):
+            raise ValueError(f"message_injection[{index}].hidden_for_transcript 必须是布尔值")
         message_time = raw_item.get("message_time")
         if message_time is None:
             message_time = raw_item.get("messageTime")
@@ -148,6 +169,7 @@ def _build_message_injection_items(runtime_params: dict[str, Any] | None) -> lis
                 content=content,
                 message_time=str(message_time).strip() if message_time else None,
                 metadata=dict(metadata or {}),
+                hidden_for_transcript=bool(raw_hidden_for_transcript),
             )
         )
 
@@ -157,6 +179,118 @@ def _build_message_injection_items(runtime_params: dict[str, Any] | None) -> lis
     if slot_items and slot_items[0].role != MessageInjectionRole.SYSTEM:
         raise ValueError("type=slot 时 role 必须为 SystemMessage")
     return items
+
+
+def _build_message_context_items(runtime_params: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not runtime_params:
+        return []
+    if not isinstance(runtime_params, dict):
+        raise ValueError("runtime_params 必须是对象")
+    raw_items = runtime_params.get("message_context_items")
+    if raw_items is None:
+        raw_items = runtime_params.get("messageContextItems")
+    if raw_items is None:
+        return []
+    if not isinstance(raw_items, list):
+        raise ValueError("runtime_params.message_context_items 必须是数组")
+
+    items: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(raw_items):
+        if not isinstance(raw_item, dict):
+            raise ValueError(f"message_context_items[{index}] 必须是对象")
+        metadata = raw_item.get("metadata")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise ValueError(f"message_context_items[{index}].metadata 必须是对象")
+        item_type = str(raw_item.get("type") or "").strip() or "follow"
+        label = str(raw_item.get("label") or raw_item.get("name") or "").strip() or "上下文"
+        content = str(raw_item.get("content") or "").strip()
+        item = {
+            "id": str(raw_item.get("id") or f"context:{index}").strip(),
+            "type": item_type,
+            "label": label,
+            "content": content,
+            "role": str(raw_item.get("role") or "HumanMessage").strip(),
+            "source": str(raw_item.get("source") or "runtime").strip(),
+            "metadata": dict(metadata or {}),
+        }
+        for key in (
+            "path",
+            "name",
+            "fileType",
+            "file_type",
+            "skill_name",
+            "skillName",
+            "description",
+            "locator",
+        ):
+            if raw_item.get(key) is not None:
+                item[key] = raw_item.get(key)
+        items.append(item)
+    return items
+
+
+def _should_hide_user_message_for_injection_turn(
+    request: ChatRequest,
+    message_injection: list[InjectedMessage],
+) -> bool:
+    if _should_hide_user_message_for_runtime_params(request.runtime_params):
+        return True
+    return (
+        not request.message.strip()
+        and not request.attachments
+        and bool(message_injection)
+        and all(item.hidden_for_transcript for item in message_injection)
+    )
+
+
+def _should_hide_user_message_for_runtime_params(runtime_params: dict[str, Any] | None) -> bool:
+    if not isinstance(runtime_params, dict):
+        return False
+    raw = runtime_params.get("hide_user_message_for_transcript")
+    if raw is None:
+        raw = runtime_params.get("hideUserMessageForTranscript")
+    if raw is True:
+        return True
+    thread_task = runtime_params.get("thread_task")
+    if thread_task is None:
+        thread_task = runtime_params.get("threadTask")
+    if isinstance(thread_task, dict):
+        raw = thread_task.get("hide_user_message_for_transcript")
+        if raw is None:
+            raw = thread_task.get("hideUserMessageForTranscript")
+        return raw is True
+    return False
+
+
+def _build_thread_task_runtime_context(
+    runtime_params: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not runtime_params:
+        return None
+    if not isinstance(runtime_params, dict):
+        raise ValueError("runtime_params 必须是对象")
+    raw_context = runtime_params.get("thread_task")
+    if raw_context is None:
+        raw_context = runtime_params.get("threadTask")
+    if raw_context is None:
+        return None
+    if not isinstance(raw_context, dict):
+        raise ValueError("runtime_params.thread_task 必须是对象")
+    task_id = str(raw_context.get("task_id") or raw_context.get("taskId") or "").strip()
+    run_id = str(raw_context.get("run_id") or raw_context.get("runId") or "").strip()
+    trigger = str(raw_context.get("trigger") or "").strip()
+    if not task_id:
+        raise ValueError("runtime_params.thread_task.task_id 不能为空")
+    if not run_id:
+        raise ValueError("runtime_params.thread_task.run_id 不能为空")
+    if trigger != "task_continue":
+        raise ValueError("runtime_params.thread_task.trigger 必须为 task_continue")
+    return {
+        "task_id": task_id,
+        "run_id": run_id,
+        "trigger": trigger,
+        "type": str(raw_context.get("type") or raw_context.get("task_type") or "").strip(),
+    }
 
 
 def _build_skill_activation_request(
@@ -555,7 +689,7 @@ def _checkpoint_message_signature(message: Any) -> tuple[str, str]:
     return _checkpoint_message_role(message), _message_content_text(content)
 
 
-def _state_has_runtime_tail(
+def _state_contains_runtime_messages(
     state_messages: list[Any],
     runtime_messages: list[dict[str, Any]],
 ) -> bool:
@@ -564,11 +698,12 @@ def _state_has_runtime_tail(
         return True
     if len(state_messages) < len(signatures):
         return False
-    state_tail = [
-        _checkpoint_message_signature(message)
-        for message in state_messages[-len(signatures) :]
-    ]
-    return state_tail == signatures
+    state_signatures = [_checkpoint_message_signature(message) for message in state_messages]
+    width = len(signatures)
+    return any(
+        state_signatures[index : index + width] == signatures
+        for index in range(len(state_signatures) - width + 1)
+    )
 
 
 def _checkpoint_message_from_runtime(message: dict[str, Any]) -> Any:
@@ -595,6 +730,99 @@ def _copy_ai_message_with_content(message: Any, content: str) -> Any:
     return AIMessage(content=content, **kwargs)
 
 
+def _checkpoint_message_tool_call_id(message: Any) -> str:
+    if isinstance(message, dict):
+        return str(message.get("tool_call_id") or message.get("toolCallId") or "")
+    return str(getattr(message, "tool_call_id", "") or "")
+
+
+def _checkpoint_ai_tool_calls(message: Any) -> list[dict[str, str]]:
+    if isinstance(message, dict):
+        raw_calls = message.get("tool_calls") or message.get("toolCalls") or []
+    else:
+        raw_calls = getattr(message, "tool_calls", None) or []
+        if not raw_calls:
+            additional_kwargs = getattr(message, "additional_kwargs", None)
+            if isinstance(additional_kwargs, dict):
+                raw_calls = additional_kwargs.get("tool_calls") or []
+    if not isinstance(raw_calls, list):
+        return []
+
+    calls: list[dict[str, str]] = []
+    for raw_call in raw_calls:
+        call_id = ""
+        name = ""
+        if isinstance(raw_call, dict):
+            call_id = str(raw_call.get("id") or raw_call.get("tool_call_id") or "")
+            name = str(raw_call.get("name") or "")
+            function = raw_call.get("function")
+            if not name and isinstance(function, dict):
+                name = str(function.get("name") or "")
+        else:
+            call_id = str(
+                getattr(raw_call, "id", "") or getattr(raw_call, "tool_call_id", "") or ""
+            )
+            name = str(getattr(raw_call, "name", "") or "")
+        if call_id:
+            calls.append({"id": call_id, "name": name})
+    return calls
+
+
+def _cancelled_tool_message_for_call(tool_call: dict[str, str]) -> ToolMessage:
+    name = str(tool_call.get("name") or "")
+    payload: dict[str, Any] = {
+        "status": "cancelled",
+        "message": "用户终止了该工具调用，本轮对话已取消。",
+    }
+    if name:
+        payload["tool"] = name
+    kwargs: dict[str, Any] = {
+        "content": json.dumps(payload, ensure_ascii=False),
+        "tool_call_id": tool_call["id"],
+    }
+    if name:
+        kwargs["name"] = name
+    return ToolMessage(**kwargs)
+
+
+def _close_pending_tool_calls_for_cancelled_checkpoint(
+    state_messages: list[Any],
+) -> tuple[list[Any], int]:
+    rebuilt: list[Any] = []
+    pending_tool_calls: list[dict[str, str]] = []
+    inserted = 0
+
+    def flush_pending() -> None:
+        nonlocal inserted
+        if not pending_tool_calls:
+            return
+        rebuilt.extend(
+            _cancelled_tool_message_for_call(tool_call) for tool_call in pending_tool_calls
+        )
+        inserted += len(pending_tool_calls)
+        pending_tool_calls.clear()
+
+    for message in state_messages:
+        role = _checkpoint_message_role(message)
+        if pending_tool_calls and role != "tool":
+            flush_pending()
+
+        rebuilt.append(message)
+
+        if role == "assistant":
+            pending_tool_calls = _checkpoint_ai_tool_calls(message)
+            continue
+        if role == "tool" and pending_tool_calls:
+            tool_call_id = _checkpoint_message_tool_call_id(message)
+            if tool_call_id:
+                pending_tool_calls = [
+                    tool_call for tool_call in pending_tool_calls if tool_call["id"] != tool_call_id
+                ]
+
+    flush_pending()
+    return rebuilt, inserted
+
+
 async def _sync_cancelled_output_to_checkpoint(
     graph: Any,
     config: dict[str, Any],
@@ -603,8 +831,6 @@ async def _sync_cancelled_output_to_checkpoint(
     runtime_messages: list[dict[str, Any]],
 ) -> bool:
     checkpoint_content = _cancelled_checkpoint_content(content)
-    if not checkpoint_content:
-        return False
     if not hasattr(graph, "aget_state") or not hasattr(graph, "aupdate_state"):
         logger.debug("[ChatTurn] graph 不支持 checkpoint 取消补写，跳过")
         return False
@@ -613,21 +839,30 @@ async def _sync_cancelled_output_to_checkpoint(
         snapshot = await graph.aget_state(config)
         values = snapshot.values or {}
         state_messages = list(values.get("messages") or []) if isinstance(values, dict) else []
-        if runtime_messages and not _state_has_runtime_tail(state_messages, runtime_messages):
+        state_messages, closed_tool_call_count = _close_pending_tool_calls_for_cancelled_checkpoint(
+            state_messages
+        )
+        if runtime_messages and not _state_contains_runtime_messages(
+            state_messages, runtime_messages
+        ):
             state_messages.extend(
                 _checkpoint_message_from_runtime(message) for message in runtime_messages
             )
 
-        if state_messages and _checkpoint_message_role(state_messages[-1]) == "assistant":
-            current_content = _message_content_text(getattr(state_messages[-1], "content", ""))
-            if CANCELLED_CHECKPOINT_NOTICE in current_content:
-                return False
-            state_messages[-1] = _copy_ai_message_with_content(
-                state_messages[-1],
-                _cancelled_checkpoint_content(current_content or content),
-            )
-        else:
-            state_messages.append(AIMessage(content=checkpoint_content))
+        if checkpoint_content:
+            if state_messages and _checkpoint_message_role(state_messages[-1]) == "assistant":
+                current_content = _message_content_text(getattr(state_messages[-1], "content", ""))
+                if CANCELLED_CHECKPOINT_NOTICE in current_content and not closed_tool_call_count:
+                    return False
+                if CANCELLED_CHECKPOINT_NOTICE not in current_content:
+                    state_messages[-1] = _copy_ai_message_with_content(
+                        state_messages[-1],
+                        _cancelled_checkpoint_content(current_content or content),
+                    )
+            else:
+                state_messages.append(AIMessage(content=checkpoint_content))
+        elif not closed_tool_call_count:
+            return False
 
         await graph.aupdate_state(
             config,
@@ -639,7 +874,7 @@ async def _sync_cancelled_output_to_checkpoint(
 
     logger.info(
         "[ChatTurn] 已将取消前 assistant 输出补写到 checkpoint | "
-        f"partial_content_len={len(content)}"
+        f"partial_content_len={len(content)} | closed_tool_calls={closed_tool_call_count}"
     )
     return True
 
@@ -652,6 +887,7 @@ class ChatService:
         repositories: StorageRepositories,
         agent_runner: AgentRunner,
         keydex_runtime_cache: KeydexWorkspaceRuntimeCache | None = None,
+        thread_task_service: ThreadTaskService | None = None,
     ) -> None:
         self.settings = settings
         self.repositories = repositories
@@ -659,6 +895,7 @@ class ChatService:
         self.keydex_runtime_cache = keydex_runtime_cache or KeydexWorkspaceRuntimeCache()
         self.message_event_service = MessageEventService(repositories.message_events)
         self.workspace_service = WorkspaceService(repositories.workspaces)
+        self.thread_task_service = thread_task_service or ThreadTaskService(repositories)
 
     async def handle_chat(
         self,
@@ -668,6 +905,8 @@ class ChatService:
         cancellation: ChatCancellationToken | None = None,
     ) -> ChatTurnResult:
         message_injection_items = _build_message_injection_items(request.runtime_params)
+        message_context_items = _build_message_context_items(request.runtime_params)
+        thread_task_context = _build_thread_task_runtime_context(request.runtime_params)
         skill_activation = _build_skill_activation_request(request.runtime_params)
         has_request_attachments = bool(request.attachments)
         if (
@@ -701,6 +940,8 @@ class ChatService:
             user_message=request.message,
         )
         runtime_metadata = {"runtime": "desktop", "agent_runtime": "langchain"}
+        if thread_task_context:
+            runtime_metadata["thread_task"] = thread_task_context
         if request.runtime_params:
             runtime_metadata["runtime_params"] = request.runtime_params
 
@@ -725,6 +966,12 @@ class ChatService:
             input_checkpoint_ns=str(input_checkpoint_config.get("checkpoint_ns") or ""),
             metadata=runtime_metadata,
         )
+        if thread_task_context:
+            self._attach_thread_task_run_to_turn(
+                thread_task_context=thread_task_context,
+                trace_id=trace_id,
+                turn_index=turn_index,
+            )
 
         aggregator = TurnCompletedAggregator()
         dispatcher = self._build_turn_dispatcher(
@@ -775,14 +1022,27 @@ class ChatService:
                 skill_activation=skill_activation,
                 keydex_snapshot=skill_activation_snapshot,
             )
-            await self._emit_user_message(
+            await self._emit_message_context_items(
                 dispatcher=dispatcher,
                 request=request,
                 session=session,
                 trace_id=trace_id,
+                root_node_id=root_node_id,
                 turn_index=turn_index,
-                attachments=attachment_payloads,
+                items=message_context_items,
             )
+            if not _should_hide_user_message_for_injection_turn(
+                request,
+                message_injection_items,
+            ):
+                await self._emit_user_message(
+                    dispatcher=dispatcher,
+                    request=request,
+                    session=session,
+                    trace_id=trace_id,
+                    turn_index=turn_index,
+                    attachments=attachment_payloads,
+                )
 
             outcome = await self._run_agent_loop(
                 request=request,
@@ -824,6 +1084,8 @@ class ChatService:
                     scene_id=request.scene_id or session.scene_id,
                     reason="user",
                 )
+                if thread_task_context:
+                    payload["thread_task"] = thread_task_context
                 await dispatcher.emit_event(
                     event_type=DomainEventType.TURN_CANCELLED.value,
                     source="chat_service",
@@ -863,6 +1125,8 @@ class ChatService:
                 latest_llm_token_usage=outcome.event_result.latest_llm_token_usage,
                 final_content=outcome.event_result.final_content,
             )
+            if thread_task_context:
+                completed_payload["thread_task"] = thread_task_context
             await dispatcher.emit_event(
                 event_type=DomainEventType.TURN_COMPLETED.value,
                 source="chat_service",
@@ -917,6 +1181,8 @@ class ChatService:
                 scene_id=request.scene_id or session.scene_id,
                 reason="user",
             )
+            if thread_task_context:
+                payload["thread_task"] = thread_task_context
             try:
                 await ApprovalService(
                     repositories=self.repositories,
@@ -953,17 +1219,20 @@ class ChatService:
                 f"trace_id={trace_id} | duration_ms={duration_ms} | error={error_message}"
             )
             try:
+                failed_payload = {
+                    "session_id": session.id,
+                    "trace_id": trace_id,
+                    "message": error_message,
+                    "error": error_message,
+                    "code": error_code,
+                    "details": error_details,
+                }
+                if thread_task_context:
+                    failed_payload["thread_task"] = thread_task_context
                 await dispatcher.emit_event(
                     event_type=DomainEventType.TURN_FAILED.value,
                     source="chat_service",
-                    payload={
-                        "session_id": session.id,
-                        "trace_id": trace_id,
-                        "message": error_message,
-                        "error": error_message,
-                        "code": error_code,
-                        "details": error_details,
-                    },
+                    payload=failed_payload,
                     trace_id=trace_id,
                     user_id=request.user_id or session.user_id,
                     original_session_id=session.id,
@@ -1066,6 +1335,7 @@ class ChatService:
             keydex_snapshot=keydex_snapshot,
         )
         tool_context.metadata["repositories"] = self.repositories
+        tool_context.metadata["thread_task_service"] = self.thread_task_service
         tool_context.metadata["dispatcher"] = dispatcher
         tool_context.metadata["data_dir"] = str(self.settings.data_dir)
         tool_context.metadata["file_access_mode"] = load_command_settings(
@@ -1334,28 +1604,30 @@ class ChatService:
 
         injected_runtime_messages: list[dict[str, Any]] = []
         for slot_item in slot_messages:
-            await self._emit_injected_message(
-                dispatcher=dispatcher,
-                request=request,
-                session=session,
-                trace_id=trace_id,
-                root_node_id=root_node_id,
-                turn_index=turn_index,
-                item=slot_item,
-            )
+            if not slot_item.hidden_for_transcript:
+                await self._emit_injected_message(
+                    dispatcher=dispatcher,
+                    request=request,
+                    session=session,
+                    trace_id=trace_id,
+                    root_node_id=root_node_id,
+                    turn_index=turn_index,
+                    item=slot_item,
+                )
 
         for follow_item in follow_messages:
             runtime_message = _to_runtime_message(follow_item)
             injected_runtime_messages.append(runtime_message)
-            await self._emit_injected_message(
-                dispatcher=dispatcher,
-                request=request,
-                session=session,
-                trace_id=trace_id,
-                root_node_id=root_node_id,
-                turn_index=turn_index,
-                item=follow_item,
-            )
+            if not follow_item.hidden_for_transcript:
+                await self._emit_injected_message(
+                    dispatcher=dispatcher,
+                    request=request,
+                    session=session,
+                    trace_id=trace_id,
+                    root_node_id=root_node_id,
+                    turn_index=turn_index,
+                    item=follow_item,
+                )
 
         logger.info(
             f"[MessageInjection] 注入消息完成 | session_id={session.id} | "
@@ -1459,6 +1731,61 @@ class ChatService:
             tags={"messageTimeMs": int(time.time() * 1000)},
         )
 
+    async def _emit_message_context_items(
+        self,
+        *,
+        dispatcher: EventDispatcher,
+        request: ChatRequest,
+        session: SessionRecord,
+        trace_id: str,
+        root_node_id: str,
+        turn_index: int,
+        items: list[dict[str, Any]],
+    ) -> None:
+        for item in items:
+            metadata = dict(item.get("metadata") or {})
+            metadata.setdefault("id", item.get("id"))
+            metadata.setdefault("kind", item.get("type"))
+            metadata.setdefault("label", item.get("label"))
+            await dispatcher.emit_event(
+                event_type=DomainEventType.MESSAGE_SYSTEM_CREATED.value,
+                source="message_context_item",
+                payload={
+                    "id": item.get("id"),
+                    "content": item.get("content", ""),
+                    "session_id": session.id,
+                    "trace_id": trace_id,
+                    "trace_record_id": trace_id,
+                    "root_node_id": root_node_id,
+                    "messageTimeMs": int(time.time() * 1000),
+                    "source": "message_context_item",
+                    "context_type": item.get("type"),
+                    "contextType": item.get("type"),
+                    "label": item.get("label"),
+                    "role": item.get("role"),
+                    "item_source": item.get("source"),
+                    "itemSource": item.get("source"),
+                    "metadata": metadata,
+                    "fallbackUserMessage": request.message,
+                    **{key: item[key] for key in (
+                        "path",
+                        "name",
+                        "fileType",
+                        "file_type",
+                        "skill_name",
+                        "skillName",
+                        "description",
+                        "locator",
+                    ) if key in item},
+                },
+                trace_id=trace_id,
+                user_id=request.user_id or session.user_id,
+                original_session_id=session.id,
+                active_session_id=session.active_session_id or session.id,
+                turn_index=turn_index,
+                tags={"messageTimeMs": int(time.time() * 1000)},
+            )
+
     async def _emit_user_message(
         self,
         *,
@@ -1556,6 +1883,27 @@ class ChatService:
             output_checkpoint_id=output_checkpoint_id,
             output_checkpoint_ns=output_checkpoint_ns,
         )
+
+    def _attach_thread_task_run_to_turn(
+        self,
+        *,
+        thread_task_context: dict[str, Any],
+        trace_id: str,
+        turn_index: int,
+    ) -> None:
+        run_id = str(thread_task_context.get("run_id") or "").strip()
+        if not run_id:
+            return
+        updated = self.repositories.thread_task_runs.attach_turn(
+            run_id,
+            turn_index=turn_index,
+            trace_id=trace_id,
+        )
+        if updated is None:
+            logger.warning(
+                "[ChatTurn] task continuation run 绑定 turn 失败 | "
+                f"run_id={run_id} | trace_id={trace_id} | turn_index={turn_index}"
+            )
 
 
 def _title_from_message(message: str) -> str:

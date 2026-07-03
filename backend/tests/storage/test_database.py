@@ -92,6 +92,7 @@ def test_init_database_creates_workspace_schema_and_session_columns(tmp_path) ->
         "session_type",
         "cwd",
         "workspace_roots_json",
+        "context_compression_epoch",
         "pinned_at",
     }.issubset(session_columns)
     assert {
@@ -203,6 +204,7 @@ def test_init_database_upgrades_legacy_session_schema_idempotently(tmp_path) -> 
         "session_type",
         "cwd",
         "workspace_roots_json",
+        "context_compression_epoch",
         "pinned_at",
     }.issubset(columns)
     assert row is not None
@@ -346,6 +348,157 @@ def test_init_database_creates_compression_staging_schema(tmp_path) -> None:
         "idx_compression_staging_original_status_target",
         "idx_compression_staging_original_generation",
     }.issubset(indexes)
+
+
+def test_init_database_creates_thread_task_schema(tmp_path) -> None:
+    db = init_database(tmp_path / "app.db")
+
+    with db.connect() as conn:
+        task_columns = {
+            str(row["name"]) for row in conn.execute("pragma table_info(thread_tasks)").fetchall()
+        }
+        run_columns = {
+            str(row["name"])
+            for row in conn.execute("pragma table_info(thread_task_runs)").fetchall()
+        }
+        task_indexes = {
+            str(row["name"]) for row in conn.execute("pragma index_list(thread_tasks)").fetchall()
+        }
+        run_indexes = {
+            str(row["name"])
+            for row in conn.execute("pragma index_list(thread_task_runs)").fetchall()
+        }
+
+    assert {
+        "id",
+        "session_id",
+        "type",
+        "title",
+        "objective",
+        "status",
+        "metadata_json",
+        "evidence_json",
+        "blocked_audit_json",
+        "system_stop_reason",
+        "current_run_id",
+        "turn_count",
+        "elapsed_seconds",
+        "token_usage_json",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+    }.issubset(task_columns)
+    assert {
+        "id",
+        "task_id",
+        "session_id",
+        "turn_index",
+        "trace_id",
+        "status",
+        "summary_json",
+        "error_json",
+        "started_at",
+        "finished_at",
+        "created_at",
+        "updated_at",
+    }.issubset(run_columns)
+    assert {
+        "idx_thread_tasks_session_updated",
+        "idx_thread_tasks_session_status",
+        "idx_thread_tasks_one_open_per_session",
+    }.issubset(task_indexes)
+    assert {
+        "idx_thread_task_runs_task_started",
+        "idx_thread_task_runs_session_started",
+        "idx_thread_task_runs_status_started",
+    }.issubset(run_indexes)
+
+
+def test_thread_task_schema_enforces_status_and_single_open_task(tmp_path) -> None:
+    db = init_database(tmp_path / "app.db")
+
+    with db.connect() as conn:
+        conn.execute(
+            """
+            insert into sessions (
+              id, user_id, scene_id, status, created_at, updated_at
+            ) values (
+              'session-1', 'user-1', 'scene-1', 'idle',
+              '2026-07-03T00:00:00Z', '2026-07-03T00:00:00Z'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into thread_tasks (
+              id, session_id, type, objective, status, created_at, updated_at
+            ) values (
+              'task-1', 'session-1', 'goal', 'finish the work', 'active',
+              '2026-07-03T00:00:00Z', '2026-07-03T00:00:00Z'
+            )
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                insert into thread_tasks (
+                  id, session_id, type, objective, status, created_at, updated_at
+                ) values (
+                  'task-2', 'session-1', 'goal', 'second open task', 'paused',
+                  '2026-07-03T00:00:01Z', '2026-07-03T00:00:01Z'
+                )
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                insert into thread_tasks (
+                  id, session_id, type, objective, status, created_at, updated_at
+                ) values (
+                  'task-bad', 'session-1', 'goal', 'invalid status', 'waiting',
+                  '2026-07-03T00:00:02Z', '2026-07-03T00:00:02Z'
+                )
+                """
+            )
+        conn.execute(
+            """
+            update thread_tasks
+            set status = 'complete',
+                updated_at = '2026-07-03T00:00:03Z'
+            where id = 'task-1'
+            """
+        )
+        conn.execute(
+            """
+            insert into thread_tasks (
+              id, session_id, type, objective, status, created_at, updated_at
+            ) values (
+              'task-3', 'session-1', 'goal', 'new open task', 'active',
+              '2026-07-03T00:00:04Z', '2026-07-03T00:00:04Z'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into thread_task_runs (
+              id, task_id, session_id, status, started_at, created_at, updated_at
+            ) values (
+              'run-1', 'task-3', 'session-1', 'running',
+              '2026-07-03T00:00:05Z', '2026-07-03T00:00:05Z', '2026-07-03T00:00:05Z'
+            )
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                insert into thread_task_runs (
+                  id, task_id, session_id, status, started_at, created_at, updated_at
+                ) values (
+                  'run-bad', 'task-3', 'session-1', 'done',
+                  '2026-07-03T00:00:06Z', '2026-07-03T00:00:06Z', '2026-07-03T00:00:06Z'
+                )
+                """
+            )
 
 
 def test_init_database_no_longer_creates_legacy_thread_turn_item_tables(tmp_path) -> None:

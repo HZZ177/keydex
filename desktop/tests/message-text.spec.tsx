@@ -156,6 +156,47 @@ describe("MessageText", () => {
     expect(screen.getByTestId("message-text").textContent).toContain("@README.md");
   });
 
+  it("renders restored goal context as a compact hover capsule below the user bubble", async () => {
+    render(
+      <MessageText
+        message={message("user", "开始执行", "completed", {
+          contextItems: [
+            {
+              id: "goal:123",
+              type: "goal",
+              label: "目标",
+              source: "goal",
+              content: "完成这个目标",
+              metadata: {
+                kind: "goal",
+                title: "目标",
+                objective: "完成这个目标",
+              },
+            },
+          ],
+        })}
+      />,
+    );
+
+    const bubble = screen.getByTestId("message-bubble");
+    const goalContext = screen.getByLabelText("目标上下文");
+    expect(bubble.textContent).toContain("开始执行");
+    expect(within(goalContext).getByText("目标")).not.toBeNull();
+    expect(within(goalContext).queryByText("完成这个目标")).toBeNull();
+    expect(screen.queryByLabelText("附加上下文")).toBeNull();
+
+    const wrapper = within(goalContext).getByText("目标").closest("[data-preview-open]");
+    if (!wrapper) {
+      throw new Error("goal context wrapper not found");
+    }
+    fireEvent.mouseEnter(wrapper);
+
+    const preview = await screen.findByText("完成这个目标");
+    const card = preview.closest("[data-floating-placement]");
+    expect(preview.closest('[data-testid="message-text"]')).toBeNull();
+    expect(card?.getAttribute("data-floating-placement")).toBe("bottom");
+  });
+
   it("does not render an empty user bubble for context-only restored messages", () => {
     render(
       <MessageText

@@ -72,17 +72,23 @@ class CommandRunner:
             ]
             deadline = started_at + request.timeout_seconds
             status: CommandStatus = "completed"
+            cancel_reason: str | None = None
             while process.poll() is None:
                 manager_record = self.manager.get(request.command_id)
                 if manager_record is not None and manager_record.cancel_event.is_set():
+                    cancel_reason = manager_record.cancel_reason or "user"
                     status = "cancelled"
-                    kill_process_tree(process.pid)
+                    logger.info(
+                        "[CommandRuntime] 检测到命令取消信号 | "
+                        f"command_id={request.command_id} | reason={cancel_reason}"
+                    )
                     break
                 if time.perf_counter() >= deadline:
                     status = "timed_out"
                     if manager_record is not None:
                         manager_record.cancel_reason = "timeout"
                         manager_record.cancel_event.set()
+                    cancel_reason = "timeout"
                     kill_process_tree(process.pid)
                     break
                 if output_store.output_limit_exceeded:
@@ -90,13 +96,24 @@ class CommandRunner:
                     if manager_record is not None:
                         manager_record.cancel_reason = "output_limit"
                         manager_record.cancel_event.set()
+                    cancel_reason = "output_limit"
                     kill_process_tree(process.pid)
                     break
                 time.sleep(0.05)
 
-            exit_code = process.wait(timeout=10)
-            for reader in readers:
-                reader.join(timeout=5)
+            manager_record = self.manager.get(request.command_id)
+            if manager_record is not None and manager_record.cancel_event.is_set():
+                cancel_reason = manager_record.cancel_reason or cancel_reason or "user"
+                if status == "completed":
+                    status = _status_for_cancel_reason(cancel_reason)
+
+            forced_termination = status in {"cancelled", "timed_out", "output_limit_exceeded"}
+            exit_code = _wait_for_process_exit(
+                process,
+                command_id=request.command_id,
+                forced=forced_termination,
+            )
+            _join_reader_threads(readers, timeout=0.2 if forced_termination else 5)
             snapshot = output_store.snapshot()
             if status == "completed" and snapshot.output_limit_exceeded:
                 status = "output_limit_exceeded"
@@ -131,6 +148,7 @@ class CommandRunner:
                 stderr_tail=snapshot.stderr_tail,
                 combined_tail=snapshot.combined_tail,
                 approval=dict(approval),
+                cancel_reason=cancel_reason,
                 run_id=request.run_id,
                 tool_call_id=request.tool_call_id,
             )
@@ -185,7 +203,10 @@ def _reader_thread(
             return
         try:
             while True:
-                chunk = pipe.read(4096)
+                try:
+                    chunk = pipe.read(4096)
+                except Exception:
+                    break
                 if not chunk:
                     break
                 output_store.write(stream_name, chunk)
@@ -198,6 +219,47 @@ def _reader_thread(
     thread = threading.Thread(target=read_loop, name=f"command-{stream_name}-reader", daemon=True)
     thread.start()
     return thread
+
+
+def _wait_for_process_exit(
+    process: subprocess.Popen,
+    *,
+    command_id: str,
+    forced: bool,
+) -> int | None:
+    try:
+        return process.wait(timeout=1 if forced else 10)
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "[CommandRuntime] 等待命令进程退出超时，继续强制终止 | "
+            f"command_id={command_id} | pid={process.pid}"
+        )
+        kill_process_tree(process.pid)
+        try:
+            process.kill()
+        except Exception:
+            pass
+        try:
+            return process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "[CommandRuntime] 命令进程仍未退出，返回已取消结果 | "
+                f"command_id={command_id} | pid={process.pid}"
+            )
+            return None
+
+
+def _join_reader_threads(readers: list[threading.Thread], *, timeout: float) -> None:
+    for reader in readers:
+        reader.join(timeout=timeout)
+
+
+def _status_for_cancel_reason(reason: str | None) -> CommandStatus:
+    if reason == "timeout":
+        return "timed_out"
+    if reason == "output_limit":
+        return "output_limit_exceeded"
+    return "cancelled"
 
 
 def _creationflags() -> int:

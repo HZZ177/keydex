@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import {
+  agentAttachmentFromSelected,
   selectedQuoteFromText,
   type SendBoxExternalQuoteRequest,
   type SelectedFile,
@@ -13,8 +14,10 @@ import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/
 import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
 import { useOptionalRightSidebarConversation } from "@/renderer/components/layout/RightSidebarConversationContext";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
 import type { AgentActionEnvelope, AgentSession, AgentSessionFork } from "@/types/protocol";
 import type { FileAccessMode } from "@/types/protocol";
+import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
 
 import { ChatLayout } from "./ChatLayout";
 import { ConversationComposer } from "./ConversationComposer";
@@ -27,6 +30,7 @@ import {
   type BtwConversationHistorySnapshot,
 } from "./conversationForkSource";
 import { consumeQuickChatSend, type QueuedQuickChatSend } from "./quickSend";
+import { goalContextItem, goalSeedContextMetadata, runtimeParamsWithGoalContextItem } from "./goalSeedContext";
 import styles from "./ConversationSessionSurface.module.css";
 
 export type ConversationSessionSurfaceMode = "main" | "sidecar";
@@ -67,6 +71,9 @@ export function ConversationSessionSurface({
   const isSidecar = mode === "sidecar";
   const [allowPersistentTrust, setAllowPersistentTrust] = useState(true);
   const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>("workspace_trusted");
+  const [goalComposerOpen, setGoalComposerOpen] = useState(false);
+  const [goalError, setGoalError] = useState<string | null>(null);
+  const [goalCreating, setGoalCreating] = useState(false);
   const quickSendConsumedRef = useRef<string | null>(null);
   const pendingQuickSendRef = useRef<QueuedQuickChatSend | null>(null);
   const scrollToBottomAfterSendRef = useRef<(() => void) | null>(null);
@@ -100,6 +107,7 @@ export function ConversationSessionSurface({
     onNotice: notifyRuntime,
     onOpenModelSettings,
     onAfterSend: () => scrollToBottomAfterSendRef.current?.(),
+    syncThreadTasks: !isSidecar,
   });
   const draft = controller.draft;
   const setDraft = controller.setDraft;
@@ -296,6 +304,16 @@ export function ConversationSessionSurface({
     [controller, modelSelection.selectedModel],
   );
 
+  const handleDraftChange = useCallback(
+    (value: string) => {
+      setDraft(value);
+      if (goalError) {
+        setGoalError(null);
+      }
+    },
+    [goalError, setDraft],
+  );
+
   const openBtwConversation = useCallback(() => {
     if (!threadId || !rightSidebarConversation) {
       notifications.warning("当前会话无法开启旁路对话");
@@ -330,9 +348,122 @@ export function ConversationSessionSurface({
     (command: SlashCommand) => {
       if (command.id === "bypass-conversation") {
         openBtwConversation();
+        return;
+      }
+      if (command.id === "goal") {
+        if (controller.activeTask) {
+          notifications.warning("当前已有进行中的目标");
+          return;
+        }
+        setGoalComposerOpen(true);
+        setGoalError(null);
       }
     },
-    [openBtwConversation],
+    [controller.activeTask, notifications, openBtwConversation],
+  );
+
+  const closeGoalComposer = useCallback(() => {
+    if (goalCreating) {
+      return;
+    }
+    setGoalComposerOpen(false);
+    setGoalError(null);
+  }, [goalCreating]);
+
+  const createGoalTask = useCallback(async (files: SelectedFile[] = [], quotes: SelectedQuote[] = [], imageAttachments: SelectedImageAttachment[] = []) => {
+    const prepared = prepareComposerMessage(draft, files, { quotes, selectedSkill });
+    const attachments = imageAttachments.map(agentAttachmentFromSelected);
+    const objective = prepared.message;
+    if (!objective) {
+      setGoalError("目标不能为空");
+      return false;
+    }
+    if (!threadId) {
+      setGoalError("当前会话无法创建目标");
+      return false;
+    }
+    if (controller.activeTask) {
+      setGoalError("当前已有进行中的目标");
+      return false;
+    }
+    setGoalCreating(true);
+    setGoalError(null);
+    try {
+      const task = await runtime.conversation.createThreadTask(threadId, {
+        type: "goal",
+        objective,
+        metadata: goalSeedContextMetadata({
+          message: prepared.message,
+          contextItems: prepared.contextItems,
+          runtimeParams: prepared.runtimeParams,
+          attachments,
+        }),
+      });
+      const goalItem = goalContextItem(objective);
+      const runtimeParams = runtimeParamsWithGoalContextItem(prepared.runtimeParams, goalItem);
+      controller.dispatch({
+        type: "event/receive",
+        event: {
+          action: "task_updated",
+          data: {
+            session_id: threadId,
+            task_id: task.id,
+            task,
+          },
+        },
+      });
+      const sent = await controller.sendText(prepared.message, modelSelection.selectedModel, {
+        clearDraft: true,
+        contextItems: [...prepared.contextItems, goalItem],
+        runtimeParams,
+        attachments,
+      });
+      if (!sent) {
+        await runtime.conversation.deleteThreadTask(threadId, task.id).catch(() => null);
+        controller.dispatch({
+          type: "event/receive",
+          event: {
+            action: "task_deleted",
+            data: {
+              session_id: threadId,
+              task_id: task.id,
+              task,
+            },
+          },
+        });
+        setGoalError("目标消息发送失败，请处理发送问题后重试");
+        return false;
+      }
+      setGoalComposerOpen(false);
+      setSelectedSkill(null);
+      notifications.success("目标已创建");
+      return true;
+    } catch (reason) {
+      if (isTaskAlreadyOpenError(reason)) {
+        try {
+          const tasks = await runtime.conversation.listThreadTasks(threadId);
+          controller.dispatch({ type: "tasks/loaded", sessionId: threadId, tasks });
+          setGoalError("当前已有进行中的目标");
+        } catch {
+          setGoalError("当前已有进行中的目标，请刷新后再试");
+        }
+        return false;
+      }
+      setGoalError(errorMessage(reason));
+      return false;
+    } finally {
+      setGoalCreating(false);
+    }
+  }, [controller, draft, modelSelection.selectedModel, notifications, runtime, selectedSkill, setSelectedSkill, threadId]);
+
+  const sendFromComposer = useCallback(
+    (files: SelectedFile[] = [], quotes: SelectedQuote[] = [], attachments: SelectedImageAttachment[] = []) => {
+      if (goalComposerOpen) {
+        return createGoalTask(files, quotes, attachments);
+      }
+      return send(files, quotes, attachments);
+    },
+    [createGoalTask, goalComposerOpen, send],
   );
 
   const sidecarExternalQuoteRequest = useMemo<SendBoxExternalQuoteRequest | null>(() => {
@@ -344,6 +475,15 @@ export function ConversationSessionSurface({
       requestId: -Math.abs(sidecarQuoteRequest.requestId),
     };
   }, [isSidecar, sidecarQuoteRequest]);
+
+  const goalModeAccessory = useMemo(() => {
+    if (!goalComposerOpen || isSidecar) {
+      return null;
+    }
+    return (
+      <GoalModeAccessory creating={goalCreating} error={goalError} onClose={closeGoalComposer} />
+    );
+  }, [closeGoalComposer, goalComposerOpen, goalCreating, goalError, isSidecar]);
 
   const handleExternalQuoteRequestHandled = useCallback(
     (requestId: number) => {
@@ -436,37 +576,42 @@ export function ConversationSessionSurface({
       onSubmit={controller.submitApproval}
     />
   ) : (
-    <ConversationComposer
-      value={draft}
-      runtimeState={runtimeState}
-      canSend={canSend}
-      canStop={canStop}
-      connectionReady={connectionReady}
-      modelSelection={{ ...modelSelection, setSelectedModel: changeModel }}
-      workspaceSkills={panelModel.workspaceSkills}
-      allowBypassConversationSlashCommand={!isSidecar}
-      selectedSkill={selectedSkill}
-      runtime={runtime}
-      sessionId={threadId}
-      fileAccessMode={fileAccessMode}
-      workspaceRoots={sessionWorkspaceRoots(session)}
-      onListWorkspaceDirectory={panelModel.listWorkspaceDirectory}
-      onSearchWorkspace={panelModel.searchWorkspace}
-      onOpenModelSettings={onOpenModelSettings}
-      onChange={setDraft}
-      onSkillChange={setSelectedSkill}
-      onSend={send}
-      onStop={controller.stop}
-      onOpenFileReference={panelModel.openFileReference}
-      onSlashCommand={handleSlashCommand}
-      onRefreshWorkspaceSkills={() => panelModel.refreshWorkspaceSkills({ forceReload: true })}
-      externalFileRequest={fileChipRequest}
-      externalQuoteRequest={sidecarExternalQuoteRequest ?? quoteChipRequest}
-      onExternalQuoteRequestHandled={handleExternalQuoteRequestHandled}
-      contextWindowUsage={panelModel.contextWindowUsage}
-      modelSelectorPlacement={isSidecar ? "bottom" : "top"}
-      autoFocusKey={isSidecar ? `sidecar:${threadId}` : undefined}
-    />
+    <div className={styles.composerStack}>
+      <ConversationComposer
+        value={draft}
+        runtimeState={runtimeState}
+        canSend={goalComposerOpen ? Boolean(draft.trim()) && !goalCreating && Boolean(threadId) : canSend}
+        canStop={canStop}
+        connectionReady={connectionReady}
+        modelSelection={{ ...modelSelection, setSelectedModel: changeModel }}
+        workspaceSkills={panelModel.workspaceSkills}
+        allowBypassConversationSlashCommand={!isSidecar}
+        allowGoalSlashCommand={!isSidecar}
+        selectedSkill={selectedSkill}
+        runtime={runtime}
+        sessionId={threadId}
+        fileAccessMode={fileAccessMode}
+        workspaceRoots={sessionWorkspaceRoots(session)}
+        onListWorkspaceDirectory={panelModel.listWorkspaceDirectory}
+        onSearchWorkspace={panelModel.searchWorkspace}
+        onOpenModelSettings={onOpenModelSettings}
+        onChange={handleDraftChange}
+        onSkillChange={setSelectedSkill}
+        onSend={sendFromComposer}
+        onStop={controller.stop}
+        onOpenFileReference={panelModel.openFileReference}
+        onSlashCommand={handleSlashCommand}
+        onRefreshWorkspaceSkills={() => panelModel.refreshWorkspaceSkills({ forceReload: true })}
+        externalFileRequest={fileChipRequest}
+        externalQuoteRequest={sidecarExternalQuoteRequest ?? quoteChipRequest}
+        onExternalQuoteRequestHandled={handleExternalQuoteRequestHandled}
+        contextWindowUsage={panelModel.contextWindowUsage}
+        modelSelectorPlacement={isSidecar ? "bottom" : "top"}
+        autoFocusKey={isSidecar ? `sidecar:${threadId}` : undefined}
+        leftAccessory={goalModeAccessory}
+        placeholder={goalComposerOpen ? "Keydex 应继续朝哪个目标努力？" : undefined}
+      />
+    </div>
   );
 
   if (isSidecar) {
@@ -583,6 +728,18 @@ function errorMessage(reason: unknown): string {
     return (reason as { message: string }).message;
   }
   return "操作失败";
+}
+
+function isTaskAlreadyOpenError(reason: unknown): boolean {
+  if (!reason || typeof reason !== "object") {
+    return false;
+  }
+  const code = (reason as { code?: unknown }).code;
+  if (code === "task_already_open") {
+    return true;
+  }
+  const message = (reason as { message?: unknown }).message;
+  return typeof message === "string" && message.includes("task_already_open");
 }
 
 function isPersistedAgentMessage(message: { id: string; messageEventId?: string }): boolean {

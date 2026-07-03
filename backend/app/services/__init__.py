@@ -38,6 +38,47 @@ _EXPORTS = {
     "SessionNotFoundError": ("backend.app.services.session_service", "SessionNotFoundError"),
     "SessionService": ("backend.app.services.session_service", "SessionService"),
     "SessionValidationError": ("backend.app.services.session_service", "SessionValidationError"),
+    "ThreadTaskConflictError": (
+        "backend.app.services.thread_task_service",
+        "ThreadTaskConflictError",
+    ),
+    "ThreadTaskNotFoundError": (
+        "backend.app.services.thread_task_service",
+        "ThreadTaskNotFoundError",
+    ),
+    "ThreadTaskService": ("backend.app.services.thread_task_service", "ThreadTaskService"),
+    "ThreadTaskServiceError": (
+        "backend.app.services.thread_task_service",
+        "ThreadTaskServiceError",
+    ),
+    "ThreadTaskRuntime": (
+        "backend.app.services.thread_task_runtime",
+        "ThreadTaskRuntime",
+    ),
+    "ThreadTaskEventPublisher": (
+        "backend.app.services.thread_task_events",
+        "ThreadTaskEventPublisher",
+    ),
+    "ThreadTaskElapsedTicker": (
+        "backend.app.services.thread_task_elapsed_ticker",
+        "ThreadTaskElapsedTicker",
+    ),
+    "ThreadTaskStateLocks": (
+        "backend.app.services.thread_task_runtime",
+        "ThreadTaskStateLocks",
+    ),
+    "ThreadTaskSessionNotFoundError": (
+        "backend.app.services.thread_task_service",
+        "ThreadTaskSessionNotFoundError",
+    ),
+    "ThreadTaskTransitionError": (
+        "backend.app.services.thread_task_service",
+        "ThreadTaskTransitionError",
+    ),
+    "ThreadTaskValidationError": (
+        "backend.app.services.thread_task_service",
+        "ThreadTaskValidationError",
+    ),
     "UsageRequestNotFoundError": (
         "backend.app.services.usage_service",
         "UsageRequestNotFoundError",

@@ -5,7 +5,7 @@ const SLASH_QUERY_REPLACE_PATTERN = /(?:^|\s)\/[^\s/]*$/;
 
 export interface SlashCommand {
   id: string;
-  kind: "builtin" | "skill_group" | "skill";
+  kind: "builtin" | "goal" | "skill_group" | "skill";
   label: string;
   title: string;
   description: string;
@@ -16,6 +16,7 @@ export interface SlashCommand {
 
 export interface BuildSlashCommandsOptions {
   includeBypassConversation?: boolean;
+  includeGoal?: boolean;
 }
 
 export function bypassConversationSlashCommand(): SlashCommand {
@@ -26,6 +27,17 @@ export function bypassConversationSlashCommand(): SlashCommand {
     title: "旁路对话",
     description: "从当前最新完整轮次开启临时旁路会话",
     searchText: "btw bypass sidecar side conversation temporary",
+  };
+}
+
+export function goalSlashCommand(): SlashCommand {
+  return {
+    id: "goal",
+    kind: "goal",
+    label: "目标",
+    title: "目标",
+    description: "创建一个长程目标",
+    searchText: "goal objective task long running thread task changcheng mubiao 目标 长程任务",
   };
 }
 
@@ -59,6 +71,9 @@ export function buildSlashCommands(
   options: BuildSlashCommandsOptions = {},
 ): SlashCommand[] {
   const commands = [skillGroupSlashCommand(skills)];
+  if (options.includeGoal !== false) {
+    commands.unshift(goalSlashCommand());
+  }
   if (options.includeBypassConversation !== false) {
     commands.unshift(bypassConversationSlashCommand());
   }

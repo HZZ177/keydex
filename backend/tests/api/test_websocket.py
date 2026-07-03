@@ -267,6 +267,38 @@ def test_websocket_chat_streams_tool_actions_and_history(tmp_path) -> None:
     assert messages[2]["content"] == "已读取"
 
 
+def test_websocket_terminate_command_does_not_cancel_turn(tmp_path) -> None:
+    client = _client(tmp_path)
+
+    async def fail_if_cancel_called(_session_id: str | None = None) -> bool:
+        raise AssertionError("terminate_command must not cancel the running turn")
+
+    client.app.state.chat_stream_manager.cancel = fail_if_cancel_called
+
+    with client.websocket_connect("/agent-base/ws/chat") as ws:
+        ws.send_json({"action": "create_session"})
+        session_id = ws.receive_json()["data"]["session_id"]
+
+        ws.send_json(
+            {
+                "action": "terminate_command",
+                "session_id": session_id,
+                "command_id": "missing-command",
+            }
+        )
+        terminated = ws.receive_json()
+
+    assert terminated == {
+        "action": "command_terminated",
+        "data": {
+            "session_id": session_id,
+            "command_id": "missing-command",
+            "terminated": False,
+            "cancelled": False,
+        },
+    }
+
+
 def test_websocket_chat_requires_explicit_model_selection(tmp_path) -> None:
     client = _client(tmp_path)
 

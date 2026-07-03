@@ -60,6 +60,24 @@ def test_trace_record_create_update_and_list_by_session(tmp_path) -> None:
     assert repositories.trace_records.list_by_session("ses_trace") == [finished]
 
 
+def test_trace_finish_preserves_metadata_when_not_supplied(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    repositories.trace_records.create(
+        trace_id="trace_meta",
+        session_id="ses_trace",
+        scene_id="desktop-agent",
+        user_id="local-user",
+        turn_index=1,
+        root_node_id="node_root",
+        metadata={"thread_task": {"task_id": "task-1", "run_id": "run-1"}},
+    )
+
+    finished = repositories.trace_records.finish("trace_meta", status="completed")
+
+    assert finished is not None
+    assert finished.metadata == {"thread_task": {"task_id": "task-1", "run_id": "run-1"}}
+
+
 def test_trace_event_log_append_and_query_by_trace_record(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     repositories.trace_records.create(

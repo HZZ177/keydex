@@ -1,4 +1,4 @@
-import { Check, ChevronDown, CircleAlert, Copy, GitBranchPlus, Undo2 } from "lucide-react";
+import { Check, ChevronDown, CircleAlert, Copy, GitBranchPlus, Target, Undo2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -99,6 +99,14 @@ export function MessageText({
   const contextItems = useMemo(
     () => (isUser ? contextItemsFromPayload(message.payload) : []),
     [isUser, message.payload],
+  );
+  const goalContextItems = useMemo(
+    () => contextItems.filter(isGoalContextItem),
+    [contextItems],
+  );
+  const regularContextItems = useMemo(
+    () => contextItems.filter((item) => !isGoalContextItem(item)),
+    [contextItems],
   );
   const imageAttachments = useMemo(
     () => (isUser ? imageAttachmentsFromPayload(message.payload) : []),
@@ -234,15 +242,15 @@ export function MessageText({
     [onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
   );
 
-  const userContextItems = isUser && contextItems.length > 0;
-  const inlineContextItems = !isUser && contextItems.length > 0;
+  const userContextItems = isUser && regularContextItems.length > 0;
+  const inlineContextItems = !isUser && regularContextItems.length > 0;
   const showBubble = Boolean(renderedContent || !userContextItems || cancelled);
 
   return (
     <article className={isUser ? styles.userMessage : styles.assistantMessage} data-testid="message-text">
       {userContextItems ? (
         <div className={styles.userContextItems}>
-          <MessageContextItems items={contextItems} onOpenFile={openContextFile} />
+          <MessageContextItems items={regularContextItems} onOpenFile={openContextFile} />
         </div>
       ) : null}
       {imageAttachments.length ? (
@@ -258,7 +266,7 @@ export function MessageText({
               {textualToolProtocolNotice}
             </div>
           ) : null}
-          {inlineContextItems ? <MessageContextItems items={contextItems} onOpenFile={openContextFile} /> : null}
+          {inlineContextItems ? <MessageContextItems items={regularContextItems} onOpenFile={openContextFile} /> : null}
           {renderedContent || !userContextItems ? (
             shouldVirtualizeMarkdown && markdownScrollParent === null ? (
               <div className="keydex-markdown" data-message-markdown-mode="virtual-pending" ref={contentRef} />
@@ -292,6 +300,7 @@ export function MessageText({
           ) : null}
         </div>
       ) : null}
+      {isUser && goalContextItems.length ? <MessageGoalContextItems items={goalContextItems} /> : null}
       <MessageGhostFooter footer={ghostFooter} />
 
       {!visuallyStreaming && showActionRow ? (
@@ -520,6 +529,31 @@ function MessageContextChip({
     return <MessageQuoteContextChip item={item} />;
   }
   return <MessagePlainContextChip item={item} />;
+}
+
+function MessageGoalContextItems({ items }: { items: AgentContextItem[] }) {
+  return (
+    <div className={styles.goalContextItems} aria-label="目标上下文">
+      {items.map((item) => (
+        <FloatingQuotePreview
+          quoteText={goalContextText(item)}
+          titleText={goalContextTitle(item)}
+          wrapperClassName={styles.goalContextItemWrapper}
+          chipClassName={styles.goalContextItem}
+          cardClassName={`${styles.contextItemCard} ${styles.goalContextCard}`}
+          titleClassName={styles.contextItemPathTitle}
+          bodyClassName={styles.contextItemBody}
+          chipProps={{ "data-context-type": "goal" }}
+          placement="bottom"
+          showCopyAction={false}
+          key={item.id || item.label}
+        >
+          <Target size={12} aria-hidden="true" />
+          <span className={styles.goalContextTitle}>{goalContextTitle(item)}</span>
+        </FloatingQuotePreview>
+      ))}
+    </div>
+  );
 }
 
 function MessageFileContextChip({
@@ -859,6 +893,18 @@ function contextItemsFromPayload(payload: Record<string, unknown>): AgentContext
   });
 }
 
+function isGoalContextItem(item: AgentContextItem): boolean {
+  return item.type === "goal" || stringValue(item.metadata?.kind) === "goal";
+}
+
+function goalContextTitle(item: AgentContextItem): string {
+  return stringValue(item.metadata?.title) || item.label || "目标";
+}
+
+function goalContextText(item: AgentContextItem): string {
+  return stringValue(item.metadata?.objective) || item.content || item.description || "";
+}
+
 function imageAttachmentsFromPayload(payload: Record<string, unknown>): AgentFileAttachment[] {
   const raw = payload.attachments;
   if (!Array.isArray(raw)) {
@@ -934,6 +980,7 @@ interface FloatingQuotePreviewProps {
   chipElement?: "span" | "button";
   chipButtonProps?: ButtonHTMLAttributes<HTMLButtonElement> & DataAttributes;
   chipProps?: Record<string, string>;
+  placement?: "auto" | "top" | "bottom";
   showCopyAction?: boolean;
   children: ReactNode;
 }
@@ -951,6 +998,7 @@ function FloatingQuotePreview({
   chipElement = "span",
   chipButtonProps,
   chipProps,
+  placement = "auto",
   showCopyAction = true,
   children,
 }: FloatingQuotePreviewProps) {
@@ -1010,16 +1058,20 @@ function FloatingQuotePreview({
     const left = clamp(chipCenter - cardWidth / 2, viewportPadding, viewportWidth - cardWidth - viewportPadding);
     const spaceAbove = rect.top - viewportPadding;
     const spaceBelow = viewportHeight - rect.bottom - viewportPadding;
-    const placement: FloatingQuotePosition["placement"] =
-      spaceAbove >= cardHeight + gap || spaceAbove > spaceBelow ? "top" : "bottom";
+    const resolvedPlacement: FloatingQuotePosition["placement"] =
+      placement === "top" || placement === "bottom"
+        ? placement
+        : spaceAbove >= cardHeight + gap || spaceAbove > spaceBelow
+          ? "top"
+          : "bottom";
     const top =
-      placement === "top"
+      resolvedPlacement === "top"
         ? clamp(rect.top - cardHeight - gap, viewportPadding, viewportHeight - cardHeight - viewportPadding)
         : clamp(rect.bottom + gap, viewportPadding, viewportHeight - cardHeight - viewportPadding);
     const arrowLeft = clamp(chipCenter - left, 16, cardWidth - 16);
 
-    setPosition({ left, top, arrowLeft, placement });
-  }, []);
+    setPosition({ left, top, arrowLeft, placement: resolvedPlacement });
+  }, [placement]);
 
   useLayoutEffect(() => {
     if (!open) {

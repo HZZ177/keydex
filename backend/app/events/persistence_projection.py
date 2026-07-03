@@ -39,6 +39,10 @@ class PersistenceProjection:
         DomainEventType.TURN_CANCELLED: ReplayAction.CANCELLED,
         DomainEventType.TURN_FAILED: ReplayAction.ERROR,
         DomainEventType.TURN_COMPLETED: ReplayAction.COMPLETED,
+        DomainEventType.THREAD_TASK_UPDATED: ReplayAction.TASK_UPDATED,
+        DomainEventType.THREAD_TASK_DELETED: ReplayAction.TASK_DELETED,
+        DomainEventType.THREAD_TASK_RUN_STARTED: ReplayAction.TASK_RUN_STARTED,
+        DomainEventType.THREAD_TASK_RUN_FINISHED: ReplayAction.TASK_RUN_FINISHED,
         DomainEventType.REASONING_FINISHED: ReplayAction.REASONING,
         DomainEventType.MIDDLEWARE_PROGRESS: ReplayAction.MIDDLEWARE_PROGRESS,
     }

@@ -5,6 +5,7 @@ export {
   filterSlashCommands,
   filterSlashSkills,
   getSlashQuery,
+  goalSlashCommand,
   removeSlashQuery,
   replaceSlashQuery,
   skillGroupSlashCommand,

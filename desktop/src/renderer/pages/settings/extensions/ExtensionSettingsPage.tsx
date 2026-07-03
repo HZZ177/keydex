@@ -382,6 +382,10 @@ function CompressionConfigurator({
   triggerFraction: number;
 }) {
   const triggerTokenCount = Math.max(0, Math.round(contextWindowTokens * triggerFraction));
+  const emergencyTokenCount = Math.max(
+    0,
+    Math.round(contextWindowTokens * FIXED_COMPRESSION_EMERGENCY_FRACTION),
+  );
 
   return (
     <div className={styles.compressionConfigurator}>
@@ -409,7 +413,9 @@ function CompressionConfigurator({
           <strong>{formatPercent(triggerFraction)}</strong>
         </div>
         <CompressionThresholdSlider
-          ariaValueText={`${formatPercent(triggerFraction)}，约 ${formatTokenCount(triggerTokenCount)} token`}
+          ariaValueText={`${formatPercent(triggerFraction)}，约 ${formatTokenCount(
+            triggerTokenCount,
+          )} token 时触发无感压缩，${formatTokenCount(emergencyTokenCount)} token 时触发阻塞式压缩`}
           label="触发阈值"
           max={MAX_COMPRESSION_TRIGGER_FRACTION}
           min={MIN_COMPRESSION_TRIGGER_FRACTION}
@@ -418,7 +424,10 @@ function CompressionConfigurator({
           value={triggerFraction}
         />
       <div className={styles.thresholdMeta}>
-        <span>约 {formatTokenCount(triggerTokenCount)} token 时触发</span>
+        <span>
+          约 {formatTokenCount(triggerTokenCount)} token 时触发无感压缩，{formatTokenCount(emergencyTokenCount)} token
+          时触发阻塞式压缩
+        </span>
       </div>
       </div>
     </div>

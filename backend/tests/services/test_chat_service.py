@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
 from backend.app.agent import AgentRunner
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
@@ -935,3 +935,62 @@ async def test_chat_service_patches_cancelled_partial_output_into_checkpoint(tmp
     trace = repositories.trace_records.get(result.trace_id)
     assert trace.status == "cancelled"
     assert trace.output_checkpoint_id == "ckpt_cancelled"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_closes_pending_tool_call_when_cancelled(tmp_path) -> None:
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="不应调用")])
+    service, repositories, _checkpointer, _factory = _service(tmp_path, model)
+    agent = CancellableStreamingAgent("终止命令")
+    agent.state_messages = [
+        HumanMessage(content="终止命令"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "run_cmd",
+                    "args": {"command": "ping 127.0.0.1"},
+                    "id": "call_command",
+                }
+            ],
+        ),
+    ]
+    service.agent_runner = CancellableStreamingRunner(agent)  # type: ignore[assignment]
+    chat_adapter = RecordingChatAdapter()
+    cancellation = ChatCancellationToken()
+
+    task = asyncio.create_task(
+        service.handle_chat(
+            ChatRequest(
+                message="终止命令",
+                provider_id="provider-1",
+                model="qwen-coder",
+            ),
+            chat_adapter=chat_adapter,
+            cancellation=cancellation,
+        )
+    )
+    await asyncio.wait_for(agent.stream_started.wait(), timeout=1)
+    for _ in range(50):
+        if any(item["action"] == "stream" for item in chat_adapter.sent):
+            break
+        await asyncio.sleep(0.01)
+
+    cancellation.cancel()
+    task.cancel()
+    result = await asyncio.wait_for(task, timeout=1)
+
+    assert result.status == "cancelled"
+    assert [message.type for message in agent.updated_messages] == ["human", "ai", "tool", "ai"]
+    assert [message.content for message in agent.updated_messages if message.type == "human"] == [
+        "终止命令"
+    ]
+    tool_message = agent.updated_messages[2]
+    assert isinstance(tool_message, ToolMessage)
+    assert tool_message.tool_call_id == "call_command"
+    assert json.loads(str(tool_message.content)) == {
+        "status": "cancelled",
+        "message": "用户终止了该工具调用，本轮对话已取消。",
+        "tool": "run_cmd",
+    }
+    assert agent.updated_messages[3].content == "半截\n\n[用户在此处取消]"

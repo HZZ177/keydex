@@ -13,6 +13,13 @@ import type {
   AgentSessionListResponse,
   AgentSessionResponse,
   AgentFileAttachment,
+  ThreadTask,
+  ThreadTaskListResponse,
+  ThreadTaskResponse,
+  ThreadTaskRun,
+  ThreadTaskRunsResponse,
+  ThreadTaskType,
+  ThreadTaskUserStatus,
 } from "@/types/protocol";
 
 import type { HttpClient } from "./httpClient";
@@ -82,6 +89,20 @@ export interface SessionBranchPayload {
   turnIndex?: number | null;
 }
 
+export interface CreateThreadTaskPayload {
+  type?: Extract<ThreadTaskType, "goal">;
+  objective: string;
+  title?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface UpdateThreadTaskPayload {
+  objective?: string | null;
+  title?: string | null;
+  status?: ThreadTaskUserStatus | null;
+  metadata?: Record<string, unknown> | null;
+}
+
 export interface ChatPayload {
   session_id?: string;
   message: string;
@@ -137,6 +158,11 @@ export interface ConversationRuntime {
   reverseSession(sessionId: string, payload: SessionBranchPayload): Promise<AgentSessionBranchResponse>;
   loadHistory(sessionId: string, options?: LoadHistoryOptions): Promise<AgentHistoryResponse>;
   loadToolDetails(sessionId: string, ref: LoadToolDetailsOptions): Promise<AgentToolDetails>;
+  listThreadTasks(sessionId: string): Promise<ThreadTask[]>;
+  createThreadTask(sessionId: string, payload: CreateThreadTaskPayload): Promise<ThreadTask>;
+  updateThreadTask(sessionId: string, taskId: string, payload: UpdateThreadTaskPayload): Promise<ThreadTask>;
+  deleteThreadTask(sessionId: string, taskId: string): Promise<ThreadTask>;
+  listThreadTaskRuns(sessionId: string, taskId: string): Promise<ThreadTaskRun[]>;
   openChatChannel(
     onEvent: (event: AgentActionEnvelope) => void,
     options?: ChatChannelOptions,
@@ -202,6 +228,47 @@ export function createConversationRuntime(
           `/api/sessions/${encodeURIComponent(sessionId)}/tool-details${toolDetailsQuery(ref)}`,
         )
         .then((response) => response.detail);
+    },
+    listThreadTasks(sessionId) {
+      return http
+        .request<ThreadTaskListResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/tasks`)
+        .then((response) => response.list);
+    },
+    createThreadTask(sessionId, payload) {
+      return http
+        .request<ThreadTaskResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/tasks`, {
+          method: "POST",
+          body: threadTaskCreatePayload(payload),
+        })
+        .then((response) => response.task);
+    },
+    updateThreadTask(sessionId, taskId, payload) {
+      return http
+        .request<ThreadTaskResponse>(
+          `/api/sessions/${encodeURIComponent(sessionId)}/tasks/${encodeURIComponent(taskId)}`,
+          {
+            method: "PATCH",
+            body: threadTaskUpdatePayload(payload),
+          },
+        )
+        .then((response) => response.task);
+    },
+    deleteThreadTask(sessionId, taskId) {
+      return http
+        .request<ThreadTaskResponse>(
+          `/api/sessions/${encodeURIComponent(sessionId)}/tasks/${encodeURIComponent(taskId)}`,
+          {
+            method: "DELETE",
+          },
+        )
+        .then((response) => response.task);
+    },
+    listThreadTaskRuns(sessionId, taskId) {
+      return http
+        .request<ThreadTaskRunsResponse>(
+          `/api/sessions/${encodeURIComponent(sessionId)}/tasks/${encodeURIComponent(taskId)}/runs`,
+        )
+        .then((response) => response.list);
     },
     openChatChannel(onEvent, channelOptions = {}) {
       const client = wsFactory({
@@ -314,5 +381,23 @@ function branchPayload(payload: SessionBranchPayload): Record<string, unknown> {
     ...(payload.traceId !== undefined ? { trace_id: payload.traceId } : {}),
     ...(payload.messageEventId !== undefined ? { message_event_id: payload.messageEventId } : {}),
     ...(payload.turnIndex !== undefined ? { turn_index: payload.turnIndex } : {}),
+  };
+}
+
+function threadTaskCreatePayload(payload: CreateThreadTaskPayload): Record<string, unknown> {
+  return {
+    type: payload.type ?? "goal",
+    objective: payload.objective,
+    ...(payload.title !== undefined ? { title: payload.title } : {}),
+    ...(payload.metadata !== undefined ? { metadata: payload.metadata } : {}),
+  };
+}
+
+function threadTaskUpdatePayload(payload: UpdateThreadTaskPayload): Record<string, unknown> {
+  return {
+    ...(payload.objective !== undefined ? { objective: payload.objective } : {}),
+    ...(payload.title !== undefined ? { title: payload.title } : {}),
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+    ...(payload.metadata !== undefined ? { metadata: payload.metadata } : {}),
   };
 }

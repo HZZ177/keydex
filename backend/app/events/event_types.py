@@ -11,6 +11,10 @@ class DomainEventType(StrEnum):
     SESSION_HAS_UPDATE = "session.has_update"
     SYSTEM_NOTICE = "system.notice"
     WORKBENCH_WORKSPACE_STATE_CHANGED = "workbench.workspace.state_changed"
+    THREAD_TASK_UPDATED = "thread_task.updated"
+    THREAD_TASK_DELETED = "thread_task.deleted"
+    THREAD_TASK_RUN_STARTED = "thread_task.run.started"
+    THREAD_TASK_RUN_FINISHED = "thread_task.run.finished"
 
     MESSAGE_USER_CREATED = "message.user.created"
     MESSAGE_SYSTEM_CREATED = "message.system.created"
@@ -92,6 +96,10 @@ CORE_EVENT_TYPES = frozenset(
         DomainEventType.REASONING_FINISHED,
         DomainEventType.REASONING_FAILED,
         DomainEventType.TASK_FINISHED_CHAT,
+        DomainEventType.THREAD_TASK_UPDATED,
+        DomainEventType.THREAD_TASK_DELETED,
+        DomainEventType.THREAD_TASK_RUN_STARTED,
+        DomainEventType.THREAD_TASK_RUN_FINISHED,
         DomainEventType.MIDDLEWARE_PROGRESS,
     }
 )

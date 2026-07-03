@@ -23,6 +23,9 @@ export function agentMessageToConversationMessage(message: AgentChatMessage, ind
 }
 
 export function conversationKindFromAgent(message: AgentChatMessage): ConversationMessage["kind"] {
+  if (message.role === "system" && isThreadTaskBoundaryMessage(message)) {
+    return "thread_task_boundary";
+  }
   if (message.role === "system" && isLLMRetryMessage(message)) {
     return "llm_retry";
   }
@@ -35,6 +38,9 @@ export function conversationKindFromAgent(message: AgentChatMessage): Conversati
     }
     if (message.toolName === "load_skill") {
       return "skill";
+    }
+    if (isThreadTaskToolName(message.toolName)) {
+      return "thread_task_status";
     }
     return isCommandToolName(message.toolName) ? "command" : "tool";
   }
@@ -63,6 +69,10 @@ function isCommandToolName(value: string | undefined): boolean {
   return value === "run_git_bash" || value === "run_cmd" || value === "run_powershell";
 }
 
+function isThreadTaskToolName(value: string | undefined): boolean {
+  return value === "update_thread_task" || value === "get_thread_task";
+}
+
 export function conversationStatusFromAgent(message: AgentChatMessage): ConversationMessage["status"] {
   if (message.cancelled) {
     return "cancelled";
@@ -80,6 +90,9 @@ export function conversationStatusFromAgent(message: AgentChatMessage): Conversa
     return message.status === "pending" ? "pending" : "completed";
   }
   if (message.role === "system" && isContextCompressionMessage(message)) {
+    return "completed";
+  }
+  if (message.role === "system" && isThreadTaskBoundaryMessage(message)) {
     return "completed";
   }
   if (message.role === "tool" || message.role === "assistant" || message.role === "reasoning" || message.role === "subagent") {
@@ -184,6 +197,10 @@ function isContextCompressionMessage(message: AgentChatMessage): boolean {
 function isLLMRetryMessage(message: AgentChatMessage): boolean {
   const retry = objectValue(message.metadata?.retry);
   return stringValue(retry?.kind) === "llm_retry";
+}
+
+function isThreadTaskBoundaryMessage(message: AgentChatMessage): boolean {
+  return stringValue(message.metadata?.kind) === "thread_task_boundary";
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {

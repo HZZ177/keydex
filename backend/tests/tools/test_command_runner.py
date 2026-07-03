@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from backend.app.tools.command_runtime.models import CommandRequest, CommandRuntime
 from backend.app.tools.command_runtime.output_store import CommandOutputStore
+from backend.app.tools.command_runtime.process_manager import CommandProcessManager
 from backend.app.tools.command_runtime.providers import CommandSpawnSpec
 from backend.app.tools.command_runtime.runner import CommandRunner
 
@@ -53,6 +59,19 @@ def _store(tmp_path, *, inline_chars: int = 12000, file_bytes: int = 1024 * 1024
         tail_max_chars=2048,
         output_file_max_bytes=file_bytes,
     )
+
+
+def _git_bash_path() -> Path | None:
+    for raw_path in (
+        "C:/Program Files/Git/bin/bash.exe",
+        "C:/Program Files/Git/usr/bin/bash.exe",
+        "C:/Program Files (x86)/Git/bin/bash.exe",
+        "C:/Program Files (x86)/Git/usr/bin/bash.exe",
+    ):
+        path = Path(raw_path)
+        if path.exists():
+            return path
+    return None
 
 
 def test_command_runner_runs_successful_foreground_command(tmp_path, monkeypatch) -> None:
@@ -154,3 +173,104 @@ def test_command_runner_limits_output_file_and_returns_tail(tmp_path, monkeypatc
     assert result.output_limit_exceeded is True
     assert result.output_truncated is True
     assert "line-" in result.combined_tail
+
+
+def test_command_runner_returns_cancelled_result_when_user_terminates_command(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "backend.app.tools.command_runtime.runner.provider_for_runtime",
+        lambda runtime: PythonProvider(),
+    )
+    manager = CommandProcessManager()
+    result_holder: list[Any] = []
+
+    def run_command() -> None:
+        result_holder.append(
+            CommandRunner(manager=manager).run(
+                request=_request(
+                    tmp_path,
+                    "import time; print('before-cancel', flush=True); time.sleep(10)",
+                ),
+                runtime=_runtime(),
+                output_store=_store(tmp_path),
+                approval={"required": False},
+            )
+        )
+
+    thread = threading.Thread(target=run_command, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if manager.get("cmd-test") is not None:
+            break
+        time.sleep(0.01)
+
+    assert manager.terminate_command("cmd-test", reason="user") is True
+    assert manager.terminate_command("cmd-test", reason="user") is False
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert result_holder
+    result = result_holder[0]
+    assert result.status == "cancelled"
+    assert result.cancel_reason == "user"
+    assert "before-cancel" in result.stdout_tail
+    assert "用户终止" in result.to_payload()["tool_summary"]
+
+
+def test_command_runner_terminates_git_bash_sleep_without_waiting_for_exit(
+    tmp_path,
+) -> None:
+    if sys.platform != "win32":
+        pytest.skip("Git Bash cancellation behavior is Windows-specific")
+    bash = _git_bash_path()
+    if bash is None:
+        pytest.skip("Git Bash is not installed")
+
+    manager = CommandProcessManager()
+    runtime = CommandRuntime(
+        shell="git_bash",
+        tool_name="run_git_bash",
+        shell_path=str(bash),
+        shell_label="Git Bash",
+    )
+    request = _request(
+        tmp_path,
+        "sleep 20 && echo done",
+        timeout_seconds=60,
+    )
+    result_holder: list[Any] = []
+
+    def run_command() -> None:
+        result_holder.append(
+            CommandRunner(manager=manager).run(
+                request=request,
+                runtime=runtime,
+                output_store=_store(tmp_path),
+                approval={"required": False},
+            )
+        )
+
+    started_at = time.perf_counter()
+    thread = threading.Thread(target=run_command, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if manager.get("cmd-test") is not None:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("Git Bash command did not register as active")
+
+    time.sleep(0.2)
+    assert manager.terminate_command("cmd-test", reason="user") is True
+    thread.join(timeout=8)
+
+    elapsed = time.perf_counter() - started_at
+    assert not thread.is_alive()
+    assert elapsed < 8
+    assert result_holder
+    result = result_holder[0]
+    assert result.status == "cancelled"
+    assert result.cancel_reason == "user"
+    assert "done" not in result.stdout_tail

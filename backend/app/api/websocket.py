@@ -220,20 +220,19 @@ async def chat_websocket(websocket: WebSocket) -> None:
                         command_id,
                         reason="user",
                     )
-                    cancelled = await stream_manager.cancel(session_id)
                     await send(
                         "command_terminated",
                         {
                             "session_id": session_id,
                             "command_id": command_id,
                             "terminated": terminated,
-                            "cancelled": cancelled,
+                            "cancelled": False,
                         },
                     )
                     logger.info(
                         "[WebSocket] 收到 command 终止请求 | "
                         f"trace_id={connection_trace_id} | session_id={session_id} | "
-                        f"command_id={command_id} | terminated={terminated} | cancelled={cancelled}"
+                        f"command_id={command_id} | terminated={terminated}"
                     )
                     continue
 

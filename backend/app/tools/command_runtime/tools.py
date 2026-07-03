@@ -92,7 +92,11 @@ async def run_configured_command_tool(
     runtime = CommandRuntime.from_settings(settings)
     tool_name = _tool_name(context)
     if runtime is None or tool_name not in SHELL_BY_TOOL or runtime.tool_name != tool_name:
-        return _unavailable_result(tool_name=tool_name, command=tool_args.command, settings=settings)
+        return _unavailable_result(
+            tool_name=tool_name,
+            command=tool_args.command,
+            settings=settings,
+        )
     validation = validate_shell_executable(runtime.shell, runtime.shell_path)
     if not validation.found:
         return _unavailable_result(
@@ -289,7 +293,9 @@ async def _emit_progress_until_done(
         await asyncio.sleep(interval)
         snapshot = output_store.snapshot()
         active = command_process_manager.get(request.command_id)
-        status = "running" if active is not None else "completed"
+        cancel_reason = active.cancel_reason if active is not None else None
+        terminating = active is not None and active.cancel_event.is_set()
+        status = "terminating" if terminating else "running" if active is not None else "completed"
         await dispatcher.emit_event(
             event_type=DomainEventType.LLM_TOOL_PROGRESS.value,
             source="command_runtime",
@@ -307,13 +313,14 @@ async def _emit_progress_until_done(
                 "cwd": request.cwd_label,
                 "timeout_seconds": request.timeout_seconds,
                 "status": status,
+                "cancel_reason": cancel_reason,
                 "elapsed_ms": int((time.perf_counter() - started_at) * 1000),
                 "output_bytes": snapshot.output_bytes,
                 "combined_tail": snapshot.combined_tail,
                 "stdout_tail": snapshot.stdout_tail,
                 "stderr_tail": snapshot.stderr_tail,
                 "output_path": snapshot.output_path,
-                "can_terminate": active is not None,
+                "can_terminate": active is not None and not terminating,
                 "session_id": context.session_id,
                 "trace_id": context.trace_id,
             },
@@ -362,7 +369,10 @@ def _unavailable_result(
     error: str | None = None,
 ) -> dict[str, Any]:
     shell = settings.selected_shell
-    message = error or "当前未配置可用命令执行环境，请先在设置页选择并保存 Git Bash、CMD 或 PowerShell。"
+    message = (
+        error
+        or "当前未配置可用命令执行环境，请先在设置页选择并保存 Git Bash、CMD 或 PowerShell。"
+    )
     return {
         "kind": "command_result",
         "tool": tool_name,
@@ -436,7 +446,11 @@ def _resolve_cwd(raw_path: str, context: ToolExecutionContext) -> Path:
     if not cwd.exists():
         raise ToolExecutionError("cwd 不存在", code="cwd_not_found", details={"cwd": raw_path})
     if not cwd.is_dir():
-        raise ToolExecutionError("cwd 不是目录", code="cwd_not_directory", details={"cwd": raw_path})
+        raise ToolExecutionError(
+            "cwd 不是目录",
+            code="cwd_not_directory",
+            details={"cwd": raw_path},
+        )
     return cwd
 
 

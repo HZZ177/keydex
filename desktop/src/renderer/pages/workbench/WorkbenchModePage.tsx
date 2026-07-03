@@ -5,7 +5,10 @@ import { WorkspaceFileBrowser, WorkspaceSelector, type WorkspaceSelection } from
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { clampWorkbenchAssistantDrawerWidth } from "@/renderer/hooks/layout/layoutStore";
-import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
+import {
+  useAgentSessionController,
+  type AgentSessionControllerEnsureSessionRequest,
+} from "@/renderer/hooks/useAgentSessionController";
 import { createBtwConversationFromSession } from "@/renderer/pages/conversation/conversationForkSource";
 import { useOptionalPreview, type PreviewFileRevealTarget } from "@/renderer/providers/PreviewProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
@@ -108,7 +111,7 @@ export function WorkbenchModePage({
     setDockTransitionLayout(state);
   }, []);
   const ensureWorkbenchSession = useCallback(
-    async ({ title, model }: { title: string; model?: { providerId: string; model: string } | null }) => {
+    async ({ title, model }: AgentSessionControllerEnsureSessionRequest) => {
       if (!workspaceId) {
         return null;
       }
@@ -152,6 +155,7 @@ export function WorkbenchModePage({
     sessionId: btwSession?.id ?? "",
     historyPageSize: 2,
     loadFullHistory: false,
+    syncThreadTasks: false,
   });
   const btwActive = Boolean(btwSession?.id);
   const activeAssistantController = btwActive ? btwController : assistantController;
@@ -304,6 +308,7 @@ export function WorkbenchModePage({
             btwLoadedHistoryTurnCount={btwLoadedHistoryTurnCount}
             onOpenBtwConversation={openWorkbenchBtwConversation}
             onCloseBtwConversation={closeWorkbenchBtwConversation}
+            onEnsureSession={!btwActive ? ensureWorkbenchSession : undefined}
             onRequestNewSession={!btwActive && onRequestNewSession ? requestNewWorkbenchSession : undefined}
             onDrawerWidthCommit={commitDrawerWidth}
             onDrawerWidthPreview={previewDrawerWidth}

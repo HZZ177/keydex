@@ -25,6 +25,10 @@ class ChatAction(StrEnum):
     SESSION_CLOSED = "session_closed"
     SESSION_TITLE_UPDATED = "session_title_updated"
     TASK_RESULT = "task_result"
+    TASK_UPDATED = "task_updated"
+    TASK_DELETED = "task_deleted"
+    TASK_RUN_STARTED = "task_run_started"
+    TASK_RUN_FINISHED = "task_run_finished"
     REASONING = "reasoning"
     MIDDLEWARE_PROGRESS = "middleware_progress"
 
@@ -46,6 +50,10 @@ class ReplayAction(StrEnum):
     CANCELLED = "cancelled"
     ERROR = "error"
     SCHEDULED_TASK_RESULT = "scheduled_task_result"
+    TASK_UPDATED = "task_updated"
+    TASK_DELETED = "task_deleted"
+    TASK_RUN_STARTED = "task_run_started"
+    TASK_RUN_FINISHED = "task_run_finished"
     REASONING = "reasoning"
     MIDDLEWARE_PROGRESS = "middleware_progress"
 

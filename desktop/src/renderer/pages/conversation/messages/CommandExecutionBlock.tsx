@@ -1,5 +1,5 @@
-import { Check, ChevronDown, Clipboard, LoaderCircle, SquareTerminal, XCircle } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Check, ChevronDown, Clipboard, LoaderCircle, Square, SquareTerminal, XCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
@@ -28,7 +28,7 @@ export function CommandExecutionBlock({
   onTerminateCommand,
 }: CommandExecutionBlockProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [terminating, setTerminating] = useState(false);
+  const [terminatingCommandId, setTerminatingCommandId] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<{ target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null>(null);
   const details = useLazyToolDetails(message, onLoadDetails);
   const command = useMemo(() => parseCommandPayload(details.message), [details.message]);
@@ -48,6 +48,16 @@ export function CommandExecutionBlock({
   const outputMotion = useDeferredUnmount<HTMLElement>(detailsOpen);
   const captureExpansionAnchor = useExpansionScrollAnchor();
   const canTerminate = running && command.canTerminate && Boolean(command.commandId) && Boolean(onTerminateCommand);
+  const terminating = terminatingCommandId === command.commandId;
+
+  useEffect(() => {
+    if (!terminatingCommandId) {
+      return;
+    }
+    if (terminatingCommandId !== command.commandId || !running || !command.canTerminate) {
+      setTerminatingCommandId(null);
+    }
+  }, [command.canTerminate, command.commandId, running, terminatingCommandId]);
 
   const handleCopy = async (target: CopyTarget, text: string) => {
     try {
@@ -62,11 +72,11 @@ export function CommandExecutionBlock({
     if (!canTerminate || terminating) {
       return;
     }
-    setTerminating(true);
+    setTerminatingCommandId(command.commandId);
     try {
       await onTerminateCommand?.(command.commandId);
-    } finally {
-      setTerminating(false);
+    } catch {
+      setTerminatingCommandId(null);
     }
   };
 
@@ -142,35 +152,36 @@ export function CommandExecutionBlock({
                   <span className={styles.toolNameLabel}>工具</span>
                   <code className={styles.toolNameValue}>{command.name}</code>
                 </div>
-                <div className={styles.toolHeaderActions}>
+              </div>
+              <div className={styles.sectionHeader} data-kind="input">
+                <div className={styles.outputHeader}>入参</div>
+                <div className={styles.sectionHeaderActions}>
                   {canTerminate ? (
                     <button
                       className={styles.terminateIconButton}
                       type="button"
                       disabled={terminating}
-                      aria-label={terminating ? "正在终止本轮" : "终止本轮"}
-                      data-tooltip-label={terminating ? "正在终止本轮" : "终止本轮"}
-                      title={terminating ? "正在终止本轮" : "终止本轮"}
+                      aria-label={terminating ? "正在终止命令" : "终止命令"}
+                      data-tooltip-label={terminating ? "正在终止命令" : "终止命令"}
+                      data-terminating={terminating ? "true" : undefined}
+                      title={terminating ? "正在终止命令" : "终止命令"}
                       onClick={() => void handleTerminate()}
                     >
-                      <XCircle size={14} />
+                      <Square size={12} fill="currentColor" strokeWidth={0} />
                     </button>
                   ) : null}
+                  <button
+                    className={styles.copyButton}
+                    type="button"
+                    aria-label={copyAriaLabel("入参", inputCopyStatus)}
+                    data-tooltip-label={copyAriaLabel("入参", inputCopyStatus)}
+                    title={copyAriaLabel("入参", inputCopyStatus)}
+                    onClick={() => void handleCopy("input", command.inputText)}
+                    disabled={details.loading}
+                  >
+                    {inputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
+                  </button>
                 </div>
-              </div>
-              <div className={styles.sectionHeader} data-kind="input">
-                <div className={styles.outputHeader}>入参</div>
-                <button
-                  className={styles.copyButton}
-                  type="button"
-                  aria-label={copyAriaLabel("入参", inputCopyStatus)}
-                  data-tooltip-label={copyAriaLabel("入参", inputCopyStatus)}
-                  title={copyAriaLabel("入参", inputCopyStatus)}
-                  onClick={() => void handleCopy("input", command.inputText)}
-                  disabled={details.loading}
-                >
-                  {inputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
-                </button>
               </div>
               <div className={styles.codeViewport}>
                 <pre data-stream="input">{details.loading ? "正在加载命令详情" : command.inputText}</pre>
@@ -331,7 +342,7 @@ function isRunningCommand(command: ParsedCommandPayload, messageStatus: Conversa
   if (command.status === "approval_pending") {
     return false;
   }
-  if (command.status === "running") {
+  if (command.status === "running" || command.status === "terminating") {
     return true;
   }
   if (isTerminalCommandStatus(command.status)) {
@@ -471,6 +482,9 @@ function commandTitleFromInput(
   if (commandStatus === "cancelled" || status === "cancelled") {
     return `已终止 ${input}`;
   }
+  if (commandStatus === "terminating") {
+    return `正在终止 ${input}`;
+  }
   if (status === "running" || status === "pending" || commandStatus === "running") {
     return `正在执行 ${input}`;
   }
@@ -487,6 +501,8 @@ function commandStatusLabel(status: string): string {
       return "已超时";
     case "cancelled":
       return "已终止";
+    case "terminating":
+      return "正在终止";
     case "failed_to_start":
       return "启动失败";
     case "shell_not_available":
@@ -506,6 +522,9 @@ function commandFooterLabel(
   running: boolean,
   negative: boolean,
 ): string {
+  if (command.status === "terminating") {
+    return "正在终止";
+  }
   if (running) {
     return "运行中";
   }

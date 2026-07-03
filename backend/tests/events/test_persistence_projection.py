@@ -62,6 +62,54 @@ async def test_persistence_projection_batches_continuous_streams_on_flush(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_persistence_projection_persists_thread_task_replay_actions(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    projection = PersistenceProjection(
+        repository=repositories.message_events,
+        session_id="ses_persist",
+        turn_index=1,
+    )
+
+    await projection.handle(
+        _event(
+            DomainEventType.THREAD_TASK_DELETED,
+            {"task_id": "task-1", "task": {"id": "task-1", "deleted_at": "now"}},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.THREAD_TASK_UPDATED,
+            {"task_id": "task-1", "task": {"id": "task-1", "status": "active"}},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.THREAD_TASK_RUN_STARTED,
+            {"task_id": "task-1", "run_id": "run-1", "run": {"status": "running"}},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.THREAD_TASK_RUN_FINISHED,
+            {"task_id": "task-1", "run_id": "run-1", "run": {"status": "succeeded"}},
+        )
+    )
+
+    events = repositories.message_events.list_by_session("ses_persist")
+
+    assert [event.action for event in events] == [
+        "task_deleted",
+        "task_updated",
+        "task_run_started",
+        "task_run_finished",
+    ]
+    assert events[0].data["_canonical"]["event_type"] == "thread_task.deleted"
+    assert events[1].data["task"]["status"] == "active"
+    assert events[2].data["run_id"] == "run-1"
+    assert events[3].data["run"]["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
 async def test_persistence_projection_flushes_stream_before_tool_start(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     projection = PersistenceProjection(

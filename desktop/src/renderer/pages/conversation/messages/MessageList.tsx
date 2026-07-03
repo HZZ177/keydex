@@ -36,6 +36,7 @@ import { MessageGroupBlock } from "./MessageGroupBlock";
 import { MessageThinking } from "./MessageThinking";
 import { MessageActionFooter, MessageText, StreamingCursor } from "./MessageText";
 import { SkillActivationBlock } from "./SkillActivationBlock";
+import { ThreadTaskStatusBlock } from "./ThreadTaskStatusBlock";
 import { ToolCallBlock } from "./ToolCallBlock";
 import { processMessages, type ProcessedMessageItem } from "./processMessages";
 import type { ToolDetailsLoader } from "./useLazyToolDetails";
@@ -177,12 +178,12 @@ export function MessageList({
   const effectiveTurnNavigatorMode = turnNavigatorMode ?? (variant === "full" ? "auto" : "hidden");
   const showTurnNavigator = effectiveTurnNavigatorMode === "auto" && turnNavigationItems.length >= 2;
   const assistantTurnFooters = useMemo(
-    () => collectAssistantTurnFooters(visibleMessages, displayItems, isProcessing),
-    [displayItems, isProcessing, visibleMessages],
+    () => collectAssistantTurnFooters(displayTurns, isProcessing),
+    [displayTurns, isProcessing],
   );
   const turnEndStreamingCursor = useMemo(
-    () => collectTurnEndStreamingCursor(visibleMessages, displayItems, isProcessing),
-    [displayItems, isProcessing, visibleMessages],
+    () => collectTurnEndStreamingCursor(displayTurns, isProcessing),
+    [displayTurns, isProcessing],
   );
   const useStaticList = shouldUseStaticMessageList(displayItems.length, performanceProfile);
   const [visibleTurnIndexes, setVisibleTurnIndexes] = useState<Set<number>>(() => new Set([0]));
@@ -916,8 +917,10 @@ function renderMessageTurn({
   showForkSourceMarkers: boolean;
   onReverseFromMessage?: (message: ConversationMessage) => void;
 }) {
-  const focusAssistantItemId = focusFlash ? findLastAssistantItemId(turn.items) : null;
-  return turn.items.map((item) => (
+  const statusMessages = threadTaskStatusMessagesFromTurn(turn);
+  const renderableItems = turn.items.filter((item) => !isThreadTaskStatusItem(item));
+  const focusAssistantItemId = focusFlash ? findLastAssistantItemId(renderableItems) : null;
+  const renderedItems = renderableItems.map((item) => (
     <div
       className={styles.item}
       data-focus-flash={item.id === focusAssistantItemId ? "true" : undefined}
@@ -946,6 +949,34 @@ function renderMessageTurn({
       })}
     </div>
   ));
+  const summaryItem = statusMessages.length ? (
+    <div
+      className={styles.item}
+      data-kind="thread_task_status_summary"
+      data-testid="thread-task-status-summary"
+      role="listitem"
+      key={`${turn.id}:thread-task-status-summary`}
+    >
+      {statusMessages.map((message) => (
+        <ThreadTaskStatusBlock message={message} key={message.id} />
+      ))}
+    </div>
+  ) : null;
+  const turnItems = summaryItem ? [...renderedItems, summaryItem] : renderedItems;
+  if (!turn.showThreadTaskContinuationNotice) {
+    return turnItems;
+  }
+  return [
+    <div
+      className={styles.item}
+      data-kind="thread_task_boundary"
+      role="listitem"
+      key={`${turn.id}:thread-task-boundary`}
+    >
+      <ThreadTaskContinuationNotice />
+    </div>,
+    ...turnItems,
+  ];
 }
 
 function renderMessageItem({
@@ -1193,6 +1224,9 @@ function DefaultMessage({
       />
     );
   }
+  if (message.kind === "thread_task_status") {
+    return <ThreadTaskStatusBlock message={message} />;
+  }
   if (message.kind === "command") {
     return (
       <CommandExecutionBlock
@@ -1213,6 +1247,9 @@ function DefaultMessage({
   }
   if (message.kind === "context_compression") {
     return <ContextCompressionNotice message={message} />;
+  }
+  if (message.kind === "thread_task_boundary") {
+    return <ThreadTaskContinuationNotice />;
   }
   if (message.kind === "llm_retry") {
     return <LLMRetryNotice message={message} />;
@@ -1278,6 +1315,23 @@ function LLMRetryNotice({ message }: { message: ConversationMessage }) {
     >
       <span className={styles.contextCompressionNoticeLabel}>
         <span>{normalizeMessageContent(message.content)}</span>
+      </span>
+    </div>
+  );
+}
+
+function ThreadTaskContinuationNotice() {
+  return (
+    <div
+      className={styles.contextCompressionNotice}
+      data-notice-kind="thread_task_continue"
+      data-state="completed"
+      data-testid="thread-task-continuation-notice"
+      role="status"
+      aria-live="polite"
+    >
+      <span className={styles.contextCompressionNoticeLabel}>
+        <span>目标继续执行</span>
       </span>
     </div>
   );
@@ -1401,6 +1455,7 @@ function findVisibleTurnNavigationIndexes(
 interface MessageTurn {
   id: string;
   items: ProcessedMessageItem[];
+  showThreadTaskContinuationNotice: boolean;
 }
 
 interface AssistantTurnFooters {
@@ -1415,6 +1470,9 @@ interface TurnEndStreamingCursor {
 function groupDisplayItemsByTurn(displayItems: ProcessedMessageItem[]): MessageTurn[] {
   const turns: MessageTurn[] = [];
   let items: ProcessedMessageItem[] = [];
+  let turnBusinessIndex: number | null = null;
+  let hasThreadTaskContinuation = false;
+  let threadTaskContinuationKey: string | null = null;
 
   const flush = () => {
     if (!items.length) {
@@ -1423,19 +1481,121 @@ function groupDisplayItemsByTurn(displayItems: ProcessedMessageItem[]): MessageT
     turns.push({
       id: turnIdFromItems(items),
       items,
+      showThreadTaskContinuationNotice:
+        hasThreadTaskContinuation && !items.some(isThreadTaskBoundaryItem),
     });
     items = [];
+    turnBusinessIndex = null;
+    hasThreadTaskContinuation = false;
+    threadTaskContinuationKey = null;
   };
 
   displayItems.forEach((item) => {
+    if (isThreadTaskBoundaryItem(item)) {
+      flush();
+      items.push(item);
+      hasThreadTaskContinuation = true;
+      threadTaskContinuationKey = threadTaskContinuationKeyFromItem(item);
+      return;
+    }
+    const itemTurnIndex = itemBusinessTurnIndex(item);
+    const itemThreadTaskContinuationKey = threadTaskContinuationKeyFromItem(item);
     if (item.type === "message" && item.message.kind === "user") {
       flush();
+    } else if (
+      items.length &&
+      itemTurnIndex !== null &&
+      turnBusinessIndex !== null &&
+      itemTurnIndex !== turnBusinessIndex
+    ) {
+      flush();
+    } else if (
+      itemThreadTaskContinuationKey &&
+      items.some((candidate) => !isThreadTaskBoundaryItem(candidate)) &&
+      threadTaskContinuationKey !== itemThreadTaskContinuationKey
+    ) {
+      flush();
+    }
+    if (isThreadTaskContinuationItem(item)) {
+      hasThreadTaskContinuation = true;
+      threadTaskContinuationKey = itemThreadTaskContinuationKey;
     }
     items.push(item);
+    if (itemTurnIndex !== null) {
+      turnBusinessIndex = itemTurnIndex;
+    }
   });
   flush();
 
   return turns;
+}
+
+function itemBusinessTurnIndex(item: ProcessedMessageItem): number | null {
+  for (const message of messagesFromProcessedItem(item)) {
+    const turnIndex = messageBusinessTurnIndex(message);
+    if (turnIndex !== null) {
+      return turnIndex;
+    }
+  }
+  return null;
+}
+
+function isThreadTaskBoundaryItem(item: ProcessedMessageItem): boolean {
+  return item.type === "message" && item.message.kind === "thread_task_boundary";
+}
+
+function isThreadTaskBoundaryMessage(message: ConversationMessage): boolean {
+  return message.kind === "thread_task_boundary";
+}
+
+function isThreadTaskContinuationItem(item: ProcessedMessageItem): boolean {
+  return messagesFromProcessedItem(item).some(isThreadTaskContinuationMessage);
+}
+
+function isThreadTaskContinuationMessage(message: ConversationMessage): boolean {
+  const threadTask = threadTaskContextFromMessage(message);
+  return stringRecordValue(threadTask?.trigger) === "task_continue";
+}
+
+function threadTaskContinuationKeyFromItem(item: ProcessedMessageItem): string {
+  for (const message of messagesFromProcessedItem(item)) {
+    const key = threadTaskContinuationKeyFromMessage(message);
+    if (key) {
+      return key;
+    }
+  }
+  return "";
+}
+
+function threadTaskContinuationKeyFromMessage(message: ConversationMessage): string {
+  const threadTask = threadTaskContextFromMessage(message);
+  if (stringRecordValue(threadTask?.trigger) !== "task_continue") {
+    return "";
+  }
+  return (
+    stringRecordValue(threadTask?.run_id) ||
+    stringRecordValue(threadTask?.runId) ||
+    stringRecordValue(threadTask?.task_id) ||
+    stringRecordValue(threadTask?.taskId) ||
+    message.id
+  );
+}
+
+function threadTaskContextFromMessage(message: ConversationMessage): Record<string, unknown> | null {
+  const metadata = recordValue(message.payload.metadata);
+  const runtimeParams =
+    recordValue(message.payload.runtime_params) ??
+    recordValue(message.payload.runtimeParams) ??
+    recordValue(metadata?.runtime_params) ??
+    recordValue(metadata?.runtimeParams);
+  return (
+    recordValue(message.payload.thread_task) ??
+    recordValue(message.payload.threadTask) ??
+    recordValue(metadata?.thread_task) ??
+    recordValue(metadata?.threadTask) ??
+    recordValue(runtimeParams?.thread_task) ??
+    recordValue(runtimeParams?.threadTask)
+  );
 }
 
 function turnIdFromItems(items: ProcessedMessageItem[]): string {
@@ -1467,6 +1627,120 @@ function buildTurnNavigationItems(turns: MessageTurn[]): ConversationTurnNavigat
 
 function messagesFromProcessedItem(item: ProcessedMessageItem): ConversationMessage[] {
   return item.type === "message" ? [item.message] : item.messages;
+}
+
+function isThreadTaskStatusItem(item: ProcessedMessageItem): boolean {
+  return item.type === "message" && item.message.kind === "thread_task_status";
+}
+
+function threadTaskStatusMessagesFromTurn(turn: MessageTurn): ConversationMessage[] {
+  const messages = turn.items
+    .flatMap(messagesFromProcessedItem)
+    .filter((message) => message.kind === "thread_task_status");
+  return coalesceThreadTaskStatusMessages(messages);
+}
+
+function coalesceThreadTaskStatusMessages(messages: ConversationMessage[]): ConversationMessage[] {
+  const coalesced: ConversationMessage[] = [];
+  const indexByKey = new Map<string, number>();
+
+  for (const message of messages) {
+    const keys = threadTaskStatusCoalesceKeys(message);
+    if (!keys.length) {
+      coalesced.push(message);
+      continue;
+    }
+    const existingIndex = keys.map((key) => indexByKey.get(key)).find((index) => index !== undefined);
+    if (existingIndex === undefined) {
+      keys.forEach((key) => indexByKey.set(key, coalesced.length));
+      coalesced.push(message);
+      continue;
+    }
+    coalesced[existingIndex] = mergeThreadTaskStatusAttempt(coalesced[existingIndex], message);
+    keys.forEach((key) => indexByKey.set(key, existingIndex));
+  }
+
+  return coalesced;
+}
+
+function mergeThreadTaskStatusAttempt(previous: ConversationMessage, next: ConversationMessage): ConversationMessage {
+  const previousAttempt = threadTaskStatusAttemptSummary(previous);
+  const hiddenAttempts = previousAttempt.hiddenAttempts + 1;
+  const failedAttempts = previousAttempt.failedAttempts + (isFailedThreadTaskStatusMessage(previous) ? 1 : 0);
+  return {
+    ...next,
+    payload: {
+      ...next.payload,
+      _coalesced_thread_task_status: {
+        hidden_attempts: hiddenAttempts,
+        failed_attempts: failedAttempts,
+      },
+    },
+  };
+}
+
+function threadTaskStatusAttemptSummary(message: ConversationMessage): {
+  failedAttempts: number;
+  hiddenAttempts: number;
+} {
+  const summary = recordValue(message.payload._coalesced_thread_task_status);
+  return {
+    failedAttempts: numberValue(summary?.failed_attempts) ?? 0,
+    hiddenAttempts: numberValue(summary?.hidden_attempts) ?? 0,
+  };
+}
+
+function threadTaskStatusCoalesceKeys(message: ConversationMessage): string[] {
+  const call = recordValue(message.payload.call);
+  const toolName =
+    stringRecordValue(call?.name) ||
+    stringRecordValue(message.payload.tool) ||
+    stringRecordValue(message.payload.tool_name) ||
+    message.content.trim();
+  if (toolName !== "update_thread_task" && toolName !== "get_thread_task") {
+    return [];
+  }
+  const keys: string[] = [];
+  const taskIdentity = threadTaskStatusTaskIdentity(message);
+  if (taskIdentity) {
+    keys.push(`${toolName}:task:${taskIdentity}`);
+  }
+  const requestedStatus = threadTaskRequestedStatus(message);
+  if (requestedStatus) {
+    keys.push(`${toolName}:status:${requestedStatus}`);
+  }
+  if (!keys.length) {
+    keys.push(`${toolName}:active`);
+  }
+  return keys;
+}
+
+function threadTaskStatusTaskIdentity(message: ConversationMessage): string {
+  const call = recordValue(message.payload.call);
+  const args = recordValue(call?.arguments) ?? recordValue(message.payload.arguments) ?? recordValue(message.payload.params);
+  const result = recordValue(message.payload.result);
+  const uiPayload = recordValue(result?.ui_payload) ?? recordValue(message.payload.ui_payload);
+  const task = recordValue(uiPayload?.task) ?? recordValue(result?.task);
+  return (
+    stringRecordValue(args?.task_id) ||
+    stringRecordValue(args?.taskId) ||
+    stringRecordValue(task?.id) ||
+    stringRecordValue(task?.task_id)
+  );
+}
+
+function threadTaskRequestedStatus(message: ConversationMessage): string {
+  const call = recordValue(message.payload.call);
+  const args = recordValue(call?.arguments) ?? recordValue(message.payload.arguments) ?? recordValue(message.payload.params);
+  const result = recordValue(message.payload.result);
+  const uiPayload = recordValue(result?.ui_payload) ?? recordValue(message.payload.ui_payload);
+  const task = recordValue(uiPayload?.task) ?? recordValue(result?.task);
+  return stringRecordValue(args?.status) || stringRecordValue(task?.status);
+}
+
+function isFailedThreadTaskStatusMessage(message: ConversationMessage): boolean {
+  const result = recordValue(message.payload.result);
+  return message.status === "failed" || stringRecordValue(result?.status) === "error";
 }
 
 function findLastAssistantItemId(items: ProcessedMessageItem[]): string | null {
@@ -1512,6 +1786,18 @@ function messageBusinessTurnIndex(message: ConversationMessage): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function stringRecordValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 function previewLine(content: unknown): string {
   return normalizePreviewText(content).split("\n").find(Boolean) ?? "";
 }
@@ -1533,50 +1819,32 @@ function normalizePreviewText(content: unknown): string {
 }
 
 function collectAssistantTurnFooters(
-  messages: ConversationMessage[],
-  displayItems: ProcessedMessageItem[],
+  turns: MessageTurn[],
   isProcessing: boolean,
 ): AssistantTurnFooters {
   const footerByItemId = new Map<string, ConversationMessage>();
-  const itemIdByMessageId = mapMessageIdsToDisplayItems(displayItems);
-  const activeTurnStart = messages.findLastIndex((message) => message.kind === "user") + 1;
 
-  const placeTurnActionRow = (start: number, end: number) => {
-    if (end < start || (isProcessing && end >= activeTurnStart)) {
-      return;
+  for (const turn of turns) {
+    const turnMessages = turn.items.flatMap(messagesFromProcessedItem);
+    if (isProcessing && turnMessages.some((message) => isStreamingStatus(message.status))) {
+      continue;
     }
-    const turnMessages = messages.slice(start, end + 1);
     const assistantMessage = [...turnMessages].reverse().find((message) => message.kind === "assistant");
     if (!assistantMessage) {
-      return;
+      continue;
     }
-    const lastDisplayMessage = [...turnMessages].reverse().find((message) => itemIdByMessageId.has(message.id));
-    if (!lastDisplayMessage) {
-      return;
-    }
-    const lastItemId = itemIdByMessageId.get(lastDisplayMessage.id);
+    const lastItemId = lastFooterAnchorItemId(turn.items);
     if (!lastItemId) {
-      return;
+      continue;
     }
     footerByItemId.set(lastItemId, assistantMessage);
-  };
-
-  let turnStart = 0;
-  messages.forEach((message, index) => {
-    if (message.kind !== "user") {
-      return;
-    }
-    placeTurnActionRow(turnStart, index - 1);
-    turnStart = index + 1;
-  });
-  placeTurnActionRow(turnStart, messages.length - 1);
+  }
 
   return { footerByItemId };
 }
 
 function collectTurnEndStreamingCursor(
-  messages: ConversationMessage[],
-  displayItems: ProcessedMessageItem[],
+  turns: MessageTurn[],
   isProcessing: boolean,
 ): TurnEndStreamingCursor {
   const empty = {
@@ -1586,18 +1854,23 @@ function collectTurnEndStreamingCursor(
   if (!isProcessing) {
     return empty;
   }
-  const activeTurnStart = messages.findLastIndex((message) => message.kind === "user") + 1;
-  const activeTurnMessages = messages.slice(activeTurnStart);
+  const activeTurn = [...turns]
+    .reverse()
+    .find((turn) => turn.items.flatMap(messagesFromProcessedItem).some((message) => isStreamingStatus(message.status)));
+  if (!activeTurn) {
+    return empty;
+  }
+  const activeTurnMessages = activeTurn.items.flatMap(messagesFromProcessedItem);
   const streamingAssistantIndex = activeTurnMessages.findLastIndex(
     (message) => message.kind === "assistant" && isStreamingStatus(message.status),
   );
   if (streamingAssistantIndex < 0) {
     return empty;
   }
-  const itemIdByMessageId = mapMessageIdsToDisplayItems(displayItems);
+  const itemIdByMessageId = mapMessageIdsToDisplayItems(activeTurn.items);
   const laterDisplayMessages = activeTurnMessages
     .slice(streamingAssistantIndex + 1)
-    .filter((message) => itemIdByMessageId.has(message.id));
+    .filter((message) => message.kind !== "thread_task_status" && itemIdByMessageId.has(message.id));
   if (!laterDisplayMessages.length) {
     return empty;
   }
@@ -1614,6 +1887,23 @@ function collectTurnEndStreamingCursor(
     ),
     cursorAfterItemIds: new Set([lastItemId]),
   };
+}
+
+function lastFooterAnchorItemId(items: ProcessedMessageItem[]): string | null {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (!item) {
+      continue;
+    }
+    if (
+      item.type === "message" &&
+      (item.message.kind === "thread_task_status" || isThreadTaskBoundaryMessage(item.message))
+    ) {
+      continue;
+    }
+    return item.id;
+  }
+  return null;
 }
 
 function mapMessageIdsToDisplayItems(displayItems: ProcessedMessageItem[]): Map<string, string> {

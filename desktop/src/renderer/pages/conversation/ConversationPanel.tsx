@@ -163,6 +163,10 @@ export function ConversationPanelComposerAccessory({
   return (
     <ConversationComposerAccessory
       messages={model.messages}
+      activeTask={model.activeTask}
+      runningTaskRun={model.taskRunState?.runningTaskRun ?? null}
+      onUpdateTask={model.updateThreadTask}
+      onDeleteTask={model.deleteThreadTask}
       showScrollToBottom={model.showScrollToBottom}
       showScrollButton={showScrollButton}
       onFilePreview={model.openFileChangePreview}

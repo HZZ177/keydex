@@ -85,6 +85,45 @@ def test_message_event_service_aggregates_user_stream_tool_and_completed(tmp_pat
     assert isinstance(messages[2]["timestamp"], int)
 
 
+def test_message_event_service_splits_thread_task_continuation_turns(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(repositories, "evt_1", "stream_batch", {"content": "第一轮"}, turn=1)
+    _append(
+        repositories,
+        "evt_2",
+        "stream_batch",
+        {
+            "content": "第二轮",
+            "thread_task": {
+                "task_id": "task-1",
+                "run_id": "run-1",
+                "trigger": "task_continue",
+                "type": "goal",
+            },
+        },
+        turn=2,
+    )
+
+    messages = service.get_display_messages("ses_history")
+
+    assert [message["content"] for message in messages] == ["第一轮", "第二轮"]
+    assert [message["turnIndex"] for message in messages] == [1, 2]
+    assert messages[1]["metadata"]["thread_task"] == {
+        "task_id": "task-1",
+        "run_id": "run-1",
+        "trigger": "task_continue",
+        "type": "goal",
+    }
+    assert messages[1]["metadata"]["runtime_params"]["thread_task"] == {
+        "task_id": "task-1",
+        "run_id": "run-1",
+        "trigger": "task_continue",
+        "type": "goal",
+    }
+
+
 def test_message_event_service_restores_llm_retry_notice(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)
@@ -542,6 +581,69 @@ def test_message_event_service_restores_update_plan_ui_payload(tmp_path) -> None
     assert messages[0]["uiPayload"]["entries"][1] == {
         "content": "实现胶囊面板",
         "status": "in_progress",
+    }
+
+
+def test_message_event_service_restores_thread_task_tool_summary_when_details_deferred(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_goal_start",
+        "tool_start",
+        {
+            "tool": "update_thread_task",
+            "params": {
+                "status": "complete",
+                "summary": "三轮测试结果汇总",
+                "checklist": [{"content": "完成第三轮验证"}],
+                "evidence": [{"detail": "目标自动续跑正常"}],
+            },
+            "run_id": "tool_goal",
+        },
+    )
+    _append(
+        repositories,
+        "evt_goal_end",
+        "tool_end",
+        {
+            "run_id": "tool_goal",
+            "result": "",
+            "ui_payload": {
+                "task_id": "task-1",
+                "status": "complete",
+                "task": {
+                    "id": "task-1",
+                    "type": "goal",
+                    "type_label": "目标",
+                    "objective": "验证 goal 功能",
+                    "status": "complete",
+                    "metadata": {"large": "not needed"},
+                },
+            },
+        },
+    )
+
+    messages = service.get_display_messages("ses_history", include_tool_details=False)
+
+    assert messages[0]["role"] == "tool"
+    assert messages[0]["toolName"] == "update_thread_task"
+    assert messages[0]["toolDetailsDeferred"] is True
+    assert messages[0]["toolParams"] == {
+        "status": "complete",
+        "summary": "三轮测试结果汇总",
+        "checklist": [{"content": "完成第三轮验证"}],
+        "evidence": [{"detail": "目标自动续跑正常"}],
+    }
+    assert messages[0]["uiPayload"]["task"] == {
+        "id": "task-1",
+        "type": "goal",
+        "type_label": "目标",
+        "objective": "验证 goal 功能",
+        "status": "complete",
     }
 
 

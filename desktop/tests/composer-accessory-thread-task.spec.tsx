@@ -1,0 +1,409 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import { ConversationComposerAccessory } from "@/renderer/pages/conversation/ComposerAccessory";
+import type { ConversationMessage } from "@/renderer/stores/conversationStore";
+import type { ThreadTask, ThreadTaskRun } from "@/types/protocol";
+
+describe("ConversationComposerAccessory thread task", () => {
+  it("caps goal-related composer capsules to two thirds of the input width", () => {
+    const composerAccessoryCss = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/conversation/ComposerAccessory.module.css"),
+      "utf8",
+    );
+    const goalModeCss = readFileSync(
+      resolve(process.cwd(), "src/renderer/components/chat/GoalModeAccessory.module.css"),
+      "utf8",
+    );
+
+    expect(composerAccessoryCss).toMatch(
+      /\.composerAccessoryItem\[data-selected-item="thread-task"\]\s*{[^}]*max-width:\s*66\.666%/s,
+    );
+    expect(goalModeCss).toMatch(/\.goalModeAccessory\s*{[^}]*max-width:\s*66\.666%/s);
+  });
+
+  it("selects the active thread task before plan summaries", () => {
+    const view = render(
+      <ConversationComposerAccessory
+        messages={[planMessage()]}
+        activeTask={threadTask({ objective: "完成目标面板", elapsed_seconds: 3661 })}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+      />,
+    );
+
+    expect(view.container.querySelector("[data-selected-item]")?.getAttribute("data-selected-item")).toBe(
+      "thread-task",
+    );
+    expect(screen.getByTestId("thread-task-pill").textContent).toContain("完成目标面板");
+    expect(screen.getByTestId("thread-task-pill").textContent).toContain("1小时1分");
+    expect(screen.queryByTestId("plan-summary-pill")).toBeNull();
+  });
+
+  it("falls back to the plan item when the active thread task disappears", () => {
+    const props = {
+      messages: [planMessage()],
+      showScrollToBottom: false,
+      onFilePreview: vi.fn(),
+      onScrollToBottom: vi.fn(),
+    };
+    const view = render(
+      <ConversationComposerAccessory
+        {...props}
+        activeTask={threadTask({ objective: "即将结束的目标" })}
+      />,
+    );
+
+    view.rerender(<ConversationComposerAccessory {...props} activeTask={null} />);
+
+    expect(view.container.querySelector("[data-selected-item]")?.getAttribute("data-selected-item")).toBe(
+      "turn-plan-summary",
+    );
+    expect(screen.getByTestId("plan-summary-pill").textContent).toContain("第 1 / 2 步");
+    expect(screen.queryByTestId("thread-task-pill")).toBeNull();
+  });
+
+  it("shows running state from the current task run", () => {
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask({ id: "task-running", objective: "持续执行" })}
+        runningTaskRun={threadTaskRun({ task_id: "task-running" })}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("thread-task-pill").textContent).toContain("运行中");
+  });
+
+  it("renders the backend-updated running task elapsed display", () => {
+    const props = {
+      messages: [],
+      runningTaskRun: threadTaskRun({ task_id: "task-running" }),
+      showScrollToBottom: false,
+      onFilePreview: vi.fn(),
+      onScrollToBottom: vi.fn(),
+    };
+    const view = render(
+      <ConversationComposerAccessory
+        {...props}
+        activeTask={threadTask({ id: "task-running", objective: "持续执行", elapsed_seconds: 6 })}
+      />,
+    );
+
+    expect(screen.getByTestId("thread-task-pill").textContent).toContain("6秒");
+    fireEvent.click(screen.getByRole("button", { name: "查看目标详情" }));
+    expect(screen.getByTestId("thread-task-panel").textContent).toContain("6秒");
+
+    view.rerender(
+      <ConversationComposerAccessory
+        {...props}
+        activeTask={threadTask({ id: "task-running", objective: "持续执行", elapsed_seconds: 8 })}
+      />,
+    );
+
+    expect(screen.getByTestId("thread-task-pill").textContent).toContain("8秒");
+    expect(screen.getByTestId("thread-task-panel").textContent).toContain("8秒");
+  });
+
+  it.each([
+    ["paused", "已暂停"],
+    ["blocked", "已阻塞"],
+    ["system_stopped", "系统停止"],
+    ["complete", "已完成"],
+    ["cancelled", "已取消"],
+  ] as const)("renders %s status label", (status, label) => {
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask({ status })}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("thread-task-pill").textContent).toContain(label);
+  });
+
+  it("renders future task type labels with a generic fallback", () => {
+    const props = {
+      messages: [],
+      showScrollToBottom: false,
+      onFilePreview: vi.fn(),
+      onScrollToBottom: vi.fn(),
+    };
+    const view = render(
+      <ConversationComposerAccessory
+        {...props}
+        activeTask={threadTask({ type: "research", type_label: "调研" })}
+      />,
+    );
+
+    expect(screen.getByTestId("thread-task-pill").textContent).toContain("调研");
+
+    view.rerender(
+      <ConversationComposerAccessory
+        {...props}
+        activeTask={threadTask({ type: "research", type_label: "" })}
+      />,
+    );
+
+    expect(screen.getByTestId("thread-task-pill").textContent).toContain("任务");
+  });
+
+  it("edits the task objective from the expanded panel", async () => {
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask({ objective: "旧目标" })}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onUpdateTask={onUpdateTask}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑目标" }));
+    fireEvent.change(screen.getByLabelText("编辑目标内容"), { target: { value: "新目标" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(onUpdateTask).toHaveBeenCalledWith("task-1", { objective: "新目标" });
+    });
+  });
+
+  it("opens and closes the task panel on hover", () => {
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask({ objective: "悬停目标" })}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+      />,
+    );
+
+    const wrapper = screen.getByTestId("thread-task-pill").parentElement;
+    expect(wrapper).not.toBeNull();
+    expect(screen.getByTestId("thread-task-panel").getAttribute("data-open")).toBe("false");
+
+    fireEvent.mouseEnter(wrapper as HTMLElement);
+
+    expect(screen.getByTestId("thread-task-panel").getAttribute("data-open")).toBe("true");
+
+    fireEvent.mouseLeave(wrapper as HTMLElement);
+
+    expect(screen.getByTestId("thread-task-panel").getAttribute("data-open")).toBe("false");
+  });
+
+  it("pauses and resumes an open task", async () => {
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined);
+    const view = render(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask({ status: "active" })}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onUpdateTask={onUpdateTask}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "暂停目标" }));
+    await waitFor(() => {
+      expect(onUpdateTask).toHaveBeenCalledWith("task-1", { status: "paused" });
+    });
+
+    view.rerender(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask({ status: "paused" })}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onUpdateTask={onUpdateTask}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "恢复目标" }));
+    await waitFor(() => {
+      expect(onUpdateTask).toHaveBeenCalledWith("task-1", { status: "active" });
+    });
+  });
+
+  it("requires delete confirmation before deleting a task", async () => {
+    const onDeleteTask = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask()}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onDeleteTask={onDeleteTask}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "删除目标" }));
+    expect(onDeleteTask).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认删除目标" }));
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledWith("task-1");
+    });
+  });
+
+  it("does not expose revive-style actions for terminal tasks", () => {
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask({ status: "system_stopped", is_terminal: true, is_open: false })}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onUpdateTask={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看目标详情" }));
+
+    expect(screen.getByText("任务已结束，可创建新目标。")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "恢复目标" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "编辑目标" })).toBeNull();
+  });
+
+  it("closes the expanded task panel with Escape", () => {
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask()}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看目标详情" }));
+    expect(screen.getByTestId("thread-task-panel").getAttribute("data-open")).toBe("true");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.getByTestId("thread-task-panel").getAttribute("data-open")).toBe("false");
+    expect(screen.getByTestId("thread-task-panel").getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("keeps long task objectives inside the truncating objective span", () => {
+    const longObjective = "这是一个很长很长的目标描述，用来验证目标胶囊不会把输入区撑开或和后续内容重叠";
+    const view = render(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask({ objective: longObjective })}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+      />,
+    );
+
+    const objective = view.container.querySelector("[class*='threadTaskObjective']");
+    expect(objective?.textContent).toBe(longObjective);
+  });
+
+  it("keeps quick actions on the capsule and leaves the panel for details and editing", () => {
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        activeTask={threadTask({ objective: "胶囊承载快捷操作" })}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onUpdateTask={vi.fn()}
+        onDeleteTask={vi.fn()}
+      />,
+    );
+
+    const pill = screen.getByTestId("thread-task-pill");
+    expect(within(pill).getByRole("button", { name: "编辑目标" })).not.toBeNull();
+    expect(within(pill).getByRole("button", { name: "暂停目标" })).not.toBeNull();
+    expect(within(pill).getByRole("button", { name: "删除目标" })).not.toBeNull();
+    expect(within(pill).getByRole("button", { name: "展开目标详情" })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看目标详情" }));
+
+    const panel = screen.getByTestId("thread-task-panel");
+    expect(within(panel).getByText("胶囊承载快捷操作")).not.toBeNull();
+    expect(within(panel).queryByRole("button", { name: "暂停目标" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: "删除目标" })).toBeNull();
+  });
+});
+
+function planMessage(): ConversationMessage {
+  return {
+    id: "plan-1",
+    threadId: "ses-1",
+    turnId: "turn-1",
+    itemId: "item-1",
+    kind: "plan",
+    status: "completed",
+    content: "",
+    payload: {
+      entries: [
+        { content: "完成目标面板", status: "in_progress" },
+        { content: "补充测试", status: "pending" },
+      ],
+    },
+    createdAt: "2026-07-03T00:00:00Z",
+    updatedAt: "2026-07-03T00:00:00Z",
+  };
+}
+
+function threadTask(patch: Partial<ThreadTask> = {}): ThreadTask {
+  return {
+    id: "task-1",
+    session_id: "ses-1",
+    type: "goal",
+    type_label: "目标",
+    title: "目标",
+    objective: "完成目标",
+    status: "active",
+    metadata: {},
+    evidence: [],
+    blocked_audit: {},
+    system_stop_reason: null,
+    current_run_id: null,
+    turn_count: 0,
+    elapsed_seconds: 0,
+    token_usage: {},
+    created_at: "2026-07-03T00:00:00Z",
+    updated_at: "2026-07-03T00:00:00Z",
+    deleted_at: null,
+    is_open: true,
+    is_terminal: false,
+    ...patch,
+  };
+}
+
+function threadTaskRun(patch: Partial<ThreadTaskRun> = {}): ThreadTaskRun {
+  return {
+    id: "run-1",
+    task_id: "task-1",
+    session_id: "ses-1",
+    status: "running",
+    started_at: "2026-07-03T00:00:00Z",
+    finished_at: null,
+    turn_index: null,
+    trace_id: null,
+    summary: {},
+    error: {},
+    created_at: "2026-07-03T00:00:00Z",
+    updated_at: "2026-07-03T00:00:00Z",
+    is_running: true,
+    ...patch,
+  };
+}

@@ -182,6 +182,60 @@ describe("ConversationComposer", () => {
     });
 
     expect(Number.parseFloat(progress.style.strokeDashoffset)).toBeCloseTo(circumference * 0.5);
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toContain("无感压缩进度 50.0%");
+    expect(tooltip.textContent).toContain("阻塞压缩进度 44.4%");
+    const tooltipText = tooltip.textContent ?? "";
+    expect(tooltipText.indexOf("无感压缩进度")).toBeLessThan(tooltipText.indexOf("阻塞压缩进度"));
+
+    rerender(
+      <ConversationComposer
+        value=""
+        runtimeState="idle"
+        canSend={false}
+        canStop={false}
+        connectionReady
+        modelSelection={modelSelection()}
+        workspaceSkills={[]}
+        selectedSkill={null}
+        externalFileRequest={null}
+        externalQuoteRequest={null}
+        contextWindowUsage={{
+          sessionId: "ses-1",
+          activeSessionId: "ses-1",
+          tokenCount: 820,
+          contextWindow: 1000,
+          windowFraction: 0.82,
+          thresholdFraction: 0.75,
+          thresholdTokenCount: 750,
+          thresholdUsageFraction: 820 / 750,
+          emergencyFraction: 0.9,
+          remainingToThresholdTokens: -70,
+          callPhase: "after",
+          callStatus: "completed",
+          tokenSource: "usage_metadata",
+          updatedAtMs: 1001,
+        }}
+        onChange={vi.fn()}
+        onSkillChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    });
+
+    const indicator = screen.getByTestId("context-window-indicator");
+    expect(Number.parseFloat(progress.style.strokeDashoffset)).toBeCloseTo(0);
+    expect(indicator.getAttribute("data-level")).toBe("danger");
+    expect(indicator.getAttribute("aria-label")).toContain("无感压缩进度 109.3%");
+    expect(indicator.getAttribute("aria-label")).toContain("阻塞压缩进度 91.1%");
+    expect(tooltip.querySelector('[data-progress-kind="ambient"]')?.getAttribute("data-level")).toBe("danger");
+    expect(tooltip.querySelector('[data-progress-kind="blocking"]')?.getAttribute("data-level")).toBe("warning");
   });
 
   it("does not render Workbench dock controls unless the surface supplies them", () => {
