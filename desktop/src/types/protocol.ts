@@ -211,7 +211,7 @@ export interface GeneralSettings {
 }
 
 export type FileAccessMode = "no_file_access" | "workspace_read_only" | "workspace_trusted" | "full_access";
-export type CommandShell = "git_bash" | "cmd" | "powershell";
+export type CommandShell = "git_bash" | "powershell" | "cmd";
 
 export interface CommandShellConfig {
   shell_path: string;

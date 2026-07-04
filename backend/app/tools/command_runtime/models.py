@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-CommandShell = Literal["git_bash", "cmd", "powershell"]
+CommandShell = Literal["git_bash", "powershell", "cmd"]
 FileAccessMode = Literal[
     "no_file_access",
     "workspace_read_only",
@@ -47,15 +47,15 @@ class CommandShellConfig(BaseModel):
 
 TOOL_BY_SHELL: dict[CommandShell, str] = {
     "git_bash": "run_git_bash",
-    "cmd": "run_cmd",
     "powershell": "run_powershell",
+    "cmd": "run_cmd",
 }
 SHELL_BY_TOOL: dict[str, CommandShell] = {tool: shell for shell, tool in TOOL_BY_SHELL.items()}
 
 
 class CommandSettings(BaseModel):
     command_enabled: bool = False
-    selected_shell: CommandShell = "cmd"
+    selected_shell: CommandShell = "git_bash"
     shell_path: str = ""
     shell_label: str = ""
     shell_edition: str | None = None
@@ -80,6 +80,13 @@ class CommandSettings(BaseModel):
         legacy_selected_shell = data.get("selected_shell")
         if legacy_selected_shell == "bash":
             data["selected_shell"] = "git_bash"
+        elif legacy_selected_shell is None and "selected_shell" not in data:
+            inferred_shell = _infer_legacy_selected_shell(
+                str(data.get("shell_path") or ""),
+                str(data.get("shell_label") or ""),
+            )
+            if inferred_shell is not None:
+                data["selected_shell"] = inferred_shell
 
         shells = data.get("shells")
         if isinstance(shells, dict) and "bash" in shells and "git_bash" not in shells:
@@ -154,6 +161,22 @@ class CommandSettings(BaseModel):
 def _looks_like_git_bash_path(path: str) -> bool:
     normalized = path.replace("/", "\\").lower()
     return "\\git\\bin\\bash.exe" in normalized or "\\git\\usr\\bin\\bash.exe" in normalized
+
+
+def _infer_legacy_selected_shell(path: str, label: str) -> CommandShell | None:
+    if not path.strip() and not label.strip():
+        return None
+    normalized_label = label.strip().lower()
+    executable = path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+    if _looks_like_git_bash_path(path) or "git bash" in normalized_label:
+        return "git_bash"
+    if executable in {"pwsh.exe", "pwsh", "powershell.exe", "powershell"}:
+        return "powershell"
+    if "powershell" in normalized_label or "pwsh" in normalized_label:
+        return "powershell"
+    if executable in {"cmd.exe", "cmd"} or "cmd" in normalized_label:
+        return "cmd"
+    return "cmd"
 
 
 class CommandRuntime(BaseModel):

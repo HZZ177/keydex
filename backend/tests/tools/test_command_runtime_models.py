@@ -10,9 +10,9 @@ def test_command_settings_defaults_are_single_runtime_shape() -> None:
     settings = CommandSettings()
 
     assert settings.command_enabled is False
-    assert settings.selected_shell == "cmd"
+    assert settings.selected_shell == "git_bash"
     assert settings.configured is False
-    assert settings.tool_name == "run_cmd"
+    assert settings.tool_name == "run_git_bash"
 
 
 def test_command_settings_rejects_invalid_shell() -> None:
@@ -50,13 +50,31 @@ def test_command_settings_migrates_legacy_wsl_bash_as_missing_git_bash() -> None
     assert settings.configured is False
 
 
+def test_command_settings_preserves_legacy_single_cmd_runtime_shape() -> None:
+    settings = CommandSettings(
+        command_enabled=True,
+        shell_path=r"C:\Windows\System32\cmd.exe",
+        shell_label="Windows CMD",
+    )
+
+    assert settings.selected_shell == "cmd"
+    assert settings.tool_name == "run_cmd"
+    assert settings.configured is True
+    assert settings.shells["cmd"].shell_path == r"C:\Windows\System32\cmd.exe"
+
+
 def test_command_settings_rejects_timeout_inversion() -> None:
     with pytest.raises(ValidationError):
         CommandSettings(default_timeout_seconds=10, max_timeout_seconds=3)
 
 
 def test_command_runtime_from_settings_requires_saved_path_and_label() -> None:
-    assert CommandRuntime.from_settings(CommandSettings(command_enabled=True, shell_path="", shell_label="")) is None
+    assert (
+        CommandRuntime.from_settings(
+            CommandSettings(command_enabled=True, shell_path="", shell_label="")
+        )
+        is None
+    )
     assert (
         CommandRuntime.from_settings(
             CommandSettings(

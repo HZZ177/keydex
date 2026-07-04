@@ -24,8 +24,8 @@ describe("ConfigSettingsPage", () => {
     expect(screen.getByRole("button", { name: "文件访问权限：工作区内信任" })).not.toBeNull();
     expect(screen.getAllByRole("radio").map((radio) => radio.getAttribute("aria-label"))).toEqual([
       "Git Bash",
-      "CMD",
       "PowerShell",
+      "CMD",
     ]);
     expect(screen.getByRole("radio", { name: "CMD" })).not.toBeNull();
     expect(screen.getByText("未信任命令执行前需要确认，可在审批时保存信任规则。")).not.toBeNull();
@@ -57,6 +57,65 @@ describe("ConfigSettingsPage", () => {
     expect(screen.queryByText("批准策略")).toBeNull();
     expect(screen.queryByText("已信任命令")).toBeNull();
     expect(screen.getByText("文件访问权限")).not.toBeNull();
+  });
+
+  it("selects the first available preferred runtime when enabling from empty settings", async () => {
+    const disabledCommand = commandSettings({
+      command_enabled: false,
+      selected_shell: "cmd",
+      shell_path: "",
+      shell_label: "",
+      shell_edition: null,
+      shell_version: null,
+      shells: {},
+    });
+    const runtime = fakeRuntime({
+      getSettings: vi.fn().mockResolvedValue(settingsResponse(disabledCommand)),
+      discoverCommandRuntime: vi.fn((shell: CommandShell) => {
+        if (shell === "git_bash") {
+          return Promise.resolve({
+            shell,
+            found: false,
+            diagnostics: [],
+            error: "未找到 Git Bash",
+          });
+        }
+        if (shell === "powershell") {
+          return Promise.resolve({
+            shell,
+            found: true,
+            path: "C:/Program Files/PowerShell/7/pwsh.exe",
+            label: "PowerShell 7+",
+            edition: "Core",
+            version: "7.5.0",
+            diagnostics: [],
+          });
+        }
+        return Promise.resolve({
+          shell,
+          found: true,
+          path: "C:/Windows/System32/cmd.exe",
+          label: "CMD",
+          diagnostics: [],
+        });
+      }),
+    });
+
+    renderConfigSettingsPage(runtime);
+
+    fireEvent.click(await screen.findByRole("button", { name: "开启命令行工具" }));
+
+    await waitFor(() => {
+      expect(runtime.settings.saveCommandSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command_enabled: true,
+          selected_shell: "powershell",
+          shell_path: "C:/Program Files/PowerShell/7/pwsh.exe",
+          shell_label: "PowerShell 7+",
+        }),
+      );
+    });
+    expect(screen.queryByRole("dialog", { name: "定位 Git Bash executable" })).toBeNull();
   });
 
   it("opens manual locator dialog when selecting a missing runtime", async () => {

@@ -21,7 +21,7 @@ const TRUSTED_COMMAND_RULE_PAGE_SIZE = 10;
 
 const DEFAULT_COMMAND_SETTINGS: CommandSettings = {
   command_enabled: false,
-  selected_shell: "cmd",
+  selected_shell: "git_bash",
   shell_path: "",
   shell_label: "",
   shell_edition: null,
@@ -74,8 +74,8 @@ const COMMAND_SHELLS: Array<{
   description: string;
 }> = [
   { value: "git_bash", label: "Git Bash", description: "Git for Windows 的 bash.exe，不支持 WSL/MSYS2/Cygwin" },
-  { value: "cmd", label: "CMD", description: "Windows CMD，适合批处理和 cmd.exe 语法" },
   { value: "powershell", label: "PowerShell", description: "PowerShell 5.1/7+，适合对象管道和 .ps 语法" },
+  { value: "cmd", label: "CMD", description: "Windows CMD，适合批处理和 cmd.exe 语法" },
 ];
 
 const FILE_ACCESS_POLICIES: Array<{
@@ -187,7 +187,11 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
     await saveCommandRuntime({ ...command, command_enabled: false }, "命令行工具已关闭");
   };
 
-  const refreshRuntimes = async (selectedShell: CommandShell, enable = command.command_enabled) => {
+  const refreshRuntimes = async (
+    selectedShell: CommandShell,
+    enable = command.command_enabled,
+    options: { fallbackToPreferredAvailable?: boolean } = {},
+  ) => {
     if (savingRuntime || refreshingRuntime) {
       return;
     }
@@ -210,23 +214,27 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
         }),
       );
       const probeMap = Object.fromEntries(probes.map((probe) => [probe.shell, probe])) as RuntimeProbeMap;
+      const targetShell =
+        enable && options.fallbackToPreferredAvailable
+          ? preferredAvailableShell(probes, selectedShell)
+          : selectedShell;
       let nextCommand = {
         ...command,
         command_enabled: enable,
-        selected_shell: selectedShell,
+        selected_shell: targetShell,
       };
       for (const probe of probes) {
         nextCommand = commandWithProbe(nextCommand, probe);
       }
-      nextCommand = syncSelectedShell(nextCommand, selectedShell);
+      nextCommand = syncSelectedShell(nextCommand, targetShell);
       setRuntimeProbes(probeMap);
       const saved = await saveCommandRuntime(
         nextCommand,
         enable ? "命令执行环境已更新" : "命令行工具已关闭",
       );
-      const selectedConfig = saved ? shellConfig(saved, selectedShell) : null;
+      const selectedConfig = saved ? shellConfig(saved, targetShell) : null;
       if (enable && saved && !(selectedConfig?.shell_path && selectedConfig.shell_label)) {
-        setManualShell(selectedShell);
+        setManualShell(targetShell);
       }
     } catch (reason) {
       setError(errorMessage(reason));
@@ -239,7 +247,10 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
     if (command.command_enabled || savingRuntime || refreshingRuntime) {
       return;
     }
-    await refreshRuntimes(command.selected_shell, true);
+    const selectedConfig = shellConfig(command, command.selected_shell);
+    await refreshRuntimes(command.selected_shell, true, {
+      fallbackToPreferredAvailable: !(selectedConfig.shell_path && selectedConfig.shell_label),
+    });
   };
 
   const selectRuntimeShell = async (shell: CommandShell) => {
@@ -843,6 +854,18 @@ function commandWithProbe(command: CommandSettings, probe: CommandRuntimeProbeRe
         }
       : { ...command, shells };
   return syncSelectedShell(nextCommand, command.selected_shell);
+}
+
+function preferredAvailableShell(
+  probes: CommandRuntimeProbeResponse[],
+  fallback: CommandShell,
+): CommandShell {
+  const availableShells = new Set(
+    probes
+      .filter((probe) => probe.found && probe.path && probe.label)
+      .map((probe) => probe.shell),
+  );
+  return COMMAND_SHELLS.find((shell) => availableShells.has(shell.value))?.value ?? fallback;
 }
 
 function syncSelectedShell(command: CommandSettings, selectedShell: CommandShell): CommandSettings {
