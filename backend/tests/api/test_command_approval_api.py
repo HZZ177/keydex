@@ -28,7 +28,7 @@ def test_settings_api_validates_and_saves_command_runtime_without_losing_model(
     with TestClient(app) as client:
         response = client.get("/api/settings")
         assert response.status_code == 200
-        assert response.json()["command"]["selected_shell"] == "cmd"
+        assert response.json()["command"]["selected_shell"] == "git_bash"
         assert response.json()["command"]["file_access_mode"] == "workspace_trusted"
 
         model_response = client.put(
@@ -126,10 +126,17 @@ def test_settings_api_rejects_unavailable_runtime_without_overwriting_existing(
         assert current["shell_path"] == str(first_path)
 
 
-def test_settings_api_saves_disabled_command_without_runtime_validation(tmp_path, monkeypatch) -> None:
+def test_settings_api_saves_disabled_command_without_runtime_validation(
+    tmp_path,
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         "backend.app.api.settings.discover_shell",
-        lambda shell, manual_path=None: ShellDiscoveryResult(shell=shell, found=False, error="not called"),
+        lambda shell, manual_path=None: ShellDiscoveryResult(
+            shell=shell,
+            found=False,
+            error="not called",
+        ),
     )
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
     with TestClient(app) as client:

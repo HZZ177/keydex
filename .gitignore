@@ -303,3 +303,5 @@ docs/superpowers/prototype
 !/desktop/src-tauri/binaries/rg-x86_64-pc-windows-msvc.exe
 /backend/app/.data/
 /.ktaicoding/des/assets/
+/.agent
+/.codex
