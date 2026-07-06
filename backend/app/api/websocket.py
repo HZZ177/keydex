@@ -17,6 +17,7 @@ from backend.app.command_approval import (
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.request_context import trace_id_var
+from backend.app.mcp.elicitation import McpElicitationError
 from backend.app.services.chat_stream_manager import (
     ChatStreamAlreadyRunningError,
     ChatStreamMissingSessionError,
@@ -268,6 +269,35 @@ async def chat_websocket(websocket: WebSocket) -> None:
                             "approval": approval,
                         },
                     )
+                    continue
+
+                if action == "mcp_elicitation_resolved":
+                    elicitation_service = getattr(
+                        websocket.app.state,
+                        "mcp_elicitation_service",
+                        None,
+                    )
+                    if elicitation_service is None:
+                        await send_error("elicitation_unavailable", "MCP elicitation 服务未启用")
+                        continue
+                    elicitation_id = str(
+                        payload.get("elicitation_id") or payload.get("id") or ""
+                    ).strip()
+                    if not elicitation_id:
+                        await send_error("missing_elicitation", "elicitation_id 必填")
+                        continue
+                    values = payload.get("values")
+                    try:
+                        result = await elicitation_service.resolve(
+                            elicitation_id,
+                            values=values if isinstance(values, dict) else {},
+                            cancelled=bool(payload.get("cancelled")),
+                            user_id=str(payload.get("user_id") or settings.default_user_id),
+                        )
+                    except McpElicitationError as exc:
+                        await send_error("invalid_elicitation_resolution", str(exc))
+                        continue
+                    await send("mcp_elicitation_resolved", {"elicitation": result.to_dict()})
                     continue
 
                 if action == "ping":

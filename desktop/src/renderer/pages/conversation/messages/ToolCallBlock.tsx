@@ -31,6 +31,7 @@ import { useDeferredUnmount } from "./useDeferredUnmount";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
 
 const INLINE_ERROR_MAX_CHARS = 240;
+const MCP_UNKNOWN_SERVER_LABEL = "未知 MCP 服务";
 
 export interface ToolCallBlockProps {
   message: ConversationMessage;
@@ -48,6 +49,7 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
   const details = useLazyToolDetails(message, onLoadDetails);
   const tool = useMemo(() => parseToolPayload(details.message), [details.message]);
   const running = details.message.status === "pending" || details.message.status === "running";
+  const cancelled = details.message.status === "cancelled" || tool.resultStatus === "cancelled";
   const failed = details.message.status === "failed" || tool.resultStatus === "error";
   const footerLabel = details.loading
     ? "加载中"
@@ -55,9 +57,11 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
       ? "加载失败"
       : running
         ? "运行中"
-        : failed
-          ? "失败"
-          : "成功";
+        : cancelled
+          ? "已取消"
+          : failed
+            ? tool.mcp?.errorLabel || "失败"
+            : "成功";
   const footerState = details.error || failed ? "failed" : details.loading || running ? "running" : "done";
   const detailsMotion = useDeferredUnmount<HTMLDivElement>(detailsOpen);
   const captureExpansionAnchor = useExpansionScrollAnchor();
@@ -142,6 +146,7 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
               unit=""
             />
           ) : null}
+          {tool.mcp ? <div className={styles.mcpMeta}>{mcpInlineLabel(tool.mcp)}</div> : null}
           {tool.duration ? <div className={styles.meta}>{tool.duration}</div> : null}
         </div>
         <span className={styles.trailingIcon} aria-hidden="true">
@@ -183,6 +188,7 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
                     <span className={styles.toolNameLabel}>工具</span>
                     <code className={styles.toolNameValue}>{tool.name}</code>
                   </div>
+                  {tool.mcp ? <McpToolDetails mcp={tool.mcp} /> : null}
                   <div className={styles.sectionHeader} data-kind="input">
                     <div className={styles.outputHeader}>入参</div>
                     <button
@@ -478,6 +484,19 @@ interface ParsedToolPayload {
   resultStatus: string | null;
   duration: string;
   errorPreview: string;
+  mcp: ParsedMcpToolMetadata | null;
+}
+
+interface ParsedMcpToolMetadata {
+  serverId: string;
+  serverName: string;
+  rawToolName: string;
+  modelToolName: string;
+  riskLevel: string;
+  approvalMode: string;
+  snapshotId: string;
+  errorType: string;
+  errorLabel: string;
 }
 
 function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
@@ -487,11 +506,15 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
   const summary = asRecord(message.payload.toolSummary) ?? {};
   const name = stringValue(call?.name) || stringValue(message.payload.tool) || stringValue(message.payload.tool_name) || message.content || "未知工具";
   const resultStatus = stringValue(result?.status);
+  const mcp = mcpMetadataFromMessage(message, name, result);
   const target = toolTarget(args, message.payload, summary);
-  const actionLabel = toolActionLabel(name, message.status, resultStatus);
+  const actionLabel = mcp
+    ? mcpToolActionLabel(mcp.rawToolName || name, message.status, resultStatus)
+    : toolActionLabel(name, message.status, resultStatus);
   const outputText = resultText(result, message.payload);
   const fileChanges = isFileMutationTool(name) ? fileReviewChangesFromMessage(message, target) : [];
   const fileChange = fileChanges.length === 1 ? fileChanges[0] : null;
+  const rawErrorText = errorText(result, message.payload, outputText);
   return {
     name,
     title: target ? `${actionLabel} ${target}` : actionLabel,
@@ -504,8 +527,239 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
     resultText: outputText,
     resultStatus,
     duration: formatDuration(result?.duration_ms ?? result?.durationMs ?? message.payload.duration_ms ?? message.payload.durationMs),
-    errorPreview: truncateInlineError(errorText(result, message.payload, outputText)),
+    errorPreview: truncateInlineError(mcpErrorPreview(mcp, rawErrorText)),
+    mcp,
   };
+}
+
+function McpToolDetails({ mcp }: { mcp: ParsedMcpToolMetadata }) {
+  const rawRows: Array<[string, string, boolean]> = [
+    ["服务", mcp.serverName || mcp.serverId || MCP_UNKNOWN_SERVER_LABEL, false],
+    ["原始工具", mcp.rawToolName, true],
+    ["模型工具", mcp.modelToolName, true],
+    ["风险", mcpRiskLabel(mcp.riskLevel), false],
+    ["审批", mcpApprovalModeLabel(mcp.approvalMode), false],
+    ["快照", mcp.snapshotId, true],
+  ];
+  const rows = rawRows.filter(([, value]) => Boolean(value));
+
+  if (!rows.length) {
+    return null;
+  }
+  return (
+    <dl className={styles.mcpDetailGrid} aria-label="MCP 工具元信息">
+      {rows.map(([label, value, mono]) => (
+        <div className={styles.mcpDetailItem} key={String(label)}>
+          <dt>{label}</dt>
+          <dd data-mono={mono ? "true" : "false"} title={String(value)}>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function mcpMetadataFromMessage(
+  message: ConversationMessage,
+  toolName: string,
+  result: Record<string, unknown> | null,
+): ParsedMcpToolMetadata | null {
+  const call = asRecord(message.payload.call);
+  const metadata = asRecord(message.payload.metadata);
+  const callMetadata = asRecord(call?.metadata);
+  const resultMetadata = asRecord(result?.metadata);
+  const resultUiPayload = asRecord(result?.ui_payload);
+  const resultUiPayloadMetadata = asRecord(resultUiPayload?.metadata);
+  const resultModelContent = parseJsonRecord(stringValue(result?.model_content));
+  const resultModelContentMetadata = asRecord(resultModelContent?.metadata);
+  const mcpRecords = [
+    asRecord(metadata?.mcp),
+    asRecord(callMetadata?.mcp),
+    asRecord(resultMetadata?.mcp),
+    asRecord(resultUiPayloadMetadata?.mcp),
+    asRecord(resultUiPayload?.mcp),
+    asRecord(resultModelContentMetadata?.mcp),
+    asRecord(resultModelContent?.mcp),
+    asRecord(message.payload.mcp),
+    asRecord(call?.mcp),
+    asRecord(result?.mcp),
+    mcpLikeRecord(message.payload),
+    mcpLikeRecord(call ?? {}),
+    mcpLikeRecord(result ?? {}),
+  ].filter((record): record is Record<string, unknown> => Boolean(record));
+  const merged = Object.assign({}, ...mcpRecords);
+  const kind = stringValue(merged.kind) || stringValue(message.payload.kind) || stringValue(call?.kind) || stringValue(result?.kind);
+  const modelToolName =
+    stringValue(merged.model_tool_name) ||
+    stringValue(merged.modelToolName) ||
+    stringValue(merged.model_name) ||
+    (toolName.startsWith("mcp__") ? toolName : "");
+  const rawToolName =
+    stringValue(merged.raw_tool_name) ||
+    stringValue(merged.rawToolName) ||
+    stringValue(merged.tool_name) ||
+    stringValue(merged.toolName) ||
+    rawToolNameFromModelName(modelToolName) ||
+    (toolName.startsWith("mcp__") ? rawToolNameFromModelName(toolName) : "");
+  const serverId = stringValue(merged.server_id) || stringValue(merged.serverId);
+  const serverName = nullableString(merged.server_name) ?? nullableString(merged.serverName) ?? "";
+  const hasMcpSignal =
+    kind === "mcp_tool" ||
+    kind === "mcp_tool_call" ||
+    Boolean(serverId || serverName || rawToolName || modelToolName || toolName.startsWith("mcp__"));
+  if (!hasMcpSignal) {
+    return null;
+  }
+  const errorType = mcpErrorTypeFromRecords([result ?? {}, message.payload, merged]);
+  return {
+    serverId,
+    serverName: serverName || serverId || MCP_UNKNOWN_SERVER_LABEL,
+    rawToolName: rawToolName || toolName,
+    modelToolName: modelToolName || toolName,
+    riskLevel: stringValue(merged.risk_level) || stringValue(merged.riskLevel),
+    approvalMode: stringValue(merged.approval_mode) || stringValue(merged.approvalMode),
+    snapshotId: stringValue(merged.snapshot_id) || stringValue(merged.snapshotId),
+    errorType,
+    errorLabel: mcpErrorLabel(errorType),
+  };
+}
+
+function mcpLikeRecord(record: Record<string, unknown>): Record<string, unknown> | null {
+  if (
+    record.kind === "mcp_tool" ||
+    record.kind === "mcp_tool_call" ||
+    record.server_id ||
+    record.serverName ||
+    record.raw_tool_name ||
+    record.model_tool_name
+  ) {
+    return record;
+  }
+  return null;
+}
+
+function rawToolNameFromModelName(name: string): string {
+  const match = name.match(/^mcp__.+__(.+)$/);
+  return match?.[1] ?? "";
+}
+
+function mcpInlineLabel(mcp: ParsedMcpToolMetadata): string {
+  return `MCP · ${mcp.serverName || MCP_UNKNOWN_SERVER_LABEL} · ${mcp.rawToolName || mcp.modelToolName || "未知工具"}`;
+}
+
+function mcpToolActionLabel(
+  rawToolName: string,
+  status: ConversationMessage["status"],
+  resultStatus: string | null,
+): string {
+  const failed = status === "failed" || resultStatus === "error";
+  const prefix = failed
+    ? "MCP 工具调用失败"
+    : status === "pending"
+      ? "等待调用 MCP 工具"
+      : status === "running"
+        ? "正在调用 MCP 工具"
+        : status === "cancelled" || resultStatus === "cancelled"
+          ? "已取消 MCP 工具"
+          : "已调用 MCP 工具";
+  return `${prefix} ${rawToolName || "未知工具"}`;
+}
+
+function mcpErrorPreview(mcp: ParsedMcpToolMetadata | null, rawText: string): string {
+  const label = mcp?.errorLabel ?? "";
+  if (!label) {
+    return rawText;
+  }
+  if (!rawText || rawText === label) {
+    return label;
+  }
+  return `${label}：${rawText}`;
+}
+
+function mcpErrorTypeFromRecords(records: Array<Record<string, unknown>>): string {
+  for (const record of records) {
+    const direct =
+      stringValue(record.error_type) ||
+      stringValue(record.errorType) ||
+      stringValue(record.error_code) ||
+      stringValue(record.errorCode) ||
+      stringValue(record.code) ||
+      stringValue(record.type);
+    if (direct) {
+      return direct;
+    }
+    const error = asRecord(record.error);
+    if (error) {
+      const nested =
+        stringValue(error.error_type) ||
+        stringValue(error.errorType) ||
+        stringValue(error.error_code) ||
+        stringValue(error.errorCode) ||
+        stringValue(error.code) ||
+        stringValue(error.type);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+  return "";
+}
+
+function mcpErrorLabel(type: string): string {
+  switch (type) {
+    case "server_disabled":
+      return "MCP 服务已停用";
+    case "server_offline":
+      return "MCP 服务离线";
+    case "tool_disabled_by_policy":
+      return "该 MCP 工具已被全局策略停用";
+    case "tool_disabled_by_session":
+      return "当前会话已禁用该 MCP 工具";
+    case "approval_rejected":
+      return "用户未批准该 MCP 工具调用";
+    case "auth_required":
+      return "MCP 服务需要重新授权";
+    case "timeout":
+      return "MCP 工具调用超时";
+    case "cancelled_by_user":
+      return "MCP 工具调用已停止";
+    case "protocol_error":
+      return "MCP 协议响应异常";
+    case "result_too_large":
+      return "MCP 工具结果过大";
+    default:
+      return "";
+  }
+}
+
+function mcpRiskLabel(level: string): string {
+  switch (level) {
+    case "high":
+      return "高";
+    case "medium":
+      return "中";
+    case "low":
+      return "低";
+    default:
+      return level;
+  }
+}
+
+function mcpApprovalModeLabel(mode: string): string {
+  switch (mode) {
+    case "auto":
+      return "自动允许";
+    case "prompt":
+      return "需要确认";
+    case "trusted":
+      return "信任规则允许";
+    case "disabled":
+    case "deny":
+      return "拒绝调用";
+    default:
+      return mode;
+  }
 }
 
 type ToolFileChange = FileReviewChange;
@@ -546,6 +800,17 @@ function resultText(result: Record<string, unknown> | null, payload: Record<stri
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | null {
+  if (!value.trim()) {
+    return null;
+  }
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
 }
 
 function toolActionLabel(
@@ -717,6 +982,13 @@ function isFileMutationTool(name: string): boolean {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function nullableString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return value.trim() ? value : null;
 }
 
 function numberValue(value: unknown): number | null {

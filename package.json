@@ -26,6 +26,8 @@
     "test:e2e:runtime:auto-title": "node .dev/e2e/runtime-auto-title.mjs",
     "test:e2e:runtime:session-branch": "node .dev/e2e/runtime-session-branch.mjs",
     "test:e2e:runtime:context-compression": "node .dev/e2e/runtime-context-compression.mjs",
+    "test:e2e:mcp:harness": "node .dev/e2e/mcp-harness-selftest.mjs",
+    "test:e2e:mcp:smoke": "node .dev/e2e/mcp-smoke.mjs",
     "build:frontend": "pnpm --dir desktop run build",
     "test": "pnpm run lint:backend && pnpm run test:backend && pnpm run test:frontend",
     "verify": "pnpm run test"

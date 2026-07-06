@@ -1,0 +1,625 @@
+.form {
+  display: grid;
+  gap: 14px;
+  min-height: 0;
+  padding: 14px 16px 18px;
+}
+
+.loading,
+.error,
+.testResult,
+.confirmBox {
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 9px 10px;
+}
+
+.loading {
+  color: var(--color-text-tertiary);
+}
+
+.error {
+  border-color: color-mix(in srgb, var(--color-danger) 32%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 7%, var(--surface-bg));
+  color: var(--color-danger);
+}
+
+.testResult {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--surface-hover) 38%, transparent);
+  color: var(--color-text-secondary);
+}
+
+.testResult[data-ok="true"] {
+  color: var(--color-success-6);
+}
+
+.testResult[data-ok="false"] {
+  color: var(--color-danger);
+}
+
+.testResultText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.testResultText strong {
+  font-weight: 600;
+}
+
+.testResultText small {
+  color: inherit;
+  opacity: 0.78;
+}
+
+.section {
+  display: grid;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 48%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
+  padding: 12px;
+}
+
+.section h3 {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.fieldStack {
+  display: grid;
+  gap: 11px;
+}
+
+.authPanel,
+.secretBox {
+  display: grid;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 44%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 28%, transparent);
+  padding: 10px;
+}
+
+.authPanel h4 {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.quickAuthPanel {
+  display: grid;
+  gap: 11px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 70%, transparent);
+  padding-top: 11px;
+}
+
+.field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.field span,
+.editorHeader span,
+.toggleRow strong,
+.replaceRow strong {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.field input,
+.field textarea,
+.field select,
+.arrayRow input,
+.mapRow input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 58%, transparent);
+  border-radius: 7px;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
+}
+
+.field input,
+.field select,
+.arrayRow input,
+.mapRow input {
+  height: 32px;
+  padding: 0 9px;
+}
+
+.field textarea {
+  min-height: 68px;
+  resize: vertical;
+  padding: 8px 9px;
+}
+
+.field input:hover:not(:disabled),
+.field textarea:hover:not(:disabled),
+.field select:hover:not(:disabled),
+.arrayRow input:hover:not(:disabled),
+.mapRow input:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-border-default) 76%, transparent);
+  background: color-mix(in srgb, var(--surface-hover) 42%, transparent);
+}
+
+.field input:focus,
+.field textarea:focus,
+.field select:focus,
+.arrayRow input:focus,
+.mapRow input:focus {
+  border-color: color-mix(in srgb, var(--color-border-3) 58%, var(--color-border-default));
+  box-shadow: var(
+    --settings-focus-ring,
+    0 0 0 1px color-mix(in srgb, var(--color-border-3) 54%, transparent)
+  );
+}
+
+.field input:disabled,
+.field textarea:disabled,
+.field select:disabled,
+.arrayRow input:disabled,
+.mapRow input:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.toggleGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.toggleRow,
+.replaceRow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 48%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.toggleRow > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.toggleRow small,
+.arrayEditor small,
+.secretHeader small,
+.mutedText {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.mutedText {
+  margin: 0;
+}
+
+.toggleRow input,
+.replaceRow input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--color-accent);
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.segmented[data-columns="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.segmented[data-columns="1"] {
+  grid-template-columns: 1fr;
+}
+
+.segmented button {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 50%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  padding: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.segmented button:hover:not(:disabled),
+.toggleRow:hover,
+.replaceRow:hover {
+  border-color: color-mix(in srgb, var(--color-border-default) 68%, transparent);
+  background: color-mix(in srgb, var(--surface-hover) 42%, transparent);
+}
+
+.segmented button[data-active="true"] {
+  border-color: color-mix(in srgb, var(--color-border-default) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-active) 70%, var(--color-bg-elevated));
+}
+
+.segmented strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.segmented span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.arrayEditor,
+.mapEditor {
+  display: grid;
+  gap: 8px;
+}
+
+.editorHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.editorHeader button,
+.inlineToolButton,
+.arrayRow button,
+.mapRow button,
+.confirmBox button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.editorHeader button:hover:not(:disabled),
+.inlineToolButton:hover:not(:disabled),
+.arrayRow button:hover:not(:disabled),
+.mapRow button:hover:not(:disabled),
+.confirmBox button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 64%, transparent);
+  color: var(--color-text-primary);
+}
+
+.editorHeader button:disabled,
+.inlineToolButton:disabled,
+.arrayRow button:disabled,
+.mapRow button:disabled,
+.confirmBox button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.inlineToolButton {
+  justify-self: start;
+  padding: 0 9px;
+}
+
+.arrayRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 8px;
+}
+
+.mapRow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) 32px;
+  gap: 8px;
+}
+
+.replaceRow {
+  justify-content: start;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.secretHeader {
+  display: grid;
+  gap: 3px;
+}
+
+.secretHeader span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.secretActions,
+.oauthButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.secretActions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.secretActions input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-accent);
+}
+
+.oauthStatus {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 7px;
+  padding: 9px 10px;
+}
+
+.oauthStatus span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oauthStatus strong {
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.oauthStatus[data-status="active"] strong {
+  color: var(--color-success-6);
+}
+
+.oauthStatus[data-status="expired"],
+.oauthStatus[data-status="revoked"],
+.oauthStatus[data-status="auth_required"] {
+  border-color: color-mix(in srgb, var(--color-warning) 32%, var(--color-border-default));
+}
+
+.inlineError {
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
+  color: var(--color-danger);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 9px;
+}
+
+.oauthButtons button,
+.oauthUrl button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 11px;
+  padding: 0 9px;
+  cursor: pointer;
+}
+
+.oauthButtons button:hover:not(:disabled),
+.oauthUrl button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 64%, transparent);
+  color: var(--color-text-primary);
+}
+
+.oauthButtons button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.oauthUrl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 7px;
+  padding: 8px;
+}
+
+.oauthUrl span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oauthClearConfirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 32%, var(--color-border-default));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-warning) 6%, transparent);
+  padding: 8px;
+}
+
+.oauthClearConfirm span {
+  min-width: min(220px, 100%);
+  flex: 1 1 auto;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.oauthClearConfirm button {
+  height: 28px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 11px;
+  padding: 0 9px;
+  cursor: pointer;
+}
+
+.replaceRow span {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.numberGrid,
+.selectGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.advancedDetails {
+  display: grid;
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 62%, transparent);
+}
+
+.advancedDetails summary {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  list-style-position: inside;
+  padding: 0 12px;
+}
+
+.advancedDetails summary:hover {
+  background: color-mix(in srgb, var(--surface-hover) 36%, transparent);
+}
+
+.advancedContent {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 76%, transparent);
+  padding: 12px;
+}
+
+.confirmBox {
+  display: grid;
+  gap: 10px;
+  border-color: color-mix(in srgb, var(--color-warning) 36%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-warning) 7%, transparent);
+}
+
+.confirmBox strong {
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.confirmBox ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.confirmBox div {
+  display: flex;
+  gap: 8px;
+}
+
+.confirmBox button:first-child {
+  border-color: color-mix(in srgb, var(--color-warning) 42%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-elevated));
+  color: var(--color-text-primary);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  position: sticky;
+  bottom: -18px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 94%, transparent);
+  padding: 12px 0 0;
+}
+
+@media (max-width: 760px) {
+  .toggleGrid,
+  .segmented,
+  .numberGrid,
+  .selectGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .mapRow {
+    grid-template-columns: minmax(0, 1fr) 32px;
+  }
+
+  .mapRow input:first-child {
+    grid-column: 1 / -1;
+  }
+}

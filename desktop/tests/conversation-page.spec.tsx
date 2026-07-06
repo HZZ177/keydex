@@ -374,7 +374,7 @@ describe("ConversationPage", () => {
   it("renders context compression divider notices from history metadata", async () => {
     const { runtime } = fakeRuntime({
       history: [
-        historyMessage("system", "无感压缩已完成", {
+        historyMessage("system", "上下文压缩已完成", {
           messageEventId: "evt-compressed",
           turnIndex: 2,
           status: "completed",
@@ -393,7 +393,7 @@ describe("ConversationPage", () => {
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     const notice = await screen.findByTestId("context-compression-notice");
-    expect(notice.textContent).toContain("无感压缩已完成");
+    expect(notice.textContent).toContain("上下文压缩已完成");
   });
 
   it("updates emergency compression divider notices in place", async () => {
@@ -414,7 +414,7 @@ describe("ConversationPage", () => {
       );
     });
 
-    expect(await screen.findByText("正在自动压缩中")).not.toBeNull();
+    expect(await screen.findByText("正在全量压缩上下文")).not.toBeNull();
 
     await act(async () => {
       emit(
@@ -430,9 +430,38 @@ describe("ConversationPage", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("context-compression-notice").textContent).toContain("自动压缩成功");
+      expect(screen.getByTestId("context-compression-notice").textContent).toContain("全量压缩已完成");
     });
-    expect(screen.queryByText("正在自动压缩中")).toBeNull();
+    expect(screen.queryByText("正在全量压缩上下文")).toBeNull();
+  });
+
+  it("starts full compression immediately from the slash command", async () => {
+    let resolveCompress: (() => void) | null = null;
+    const compressContext = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCompress = resolve;
+        }),
+    );
+    const { runtime } = fakeRuntime({ compressContext });
+    renderConversationWithNotifications(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    const input = await readyComposer();
+    typeComposer("/全量");
+    await waitFor(() => {
+      expect(screen.getByTestId("slash-command-menu")).not.toBeNull();
+    });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(compressContext).toHaveBeenCalledWith("ses-1", { mode: "deep" });
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await act(async () => {
+      resolveCompress?.();
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("shows async compression failures as top notifications without adding a divider", async () => {
@@ -452,7 +481,7 @@ describe("ConversationPage", () => {
       );
     });
 
-    expect((await screen.findByRole("alert")).textContent).toContain("无感压缩失败");
+    expect((await screen.findByRole("alert")).textContent).toContain("上下文压缩失败");
     expect(screen.queryByTestId("context-compression-notice")).toBeNull();
   });
 
@@ -514,14 +543,14 @@ describe("ConversationPage", () => {
     const indicator = screen.getByTestId("context-window-indicator");
     expect(indicator.getAttribute("aria-label")).toContain("当前已使用上下文 700 tokens");
     expect(indicator.getAttribute("data-level")).toBe("warning");
-    expect(indicator.getAttribute("aria-label")).toContain("无感压缩进度 93.3%");
-    expect(indicator.getAttribute("aria-label")).toContain("阻塞压缩进度 77.8%");
+    expect(indicator.getAttribute("aria-label")).toContain("上下文压缩进度 93.3%");
+    expect(indicator.getAttribute("aria-label")).toContain("全量压缩进度 77.8%");
     const tooltip = screen.getByRole("tooltip");
     expect(tooltip.textContent).toContain("当前已使用 700 tokens");
-    expect(tooltip.textContent).toContain("无感压缩进度 93.3%");
-    expect(tooltip.textContent).toContain("阻塞压缩进度 77.8%");
+    expect(tooltip.textContent).toContain("上下文压缩进度 93.3%");
+    expect(tooltip.textContent).toContain("全量压缩进度 77.8%");
     const tooltipText = tooltip.textContent ?? "";
-    expect(tooltipText.indexOf("无感压缩进度")).toBeLessThan(tooltipText.indexOf("阻塞压缩进度"));
+    expect(tooltipText.indexOf("上下文压缩进度")).toBeLessThan(tooltipText.indexOf("全量压缩进度"));
     expect(tooltip.querySelector('[data-progress-kind="ambient"]')?.getAttribute("data-level")).toBe("warning");
     expect(tooltip.querySelector('[data-progress-kind="blocking"]')?.getAttribute("data-level")).toBe("normal");
     expect(tooltip.textContent).not.toContain("700 / 1,000 tokens");
@@ -2811,6 +2840,7 @@ function fakeRuntime({
     session,
     source: branchSource(),
   }),
+  compressContext = vi.fn().mockResolvedValue(undefined),
   loadHistory,
   workspaceSearch = vi.fn().mockResolvedValue([]),
   workspaceListSkills = vi.fn().mockResolvedValue({
@@ -2833,6 +2863,7 @@ function fakeRuntime({
   cancel?: ReturnType<typeof vi.fn>;
   forkSession?: ReturnType<typeof vi.fn>;
   reverseSession?: ReturnType<typeof vi.fn>;
+  compressContext?: ReturnType<typeof vi.fn>;
   loadHistory?: ReturnType<typeof vi.fn>;
   workspaceSearch?: ReturnType<typeof vi.fn>;
   workspaceListSkills?: ReturnType<typeof vi.fn>;
@@ -2862,6 +2893,7 @@ function fakeRuntime({
     conversation: {
       forkSession,
       reverseSession,
+      compressContext,
       updateSession: vi.fn().mockImplementation((_sessionId: string, patch: Partial<AgentSession>) =>
         Promise.resolve({ ...session, ...patch }),
       ),

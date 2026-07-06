@@ -70,6 +70,7 @@ export function ConversationPanel({
         onFilePreview={model.openFileChangePreview}
         onLoadToolDetails={model.loadToolDetails}
         onTerminateCommand={model.terminateCommand}
+        onResolveMcpElicitation={model.resolveMcpElicitation}
         onQuoteSelection={model.quoteSelection}
         onAskSelectionInBtwConversation={onAskSelectionInBtwConversation}
         onForkFromMessage={showForkActions ? model.forkFromMessage : undefined}
@@ -153,11 +154,13 @@ function ReverseConfirmDialog({
 
 export interface ConversationPanelComposerAccessoryProps {
   model: ConversationPanelModel;
+  runtime?: RuntimeBridge;
   showScrollButton?: boolean;
 }
 
 export function ConversationPanelComposerAccessory({
   model,
+  runtime,
   showScrollButton = true,
 }: ConversationPanelComposerAccessoryProps) {
   return (
@@ -165,6 +168,15 @@ export function ConversationPanelComposerAccessory({
       messages={model.messages}
       activeTask={model.activeTask}
       runningTaskRun={model.taskRunState?.runningTaskRun ?? null}
+      mcpRuntime={
+        runtime && model.sessionId
+          ? {
+              runtime,
+              sessionId: model.sessionId,
+              runtimeState: model.runtimeState,
+            }
+          : null
+      }
       onUpdateTask={model.updateThreadTask}
       onDeleteTask={model.deleteThreadTask}
       showScrollToBottom={model.showScrollToBottom}

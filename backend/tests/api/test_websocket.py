@@ -173,19 +173,18 @@ def test_websocket_chat_streams_projection_actions(tmp_path) -> None:
                 "model": "qwen-coder",
             }
         )
-        first = ws.receive_json()
-        second = ws.receive_json()
-        completed = ws.receive_json()
+        events = [ws.receive_json() for _ in range(4)]
 
-    assert [first["action"], second["action"], completed["action"]] == [
+    assert [event["action"] for event in events] == [
+        "turn_started",
         "stream",
         "stream",
         "completed",
     ]
-    assert first["data"]["content"] == "你"
-    assert second["data"]["content"] == "好"
-    assert completed["data"]["session_id"] == session_id
-    assert completed["data"]["final_content"] == "你好"
+    assert events[1]["data"]["content"] == "你"
+    assert events[2]["data"]["content"] == "好"
+    assert events[3]["data"]["session_id"] == session_id
+    assert events[3]["data"]["final_content"] == "你好"
 
 
 def test_websocket_chat_streams_tool_actions_and_history(tmp_path) -> None:
@@ -247,21 +246,24 @@ def test_websocket_chat_streams_tool_actions_and_history(tmp_path) -> None:
                 "model": "qwen-coder",
             }
         )
-        events = [ws.receive_json() for _ in range(4)]
+        events = [ws.receive_json() for _ in range(5)]
 
     assert [event["action"] for event in events] == [
+        "turn_started",
         "tool_start",
         "tool_end",
         "stream",
         "completed",
     ]
-    assert events[0]["data"]["tool"] == "read_file"
-    assert events[1]["data"]["status"] == "completed"
-    assert "文件内容" in events[1]["data"]["result"]
-    assert events[2]["data"]["content"] == "已读取"
+    assert events[1]["data"]["tool"] == "read_file"
+    assert events[2]["data"]["status"] == "completed"
+    assert "文件内容" in events[2]["data"]["result"]
+    assert events[3]["data"]["content"] == "已读取"
     history = client.get(f"/api/sessions/{session_id}/history")
     assert history.status_code == 200
-    messages = history.json()["list"]
+    messages = [
+        message for message in history.json()["list"] if message["role"] != "turn"
+    ]
     assert [message["role"] for message in messages] == ["user", "tool", "assistant"]
     assert messages[1]["status"] == "completed"
     assert messages[2]["content"] == "已读取"
@@ -299,6 +301,65 @@ def test_websocket_terminate_command_does_not_cancel_turn(tmp_path) -> None:
     }
 
 
+def test_websocket_approval_decision_resolves_mcp_tool_call(tmp_path) -> None:
+    client = _client(tmp_path)
+    repositories = client.app.state.repositories
+    repositories.sessions.create(
+        session_id="ses-mcp-ws",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="MCP WebSocket 审批",
+    )
+    repositories.mcp_servers.create(
+        server_id="srv_exec",
+        name="Execution MCP",
+        transport="streamable_http",
+        url="https://mcp.example.test/mcp",
+    )
+    repositories.command_approvals.create(
+        approval_id="approval-mcp-ws",
+        session_id="ses-mcp-ws",
+        command="mcp__srv_exec__search",
+        cwd=".",
+        title="允许 Execution MCP MCP 执行 search？",
+        tool_name="mcp__srv_exec__search",
+        shell="mcp",
+        kind="mcp_tool_call",
+        details={
+            "approval_kind": "mcp_tool_call",
+            "snapshot_id": "snap-ws",
+            "server_id": "srv_exec",
+            "server_name": "Execution MCP",
+            "raw_tool_name": "search",
+            "model_tool_name": "mcp__srv_exec__search",
+            "risk_level": "high",
+            "approval_mode": "auto",
+            "arguments_preview": {"query": "hello"},
+            "trust_options": ["once", "session", "persistent_tool", "server_readonly"],
+            "matched_rule": None,
+        },
+    )
+
+    with client.websocket_connect("/agent-base/ws/chat?session_id=ses-mcp-ws") as ws:
+        ws.send_json(
+            {
+                "action": "approval_decision",
+                "approval_id": "approval-mcp-ws",
+                "decision": "approved",
+                "trust_scope": "session",
+            }
+        )
+        resolved = ws.receive_json()
+
+    assert resolved["action"] == "approval_resolved"
+    approval = resolved["data"]["approval"]
+    assert approval["kind"] == "mcp_tool_call"
+    assert approval["status"] == "approved"
+    assert approval["trust_scope"] == "session"
+    assert approval["metadata"]["mcp"]["server_id"] == "srv_exec"
+    assert repositories.command_approvals.get("approval-mcp-ws").status == "approved"
+
+
 def test_websocket_chat_requires_explicit_model_selection(tmp_path) -> None:
     client = _client(tmp_path)
 
@@ -325,6 +386,23 @@ def test_websocket_returns_structured_error_for_unknown_action(tmp_path) -> None
     assert response["action"] == "error"
     assert response["data"]["code"] == "unknown_action"
     assert "unknown" in response["data"]["message"]
+
+
+def test_websocket_elicitation_resolve_action_is_not_unknown(tmp_path) -> None:
+    client = _client(tmp_path)
+
+    with client.websocket_connect("/agent-base/ws/chat") as ws:
+        ws.send_json(
+            {
+                "action": "mcp_elicitation_resolved",
+                "elicitation_id": "missing",
+                "values": {"name": "value"},
+            }
+        )
+        response = ws.receive_json()
+
+    assert response["action"] == "error"
+    assert response["data"]["code"] == "invalid_elicitation_resolution"
 
 
 def test_websocket_reconnect_can_bind_existing_session(tmp_path) -> None:

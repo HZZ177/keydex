@@ -39,6 +39,300 @@ create table if not exists model_defaults (
   foreign key(provider_id) references model_providers(id) on delete cascade
 );
 
+create table if not exists mcp_servers (
+  id text primary key,
+  name text not null,
+  description text,
+  enabled integer not null default 1,
+  required integer not null default 0,
+  transport text not null check (transport in ('stdio', 'streamable_http', 'sse')),
+  command text,
+  args_json text,
+  cwd text,
+  inherit_environment integer not null default 1,
+  env_json text,
+  url text,
+  sse_url text,
+  message_url text,
+  headers_json text,
+  env_headers_json text,
+  bearer_token_env_var text,
+  auth_type text not null default 'none'
+    check (auth_type in ('none', 'header_token', 'bearer_env', 'oauth')),
+  secret_refs_json text,
+  oauth_config_json text,
+  oauth_resource text,
+  oauth_scopes_json text,
+  startup_timeout_sec integer not null default 30,
+  tool_timeout_sec integer not null default 60,
+  read_timeout_sec integer not null default 60,
+  sse_read_timeout_sec integer not null default 300,
+  shutdown_timeout_sec integer not null default 10,
+  restart_policy text not null default 'on_failure'
+    check (restart_policy in ('never', 'on_failure', 'always')),
+  connect_mode text not null default 'on_demand'
+    check (connect_mode in ('on_startup', 'on_demand')),
+  auto_refresh integer not null default 1,
+  refresh_interval_sec integer not null default 1800,
+  default_tool_exposure_mode text not null default 'allow_all_except_disabled'
+    check (default_tool_exposure_mode in (
+      'allow_all_except_disabled',
+      'allow_selected_only',
+      'read_only_auto'
+    )),
+  default_tool_approval_mode text not null default 'auto'
+    check (default_tool_approval_mode in ('auto', 'prompt', 'approve')),
+  supports_parallel_tool_calls integer not null default 0,
+  elicitation_enabled integer not null default 1,
+  sampling_enabled integer not null default 0,
+  prompt_discovery_enabled integer not null default 1,
+  resource_reserved_policy_json text,
+  created_at text not null,
+  updated_at text not null,
+  unique(name)
+);
+
+create index if not exists idx_mcp_servers_enabled on mcp_servers(enabled);
+create index if not exists idx_mcp_servers_transport on mcp_servers(transport);
+
+create table if not exists mcp_server_status (
+  server_id text primary key references mcp_servers(id) on delete cascade,
+  status text not null default 'unknown'
+    check (status in (
+      'unknown',
+      'online',
+      'offline',
+      'auth_required',
+      'error',
+      'disabled',
+      'refreshing'
+    )),
+  capabilities_json text,
+  server_info_json text,
+  last_connected_at text,
+  last_refresh_at text,
+  last_refresh_revision integer not null default 0,
+  last_error_code text,
+  last_error_message text,
+  last_error_detail_json text,
+  tools_count integer not null default 0,
+  prompts_count integer not null default 0,
+  resources_reserved_count integer not null default 0,
+  updated_at text not null
+);
+
+create index if not exists idx_mcp_server_status_status on mcp_server_status(status);
+create index if not exists idx_mcp_server_status_last_refresh
+  on mcp_server_status(last_refresh_at desc);
+
+create table if not exists mcp_tools (
+  id text primary key,
+  server_id text not null references mcp_servers(id) on delete cascade,
+  raw_name text not null,
+  model_name text not null,
+  callable_namespace text not null,
+  callable_name text not null,
+  display_name text,
+  description text,
+  input_schema_json text not null default '{}',
+  annotations_json text,
+  meta_json text,
+  schema_hash text not null,
+  risk_level text not null default 'unknown'
+    check (risk_level in ('low', 'medium', 'high', 'unknown')),
+  discovery_status text not null default 'active'
+    check (discovery_status in ('new', 'active', 'removed', 'schema_changed')),
+  first_seen_at text not null,
+  last_seen_at text not null,
+  removed_at text,
+  last_used_at text,
+  call_count integer not null default 0,
+  failure_count integer not null default 0,
+  unique(server_id, raw_name),
+  unique(model_name)
+);
+
+create index if not exists idx_mcp_tools_server on mcp_tools(server_id);
+create index if not exists idx_mcp_tools_status on mcp_tools(discovery_status);
+create index if not exists idx_mcp_tools_risk on mcp_tools(risk_level);
+
+create table if not exists mcp_tool_policies (
+  id text primary key,
+  server_id text not null references mcp_servers(id) on delete cascade,
+  raw_tool_name text not null,
+  enabled integer not null default 1,
+  hidden integer not null default 0,
+  approval_mode text not null default 'inherit'
+    check (approval_mode in ('inherit', 'auto', 'prompt', 'approve', 'deny')),
+  risk_override text check (risk_override in ('low', 'medium', 'high', 'unknown')),
+  parameter_constraints_json text,
+  schema_change_action text not null default 'require_review'
+    check (schema_change_action in ('keep_enabled', 'require_review', 'disable')),
+  updated_at text not null,
+  unique(server_id, raw_tool_name)
+);
+
+create index if not exists idx_mcp_tool_policies_server
+  on mcp_tool_policies(server_id);
+
+create table if not exists mcp_prompts (
+  id text primary key,
+  server_id text not null references mcp_servers(id) on delete cascade,
+  raw_name text not null,
+  display_name text,
+  description text,
+  arguments_schema_json text not null default '{}',
+  meta_json text,
+  discovery_status text not null default 'active'
+    check (discovery_status in ('new', 'active', 'removed', 'schema_changed')),
+  first_seen_at text not null,
+  last_seen_at text not null,
+  removed_at text,
+  unique(server_id, raw_name)
+);
+
+create index if not exists idx_mcp_prompts_server on mcp_prompts(server_id);
+create index if not exists idx_mcp_prompts_status on mcp_prompts(discovery_status);
+
+create table if not exists mcp_prompt_policies (
+  id text primary key,
+  server_id text not null references mcp_servers(id) on delete cascade,
+  raw_prompt_name text not null,
+  enabled integer not null default 1,
+  exposure_mode text not null default 'manual'
+    check (exposure_mode in ('hidden', 'manual', 'slash_command', 'agent_selectable')),
+  updated_at text not null,
+  unique(server_id, raw_prompt_name)
+);
+
+create index if not exists idx_mcp_prompt_policies_server
+  on mcp_prompt_policies(server_id);
+
+create table if not exists mcp_resources (
+  id text primary key,
+  server_id text not null references mcp_servers(id) on delete cascade,
+  uri text not null,
+  name text,
+  description text,
+  mime_type text,
+  meta_json text,
+  last_seen_at text,
+  reserved_only integer not null default 1,
+  unique(server_id, uri)
+);
+
+create index if not exists idx_mcp_resources_server on mcp_resources(server_id);
+
+create table if not exists mcp_resource_templates (
+  id text primary key,
+  server_id text not null references mcp_servers(id) on delete cascade,
+  uri_template text not null,
+  name text,
+  description text,
+  mime_type text,
+  meta_json text,
+  last_seen_at text,
+  reserved_only integer not null default 1,
+  unique(server_id, uri_template)
+);
+
+create index if not exists idx_mcp_resource_templates_server
+  on mcp_resource_templates(server_id);
+
+create table if not exists mcp_oauth_tokens (
+  id text primary key,
+  server_id text not null references mcp_servers(id) on delete cascade,
+  account_label text,
+  token_ref text not null,
+  refresh_token_ref text,
+  scopes_json text,
+  expires_at text,
+  status text not null default 'active'
+    check (status in ('active', 'expired', 'revoked', 'error')),
+  created_at text not null,
+  updated_at text not null
+);
+
+create index if not exists idx_mcp_oauth_tokens_server_status
+  on mcp_oauth_tokens(server_id, status);
+
+create table if not exists mcp_trust_rules (
+  id text primary key,
+  server_id text references mcp_servers(id) on delete cascade,
+  raw_tool_name text,
+  rule_kind text not null
+    check (rule_kind in ('server_readonly', 'tool', 'tool_with_params', 'deny_tool')),
+  scope text not null check (scope in ('session', 'global')),
+  session_id text,
+  condition_json text,
+  approval_mode text not null check (approval_mode in ('approve', 'deny')),
+  hit_count integer not null default 0,
+  created_from_approval_id text,
+  expires_at text,
+  last_hit_at text,
+  created_at text not null,
+  updated_at text not null
+);
+
+create index if not exists idx_mcp_trust_rules_server_tool
+  on mcp_trust_rules(server_id, raw_tool_name);
+create index if not exists idx_mcp_trust_rules_scope
+  on mcp_trust_rules(scope, session_id);
+
+create table if not exists mcp_session_tool_overrides (
+  id text primary key,
+  session_id text not null,
+  server_id text not null references mcp_servers(id) on delete cascade,
+  raw_tool_name text not null,
+  enabled integer not null,
+  reason text,
+  created_at text not null,
+  expires_at text,
+  unique(session_id, server_id, raw_tool_name)
+);
+
+create index if not exists idx_mcp_session_tool_overrides_session
+  on mcp_session_tool_overrides(session_id);
+
+create table if not exists mcp_runtime_snapshots (
+  id text primary key,
+  session_id text not null,
+  turn_id text,
+  tool_inventory_revision integer not null,
+  visible_tools_json text not null,
+  server_status_json text not null,
+  policy_summary_json text not null,
+  created_at text not null
+);
+
+create index if not exists idx_mcp_runtime_snapshots_session_turn
+  on mcp_runtime_snapshots(session_id, turn_id);
+
+create table if not exists mcp_audit_log (
+  id text primary key,
+  event_type text not null,
+  server_id text,
+  raw_tool_name text,
+  prompt_name text,
+  session_id text,
+  turn_id text,
+  call_id text,
+  approval_id text,
+  actor text,
+  status text,
+  duration_ms integer,
+  summary text,
+  detail_json text,
+  created_at text not null
+);
+
+create index if not exists idx_mcp_audit_log_server_created
+  on mcp_audit_log(server_id, created_at desc);
+create index if not exists idx_mcp_audit_log_session_created
+  on mcp_audit_log(session_id, created_at desc);
+create index if not exists idx_mcp_audit_log_event_created
+  on mcp_audit_log(event_type, created_at desc);
+
 create table if not exists workspaces (
   id text primary key,
   name text not null,
@@ -266,7 +560,9 @@ create table if not exists compression_staging (
   target_session_id text not null,
   generation integer not null,
   status text not null default 'pending',
+  staging_strategy text not null default 'anchor_replacement',
   anchor_message_id text,
+  source_last_message_id text,
   l1_content text,
   l2_content text,
   failure_reason text,
@@ -622,6 +918,13 @@ class Database:
             self._ensure_column(conn, "workspace_file_annotations", "anchor_json", "text")
             self._ensure_column(conn, "trace_record", "input_checkpoint_id", "text")
             self._ensure_column(conn, "trace_record", "input_checkpoint_ns", "text")
+            self._ensure_column(
+                conn,
+                "compression_staging",
+                "staging_strategy",
+                "text not null default 'anchor_replacement'",
+            )
+            self._ensure_column(conn, "compression_staging", "source_last_message_id", "text")
             self._ensure_column(
                 conn,
                 "trusted_command_rules",

@@ -17,8 +17,9 @@ from backend.app.agent.state import KeydexAgentState
 from backend.app.agent.tool_call_preset_middleware import ToolCallPresetMiddleware
 from backend.app.events import EventDispatcher
 from backend.app.keydex import KeydexWorkspaceRuntimeCache
+from backend.app.mcp.tools import mcp_local_tools_from_snapshot
 from backend.app.model import ModelSettings
-from backend.app.storage import StorageRepositories, init_database
+from backend.app.storage import McpRuntimeSnapshotRecord, StorageRepositories, init_database
 from backend.app.tools import FunctionTool, ToolExecutionContext, ToolRegistry
 
 
@@ -66,7 +67,16 @@ def _registry() -> ToolRegistry:
     return registry
 
 
-def _runner(factory: RecordingAgentFactory) -> AgentRunner:
+class FakeMcpExecutor:
+    async def execute_tool(self, **_kwargs: Any) -> dict[str, str]:
+        return {"content": "ok"}
+
+
+def _runner(
+    factory: RecordingAgentFactory,
+    *,
+    registry: ToolRegistry | None = None,
+) -> AgentRunner:
     return AgentRunner(
         model_settings_provider=lambda: ModelSettings(
             base_url="http://model.test/v1",
@@ -74,7 +84,7 @@ def _runner(factory: RecordingAgentFactory) -> AgentRunner:
             model="fake-default",
         ),
         checkpointer=object(),
-        tool_registry=_registry(),
+        tool_registry=registry or _registry(),
         default_system_prompt="base prompt",
         factory=factory,
     )
@@ -93,6 +103,36 @@ description: Build a structured development plan.
 """,
         encoding="utf-8",
     )
+
+
+def _mcp_runtime_tool():
+    snapshot = McpRuntimeSnapshotRecord(
+        id="snap_agent",
+        session_id="ses-1",
+        turn_id="turn-1",
+        tool_inventory_revision=1,
+        visible_tools=[
+            {
+                "server_id": "srv_agent_mcp",
+                "server_name": "Agent MCP",
+                "raw_name": "search",
+                "model_name": "mcp__srv_agent_mcp__search",
+                "description": "Search MCP data",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+                "risk_level": "low",
+                "approval_mode": "auto",
+                "exposure": "direct",
+            }
+        ],
+        server_status={},
+        policy_summary={},
+        created_at="2026-07-06T00:00:00Z",
+    )
+    return mcp_local_tools_from_snapshot(snapshot, FakeMcpExecutor())[0]
 
 
 def test_agent_runner_appends_native_load_skill_for_workspace_skill_catalog(
@@ -143,6 +183,36 @@ def test_agent_runner_does_not_append_load_skill_when_tools_disabled(tmp_path: P
 
     assert factory.created_tools == [[]]
     assert factory.created_state_schema == [KeydexAgentState]
+
+
+def test_agent_runner_merges_local_registry_and_runtime_mcp_tools_without_registry_mutation(
+    tmp_path: Path,
+) -> None:
+    registry = _registry()
+    factory = RecordingAgentFactory()
+    runner = _runner(factory, registry=registry)
+    mcp_tool = _mcp_runtime_tool()
+
+    runner.create_agent(
+        model="qwen-coder",
+        system_prompt="base prompt",
+        tool_context=ToolExecutionContext(
+            session_id="ses-1",
+            user_id="user-1",
+            workspace_root=tmp_path,
+            turn_index=1,
+        ),
+        runtime_tools=[mcp_tool],
+    )
+
+    tool_names = [tool.name for tool in factory.created_tools[0]]
+    mcp_langchain_tool = next(
+        tool for tool in factory.created_tools[0] if tool.name == "mcp__srv_agent_mcp__search"
+    )
+    assert tool_names == ["read_file", "mcp__srv_agent_mcp__search"]
+    assert mcp_langchain_tool.description == "Search MCP data"
+    assert mcp_langchain_tool.args_schema == mcp_tool.parameters
+    assert registry.get("mcp__srv_agent_mcp__search", include_disabled=True) is None
 
 
 def test_default_middleware_order_matches_skill_design() -> None:

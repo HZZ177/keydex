@@ -51,6 +51,8 @@ import { useTextSelection } from "./useTextSelection";
 import { useTypingAnimation } from "./useTypingAnimation";
 import styles from "./MessageText.module.css";
 
+const MESSAGE_ACTION_COPY_FEEDBACK_MS = 1400;
+
 const messageMarkdownModelCache = new MarkdownDocumentModelCache(96);
 const MESSAGE_MARKDOWN_SCROLL_PARENT_SELECTOR = "[data-message-list-scroll='true']";
 const MESSAGE_MARKDOWN_VIRTUAL_BLOCK_THRESHOLD = 96;
@@ -860,17 +862,44 @@ export function MessageActionFooter({
   onReverseFromMessage?: (message: ConversationMessage) => void;
 }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const copyFeedbackTimerRef = useRef<number | null>(null);
   const time = formatMessageTime(message.updatedAt || message.createdAt);
   const hasPersistedEvent = typeof message.payload.messageEventId === "string" && message.status !== "running";
   const canFork = hasPersistedEvent && message.kind === "assistant";
   const canReverse = hasPersistedEvent && message.kind === "user";
 
+  const clearCopyFeedbackTimer = useCallback(() => {
+    if (copyFeedbackTimerRef.current !== null) {
+      window.clearTimeout(copyFeedbackTimerRef.current);
+      copyFeedbackTimerRef.current = null;
+    }
+  }, []);
+
+  const resetCopyFeedback = useCallback(() => {
+    clearCopyFeedbackTimer();
+    setCopyState("idle");
+  }, [clearCopyFeedbackTimer]);
+
+  const showCopyFeedback = useCallback(
+    (state: "copied" | "failed") => {
+      clearCopyFeedbackTimer();
+      setCopyState(state);
+      copyFeedbackTimerRef.current = window.setTimeout(() => {
+        setCopyState("idle");
+        copyFeedbackTimerRef.current = null;
+      }, MESSAGE_ACTION_COPY_FEEDBACK_MS);
+    },
+    [clearCopyFeedbackTimer],
+  );
+
+  useEffect(() => clearCopyFeedbackTimer, [clearCopyFeedbackTimer]);
+
   const handleCopy = async () => {
     try {
       await copyText(normalizeMessageContent(message.content));
-      setCopyState("copied");
+      showCopyFeedback("copied");
     } catch {
-      setCopyState("failed");
+      showCopyFeedback("failed");
     }
   };
 
@@ -880,6 +909,7 @@ export function MessageActionFooter({
       data-copy-state={copyState}
       data-message-kind={message.kind}
       data-placement={placement}
+      onPointerLeave={resetCopyFeedback}
     >
       <button
         className={styles.actionButton}

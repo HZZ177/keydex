@@ -18,12 +18,14 @@ export type {
   MessageListTurnNavigatorMode,
 } from "./MessageList";
 export type { ConversationTurnNavigationItem } from "./ConversationTurnNavigator";
-export { MessageAgentStatus } from "./MessageAgentStatus";
+export { AgentLoadingIcon, MessageAgentStatus } from "./MessageAgentStatus";
 export type { MessageAgentStatusProps } from "./MessageAgentStatus";
 export { MessageThinking } from "./MessageThinking";
 export type { MessageThinkingProps } from "./MessageThinking";
 export { MessageText } from "./MessageText";
 export type { MessageTextProps } from "./MessageText";
+export { McpElicitationPrompt } from "./McpElicitationPrompt";
+export type { McpElicitationPromptProps, McpElicitationResolveHandler } from "./McpElicitationPrompt";
 export { SkillActivationBlock } from "./SkillActivationBlock";
 export type { SkillActivationBlockProps } from "./SkillActivationBlock";
 export { ThreadTaskStatusBlock } from "./ThreadTaskStatusBlock";

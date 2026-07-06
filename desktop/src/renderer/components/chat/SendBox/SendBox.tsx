@@ -105,6 +105,7 @@ export interface SendBoxProps {
   leftHint?: ReactNode;
   allowBypassConversationSlashCommand?: boolean;
   allowGoalSlashCommand?: boolean;
+  allowContextCompressionSlashCommand?: boolean;
   workspaceSkills?: WorkspaceSkillSummary[];
   selectedSkill?: WorkspaceSkillSummary | null;
   onSelectedFilesChange?: (files: SelectedFile[]) => void;
@@ -173,6 +174,7 @@ export function SendBox({
   leftHint = null,
   allowBypassConversationSlashCommand = true,
   allowGoalSlashCommand = true,
+  allowContextCompressionSlashCommand = true,
   workspaceSkills = [],
   selectedSkill: controlledSelectedSkill,
   onSelectedFilesChange,
@@ -349,8 +351,14 @@ export function SendBox({
       buildSlashCommands(workspaceSkills, {
         includeBypassConversation: allowBypassConversationSlashCommand,
         includeGoal: allowGoalSlashCommand,
+        includeContextCompression: allowContextCompressionSlashCommand,
       }),
-    [allowBypassConversationSlashCommand, allowGoalSlashCommand, workspaceSkills],
+    [
+      allowBypassConversationSlashCommand,
+      allowContextCompressionSlashCommand,
+      allowGoalSlashCommand,
+      workspaceSkills,
+    ],
   );
   const slashCommands = useMemo(
     () => (slashQuery === null ? [] : filterSlashCommands(availableSlashCommands, slashQuery)),

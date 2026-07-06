@@ -1,0 +1,207 @@
+.block {
+  display: grid;
+  gap: 10px;
+  max-width: 100%;
+  border: 1px solid var(--inline-block-border);
+  border-radius: var(--radius-md);
+  background: var(--inline-block-bg);
+  color: var(--color-text-secondary);
+  padding: 10px 12px;
+}
+
+.block[data-status="pending"] {
+  border-color: color-mix(in srgb, var(--color-accent) 22%, var(--inline-block-border));
+}
+
+.block[data-status="cancelled"],
+.block[data-status="timeout"] {
+  border-color: color-mix(in srgb, var(--color-danger) 24%, var(--inline-block-border));
+}
+
+.header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: currentColor;
+}
+
+.titleGroup {
+  min-width: 0;
+}
+
+.title {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 1px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.target {
+  max-width: min(360px, 100%);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.description,
+.riskText,
+.empty,
+.resolvedState {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.riskText {
+  color: color-mix(in srgb, var(--color-danger) 60%, var(--color-text-secondary));
+}
+
+.form {
+  display: grid;
+  gap: 9px;
+}
+
+.field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.fieldLabel {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 620;
+  line-height: 1.35;
+}
+
+.required {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.fieldDescription {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--inline-block-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 6px 8px;
+}
+
+.field input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: color-mix(in srgb, var(--color-accent) 38%, var(--inline-block-border));
+  outline: none;
+}
+
+.field input[aria-invalid="true"],
+.field select[aria-invalid="true"],
+.field textarea[aria-invalid="true"] {
+  border-color: color-mix(in srgb, var(--color-danger) 52%, var(--inline-block-border));
+}
+
+.errorText {
+  color: color-mix(in srgb, var(--color-danger) 78%, var(--color-text-primary));
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.submitButton,
+.cancelButton {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+}
+
+.submitButton {
+  border: 1px solid color-mix(in srgb, var(--color-accent) 36%, var(--inline-block-border));
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.cancelButton {
+  border: 1px solid var(--inline-block-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.submitButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 88%, #000);
+}
+
+.cancelButton:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.submitButton:disabled,
+.cancelButton:disabled,
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}

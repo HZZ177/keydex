@@ -191,6 +191,26 @@
   content: "\00b7";
 }
 
+.mcpMeta {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: var(--ghost-row-height);
+  align-items: center;
+  overflow: hidden;
+  color: currentColor;
+  font-size: 12px;
+  line-height: var(--ui-line-height-compact);
+  text-overflow: ellipsis;
+  transform: translateY(var(--ghost-text-offset-y));
+  white-space: nowrap;
+}
+
+.mcpMeta::before {
+  content: "\00b7";
+  margin-right: 6px;
+}
+
 .chevron {
   display: block;
   color: currentColor;
@@ -322,6 +342,43 @@
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mcpDetailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0 0 7px;
+}
+
+.mcpDetailItem {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+}
+
+.mcpDetailItem dt {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.mcpDetailItem dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--color-text-secondary) 90%, transparent);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpDetailItem dd[data-mono="true"] {
+  font-family: var(--font-mono);
 }
 
 :global(html[data-theme="dark"]) .sectionHeader {

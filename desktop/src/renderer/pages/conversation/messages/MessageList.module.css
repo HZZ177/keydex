@@ -140,6 +140,10 @@
   height: var(--message-list-bottom-buffer);
 }
 
+.timelineBlock {
+  min-width: 0;
+}
+
 .olderLoader {
   display: grid;
   height: 46px;
@@ -190,6 +194,14 @@
 
 .turnGroup:not(:last-child) {
   padding-bottom: 20px;
+}
+
+.timelineBlock:not(:last-child) > .turnGroup {
+  padding-bottom: 20px;
+}
+
+.timelineBlock:not(:last-child) > .item[data-kind="context_compression"] {
+  padding-bottom: 18px;
 }
 
 .item[data-kind="assistant"][data-focus-flash="true"] {
@@ -270,8 +282,13 @@
   display: inline-flex;
   min-width: 0;
   align-items: center;
+  gap: 5px;
   justify-content: center;
   text-align: center;
+}
+
+.contextCompressionNoticeSpinner {
+  flex: 0 0 auto;
 }
 
 .contextCompressionNotice[data-state="running"] {

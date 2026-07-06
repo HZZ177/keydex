@@ -32,6 +32,7 @@ export interface ConversationComposerProps {
   workspaceRoots?: string[];
   allowBypassConversationSlashCommand?: boolean;
   allowGoalSlashCommand?: boolean;
+  allowContextCompressionSlashCommand?: boolean;
   selectedFiles?: SelectedFile[];
   selectedQuotes?: SelectedQuote[];
   onSearchWorkspace?: (query: string, options?: { signal?: AbortSignal }) => Promise<WorkspaceSearchResult[]>;
@@ -81,6 +82,7 @@ export function ConversationComposer({
   workspaceRoots = [],
   allowBypassConversationSlashCommand = true,
   allowGoalSlashCommand = true,
+  allowContextCompressionSlashCommand = true,
   selectedFiles,
   selectedQuotes,
   onSearchWorkspace,
@@ -144,6 +146,7 @@ export function ConversationComposer({
       workspaceSkills={workspaceSkills}
       allowBypassConversationSlashCommand={allowBypassConversationSlashCommand}
       allowGoalSlashCommand={allowGoalSlashCommand}
+      allowContextCompressionSlashCommand={allowContextCompressionSlashCommand}
       selectedFiles={selectedFiles}
       selectedQuotes={selectedQuotes}
       selectedSkill={selectedSkill}
@@ -192,8 +195,8 @@ function ContextWindowIndicator({ usage }: { usage: ContextWindowUsageStatus | n
   const ariaLabel = usage
     ? `当前已使用上下文 ${formatTokens(usage.tokenCount)} tokens，${
         emergencyProgress === null
-          ? `无感压缩进度 ${formatPercent(thresholdProgress)}`
-          : `无感压缩进度 ${formatPercent(thresholdProgress)}，阻塞压缩进度 ${formatPercent(emergencyProgress)}`
+          ? `上下文压缩进度 ${formatPercent(thresholdProgress)}`
+          : `上下文压缩进度 ${formatPercent(thresholdProgress)}，全量压缩进度 ${formatPercent(emergencyProgress)}`
       }`
     : "上下文窗口占用等待下一次模型调用";
 
@@ -236,7 +239,7 @@ function ContextWindowIndicator({ usage }: { usage: ContextWindowUsageStatus | n
               当前已使用 {formatTokens(usage.tokenCount)} tokens
             </span>
             <span className={styles.contextWindowTooltipMeta}>
-              无感压缩进度{" "}
+              上下文压缩进度{" "}
               <span
                 className={styles.contextWindowTooltipValue}
                 data-level={progressValueLevel(thresholdProgress)}
@@ -247,7 +250,7 @@ function ContextWindowIndicator({ usage }: { usage: ContextWindowUsageStatus | n
             </span>
             {emergencyProgress === null ? null : (
               <span className={styles.contextWindowTooltipMeta}>
-                阻塞压缩进度{" "}
+                全量压缩进度{" "}
                 <span
                   className={styles.contextWindowTooltipValue}
                   data-level={progressValueLevel(emergencyProgress)}

@@ -1,0 +1,394 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  outline: 0;
+  pointer-events: auto;
+}
+
+.wrap::after {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  z-index: 31;
+  height: 12px;
+  content: "";
+  pointer-events: auto;
+}
+
+.pill {
+  display: inline-flex;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text-secondary) 94%, var(--color-text-primary));
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--ui-line-height-tight);
+  padding: 0 8px 0 4px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.pill span {
+  flex: 0 0 auto;
+  font-weight: 560;
+}
+
+.pill em,
+.pill strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-style: normal;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+.pill strong {
+  color: color-mix(in srgb, var(--color-accent) 76%, var(--color-text-secondary));
+}
+
+.panel {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  z-index: 32;
+  display: grid;
+  width: min(760px, calc(100vw - 24px));
+  min-width: min(360px, calc(100vw - 24px));
+  max-height: min(560px, 66vh);
+  gap: 10px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 99%, var(--surface-muted));
+  box-shadow:
+    0 10px 28px rgb(15 23 42 / 10%),
+    0 1px 4px rgb(15 23 42 / 8%);
+  opacity: 0;
+  padding: 10px;
+  pointer-events: none;
+  transform: translate(-50%, 4px) scale(0.985);
+  transform-origin: bottom center;
+  transition:
+    opacity 140ms ease,
+    transform 160ms var(--motion-ease-out),
+    visibility 160ms step-end;
+  visibility: hidden;
+}
+
+.panel[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0) scale(1);
+  transition:
+    opacity 140ms ease,
+    transform 160ms var(--motion-ease-out),
+    visibility 0ms step-start;
+  visibility: visible;
+}
+
+.panelHeader {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.panelHeader div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.panelHeader strong,
+.runningList h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.panelHeader span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.panelHeader button,
+.runningRow button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.panelHeader button:hover:not(:disabled),
+.runningRow button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
+  color: var(--color-text-primary);
+}
+
+.panelHeader button:disabled,
+.runningRow button:disabled,
+.toolRow button:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 7px;
+  min-width: 0;
+}
+
+.metric {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-bg) 64%, transparent);
+  padding: 7px;
+}
+
+.metric span {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
+.metric strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inlineError,
+.notice {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, var(--color-border-default));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 7px 9px;
+}
+
+.notice {
+  border-color: color-mix(in srgb, var(--color-success-6) 34%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-success-6) 7%, transparent);
+  color: var(--color-text-secondary);
+}
+
+.serverList,
+.runningList,
+.toolList {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.serverGroup {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 78%, transparent);
+  padding: 9px;
+}
+
+.serverGroup header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.serverGroup header div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.serverGroup header strong,
+.runningRow strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.serverGroup header span,
+.serverGroup p,
+.emptyState,
+.runningRow span {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.statusBadge {
+  display: inline-flex;
+  min-height: 20px;
+  flex: 0 0 auto;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 7px;
+}
+
+.statusBadge[data-status="online"] {
+  color: var(--color-success-6);
+}
+
+.statusBadge[data-status="offline"],
+.statusBadge[data-status="auth_required"],
+.statusBadge[data-status="error"] {
+  color: var(--color-warning);
+}
+
+.statusBadge[data-status="disabled"] {
+  color: var(--color-text-4);
+}
+
+.toolRow {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) minmax(54px, 0.34fr) minmax(70px, 0.45fr) minmax(96px, 0.7fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 36%, transparent);
+  border-radius: 7px;
+  padding: 7px;
+}
+
+.toolRow button[role="switch"] {
+  display: inline-flex;
+  width: 38px;
+  height: 24px;
+  align-items: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-3);
+  padding: 2px;
+  cursor: pointer;
+}
+
+.toolRow button[role="switch"] span {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 1px 4px rgb(15 23 42 / 18%);
+  transition: transform 140ms ease;
+}
+
+.toolRow button[role="switch"][data-checked="true"] {
+  background: var(--color-accent);
+}
+
+.toolRow button[role="switch"][data-checked="true"] span {
+  transform: translateX(14px);
+}
+
+.toolRow div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.toolRow strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.toolRow span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runningRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 36%, transparent);
+  border-radius: 7px;
+  padding: 8px;
+}
+
+.runningRow div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.spinning {
+  animation: mcp-runtime-spin 900ms linear infinite;
+}
+
+@keyframes mcp-runtime-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 760px) {
+  .summaryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .toolRow,
+  .runningRow {
+    grid-template-columns: 1fr;
+  }
+}

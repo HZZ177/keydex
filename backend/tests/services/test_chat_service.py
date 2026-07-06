@@ -19,6 +19,11 @@ from backend.app.agent.factory import AgentFactory
 from backend.app.command_approval import CommandSettings, save_command_settings
 from backend.app.core.config import AppSettings
 from backend.app.core.time import to_iso_z, utc_now
+from backend.app.mcp.tools import (
+    DEFERRED_LIST_TOOL_NAME,
+    DEFERRED_SEARCH_TOOL_NAME,
+    mcp_deferred_tools_from_snapshot,
+)
 from backend.app.model import ModelSettings
 from backend.app.services import ChatCancellationToken, ChatRequest, ChatService
 from backend.app.services.chat_service import _chat_turn_error
@@ -28,7 +33,7 @@ from backend.app.storage import (
     StorageRepositories,
     init_database,
 )
-from backend.app.tools import FunctionTool, ToolRegistry
+from backend.app.tools import FunctionTool, ToolExecutionContext, ToolRegistry
 from backend.app.tools.factory import create_default_tool_registry
 
 
@@ -185,11 +190,18 @@ class BlockingAssemblyRunner:
         return {"checkpoint_id": None, "checkpoint_ns": checkpoint_ns}
 
 
+class FakeMcpManager:
+    async def execute_tool(self, **_kwargs: Any) -> Any:
+        return {"ok": True}
+
+
 def _service(
     tmp_path: Path,
     model: ToolFriendlyFakeModel,
     registry: ToolRegistry | None = None,
     configure_provider: bool = True,
+    settings: AppSettings | None = None,
+    mcp_manager: Any | None = None,
 ) -> tuple[ChatService, StorageRepositories, SQLiteCheckpointSaver, FakeAgentFactory]:
     database = init_database(tmp_path / "app.db")
     repositories = StorageRepositories(database)
@@ -213,7 +225,7 @@ def _service(
             provider_id=provider.id,
             model="fake-default",
         )
-    settings = AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path)
+    settings = settings or AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path)
     checkpointer = SQLiteCheckpointSaver(database)
     factory = FakeAgentFactory(model)
     runner = AgentRunner(
@@ -228,10 +240,49 @@ def _service(
         factory=factory,
     )
     return (
-        ChatService(settings=settings, repositories=repositories, agent_runner=runner),
+        ChatService(
+            settings=settings,
+            repositories=repositories,
+            agent_runner=runner,
+            mcp_manager=mcp_manager,
+        ),
         repositories,
         checkpointer,
         factory,
+    )
+
+
+def _configure_mcp_tool(
+    repositories: StorageRepositories,
+    *,
+    raw_names: tuple[str, ...] = ("search",),
+) -> None:
+    repositories.mcp_servers.create(
+        server_id="srv_chat_mcp",
+        name="Chat MCP",
+        transport="streamable_http",
+        url="https://mcp.example.test/mcp",
+    )
+    repositories.mcp_server_status.upsert("srv_chat_mcp", status="online")
+    repositories.mcp_tools.upsert_many(
+        "srv_chat_mcp",
+        [
+            {
+                "raw_name": raw_name,
+                "model_name": f"mcp__srv_chat_mcp__{raw_name}",
+                "callable_namespace": "mcp__srv_chat_mcp",
+                "callable_name": raw_name,
+                "description": f"{raw_name} MCP data",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+                "schema_hash": f"hash-{raw_name}",
+                "risk_level": "low",
+            }
+            for raw_name in raw_names
+        ],
     )
 
 
@@ -273,10 +324,13 @@ async def test_chat_service_uses_langchain_agent_and_persists_history(tmp_path) 
     assert result.status == "completed"
     assert result.final_content == "你好"
     assert factory.requested_models == ["qwen-coder"]
-    assert [item["action"] for item in chat_adapter.sent] == ["stream", "completed"]
+    assert [
+        item["action"] for item in chat_adapter.sent if item["action"] != "turn_started"
+    ] == ["stream", "completed"]
     history = service.message_event_service.get_display_messages(result.session_id)
-    assert [message["role"] for message in history] == ["user", "assistant"]
-    assert history[-1]["content"] == "你好"
+    visible_history = [message for message in history if message["role"] != "turn"]
+    assert [message["role"] for message in visible_history] == ["user", "assistant"]
+    assert visible_history[-1]["content"] == "你好"
     trace = repositories.trace_records.get(result.trace_id)
     assert trace.status == "completed"
     assert trace.output_checkpoint_id
@@ -393,12 +447,13 @@ async def test_chat_service_injects_follow_messages_and_restores_context_items(t
     )
 
     history = service.message_event_service.get_display_messages(result.session_id)
-    assert [message["role"] for message in history] == ["user", "assistant"]
-    assert history[0]["content"] == "总结一下"
-    assert history[0]["contextItems"][0]["type"] == "file"
-    assert history[0]["contextItems"][0]["path"] == "README.md"
-    assert history[0]["contextItems"][1]["type"] == "quote"
-    assert "关键片段" in history[0]["contextItems"][1]["content"]
+    visible_history = [message for message in history if message["role"] != "turn"]
+    assert [message["role"] for message in visible_history] == ["user", "assistant"]
+    assert visible_history[0]["content"] == "总结一下"
+    assert visible_history[0]["contextItems"][0]["type"] == "file"
+    assert visible_history[0]["contextItems"][0]["path"] == "README.md"
+    assert visible_history[0]["contextItems"][1]["type"] == "quote"
+    assert "关键片段" in visible_history[0]["contextItems"][1]["content"]
 
     checkpoint = await checkpointer.aget_tuple(
         {"configurable": {"thread_id": result.session_id, "checkpoint_ns": ""}}
@@ -467,21 +522,234 @@ async def test_chat_service_routes_langchain_tool_events(tmp_path) -> None:
     )
 
     assert result.status == "completed"
-    assert [item["action"] for item in chat_adapter.sent] == [
+    visible_events = [item for item in chat_adapter.sent if item["action"] != "turn_started"]
+    assert [item["action"] for item in visible_events] == [
         "tool_start",
         "tool_end",
         "stream",
         "completed",
     ]
-    assert chat_adapter.sent[0]["data"]["tool"] == "read_file"
-    assert chat_adapter.sent[1]["data"]["status"] == "completed"
-    assert "文件内容:a.txt" in chat_adapter.sent[1]["data"]["result"]
-    tool_result = json.loads(chat_adapter.sent[1]["data"]["result"])
+    assert visible_events[0]["data"]["tool"] == "read_file"
+    assert visible_events[1]["data"]["status"] == "completed"
+    assert "文件内容:a.txt" in visible_events[1]["data"]["result"]
+    tool_result = json.loads(visible_events[1]["data"]["result"])
     assert tool_result["root"] == str(project.resolve())
     history = service.message_event_service.get_display_messages(result.session_id)
-    assert [message["role"] for message in history] == ["user", "tool", "assistant"]
-    assert history[1]["toolName"] == "read_file"
-    assert history[2]["content"] == "已读取"
+    visible_history = [message for message in history if message["role"] != "turn"]
+    assert [message["role"] for message in visible_history] == ["user", "tool", "assistant"]
+    assert visible_history[1]["toolName"] == "read_file"
+    assert visible_history[2]["content"] == "已读取"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_injects_mcp_runtime_tools_for_workspace_session(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="已完成")])
+    service, repositories, _checkpointer, factory = _service(
+        tmp_path,
+        model,
+        mcp_manager=FakeMcpManager(),
+    )
+    _configure_mcp_tool(repositories)
+    workspace = repositories.workspaces.create(workspace_id="ws_mcp", root_path=project)
+    session = repositories.sessions.create(
+        session_id="ses_mcp_workspace",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="使用 MCP",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    assert result.status == "completed"
+    assert "mcp__srv_chat_mcp__search" in factory.created_tool_names[-1]
+    snapshots = repositories.mcp_runtime_snapshots.list_by_session(session.id)
+    assert len(snapshots) == 1
+    mcp_tool_names = [
+        tool_name
+        for tool_name in factory.created_tool_names[-1]
+        if tool_name.startswith("mcp__")
+    ]
+    assert snapshots[0].session_id == session.id
+    assert snapshots[0].visible_tools[0]["model_name"] == "mcp__srv_chat_mcp__search"
+    assert [tool["model_name"] for tool in snapshots[0].visible_tools] == mcp_tool_names
+
+
+@pytest.mark.asyncio
+async def test_chat_service_deferred_mcp_tools_activate_for_next_turn(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    model = ToolFriendlyFakeModel(
+        responses=[AIMessage(content="首轮完成"), AIMessage(content="次轮完成")]
+    )
+    service, repositories, _checkpointer, factory = _service(
+        tmp_path,
+        model,
+        settings=AppSettings(
+            data_dir=tmp_path / "data",
+            workspace_root=tmp_path,
+            mcp_deferred_tool_threshold=1,
+        ),
+        mcp_manager=FakeMcpManager(),
+    )
+    _configure_mcp_tool(repositories, raw_names=("target_report", "other_report"))
+    workspace = repositories.workspaces.create(workspace_id="ws_mcp_deferred", root_path=project)
+    session = repositories.sessions.create(
+        session_id="ses_mcp_deferred",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    first = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="查找 deferred MCP 工具",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    assert first.status == "completed"
+    assert DEFERRED_SEARCH_TOOL_NAME in factory.created_tool_names[-1]
+    assert DEFERRED_LIST_TOOL_NAME in factory.created_tool_names[-1]
+    assert not any(name.startswith("mcp__") for name in factory.created_tool_names[-1])
+    first_snapshot = repositories.mcp_runtime_snapshots.list_by_session(session.id)[0]
+    assert first_snapshot.policy_summary["mode"] == "deferred"
+    assert first_snapshot.policy_summary["direct_tools"] == 0
+    assert first_snapshot.policy_summary["deferred_tools"] == 2
+
+    search_tool = mcp_deferred_tools_from_snapshot(
+        first_snapshot,
+        service.mcp_active_tool_window,
+    )[0]
+    search_result = await search_tool.run(
+        {"query": "target_report"},
+        ToolExecutionContext(
+            session_id=session.id,
+            user_id="local-user",
+            workspace_root=project,
+            turn_index=1,
+        ),
+    )
+
+    assert search_result.ok is True
+    assert search_result.result["tools"][0]["model_name"] == "mcp__srv_chat_mcp__target_report"
+    assert service.mcp_active_tool_window.active_model_names(session.id) == {
+        "mcp__srv_chat_mcp__target_report"
+    }
+
+    second = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="调用已激活 MCP 工具",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    assert second.status == "completed"
+    assert "mcp__srv_chat_mcp__target_report" in factory.created_tool_names[-1]
+    assert "mcp__srv_chat_mcp__other_report" not in factory.created_tool_names[-1]
+    assert DEFERRED_SEARCH_TOOL_NAME in factory.created_tool_names[-1]
+    latest_snapshot = repositories.mcp_runtime_snapshots.list_by_session(session.id)[0]
+    assert latest_snapshot.policy_summary["direct_tools"] == 1
+    assert latest_snapshot.policy_summary["deferred_tools"] == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_service_does_not_inject_mcp_tools_for_chat_session(tmp_path) -> None:
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="普通回复")])
+    service, repositories, _checkpointer, factory = _service(
+        tmp_path,
+        model,
+        mcp_manager=FakeMcpManager(),
+    )
+    _configure_mcp_tool(repositories)
+
+    result = await service.handle_chat(
+        ChatRequest(message="只聊天", provider_id="provider-1", model="qwen-coder")
+    )
+
+    assert result.status == "completed"
+    assert not any(
+        tool_name.startswith("mcp__")
+        for created_tools in factory.created_tool_names
+        for tool_name in created_tools
+    )
+    assert repositories.mcp_runtime_snapshots.list_by_session(result.session_id) == []
+
+
+@pytest.mark.asyncio
+async def test_chat_service_mcp_disabled_keeps_local_workspace_tools_available(
+    tmp_path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    registry = ToolRegistry()
+    registry.register(
+        FunctionTool(
+            name="read_file",
+            description="读取文件",
+            parameters={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+            handler=lambda args, context: {"content": "ok"},
+        )
+    )
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="已完成")])
+    service, repositories, _checkpointer, factory = _service(
+        tmp_path,
+        model,
+        registry,
+        settings=AppSettings(
+            data_dir=tmp_path / "data",
+            workspace_root=tmp_path,
+            mcp_enabled=False,
+        ),
+        mcp_manager=FakeMcpManager(),
+    )
+    _configure_mcp_tool(repositories)
+    workspace = repositories.workspaces.create(workspace_id="ws_mcp_disabled", root_path=project)
+    session = repositories.sessions.create(
+        session_id="ses_mcp_disabled",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="使用本地工具",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    assert result.status == "completed"
+    assert "read_file" in factory.created_tool_names[-1]
+    assert not any(name.startswith("mcp__") for name in factory.created_tool_names[-1])
+    assert repositories.mcp_runtime_snapshots.list_by_session(session.id) == []
 
 
 @pytest.mark.parametrize(
@@ -731,11 +999,12 @@ async def test_chat_service_runs_skill_activation_chain_with_message_injection(
     assert 'load_skill(skill_name="dev-plan")' in factory.system_prompts[0]
     assert "Use the project planning workflow." not in factory.system_prompts[0]
 
-    actions = [item["action"] for item in chat_adapter.sent]
+    visible_events = [item for item in chat_adapter.sent if item["action"] != "turn_started"]
+    actions = [item["action"] for item in visible_events]
     assert actions == ["system_message", "tool_start", "tool_end", "stream", "completed"]
-    assert chat_adapter.sent[0]["data"]["content"] == "Build a structured development plan."
-    assert chat_adapter.sent[1]["data"]["tool"] == "load_skill"
-    tool_result = json.loads(chat_adapter.sent[2]["data"]["result"])
+    assert visible_events[0]["data"]["content"] == "Build a structured development plan."
+    assert visible_events[1]["data"]["tool"] == "load_skill"
+    tool_result = json.loads(visible_events[2]["data"]["result"])
     assert tool_result["skill_name"] == "dev-plan"
     assert tool_result["found"] is True
     assert tool_result["loaded"] is True
@@ -751,16 +1020,20 @@ async def test_chat_service_runs_skill_activation_chain_with_message_injection(
     )
 
     history = service.message_event_service.get_display_messages(result.session_id)
-    assert [message["role"] for message in history] == ["user", "tool", "assistant"]
-    assert history[0]["content"] == "拆成开发 issues"
-    assert history[0]["contextItems"][0]["type"] == "file"
-    assert history[0]["contextItems"][0]["path"] == "DES.md"
-    assert history[0]["contextItems"][1]["type"] == "skill"
-    assert history[0]["contextItems"][1]["skill_name"] == "dev-plan"
-    assert history[0]["contextItems"][1]["description"] == "Build a structured development plan."
-    assert "Use the project planning workflow." not in str(history[0]["contextItems"])
-    assert history[1]["toolName"] == "load_skill"
-    assert history[2]["content"] == "已按 Skill 处理"
+    visible_history = [message for message in history if message["role"] != "turn"]
+    assert [message["role"] for message in visible_history] == ["user", "tool", "assistant"]
+    assert visible_history[0]["content"] == "拆成开发 issues"
+    assert visible_history[0]["contextItems"][0]["type"] == "file"
+    assert visible_history[0]["contextItems"][0]["path"] == "DES.md"
+    assert visible_history[0]["contextItems"][1]["type"] == "skill"
+    assert visible_history[0]["contextItems"][1]["skill_name"] == "dev-plan"
+    assert (
+        visible_history[0]["contextItems"][1]["description"]
+        == "Build a structured development plan."
+    )
+    assert "Use the project planning workflow." not in str(visible_history[0]["contextItems"])
+    assert visible_history[1]["toolName"] == "load_skill"
+    assert visible_history[2]["content"] == "已按 Skill 处理"
 
 
 @pytest.mark.asyncio
@@ -789,7 +1062,9 @@ async def test_chat_service_disables_project_tools_for_chat_session(tmp_path) ->
 
     assert result.status == "completed"
     assert factory.created_tool_counts == [0]
-    assert [item["action"] for item in chat_adapter.sent] == ["stream", "completed"]
+    assert [
+        item["action"] for item in chat_adapter.sent if item["action"] != "turn_started"
+    ] == ["stream", "completed"]
 
 
 @pytest.mark.asyncio
@@ -887,8 +1162,9 @@ async def test_chat_service_patches_cancelled_partial_output_into_checkpoint(tmp
     result = await asyncio.wait_for(task, timeout=1)
 
     assert result.status == "cancelled"
-    assert [item["action"] for item in chat_adapter.sent] == ["stream", "cancelled"]
-    assert chat_adapter.sent[0]["data"]["content"] == "半截"
+    visible_events = [item for item in chat_adapter.sent if item["action"] != "turn_started"]
+    assert [item["action"] for item in visible_events] == ["stream", "cancelled"]
+    assert visible_events[0]["data"]["content"] == "半截"
     assert [message.type for message in agent.updated_messages] == ["human", "ai"]
     assert [message.content for message in agent.updated_messages] == [
         "取消这轮",

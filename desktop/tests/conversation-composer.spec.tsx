@@ -183,10 +183,10 @@ describe("ConversationComposer", () => {
 
     expect(Number.parseFloat(progress.style.strokeDashoffset)).toBeCloseTo(circumference * 0.5);
     const tooltip = screen.getByRole("tooltip");
-    expect(tooltip.textContent).toContain("无感压缩进度 50.0%");
-    expect(tooltip.textContent).toContain("阻塞压缩进度 44.4%");
+    expect(tooltip.textContent).toContain("上下文压缩进度 50.0%");
+    expect(tooltip.textContent).toContain("全量压缩进度 44.4%");
     const tooltipText = tooltip.textContent ?? "";
-    expect(tooltipText.indexOf("无感压缩进度")).toBeLessThan(tooltipText.indexOf("阻塞压缩进度"));
+    expect(tooltipText.indexOf("上下文压缩进度")).toBeLessThan(tooltipText.indexOf("全量压缩进度"));
 
     rerender(
       <ConversationComposer
@@ -232,8 +232,8 @@ describe("ConversationComposer", () => {
     const indicator = screen.getByTestId("context-window-indicator");
     expect(Number.parseFloat(progress.style.strokeDashoffset)).toBeCloseTo(0);
     expect(indicator.getAttribute("data-level")).toBe("danger");
-    expect(indicator.getAttribute("aria-label")).toContain("无感压缩进度 109.3%");
-    expect(indicator.getAttribute("aria-label")).toContain("阻塞压缩进度 91.1%");
+    expect(indicator.getAttribute("aria-label")).toContain("上下文压缩进度 109.3%");
+    expect(indicator.getAttribute("aria-label")).toContain("全量压缩进度 91.1%");
     expect(tooltip.querySelector('[data-progress-kind="ambient"]')?.getAttribute("data-level")).toBe("danger");
     expect(tooltip.querySelector('[data-progress-kind="blocking"]')?.getAttribute("data-level")).toBe("warning");
   });

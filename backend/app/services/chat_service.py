@@ -41,6 +41,13 @@ from backend.app.events import (
 from backend.app.keydex import KeydexWorkspaceRuntimeCache
 from backend.app.keydex.runtime import KeydexWorkspaceRuntimeSnapshot
 from backend.app.keydex.skills import SkillCatalog
+from backend.app.mcp.runtime import McpRuntimeSnapshotBuilder, McpRuntimeSnapshotContext
+from backend.app.mcp.tools import (
+    McpActiveToolWindow,
+    McpToolExecutor,
+    mcp_deferred_tools_from_snapshot,
+    mcp_local_tools_from_snapshot,
+)
 from backend.app.model import ModelSelectionError, ResolvedModelSelection, resolve_model_selection
 from backend.app.services.chat_types import ChatCancellationToken, ChatRequest, ChatTurnResult
 from backend.app.services.message_event_service import MessageEventService
@@ -48,7 +55,7 @@ from backend.app.services.thread_task_prompt import build_task_initial_prompt
 from backend.app.services.thread_task_service import ThreadTaskService
 from backend.app.services.workspace_service import WorkspaceService
 from backend.app.storage import AttachmentRecord, SessionRecord, StorageRepositories
-from backend.app.tools import ToolExecutionContext
+from backend.app.tools import LocalTool, ToolExecutionContext
 from backend.app.tools.command_runtime import command_process_manager
 
 # LangGraph requires a positive integer recursion_limit and does not expose an
@@ -917,6 +924,7 @@ class ChatService:
         agent_runner: AgentRunner,
         keydex_runtime_cache: KeydexWorkspaceRuntimeCache | None = None,
         thread_task_service: ThreadTaskService | None = None,
+        mcp_manager: McpToolExecutor | None = None,
     ) -> None:
         self.settings = settings
         self.repositories = repositories
@@ -925,6 +933,8 @@ class ChatService:
         self.message_event_service = MessageEventService(repositories.message_events)
         self.workspace_service = WorkspaceService(repositories.workspaces)
         self.thread_task_service = thread_task_service or ThreadTaskService(repositories)
+        self.mcp_manager = mcp_manager
+        self.mcp_active_tool_window = McpActiveToolWindow()
 
     def _build_initial_thread_task_injection(
         self,
@@ -1409,12 +1419,17 @@ class ChatService:
         tool_context.metadata["file_access_mode"] = load_command_settings(
             self.repositories
         ).file_access_mode
+        runtime_tools = self._build_mcp_runtime_tools(
+            session=session,
+            tool_context=tool_context,
+            enable_tools=enable_tools,
+        )
         workspace_root_label = str(tool_context.workspace_root) if enable_tools else "-"
         logger.info(
             f"[AgentLoop] 创建 agent | session_id={session.id} | turn_index={turn_index} | "
             f"trace_id={trace_id} | model={request.model.strip()} | "
             f"session_type={session.session_type} | tools_enabled={enable_tools} | "
-            f"workspace_root={workspace_root_label}"
+            f"workspace_root={workspace_root_label} | mcp_runtime_tools={len(runtime_tools)}"
         )
         agent_context_token = self._set_agent_runtime_context(
             tool_context=tool_context,
@@ -1429,6 +1444,7 @@ class ChatService:
                 system_prompt=request.system_prompt,
                 tool_context=tool_context,
                 enable_tools=enable_tools,
+                runtime_tools=runtime_tools,
             )
             run_config = {
                 "configurable": {
@@ -1551,6 +1567,35 @@ class ChatService:
                 False,
             )
         raise ValueError(f"不支持的 session 类型: {session.session_type}")
+
+    def _build_mcp_runtime_tools(
+        self,
+        *,
+        session: SessionRecord,
+        tool_context: ToolExecutionContext,
+        enable_tools: bool,
+    ) -> list[LocalTool]:
+        if not enable_tools or session.session_type != "workspace":
+            return []
+        if not self.settings.mcp_enabled or self.mcp_manager is None:
+            return []
+        snapshot = McpRuntimeSnapshotBuilder(
+            self.repositories,
+            deferred_threshold=self.settings.mcp_deferred_tool_threshold,
+        ).build_snapshot(
+            McpRuntimeSnapshotContext(
+                session_id=session.id,
+                turn_id=str(tool_context.turn_index),
+                workspace_session=True,
+                active_model_names=self.mcp_active_tool_window.active_model_names(session.id),
+            )
+        )
+        tool_context.metadata["mcp_snapshot_id"] = snapshot.id
+        tool_context.metadata["mcp_snapshot"] = snapshot
+        return [
+            *mcp_local_tools_from_snapshot(snapshot, self.mcp_manager),
+            *mcp_deferred_tools_from_snapshot(snapshot, self.mcp_active_tool_window),
+        ]
 
     def _validate_skill_activation(
         self,

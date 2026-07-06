@@ -598,6 +598,7 @@ export function useConversationPanelModel({
   );
 
   return {
+    sessionId,
     messages,
     session,
     sessionViewState: controller.sessionViewState,
@@ -611,6 +612,7 @@ export function useConversationPanelModel({
     loadingOlderHistory: controller.loadingOlderHistory,
     loadOlderHistory: controller.loadOlderHistory,
     terminateCommand: controller.terminateCommand,
+    resolveMcpElicitation: controller.resolveMcpElicitation,
     messageWorkspaceScope,
     workspaceAvailable,
     workspaceUnavailable,
@@ -690,13 +692,19 @@ function backgroundCompressionFailureMessage(data: AgentMiddlewareProgressData):
   }
   const stage = typeof data.stage === "string" ? data.stage : "";
   if (stage === "background_failed") {
-    return "无感压缩失败，当前对话将继续使用未压缩上下文。";
+    return "上下文压缩失败，当前对话将继续使用未压缩上下文。";
   }
   if (stage === "background_fork_failed") {
-    return "无感压缩未能切换到压缩分支，当前对话将继续使用原上下文。";
+    return "上下文压缩未能切换到压缩分支，当前对话将继续使用原上下文。";
   }
   if (stage === "staging_failed") {
-    return "无感压缩结果应用失败，当前对话将继续使用原上下文。";
+    return "上下文压缩结果应用失败，当前对话将继续使用原上下文。";
+  }
+  if (stage === "manual_light_failed") {
+    return "上下文压缩失败，当前对话将继续使用原上下文。";
+  }
+  if (stage === "manual_deep_failed") {
+    return "全量压缩失败，当前对话将继续使用原上下文。";
   }
   return "";
 }

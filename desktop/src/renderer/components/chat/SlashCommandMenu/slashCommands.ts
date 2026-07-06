@@ -17,6 +17,7 @@ export interface SlashCommand {
 export interface BuildSlashCommandsOptions {
   includeBypassConversation?: boolean;
   includeGoal?: boolean;
+  includeContextCompression?: boolean;
 }
 
 export function bypassConversationSlashCommand(): SlashCommand {
@@ -38,6 +39,28 @@ export function goalSlashCommand(): SlashCommand {
     title: "目标",
     description: "创建一个长程目标",
     searchText: "goal objective task long running thread task changcheng mubiao 目标 长程任务",
+  };
+}
+
+export function lightContextCompressionSlashCommand(): SlashCommand {
+  return {
+    id: "context-compression-light",
+    kind: "builtin",
+    label: "压缩上下文",
+    title: "压缩上下文",
+    description: "保留最近两轮原文并压缩更早历史",
+    searchText: "compress compact context light qingliang yasuo shangxiawen 上下文 压缩 轻量",
+  };
+}
+
+export function deepContextCompressionSlashCommand(): SlashCommand {
+  return {
+    id: "context-compression-deep",
+    kind: "builtin",
+    label: "全量压缩上下文",
+    title: "全量压缩上下文",
+    description: "全量压缩历史，最大释放上下文空间",
+    searchText: "compress compact context deep full quanliang yasuo 上下文 压缩 全量",
   };
 }
 
@@ -70,14 +93,30 @@ export function buildSlashCommands(
   skills: WorkspaceSkillSummary[] = [],
   options: BuildSlashCommandsOptions = {},
 ): SlashCommand[] {
-  const commands = [skillGroupSlashCommand(skills)];
-  if (options.includeGoal !== false) {
-    commands.unshift(goalSlashCommand());
-  }
+  const commands: SlashCommand[] = [];
   if (options.includeBypassConversation !== false) {
-    commands.unshift(bypassConversationSlashCommand());
+    commands.push(bypassConversationSlashCommand());
   }
+  if (options.includeGoal !== false) {
+    commands.push(goalSlashCommand());
+  }
+  if (options.includeContextCompression !== false) {
+    commands.push(lightContextCompressionSlashCommand(), deepContextCompressionSlashCommand());
+  }
+  commands.push(skillGroupSlashCommand(skills));
   return commands;
+}
+
+export function isLightContextCompressionSlashCommand(command: SlashCommand): boolean {
+  return command.kind === "builtin" && command.id === "context-compression-light";
+}
+
+export function isDeepContextCompressionSlashCommand(command: SlashCommand): boolean {
+  return command.kind === "builtin" && command.id === "context-compression-deep";
+}
+
+export function isContextCompressionSlashCommand(command: SlashCommand): boolean {
+  return isLightContextCompressionSlashCommand(command) || isDeepContextCompressionSlashCommand(command);
 }
 
 export function getSlashQuery(value: string): string | null {

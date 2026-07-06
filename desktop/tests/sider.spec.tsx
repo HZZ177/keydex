@@ -43,6 +43,7 @@ describe("Sider", () => {
     expect(screen.getByText("keydex")).not.toBeNull();
     expect(screen.getByText("研读文档与 Keydex 源码")).not.toBeNull();
     expect(screen.getByText("设置")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "MCP服务器" })).toBeNull();
     expect(screen.queryByText("Team")).toBeNull();
     expect(screen.queryByText("Cron")).toBeNull();
     expect(screen.queryByText("Scheduled")).toBeNull();

@@ -163,6 +163,61 @@ async def test_context_compression_before_model_applies_pending_staging(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_context_compression_before_model_applies_full_replacement_staging(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    session = repositories.sessions.create(
+        session_id="ses_full_staging",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="源会话",
+    )
+    repositories.compression_staging.create(
+        original_session_id=session.id,
+        active_session_id=session.id,
+        target_session_id=session.id,
+        generation=1,
+        source_last_message_id="a1",
+        l1_content="全量历史摘要",
+        staging_strategy="full_replacement",
+    )
+    token = set_request_context(session_id=session.id, active_session_id=session.id)
+    try:
+        middleware = ContextCompressionMiddleware(
+            settings=ContextCompressionRuntimeSettings(
+                enabled=True,
+                context_window_tokens=100000,
+                trigger_fraction=0.5,
+                emergency_fraction=0.9,
+                retain_rounds=1,
+            ),
+            repositories=repositories,
+            dispatcher=EventDispatcher(),
+            checkpointer=object(),
+        )
+        result = await middleware.abefore_model(
+            {
+                "messages": [
+                    HumanMessage(content="旧问题", id="h1"),
+                    AIMessage(content="旧回答", id="a1"),
+                    HumanMessage(content="新问题", id="h2"),
+                ]
+            },
+            runtime=None,
+        )
+    finally:
+        reset_request_context(token)
+
+    assert result is not None
+    messages = result["messages"]
+    contents = [str(getattr(message, "content", "")) for message in messages]
+    assert any("全量历史摘要" in content for content in contents)
+    assert "旧问题" not in contents
+    assert contents[-1] == "新问题"
+    staging = repositories.compression_staging.get_latest(original_session_id=session.id)
+    assert staging.status == "applied"
+
+
+@pytest.mark.asyncio
 async def test_context_compression_before_model_runs_emergency_compression(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     session = repositories.sessions.create(

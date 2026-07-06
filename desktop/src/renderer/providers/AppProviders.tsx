@@ -10,7 +10,6 @@ import { NotificationProvider } from "./NotificationProvider";
 import { RuntimeConnectionProvider, type RuntimeConnectionProviderProps } from "./RuntimeConnectionProvider";
 import { WindowClosePreferenceController } from "./WindowClosePreferenceController";
 import { APP_FIND_SHORTCUT_EVENT, isFindShortcutEvent } from "@/renderer/events/findShortcut";
-import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 
 export interface AppProvidersProps extends PropsWithChildren {
@@ -29,18 +28,16 @@ export function AppProviders({
     <ThemeProvider>
       <NotificationProvider>
         <AppContextMenuProvider>
-          <LayoutStateProvider>
-            <RuntimeConnectionProvider runtime={runtime} {...runtimeConnection}>
-              <WindowClosePreferenceController runtime={runtime} />
-              <FontProvider>
-                <AgentSessionProvider runtime={runtime}>
-                  <PreviewProvider>
-                    <HashRouter>{children}</HashRouter>
-                  </PreviewProvider>
-                </AgentSessionProvider>
-              </FontProvider>
-            </RuntimeConnectionProvider>
-          </LayoutStateProvider>
+          <RuntimeConnectionProvider runtime={runtime} {...runtimeConnection}>
+            <WindowClosePreferenceController runtime={runtime} />
+            <FontProvider>
+              <AgentSessionProvider runtime={runtime}>
+                <PreviewProvider>
+                  <HashRouter>{children}</HashRouter>
+                </PreviewProvider>
+              </AgentSessionProvider>
+            </FontProvider>
+          </RuntimeConnectionProvider>
         </AppContextMenuProvider>
       </NotificationProvider>
     </ThemeProvider>

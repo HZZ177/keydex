@@ -140,15 +140,17 @@ interface ApprovalFact {
 }
 
 function parseApproval(message: ConversationMessage): ParsedApproval {
+  const approvalRecord = asRecord(message.payload.approval);
   const approval = asApproval(message.payload.approval);
-  const details = approval?.details ?? {};
+  const details = normalizedApprovalDetails(approvalRecord, approval);
+  const kind = (approval?.kind || scalarText(approvalRecord?.kind) || "exec") as ApprovalKind;
   return {
     id: approval?.id ?? "",
-    kind: approval?.kind ?? "exec",
+    kind,
     title: approval?.title || message.content || "需要确认操作",
     description: approval?.description ?? "",
-    target: targetFromDetails(details),
-    facts: factsFromDetails(details),
+    target: targetFromDetails(details, kind),
+    facts: factsFromDetails(details, kind),
     detailsText: stringify(details),
     riskLevel: riskFromDetails(details),
     status: (approval?.status ?? message.status ?? "pending") as ApprovalStatus,
@@ -162,7 +164,74 @@ function asApproval(value: unknown): ApprovalRequest | null {
   return value as ApprovalRequest;
 }
 
-function targetFromDetails(details: Record<string, unknown>): string {
+function normalizedApprovalDetails(
+  approvalRecord: Record<string, unknown> | null,
+  approval: ApprovalRequest | null,
+): Record<string, unknown> {
+  const details = { ...(approval?.details ?? {}) };
+  const metadata = asRecord(approvalRecord?.metadata);
+  const mcp = asRecord(metadata?.mcp);
+  if (mcp) {
+    mergeMissing(details, mcp);
+  }
+  [
+    "approval_kind",
+    "server_id",
+    "server_name",
+    "raw_tool_name",
+    "model_tool_name",
+    "risk_level",
+    "risk_reasons",
+    "snapshot_id",
+    "approval_mode",
+    "arguments_preview",
+    "trust_options",
+    "matched_rule",
+    "model",
+    "requested_model",
+    "model_policy",
+    "max_tokens",
+    "sampling_max_tokens",
+    "sampling_approval_mode",
+    "sampling_audit_detail",
+    "audit_detail",
+    "message_count",
+    "prompt_preview",
+    "messages_preview",
+  ].forEach((key) => {
+    if (approvalRecord?.[key] !== undefined && details[key] === undefined) {
+      details[key] = approvalRecord[key];
+    }
+  });
+  return details;
+}
+
+function mergeMissing(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  Object.entries(source).forEach(([key, value]) => {
+    if (target[key] === undefined) {
+      target[key] = value;
+    }
+  });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function targetFromDetails(details: Record<string, unknown>, kind: ApprovalKind): string {
+  if (kind === "mcp_tool_call") {
+    const server = scalarText(details.server_name) || scalarText(details.server_id);
+    const tool =
+      scalarText(details.raw_tool_name) ||
+      scalarText(details.tool_name) ||
+      scalarText(details.model_tool_name);
+    return [server, tool].filter(Boolean).join(" / ");
+  }
+  if (kind === "mcp_sampling") {
+    const server = scalarText(details.server_name) || scalarText(details.server_id);
+    const model = scalarText(details.model) || scalarText(details.requested_model) || scalarText(details.model_policy);
+    return [server, model].filter(Boolean).join(" / ");
+  }
   const candidates = [details.command, details.path, details.cwd, details.target, details.reason]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
   if (candidates.length) {
@@ -176,8 +245,30 @@ function targetFromDetails(details: Record<string, unknown>): string {
   return "";
 }
 
-function factsFromDetails(details: Record<string, unknown>): ApprovalFact[] {
+function factsFromDetails(details: Record<string, unknown>, kind: ApprovalKind): ApprovalFact[] {
   const facts: ApprovalFact[] = [];
+  if (kind === "mcp_tool_call") {
+    addFact(facts, "服务", details.server_name ?? details.server_id);
+    addFact(facts, "MCP 工具", details.raw_tool_name ?? details.tool_name);
+    addFact(facts, "模型工具", details.model_tool_name, true);
+    addFact(facts, "风险原因", listText(details.risk_reasons));
+    addFact(facts, "参数预览", previewText(details.arguments_preview), true);
+    addFact(facts, "信任选项", trustOptionsText(details.trust_options));
+    addFact(facts, "匹配规则", previewText(details.matched_rule), true);
+    addFact(facts, "快照", details.snapshot_id, true);
+    return facts;
+  }
+  if (kind === "mcp_sampling") {
+    addFact(facts, "服务", details.server_name ?? details.server_id);
+    addFact(facts, "模型", details.model ?? details.requested_model ?? details.model_policy);
+    addFact(facts, "Token 上限", details.max_tokens ?? details.sampling_max_tokens);
+    addFact(facts, "审批策略", details.approval_mode ?? details.sampling_approval_mode);
+    addFact(facts, "审计", details.audit_detail ?? details.sampling_audit_detail);
+    addFact(facts, "消息数", details.message_count);
+    addFact(facts, "风险原因", listText(details.risk_reasons));
+    addFact(facts, "请求摘要", previewText(details.arguments_preview ?? details.prompt_preview ?? details.messages_preview), true);
+    return facts;
+  }
   addFact(facts, "命令", details.command, true);
   addFact(facts, "工具", details.tool_name ?? details.tool);
   addFact(facts, "Shell", details.shell_label ?? details.shell);
@@ -216,6 +307,49 @@ function formatTimeout(value: unknown): string {
   return `${value}s`;
 }
 
+function listText(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map(scalarText).filter(Boolean).join("；");
+  }
+  return scalarText(value);
+}
+
+function previewText(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function trustOptionsText(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return scalarText(value);
+  }
+  return value.map((item) => trustOptionLabel(scalarText(item))).filter(Boolean).join("；");
+}
+
+function trustOptionLabel(value: string): string {
+  switch (value) {
+    case "once":
+      return "仅本次允许";
+    case "session":
+      return "本会话信任";
+    case "persistent_tool":
+      return "持久信任该工具";
+    case "server_readonly":
+      return "信任该服务只读工具";
+    default:
+      return value;
+  }
+}
+
 function riskFromDetails(details: Record<string, unknown>): ParsedApproval["riskLevel"] {
   const risk = details.risk ?? details.risk_level ?? details.level;
   if (risk === "high" || risk === "medium" || risk === "low") {
@@ -237,6 +371,10 @@ function kindLabel(kind: ApprovalKind): string {
       return "读取外部路径";
     case "write_external":
       return "写入外部路径";
+    case "mcp_tool_call":
+      return "MCP 工具调用";
+    case "mcp_sampling":
+      return "MCP Sampling";
   }
 }
 

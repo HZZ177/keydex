@@ -304,6 +304,81 @@ def test_message_event_service_can_defer_tool_payloads_for_history(tmp_path) -> 
     ]
 
 
+def test_message_event_service_preserves_mcp_tool_metadata_for_history(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_mcp_start",
+        "tool_start",
+        {
+            "tool": "mcp__srv_1__read_fixture",
+            "params": {"key": "runtime-snapshot"},
+            "run_id": "tool_mcp",
+            "tool_call_id": "call_mcp",
+            "kind": "mcp_tool",
+            "snapshot_id": "snap-1",
+            "server_id": "srv-1",
+            "server_name": "Fixture MCP",
+            "raw_tool_name": "read_fixture",
+            "model_tool_name": "mcp__srv_1__read_fixture",
+            "risk_level": "low",
+            "metadata": {"mcp": {"approval_mode": "auto"}},
+        },
+    )
+    _append(
+        repositories,
+        "evt_mcp_end",
+        "tool_end",
+        {
+            "run_id": "tool_mcp",
+            "tool_call_id": "call_mcp",
+            "result": "fixture result",
+            "duration_ms": 18,
+            "status": "completed",
+            "kind": "mcp_tool",
+            "snapshot_id": "snap-1",
+            "server_id": "srv-1",
+            "server_name": "Fixture MCP",
+            "raw_tool_name": "read_fixture",
+            "model_tool_name": "mcp__srv_1__read_fixture",
+            "risk_level": "low",
+            "ui_payload": {
+                "structured_content": {
+                    "key": "runtime-snapshot",
+                    "value": "fixture:runtime-snapshot",
+                }
+            },
+        },
+    )
+
+    messages = service.get_display_messages("ses_history", include_tool_details=False)
+
+    assert messages[0]["role"] == "tool"
+    assert messages[0]["toolName"] == "mcp__srv_1__read_fixture"
+    assert messages[0]["toolDetailsDeferred"] is True
+    assert messages[0]["metadata"]["mcp"] == {
+        "approval_mode": "auto",
+        "kind": "mcp_tool",
+        "snapshot_id": "snap-1",
+        "server_id": "srv-1",
+        "server_name": "Fixture MCP",
+        "raw_tool_name": "read_fixture",
+        "model_tool_name": "mcp__srv_1__read_fixture",
+        "risk_level": "low",
+    }
+
+    detail = service.get_tool_detail(
+        session_id="ses_history",
+        start_event_id="evt_mcp_start",
+        end_event_id="evt_mcp_end",
+    )
+
+    assert detail["metadata"]["mcp"]["server_name"] == "Fixture MCP"
+    assert detail["metadata"]["mcp"]["model_tool_name"] == "mcp__srv_1__read_fixture"
+
+
 def test_message_event_service_keeps_deferred_command_error_preview(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)

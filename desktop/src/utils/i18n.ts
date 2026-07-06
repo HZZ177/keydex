@@ -42,6 +42,8 @@ const approvalKindLabels: Record<ApprovalKind, string> = {
   file_change: "修改文件",
   read_external: "读取工作区外文件",
   write_external: "写入工作区外文件",
+  mcp_tool_call: "MCP 工具调用",
+  mcp_sampling: "MCP Sampling",
 };
 
 const approvalStatusLabels: Record<ApprovalStatus, string> = {

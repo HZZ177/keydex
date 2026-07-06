@@ -11,6 +11,8 @@ export interface ConfirmDialogProps {
   cancelLabel?: string;
   confirmLabel: string;
   confirmTone?: "default" | "danger";
+  cancelDisabled?: boolean;
+  confirmDisabled?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -22,6 +24,8 @@ export function ConfirmDialog({
   cancelLabel = "取消",
   confirmLabel,
   confirmTone = "default",
+  cancelDisabled = false,
+  confirmDisabled = false,
   onCancel,
   onConfirm,
 }: ConfirmDialogProps) {
@@ -36,10 +40,15 @@ export function ConfirmDialog({
       onClose={onCancel}
       footer={
         <>
-          <DialogButton type="button" onClick={onCancel}>
+          <DialogButton type="button" disabled={cancelDisabled} onClick={onCancel}>
             {cancelLabel}
           </DialogButton>
-          <DialogButton tone={confirmTone === "danger" ? "danger" : "primary"} type="button" onClick={onConfirm}>
+          <DialogButton
+            tone={confirmTone === "danger" ? "danger" : "primary"}
+            type="button"
+            disabled={confirmDisabled}
+            onClick={onConfirm}
+          >
             {confirmLabel}
           </DialogButton>
         </>

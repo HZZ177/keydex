@@ -19,6 +19,7 @@ import {
   type WsConnectionStatus,
 } from "@/runtime";
 import type { AgentActionEnvelope } from "@/types/protocol";
+import type { McpElicitationResolvePayload } from "@/types/protocol";
 import { emitSessionEventsFromRuntimeEvent } from "@/renderer/events/sessionEvents";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import {
@@ -40,6 +41,7 @@ export interface AgentSessionRuntimeContextValue {
   chat: (payload: ChatPayload) => void;
   cancel: (sessionId?: string) => void;
   terminateCommand: (sessionId: string, commandId: string) => void;
+  resolveMcpElicitation: (payload: McpElicitationResolvePayload) => void;
   ping: () => void;
 }
 
@@ -165,6 +167,17 @@ export function AgentSessionProvider({
     channel.terminateCommand(sessionId, commandId);
   }, []);
 
+  const resolveMcpElicitation = useCallback((payload: McpElicitationResolvePayload) => {
+    const channel = channelRef.current;
+    if (!channel || channel.getStatus() !== "open") {
+      throw new Error("对话连接尚未就绪");
+    }
+    if (!channel.resolveMcpElicitation) {
+      throw new Error("MCP elicitation 通道未启用");
+    }
+    channel.resolveMcpElicitation(payload);
+  }, []);
+
   const ping = useCallback(() => {
     const channel = channelRef.current;
     if (!channel || channel.getStatus() !== "open") {
@@ -186,9 +199,10 @@ export function AgentSessionProvider({
       chat,
       cancel,
       terminateCommand,
+      resolveMcpElicitation,
       ping,
     }),
-    [bindSession, cancel, chat, ping, runtime, runtimeDetail, state, subscribeEvent, terminateCommand, wsStatus],
+    [bindSession, cancel, chat, ping, resolveMcpElicitation, runtime, runtimeDetail, state, subscribeEvent, terminateCommand, wsStatus],
   );
 
   return (

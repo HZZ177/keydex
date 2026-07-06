@@ -28,6 +28,7 @@ export type ConversationMessageKind =
   | "command"
   | "file_change"
   | "approval"
+  | "mcp_elicitation"
   | "error"
   | "cancelled"
   | "context_compression"

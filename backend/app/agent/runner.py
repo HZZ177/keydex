@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import httpx
 from langchain_core.messages import SystemMessage
 
 from backend.app.agent.factory import AgentFactory, agent_factory
-from backend.app.agent.langchain_tools import registry_to_langchain_tools
+from backend.app.agent.langchain_tools import registry_to_langchain_tools, tools_to_langchain_tools
 from backend.app.agent.middleware.builder import build_default_middleware
 from backend.app.agent.runtime_settings import (
     AgentRuntimeSettings,
@@ -19,7 +19,7 @@ from backend.app.command_approval import load_command_settings
 from backend.app.core.logger import logger
 from backend.app.keydex.skills import SkillCatalog, build_skill_index
 from backend.app.model import ModelSettings
-from backend.app.tools import ToolExecutionContext, ToolRegistry
+from backend.app.tools import LocalTool, ToolExecutionContext, ToolRegistry
 from backend.app.tools.command_runtime.descriptions import command_system_prompt_section
 from backend.app.tools.command_runtime.models import CommandRuntime
 from backend.app.tools.command_runtime.tools import create_command_tools
@@ -74,6 +74,7 @@ class AgentRunner:
         system_prompt: str | None,
         tool_context: ToolExecutionContext,
         enable_tools: bool = True,
+        runtime_tools: Sequence[LocalTool] | None = None,
     ) -> Any:
         if self.checkpointer is None:
             logger.error("[AgentRunner] checkpointer 未配置，无法创建 agent")
@@ -105,6 +106,13 @@ class AgentRunner:
                 tools.extend(
                     registry_to_langchain_tools(
                         command_registry,
+                        context_factory=lambda: tool_context,
+                    )
+                )
+            if runtime_tools:
+                tools.extend(
+                    tools_to_langchain_tools(
+                        runtime_tools,
                         context_factory=lambda: tool_context,
                     )
                 )

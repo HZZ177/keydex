@@ -6,6 +6,7 @@ import type {
   AgentToolDetailResponse,
   AgentToolDetails,
   CommandApprovalDecisionPayload,
+  McpElicitationResolvePayload,
   AgentHistoryResponse,
   AgentSession,
   AgentSessionBranchResponse,
@@ -13,6 +14,8 @@ import type {
   AgentSessionListResponse,
   AgentSessionResponse,
   AgentFileAttachment,
+  ManualContextCompressionMode,
+  ManualContextCompressionResponse,
   ThreadTask,
   ThreadTaskListResponse,
   ThreadTaskResponse,
@@ -89,6 +92,10 @@ export interface SessionBranchPayload {
   turnIndex?: number | null;
 }
 
+export interface ManualContextCompressionPayload {
+  mode: ManualContextCompressionMode;
+}
+
 export interface CreateThreadTaskPayload {
   type?: Extract<ThreadTaskType, "goal">;
   objective: string;
@@ -134,6 +141,7 @@ export interface ChatChannel {
   unbindSession(sessionId?: string): void;
   chat(payload: ChatPayload): void;
   approvalDecision(approvalId: string, decision: CommandApprovalDecisionPayload): void;
+  resolveMcpElicitation?(payload: McpElicitationResolvePayload): void;
   cancel(sessionId?: string): void;
   terminateCommand(sessionId: string, commandId: string): void;
   requestStatus(sessionId?: string): void;
@@ -156,6 +164,10 @@ export interface ConversationRuntime {
   deleteSession(sessionId: string): Promise<void>;
   forkSession(sessionId: string, payload: SessionBranchPayload): Promise<AgentSessionBranchResponse>;
   reverseSession(sessionId: string, payload: SessionBranchPayload): Promise<AgentSessionBranchResponse>;
+  compressContext(
+    sessionId: string,
+    payload: ManualContextCompressionPayload,
+  ): Promise<ManualContextCompressionResponse>;
   loadHistory(sessionId: string, options?: LoadHistoryOptions): Promise<AgentHistoryResponse>;
   loadToolDetails(sessionId: string, ref: LoadToolDetailsOptions): Promise<AgentToolDetails>;
   listThreadTasks(sessionId: string): Promise<ThreadTask[]>;
@@ -216,6 +228,15 @@ export function createConversationRuntime(
         method: "POST",
         body: branchPayload(payload),
       });
+    },
+    compressContext(sessionId, payload) {
+      return http.request<ManualContextCompressionResponse>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/context-compression`,
+        {
+          method: "POST",
+          body: { mode: payload.mode },
+        },
+      );
     },
     loadHistory(sessionId, historyOptions = {}) {
       return http.request<AgentHistoryResponse>(
@@ -294,6 +315,8 @@ export function createConversationRuntime(
             approval_id: approvalId,
             ...decision,
           }),
+        resolveMcpElicitation: (payload) =>
+          client.sendAction("mcp_elicitation_resolved", { ...payload }),
         cancel: (sessionId) => client.cancel(sessionId),
         terminateCommand: (sessionId, commandId) =>
           client.sendAction("terminate_command", {

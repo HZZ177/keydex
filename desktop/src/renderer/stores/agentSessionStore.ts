@@ -29,11 +29,13 @@ import type {
   ThreadTaskRun,
   ThreadTaskRunEventData,
   Workspace,
+  McpElicitationRequest,
 } from "@/types/protocol";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import { shouldDisplayAgentTranscriptMessage } from "@/renderer/utils/agentTranscriptVisibility";
 
 export type AgentSessionRuntimeState = "idle" | "running" | "waiting_approval" | "cancelling" | "failed" | "closed";
+const DEFAULT_MCP_ELICITATION_TITLE = "MCP 请求补充信息";
 
 export interface AgentSessionViewState {
   sessionId: string;
@@ -51,6 +53,7 @@ export interface AgentSessionViewState {
   historyHasMoreOlder: boolean;
   hasUnread: boolean;
   pendingApproval: CommandApprovalRequest | null;
+  pendingElicitation: McpElicitationRequest | null;
   threadTasks: ThreadTask[];
   activeTask: ThreadTask | null;
   runningTaskRun: ThreadTaskRun | null;
@@ -175,6 +178,12 @@ export function reduceAgentWsEvent(
       break;
     case "approval_resolved":
       next = handleApprovalResolved(state, event.data);
+      break;
+    case "mcp_elicitation_requested":
+      next = handleMcpElicitationRequested(state, event.data);
+      break;
+    case "mcp_elicitation_resolved":
+      next = handleMcpElicitationResolved(state, event.data);
       break;
     case "subagent_start":
       next = handleSubagentStart(state, event.data);
@@ -619,7 +628,8 @@ function isEquivalentHydratedMessage(candidate: AgentChatMessage, localMessage: 
 function applyHydratedRuntimeState(view: AgentSessionViewState, previousView?: AgentSessionViewState): void {
   const hasStreamingMessage = view.messages.some((message) => Boolean(message.streaming));
   const pendingApproval = pendingApprovalForHydratedView(view.messages, previousView);
-  let runtimeState = pendingApproval
+  const pendingElicitation = pendingElicitationForHydratedView(view.messages, previousView);
+  let runtimeState = pendingApproval || pendingElicitation
     ? "waiting_approval"
     : hasStreamingMessage
       ? "running"
@@ -631,6 +641,7 @@ function applyHydratedRuntimeState(view: AgentSessionViewState, previousView?: A
 
   view.runtimeState = runtimeState;
   view.pendingApproval = pendingApproval;
+  view.pendingElicitation = pendingElicitation;
   view.isStreaming = hasStreamingMessage || (runtimeState === "running" && previousView?.isStreaming === true);
   view.isCancelling = runtimeState === "cancelling";
 }
@@ -1090,6 +1101,69 @@ function handleApprovalResolved(
   return next;
 }
 
+function handleMcpElicitationRequested(
+  state: AgentConversationState,
+  data: Record<string, unknown>,
+): AgentConversationState {
+  const elicitation = elicitationFromData(data, state.selectedSessionId ?? "");
+  const sessionId = elicitation?.session_id || sessionIdFromData(data) || state.selectedSessionId || "";
+  if (!sessionId || !elicitation) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  upsertElicitationMessage(next, view, { ...elicitation, status: "pending" });
+  view.pendingElicitation = { ...elicitation, status: "pending" };
+  view.runtimeState = "waiting_approval";
+  view.isStreaming = false;
+  view.isCancelling = false;
+  const existing = next.sessionsById[sessionId];
+  if (existing) {
+    next.sessionsById = {
+      ...next.sessionsById,
+      [sessionId]: { ...existing, status: "waiting_approval" },
+    };
+  }
+  return next;
+}
+
+function handleMcpElicitationResolved(
+  state: AgentConversationState,
+  data: Record<string, unknown>,
+): AgentConversationState {
+  const source = asRecord(data.elicitation) ?? data;
+  const elicitationId = stringValue(source.elicitation_id) || stringValue(source.id);
+  const fallbackSessionId =
+    sessionIdFromData(data) ||
+    sessionIdForPendingElicitation(state, elicitationId) ||
+    state.selectedSessionId ||
+    "";
+  const elicitation = elicitationFromData(data, fallbackSessionId);
+  const sessionId = elicitation?.session_id || sessionIdFromData(data) || state.selectedSessionId || "";
+  if (!sessionId || !elicitation) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  upsertElicitationMessage(next, view, elicitation);
+  if (view.pendingElicitation?.elicitation_id === elicitation.elicitation_id) {
+    view.pendingElicitation = null;
+  } else {
+    view.pendingElicitation = firstPendingElicitation(view.messages);
+  }
+  view.runtimeState = view.pendingApproval || view.pendingElicitation ? "waiting_approval" : "running";
+  view.isStreaming = !view.pendingApproval && !view.pendingElicitation;
+  view.isCancelling = false;
+  const existing = next.sessionsById[sessionId];
+  if (existing) {
+    next.sessionsById = {
+      ...next.sessionsById,
+      [sessionId]: { ...existing, status: view.runtimeState === "waiting_approval" ? "waiting_approval" : "running" },
+    };
+  }
+  return next;
+}
+
 function handleReasoning(
   state: AgentConversationState,
   data: AgentReasoningData,
@@ -1401,6 +1475,7 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
   view.isCancelling = false;
   view.stale = false;
   view.pendingApproval = null;
+  view.pendingElicitation = null;
   view.runtimeState = payload.status === "failed" ? "failed" : "idle";
   return next;
 }
@@ -1466,6 +1541,7 @@ function handleCancelled(state: AgentConversationState, data: Record<string, unk
   view.isStreaming = false;
   view.isCancelling = false;
   view.pendingApproval = null;
+  view.pendingElicitation = null;
   view.runtimeState = "idle";
   return next;
 }
@@ -1535,6 +1611,7 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
   view.isStreaming = false;
   view.isCancelling = false;
   view.pendingApproval = null;
+  view.pendingElicitation = null;
   view.runtimeState = "failed";
   return next;
 }
@@ -1692,7 +1769,7 @@ function handleToolProgress(state: AgentConversationState, data: AgentToolProgre
       status: toolStatusFromCommandPayload(commandPayload, data.status),
       fileChanges: normalizedFileChanges(data.files),
       uiPayload: mergeToolFilesIntoUiPayload(commandPayload ?? data.ui_payload, data.files),
-      metadata: data.metadata,
+      metadata: toolMetadataFromData(data),
     };
     view.messages.push(created);
   }
@@ -1897,6 +1974,7 @@ function ensureSessionState(
     historyHasMoreOlder: meta.historyHasMoreOlder ?? false,
     hasUnread: meta.hasUnread ?? false,
     pendingApproval: meta.pendingApproval ?? null,
+    pendingElicitation: meta.pendingElicitation ?? null,
     threadTasks: meta.threadTasks?.map(cloneThreadTask) ?? [],
     activeTask: meta.activeTask ? cloneThreadTask(meta.activeTask) : null,
     runningTaskRun: meta.runningTaskRun ? cloneThreadTaskRun(meta.runningTaskRun) : null,
@@ -1940,8 +2018,203 @@ function approvalFromData(data: Record<string, unknown>): CommandApprovalRequest
     rule_match_type: isRuleMatchType(ruleMatchType) ? ruleMatchType : null,
     reject_message: nullableString(approval.reject_message),
     trusted_rule_id: nullableString(approval.trusted_rule_id),
+    metadata: approvalMetadataFromData(approval),
+    server_id: nullableString(approval.server_id),
+    server_name: nullableString(approval.server_name),
+    raw_tool_name: nullableString(approval.raw_tool_name),
+    model_tool_name: nullableString(approval.model_tool_name),
+    risk_level: nullableString(approval.risk_level),
+    snapshot_id: nullableString(approval.snapshot_id),
     created_at: stringValue(approval.created_at) || new Date().toISOString(),
     resolved_at: nullableString(approval.resolved_at),
+  };
+}
+
+function approvalMetadataFromData(approval: Record<string, unknown>): Record<string, unknown> | undefined {
+  const metadata = asRecord(approval.metadata);
+  const mcp = mcpMetadataFromApprovalData(approval);
+  if (!metadata && !mcp) {
+    return undefined;
+  }
+  const result = metadata ? { ...metadata } : {};
+  if (mcp) {
+    result.mcp = {
+      ...(asRecord(result.mcp) ?? {}),
+      ...mcp,
+    };
+  }
+  return result;
+}
+
+function mcpMetadataFromApprovalData(approval: Record<string, unknown>): Record<string, unknown> | undefined {
+  const existing = asRecord(asRecord(approval.metadata)?.mcp);
+  const kind = stringValue(approval.kind) || stringValue(existing?.kind);
+  const serverId = stringValue(approval.server_id) || stringValue(existing?.server_id);
+  const rawToolName = stringValue(approval.raw_tool_name) || stringValue(existing?.raw_tool_name);
+  const modelToolName =
+    stringValue(approval.model_tool_name) ||
+    stringValue(existing?.model_tool_name) ||
+    stringValue(existing?.model_name);
+  if (kind !== "mcp_tool_call" && kind !== "mcp_tool" && !(serverId && rawToolName && modelToolName)) {
+    return undefined;
+  }
+  const mcp: Record<string, unknown> = {
+    ...(existing ?? {}),
+    kind: "mcp_tool",
+  };
+  setIfPresent(mcp, "snapshot_id", stringValue(approval.snapshot_id) || stringValue(existing?.snapshot_id));
+  setIfPresent(mcp, "server_id", serverId);
+  setIfPresent(mcp, "server_name", nullableString(approval.server_name) ?? nullableString(existing?.server_name));
+  setIfPresent(mcp, "raw_tool_name", rawToolName);
+  setIfPresent(mcp, "model_tool_name", modelToolName);
+  setIfPresent(mcp, "model_name", stringValue(existing?.model_name) || modelToolName);
+  setIfPresent(mcp, "risk_level", stringValue(approval.risk_level) || stringValue(existing?.risk_level));
+  return mcp;
+}
+
+function elicitationFromData(data: Record<string, unknown>, fallbackSessionId = ""): McpElicitationRequest | null {
+  const source = asRecord(data.elicitation) ?? data;
+  const id = stringValue(source.elicitation_id) || stringValue(source.id);
+  const sessionId = stringValue(source.session_id) || sessionIdFromData(data) || fallbackSessionId;
+  if (!id || !sessionId) {
+    return null;
+  }
+  const status = normalizeElicitationStatus(source.status);
+  return {
+    elicitation_id: id,
+    id,
+    session_id: sessionId,
+    server_id: stringValue(source.server_id),
+    server_name: nullableString(source.server_name),
+    raw_tool_name: nullableString(source.raw_tool_name),
+    title: stringValue(source.title) || DEFAULT_MCP_ELICITATION_TITLE,
+    schema: asRecord(source.schema) ?? {},
+    status,
+    values: asRecord(source.values),
+    created_at: stringValue(source.created_at) || new Date().toISOString(),
+  };
+}
+
+function normalizeElicitationStatus(value: unknown): McpElicitationRequest["status"] {
+  const status = stringValue(value);
+  if (status === "submitted" || status === "cancelled" || status === "timeout") {
+    return status;
+  }
+  return "pending";
+}
+
+function pendingElicitationForHydratedView(
+  messages: AgentChatMessage[],
+  previousView?: AgentSessionViewState,
+): McpElicitationRequest | null {
+  const pending = firstPendingElicitation(messages);
+  if (pending) {
+    return pending;
+  }
+  const previous = previousView?.pendingElicitation;
+  if (!previous || previous.status !== "pending") {
+    return null;
+  }
+  if (hasElicitationMessage(messages, previous.elicitation_id)) {
+    return null;
+  }
+  return previous;
+}
+
+function firstPendingElicitation(messages: AgentChatMessage[]): McpElicitationRequest | null {
+  for (const message of messages) {
+    if (message.role === "mcp_elicitation" && message.status === "pending") {
+      const elicitation = elicitationFromMessage(message);
+      if (elicitation?.status === "pending") {
+        return elicitation;
+      }
+    }
+  }
+  return null;
+}
+
+function hasElicitationMessage(messages: AgentChatMessage[], elicitationId: string): boolean {
+  return messages.some((message) => message.role === "mcp_elicitation" && elicitationFromMessage(message)?.elicitation_id === elicitationId);
+}
+
+function sessionIdForPendingElicitation(state: AgentConversationState, elicitationId: string): string {
+  if (!elicitationId) {
+    return "";
+  }
+  for (const [sessionId, view] of Object.entries(state.sessionStateById)) {
+    if (view.pendingElicitation?.elicitation_id === elicitationId || hasElicitationMessage(view.messages, elicitationId)) {
+      return sessionId;
+    }
+  }
+  return "";
+}
+
+function upsertElicitationMessage(
+  state: AgentConversationState,
+  view: AgentSessionViewState,
+  elicitation: McpElicitationRequest,
+) {
+  const existing = view.messages.find(
+    (message) => message.role === "mcp_elicitation" && elicitationFromMessage(message)?.elicitation_id === elicitation.elicitation_id,
+  );
+  const merged = mergeElicitationForDisplay(existing ? elicitationFromMessage(existing) : null, elicitation);
+  const status = elicitation.status === "pending"
+    ? "pending"
+    : elicitation.status === "cancelled"
+      ? "cancelled"
+      : elicitation.status === "timeout"
+        ? "error"
+        : "completed";
+  const patch: Partial<AgentChatMessage> = {
+    role: "mcp_elicitation",
+    content: merged.title,
+    status,
+    timestamp: Date.parse(merged.created_at) || Date.now(),
+    metadata: {
+      ...(existing?.metadata ?? {}),
+      mcp_elicitation: merged,
+    },
+  };
+  if (existing) {
+    Object.assign(existing, patch);
+    return;
+  }
+  view.messages.push({
+    id: `mcp-elicitation:${elicitation.elicitation_id}`,
+    sessionId: view.sessionId,
+    role: "mcp_elicitation",
+    content: merged.title,
+    timestamp: Date.parse(merged.created_at) || Date.now(),
+    status,
+    metadata: {
+      mcp_elicitation: merged,
+    },
+  });
+  state.messageSeq += 1;
+}
+
+function elicitationFromMessage(message: AgentChatMessage): McpElicitationRequest | null {
+  const metadata = asRecord(message.metadata);
+  return elicitationFromData(asRecord(metadata?.mcp_elicitation) ?? {}, message.sessionId);
+}
+
+function mergeElicitationForDisplay(
+  existing: McpElicitationRequest | null,
+  incoming: McpElicitationRequest,
+): McpElicitationRequest {
+  if (!existing) {
+    return incoming;
+  }
+  return {
+    ...existing,
+    ...incoming,
+    server_id: incoming.server_id || existing.server_id,
+    server_name: incoming.server_name ?? existing.server_name,
+    raw_tool_name: incoming.raw_tool_name ?? existing.raw_tool_name,
+    title: incoming.title === DEFAULT_MCP_ELICITATION_TITLE ? existing.title : incoming.title,
+    schema: Object.keys(incoming.schema).length ? incoming.schema : existing.schema,
+    values: incoming.values ?? existing.values,
+    created_at: incoming.created_at || existing.created_at,
   };
 }
 
@@ -2311,7 +2584,7 @@ function toolCallFromStart(data: AgentToolEventData, toolName: string): AgentToo
     toolParams: data.params ?? data.input_data,
     status: "running",
     uiPayload: mergeToolFilesIntoUiPayload(data.ui_payload, fileChanges),
-    metadata: data.metadata,
+    metadata: toolMetadataFromData(data),
   };
   if (data.tool_call_id) {
     call.toolCallId = data.tool_call_id;
@@ -2345,7 +2618,7 @@ function applyToolProgress(
   } else {
     target.uiPayload = commandPayload ? { ...(target.uiPayload ?? {}), ...commandPayload } : data.ui_payload ?? target.uiPayload;
   }
-  target.metadata = data.metadata ?? target.metadata;
+  target.metadata = toolMetadataFromData(data) ?? target.metadata;
 }
 
 function shouldAcceptProgressRunId(
@@ -2384,7 +2657,61 @@ function applyToolEnd(
     target.fileChanges = fileChanges;
     target.uiPayload = mergeToolFilesIntoUiPayload(target.uiPayload, fileChanges);
   }
-  target.metadata = data.metadata ?? target.metadata;
+  target.metadata = toolMetadataFromData(data) ?? target.metadata;
+}
+
+function toolMetadataFromData(
+  data: AgentToolEventData | AgentToolProgressData,
+): Record<string, unknown> | undefined {
+  const existing = asRecord(data.metadata);
+  const mcp = mcpMetadataFromToolData(data);
+  if (!existing && !mcp) {
+    return undefined;
+  }
+  const metadata = existing ? { ...existing } : {};
+  if (mcp) {
+    metadata.mcp = {
+      ...(asRecord(metadata.mcp) ?? {}),
+      ...mcp,
+    };
+  }
+  return metadata;
+}
+
+function mcpMetadataFromToolData(
+  data: AgentToolEventData | AgentToolProgressData,
+): Record<string, unknown> | undefined {
+  const record = asRecord(data) ?? {};
+  const existing = asRecord(asRecord(data.metadata)?.mcp);
+  const kind = stringValue(record.kind) || stringValue(existing?.kind);
+  const serverId = stringValue(record.server_id) || stringValue(existing?.server_id);
+  const rawToolName = stringValue(record.raw_tool_name) || stringValue(existing?.raw_tool_name);
+  const modelToolName =
+    stringValue(record.model_tool_name) ||
+    stringValue(existing?.model_tool_name) ||
+    stringValue(existing?.model_name);
+  if (kind !== "mcp_tool" && !(serverId && rawToolName && modelToolName)) {
+    return undefined;
+  }
+  const mcp: Record<string, unknown> = {
+    ...(existing ?? {}),
+    kind: "mcp_tool",
+  };
+  setIfPresent(mcp, "snapshot_id", stringValue(record.snapshot_id) || stringValue(existing?.snapshot_id));
+  setIfPresent(mcp, "server_id", serverId);
+  setIfPresent(mcp, "server_name", nullableString(record.server_name) ?? nullableString(existing?.server_name));
+  setIfPresent(mcp, "raw_tool_name", rawToolName);
+  setIfPresent(mcp, "model_tool_name", modelToolName);
+  setIfPresent(mcp, "model_name", stringValue(existing?.model_name) || modelToolName);
+  setIfPresent(mcp, "risk_level", stringValue(record.risk_level) || stringValue(existing?.risk_level));
+  setIfPresent(mcp, "approval_mode", stringValue(record.approval_mode) || stringValue(existing?.approval_mode));
+  return mcp;
+}
+
+function setIfPresent(target: Record<string, unknown>, key: string, value: unknown) {
+  if (value !== undefined && value !== null && value !== "") {
+    target[key] = value;
+  }
 }
 
 function toolNameFromData(data: AgentToolEventData): string {
@@ -3063,6 +3390,12 @@ function isVisibleCompressionProgressStage(stage: string): boolean {
     "emergency_failed",
     "emergency_replacement_failed",
     "emergency_completed",
+    "manual_light_started",
+    "manual_light_completed",
+    "manual_light_failed",
+    "manual_deep_started",
+    "manual_deep_completed",
+    "manual_deep_failed",
   ].includes(stage);
 }
 
@@ -3109,15 +3442,33 @@ function llmMaxRetries(data: AgentMiddlewareProgressData): number {
 
 function contextCompressionContent(stage: string): string {
   if (stage === "emergency_triggered") {
-    return "正在自动压缩中";
+    return "正在全量压缩上下文";
   }
   if (stage === "emergency_failed" || stage === "emergency_replacement_failed") {
-    return "自动压缩失败";
+    return "全量压缩失败";
   }
   if (stage === "emergency_completed") {
-    return "自动压缩成功";
+    return "全量压缩已完成";
   }
-  return "无感压缩已完成";
+  if (stage === "manual_light_started") {
+    return "正在压缩上下文";
+  }
+  if (stage === "manual_light_completed") {
+    return "上下文压缩已完成";
+  }
+  if (stage === "manual_light_failed") {
+    return "上下文压缩失败";
+  }
+  if (stage === "manual_deep_started") {
+    return "正在全量压缩上下文";
+  }
+  if (stage === "manual_deep_completed") {
+    return "全量压缩已完成";
+  }
+  if (stage === "manual_deep_failed") {
+    return "全量压缩失败";
+  }
+  return "上下文压缩已完成";
 }
 
 function contextCompressionStatus(stage: string): AgentChatMessage["status"] {
@@ -3125,6 +3476,12 @@ function contextCompressionStatus(stage: string): AgentChatMessage["status"] {
     return "running";
   }
   if (stage === "emergency_failed" || stage === "emergency_replacement_failed") {
+    return "failed";
+  }
+  if (stage.endsWith("_started")) {
+    return "running";
+  }
+  if (stage.endsWith("_failed")) {
     return "failed";
   }
   return "completed";
@@ -3149,6 +3506,9 @@ function contextCompressionNoticeId(
   }
   if (stage.startsWith("emergency_")) {
     return `context-compression:emergency:${stringValue(data.trace_id) || sessionId}`;
+  }
+  if (stage.startsWith("manual_")) {
+    return `context-compression:manual:${stringValue(data.manual_mode) || "context"}:${sessionId}`;
   }
   const stagingFallback = stringValue(data.active_session_id) || sessionId;
   return `context-compression:staging:${String(data.staging_id ?? stagingFallback)}`;

@@ -85,6 +85,74 @@ describe("ComposerApprovalCard", () => {
     expect(screen.getByRole("button", { name: "提交" })).not.toBeNull();
   });
 
+  it("uses MCP-specific trust scopes for MCP tool approvals", () => {
+    const onSubmit = vi.fn();
+
+    render(<ComposerApprovalCard approval={mcpApproval()} allowPersistentTrust={false} onSubmit={onSubmit} />);
+
+    expect(screen.getByTestId("composer-approval-card").getAttribute("aria-label")).toBe("MCP 工具审批");
+    expect(screen.getByText("允许 Ticket MCP MCP 执行 write_fixture？")).not.toBeNull();
+    expect(screen.getByText("Ticket MCP / write_fixture")).not.toBeNull();
+    expect(screen.getByTestId("composer-approval-command").textContent).toContain('"title": "Fix"');
+    expect(screen.getByRole("radio", { name: "允许本次" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: "允许并信任本会话" })).not.toBeNull();
+    expect(screen.getByRole("radio", { name: "持久信任该 MCP 工具" })).not.toBeNull();
+    expect(screen.getByRole("radio", { name: "信任该服务只读工具" })).not.toBeNull();
+    expect(screen.queryByRole("radio", { name: "是，且以后相同命令不再询问" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("radio", { name: "允许本次" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    expect(onSubmit).toHaveBeenLastCalledWith({ decision: "approved", trust_scope: "once" });
+
+    fireEvent.click(screen.getByRole("radio", { name: "允许并信任本会话" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    expect(onSubmit).toHaveBeenLastCalledWith({ decision: "approved", trust_scope: "session" });
+
+    fireEvent.click(screen.getByRole("radio", { name: "持久信任该 MCP 工具" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    expect(onSubmit).toHaveBeenLastCalledWith({ decision: "approved", trust_scope: "persistent_tool" });
+
+    fireEvent.click(screen.getByRole("radio", { name: "信任该服务只读工具" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    expect(onSubmit).toHaveBeenLastCalledWith({ decision: "approved", trust_scope: "server_readonly" });
+
+    fireEvent.click(screen.getByRole("radio", { name: "拒绝，请告知 agent 如何调整" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    expect(onSubmit).toHaveBeenLastCalledWith({
+      decision: "rejected",
+      trust_scope: "once",
+      reject_message: "",
+    });
+  });
+
+  it("uses once-only choices for MCP sampling approvals", () => {
+    const onSubmit = vi.fn();
+
+    render(<ComposerApprovalCard approval={mcpSamplingApproval()} allowPersistentTrust onSubmit={onSubmit} />);
+
+    expect(screen.getByTestId("composer-approval-card").getAttribute("aria-label")).toBe("MCP Sampling 审批");
+    expect(screen.getByText("是否允许 Ticket MCP MCP Sampling？")).not.toBeNull();
+    expect(screen.getByText("Ticket MCP / qwen-coder")).not.toBeNull();
+    expect(screen.getByTestId("composer-approval-command").textContent).toContain("message_count");
+    fireEvent.click(screen.getByRole("button", { name: "展开" }));
+    expect(screen.getByTestId("composer-approval-command").textContent).toContain("Summarize ticket");
+    expect(screen.getByRole("radio", { name: "允许本次 Sampling" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: "拒绝，请告知 agent 如何调整" })).not.toBeNull();
+    expect(screen.queryByRole("radio", { name: "允许并信任本会话" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "持久信任该 MCP 工具" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    expect(onSubmit).toHaveBeenLastCalledWith({ decision: "approved", trust_scope: "once" });
+
+    fireEvent.click(screen.getByRole("radio", { name: "拒绝，请告知 agent 如何调整" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    expect(onSubmit).toHaveBeenLastCalledWith({
+      decision: "rejected",
+      trust_scope: "once",
+      reject_message: "",
+    });
+  });
+
   it("omits generic workspace copy and dot cwd from the approval card", () => {
     const onSubmit = vi.fn();
 
@@ -176,6 +244,72 @@ function approval(): CommandApprovalRequest {
     },
     status: "pending",
     created_at: "2026-06-24T10:00:00Z",
+    resolved_at: null,
+  };
+}
+
+function mcpApproval(): CommandApprovalRequest {
+  return {
+    id: "approval-mcp",
+    session_id: "session-1",
+    thread_id: "session-1",
+    turn_id: "turn-1",
+    item_id: "item-mcp",
+    call_id: "call-mcp",
+    run_id: "run-mcp",
+    tool_name: "mcp__srv_1__write_fixture",
+    kind: "mcp_tool_call",
+    title: "允许 Ticket MCP MCP 执行 write_fixture？",
+    description: "MCP 工具请求执行，需要你确认后继续。",
+    details: {
+      approval_kind: "mcp_tool_call",
+      server_id: "srv-1",
+      server_name: "Ticket MCP",
+      raw_tool_name: "write_fixture",
+      model_tool_name: "mcp__srv_1__write_fixture",
+      risk_level: "high",
+      risk_reasons: ["destructiveHint=true"],
+      arguments_preview: { title: "Fix", priority: "high" },
+      trust_options: ["once", "session", "persistent_tool", "server_readonly"],
+    },
+    status: "pending",
+    created_at: "2026-07-07T10:00:00Z",
+    resolved_at: null,
+  };
+}
+
+function mcpSamplingApproval(): CommandApprovalRequest {
+  return {
+    id: "approval-sampling",
+    session_id: "session-1",
+    thread_id: "session-1",
+    turn_id: "turn-1",
+    item_id: "item-sampling",
+    call_id: "call-sampling",
+    run_id: "run-sampling",
+    tool_name: "qwen-coder",
+    kind: "mcp_sampling",
+    title: "是否允许 Ticket MCP MCP Sampling？",
+    description: "MCP server 请求 Keydex 使用当前默认模型生成内容，需要你确认后继续。",
+    details: {
+      approval_kind: "mcp_sampling",
+      server_id: "srv-1",
+      server_name: "Ticket MCP",
+      raw_tool_name: "sampling/createMessage",
+      model: "qwen-coder",
+      model_policy: "current_default",
+      max_tokens: 128,
+      approval_mode: "prompt",
+      audit_detail: "summary",
+      message_count: 1,
+      arguments_preview: {
+        message_count: 1,
+        roles: ["user"],
+        preview: ["Summarize ticket"],
+      },
+    },
+    status: "pending",
+    created_at: "2026-07-07T10:00:00Z",
     resolved_at: null,
   };
 }

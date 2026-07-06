@@ -41,6 +41,7 @@ import type {
   AgentSession,
   CommandApprovalRequest,
   CommandApprovalDecisionPayload,
+  McpElicitationResolvePayload,
 } from "@/types/protocol";
 
 export type AgentSessionControllerNoticeLevel = "error" | "warning";
@@ -140,6 +141,7 @@ export interface AgentSessionController {
   ) => Promise<boolean>;
   stop: () => void;
   terminateCommand: (commandId: string) => Promise<void>;
+  resolveMcpElicitation: (payload: McpElicitationResolvePayload) => Promise<void>;
   submitApproval: (decision: CommandApprovalDecisionPayload) => Promise<void>;
   approvalSubmitting: boolean;
   approvalError: string | null;
@@ -779,6 +781,43 @@ export function useAgentSessionController({
     [dispatch, onNotice, sessionId, setRuntimeDetail, sharedRuntimeContext, wsStatus],
   );
 
+  const resolveMcpElicitation = useCallback(
+    async (payload: McpElicitationResolvePayload) => {
+      if (!payload.elicitation_id.trim()) {
+        return;
+      }
+      if (wsStatus !== "open") {
+        const message = "对话连接尚未就绪";
+        setRuntimeDetail(message);
+        onNotice?.(message, "warning");
+        return;
+      }
+
+      setRuntimeDetail(null);
+      try {
+        if (sharedRuntimeContext) {
+          sharedRuntimeContext.resolveMcpElicitation(payload);
+        } else {
+          const channel = channelRef.current;
+          if (!channel) {
+            throw new Error("对话连接尚未就绪");
+          }
+          if (!channel.resolveMcpElicitation) {
+            throw new Error("MCP elicitation 通道未启用");
+          }
+          channel.resolveMcpElicitation(payload);
+        }
+      } catch (reason) {
+        const message = errorMessage(reason);
+        setRuntimeDetail(publicRuntimeDetail(message));
+        if (sessionId) {
+          appendLocalError(dispatch, sessionId, message);
+        }
+      }
+    },
+    [dispatch, onNotice, sessionId, setRuntimeDetail, sharedRuntimeContext, wsStatus],
+  );
+
   const submitApproval = useCallback(
     async (decision: CommandApprovalDecisionPayload) => {
       if (!pendingApproval) {
@@ -844,6 +883,7 @@ export function useAgentSessionController({
       send,
       stop,
       terminateCommand,
+      resolveMcpElicitation,
       submitApproval,
       approvalSubmitting,
       approvalError,
@@ -867,6 +907,7 @@ export function useAgentSessionController({
       reloadHistory,
       runtimeDetail,
       runtimeState,
+      resolveMcpElicitation,
       selectedSkill,
       send,
       sendText,

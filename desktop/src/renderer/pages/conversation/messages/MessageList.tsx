@@ -33,6 +33,8 @@ import { ConversationTurnNavigator, type ConversationTurnNavigationItem } from "
 import { ErrorItem } from "./ErrorItem";
 import { FileChangeBlock, type FileChangePreview } from "./FileChangeBlock";
 import { MessageGroupBlock } from "./MessageGroupBlock";
+import { McpElicitationPrompt, type McpElicitationResolveHandler } from "./McpElicitationPrompt";
+import { AgentLoadingIcon } from "./MessageAgentStatus";
 import { MessageThinking } from "./MessageThinking";
 import { MessageActionFooter, MessageText, StreamingCursor } from "./MessageText";
 import { SkillActivationBlock } from "./SkillActivationBlock";
@@ -69,6 +71,7 @@ export interface MessageListProps {
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
+  onResolveMcpElicitation?: McpElicitationResolveHandler;
   onFilePreview?: (file: FileChangePreview) => void;
   onLoadToolDetails?: ToolDetailsLoader;
   onTerminateCommand?: (commandId: string) => Promise<void> | void;
@@ -124,6 +127,7 @@ export function MessageList({
   workspaceRuntime,
   workspaceScope,
   onApprovalDecision,
+  onResolveMcpElicitation,
   onFilePreview,
   onLoadToolDetails,
   onTerminateCommand,
@@ -173,7 +177,9 @@ export function MessageList({
       },
     ];
   }, [pendingAssistantMessage, processedMessages]);
-  const displayTurns = useMemo(() => groupDisplayItemsByTurn(displayItems), [displayItems]);
+  const timeline = useMemo(() => buildConversationTimeline(displayItems), [displayItems]);
+  const displayBlocks = timeline.blocks;
+  const displayTurns = timeline.turns;
   const turnNavigationItems = useMemo(() => buildTurnNavigationItems(displayTurns), [displayTurns]);
   const effectiveTurnNavigatorMode = turnNavigatorMode ?? (variant === "full" ? "auto" : "hidden");
   const showTurnNavigator = effectiveTurnNavigatorMode === "auto" && turnNavigationItems.length >= 2;
@@ -185,7 +191,7 @@ export function MessageList({
     () => collectTurnEndStreamingCursor(displayTurns, isProcessing),
     [displayTurns, isProcessing],
   );
-  const useStaticList = shouldUseStaticMessageList(displayItems.length, performanceProfile);
+  const useStaticList = shouldUseStaticMessageList(displayBlocks.length, performanceProfile);
   const [visibleTurnIndexes, setVisibleTurnIndexes] = useState<Set<number>>(() => new Set([0]));
   const listMode = useStaticList ? "static" : "virtual";
   const externalTurnNavigationIndex = useMemo(
@@ -195,11 +201,11 @@ export function MessageList({
   const externalTurnNavigationRequestId = turnNavigationRequest?.requestId;
   const shouldAutoFollowMessages = externalTurnNavigationIndex === null;
   const staticAutoScroll = useAutoScroll({
-    deps: [displayTurns, isProcessing],
-    itemCount: displayTurns.length,
+    deps: [displayBlocks, isProcessing],
+    itemCount: displayBlocks.length,
     autoFollow: shouldAutoFollowMessages,
   });
-  const autoScroll = useVirtuosoAutoScroll(displayTurns.length, { autoFollow: shouldAutoFollowMessages });
+  const autoScroll = useVirtuosoAutoScroll(displayBlocks.length, { autoFollow: shouldAutoFollowMessages });
   const scrollControls = useStaticList ? staticAutoScroll : autoScroll;
   const canLoadOlder = Boolean(hasMoreOlder && onLoadOlder);
   const olderLoader = renderOlderLoader({ canLoadOlder, loadingOlder, showTrigger: showOlderTrigger });
@@ -454,7 +460,7 @@ export function MessageList({
     setVisibleTurnIndexesIfChanged(new Set([displayTurns.length - 1]));
   }, [displayTurns, isProcessing, setVisibleTurnIndexesIfChanged, showTurnNavigator]);
 
-  const virtualComponents = useMemo<Components<MessageTurn>>(
+  const virtualComponents = useMemo<Components<TimelineBlock>>(
     () => ({
       ...messageVirtuosoComponents,
       Scroller: forwardRef<HTMLDivElement, ScrollerProps>(function MessageScroller(
@@ -495,14 +501,13 @@ export function MessageList({
           </>
         );
       },
-      Item: function MessageItem({ children, style, ...props }: ItemProps<MessageTurn>) {
-        const turnIndex = (props as { "data-index"?: number | string })["data-index"];
+      Item: function MessageItem({ children, style, ...props }: ItemProps<TimelineBlock>) {
+        const blockIndex = (props as { "data-index"?: number | string })["data-index"];
         return (
           <div
             {...props}
-            className={styles.turnGroup}
-            data-turn-index={turnIndex}
-            data-testid="message-turn"
+            className={styles.timelineBlock}
+            data-timeline-index={blockIndex}
             style={style}
           >
             {children}
@@ -569,10 +574,14 @@ export function MessageList({
         if (!virtuoso) {
           return false;
         }
+        const blockIndex = timeline.turnBlockIndexes[index];
+        if (blockIndex === undefined) {
+          return false;
+        }
         virtuoso.scrollToIndex({
           align: "center",
           behavior: prefersReducedMotion() ? "auto" : "smooth",
-          index,
+          index: blockIndex,
         });
         setVisibleTurnIndexesIfChanged(new Set([index]));
         return true;
@@ -589,7 +598,7 @@ export function MessageList({
       }
       return false;
     },
-    [autoScroll.virtuosoRef, displayTurns.length, setVisibleTurnIndexesIfChanged, useStaticList],
+    [autoScroll.virtuosoRef, displayTurns.length, setVisibleTurnIndexesIfChanged, timeline.turnBlockIndexes, useStaticList],
   );
 
   useEffect(() => {
@@ -649,47 +658,42 @@ export function MessageList({
       <div ref={staticAutoScroll.contentRef} className={styles.list} role="list" aria-label="Messages">
         {olderLoader}
         {renderedTopNotice}
-        {displayTurns.map((turn, index) => (
-          <div
-            className={styles.turnGroup}
-            data-turn-index={index}
-            data-testid="message-turn"
-            key={turn.id}
-            ref={(node) => {
-              staticTurnRefsRef.current[index] = node;
-            }}
-          >
-            {renderMessageTurn({
-              turn,
-              hideThreadTaskStatusSummary: isProcessing && index === displayTurns.length - 1,
-              focusFlash: index === flashingTurnIndex,
-              renderMessage,
-              assistantTurnFooters,
-              turnEndStreamingCursor,
-              workspaceRuntime,
-              workspaceScope,
-              onApprovalDecision,
-              onFilePreview,
-              onLoadToolDetails,
-              onTerminateCommand,
-              onQuoteSelection,
-              onAskSelectionInBtwConversation,
-              onForkFromMessage,
-              onNavigateToForkSource,
-              showForkSourceMarkers,
-              onReverseFromMessage,
-            })}
-          </div>
-        ))}
+        {displayBlocks.map((block) =>
+          renderTimelineBlock({
+            block,
+            isLastTurn: block.type === "turn" && block.turnIndex === displayTurns.length - 1,
+            focusFlash: block.type === "turn" && block.turnIndex === flashingTurnIndex,
+            renderMessage,
+            assistantTurnFooters,
+            turnEndStreamingCursor,
+            workspaceRuntime,
+            workspaceScope,
+            onApprovalDecision,
+            onResolveMcpElicitation,
+            onFilePreview,
+            onLoadToolDetails,
+            onTerminateCommand,
+            onQuoteSelection,
+            onAskSelectionInBtwConversation,
+            onForkFromMessage,
+            onNavigateToForkSource,
+            showForkSourceMarkers,
+            onReverseFromMessage,
+            setStaticTurnRef: (turnIndex, node) => {
+              staticTurnRefsRef.current[turnIndex] = node;
+            },
+            isProcessing,
+          }),
+        )}
       </div>
     </div>
   ) : (
     <Virtuoso
       ref={autoScroll.virtuosoRef}
       className={styles.virtualScroller}
-      data={displayTurns}
+      data={displayBlocks}
       components={virtualComponents}
-      computeItemKey={(_, turn) => turn.id}
+      computeItemKey={(_, block) => block.id}
       defaultItemHeight={120}
       increaseViewportBy={VIRTUAL_MESSAGE_VIEWPORT_BUFFER}
       followOutput={autoScroll.followOutput}
@@ -703,20 +707,21 @@ export function MessageList({
       rangeChanged={handleVirtualRangeChanged}
       initialTopMostItemIndex={
         externalTurnNavigationIndex === null
-          ? { align: "end", index: Math.max(0, displayTurns.length - 1) }
-          : { align: "center", index: externalTurnNavigationIndex }
+          ? { align: "end", index: Math.max(0, displayBlocks.length - 1) }
+          : { align: "center", index: timeline.turnBlockIndexes[externalTurnNavigationIndex] ?? 0 }
       }
-      itemContent={(index, turn) =>
-        renderMessageTurn({
-          turn,
-          hideThreadTaskStatusSummary: isProcessing && index === displayTurns.length - 1,
-          focusFlash: index === flashingTurnIndex,
+      itemContent={(_, block) =>
+        renderTimelineBlock({
+          block,
+          isLastTurn: block.type === "turn" && block.turnIndex === displayTurns.length - 1,
+          focusFlash: block.type === "turn" && block.turnIndex === flashingTurnIndex,
           renderMessage,
           assistantTurnFooters,
           turnEndStreamingCursor,
           workspaceRuntime,
           workspaceScope,
           onApprovalDecision,
+          onResolveMcpElicitation,
           onFilePreview,
           onLoadToolDetails,
           onTerminateCommand,
@@ -726,6 +731,7 @@ export function MessageList({
           onNavigateToForkSource,
           showForkSourceMarkers,
           onReverseFromMessage,
+          isProcessing,
         })
       }
     />
@@ -793,7 +799,7 @@ export function MessageList({
   return list;
 }
 
-const messageVirtuosoComponents: Components<MessageTurn> = {
+const messageVirtuosoComponents: Components<TimelineBlock> = {
   Scroller: forwardRef<HTMLDivElement, ScrollerProps>(function MessageScroller(
     { children, style, ...props },
     ref,
@@ -828,10 +834,10 @@ const messageVirtuosoComponents: Components<MessageTurn> = {
   Footer: function MessageListBottomSpacer() {
     return <div className={styles.virtualBottomSpacer} aria-hidden="true" />;
   },
-  Item: function MessageItem({ children, style, ...props }: ItemProps<MessageTurn>) {
-    const turnIndex = (props as { "data-index"?: number | string })["data-index"];
+  Item: function MessageItem({ children, style, ...props }: ItemProps<TimelineBlock>) {
+    const blockIndex = (props as { "data-index"?: number | string })["data-index"];
     return (
-      <div {...props} className={styles.turnGroup} data-turn-index={turnIndex} data-testid="message-turn" style={style}>
+      <div {...props} className={styles.timelineBlock} data-timeline-index={blockIndex} style={style}>
         {children}
       </div>
     );
@@ -882,6 +888,116 @@ function renderTopNotice(notice: MessageListTopNotice | null): ReactNode {
   );
 }
 
+function renderTimelineBlock({
+  block,
+  isLastTurn,
+  focusFlash,
+  renderMessage,
+  assistantTurnFooters,
+  turnEndStreamingCursor,
+  workspaceRuntime,
+  workspaceScope,
+  onApprovalDecision,
+  onResolveMcpElicitation,
+  onFilePreview,
+  onLoadToolDetails,
+  onTerminateCommand,
+  onQuoteSelection,
+  onAskSelectionInBtwConversation,
+  onForkFromMessage,
+  onNavigateToForkSource,
+  showForkSourceMarkers,
+  onReverseFromMessage,
+  setStaticTurnRef,
+  isProcessing,
+}: {
+  block: TimelineBlock;
+  isLastTurn: boolean;
+  focusFlash: boolean;
+  renderMessage?: (message: ConversationMessage) => ReactNode;
+  assistantTurnFooters: AssistantTurnFooters;
+  turnEndStreamingCursor: TurnEndStreamingCursor;
+  workspaceRuntime?: RuntimeBridge;
+  workspaceScope?: WorkspaceScope | null;
+  onApprovalDecision?: ApprovalDecisionHandler;
+  onResolveMcpElicitation?: McpElicitationResolveHandler;
+  onFilePreview?: (file: FileChangePreview) => void;
+  onLoadToolDetails?: ToolDetailsLoader;
+  onTerminateCommand?: (commandId: string) => Promise<void> | void;
+  onQuoteSelection?: (text: string) => void;
+  onAskSelectionInBtwConversation?: (text: string) => void;
+  onForkFromMessage?: (message: ConversationMessage) => void;
+  onNavigateToForkSource?: (fork: AgentSessionFork) => void;
+  showForkSourceMarkers: boolean;
+  onReverseFromMessage?: (message: ConversationMessage) => void;
+  setStaticTurnRef?: (turnIndex: number, node: HTMLDivElement | null) => void;
+  isProcessing: boolean;
+}): ReactNode {
+  if (block.type === "event") {
+    return (
+      <div
+        className={styles.item}
+        data-kind={block.kind}
+        data-testid="message-timeline-event"
+        role="listitem"
+        key={block.id}
+      >
+        {renderMessageItem({
+          item: block.item,
+          renderMessage,
+          showTurnEndStreamingCursor: false,
+          suppressStreamingCursorMessageIds: new Set(),
+          workspaceRuntime,
+          workspaceScope,
+          onApprovalDecision,
+          onResolveMcpElicitation,
+          onFilePreview,
+          onLoadToolDetails,
+          onTerminateCommand,
+          onQuoteSelection,
+          onAskSelectionInBtwConversation,
+          onForkFromMessage,
+          onNavigateToForkSource,
+          showForkSourceMarkers,
+          onReverseFromMessage,
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={styles.turnGroup}
+      data-turn-index={block.turnIndex}
+      data-testid="message-turn"
+      key={block.id}
+      ref={setStaticTurnRef ? (node) => setStaticTurnRef(block.turnIndex, node) : undefined}
+    >
+      {renderMessageTurn({
+        turn: block.turn,
+        hideThreadTaskStatusSummary: isProcessing && isLastTurn,
+        focusFlash,
+        renderMessage,
+        assistantTurnFooters,
+        turnEndStreamingCursor,
+        workspaceRuntime,
+        workspaceScope,
+        onApprovalDecision,
+        onResolveMcpElicitation,
+        onFilePreview,
+        onLoadToolDetails,
+        onTerminateCommand,
+        onQuoteSelection,
+        onAskSelectionInBtwConversation,
+        onForkFromMessage,
+        onNavigateToForkSource,
+        showForkSourceMarkers,
+        onReverseFromMessage,
+      })}
+    </div>
+  );
+}
+
 function renderMessageTurn({
   turn,
   hideThreadTaskStatusSummary = false,
@@ -892,6 +1008,7 @@ function renderMessageTurn({
   workspaceRuntime,
   workspaceScope,
   onApprovalDecision,
+  onResolveMcpElicitation,
   onFilePreview,
   onLoadToolDetails,
   onTerminateCommand,
@@ -911,6 +1028,7 @@ function renderMessageTurn({
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
+  onResolveMcpElicitation?: McpElicitationResolveHandler;
   onFilePreview?: (file: FileChangePreview) => void;
   onLoadToolDetails?: ToolDetailsLoader;
   onTerminateCommand?: (commandId: string) => Promise<void> | void;
@@ -941,6 +1059,7 @@ function renderMessageTurn({
         workspaceRuntime,
         workspaceScope,
         onApprovalDecision,
+        onResolveMcpElicitation,
         onFilePreview,
         onLoadToolDetails,
         onTerminateCommand,
@@ -992,6 +1111,7 @@ function renderMessageItem({
   workspaceRuntime,
   workspaceScope,
   onApprovalDecision,
+  onResolveMcpElicitation,
   onFilePreview,
   onLoadToolDetails,
   onTerminateCommand,
@@ -1010,6 +1130,7 @@ function renderMessageItem({
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
+  onResolveMcpElicitation?: McpElicitationResolveHandler;
   onFilePreview?: (file: FileChangePreview) => void;
   onLoadToolDetails?: ToolDetailsLoader;
   onTerminateCommand?: (commandId: string) => Promise<void> | void;
@@ -1030,6 +1151,7 @@ function renderMessageItem({
         workspaceRuntime={workspaceRuntime}
         workspaceScope={workspaceScope}
         onApprovalDecision={onApprovalDecision}
+        onResolveMcpElicitation={onResolveMcpElicitation}
         onFilePreview={onFilePreview}
         onLoadToolDetails={onLoadToolDetails}
         onTerminateCommand={onTerminateCommand}
@@ -1064,6 +1186,7 @@ function renderMessageItem({
           workspaceRuntime={workspaceRuntime}
           workspaceScope={workspaceScope}
           onApprovalDecision={onApprovalDecision}
+          onResolveMcpElicitation={onResolveMcpElicitation}
           onFilePreview={onFilePreview}
           onLoadToolDetails={onLoadToolDetails}
           onTerminateCommand={onTerminateCommand}
@@ -1193,6 +1316,7 @@ function DefaultMessage({
   workspaceRuntime,
   workspaceScope,
   onApprovalDecision,
+  onResolveMcpElicitation,
   onFilePreview,
   onLoadToolDetails,
   onTerminateCommand,
@@ -1205,6 +1329,7 @@ function DefaultMessage({
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
+  onResolveMcpElicitation?: McpElicitationResolveHandler;
   onFilePreview?: (file: FileChangePreview) => void;
   onLoadToolDetails?: ToolDetailsLoader;
   onTerminateCommand?: (commandId: string) => Promise<void> | void;
@@ -1245,6 +1370,9 @@ function DefaultMessage({
   }
   if (message.kind === "approval") {
     return <ApprovalPrompt message={message} onDecision={onApprovalDecision} />;
+  }
+  if (message.kind === "mcp_elicitation") {
+    return <McpElicitationPrompt message={message} onResolve={onResolveMcpElicitation} />;
   }
   if (message.kind === "error") {
     return <ErrorItem message={message} />;
@@ -1291,6 +1419,7 @@ function ConversationCancelledNotice() {
 
 function ContextCompressionNotice({ message }: { message: ConversationMessage }) {
   const state = message.status === "running" ? "running" : message.status === "failed" ? "failed" : "completed";
+  const showLoading = isContextCompressionLoadingNotice(message);
   return (
     <div
       className={styles.contextCompressionNotice}
@@ -1300,10 +1429,40 @@ function ContextCompressionNotice({ message }: { message: ConversationMessage })
       aria-live="polite"
     >
       <span className={styles.contextCompressionNoticeLabel}>
+        {showLoading ? <AgentLoadingIcon className={styles.contextCompressionNoticeSpinner} size={12} /> : null}
         <span>{normalizeMessageContent(message.content)}</span>
       </span>
     </div>
   );
+}
+
+function isContextCompressionLoadingNotice(message: ConversationMessage): boolean {
+  const metadata = message.payload.metadata;
+  const compression =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as { compression?: unknown }).compression
+      : null;
+  if (!compression || typeof compression !== "object" || Array.isArray(compression)) {
+    return isRunningCompressionText(message);
+  }
+  const stage = (compression as { stage?: unknown }).stage;
+  return (
+    message.status === "running" &&
+    (isRunningCompressionStage(stage) || isRunningCompressionText(message))
+  );
+}
+
+function isRunningCompressionStage(stage: unknown): boolean {
+  return (
+    stage === "emergency_triggered" ||
+    stage === "manual_light_started" ||
+    stage === "manual_deep_started"
+  );
+}
+
+function isRunningCompressionText(message: ConversationMessage): boolean {
+  const content = normalizeMessageContent(message.content);
+  return message.status === "running" && content.startsWith("正在") && content.includes("压缩");
 }
 
 function LLMRetryNotice({ message }: { message: ConversationMessage }) {
@@ -1437,7 +1596,7 @@ export function visibleTurnIndexesFromMountedTurns(scroller: HTMLElement | null,
 }
 
 export function buildTurnNavigationItemsFromMessages(messages: ConversationMessage[]): ConversationTurnNavigationItem[] {
-  return buildTurnNavigationItems(groupDisplayItemsByTurn(processMessages(messages)));
+  return buildTurnNavigationItems(buildConversationTimeline(processMessages(messages)).turns);
 }
 
 function findVisibleTurnNavigationIndexes(
@@ -1463,6 +1622,26 @@ interface MessageTurn {
   showThreadTaskContinuationNotice: boolean;
 }
 
+interface ConversationTimeline {
+  blocks: TimelineBlock[];
+  turns: MessageTurn[];
+  turnBlockIndexes: number[];
+}
+
+type TimelineBlock =
+  | {
+      type: "turn";
+      id: string;
+      turn: MessageTurn;
+      turnIndex: number;
+    }
+  | {
+      type: "event";
+      id: string;
+      item: ProcessedMessageItem;
+      kind: ConversationMessage["kind"] | string;
+    };
+
 interface AssistantTurnFooters {
   footerByItemId: Map<string, ConversationMessage>;
 }
@@ -1470,6 +1649,52 @@ interface AssistantTurnFooters {
 interface TurnEndStreamingCursor {
   suppressedMessageIds: Set<string>;
   cursorAfterItemIds: Set<string>;
+}
+
+function buildConversationTimeline(displayItems: ProcessedMessageItem[]): ConversationTimeline {
+  const blocks: TimelineBlock[] = [];
+  const turns: MessageTurn[] = [];
+  const turnBlockIndexes: number[] = [];
+  let pendingTurnItems: ProcessedMessageItem[] = [];
+
+  const flushTurns = () => {
+    if (!pendingTurnItems.length) {
+      return;
+    }
+    for (const turn of groupDisplayItemsByTurn(pendingTurnItems)) {
+      const turnIndex = turns.length;
+      turnBlockIndexes[turnIndex] = blocks.length;
+      turns.push(turn);
+      blocks.push({
+        type: "turn",
+        id: turn.id,
+        turn,
+        turnIndex,
+      });
+    }
+    pendingTurnItems = [];
+  };
+
+  for (const item of displayItems) {
+    if (isTimelineEventItem(item)) {
+      flushTurns();
+      blocks.push({
+        type: "event",
+        id: `event:${item.id}`,
+        item,
+        kind: itemKind(item),
+      });
+      continue;
+    }
+    pendingTurnItems.push(item);
+  }
+  flushTurns();
+
+  return { blocks, turns, turnBlockIndexes };
+}
+
+function isTimelineEventItem(item: ProcessedMessageItem): boolean {
+  return item.type === "message" && item.message.kind === "context_compression";
 }
 
 function groupDisplayItemsByTurn(displayItems: ProcessedMessageItem[]): MessageTurn[] {

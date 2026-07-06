@@ -315,3 +315,104 @@ def test_approval_decision_api_rejects_broad_prefix(tmp_path) -> None:
     assert response.status_code == 400
     message = response.json()["detail"]["message"]
     assert "过宽" in message or "过短" in message
+
+
+def test_mcp_approval_decision_api_resolves_mcp_tool_call_without_trusted_command_rule(
+    tmp_path,
+) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+    repositories = app.state.repositories
+    repositories.sessions.create(
+        session_id="ses-mcp-api",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="MCP 审批 API",
+    )
+    repositories.mcp_servers.create(
+        server_id="srv_exec",
+        name="Execution MCP",
+        transport="streamable_http",
+        url="https://mcp.example.test/mcp",
+    )
+    repositories.command_approvals.create(
+        approval_id="approval-mcp-api",
+        session_id="ses-mcp-api",
+        command="mcp__srv_exec__search",
+        cwd=".",
+        title="允许 Execution MCP MCP 执行 search？",
+        tool_name="mcp__srv_exec__search",
+        shell="mcp",
+        kind="mcp_tool_call",
+        details={
+            "approval_kind": "mcp_tool_call",
+            "snapshot_id": "snap-a",
+            "server_id": "srv_exec",
+            "server_name": "Execution MCP",
+            "raw_tool_name": "search",
+            "model_tool_name": "mcp__srv_exec__search",
+            "risk_level": "high",
+            "approval_mode": "auto",
+            "arguments_preview": {"query": "hello"},
+            "trust_options": ["once", "session", "persistent_tool", "server_readonly"],
+            "matched_rule": None,
+        },
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mcp/approvals/approval-mcp-api/decision",
+            json={
+                "decision": "approved",
+                "trust_scope": "session",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    audits, total = repositories.command_approval_audit.list(session_id="ses-mcp-api")
+    assert payload["kind"] == "mcp_tool_call"
+    assert payload["approval_kind"] == "mcp_tool_call"
+    assert payload["status"] == "approved"
+    assert payload["trust_scope"] == "session"
+    assert payload["server_id"] == "srv_exec"
+    assert payload["raw_tool_name"] == "search"
+    assert payload["trust_options"] == ["once", "session", "persistent_tool", "server_readonly"]
+    assert repositories.trusted_command_rules.list() == []
+    assert repositories.mcp_trust_rules.list(scope="session", session_id="ses-mcp-api")
+    assert total == 1
+    assert audits[0].metadata["kind"] == "mcp_tool_call"
+    assert audits[0].metadata["mcp"]["server_id"] == "srv_exec"
+    assert audits[0].metadata["mcp"]["trust_rule_id"]
+
+
+def test_mcp_approval_decision_api_rejects_exec_approval(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+    repositories = app.state.repositories
+    repositories.sessions.create(
+        session_id="ses-mcp-api",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="MCP 审批 API",
+    )
+    repositories.command_approvals.create(
+        approval_id="approval-exec-api",
+        session_id="ses-mcp-api",
+        command="pnpm test",
+        cwd=".",
+        title="是否允许执行命令？",
+        tool_name="run_cmd",
+        shell="cmd",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mcp/approvals/approval-exec-api/decision",
+            json={
+                "decision": "approved",
+                "trust_scope": "session",
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_mcp_approval"
+    assert repositories.command_approvals.get("approval-exec-api").status == "pending"

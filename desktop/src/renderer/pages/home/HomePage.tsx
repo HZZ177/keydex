@@ -496,6 +496,7 @@ export function HomePage({
           workspaceSkills={workspaceSkills}
           selectedSkill={selectedSkill}
           allowBypassConversationSlashCommand={false}
+          allowContextCompressionSlashCommand={false}
           onListWorkspaceDirectory={listWorkspaceDirectory}
           onSearchWorkspace={searchWorkspace}
           contextBar={

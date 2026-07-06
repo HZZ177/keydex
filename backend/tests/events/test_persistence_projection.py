@@ -233,7 +233,7 @@ async def test_persistence_projection_writes_middleware_progress(tmp_path) -> No
     assert events[0].data["stage"] == "staging_applied"
     assert events[0].data["_canonical"]["action"] == "middleware_progress"
     messages = MessageEventService(repositories.message_events).get_display_messages("ses_persist")
-    assert messages[0]["content"] == "无感压缩已完成"
+    assert messages[0]["content"] == "上下文压缩已完成"
 
 
 @pytest.mark.asyncio

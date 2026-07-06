@@ -5,6 +5,8 @@ import {
   AGENT_COMPLETED_EVENT_ITEM_ACTIONS,
   AGENT_INBOUND_ACTIONS,
   AGENT_REPLAY_ACTIONS,
+  type ApprovalKind,
+  type CommandApprovalTrustScope,
   type AgentActionEnvelope,
   type AgentChatMessage,
   type AgentCompletedPayload,
@@ -12,6 +14,19 @@ import {
   type AgentThreadTaskStatusData,
   type AgentToolEventData,
   type AgentTurnStartedData,
+  type McpErrorPayload,
+  type McpAuditRecord,
+  type McpImportPreviewResponse,
+  type McpOAuthStatusResponse,
+  type McpRuntimeSnapshotSummary,
+  type McpRuntimeStatusResponse,
+  type McpServerCreatePayload,
+  type McpServerDetailResponse,
+  type McpServerSummary,
+  type McpSessionToolOverride,
+  type McpToolEventMetadata,
+  type McpToolSummary,
+  type McpTrustRule,
   type ThreadTask,
   type ThreadTaskEventData,
   type ThreadTaskRun,
@@ -34,12 +49,20 @@ describe("agent protocol types", () => {
     expect(AGENT_CHAT_ACTIONS).toContain("task_run_finished");
     expect(AGENT_CHAT_ACTIONS).toContain("turn_started");
     expect(AGENT_CHAT_ACTIONS).toContain("thread_task_status");
+    expect(AGENT_CHAT_ACTIONS).toContain("mcp_server_status_changed");
+    expect(AGENT_CHAT_ACTIONS).toContain("mcp_runtime_snapshot_created");
+    expect(AGENT_CHAT_ACTIONS).toContain("mcp_tool_policy_changed");
+    expect(AGENT_CHAT_ACTIONS).toContain("mcp_elicitation_requested");
+    expect(AGENT_CHAT_ACTIONS).toContain("mcp_elicitation_resolved");
+    expect(AGENT_CHAT_ACTIONS).toContain("mcp_oauth_required");
     expect(AGENT_REPLAY_ACTIONS).toContain("stream_batch");
     expect(AGENT_REPLAY_ACTIONS).toContain("reasoning");
     expect(AGENT_REPLAY_ACTIONS).toContain("task_updated");
     expect(AGENT_REPLAY_ACTIONS).toContain("task_run_finished");
     expect(AGENT_REPLAY_ACTIONS).toContain("turn_started");
     expect(AGENT_REPLAY_ACTIONS).toContain("thread_task_status");
+    expect(AGENT_REPLAY_ACTIONS).toContain("mcp_runtime_snapshot_created");
+    expect(AGENT_REPLAY_ACTIONS).toContain("mcp_oauth_required");
     expect(AGENT_COMPLETED_EVENT_ITEM_ACTIONS).toEqual([
       "ai_message",
       "tool_start",
@@ -50,6 +73,197 @@ describe("agent protocol types", () => {
     expect(AGENT_INBOUND_ACTIONS).toContain("create_session");
     expect(AGENT_INBOUND_ACTIONS).toContain("bind_session");
     expect(AGENT_INBOUND_ACTIONS).toContain("cancel");
+  });
+
+  it("constructs MCP protocol shapes", () => {
+    const approvalKind = "mcp_tool_call" satisfies ApprovalKind;
+    const trustScope = "server_readonly" satisfies CommandApprovalTrustScope;
+    const server = {
+      id: "srv_1",
+      name: "filesystem",
+      description: "Local files",
+      enabled: true,
+      required: false,
+      transport: "stdio",
+      status: "online",
+      tools_count: 3,
+      prompts_count: 1,
+      resources_reserved: true,
+      last_refresh_at: "2026-07-06T00:00:00Z",
+      last_error_message: null,
+    } satisfies McpServerSummary;
+    const detail = {
+      ...server,
+      auth: {
+        auth_type: "oauth",
+        headers_configured: true,
+        env_headers_configured: false,
+        bearer_token_env_var: null,
+        secret_ref_keys: ["api_key"],
+        oauth_configured: true,
+        oauth_resource: "https://mcp.example.test",
+        oauth_scopes: ["tools:read"],
+      },
+      startup_timeout_sec: 30,
+      tool_timeout_sec: 60,
+      read_timeout_sec: 60,
+      sse_read_timeout_sec: 300,
+      shutdown_timeout_sec: 10,
+      auto_refresh: true,
+      refresh_interval_sec: 1800,
+      default_tool_exposure_mode: "allow_all_except_disabled",
+      default_tool_approval_mode: "auto",
+      elicitation_enabled: true,
+      sampling_enabled: false,
+      prompt_discovery_enabled: true,
+    } satisfies McpServerDetailResponse;
+    const tool = {
+      id: "tool_1",
+      server_id: "srv_1",
+      server_name: "filesystem",
+      raw_name: "read_file",
+      model_name: "mcp__filesystem__read_file",
+      display_name: "Read file",
+      description: "Read a file",
+      input_schema: { type: "object" },
+      enabled: true,
+      hidden: false,
+      status: "unchanged",
+      discovery_status: "unchanged",
+      effective_state: "enabled",
+      risk_level: "low",
+      approval_mode: "auto",
+      effective_approval_mode: "auto",
+      annotations: { readOnlyHint: true },
+      last_used_at: null,
+    } satisfies McpToolSummary;
+    const createServer = {
+      name: "filesystem",
+      transport: "stdio",
+      command: "node",
+      args: ["server.js"],
+      default_tool_approval_mode: "prompt",
+      default_tool_exposure_mode: "allow_all_except_disabled",
+      resource_reserved_policy: { reserved_only: true },
+    } satisfies McpServerCreatePayload;
+    const override = {
+      id: "override_1",
+      session_id: "ses_1",
+      server_id: "srv_1",
+      raw_tool_name: "read_file",
+      enabled: false,
+      reason: "paused for current task",
+      created_at: "2026-07-06T00:00:00Z",
+    } satisfies McpSessionToolOverride;
+    const snapshot = {
+      id: "snap_1",
+      snapshot_id: "snap_1",
+      session_id: "ses_1",
+      turn_id: "turn_1",
+      servers_total: 2,
+      servers_online: 1,
+      tools_visible: 4,
+      tools_disabled_for_session: 1,
+      pending_approvals: 0,
+      created_at: "2026-07-06T00:00:01Z",
+    } satisfies McpRuntimeSnapshotSummary;
+    const runtimeStatus = {
+      session_id: "ses_1",
+      manager: {
+        enabled: true,
+        runtime_status: "enabled",
+        started: true,
+        active_client_count: 1,
+      },
+      snapshot,
+      servers: [server],
+      tools: [tool],
+      overrides: [override],
+      running_calls: [],
+      pending_approvals: 0,
+      summary: {
+        servers_total: 1,
+        servers_online: 1,
+        tools_total: 1,
+        tools_enabled: 1,
+        running_calls: 0,
+        pending_approvals: 0,
+      },
+    } satisfies McpRuntimeStatusResponse;
+    const importPreview = {
+      source_type: "codex",
+      conflict_strategy: "skip",
+      server_count: 1,
+      servers: [
+        {
+          name: "filesystem",
+          transport: "stdio",
+          enabled: true,
+          conflict: false,
+          action: "create",
+          missing_secrets: [],
+          unknown_fields: [],
+        },
+      ],
+      conflicts: [],
+      missing_secrets: [],
+      unknown_fields: [],
+      valid: true,
+    } satisfies McpImportPreviewResponse;
+    const trustRule = {
+      id: "trust_1",
+      rule_kind: "server_readonly",
+      scope: "global",
+      approval_mode: "approve",
+      hit_count: 0,
+      server_id: server.id,
+      created_at: "2026-07-06T00:00:00Z",
+      updated_at: "2026-07-06T00:00:00Z",
+    } satisfies McpTrustRule;
+    const oauth = {
+      server_id: server.id,
+      status: "authorized",
+      token_configured: true,
+      account_label: "user@example.test",
+      scopes: ["tools:read"],
+      expires_at: null,
+    } satisfies McpOAuthStatusResponse;
+    const audit = {
+      id: "audit_1",
+      event_type: "refresh.completed",
+      server_id: server.id,
+      status: "completed",
+      summary: "refresh",
+      detail: { tools_count: 1 },
+      created_at: "2026-07-06T00:00:00Z",
+    } satisfies McpAuditRecord;
+    const metadata = {
+      kind: "mcp_tool",
+      server_id: "srv_1",
+      server_name: "filesystem",
+      raw_tool_name: "read_file",
+      model_tool_name: "mcp__filesystem__read_file",
+      risk_level: "low",
+      snapshot_id: snapshot.snapshot_id,
+    } satisfies McpToolEventMetadata;
+    const error = {
+      code: "server_offline",
+      message: "MCP server is offline.",
+      detail: { server_id: server.id },
+    } satisfies McpErrorPayload;
+
+    expect(approvalKind).toBe("mcp_tool_call");
+    expect(trustScope).toBe("server_readonly");
+    expect(createServer.args).toEqual(["server.js"]);
+    expect(detail.auth.secret_ref_keys).toEqual(["api_key"]);
+    expect(tool.model_name).toBe(metadata.model_tool_name);
+    expect(runtimeStatus.overrides[0].enabled).toBe(false);
+    expect(snapshot.tools_visible).toBe(4);
+    expect(importPreview.servers[0].action).toBe("create");
+    expect(trustRule.rule_kind).toBe("server_readonly");
+    expect(oauth.token_configured).toBe(true);
+    expect(audit.event_type).toBe("refresh.completed");
+    expect(error.code).toBe("server_offline");
   });
 
   it("constructs session and message shapes for all visible roles", () => {
@@ -157,6 +371,28 @@ describe("agent protocol types", () => {
       files: [{ path: "src/app.ts", added_lines: 2, deleted_lines: 1 }],
     } satisfies AgentToolEventData;
 
+    const mcpToolStart = {
+      session_id: "ses_1",
+      run_id: "run_mcp",
+      tool: "mcp__srv_1__search",
+      kind: "mcp_tool",
+      snapshot_id: "snap_1",
+      server_id: "srv_1",
+      server_name: "Ticket MCP",
+      raw_tool_name: "search",
+      model_tool_name: "mcp__srv_1__search",
+      risk_level: "low",
+      metadata: {
+        mcp: {
+          kind: "mcp_tool",
+          snapshot_id: "snap_1",
+          server_id: "srv_1",
+          raw_tool_name: "search",
+          model_tool_name: "mcp__srv_1__search",
+        },
+      },
+    } satisfies AgentToolEventData;
+
     const completed = {
       action: "completed",
       data: {
@@ -200,6 +436,8 @@ describe("agent protocol types", () => {
       "reasoning_message",
     ]);
     expect(completed.data.latest_llm_token_usage?.output_tokens).toBe(20);
+    expect(mcpToolStart.kind).toBe("mcp_tool");
+    expect(mcpToolStart.metadata.mcp.server_id).toBe("srv_1");
   });
 
   it("constructs thread task websocket payloads", () => {

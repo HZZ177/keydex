@@ -301,6 +301,9 @@ docs/superpowers/prototype
 /desktop/src-tauri/binaries/*
 !/desktop/src-tauri/binaries/.gitkeep
 !/desktop/src-tauri/binaries/rg-x86_64-pc-windows-msvc.exe
+# Desktop TypeScript sources are the source of truth; ignore generated JS mirrors.
+/desktop/src/**/*.js
+/desktop/tests/**/*.js
 /backend/app/.data/
 /.ktaicoding/des/assets/
 /.agent

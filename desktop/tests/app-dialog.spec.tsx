@@ -39,4 +39,21 @@ describe("AppDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onConfirm).not.toHaveBeenCalled();
   });
+
+  it("can disable ConfirmDialog actions while work is running", () => {
+    render(
+      <ConfirmDialog
+        title="确认操作"
+        description="操作前需要确认"
+        confirmLabel="正在处理"
+        cancelDisabled
+        confirmDisabled
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+
+    expect((screen.getByRole("button", { name: "取消" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "正在处理" }) as HTMLButtonElement).disabled).toBe(true);
+  });
 });

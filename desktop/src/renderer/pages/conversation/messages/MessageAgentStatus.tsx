@@ -9,6 +9,16 @@ export interface MessageAgentStatusProps {
   detail?: string | null;
 }
 
+export function AgentLoadingIcon({ size = 15, className = "" }: { size?: number; className?: string }) {
+  return (
+    <LoaderCircle
+      aria-hidden="true"
+      className={className ? `${styles.loadingIcon} ${className}` : styles.loadingIcon}
+      size={size}
+    />
+  );
+}
+
 export function MessageAgentStatus({ state, detail }: MessageAgentStatusProps) {
   if (state === "idle") {
     return null;
@@ -30,13 +40,13 @@ function statusView(state: ConversationRuntimeState, detail?: string | null) {
   switch (state) {
     case "starting":
       return {
-        icon: <LoaderCircle size={15} />,
+        icon: <AgentLoadingIcon size={15} />,
         text: "正在连接智能体",
         detail: detail ?? "准备发起这轮对话",
       };
     case "running":
       return {
-        icon: <LoaderCircle size={15} />,
+        icon: <AgentLoadingIcon size={15} />,
         text: "智能体正在处理",
         detail: detail ?? "可能正在思考、读取上下文或执行工具",
       };

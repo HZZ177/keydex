@@ -8,6 +8,7 @@ import {
   PanelLeftOpen,
   Puzzle,
   Search,
+  Server,
   Settings2,
   SlidersHorizontal,
   Sun,
@@ -26,17 +27,26 @@ import { useTheme } from "@/renderer/providers/ThemeProvider";
 
 import styles from "./SettingsShell.module.css";
 
-export type SettingsSection = "general" | "appearance" | "providers" | "modelDefaults" | "extensions" | "config" | "usage";
+export type SettingsSection =
+  | "general"
+  | "appearance"
+  | "providers"
+  | "modelDefaults"
+  | "extensions"
+  | "config"
+  | "usage"
+  | "mcp";
 
 const settingsItems = [
-  { id: "general", label: "常规", path: "/settings/general", icon: SlidersHorizontal },
-  { id: "appearance", label: "外观", path: "/settings/appearance", icon: Palette },
-  { id: "providers", label: "供应商配置", path: "/settings/providers", icon: Settings2 },
-  { id: "modelDefaults", label: "模型配置", path: "/settings/model-defaults", icon: Bot },
-  { id: "extensions", label: "扩展功能", path: "/settings/extensions", icon: Puzzle },
-  { id: "config", label: "策略配置", path: "/settings/policy-config", icon: Wrench },
-  { id: "usage", label: "用量统计", path: "/settings/usage", icon: BarChart3 },
-] satisfies Array<{ id: SettingsSection; label: string; path: string; icon: LucideIcon }>;
+  { id: "general", label: "常规", path: "/settings/general", icon: SlidersHorizontal, iconName: "sliders-horizontal" },
+  { id: "appearance", label: "外观", path: "/settings/appearance", icon: Palette, iconName: "palette" },
+  { id: "providers", label: "供应商配置", path: "/settings/providers", icon: Settings2, iconName: "settings-2" },
+  { id: "modelDefaults", label: "模型配置", path: "/settings/model-defaults", icon: Bot, iconName: "bot" },
+  { id: "extensions", label: "扩展功能", path: "/settings/extensions", icon: Puzzle, iconName: "puzzle" },
+  { id: "mcp", label: "MCP服务器", path: "/settings/mcp", icon: Server, iconName: "server" },
+  { id: "config", label: "策略配置", path: "/settings/policy-config", icon: Wrench, iconName: "wrench" },
+  { id: "usage", label: "用量统计", path: "/settings/usage", icon: BarChart3, iconName: "bar-chart-3" },
+] satisfies Array<{ id: SettingsSection; label: string; path: string; icon: LucideIcon; iconName: string }>;
 
 export function SettingsShell({
   activeSection,
@@ -121,6 +131,7 @@ export function SettingsShell({
                   <button
                     className={styles.menuItem}
                     data-active={activeSection === item.id ? "true" : "false"}
+                    data-icon={item.iconName}
                     key={item.id}
                     onClick={() => navigateSettings(item.path)}
                     type="button"

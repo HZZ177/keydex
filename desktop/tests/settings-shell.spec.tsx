@@ -7,7 +7,7 @@ import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
 
 function renderShell(
-  activeSection: "general" | "appearance" | "providers" | "modelDefaults" | "extensions" | "usage" | "config" = "providers",
+  activeSection: "general" | "appearance" | "providers" | "modelDefaults" | "extensions" | "usage" | "config" | "mcp" = "providers",
 ) {
   return render(
     <ThemeProvider>
@@ -33,11 +33,18 @@ describe("SettingsShell", () => {
     expect(screen.getByRole("button", { name: "供应商配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "模型配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "扩展功能" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "MCP服务器" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "策略配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "用量统计" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "切换主题" })).not.toBeNull();
     expect(screen.queryByText("暂未开放")).toBeNull();
-    expect(screen.queryByText("MCP 服务器")).toBeNull();
+  });
+
+  it("uses a dedicated MCP server icon instead of the extensions icon", () => {
+    renderShell("providers");
+
+    expect(screen.getByRole("button", { name: "扩展功能" }).getAttribute("data-icon")).toBe("puzzle");
+    expect(screen.getByRole("button", { name: "MCP服务器" }).getAttribute("data-icon")).toBe("server");
   });
 
   it("marks the active settings section", () => {
@@ -49,6 +56,7 @@ describe("SettingsShell", () => {
     expect(screen.getByRole("button", { name: "供应商配置" }).getAttribute("data-active")).toBe("false");
     expect(screen.getByRole("button", { name: "模型配置" }).getAttribute("data-active")).toBe("false");
     expect(screen.getByRole("button", { name: "扩展功能" }).getAttribute("data-active")).toBe("false");
+    expect(screen.getByRole("button", { name: "MCP服务器" }).getAttribute("data-active")).toBe("false");
     expect(screen.getByRole("button", { name: "策略配置" }).getAttribute("data-active")).toBe("false");
   });
 
@@ -76,6 +84,7 @@ describe("SettingsShell", () => {
     expect(screen.queryByRole("button", { name: "供应商配置" })).toBeNull();
     expect(screen.queryByRole("button", { name: "模型配置" })).toBeNull();
     expect(screen.queryByRole("button", { name: "扩展功能" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "MCP服务器" })).toBeNull();
     expect(screen.queryByRole("button", { name: "策略配置" })).toBeNull();
     expect(screen.getByRole("button", { name: "用量统计" })).not.toBeNull();
   });

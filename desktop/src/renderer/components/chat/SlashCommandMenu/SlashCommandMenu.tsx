@@ -1,10 +1,14 @@
-import { Box, ChevronLeft, ChevronRight, Command, Search, Sparkles, Target } from "lucide-react";
+import { Archive, Box, ChevronLeft, ChevronRight, Command, Minimize2, Search, Sparkles, Target } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import type { WorkspaceSkillSummary } from "@/runtime";
 
 import styles from "../ComposerPopupMenu/ComposerPopupMenu.module.css";
-import type { SlashCommand } from "./slashCommands";
+import {
+  isDeepContextCompressionSlashCommand,
+  isLightContextCompressionSlashCommand,
+  type SlashCommand,
+} from "./slashCommands";
 
 export interface SlashCommandMenuProps {
   mode: "root" | "skills";
@@ -138,7 +142,7 @@ function CommandItem({
   active: boolean;
   onSelect: (command: SlashCommand) => void;
 }) {
-  const Icon = command.kind === "skill_group" ? Sparkles : command.kind === "goal" ? Target : Command;
+  const Icon = slashCommandIcon(command);
   return (
     <button
       className={styles.item}
@@ -163,6 +167,22 @@ function CommandItem({
       {command.kind === "skill_group" ? <ChevronRight className={styles.enterIcon} size={13} /> : null}
     </button>
   );
+}
+
+function slashCommandIcon(command: SlashCommand) {
+  if (command.kind === "skill_group") {
+    return Sparkles;
+  }
+  if (command.kind === "goal") {
+    return Target;
+  }
+  if (isLightContextCompressionSlashCommand(command)) {
+    return Archive;
+  }
+  if (isDeepContextCompressionSlashCommand(command)) {
+    return Minimize2;
+  }
+  return Command;
 }
 
 function SkillItem({

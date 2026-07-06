@@ -20,6 +20,12 @@ def test_app_settings_exposes_desktop_runtime_defaults(tmp_path) -> None:
     assert settings.shell_timeout_seconds > 0
     assert settings.e2e_model_transport is False
     assert settings.e2e_stream_delay_ms >= 0
+    assert settings.mcp_enabled is True
+    assert settings.mcp_default_startup_timeout_sec == 30
+    assert settings.mcp_default_tool_timeout_sec == 60
+    assert settings.mcp_max_tool_result_bytes == 262_144
+    assert settings.mcp_auto_refresh_interval_sec == 1_800
+    assert settings.mcp_deferred_tool_threshold == 40
 
 
 def test_app_settings_default_data_dir_is_backend_app_data() -> None:
@@ -36,6 +42,12 @@ def test_app_settings_can_be_overridden_by_environment(monkeypatch, tmp_path) ->
     monkeypatch.setenv("KEYDEX_TOOL_TIMEOUT_SECONDS", "9.5")
     monkeypatch.setenv("KEYDEX_E2E_MODEL_TRANSPORT", "true")
     monkeypatch.setenv("KEYDEX_E2E_STREAM_DELAY_MS", "0")
+    monkeypatch.setenv("KEYDEX_MCP_ENABLED", "false")
+    monkeypatch.setenv("KEYDEX_MCP_DEFAULT_STARTUP_TIMEOUT_SEC", "7")
+    monkeypatch.setenv("KEYDEX_MCP_DEFAULT_TOOL_TIMEOUT_SEC", "11")
+    monkeypatch.setenv("KEYDEX_MCP_MAX_TOOL_RESULT_BYTES", "12345")
+    monkeypatch.setenv("KEYDEX_MCP_AUTO_REFRESH_INTERVAL_SEC", "90")
+    monkeypatch.setenv("KEYDEX_MCP_DEFERRED_TOOL_THRESHOLD", "8")
 
     settings = AppSettings()
 
@@ -46,8 +58,31 @@ def test_app_settings_can_be_overridden_by_environment(monkeypatch, tmp_path) ->
     assert settings.tool_timeout_seconds == 9.5
     assert settings.e2e_model_transport is True
     assert settings.e2e_stream_delay_ms == 0
+    assert settings.mcp_enabled is False
+    assert settings.mcp_default_startup_timeout_sec == 7
+    assert settings.mcp_default_tool_timeout_sec == 11
+    assert settings.mcp_max_tool_result_bytes == 12345
+    assert settings.mcp_auto_refresh_interval_sec == 90
+    assert settings.mcp_deferred_tool_threshold == 8
 
 
 def test_app_settings_reject_invalid_timeouts() -> None:
     with pytest.raises(ValidationError):
         AppSettings(tool_timeout_seconds=0)
+
+
+def test_app_settings_reject_invalid_mcp_values() -> None:
+    with pytest.raises(ValidationError):
+        AppSettings(mcp_default_startup_timeout_sec=0)
+
+    with pytest.raises(ValidationError):
+        AppSettings(mcp_default_tool_timeout_sec=0)
+
+    with pytest.raises(ValidationError):
+        AppSettings(mcp_max_tool_result_bytes=0)
+
+    with pytest.raises(ValidationError):
+        AppSettings(mcp_auto_refresh_interval_sec=0)
+
+    with pytest.raises(ValidationError):
+        AppSettings(mcp_deferred_tool_threshold=0)

@@ -41,6 +41,67 @@ describe("ApprovalPrompt", () => {
     });
   });
 
+  it("renders MCP approval context, trust options and uses the same decision handler", async () => {
+    const onDecision = vi.fn().mockResolvedValue(undefined);
+    render(<ApprovalPrompt message={mcpApprovalMessage()} onDecision={onDecision} />);
+
+    expect(screen.getByText("是否允许调用 MCP 工具？")).not.toBeNull();
+    expect(screen.getByText("MCP 工具调用")).not.toBeNull();
+    expect(screen.getByText("Ticket MCP / write")).not.toBeNull();
+    expect(screen.getByText("write")).not.toBeNull();
+    expect(screen.getByText("mcp__srv_1__write")).not.toBeNull();
+    expect(screen.getByText("写入外部系统；参数包含 title")).not.toBeNull();
+    expect(screen.getByText(/"title":"Fix"/)).not.toBeNull();
+    expect(screen.getByText("本会话信任；持久信任该工具")).not.toBeNull();
+    expect(screen.getByText("高")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "允许" }));
+
+    await waitFor(() => {
+      expect(onDecision).toHaveBeenCalledWith("approval-mcp", "approved");
+    });
+  });
+
+  it("renders MCP sampling approval separately from tool approval", async () => {
+    const onDecision = vi.fn().mockResolvedValue(undefined);
+    render(<ApprovalPrompt message={samplingApprovalMessage()} onDecision={onDecision} />);
+
+    expect(screen.getByText("是否允许 MCP Sampling？")).not.toBeNull();
+    expect(screen.getByText("MCP Sampling")).not.toBeNull();
+    expect(screen.queryByText("MCP 工具调用")).toBeNull();
+    expect(screen.getByText("Ticket MCP / qwen-coder")).not.toBeNull();
+    expect(screen.getByText("qwen-coder")).not.toBeNull();
+    expect(screen.getByText("2048")).not.toBeNull();
+    expect(screen.getByText("prompt")).not.toBeNull();
+    expect(screen.getByText("summary")).not.toBeNull();
+    expect(screen.getByText("2")).not.toBeNull();
+    expect(screen.getByText("模型采样会消耗 token；server 可请求生成内容")).not.toBeNull();
+    expect(screen.getByText("Summarize ticket status")).not.toBeNull();
+    expect(screen.getByText("高")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "允许" }));
+
+    await waitFor(() => {
+      expect(onDecision).toHaveBeenCalledWith("approval-sampling", "approved");
+    });
+  });
+
+  it("shows resolved MCP sampling approval state without action buttons", () => {
+    const { rerender } = render(<ApprovalPrompt message={samplingApprovalMessage("approved")} />);
+
+    expect(screen.getByText("MCP Sampling")).not.toBeNull();
+    expect(screen.getByText("已允许")).not.toBeNull();
+    expect(screen.getByText("Ticket MCP / qwen-coder")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "允许" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "拒绝" })).toBeNull();
+
+    rerender(<ApprovalPrompt message={samplingApprovalMessage("rejected")} />);
+
+    expect(screen.getByText("已拒绝")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "允许" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "拒绝" })).toBeNull();
+  });
+
   it("shows resolved approval state without action buttons", () => {
     const { rerender } = render(<ApprovalPrompt message={approvalMessage("approved")} />);
 
@@ -91,6 +152,96 @@ function approvalMessage(status: ApprovalRequest["status"] = "pending", id = "ap
     itemId: "item-command",
     kind: "approval",
     status,
+    content: approval.title,
+    payload: { approval },
+    createdAt: approval.created_at,
+    updatedAt: approval.created_at,
+  };
+}
+
+function samplingApprovalMessage(status: ApprovalRequest["status"] = "pending"): ConversationMessage {
+  const approval = {
+    id: "approval-sampling",
+    thread_id: "thread-1",
+    turn_id: "turn-1",
+    item_id: "item-sampling",
+    call_id: "call-sampling",
+    kind: "mcp_sampling",
+    title: "是否允许 MCP Sampling？",
+    description: "该 MCP server 请求 Keydex 使用当前模型生成内容。",
+    details: {
+      server_name: "Ticket MCP",
+      model: "qwen-coder",
+      max_tokens: 2048,
+      sampling_approval_mode: "prompt",
+      sampling_audit_detail: "summary",
+      message_count: 2,
+      prompt_preview: "Summarize ticket status",
+      risk_reasons: ["模型采样会消耗 token", "server 可请求生成内容"],
+    },
+    risk_level: "high",
+    status,
+    created_at: "2026-06-17T10:00:00Z",
+    metadata: {
+      mcp: {
+        kind: "mcp_sampling",
+        model_policy: "current_default",
+      },
+    },
+  };
+
+  return {
+    id: "approval:approval-sampling",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "item-sampling",
+    kind: "approval",
+    status,
+    content: approval.title,
+    payload: { approval },
+    createdAt: approval.created_at,
+    updatedAt: approval.created_at,
+  };
+}
+
+function mcpApprovalMessage(): ConversationMessage {
+  const approval = {
+    id: "approval-mcp",
+    thread_id: "thread-1",
+    turn_id: "turn-1",
+    item_id: "item-mcp",
+    call_id: "call-mcp",
+    kind: "mcp_tool_call",
+    title: "是否允许调用 MCP 工具？",
+    description: "该工具会向外部工单系统写入数据。",
+    details: {
+      arguments_preview: { title: "Fix", priority: "high" },
+      risk_reasons: ["写入外部系统", "参数包含 title"],
+      trust_options: ["session", "persistent_tool"],
+    },
+    server_id: "srv-1",
+    server_name: "Ticket MCP",
+    raw_tool_name: "write",
+    model_tool_name: "mcp__srv_1__write",
+    risk_level: "high",
+    snapshot_id: "snap-1",
+    status: "pending",
+    created_at: "2026-06-17T10:00:00Z",
+    metadata: {
+      mcp: {
+        kind: "mcp_tool",
+        approval_mode: "prompt",
+      },
+    },
+  };
+
+  return {
+    id: "approval:approval-mcp",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "item-mcp",
+    kind: "approval",
+    status: "pending",
     content: approval.title,
     payload: { approval },
     createdAt: approval.created_at,

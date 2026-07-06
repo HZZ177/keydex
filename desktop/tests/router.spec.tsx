@@ -53,6 +53,33 @@ function renderRouter(
   return { ...result, runtime };
 }
 
+function renderRouterWithoutLayoutProvider(
+  initialEntries: Array<string | { pathname: string; state?: unknown }>,
+  options: RenderRouterOptions = {},
+) {
+  const { extra, starter = () => Promise.resolve(agentConnection()), ...runtimeOptions } = options;
+  const runtime = fakeRuntime(runtimeOptions);
+  const result = render(
+    <ThemeProvider>
+      <FontProvider>
+        <NotificationProvider>
+          <RuntimeConnectionProvider runtime={runtime} starter={starter}>
+            <AgentSessionProvider runtime={runtime}>
+              <PreviewProvider>
+                {extra}
+                <MemoryRouter initialEntries={initialEntries}>
+                  <AppRouter runtime={runtime} />
+                </MemoryRouter>
+              </PreviewProvider>
+            </AgentSessionProvider>
+          </RuntimeConnectionProvider>
+        </NotificationProvider>
+      </FontProvider>
+    </ThemeProvider>,
+  );
+  return { ...result, runtime };
+}
+
 describe("AppRouter", () => {
   it("builds and detects mode-aware route helpers", () => {
     expect(conversationPath("thread 1")).toBe("/conversation/thread%201");
@@ -92,6 +119,13 @@ describe("AppRouter", () => {
 
     expect(await screen.findByTestId("home-page", undefined, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByLabelText("输入需求")).not.toBeNull();
+  });
+
+  it("mounts routed layouts even when the outer provider tree does not include layout state", async () => {
+    renderRouterWithoutLayoutProvider(["/guid"]);
+
+    expect(await screen.findByTestId("home-page", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("app-shell")).not.toBeNull();
   });
 
   it("opens settings in an isolated settings workspace and returns to the source route", async () => {
@@ -171,6 +205,43 @@ describe("AppRouter", () => {
 
     expect(await screen.findByRole("heading", { name: "外观" }, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByTestId("appearance-settings-page")).not.toBeNull();
+  });
+
+  it("opens MCP settings inside the settings workspace", async () => {
+    const { runtime } = renderRouter(["/settings/mcp"]);
+
+    expect(await screen.findByTestId("settings-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("settings-sidebar")).not.toBeNull();
+    expect(await screen.findByTestId("mcp-console-page", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "MCP" })).not.toBeNull();
+    await waitFor(() => {
+      expect(within(screen.getByTestId("mcp-server-list")).getByText("Filesystem MCP")).not.toBeNull();
+    });
+    expect(runtime.mcp.listServers).toHaveBeenCalledWith({ limit: 500 });
+    expect(screen.getByRole("button", { name: "MCP服务器" }).getAttribute("data-active")).toBe("true");
+  });
+
+  it("redirects the legacy MCP route into settings", async () => {
+    renderRouter(["/mcp"]);
+
+    expect(await screen.findByTestId("settings-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(await screen.findByTestId("mcp-console-page", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "MCP服务器" }).getAttribute("data-active")).toBe("true");
+  });
+
+  it("opens MCP console from the settings navigation", async () => {
+    renderRouter(["/conversation/thread-1"]);
+
+    expect(await screen.findByRole("heading", { name: /thread-1/ }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "MCP服务器" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    expect(await screen.findByTestId("settings-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "MCP服务器" }));
+
+    expect(await screen.findByTestId("mcp-console-page", undefined, { timeout: 10000 })).not.toBeNull();
+    await waitFor(() => {
+      expect(within(screen.getByTestId("mcp-server-list")).getByText("Filesystem MCP")).not.toBeNull();
+    });
   });
 
   it("opens the workbench picker route", async () => {
@@ -982,6 +1053,32 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
 
   return {
     __spies: { chat, emit: (event: AgentActionEnvelope) => emit(event) },
+    mcp: {
+      listServers: vi.fn(() =>
+        Promise.resolve({
+          list: [
+            {
+              id: "srv-mcp-1",
+              name: "Filesystem MCP",
+              description: "Local MCP server",
+              enabled: true,
+              required: false,
+              transport: "stdio",
+              status: "online",
+              tools_count: 2,
+              prompts_count: 1,
+              resources_reserved: true,
+              last_refresh_at: "2026-07-06T08:00:00Z",
+              last_error_message: null,
+            },
+          ],
+          total: 1,
+          limit: 500,
+          offset: 0,
+        }),
+      ),
+      refreshServers: vi.fn(() => Promise.resolve({ ok: true, list: [], total: 0 })),
+    },
     settings: {
       getSettings: vi.fn(() =>
         Promise.resolve({

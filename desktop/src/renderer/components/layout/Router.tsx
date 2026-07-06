@@ -5,7 +5,7 @@ import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import type { RuntimeSelectedModel } from "@/renderer/components/model";
 import { subscribeSessionUpdated, type AgentSessionUpdate } from "@/renderer/events/sessionEvents";
 import { queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
-import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
+import { LayoutStateProvider, useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import type { WorkspaceSelection } from "@/renderer/components/workspace";
 import type { AgentSession, Workspace } from "@/types/protocol";
@@ -80,12 +80,25 @@ const ConfigSettingsPage = lazy(() =>
     default: module.ConfigSettingsPage,
   })),
 );
+const McpConsolePage = lazy(() =>
+  import("@/renderer/pages/mcp/McpConsolePage").then((module) => ({
+    default: module.McpConsolePage,
+  })),
+);
 
 export interface AppRouterProps {
   runtime?: RuntimeBridge;
 }
 
 export function AppRouter({ runtime = runtimeBridge }: AppRouterProps = {}) {
+  return (
+    <LayoutStateProvider>
+      <AppRoutes runtime={runtime} />
+    </LayoutStateProvider>
+  );
+}
+
+function AppRoutes({ runtime }: { runtime: RuntimeBridge }) {
   return (
     <Suspense fallback={null}>
       <Routes>
@@ -96,12 +109,14 @@ export function AppRouter({ runtime = runtimeBridge }: AppRouterProps = {}) {
         <Route path="/workbench/:workspaceId/session/:sessionId" element={<WorkbenchRoute runtime={runtime} />} />
         <Route path={PROJECT_PATH} element={<ProjectRoute />} />
         <Route path="/conversation/:threadId" element={<ConversationRoute runtime={runtime} />} />
+        <Route path="/mcp" element={<Navigate to="/settings/mcp" replace />} />
         <Route path="/__dev/event-replay" element={<EventReplayRoute />} />
         <Route path="/settings/providers" element={<ProviderSettingsRoute runtime={runtime} />} />
         <Route path="/settings/model-defaults" element={<ModelDefaultSettingsRoute runtime={runtime} />} />
         <Route path="/settings/extensions" element={<ExtensionSettingsRoute runtime={runtime} />} />
         <Route path="/settings/policy-config" element={<ConfigSettingsRoute runtime={runtime} />} />
         <Route path="/settings/usage" element={<UsageSettingsRoute runtime={runtime} />} />
+        <Route path="/settings/mcp" element={<McpSettingsRoute runtime={runtime} />} />
         <Route path="/settings/general" element={<GeneralSettingsRoute runtime={runtime} />} />
         <Route path="/settings/appearance" element={<AppearanceSettingsRoute />} />
         <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
@@ -636,6 +651,14 @@ function UsageSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
   return (
     <SettingsShell activeSection="usage">
       <UsageStatsPage runtime={runtime} onNavigateToConversationTurn={navigateToConversationTurn} />
+    </SettingsShell>
+  );
+}
+
+function McpSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
+  return (
+    <SettingsShell activeSection="mcp">
+      <McpConsolePage runtime={runtime} />
     </SettingsShell>
   );
 }

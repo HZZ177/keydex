@@ -258,7 +258,7 @@ async def test_context_compression_progress_projects_to_realtime_and_history(tmp
     ]
     assert len(messages) == 1
     assert messages[0]["role"] == "system"
-    assert messages[0]["content"] == "自动压缩成功"
+    assert messages[0]["content"] == "全量压缩已完成"
     assert messages[0]["metadata"]["compression"]["stage"] == "emergency_completed"
 
 

@@ -1,0 +1,1590 @@
+.page {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 14px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px;
+  color: var(--color-text-primary);
+}
+
+.toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.titleBlock {
+  min-width: 0;
+}
+
+.titleBlock h1,
+.detailHeader h2 {
+  margin: 0;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.titleBlock h1 {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.summaryRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 7px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.summaryRow span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.iconButton {
+  display: inline-flex;
+  min-width: 0;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 62%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--ui-line-height-tight);
+  padding: 0 11px;
+  cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 80%, var(--color-bg-elevated));
+}
+
+.iconButton:disabled {
+  color: var(--color-text-4);
+  cursor: default;
+}
+
+.error,
+.notice {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 42%, var(--color-border-default));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+.error button {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.notice {
+  grid-template-columns: 16px minmax(0, 1fr);
+  border-color: color-mix(in srgb, var(--color-success-6) 36%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-success-6) 7%, transparent);
+  color: var(--color-text-secondary);
+}
+
+.consoleGrid {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.serverPane,
+.detailPane {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 58%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg-elevated) 86%, transparent);
+  box-shadow: none;
+}
+
+.serverPane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.filterStack {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-default) 52%, transparent);
+  padding: 10px;
+}
+
+.searchBox {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  color: var(--color-text-4);
+  padding: 0 9px;
+}
+
+.searchBox input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.searchBox input::placeholder {
+  color: var(--color-text-4);
+}
+
+.filterRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.filterRow select {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.serverList {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.serverItem {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  padding: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.serverItem:hover {
+  background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
+}
+
+.serverItem[data-active="true"] {
+  border-color: color-mix(in srgb, var(--color-border-default) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-active) 66%, var(--color-bg-elevated));
+}
+
+.serverItemHeader,
+.serverMeta,
+.detailKicker {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.serverItemHeader {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.serverName {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serverMeta {
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.statusBadge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 20px;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-hover) 78%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 7px;
+}
+
+.statusBadge[data-status="online"] {
+  color: var(--color-success-6);
+}
+
+.statusBadge[data-status="error"],
+.statusBadge[data-status="auth_required"] {
+  color: var(--color-warning);
+}
+
+.statusBadge[data-status="disabled"] {
+  color: var(--color-text-4);
+}
+
+.loadingList,
+.emptyState,
+.detailEmpty {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.detailPane {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.detailHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-default) 52%, transparent);
+  padding: 16px;
+}
+
+.detailKicker {
+  gap: 7px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.detailHeader h2 {
+  margin-top: 5px;
+  font-size: 18px;
+}
+
+.detailMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(72px, 1fr));
+  gap: 8px;
+  min-width: 260px;
+}
+
+.detailHeaderSide {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+  min-width: 260px;
+}
+
+.detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.detailActions button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 9px;
+  cursor: pointer;
+}
+
+.detailActions button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
+  color: var(--color-text-primary);
+}
+
+.detailActions .dangerAction {
+  border-color: color-mix(in srgb, var(--color-danger) 34%, var(--color-border-default));
+  color: var(--color-danger);
+}
+
+.detailActions .dangerAction:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+  color: var(--color-danger);
+}
+
+.detailActions button:disabled {
+  cursor: default;
+  opacity: 0.54;
+}
+
+.metric {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 7px;
+  padding: 8px;
+}
+
+.metric span,
+.infoRow span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.metric strong,
+.infoRow strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tabs {
+  display: flex;
+  min-width: 0;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-default) 52%, transparent);
+  padding: 7px 10px 0;
+}
+
+.tabs button {
+  flex: 0 0 auto;
+  height: 32px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.tabs button[data-active="true"] {
+  border-bottom-color: color-mix(in srgb, var(--color-text-primary) 55%, transparent);
+  color: var(--color-text-primary);
+}
+
+.tabPanel {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.overviewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.infoRow {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 7px;
+  padding: 10px;
+}
+
+.infoRow[data-wide="true"] {
+  grid-column: 1 / -1;
+}
+
+.skeletonTab {
+  display: grid;
+  gap: 10px;
+}
+
+.skeletonTab div {
+  height: 42px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
+}
+
+.toolsTab {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.toolsToolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(360px, 2fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.toolFilters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.toolFilters select,
+.bulkBar select,
+.toolActionCell select {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.smallToolButton,
+.selectAllButton,
+.rowCheckButton,
+.schemaPanelHeader button,
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.smallToolButton,
+.selectAllButton {
+  height: 30px;
+  gap: 6px;
+  padding: 0 9px;
+}
+
+.smallToolButton:hover:not(:disabled),
+.selectAllButton:hover:not(:disabled),
+.rowCheckButton:hover:not(:disabled),
+.schemaPanelHeader button:hover:not(:disabled),
+.toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
+  color: var(--color-text-primary);
+}
+
+.smallToolButton:disabled,
+.selectAllButton:disabled,
+.rowCheckButton:disabled,
+.schemaPanelHeader button:disabled,
+.toggle:disabled {
+  cursor: default;
+  opacity: 0.54;
+}
+
+.bulkBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
+  border-radius: 7px;
+  padding: 8px;
+}
+
+.selectAllButton {
+  color: var(--color-text-primary);
+}
+
+.inlineError {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, var(--color-border-default));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+.toolsContent {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 10px;
+  min-width: 0;
+}
+
+.toolsContent[data-has-schema="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.toolList {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.toolRow {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) minmax(92px, 120px) minmax(170px, 220px);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
+  padding: 10px;
+}
+
+.toolSelectCell {
+  display: flex;
+  justify-content: center;
+  padding-top: 1px;
+}
+
+.rowCheckButton {
+  width: 26px;
+  height: 26px;
+  border-color: transparent;
+  padding: 0;
+}
+
+.toolMainCell {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.toolTitleRow {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 9px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.toolTitleRow strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.toolModelName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolMainCell p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.toolBadgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.toolBadge {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 7px;
+}
+
+.toolBadge[data-tone="success"] {
+  color: var(--color-success-6);
+}
+
+.toolBadge[data-tone="warning"] {
+  color: var(--color-warning);
+}
+
+.toolBadge[data-tone="muted"] {
+  color: var(--color-text-4);
+}
+
+.schemaChangedNotice {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 36%, var(--color-border-default));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-warning) 7%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.toolStateCell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  min-width: 0;
+}
+
+.toolStateCell span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.toolStateCell strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.toolActionCell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+}
+
+.toolActionCell .smallToolButton {
+  grid-column: 1 / -1;
+  width: fit-content;
+}
+
+.toggle {
+  width: 42px;
+  height: 30px;
+  border-color: transparent;
+  border-radius: var(--radius-pill);
+  padding: 0;
+}
+
+.toggleTrack {
+  display: inline-flex;
+  width: 34px;
+  height: 20px;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-3);
+  padding: 2px;
+  transition: background-color var(--motion-fast) var(--motion-ease-out);
+}
+
+.toggleThumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 1px 4px rgb(15 23 42 / 18%);
+  transition: transform 140ms ease;
+}
+
+.toggleTrack[data-checked="true"] {
+  background: var(--color-accent);
+}
+
+.toggleTrack[data-checked="true"] .toggleThumb {
+  transform: translateX(14px);
+}
+
+.schemaPanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  max-height: 620px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 82%, transparent);
+}
+
+.schemaPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  padding: 10px;
+}
+
+.schemaPanelHeader div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.schemaPanelHeader span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.schemaPanelHeader strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.schemaPanelHeader button {
+  height: 28px;
+  padding: 0 8px;
+}
+
+.schemaPanel pre {
+  min-width: 0;
+  margin: 0;
+  overflow: auto;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 10px;
+}
+
+.promptsTab {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.promptFilters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.promptFilters select,
+.promptRowActions select,
+.promptArgField input,
+.promptArgField select {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.promptsContent {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 10px;
+  min-width: 0;
+}
+
+.promptList {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.promptRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 210px);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
+  padding: 10px;
+}
+
+.promptRow[data-active="true"] {
+  border-color: color-mix(in srgb, var(--color-text-primary) 22%, var(--color-border-default));
+  background: color-mix(in srgb, var(--surface-active) 52%, var(--color-bg-elevated));
+}
+
+.promptRowMain {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.promptTitleRow {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 9px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.promptTitleRow strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.promptTitleRow span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.promptDescription {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.promptRowActions {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  justify-items: start;
+}
+
+.promptPanel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 82%, transparent);
+  padding: 10px;
+}
+
+.promptPanelHeader,
+.promptPreviewHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.promptPanelHeader div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.promptPanelHeader span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.promptPanelHeader strong,
+.promptArguments h3,
+.promptPreviewHeader h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.promptArguments {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
+  padding-top: 10px;
+}
+
+.promptNoArgs {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.promptArgField {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.promptArgField span,
+.promptArgCheck span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.promptArgCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.promptPreview {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
+  padding-top: 10px;
+}
+
+.promptPreviewHeader div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.promptPreview pre {
+  min-height: 120px;
+  max-height: 360px;
+  min-width: 0;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-hover) 28%, transparent);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
+.policyTab,
+.logsTab {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.policySection {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
+  padding: 10px;
+}
+
+.policySectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.policySectionHeader h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.policyGrid,
+.trustCreateGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.policyField {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.policyField[data-wide="true"] {
+  grid-column: 1 / -1;
+}
+
+.policyField span,
+.policyToggleRow > span,
+.policyReadonly span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.policyField input,
+.policyField select,
+.logFilters select {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.policyToggleRow,
+.policyReadonly {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
+  border-radius: 7px;
+  padding: 5px 8px;
+}
+
+.policySummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.policySummary span {
+  min-width: 0;
+}
+
+.policyReadonly strong {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.trustRuleList {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trustRuleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(120px, 0.7fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
+  border-radius: 7px;
+  padding: 9px;
+}
+
+.trustRuleRow div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.trustRuleRow strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.trustRuleRow span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.trustRuleRow pre,
+.logRow pre {
+  min-width: 0;
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 36%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-hover) 28%, transparent);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 8px;
+}
+
+.logFilters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.logPager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.logPager span {
+  margin-right: auto;
+}
+
+.logList {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.logRow {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
+  padding: 9px;
+}
+
+.logRow button {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) minmax(130px, 0.8fr) minmax(60px, 0.4fr) minmax(60px, 0.4fr) minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.logRow button:hover {
+  color: var(--color-text-primary);
+}
+
+.logRow strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font-weight: 650;
+}
+
+.logRow span,
+.logRow em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-style: normal;
+}
+
+.importExportForm {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 16px 18px;
+}
+
+.importOptionsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.importExportField {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.importExportField span,
+.importExportToggle strong,
+.importPreviewWarning strong,
+.exportPreviewHeader strong {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.importExportField select,
+.importExportField textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 58%, transparent);
+  border-radius: 7px;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.importExportField select {
+  height: 32px;
+  padding: 0 9px;
+}
+
+.importExportField textarea {
+  min-height: 170px;
+  resize: vertical;
+  padding: 9px;
+}
+
+.importExportField select:hover:not(:disabled),
+.importExportField textarea:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-border-default) 76%, transparent);
+  background: color-mix(in srgb, var(--surface-hover) 42%, transparent);
+}
+
+.importExportField select:focus,
+.importExportField textarea:focus {
+  border-color: color-mix(in srgb, var(--color-border-3) 58%, var(--color-border-default));
+  box-shadow: var(
+    --settings-focus-ring,
+    0 0 0 1px color-mix(in srgb, var(--color-border-3) 54%, transparent)
+  );
+}
+
+.importExportNotice,
+.importPreviewWarning {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 44%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-hover) 30%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 10px;
+}
+
+.importPreviewWarning {
+  grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
+}
+
+.importPreviewWarning[data-invalid="true"] {
+  border-color: color-mix(in srgb, var(--color-danger) 36%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+}
+
+.importPreview {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 78%, transparent);
+  padding: 10px;
+}
+
+.importPreviewSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.importPreviewSummary span,
+.importActionBadge,
+.exportCopyState {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 7px;
+}
+
+.importPreviewList {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.importPreviewRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 38%, transparent);
+  border-radius: 7px;
+  padding: 8px;
+}
+
+.importPreviewRow div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.importPreviewRow strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.importPreviewRow span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.importActionBadge[data-action="create"],
+.importActionBadge[data-action="rename"] {
+  color: var(--color-success-6);
+}
+
+.importActionBadge[data-action="skip"] {
+  color: var(--color-text-tertiary);
+}
+
+.importActionBadge[data-action="error"] {
+  color: var(--color-danger);
+}
+
+.importExportToggle {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 48%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.importExportToggle > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.importExportToggle small,
+.exportPreviewHeader span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.importExportToggle input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--color-accent);
+}
+
+.exportPreview {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 78%, transparent);
+  padding: 10px;
+}
+
+.exportPreviewHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.exportPreviewHeader div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.exportPreviewHeader button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.exportPreviewHeader button:hover {
+  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
+  color: var(--color-text-primary);
+}
+
+.exportPreview pre {
+  min-height: 160px;
+  max-height: 360px;
+  min-width: 0;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 36%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-hover) 28%, transparent);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 8px;
+}
+
+.spinning {
+  animation: mcp-spin 900ms linear infinite;
+}
+
+@keyframes mcp-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 900px) {
+  .page {
+    padding: 12px;
+  }
+
+  .toolbar,
+  .detailHeader {
+    display: grid;
+  }
+
+  .actions {
+    justify-content: flex-start;
+  }
+
+  .detailHeaderSide {
+    justify-items: stretch;
+    min-width: 0;
+  }
+
+  .detailActions {
+    justify-content: flex-start;
+  }
+
+  .consoleGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .serverPane {
+    min-height: 300px;
+  }
+
+  .detailMetrics {
+    min-width: 0;
+  }
+
+  .toolsToolbar,
+  .toolsContent,
+  .toolRow,
+  .promptsContent,
+  .promptRow,
+  .policyGrid,
+  .trustCreateGrid,
+  .trustRuleRow,
+  .importOptionsGrid,
+  .importPreviewRow,
+  .logFilters,
+  .logRow button {
+    grid-template-columns: 1fr;
+  }
+
+  .toolFilters,
+  .promptFilters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .toolTitleRow,
+  .toolActionCell,
+  .promptTitleRow {
+    grid-template-columns: 1fr;
+  }
+}

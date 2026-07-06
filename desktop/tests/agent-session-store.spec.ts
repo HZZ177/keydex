@@ -59,6 +59,12 @@ describe("agentSessionStore reducer", () => {
       "workspaceSkillsChanged",
       "approval_requested",
       "approval_resolved",
+      "mcp_server_status_changed",
+      "mcp_runtime_snapshot_created",
+      "mcp_tool_policy_changed",
+      "mcp_oauth_required",
+      "mcp_elicitation_requested",
+      "mcp_elicitation_resolved",
     ]);
 
     expect([...coveredActions].sort()).toEqual([...AGENT_CHAT_ACTIONS].sort());
@@ -852,6 +858,131 @@ describe("agentSessionStore reducer", () => {
     ]);
   });
 
+  it("preserves MCP metadata on approval requests", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [session("ses-1", "2026-06-18T08:00:00Z")],
+    });
+    state = agentConversationReducer(state, { type: "session/select", sessionId: "ses-1" });
+
+    state = reduceAgentWsEvent(
+      state,
+      approvalRequested("ses-1", {
+        ...commandApproval("approval-mcp"),
+        kind: "mcp_tool_call",
+        tool_name: "mcp__srv_1__write",
+        server_id: "srv-1",
+        server_name: "Ticket MCP",
+        raw_tool_name: "write",
+        model_tool_name: "mcp__srv_1__write",
+        risk_level: "high",
+        snapshot_id: "snap-1",
+        metadata: {
+          mcp: {
+            approval_mode: "prompt",
+          },
+        },
+      }),
+    );
+
+    expect(selectAgentSessionState(state, "ses-1")?.pendingApproval).toMatchObject({
+      id: "approval-mcp",
+      kind: "mcp_tool_call",
+      server_id: "srv-1",
+      raw_tool_name: "write",
+      model_tool_name: "mcp__srv_1__write",
+      risk_level: "high",
+      metadata: {
+        mcp: {
+          kind: "mcp_tool",
+          snapshot_id: "snap-1",
+          server_id: "srv-1",
+          server_name: "Ticket MCP",
+          raw_tool_name: "write",
+          model_tool_name: "mcp__srv_1__write",
+          risk_level: "high",
+          approval_mode: "prompt",
+        },
+      },
+    });
+  });
+
+  it("tracks MCP elicitation request and resolution state", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [session("ses-1", "2026-06-18T08:00:00Z")],
+    });
+    state = agentConversationReducer(state, { type: "session/select", sessionId: "ses-1" });
+
+    state = reduceAgentWsEvent(state, mcpElicitationRequested("ses-1"));
+
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      runtimeState: "waiting_approval",
+      isStreaming: false,
+      pendingElicitation: {
+        elicitation_id: "elicit-1",
+        status: "pending",
+        title: "补充工单信息",
+      },
+    });
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        role: "mcp_elicitation",
+        status: "pending",
+        content: "补充工单信息",
+        metadata: {
+          mcp_elicitation: {
+            server_name: "Ticket MCP",
+            raw_tool_name: "create_issue",
+            schema: {
+              required: ["title"],
+            },
+          },
+        },
+      },
+    ]);
+
+    state = reduceAgentWsEvent(state, mcpElicitationResolved({ status: "submitted", values: { title: "Fix" } }));
+
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      runtimeState: "running",
+      isStreaming: true,
+      pendingElicitation: null,
+    });
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      role: "mcp_elicitation",
+      status: "completed",
+      content: "补充工单信息",
+      metadata: {
+        mcp_elicitation: {
+          elicitation_id: "elicit-1",
+          status: "submitted",
+          values: { title: "Fix" },
+          schema: {
+            required: ["title"],
+          },
+        },
+      },
+    });
+  });
+
+  it("marks MCP elicitation as cancelled when user cancels", () => {
+    let state = reduceAgentWsEvent(createInitialAgentConversationState(), mcpElicitationRequested("ses-1"));
+    state = reduceAgentWsEvent(state, mcpElicitationResolved({ status: "cancelled" }));
+
+    expect(selectAgentSessionState(state, "ses-1")?.pendingElicitation).toBeNull();
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      role: "mcp_elicitation",
+      status: "cancelled",
+      metadata: {
+        mcp_elicitation: {
+          status: "cancelled",
+          title: "补充工单信息",
+        },
+      },
+    });
+  });
+
   it("marks matching command placeholders as waiting approval before execution starts", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, {
@@ -1183,7 +1314,7 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentMessages(state, "ses-1")).toMatchObject([
       {
         role: "system",
-        content: "无感压缩已完成",
+        content: "上下文压缩已完成",
         status: "completed",
         metadata: {
           compression: {
@@ -1274,13 +1405,57 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentMessages(state, "ses-1")).toMatchObject([
       {
         role: "system",
-        content: "自动压缩成功",
+        content: "全量压缩已完成",
         status: "completed",
         metadata: {
           compression: {
             stage: "emergency_completed",
             mode: "emergency",
             notice_id: "context-compression:emergency:trace-1",
+          },
+        },
+      },
+    ]);
+    expect(selectAgentMessages(state, "ses-1")).toHaveLength(1);
+  });
+
+  it("updates one manual deep compression notice through running and terminal states", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "middleware_progress",
+      data: {
+        session_id: "ses-1",
+        middleware: "ContextCompressionMiddleware",
+        stage: "manual_deep_started",
+        compression_mode: "manual_deep",
+        manual_mode: "deep",
+        notice_id: "context-compression:manual:deep:ses-1:run-1",
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "middleware_progress",
+      data: {
+        session_id: "ses-1",
+        middleware: "ContextCompressionMiddleware",
+        stage: "manual_deep_completed",
+        compression_mode: "manual_deep",
+        manual_mode: "deep",
+        notice_id: "context-compression:manual:deep:ses-1:run-1",
+        staging_id: 3,
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        role: "system",
+        content: "全量压缩已完成",
+        status: "completed",
+        metadata: {
+          compression: {
+            stage: "manual_deep_completed",
+            mode: "manual_deep",
+            notice_id: "context-compression:manual:deep:ses-1:run-1",
+            staging_id: 3,
           },
         },
       },
@@ -1312,6 +1487,79 @@ describe("agentSessionStore reducer", () => {
       toolResult: "文件内容",
       toolDurationMs: 12,
       status: "completed",
+    });
+  });
+
+  it("preserves MCP tool metadata across tool lifecycle events", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "tool_start",
+      data: {
+        session_id: "ses-1",
+        run_id: "run-mcp",
+        tool_name: "mcp__srv_1__search",
+        kind: "mcp_tool",
+        snapshot_id: "snap-1",
+        server_id: "srv-1",
+        server_name: "Ticket MCP",
+        raw_tool_name: "search",
+        model_tool_name: "mcp__srv_1__search",
+        risk_level: "low",
+        metadata: {
+          mcp: {
+            approval_mode: "auto",
+          },
+        },
+      },
+    });
+
+    let message = selectAgentMessages(state, "ses-1")[0];
+    expect(message.metadata).toMatchObject({
+      mcp: {
+        kind: "mcp_tool",
+        snapshot_id: "snap-1",
+        server_id: "srv-1",
+        server_name: "Ticket MCP",
+        raw_tool_name: "search",
+        model_tool_name: "mcp__srv_1__search",
+        risk_level: "low",
+        approval_mode: "auto",
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "tool_end",
+      data: {
+        session_id: "ses-1",
+        run_id: "run-mcp",
+        tool_name: "mcp__srv_1__search",
+        result: "ok",
+        status: "success",
+        metadata: {
+          mcp: {
+            kind: "mcp_tool",
+            snapshot_id: "snap-1",
+            server_id: "srv-1",
+            raw_tool_name: "search",
+            model_tool_name: "mcp__srv_1__search",
+            risk_level: "low",
+          },
+        },
+      },
+    });
+
+    message = selectAgentMessages(state, "ses-1")[0];
+    expect(message).toMatchObject({
+      status: "completed",
+      toolResult: "ok",
+      metadata: {
+        mcp: {
+          kind: "mcp_tool",
+          server_id: "srv-1",
+          raw_tool_name: "search",
+          model_tool_name: "mcp__srv_1__search",
+        },
+      },
     });
   });
 
@@ -2126,6 +2374,43 @@ function approvalResolved(sessionId: string, approval: CommandApprovalRequest): 
   return {
     action: "approval_resolved",
     data: { session_id: sessionId, approval },
+  };
+}
+
+function mcpElicitationRequested(sessionId: string): AgentActionEnvelope {
+  return {
+    action: "mcp_elicitation_requested",
+    data: {
+      session_id: sessionId,
+      elicitation: {
+        elicitation_id: "elicit-1",
+        session_id: sessionId,
+        server_id: "srv-1",
+        server_name: "Ticket MCP",
+        raw_tool_name: "create_issue",
+        title: "补充工单信息",
+        schema: {
+          type: "object",
+          required: ["title"],
+          properties: {
+            title: { type: "string", title: "标题" },
+          },
+        },
+        created_at: "2026-06-18T08:00:01Z",
+      },
+    },
+  };
+}
+
+function mcpElicitationResolved(patch: Record<string, unknown>): AgentActionEnvelope {
+  return {
+    action: "mcp_elicitation_resolved",
+    data: {
+      elicitation: {
+        elicitation_id: "elicit-1",
+        ...patch,
+      },
+    },
   };
 }
 

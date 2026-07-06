@@ -833,6 +833,7 @@ describe("RuntimeBridge", () => {
 
     const channel = runtime.conversation.openChatChannel(onEvent, { sessionId: "ses-1" });
     channel.chat({ message: "你好" });
+    channel.resolveMcpElicitation?.({ elicitation_id: "elicit-1", values: { title: "Fix" } });
     channel.cancel();
     channel.requestStatus();
     channel.ping();
@@ -841,6 +842,7 @@ describe("RuntimeBridge", () => {
     expect(clients[0].connectedWith).toEqual({ sessionId: "ses-1" });
     expect(clients[0].sent).toEqual([
       { action: "chat", data: { message: "你好" } },
+      { action: "mcp_elicitation_resolved", data: { elicitation_id: "elicit-1", values: { title: "Fix" } } },
       { action: "cancel", data: { session_id: "ses-1" } },
       { action: "get_status", data: { session_id: "ses-1" } },
       { action: "ping", data: {} },

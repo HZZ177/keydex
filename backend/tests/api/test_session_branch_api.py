@@ -3,8 +3,10 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
+from backend.app.api import sessions as sessions_api
 from backend.app.core.config import AppSettings
 from backend.app.main import create_app
+from backend.app.services.manual_context_compression_service import ManualContextCompressionResult
 
 
 def _checkpoint(checkpoint_id: str) -> dict:
@@ -102,6 +104,58 @@ def test_session_fork_api_returns_new_session_and_source_metadata(tmp_path) -> N
         == body["session"]["fork_source"]["target_message_event_id"]
     )
     assert marker_message["forkSource"]["source_session_id"] == "ses_source"
+
+
+def test_session_context_compression_api_returns_manual_result(tmp_path, monkeypatch) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+    app.state.checkpointer = object()
+
+    class FakeAgentRunner:
+        def model_http_transport(self):
+            return None
+
+    app.state.agent_runner = FakeAgentRunner()
+
+    async def fake_compress(self, *, session_id: str, mode: str):
+        return ManualContextCompressionResult(
+            success=True,
+            mode=mode,
+            session_id=session_id,
+            active_session_id="active_compact",
+            target_session_id="active_compact",
+            staging_id=7,
+            generation=2,
+            staging_strategy="full_replacement",
+            source_last_message_id="a2",
+            notice_id="context-compression:manual:deep:ses_source:test",
+            compression_message_count=4,
+            retain_message_count=0,
+            total_message_count=4,
+        )
+
+    monkeypatch.setattr(sessions_api.ManualContextCompressionService, "compress", fake_compress)
+
+    with TestClient(app) as client:
+        response = client.post("/api/sessions/ses_source/context-compression", json={"mode": "deep"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "success": True,
+        "mode": "deep",
+        "session_id": "ses_source",
+        "active_session_id": "active_compact",
+        "target_session_id": "active_compact",
+        "staging_id": 7,
+        "generation": 2,
+        "staging_strategy": "full_replacement",
+        "anchor_message_id": None,
+        "source_last_message_id": "a2",
+        "notice_id": "context-compression:manual:deep:ses_source:test",
+        "reason": None,
+        "compression_message_count": 4,
+        "retain_message_count": 0,
+        "total_message_count": 4,
+    }
 
 
 def test_session_fork_api_can_create_tagged_branch_outside_default_list(tmp_path) -> None:

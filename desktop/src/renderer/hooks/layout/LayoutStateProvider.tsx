@@ -130,3 +130,7 @@ export function useLayoutState() {
   }
   return value;
 }
+
+export function useOptionalLayoutState() {
+  return useContext(LayoutStateContext);
+}

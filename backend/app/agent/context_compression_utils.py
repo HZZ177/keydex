@@ -226,6 +226,15 @@ def select_anchor_message_id(messages: Iterable[BaseMessage]) -> str | None:
     return None
 
 
+def select_last_message_id(messages: Iterable[BaseMessage]) -> str | None:
+    selected: str | None = None
+    for message in messages:
+        message_id = _message_id(message)
+        if message_id:
+            selected = message_id
+    return selected
+
+
 def apply_compression_anchor_replacement(
     *,
     messages: Iterable[BaseMessage],
@@ -279,6 +288,45 @@ def apply_compression_full_replacement(
             l1_content=l1_content,
             l2_content=l2_content,
         ),
+        applied=True,
+    )
+
+
+def apply_compression_full_replacement_after_boundary(
+    *,
+    messages: Iterable[BaseMessage],
+    source_last_message_id: str | None,
+    l1_content: str,
+    l2_content: str | None = None,
+) -> AnchorReplaceResult:
+    message_list = list(messages)
+    if not source_last_message_id:
+        return AnchorReplaceResult(
+            anchor_message_id=None,
+            replaced_messages=message_list,
+            applied=False,
+        )
+    boundary_index = next(
+        (
+            index
+            for index, message in enumerate(message_list)
+            if _message_id(message) == source_last_message_id
+        ),
+        None,
+    )
+    if boundary_index is None:
+        return AnchorReplaceResult(
+            anchor_message_id=source_last_message_id,
+            replaced_messages=message_list,
+            applied=False,
+        )
+    replaced_messages = build_compression_context_messages(
+        l1_content=l1_content,
+        l2_content=l2_content,
+    ) + message_list[boundary_index + 1 :]
+    return AnchorReplaceResult(
+        anchor_message_id=source_last_message_id,
+        replaced_messages=replaced_messages,
         applied=True,
     )
 

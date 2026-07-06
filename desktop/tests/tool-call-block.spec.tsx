@@ -137,6 +137,150 @@ describe("ToolCallBlock", () => {
     expect(screen.getByText("读取失败")).not.toBeNull();
   });
 
+  it("renders MCP tool server, raw tool and runtime metadata", () => {
+    render(<ToolCallBlock message={mcpToolMessage("completed", { status: "success", model_content: "ok", duration_ms: 240 })} />);
+
+    const block = screen.getByTestId("tool-call-block");
+    expect(block.textContent).toContain("已调用 MCP 工具 search");
+    expect(block.textContent).toContain("MCP · Ticket MCP · search");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
+    expect(screen.getByLabelText("MCP 工具元信息").textContent).toContain("Ticket MCP");
+    expect(screen.getByLabelText("MCP 工具元信息").textContent).toContain("mcp__srv_1__search");
+    expect(screen.getByLabelText("MCP 工具元信息").textContent).toContain("自动允许");
+    expect(screen.getByLabelText("MCP 工具元信息").textContent).toContain("snap-1");
+  });
+
+  it("reads MCP metadata from tool ui payload and parses hashed model names", () => {
+    const modelName = "mcp__20260706-045dd9_5fb1e382__read_fixture";
+    render(
+      <ToolCallBlock
+        message={toolMessage(
+          "completed",
+          {
+            status: "success",
+            model_content: "ok",
+            duration_ms: 88,
+            ui_payload: {
+              structured_content: {
+                key: "runtime-snapshot",
+                value: "fixture:run:runtime-snapshot",
+              },
+              metadata: {
+                mcp: {
+                  kind: "mcp_tool",
+                  snapshot_id: "snap-hashed",
+                  server_id: "srv-hashed",
+                  server_name: "Hashed MCP",
+                  raw_tool_name: "read_fixture",
+                  model_tool_name: modelName,
+                  risk_level: "low",
+                  approval_mode: "auto",
+                },
+              },
+            },
+          },
+          modelName,
+          { key: "runtime-snapshot" },
+        )}
+      />,
+    );
+
+    const block = screen.getByTestId("tool-call-block");
+    expect(block.textContent).toContain("已调用 MCP 工具 read_fixture");
+    expect(block.textContent).toContain("MCP · Hashed MCP · read_fixture");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
+    const details = screen.getByLabelText("MCP 工具元信息").textContent ?? "";
+    expect(details).toContain("Hashed MCP");
+    expect(details).toContain(modelName);
+    expect(details).toContain("snap-hashed");
+  });
+
+  it("reads MCP metadata from JSON model content", () => {
+    const modelName = "mcp__20260706-045dd9_5fb1e382__read_fixture";
+    render(
+      <ToolCallBlock
+        message={toolMessage(
+          "completed",
+          {
+            status: "success",
+            duration_ms: 96,
+            model_content: JSON.stringify({
+              structured_content: {
+                key: "runtime-snapshot",
+                value: "fixture:run:runtime-snapshot",
+              },
+              metadata: {
+                mcp: {
+                  kind: "mcp_tool",
+                  snapshot_id: "snap-result",
+                  server_id: "srv-result",
+                  server_name: "Result MCP",
+                  raw_tool_name: "read_fixture",
+                  model_tool_name: modelName,
+                  risk_level: "low",
+                  approval_mode: "auto",
+                },
+              },
+            }),
+          },
+          modelName,
+          { key: "runtime-snapshot" },
+        )}
+      />,
+    );
+
+    const block = screen.getByTestId("tool-call-block");
+    expect(block.textContent).toContain("已调用 MCP 工具 read_fixture");
+    expect(block.textContent).toContain("MCP · Result MCP · read_fixture");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
+    const details = screen.getByLabelText("MCP 工具元信息").textContent ?? "";
+    expect(details).toContain("Result MCP");
+    expect(details).toContain(modelName);
+    expect(details).toContain("snap-result");
+  });
+
+  it("shows readable MCP execution errors", () => {
+    render(
+      <ToolCallBlock
+        message={mcpToolMessage("failed", {
+          status: "error",
+          model_content: "",
+          error: {
+            code: "tool_disabled_by_session",
+            message: "blocked",
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/错误信息：当前会话已禁用该 MCP 工具/)).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
+    expect(screen.getByRole("region", { name: "工具错误" }).textContent).toContain("tool_disabled_by_session");
+  });
+
+  it("renders cancelled MCP tools distinctly from failures", () => {
+    render(
+      <ToolCallBlock
+        message={mcpToolMessage("cancelled", {
+          status: "cancelled",
+          model_content: "",
+          error: { code: "cancelled_by_user" },
+        })}
+      />,
+    );
+
+    const block = screen.getByTestId("tool-call-block");
+    expect(block.textContent).toContain("已取消 MCP 工具 search");
+    expect(block.textContent).toContain("MCP · Ticket MCP · search");
+    expect(block.textContent).not.toContain("错误信息");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
+    expect(screen.getByText("已取消")).not.toBeNull();
+  });
+
   it("shows readable previews for structured JSON tool errors", () => {
     render(
       <ToolCallBlock
@@ -326,5 +470,34 @@ function toolMessage(
     },
     createdAt: "2026-06-17T10:00:00Z",
     updatedAt: "2026-06-17T10:00:02Z",
+  };
+}
+
+function mcpToolMessage(
+  status: ConversationMessage["status"],
+  result: Record<string, unknown>,
+): ConversationMessage {
+  return {
+    ...toolMessage(status, result, "mcp__srv_1__search", { query: "KT-1" }),
+    payload: {
+      call: {
+        id: "call-mcp-1",
+        name: "mcp__srv_1__search",
+        arguments: { query: "KT-1" },
+      },
+      result,
+      metadata: {
+        mcp: {
+          kind: "mcp_tool",
+          snapshot_id: "snap-1",
+          server_id: "srv-1",
+          server_name: "Ticket MCP",
+          raw_tool_name: "search",
+          model_tool_name: "mcp__srv_1__search",
+          risk_level: "low",
+          approval_mode: "auto",
+        },
+      },
+    },
   };
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -607,6 +608,80 @@ async def test_process_agent_events_includes_structured_tool_files_on_tool_end()
     }
     assert finished.payload["ui_payload"]["files"][0]["path"] == "src/app.py"
     assert finished.payload["output_data"]["result"]["files"][0]["added_lines"] == 2
+
+
+@pytest.mark.asyncio
+async def test_process_agent_events_preserves_mcp_tool_metadata() -> None:
+    emitted: list[DomainEvent] = []
+
+    async def capture(event: DomainEvent) -> None:
+        emitted.append(event)
+
+    mcp_metadata = {
+        "kind": "mcp_tool",
+        "snapshot_id": "snap-1",
+        "server_id": "srv-1",
+        "server_name": "Ticket MCP",
+        "raw_tool_name": "search",
+        "model_tool_name": "mcp__srv_1__search",
+        "risk_level": "low",
+    }
+    await process_agent_events(
+        _event_stream(
+            [
+                {
+                    "event": "on_tool_start",
+                    "run_id": "tool_mcp",
+                    "name": "mcp__srv_1__search",
+                    "metadata": {"mcp": mcp_metadata},
+                    "data": {"input": {"query": "MCP"}},
+                },
+                {
+                    "event": "on_tool_end",
+                    "run_id": "tool_mcp",
+                    "name": "mcp__srv_1__search",
+                    "data": {
+                        "output": ToolMessage(
+                            content=json.dumps(
+                                {
+                                    "call_id": "call-mcp",
+                                    "status": "success",
+                                    "content": [{"type": "text", "text": "ok"}],
+                                    "metadata": {"mcp": mcp_metadata},
+                                },
+                                ensure_ascii=False,
+                            ),
+                            tool_call_id="call-mcp",
+                        )
+                    },
+                },
+            ]
+        ),
+        dispatcher=EventDispatcher([capture]),
+        cancellation=NeverCancelled(),
+        session_id="ses_agent",
+        trace_id="trace_agent",
+        user_id="local-user",
+        active_session_id="ses_agent",
+        turn_index=1,
+    )
+
+    started = [
+        event for event in emitted if event.event_type == DomainEventType.LLM_TOOL_STARTED.value
+    ][0]
+    finished = [
+        event for event in emitted if event.event_type == DomainEventType.LLM_TOOL_FINISHED.value
+    ][0]
+    assert started.payload["kind"] == "mcp_tool"
+    assert started.payload["server_id"] == "srv-1"
+    assert started.payload["server_name"] == "Ticket MCP"
+    assert started.payload["raw_tool_name"] == "search"
+    assert started.payload["model_tool_name"] == "mcp__srv_1__search"
+    assert started.payload["snapshot_id"] == "snap-1"
+    assert started.payload["metadata"]["mcp"]["risk_level"] == "low"
+    assert finished.payload["kind"] == "mcp_tool"
+    assert finished.payload["tool_call_id"] == "call-mcp"
+    assert finished.payload["metadata"]["mcp"]["raw_tool_name"] == "search"
 
 
 @pytest.mark.asyncio

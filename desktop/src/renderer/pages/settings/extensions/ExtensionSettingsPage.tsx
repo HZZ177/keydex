@@ -371,14 +371,14 @@ function CompressionConfigurator({
         <div className={styles.thresholdHeader}>
           <div>
             <h3>压缩触发阈值</h3>
-            <p>达到窗口占用比例后自动压缩历史</p>
+            <p>达到窗口占用比例后压缩历史上下文</p>
           </div>
           <strong>{formatPercent(triggerFraction)}</strong>
         </div>
         <CompressionThresholdSlider
           ariaValueText={`${formatPercent(triggerFraction)}，约 ${formatTokenCount(
             triggerTokenCount,
-          )} token 时触发无感压缩，${formatTokenCount(emergencyTokenCount)} token 时触发阻塞式压缩`}
+          )} token 时触发上下文压缩，${formatTokenCount(emergencyTokenCount)} token 时触发全量压缩`}
           label="触发阈值"
           max={MAX_COMPRESSION_TRIGGER_FRACTION}
           min={MIN_COMPRESSION_TRIGGER_FRACTION}
@@ -388,8 +388,8 @@ function CompressionConfigurator({
         />
       <div className={styles.thresholdMeta}>
         <span>
-          约 {formatTokenCount(triggerTokenCount)} token 时触发无感压缩，{formatTokenCount(emergencyTokenCount)} token
-          时触发阻塞式压缩
+          约 {formatTokenCount(triggerTokenCount)} token 时触发上下文压缩，{formatTokenCount(emergencyTokenCount)} token
+          时触发全量压缩
         </span>
       </div>
       </div>

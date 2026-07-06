@@ -269,6 +269,229 @@ async def test_e2e_transport_command_approval_ignores_old_tool_messages() -> Non
 
 
 @pytest.mark.asyncio
+async def test_e2e_transport_can_drive_mcp_tool_calls_from_injected_tools() -> None:
+    async with httpx.AsyncClient(
+        base_url="http://e2e-model.test",
+        transport=create_e2e_model_transport(delay_ms=0),
+    ) as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "messages": [{"role": "user", "content": "MCP Runtime read_fixture"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "mcp__srv_e2e__read_fixture",
+                            "description": "Read an E2E fixture value.",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            },
+        )
+
+    body = response.text
+    assert response.status_code == 200
+    assert "mcp__srv_e2e__read_fixture" in body
+    assert "runtime-snapshot" in body
+    assert "finish_reason\": \"tool_calls" in body
+
+
+@pytest.mark.asyncio
+async def test_e2e_transport_can_drive_mcp_deferred_search_tool() -> None:
+    async with httpx.AsyncClient(
+        base_url="http://e2e-model.test",
+        transport=create_e2e_model_transport(delay_ms=0),
+    ) as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "messages": [{"role": "user", "content": "MCP Deferred search read_fixture"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "search_mcp_tools",
+                            "description": "Search deferred MCP tools.",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "list_mcp_tools",
+                            "description": "List deferred MCP tools.",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                ],
+            },
+        )
+
+    body = response.text
+    assert response.status_code == 200
+    assert "search_mcp_tools" in body
+    assert "read_fixture" in body
+    assert "finish_reason\": \"tool_calls" in body
+
+
+@pytest.mark.asyncio
+async def test_e2e_transport_can_drive_mcp_deferred_activated_tool_next_turn() -> None:
+    async with httpx.AsyncClient(
+        base_url="http://e2e-model.test",
+        transport=create_e2e_model_transport(delay_ms=0),
+    ) as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "messages": [
+                    {"role": "user", "content": "MCP Deferred search read_fixture"},
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call_e2e_mcp_deferred_search_read_fixture",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_mcp_tools",
+                                    "arguments": "{\"query\":\"read_fixture\",\"limit\":10}",
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_e2e_mcp_deferred_search_read_fixture",
+                        "content": "{\"tools\":[{\"model_name\":\"mcp__srv_e2e__read_fixture\"}]}",
+                    },
+                    {"role": "user", "content": "MCP Deferred call read_fixture"},
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "search_mcp_tools",
+                            "description": "Search deferred MCP tools.",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "mcp__srv_e2e__read_fixture",
+                            "description": "Read an E2E fixture value.",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                ],
+            },
+        )
+
+    body = response.text
+    assert response.status_code == 200
+    assert "mcp__srv_e2e__read_fixture" in body
+    assert "runtime-snapshot" in body
+    assert "finish_reason\": \"tool_calls" in body
+
+
+@pytest.mark.asyncio
+async def test_e2e_transport_delays_mcp_live_guard_tool_call() -> None:
+    async with httpx.AsyncClient(
+        base_url="http://e2e-model.test",
+        transport=create_e2e_model_transport(delay_ms=0),
+    ) as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "MCP Runtime live-guard read_fixture delay-tool-call",
+                    }
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "mcp__srv_e2e__read_fixture",
+                            "description": "Read an E2E fixture value.",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            },
+        )
+
+    body = response.text
+    assert response.status_code == 200
+    assert body.count("MCP Runtime snapshot freeze wait") == 24
+    assert body.index("MCP Runtime snapshot freeze wait") < body.index(
+        "mcp__srv_e2e__read_fixture"
+    )
+
+
+@pytest.mark.asyncio
+async def test_e2e_transport_finishes_mcp_scenario_after_tool_result() -> None:
+    async with httpx.AsyncClient(
+        base_url="http://e2e-model.test",
+        transport=create_e2e_model_transport(delay_ms=0),
+    ) as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "messages": [
+                    {"role": "user", "content": "MCP Runtime read_fixture"},
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call_e2e_mcp_read_fixture",
+                                "type": "function",
+                                "function": {
+                                    "name": "mcp__srv_e2e__read_fixture",
+                                    "arguments": "{\"key\":\"runtime-snapshot\"}",
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_e2e_mcp_read_fixture",
+                        "content": "{\"ok\":true}",
+                    },
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "mcp__srv_e2e__read_fixture",
+                            "description": "Read an E2E fixture value.",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            },
+        )
+
+    body = response.text
+    assert response.status_code == 200
+    assert "MCP Runtime" in body
+    assert "read_fixture" in body
+    assert "tool_calls" not in body
+
+
+@pytest.mark.asyncio
 async def test_e2e_transport_returns_deterministic_side_task_outputs() -> None:
     async with httpx.AsyncClient(
         base_url="http://e2e-model.test",

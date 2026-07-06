@@ -22,6 +22,10 @@ describe("SlashCommandMenu", () => {
     expect(filterSlashCommands(rootCommands, "model")).toEqual([]);
     expect(filterSlashCommands(rootCommands, "goal").map((command) => command.id)).toEqual(["goal"]);
     expect(filterSlashCommands(rootCommands, "目标").map((command) => command.id)).toEqual(["goal"]);
+    expect(filterSlashCommands(rootCommands, "压缩").map((command) => command.id)).toEqual([
+      "context-compression-light",
+      "context-compression-deep",
+    ]);
     expect(replaceSlashQuery("请 /dev", "")).toBe("请 ");
     expect(replaceSlashQuery("请 /旁路", "")).toBe("请 ");
     expect(removeSlashQuery("请 /dev")).toBe("请");
@@ -40,11 +44,25 @@ describe("SlashCommandMenu", () => {
     const commands = buildSlashCommands(skills);
     const emptyCommands = buildSlashCommands();
 
-    expect(commands.map((command) => command.id)).toEqual(["bypass-conversation", "goal", "skill"]);
-    expect(emptyCommands.map((command) => command.id)).toEqual(["bypass-conversation", "goal", "skill"]);
+    expect(commands.map((command) => command.id)).toEqual([
+      "bypass-conversation",
+      "goal",
+      "context-compression-light",
+      "context-compression-deep",
+      "skill",
+    ]);
+    expect(emptyCommands.map((command) => command.id)).toEqual([
+      "bypass-conversation",
+      "goal",
+      "context-compression-light",
+      "context-compression-deep",
+      "skill",
+    ]);
     expect(commands[0]).toMatchObject({ id: "bypass-conversation", label: "旁路对话" });
     expect(commands[1]).toMatchObject({ id: "goal", label: "目标", kind: "goal" });
-    expect(emptyCommands[2]?.childCount).toBe(0);
+    expect(commands[2]).toMatchObject({ id: "context-compression-light", label: "压缩上下文", kind: "builtin" });
+    expect(commands[3]).toMatchObject({ id: "context-compression-deep", label: "全量压缩上下文", kind: "builtin" });
+    expect(emptyCommands[4]?.childCount).toBe(0);
     expect(filterSlashCommands(commands, "旁路").map((command) => command.id)).toEqual(["bypass-conversation"]);
     expect(filterSlashCommands(commands, "goal").map((command) => command.id)).toEqual(["goal"]);
     expect(filterSlashCommands(commands, "目标").map((command) => command.id)).toEqual(["goal"]);
@@ -55,9 +73,22 @@ describe("SlashCommandMenu", () => {
   it("can hide the bypass conversation command for nested sidecar composers", () => {
     expect(buildSlashCommands([], { includeBypassConversation: false }).map((command) => command.id)).toEqual([
       "goal",
+      "context-compression-light",
+      "context-compression-deep",
       "skill",
     ]);
-    expect(buildSlashCommands([], { includeBypassConversation: false, includeGoal: false }).map((command) => command.id)).toEqual(["skill"]);
+    expect(buildSlashCommands([], { includeBypassConversation: false, includeGoal: false }).map((command) => command.id)).toEqual([
+      "context-compression-light",
+      "context-compression-deep",
+      "skill",
+    ]);
+    expect(
+      buildSlashCommands([], {
+        includeBypassConversation: false,
+        includeGoal: false,
+        includeContextCompression: false,
+      }).map((command) => command.id),
+    ).toEqual(["skill"]);
   });
 
   it("keeps Skill visible without workspace skills and shows the project empty state inside it", () => {
@@ -80,6 +111,8 @@ describe("SlashCommandMenu", () => {
     expect(screen.getByRole("option", { name: "创建目标" })).not.toBeNull();
     expect(screen.getByRole("option", { name: /Skill/ })).not.toBeNull();
 
+    fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "ArrowDown" });
     fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "ArrowDown" });
     fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "ArrowDown" });
     fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "Enter" });
@@ -181,6 +214,8 @@ describe("SlashCommandMenu", () => {
     const input = screen.getByLabelText("继续输入");
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(screen.getByText("dev-plan")).not.toBeNull();
     fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "Enter" });
@@ -226,6 +261,37 @@ describe("SlashCommandMenu", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  it("selects the light context compression command without sending the current slash query", () => {
+    const onChange = vi.fn();
+    const onSend = vi.fn();
+    const onSlashCommand = vi.fn();
+    render(
+      <SendBox
+        value="/压缩"
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        workspaceSkills={[]}
+        onChange={onChange}
+        onSend={onSend}
+        onStop={vi.fn()}
+        onSlashCommand={onSlashCommand}
+      />,
+    );
+
+    fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "Enter" });
+
+    expect(onSlashCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "context-compression-light",
+        kind: "builtin",
+        label: "压缩上下文",
+      }),
+    );
+    expect(onChange).toHaveBeenCalledWith("");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it("does not show bypass conversation when disabled", () => {
     render(
       <SendBox
@@ -235,6 +301,7 @@ describe("SlashCommandMenu", () => {
         canStop={false}
         allowBypassConversationSlashCommand={false}
         allowGoalSlashCommand={false}
+        allowContextCompressionSlashCommand={false}
         workspaceSkills={[]}
         onChange={vi.fn()}
         onSend={vi.fn()}

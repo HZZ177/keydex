@@ -140,6 +140,7 @@ async def process_agent_events(
             if event_type == "on_tool_start":
                 tool_start_times[run_id] = time.perf_counter()
                 tool_call_count += 1
+                mcp_metadata = _mcp_metadata_from_event(event=event, data=data)
                 tool_call_id = tool_chunk_pipeline.bind_tool_run(
                     run_id=run_id,
                     tool_name=name,
@@ -162,6 +163,7 @@ async def process_agent_events(
                         "trace_id": trace_id,
                         "start_time": int(time.time() * 1000),
                         "status": "running",
+                        **_mcp_event_fields(mcp_metadata),
                     },
                     trace_id=trace_id,
                     user_id=user_id,
@@ -179,6 +181,12 @@ async def process_agent_events(
                 is_error = _tool_output_is_error(output)
                 result_text = _stringify_tool_output(output)
                 structured_output = _structured_tool_output(output)
+                mcp_metadata = _mcp_metadata_from_event(
+                    event=event,
+                    data=data,
+                    output=output,
+                    structured_output=structured_output,
+                )
                 ui_payload = structured_output if isinstance(structured_output, dict) else None
                 files = _tool_files_from_structured_output(structured_output)
                 tool_call_id = tool_chunk_pipeline.tool_call_id_for_run(
@@ -222,6 +230,7 @@ async def process_agent_events(
                         },
                         "ui_payload": ui_payload,
                         "files": files,
+                        **_mcp_event_fields(mcp_metadata),
                     },
                     trace_id=trace_id,
                     user_id=user_id,
@@ -236,6 +245,7 @@ async def process_agent_events(
                 started_at = tool_start_times.pop(run_id, time.perf_counter())
                 duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
                 error_text = str(data.get("error") or event.get("error") or "工具执行失败")
+                mcp_metadata = _mcp_metadata_from_event(event=event, data=data)
                 tool_call_id = tool_chunk_pipeline.tool_call_id_for_run(run_id)
                 logger.warning(
                     f"[AgentEvents] 工具异常 | session_id={session_id} | "
@@ -258,6 +268,7 @@ async def process_agent_events(
                         "error": error_text,
                         "error_type": "ToolError",
                         "output_data": {"result": ""},
+                        **_mcp_event_fields(mcp_metadata),
                     },
                     trace_id=trace_id,
                     user_id=user_id,
@@ -610,6 +621,110 @@ def _tool_files_from_structured_output(output: Any) -> list[dict[str, Any]]:
             continue
         files.append(finalize_file_change(item))
     return files
+
+
+def _mcp_metadata_from_event(
+    *,
+    event: dict[str, Any],
+    data: dict[str, Any],
+    output: Any = None,
+    structured_output: Any = None,
+) -> dict[str, Any] | None:
+    candidates: list[Any] = [
+        event.get("metadata"),
+        data.get("metadata"),
+        structured_output,
+    ]
+    if isinstance(structured_output, dict):
+        candidates.extend(
+            [
+                structured_output.get("metadata"),
+                structured_output.get("mcp"),
+            ]
+        )
+    public_output = _public_tool_output(output)
+    if isinstance(public_output, ToolMessage):
+        candidates.extend(
+            [
+                getattr(public_output, "metadata", None),
+                getattr(public_output, "response_metadata", None),
+                _parse_structured_tool_content(getattr(public_output, "content", "")),
+            ]
+        )
+    elif isinstance(public_output, dict):
+        candidates.append(public_output)
+
+    for candidate in candidates:
+        normalized = _normalize_mcp_metadata(candidate)
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _normalize_mcp_metadata(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    source = value.get("mcp") if isinstance(value.get("mcp"), dict) else value
+    if not isinstance(source, dict):
+        return None
+    kind = source.get("kind")
+    server_id = source.get("server_id")
+    raw_tool_name = source.get("raw_tool_name") or source.get("raw_name")
+    model_tool_name = (
+        source.get("model_tool_name")
+        or source.get("model_name")
+        or source.get("tool_name")
+    )
+    snapshot_id = source.get("snapshot_id")
+    if kind != "mcp_tool" and not (server_id and raw_tool_name and model_tool_name):
+        return None
+    metadata = {
+        "kind": "mcp_tool",
+        **_mcp_optional_text("snapshot_id", snapshot_id),
+        **_mcp_optional_text("server_id", server_id),
+        **_mcp_optional_text("server_name", source.get("server_name")),
+        **_mcp_optional_text("raw_tool_name", raw_tool_name),
+        **_mcp_optional_text("model_tool_name", model_tool_name),
+        **_mcp_optional_text("model_name", source.get("model_name") or model_tool_name),
+        **_mcp_optional_text("risk_level", source.get("risk_level")),
+        **_mcp_optional_text("approval_mode", source.get("approval_mode")),
+        **_mcp_optional_text("exposure", source.get("exposure")),
+        **_mcp_optional_text("call_id", source.get("call_id")),
+    }
+    annotations = source.get("annotations")
+    if isinstance(annotations, dict):
+        metadata["annotations"] = _make_json_serializable(annotations)
+    return metadata
+
+
+def _mcp_optional_text(
+    key: str,
+    value: Any,
+) -> dict[str, Any]:
+    if value is None:
+        return {}
+    normalized = str(value).strip()
+    return {key: normalized} if normalized else {}
+
+
+def _mcp_event_fields(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    if metadata is None:
+        return {}
+    fields: dict[str, Any] = {
+        "kind": "mcp_tool",
+        "metadata": {"mcp": metadata},
+    }
+    for key in (
+        "snapshot_id",
+        "server_id",
+        "server_name",
+        "raw_tool_name",
+        "model_tool_name",
+        "risk_level",
+    ):
+        if key in metadata:
+            fields[key] = metadata[key]
+    return fields
 
 
 def _make_json_serializable(obj: Any) -> Any:

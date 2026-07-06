@@ -45,6 +45,52 @@ def test_session_repository_create_get_and_list(tmp_path) -> None:
     assert repositories.sessions.list(status="running") == [second]
 
 
+def test_session_repository_hides_internal_context_compression_sessions_by_default(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    visible = repositories.sessions.create(
+        session_id="ses_visible",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="可见会话",
+    )
+    internal = repositories.sessions.create(
+        session_id="ses_internal",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="压缩分支",
+        session_tag=repositories.sessions.INTERNAL_CONTEXT_COMPRESSION_SESSION_TAG,
+    )
+    legacy_internal = repositories.sessions.create(
+        session_id="ses_legacy_internal",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="旧压缩分支",
+        active_session_id="ses_legacy_internal",
+        parent_session_id=visible.id,
+        source_active_session_id=visible.id,
+        source_checkpoint_id="ckpt_legacy",
+        source_checkpoint_ns="",
+    )
+
+    assert repositories.sessions.get(internal.id) == internal
+    assert repositories.sessions.get(legacy_internal.id) == legacy_internal
+    assert repositories.sessions.list(user_id="local-user", scene_id="desktop-agent") == [visible]
+    all_session_ids = {
+        record.id
+        for record in repositories.sessions.list(
+            user_id="local-user",
+            scene_id="desktop-agent",
+            include_internal=True,
+        )
+    }
+    assert all_session_ids == {visible.id, internal.id, legacy_internal.id}
+    assert repositories.sessions.list(
+        session_tag=repositories.sessions.INTERNAL_CONTEXT_COMPRESSION_SESSION_TAG,
+    ) == [internal]
+
+
 def test_session_repository_pins_sessions_without_touching_updated_at(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     old = repositories.sessions.create(

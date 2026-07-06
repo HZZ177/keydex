@@ -17,7 +17,12 @@ from backend.app.storage import (
     StorageRepositories,
     TrustedCommandRuleRecord,
 )
-from backend.app.tools.command_runtime.models import CommandSettings, FileAccessMode
+from backend.app.tools.command_runtime.models import (
+    CommandSettings,
+)
+from backend.app.tools.command_runtime.models import (
+    FileAccessMode as FileAccessMode,
+)
 
 COMMAND_SETTINGS_KEY = "command_settings"
 DEFAULT_APPROVAL_WAIT_SECONDS = 24 * 60 * 60
@@ -26,7 +31,13 @@ BROAD_PREFIX_COMMANDS = {"powershell", "pwsh", "cmd", "python", "node", "npm", "
 
 class CommandApprovalDecision(BaseModel):
     decision: Literal["approved", "rejected"]
-    trust_scope: Literal["once", "persistent"] = "once"
+    trust_scope: Literal[
+        "once",
+        "persistent",
+        "session",
+        "persistent_tool",
+        "server_readonly",
+    ] = "once"
     rule_match_type: Literal["exact", "prefix"] | None = None
     reject_message: str = ""
 
@@ -151,6 +162,44 @@ def approval_to_payload(record: CommandApprovalRequestRecord) -> dict[str, Any]:
         "created_at": record.created_at,
         "resolved_at": record.resolved_at,
     }
+    if record.kind == "mcp_tool_call":
+        mcp = _mcp_approval_metadata(record)
+        payload.update(
+            {
+                "approval_kind": "mcp_tool_call",
+                "display_title": record.title,
+                "server_id": mcp.get("server_id"),
+                "server_name": mcp.get("server_name"),
+                "raw_tool_name": mcp.get("raw_tool_name"),
+                "model_tool_name": mcp.get("model_tool_name"),
+                "risk_level": mcp.get("risk_level"),
+                "risk_reasons": details.get("risk_reasons") or [],
+                "snapshot_id": mcp.get("snapshot_id"),
+                "approval_mode": mcp.get("approval_mode"),
+                "arguments_preview": details.get("arguments_preview"),
+                "trust_options": details.get("trust_options") or [],
+                "matched_rule": details.get("matched_rule"),
+                "metadata": {"mcp": mcp},
+            }
+        )
+    if record.kind == "mcp_sampling":
+        mcp = _mcp_sampling_metadata(record)
+        payload.update(
+            {
+                "approval_kind": "mcp_sampling",
+                "display_title": record.title,
+                "server_id": mcp.get("server_id"),
+                "server_name": mcp.get("server_name"),
+                "raw_tool_name": mcp.get("raw_tool_name"),
+                "model": mcp.get("model"),
+                "max_tokens": mcp.get("max_tokens"),
+                "approval_mode": mcp.get("approval_mode"),
+                "risk_level": details.get("risk_level"),
+                "risk_reasons": details.get("risk_reasons") or [],
+                "arguments_preview": details.get("arguments_preview"),
+                "metadata": {"mcp": mcp},
+            }
+        )
     return payload
 
 
@@ -310,11 +359,17 @@ class ApprovalService:
             raise CommandApprovalError("审批请求不存在")
         if record.status != "pending":
             raise CommandApprovalError("审批请求已经处理")
+        _validate_decision_scope(record, decision)
+        mcp_trust_rule_plan = _mcp_trust_rule_plan(self.repositories, record, decision)
 
         command_settings = settings or load_command_settings(self.repositories)
         trusted_rule_id: str | None = None
         rule_match_type = decision.rule_match_type
-        if decision.decision == "approved" and decision.trust_scope == "persistent":
+        if (
+            record.kind != "mcp_tool_call"
+            and decision.decision == "approved"
+            and decision.trust_scope == "persistent"
+        ):
             if not command_settings.allow_persistent_trust:
                 raise CommandApprovalError("当前配置不允许保存已信任命令")
             resolved_match_type = rule_match_type or "exact"
@@ -350,6 +405,11 @@ class ApprovalService:
         )
         if resolved is None:
             raise CommandApprovalError("审批请求不存在")
+        mcp_trust_rule_id = _create_mcp_trust_rule(
+            self.repositories,
+            resolved,
+            mcp_trust_rule_plan,
+        )
         self.repositories.command_approval_audit.create(
             audit_id=new_id(),
             approval_id=resolved.id,
@@ -361,7 +421,7 @@ class ApprovalService:
             rule_match_type=rule_match_type,
             trusted_rule_id=trusted_rule_id,
             reject_message=resolved.reject_message,
-            metadata={"source": "approval_api"},
+            metadata=_approval_audit_metadata(record, mcp_trust_rule_id=mcp_trust_rule_id),
         )
         self.repositories.sessions.update(resolved.session_id, status="running")
         await self._emit(
@@ -412,3 +472,156 @@ class ApprovalService:
             run_id=record.run_id,
             turn_index=record.turn_index,
         )
+
+
+def _validate_decision_scope(
+    record: CommandApprovalRequestRecord,
+    decision: CommandApprovalDecision,
+) -> None:
+    if record.kind == "mcp_tool_call":
+        if decision.trust_scope not in {
+            "once",
+            "session",
+            "persistent_tool",
+            "server_readonly",
+        }:
+            raise CommandApprovalError("MCP 审批不支持该 trust_scope")
+        return
+    if record.kind == "mcp_sampling":
+        if decision.trust_scope != "once":
+            raise CommandApprovalError("MCP Sampling 审批仅支持本次允许或拒绝")
+        return
+    if decision.trust_scope not in {"once", "persistent"}:
+        raise CommandApprovalError("命令审批仅支持 once 或 persistent trust_scope")
+
+
+def _mcp_approval_metadata(record: CommandApprovalRequestRecord) -> dict[str, Any]:
+    details = dict(record.details or {})
+    metadata = {
+        "kind": "mcp_tool",
+        "snapshot_id": details.get("snapshot_id"),
+        "server_id": details.get("server_id"),
+        "server_name": details.get("server_name"),
+        "raw_tool_name": details.get("raw_tool_name"),
+        "model_tool_name": details.get("model_tool_name") or record.tool_name,
+        "model_name": details.get("model_tool_name") or record.tool_name,
+        "risk_level": details.get("risk_level"),
+        "approval_mode": details.get("approval_mode"),
+        "call_id": details.get("call_id") or record.run_id,
+    }
+    return {key: value for key, value in metadata.items() if value not in {None, ""}}
+
+
+def _mcp_sampling_metadata(record: CommandApprovalRequestRecord) -> dict[str, Any]:
+    details = dict(record.details or {})
+    metadata = {
+        "kind": "mcp_sampling",
+        "server_id": details.get("server_id"),
+        "server_name": details.get("server_name"),
+        "raw_tool_name": details.get("raw_tool_name"),
+        "model": details.get("model"),
+        "model_policy": details.get("model_policy"),
+        "max_tokens": details.get("max_tokens"),
+        "approval_mode": details.get("approval_mode"),
+        "audit_detail": details.get("audit_detail"),
+        "call_id": details.get("call_id") or record.run_id,
+    }
+    return {key: value for key, value in metadata.items() if value not in {None, ""}}
+
+
+def _mcp_trust_rule_plan(
+    repositories: StorageRepositories,
+    record: CommandApprovalRequestRecord,
+    decision: CommandApprovalDecision,
+) -> dict[str, Any] | None:
+    if (
+        record.kind != "mcp_tool_call"
+        or decision.decision != "approved"
+        or decision.trust_scope == "once"
+    ):
+        return None
+    details = dict(record.details or {})
+    server_id = str(details.get("server_id") or "").strip()
+    raw_tool_name = str(details.get("raw_tool_name") or "").strip()
+    if not server_id:
+        raise CommandApprovalError("MCP trust rule 缺少 server_id")
+    if repositories.mcp_servers.get(server_id) is None:
+        raise CommandApprovalError("MCP trust rule 对应 server 不存在")
+    if decision.trust_scope in {"session", "persistent_tool"} and not raw_tool_name:
+        raise CommandApprovalError("MCP trust rule 缺少 raw_tool_name")
+    if decision.trust_scope == "session":
+        return {
+            "rule_kind": "tool",
+            "scope": "session",
+            "server_id": server_id,
+            "raw_tool_name": raw_tool_name,
+            "session_id": record.session_id,
+        }
+    if decision.trust_scope == "persistent_tool":
+        return {
+            "rule_kind": "tool",
+            "scope": "global",
+            "server_id": server_id,
+            "raw_tool_name": raw_tool_name,
+            "session_id": None,
+        }
+    if decision.trust_scope == "server_readonly":
+        return {
+            "rule_kind": "server_readonly",
+            "scope": "global",
+            "server_id": server_id,
+            "raw_tool_name": None,
+            "session_id": None,
+        }
+    return None
+
+
+def _create_mcp_trust_rule(
+    repositories: StorageRepositories,
+    record: CommandApprovalRequestRecord,
+    plan: dict[str, Any] | None,
+) -> str | None:
+    if plan is None:
+        return None
+    from backend.app.mcp.audit import McpAuditWriter
+
+    rule = repositories.mcp_trust_rules.create(
+        rule_id=new_id(),
+        approval_mode="approve",
+        created_from_approval_id=record.id,
+        **plan,
+    )
+    McpAuditWriter.from_repositories(repositories).append_event(
+        event_type="trust.created",
+        server_id=rule.server_id,
+        raw_tool_name=rule.raw_tool_name,
+        session_id=record.session_id,
+        call_id=record.run_id,
+        approval_id=record.id,
+        actor="user",
+        status="created",
+        summary=f"MCP trust rule created: {rule.rule_kind}",
+        detail={
+            "rule_id": rule.id,
+            "rule_kind": rule.rule_kind,
+            "scope": rule.scope,
+            "approval_mode": rule.approval_mode,
+            "created_from_approval_id": record.id,
+        },
+    )
+    return rule.id
+
+
+def _approval_audit_metadata(
+    record: CommandApprovalRequestRecord,
+    *,
+    mcp_trust_rule_id: str | None = None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"source": "approval_api", "kind": record.kind}
+    if record.kind == "mcp_tool_call":
+        metadata["mcp"] = _mcp_approval_metadata(record)
+        if mcp_trust_rule_id:
+            metadata["mcp"]["trust_rule_id"] = mcp_trust_rule_id
+    if record.kind == "mcp_sampling":
+        metadata["mcp"] = _mcp_sampling_metadata(record)
+    return metadata

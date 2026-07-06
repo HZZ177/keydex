@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.core.config import AppSettings
 from backend.app.main import create_app
+from backend.app.mcp.manager import McpManager
 from backend.app.runtime import DesktopAgentRuntime
 
 
@@ -20,6 +21,7 @@ def test_create_app_mounts_desktop_runtime_and_keeps_health(tmp_path) -> None:
     assert app.state.runtime.chat_service is app.state.chat_service
     assert app.state.runtime.chat_stream_manager is app.state.chat_stream_manager
     assert app.state.runtime.tool_registry is app.state.tool_registry
+    assert isinstance(app.state.mcp_manager, McpManager)
     assert hasattr(app.state, "agent_runtime_provider")
     assert not hasattr(app.state, "agent_runner")
     assert "read_file" in app.state.runtime.tool_registry.names()
@@ -31,6 +33,28 @@ def test_create_app_mounts_desktop_runtime_and_keeps_health(tmp_path) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_create_app_exposes_disabled_mcp_manager_without_client_startup(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data", mcp_enabled=False))
+
+    assert app.state.mcp_enabled is False
+    assert app.state.mcp_runtime_status == "disabled"
+    assert isinstance(app.state.mcp_manager, McpManager)
+    assert app.state.mcp_manager.status().to_dict() == {
+        "enabled": False,
+        "runtime_status": "disabled",
+        "started": False,
+        "active_client_count": 0,
+    }
+
+    with TestClient(app) as client:
+        response = client.get("/api/health")
+        assert app.state.mcp_manager.started is True
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert app.state.mcp_manager.started is False
 
 
 def test_create_app_mounts_e2e_model_transport_only_when_enabled(tmp_path) -> None:

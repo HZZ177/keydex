@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from pathlib import Path
 
 from backend.app.command_approval import (
     ApprovalService,
     CommandApprovalDecision,
+    CommandApprovalError,
     find_trusted_command_rule,
 )
 from backend.app.storage import StorageRepositories, init_database
@@ -203,6 +203,31 @@ async def test_persistent_exact_trust_includes_tool_shell_path(tmp_path, monkeyp
     assert second.result["status"] == "completed"
     assert second.result["approval"]["trusted"] is True
     assert repositories.command_approvals.list_pending(session_id="ses-command") == []
+
+
+async def test_command_approval_rejects_mcp_only_trust_scope(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    approval = repositories.command_approvals.create(
+        approval_id="approval-command-scope",
+        session_id="ses-command",
+        command="pnpm test",
+        cwd=".",
+        title="是否允许执行命令？",
+        tool_name="run_cmd",
+        shell="cmd",
+    )
+
+    try:
+        await ApprovalService(repositories=repositories).resolve(
+            approval.id,
+            CommandApprovalDecision(decision="approved", trust_scope="session"),
+        )
+    except CommandApprovalError as exc:
+        assert "once 或 persistent" in str(exc)
+    else:
+        raise AssertionError("命令审批不应接受 MCP-only trust_scope")
+
+    assert repositories.command_approvals.get(approval.id).status == "pending"
 
 
 async def test_command_runtime_unavailable_returns_clear_result(tmp_path, monkeypatch) -> None:

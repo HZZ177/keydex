@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -27,8 +27,8 @@ def local_tool_to_langchain_tool(
     async def _run(config: RunnableConfig, **kwargs: Any) -> str:
         result = await tool.run(dict(kwargs), _context_for_tool(tool, context_factory(), config))
         if result.ok:
-            return _json_result(result.result)
-        return _json_result(_failed_tool_payload(tool.name, result.error))
+            return _json_result(_successful_tool_payload(result))
+        return _json_result(_failed_tool_payload(tool.name, result.error, result.metadata))
 
     _run.__name__ = tool.name
     _run.__doc__ = tool.description or tool.name
@@ -37,6 +37,7 @@ def local_tool_to_langchain_tool(
         name=tool.name,
         description=tool.description or tool.name,
         args_schema=tool.parameters,
+        metadata=_langchain_tool_metadata(tool),
     )
 
 
@@ -76,7 +77,26 @@ def _context_for_tool(
     )
 
 
-def _failed_tool_payload(tool_name: str, error: dict[str, Any] | None) -> dict[str, Any]:
+def _successful_tool_payload(result: Any) -> Any:
+    metadata = getattr(result, "metadata", None)
+    if not metadata:
+        return result.result
+    if isinstance(result.result, dict):
+        existing_metadata = result.result.get("metadata")
+        if isinstance(existing_metadata, dict):
+            return {
+                **result.result,
+                "metadata": _merge_result_metadata(existing_metadata, metadata),
+            }
+        return {**result.result, "metadata": metadata}
+    return {"result": result.result, "metadata": metadata}
+
+
+def _failed_tool_payload(
+    tool_name: str,
+    error: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     normalized_error = error or {"code": "tool_failed", "message": "工具执行失败", "details": {}}
     code = str(normalized_error.get("code") or "tool_failed")
     message = str(normalized_error.get("message") or "工具执行失败")
@@ -92,7 +112,33 @@ def _failed_tool_payload(tool_name: str, error: dict[str, Any] | None) -> dict[s
         "details": details,
         "error": normalized_error,
         "tool_summary": f"工具 {tool_name} 执行失败：{message}（错误码：{code}）。",
+        **({"metadata": metadata} if metadata else {}),
     }
+
+
+def _langchain_tool_metadata(tool: LocalTool) -> dict[str, Any] | None:
+    metadata = getattr(tool, "metadata", None)
+    if metadata is None:
+        return None
+    to_dict = getattr(metadata, "to_dict", None)
+    if callable(to_dict):
+        return {"mcp": to_dict()}
+    if isinstance(metadata, dict):
+        return dict(metadata)
+    return None
+
+
+def _merge_result_metadata(
+    existing: dict[str, Any],
+    extra: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(existing)
+    for key, value in extra.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
+    return merged
 
 
 def registry_to_langchain_tools(
@@ -100,7 +146,19 @@ def registry_to_langchain_tools(
     *,
     context_factory: Callable[[], ToolExecutionContext],
 ) -> list[StructuredTool]:
+    return tools_to_langchain_tools(
+        registry.list(),
+        context_factory=context_factory,
+    )
+
+
+def tools_to_langchain_tools(
+    tools: Sequence[LocalTool],
+    *,
+    context_factory: Callable[[], ToolExecutionContext],
+) -> list[StructuredTool]:
     return [
         local_tool_to_langchain_tool(tool, context_factory=context_factory)
-        for tool in registry.list()
+        for tool in tools
+        if tool.enabled
     ]

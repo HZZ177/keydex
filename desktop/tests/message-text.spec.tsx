@@ -822,6 +822,26 @@ describe("MessageText", () => {
     expect(screen.getByText("已复制")).not.toBeNull();
   });
 
+  it("resets message action copy feedback after the footer is left", async () => {
+    const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
+    const { container } = render(<MessageText message={message("assistant", "可以复制", "completed")} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "复制消息" }));
+
+    await waitFor(() => {
+      expect(clipboard).toHaveBeenCalledWith("可以复制");
+      expect(container.querySelector('footer[data-copy-state="copied"]')).not.toBeNull();
+    });
+
+    const footer = container.querySelector("footer");
+    expect(footer).not.toBeNull();
+
+    fireEvent.pointerLeave(footer as HTMLElement);
+
+    expect(footer?.getAttribute("data-copy-state")).toBe("idle");
+    expect(within(footer as HTMLElement).getByText("复制")).not.toBeNull();
+  });
+
   it("renders a lightweight ghost footer with duration data", () => {
     render(
       <MessageText

@@ -7,7 +7,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    app_dir = Path(__file__).resolve().parent
+    project_root = Path(__file__).resolve().parents[2]
+    sys.path = [entry for entry in sys.path if Path(entry or ".").resolve() != app_dir]
+    sys.path.insert(0, str(project_root))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +19,7 @@ from backend.app.api.approvals import router as approvals_router
 from backend.app.api.attachments import router as attachments_router
 from backend.app.api.health import router as health_router
 from backend.app.api.local_preview import router as local_preview_router
+from backend.app.api.mcp import router as mcp_router
 from backend.app.api.model_providers import router as model_providers_router
 from backend.app.api.models import router as models_router
 from backend.app.api.sessions import router as sessions_router
@@ -32,6 +36,9 @@ from backend.app.core.logger import configure_logging, logger
 from backend.app.core.middleware import RequestLoggingMiddleware
 from backend.app.keydex import KeydexWorkspaceRuntimeCache
 from backend.app.keydex.watcher import KeydexWorkspaceWatcher
+from backend.app.mcp.elicitation import McpElicitationService
+from backend.app.mcp.manager import McpManager
+from backend.app.mcp.sampling import McpOpenAICompatibleSamplingBridge, McpSamplingService
 from backend.app.model import OpenAICompatibleProviderClient
 from backend.app.model.e2e_transport import create_e2e_model_transport
 from backend.app.runtime import create_desktop_runtime
@@ -59,12 +66,14 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             except Exception:
                 pass
 
+        await app.state.mcp_manager.start()
         warmup_task = asyncio.create_task(run_warmup())
         app.state.thread_task_elapsed_ticker.start()
         try:
             yield
         finally:
             await app.state.thread_task_elapsed_ticker.stop()
+            await app.state.mcp_manager.shutdown()
             if not warmup_task.done():
                 warmup_task.cancel()
             killed = command_process_manager.shutdown()
@@ -92,11 +101,17 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         allow_credentials=False,
     )
     app.state.settings = resolved_settings
+    app.state.mcp_enabled = resolved_settings.mcp_enabled
+    app.state.mcp_runtime_status = "enabled" if resolved_settings.mcp_enabled else "disabled"
     app.state.database = init_database(
         resolved_settings.data_dir / "app.db",
         default_workspace_root=resolved_settings.workspace_root,
     )
     app.state.repositories = StorageRepositories(app.state.database)
+    app.state.mcp_manager = McpManager(
+        settings=resolved_settings,
+        repositories=app.state.repositories,
+    )
     app.state.thread_task_state_locks = ThreadTaskStateLocks()
     app.state.thread_task_service = ThreadTaskService(
         app.state.repositories,
@@ -110,6 +125,14 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         load_effective_model_settings(app.state.repositories),
         transport=getattr(app.state, "model_http_transport", None),
     )
+    app.state.mcp_sampling_service = McpSamplingService(
+        app.state.repositories,
+        model_bridge=McpOpenAICompatibleSamplingBridge(
+            app.state.repositories,
+            transport_provider=lambda: getattr(app.state, "model_http_transport", None),
+        ),
+    )
+    app.state.mcp_manager.sampling_service = app.state.mcp_sampling_service
     app.state.tool_registry = create_default_tool_registry()
     app.state.keydex_runtime_cache = KeydexWorkspaceRuntimeCache()
 
@@ -135,6 +158,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             agent_runner=agent_runner,
             keydex_runtime_cache=app.state.keydex_runtime_cache,
             thread_task_service=app.state.thread_task_service,
+            mcp_manager=app.state.mcp_manager,
         )
 
     app.state.agent_runtime_provider = AgentRuntimeProvider(build_chat_service)
@@ -143,6 +167,15 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         repositories=app.state.repositories,
     )
     app.state.chat_stream_manager = ChatStreamManager(app.state.chat_service)
+    app.state.mcp_elicitation_service = McpElicitationService(
+        app.state.repositories,
+        broadcaster=lambda session_id, action, data: app.state.chat_stream_manager.broadcast(
+            session_id=session_id,
+            action=action,
+            data=data,
+        ),
+    )
+    app.state.mcp_manager.elicitation_service = app.state.mcp_elicitation_service
     app.state.thread_task_event_publisher = ThreadTaskEventPublisher(
         repositories=app.state.repositories,
         chat_stream_manager=app.state.chat_stream_manager,
@@ -189,6 +222,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(approvals_router)
     app.include_router(attachments_router)
     app.include_router(local_preview_router)
+    app.include_router(mcp_router)
     app.include_router(settings_router)
     app.include_router(model_providers_router)
     app.include_router(models_router)

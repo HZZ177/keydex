@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 
 from backend.app.api.dependencies import get_repositories
+from backend.app.services.agent_runtime import AgentRuntimeInitializationError
 from backend.app.core.config import AppSettings, get_settings
 from backend.app.core.logger import logger
+from backend.app.services.manual_context_compression_service import (
+    ManualContextCompressionResult,
+    ManualContextCompressionService,
+)
 from backend.app.services.session_fork_service import (
     SessionForkService,
     SessionForkServiceError,
@@ -62,8 +67,30 @@ class SessionBranchRequest(BaseModel):
     turn_index: int | None = None
 
 
+class SessionContextCompressionRequest(BaseModel):
+    mode: Literal["light", "deep"]
+
+
 class SessionResponse(BaseModel):
     session: dict[str, Any]
+
+
+class SessionContextCompressionResponse(BaseModel):
+    success: bool
+    mode: Literal["light", "deep"]
+    session_id: str
+    active_session_id: str | None = None
+    target_session_id: str | None = None
+    staging_id: int | None = None
+    generation: int | None = None
+    staging_strategy: str | None = None
+    anchor_message_id: str | None = None
+    source_last_message_id: str | None = None
+    notice_id: str | None = None
+    reason: str | None = None
+    compression_message_count: int = 0
+    retain_message_count: int = 0
+    total_message_count: int = 0
 
 
 class SessionBranchResponse(BaseModel):
@@ -306,6 +333,53 @@ def reverse_session(
     return SessionBranchResponse(session=session, source=result.source.to_dict())
 
 
+@router.post("/{session_id}/context-compression", response_model=SessionContextCompressionResponse)
+async def compress_session_context(
+    session_id: str,
+    payload: SessionContextCompressionRequest,
+    request: Request,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> SessionContextCompressionResponse:
+    checkpointer = getattr(request.app.state, "checkpointer", None)
+    http_transport = getattr(request.app.state, "model_http_transport", None)
+    agent_runner = getattr(request.app.state, "agent_runner", None)
+    if checkpointer is None or agent_runner is None:
+        provider = getattr(request.app.state, "agent_runtime_provider", None)
+        if provider is None:
+            raise _manual_context_compression_runtime_error("agent_runtime_unavailable")
+        try:
+            chat_service = await provider.get_chat_service_async()
+        except AgentRuntimeInitializationError as exc:
+            raise _manual_context_compression_runtime_error(
+                "agent_runtime_initialization_failed",
+                message=str(exc),
+            ) from exc
+        agent_runner = getattr(chat_service, "agent_runner", None)
+        checkpointer = getattr(agent_runner, "checkpointer", None)
+    if agent_runner is not None and callable(getattr(agent_runner, "model_http_transport", None)):
+        http_transport = agent_runner.model_http_transport()
+    if checkpointer is None:
+        raise _manual_context_compression_runtime_error("checkpointer_unavailable")
+
+    stream_manager = getattr(request.app.state, "chat_stream_manager", None)
+
+    async def broadcast(session: str, action: str, data: dict[str, Any]) -> bool:
+        if stream_manager is None:
+            return False
+        return await stream_manager.broadcast(session_id=session, action=action, data=data)
+
+    service = ManualContextCompressionService(
+        repositories,
+        checkpointer=checkpointer,
+        http_transport=http_transport,
+        broadcaster=broadcast,
+    )
+    result = await service.compress(session_id=session_id, mode=payload.mode)
+    if not result.success:
+        raise _manual_context_compression_error(result)
+    return SessionContextCompressionResponse(**result.to_dict())
+
+
 @router.get("/{session_id}/messages", response_model=SessionHistoryResponse)
 def get_session_messages(
     session_id: str,
@@ -465,3 +539,58 @@ def _branch_error(exc: SessionForkServiceError) -> HTTPException:
             "details": exc.details,
         },
     )
+
+
+def _manual_context_compression_runtime_error(
+    code: str,
+    *,
+    message: str | None = None,
+) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "code": code,
+            "message": message or "主动上下文压缩运行时不可用",
+            "details": {},
+        },
+    )
+
+
+def _manual_context_compression_error(result: ManualContextCompressionResult) -> HTTPException:
+    reason = str(result.reason or "context_compression_failed")
+    base_code = reason.split(":", 1)[0]
+    status_code = {
+        "session_not_found": status.HTTP_404_NOT_FOUND,
+        "session_busy": status.HTTP_409_CONFLICT,
+        "checkpoint_not_found": status.HTTP_409_CONFLICT,
+        "fork_active_session_failed": status.HTTP_409_CONFLICT,
+        "context_compression_disabled": status.HTTP_409_CONFLICT,
+        "source_boundary_missing": status.HTTP_409_CONFLICT,
+        "model_config_error": status.HTTP_400_BAD_REQUEST,
+        "llm_error": status.HTTP_502_BAD_GATEWAY,
+        "no_compressible_messages": status.HTTP_400_BAD_REQUEST,
+        "invalid_compression_mode": status.HTTP_400_BAD_REQUEST,
+    }.get(base_code, status.HTTP_400_BAD_REQUEST)
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "code": base_code,
+            "message": _manual_context_compression_error_message(base_code),
+            "details": result.to_dict(),
+        },
+    )
+
+
+def _manual_context_compression_error_message(code: str) -> str:
+    return {
+        "session_not_found": "会话不存在",
+        "session_busy": "当前会话正在运行，无法主动压缩上下文",
+        "checkpoint_not_found": "当前会话没有可压缩的检查点",
+        "fork_active_session_failed": "无法切换到压缩后的会话分支",
+        "context_compression_disabled": "上下文压缩未启用",
+        "source_boundary_missing": "无法确定全量压缩的源消息边界",
+        "model_config_error": "快速模型配置不可用，无法生成压缩摘要",
+        "llm_error": "压缩摘要生成失败",
+        "no_compressible_messages": "当前会话没有可压缩的历史上下文",
+        "invalid_compression_mode": "不支持的上下文压缩模式",
+    }.get(code, "主动上下文压缩失败")

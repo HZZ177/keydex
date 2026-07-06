@@ -605,6 +605,9 @@ class MessageEventService:
             "toolDetailRef": detail_ref,
             "toolSummary": MessageEventService._tool_start_summary(data),
         }
+        metadata = MessageEventService._tool_metadata(data)
+        if metadata:
+            tool_call["metadata"] = metadata
         if include_tool_details:
             tool_call["toolParams"] = data.get("params")
         else:
@@ -663,6 +666,12 @@ class MessageEventService:
         ui_payload = MessageEventService._tool_ui_payload(data)
         error = MessageEventService._tool_error_summary(data, ui_payload)
         target["status"] = "error" if error else "completed"
+        metadata = MessageEventService._tool_metadata(data)
+        if metadata:
+            target["metadata"] = MessageEventService._merge_metadata(
+                target.get("metadata"),
+                metadata,
+            )
         if error:
             target["toolError"] = error
         if include_tool_details:
@@ -762,6 +771,46 @@ class MessageEventService:
                 return None
             return parsed if isinstance(parsed, dict) else None
         return None
+
+    @staticmethod
+    def _tool_metadata(data: dict[str, Any]) -> dict[str, Any] | None:
+        existing = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        metadata = dict(existing)
+        existing_mcp = existing.get("mcp") if isinstance(existing.get("mcp"), dict) else {}
+        mcp_fields = {
+            key: data.get(key)
+            for key in (
+                "kind",
+                "snapshot_id",
+                "server_id",
+                "server_name",
+                "raw_tool_name",
+                "model_tool_name",
+                "model_name",
+                "risk_level",
+                "approval_mode",
+                "exposure",
+                "call_id",
+            )
+            if data.get(key) is not None
+        }
+        mcp = {**existing_mcp, **mcp_fields}
+        if mcp.get("kind") == "mcp_tool" or (
+            mcp.get("server_id") and mcp.get("raw_tool_name") and mcp.get("model_tool_name")
+        ):
+            mcp.setdefault("kind", "mcp_tool")
+            metadata["mcp"] = mcp
+        return metadata or None
+
+    @staticmethod
+    def _merge_metadata(existing: Any, incoming: dict[str, Any]) -> dict[str, Any]:
+        base = dict(existing) if isinstance(existing, dict) else {}
+        merged = {**base, **incoming}
+        base_mcp = base.get("mcp") if isinstance(base.get("mcp"), dict) else {}
+        incoming_mcp = incoming.get("mcp") if isinstance(incoming.get("mcp"), dict) else {}
+        if base_mcp or incoming_mcp:
+            merged["mcp"] = {**base_mcp, **incoming_mcp}
+        return merged
 
     @staticmethod
     def _tool_files(
@@ -1108,7 +1157,7 @@ class MessageEventService:
             "status": "error" if error else status,
             "uiPayload": ui_payload,
             "fileChanges": files,
-            "metadata": data.get("metadata"),
+            "metadata": MessageEventService._tool_metadata(data),
         }
         return {key: value for key, value in detail.items() if value is not None}
 
@@ -1397,18 +1446,36 @@ def _is_visible_context_compression_progress(data: dict[str, Any]) -> bool:
         "emergency_failed",
         "emergency_replacement_failed",
         "emergency_completed",
+        "manual_light_started",
+        "manual_light_completed",
+        "manual_light_failed",
+        "manual_deep_started",
+        "manual_deep_completed",
+        "manual_deep_failed",
     }
 
 
 def _context_compression_progress_content(data: dict[str, Any]) -> str:
     stage = str(data.get("stage") or "")
     if stage == "emergency_triggered":
-        return "正在自动压缩上下文"
+        return "正在全量压缩上下文"
     if stage in {"emergency_failed", "emergency_replacement_failed"}:
-        return "自动压缩失败"
+        return "全量压缩失败"
     if stage == "emergency_completed":
-        return "自动压缩成功"
-    return "无感压缩已完成"
+        return "全量压缩已完成"
+    if stage == "manual_light_started":
+        return "正在压缩上下文"
+    if stage == "manual_light_completed":
+        return "上下文压缩已完成"
+    if stage == "manual_light_failed":
+        return "上下文压缩失败"
+    if stage == "manual_deep_started":
+        return "正在全量压缩上下文"
+    if stage == "manual_deep_completed":
+        return "全量压缩已完成"
+    if stage == "manual_deep_failed":
+        return "全量压缩失败"
+    return "上下文压缩已完成"
 
 
 def _context_compression_status(data: dict[str, Any]) -> str:
@@ -1417,14 +1484,23 @@ def _context_compression_status(data: dict[str, Any]) -> str:
         return "running"
     if stage in {"emergency_failed", "emergency_replacement_failed"}:
         return "failed"
+    if stage.endswith("_started"):
+        return "running"
+    if stage.endswith("_failed"):
+        return "failed"
     return "completed"
 
 
 def _context_compression_metadata(data: dict[str, Any]) -> dict[str, Any]:
     stage = str(data.get("stage") or "")
     mode = str(data.get("compression_mode") or "")
-    if mode not in {"emergency", "background"}:
-        mode = "emergency" if stage.startswith("emergency_") else "background"
+    if mode not in {"emergency", "background", "manual_light", "manual_deep"}:
+        if stage.startswith("manual_light_"):
+            mode = "manual_light"
+        elif stage.startswith("manual_deep_"):
+            mode = "manual_deep"
+        else:
+            mode = "emergency" if stage.startswith("emergency_") else "background"
     return {
         "kind": "context_compression",
         "stage": stage,
@@ -1449,6 +1525,10 @@ def _context_compression_notice_id_from_data(data: dict[str, Any]) -> str:
             or ""
         )
         return f"context-compression:emergency:{notice_key}"
+    if stage.startswith("manual_"):
+        notice_key = data.get("session_id") or data.get("active_session_id") or ""
+        manual_mode = data.get("manual_mode") or "context"
+        return f"context-compression:manual:{manual_mode}:{notice_key}"
     notice_key = data.get("staging_id") or data.get("active_session_id") or ""
     return f"context-compression:staging:{notice_key}"
 

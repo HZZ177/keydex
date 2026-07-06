@@ -18,8 +18,7 @@
   color: currentColor;
 }
 
-.status[data-state="starting"] .icon,
-.status[data-state="running"] .icon {
+.loadingIcon {
   animation: spin 900ms linear infinite;
 }
 

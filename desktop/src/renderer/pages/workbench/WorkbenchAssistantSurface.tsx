@@ -27,7 +27,11 @@ import {
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
 import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
-import type { SlashCommand } from "@/renderer/components/chat/SlashCommandMenu";
+import {
+  isDeepContextCompressionSlashCommand,
+  isLightContextCompressionSlashCommand,
+  type SlashCommand,
+} from "@/renderer/components/chat/SlashCommandMenu";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import { useRafPanelResize } from "@/renderer/components/layout/useRafPanelResize";
 import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
@@ -87,6 +91,7 @@ import type {
   AgentSession,
   CommandApprovalRequest,
   FileAccessMode,
+  ManualContextCompressionMode,
   Workspace,
 } from "@/types/protocol";
 
@@ -230,6 +235,7 @@ export function WorkbenchAssistantSurface({
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
   const [goalCreating, setGoalCreating] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
+  const [contextCompressionMode, setContextCompressionMode] = useState<ManualContextCompressionMode | null>(null);
   const modelSelection = useRuntimeModelSelection(runtime, null, { enabled: backendReady });
   const workspaceSkillScope = useMemo(() => ({ workspaceId }), [workspaceId]);
   const { state: workspaceSkillsState, refresh: refreshWorkspaceSkills } = useWorkspaceSkills({
@@ -371,6 +377,7 @@ export function WorkbenchAssistantSurface({
   const connectionReady = controller.connectionReady;
   const canSend = controller.canSend && !creatingSession && Boolean(workspaceId);
   const canStop = controller.canStop;
+  const contextCompressionRunning = contextCompressionMode !== null;
   const selectedModel = modelSelection.selectedModel;
   const hasComposerContext = Boolean(controller.selectedSkill || composerFiles.length || composerQuotes.length);
   const hasComposerContent = Boolean(controller.draft.trim() || hasComposerContext || goalComposerOpen);
@@ -1264,10 +1271,54 @@ export function WorkbenchAssistantSurface({
     }
   }, [dockToDrawer, panelSessionId, previewContext.reviewPanelRequest, surfaceMode, workspaceId]);
 
+  const runContextCompression = useCallback(
+    async (mode: ManualContextCompressionMode) => {
+      if (contextCompressionRunning) {
+        notifications.warning("上下文压缩正在执行");
+        return;
+      }
+      if (!panelSessionId || secondaryPageActive) {
+        notifications.warning("当前会话无法压缩上下文");
+        return;
+      }
+      if (!backendReady) {
+        notifications.warning("本地服务尚未就绪");
+        return;
+      }
+      setContextCompressionMode(mode);
+      try {
+        await runtime.conversation.compressContext(panelSessionId, { mode });
+        notifications.success(mode === "deep" ? "全量压缩已完成" : "上下文压缩已完成");
+        void controller.reloadHistory().catch(() => undefined);
+      } catch (reason) {
+        notifications.error(contextCompressionErrorMessage(reason));
+      } finally {
+        setContextCompressionMode(null);
+      }
+    },
+    [
+      backendReady,
+      contextCompressionRunning,
+      controller,
+      notifications,
+      panelSessionId,
+      runtime,
+      secondaryPageActive,
+    ],
+  );
+
   const handleSlashCommand = useCallback(
     (command: SlashCommand) => {
       if (command.id === "bypass-conversation") {
         openBtwConversation();
+        return;
+      }
+      if (isLightContextCompressionSlashCommand(command)) {
+        void runContextCompression("light");
+        return;
+      }
+      if (isDeepContextCompressionSlashCommand(command)) {
+        void runContextCompression("deep");
         return;
       }
       if (command.id === "goal") {
@@ -1283,7 +1334,13 @@ export function WorkbenchAssistantSurface({
         dispatchAssistantState({ type: "open-composer" });
       }
     },
-    [controller.activeTask, notifications, openBtwConversation, secondaryPageActive],
+    [
+      controller.activeTask,
+      notifications,
+      openBtwConversation,
+      runContextCompression,
+      secondaryPageActive,
+    ],
   );
 
   const toggleExpandedLayer = useCallback(() => {
@@ -1386,8 +1443,10 @@ export function WorkbenchAssistantSurface({
       value={controller.draft}
       runtimeState={creatingSession ? "starting" : runtimeState}
       canSend={
-        goalComposerOpen
-          ? Boolean(controller.draft.trim()) && !goalCreating && !secondaryPageActive && Boolean(panelSessionId || onEnsureSession)
+        contextCompressionRunning
+          ? false
+          : goalComposerOpen
+            ? Boolean(controller.draft.trim()) && !goalCreating && !secondaryPageActive && Boolean(panelSessionId || onEnsureSession)
           : canSend
       }
       canStop={canStop}
@@ -1410,6 +1469,7 @@ export function WorkbenchAssistantSurface({
       contextWindowUsage={displayPanelModel.contextWindowUsage}
       allowBypassConversationSlashCommand={!secondaryPageActive && Boolean(onOpenBtwConversation)}
       allowGoalSlashCommand={!secondaryPageActive}
+      allowContextCompressionSlashCommand={!secondaryPageActive && Boolean(panelSessionId)}
       autoFocusKey={
         surfaceMode === "capsule"
           ? undefined
@@ -2674,6 +2734,7 @@ function WorkbenchComposer({
   contextWindowUsage,
   allowBypassConversationSlashCommand,
   allowGoalSlashCommand,
+  allowContextCompressionSlashCommand,
   autoFocusKey,
   leftAccessory,
   placeholder,
@@ -2716,6 +2777,7 @@ function WorkbenchComposer({
   contextWindowUsage: ContextWindowUsageStatus | null;
   allowBypassConversationSlashCommand?: boolean;
   allowGoalSlashCommand?: boolean;
+  allowContextCompressionSlashCommand?: boolean;
   autoFocusKey?: string;
   leftAccessory?: ReactNode;
   placeholder?: string;
@@ -2771,6 +2833,7 @@ function WorkbenchComposer({
       workspaceRoots={workspaceRoots}
       allowBypassConversationSlashCommand={allowBypassConversationSlashCommand}
       allowGoalSlashCommand={allowGoalSlashCommand}
+      allowContextCompressionSlashCommand={allowContextCompressionSlashCommand}
       autoFocusKey={autoFocusKey}
       className={styles.composer}
       leftAccessory={leftAccessory}
@@ -2812,6 +2875,49 @@ function errorMessage(reason: unknown): string {
     return (reason as { message: string }).message;
   }
   return "操作失败";
+}
+
+function contextCompressionErrorMessage(reason: unknown): string {
+  const code = runtimeErrorCode(reason);
+  if (code === "context_compression_disabled") {
+    return "上下文压缩未启用";
+  }
+  if (code === "session_busy") {
+    return "当前会话正在运行，无法压缩上下文";
+  }
+  if (code === "checkpoint_not_found") {
+    return "当前会话还没有可压缩的上下文";
+  }
+  if (code === "no_compressible_messages") {
+    return "当前会话没有可压缩的历史上下文";
+  }
+  if (code === "model_config_error") {
+    return "快速模型配置不可用，无法生成压缩摘要";
+  }
+  if (code === "llm_error") {
+    return "压缩摘要生成失败";
+  }
+  return errorMessage(reason);
+}
+
+function runtimeErrorCode(reason: unknown): string | null {
+  const record = objectRecord(reason);
+  if (typeof record?.code === "string") {
+    return record.code;
+  }
+  const detail = objectRecord(record?.detail);
+  if (typeof detail?.code === "string") {
+    return detail.code;
+  }
+  const details = objectRecord(record?.details);
+  if (typeof details?.code === "string") {
+    return details.code;
+  }
+  return null;
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function isTaskAlreadyOpenError(reason: unknown): boolean {

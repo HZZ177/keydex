@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -86,6 +87,10 @@ class DelayedSSEStream(httpx.AsyncByteStream):
 
 def _chat_chunks(payload: dict[str, Any]) -> list[str]:
     user_message = _last_user_message(payload)
+    if "MCP Deferred" in user_message:
+        return _mcp_deferred_chunks(payload, user_message)
+    if "MCP Runtime" in user_message:
+        return _mcp_runtime_chunks(payload, user_message)
     if "CommandRuntime" in user_message:
         return _command_runtime_chunks(payload, user_message)
     if "命令审批" in user_message:
@@ -299,6 +304,245 @@ def _command_for_approval_prompt(user_message: str) -> str:
         if key in user_message:
             return command
     return "echo e2e-approval-default"
+
+
+def _mcp_runtime_chunks(payload: dict[str, Any], user_message: str) -> list[str]:
+    target = _mcp_target_from_user_message(user_message)
+    if _has_tool_message(payload):
+        return _content_chunks(
+            payload,
+            f"MCP Runtime 场景已经完成：{target} 工具结果已返回给模型。"
+            "最终检查点：MCP Runtime 工具调用已返回。",
+            usage={"prompt_tokens": 20, "completion_tokens": 14},
+        )
+
+    tool_name = _mcp_model_tool_name(payload, target)
+    if not tool_name:
+        available = ", ".join(_payload_tool_names(payload)) or "none"
+        return _content_chunks(
+            payload,
+            f"MCP Runtime tool unavailable: {target}. available tools: {available}",
+            usage={"prompt_tokens": 18, "completion_tokens": 12},
+        )
+
+    chunks = [
+        _chat_sse(
+            payload,
+            delta={"reasoning_content": f"准备调用 MCP 工具 {target}。"},
+        )
+    ]
+    if _mcp_should_delay_tool_call(user_message):
+        chunks.extend(
+            _chat_sse(
+                payload,
+                delta={
+                    "reasoning_content": (
+                        f"MCP Runtime snapshot freeze wait {index + 1}/24。"
+                    )
+                },
+            )
+            for index in range(24)
+        )
+    chunks.extend(
+        [
+            _chat_sse(
+                payload,
+                delta={
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": f"call_e2e_mcp_{target}",
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(
+                                    _mcp_tool_arguments(target, user_message),
+                                    ensure_ascii=False,
+                                    separators=(",", ":"),
+                                ),
+                            },
+                        }
+                    ]
+                },
+                finish_reason="tool_calls",
+            ),
+            _sse_done(),
+        ]
+    )
+    return chunks
+
+
+def _mcp_deferred_chunks(payload: dict[str, Any], user_message: str) -> list[str]:
+    target = _mcp_target_from_user_message(user_message)
+    lowered = user_message.lower()
+    if _has_tool_message(payload):
+        if "call" in lowered or "调用" in user_message:
+            message = (
+                f"MCP Deferred 场景已经完成：{target} 工具结果已返回给模型。"
+                "最终检查点：MCP Deferred 已激活工具调用已返回。"
+            )
+        else:
+            message = (
+                f"MCP Deferred 搜索已经完成：{target} 候选结果已返回给模型。"
+                "最终检查点：MCP Deferred 搜索结果已返回。"
+            )
+        return _content_chunks(
+            payload,
+            message,
+            usage={"prompt_tokens": 18, "completion_tokens": 14},
+        )
+
+    if "list" in lowered or "列表" in user_message:
+        tool_name = _mcp_exact_tool_name(payload, "list_mcp_tools")
+        arguments = {"limit": 5}
+        action = "list"
+    elif "search" in lowered or "搜索" in user_message:
+        tool_name = _mcp_exact_tool_name(payload, "search_mcp_tools")
+        arguments = {"query": _mcp_deferred_search_query(user_message, target), "limit": 10}
+        action = "search"
+    else:
+        tool_name = _mcp_model_tool_name(payload, target)
+        arguments = _mcp_tool_arguments(target, user_message)
+        action = "call"
+
+    if action in {"search", "list"} and "strict" in lowered:
+        tool_names = _payload_tool_names(payload)
+        direct_mcp_tools = [name for name in tool_names if name.startswith("mcp__")]
+        missing_deferred_tools = [
+            name
+            for name in ("search_mcp_tools", "list_mcp_tools")
+            if name not in tool_names
+        ]
+        if direct_mcp_tools or missing_deferred_tools:
+            return _content_chunks(
+                payload,
+                "MCP Deferred strict exposure failed: "
+                f"direct={direct_mcp_tools}; missing={missing_deferred_tools}; "
+                f"available tools: {', '.join(tool_names) or 'none'}",
+                usage={"prompt_tokens": 18, "completion_tokens": 12},
+            )
+
+    if not tool_name:
+        available = ", ".join(_payload_tool_names(payload)) or "none"
+        return _content_chunks(
+            payload,
+            f"MCP Deferred tool unavailable: {target}. available tools: {available}",
+            usage={"prompt_tokens": 18, "completion_tokens": 12},
+        )
+
+    return [
+        _chat_sse(
+            payload,
+            delta={"reasoning_content": f"准备执行 MCP Deferred {action}：{target}。"},
+        ),
+        _chat_sse(
+            payload,
+            delta={
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": f"call_e2e_mcp_deferred_{action}_{target}",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(
+                                arguments,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                        },
+                    }
+                ]
+            },
+            finish_reason="tool_calls",
+        ),
+        _sse_done(),
+    ]
+
+
+def _mcp_deferred_search_query(user_message: str, default: str) -> str:
+    match = re.search(r"\bquery:([A-Za-z0-9_.-]+)", user_message)
+    if match:
+        return match.group(1)
+    return default
+
+
+def _mcp_target_from_user_message(user_message: str) -> str:
+    lowered = user_message.lower()
+    for raw_name in (
+        "read_fixture",
+        "write_fixture",
+        "slow_echo",
+        "always_fail",
+        "large_payload",
+        "request_elicitation",
+        "request_sampling",
+    ):
+        if raw_name in lowered:
+            return raw_name
+    return "read_fixture"
+
+
+def _mcp_should_delay_tool_call(user_message: str) -> bool:
+    lowered = user_message.lower()
+    return "live-guard" in lowered or "delay-tool-call" in lowered
+
+
+def _mcp_tool_arguments(target: str, user_message: str) -> dict[str, Any]:
+    if target == "write_fixture":
+        return {"key": "runtime-snapshot", "value": "e2e-mcp-runtime"}
+    if target == "slow_echo":
+        lowered = user_message.lower()
+        delay_ms = 4500 if "panel-cancel" in lowered else 1800 if "long" in lowered else 100
+        return {"text": "e2e-mcp-runtime-snapshot", "delay_ms": delay_ms}
+    if target == "always_fail":
+        return {"reason": "e2e-mcp-runtime-failure"}
+    if target == "large_payload":
+        return {"size": 5000}
+    if target == "request_elicitation":
+        mode = "cancel" if "cancel" in user_message.lower() or "取消" in user_message else "submit"
+        return {"mode": mode}
+    if target == "request_sampling":
+        lowered = user_message.lower()
+        if "oversize" in lowered or "budget" in lowered or "超预算" in user_message:
+            return {"mode": "oversize"}
+        if "reject" in lowered or "拒绝" in user_message:
+            return {"mode": "reject"}
+        if "disabled" in lowered or "禁用" in user_message:
+            return {"mode": "disabled"}
+        return {"mode": "approve"}
+    return {"key": "runtime-snapshot"}
+
+
+def _mcp_model_tool_name(payload: dict[str, Any], raw_name: str) -> str:
+    for name in _payload_tool_names(payload):
+        if name == raw_name or name.endswith(f"__{raw_name}"):
+            return name
+    return ""
+
+
+def _mcp_exact_tool_name(payload: dict[str, Any], expected_name: str) -> str:
+    for name in _payload_tool_names(payload):
+        if name == expected_name:
+            return name
+    return ""
+
+
+def _payload_tool_names(payload: dict[str, Any]) -> list[str]:
+    tools = payload.get("tools")
+    if not isinstance(tools, list):
+        return []
+    names: list[str] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name = tool.get("name")
+        function = tool.get("function")
+        if not name and isinstance(function, dict):
+            name = function.get("name")
+        if isinstance(name, str) and name:
+            names.append(name)
+    return names
 
 
 def _scenario_marker(user_message: str) -> str:

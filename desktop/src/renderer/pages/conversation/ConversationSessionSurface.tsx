@@ -9,14 +9,24 @@ import {
   type SelectedImageAttachment,
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
-import type { SlashCommand } from "@/renderer/components/chat/SlashCommandMenu";
+import {
+  isDeepContextCompressionSlashCommand,
+  isLightContextCompressionSlashCommand,
+  type SlashCommand,
+} from "@/renderer/components/chat/SlashCommandMenu";
 import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
 import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
 import { useOptionalRightSidebarConversation } from "@/renderer/components/layout/RightSidebarConversationContext";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
-import type { AgentActionEnvelope, AgentSession, AgentSessionFork } from "@/types/protocol";
+import { subscribeInsertMcpPromptDraft } from "@/renderer/events/mcpPromptDraft";
+import type {
+  AgentActionEnvelope,
+  AgentSession,
+  AgentSessionFork,
+  ManualContextCompressionMode,
+} from "@/types/protocol";
 import type { FileAccessMode } from "@/types/protocol";
 import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
 
@@ -80,6 +90,7 @@ export function ConversationSessionSurface({
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [goalCreating, setGoalCreating] = useState(false);
+  const [contextCompressionMode, setContextCompressionMode] = useState<ManualContextCompressionMode | null>(null);
   const quickSendConsumedRef = useRef<string | null>(null);
   const pendingQuickSendRef = useRef<QueuedQuickChatSend | null>(null);
   const scrollToBottomAfterSendRef = useRef<(() => void) | null>(null);
@@ -215,6 +226,7 @@ export function ConversationSessionSurface({
   const connectionReady = controller.connectionReady;
   const canSend = controller.canSend;
   const canStop = controller.canStop;
+  const contextCompressionRunning = contextCompressionMode !== null;
   const selectedModelProviderId = modelSelection.selectedModel?.providerId ?? "";
   const selectedModelName = modelSelection.selectedModel?.model ?? "";
   const setSelectedRuntimeModel = modelSelection.setSelectedModel;
@@ -326,6 +338,26 @@ export function ConversationSessionSurface({
     [goalError, setDraft],
   );
 
+  useEffect(() => {
+    return subscribeInsertMcpPromptDraft((detail) => {
+      if (!detail.text.trim()) {
+        return false;
+      }
+      if (detail.sessionId && detail.sessionId !== threadId) {
+        return false;
+      }
+      if (!detail.sessionId && isSidecar) {
+        return false;
+      }
+      setDraft((current) => (current.trim() ? `${current}\n\n${detail.text}` : detail.text));
+      if (goalError) {
+        setGoalError(null);
+      }
+      notifications.success(`已插入 MCP Prompt：${detail.rawName}`);
+      return true;
+    });
+  }, [goalError, isSidecar, notifications, setDraft, threadId]);
+
   const openBtwConversation = useCallback(() => {
     if (!threadId || !rightSidebarConversation) {
       notifications.warning("当前会话无法开启旁路对话");
@@ -356,10 +388,54 @@ export function ConversationSessionSurface({
     [notifications, rightSidebarConversation, runtime, threadId],
   );
 
+  const runContextCompression = useCallback(
+    async (mode: ManualContextCompressionMode) => {
+      if (contextCompressionRunning) {
+        notifications.warning("上下文压缩正在执行");
+        return;
+      }
+      if (!threadId || isSidecar) {
+        notifications.warning("当前会话无法压缩上下文");
+        return;
+      }
+      if (!backendReady) {
+        notifications.warning("本地服务尚未就绪");
+        return;
+      }
+      setContextCompressionMode(mode);
+      try {
+        await runtime.conversation.compressContext(threadId, { mode });
+        notifications.success(mode === "deep" ? "全量压缩已完成" : "上下文压缩已完成");
+        void controller.reloadHistory().catch(() => undefined);
+      } catch (reason) {
+        notifications.error(contextCompressionErrorMessage(reason));
+      } finally {
+        setContextCompressionMode(null);
+      }
+    },
+    [
+      backendReady,
+      contextCompressionRunning,
+      controller,
+      isSidecar,
+      notifications,
+      runtime,
+      threadId,
+    ],
+  );
+
   const handleSlashCommand = useCallback(
     (command: SlashCommand) => {
       if (command.id === "bypass-conversation") {
         openBtwConversation();
+        return;
+      }
+      if (isLightContextCompressionSlashCommand(command)) {
+        void runContextCompression("light");
+        return;
+      }
+      if (isDeepContextCompressionSlashCommand(command)) {
+        void runContextCompression("deep");
         return;
       }
       if (command.id === "goal") {
@@ -371,7 +447,7 @@ export function ConversationSessionSurface({
         setGoalError(null);
       }
     },
-    [controller.activeTask, notifications, openBtwConversation],
+    [controller.activeTask, notifications, openBtwConversation, runContextCompression],
   );
 
   const closeGoalComposer = useCallback(() => {
@@ -595,13 +671,20 @@ export function ConversationSessionSurface({
       <ConversationComposer
         value={draft}
         runtimeState={runtimeState}
-        canSend={goalComposerOpen ? Boolean(draft.trim()) && !goalCreating && Boolean(threadId) : canSend}
+        canSend={
+          contextCompressionRunning
+            ? false
+            : goalComposerOpen
+              ? Boolean(draft.trim()) && !goalCreating && Boolean(threadId)
+              : canSend
+        }
         canStop={canStop}
         connectionReady={connectionReady}
         modelSelection={{ ...modelSelection, setSelectedModel: changeModel }}
         workspaceSkills={panelModel.workspaceSkills}
         allowBypassConversationSlashCommand={!isSidecar}
         allowGoalSlashCommand={!isSidecar}
+        allowContextCompressionSlashCommand={!isSidecar}
         selectedSkill={selectedSkill}
         runtime={runtime}
         sessionId={threadId}
@@ -647,7 +730,7 @@ export function ConversationSessionSurface({
           />
         </div>
         <div className={styles.sidecarComposer}>
-          <ConversationPanelComposerAccessory model={sidecarPanelModel} />
+          <ConversationPanelComposerAccessory model={sidecarPanelModel} runtime={runtime} />
           {composer}
         </div>
       </section>
@@ -667,7 +750,7 @@ export function ConversationSessionSurface({
             }
           : undefined
       }
-      composerAccessory={<ConversationPanelComposerAccessory model={panelModel} />}
+      composerAccessory={<ConversationPanelComposerAccessory model={panelModel} runtime={runtime} />}
       composer={composer}
     >
       <ConversationPanel
@@ -733,6 +816,49 @@ function uniqueStrings(values: string[]): string[] {
     result.push(cleaned);
   }
   return result;
+}
+
+function contextCompressionErrorMessage(reason: unknown): string {
+  const code = runtimeErrorCode(reason);
+  if (code === "context_compression_disabled") {
+    return "上下文压缩未启用";
+  }
+  if (code === "session_busy") {
+    return "当前会话正在运行，无法压缩上下文";
+  }
+  if (code === "checkpoint_not_found") {
+    return "当前会话还没有可压缩的上下文";
+  }
+  if (code === "no_compressible_messages") {
+    return "当前会话没有可压缩的历史上下文";
+  }
+  if (code === "model_config_error") {
+    return "快速模型配置不可用，无法生成压缩摘要";
+  }
+  if (code === "llm_error") {
+    return "压缩摘要生成失败";
+  }
+  return errorMessage(reason);
+}
+
+function runtimeErrorCode(reason: unknown): string | null {
+  const record = objectRecord(reason);
+  if (typeof record?.code === "string") {
+    return record.code;
+  }
+  const detail = objectRecord(record?.detail);
+  if (typeof detail?.code === "string") {
+    return detail.code;
+  }
+  const details = objectRecord(record?.details);
+  if (typeof details?.code === "string") {
+    return details.code;
+  }
+  return null;
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function errorMessage(reason: unknown): string {

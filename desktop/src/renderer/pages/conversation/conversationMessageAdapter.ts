@@ -59,6 +59,9 @@ export function conversationKindFromAgent(message: AgentChatMessage): Conversati
   if (message.role === "approval") {
     return "approval";
   }
+  if (message.role === "mcp_elicitation") {
+    return "mcp_elicitation";
+  }
   if (message.role === "error") {
     return "error";
   }
@@ -84,6 +87,19 @@ export function conversationStatusFromAgent(message: AgentChatMessage): Conversa
   }
   if (message.role === "approval") {
     return message.status === "pending" ? "pending" : "completed";
+  }
+  if (message.role === "mcp_elicitation") {
+    const status = String(message.status ?? "");
+    if (status === "pending") {
+      return "pending";
+    }
+    if (status === "cancelled") {
+      return "cancelled";
+    }
+    if (status === "error") {
+      return "failed";
+    }
+    return "completed";
   }
   if (message.role === "system" && isContextCompressionMessage(message)) {
     return "completed";
@@ -188,6 +204,14 @@ export function payloadFromAgentMessage(message: AgentChatMessage): Record<strin
     return {
       ...base,
       approval: message.approval,
+    };
+  }
+
+  if (message.role === "mcp_elicitation") {
+    const metadata = objectValue(message.metadata);
+    return {
+      ...base,
+      elicitation: metadata?.mcp_elicitation,
     };
   }
 

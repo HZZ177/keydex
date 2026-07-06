@@ -23,6 +23,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from backend.app.agent.context_compression_utils import (
     apply_compression_anchor_replacement,
     apply_compression_full_replacement,
+    apply_compression_full_replacement_after_boundary,
     extract_compression_material,
     split_and_prepare_compression,
     split_and_prepare_emergency_compression,
@@ -46,7 +47,7 @@ from backend.app.storage import CompressionStagingRecord, StorageRepositories
 class ContextCompressionMiddleware(AgentMiddleware):
     """基座同款上下文压缩中间件。
 
-    模型调用前优先消费上一轮后台压缩落库的暂存产物，必要时执行阻塞式紧急压缩；
+    模型调用前优先消费上一轮后台压缩落库的暂存产物，必要时执行紧急全量压缩；
     代理完成后只判断是否达到常规阈值，并异步生成压缩产物、派生新的活动会话。
     """
 
@@ -279,26 +280,39 @@ class ContextCompressionMiddleware(AgentMiddleware):
                 staging=latest_staging,
             )
             if latest_staging is not None:
-                replacement = apply_compression_anchor_replacement(
-                    messages=messages,
-                    anchor_message_id=latest_staging.anchor_message_id,
-                    l1_content=latest_staging.l1_content or "",
-                    l2_content=latest_staging.l2_content,
-                )
+                if latest_staging.staging_strategy == "full_replacement":
+                    replacement = apply_compression_full_replacement_after_boundary(
+                        messages=messages,
+                        source_last_message_id=latest_staging.source_last_message_id,
+                        l1_content=latest_staging.l1_content or "",
+                        l2_content=latest_staging.l2_content,
+                    )
+                    failure_reason = "source_boundary_not_found"
+                else:
+                    replacement = apply_compression_anchor_replacement(
+                        messages=messages,
+                        anchor_message_id=latest_staging.anchor_message_id,
+                        l1_content=latest_staging.l1_content or "",
+                        l2_content=latest_staging.l2_content,
+                    )
+                    failure_reason = "anchor_not_found"
                 if not replacement.applied:
-                    self._mark_staging_failed(latest_staging.id, "anchor_not_found")
+                    self._mark_staging_failed(latest_staging.id, failure_reason)
                     logger.warning(
                         "[ContextCompressionMiddleware] 压缩暂存应用失败 | "
                         f"原始会话ID={original_session_id} | "
                         f"活动会话ID={active_session_id} | "
-                        f"暂存记录ID={latest_staging.id} | 原因=未找到锚点"
+                        f"暂存记录ID={latest_staging.id} | "
+                        f"策略={latest_staging.staging_strategy} | "
+                        f"原因={failure_reason}"
                     )
                     await self._emit_middleware_progress(
                         stage="staging_failed",
                         original_session_id=original_session_id,
                         active_session_id=active_session_id,
                         staging_id=latest_staging.id,
-                        reason="anchor_not_found",
+                        staging_strategy=latest_staging.staging_strategy,
+                        reason=failure_reason,
                     )
                 else:
                     self._mark_staging_applied(latest_staging.id)
@@ -314,6 +328,7 @@ class ContextCompressionMiddleware(AgentMiddleware):
                         f"原始会话ID={original_session_id} | "
                         f"活动会话ID={active_session_id} | "
                         f"暂存记录ID={latest_staging.id} | "
+                        f"策略={latest_staging.staging_strategy} | "
                         f"压缩代次={context_compression_epoch}"
                     )
                     await self._emit_middleware_progress(
@@ -321,6 +336,7 @@ class ContextCompressionMiddleware(AgentMiddleware):
                         original_session_id=original_session_id,
                         active_session_id=active_session_id,
                         staging_id=latest_staging.id,
+                        staging_strategy=latest_staging.staging_strategy,
                         context_compression_epoch=context_compression_epoch,
                     )
 
@@ -827,7 +843,7 @@ class ContextCompressionMiddleware(AgentMiddleware):
             scene_id=previous_session.scene_id,
             scene_version_seq=previous_session.scene_version_seq,
             status="active",
-            session_tag=previous_session.session_tag,
+            session_tag=self.repositories.sessions.INTERNAL_CONTEXT_COMPRESSION_SESSION_TAG,
             active_session_id=new_active_session_id,
             is_debug=previous_session.is_debug,
             workspace_id=previous_session.workspace_id,
@@ -1191,7 +1207,9 @@ class ContextCompressionMiddleware(AgentMiddleware):
             "[ContextCompressionMiddleware] 压缩暂存查询 | "
             f"原始会话ID={original_session_id} | 活动会话ID={active_session_id} | "
             f"结果=命中待应用暂存 | 暂存记录ID={staging.id} | "
-            f"代次={staging.generation} | 锚点消息ID={staging.anchor_message_id}"
+            f"代次={staging.generation} | 策略={staging.staging_strategy} | "
+            f"锚点消息ID={staging.anchor_message_id} | "
+            f"源边界消息ID={staging.source_last_message_id}"
         )
 
     @staticmethod

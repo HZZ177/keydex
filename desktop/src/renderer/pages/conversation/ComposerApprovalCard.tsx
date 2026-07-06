@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CommandApprovalDecisionPayload,
   CommandApprovalRequest,
+  CommandApprovalTrustScope,
   TrustedCommandRuleMatchType,
 } from "@/types/protocol";
 
@@ -18,7 +19,20 @@ export interface ComposerApprovalCardProps {
   onSubmit: (decision: CommandApprovalDecisionPayload) => Promise<void> | void;
 }
 
-type ApprovalChoice = "approve_once" | "approve_exact" | "approve_prefix" | "reject";
+type ApprovalChoice =
+  | "approve_once"
+  | "approve_exact"
+  | "approve_prefix"
+  | "approve_session"
+  | "approve_persistent_tool"
+  | "approve_server_readonly"
+  | "reject";
+
+interface ApprovalChoiceOption {
+  id: ApprovalChoice;
+  label: string;
+  title: string;
+}
 
 const REJECT_TEXTAREA_MIN_HEIGHT = 22;
 const REJECT_TEXTAREA_MAX_HEIGHT = 108;
@@ -44,8 +58,19 @@ export function ComposerApprovalCard({
   const commandCollapseTimerRef = useRef<number | null>(null);
   const rejectTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const rejectMotion = useDeferredUnmount<HTMLSpanElement>(selectedChoice === "reject", 180, 220);
-  const command = stringValue(approval.details.command);
-  const cwd = meaningfulCwd(approval.details.cwd);
+  const mcpToolApproval = isMcpToolApproval(approval);
+  const mcpSamplingApproval = isMcpSamplingApproval(approval);
+  const mcpApproval = mcpToolApproval || mcpSamplingApproval;
+  const command = mcpToolApproval
+    ? mcpArgumentsPreview(approval)
+    : mcpSamplingApproval
+      ? mcpSamplingPreview(approval)
+      : stringValue(approval.details.command);
+  const cwd = mcpToolApproval
+    ? mcpTargetLabel(approval)
+    : mcpSamplingApproval
+      ? mcpSamplingTargetLabel(approval)
+      : meaningfulCwd(approval.details.cwd);
   const exactRule = stringValue(approval.details.suggested_exact_rule) || command;
   const prefixRule = stringValue(approval.details.suggested_prefix_rule) || command;
   const description = meaningfulDescription(approval.description);
@@ -64,27 +89,32 @@ export function ComposerApprovalCard({
     ],
     [exactRule, prefixRule],
   );
-  const choices = useMemo(
-    () => [
-      {
-        id: "approve_once" as const,
-        label: "是",
-        title: "",
-      },
-      ...(allowPersistentTrust
-        ? persistentActions.map((action) => ({
-            id: action.matchType === "exact" ? ("approve_exact" as const) : ("approve_prefix" as const),
-            label: action.label,
-            title: action.hint,
-          }))
-        : []),
-      {
-        id: "reject" as const,
-        label: "否，请告知 agent 如何调整",
-        title: "",
-      },
-    ],
-    [allowPersistentTrust, persistentActions],
+  const choices = useMemo<ApprovalChoiceOption[]>(
+    () =>
+      mcpApproval
+        ? mcpSamplingApproval
+          ? mcpSamplingApprovalChoices()
+          : mcpApprovalChoices(mcpTrustOptions(approval))
+        : [
+            {
+              id: "approve_once",
+              label: "是",
+              title: "",
+            },
+            ...(allowPersistentTrust
+              ? persistentActions.map((action) => ({
+                  id: action.matchType === "exact" ? ("approve_exact" as const) : ("approve_prefix" as const),
+                  label: action.label,
+                  title: action.hint,
+                }))
+              : []),
+            {
+              id: "reject",
+              label: "否，请告知 agent 如何调整",
+              title: "",
+            },
+          ],
+    [allowPersistentTrust, approval, mcpApproval, mcpSamplingApproval, persistentActions],
   );
 
   const clearCommandAnimationTimers = useCallback(() => {
@@ -192,7 +222,12 @@ export function ComposerApprovalCard({
   }, [moveSelectedChoice]);
 
   return (
-    <section className={styles.card} aria-label="命令执行审批" data-testid="composer-approval-card" ref={cardRef}>
+    <section
+      className={styles.card}
+      aria-label={mcpSamplingApproval ? "MCP Sampling 审批" : mcpToolApproval ? "MCP 工具审批" : "命令执行审批"}
+      data-testid="composer-approval-card"
+      ref={cardRef}
+    >
       <header className={styles.header}>
         <span className={styles.approvalIcon} aria-hidden="true">
           <ShieldCheck size={15} strokeWidth={2.2} />
@@ -224,7 +259,11 @@ export function ComposerApprovalCard({
         ) : null}
       </div>
 
-      <div className={styles.actions} role="radiogroup" aria-label="命令审批选项">
+      <div
+        className={styles.actions}
+        role="radiogroup"
+        aria-label={mcpSamplingApproval ? "MCP Sampling 审批选项" : mcpToolApproval ? "MCP 工具审批选项" : "命令审批选项"}
+      >
         {choices.map((choice, index) => {
           const selected = choice.id === selectedChoice;
           if (choice.id === "reject") {
@@ -415,6 +454,24 @@ function meaningfulDescription(value: unknown): string {
 }
 
 function decisionFromChoice(choice: ApprovalChoice, rejectMessage: string): CommandApprovalDecisionPayload {
+  if (choice === "approve_session") {
+    return {
+      decision: "approved",
+      trust_scope: "session",
+    };
+  }
+  if (choice === "approve_persistent_tool") {
+    return {
+      decision: "approved",
+      trust_scope: "persistent_tool",
+    };
+  }
+  if (choice === "approve_server_readonly") {
+    return {
+      decision: "approved",
+      trust_scope: "server_readonly",
+    };
+  }
   if (choice === "approve_exact") {
     return {
       decision: "approved",
@@ -441,4 +498,133 @@ function decisionFromChoice(choice: ApprovalChoice, rejectMessage: string): Comm
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function isMcpToolApproval(approval: CommandApprovalRequest): boolean {
+  return approval.kind === "mcp_tool_call" || stringValue(approval.details.approval_kind) === "mcp_tool_call";
+}
+
+function isMcpSamplingApproval(approval: CommandApprovalRequest): boolean {
+  return approval.kind === "mcp_sampling" || stringValue(approval.details.approval_kind) === "mcp_sampling";
+}
+
+function mcpTrustOptions(approval: CommandApprovalRequest): CommandApprovalTrustScope[] {
+  const raw = approval.details.trust_options;
+  if (!Array.isArray(raw)) {
+    return ["once"];
+  }
+  const allowed = new Set<CommandApprovalTrustScope>(["once", "session", "persistent_tool", "server_readonly"]);
+  const options = raw
+    .map((value) => stringValue(value))
+    .filter((value): value is CommandApprovalTrustScope => allowed.has(value as CommandApprovalTrustScope));
+  return options.includes("once") ? options : ["once", ...options];
+}
+
+function mcpSamplingApprovalChoices(): ApprovalChoiceOption[] {
+  return [
+    {
+      id: "approve_once",
+      label: "允许本次 Sampling",
+      title: "",
+    },
+    {
+      id: "reject",
+      label: "拒绝，请告知 agent 如何调整",
+      title: "",
+    },
+  ];
+}
+
+function mcpApprovalChoices(options: CommandApprovalTrustScope[]): ApprovalChoiceOption[] {
+  const available = new Set(options);
+  const choices: ApprovalChoiceOption[] = [
+    {
+      id: "approve_once",
+      label: "允许本次",
+      title: "",
+    },
+  ];
+  if (available.has("session")) {
+    choices.push({
+      id: "approve_session",
+      label: "允许并信任本会话",
+      title: "当前会话内同一 MCP 工具不再重复询问",
+    });
+  }
+  if (available.has("persistent_tool")) {
+    choices.push({
+      id: "approve_persistent_tool",
+      label: "持久信任该 MCP 工具",
+      title: "全局信任当前 server 的同名 MCP 工具",
+    });
+  }
+  if (available.has("server_readonly")) {
+    choices.push({
+      id: "approve_server_readonly",
+      label: "信任该服务只读工具",
+      title: "仅适用于服务声明为只读且非 open world 的工具",
+    });
+  }
+  choices.push({
+    id: "reject",
+    label: "拒绝，请告知 agent 如何调整",
+    title: "",
+  });
+  return choices;
+}
+
+function mcpSamplingTargetLabel(approval: CommandApprovalRequest): string {
+  const server = stringValue(approval.details.server_name) || stringValue(approval.server_name) || stringValue(approval.details.server_id) || stringValue(approval.server_id);
+  const model =
+    stringValue(approval.details.model) ||
+    stringValue(approval.details.requested_model) ||
+    stringValue(approval.details.model_policy);
+  return [server, model].filter(Boolean).join(" / ");
+}
+
+function mcpSamplingPreview(approval: CommandApprovalRequest): string {
+  const preview = approval.details.arguments_preview ?? approval.details.messages_preview;
+  if (preview !== undefined && preview !== null) {
+    if (typeof preview === "string") {
+      return preview;
+    }
+    try {
+      return JSON.stringify(preview, null, 2);
+    } catch {
+      return String(preview);
+    }
+  }
+  const maxTokens = stringValue(approval.details.max_tokens);
+  const messageCount = stringValue(approval.details.message_count);
+  return [
+    "MCP Sampling",
+    messageCount ? `messages: ${messageCount}` : "",
+    maxTokens ? `max_tokens: ${maxTokens}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function mcpTargetLabel(approval: CommandApprovalRequest): string {
+  const server = stringValue(approval.details.server_name) || stringValue(approval.server_name) || stringValue(approval.details.server_id) || stringValue(approval.server_id);
+  const tool =
+    stringValue(approval.details.raw_tool_name) ||
+    stringValue(approval.raw_tool_name) ||
+    stringValue(approval.details.tool_name) ||
+    stringValue(approval.details.model_tool_name) ||
+    stringValue(approval.model_tool_name);
+  return [server, tool].filter(Boolean).join(" / ");
+}
+
+function mcpArgumentsPreview(approval: CommandApprovalRequest): string {
+  const preview = approval.details.arguments_preview;
+  if (preview === undefined || preview === null) {
+    return stringValue(approval.details.model_tool_name) || stringValue(approval.model_tool_name) || "MCP 工具调用";
+  }
+  if (typeof preview === "string") {
+    return preview;
+  }
+  try {
+    return JSON.stringify(preview, null, 2);
+  } catch {
+    return String(preview);
+  }
 }

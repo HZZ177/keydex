@@ -83,7 +83,13 @@ export interface RuntimeEvent {
 }
 
 export type ApprovalDecision = "approved" | "rejected";
-export type ApprovalKind = "exec" | "file_change" | "read_external" | "write_external";
+export type ApprovalKind =
+  | "exec"
+  | "file_change"
+  | "read_external"
+  | "write_external"
+  | "mcp_tool_call"
+  | "mcp_sampling";
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "cancelled";
 
 export interface ApprovalRequest {
@@ -124,6 +130,574 @@ export interface ToolResult {
   model_content: string;
   ui_payload: Record<string, unknown>;
   metadata: Record<string, unknown>;
+}
+
+export type McpTransport = "stdio" | "streamable_http" | "sse";
+export type McpServerStatus =
+  | "unknown"
+  | "online"
+  | "offline"
+  | "auth_required"
+  | "error"
+  | "disabled"
+  | "refreshing";
+export type McpApprovalMode = "auto" | "prompt" | "approve" | "deny" | "inherit";
+export type McpToolExposureMode =
+  | "allow_all_except_disabled"
+  | "allow_selected_only"
+  | "read_only_auto";
+export type McpPromptExposureMode = "hidden" | "manual" | "slash_command" | "agent_selectable";
+export type McpRiskLevel = "low" | "medium" | "high" | "unknown";
+export type McpAuthType = "none" | "header_token" | "bearer_env" | "oauth";
+export type McpRestartPolicy = "never" | "on_failure" | "always";
+export type McpConnectMode = "on_demand" | "on_startup";
+export type McpToolSchemaChangeAction = "keep_enabled" | "require_review" | "disable";
+export type McpToolDiscoveryStatus = "new" | "unchanged" | "removed" | "schema_changed";
+export type McpToolEffectiveState =
+  | "enabled"
+  | "disabled_persistently"
+  | "disabled_for_session"
+  | "disabled_by_server"
+  | "server_offline"
+  | "approval_required"
+  | "removed"
+  | "schema_changed";
+export type McpPromptDiscoveryStatus = "available" | "removed" | "error" | "unknown";
+export type McpToolBulkPolicyAction =
+  | "enable_selected"
+  | "disable_selected"
+  | "keep_selected_only"
+  | "enable_read_only"
+  | "disable_write_tools"
+  | "prompt_all";
+export type McpImportSourceType = "keydex" | "codex" | "claude";
+export type McpImportConflictStrategy = "skip" | "rename" | "error";
+export type McpTrustRuleKind = "server_readonly" | "tool" | "tool_with_params" | "deny_tool";
+export type McpTrustRuleScope = "session" | "global";
+export type McpTrustApprovalMode = "approve" | "deny";
+export type McpErrorCode =
+  | "mcp_disabled"
+  | "server_not_found"
+  | "server_disabled"
+  | "server_offline"
+  | "auth_required"
+  | "tool_not_found"
+  | "tool_disabled_by_policy"
+  | "tool_disabled_by_session"
+  | "approval_required"
+  | "approval_rejected"
+  | "policy_denied"
+  | "timeout"
+  | "cancelled"
+  | "protocol_error"
+  | "validation_error"
+  | "result_too_large"
+  | "resource_reserved"
+  | "internal_error";
+
+export interface McpServerAuthSummary {
+  auth_type: McpAuthType;
+  headers_configured: boolean;
+  env_headers_configured: boolean;
+  bearer_token_env_var?: string | null;
+  secret_ref_keys: string[];
+  oauth_configured: boolean;
+  oauth_resource?: string | null;
+  oauth_scopes: string[];
+}
+
+export interface McpServerSummary {
+  id: string;
+  name: string;
+  description?: string | null;
+  enabled: boolean;
+  required: boolean;
+  transport: McpTransport;
+  status: McpServerStatus;
+  tools_count: number;
+  prompts_count: number;
+  resources_reserved: boolean;
+  resources_reserved_count?: number;
+  last_connected_at?: string | null;
+  last_refresh_at?: string | null;
+  last_error_code?: string | null;
+  last_error_message?: string | null;
+  last_error_detail?: Record<string, unknown> | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface McpServerDetailResponse extends McpServerSummary {
+  auth?: McpServerAuthSummary;
+  command?: string | null;
+  args?: string[];
+  cwd?: string | null;
+  url?: string | null;
+  sse_url?: string | null;
+  message_url?: string | null;
+  inherit_environment?: boolean;
+  env_keys?: string[];
+  header_keys?: string[];
+  env_header_keys?: string[];
+  bearer_token_env_var?: string | null;
+  auth_type?: McpAuthType;
+  secret_ref_keys?: string[];
+  oauth_configured?: boolean;
+  oauth_resource?: string | null;
+  oauth_scopes?: string[];
+  startup_timeout_sec: number;
+  tool_timeout_sec: number;
+  read_timeout_sec: number;
+  sse_read_timeout_sec: number;
+  shutdown_timeout_sec: number;
+  restart_policy?: McpRestartPolicy;
+  connect_mode?: McpConnectMode;
+  auto_refresh: boolean;
+  refresh_interval_sec: number;
+  default_tool_exposure_mode: McpToolExposureMode;
+  default_tool_approval_mode: Extract<McpApprovalMode, "auto" | "prompt" | "approve">;
+  supports_parallel_tool_calls?: boolean;
+  elicitation_enabled: boolean;
+  sampling_enabled: boolean;
+  sampling_approval_mode?: "prompt" | "auto" | string | null;
+  sampling_model_policy?: "current_default" | string | null;
+  sampling_max_tokens?: number | null;
+  sampling_audit_detail?: "summary" | "none" | "full" | string | null;
+  prompt_discovery_enabled: boolean;
+  resource_reserved_policy?: Record<string, unknown> | null;
+}
+
+export interface McpToolSummary {
+  id: string;
+  server_id: string;
+  server_name: string;
+  raw_name: string;
+  model_name: string;
+  display_name?: string | null;
+  description?: string | null;
+  input_schema?: Record<string, unknown>;
+  enabled: boolean;
+  hidden: boolean;
+  status?: McpToolDiscoveryStatus | string;
+  discovery_status?: McpToolDiscoveryStatus | string;
+  effective_state: McpToolEffectiveState;
+  risk_level: McpRiskLevel;
+  stored_risk_level?: McpRiskLevel | string;
+  risk_override?: McpRiskLevel | null;
+  approval_mode: McpApprovalMode;
+  effective_approval_mode?: McpApprovalMode;
+  schema_change_action?: McpToolSchemaChangeAction;
+  parameter_constraints?: Record<string, unknown> | null;
+  annotations?: Record<string, unknown>;
+  last_used_at?: string | null;
+  call_count?: number;
+  failure_count?: number;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  removed_at?: string | null;
+}
+
+export interface McpPromptSummary {
+  id: string;
+  server_id: string;
+  server_name: string;
+  raw_name: string;
+  display_name?: string | null;
+  description?: string | null;
+  arguments_schema?: Record<string, unknown>;
+  enabled: boolean;
+  exposure_mode: McpPromptExposureMode;
+  argument_count: number;
+  status?: McpPromptDiscoveryStatus | string;
+  discovery_status: McpPromptDiscoveryStatus;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  removed_at?: string | null;
+}
+
+export interface McpRuntimeSnapshotSummary {
+  id?: string;
+  snapshot_id?: string;
+  session_id: string;
+  turn_id?: string | null;
+  tool_inventory_revision?: number;
+  visible_tools_count?: number;
+  server_status?: Record<string, unknown>;
+  policy_summary?: Record<string, unknown>;
+  servers_total?: number;
+  servers_online?: number;
+  tools_visible?: number;
+  tools_disabled_for_session?: number;
+  pending_approvals?: number;
+  created_at: string;
+}
+
+export interface McpToolEventMetadata {
+  kind: "mcp_tool";
+  snapshot_id?: string;
+  server_id?: string;
+  server_name?: string | null;
+  raw_tool_name?: string;
+  model_tool_name?: string;
+  model_name?: string;
+  risk_level?: McpRiskLevel | string;
+  approval_mode?: McpApprovalMode | string;
+  exposure?: string;
+  call_id?: string | null;
+  annotations?: Record<string, unknown> | null;
+}
+
+export interface McpErrorPayload {
+  code: McpErrorCode;
+  message: string;
+  detail: Record<string, unknown>;
+}
+
+export interface McpServerListResponse {
+  list: McpServerSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface McpServerCreatePayload {
+  name: string;
+  description?: string | null;
+  enabled?: boolean;
+  required?: boolean;
+  transport: McpTransport;
+  command?: string | null;
+  args?: string[] | null;
+  cwd?: string | null;
+  env?: Record<string, string> | null;
+  inherit_environment?: boolean;
+  url?: string | null;
+  sse_url?: string | null;
+  message_url?: string | null;
+  headers?: Record<string, unknown> | null;
+  env_headers?: Record<string, string> | null;
+  bearer_token_env_var?: string | null;
+  auth_type?: McpAuthType;
+  secret_refs?: Record<string, string> | null;
+  oauth_config?: Record<string, unknown> | null;
+  oauth_resource?: string | null;
+  oauth_scopes?: string[] | null;
+  startup_timeout_sec?: number;
+  tool_timeout_sec?: number;
+  read_timeout_sec?: number;
+  sse_read_timeout_sec?: number;
+  shutdown_timeout_sec?: number;
+  restart_policy?: McpRestartPolicy;
+  connect_mode?: McpConnectMode;
+  auto_refresh?: boolean;
+  refresh_interval_sec?: number;
+  default_tool_exposure_mode?: McpToolExposureMode;
+  default_tool_approval_mode?: Extract<McpApprovalMode, "auto" | "prompt" | "approve">;
+  supports_parallel_tool_calls?: boolean;
+  elicitation_enabled?: boolean;
+  sampling_enabled?: boolean;
+  prompt_discovery_enabled?: boolean;
+  resource_reserved_policy?: Record<string, unknown> | null;
+}
+
+export type McpServerUpdatePayload = Partial<McpServerCreatePayload>;
+
+export interface McpRefreshResult {
+  ok: boolean;
+  server_id?: string;
+  status?: McpServerStatus | string;
+  tools_count?: number;
+  prompts_count?: number;
+  resources_reserved_count?: number;
+  removed_tools_count?: number;
+  removed_prompts_count?: number;
+  schema_changed_tools_count?: number;
+  schema_changed_prompts_count?: number;
+  refresh_revision?: number;
+  duration_ms?: number;
+  error?: McpErrorPayload;
+}
+
+export interface McpRefreshAllResponse {
+  ok: boolean;
+  list: McpRefreshResult[];
+  total: number;
+}
+
+export interface McpConnectionTestResponse {
+  ok: boolean;
+  server_id: string;
+  status: McpServerStatus | string;
+  protocol_version?: string;
+  server_info?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
+  error?: McpErrorPayload;
+}
+
+export interface McpToolListResponse {
+  list: McpToolSummary[];
+  total: number;
+  limit: number;
+}
+
+export interface McpToolPolicyUpdatePayload {
+  enabled?: boolean | null;
+  hidden?: boolean | null;
+  approval_mode?: McpApprovalMode | null;
+  risk_override?: McpRiskLevel | null;
+  parameter_constraints?: Record<string, unknown> | null;
+  schema_change_action?: McpToolSchemaChangeAction | null;
+}
+
+export interface McpToolBulkPolicyPayload {
+  action: McpToolBulkPolicyAction;
+  tool_ids?: string[];
+  raw_tool_names?: string[];
+}
+
+export interface McpToolBulkPolicyResponse {
+  server_id: string;
+  action: McpToolBulkPolicyAction;
+  updated_count: number;
+  tools: McpToolSummary[];
+}
+
+export interface McpPromptListResponse {
+  list: McpPromptSummary[];
+  total: number;
+  limit: number;
+}
+
+export interface McpPromptPolicyUpdatePayload {
+  enabled?: boolean | null;
+  exposure_mode?: McpPromptExposureMode | null;
+}
+
+export interface McpPromptMaterializeResponse {
+  id: string;
+  server_id: string;
+  server_name: string;
+  raw_name: string;
+  display_name?: string | null;
+  arguments: Record<string, unknown>;
+  messages: Array<Record<string, unknown>>;
+}
+
+export interface McpSessionToolOverride {
+  id: string;
+  session_id: string;
+  server_id: string;
+  raw_tool_name: string;
+  enabled: boolean;
+  reason?: string | null;
+  created_at: string;
+  expires_at?: string | null;
+}
+
+export interface McpRuntimeCallSummary {
+  call_id: string;
+  session_id?: string | null;
+  snapshot_id: string;
+  server_id: string;
+  server_name: string;
+  raw_tool_name: string;
+  model_name: string;
+  risk_level: McpRiskLevel | string;
+  approval_mode: McpApprovalMode | string;
+  started_at: string;
+  elapsed_ms: number;
+}
+
+export interface McpRuntimeStatusResponse {
+  session_id: string;
+  manager: {
+    enabled: boolean;
+    runtime_status: string;
+    started: boolean;
+    active_client_count: number;
+  };
+  snapshot: McpRuntimeSnapshotSummary | null;
+  servers: McpServerSummary[];
+  tools: McpToolSummary[];
+  overrides: McpSessionToolOverride[];
+  running_calls: McpRuntimeCallSummary[];
+  pending_approvals: number;
+  summary: {
+    servers_total: number;
+    servers_online: number;
+    tools_total: number;
+    tools_enabled: number;
+    running_calls: number;
+    pending_approvals: number;
+  };
+}
+
+export interface McpSessionToolOverridePayload {
+  enabled: boolean;
+  server_id?: string | null;
+  reason?: string | null;
+}
+
+export interface McpSessionToolOverrideResponse {
+  session_id: string;
+  override?: McpSessionToolOverride;
+  deleted?: boolean;
+  tool: McpToolSummary;
+  apply_timing?: Record<string, unknown>;
+  applies_to_current_run?: boolean;
+}
+
+export interface McpRuntimeCallCancelResponse {
+  call_id: string;
+  cancelled: boolean;
+  reason?: string;
+  server_id?: string;
+  raw_tool_name?: string;
+}
+
+export type McpElicitationStatus = "pending" | "submitted" | "cancelled" | "timeout";
+
+export interface McpElicitationRequest {
+  elicitation_id: string;
+  id?: string;
+  session_id: string;
+  server_id: string;
+  server_name?: string | null;
+  raw_tool_name?: string | null;
+  title: string;
+  schema: Record<string, unknown>;
+  status?: McpElicitationStatus;
+  values?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface McpElicitationResolvePayload {
+  elicitation_id: string;
+  values?: Record<string, unknown>;
+  cancelled?: boolean;
+  user_id?: string | null;
+}
+
+export interface McpImportPreviewServer {
+  name: string;
+  transport: McpTransport | string;
+  enabled: boolean;
+  conflict: boolean;
+  action: "create" | "skip" | "rename" | "error" | string;
+  missing_secrets: string[];
+  unknown_fields: string[];
+}
+
+export interface McpImportPreviewResponse {
+  source_type: McpImportSourceType;
+  conflict_strategy: McpImportConflictStrategy;
+  server_count: number;
+  servers: McpImportPreviewServer[];
+  conflicts: string[];
+  missing_secrets: string[];
+  unknown_fields: string[];
+  valid: boolean;
+  applied?: boolean;
+  created_count?: number;
+  skipped_count?: number;
+  created?: Array<{ id: string; name: string; transport: McpTransport | string }>;
+  skipped?: string[];
+}
+
+export interface McpImportPayload {
+  source_type: McpImportSourceType;
+  config: Record<string, unknown>;
+  confirm?: boolean;
+  conflict_strategy?: McpImportConflictStrategy;
+}
+
+export interface McpExportPayload {
+  include_trust_rules?: boolean;
+}
+
+export interface McpExportResponse {
+  format: "keydex.mcp.v1" | string;
+  servers: Array<Record<string, unknown>>;
+  tool_policies: Array<Record<string, unknown>>;
+  prompt_policies: Array<Record<string, unknown>>;
+  trust_rules?: Array<Record<string, unknown>>;
+}
+
+export interface McpAuditRecord {
+  id: string;
+  event_type: string;
+  server_id?: string | null;
+  raw_tool_name?: string | null;
+  prompt_name?: string | null;
+  session_id?: string | null;
+  turn_id?: string | null;
+  call_id?: string | null;
+  approval_id?: string | null;
+  actor?: string | null;
+  status?: string | null;
+  duration_ms?: number | null;
+  summary?: string | null;
+  detail?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface McpAuditListResponse {
+  list: McpAuditRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface McpTrustRule {
+  id: string;
+  rule_kind: McpTrustRuleKind;
+  scope: McpTrustRuleScope;
+  approval_mode: McpTrustApprovalMode;
+  hit_count: number;
+  created_at: string;
+  updated_at: string;
+  server_id?: string | null;
+  raw_tool_name?: string | null;
+  session_id?: string | null;
+  condition?: Record<string, unknown> | null;
+  created_from_approval_id?: string | null;
+  expires_at?: string | null;
+  last_hit_at?: string | null;
+}
+
+export interface McpTrustRulePayload {
+  rule_kind: McpTrustRuleKind;
+  scope: McpTrustRuleScope;
+  approval_mode: McpTrustApprovalMode;
+  server_id?: string | null;
+  raw_tool_name?: string | null;
+  session_id?: string | null;
+  condition?: Record<string, unknown> | null;
+  expires_at?: string | null;
+}
+
+export interface McpOAuthStartPayload {
+  redirect_uri?: string | null;
+}
+
+export interface McpOAuthStartResponse {
+  server_id: string;
+  auth_url: string;
+  state: string;
+}
+
+export interface McpOAuthCallbackPayload {
+  state: string;
+  code: string;
+}
+
+export interface McpOAuthStatusResponse {
+  server_id: string;
+  status: string;
+  token_configured: boolean;
+  account_label?: string | null;
+  scopes: unknown[];
+  expires_at?: string | null;
 }
 
 export interface ThreadDetail {
@@ -270,7 +844,12 @@ export interface TrustedCommandRule {
 }
 
 export type CommandApprovalDecisionValue = "approved" | "rejected";
-export type CommandApprovalTrustScope = "once" | "persistent";
+export type CommandApprovalTrustScope =
+  | "once"
+  | "persistent"
+  | "session"
+  | "persistent_tool"
+  | "server_readonly";
 
 export interface CommandApprovalRequest {
   id: string;
@@ -291,6 +870,13 @@ export interface CommandApprovalRequest {
   rule_match_type?: TrustedCommandRuleMatchType | null;
   reject_message?: string | null;
   trusted_rule_id?: string | null;
+  metadata?: Record<string, unknown>;
+  server_id?: string | null;
+  server_name?: string | null;
+  raw_tool_name?: string | null;
+  model_tool_name?: string | null;
+  risk_level?: McpRiskLevel | string | null;
+  snapshot_id?: string | null;
   created_at: string;
   resolved_at?: string | null;
 }
@@ -466,6 +1052,12 @@ export const AGENT_CHAT_ACTIONS = [
   "middleware_progress",
   "workspaceSkillsChanged",
   "command_terminated",
+  "mcp_server_status_changed",
+  "mcp_runtime_snapshot_created",
+  "mcp_tool_policy_changed",
+  "mcp_elicitation_requested",
+  "mcp_elicitation_resolved",
+  "mcp_oauth_required",
 ] as const;
 
 export type AgentChatAction = (typeof AGENT_CHAT_ACTIONS)[number];
@@ -495,6 +1087,12 @@ export const AGENT_REPLAY_ACTIONS = [
   "thread_task_status",
   "reasoning",
   "middleware_progress",
+  "mcp_server_status_changed",
+  "mcp_runtime_snapshot_created",
+  "mcp_tool_policy_changed",
+  "mcp_elicitation_requested",
+  "mcp_elicitation_resolved",
+  "mcp_oauth_required",
 ] as const;
 
 export type AgentReplayAction = (typeof AGENT_REPLAY_ACTIONS)[number];
@@ -521,6 +1119,7 @@ export const AGENT_INBOUND_ACTIONS = [
   "ping",
   "get_status",
   "terminate_command",
+  "mcp_elicitation_resolved",
 ] as const;
 
 export type AgentInboundAction = (typeof AGENT_INBOUND_ACTIONS)[number];
@@ -535,6 +1134,7 @@ export type AgentChatRole =
   | "subagent"
   | "reasoning"
   | "approval"
+  | "mcp_elicitation"
   | "error"
   | "turn"
   | "thread_task";
@@ -681,6 +1281,26 @@ export interface AgentSessionFork {
 
 export interface AgentSessionResponse {
   session: AgentSession;
+}
+
+export type ManualContextCompressionMode = "light" | "deep";
+
+export interface ManualContextCompressionResponse {
+  success: boolean;
+  mode: ManualContextCompressionMode;
+  session_id: string;
+  active_session_id: string | null;
+  target_session_id: string | null;
+  staging_id: number | null;
+  generation: number | null;
+  staging_strategy: "anchor_replacement" | "full_replacement" | string | null;
+  anchor_message_id: string | null;
+  source_last_message_id: string | null;
+  notice_id: string | null;
+  reason: string | null;
+  compression_message_count: number;
+  retain_message_count: number;
+  total_message_count: number;
 }
 
 export interface AgentSessionBranchSource {
@@ -918,6 +1538,14 @@ export interface AgentToolEventData {
   run_id: string;
   tool_call_id?: string;
   parent_run_id?: string | null;
+  kind?: "mcp_tool" | string;
+  server_id?: string;
+  server_name?: string | null;
+  raw_tool_name?: string;
+  model_tool_name?: string;
+  risk_level?: McpRiskLevel | string;
+  snapshot_id?: string;
+  approval_mode?: McpApprovalMode | string;
   tool?: string;
   tool_name?: string;
   params?: unknown;
@@ -999,10 +1627,13 @@ export interface AgentMiddlewareProgressData {
   error?: string;
   error_type?: string;
   compression_mode?: "background" | "emergency" | string;
+  manual_mode?: ManualContextCompressionMode | string;
   notice_id?: string;
   reason?: string | null;
   staging_id?: number | string | null;
+  staging_strategy?: "anchor_replacement" | "full_replacement" | string | null;
   anchor_message_id?: string | null;
+  source_last_message_id?: string | null;
   trace_id?: string | null;
   timestamp_ms?: number;
   snapshot_hook?: string;

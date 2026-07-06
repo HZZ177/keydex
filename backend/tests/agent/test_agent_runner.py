@@ -22,6 +22,7 @@ class RecordingAgentFactory(AgentFactory):
         self.model = model
         self.requested_models: list[str] = []
         self.created_tool_counts: list[int] = []
+        self.created_tool_names: list[list[str]] = []
         self.created_middleware: list[tuple[Any, ...]] = []
 
     def get_or_create_llm(
@@ -49,6 +50,7 @@ class RecordingAgentFactory(AgentFactory):
         name: str = "desktop_agent",
     ) -> Any:
         self.created_tool_counts.append(len(tools))
+        self.created_tool_names.append([str(getattr(tool, "name", "")) for tool in tools])
         self.created_middleware.append(middleware)
         return super().create_agent(
             model=model,
@@ -246,6 +248,36 @@ def test_agent_runner_exports_registered_tools_to_langchain_agent(tmp_path) -> N
     assert graph is not None
     assert runner.tool_registry.names() == ["read_file"]
     assert factory.created_tool_counts == [1]
+
+
+def test_agent_runner_merges_runtime_tools_with_registered_tools(tmp_path) -> None:
+    runner, factory = _runner(tmp_path, registry=_tool_registry())
+    runtime_tool = FunctionTool(
+        name="mcp__srv__search",
+        description="MCP search",
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        handler=lambda args, context: {"query": args["query"]},
+    )
+
+    runner.create_agent(
+        model="qwen-coder",
+        system_prompt="自定义提示",
+        tool_context=ToolExecutionContext(
+            session_id="ses_1",
+            user_id="user_1",
+            workspace_root=tmp_path,
+            turn_index=1,
+            trace_id="trace_1",
+        ),
+        runtime_tools=[runtime_tool],
+    )
+
+    assert runner.tool_registry.names() == ["read_file"]
+    assert factory.created_tool_names == [["read_file", "mcp__srv__search"]]
 
 
 def test_agent_runner_can_disable_registered_tools(tmp_path) -> None:

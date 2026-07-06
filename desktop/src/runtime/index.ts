@@ -18,6 +18,7 @@ export { createWorkspaceRuntime } from "./workspace";
 export { createWorkspacesRuntime } from "./workspaces";
 export { createDesktopPickerRuntime } from "./desktopPicker";
 export { createAttachmentsRuntime } from "./attachments";
+export { createMcpRuntime } from "./mcp";
 export type { HttpClientOptions, RequestOptions } from "./httpClient";
 export type { WebSocketConstructor, WebSocketLike, WsClientOptions, WsConnectionStatus } from "./wsClient";
 export type { RuntimeErrorEnvelope, RuntimeHttpErrorParams } from "./errors";
@@ -58,6 +59,7 @@ export type {
   ListSessionsOptions,
   LoadHistoryOptions,
   LoadToolDetailsOptions,
+  ManualContextCompressionPayload,
   UpdateSessionPayload,
 } from "./conversation";
 export type {
@@ -104,3 +106,11 @@ export type {
   DesktopPickerRuntime,
   DesktopPickerRuntimeOptions,
 } from "./desktopPicker";
+export type {
+  McpAuditListOptions,
+  McpPromptListOptions,
+  McpRuntime,
+  McpServerListOptions,
+  McpToolListOptions,
+  McpTrustRuleListOptions,
+} from "./mcp";

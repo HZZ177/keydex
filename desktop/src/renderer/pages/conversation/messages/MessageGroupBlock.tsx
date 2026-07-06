@@ -116,6 +116,7 @@ type GroupIconKind =
   | "edit"
   | "create"
   | "delete"
+  | "mcp"
   | "other";
 
 function groupIconKind(
@@ -161,6 +162,8 @@ function groupIcon(kind: GroupIconKind) {
       return <FilePenLine size={16} />;
     case "delete":
       return <FileX2 size={16} />;
+    case "mcp":
+      return <Wrench size={16} />;
     case "other":
       return <Wrench size={16} />;
     case "done":
@@ -236,6 +239,9 @@ function summarizeFileChange(message: ConversationMessage): GroupSummary {
 function toolIconKindFromMessage(message: ConversationMessage): GroupIconKind {
   if (message.kind === "command") {
     return "command";
+  }
+  if (isMcpToolMessage(message)) {
+    return "mcp";
   }
   const toolName = toolNameFromMessage(message);
   if (isReadTool(toolName)) {
@@ -317,6 +323,10 @@ function toolActivityLabel(
       stats.commands[countState] += 1;
       return;
     }
+    if (isMcpToolMessage(message)) {
+      stats.mcpTools[countState] += 1;
+      return;
+    }
     const toolName = toolNameFromMessage(message);
     const args = toolArgsFromMessage(message);
     const target = toolTarget(args, index);
@@ -356,6 +366,7 @@ function toolActivityLabel(
     ...countNumberPhrases("contentSearches", stats.contentSearches),
     ...countNumberPhrases("searches", stats.searches),
     ...countNumberPhrases("commands", stats.commands),
+    ...countNumberPhrases("mcpTools", stats.mcpTools),
     ...countSetPhrases("createdFiles", stats.createdFiles),
     ...countSetPhrases("editedFiles", stats.editedFiles),
     ...countSetPhrases("deletedFiles", stats.deletedFiles),
@@ -394,6 +405,7 @@ type ToolSummaryKind =
   | "contentSearches"
   | "searches"
   | "commands"
+  | "mcpTools"
   | "createdFiles"
   | "editedFiles"
   | "deletedFiles"
@@ -452,6 +464,8 @@ function countPhrase(kind: ToolSummaryKind, count: number, state: CountState): s
       return `${verb} ${count} 次`;
     case "commands":
       return `${verb} ${count} 条命令`;
+    case "mcpTools":
+      return `${verb} ${count} 个 MCP 工具`;
     case "createdFiles":
     case "editedFiles":
     case "deletedFiles":
@@ -477,6 +491,8 @@ function verbForKind(kind: ToolSummaryKind, state: CountState): string {
       return failed ? "搜索失败" : running ? "正在搜索" : "搜索了";
     case "commands":
       return failed ? "运行失败" : running ? "正在运行" : "已运行";
+    case "mcpTools":
+      return failed ? "调用失败" : running ? "正在调用" : "调用了";
     case "createdFiles":
       return failed ? "创建失败" : running ? "正在创建" : "创建了";
     case "editedFiles":
@@ -499,6 +515,7 @@ function createToolStats() {
     contentSearches: createStateNumberBuckets(),
     searches: createStateNumberBuckets(),
     commands: createStateNumberBuckets(),
+    mcpTools: createStateNumberBuckets(),
     createdFiles: createStateSetBuckets(),
     editedFiles: createStateSetBuckets(),
     deletedFiles: createStateSetBuckets(),
@@ -559,6 +576,20 @@ function countStateFromSummary(state: GroupSummary["state"]): CountState {
 function toolNameFromMessage(message: ConversationMessage): string {
   const call = asRecord(message.payload.call);
   return stringValue(call?.name) || stringValue(message.payload.tool) || stringValue(message.payload.tool_name) || message.content;
+}
+
+function isMcpToolMessage(message: ConversationMessage): boolean {
+  if (message.kind !== "tool") {
+    return false;
+  }
+  const metadata = asRecord(message.payload.metadata);
+  const mcp = asRecord(metadata?.mcp) ?? asRecord(message.payload.mcp);
+  const toolName = toolNameFromMessage(message);
+  return (
+    toolName.startsWith("mcp__") ||
+    mcp?.kind === "mcp_tool" ||
+    Boolean(mcp?.server_id || mcp?.serverName || mcp?.raw_tool_name || mcp?.model_tool_name)
+  );
 }
 
 function toolArgsFromMessage(message: ConversationMessage): Record<string, unknown> | null {

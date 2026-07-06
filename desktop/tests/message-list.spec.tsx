@@ -109,7 +109,7 @@ describe("MessageList", () => {
       source_message_event_id: "source-event",
       target_message_event_id: "target-event",
     };
-    const compressionNotice = message("m1", "context_compression", "无感压缩已完成");
+    const compressionNotice = message("m1", "context_compression", "上下文压缩已完成");
     const cancelledNotice = message("m2", "cancelled", "对话已取消");
     const retryNotice = message("m4", "llm_retry", "LLM 请求正在重试 1/3");
     const threadTaskNotice = goalTurnMarker("m5", 2);
@@ -140,6 +140,84 @@ describe("MessageList", () => {
     expect(screen.getByTestId("thread-task-continuation-notice").getAttribute("data-notice-kind")).toBe("thread_task_continue");
     expect(screen.getByTestId("conversation-cancelled-notice").querySelector("svg")).toBeNull();
     expect(screen.getByTestId("message-fork-marker").querySelector("svg")).toBeNull();
+  });
+
+  it("renders the shared loading icon only for running compression notices", () => {
+    const runningCompression = {
+      ...message("m1", "context_compression", "正在全量压缩上下文"),
+      status: "running" as const,
+      payload: {
+        metadata: {
+          compression: {
+            kind: "context_compression",
+            stage: "manual_deep_started",
+            mode: "manual_deep",
+            notice_id: "context-compression:manual:deep:thread-1:run-1",
+          },
+        },
+      },
+    };
+    const completedCompression = {
+      ...message("m2", "context_compression", "全量压缩已完成"),
+      payload: {
+        metadata: {
+          compression: {
+            kind: "context_compression",
+            stage: "manual_deep_completed",
+            mode: "manual_deep",
+            notice_id: "context-compression:manual:deep:thread-1:run-1",
+          },
+        },
+      },
+    };
+    const { rerender } = render(<MessageList messages={[runningCompression]} />);
+
+    expect(screen.getByTestId("context-compression-notice").getAttribute("data-state")).toBe("running");
+    expect(screen.getByTestId("context-compression-notice").querySelector("svg")).not.toBeNull();
+
+    rerender(<MessageList messages={[completedCompression]} />);
+
+    expect(screen.getByTestId("context-compression-notice").getAttribute("data-state")).toBe("completed");
+    expect(screen.getByTestId("context-compression-notice").querySelector("svg")).toBeNull();
+  });
+
+  it("renders compression notices as timeline events after the previous turn footer", () => {
+    const user = {
+      ...message("m1", "user", "请总结"),
+      payload: { turnIndex: 1, turn_index: 1, messageEventId: "evt-user-1" },
+    };
+    const assistant = {
+      ...message("m2", "assistant", "总结完成"),
+      payload: { turnIndex: 1, turn_index: 1, messageEventId: "evt-assistant-1" },
+    };
+    const compressionNotice = {
+      ...message("m3", "context_compression", "全量压缩已完成"),
+      payload: {
+        turnIndex: 1,
+        turn_index: 1,
+        metadata: {
+          compression: {
+            kind: "context_compression",
+            stage: "manual_deep_completed",
+            mode: "manual_deep",
+            notice_id: "context-compression:manual:deep:thread-1:run-1",
+          },
+        },
+      },
+    };
+    const { container } = render(<MessageList messages={[user, assistant, compressionNotice]} />);
+
+    const turn = screen.getByTestId("message-turn");
+    const timelineEvent = screen.getByTestId("message-timeline-event");
+    const notice = screen.getByTestId("context-compression-notice");
+    const turnFooter = container.querySelector('footer[data-placement="turn"]');
+
+    expect(screen.getAllByTestId("message-turn")).toHaveLength(1);
+    expect(timelineEvent.getAttribute("data-kind")).toBe("context_compression");
+    expect(notice.closest('[data-testid="message-turn"]')).toBeNull();
+    expect(turnFooter).not.toBeNull();
+    expect(turn.contains(turnFooter)).toBe(true);
+    expect(Boolean(turnFooter!.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
   it("renders a goal continuation divider from a turn marker event", () => {
@@ -1451,6 +1529,26 @@ describe("MessageList", () => {
     expect(screen.getByRole("button", { name: "已搜索内容 2 次详情" })).not.toBeNull();
   });
 
+  it("identifies grouped MCP tool activity", () => {
+    render(
+      <MessageList
+        messages={[
+          mcpToolMessage("mcp-1", "search"),
+          mcpToolMessage("mcp-2", "write"),
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "调用了 2 个 MCP 工具详情" })).not.toBeNull();
+    expect(screen.getByTestId("message-group-block").querySelector("[data-icon-kind]")?.getAttribute("data-icon-kind")).toBe("mcp");
+    expect(screen.queryByTestId("tool-call-block")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "调用了 2 个 MCP 工具详情" }));
+    expect(screen.getAllByTestId("tool-call-block")).toHaveLength(2);
+    expect(screen.getByText("MCP · Ticket MCP · search")).not.toBeNull();
+    expect(screen.getByText("MCP · Ticket MCP · write")).not.toBeNull();
+  });
+
   it("uses the concrete tool icon for grouped activity with one tool category", () => {
     render(
       <MessageList
@@ -1866,6 +1964,36 @@ function failedToolMessage(
       result: {
         status: "error",
         error: "失败",
+      },
+    },
+  };
+}
+
+function mcpToolMessage(id: string, rawToolName: string): ConversationMessage {
+  const modelToolName = `mcp__srv_1__${rawToolName}`;
+  return {
+    ...toolMessage(id, modelToolName, { query: "KT-1" }),
+    payload: {
+      call: {
+        id: `call-${id}`,
+        name: modelToolName,
+        arguments: { query: "KT-1" },
+      },
+      result: {
+        status: "success",
+        model_content: "ok",
+      },
+      metadata: {
+        mcp: {
+          kind: "mcp_tool",
+          snapshot_id: "snap-1",
+          server_id: "srv-1",
+          server_name: "Ticket MCP",
+          raw_tool_name: rawToolName,
+          model_tool_name: modelToolName,
+          risk_level: "low",
+          approval_mode: "auto",
+        },
       },
     },
   };

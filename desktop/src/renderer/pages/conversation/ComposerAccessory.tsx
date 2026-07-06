@@ -15,11 +15,13 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
+import type { RuntimeBridge } from "@/runtime";
 import { useRuntimeTypingMetrics } from "@/renderer/hooks/useRuntimeTypingSpeed";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
 import type { ThreadTask, ThreadTaskRun } from "@/types/protocol";
 
+import { McpRuntimePill } from "./McpRuntimePanel";
 import { type FileChangePreview } from "./messages";
 import { LineChangeTicker } from "./messages/LineChangeTicker";
 import styles from "./ComposerAccessory.module.css";
@@ -48,6 +50,7 @@ export function ConversationComposerAccessory({
   messages,
   activeTask = null,
   runningTaskRun = null,
+  mcpRuntime = null,
   onUpdateTask,
   onDeleteTask,
   showScrollToBottom,
@@ -58,6 +61,11 @@ export function ConversationComposerAccessory({
   messages: ConversationMessage[];
   activeTask?: ThreadTask | null;
   runningTaskRun?: ThreadTaskRun | null;
+  mcpRuntime?: {
+    runtime: RuntimeBridge;
+    sessionId: string;
+    runtimeState: string;
+  } | null;
   onUpdateTask?: (taskId: string, payload: ThreadTaskUpdatePayload) => Promise<unknown> | unknown;
   onDeleteTask?: (taskId: string) => Promise<unknown> | unknown;
   showScrollToBottom: boolean;
@@ -85,6 +93,20 @@ export function ConversationComposerAccessory({
             running={activeTaskRunning}
             onUpdateTask={onUpdateTask}
             onDeleteTask={onDeleteTask}
+          />
+        ) : null,
+      },
+      {
+        id: "mcp-runtime",
+        active: Boolean(mcpRuntime),
+        description: "当前会话 MCP runtime",
+        label: "MCP",
+        priority: 120,
+        node: mcpRuntime ? (
+          <McpRuntimePill
+            runtime={mcpRuntime.runtime}
+            sessionId={mcpRuntime.sessionId}
+            runtimeState={mcpRuntime.runtimeState}
           />
         ) : null,
       },
@@ -117,6 +139,7 @@ export function ConversationComposerAccessory({
       activeTask,
       activeTaskRunning,
       fileChangeSummary,
+      mcpRuntime,
       onDeleteTask,
       onFilePreview,
       onUpdateTask,
