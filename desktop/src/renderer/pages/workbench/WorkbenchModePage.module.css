@@ -100,13 +100,243 @@
 }
 
 .canvasContent {
+  --workbench-main-browser-width: 300px;
+  display: grid;
   height: 100%;
   min-width: 0;
   min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.canvasContent[data-main-preview-open="true"] {
+  grid-template-columns: minmax(220px, var(--workbench-main-browser-width)) 7px minmax(0, 1fr);
+}
+
+.browserPane {
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.browserPane[data-main-preview-open="true"] {
+  border-right: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+}
+
+.previewResizeHandle {
+  position: relative;
+  z-index: 1;
+  grid-column: 2;
+  min-width: 0;
+  min-height: 0;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.previewResizeHandle::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  content: "";
+  transition: background-color var(--motion-fast) var(--motion-ease-standard);
+}
+
+.previewResizeHandle:hover::before,
+.previewResizeHandle:focus-visible::before {
+  background: color-mix(in srgb, var(--color-text-3) 42%, transparent);
+}
+
+.previewResizeHandle:focus-visible {
+  outline: none;
 }
 
 .mainPreview {
+  display: grid;
+  grid-column: 3;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 34px minmax(0, 1fr);
+  background: var(--color-bg-elevated);
+  overflow: hidden;
+}
+
+.previewTabStrip {
+  display: flex;
+  min-width: 0;
+  height: 34px;
+  align-items: end;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  background: var(--color-bg-elevated);
+  padding: 4px 8px 0;
+  scrollbar-width: thin;
+}
+
+.previewTab {
+  position: relative;
+  display: inline-flex;
+  min-width: 88px;
+  max-width: 190px;
+  height: 29px;
+  flex: 0 0 auto;
+  align-items: center;
+  border: 1px solid transparent;
+  border-bottom-color: transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-standard),
+    border-color var(--motion-fast) var(--motion-ease-standard),
+    color var(--motion-fast) var(--motion-ease-standard);
+}
+
+.previewTab:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.previewTab[data-menu-open="true"] {
+  background: color-mix(in srgb, var(--surface-hover) 88%, transparent);
+  color: var(--color-text-primary);
+}
+
+.previewTab[data-active="true"] {
+  border-color: color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  border-bottom-color: var(--color-bg-elevated);
+  background: var(--color-bg-elevated);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 58%, transparent);
+  color: var(--color-text-primary);
+}
+
+.previewTab[data-active="true"]::before {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 5px;
+  width: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-primary) 70%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.previewTabMain,
+.previewTabClose {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.previewTabMain {
+  display: inline-flex;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
+  align-items: center;
+  padding: 0 6px 0 10px;
+}
+
+.previewTabTitle {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: var(--ui-line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewTab[data-active="true"] .previewTabTitle {
+  font-weight: 600;
+}
+
+.previewTabClose {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius-xs);
+}
+
+.previewTabClose:hover,
+.previewTabClose:focus-visible {
+  background: var(--surface-hover);
+}
+
+.previewTabMain:focus-visible,
+.previewTabClose:focus-visible {
+  outline: none;
+}
+
+.previewTabMenu {
+  position: fixed;
+  z-index: 190;
+  display: grid;
+  width: 148px;
+  gap: 3px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 58%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 98%, var(--surface-bg));
+  box-shadow:
+    0 18px 54px rgb(15 23 42 / 12%),
+    0 2px 10px rgb(15 23 42 / 5%);
+  backdrop-filter: blur(18px);
+}
+
+.previewTabMenu button {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  width: 100%;
+  height: 28px;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--ui-line-height-tight);
+  padding: 0 9px;
+  text-align: left;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out);
+}
+
+.previewTabMenu button:hover,
+.previewTabMenu button:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.previewTabMenu button:disabled {
+  cursor: default;
+  opacity: 0.56;
+}
+
+.previewTabMenu button:disabled:hover,
+.previewTabMenu button:disabled:focus-visible {
+  background: transparent;
+  color: var(--color-text-2);
+}
+
+.previewTabMenu svg {
+  color: color-mix(in srgb, currentColor 78%, transparent);
+}
+
+.mainPreviewBody {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -141,6 +371,27 @@
 @media (max-width: 900px) {
   .picker {
     padding-inline: 20px;
+  }
+}
+
+@media (max-width: 760px) {
+  .canvasContent[data-main-preview-open="true"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(160px, 34%) minmax(0, 1fr);
+  }
+
+  .browserPane[data-main-preview-open="true"] {
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  }
+
+  .previewResizeHandle {
+    display: none;
+  }
+
+  .mainPreview {
+    grid-column: 1;
+    grid-row: 2;
   }
 }
 

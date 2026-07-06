@@ -445,6 +445,135 @@ describe("AppRouter", () => {
     expect(shell.dataset.rightSidebar).toBe("closed");
   });
 
+  it("keeps one workbench file tree while switching main preview tabs", async () => {
+    const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"], {
+      extra: <WorkbenchFileOpenProbe />,
+    });
+
+    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    const shell = await screen.findByTestId("app-shell", undefined, { timeout: 10000 });
+
+    fireEvent.click(screen.getByTestId("open-workbench-file-readme"));
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("1");
+
+    fireEvent.click(screen.getByTestId("open-workbench-file-package"));
+    expect(await screen.findByRole("tab", { name: "package.json" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("2");
+    expect(screen.getAllByTestId("workspace-file-browser")).toHaveLength(1);
+    expect(screen.queryByTestId("workspace-file-browser-preview")).toBeNull();
+    expect(screen.getByRole("tab", { name: "package.json" }).getAttribute("aria-selected")).toBe("true");
+    expect(shell.dataset.rightSidebar).toBe("closed");
+
+    const canvasContent = screen.getByTestId("workbench-canvas-content");
+    vi.spyOn(canvasContent, "getBoundingClientRect").mockReturnValue({
+      bottom: 600,
+      height: 600,
+      left: 0,
+      right: 900,
+      top: 0,
+      width: 900,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    const resizeHandle = screen.getByTestId("workbench-preview-resize-handle");
+    act(() => {
+      dispatchPointer(resizeHandle, "pointerdown", { button: 0, clientX: 300, pointerId: 1 });
+    });
+    await waitFor(() => {
+      expect(resizeHandle.getAttribute("data-dragging")).toBe("true");
+    });
+    act(() => {
+      dispatchPointer(window, "pointermove", { clientX: 360, pointerId: 1 });
+    });
+    await waitFor(() => {
+      expect(canvasContent.style.getPropertyValue("--workbench-main-browser-width")).toBe("360px");
+    });
+    act(() => {
+      dispatchPointer(window, "pointerup", { clientX: 360, pointerId: 1 });
+    });
+    await waitFor(() => {
+      expect(resizeHandle.getAttribute("data-dragging")).toBe("false");
+    });
+    fireEvent.doubleClick(resizeHandle);
+    expect(canvasContent.style.getPropertyValue("--workbench-main-browser-width")).toBe("300px");
+
+    fireEvent.click(screen.getByRole("tab", { name: "README.md" }));
+    expect(screen.getByRole("tab", { name: "README.md" }).getAttribute("aria-selected")).toBe("true");
+    await waitFor(() => {
+      expect(runtime.workspace.readFile).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "README.md");
+    });
+
+    const previewPanel = screen.getByTestId("workbench-main-file-preview");
+    fireEvent.click(within(previewPanel).getByRole("button", { name: /README\.md/ }));
+    expect(screen.getByRole("tab", { name: "package.json" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(within(previewPanel).getByRole("button", { name: /package\.json/ }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("workbench-main-file-preview")).toBeNull();
+    });
+    expect(screen.getByTestId("workspace-file-browser")).not.toBeNull();
+    expect(shell.dataset.rightSidebar).toBe("closed");
+  });
+
+  it("supports the workbench main preview tab context menu", async () => {
+    renderRouter(["/workbench/workspace%20A/session/session%201"], {
+      extra: <WorkbenchFileOpenProbe />,
+    });
+
+    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+
+    fireEvent.click(screen.getByTestId("open-workbench-file-readme"));
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    fireEvent.click(screen.getByTestId("open-workbench-file-package"));
+    expect(await screen.findByRole("tab", { name: "package.json" }, { timeout: 10000 })).not.toBeNull();
+    fireEvent.click(screen.getByTestId("open-workbench-file-main"));
+    expect(await screen.findByRole("tab", { name: "main.tsx" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("3");
+
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "package.json" }), { clientX: 420, clientY: 80 });
+    let menu = await screen.findByRole("menu", { name: "工作台文件预览tab菜单" });
+    expect((within(menu).getByRole("menuitem", { name: "关闭左侧tab" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((within(menu).getByRole("menuitem", { name: "关闭右侧tab" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "关闭左侧tab" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("tab", { name: "README.md" })).toBeNull();
+    });
+    expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("2");
+
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "package.json" }), { clientX: 420, clientY: 80 });
+    menu = await screen.findByRole("menu", { name: "工作台文件预览tab菜单" });
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "关闭右侧tab" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("tab", { name: "main.tsx" })).toBeNull();
+    });
+    expect(screen.getByRole("tab", { name: "package.json" }).getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(screen.getByTestId("open-workbench-file-readme"));
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    fireEvent.click(screen.getByTestId("open-workbench-file-main"));
+    expect(await screen.findByRole("tab", { name: "main.tsx" }, { timeout: 10000 })).not.toBeNull();
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "README.md" }), { clientX: 420, clientY: 80 });
+    menu = await screen.findByRole("menu", { name: "工作台文件预览tab菜单" });
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "关闭其他tab" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("tab", { name: "package.json" })).toBeNull();
+      expect(screen.queryByRole("tab", { name: "main.tsx" })).toBeNull();
+    });
+    expect(screen.getByRole("tab", { name: "README.md" }).getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "README.md" }), { clientX: 420, clientY: 80 });
+    menu = await screen.findByRole("menu", { name: "工作台文件预览tab菜单" });
+    expect((within(menu).getByRole("menuitem", { name: "关闭左侧tab" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(menu).getByRole("menuitem", { name: "关闭右侧tab" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(menu).getByRole("menuitem", { name: "关闭其他tab" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "关闭所有tab" }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("workbench-main-file-preview")).toBeNull();
+    });
+    expect(screen.getByTestId("workspace-file-browser")).not.toBeNull();
+  });
+
   it("enters a blank workbench session route from the assistant new-session button", async () => {
     const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"]);
 
@@ -1038,8 +1167,18 @@ function WorkbenchFileOpenProbe() {
   const preview = usePreview();
   return (
     <>
-      <button type="button" onClick={() => preview.openFilePanel("README.md")}>
+      <button type="button" data-testid="open-workbench-file-readme" onClick={() => preview.openFilePanel("README.md")}>
         测试打开工作台文件
+      </button>
+      <button
+        type="button"
+        data-testid="open-workbench-file-package"
+        onClick={() => preview.openFilePanel("package.json")}
+      >
+        Open workbench package file
+      </button>
+      <button type="button" data-testid="open-workbench-file-main" onClick={() => preview.openFilePanel("src/main.tsx")}>
+        Open workbench main file
       </button>
       <button type="button" onClick={() => preview.openPreview({ type: "file", path: "README.md" })}>
         测试打开工作台预览
