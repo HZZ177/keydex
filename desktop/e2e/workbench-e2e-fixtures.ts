@@ -277,6 +277,11 @@ export async function mockWorkbenchBackend(page: Page, backend: MockBackendState
       return fulfillJson(route, { session: sessionResponse(backend.sessions[sessionId] ?? backend.sessions[SESSION_A]) });
     }
 
+    const sessionTasksMatch = requestPath.match(/^\/api\/sessions\/([^/]+)\/tasks$/);
+    if (sessionTasksMatch && method === "GET") {
+      return fulfillJson(route, { list: [] });
+    }
+
     const sessionWorkspaceMatch = requestPath.match(/^\/api\/sessions\/([^/]+)\/workspace(\/.*)?$/);
     if (sessionWorkspaceMatch) {
       const sessionId = decodeURIComponent(sessionWorkspaceMatch[1]);

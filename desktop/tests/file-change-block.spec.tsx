@@ -14,7 +14,9 @@ describe("FileChangeBlock", () => {
     expect(screen.queryByLabelText("变更文件")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
-    fireEvent.click(screen.getByRole("button", { name: /src\/main.py/ }));
+    const fileButton = screen.getByRole("button", { name: /src\/main.py/ });
+    expect(fileButton.querySelector("[data-file-change-path-icon='true']")?.getAttribute("data-icon-id")).toBe("python");
+    fireEvent.click(fileButton);
     expect(screen.getByLabelText("文件 diff").textContent).toContain("+print('new')");
   });
 
@@ -78,7 +80,8 @@ describe("FileChangeBlock", () => {
     render(<FileChangeBlock message={singleFileChangeMessage("running")} onPreviewFile={onPreviewFile} />);
 
     expect(screen.getByText("正在编辑")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "src/main.py" })).not.toBeNull();
+    const pathButton = screen.getByRole("button", { name: "src/main.py" });
+    expect(pathButton.querySelector("[data-file-change-path-icon='true']")?.getAttribute("data-icon-id")).toBe("python");
     expect(screen.getByTestId("line-change-ticker").textContent).toContain("+4");
     expect(screen.getByTestId("line-change-ticker").textContent).toContain("-2");
     expect(screen.getByTestId("line-change-ticker").textContent).not.toContain("行");
@@ -87,7 +90,7 @@ describe("FileChangeBlock", () => {
     expect(blockText.indexOf("src/main.py")).toBeLessThan(blockText.indexOf("+4"));
     expect(blockText.indexOf("+4")).toBeLessThan(blockText.indexOf("-2"));
 
-    fireEvent.click(screen.getByRole("button", { name: "src/main.py" }));
+    fireEvent.click(pathButton);
     expect(onPreviewFile).toHaveBeenCalledWith(expect.objectContaining({
       path: "src/main.py",
       diff: "",

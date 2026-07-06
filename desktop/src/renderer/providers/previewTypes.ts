@@ -2,6 +2,7 @@ export type PreviewContentKind = "markdown" | "html" | "diff" | "json" | "code" 
 
 export type PreviewRequest =
   | { type: "file"; path: string }
+  | { type: "local-file"; path: string }
   | { type: "diff"; path: string; diff: string }
   | {
       type: "content";

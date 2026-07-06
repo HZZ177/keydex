@@ -184,12 +184,12 @@ export function FilePreview({
   const markdownPreviewRef = useRef<VirtualMarkdownPreviewHandle | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const panelChrome = chrome === "panel";
-  const usesFileOpenDelay = panelChrome && request.type === "file";
+  const usesFileOpenDelay = panelChrome && isPathPreviewRequest(request);
   const kind = useMemo(() => detectPreviewKind(request), [request]);
   const immediateContent = useMemo(() => immediatePreviewContent(request), [request]);
   const [content, setContent] = useState(() => immediatePreviewContent(request) ?? "");
   const [media, setMedia] = useState<WorkspaceMediaResponse | null>(null);
-  const [loading, setLoading] = useState(request.type === "file");
+  const [loading, setLoading] = useState(isPathPreviewRequest(request));
   const [fileOpenSettling, setFileOpenSettling] = useState(usesFileOpenDelay);
   const previewContent = immediateContent ?? content;
   const previewLoading = immediateContent === null ? loading : false;
@@ -210,6 +210,11 @@ export function FilePreview({
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const annotationScope = useMemo(() => annotationWorkspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const annotationPath = request.type === "file" ? request.path : null;
+  const revealPath = isPathPreviewRequest(request)
+    ? request.path
+    : request.type === "content"
+      ? request.sourcePath ?? null
+      : null;
   const annotationRuntime = useMemo(() => annotationWorkspaceRuntime(runtime), [runtime]);
   const quoteSelectionAvailable = Boolean(onQuoteSelection && annotationPath);
   const annotationAvailable = Boolean(
@@ -455,7 +460,7 @@ export function FilePreview({
     }
 
     setContent("");
-    if (!scope || !runtime) {
+    if (!runtime || (request.type === "file" && !scope)) {
       setError("工作区预览运行时未就绪");
       setLoading(false);
       return () => {
@@ -465,17 +470,29 @@ export function FilePreview({
 
     setLoading(true);
     const loader =
-      kind === "image"
-        ? runtime.workspace.readMedia(scope, request.path).then((response) => {
-            if (active) {
-              setMedia(response);
-            }
-          })
-        : runtime.workspace.readFile(scope, request.path).then((response) => {
-            if (active) {
-              setContent(response.content);
-            }
-          });
+      request.type === "local-file"
+        ? kind === "image"
+          ? runtime.localPreview.readMedia(request.path).then((response) => {
+              if (active) {
+                setMedia(response);
+              }
+            })
+          : runtime.localPreview.readFile(request.path).then((response) => {
+              if (active) {
+                setContent(response.content);
+              }
+            })
+        : kind === "image"
+          ? runtime.workspace.readMedia(scope as WorkspaceScope, request.path).then((response) => {
+              if (active) {
+                setMedia(response);
+              }
+            })
+          : runtime.workspace.readFile(scope as WorkspaceScope, request.path).then((response) => {
+              if (active) {
+                setContent(response.content);
+              }
+            });
 
     void loader
       .catch((reason) => {
@@ -1048,7 +1065,7 @@ export function FilePreview({
   }, [annotationPath, clearTransientReveal]);
 
   useEffect(() => {
-    if (!sourceRevealRequest || !annotationPath || previewBusy || error) {
+    if (!sourceRevealRequest || !revealPath || previewBusy || error) {
       return;
     }
     if (handledSourceRevealRequestIdRef.current === sourceRevealRequest.requestId) {
@@ -1056,7 +1073,7 @@ export function FilePreview({
     }
     const annotation = transientRevealAnnotationFromRequest(
       formattedSource,
-      annotationPath,
+      revealPath,
       sourceRevealRequest,
       annotationScope,
     );
@@ -1070,13 +1087,13 @@ export function FilePreview({
     setFocusedAnnotationId(annotation.id);
     flashAnnotation(annotation.id);
   }, [
-    annotationPath,
     clearTransientReveal,
     error,
     flashAnnotation,
     formattedSource,
     annotationScope,
     previewBusy,
+    revealPath,
     sourceRevealRequest,
   ]);
 
@@ -1670,9 +1687,9 @@ export function FilePreview({
         <div
           className={styles.body}
           data-chrome={chrome}
-          data-workspace-document-context={request.type === "file" ? "true" : undefined}
-          data-workspace-document-name={request.type === "file" ? fileName(request.path) : undefined}
-          data-workspace-document-path={request.type === "file" ? request.path : undefined}
+          data-workspace-document-context={isPathPreviewRequest(request) ? "true" : undefined}
+          data-workspace-document-name={isPathPreviewRequest(request) ? fileName(request.path) : undefined}
+          data-workspace-document-path={isPathPreviewRequest(request) ? request.path : undefined}
           data-workspace-id={workspaceId}
           data-workspace-session-id={sessionId}
           aria-label="预览内容"
@@ -5599,6 +5616,12 @@ function immediatePreviewContent(request: FilePreviewRequest): string | null {
   return null;
 }
 
+function isPathPreviewRequest(
+  request: FilePreviewRequest,
+): request is Extract<FilePreviewRequest, { type: "file" | "local-file" }> {
+  return request.type === "file" || request.type === "local-file";
+}
+
 function defaultViewMode(request: FilePreviewRequest): "preview" | "source" {
   const kind = detectPreviewKind(request);
   return kind === "markdown" || kind === "html" || kind === "diff" || kind === "mermaid" ? "preview" : "source";
@@ -5611,7 +5634,7 @@ function detectPreviewKind(request: FilePreviewRequest): PreviewKind {
   if (request.type === "diff") {
     return "diff";
   }
-  const path = request.path;
+  const path = isPathPreviewRequest(request) ? request.path : "";
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   if (["md", "mdx", "markdown"].includes(ext)) {
     return "markdown";
@@ -5692,7 +5715,7 @@ function sourceLanguage(request: FilePreviewRequest, kind: PreviewKind): string 
   if (request.type === "diff") {
     return "diff";
   }
-  const ext = request.path.split(".").pop()?.toLowerCase() ?? "";
+  const ext = isPathPreviewRequest(request) ? request.path.split(".").pop()?.toLowerCase() ?? "" : "";
   const languageByExtension: Record<string, string> = {
     cjs: "javascript",
     css: "css",

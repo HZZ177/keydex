@@ -56,6 +56,7 @@ export interface PreviewEntry {
   sourceLabel: string;
   openedAt: number;
   renderContext: PreviewRenderContext | null;
+  revealTarget: PreviewFileRevealTarget | null;
 }
 
 export interface FilePanelRequest {
@@ -105,10 +106,18 @@ export interface PreviewContextValue extends PreviewState {
   activeEntry: PreviewEntry | null;
   activeRenderContext: PreviewRenderContext | null;
   activeScopeKey: string;
-  openPreview(request: PreviewRequest | string, renderContext?: PreviewRenderContext): void;
+  openPreview(
+    request: PreviewRequest | string,
+    renderContext?: PreviewRenderContext,
+    revealTarget?: PreviewFileRevealTarget | null,
+  ): void;
   openFilePanel(path?: string | null, renderContext?: PreviewRenderContext, revealTarget?: PreviewFileRevealTarget | null): void;
   openReviewPanel(request?: OpenReviewPanelRequest, renderContext?: PreviewRenderContext): void;
-  togglePreview(request: PreviewRequest | string, renderContext?: PreviewRenderContext): void;
+  togglePreview(
+    request: PreviewRequest | string,
+    renderContext?: PreviewRenderContext,
+    revealTarget?: PreviewFileRevealTarget | null,
+  ): void;
   switchPreview(entryId: string): void;
   closePreviewEntry(entryId: string): void;
   closePreview(): void;
@@ -146,9 +155,13 @@ export function PreviewProvider({ children }: PropsWithChildren) {
     reviewPanelRequest: null,
   });
 
-  const openPreview = useCallback((request: PreviewRequest | string, renderContext?: PreviewRenderContext) => {
+  const openPreview = useCallback((
+    request: PreviewRequest | string,
+    renderContext?: PreviewRenderContext,
+    revealTarget: PreviewFileRevealTarget | null = null,
+  ) => {
     setState((current) => {
-      return openPreviewInStore(current, request, renderContext, "append");
+      return openPreviewInStore(current, request, renderContext, "append", revealTarget);
     });
   }, []);
 
@@ -197,12 +210,16 @@ export function PreviewProvider({ children }: PropsWithChildren) {
     });
   }, []);
 
-  const togglePreview = useCallback((request: PreviewRequest | string, renderContext?: PreviewRenderContext) => {
+  const togglePreview = useCallback((
+    request: PreviewRequest | string,
+    renderContext?: PreviewRenderContext,
+    revealTarget: PreviewFileRevealTarget | null = null,
+  ) => {
     setState((current) => {
       const normalizedRequest = normalizePreviewRequest(request);
       const context = renderContext ?? current.hostContext;
       const scopeKey = previewScopeKey(context);
-      const entry = createPreviewEntry(normalizedRequest, context, scopeKey);
+      const entry = createPreviewEntry(normalizedRequest, context, scopeKey, revealTarget);
       const scopeState = current.scopes[scopeKey] ?? { open: false, activeEntryId: null };
 
       if (current.panelOpen && scopeState.open && current.panelActiveEntryId === entry.id) {
@@ -212,7 +229,7 @@ export function PreviewProvider({ children }: PropsWithChildren) {
         };
       }
 
-      return openPreviewInStore(current, normalizedRequest, context, "preserve-order");
+      return openPreviewInStore(current, normalizedRequest, context, "preserve-order", revealTarget);
     });
   }, []);
 
@@ -389,11 +406,12 @@ function openPreviewInStore(
   request: PreviewRequest | string,
   renderContext: PreviewRenderContext | null | undefined,
   placement: PreviewEntryPlacement,
+  revealTarget: PreviewFileRevealTarget | null = null,
 ): PreviewStoreState {
   const normalizedRequest = normalizePreviewRequest(request);
   const context = renderContext ?? current.hostContext;
   const scopeKey = previewScopeKey(context);
-  const entry = createPreviewEntry(normalizedRequest, context, scopeKey);
+  const entry = createPreviewEntry(normalizedRequest, context, scopeKey, revealTarget);
   const existingEntry = current.entries.find((item) => item.id === entry.id);
 
   if (existingEntry && placement === "preserve-order") {
@@ -418,6 +436,7 @@ function openPreviewInStore(
 
   return {
     ...current,
+    hostContext: context ?? current.hostContext,
     entries,
     scopes: {
       ...current.scopes,
@@ -437,6 +456,7 @@ function createPreviewEntry(
   request: PreviewRequest,
   renderContext: PreviewRenderContext | null,
   scopeKey: string,
+  revealTarget: PreviewFileRevealTarget | null,
 ): PreviewEntry {
   return {
     id: `${scopeKey}:${previewEntryId(request)}`,
@@ -446,6 +466,7 @@ function createPreviewEntry(
     sourceLabel: previewSourceLabel(request),
     openedAt: Date.now(),
     renderContext,
+    revealTarget,
   };
 }
 
@@ -482,7 +503,7 @@ function samePreviewRenderContext(left: PreviewRenderContext | null, right: Prev
 }
 
 function previewEntryId(request: PreviewRequest): string {
-  if (request.type === "file") {
+  if (request.type === "file" || request.type === "local-file") {
     return `file:${request.path}`;
   }
   if (request.type === "diff") {

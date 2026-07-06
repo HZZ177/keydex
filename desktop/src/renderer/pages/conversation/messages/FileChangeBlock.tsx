@@ -2,6 +2,7 @@ import { ChevronDown, Copy, FileDiff, FilePenLine, FileX2, XCircle } from "lucid
 import { useMemo, useState } from "react";
 
 import { FileReviewCard } from "@/renderer/components/review/FileReviewDiff";
+import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
 
@@ -98,7 +99,8 @@ export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileC
                   });
                 }}
               >
-                {singleFile.path}
+                <FileChangePathIcon path={singleFile.path} />
+                <span className={styles.pathLabel}>{singleFile.path}</span>
               </button>
             ) : (
               <span className={styles.title}>{title}</span>
@@ -154,6 +156,7 @@ export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileC
                           onClick={() => setExpandedPath(open ? null : file.path)}
                         >
                           <ChevronDown size={14} data-expanded={open ? "true" : "false"} />
+                          <FileChangePathIcon path={file.path} />
                           <span className={styles.path}>{file.path}</span>
                           <span className={styles.fileStats}>+{file.additions} -{file.deletions}</span>
                         </button>
@@ -184,6 +187,21 @@ export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileC
         </div>
       ) : null}
     </article>
+  );
+}
+
+function FileChangePathIcon({ path }: { path: string }) {
+  const icon = useMaterialEntryIcon(path, "file");
+  return (
+    <img
+      alt=""
+      aria-hidden="true"
+      className={styles.pathIcon}
+      data-icon-id={icon.id}
+      data-file-change-path-icon="true"
+      draggable={false}
+      src={icon.src}
+    />
   );
 }
 

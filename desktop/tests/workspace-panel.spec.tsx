@@ -595,6 +595,37 @@ describe("WorkspacePanel", () => {
     expect(screen.getByRole("tree", { name: "工作区目录" })).not.toBeNull();
   });
 
+  it("can delegate selected file previews to an external host", async () => {
+    const runtime = fakeRuntime(
+      {
+        "": [entry("README.md", "README.md", "file", 12)],
+      },
+      {
+        "README.md": "# Project\n\nRead me",
+      },
+    );
+    const onPreviewPathChange = vi.fn();
+
+    render(
+      <WorkspaceFileBrowser
+        sessionId="ses-1"
+        label="D:/repo"
+        runtime={runtime}
+        previewPlacement="external"
+        onPreviewPathChange={onPreviewPathChange}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "选择文件 README.md" })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "选择文件 README.md" }));
+
+    expect(onPreviewPathChange).toHaveBeenCalledWith("README.md");
+    expect(screen.queryByTestId("workspace-file-browser-preview")).toBeNull();
+    expect(screen.getByTestId("workspace-file-browser").getAttribute("data-preview-open")).toBe("false");
+    expect(runtime.workspace.readFile).not.toHaveBeenCalled();
+  });
+
   it("switches markdown file navigation to document outline and jumps to headings", async () => {
     const scrollIntoView = vi.fn();
     const originalScrollIntoView = Element.prototype.scrollIntoView;

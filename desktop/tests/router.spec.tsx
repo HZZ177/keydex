@@ -406,7 +406,7 @@ describe("AppRouter", () => {
     });
   });
 
-  it("routes workbench file-open requests into the main workspace browser", async () => {
+  it("routes workbench file-open requests into the main preview area", async () => {
     const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"], {
       extra: <WorkbenchFileOpenProbe />,
     });
@@ -418,13 +418,31 @@ describe("AppRouter", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "测试打开工作台文件" }));
 
-    expect(await screen.findByTestId("workspace-file-browser-preview", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(await screen.findByTestId("workbench-main-file-preview", undefined, { timeout: 10000 })).not.toBeNull();
     await waitFor(() => {
       expect(runtime.workspace.readFile).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "README.md");
     });
-    expect(screen.getByTestId("workspace-file-browser-pathbar").textContent).toContain("/README.md");
+    expect(screen.queryByTestId("workspace-file-browser-preview")).toBeNull();
     expect(shell.dataset.rightSidebar).toBe("closed");
     expect(screen.queryByLabelText("展开右侧栏")).toBeNull();
+  });
+
+  it("routes workbench preview entries into the main preview area", async () => {
+    const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"], {
+      extra: <WorkbenchFileOpenProbe />,
+    });
+
+    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    const shell = await screen.findByTestId("app-shell", undefined, { timeout: 10000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "测试打开工作台预览" }));
+
+    expect(await screen.findByTestId("workbench-main-file-preview", undefined, { timeout: 10000 })).not.toBeNull();
+    await waitFor(() => {
+      expect(runtime.workspace.readFile).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "README.md");
+    });
+    expect(screen.queryByTestId("workspace-file-browser-preview")).toBeNull();
+    expect(shell.dataset.rightSidebar).toBe("closed");
   });
 
   it("enters a blank workbench session route from the assistant new-session button", async () => {
@@ -1019,9 +1037,14 @@ function defaultExtensionSettings() {
 function WorkbenchFileOpenProbe() {
   const preview = usePreview();
   return (
-    <button type="button" onClick={() => preview.openFilePanel("README.md")}>
-      测试打开工作台文件
-    </button>
+    <>
+      <button type="button" onClick={() => preview.openFilePanel("README.md")}>
+        测试打开工作台文件
+      </button>
+      <button type="button" onClick={() => preview.openPreview({ type: "file", path: "README.md" })}>
+        测试打开工作台预览
+      </button>
+    </>
   );
 }
 

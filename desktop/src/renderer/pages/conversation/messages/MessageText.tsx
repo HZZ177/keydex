@@ -10,6 +10,7 @@ import {
   type CSSProperties,
   type FocusEvent,
   type MutableRefObject,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -27,8 +28,9 @@ import {
   type MarkdownInlineImageProps,
 } from "@/renderer/components/workspace/markdownPreviewEngine";
 import { ImagePreviewDialog } from "@/renderer/components/workspace/ImagePreviewSurface";
-import { useOptionalPreview } from "@/renderer/providers/PreviewProvider";
+import { useOptionalPreview, type PreviewFileRevealTarget, type PreviewRenderContext } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
+import { isAbsoluteFilePath } from "@/renderer/utils/fileLinks";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import type { AgentContextItem, AgentFileAttachment, TurnError } from "@/types/protocol";
 
@@ -241,13 +243,49 @@ export function MessageText({
     },
     [onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
   );
+  const handleMarkdownFileLinkClick = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !previewContext) {
+        return;
+      }
+      const link = target.closest<HTMLAnchorElement>("a[data-keydex-file-link='true']");
+      if (!link || !event.currentTarget.contains(link)) {
+        return;
+      }
+      const path = link.dataset.keydexFilePath?.trim();
+      if (!path) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const line = positiveIntegerOrNull(link.dataset.keydexFileLine);
+      const revealTarget: PreviewFileRevealTarget | null = line ? { lineStart: line, lineEnd: line } : null;
+      const renderContext = messageFilePreviewRenderContext(
+        workspaceScope,
+        workspaceRuntime,
+        onQuoteSelection,
+        previewContext.hostContext,
+      );
+      previewContext.openPreview(
+        isAbsoluteFilePath(path) ? { type: "local-file", path } : { type: "file", path },
+        renderContext,
+        revealTarget,
+      );
+    },
+    [onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
+  );
 
   const userContextItems = isUser && regularContextItems.length > 0;
   const inlineContextItems = !isUser && regularContextItems.length > 0;
   const showBubble = Boolean(renderedContent || !userContextItems || cancelled);
 
   return (
-    <article className={isUser ? styles.userMessage : styles.assistantMessage} data-testid="message-text">
+    <article
+      className={isUser ? styles.userMessage : styles.assistantMessage}
+      data-testid="message-text"
+      onClickCapture={handleMarkdownFileLinkClick}
+    >
       {userContextItems ? (
         <div className={styles.userContextItems}>
           <MessageContextItems items={regularContextItems} onOpenFile={openContextFile} />
@@ -491,6 +529,36 @@ function shouldVirtualizeMessageMarkdown({
 
 function nearestMessageMarkdownScrollParent(root: HTMLElement | null): MessageMarkdownScrollParent {
   return root?.closest<HTMLElement>(MESSAGE_MARKDOWN_SCROLL_PARENT_SELECTOR) ?? false;
+}
+
+function messageFilePreviewRenderContext(
+  workspaceScope: WorkspaceScope | null | undefined,
+  runtime: RuntimeBridge | undefined,
+  onQuoteSelection: ((text: string) => void) | undefined,
+  hostContext: PreviewRenderContext | null | undefined,
+): PreviewRenderContext | undefined {
+  const workspaceContext = previewRenderContextFromWorkspaceScope(
+    workspaceScope,
+    runtime,
+    onQuoteSelection,
+    hostContext,
+  );
+  if (workspaceContext) {
+    return workspaceContext;
+  }
+  const context: PreviewRenderContext = hostContext ? { ...hostContext } : {};
+  if (runtime) {
+    context.runtime = runtime;
+  }
+  if (onQuoteSelection) {
+    context.onQuoteSelection = (request) => onQuoteSelection(request.selectedText);
+  }
+  return Object.keys(context).length ? context : undefined;
+}
+
+function positiveIntegerOrNull(value: string | undefined): number | null {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function MessageContextItems({

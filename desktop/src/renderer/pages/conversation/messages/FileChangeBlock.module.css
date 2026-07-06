@@ -156,6 +156,7 @@
   display: inline-flex;
   min-height: var(--ghost-row-height);
   align-items: center;
+  gap: 4px;
   min-width: 0;
   max-width: 100%;
   overflow: visible;
@@ -180,6 +181,21 @@
 .pathButton:hover {
   background: transparent;
   color: color-mix(in srgb, var(--color-accent) 84%, var(--color-text-primary));
+}
+
+.pathIcon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  user-select: none;
+}
+
+.pathLabel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .inlineTicker {
@@ -281,9 +297,9 @@
 .fileButton {
   display: grid;
   width: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;

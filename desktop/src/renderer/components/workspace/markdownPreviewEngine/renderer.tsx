@@ -15,7 +15,9 @@ import katex from "katex";
 
 import { copyText } from "@/renderer/pages/conversation/messages/markdown";
 import { getMermaidConfig } from "@/renderer/utils/mermaidConfig";
+import { parseFileLinkTarget, parseMarkdownFileLinkExpression } from "@/renderer/utils/fileLinks";
 import styles from "../FilePreview.module.css";
+import { useMaterialEntryIcon } from "../materialIconTheme";
 import type { MarkdownAnnotationIndexItem } from "./annotationIndex";
 import type { MarkdownFindIndex } from "./findIndex";
 import type { MarkdownBlock, MarkdownBlockType, MarkdownDocumentModel } from "./types";
@@ -919,7 +921,7 @@ function renderInlineMarkdown(
   findMatches: MarkdownRenderedFindMatch[] = [],
   renderImage?: MarkdownInlineImageRenderer,
 ): ReactNode {
-  const tokenPattern = /(!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|(\*\*|__)([\s\S]+?)\4|(\*|_)([^*_\n]+?)\6|\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$|`([^`\n]+)`|~~([^~]+)~~|\[([^\]]+)]\(([^)\s]+)(?:\s+"[^"]*")?\)|(https?:\/\/[^\s<]+))/g;
+  const tokenPattern = /(!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\)|(\*\*|__)([\s\S]+?)\4|(\*|_)([^*_\n]+?)\6|\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$|`([^`\n]+)`|~~([^~]+)~~|\[([^\]]+)]\((<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\)|(https?:\/\/[^\s<]+))/g;
   const nodes: ReactNode[] = [];
   let cursor = 0;
   let match: RegExpExecArray | null;
@@ -950,36 +952,32 @@ function renderInlineMarkdown(
       const contentSourceStart = sourceStart + match.index + match[4].length;
       nodes.push(
         <strong key={`inline-strong-${match.index}`} {...sourceSegmentAttributes(contentSourceStart, contentSourceStart + match[5].length)}>
-          {annotationRanges.length || findMatches.length
-            ? renderInlineTextWithMarkers(
-              match[5],
-              contentSourceStart,
-              `strong-${match.index}`,
-              annotationRanges,
-              findMatches,
-            )
-            : match[5]}
+          {renderInlineMarkdown(match[5], contentSourceStart, annotationRanges, findMatches, renderImage)}
         </strong>,
       );
     } else if (typeof match[7] === "string") {
       const contentSourceStart = sourceStart + match.index + match[6].length;
       nodes.push(
         <em key={`inline-em-${match.index}`} {...sourceSegmentAttributes(contentSourceStart, contentSourceStart + match[7].length)}>
-          {annotationRanges.length || findMatches.length
-            ? renderInlineTextWithMarkers(
-              match[7],
-              contentSourceStart,
-              `em-${match.index}`,
-              annotationRanges,
-              findMatches,
-            )
-            : match[7]}
+          {renderInlineMarkdown(match[7], contentSourceStart, annotationRanges, findMatches, renderImage)}
         </em>,
       );
     } else {
       const displayMode = typeof match[8] === "string";
       if (typeof match[10] === "string") {
         const contentSourceStart = sourceStart + match.index + 1;
+        const fileLink = parseMarkdownFileLinkExpression(match[10]);
+        if (fileLink) {
+          nodes.push(renderFileLinkAnchor({
+            attributes: sourceSegmentAttributes(contentSourceStart, contentSourceStart + match[10].length),
+            key: `inline-code-file-link-${match.index}`,
+            label: fileLink.label,
+            line: fileLink.line,
+            path: fileLink.path,
+          }));
+          cursor = match.index + match[0].length;
+          continue;
+        }
         nodes.push(
           <code key={`inline-code-${match.index}`} {...sourceSegmentAttributes(contentSourceStart, contentSourceStart + match[10].length)}>
             {annotationRanges.length || findMatches.length
@@ -997,20 +995,12 @@ function renderInlineMarkdown(
         const contentSourceStart = sourceStart + match.index + 2;
         nodes.push(
           <del key={`inline-del-${match.index}`} {...sourceSegmentAttributes(contentSourceStart, contentSourceStart + match[11].length)}>
-            {annotationRanges.length || findMatches.length
-              ? renderInlineTextWithMarkers(
-                match[11],
-                contentSourceStart,
-                `del-${match.index}`,
-                annotationRanges,
-                findMatches,
-              )
-              : match[11]}
+            {renderInlineMarkdown(match[11], contentSourceStart, annotationRanges, findMatches, renderImage)}
           </del>,
         );
       } else if (typeof match[12] === "string") {
         const contentSourceStart = sourceStart + match.index + 1;
-        const href = safeMarkdownHref(match[13]);
+        const target = markdownLinkTarget(match[13]);
         const label = annotationRanges.length || findMatches.length
           ? renderInlineTextWithMarkers(
             match[12],
@@ -1020,9 +1010,15 @@ function renderInlineMarkdown(
             findMatches,
           )
           : match[12];
-        nodes.push(href ? (
+        nodes.push(target?.kind === "file" ? renderFileLinkAnchor({
+          attributes: sourceSegmentAttributes(contentSourceStart, contentSourceStart + match[12].length),
+          key: `inline-link-${match.index}`,
+          label,
+          line: target.line,
+          path: target.path,
+        }) : target?.kind === "external" ? (
           <a
-            href={href}
+            href={target.href}
             key={`inline-link-${match.index}`}
             rel="noreferrer"
             target="_blank"
@@ -1151,8 +1147,74 @@ function sourceSegmentAttributes(sourceStart: number, sourceEnd: number) {
   };
 }
 
+function renderFileLinkAnchor({
+  attributes,
+  key,
+  label,
+  line,
+  path,
+}: {
+  attributes: ReturnType<typeof sourceSegmentAttributes>;
+  key: string;
+  label: ReactNode;
+  line: number | null;
+  path: string;
+}): ReactNode {
+  return (
+    <a
+      className={styles.markdownFileLink}
+      data-keydex-file-line={line ?? undefined}
+      data-keydex-file-link="true"
+      data-keydex-file-path={path}
+      href="#"
+      key={key}
+      {...attributes}
+    >
+      <MarkdownFileLinkIcon path={path} />
+      <span className={styles.markdownFileLinkLabel}>{label}</span>
+      {line ? (
+        <span
+          aria-hidden="true"
+          className={styles.markdownFileLineBadge}
+          data-keydex-file-link-line-badge="true"
+          title={`第 ${line} 行`}
+        >
+          L{line}
+        </span>
+      ) : null}
+    </a>
+  );
+}
+
+function MarkdownFileLinkIcon({ path }: { path: string }) {
+  const icon = useMaterialEntryIcon(path, "file");
+  return (
+    <img
+      alt=""
+      aria-hidden="true"
+      className={styles.markdownFileLinkIcon}
+      data-icon-id={icon.id}
+      data-keydex-file-link-icon="true"
+      draggable={false}
+      src={icon.src}
+    />
+  );
+}
+
+function markdownLinkTarget(value: string | undefined):
+  | { kind: "external"; href: string }
+  | { kind: "file"; path: string; line: number | null }
+  | null {
+  const fileTarget = parseFileLinkTarget(value);
+  if (fileTarget) {
+    return { kind: "file", path: fileTarget.path, line: fileTarget.line };
+  }
+  const href = safeMarkdownHref(value);
+  return href ? { kind: "external", href } : null;
+}
+
 function safeMarkdownHref(value: string | undefined): string | null {
-  const href = value?.trim();
+  const href = normalizeMarkdownLinkTarget(value);
   if (!href) {
     return null;
   }
@@ -1161,6 +1223,14 @@ function safeMarkdownHref(value: string | undefined): string | null {
     return href;
   }
   return /^(https?|mailto|xmpp|irc|ircs)$/.test(scheme) ? href : null;
+}
+
+function normalizeMarkdownLinkTarget(value: string | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed.startsWith("<") && trimmed.endsWith(">")) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
 }
 
 function headingTextSourceStart(block: MarkdownBlock): number {

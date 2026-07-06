@@ -13,6 +13,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { FileReviewCard } from "@/renderer/components/review/FileReviewDiff";
+import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import {
   fileReviewChangesFromMessage,
@@ -266,7 +267,12 @@ function FileTarget({
   title: string;
 }) {
   if (!onPreviewFile) {
-    return <span className={styles.fileTarget}>{path}</span>;
+    return (
+      <span className={styles.fileTarget}>
+        <ToolFileTargetIcon path={path} />
+        <span className={styles.fileTargetLabel}>{path}</span>
+      </span>
+    );
   }
   return (
     <button
@@ -277,8 +283,24 @@ function FileTarget({
         onPreviewFile({ path, diff, files, message, title });
       }}
     >
-      {path}
+      <ToolFileTargetIcon path={path} />
+      <span className={styles.fileTargetLabel}>{path}</span>
     </button>
+  );
+}
+
+function ToolFileTargetIcon({ path }: { path: string }) {
+  const icon = useMaterialEntryIcon(path, "file");
+  return (
+    <img
+      alt=""
+      aria-hidden="true"
+      className={styles.fileTargetIcon}
+      data-icon-id={icon.id}
+      data-tool-file-target-icon="true"
+      draggable={false}
+      src={icon.src}
+    />
   );
 }
 
@@ -342,7 +364,10 @@ function FileMutationDetails({
                   type="button"
                   onClick={() => onExpandedPathChange(active ? null : file.path)}
                 >
-                  <span>{file.path}</span>
+                  <span className={styles.fileReviewPath}>
+                    <ToolFileTargetIcon path={file.path} />
+                    <span>{file.path}</span>
+                  </span>
                   <span className={styles.fileReviewStats}>+{file.additions} -{file.deletions}</span>
                 </button>
               </li>

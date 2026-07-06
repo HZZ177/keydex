@@ -990,6 +990,7 @@ function RightSidebarPanel({
       : null;
   const activeRequest = activePreviewEntry?.request ?? (resolvedActivePanelId === activeEntryId ? request : null);
   const activeRenderContext = activePreviewEntry?.renderContext ?? renderContext;
+  const activeRevealTarget = activePreviewEntry?.revealTarget ?? null;
   const filePanelQuoteSelection = useCallback(
     (request: PreviewQuoteSelectionRequest) => {
       filePanelRenderContext?.onQuoteSelection?.(request);
@@ -2037,6 +2038,14 @@ function RightSidebarPanel({
                     sessionId={activeRenderContext?.sessionId}
                     request={activeRequest}
                     runtime={activeRenderContext?.runtime}
+                    sourceRevealRequest={
+                      activeRevealTarget
+                        ? {
+                            requestId: activePreviewEntry?.openedAt ?? 0,
+                            ...activeRevealTarget,
+                          }
+                        : null
+                    }
                     onQuoteSelection={activeRenderContext?.onQuoteSelection ? activePreviewQuoteSelection : undefined}
                     onStartChatFromAnnotation={activeRenderContext?.onStartChatFromAnnotation}
                     chrome="panel"

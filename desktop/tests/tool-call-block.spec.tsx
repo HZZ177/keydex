@@ -177,6 +177,7 @@ describe("ToolCallBlock", () => {
     const block = screen.getByTestId("tool-call-block");
     expect(block.textContent).toContain("编辑文件失败 docs/project-structure.md");
     expect(screen.getByText("docs/project-structure.md")).not.toBeNull();
+    expect(block.querySelector("[data-tool-file-target-icon='true']")?.getAttribute("data-icon-id")).toBe("markdown");
     expect(block.querySelector("svg.lucide-circle-x")).not.toBeNull();
   });
 
@@ -206,12 +207,13 @@ describe("ToolCallBlock", () => {
     );
 
     expect(screen.getByText("正在编辑文件")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "src/main.py" })).not.toBeNull();
+    const pathButton = screen.getByRole("button", { name: "src/main.py" });
+    expect(pathButton.querySelector("[data-tool-file-target-icon='true']")?.getAttribute("data-icon-id")).toBe("python");
     expect(screen.getByTestId("line-change-ticker").textContent).toContain("+4");
     expect(screen.getByTestId("line-change-ticker").textContent).toContain("-2");
     expect(screen.getByTestId("line-change-ticker").textContent).not.toContain("行");
 
-    fireEvent.click(screen.getByRole("button", { name: "src/main.py" }));
+    fireEvent.click(pathButton);
     expect(onPreviewFile).toHaveBeenCalledWith(expect.objectContaining({
       path: "src/main.py",
       diff: "",

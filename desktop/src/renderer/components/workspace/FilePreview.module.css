@@ -1543,6 +1543,42 @@
   min-width: 0;
 }
 
+.markdownFileLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: -0.15em;
+}
+
+.markdownFileLinkIcon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  user-select: none;
+}
+
+.markdownFileLinkLabel {
+  min-width: 0;
+}
+
+.markdownFileLineBadge {
+  display: inline-flex;
+  height: 16px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--surface-muted) 78%, transparent);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 0 4px;
+  text-decoration: none;
+  transform: translateY(0.02em);
+}
+
 .markdownPreviewBlock:first-child .markdownPreviewBlockContent > :where(p, h1, h2, h3, h4, h5, h6):first-child {
   margin-top: 0;
 }

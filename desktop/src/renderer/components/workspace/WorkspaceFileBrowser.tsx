@@ -33,6 +33,7 @@ export interface WorkspaceFileBrowserProps {
   previewPath?: string | null;
   previewRequestId?: number;
   previewRevealTarget?: PreviewFileRevealTarget | null;
+  previewPlacement?: "inline" | "external";
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
   onStartChatFromAnnotation?: (request: PreviewAnnotationChatRequest | PreviewAnnotationChatRequest[]) => void;
   onPreviewPathChange?: (path: string | null) => void;
@@ -62,6 +63,7 @@ export function WorkspaceFileBrowser({
   previewPath = null,
   previewRequestId = 0,
   previewRevealTarget = null,
+  previewPlacement = "inline",
   onQuoteSelection,
   onStartChatFromAnnotation,
   onPreviewPathChange,
@@ -181,6 +183,13 @@ export function WorkspaceFileBrowser({
 
   const openPreview = useCallback(
     (path: string, notify = true) => {
+      if (previewPlacement === "external") {
+        if (notify) {
+          onPreviewPathChange?.(path);
+        }
+        setSelectedPath(path);
+        return;
+      }
       clearPreviewUnmountTimer();
       clearPreviewOpenFrame();
       if (notify) {
@@ -198,7 +207,13 @@ export function WorkspaceFileBrowser({
         setPreviewOpen(true);
       });
     },
-    [clearPreviewOpenFrame, clearPreviewUnmountTimer, mountedPreviewPath, onPreviewPathChange],
+    [
+      clearPreviewOpenFrame,
+      clearPreviewUnmountTimer,
+      mountedPreviewPath,
+      onPreviewPathChange,
+      previewPlacement,
+    ],
   );
 
   const closePreview = useCallback(() => {
@@ -240,11 +255,15 @@ export function WorkspaceFileBrowser({
       return;
     }
     handledPreviewRequestIdRef.current = previewRequestId;
+    if (previewPlacement === "external") {
+      setSelectedPath(previewPath);
+      return;
+    }
     if (previewPath === mountedPreviewPath && previewOpen) {
       return;
     }
     openPreview(previewPath, false);
-  }, [mountedPreviewPath, openPreview, previewOpen, previewPath, previewRequestId]);
+  }, [mountedPreviewPath, openPreview, previewOpen, previewPath, previewRequestId, previewPlacement]);
 
   useEffect(
     () => () => {

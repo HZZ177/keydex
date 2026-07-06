@@ -96,6 +96,9 @@
 }
 
 .fileTarget {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin-left: 4px;
   color: var(--color-accent);
   font: inherit;
@@ -105,6 +108,7 @@
   display: inline-flex;
   min-height: var(--ghost-row-height);
   align-items: center;
+  gap: 4px;
   min-width: 0;
   max-width: 100%;
   overflow: visible;
@@ -130,6 +134,21 @@
 
 .fileTargetButton:focus-visible {
   outline: none;
+}
+
+.fileTargetIcon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  user-select: none;
+}
+
+.fileTargetLabel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .inlineTicker {
@@ -469,11 +488,24 @@
   outline: none;
 }
 
-.fileReviewListButton > span:first-child,
+.fileReviewPath,
 .fileReviewFailedPath {
   min-width: 0;
   overflow: hidden;
   font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileReviewPath {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.fileReviewPath > span:last-child {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

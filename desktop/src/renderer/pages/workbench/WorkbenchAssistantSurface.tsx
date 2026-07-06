@@ -244,6 +244,7 @@ export function WorkbenchAssistantSurface({
   const [workbenchReviewPanel, setWorkbenchReviewPanel] = useState<ReviewPanelRequest | null>(null);
   const pendingApproval = controller.pendingApproval;
   const panelSessionId = controller.session?.id ?? "";
+  const workbenchPreviewScopeKey = workspaceId ? workbenchPreviewPanelScopeKey(workspaceId) : undefined;
   const currentFileChipRequestId = controller.fileChipRequest?.requestId ?? 0;
   const currentQuoteChipRequestId = controller.quoteChipRequest?.requestId ?? 0;
   const contextRequestBaselineRef = useRef({
@@ -266,6 +267,7 @@ export function WorkbenchAssistantSurface({
     runtime,
     sessionId: panelSessionId,
     controller,
+    previewPanelScopeKey: workbenchPreviewScopeKey,
     validateSelectedSkill: false,
   });
   useEffect(() => {
@@ -325,6 +327,7 @@ export function WorkbenchAssistantSurface({
   }, [btwActive, displayPanelMessages, panelModel]);
   const workbenchPreviewRenderContext = useMemo<PreviewRenderContext>(
     () => ({
+      panelScopeKey: workbenchPreviewScopeKey,
       workspaceId,
       workspaceAvailable: Boolean(workspaceId),
       workspaceLabel: workbenchWorkspaceLabel,
@@ -335,6 +338,7 @@ export function WorkbenchAssistantSurface({
     [
       controller.quoteSelection,
       controller.startChatFromAnnotation,
+      workbenchPreviewScopeKey,
       runtime,
       workbenchWorkspaceLabel,
       workspaceId,
@@ -1857,7 +1861,14 @@ function reviewPanelRequestMatchesWorkbench(
   if (panelSessionId && request.scopeKey === `session:${panelSessionId}`) {
     return true;
   }
+  if (workspaceId && request.scopeKey === workbenchPreviewPanelScopeKey(workspaceId)) {
+    return true;
+  }
   return Boolean(workspaceId && request.scopeKey === `workspace:${workspaceId}`);
+}
+
+function workbenchPreviewPanelScopeKey(workspaceId: string): string {
+  return `workbench:${workspaceId}`;
 }
 
 function WorkbenchMiniTurnNavigator({

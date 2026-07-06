@@ -105,6 +105,13 @@
   min-height: 0;
 }
 
+.mainPreview {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .assistantCapsule {
   position: absolute;
   left: 50%;

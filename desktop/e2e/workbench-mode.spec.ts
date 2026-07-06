@@ -387,7 +387,7 @@ test("workbench dock keeps large markdown searchable without enabling the global
   await installWebSocketMock(page);
   await mockWorkbenchBackend(page, backend);
 
-  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "选择文件 README.md" }).click();
   await expect(page.getByRole("heading", { name: "E2E Workbench File" })).toBeVisible();
   const virtualPreview = page.locator("[data-markdown-virtual-preview='true']");
@@ -405,7 +405,7 @@ test("workbench dock keeps large markdown searchable without enabling the global
   await expect(page.getByTestId("app-shell")).toHaveAttribute("data-right-sidebar-enabled", "false");
   await expect(page.getByTestId("app-shell")).toHaveAttribute("data-right-sidebar", "closed");
 
-  const previewPanel = page.getByTestId("workspace-file-browser-preview");
+  const previewPanel = page.getByTestId("workbench-main-file-preview");
   await previewPanel.getByRole("button", { name: "搜索文件内容" }).click();
   const search = page.getByRole("search", { name: "文件内容搜索" });
   await search.getByLabel("搜索文件内容").fill("tail-search-target");
@@ -691,6 +691,10 @@ async function mockWorkbenchBackend(page: Page, backend: MockBackendState) {
     if (sessionMatch && method === "GET") {
       const id = decodeURIComponent(sessionMatch[1]);
       return fulfillJson(route, { session: sessionResponse(backend.sessions[id] ?? backend.sessions[SESSION_A]) });
+    }
+    const sessionTasksMatch = path.match(/^\/api\/sessions\/([^/]+)\/tasks$/);
+    if (sessionTasksMatch && method === "GET") {
+      return fulfillJson(route, { list: [] });
     }
     const historyMatch = path.match(/^\/api\/sessions\/([^/]+)\/history$/);
     if (historyMatch) {

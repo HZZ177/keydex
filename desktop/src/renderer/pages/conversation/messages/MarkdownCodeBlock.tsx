@@ -696,7 +696,7 @@ function buildPanelPreviewRequest(language: string, content: string): ContentPre
 }
 
 function previewEntryIdForRequest(request: PreviewRequest, scopeKey: string): string {
-  if (request.type === "file") {
+  if (request.type === "file" || request.type === "local-file") {
     return `${scopeKey}:file:${request.path}`;
   }
   if (request.type === "diff") {

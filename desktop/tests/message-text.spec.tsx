@@ -1,12 +1,13 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import mermaid, { type ParseResult, type RenderResult } from "mermaid";
+import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { calculateDynamicStreamStep } from "@/renderer/hooks/useDynamicStreamBuffer";
 import { useRuntimeTypingMetrics } from "@/renderer/hooks/useRuntimeTypingSpeed";
 import { LineChangeTicker } from "@/renderer/pages/conversation/messages/LineChangeTicker";
 import { MessageText } from "@/renderer/pages/conversation/messages";
-import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
+import { PreviewProvider, usePreview, type PreviewRenderContext } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { RuntimeBridge } from "@/runtime";
 
@@ -274,6 +275,159 @@ describe("MessageText", () => {
     fireEvent.click(screen.getByRole("button", { name: "打开文件引用 README.md" }));
 
     expect(screen.getByTestId("file-panel-request").textContent).toBe("session:ses-1:README.md");
+  });
+
+  it("opens absolute markdown file links as single local previews with line reveal", () => {
+    render(
+      <PreviewProvider>
+        <MessageText
+          message={message("assistant", "查看 [notes.md](<D:/Docs/local notes.md:7>)", "completed")}
+          workspaceRuntime={{} as RuntimeBridge}
+        />
+        <PreviewEntryProbe />
+      </PreviewProvider>,
+    );
+
+    const link = screen.getByRole("link", { name: "notes.md" });
+    expect(link.getAttribute("data-keydex-file-link")).toBe("true");
+    const icon = link.querySelector("[data-keydex-file-link-icon='true']");
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    expect(icon?.getAttribute("data-icon-id")).toBe("markdown");
+    const lineBadge = link.querySelector("[data-keydex-file-link-line-badge='true']");
+    expect(lineBadge?.textContent).toBe("L7");
+    expect(lineBadge?.getAttribute("aria-hidden")).toBe("true");
+    expect(lineBadge?.getAttribute("title")).toBe("第 7 行");
+    fireEvent.click(link);
+
+    const payload = previewEntryPayload();
+    expect(payload).toMatchObject({
+      request: {
+        type: "local-file",
+        path: "D:/Docs/local notes.md",
+      },
+      revealTarget: {
+        lineStart: 7,
+        lineEnd: 7,
+      },
+      scopeKey: "global",
+    });
+  });
+
+  it("does not render a line badge for file links without line targets", () => {
+    render(
+      <PreviewProvider>
+        <MessageText
+          message={message("assistant", "查看 [notes.md](<D:/Docs/local notes.md>)", "completed")}
+          workspaceRuntime={{} as RuntimeBridge}
+        />
+      </PreviewProvider>,
+    );
+
+    const link = screen.getByRole("link", { name: "notes.md" });
+    expect(link.querySelector("[data-keydex-file-link-line-badge='true']")).toBeNull();
+  });
+
+  it("opens relative markdown file links as workspace-scoped file previews", () => {
+    render(
+      <PreviewProvider>
+        <PreviewHostContextSetter context={{ sessionId: "ses-1", workspaceAvailable: true, runtime: {} as RuntimeBridge }} />
+        <MessageText
+          message={message(
+            "assistant",
+            "查看 [MessageText.tsx](<desktop/src/renderer/pages/conversation/messages/MessageText.tsx:120>)",
+            "completed",
+          )}
+          workspaceRuntime={{} as RuntimeBridge}
+          workspaceScope={{ sessionId: "ses-1" }}
+        />
+        <PreviewEntryProbe />
+      </PreviewProvider>,
+    );
+
+    const link = screen.getByRole("link", { name: "MessageText.tsx" });
+    expect(link.getAttribute("data-keydex-file-link")).toBe("true");
+    expect(link.querySelector("[data-keydex-file-link-icon='true']")?.getAttribute("data-icon-id")).toBe("react_ts");
+    expect(link.querySelector("[data-keydex-file-link-line-badge='true']")?.textContent).toBe("L120");
+    fireEvent.click(link);
+
+    const payload = previewEntryPayload();
+    expect(payload).toMatchObject({
+      request: {
+        type: "file",
+        path: "desktop/src/renderer/pages/conversation/messages/MessageText.tsx",
+      },
+      revealTarget: {
+        lineStart: 120,
+        lineEnd: 120,
+      },
+      scopeKey: "session:ses-1",
+    });
+  });
+
+  it("recovers standard markdown file links wrapped as inline code", () => {
+    render(
+      <PreviewProvider>
+        <PreviewHostContextSetter context={{ sessionId: "ses-1", workspaceAvailable: true, runtime: {} as RuntimeBridge }} />
+        <MessageText
+          message={message("assistant", "查看 `[README.md](<README.md:162>)`", "completed")}
+          workspaceRuntime={{} as RuntimeBridge}
+          workspaceScope={{ sessionId: "ses-1" }}
+        />
+        <PreviewEntryProbe />
+      </PreviewProvider>,
+    );
+
+    const link = screen.getByRole("link", { name: "README.md" });
+    expect(link.closest("code")).toBeNull();
+    fireEvent.click(link);
+
+    expect(previewEntryPayload()).toMatchObject({
+      request: {
+        type: "file",
+        path: "README.md",
+      },
+      revealTarget: {
+        lineStart: 162,
+        lineEnd: 162,
+      },
+      scopeKey: "session:ses-1",
+    });
+  });
+
+  it("keeps standard markdown file links clickable inside emphasis without auto-linking natural language", () => {
+    render(
+      <PreviewProvider>
+        <PreviewHostContextSetter context={{ sessionId: "ses-1", workspaceAvailable: true, runtime: {} as RuntimeBridge }} />
+        <MessageText
+          message={message(
+            "assistant",
+            "重点看 **[README.md](<README.md:162>)**，但 README.md 第 162 行 只是自然语言。",
+            "completed",
+          )}
+          workspaceRuntime={{} as RuntimeBridge}
+          workspaceScope={{ sessionId: "ses-1" }}
+        />
+        <PreviewEntryProbe />
+      </PreviewProvider>,
+    );
+
+    const links = screen.getAllByRole("link", { name: "README.md" });
+    expect(links).toHaveLength(1);
+    expect(screen.getByTestId("message-text").textContent).toContain("README.md 第 162 行");
+    fireEvent.click(links[0]);
+
+    expect(previewEntryPayload()).toMatchObject({
+      request: {
+        type: "file",
+        path: "README.md",
+      },
+      revealTarget: {
+        lineStart: 162,
+        lineEnd: 162,
+      },
+      scopeKey: "session:ses-1",
+    });
   });
 
   it("shows restored file context paths in a body portal", async () => {
@@ -1655,6 +1809,40 @@ function PreviewProbe() {
       {request?.type === "content" ? `${request.contentType}:${request.title}` : ""}
     </output>
   );
+}
+
+function PreviewEntryProbe() {
+  const preview = usePreview();
+  const entry = preview.entries.at(-1) ?? null;
+  return (
+    <output data-testid="preview-entry">
+      {entry
+        ? JSON.stringify({
+            request: entry.request,
+            revealTarget: entry.revealTarget,
+            scopeKey: entry.scopeKey,
+          })
+        : ""}
+    </output>
+  );
+}
+
+function PreviewHostContextSetter({ context }: { context: PreviewRenderContext }) {
+  const { setPreviewHostContext } = usePreview();
+  useEffect(() => {
+    setPreviewHostContext(context);
+    return () => setPreviewHostContext(null);
+  }, [context, setPreviewHostContext]);
+  return null;
+}
+
+function previewEntryPayload() {
+  const content = screen.getByTestId("preview-entry").textContent ?? "";
+  return JSON.parse(content) as {
+    request: Record<string, unknown>;
+    revealTarget: Record<string, unknown> | null;
+    scopeKey: string;
+  };
 }
 
 function FilePanelProbe() {

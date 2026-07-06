@@ -1,5 +1,6 @@
 import { createConversationRuntime, type ConversationRuntime, type ConversationRuntimeOptions } from "./conversation";
 import { createHttpClient, HttpClient, type HttpClientOptions } from "./httpClient";
+import { createLocalPreviewRuntime, type LocalPreviewRuntime } from "./localPreview";
 import { createModelsRuntime, type ModelsRuntime } from "./models";
 import { createSettingsRuntime, type HealthResponse, type SettingsRuntime } from "./settings";
 import { createUsageRuntime, type UsageRuntime } from "./usage";
@@ -18,6 +19,7 @@ export interface RuntimeBridge {
   models: ModelsRuntime;
   settings: SettingsRuntime;
   usage: UsageRuntime;
+  localPreview: LocalPreviewRuntime;
   workspace: WorkspaceRuntime;
   workspaces: WorkspacesRuntime;
   desktopPicker: DesktopPickerRuntime;
@@ -37,6 +39,7 @@ export function createRuntimeBridge(options: RuntimeBridgeOptions = {}): Runtime
     models: createModelsRuntime(http),
     settings,
     usage: createUsageRuntime(http),
+    localPreview: createLocalPreviewRuntime(http),
     workspace: createWorkspaceRuntime(http),
     workspaces: createWorkspacesRuntime(http),
     desktopPicker: createDesktopPickerRuntime(),

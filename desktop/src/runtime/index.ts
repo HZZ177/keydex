@@ -10,6 +10,7 @@ export {
   waitForAgentHealth,
 } from "./agentConnection";
 export { createSettingsRuntime } from "./settings";
+export { createLocalPreviewRuntime } from "./localPreview";
 export { createModelsRuntime } from "./models";
 export { createConversationRuntime } from "./conversation";
 export { createUsageRuntime } from "./usage";
@@ -28,6 +29,11 @@ export type {
   TauriInvoke,
 } from "./agentConnection";
 export type { HealthResponse, SettingsRuntime } from "./settings";
+export type {
+  LocalPreviewFileResponse,
+  LocalPreviewMediaResponse,
+  LocalPreviewRuntime,
+} from "./localPreview";
 export type {
   ModelHealth,
   ModelHealthResponse,
