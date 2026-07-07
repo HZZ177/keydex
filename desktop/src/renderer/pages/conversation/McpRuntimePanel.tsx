@@ -266,7 +266,7 @@ function runtimeView(status: McpRuntimeStatusResponse | null, error: string): Ru
 }
 
 function runtimeIssues(status: McpRuntimeStatusResponse): RuntimePanelIssue[] {
-  const issues = status.servers
+  const issues: RuntimePanelIssue[] = status.servers
     .filter((server) => isServerIssue(server))
     .slice(0, 3)
     .map((server) => ({
