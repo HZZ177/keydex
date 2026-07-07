@@ -123,7 +123,7 @@ export function AppDialog({
         <div className={bodyClasses} data-size={size}>
           {children}
         </div>
-        {footer ? <footer className={footerClasses}>{footer}</footer> : null}
+        {footer ? <footer className={footerClasses} data-size={size}>{footer}</footer> : null}
       </section>
     </div>
   );

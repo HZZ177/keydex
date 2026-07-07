@@ -20,6 +20,21 @@ describe("AppDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("marks footer with dialog size for consistent button spacing", () => {
+    render(
+      <AppDialog
+        title="带底部按钮的弹窗"
+        footer={<button type="button">确认</button>}
+      >
+        弹窗内容
+      </AppDialog>,
+    );
+
+    const footer = screen.getByRole("button", { name: "确认" }).closest("footer");
+
+    expect(footer?.getAttribute("data-size")).toBe("form");
+  });
+
   it("routes ConfirmDialog Escape through cancel without confirming", () => {
     const onCancel = vi.fn();
     const onConfirm = vi.fn();
