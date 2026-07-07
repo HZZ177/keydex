@@ -571,6 +571,9 @@ Invoke-Step "构建 Tauri NSIS 安装包" {
             Write-Host "临时覆盖 Tauri 打包版本：$AppVersion"
         }
         $args = @("run", "tauri:build", "--", "--ci")
+        if (-not [string]::IsNullOrWhiteSpace($buildTauriConfig)) {
+            $args += @("--config", $buildTauriConfig)
+        }
         if ($NoSign) {
             $args += "--no-sign"
         }
@@ -605,7 +608,7 @@ Invoke-Step "复制发布产物到快速目录" {
         throw "Tauri v1Compatible updater 产物不完整：$V1UpdaterBundle / $V1UpdaterSignature"
     }
     if ($ExpectUpdaterArtifacts -and -not (($hasV1UpdaterBundle -and $hasV1UpdaterSignature) -or $hasV2UpdaterSignature)) {
-        throw "已启用 createUpdaterArtifacts，但未生成 updater 签名产物。Tauri v2 预期：$V2UpdaterSignature；v1Compatible 预期：$V1UpdaterBundle / $V1UpdaterSignature。请检查 TAURI_SIGNING_PRIVATE_KEY、TAURI_CONFIG 和 Tauri build 日志。"
+        throw "已启用 createUpdaterArtifacts，但未生成 updater 签名产物。Tauri v2 预期：$V2UpdaterSignature；v1Compatible 预期：$V1UpdaterBundle / $V1UpdaterSignature。请检查 TAURI_SIGNING_PRIVATE_KEY、TAURI_CONFIG/--config 和 Tauri build 日志。"
     }
     if ($hasV1UpdaterBundle) {
         $artifactUpdaterBundle = Join-Path $ArtifactDir $V1UpdaterBundleName
