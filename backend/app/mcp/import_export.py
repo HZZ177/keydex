@@ -7,32 +7,10 @@ from backend.app.mcp.audit import McpAuditWriter, redact_sensitive_data
 from backend.app.mcp.types import McpServerCreateRequest
 from backend.app.storage import McpServerRecord, StorageRepositories
 
-SUPPORTED_IMPORT_SOURCES = {"keydex", "codex", "claude"}
+SUPPORTED_IMPORT_SOURCES = {"keydex"}
 CONFLICT_STRATEGIES = {"skip", "rename", "error"}
 SERVER_FIELDS = set(McpServerCreateRequest.model_fields)
-CODEX_SERVER_FIELDS = {
-    "command",
-    "args",
-    "env",
-    "cwd",
-    "url",
-    "sse_url",
-    "message_url",
-    "headers",
-    "env_headers",
-    "bearer_token_env_var",
-    "transport",
-    "enabled",
-    "required",
-    "description",
-    "startup_timeout_sec",
-    "tool_timeout_sec",
-    "read_timeout_sec",
-    "sse_read_timeout_sec",
-    "shutdown_timeout_sec",
-    "default_tool_approval_mode",
-}
-CLAUDE_SERVER_FIELDS = {"command", "args", "env", "cwd", "disabled", "description"}
+KEYDEX_EXPORT_METADATA_FIELDS = {"secret_ref_keys", "oauth_configured"}
 
 
 class McpImportExportError(ValueError):
@@ -193,11 +171,6 @@ def export_mcp_config(
 def _drafts_from_source(source_type: str, config: dict[str, Any]) -> list[dict[str, Any]]:
     if source_type == "keydex":
         return _keydex_drafts(config)
-    if source_type == "codex":
-        servers = config.get("mcp_servers") or config.get("mcpServers") or {}
-        return _named_server_drafts(servers, source_type)
-    if source_type == "claude":
-        return _named_server_drafts(config.get("mcpServers") or {}, source_type)
     raise McpImportExportError(f"不支持的 MCP import source: {source_type}", code="invalid_source")
 
 
@@ -209,33 +182,29 @@ def _keydex_drafts(config: dict[str, Any]) -> list[dict[str, Any]]:
     for index, item in enumerate(servers):
         if not isinstance(item, dict):
             raise McpImportExportError(f"servers[{index}] 必须是对象", code="invalid_config")
-        unknown = sorted(set(item) - SERVER_FIELDS)
+        unknown = sorted(set(item) - SERVER_FIELDS - KEYDEX_EXPORT_METADATA_FIELDS)
         draft = {key: value for key, value in item.items() if key in SERVER_FIELDS}
         draft.setdefault("enabled", True)
         draft["_unknown_fields"] = unknown
-        draft["_missing_secrets"] = _strip_draft_secrets(draft)
+        draft["_missing_secrets"] = [
+            *_missing_from_keydex_export_metadata(item),
+            *_strip_draft_secrets(draft),
+        ]
         drafts.append(_normalize_draft(draft, default_name=f"Imported {index + 1}"))
     return drafts
 
 
-def _named_server_drafts(servers: Any, source_type: str) -> list[dict[str, Any]]:
-    if not isinstance(servers, dict):
-        raise McpImportExportError("MCP import config servers 必须是对象", code="invalid_config")
-    fields = CODEX_SERVER_FIELDS if source_type == "codex" else CLAUDE_SERVER_FIELDS
-    drafts: list[dict[str, Any]] = []
-    for name, item in servers.items():
-        if not isinstance(item, dict):
-            raise McpImportExportError(f"MCP server {name} 必须是对象", code="invalid_config")
-        unknown = sorted(set(item) - fields)
-        draft = {key: value for key, value in item.items() if key in fields}
-        draft["name"] = str(name)
-        if source_type == "claude":
-            draft["transport"] = "stdio"
-            draft["enabled"] = not bool(draft.pop("disabled", False))
-        draft["_unknown_fields"] = unknown
-        draft["_missing_secrets"] = _strip_draft_secrets(draft)
-        drafts.append(_normalize_draft(draft, default_name=str(name)))
-    return drafts
+def _missing_from_keydex_export_metadata(item: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    secret_ref_keys = item.get("secret_ref_keys")
+    if isinstance(secret_ref_keys, list):
+        missing.extend(
+            f"secret_refs.{key}"
+            for key in sorted({str(key).strip() for key in secret_ref_keys if str(key).strip()})
+        )
+    if item.get("oauth_configured") is True and not item.get("oauth_config"):
+        missing.append("oauth_config")
+    return missing
 
 
 def _normalize_draft(draft: dict[str, Any], *, default_name: str) -> dict[str, Any]:

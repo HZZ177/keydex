@@ -125,7 +125,7 @@ class SetMcpSessionToolOverrideRequest(BaseModel):
 
 
 class McpImportRequest(BaseModel):
-    source_type: str = Field(pattern="^(keydex|codex|claude)$")
+    source_type: str = Field(pattern="^keydex$")
     config: dict[str, Any]
     confirm: bool = False
     conflict_strategy: str = Field(default="skip", pattern="^(skip|rename|error)$")

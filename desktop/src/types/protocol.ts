@@ -164,7 +164,7 @@ export type McpToolBulkPolicyAction =
   | "disable_selected"
   | "keep_selected_only"
   | "prompt_all";
-export type McpImportSourceType = "keydex" | "codex" | "claude";
+export type McpImportSourceType = "keydex";
 export type McpImportConflictStrategy = "skip" | "rename" | "error";
 export type McpTrustRuleKind = "tool" | "tool_with_params" | "deny_tool";
 export type McpTrustRuleScope = "session" | "global";

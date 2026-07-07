@@ -120,8 +120,8 @@ describe("McpRuntime", () => {
     const runtime = createMcpRuntime({ request } as unknown as HttpClient);
 
     await runtime.importConfig({
-      source_type: "codex",
-      config: { mcp_servers: {} },
+      source_type: "keydex",
+      config: { format: "keydex.mcp.v1", servers: [] },
       conflict_strategy: "rename",
     });
     await runtime.exportConfig({ include_trust_rules: true, server_ids: ["srv 1"] });
@@ -147,7 +147,7 @@ describe("McpRuntime", () => {
 
     expect(request).toHaveBeenNthCalledWith(1, "/api/mcp/import", {
       method: "POST",
-      body: { source_type: "codex", config: { mcp_servers: {} }, conflict_strategy: "rename" },
+      body: { source_type: "keydex", config: { format: "keydex.mcp.v1", servers: [] }, conflict_strategy: "rename" },
     });
     expect(request).toHaveBeenNthCalledWith(2, "/api/mcp/export", {
       method: "POST",

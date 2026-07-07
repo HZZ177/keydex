@@ -852,13 +852,16 @@ describe("McpConsolePage", () => {
 
   it("previews import conflicts and confirms import with sanitized server output", async () => {
     const config = {
-      mcpServers: {
-        Duplicate: { command: "existing-mcp" },
-        "New Tools": {
+      format: "keydex.mcp.v1",
+      servers: [
+        { name: "Duplicate", transport: "stdio", command: "existing-mcp" },
+        {
+          name: "New Tools",
+          transport: "stdio",
           command: "new-mcp",
           env: { API_KEY: "raw-secret-value-0123456789012345" },
         },
-      },
+      ],
     };
     const preview = importPreviewResponse();
     const applied = {
@@ -877,13 +880,16 @@ describe("McpConsolePage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "导入 MCP 配置" }));
     expect(await screen.findByRole("dialog", { name: "导入 MCP 配置" })).not.toBeNull();
 
-    await chooseSettingsSelect("MCP 导入来源", "Claude Desktop");
+    fireEvent.click(await screen.findByRole("button", { name: /^MCP 导入来源：/ }));
+    expect(await screen.findByRole("option", { name: "Keydex JSON" })).not.toBeNull();
+    expect(screen.queryByRole("option", { name: "Codex 配置" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Claude Desktop" })).toBeNull();
     fireEvent.change(screen.getByLabelText("MCP 导入 JSON"), { target: { value: JSON.stringify(config) } });
     fireEvent.click(screen.getByRole("button", { name: "预览导入" }));
 
     await waitFor(() =>
       expect(importConfig).toHaveBeenCalledWith({
-        source_type: "claude",
+        source_type: "keydex",
         conflict_strategy: "skip",
         confirm: false,
         config,
@@ -898,7 +904,7 @@ describe("McpConsolePage", () => {
 
     await waitFor(() => expect(importConfig).toHaveBeenCalledTimes(2));
     expect(importConfig).toHaveBeenLastCalledWith({
-      source_type: "claude",
+      source_type: "keydex",
       conflict_strategy: "skip",
       confirm: true,
       config,
@@ -930,9 +936,10 @@ describe("McpConsolePage", () => {
     expect(screen.getByText("导出预览和文件都不包含密钥明文或 OAuth 令牌。")).not.toBeNull();
     expect(screen.getByLabelText("导出 MCP 服务器 Filesystem")).not.toBeNull();
     expect(screen.getByLabelText("导出 MCP 服务器 Ticketing")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "导出文件" })).toBeNull();
 
     fireEvent.click(screen.getByLabelText("导出包含信任名单"));
-    fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成导出预览" }));
 
     await waitFor(() =>
       expect(exportConfig).toHaveBeenCalledWith({
@@ -941,10 +948,20 @@ describe("McpConsolePage", () => {
       }),
     );
     const preview = await screen.findByTestId("mcp-export-preview");
+    expect(screen.queryByLabelText("导出包含信任名单")).toBeNull();
+    expect(screen.queryByLabelText("导出 MCP 服务器 Filesystem")).toBeNull();
+    expect(screen.getByRole("button", { name: "上一步" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "导出文件" })).not.toBeNull();
     expect(preview.textContent).toContain("\"trust_rules\"");
     expect(preview.textContent).toContain("secret:configured");
     expect(preview.textContent).not.toContain("raw-secret-value");
     expect(preview.textContent).not.toContain("raw-token");
+
+    fireEvent.click(screen.getByRole("button", { name: "上一步" }));
+    expect(screen.queryByTestId("mcp-export-preview")).toBeNull();
+    expect(screen.queryByRole("button", { name: "导出文件" })).toBeNull();
+    expect((screen.getByLabelText("导出包含信任名单") as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByLabelText("导出 MCP 服务器 Filesystem")).not.toBeNull();
   });
 
   it("exports selected MCP servers as a JSON file", async () => {
@@ -968,7 +985,8 @@ describe("McpConsolePage", () => {
 
       fireEvent.click(await screen.findByRole("button", { name: "导出 MCP 配置" }));
       fireEvent.click(await screen.findByLabelText("导出 MCP 服务器 Ticketing"));
-      fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
+      expect(screen.queryByRole("button", { name: "导出文件" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "生成导出预览" }));
 
       await waitFor(() =>
         expect(exportConfig).toHaveBeenCalledWith({
@@ -977,13 +995,20 @@ describe("McpConsolePage", () => {
         }),
       );
       expect(await screen.findByTestId("mcp-export-preview")).not.toBeNull();
+      expect(screen.queryByLabelText("导出 MCP 服务器 Ticketing")).toBeNull();
+      expect(screen.getByRole("button", { name: "上一步" })).not.toBeNull();
 
       fireEvent.click(screen.getByRole("button", { name: "导出文件" }));
 
       await waitFor(() => expect(anchorClick).toHaveBeenCalledTimes(1));
       expect(createObjectURL).toHaveBeenCalledTimes(1);
       expect(revokeObjectURL).toHaveBeenCalledWith("blob:mcp-export");
-      expect(await screen.findByText("文件已下载")).not.toBeNull();
+      expect(await screen.findByRole("button", { name: "已下载" })).not.toBeNull();
+      expect(screen.queryByText("文件已下载")).toBeNull();
+      await waitFor(() => expect(screen.getByRole("button", { name: "导出文件" })).not.toBeNull(), {
+        timeout: 2500,
+      });
+      expect(screen.queryByRole("button", { name: "已下载" })).toBeNull();
     } finally {
       anchorClick.mockRestore();
       restoreUrlMethod("createObjectURL", originalCreateObjectURL);
@@ -1012,7 +1037,7 @@ describe("McpConsolePage", () => {
     const closeButtons = within(importDialog).getAllByRole("button", { name: "关闭" });
     fireEvent.click(closeButtons[closeButtons.length - 1]);
     fireEvent.click(await screen.findByRole("button", { name: "导出 MCP 配置" }));
-    fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成导出预览" }));
 
     expect(await screen.findByText("MCP 服务器需要认证，请完成登录或补充凭据。")).not.toBeNull();
     expect(screen.queryByText(/raw-export-token/)).toBeNull();
@@ -1501,7 +1526,7 @@ function filterAuditLogs(records: McpAuditRecord[], options: Record<string, unkn
 
 function importPreviewResponse(): McpImportPreviewResponse {
   return {
-    source_type: "claude",
+    source_type: "keydex",
     conflict_strategy: "skip",
     server_count: 2,
     servers: [

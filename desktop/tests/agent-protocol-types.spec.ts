@@ -188,7 +188,7 @@ describe("agent protocol types", () => {
       },
     } satisfies McpRuntimeStatusResponse;
     const importPreview = {
-      source_type: "codex",
+      source_type: "keydex",
       conflict_strategy: "skip",
       server_count: 1,
       servers: [

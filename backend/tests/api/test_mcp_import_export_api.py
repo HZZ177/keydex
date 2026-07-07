@@ -8,25 +8,28 @@ from backend.app.core.config import AppSettings
 from backend.app.main import create_app
 
 
-def test_codex_import_preview_and_confirm_writes_audit(tmp_path) -> None:
+def test_keydex_import_preview_and_confirm_writes_audit(tmp_path) -> None:
     client = TestClient(create_app(AppSettings(data_dir=tmp_path / "data")))
     config = {
-        "mcp_servers": {
-            "Remote Search": {
+        "format": "keydex.mcp.v1",
+        "servers": [
+            {
+                "name": "Remote Search",
+                "transport": "streamable_http",
                 "url": "https://mcp.example.test/mcp",
                 "headers": {"Authorization": "env:MCP_TOKEN"},
                 "tool_timeout_sec": 15,
             }
-        }
+        ],
     }
 
     preview = client.post(
         "/api/mcp/import",
-        json={"source_type": "codex", "config": config},
+        json={"source_type": "keydex", "config": config},
     )
     applied = client.post(
         "/api/mcp/import",
-        json={"source_type": "codex", "config": config, "confirm": True},
+        json={"source_type": "keydex", "config": config, "confirm": True},
     )
 
     assert preview.status_code == 200
@@ -45,11 +48,14 @@ def test_codex_import_preview_and_confirm_writes_audit(tmp_path) -> None:
     assert audits[0].detail["created_count"] == 1
 
 
-def test_claude_import_strips_sensitive_env_values(tmp_path) -> None:
+def test_keydex_import_strips_sensitive_env_values(tmp_path) -> None:
     client = TestClient(create_app(AppSettings(data_dir=tmp_path / "data")))
     config = {
-        "mcpServers": {
-            "Local Files": {
+        "format": "keydex.mcp.v1",
+        "servers": [
+            {
+                "name": "Local Files",
+                "transport": "stdio",
                 "command": "npx",
                 "args": ["@example/mcp-files"],
                 "env": {
@@ -57,16 +63,16 @@ def test_claude_import_strips_sensitive_env_values(tmp_path) -> None:
                     "API_KEY": "raw-secret-value-0123456789012345",
                 },
             }
-        }
+        ],
     }
 
     preview = client.post(
         "/api/mcp/import",
-        json={"source_type": "claude", "config": config},
+        json={"source_type": "keydex", "config": config},
     )
     applied = client.post(
         "/api/mcp/import",
-        json={"source_type": "claude", "config": config, "confirm": True},
+        json={"source_type": "keydex", "config": config, "confirm": True},
     )
 
     assert preview.status_code == 200
@@ -78,6 +84,17 @@ def test_claude_import_strips_sensitive_env_values(tmp_path) -> None:
     assert server.command == "npx"
     assert server.args == ["@example/mcp-files"]
     assert server.env == {"NODE_ENV": "production"}
+
+
+def test_import_rejects_non_keydex_sources(tmp_path) -> None:
+    client = TestClient(create_app(AppSettings(data_dir=tmp_path / "data")))
+
+    response = client.post(
+        "/api/mcp/import",
+        json={"source_type": "codex", "config": {}},
+    )
+
+    assert response.status_code == 422
 
 
 def test_keydex_import_applies_valid_json_and_preview_unknown_fields_does_not_write(
@@ -150,6 +167,51 @@ def test_keydex_import_applies_valid_json_and_preview_unknown_fields_does_not_wr
     assert [item.name for item in servers] == ["Keydex Remote"]
 
 
+def test_keydex_import_accepts_export_metadata_without_unknown_fields(tmp_path) -> None:
+    client = TestClient(create_app(AppSettings(data_dir=tmp_path / "data")))
+    config = {
+        "format": "keydex.mcp.v1",
+        "servers": [
+            {
+                "name": "Exported Keydex Remote",
+                "transport": "streamable_http",
+                "url": "https://mcp.example.test/mcp",
+                "headers": {"Authorization": "secret:configured"},
+                "auth_type": "oauth",
+                "secret_ref_keys": ["api_key"],
+                "oauth_configured": True,
+                "oauth_scopes": ["read"],
+            }
+        ],
+        "tool_policies": [],
+    }
+
+    preview = client.post(
+        "/api/mcp/import",
+        json={"source_type": "keydex", "config": config},
+    )
+    applied = client.post(
+        "/api/mcp/import",
+        json={"source_type": "keydex", "config": config, "confirm": True},
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["valid"] is True
+    assert preview.json()["unknown_fields"] == []
+    assert preview.json()["missing_secrets"] == [
+        "Exported Keydex Remote.secret_refs.api_key",
+        "Exported Keydex Remote.oauth_config",
+        "Exported Keydex Remote.headers.Authorization",
+    ]
+    assert applied.status_code == 200
+    server = client.app.state.repositories.mcp_servers.get(applied.json()["created"][0]["id"])
+    assert server is not None
+    assert server.name == "Exported Keydex Remote"
+    assert server.auth_type == "oauth"
+    assert server.headers == {}
+    assert server.oauth_config is None
+
+
 def test_import_name_conflict_requires_strategy(tmp_path) -> None:
     client = TestClient(create_app(AppSettings(data_dir=tmp_path / "data")))
     create = client.post(
@@ -161,16 +223,25 @@ def test_import_name_conflict_requires_strategy(tmp_path) -> None:
         },
     )
     assert create.status_code == 200
-    config = {"mcpServers": {"Duplicate": {"command": "new-mcp"}}}
+    config = {
+        "format": "keydex.mcp.v1",
+        "servers": [
+            {
+                "name": "Duplicate",
+                "transport": "stdio",
+                "command": "new-mcp",
+            }
+        ],
+    }
 
     preview = client.post(
         "/api/mcp/import",
-        json={"source_type": "claude", "config": config},
+        json={"source_type": "keydex", "config": config},
     )
     rejected = client.post(
         "/api/mcp/import",
         json={
-            "source_type": "claude",
+            "source_type": "keydex",
             "config": config,
             "confirm": True,
             "conflict_strategy": "error",
@@ -179,7 +250,7 @@ def test_import_name_conflict_requires_strategy(tmp_path) -> None:
     renamed = client.post(
         "/api/mcp/import",
         json={
-            "source_type": "claude",
+            "source_type": "keydex",
             "config": config,
             "confirm": True,
             "conflict_strategy": "rename",

@@ -1,5 +1,5 @@
-import { AlertCircle, CheckCircle2, Clipboard, Download, FileJson, LoaderCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, CheckCircle2, FileJson, LoaderCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { RuntimeBridge } from "@/runtime";
 import { AppDialog, DialogButton } from "@/renderer/components/dialog";
@@ -28,11 +28,12 @@ interface McpExportDialogProps {
 }
 
 type ExportFileState = "idle" | "saved" | "downloaded" | "cancelled" | "failed";
+type ExportFileResultState = Exclude<ExportFileState, "idle">;
+
+const EXPORT_FILE_FEEDBACK_MS = 1400;
 
 const IMPORT_SOURCES: Array<{ value: McpImportSourceType; label: string }> = [
   { value: "keydex", label: "Keydex JSON" },
-  { value: "codex", label: "Codex 配置" },
-  { value: "claude", label: "Claude Desktop" },
 ];
 
 const CONFLICT_STRATEGIES: Array<{ value: McpImportConflictStrategy; label: string }> = [
@@ -215,10 +216,10 @@ export function McpExportDialog({ runtime, servers, onClose }: McpExportDialogPr
   const [exported, setExported] = useState<McpExportResponse | null>(null);
   const [exportFilename, setExportFilename] = useState(() => createMcpExportFilename());
   const [error, setError] = useState("");
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [fileState, setFileState] = useState<ExportFileState>("idle");
   const [busy, setBusy] = useState(false);
   const [fileBusy, setFileBusy] = useState(false);
+  const fileFeedbackTimerRef = useRef<number | null>(null);
 
   const serialized = useMemo(
     () => (exported ? JSON.stringify(exported, null, 2) : ""),
@@ -227,6 +228,34 @@ export function McpExportDialog({ runtime, servers, onClose }: McpExportDialogPr
   const selectedServerIdSet = useMemo(() => new Set(selectedServerIds), [selectedServerIds]);
   const allServersSelected = servers.length > 0 && selectedServerIds.length === servers.length;
   const canGeneratePreview = servers.length > 0 && selectedServerIds.length > 0 && !busy;
+  const isPreviewStep = exported !== null;
+  const exportButtonLabel = exportFileButtonLabel(fileState, fileBusy);
+
+  const clearFileFeedbackTimer = useCallback(() => {
+    if (fileFeedbackTimerRef.current !== null) {
+      window.clearTimeout(fileFeedbackTimerRef.current);
+      fileFeedbackTimerRef.current = null;
+    }
+  }, []);
+
+  const resetFileFeedback = useCallback(() => {
+    clearFileFeedbackTimer();
+    setFileState("idle");
+  }, [clearFileFeedbackTimer]);
+
+  const showFileFeedback = useCallback(
+    (state: Exclude<ExportFileState, "idle">) => {
+      clearFileFeedbackTimer();
+      setFileState(state);
+      fileFeedbackTimerRef.current = window.setTimeout(() => {
+        setFileState("idle");
+        fileFeedbackTimerRef.current = null;
+      }, EXPORT_FILE_FEEDBACK_MS);
+    },
+    [clearFileFeedbackTimer],
+  );
+
+  useEffect(() => clearFileFeedbackTimer, [clearFileFeedbackTimer]);
 
   useEffect(() => {
     setSelectedServerIds((current) => {
@@ -238,8 +267,12 @@ export function McpExportDialog({ runtime, servers, onClose }: McpExportDialogPr
 
   const resetPreview = () => {
     setExported(null);
-    setCopyState("idle");
-    setFileState("idle");
+    resetFileFeedback();
+  };
+
+  const backToSelection = () => {
+    setError("");
+    resetPreview();
   };
 
   const toggleServer = (serverId: string) => {
@@ -269,8 +302,7 @@ export function McpExportDialog({ runtime, servers, onClose }: McpExportDialogPr
     }
     setBusy(true);
     setError("");
-    setCopyState("idle");
-    setFileState("idle");
+    resetFileFeedback();
     try {
       const response = await runtime.mcp.exportConfig({
         include_trust_rules: includeTrustRules,
@@ -286,31 +318,18 @@ export function McpExportDialog({ runtime, servers, onClose }: McpExportDialogPr
     }
   };
 
-  const copyExport = async () => {
-    if (!serialized) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(serialized);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
-  };
-
   const exportFile = async () => {
     if (!serialized) {
       return;
     }
     setFileBusy(true);
     setError("");
-    setFileState("idle");
+    resetFileFeedback();
     try {
       const result = await saveMcpExportFile(serialized, exportFilename);
-      setFileState(result);
+      showFileFeedback(result);
     } catch {
-      setFileState("failed");
-      setError("导出文件失败");
+      showFileFeedback("failed");
     } finally {
       setFileBusy(false);
     }
@@ -319,24 +338,32 @@ export function McpExportDialog({ runtime, servers, onClose }: McpExportDialogPr
   return (
     <AppDialog
       title="导出 MCP 配置"
-      description="选择服务器，生成预览后导出 Keydex MCP JSON。"
+      description={isPreviewStep ? "确认 JSON 内容后导出为文件。" : "选择服务器并生成导出预览。"}
       onClose={onClose}
       footer={(
         <>
           <DialogButton type="button" onClick={onClose}>
             关闭
           </DialogButton>
-          <DialogButton type="button" disabled={!canGeneratePreview} onClick={() => void runExport()}>
-            {busy ? "生成中" : exported ? "重新生成预览" : "生成预览"}
-          </DialogButton>
-          <DialogButton
-            tone="primary"
-            type="button"
-            disabled={!exported || fileBusy}
-            onClick={() => void exportFile()}
-          >
-            {fileBusy ? "导出中" : "导出文件"}
-          </DialogButton>
+          {isPreviewStep ? (
+            <>
+              <DialogButton type="button" disabled={fileBusy} onClick={backToSelection}>
+                上一步
+              </DialogButton>
+              <DialogButton
+                tone="primary"
+                type="button"
+                disabled={!serialized || fileBusy}
+                onClick={() => void exportFile()}
+              >
+                {exportButtonLabel}
+              </DialogButton>
+            </>
+          ) : (
+            <DialogButton tone="primary" type="button" disabled={!canGeneratePreview} onClick={() => void runExport()}>
+              {busy ? "生成中" : "生成导出预览"}
+            </DialogButton>
+          )}
         </>
       )}
     >
@@ -347,86 +374,92 @@ export function McpExportDialog({ runtime, servers, onClose }: McpExportDialogPr
             <span>{error}</span>
           </div>
         ) : null}
-        <div className={styles.exportStep}>
-          <div className={styles.exportStepHeader}>
-            <div>
-              <strong>选择 MCP 服务器</strong>
-              <span>{selectedServerIds.length} / {servers.length} 个服务器</span>
+        {!isPreviewStep ? (
+          <>
+            <label className={styles.importExportToggle}>
+              <span>
+                <strong>包含信任名单</strong>
+                <small>导出服务器与工具授权配置时可附带信任名单。</small>
+              </span>
+              <input
+                aria-label="导出包含信任名单"
+                type="checkbox"
+                checked={includeTrustRules}
+                onChange={(event) => {
+                  setIncludeTrustRules(event.target.checked);
+                  resetPreview();
+                }}
+              />
+            </label>
+            <div className={styles.exportStep}>
+              <div className={styles.exportStepHeader}>
+                <div>
+                  <strong>选择 MCP 服务器</strong>
+                  <span>{selectedServerIds.length} / {servers.length} 个服务器</span>
+                </div>
+                <button type="button" disabled={servers.length === 0} onClick={toggleAllServers}>
+                  {allServersSelected ? "取消全选" : "全选"}
+                </button>
+              </div>
+              {servers.length === 0 ? (
+                <div className={styles.importExportNotice} role="status">
+                  <FileJson size={15} />
+                  <span>暂无可导出的 MCP 服务器。</span>
+                </div>
+              ) : (
+                <div className={styles.exportServerList} role="group" aria-label="导出 MCP 服务器">
+                  {servers.map((server) => (
+                    <label key={server.id} className={styles.exportServerOption}>
+                      <input
+                        aria-label={`导出 MCP 服务器 ${server.name}`}
+                        type="checkbox"
+                        checked={selectedServerIdSet.has(server.id)}
+                        onChange={() => toggleServer(server.id)}
+                      />
+                      <span>
+                        <strong>{server.name}</strong>
+                        <small>{transportLabel(server.transport)} · {server.enabled ? "已启用" : "已停用"}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
-            <button type="button" disabled={servers.length === 0} onClick={toggleAllServers}>
-              {allServersSelected ? "取消全选" : "全选"}
-            </button>
-          </div>
-          {servers.length === 0 ? (
             <div className={styles.importExportNotice} role="status">
               <FileJson size={15} />
-              <span>暂无可导出的 MCP 服务器。</span>
+              <span>导出预览和文件都不包含密钥明文或 OAuth 令牌。</span>
             </div>
-          ) : (
-            <div className={styles.exportServerList} role="group" aria-label="导出 MCP 服务器">
-              {servers.map((server) => (
-                <label key={server.id} className={styles.exportServerOption}>
-                  <input
-                    aria-label={`导出 MCP 服务器 ${server.name}`}
-                    type="checkbox"
-                    checked={selectedServerIdSet.has(server.id)}
-                    onChange={() => toggleServer(server.id)}
-                  />
-                  <span>
-                    <strong>{server.name}</strong>
-                    <small>{transportLabel(server.transport)} · {server.enabled ? "已启用" : "已停用"}</small>
-                  </span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-        <label className={styles.importExportToggle}>
-          <span>
-            <strong>包含信任名单</strong>
-            <small>导出服务器与工具授权配置时可附带信任名单。</small>
-          </span>
-          <input
-            aria-label="导出包含信任名单"
-            type="checkbox"
-            checked={includeTrustRules}
-            onChange={(event) => {
-              setIncludeTrustRules(event.target.checked);
-              resetPreview();
-            }}
-          />
-        </label>
-        <div className={styles.importExportNotice} role="status">
-          <FileJson size={15} />
-          <span>导出预览和文件都不包含密钥明文或 OAuth 令牌。</span>
-        </div>
-        {exported ? (
+          </>
+        ) : (
           <div className={styles.exportPreview} data-testid="mcp-export-preview">
-            <div className={styles.exportPreviewHeader}>
-              <div>
-                <strong>导出预览</strong>
-                <span>{exported.format} · {exported.servers.length} 个服务器</span>
-              </div>
-              <button type="button" onClick={() => void copyExport()}>
-                <Clipboard size={14} />
-                <span>复制 JSON</span>
-              </button>
-            </div>
-            {copyState === "copied" ? <span className={styles.exportCopyState}>已复制</span> : null}
-            {copyState === "failed" ? <span className={styles.exportCopyState}>复制失败</span> : null}
-            {fileState === "saved" ? <span className={styles.exportCopyState}>文件已保存</span> : null}
-            {fileState === "downloaded" ? <span className={styles.exportCopyState}>文件已下载</span> : null}
-            {fileState === "cancelled" ? <span className={styles.exportCopyState}>已取消导出</span> : null}
-            {fileState === "failed" ? <span className={styles.exportCopyState}>导出失败</span> : null}
-            <pre>{serialized}</pre>
+            <pre aria-label="MCP 导出 JSON">{serialized}</pre>
           </div>
-        ) : null}
+        )}
       </div>
     </AppDialog>
   );
 }
 
-async function saveMcpExportFile(contents: string, filename: string): Promise<ExportFileState> {
+function exportFileButtonLabel(fileState: ExportFileState, fileBusy: boolean) {
+  if (fileBusy) {
+    return "导出中";
+  }
+  if (fileState === "saved") {
+    return "已保存";
+  }
+  if (fileState === "downloaded") {
+    return "已下载";
+  }
+  if (fileState === "cancelled") {
+    return "已取消";
+  }
+  if (fileState === "failed") {
+    return "导出失败";
+  }
+  return "导出文件";
+}
+
+async function saveMcpExportFile(contents: string, filename: string): Promise<ExportFileResultState> {
   const nativeResult = await saveTextWithNativeDialog(contents, filename);
   if (nativeResult !== "unavailable") {
     return nativeResult;
