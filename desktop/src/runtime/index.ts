@@ -19,6 +19,12 @@ export { createWorkspacesRuntime } from "./workspaces";
 export { createDesktopPickerRuntime } from "./desktopPicker";
 export { createAttachmentsRuntime } from "./attachments";
 export { createMcpRuntime } from "./mcp";
+export {
+  canUseAppUpdater,
+  checkForAppUpdate,
+  downloadAndInstallAppUpdate,
+  getCurrentAppVersion,
+} from "./appUpdate";
 export type { HttpClientOptions, RequestOptions } from "./httpClient";
 export type { WebSocketConstructor, WebSocketLike, WsClientOptions, WsConnectionStatus } from "./wsClient";
 export type { RuntimeErrorEnvelope, RuntimeHttpErrorParams } from "./errors";
@@ -113,3 +119,4 @@ export type {
   McpToolListOptions,
   McpTrustRuleListOptions,
 } from "./mcp";
+export type { AppUpdateProgress, PendingAppUpdate } from "./appUpdate";

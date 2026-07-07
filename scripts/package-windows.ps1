@@ -51,11 +51,17 @@ if ([string]::IsNullOrWhiteSpace($AppVersion)) {
     throw "未能从 Tauri 配置读取版本号：$TauriConfigPath"
 }
 $InstallerName = "Keydex_${AppVersion}_x64-setup.exe"
+$UpdaterBundleName = "Keydex_${AppVersion}_x64-setup.nsis.zip"
+$UpdaterSignatureName = "$UpdaterBundleName.sig"
 $SidecarDir = Join-Path $Root "desktop\src-tauri\binaries\agent-server"
 $Sidecar = Join-Path $SidecarDir "agent-server.exe"
 $Installer = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\$InstallerName"
+$UpdaterBundle = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\$UpdaterBundleName"
+$UpdaterSignature = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\$UpdaterSignatureName"
 $ReleaseApp = Join-Path $Root "desktop\src-tauri\target\release\keydex-desktop.exe"
 $ArtifactDir = Join-Path $Root "artifacts\windows"
+$ReleaseRepository = if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) { "HZZ177/keydex" } else { $env:GITHUB_REPOSITORY }
+$ReleaseTag = if ([string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) { "v$AppVersion" } else { $env:RELEASE_TAG }
 
 function Invoke-Step {
     param(
@@ -426,6 +432,9 @@ Invoke-Step "复制发布产物到快速目录" {
     Stop-ArtifactProcesses -Directory $ArtifactDir
 
     $artifactInstaller = Join-Path $ArtifactDir $InstallerName
+    $artifactUpdaterBundle = Join-Path $ArtifactDir $UpdaterBundleName
+    $artifactUpdaterSignature = Join-Path $ArtifactDir $UpdaterSignatureName
+    $artifactLatestJson = Join-Path $ArtifactDir "latest.json"
     $artifactApp = Join-Path $ArtifactDir "keydex-desktop.exe"
     $artifactSidecarDir = Join-Path $ArtifactDir "binaries\agent-server"
     $artifactSidecar = Join-Path $artifactSidecarDir "agent-server.exe"
@@ -435,6 +444,35 @@ Invoke-Step "复制发布产物到快速目录" {
     )
 
     Copy-Artifact -Source $Installer -Destination $artifactInstaller
+    $hasUpdaterBundle = Test-Path -LiteralPath $UpdaterBundle
+    $hasUpdaterSignature = Test-Path -LiteralPath $UpdaterSignature
+    if ($hasUpdaterBundle -xor $hasUpdaterSignature) {
+        throw "updater 产物不完整：$UpdaterBundle / $UpdaterSignature"
+    }
+    if ($hasUpdaterBundle) {
+        Copy-Artifact -Source $UpdaterBundle -Destination $artifactUpdaterBundle
+        Copy-Artifact -Source $UpdaterSignature -Destination $artifactUpdaterSignature
+        $signature = (Get-Content -Raw -LiteralPath $artifactUpdaterSignature).Trim()
+        $updateUrl = "https://github.com/$ReleaseRepository/releases/download/$ReleaseTag/$UpdaterBundleName"
+        $latest = [ordered]@{
+            version = $AppVersion
+            notes = "Keydex $AppVersion"
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+                "windows-x86_64" = [ordered]@{
+                    signature = $signature
+                    url = $updateUrl
+                }
+            }
+        }
+        $latest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $artifactLatestJson
+    } else {
+        foreach ($staleUpdaterArtifact in @($artifactUpdaterBundle, $artifactUpdaterSignature, $artifactLatestJson)) {
+            if (Test-Path -LiteralPath $staleUpdaterArtifact) {
+                Remove-Item -LiteralPath $staleUpdaterArtifact -Force
+            }
+        }
+    }
     Copy-Artifact -Source $ReleaseApp -Destination $artifactApp
     foreach ($legacySidecar in $legacyArtifactSidecars) {
         if (Test-Path $legacySidecar) {
@@ -448,6 +486,13 @@ Invoke-Step "复制发布产物到快速目录" {
         Get-Item -LiteralPath $artifactApp
         Get-Item -LiteralPath $artifactSidecar
     )
+    if ($hasUpdaterBundle) {
+        $files += @(
+            Get-Item -LiteralPath $artifactUpdaterBundle
+            Get-Item -LiteralPath $artifactUpdaterSignature
+            Get-Item -LiteralPath $artifactLatestJson
+        )
+    }
     $manifest = [ordered]@{
         generated_at = (Get-Date).ToString("o")
         source_root = $Root
@@ -469,7 +514,18 @@ Invoke-Step "复制发布产物到快速目录" {
         "",
         "主安装包：",
         "  $InstallerName",
-        "",
+        ""
+    )
+    if ($hasUpdaterBundle) {
+        $readmeLines += @(
+            "应用内更新产物：",
+            "  $UpdaterBundleName",
+            "  $UpdaterSignatureName",
+            "  latest.json",
+            ""
+        )
+    }
+    $readmeLines += @(
         "调试/直接运行二进制：",
         "  keydex-desktop.exe",
         "",

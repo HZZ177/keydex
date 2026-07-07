@@ -35,5 +35,16 @@
         "installerHooks": "installer-hooks.nsh"
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERCRUYyNzI5QzExNUU2RDYKUldUVzVoWEJLU2Z2MjJNRGt0V0ZMeG55cFlLUDBzUlFlSlU5WmR0dXVoSE41WGRuSHN2QWR6MzAK",
+      "endpoints": [
+        "https://github.com/HZZ177/keydex/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

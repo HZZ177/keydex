@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   BarChart3,
   Bot,
+  Info,
   Moon,
   Palette,
   PanelLeftClose,
@@ -35,7 +36,8 @@ export type SettingsSection =
   | "extensions"
   | "config"
   | "usage"
-  | "mcp";
+  | "mcp"
+  | "about";
 
 const settingsItems = [
   { id: "general", label: "常规", path: "/settings/general", icon: SlidersHorizontal, iconName: "sliders-horizontal" },
@@ -46,6 +48,7 @@ const settingsItems = [
   { id: "mcp", label: "MCP服务器", path: "/settings/mcp", icon: Server, iconName: "server" },
   { id: "config", label: "策略配置", path: "/settings/policy-config", icon: Wrench, iconName: "wrench" },
   { id: "usage", label: "用量统计", path: "/settings/usage", icon: BarChart3, iconName: "bar-chart-3" },
+  { id: "about", label: "关于", path: "/settings/about", icon: Info, iconName: "info" },
 ] satisfies Array<{ id: SettingsSection; label: string; path: string; icon: LucideIcon; iconName: string }>;
 
 export function SettingsShell({

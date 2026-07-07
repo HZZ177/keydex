@@ -55,6 +55,11 @@ const AppearanceSettingsPage = lazy(() =>
     default: module.AppearanceSettingsPage,
   })),
 );
+const AboutSettingsPage = lazy(() =>
+  import("@/renderer/pages/settings/about/AboutSettingsPage").then((module) => ({
+    default: module.AboutSettingsPage,
+  })),
+);
 const ModelSettingsPage = lazy(() =>
   import("@/renderer/pages/settings/model/ModelSettingsPage").then((module) => ({
     default: module.ModelSettingsPage,
@@ -119,6 +124,7 @@ function AppRoutes({ runtime }: { runtime: RuntimeBridge }) {
         <Route path="/settings/mcp" element={<McpSettingsRoute runtime={runtime} />} />
         <Route path="/settings/general" element={<GeneralSettingsRoute runtime={runtime} />} />
         <Route path="/settings/appearance" element={<AppearanceSettingsRoute />} />
+        <Route path="/settings/about" element={<AboutSettingsRoute />} />
         <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
       </Routes>
     </Suspense>
@@ -599,6 +605,14 @@ function AppearanceSettingsRoute() {
   return (
     <SettingsShell activeSection="appearance">
       <AppearanceSettingsPage />
+    </SettingsShell>
+  );
+}
+
+function AboutSettingsRoute() {
+  return (
+    <SettingsShell activeSection="about">
+      <AboutSettingsPage />
     </SettingsShell>
   );
 }
