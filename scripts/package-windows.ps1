@@ -78,13 +78,15 @@ if ($UseAppVersionOverride) {
     Write-Host "版本号将通过 TAURI_CONFIG 临时覆盖；不会修改 tauri.conf.json/package.json 源文件。"
 }
 $InstallerName = "Keydex_${AppVersion}_x64-setup.exe"
-$UpdaterBundleName = "Keydex_${AppVersion}_x64-setup.nsis.zip"
-$UpdaterSignatureName = "$UpdaterBundleName.sig"
+$V1UpdaterBundleName = "Keydex_${AppVersion}_x64-setup.nsis.zip"
+$V1UpdaterSignatureName = "$V1UpdaterBundleName.sig"
+$V2UpdaterSignatureName = "$InstallerName.sig"
 $SidecarDir = Join-Path $Root "desktop\src-tauri\binaries\agent-server"
 $Sidecar = Join-Path $SidecarDir "agent-server.exe"
 $Installer = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\$InstallerName"
-$UpdaterBundle = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\$UpdaterBundleName"
-$UpdaterSignature = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\$UpdaterSignatureName"
+$V1UpdaterBundle = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\$V1UpdaterBundleName"
+$V1UpdaterSignature = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\$V1UpdaterSignatureName"
+$V2UpdaterSignature = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\$V2UpdaterSignatureName"
 $ReleaseApp = Join-Path $Root "desktop\src-tauri\target\release\keydex-desktop.exe"
 $ArtifactDir = Join-Path $Root "artifacts\windows"
 $ReleaseRepository = if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) { "HZZ177/keydex" } else { $env:GITHUB_REPOSITORY }
@@ -586,8 +588,6 @@ Invoke-Step "复制发布产物到快速目录" {
     Stop-ArtifactProcesses -Directory $ArtifactDir
 
     $artifactInstaller = Join-Path $ArtifactDir $InstallerName
-    $artifactUpdaterBundle = Join-Path $ArtifactDir $UpdaterBundleName
-    $artifactUpdaterSignature = Join-Path $ArtifactDir $UpdaterSignatureName
     $artifactLatestJson = Join-Path $ArtifactDir "latest.json"
     $artifactApp = Join-Path $ArtifactDir "keydex-desktop.exe"
     $artifactSidecarDir = Join-Path $ArtifactDir "binaries\agent-server"
@@ -598,19 +598,32 @@ Invoke-Step "复制发布产物到快速目录" {
     )
 
     Copy-Artifact -Source $Installer -Destination $artifactInstaller
-    $hasUpdaterBundle = Test-Path -LiteralPath $UpdaterBundle
-    $hasUpdaterSignature = Test-Path -LiteralPath $UpdaterSignature
-    if ($hasUpdaterBundle -xor $hasUpdaterSignature) {
-        throw "updater 产物不完整：$UpdaterBundle / $UpdaterSignature"
+    $hasV1UpdaterBundle = Test-Path -LiteralPath $V1UpdaterBundle
+    $hasV1UpdaterSignature = Test-Path -LiteralPath $V1UpdaterSignature
+    $hasV2UpdaterSignature = Test-Path -LiteralPath $V2UpdaterSignature
+    if ($hasV1UpdaterBundle -xor $hasV1UpdaterSignature) {
+        throw "Tauri v1Compatible updater 产物不完整：$V1UpdaterBundle / $V1UpdaterSignature"
     }
-    if ($ExpectUpdaterArtifacts -and -not ($hasUpdaterBundle -and $hasUpdaterSignature)) {
-        throw "已启用 createUpdaterArtifacts，但未生成 updater 产物：$UpdaterBundle / $UpdaterSignature。请检查 TAURI_SIGNING_PRIVATE_KEY、TAURI_CONFIG 和 Tauri build 日志。"
+    if ($ExpectUpdaterArtifacts -and -not (($hasV1UpdaterBundle -and $hasV1UpdaterSignature) -or $hasV2UpdaterSignature)) {
+        throw "已启用 createUpdaterArtifacts，但未生成 updater 签名产物。Tauri v2 预期：$V2UpdaterSignature；v1Compatible 预期：$V1UpdaterBundle / $V1UpdaterSignature。请检查 TAURI_SIGNING_PRIVATE_KEY、TAURI_CONFIG 和 Tauri build 日志。"
     }
-    if ($hasUpdaterBundle) {
-        Copy-Artifact -Source $UpdaterBundle -Destination $artifactUpdaterBundle
-        Copy-Artifact -Source $UpdaterSignature -Destination $artifactUpdaterSignature
+    if ($hasV1UpdaterBundle) {
+        $artifactUpdaterBundle = Join-Path $ArtifactDir $V1UpdaterBundleName
+        $artifactUpdaterSignature = Join-Path $ArtifactDir $V1UpdaterSignatureName
+        Copy-Artifact -Source $V1UpdaterBundle -Destination $artifactUpdaterBundle
+        Copy-Artifact -Source $V1UpdaterSignature -Destination $artifactUpdaterSignature
         $signature = (Get-Content -Raw -LiteralPath $artifactUpdaterSignature).Trim()
-        $updateUrl = "https://github.com/$ReleaseRepository/releases/download/$ReleaseTag/$UpdaterBundleName"
+        $updateUrl = "https://github.com/$ReleaseRepository/releases/download/$ReleaseTag/$V1UpdaterBundleName"
+        $updaterMode = "v1Compatible zip"
+    } elseif ($hasV2UpdaterSignature) {
+        $artifactUpdaterBundle = $artifactInstaller
+        $artifactUpdaterSignature = Join-Path $ArtifactDir $V2UpdaterSignatureName
+        Copy-Artifact -Source $V2UpdaterSignature -Destination $artifactUpdaterSignature
+        $signature = (Get-Content -Raw -LiteralPath $artifactUpdaterSignature).Trim()
+        $updateUrl = "https://github.com/$ReleaseRepository/releases/download/$ReleaseTag/$InstallerName"
+        $updaterMode = "v2 installer"
+    }
+    if ($hasV1UpdaterBundle -or $hasV2UpdaterSignature) {
         $latest = [ordered]@{
             version = $AppVersion
             notes = "Keydex $AppVersion"
@@ -623,8 +636,14 @@ Invoke-Step "复制发布产物到快速目录" {
             }
         }
         $latest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $artifactLatestJson
+        Write-Host "应用内更新产物模式：$updaterMode"
     } else {
-        foreach ($staleUpdaterArtifact in @($artifactUpdaterBundle, $artifactUpdaterSignature, $artifactLatestJson)) {
+        foreach ($staleUpdaterArtifact in @(
+            (Join-Path $ArtifactDir $V1UpdaterBundleName),
+            (Join-Path $ArtifactDir $V1UpdaterSignatureName),
+            (Join-Path $ArtifactDir $V2UpdaterSignatureName),
+            $artifactLatestJson
+        )) {
             if (Test-Path -LiteralPath $staleUpdaterArtifact) {
                 Remove-Item -LiteralPath $staleUpdaterArtifact -Force
             }
@@ -643,9 +662,14 @@ Invoke-Step "复制发布产物到快速目录" {
         Get-Item -LiteralPath $artifactApp
         Get-Item -LiteralPath $artifactSidecar
     )
-    if ($hasUpdaterBundle) {
+    if ($hasV1UpdaterBundle) {
         $files += @(
             Get-Item -LiteralPath $artifactUpdaterBundle
+            Get-Item -LiteralPath $artifactUpdaterSignature
+            Get-Item -LiteralPath $artifactLatestJson
+        )
+    } elseif ($hasV2UpdaterSignature) {
+        $files += @(
             Get-Item -LiteralPath $artifactUpdaterSignature
             Get-Item -LiteralPath $artifactLatestJson
         )
@@ -673,11 +697,19 @@ Invoke-Step "复制发布产物到快速目录" {
         "  $InstallerName",
         ""
     )
-    if ($hasUpdaterBundle) {
+    if ($hasV1UpdaterBundle) {
         $readmeLines += @(
             "应用内更新产物：",
-            "  $UpdaterBundleName",
-            "  $UpdaterSignatureName",
+            "  $V1UpdaterBundleName",
+            "  $V1UpdaterSignatureName",
+            "  latest.json",
+            ""
+        )
+    } elseif ($hasV2UpdaterSignature) {
+        $readmeLines += @(
+            "应用内更新产物：",
+            "  $InstallerName",
+            "  $V2UpdaterSignatureName",
             "  latest.json",
             ""
         )
