@@ -9,6 +9,7 @@ import {
   type AppUpdateProgress,
   type PendingAppUpdate,
 } from "@/runtime";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
 
 import styles from "./AboutSettingsPage.module.css";
 
@@ -25,7 +26,7 @@ export function AboutSettingsPage() {
   const [status, setStatus] = useState<UpdateStatus>("idle");
   const [pendingUpdate, setPendingUpdate] = useState<PendingAppUpdate | null>(null);
   const [progress, setProgress] = useState<AppUpdateProgress>(EMPTY_PROGRESS);
-  const [error, setError] = useState<string | null>(null);
+  const notifications = useNotifications();
   const updaterAvailable = canUseAppUpdater();
   const busy = status === "checking" || status === "downloading";
 
@@ -53,18 +54,20 @@ export function AboutSettingsPage() {
     setStatus("checking");
     setPendingUpdate(null);
     setProgress(EMPTY_PROGRESS);
-    setError(null);
     try {
       const update = await checkForAppUpdate();
       if (!update) {
         setStatus("current");
+        notifications.success("已是最新版本");
         return;
       }
       setPendingUpdate(update);
       setStatus("available");
+      notifications.info(`发现新版本 ${update.version}`);
     } catch (reason) {
+      const message = errorMessage(reason);
       setStatus("error");
-      setError(errorMessage(reason));
+      notifications.error(`更新检查失败：${message}`);
     }
   };
 
@@ -74,13 +77,14 @@ export function AboutSettingsPage() {
     }
     setStatus("downloading");
     setProgress(EMPTY_PROGRESS);
-    setError(null);
+    notifications.info("开始下载更新");
     try {
       await downloadAndInstallAppUpdate(pendingUpdate, setProgress);
       setStatus("installed");
     } catch (reason) {
+      const message = errorMessage(reason);
       setStatus("error");
-      setError(errorMessage(reason));
+      notifications.error(`更新安装失败：${message}`);
     }
   };
 
@@ -151,11 +155,6 @@ export function AboutSettingsPage() {
 
           {pendingUpdate?.body ? <p className={styles.notes}>{pendingUpdate.body}</p> : null}
 
-          {error ? (
-            <p className={styles.error} data-settings-error role="alert">
-              {error}
-            </p>
-          ) : null}
         </div>
       </section>
     </main>
