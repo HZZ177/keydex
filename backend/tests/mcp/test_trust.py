@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import timedelta
 
 from backend.app.core.time import to_iso_z, utc_now
@@ -87,27 +89,30 @@ def test_global_tool_trust_matches_any_session(tmp_path) -> None:
     assert match.rule.id == rule.id
 
 
-def test_server_readonly_trust_requires_readonly_non_openworld_tool(tmp_path) -> None:
+def test_tool_with_params_matches_arguments_hash(tmp_path) -> None:
     repositories = _repositories(tmp_path)
+    arguments = {"query": "allowed", "page": 1}
     rule = repositories.mcp_trust_rules.create(
-        rule_id="trust-readonly",
-        rule_kind="server_readonly",
+        rule_id="trust-params-hash",
+        rule_kind="tool_with_params",
         scope="global",
         server_id="srv_trust",
+        raw_tool_name="search",
         approval_mode="approve",
+        condition={"arguments_sha256": _arguments_sha256(arguments)},
     )
 
-    readonly = find_mcp_trust_rule_match(
+    same_arguments = find_mcp_trust_rule_match(
         repositories,
-        _request(annotations={"readOnlyHint": True}),
+        _request(arguments={"page": 1, "query": "allowed"}),
     )
-    open_world = find_mcp_trust_rule_match(
+    different_arguments = find_mcp_trust_rule_match(
         repositories,
-        _request(annotations={"readOnlyHint": True, "openWorldHint": True}),
+        _request(arguments={"query": "allowed", "page": 2}),
     )
 
-    assert readonly.rule.id == rule.id
-    assert open_world is None
+    assert same_arguments.rule.id == rule.id
+    assert different_arguments is None
 
 
 def test_tool_with_params_matches_argument_subset(tmp_path) -> None:
@@ -175,3 +180,14 @@ def test_expired_rule_is_ignored(tmp_path) -> None:
     match = find_mcp_trust_rule_match(repositories, _request())
 
     assert match is None
+
+
+def _arguments_sha256(arguments: dict) -> str:
+    payload = json.dumps(
+        arguments,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=repr,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

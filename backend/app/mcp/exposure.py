@@ -205,10 +205,6 @@ def _default_mode_hidden_reason(
         return None
     if server.default_tool_exposure_mode == "allow_selected_only":
         return "tool_not_selected"
-    if server.default_tool_exposure_mode == "read_only_auto":
-        if (tool.annotations or {}).get("readOnlyHint") is True:
-            return None
-        return "tool_not_read_only"
     return "unknown_exposure_mode"
 
 

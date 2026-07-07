@@ -33,7 +33,6 @@ class McpApprovalMode(StrEnum):
 class McpToolExposureMode(StrEnum):
     ALLOW_ALL_EXCEPT_DISABLED = "allow_all_except_disabled"
     ALLOW_SELECTED_ONLY = "allow_selected_only"
-    READ_ONLY_AUTO = "read_only_auto"
 
 
 class McpToolEffectiveState(StrEnum):
@@ -128,7 +127,7 @@ class McpServerCreateRequest(McpBaseModel):
     default_tool_exposure_mode: McpToolExposureMode = (
         McpToolExposureMode.ALLOW_ALL_EXCEPT_DISABLED
     )
-    default_tool_approval_mode: McpApprovalMode = McpApprovalMode.AUTO
+    default_tool_approval_mode: McpApprovalMode = McpApprovalMode.PROMPT
     supports_parallel_tool_calls: bool = False
     elicitation_enabled: bool = True
     sampling_enabled: bool = False

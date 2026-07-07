@@ -77,8 +77,7 @@ create table if not exists mcp_servers (
   default_tool_exposure_mode text not null default 'allow_all_except_disabled'
     check (default_tool_exposure_mode in (
       'allow_all_except_disabled',
-      'allow_selected_only',
-      'read_only_auto'
+      'allow_selected_only'
     )),
   default_tool_approval_mode text not null default 'auto'
     check (default_tool_approval_mode in ('auto', 'prompt', 'approve')),
@@ -222,7 +221,7 @@ create table if not exists mcp_trust_rules (
   server_id text references mcp_servers(id) on delete cascade,
   raw_tool_name text,
   rule_kind text not null
-    check (rule_kind in ('server_readonly', 'tool', 'tool_with_params', 'deny_tool')),
+    check (rule_kind in ('tool', 'tool_with_params', 'deny_tool')),
   scope text not null check (scope in ('session', 'global')),
   session_id text,
   condition_json text,

@@ -84,12 +84,12 @@ export function ApprovalPrompt({ message, onDecision }: ApprovalPromptProps) {
         onClick={() => setDetailsOpen((value) => !value)}
       >
         <ChevronDown size={14} data-expanded={detailsOpen ? "true" : "false"} />
-        <span>审批详情</span>
+        <span>确认详情</span>
       </button>
       {detailsOpen ? <pre className={styles.details}>{approval.detailsText}</pre> : null}
 
       {approval.status === "pending" ? (
-        <div className={styles.actions} aria-label="审批操作">
+        <div className={styles.actions} aria-label="确认操作">
           <button
             className={styles.rejectButton}
             type="button"
@@ -139,7 +139,7 @@ function parseApproval(message: ConversationMessage): ParsedApproval {
   return {
     id: approval?.id ?? "",
     kind,
-    title: approval?.title || message.content || "需要确认操作",
+    title: approvalTitle(approval?.title || message.content || "需要确认操作"),
     description: approval?.description ?? "",
     target: targetFromDetails(details, kind),
     facts: factsFromDetails(details, kind),
@@ -238,19 +238,19 @@ function factsFromDetails(details: Record<string, unknown>, kind: ApprovalKind):
   const facts: ApprovalFact[] = [];
   if (kind === "mcp_tool_call") {
     addFact(facts, "服务", details.server_name ?? details.server_id);
-    addFact(facts, "MCP 工具", details.raw_tool_name ?? details.tool_name);
-    addFact(facts, "模型工具", details.model_tool_name, true);
+    addFact(facts, "工具", details.raw_tool_name ?? details.tool_name);
+    addFact(facts, "工具名称", details.model_tool_name, true);
     addFact(facts, "参数预览", previewText(details.arguments_preview), true);
-    addFact(facts, "信任选项", trustOptionsText(details.trust_options));
-    addFact(facts, "匹配规则", previewText(details.matched_rule), true);
-    addFact(facts, "快照", details.snapshot_id, true);
+    addFact(facts, "可选信任方式", trustOptionsText(details.trust_options));
+    addFact(facts, "命中的信任项", previewText(details.matched_rule), true);
+    addFact(facts, "本次工具版本", details.snapshot_id, true);
     return facts;
   }
   if (kind === "mcp_sampling") {
     addFact(facts, "服务", details.server_name ?? details.server_id);
     addFact(facts, "模型", details.model ?? details.requested_model ?? details.model_policy);
     addFact(facts, "Token 上限", details.max_tokens ?? details.sampling_max_tokens);
-    addFact(facts, "审批策略", details.approval_mode ?? details.sampling_approval_mode);
+    addFact(facts, "确认方式", approvalModeText(details.approval_mode ?? details.sampling_approval_mode));
     addFact(facts, "审计", details.audit_detail ?? details.sampling_audit_detail);
     addFact(facts, "消息数", details.message_count);
     addFact(facts, "请求摘要", previewText(details.arguments_preview ?? details.prompt_preview ?? details.messages_preview), true);
@@ -274,6 +274,10 @@ function addFact(facts: ApprovalFact[], label: string, value: unknown, mono = fa
   facts.push({ label, value: text, mono });
 }
 
+function approvalTitle(value: string): string {
+  return value.replace(/MCP Sampling/gi, "MCP 模型请求");
+}
+
 function scalarText(value: unknown): string {
   if (typeof value === "string") {
     return value.trim();
@@ -282,7 +286,7 @@ function scalarText(value: unknown): string {
     return String(value);
   }
   if (typeof value === "boolean") {
-    return value ? "true" : "false";
+    return value ? "是" : "否";
   }
   return "";
 }
@@ -322,11 +326,27 @@ function trustOptionLabel(value: string): string {
     case "session":
       return "本会话信任";
     case "persistent_tool":
-      return "持久信任该工具";
-    case "server_readonly":
-      return "信任该服务只读工具";
+      return "始终信任该工具";
+    case "persistent_server":
+      return "信任此 MCP 服务器";
     default:
-      return value;
+      return "";
+  }
+}
+
+function approvalModeText(value: unknown): string {
+  switch (scalarText(value)) {
+    case "auto":
+    case "approve":
+      return "始终允许";
+    case "prompt":
+      return "每次确认";
+    case "deny":
+      return "始终拒绝";
+    case "inherit":
+      return "继承服务器";
+    default:
+      return scalarText(value);
   }
 }
 
@@ -343,7 +363,7 @@ function kindLabel(kind: ApprovalKind): string {
     case "mcp_tool_call":
       return "MCP 工具调用";
     case "mcp_sampling":
-      return "MCP Sampling";
+      return "MCP 模型请求";
   }
 }
 

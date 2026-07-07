@@ -334,7 +334,7 @@ def test_websocket_approval_decision_resolves_mcp_tool_call(tmp_path) -> None:
             "model_tool_name": "mcp__srv_exec__search",
             "approval_mode": "auto",
             "arguments_preview": {"query": "hello"},
-            "trust_options": ["once", "session", "persistent_tool", "server_readonly"],
+            "trust_options": ["once", "session", "persistent_tool", "persistent_server"],
             "matched_rule": None,
         },
     )

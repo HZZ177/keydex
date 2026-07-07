@@ -281,7 +281,7 @@ def _approval_details(
         "call_id": request.tool_call_id,
         "run_id": request.run_id,
         "arguments_preview": _arguments_preview(request.arguments),
-        "trust_options": ["once", "session", "persistent_tool", "server_readonly"],
+        "trust_options": ["once", "session", "persistent_tool", "persistent_server"],
         "matched_rule": None,
     }
 

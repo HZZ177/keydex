@@ -66,17 +66,9 @@ def test_tool_bulk_policy_actions(tmp_path) -> None:
         f"/api/mcp/servers/{server_id}/tools/bulk-policy",
         json={"action": "keep_selected_only", "tool_ids": [tools["read_file"].id]},
     )
-    enable_readonly = client.post(
-        f"/api/mcp/servers/{server_id}/tools/bulk-policy",
-        json={"action": "enable_read_only"},
-    )
     prompt_all = client.post(
         f"/api/mcp/servers/{server_id}/tools/bulk-policy",
         json={"action": "prompt_all"},
-    )
-    disable_write = client.post(
-        f"/api/mcp/servers/{server_id}/tools/bulk-policy",
-        json={"action": "disable_write_tools"},
     )
 
     assert disabled_selected.status_code == 200
@@ -85,16 +77,10 @@ def test_tool_bulk_policy_actions(tmp_path) -> None:
     assert _tool_by_name(keep_selected.json()["tools"], "read_file")["enabled"] is True
     assert _tool_by_name(keep_selected.json()["tools"], "write_file")["enabled"] is False
     assert _tool_by_name(keep_selected.json()["tools"], "search_docs")["enabled"] is False
-    assert enable_readonly.status_code == 200
-    assert _tool_by_name(enable_readonly.json()["tools"], "read_file")["enabled"] is True
     assert prompt_all.status_code == 200
     assert {
         item["approval_mode"] for item in prompt_all.json()["tools"]
     } == {"prompt"}
-    assert disable_write.status_code == 200
-    assert _tool_by_name(disable_write.json()["tools"], "read_file")["enabled"] is True
-    assert _tool_by_name(disable_write.json()["tools"], "write_file")["enabled"] is False
-    assert _tool_by_name(disable_write.json()["tools"], "search_docs")["enabled"] is False
 
 
 def test_trust_rules_and_audit_api(tmp_path) -> None:
@@ -104,7 +90,12 @@ def test_trust_rules_and_audit_api(tmp_path) -> None:
 
     invalid_global = client.post(
         "/api/mcp/trust-rules",
-        json={"rule_kind": "server_readonly", "scope": "global", "approval_mode": "approve"},
+        json={
+            "rule_kind": "tool",
+            "scope": "global",
+            "approval_mode": "approve",
+            "raw_tool_name": "read_file",
+        },
     )
     created = client.post(
         "/api/mcp/trust-rules",

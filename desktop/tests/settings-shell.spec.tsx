@@ -26,7 +26,7 @@ describe("SettingsShell", () => {
   it("renders only supported settings menu entries", () => {
     renderShell("providers");
 
-    expect(screen.getByRole("button", { name: "返回应用" })).not.toBeNull();
+    expect(screen.getAllByRole("button", { name: "返回应用" })).toHaveLength(2);
     expect(screen.getByLabelText("搜索设置")).not.toBeNull();
     expect(screen.getByRole("button", { name: "常规" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "外观" })).not.toBeNull();
@@ -99,6 +99,7 @@ describe("SettingsShell", () => {
     renderShell("providers");
 
     expect(screen.getByText("深色")).not.toBeNull();
+    expect(screen.getAllByRole("button", { name: "返回应用" })[1]).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "切换主题" }));
 

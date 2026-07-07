@@ -766,7 +766,19 @@ function decisionLabel(value: CommandApprovalAuditRecord["decision"]): string {
 }
 
 function trustScopeLabel(value: NonNullable<CommandApprovalAuditRecord["trust_scope"]>): string {
-  return value === "persistent" ? "已保存信任" : "仅本次";
+  switch (value) {
+    case "persistent":
+      return "已保存信任";
+    case "session":
+      return "本会话信任";
+    case "persistent_tool":
+      return "已信任工具";
+    case "persistent_server":
+      return "已信任 MCP 服务器";
+    case "once":
+    default:
+      return "仅本次";
+  }
 }
 
 function ruleMatchLabel(value: NonNullable<CommandApprovalAuditRecord["rule_match_type"]>): string {

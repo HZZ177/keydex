@@ -1,3 +1,23 @@
+.serverFormPanel.serverFormPanel {
+  width: min(640px, calc(100vw - 48px));
+  max-height: min(760px, calc(100vh - 48px));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.serverFormBody.serverFormBody {
+  min-height: 0;
+  overflow: auto;
+}
+
+.serverFormFooter.serverFormFooter {
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, transparent);
+  background: transparent;
+  padding: 12px 16px 16px;
+}
+
 .form {
   display: grid;
   gap: 14px;
@@ -7,6 +27,7 @@
 
 .loading,
 .error,
+.testProgress,
 .testResult,
 .confirmBox {
   border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
@@ -26,20 +47,43 @@
   color: var(--color-danger);
 }
 
+.testProgress,
 .testResult {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  background: color-mix(in srgb, var(--surface-hover) 38%, transparent);
   color: var(--color-text-secondary);
 }
 
+.testProgress {
+  border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+}
+
+.testProgress > svg {
+  color: var(--color-accent);
+}
+
+.testResult {
+  background: color-mix(in srgb, var(--surface-hover) 38%, transparent);
+}
+
 .testResult[data-ok="true"] {
-  color: var(--color-success-6);
+  border-color: color-mix(in srgb, var(--color-success-6) 28%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-success-6) 7%, transparent);
 }
 
 .testResult[data-ok="false"] {
+  border-color: color-mix(in srgb, var(--color-danger) 30%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+}
+
+.testResult[data-ok="true"] > svg {
+  color: var(--color-success-6);
+}
+
+.testResult[data-ok="false"] > svg {
   color: var(--color-danger);
 }
 
@@ -50,12 +94,22 @@
 }
 
 .testResultText strong {
+  color: var(--color-text-primary);
   font-weight: 600;
 }
 
 .testResultText small {
-  color: inherit;
-  opacity: 0.78;
+  color: var(--color-text-secondary);
+}
+
+.serverFormFooter button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.spinning {
+  animation: mcpServerFormSpin 900ms linear infinite;
 }
 
 .section {
@@ -564,15 +618,10 @@
   color: var(--color-text-primary);
 }
 
-.footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  position: sticky;
-  bottom: -18px;
-  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
-  background: color-mix(in srgb, var(--color-bg-elevated) 94%, transparent);
-  padding: 12px 0 0;
+@keyframes mcpServerFormSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 760px) {

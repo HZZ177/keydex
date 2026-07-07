@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
 from contextlib import suppress
 from dataclasses import asdict
 from typing import Any
 
 from backend.app.core.ids import new_id
+from backend.app.core.time import to_iso_z, utc_now
 from backend.app.mcp.audit import McpAuditWriter
 from backend.app.mcp.client import status_from_mcp_error_code
 from backend.app.mcp.errors import McpRuntimeError, to_mcp_runtime_error
@@ -206,12 +208,6 @@ def apply_mcp_tool_bulk_policy(
         elif action == "keep_selected_only":
             values["enabled"] = tool.raw_name in selected_raw_names
             should_update = True
-        elif action == "enable_read_only" and _is_read_only_tool(tool):
-            values["enabled"] = True
-            should_update = True
-        elif action == "disable_write_tools" and not _is_read_only_tool(tool):
-            values["enabled"] = False
-            should_update = True
         elif action == "prompt_all":
             values["approval_mode"] = "prompt"
             should_update = True
@@ -395,6 +391,51 @@ async def test_mcp_server_connection(
             await client.shutdown(timeout_sec=server.shutdown_timeout_sec)
 
 
+async def test_mcp_server_connection_config(
+    manager: McpManager,
+    payload: McpServerCreateRequest,
+    *,
+    base_server_id: str | None = None,
+) -> dict[str, Any]:
+    server = _temporary_mcp_server_record(
+        manager.repositories,
+        payload,
+        base_server_id=base_server_id,
+    )
+    client = manager.client_factory.create_client(server)
+    started = time.perf_counter()
+    try:
+        init_result = await client.initialize(timeout_sec=server.startup_timeout_sec)
+        tools = (
+            await client.list_tools(timeout_sec=server.read_timeout_sec)
+            if init_result.capabilities.tools
+            else []
+        )
+        return {
+            "ok": True,
+            "server_id": server.id,
+            "status": "online",
+            "protocol_version": init_result.protocol_version,
+            "server_info": init_result.server_info,
+            "capabilities": asdict(init_result.capabilities),
+            "tools_count": len(tools),
+            "resources_reserved_count": 1 if init_result.capabilities.resources_reserved else 0,
+            "duration_ms": _duration_ms(started),
+        }
+    except Exception as exc:
+        runtime_error = to_mcp_runtime_error(exc)
+        return {
+            "ok": False,
+            "server_id": server.id,
+            "status": status_from_mcp_error_code(runtime_error.code).value,
+            "duration_ms": _duration_ms(started),
+            "error": runtime_error.to_payload().model_dump(mode="json"),
+        }
+    finally:
+        with suppress(Exception):
+            await client.shutdown(timeout_sec=server.shutdown_timeout_sec)
+
+
 async def refresh_mcp_server(manager: McpManager, server_id: str) -> dict[str, Any]:
     try:
         report = await manager.refresh_capabilities(server_id)
@@ -437,6 +478,24 @@ def require_mcp_tool(
         if tool.id == tool_id or tool.raw_name == tool_id or tool.model_name == tool_id:
             return tool
     raise McpServiceError("MCP tool 不存在", code="tool_not_found")
+
+
+def _temporary_mcp_server_record(
+    repositories: StorageRepositories,
+    payload: McpServerCreateRequest,
+    *,
+    base_server_id: str | None,
+) -> McpServerRecord:
+    if base_server_id:
+        data = asdict(require_mcp_server(repositories, base_server_id))
+        data.update(payload.model_dump(mode="json", exclude_unset=True))
+    else:
+        data = payload.model_dump(mode="json")
+    now = to_iso_z(utc_now())
+    data["id"] = f"temporary-{new_id()}"
+    data["created_at"] = now
+    data["updated_at"] = now
+    return McpServerRecord(**data)
 
 
 def resolve_mcp_tool_location(
@@ -605,8 +664,6 @@ _BULK_TOOL_POLICY_ACTIONS = {
     "enable_selected",
     "disable_selected",
     "keep_selected_only",
-    "enable_read_only",
-    "disable_write_tools",
     "prompt_all",
 }
 
@@ -675,7 +732,6 @@ def _effective_state_from_hidden_reason(reason: str) -> str:
         "tool_disabled_by_policy": "disabled_persistently",
         "tool_disabled_for_session": "disabled_for_session",
         "tool_not_selected": "disabled_persistently",
-        "tool_not_read_only": "disabled_persistently",
         "tool_hidden_from_model": "disabled_by_server",
     }.get(reason, "disabled_persistently")
 
@@ -763,13 +819,12 @@ def _append_runtime_override_audit(
     )
 
 
-def _is_read_only_tool(tool: McpToolRecord) -> bool:
-    annotations = tool.annotations or {}
-    return annotations.get("readOnlyHint") is True and annotations.get("openWorldHint") is not True
-
-
 def _matches_search(search: str, *values: str | None) -> bool:
     needle = search.casefold().strip()
     if not needle:
         return True
     return any(needle in value.casefold() for value in values if value)
+
+
+def _duration_ms(started_at: float) -> int:
+    return max(0, int((time.perf_counter() - started_at) * 1000))

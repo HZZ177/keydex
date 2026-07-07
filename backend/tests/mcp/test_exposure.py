@@ -109,22 +109,6 @@ def test_allow_selected_only_requires_explicit_policy_or_session_enable(tmp_path
     } == {"unselected": "tool_not_selected"}
 
 
-def test_read_only_auto_exposes_read_only_and_explicitly_enabled_tools(tmp_path) -> None:
-    repositories = _repositories(tmp_path)
-    _create_server(repositories, mode="read_only_auto")
-    _tool(repositories, "read", annotations={"readOnlyHint": True})
-    _tool(repositories, "write")
-    repositories.mcp_tool_policies.upsert(
-        server_id="srv_exposure",
-        raw_tool_name="write",
-        enabled=True,
-    )
-
-    result = _resolve(repositories)
-
-    assert [tool.raw_name for tool in result.visible_tools] == ["read", "write"]
-
-
 def test_policy_hidden_disabled_removed_and_offline_tools_are_excluded(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _create_server(repositories)

@@ -18,7 +18,7 @@ describe("ApprovalPrompt", () => {
     expect(screen.getByText("C:/Windows/System32/cmd.exe")).not.toBeNull();
     expect(screen.queryByText(/workspace_write/)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "审批详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认详情" }));
     expect(screen.getByText(/workspace_write/)).not.toBeNull();
   });
 
@@ -50,7 +50,7 @@ describe("ApprovalPrompt", () => {
     expect(screen.getByText("write")).not.toBeNull();
     expect(screen.getByText("mcp__srv_1__write")).not.toBeNull();
     expect(screen.getByText(/"title":"Fix"/)).not.toBeNull();
-    expect(screen.getByText("本会话信任；持久信任该工具")).not.toBeNull();
+    expect(screen.getByText("本会话信任；始终信任该工具；信任此 MCP 服务器")).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "允许" }));
 
@@ -63,13 +63,13 @@ describe("ApprovalPrompt", () => {
     const onDecision = vi.fn().mockResolvedValue(undefined);
     render(<ApprovalPrompt message={samplingApprovalMessage()} onDecision={onDecision} />);
 
-    expect(screen.getByText("是否允许 MCP Sampling？")).not.toBeNull();
-    expect(screen.getByText("MCP Sampling")).not.toBeNull();
+    expect(screen.getByText("是否允许 MCP 模型请求？")).not.toBeNull();
+    expect(screen.getByText("MCP 模型请求")).not.toBeNull();
     expect(screen.queryByText("MCP 工具调用")).toBeNull();
     expect(screen.getByText("Ticket MCP / qwen-coder")).not.toBeNull();
     expect(screen.getByText("qwen-coder")).not.toBeNull();
     expect(screen.getByText("2048")).not.toBeNull();
-    expect(screen.getByText("prompt")).not.toBeNull();
+    expect(screen.getByText("每次确认")).not.toBeNull();
     expect(screen.getByText("summary")).not.toBeNull();
     expect(screen.getByText("2")).not.toBeNull();
     expect(screen.getByText("Summarize ticket status")).not.toBeNull();
@@ -84,7 +84,7 @@ describe("ApprovalPrompt", () => {
   it("shows resolved MCP sampling approval state without action buttons", () => {
     const { rerender } = render(<ApprovalPrompt message={samplingApprovalMessage("approved")} />);
 
-    expect(screen.getByText("MCP Sampling")).not.toBeNull();
+    expect(screen.getByText("MCP 模型请求")).not.toBeNull();
     expect(screen.getByText("已允许")).not.toBeNull();
     expect(screen.getByText("Ticket MCP / qwen-coder")).not.toBeNull();
     expect(screen.queryByRole("button", { name: "允许" })).toBeNull();
@@ -163,7 +163,7 @@ function samplingApprovalMessage(status: ApprovalRequest["status"] = "pending"):
     call_id: "call-sampling",
     kind: "mcp_sampling",
     title: "是否允许 MCP Sampling？",
-    description: "该 MCP server 请求 Keydex 使用当前模型生成内容。",
+    description: "该 MCP 服务请求 Keydex 使用当前模型生成内容。",
     details: {
       server_name: "Ticket MCP",
       model: "qwen-coder",
@@ -209,7 +209,7 @@ function mcpApprovalMessage(): ConversationMessage {
     description: "该工具会向外部工单系统写入数据。",
     details: {
       arguments_preview: { title: "Fix", priority: "high" },
-      trust_options: ["session", "persistent_tool"],
+      trust_options: ["session", "persistent_tool", "persistent_server"],
     },
     server_id: "srv-1",
     server_name: "Ticket MCP",

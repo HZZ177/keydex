@@ -737,7 +737,6 @@ class McpServersRepository:
     VALID_TOOL_EXPOSURE_MODES = {
         "allow_all_except_disabled",
         "allow_selected_only",
-        "read_only_auto",
     }
     VALID_TOOL_APPROVAL_MODES = {"auto", "prompt", "approve"}
     JSON_FIELDS = {
@@ -821,7 +820,7 @@ class McpServersRepository:
         auto_refresh: bool = True,
         refresh_interval_sec: int = 1800,
         default_tool_exposure_mode: str = "allow_all_except_disabled",
-        default_tool_approval_mode: str = "auto",
+        default_tool_approval_mode: str = "prompt",
         supports_parallel_tool_calls: bool = False,
         elicitation_enabled: bool = True,
         sampling_enabled: bool = False,
@@ -2204,7 +2203,7 @@ class McpOAuthTokensRepository:
 
 
 class McpTrustRulesRepository:
-    VALID_RULE_KINDS = {"server_readonly", "tool", "tool_with_params", "deny_tool"}
+    VALID_RULE_KINDS = {"tool", "tool_with_params", "deny_tool"}
     VALID_SCOPES = {"session", "global"}
     VALID_APPROVAL_MODES = {"approve", "deny"}
 

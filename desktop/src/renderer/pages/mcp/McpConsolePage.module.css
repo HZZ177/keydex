@@ -1,13 +1,19 @@
 .page {
+  box-sizing: border-box;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   padding: 18px;
   color: var(--color-text-primary);
+}
+
+.page[data-has-error="true"] {
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .toolbar {
@@ -83,6 +89,7 @@
 }
 
 .error {
+  grid-row: 2;
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
@@ -106,15 +113,23 @@
 }
 
 .consoleGrid {
+  grid-row: 2;
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
   gap: 14px;
+  height: 100%;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+.page[data-has-error="true"] .consoleGrid {
+  grid-row: 3;
 }
 
 .serverPane,
 .detailPane {
+  height: 100%;
   min-width: 0;
   min-height: 0;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 58%, transparent);
@@ -176,6 +191,8 @@
 
 .serverItem {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   width: 100%;
   min-width: 0;
   gap: 8px;
@@ -184,18 +201,38 @@
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
-  padding: 10px;
+  padding: 8px;
   text-align: left;
-  cursor: pointer;
 }
 
 .serverItem:hover {
   background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
 }
 
+.serverItem[data-menu-open="true"] {
+  border-color: color-mix(in srgb, var(--color-border-default) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-active) 60%, var(--color-bg-elevated));
+}
+
 .serverItem[data-active="true"] {
   border-color: color-mix(in srgb, var(--color-border-default) 72%, transparent);
   background: color-mix(in srgb, var(--surface-active) 66%, var(--color-bg-elevated));
+}
+
+.serverSelectButton {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 2px;
+  text-align: left;
+}
+
+.serverSelectButton:hover {
+  background: transparent;
 }
 
 .serverItemHeader,
@@ -207,11 +244,12 @@
 }
 
 .serverItemHeader {
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 8px;
 }
 
 .serverName {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   font-size: 13px;
@@ -227,29 +265,95 @@
   font-size: 11px;
 }
 
+.serverToggleButton {
+  display: inline-flex;
+  width: 42px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.serverToggleButton:hover:not(:disabled),
+.serverToggleButton:focus-visible {
+  outline: 0;
+  background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
+}
+
+.serverToggleButton:hover:not(:disabled) .toggleTrack,
+.serverToggleButton:focus-visible .toggleTrack {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--surface-hover) 72%, transparent);
+}
+
+.serverToggleButton:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.serverToggleButton:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
 .statusBadge {
   display: inline-flex;
   flex: 0 0 auto;
-  min-height: 20px;
+  height: 20px;
   align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--surface-hover) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-hover) 48%, transparent);
   color: var(--color-text-secondary);
   font-size: 11px;
   line-height: 1;
-  padding: 0 7px;
+  padding: 0 8px;
+}
+
+.statusBadge::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .statusBadge[data-status="online"] {
+  border-color: color-mix(in srgb, var(--color-success-6) 26%, transparent);
+  background: color-mix(in srgb, var(--color-success-6) 8%, transparent);
   color: var(--color-success-6);
+}
+
+.statusBadge[data-status="refreshing"] {
+  border-color: color-mix(in srgb, var(--color-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+  color: var(--color-accent);
 }
 
 .statusBadge[data-status="error"],
 .statusBadge[data-status="auth_required"] {
+  border-color: color-mix(in srgb, var(--color-warning) 26%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
   color: var(--color-warning);
 }
 
+.statusBadge[data-status="offline"] {
+  border-color: color-mix(in srgb, var(--color-text-4) 30%, transparent);
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.statusBadge[data-status="unknown"],
 .statusBadge[data-status="disabled"] {
+  background: transparent;
   color: var(--color-text-4);
 }
 
@@ -265,6 +369,101 @@
   font-size: 12px;
 }
 
+.emptyState span,
+.detailEmpty span {
+  max-width: min(260px, 100%);
+  text-align: center;
+}
+
+.serverListEmpty {
+  min-height: 100%;
+}
+
+.detailEmpty {
+  grid-row: 1 / -1;
+  min-height: 100%;
+}
+
+.serverContextMenu {
+  position: fixed;
+  z-index: 1000;
+  top: var(--mcp-server-context-top);
+  left: var(--mcp-server-context-left);
+  display: grid;
+  gap: 3px;
+  min-width: 156px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 68%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 98%, transparent);
+  box-shadow: var(--shadow-md, 0 12px 32px color-mix(in srgb, #000 14%, transparent));
+  padding: 5px;
+}
+
+.serverContextMenu button {
+  display: flex;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--ui-line-height-tight);
+  padding: 0 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.serverContextMenu button:hover:not(:disabled),
+.serverContextMenu button:focus-visible {
+  outline: 0;
+  background: color-mix(in srgb, var(--surface-hover) 78%, transparent);
+}
+
+.serverContextMenu button:disabled {
+  color: var(--color-text-4);
+  cursor: default;
+}
+
+.serverContextMenu button[data-danger="true"] {
+  color: var(--color-danger);
+}
+
+.serverContextMenu button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serverListSkeleton,
+.detailSkeleton,
+.toolListSkeleton {
+  min-width: 0;
+  width: 100%;
+  min-height: 100%;
+  --loading-skeleton-padding: 0;
+}
+
+.serverListSkeleton {
+  --loading-skeleton-compact-stack-width: min(240px, 72%);
+  --loading-skeleton-line-gap: 9px;
+}
+
+.detailSkeleton {
+  --loading-skeleton-stack-width: min(360px, 64%);
+  --loading-skeleton-line-gap: 9px;
+}
+
+.toolListSkeleton {
+  min-height: max(320px, 100%);
+  --loading-skeleton-stack-width: min(380px, 68%);
+  --loading-skeleton-line-gap: 9px;
+}
+
 .detailPane {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -273,41 +472,60 @@
 
 .detailHeader {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 18px;
   border-bottom: 1px solid color-mix(in srgb, var(--color-border-default) 52%, transparent);
   padding: 16px;
 }
 
+.detailTitleBlock {
+  display: grid;
+  min-width: 0;
+}
+
+.detailTitleRow {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.detailNameBlock {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+}
+
 .detailKicker {
   gap: 7px;
   color: var(--color-text-tertiary);
   font-size: 12px;
+  line-height: var(--ui-line-height-tight);
 }
 
 .detailHeader h2 {
-  margin-top: 5px;
+  min-width: 0;
+  overflow: hidden;
   font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .detailMetrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(72px, 1fr));
-  gap: 8px;
-  min-width: 260px;
-}
-
-.detailHeaderSide {
-  display: grid;
-  justify-items: end;
-  gap: 10px;
-  min-width: 260px;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(2, minmax(66px, auto));
+  gap: 6px;
+  align-self: stretch;
 }
 
 .detailActions {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
+  align-self: center;
   justify-content: flex-end;
   gap: 7px;
 }
@@ -349,11 +567,11 @@
 
 .metric {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
   border-radius: 7px;
-  padding: 8px;
+  padding: 6px 8px;
 }
 
 .metric span,
@@ -423,21 +641,11 @@
   grid-column: 1 / -1;
 }
 
-.skeletonTab {
-  display: grid;
-  gap: 10px;
-}
-
-.skeletonTab div {
-  height: 42px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
-}
-
 .toolsTab {
   display: grid;
   gap: 10px;
   min-width: 0;
+  min-height: 100%;
 }
 
 .toolsToolbar {
@@ -541,6 +749,7 @@
   align-content: start;
   gap: 8px;
   min-width: 0;
+  min-height: 100%;
 }
 
 .toolRow {
@@ -698,7 +907,9 @@
   border-radius: var(--radius-pill);
   background: var(--color-border-3);
   padding: 2px;
-  transition: background-color var(--motion-fast) var(--motion-ease-out);
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
 }
 
 .toggleThumb {
@@ -776,8 +987,10 @@
 .policyTab,
 .logsTab {
   display: grid;
+  align-content: start;
   gap: 10px;
   min-width: 0;
+  min-height: 100%;
 }
 
 .policySection {
@@ -874,6 +1087,59 @@
   font-weight: 600;
 }
 
+.permissionChoiceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 280px));
+  gap: 8px;
+  justify-content: start;
+  min-width: 0;
+}
+
+.permissionChoice {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 0;
+  align-content: start;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 72%, transparent);
+  color: var(--color-text-primary);
+  font: inherit;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.permissionChoice:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 66%, var(--color-bg-elevated));
+}
+
+.permissionChoice[data-active="true"] {
+  border-color: color-mix(in srgb, var(--color-text-primary) 22%, var(--color-border-default));
+  background: color-mix(in srgb, var(--surface-active) 48%, var(--color-bg-elevated));
+}
+
+.permissionChoice:disabled {
+  color: var(--color-text-4);
+  cursor: default;
+}
+
+.permissionChoice strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.permissionChoice span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .trustRuleList {
   display: grid;
   gap: 8px;
@@ -882,7 +1148,7 @@
 
 .trustRuleRow {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(120px, 0.7fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1.1fr) minmax(120px, 0.6fr) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: start;
   min-width: 0;
@@ -911,8 +1177,7 @@
   font-size: 12px;
 }
 
-.trustRuleRow pre,
-.logRow pre {
+.trustRuleRow pre {
   min-width: 0;
   max-height: 220px;
   margin: 0;
@@ -928,24 +1193,71 @@
 }
 
 .logFilters {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) auto;
+  display: flex;
+  align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.logFilters > :not(button) {
+  width: min(220px, 30%);
+  min-width: 160px;
+}
+
+.logFilters > button {
+  margin-left: auto;
 }
 
 .logPager {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
   min-width: 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
   color: var(--color-text-tertiary);
   font-size: 12px;
+  padding: 12px 14px 0;
 }
 
-.logPager span {
-  margin-right: auto;
+.logPager > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.logPager button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 80%, transparent);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--ui-line-height-tight);
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.logPager button:not(:disabled):hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.logPager button:focus-visible {
+  outline: 0;
+  box-shadow: var(
+    --settings-focus-ring,
+    0 0 0 1px color-mix(in srgb, var(--color-border-3) 54%, transparent)
+  );
+}
+
+.logPager button:disabled {
+  cursor: default;
+  opacity: 0.46;
 }
 
 .logList {
@@ -956,32 +1268,54 @@
 
 .logRow {
   display: grid;
-  gap: 8px;
+  gap: 0;
   min-width: 0;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
   border-radius: 7px;
   background: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
-  padding: 9px;
+  overflow: hidden;
+  padding: 0;
 }
 
 .logRow button {
   display: grid;
-  grid-template-columns: minmax(140px, 0.8fr) minmax(130px, 0.8fr) minmax(60px, 0.4fr) minmax(60px, 0.4fr) minmax(0, 1fr);
+  grid-template-columns: 16px minmax(140px, 0.8fr) minmax(130px, 0.8fr) minmax(60px, 0.4fr) minmax(60px, 0.4fr) minmax(0, 1fr);
   gap: 9px;
   align-items: center;
   min-width: 0;
+  min-height: 52px;
   border: 0;
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
   font-size: 12px;
-  padding: 0;
+  padding: 10px 12px;
   text-align: left;
   cursor: pointer;
 }
 
 .logRow button:hover {
+  background: color-mix(in srgb, var(--surface-hover) 68%, transparent);
   color: var(--color-text-primary);
+}
+
+.logRow button:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-border-3) 54%, transparent);
+}
+
+.logRow[data-expanded="true"] button {
+  background: color-mix(in srgb, var(--surface-active) 42%, transparent);
+}
+
+.logChevron {
+  color: var(--color-text-tertiary);
+  transition: transform 160ms ease, color 160ms ease;
+}
+
+.logRow[data-expanded="true"] .logChevron {
+  color: var(--color-text-secondary);
+  transform: rotate(180deg);
 }
 
 .logRow strong {
@@ -996,6 +1330,54 @@
   min-width: 0;
   overflow-wrap: anywhere;
   font-style: normal;
+}
+
+.logRow em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logDetailShell {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition:
+    grid-template-rows 180ms var(--motion-ease-out),
+    opacity 150ms var(--motion-ease-out),
+    transform 180ms var(--motion-ease-out);
+}
+
+.logDetailShell[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.logRow pre {
+  min-width: 0;
+  min-height: 0;
+  max-height: 240px;
+  margin: 0;
+  overflow: auto;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 10px 12px 12px 37px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logChevron,
+  .logDetailShell {
+    transition: none;
+  }
 }
 
 .importExportForm {
@@ -1279,13 +1661,13 @@
     display: grid;
   }
 
-  .actions {
-    justify-content: flex-start;
+  .detailTitleRow {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
-  .detailHeaderSide {
-    justify-items: stretch;
-    min-width: 0;
+  .actions {
+    justify-content: flex-start;
   }
 
   .detailActions {
@@ -1294,27 +1676,43 @@
 
   .consoleGrid {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(220px, 0.38fr) minmax(0, 1fr);
   }
 
   .serverPane {
-    min-height: 300px;
+    min-height: 0;
   }
 
   .detailMetrics {
+    width: 100%;
     min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .toolsToolbar,
   .toolsContent,
   .toolRow,
   .policyGrid,
+  .permissionChoiceGrid,
   .trustCreateGrid,
   .trustRuleRow,
   .importOptionsGrid,
   .importPreviewRow,
-  .logFilters,
   .logRow button {
     grid-template-columns: 1fr;
+  }
+
+  .logFilters {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .logFilters > :not(button) {
+    width: 100%;
+  }
+
+  .logFilters > button {
+    margin-left: 0;
   }
 
   .toolFilters {

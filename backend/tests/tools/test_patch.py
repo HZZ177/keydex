@@ -24,11 +24,14 @@ async def _run(patch: str, tmp_path):
 def test_edit_file_tool_contract_documents_required_headers() -> None:
     tool = _registry().require("edit_file")
 
+    assert "*** Begin Patch" in tool.description
     assert "*** Update File: <path>" in tool.description
     assert "*** Delete File: <path>" in tool.description
-    assert "不要写 `*** docs/file.md`" in tool.description
+    assert "不支持 `*** Add File`" in tool.description
+    assert "不要粘贴完整重写后的文件内容" in tool.description
     assert "*** Update File: <path>" in tool.parameters["properties"]["patch"]["description"]
     assert "空白上下文行" in tool.parameters["properties"]["patch"]["description"]
+    assert "`*** Add File` 无效" in tool.parameters["properties"]["patch"]["description"]
 
 
 async def test_apply_patch_rejects_add_file_to_keep_creation_separate(tmp_path) -> None:

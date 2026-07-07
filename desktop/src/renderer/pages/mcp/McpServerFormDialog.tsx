@@ -1,5 +1,5 @@
-import { AlertCircle, CheckCircle2, Plus, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { AlertCircle, CheckCircle2, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 
 import type { RuntimeBridge } from "@/runtime";
 import { AppDialog, DialogButton } from "@/renderer/components/dialog";
@@ -15,7 +15,6 @@ import type {
 import styles from "./McpServerFormDialog.module.css";
 
 type FormMode = "create" | "edit";
-type SaveAction = "save" | "save_test";
 
 interface McpServerFormDialogProps {
   mode: FormMode;
@@ -62,14 +61,13 @@ interface FormState {
 }
 
 interface PendingConfirmation {
-  action: SaveAction;
   messages: string[];
 }
 
 const TRANSPORTS: Array<{ value: McpTransport; label: string; description: string }> = [
-  { value: "stdio", label: "stdio", description: "本地进程，通过 command + args 启动" },
-  { value: "streamable_http", label: "HTTP", description: "远端 Streamable HTTP MCP endpoint" },
-  { value: "sse", label: "SSE", description: "SSE 事件流 + message endpoint" },
+  { value: "stdio", label: "本地命令", description: "在本机启动一个 MCP 服务进程" },
+  { value: "streamable_http", label: "HTTP 地址", description: "连接远端 MCP 服务地址" },
+  { value: "sse", label: "SSE 地址", description: "连接使用 SSE 的旧版远端服务" },
 ];
 
 const DEFAULT_FORM: FormState = {
@@ -109,6 +107,7 @@ export function McpServerFormDialog({
   onClose,
   onSaved,
 }: McpServerFormDialogProps) {
+  const formId = useId();
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [original, setOriginal] = useState<McpServerDetailResponse | null>(null);
   const [persistedServerId, setPersistedServerId] = useState<string | null>(null);
@@ -128,7 +127,7 @@ export function McpServerFormDialog({
 
   const effectiveMode: FormMode = mode === "edit" || persistedServerId ? "edit" : "create";
   const effectiveServerId = persistedServerId ?? serverId ?? "";
-  const title = effectiveMode === "create" ? "添加 MCP Server" : "编辑 MCP Server";
+  const title = effectiveMode === "create" ? "添加 MCP 服务器" : "编辑 MCP 服务器";
   const busy = loading || saving || testing;
   const showAllTransports = effectiveMode === "edit" || showSseTransport || form.transport === "sse";
   const visibleTransports = showAllTransports
@@ -214,7 +213,7 @@ export function McpServerFormDialog({
     });
   };
 
-  const requestSave = (action: SaveAction) => {
+  const requestSave = () => {
     setError("");
     setTestResult(null);
     const validationError = validateForm(form, original, effectiveMode);
@@ -224,15 +223,14 @@ export function McpServerFormDialog({
     }
     const dangerousChanges = effectiveMode === "edit" && original ? describeDangerousChanges(original, form) : [];
     if (dangerousChanges.length) {
-      setPendingConfirmation({ action, messages: dangerousChanges });
+      setPendingConfirmation({ messages: dangerousChanges });
       return;
     }
-    void save(action);
+    void save();
   };
 
-  const save = async (action: SaveAction) => {
+  const save = async () => {
     setSaving(true);
-    setTesting(action === "save_test");
     setError("");
     setPendingConfirmation(null);
     try {
@@ -253,26 +251,43 @@ export function McpServerFormDialog({
       setOriginal(saved);
       setForm(formFromServer(saved));
       onSaved(saved);
-
-      if (action === "save_test") {
-        const result = await runtime.mcp.testServer(saved.id);
-        setTestResult(result);
-        try {
-          const latest = await runtime.mcp.getServer(saved.id);
-          setOriginal(latest);
-          setForm(formFromServer(latest));
-          onSaved(latest);
-        } catch {
-          onSaved(saved);
-        }
-        return;
-      }
-
       onClose();
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const testConnection = async () => {
+    setTesting(true);
+    setError("");
+    setTestResult(null);
+    setPendingConfirmation(null);
+    const validationError = validateForm(form, original, effectiveMode);
+    if (validationError) {
+      setError(validationError);
+      setTesting(false);
+      return;
+    }
+    try {
+      const payload = buildPayload(form, {
+        mode: effectiveMode,
+        includeEnv: effectiveMode === "create" || form.replaceEnv,
+        includeHeaders: effectiveMode === "create" || form.replaceHeaders,
+        includeEnvHeaders: effectiveMode === "create" || form.replaceEnvHeaders,
+        includeSecretRefs: effectiveMode === "create" || form.replaceSecretRefs || form.clearSecretRefs,
+        includeOAuthConfig: effectiveMode === "create" || form.replaceOAuthConfig,
+        simpleRemoteAuth: useQuickRemoteAuth,
+      });
+      const result = await runtime.mcp.testServerConfig({
+        server: payload,
+        base_server_id: effectiveMode === "edit" ? effectiveServerId : null,
+      });
+      setTestResult(result);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
       setTesting(false);
     }
   };
@@ -346,44 +361,59 @@ export function McpServerFormDialog({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    requestSave("save");
+    requestSave();
   }
 
   return (
     <AppDialog
       title={title}
-      description="配置 MCP Server 连接"
-      placement="right"
-      size="drawer"
-      backdrop="panel"
-      inset="below-titlebar"
-      closeLabel="关闭 MCP Server 表单"
+      description="配置 MCP 服务器连接"
+      placement="center"
+      size="form"
+      panelClassName={styles.serverFormPanel}
+      bodyClassName={styles.serverFormBody}
+      footerClassName={styles.serverFormFooter}
+      closeLabel="关闭 MCP 服务器表单"
       closeOnOverlayClick={false}
       onClose={onClose}
+      footer={(
+        <>
+          <DialogButton disabled={busy} type="button" onClick={onClose}>
+            取消
+          </DialogButton>
+          <DialogButton disabled={busy} type="button" onClick={() => void testConnection()}>
+            {testing ? <LoaderCircle size={13} className={styles.spinning} /> : null}
+            {testing ? "测试中" : "测试连接"}
+          </DialogButton>
+          <DialogButton form={formId} tone="primary" disabled={busy} type="submit">
+            {saving && !testing ? <LoaderCircle size={13} className={styles.spinning} /> : null}
+            {saving && !testing ? "保存中" : "保存"}
+          </DialogButton>
+        </>
+      )}
     >
-      <form className={styles.form} aria-label={title} onSubmit={submit}>
-        {loading ? <div className={styles.loading}>正在加载 MCP Server 配置</div> : null}
+      <form id={formId} className={styles.form} aria-label={title} onSubmit={submit}>
+        {loading ? <div className={styles.loading}>正在加载 MCP 服务器配置</div> : null}
         {error ? <div className={styles.error} role="alert">{error}</div> : null}
-        {testResult ? <TestResult result={testResult} /> : null}
 
         <section className={styles.section} aria-labelledby="mcp-server-basic-title">
           <h3 id="mcp-server-basic-title">基础信息</h3>
           <label className={styles.field}>
             <span>名称</span>
             <input
-              aria-label="MCP Server 名称"
+              aria-label="MCP 服务器名称"
               autoFocus
               disabled={busy}
               value={form.name}
-              placeholder="例如 Filesystem MCP"
+              placeholder="例如 文件服务"
               onChange={(event) => update("name", event.target.value)}
             />
           </label>
         </section>
 
         <section className={styles.section} aria-labelledby="mcp-server-transport-title">
-          <h3 id="mcp-server-transport-title">Transport</h3>
-          <div className={styles.segmented} data-columns={visibleTransports.length} role="radiogroup" aria-label="MCP transport">
+          <h3 id="mcp-server-transport-title">连接方式</h3>
+          <div className={styles.segmented} data-columns={visibleTransports.length} role="radiogroup" aria-label="MCP 连接方式">
             {visibleTransports.map((transport) => (
               <button
                 key={transport.value}
@@ -445,6 +475,8 @@ export function McpServerFormDialog({
               />
             ) : null
           ) : null}
+          {testing ? <ConnectionTestProgress /> : null}
+          {!testing && testResult ? <TestResult result={testResult} /> : null}
         </section>
 
         {!showAllTransports || useQuickRemoteAuth ? (
@@ -456,7 +488,7 @@ export function McpServerFormDialog({
                 disabled={busy}
                 onClick={() => setShowSseTransport(true)}
               >
-                显示 SSE
+                显示旧版 SSE 连接
               </button>
             ) : null}
             {useQuickRemoteAuth ? (
@@ -466,7 +498,7 @@ export function McpServerFormDialog({
                 disabled={busy}
                 onClick={() => setShowAdvancedAuth(true)}
               >
-                OAuth / Secret refs
+                高级鉴权
               </button>
             ) : null}
           </div>
@@ -481,7 +513,7 @@ export function McpServerFormDialog({
               ))}
             </ul>
             <div>
-              <button type="button" disabled={busy} onClick={() => void save(pendingConfirmation.action)}>
+              <button type="button" disabled={busy} onClick={() => void save()}>
                 确认保存
               </button>
               <button type="button" disabled={busy} onClick={() => setPendingConfirmation(null)}>
@@ -491,17 +523,6 @@ export function McpServerFormDialog({
           </section>
         ) : null}
 
-        <footer className={styles.footer}>
-          <DialogButton disabled={busy} type="button" onClick={onClose}>
-            取消
-          </DialogButton>
-          <DialogButton disabled={busy} type="button" onClick={() => requestSave("save_test")}>
-            {testing ? "测试中" : "保存并测试"}
-          </DialogButton>
-          <DialogButton tone="primary" disabled={busy} type="submit">
-            {saving && !testing ? "保存中" : "保存"}
-          </DialogButton>
-        </footer>
       </form>
     </AppDialog>
   );
@@ -519,9 +540,9 @@ function StdioFields({
   return (
     <div className={styles.fieldStack}>
       <label className={styles.field}>
-        <span>Command</span>
+        <span>启动命令</span>
         <input
-          aria-label="stdio command"
+          aria-label="本地 MCP 启动命令"
           disabled={busy}
           value={form.command}
           placeholder="node"
@@ -534,29 +555,29 @@ function StdioFields({
         onChange={(args) => update("args", args)}
       />
       <label className={styles.field}>
-        <span>CWD</span>
+        <span>工作目录</span>
         <input
-          aria-label="stdio cwd"
+          aria-label="本地 MCP 工作目录"
           disabled={busy}
           value={form.cwd}
-          placeholder="可选，server 工作目录"
+          placeholder="可选，服务器工作目录"
           onChange={(event) => update("cwd", event.target.value)}
         />
       </label>
       <ToggleRow
         checked={form.inheritEnvironment}
         disabled={busy}
-        label="继承系统环境变量"
-        hint="关闭后只使用下方显式配置的 env"
+        label="使用系统环境变量"
+        hint="关闭后只使用下方显式配置的环境变量"
         onChange={(checked) => update("inheritEnvironment", checked)}
       />
       <KeyValueEditor
-        title="Env"
-        addLabel="添加 env"
+        title="环境变量"
+        addLabel="添加环境变量"
         rows={form.envRows}
         disabled={busy}
         keyPlaceholder="MCP_TOKEN"
-        valuePlaceholder="value"
+        valuePlaceholder="值"
         existingKeys={[]}
         replaceExisting
         onReplaceExistingChange={() => undefined}
@@ -578,9 +599,9 @@ function HttpFields({
   return (
     <div className={styles.fieldStack}>
       <label className={styles.field}>
-        <span>URL</span>
+        <span>服务地址</span>
         <input
-          aria-label="streamable_http url"
+          aria-label="MCP HTTP 地址"
           disabled={busy}
           value={form.url}
           placeholder="https://mcp.example.com/mcp"
@@ -605,7 +626,7 @@ function SseFields({
       <label className={styles.field}>
         <span>SSE URL</span>
         <input
-          aria-label="sse url"
+          aria-label="MCP SSE 地址"
           disabled={busy}
           value={form.sseUrl}
           placeholder="https://mcp.example.com/sse"
@@ -613,9 +634,9 @@ function SseFields({
         />
       </label>
       <label className={styles.field}>
-        <span>Message URL</span>
+        <span>消息地址</span>
         <input
-          aria-label="sse message url"
+          aria-label="MCP SSE 消息地址"
           disabled={busy}
           value={form.messageUrl}
           placeholder="https://mcp.example.com/messages"
@@ -642,7 +663,7 @@ function QuickRemoteAuthFields({
       <label className={styles.field}>
         <span>Bearer 令牌环境变量</span>
         <input
-          aria-label="bearer token env"
+          aria-label="Bearer 令牌环境变量"
           disabled={busy}
           value={form.bearerTokenEnvVar}
           placeholder="MCP_BEARER_TOKEN"
@@ -655,7 +676,7 @@ function QuickRemoteAuthFields({
         rows={form.headerRows}
         disabled={busy}
         keyPlaceholder="X-Api-Key"
-        valuePlaceholder="value 或 secret:ref"
+        valuePlaceholder="值或密钥引用"
         existingKeys={[]}
         replaceExisting
         onReplaceExistingChange={() => undefined}
@@ -697,15 +718,15 @@ function AuthFields({
   onCopyOAuthUrl: () => void;
 }) {
   const authOptions: Array<{ value: McpAuthType; label: string; description: string; disabled?: boolean }> = [
-    { value: "none", label: "无", description: "不附加鉴权 header" },
-    { value: "header_token", label: "Header Token", description: "通过 header/env header/secret ref 注入" },
+    { value: "none", label: "无鉴权", description: "连接时不附加鉴权信息" },
+    { value: "header_token", label: "请求头令牌", description: "通过请求头或密钥引用传递鉴权信息" },
     {
       value: "bearer_env",
-      label: "Bearer Env",
-      description: "从环境变量读取 Bearer token",
+      label: "Bearer 令牌",
+      description: "从环境变量读取 Bearer 令牌",
       disabled: form.transport !== "streamable_http",
     },
-    { value: "oauth", label: "OAuth", description: "通过授权流程保存 OAuth token" },
+    { value: "oauth", label: "OAuth 授权", description: "通过授权流程保存访问凭据" },
   ];
   return (
     <section className={styles.authPanel} aria-label="MCP 鉴权">
@@ -728,26 +749,26 @@ function AuthFields({
       </div>
 
       {form.authType === "none" ? (
-        <p className={styles.mutedText}>保存后会清除本 server 的 header token、Bearer Env 和 OAuth 配置引用。</p>
+        <p className={styles.mutedText}>保存后会清除此服务器已保存的鉴权配置引用。</p>
       ) : null}
 
       {form.authType === "header_token" ? (
         <div className={styles.fieldStack}>
           <KeyValueEditor
-            title="Headers"
-            addLabel="添加 header"
+            title="固定请求头"
+            addLabel="添加请求头"
             rows={form.headerRows}
             disabled={busy}
             keyPlaceholder="X-Api-Key"
-            valuePlaceholder="value 或 secret:ref"
+            valuePlaceholder="值或密钥引用"
             existingKeys={existingKeys.headers}
             replaceExisting={form.replaceHeaders}
             onReplaceExistingChange={(checked) => update("replaceHeaders", checked)}
             onChange={(rows) => update("headerRows", rows)}
           />
           <KeyValueEditor
-            title="Env headers"
-            addLabel="添加 env header"
+            title="来自环境变量的请求头"
+            addLabel="添加变量请求头"
             rows={form.envHeaderRows}
             disabled={busy}
             keyPlaceholder="Authorization"
@@ -782,9 +803,9 @@ function AuthFields({
 
       {form.authType === "bearer_env" ? (
         <label className={styles.field}>
-          <span>Bearer token env</span>
+          <span>Bearer 令牌环境变量</span>
           <input
-            aria-label="bearer token env"
+            aria-label="Bearer 令牌环境变量"
             disabled={busy}
             value={form.bearerTokenEnvVar}
             placeholder="MCP_BEARER_TOKEN"
@@ -836,8 +857,8 @@ function SecretRefsEditor({
   return (
     <div className={styles.secretBox}>
       <div className={styles.secretHeader}>
-        <span>Secret refs</span>
-        {existingKeys.length ? <small>已配置：{existingKeys.join(", ")}</small> : <small>未配置 secret ref</small>}
+        <span>密钥引用</span>
+        {existingKeys.length ? <small>已配置：{existingKeys.join(", ")}</small> : <small>未配置密钥引用</small>}
       </div>
       {existingKeys.length ? (
         <div className={styles.secretActions}>
@@ -863,8 +884,8 @@ function SecretRefsEditor({
       ) : null}
       {(replaceSecretRefs || !existingKeys.length) && !clearSecretRefs ? (
         <KeyValueEditor
-          title="Secret refs"
-          addLabel="添加 secret ref"
+          title="密钥引用"
+          addLabel="添加密钥引用"
           rows={rows}
           disabled={disabled}
           keyPlaceholder="Authorization"
@@ -875,7 +896,7 @@ function SecretRefsEditor({
           onChange={onChange}
         />
       ) : null}
-      {clearSecretRefs ? <p className={styles.mutedText}>保存后会清除已配置 secret refs。</p> : null}
+      {clearSecretRefs ? <p className={styles.mutedText}>保存后会清除已配置的密钥引用。</p> : null}
     </div>
   );
 }
@@ -912,12 +933,12 @@ function OAuthFields({
   const [confirmClear, setConfirmClear] = useState(false);
   return (
     <div className={styles.fieldStack}>
-      <div className={styles.oauthStatus} data-status={oauthDisplayStatus(oauthStatus, canStartOAuth)}>
+      <div className={styles.oauthStatus} data-status={oauthStatusCode(oauthStatus, canStartOAuth)}>
         <span>状态</span>
-        <strong>{oauthDisplayStatus(oauthStatus, canStartOAuth)}</strong>
+        <strong>{oauthStatusLabel(oauthStatus, canStartOAuth)}</strong>
         {oauthStatus?.account_label ? <span>{oauthStatus.account_label}</span> : null}
-        {oauthStatus?.expires_at ? <span>expires {oauthStatus.expires_at}</span> : null}
-        {oauthStatus?.scopes?.length ? <span>scopes {oauthStatus.scopes.join(", ")}</span> : null}
+        {oauthStatus?.expires_at ? <span>过期时间 {oauthStatus.expires_at}</span> : null}
+        {oauthStatus?.scopes?.length ? <span>授权范围 {oauthStatus.scopes.join(", ")}</span> : null}
       </div>
       {oauthError ? <div className={styles.inlineError}>{oauthError}</div> : null}
       <div className={styles.oauthButtons}>
@@ -937,7 +958,7 @@ function OAuthFields({
       </div>
       {confirmClear ? (
         <div className={styles.oauthClearConfirm}>
-          <span>确认清除 OAuth 凭据？清除后该 server 会进入需要重新授权的状态。</span>
+          <span>确认清除 OAuth 凭据？清除后该服务器需要重新授权。</span>
           <button
             type="button"
             disabled={busy || oauthLoading}
@@ -963,7 +984,7 @@ function OAuthFields({
         </div>
       ) : null}
       <label className={styles.replaceRow}>
-        <span>已保存 OAuth provider config 时，默认保留原配置。</span>
+        <span>已保存 OAuth 提供方配置时，默认保留原配置。</span>
         <input
           type="checkbox"
           checked={form.replaceOAuthConfig}
@@ -975,9 +996,9 @@ function OAuthFields({
       {form.replaceOAuthConfig ? (
         <>
           <label className={styles.field}>
-            <span>Authorization URL</span>
+            <span>授权地址</span>
             <input
-              aria-label="OAuth authorization url"
+              aria-label="OAuth 授权地址"
               disabled={busy}
               value={form.oauthAuthorizationUrl}
               placeholder="https://provider.example.com/oauth/authorize"
@@ -985,9 +1006,9 @@ function OAuthFields({
             />
           </label>
           <label className={styles.field}>
-            <span>Token URL</span>
+            <span>令牌地址</span>
             <input
-              aria-label="OAuth token url"
+              aria-label="OAuth 令牌地址"
               disabled={busy}
               value={form.oauthTokenUrl}
               placeholder="https://provider.example.com/oauth/token"
@@ -996,7 +1017,7 @@ function OAuthFields({
           </label>
           <div className={styles.selectGrid}>
             <label className={styles.field}>
-              <span>Client ID</span>
+              <span>客户端 ID</span>
               <input
                 aria-label="OAuth client id"
                 disabled={busy}
@@ -1005,7 +1026,7 @@ function OAuthFields({
               />
             </label>
             <label className={styles.field}>
-              <span>Redirect URI</span>
+              <span>回调地址</span>
               <input
                 aria-label="OAuth redirect uri"
                 disabled={busy}
@@ -1017,7 +1038,7 @@ function OAuthFields({
           </div>
           <div className={styles.selectGrid}>
             <label className={styles.field}>
-              <span>Resource</span>
+              <span>资源标识</span>
               <input
                 aria-label="OAuth resource"
                 disabled={busy}
@@ -1027,9 +1048,9 @@ function OAuthFields({
               />
             </label>
             <label className={styles.field}>
-              <span>Scopes</span>
+              <span>授权范围</span>
               <input
-                aria-label="OAuth scopes"
+                aria-label="OAuth 授权范围"
                 disabled={busy}
                 value={form.oauthScopes}
                 placeholder="read write"
@@ -1064,16 +1085,16 @@ function ArgsEditor({
   return (
     <div className={styles.arrayEditor}>
       <div className={styles.editorHeader}>
-        <span>Args</span>
+        <span>参数</span>
         <button type="button" disabled={disabled} onClick={() => onChange([...args, ""])}>
           <Plus size={13} />
-          添加 arg
+          添加参数
         </button>
       </div>
       {rows.map((arg, index) => (
         <div className={styles.arrayRow} key={index}>
           <input
-            aria-label={`stdio arg ${index + 1}`}
+            aria-label={`本地命令参数 ${index + 1}`}
             disabled={disabled}
             value={arg}
             placeholder={index === 0 ? "server.js" : "--flag"}
@@ -1081,7 +1102,7 @@ function ArgsEditor({
           />
           <button
             type="button"
-            aria-label={`删除 arg ${index + 1}`}
+            aria-label={`删除本地命令参数 ${index + 1}`}
             disabled={disabled || rows.length === 1}
             onClick={() => removeArg(index)}
           >
@@ -1089,7 +1110,7 @@ function ArgsEditor({
           </button>
         </div>
       ))}
-      <small>Args 会作为数组保存，不按整行 shell 字符串解析。</small>
+      <small>参数会逐项传给启动命令，不按整行命令解析。</small>
     </div>
   );
 }
@@ -1150,14 +1171,14 @@ function KeyValueEditor({
       {effectiveRows.map((row, index) => (
         <div className={styles.mapRow} key={row.id}>
           <input
-            aria-label={`${title} key ${index + 1}`}
+            aria-label={`${title} 键 ${index + 1}`}
             disabled={disabled || (existingKeys.length > 0 && !replaceExisting)}
             value={row.key}
             placeholder={keyPlaceholder}
             onChange={(event) => updateRow(row.id, { key: event.target.value })}
           />
           <input
-            aria-label={`${title} value ${index + 1}`}
+            aria-label={`${title} 值 ${index + 1}`}
             disabled={disabled || (existingKeys.length > 0 && !replaceExisting)}
             value={row.value}
             placeholder={valuePlaceholder}
@@ -1206,10 +1227,24 @@ function ToggleRow({
   );
 }
 
-function TestResult({ result }: { result: McpConnectionTestResponse }) {
-  const capabilities = result.ok ? formatConnectionCapabilities(result.capabilities) : "";
+function ConnectionTestProgress() {
   return (
-    <div className={styles.testResult} data-ok={result.ok ? "true" : "false"} role="status">
+    <div className={styles.testProgress} role="status" aria-live="polite" data-testid="mcp-connection-test-progress">
+      <LoaderCircle size={16} className={styles.spinning} />
+      <span className={styles.testResultText}>
+        <strong>正在测试连接</strong>
+        <small>正在连接服务器并读取工具列表</small>
+      </span>
+    </div>
+  );
+}
+
+function TestResult({ result }: { result: McpConnectionTestResponse }) {
+  const capabilities = result.ok ? formatConnectionCapabilities(result) : "";
+  const duration = typeof result.duration_ms === "number" ? `耗时 ${result.duration_ms}ms` : "";
+  const detail = [capabilities, duration].filter(Boolean).join(" · ");
+  return (
+    <div className={styles.testResult} data-ok={result.ok ? "true" : "false"} role="status" aria-live="polite">
       {result.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
       <span className={styles.testResultText}>
         <strong>
@@ -1217,20 +1252,24 @@ function TestResult({ result }: { result: McpConnectionTestResponse }) {
             ? `连接测试通过，状态 ${result.status}`
             : result.error?.message || `连接测试失败，状态 ${result.status}`}
         </strong>
-        {capabilities ? <small>{capabilities}</small> : null}
+        {detail ? <small>{detail}</small> : null}
       </span>
     </div>
   );
 }
 
-function formatConnectionCapabilities(capabilities: Record<string, unknown> | undefined): string {
+function formatConnectionCapabilities(result: McpConnectionTestResponse): string {
+  const capabilities = result.capabilities;
   if (!capabilities) {
     return "";
   }
-  const boolLabel = (key: string) => (capabilities[key] === true ? "yes" : "no");
+  const boolLabel = (key: string) => (capabilities[key] === true ? "支持" : "未支持");
+  const toolLabel = typeof result.tools_count === "number"
+    ? `工具：${result.tools_count} 个`
+    : `工具：${boolLabel("tools")}`;
   return [
-    `tools: ${boolLabel("tools")}`,
-    `resources: ${boolLabel("resources_reserved")}`,
+    toolLabel,
+    `资源：${boolLabel("resources_reserved")}`,
   ].join(" · ");
 }
 
@@ -1394,28 +1433,28 @@ function validateForm(
   mode: FormMode,
 ): string | null {
   if (!form.name.trim()) {
-    return "请填写 Server 名称";
+    return "请填写服务器名称";
   }
   if (form.transport === "stdio" && !form.command.trim()) {
-    return "stdio transport 必须填写 command";
+    return "本地命令连接必须填写启动命令";
   }
   if (form.transport === "streamable_http" && !isHttpUrl(form.url)) {
-    return "streamable_http transport 必须填写有效的 http(s) URL";
+    return "HTTP 连接必须填写有效的服务地址";
   }
   if (form.transport === "sse") {
     if (!isHttpUrl(form.sseUrl)) {
-      return "sse transport 必须填写有效的 SSE URL";
+      return "SSE 连接必须填写有效的服务地址";
     }
     if (!isHttpUrl(form.messageUrl)) {
-      return "sse transport 必须填写有效的 Message URL";
+      return "SSE 连接必须填写有效的消息地址";
     }
   }
   if (form.authType === "bearer_env") {
     if (form.transport !== "streamable_http") {
-      return "Bearer Env 仅支持 streamable_http transport";
+      return "Bearer 令牌仅支持 HTTP 连接";
     }
     if (!isEnvName(form.bearerTokenEnvVar)) {
-      return "Bearer token env 必须是有效环境变量名";
+      return "Bearer 令牌环境变量名不合法";
     }
   }
   if (form.authType === "header_token") {
@@ -1432,23 +1471,23 @@ function validateForm(
         ? hasRows(form.secretRefRows)
         : existingSecretRefKeys.length > 0;
     if (!hasEffectiveHeaders && !hasEffectiveEnvHeaders && !hasEffectiveSecretRefs) {
-      return "Header Token 需要至少配置 headers、env headers 或 secret refs";
+      return "请求头令牌需要至少配置一种请求头或密钥引用";
     }
   }
   if (form.authType === "oauth") {
     const mustConfigureOAuth = mode === "create" || form.replaceOAuthConfig || !original?.oauth_configured;
     if (mustConfigureOAuth) {
       if (!isHttpUrl(form.oauthAuthorizationUrl)) {
-        return "OAuth Authorization URL 必须是有效的 http(s) URL";
+        return "OAuth 授权地址必须是有效地址";
       }
       if (!isHttpUrl(form.oauthTokenUrl)) {
-        return "OAuth Token URL 必须是有效的 http(s) URL";
+        return "OAuth 令牌地址必须是有效地址";
       }
       if (!form.oauthClientId.trim()) {
-        return "OAuth Client ID 不能为空";
+        return "OAuth 客户端 ID 不能为空";
       }
       if (!isHttpUrl(form.oauthRedirectUri)) {
-        return "OAuth Redirect URI 必须是有效的 http(s) URL";
+        return "OAuth 回调地址必须是有效地址";
       }
     }
   }
@@ -1462,10 +1501,10 @@ function validateForm(
 function validateRows(form: FormState): string | null {
   const scopes: Array<[string, KeyValueRow[]]> = [];
   if (form.transport === "stdio") {
-    scopes.push(["Env", form.envRows]);
+    scopes.push(["环境变量", form.envRows]);
   }
   if (form.transport === "streamable_http" || form.transport === "sse") {
-    scopes.push(["Headers", form.headerRows], ["Env headers", form.envHeaderRows]);
+    scopes.push(["固定请求头", form.headerRows], ["来自环境变量的请求头", form.envHeaderRows]);
   }
   for (const [label, rows] of scopes) {
     for (const row of rows) {
@@ -1473,7 +1512,7 @@ function validateRows(form: FormState): string | null {
         continue;
       }
       if (!row.key.trim() || !row.value.trim()) {
-        return `${label} 必须同时填写 key 和 value`;
+        return `${label} 必须同时填写键和值`;
       }
     }
   }
@@ -1483,27 +1522,27 @@ function validateRows(form: FormState): string | null {
 function describeDangerousChanges(original: McpServerDetailResponse, form: FormState): string[] {
   const messages: string[] = [];
   if (original.transport !== form.transport) {
-    messages.push(`Transport 将从 ${original.transport} 改为 ${form.transport}`);
+    messages.push(`连接方式将从 ${transportLabel(original.transport)} 改为 ${transportLabel(form.transport)}`);
   }
   if (form.transport === "stdio" && original.command !== form.command.trim()) {
-    messages.push("stdio command 发生变化，保存后下次连接会启动新的进程命令");
+    messages.push("启动命令发生变化，保存后下次连接会启动新的进程命令");
   }
   if (form.transport === "streamable_http" && (original.url ?? "") !== form.url.trim()) {
-    messages.push("HTTP URL 发生变化，保存后会连接新的远端 endpoint");
+    messages.push("HTTP 服务地址发生变化，保存后会连接新的远端地址");
   }
   if (form.transport === "sse") {
     if ((original.sse_url ?? "") !== form.sseUrl.trim()) {
-      messages.push("SSE URL 发生变化，保存后会连接新的事件流 endpoint");
+      messages.push("SSE 服务地址发生变化，保存后会连接新的事件流地址");
     }
     if ((original.message_url ?? "") !== form.messageUrl.trim()) {
-      messages.push("Message URL 发生变化，保存后会发送到新的消息 endpoint");
+      messages.push("SSE 消息地址发生变化，保存后会发送到新的消息地址");
     }
   }
   if (form.authType === "none" && (original.auth_type ?? original.auth?.auth_type) !== "none") {
-    messages.push("鉴权方式将改为无鉴权，并清除已保存的 auth 配置引用");
+    messages.push("鉴权方式将改为无鉴权，并清除已保存的鉴权配置引用");
   }
   if (form.clearSecretRefs) {
-    messages.push("已保存的 secret refs 将被清除");
+    messages.push("已保存的密钥引用将被清除");
   }
   return messages;
 }
@@ -1555,7 +1594,7 @@ function isEnvName(value: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value.trim());
 }
 
-function oauthDisplayStatus(status: McpOAuthStatusResponse | null, canStartOAuth: boolean): string {
+function oauthStatusCode(status: McpOAuthStatusResponse | null, canStartOAuth: boolean): string {
   if (!canStartOAuth) {
     return "not_saved";
   }
@@ -1566,6 +1605,37 @@ function oauthDisplayStatus(status: McpOAuthStatusResponse | null, canStartOAuth
     return "expired";
   }
   return status.status || "unknown";
+}
+
+function oauthStatusLabel(status: McpOAuthStatusResponse | null, canStartOAuth: boolean): string {
+  const code = oauthStatusCode(status, canStartOAuth);
+  switch (code) {
+    case "active":
+      return "已授权";
+    case "expired":
+      return "已过期";
+    case "revoked":
+      return "已撤销";
+    case "auth_required":
+      return "需要授权";
+    case "not_saved":
+      return "待保存";
+    default:
+      return "未知";
+  }
+}
+
+function transportLabel(value: McpTransport): string {
+  switch (value) {
+    case "stdio":
+      return "本地命令";
+    case "streamable_http":
+      return "HTTP 地址";
+    case "sse":
+      return "SSE 地址";
+    default:
+      return value;
+  }
 }
 
 function newRow(): KeyValueRow {
@@ -1583,5 +1653,5 @@ function errorMessage(reason: unknown): string {
   if (reason && typeof reason === "object" && typeof (reason as { message?: unknown }).message === "string") {
     return (reason as { message: string }).message;
   }
-  return "MCP Server 配置保存失败";
+  return "MCP 服务器配置保存失败";
 }

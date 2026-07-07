@@ -141,7 +141,7 @@ describe("AppRouter", () => {
     expect(screen.queryByLabelText("侧边栏")).toBeNull();
     expect(screen.queryByText("新对话")).toBeNull();
 
-    fireEvent.click(screen.getByText("返回应用"));
+    fireEvent.click(screen.getAllByRole("button", { name: "返回应用" })[1]);
     expect(await screen.findByRole("heading", { name: /thread-1/ }, { timeout: 10000 })).not.toBeNull();
   });
 
@@ -157,7 +157,7 @@ describe("AppRouter", () => {
     expect(screen.getByRole("button", { name: "扩展功能" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "策略配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "用量统计" })).not.toBeNull();
-    fireEvent.click(screen.getByText("返回应用"));
+    fireEvent.click(screen.getAllByRole("button", { name: "返回应用" })[1]);
     expect(await screen.findByTestId("home-page", undefined, { timeout: 10000 })).not.toBeNull();
   });
 
@@ -196,7 +196,7 @@ describe("AppRouter", () => {
     renderRouter(["/settings/general"]);
 
     expect(await screen.findByRole("heading", { name: "常规" }, { timeout: 10000 })).not.toBeNull();
-    fireEvent.click(screen.getByText("返回应用"));
+    fireEvent.click(screen.getAllByRole("button", { name: "返回应用" })[1]);
     expect(await screen.findByTestId("home-page", undefined, { timeout: 10000 })).not.toBeNull();
   });
 

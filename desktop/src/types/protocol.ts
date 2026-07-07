@@ -144,13 +144,12 @@ export type McpServerStatus =
 export type McpApprovalMode = "auto" | "prompt" | "approve" | "deny" | "inherit";
 export type McpToolExposureMode =
   | "allow_all_except_disabled"
-  | "allow_selected_only"
-  | "read_only_auto";
+  | "allow_selected_only";
 export type McpAuthType = "none" | "header_token" | "bearer_env" | "oauth";
 export type McpRestartPolicy = "never" | "on_failure" | "always";
 export type McpConnectMode = "on_demand" | "on_startup";
 export type McpToolSchemaChangeAction = "keep_enabled" | "require_review" | "disable";
-export type McpToolDiscoveryStatus = "new" | "unchanged" | "removed" | "schema_changed";
+export type McpToolDiscoveryStatus = "new" | "active" | "removed" | "schema_changed";
 export type McpToolEffectiveState =
   | "enabled"
   | "disabled_persistently"
@@ -164,12 +163,10 @@ export type McpToolBulkPolicyAction =
   | "enable_selected"
   | "disable_selected"
   | "keep_selected_only"
-  | "enable_read_only"
-  | "disable_write_tools"
   | "prompt_all";
 export type McpImportSourceType = "keydex" | "codex" | "claude";
 export type McpImportConflictStrategy = "skip" | "rename" | "error";
-export type McpTrustRuleKind = "server_readonly" | "tool" | "tool_with_params" | "deny_tool";
+export type McpTrustRuleKind = "tool" | "tool_with_params" | "deny_tool";
 export type McpTrustRuleScope = "session" | "global";
 export type McpTrustApprovalMode = "approve" | "deny";
 export type McpErrorCode =
@@ -400,7 +397,15 @@ export interface McpConnectionTestResponse {
   protocol_version?: string;
   server_info?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
+  tools_count?: number;
+  resources_reserved_count?: number;
+  duration_ms?: number;
   error?: McpErrorPayload;
+}
+
+export interface McpConnectionTestPayload {
+  server: McpServerCreatePayload;
+  base_server_id?: string | null;
 }
 
 export interface McpToolListResponse {
@@ -793,7 +798,7 @@ export type CommandApprovalTrustScope =
   | "persistent"
   | "session"
   | "persistent_tool"
-  | "server_readonly";
+  | "persistent_server";
 
 export interface CommandApprovalRequest {
   id: string;

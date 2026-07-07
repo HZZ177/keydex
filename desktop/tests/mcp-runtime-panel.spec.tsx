@@ -16,17 +16,17 @@ describe("MCP Runtime Panel", () => {
 
     const pill = await screen.findByTestId("mcp-runtime-pill");
     await waitFor(() => expect(pill.textContent).toContain("snap_1"));
-    expect(pill.textContent).toContain("2 tools");
+    expect(pill.textContent).toContain("2 个工具");
 
     fireEvent.click(pill);
 
     const panel = screen.getByTestId("mcp-runtime-panel");
     expect(panel.textContent).toContain("Online MCP");
-    expect(panel.textContent).toContain("Visible tools");
-    expect(panel.textContent).toContain("Pending approvals");
+    expect(panel.textContent).toContain("可用工具");
+    expect(panel.textContent).toContain("等待确认");
     expect(panel.textContent).toContain("read_file description");
-    expect(panel.textContent).toContain("auto");
-    expect(panel.textContent).toContain("enabled");
+    expect(panel.textContent).toContain("始终允许");
+    expect(panel.textContent).toContain("已启用");
   });
 
   it("keeps the panel open when a real click follows hover", async () => {
@@ -58,7 +58,7 @@ describe("MCP Runtime Panel", () => {
     renderRuntimePanel(runtime);
 
     fireEvent.click(await screen.findByTestId("mcp-runtime-pill"));
-    fireEvent.click(await screen.findByRole("switch", { name: "关闭 MCP tool read_file" }));
+    fireEvent.click(await screen.findByRole("switch", { name: "关闭 MCP 工具 read_file" }));
 
     await waitFor(() =>
       expect(setSessionToolOverride).toHaveBeenCalledWith("sess_1", "tool_read", {
@@ -69,8 +69,8 @@ describe("MCP Runtime Panel", () => {
     );
     expect(await screen.findByText("已在当前会话禁用 read_file")).not.toBeNull();
     const panel = screen.getByTestId("mcp-runtime-panel");
-    await waitFor(() => expect(panel.textContent).toContain("disabled_for_session"));
-    expect(panel.textContent).toMatch(/Session disabled\s*1/);
+    await waitFor(() => expect(panel.textContent).toContain("当前会话停用"));
+    expect(panel.textContent).toMatch(/本会话停用\s*1/);
   });
 
   it("shows next-turn timing when enabling during a running turn", async () => {
@@ -86,7 +86,7 @@ describe("MCP Runtime Panel", () => {
     renderRuntimePanel(runtime, "running");
 
     fireEvent.click(await screen.findByTestId("mcp-runtime-pill"));
-    fireEvent.click(await screen.findByRole("switch", { name: "启用 MCP tool read_file" }));
+    fireEvent.click(await screen.findByRole("switch", { name: "启用 MCP 工具 read_file" }));
 
     await waitFor(() =>
       expect(setSessionToolOverride).toHaveBeenCalledWith("sess_1", "tool_read", {
@@ -113,10 +113,10 @@ describe("MCP Runtime Panel", () => {
     );
 
     fireEvent.click(await screen.findByTestId("mcp-runtime-pill"));
-    const offlineSwitch = await screen.findByRole("switch", { name: "MCP tool search_docs 不可切换" });
+    const offlineSwitch = await screen.findByRole("switch", { name: "MCP 工具 search_docs 不可切换" });
 
     expect((offlineSwitch as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByTestId("mcp-runtime-panel").textContent).toContain("server offline");
+    expect(screen.getByTestId("mcp-runtime-panel").textContent).toContain("服务离线");
   });
 
   it("hides tools for disabled servers", async () => {
@@ -144,8 +144,8 @@ describe("MCP Runtime Panel", () => {
     const panel = screen.getByTestId("mcp-runtime-panel");
 
     expect(panel.textContent).toContain("Disabled MCP");
-    expect(panel.textContent).toContain("disabled");
-    expect(panel.textContent).toContain("暂无可见 tools");
+    expect(panel.textContent).toContain("已停用");
+    expect(panel.textContent).toContain("暂无可见工具");
     expect(panel.textContent).not.toContain("read_file");
     expect(panel.textContent).not.toContain("read_file description");
   });
@@ -157,7 +157,7 @@ describe("MCP Runtime Panel", () => {
     renderRuntimePanel(runtime, "running");
 
     fireEvent.click(await screen.findByTestId("mcp-runtime-pill"));
-    fireEvent.click(await screen.findByRole("button", { name: "取消 MCP call call_1" }));
+    fireEvent.click(await screen.findByRole("button", { name: "取消 MCP 调用 call_1" }));
 
     await waitFor(() => expect(cancelRuntimeCall).toHaveBeenCalledWith("call_1"));
     expect(await screen.findByText("已取消 read_file")).not.toBeNull();

@@ -2,6 +2,7 @@ import type {
   CommandApprovalDecisionPayload,
   CommandApprovalRequest,
   McpAuditListResponse,
+  McpConnectionTestPayload,
   McpConnectionTestResponse,
   McpExportPayload,
   McpExportResponse,
@@ -70,6 +71,7 @@ export interface McpRuntime {
   deleteServer(serverId: string): Promise<{ deleted: boolean; server_id: string }>;
   toggleServer(serverId: string, enabled: boolean): Promise<McpServerSummary>;
   testServer(serverId: string): Promise<McpConnectionTestResponse>;
+  testServerConfig(payload: McpConnectionTestPayload): Promise<McpConnectionTestResponse>;
   refreshServer(serverId: string): Promise<McpRefreshResult>;
   refreshServers(): Promise<McpRefreshAllResponse>;
   listTools(serverId: string, options?: McpToolListOptions): Promise<McpToolListResponse>;
@@ -150,6 +152,12 @@ export function createMcpRuntime(http: HttpClient): McpRuntime {
     testServer(serverId) {
       return http.request<McpConnectionTestResponse>(`/api/mcp/servers/${encodePath(serverId)}/test`, {
         method: "POST",
+      });
+    },
+    testServerConfig(payload) {
+      return http.request<McpConnectionTestResponse>("/api/mcp/servers/test", {
+        method: "POST",
+        body: payload,
       });
     },
     refreshServer(serverId) {

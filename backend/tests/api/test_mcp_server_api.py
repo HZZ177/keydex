@@ -180,6 +180,33 @@ def test_mcp_server_test_connection_success_and_failure(tmp_path) -> None:
     assert app.state.repositories.mcp_tools.list_by_server(ok_id) == []
 
 
+def test_mcp_server_config_test_is_temporary_and_discovers_tools(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+    app.state.mcp_manager.client_factory = FakeClientFactory()
+    client = TestClient(app)
+
+    tested = client.post(
+        "/api/mcp/servers/test",
+        json={
+            "server": {
+                "name": "Temporary MCP",
+                "transport": "streamable_http",
+                "url": "https://mcp.example.test/mcp",
+            }
+        },
+    )
+
+    assert tested.status_code == 200
+    body = tested.json()
+    assert body["ok"] is True
+    assert body["server_id"].startswith("temporary-")
+    assert body["status"] == "online"
+    assert body["tools_count"] == 1
+    assert app.state.repositories.mcp_servers.list()[1] == 0
+    assert app.state.repositories.mcp_server_status.get(body["server_id"]) is None
+    assert app.state.repositories.mcp_tools.list_by_server(body["server_id"]) == []
+
+
 def test_mcp_server_refresh_single_and_all(tmp_path) -> None:
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
     app.state.mcp_manager.client_factory = FakeClientFactory(fail_names={"Refresh All Fail"})

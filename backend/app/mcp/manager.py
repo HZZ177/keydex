@@ -709,17 +709,15 @@ class McpManager:
         if not server.enabled:
             self.repositories.mcp_server_status.upsert(server.id, status="disabled")
             raise McpRuntimeError(McpErrorCode.SERVER_DISABLED)
-        await self.drop_client(server_id)
-        client = await self.get_or_create_client(server_id)
+        client = self.client_factory.create_client(server)
         try:
             return await self.discovery_service.refresh_server(
                 server=server,
                 client=client,
                 cancellation=cancellation,
             )
-        except Exception:
-            await self.drop_client(server_id)
-            raise
+        finally:
+            await self._shutdown_client(server_id, client)
 
     async def shutdown(self) -> None:
         await self.cancel_auto_refresh_tasks()
@@ -770,11 +768,14 @@ class McpManager:
         return server
 
     async def _shutdown_cached_client(self, server_id: str, cached: _CachedClient) -> None:
+        await self._shutdown_client(server_id, cached.client)
+
+    async def _shutdown_client(self, server_id: str, client: McpClient) -> None:
         try:
-            await cached.client.shutdown(timeout_sec=self._shutdown_timeout(server_id))
+            await client.shutdown(timeout_sec=self._shutdown_timeout(server_id))
         except Exception as exc:
             logger.warning(
-                "[MCP Manager] cached client shutdown failed | "
+                "[MCP Manager] client shutdown failed | "
                 "server_id={} | error_type={} | error={}",
                 server_id,
                 type(exc).__name__,

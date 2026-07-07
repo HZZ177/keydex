@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -110,8 +112,6 @@ def _rule_matches(rule: McpTrustRuleRecord, request: Any) -> bool:
         return False
     if rule.scope == "session" and rule.session_id != request.session_id:
         return False
-    if rule.rule_kind == "server_readonly":
-        return _is_readonly_request(request)
     if rule.rule_kind in {"tool", "deny_tool"}:
         return rule.raw_tool_name == request.raw_tool_name
     if rule.rule_kind == "tool_with_params":
@@ -134,18 +134,15 @@ def _is_expired(rule: McpTrustRuleRecord) -> bool:
     return expires_at <= datetime.now(UTC)
 
 
-def _is_readonly_request(request: Any) -> bool:
-    tool = getattr(request, "tool", None)
-    annotations = getattr(tool, "annotations", None) or getattr(request, "annotations", None) or {}
-    return annotations.get("readOnlyHint") is True and annotations.get("openWorldHint") is not True
-
-
 def _condition_matches(
     condition: dict[str, Any] | None,
     arguments: dict[str, Any],
 ) -> bool:
     if not condition:
         return True
+    expected_hash = condition.get("arguments_sha256")
+    if isinstance(expected_hash, str) and expected_hash:
+        return _arguments_sha256(arguments) == expected_hash
     expected = condition.get("arguments")
     if expected is None:
         expected = condition.get("arguments_subset")
@@ -154,3 +151,14 @@ def _condition_matches(
     if not isinstance(expected, dict):
         return False
     return all(arguments.get(key) == value for key, value in expected.items())
+
+
+def _arguments_sha256(arguments: dict[str, Any]) -> str:
+    payload = json.dumps(
+        arguments,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=repr,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

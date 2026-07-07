@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -70,15 +71,33 @@ async def test_refresh_capabilities_persists_tools_status_and_audit(tmp_path) ->
 
 
 @pytest.mark.asyncio
+async def test_refresh_capabilities_uses_short_lived_client_without_cache(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    _create_server(repositories)
+    first_client = FakeDiscoveryClient(tools=[_tool("first", {"type": "object"})])
+    second_client = FakeDiscoveryClient(tools=[_tool("second", {"type": "object"})])
+    manager = _manager(tmp_path, repositories, first_client, second_client)
+
+    await manager.refresh_capabilities("srv_refresh")
+    await manager.refresh_capabilities("srv_refresh")
+
+    assert first_client.shutdown_calls == 1
+    assert second_client.shutdown_calls == 1
+    assert first_client.initialize_calls == 1
+    assert second_client.initialize_calls == 1
+    assert first_client.initialize_task is first_client.shutdown_task
+    assert second_client.initialize_task is second_client.shutdown_task
+    assert manager.active_client_count == 0
+    assert repositories.mcp_tools.get_by_raw_name("srv_refresh", "first").discovery_status == "removed"
+    assert repositories.mcp_tools.get_by_raw_name("srv_refresh", "second").discovery_status == "new"
+
+
+@pytest.mark.asyncio
 async def test_refresh_marks_first_discovery_new_then_unchanged_active(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _create_server(repositories)
-    first_client = FakeDiscoveryClient(
-        tools=[_tool("echo", {"type": "object"})],
-    )
-    second_client = FakeDiscoveryClient(
-        tools=[_tool("echo", {"type": "object"})],
-    )
+    first_client = FakeDiscoveryClient(tools=[_tool("echo", {"type": "object"})])
+    second_client = FakeDiscoveryClient(tools=[_tool("echo", {"type": "object"})])
     manager = _manager(tmp_path, repositories, first_client, second_client)
 
     first_report = await manager.refresh_capabilities("srv_refresh")
@@ -181,7 +200,7 @@ async def test_refresh_list_tools_failure_preserves_existing_discovery_and_write
             list_tools_error=McpRuntimeError(
                 McpErrorCode.PROTOCOL_ERROR,
                 "list tools failed",
-            )
+            ),
         ),
     )
     await manager.refresh_capabilities("srv_refresh")
@@ -326,8 +345,12 @@ class FakeDiscoveryClient(McpClientBase):
         self.capabilities = capabilities or McpClientCapabilities()
         self.initialize_error = initialize_error
         self.list_tools_error = list_tools_error
+        self.initialize_calls = 0
+        self.list_tools_calls = 0
         self.list_resources_calls = 0
         self.shutdown_calls = 0
+        self.initialize_task: asyncio.Task[Any] | None = None
+        self.shutdown_task: asyncio.Task[Any] | None = None
 
     async def initialize(
         self,
@@ -335,6 +358,8 @@ class FakeDiscoveryClient(McpClientBase):
         timeout_sec: float | None = None,
         cancellation: McpCancellationToken | None = None,
     ) -> McpClientInitializeResult:
+        self.initialize_calls += 1
+        self.initialize_task = asyncio.current_task()
         if self.initialize_error is not None:
             raise self.initialize_error
         self.transition_status(McpServerStatus.ONLINE, reason="test_initialized")
@@ -350,6 +375,7 @@ class FakeDiscoveryClient(McpClientBase):
         timeout_sec: float | None = None,
         cancellation: McpCancellationToken | None = None,
     ) -> list[McpClientToolSpec]:
+        self.list_tools_calls += 1
         if self.list_tools_error is not None:
             raise self.list_tools_error
         return self.tools
@@ -374,3 +400,4 @@ class FakeDiscoveryClient(McpClientBase):
 
     async def shutdown(self, *, timeout_sec: float | None = None) -> None:
         self.shutdown_calls += 1
+        self.shutdown_task = asyncio.current_task()

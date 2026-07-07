@@ -805,7 +805,7 @@ async def test_execute_tool_creates_mcp_approval_request_payload(tmp_path) -> No
         "once",
         "session",
         "persistent_tool",
-        "server_readonly",
+        "persistent_server",
     ]
     assert payload["approval_kind"] == "mcp_tool_call"
     assert payload["metadata"]["mcp"]["server_id"] == "srv_exec"
@@ -969,6 +969,66 @@ async def test_persistent_tool_trust_created_from_mcp_approval_is_global_and_mcp
     assert hit_audits[0].detail["rule_id"] == trust_rules[0].id
     assert approval_audit_total == 1
     assert approval_audits[0].metadata["mcp"]["trust_rule_id"] == trust_rules[0].id
+
+
+@pytest.mark.asyncio
+async def test_persistent_server_trust_from_mcp_approval_updates_server_default(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    _create_session(repositories)
+    _create_session(repositories, session_id="session-b")
+    _create_server_and_tool(repositories, default_tool_approval_mode="prompt")
+    factory = RecordingExecutionClientFactory()
+    manager = McpManager(
+        settings=AppSettings(data_dir=tmp_path / "data"),
+        repositories=repositories,
+        client_factory=factory,
+    )
+    first_task = asyncio.create_task(
+        manager.execute_tool(
+            snapshot_id="snap-a",
+            server_id="srv_exec",
+            raw_tool_name="search",
+            arguments={"query": "hello"},
+            call_context=_context(),
+        )
+    )
+    approval = await _wait_for_pending_mcp_approval(repositories)
+    await ApprovalService(repositories=repositories).resolve(
+        approval.id,
+        CommandApprovalDecision(decision="approved", trust_scope="persistent_server"),
+    )
+    first = await first_task
+
+    second = await manager.execute_tool(
+        snapshot_id="snap-b",
+        server_id="srv_exec",
+        raw_tool_name="search",
+        arguments={"query": "different"},
+        call_context=_context(session_id="session-b"),
+    )
+
+    server = repositories.mcp_servers.get("srv_exec")
+    updated_audits, updated_total = repositories.mcp_audit_log.list(
+        event_type="server.updated"
+    )
+    approval_audits, approval_audit_total = repositories.command_approval_audit.list(
+        session_id="session-a"
+    )
+    assert first.ok is True
+    assert second.ok is True
+    assert server is not None
+    assert server.default_tool_approval_mode == "approve"
+    assert repositories.mcp_trust_rules.list() == []
+    assert repositories.trusted_command_rules.list() == []
+    assert repositories.command_approvals.list_pending(session_id="session-b") == []
+    assert len(factory.clients[0].calls) == 2
+    assert updated_total == 1
+    assert updated_audits[0].detail["default_tool_approval_mode"] == "approve"
+    assert updated_audits[0].detail["trust_scope"] == "persistent_server"
+    assert approval_audit_total == 1
+    assert approval_audits[0].metadata["mcp"]["server_trusted"] is True
 
 
 @pytest.mark.asyncio

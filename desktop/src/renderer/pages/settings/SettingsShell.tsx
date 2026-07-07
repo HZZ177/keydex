@@ -156,6 +156,16 @@ export function SettingsShell({
               <ThemeIcon size={17} strokeWidth={2} />
               <span>{theme === "dark" ? "浅色" : "深色"}</span>
             </button>
+            <button
+              aria-label="返回应用"
+              className={styles.themeButton}
+              title={state.sidebarCollapsed ? "返回应用" : ""}
+              type="button"
+              onClick={() => void navigate(from)}
+            >
+              <ArrowLeft size={17} strokeWidth={2} />
+              <span>返回应用</span>
+            </button>
           </div>
         </aside>
         <SidebarResizeHandle

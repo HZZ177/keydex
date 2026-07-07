@@ -3591,7 +3591,11 @@ function isApprovalDecision(value: string): value is NonNullable<CommandApproval
 }
 
 function isTrustScope(value: string): value is NonNullable<CommandApprovalRequest["trust_scope"]> {
-  return value === "once" || value === "persistent";
+  return value === "once"
+    || value === "persistent"
+    || value === "session"
+    || value === "persistent_tool"
+    || value === "persistent_server";
 }
 
 function isRuleMatchType(value: string): value is NonNullable<CommandApprovalRequest["rule_match_type"]> {

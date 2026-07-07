@@ -147,7 +147,7 @@ describe("ToolCallBlock", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
     expect(screen.getByLabelText("MCP 工具元信息").textContent).toContain("Ticket MCP");
     expect(screen.getByLabelText("MCP 工具元信息").textContent).toContain("mcp__srv_1__search");
-    expect(screen.getByLabelText("MCP 工具元信息").textContent).toContain("自动允许");
+    expect(screen.getByLabelText("MCP 工具元信息").textContent).toContain("始终允许");
     expect(screen.getByLabelText("MCP 工具元信息").textContent).toContain("snap-1");
   });
 

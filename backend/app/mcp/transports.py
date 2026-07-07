@@ -226,6 +226,7 @@ class McpStdioClient(McpClientBase):
         self._stdio_context: AbstractAsyncContextManager[tuple[Any, Any]] | None = None
         self._session_context: Any | None = None
         self._session: Any | None = None
+        self._initialize_result: McpClientInitializeResult | None = None
         self._active_call_tasks: dict[str, asyncio.Task[Any]] = {}
 
     async def initialize(
@@ -235,6 +236,8 @@ class McpStdioClient(McpClientBase):
         cancellation: McpCancellationToken | None = None,
     ) -> McpClientInitializeResult:
         _raise_if_cancelled(cancellation)
+        if self._session is not None and self._initialize_result is not None:
+            return self._initialize_result
         self.transition_status(McpServerStatus.REFRESHING, reason="initialize")
         try:
             result = await _await_with_timeout(
@@ -245,6 +248,7 @@ class McpStdioClient(McpClientBase):
             await self._close_open_contexts()
             raise self._map_and_raise(exc) from exc
         self.transition_status(McpServerStatus.ONLINE, reason="initialized")
+        self._initialize_result = result
         return result
 
     async def list_tools(
@@ -348,6 +352,7 @@ class McpStdioClient(McpClientBase):
         return McpRuntimeError(code, detail={"error_type": type(error).__name__})
 
     async def _close_open_contexts(self) -> None:
+        self._initialize_result = None
         active_tasks = list(self._active_call_tasks.values())
         for call_id in list(self._active_call_tasks):
             await self.cancel_call(call_id)
@@ -379,6 +384,7 @@ class McpStreamableHttpClient(McpClientBase):
         self._transport_context: AbstractAsyncContextManager[tuple[Any, Any, Any]] | None = None
         self._session_context: Any | None = None
         self._session: Any | None = None
+        self._initialize_result: McpClientInitializeResult | None = None
         self._active_call_tasks: dict[str, asyncio.Task[Any]] = {}
 
     async def initialize(
@@ -388,6 +394,8 @@ class McpStreamableHttpClient(McpClientBase):
         cancellation: McpCancellationToken | None = None,
     ) -> McpClientInitializeResult:
         _raise_if_cancelled(cancellation)
+        if self._session is not None and self._initialize_result is not None:
+            return self._initialize_result
         self.transition_status(McpServerStatus.REFRESHING, reason="initialize")
         try:
             result = await _await_with_timeout(
@@ -398,6 +406,7 @@ class McpStreamableHttpClient(McpClientBase):
             await self._close_open_contexts()
             raise self._map_and_raise(exc) from exc
         self.transition_status(McpServerStatus.ONLINE, reason="initialized")
+        self._initialize_result = result
         return result
 
     async def list_tools(
@@ -506,6 +515,7 @@ class McpStreamableHttpClient(McpClientBase):
         return McpRuntimeError(code, detail={"error_type": type(error).__name__})
 
     async def _close_open_contexts(self) -> None:
+        self._initialize_result = None
         active_tasks = list(self._active_call_tasks.values())
         for call_id in list(self._active_call_tasks):
             await self.cancel_call(call_id)
@@ -539,6 +549,7 @@ class McpSseClient(McpClientBase):
         self._transport_context: AbstractAsyncContextManager[tuple[Any, Any]] | None = None
         self._session_context: Any | None = None
         self._session: Any | None = None
+        self._initialize_result: McpClientInitializeResult | None = None
         self._active_call_tasks: dict[str, asyncio.Task[Any]] = {}
 
     async def initialize(
@@ -548,6 +559,8 @@ class McpSseClient(McpClientBase):
         cancellation: McpCancellationToken | None = None,
     ) -> McpClientInitializeResult:
         _raise_if_cancelled(cancellation)
+        if self._session is not None and self._initialize_result is not None:
+            return self._initialize_result
         self.transition_status(McpServerStatus.REFRESHING, reason="initialize")
         try:
             result = await _await_with_timeout(
@@ -558,6 +571,7 @@ class McpSseClient(McpClientBase):
             await self._close_open_contexts()
             raise self._map_and_raise(exc) from exc
         self.transition_status(McpServerStatus.ONLINE, reason="initialized")
+        self._initialize_result = result
         return result
 
     async def list_tools(
@@ -664,6 +678,7 @@ class McpSseClient(McpClientBase):
         return McpRuntimeError(code, detail={"error_type": type(error).__name__})
 
     async def _close_open_contexts(self) -> None:
+        self._initialize_result = None
         active_tasks = list(self._active_call_tasks.values())
         for call_id in list(self._active_call_tasks):
             await self.cancel_call(call_id)

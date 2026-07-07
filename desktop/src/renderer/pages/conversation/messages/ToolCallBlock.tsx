@@ -534,10 +534,10 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
 function McpToolDetails({ mcp }: { mcp: ParsedMcpToolMetadata }) {
   const rawRows: Array<[string, string, boolean]> = [
     ["服务", mcp.serverName || mcp.serverId || MCP_UNKNOWN_SERVER_LABEL, false],
-    ["原始工具", mcp.rawToolName, true],
-    ["模型工具", mcp.modelToolName, true],
-    ["审批", mcpApprovalModeLabel(mcp.approvalMode), false],
-    ["快照", mcp.snapshotId, true],
+    ["工具", mcp.rawToolName, true],
+    ["工具名称", mcp.modelToolName, true],
+    ["确认方式", mcpApprovalModeLabel(mcp.approvalMode), false],
+    ["本次工具版本", mcp.snapshotId, true],
   ];
   const rows = rawRows.filter(([, value]) => Boolean(value));
 
@@ -710,7 +710,7 @@ function mcpErrorLabel(type: string): string {
     case "server_offline":
       return "MCP 服务离线";
     case "tool_disabled_by_policy":
-      return "该 MCP 工具已被全局策略停用";
+      return "该 MCP 工具已停用";
     case "tool_disabled_by_session":
       return "当前会话已禁用该 MCP 工具";
     case "approval_rejected":
@@ -733,16 +733,20 @@ function mcpErrorLabel(type: string): string {
 function mcpApprovalModeLabel(mode: string): string {
   switch (mode) {
     case "auto":
-      return "自动允许";
+      return "始终允许";
+    case "approve":
+      return "始终允许";
     case "prompt":
-      return "需要确认";
+      return "每次确认";
     case "trusted":
-      return "信任规则允许";
+      return "信任名单允许";
+    case "inherit":
+      return "继承服务器";
     case "disabled":
     case "deny":
       return "拒绝调用";
     default:
-      return mode;
+      return "未知";
   }
 }
 

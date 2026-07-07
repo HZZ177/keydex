@@ -111,6 +111,13 @@ export function createMcpRuntimeMock(options: McpRuntimeMockOptions = {}): McpRu
       status: "online",
       capabilities: { tools: true },
     })),
+    testServerConfig: vi.fn(() => resolve<McpConnectionTestResponse>({
+      ok: true,
+      server_id: "temporary-test",
+      status: "online",
+      capabilities: { tools: true, resources_reserved: true },
+      tools_count: tools.length,
+    })),
     refreshServer: vi.fn((serverId: string) => resolve<McpRefreshResult>({
       ok: true,
       server_id: serverId,

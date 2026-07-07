@@ -25,7 +25,7 @@ type ApprovalChoice =
   | "approve_prefix"
   | "approve_session"
   | "approve_persistent_tool"
-  | "approve_server_readonly"
+  | "approve_persistent_server"
   | "reject";
 
 interface ApprovalChoiceOption {
@@ -110,7 +110,7 @@ export function ComposerApprovalCard({
               : []),
             {
               id: "reject",
-              label: "否，请告知 agent 如何调整",
+              label: "否，请告知智能体如何调整",
               title: "",
             },
           ],
@@ -224,7 +224,7 @@ export function ComposerApprovalCard({
   return (
     <section
       className={styles.card}
-      aria-label={mcpSamplingApproval ? "MCP Sampling 审批" : mcpToolApproval ? "MCP 工具审批" : "命令执行审批"}
+      aria-label={mcpSamplingApproval ? "MCP 模型请求确认" : mcpToolApproval ? "MCP 工具确认" : "命令执行确认"}
       data-testid="composer-approval-card"
       ref={cardRef}
     >
@@ -233,7 +233,7 @@ export function ComposerApprovalCard({
           <ShieldCheck size={15} strokeWidth={2.2} />
         </span>
         <div className={styles.titleGroup}>
-          <div className={styles.title}>{approval.title || "是否允许执行命令？"}</div>
+          <div className={styles.title}>{approvalTitle(approval.title, mcpSamplingApproval) || "是否允许执行命令？"}</div>
           {description ? <div className={styles.description}>{description}</div> : null}
         </div>
       </header>
@@ -262,7 +262,7 @@ export function ComposerApprovalCard({
       <div
         className={styles.actions}
         role="radiogroup"
-        aria-label={mcpSamplingApproval ? "MCP Sampling 审批选项" : mcpToolApproval ? "MCP 工具审批选项" : "命令审批选项"}
+        aria-label={mcpSamplingApproval ? "MCP 模型请求确认选项" : mcpToolApproval ? "MCP 工具确认选项" : "命令确认选项"}
       >
         {choices.map((choice, index) => {
           const selected = choice.id === selectedChoice;
@@ -322,7 +322,7 @@ export function ComposerApprovalCard({
                             submit();
                           }
                         }}
-                        placeholder="告诉 agent 如何调整"
+                        placeholder="告诉智能体如何调整"
                         ref={rejectTextareaRef}
                         rows={1}
                         value={rejectMessage}
@@ -466,10 +466,10 @@ function decisionFromChoice(choice: ApprovalChoice, rejectMessage: string): Comm
       trust_scope: "persistent_tool",
     };
   }
-  if (choice === "approve_server_readonly") {
+  if (choice === "approve_persistent_server") {
     return {
       decision: "approved",
-      trust_scope: "server_readonly",
+      trust_scope: "persistent_server",
     };
   }
   if (choice === "approve_exact") {
@@ -513,7 +513,7 @@ function mcpTrustOptions(approval: CommandApprovalRequest): CommandApprovalTrust
   if (!Array.isArray(raw)) {
     return ["once"];
   }
-  const allowed = new Set<CommandApprovalTrustScope>(["once", "session", "persistent_tool", "server_readonly"]);
+  const allowed = new Set<CommandApprovalTrustScope>(["once", "session", "persistent_tool", "persistent_server"]);
   const options = raw
     .map((value) => stringValue(value))
     .filter((value): value is CommandApprovalTrustScope => allowed.has(value as CommandApprovalTrustScope));
@@ -524,12 +524,12 @@ function mcpSamplingApprovalChoices(): ApprovalChoiceOption[] {
   return [
     {
       id: "approve_once",
-      label: "允许本次 Sampling",
+      label: "允许本次模型请求",
       title: "",
     },
     {
       id: "reject",
-      label: "拒绝，请告知 agent 如何调整",
+      label: "拒绝，请告知智能体如何调整",
       title: "",
     },
   ];
@@ -548,26 +548,26 @@ function mcpApprovalChoices(options: CommandApprovalTrustScope[]): ApprovalChoic
     choices.push({
       id: "approve_session",
       label: "允许并信任本会话",
-      title: "当前会话内同一 MCP 工具不再重复询问",
+      title: "当前会话内同一工具不再重复询问",
     });
   }
   if (available.has("persistent_tool")) {
     choices.push({
       id: "approve_persistent_tool",
-      label: "持久信任该 MCP 工具",
-      title: "全局信任当前 server 的同名 MCP 工具",
+      label: "始终信任该工具",
+      title: "以后此服务的同名工具不再重复询问",
     });
   }
-  if (available.has("server_readonly")) {
+  if (available.has("persistent_server")) {
     choices.push({
-      id: "approve_server_readonly",
-      label: "信任该服务只读工具",
-      title: "仅适用于服务声明为只读且非 open world 的工具",
+      id: "approve_persistent_server",
+      label: "信任此 MCP 服务器",
+      title: "以后此 MCP 服务器的工具调用不再重复询问",
     });
   }
   choices.push({
     id: "reject",
-    label: "拒绝，请告知 agent 如何调整",
+    label: "拒绝，请告知智能体如何调整",
     title: "",
   });
   return choices;
@@ -597,9 +597,9 @@ function mcpSamplingPreview(approval: CommandApprovalRequest): string {
   const maxTokens = stringValue(approval.details.max_tokens);
   const messageCount = stringValue(approval.details.message_count);
   return [
-    "MCP Sampling",
-    messageCount ? `messages: ${messageCount}` : "",
-    maxTokens ? `max_tokens: ${maxTokens}` : "",
+    "MCP 模型请求",
+    messageCount ? `消息数：${messageCount}` : "",
+    maxTokens ? `Token 上限：${maxTokens}` : "",
   ].filter(Boolean).join("\n");
 }
 
@@ -612,6 +612,14 @@ function mcpTargetLabel(approval: CommandApprovalRequest): string {
     stringValue(approval.details.model_tool_name) ||
     stringValue(approval.model_tool_name);
   return [server, tool].filter(Boolean).join(" / ");
+}
+
+function approvalTitle(title: string | undefined, isSampling: boolean): string {
+  const raw = stringValue(title);
+  if (!raw && isSampling) {
+    return "是否允许 MCP 服务器发起模型请求？";
+  }
+  return raw.replace(/MCP Sampling/gi, "MCP 模型请求");
 }
 
 function mcpArgumentsPreview(approval: CommandApprovalRequest): string {

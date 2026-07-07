@@ -43,6 +43,7 @@ from backend.app.mcp.service import (
     set_mcp_server_enabled,
     set_mcp_session_tool_override,
     test_mcp_server_connection,
+    test_mcp_server_connection_config,
     update_mcp_server,
     update_mcp_tool_policy,
 )
@@ -90,6 +91,11 @@ class ToggleMcpServerRequest(BaseModel):
     enabled: bool
 
 
+class TestMcpServerConnectionRequest(BaseModel):
+    server: McpServerCreateRequest
+    base_server_id: str | None = None
+
+
 class UpdateMcpToolPolicyRequest(BaseModel):
     enabled: bool | None = None
     hidden: bool | None = None
@@ -106,7 +112,7 @@ class UpdateMcpToolPolicyRequest(BaseModel):
 
 class BulkMcpToolPolicyRequest(BaseModel):
     action: str = Field(
-        pattern="^(enable_selected|disable_selected|keep_selected_only|enable_read_only|disable_write_tools|prompt_all)$"
+        pattern="^(enable_selected|disable_selected|keep_selected_only|prompt_all)$"
     )
     tool_ids: list[str] = Field(default_factory=list)
     raw_tool_names: list[str] = Field(default_factory=list)
@@ -130,7 +136,7 @@ class McpExportRequest(BaseModel):
 
 
 class McpTrustRuleRequest(BaseModel):
-    rule_kind: str = Field(pattern="^(server_readonly|tool|tool_with_params|deny_tool)$")
+    rule_kind: str = Field(pattern="^(tool|tool_with_params|deny_tool)$")
     scope: str = Field(pattern="^(session|global)$")
     approval_mode: str = Field(pattern="^(approve|deny)$")
     server_id: str | None = None
@@ -246,6 +252,21 @@ async def toggle_server(
 async def test_server(server_id: str, request: Request) -> dict[str, Any]:
     try:
         return await test_mcp_server_connection(_mcp_manager(request), server_id)
+    except McpServiceError as exc:
+        raise _mcp_service_http_error(exc) from exc
+
+
+@router.post("/servers/test", response_model=dict[str, Any])
+async def test_server_config(
+    payload: TestMcpServerConnectionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    try:
+        return await test_mcp_server_connection_config(
+            _mcp_manager(request),
+            payload.server,
+            base_server_id=payload.base_server_id,
+        )
     except McpServiceError as exc:
         raise _mcp_service_http_error(exc) from exc
 
@@ -705,10 +726,7 @@ def _validate_trust_rule_payload(payload: McpTrustRuleRequest) -> None:
         raise _mcp_service_http_error(
             McpServiceError("会话 MCP trust rule 必须绑定 session", code="invalid_trust_rule")
         )
-    if (
-        payload.rule_kind in {"tool", "tool_with_params", "deny_tool"}
-        and not payload.raw_tool_name
-    ):
+    if payload.rule_kind in {"tool", "tool_with_params", "deny_tool"} and not payload.raw_tool_name:
         raise _mcp_service_http_error(
             McpServiceError(
                 "Tool 类 MCP trust rule 必须绑定 raw_tool_name",

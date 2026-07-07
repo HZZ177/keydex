@@ -230,6 +230,46 @@ async def test_command_approval_rejects_mcp_only_trust_scope(tmp_path) -> None:
     assert repositories.command_approvals.get(approval.id).status == "pending"
 
 
+async def test_mcp_approval_rejects_removed_same_request_scope(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    repositories.mcp_servers.create(
+        server_id="srv_exec",
+        name="Execution MCP",
+        transport="streamable_http",
+        url="https://mcp.example.test/mcp",
+    )
+    approval = repositories.command_approvals.create(
+        approval_id="approval-mcp-persistent",
+        session_id="ses-command",
+        command="mcp__srv_exec__search",
+        cwd=".",
+        title="允许 Execution MCP MCP 执行 search？",
+        tool_name="mcp__srv_exec__search",
+        shell="mcp",
+        kind="mcp_tool_call",
+        details={
+            "approval_kind": "mcp_tool_call",
+            "server_id": "srv_exec",
+            "server_name": "Execution MCP",
+            "raw_tool_name": "search",
+            "model_tool_name": "mcp__srv_exec__search",
+        },
+    )
+
+    try:
+        await ApprovalService(repositories=repositories).resolve(
+            approval.id,
+            CommandApprovalDecision(decision="approved", trust_scope="persistent"),
+        )
+    except CommandApprovalError as exc:
+        assert "MCP 审批不支持" in str(exc)
+    else:
+        raise AssertionError("MCP 审批不应接受已移除的同请求信任范围")
+
+    assert repositories.command_approvals.get(approval.id).status == "pending"
+    assert repositories.mcp_trust_rules.list() == []
+
+
 async def test_command_runtime_unavailable_returns_clear_result(tmp_path, monkeypatch) -> None:
     repositories = _repositories(tmp_path)
     monkeypatch.setattr(

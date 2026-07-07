@@ -27,7 +27,7 @@ interface McpExportDialogProps {
 
 const IMPORT_SOURCES: Array<{ value: McpImportSourceType; label: string }> = [
   { value: "keydex", label: "Keydex JSON" },
-  { value: "codex", label: "Codex config" },
+  { value: "codex", label: "Codex 配置" },
   { value: "claude", label: "Claude Desktop" },
 ];
 
@@ -155,7 +155,8 @@ export function McpImportDialog({ runtime, onClose, onImported }: McpImportDialo
           <label className={styles.importExportField}>
             <span>来源</span>
             <SettingsSelect
-              ariaLabel="MCP import source"
+              ariaLabel="MCP 导入来源"
+              density="compact"
               options={IMPORT_SOURCES}
               value={sourceType}
               onChange={(value) => {
@@ -167,7 +168,8 @@ export function McpImportDialog({ runtime, onClose, onImported }: McpImportDialo
           <label className={styles.importExportField}>
             <span>冲突策略</span>
             <SettingsSelect
-              ariaLabel="MCP import conflict strategy"
+              ariaLabel="MCP 导入冲突策略"
+              density="compact"
               options={CONFLICT_STRATEGIES}
               value={conflictStrategy}
               onChange={(value) => {
@@ -181,7 +183,7 @@ export function McpImportDialog({ runtime, onClose, onImported }: McpImportDialo
         <label className={styles.importExportField}>
           <span>JSON</span>
           <textarea
-            aria-label="MCP import JSON"
+            aria-label="MCP 导入 JSON"
             value={configText}
             placeholder="粘贴 MCP 配置 JSON"
             onChange={(event) => {
@@ -269,11 +271,11 @@ export function McpExportDialog({ runtime, onClose }: McpExportDialogProps) {
         ) : null}
         <label className={styles.importExportToggle}>
           <span>
-            <strong>包含 trust rules</strong>
-            <small>导出 server、tool policies、prompt policies 时可附带信任规则。</small>
+            <strong>包含信任名单</strong>
+            <small>导出服务器与工具授权配置时可附带信任名单。</small>
           </span>
           <input
-            aria-label="导出包含 trust rules"
+            aria-label="导出包含信任名单"
             type="checkbox"
             checked={includeTrustRules}
             onChange={(event) => setIncludeTrustRules(event.target.checked)}
@@ -281,14 +283,14 @@ export function McpExportDialog({ runtime, onClose }: McpExportDialogProps) {
         </label>
         <div className={styles.importExportNotice} role="status">
           <FileJson size={15} />
-          <span>导出内容不包含 secret 明文或 OAuth token。</span>
+          <span>导出内容不包含密钥明文或 OAuth 令牌。</span>
         </div>
         {exported ? (
           <div className={styles.exportPreview} data-testid="mcp-export-preview">
             <div className={styles.exportPreviewHeader}>
               <div>
                 <strong>{exported.format}</strong>
-                <span>{exported.servers.length} servers</span>
+                <span>{exported.servers.length} 个服务器</span>
               </div>
               <button type="button" onClick={() => void copyExport()}>
                 <Clipboard size={14} />
@@ -309,10 +311,10 @@ function ImportPreview({ preview }: { preview: McpImportPreviewResponse }) {
   return (
     <div className={styles.importPreview} data-testid="mcp-import-preview">
       <div className={styles.importPreviewSummary}>
-        <span>{preview.server_count} servers</span>
-        <span>{preview.valid ? "valid" : "invalid"}</span>
-        <span>{preview.conflicts.length} conflicts</span>
-        <span>{preview.missing_secrets.length} missing secrets</span>
+        <span>{preview.server_count} 个服务器</span>
+        <span>{preview.valid ? "校验通过" : "校验失败"}</span>
+        <span>{preview.conflicts.length} 个冲突</span>
+        <span>{preview.missing_secrets.length} 个待补密钥</span>
       </div>
       {preview.conflicts.length > 0 ? (
         <div className={styles.importPreviewWarning}>
@@ -322,7 +324,7 @@ function ImportPreview({ preview }: { preview: McpImportPreviewResponse }) {
       ) : null}
       {preview.missing_secrets.length > 0 ? (
         <div className={styles.importPreviewWarning}>
-          <strong>需重新配置 secret</strong>
+          <strong>需重新配置密钥</strong>
           <span>{preview.missing_secrets.join(", ")}</span>
         </div>
       ) : null}
@@ -337,18 +339,46 @@ function ImportPreview({ preview }: { preview: McpImportPreviewResponse }) {
           <div key={`${server.name}-${server.action}`} className={styles.importPreviewRow}>
             <div>
               <strong>{server.name}</strong>
-              <span>{server.transport}</span>
+              <span>{transportLabel(server.transport)}</span>
             </div>
             <span className={styles.importActionBadge} data-action={server.action}>
-              {server.action}
+              {importActionLabel(server.action)}
             </span>
-            <span>{server.conflict ? "conflict" : "new"}</span>
-            <span>{server.enabled ? "enabled" : "disabled"}</span>
+            <span>{server.conflict ? "存在冲突" : "新建"}</span>
+            <span>{server.enabled ? "已启用" : "已停用"}</span>
           </div>
         ))}
       </div>
     </div>
   );
+}
+
+function transportLabel(value: string): string {
+  switch (value) {
+    case "stdio":
+      return "本地命令";
+    case "streamable_http":
+      return "HTTP 地址";
+    case "sse":
+      return "SSE 地址";
+    default:
+      return value;
+  }
+}
+
+function importActionLabel(value: string): string {
+  switch (value) {
+    case "create":
+      return "创建";
+    case "skip":
+      return "跳过";
+    case "rename":
+      return "重命名";
+    case "error":
+      return "错误";
+    default:
+      return value;
+  }
 }
 
 function errorMessage(reason: unknown): string {

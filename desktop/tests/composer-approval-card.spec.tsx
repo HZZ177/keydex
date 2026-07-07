@@ -15,17 +15,17 @@ describe("ComposerApprovalCard", () => {
     expect(screen.getByText("D:/repo")).not.toBeNull();
     expect(screen.getByTestId("composer-approval-command").textContent).toContain("pnpm test");
     expect(screen.getByRole("radio", { name: "是" }).getAttribute("aria-checked")).toBe("true");
-    expect(screen.queryByPlaceholderText("告诉 agent 如何调整")).toBeNull();
+    expect(screen.queryByPlaceholderText("告诉智能体如何调整")).toBeNull();
 
-    const group = screen.getByRole("radiogroup", { name: "命令审批选项" });
+    const group = screen.getByRole("radiogroup", { name: "命令确认选项" });
     fireEvent.keyDown(group, { key: "ArrowDown" });
     expect(screen.getByRole("radio", { name: "是，且以后相同命令不再询问" }).getAttribute("aria-checked")).toBe("true");
     fireEvent.keyDown(group, { key: "ArrowUp" });
     expect(screen.getByRole("radio", { name: "是" }).getAttribute("aria-checked")).toBe("true");
     fireEvent.keyDown(group, { key: "ArrowUp" });
-    expect(screen.getByRole("radio", { name: "否，请告知 agent 如何调整" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: "否，请告知智能体如何调整" }).getAttribute("aria-checked")).toBe("true");
     await waitFor(() => {
-      expect(screen.getByPlaceholderText("告诉 agent 如何调整")).toBe(document.activeElement);
+      expect(screen.getByPlaceholderText("告诉智能体如何调整")).toBe(document.activeElement);
     });
     fireEvent.keyDown(group, { key: "ArrowDown" });
     expect(screen.getByRole("radio", { name: "是" }).getAttribute("aria-checked")).toBe("true");
@@ -54,10 +54,10 @@ describe("ComposerApprovalCard", () => {
       rule_match_type: "prefix",
     });
 
-    fireEvent.click(screen.getByRole("radio", { name: "否，请告知 agent 如何调整" }));
-    expect(screen.getByRole("radio", { name: "否，请告知 agent 如何调整" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("radio", { name: "否，请告知智能体如何调整" }));
+    expect(screen.getByRole("radio", { name: "否，请告知智能体如何调整" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByTestId("composer-approval-reject-panel")).not.toBeNull();
-    fireEvent.change(screen.getByPlaceholderText("告诉 agent 如何调整"), { target: { value: "请改成只读命令" } });
+    fireEvent.change(screen.getByPlaceholderText("告诉智能体如何调整"), { target: { value: "请改成只读命令" } });
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
     expect(onSubmit).toHaveBeenLastCalledWith({
       decision: "rejected",
@@ -66,7 +66,7 @@ describe("ComposerApprovalCard", () => {
     });
 
     fireEvent.click(screen.getByRole("radio", { name: "是" }));
-    expect((screen.getByPlaceholderText("告诉 agent 如何调整") as HTMLTextAreaElement).disabled).toBe(true);
+    expect((screen.getByPlaceholderText("告诉智能体如何调整") as HTMLTextAreaElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "跳过" }));
     expect(onSubmit).toHaveBeenLastCalledWith({ decision: "rejected", trust_scope: "once" });
@@ -79,7 +79,7 @@ describe("ComposerApprovalCard", () => {
 
     expect(screen.getByText("审批提交失败")).not.toBeNull();
     expect(screen.getByRole("radio", { name: "是" })).not.toBeNull();
-    expect(screen.getByRole("radio", { name: "否，请告知 agent 如何调整" })).not.toBeNull();
+    expect(screen.getByRole("radio", { name: "否，请告知智能体如何调整" })).not.toBeNull();
     expect(screen.queryByRole("radio", { name: "是，且以后相同命令不再询问" })).toBeNull();
     expect(screen.queryByRole("radio", { name: "是，且以后以该前缀开头的命令不再询问" })).toBeNull();
     expect(screen.getByRole("button", { name: "提交" })).not.toBeNull();
@@ -90,14 +90,15 @@ describe("ComposerApprovalCard", () => {
 
     render(<ComposerApprovalCard approval={mcpApproval()} allowPersistentTrust={false} onSubmit={onSubmit} />);
 
-    expect(screen.getByTestId("composer-approval-card").getAttribute("aria-label")).toBe("MCP 工具审批");
+    expect(screen.getByTestId("composer-approval-card").getAttribute("aria-label")).toBe("MCP 工具确认");
     expect(screen.getByText("允许 Ticket MCP MCP 执行 write_fixture？")).not.toBeNull();
     expect(screen.getByText("Ticket MCP / write_fixture")).not.toBeNull();
     expect(screen.getByTestId("composer-approval-command").textContent).toContain('"title": "Fix"');
     expect(screen.getByRole("radio", { name: "允许本次" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.queryByRole("radio", { name: "始终允许同样请求" })).toBeNull();
     expect(screen.getByRole("radio", { name: "允许并信任本会话" })).not.toBeNull();
-    expect(screen.getByRole("radio", { name: "持久信任该 MCP 工具" })).not.toBeNull();
-    expect(screen.getByRole("radio", { name: "信任该服务只读工具" })).not.toBeNull();
+    expect(screen.getByRole("radio", { name: "始终信任该工具" })).not.toBeNull();
+    expect(screen.getByRole("radio", { name: "信任此 MCP 服务器" })).not.toBeNull();
     expect(screen.queryByRole("radio", { name: "是，且以后相同命令不再询问" })).toBeNull();
 
     fireEvent.click(screen.getByRole("radio", { name: "允许本次" }));
@@ -108,15 +109,15 @@ describe("ComposerApprovalCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
     expect(onSubmit).toHaveBeenLastCalledWith({ decision: "approved", trust_scope: "session" });
 
-    fireEvent.click(screen.getByRole("radio", { name: "持久信任该 MCP 工具" }));
+    fireEvent.click(screen.getByRole("radio", { name: "始终信任该工具" }));
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
     expect(onSubmit).toHaveBeenLastCalledWith({ decision: "approved", trust_scope: "persistent_tool" });
 
-    fireEvent.click(screen.getByRole("radio", { name: "信任该服务只读工具" }));
+    fireEvent.click(screen.getByRole("radio", { name: "信任此 MCP 服务器" }));
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
-    expect(onSubmit).toHaveBeenLastCalledWith({ decision: "approved", trust_scope: "server_readonly" });
+    expect(onSubmit).toHaveBeenLastCalledWith({ decision: "approved", trust_scope: "persistent_server" });
 
-    fireEvent.click(screen.getByRole("radio", { name: "拒绝，请告知 agent 如何调整" }));
+    fireEvent.click(screen.getByRole("radio", { name: "拒绝，请告知智能体如何调整" }));
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
     expect(onSubmit).toHaveBeenLastCalledWith({
       decision: "rejected",
@@ -130,21 +131,21 @@ describe("ComposerApprovalCard", () => {
 
     render(<ComposerApprovalCard approval={mcpSamplingApproval()} allowPersistentTrust onSubmit={onSubmit} />);
 
-    expect(screen.getByTestId("composer-approval-card").getAttribute("aria-label")).toBe("MCP Sampling 审批");
-    expect(screen.getByText("是否允许 Ticket MCP MCP Sampling？")).not.toBeNull();
+    expect(screen.getByTestId("composer-approval-card").getAttribute("aria-label")).toBe("MCP 模型请求确认");
+    expect(screen.getByText("是否允许 Ticket MCP MCP 模型请求？")).not.toBeNull();
     expect(screen.getByText("Ticket MCP / qwen-coder")).not.toBeNull();
     expect(screen.getByTestId("composer-approval-command").textContent).toContain("message_count");
     fireEvent.click(screen.getByRole("button", { name: "展开" }));
     expect(screen.getByTestId("composer-approval-command").textContent).toContain("Summarize ticket");
-    expect(screen.getByRole("radio", { name: "允许本次 Sampling" }).getAttribute("aria-checked")).toBe("true");
-    expect(screen.getByRole("radio", { name: "拒绝，请告知 agent 如何调整" })).not.toBeNull();
+    expect(screen.getByRole("radio", { name: "允许本次模型请求" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: "拒绝，请告知智能体如何调整" })).not.toBeNull();
     expect(screen.queryByRole("radio", { name: "允许并信任本会话" })).toBeNull();
-    expect(screen.queryByRole("radio", { name: "持久信任该 MCP 工具" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "始终信任该工具" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
     expect(onSubmit).toHaveBeenLastCalledWith({ decision: "approved", trust_scope: "once" });
 
-    fireEvent.click(screen.getByRole("radio", { name: "拒绝，请告知 agent 如何调整" }));
+    fireEvent.click(screen.getByRole("radio", { name: "拒绝，请告知智能体如何调整" }));
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
     expect(onSubmit).toHaveBeenLastCalledWith({
       decision: "rejected",
@@ -206,8 +207,8 @@ describe("ComposerApprovalCard", () => {
       expect(command.textContent).toContain("line-12");
     });
 
-    fireEvent.click(screen.getByRole("radio", { name: "否，请告知 agent 如何调整" }));
-    const textarea = await screen.findByPlaceholderText("告诉 agent 如何调整");
+    fireEvent.click(screen.getByRole("radio", { name: "否，请告知智能体如何调整" }));
+    const textarea = await screen.findByPlaceholderText("告诉智能体如何调整");
     fireEvent.change(textarea, { target: { value: "请改为只读检查" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
 
@@ -268,7 +269,7 @@ function mcpApproval(): CommandApprovalRequest {
       raw_tool_name: "write_fixture",
       model_tool_name: "mcp__srv_1__write_fixture",
       arguments_preview: { title: "Fix", priority: "high" },
-      trust_options: ["once", "session", "persistent_tool", "server_readonly"],
+      trust_options: ["once", "session", "persistent_tool", "persistent_server"],
     },
     status: "pending",
     created_at: "2026-07-07T10:00:00Z",
@@ -288,7 +289,7 @@ function mcpSamplingApproval(): CommandApprovalRequest {
     tool_name: "qwen-coder",
     kind: "mcp_sampling",
     title: "是否允许 Ticket MCP MCP Sampling？",
-    description: "MCP server 请求 Keydex 使用当前默认模型生成内容，需要你确认后继续。",
+    description: "MCP 服务请求 Keydex 使用当前默认模型生成内容，需要你确认后继续。",
     details: {
       approval_kind: "mcp_sampling",
       server_id: "srv-1",

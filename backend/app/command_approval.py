@@ -36,7 +36,7 @@ class CommandApprovalDecision(BaseModel):
         "persistent",
         "session",
         "persistent_tool",
-        "server_readonly",
+        "persistent_server",
     ] = "once"
     rule_match_type: Literal["exact", "prefix"] | None = None
     reject_message: str = ""
@@ -401,6 +401,11 @@ class ApprovalService:
         )
         if resolved is None:
             raise CommandApprovalError("审批请求不存在")
+        mcp_server_trusted = _apply_mcp_server_trust(
+            self.repositories,
+            resolved,
+            decision,
+        )
         mcp_trust_rule_id = _create_mcp_trust_rule(
             self.repositories,
             resolved,
@@ -417,7 +422,11 @@ class ApprovalService:
             rule_match_type=rule_match_type,
             trusted_rule_id=trusted_rule_id,
             reject_message=resolved.reject_message,
-            metadata=_approval_audit_metadata(record, mcp_trust_rule_id=mcp_trust_rule_id),
+            metadata=_approval_audit_metadata(
+                record,
+                mcp_server_trusted=mcp_server_trusted,
+                mcp_trust_rule_id=mcp_trust_rule_id,
+            ),
         )
         self.repositories.sessions.update(resolved.session_id, status="running")
         await self._emit(
@@ -479,7 +488,7 @@ def _validate_decision_scope(
             "once",
             "session",
             "persistent_tool",
-            "server_readonly",
+            "persistent_server",
         }:
             raise CommandApprovalError("MCP 审批不支持该 trust_scope")
         return
@@ -560,15 +569,49 @@ def _mcp_trust_rule_plan(
             "raw_tool_name": raw_tool_name,
             "session_id": None,
         }
-    if decision.trust_scope == "server_readonly":
-        return {
-            "rule_kind": "server_readonly",
-            "scope": "global",
-            "server_id": server_id,
-            "raw_tool_name": None,
-            "session_id": None,
-        }
     return None
+
+
+def _apply_mcp_server_trust(
+    repositories: StorageRepositories,
+    record: CommandApprovalRequestRecord,
+    decision: CommandApprovalDecision,
+) -> bool:
+    if (
+        record.kind != "mcp_tool_call"
+        or decision.decision != "approved"
+        or decision.trust_scope != "persistent_server"
+    ):
+        return False
+    details = dict(record.details or {})
+    server_id = str(details.get("server_id") or "").strip()
+    if not server_id:
+        raise CommandApprovalError("MCP server trust 缺少 server_id")
+    updated = repositories.mcp_servers.update(
+        server_id,
+        default_tool_approval_mode="approve",
+    )
+    if updated is None:
+        raise CommandApprovalError("MCP server trust 对应 server 不存在")
+    from backend.app.mcp.audit import McpAuditWriter
+
+    McpAuditWriter.from_repositories(repositories).append_event(
+        event_type="server.updated",
+        server_id=server_id,
+        raw_tool_name=str(details.get("raw_tool_name") or "") or None,
+        session_id=record.session_id,
+        call_id=record.run_id,
+        approval_id=record.id,
+        actor="user",
+        status="ok",
+        summary="MCP server trusted from approval",
+        detail={
+            "default_tool_approval_mode": "approve",
+            "created_from_approval_id": record.id,
+            "trust_scope": "persistent_server",
+        },
+    )
+    return True
 
 
 def _create_mcp_trust_rule(
@@ -610,11 +653,14 @@ def _create_mcp_trust_rule(
 def _approval_audit_metadata(
     record: CommandApprovalRequestRecord,
     *,
+    mcp_server_trusted: bool = False,
     mcp_trust_rule_id: str | None = None,
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {"source": "approval_api", "kind": record.kind}
     if record.kind == "mcp_tool_call":
         metadata["mcp"] = _mcp_approval_metadata(record)
+        if mcp_server_trusted:
+            metadata["mcp"]["server_trusted"] = True
         if mcp_trust_rule_id:
             metadata["mcp"]["trust_rule_id"] = mcp_trust_rule_id
     if record.kind == "mcp_sampling":

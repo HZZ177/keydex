@@ -18,12 +18,18 @@ from backend.app.tools.registry import ToolRegistry
 EDIT_FILE_USAGE = """在文件访问权限允许范围内修改、删除或移动已有 UTF-8 文本文件，
 并返回文件变更 diff。
 
-patch 必须使用以下文件操作头；不接受普通 unified diff 文件头：
-- *** Update File: <path>
-- *** Delete File: <path>
-- *** Move to: <path>（只能跟在 Update File 后面）
+patch 是结构化文本补丁，整体 envelope：
+*** Begin Patch
+[一个或多个已有文件操作]
+*** End Patch
 
-更新文件示例：
+支持的文件操作：
+- *** Update File: <path>：修改已有文件；下一行可选 `*** Move to: <new-path>` 用于移动/重命名。
+- *** Delete File: <path>：删除已有文件；后面不写正文。
+
+不支持 `*** Add File`；新增文件必须使用 `create_file`。
+
+Update File 正文只写一个或多个 `@@` hunk：
 *** Begin Patch
 *** Update File: docs/note.md
 @@
@@ -31,30 +37,21 @@ patch 必须使用以下文件操作头；不接受普通 unified diff 文件头
 +新增内容
 *** End Patch
 
-删除文件示例：
-*** Begin Patch
-*** Delete File: docs/old.md
-*** End Patch
+关键规则：
+- 上下文行以一个空格开头；新增行以 `+` 开头；删除行以 `-` 开头。
+- 空白上下文行可以是空行或单独一个空格；新增空白行写 `+`；删除空白行写 `-`。
+- 不要粘贴完整重写后的文件内容；不要写 `---`/`+++` unified diff 文件头。
+- `*** End of File` 很少需要；如使用，必须放在已有 hunk 内容之后。"""
 
-移动并修改文件示例：
-*** Begin Patch
-*** Update File: docs/old.md
-*** Move to: docs/new.md
-@@
--旧标题
-+新标题
-*** End Patch
-
-禁止写法：不要写 `*** docs/file.md`、`--- docs/file.md`、`+++ docs/file.md`，
-也不要只写普通 unified diff hunk，例如 `@@ -1,2 +1,3 @@`。"""
-
-PATCH_PARAMETER_DESCRIPTION = """完整的结构化文本编辑补丁。必须以 `*** Begin Patch` 开始，
-并以 `*** End Patch` 结束。
-每个文件操作必须使用 `*** Update File: <path>` 或 `*** Delete File: <path>`。
-Update File 正文只能写 patch hunk，不要直接粘贴修改后的完整文件内容。
-Update File 内容行必须以空格、+、-、@@、`*** Move to: <path>` 或
-`*** End of File` 开头；上下文行必须保留前导空格。空白上下文行写成一个空格，
-新增空白行写成 `+`，删除空白行写成 `-`。"""
+PATCH_PARAMETER_DESCRIPTION = """结构化文本补丁。整体必须是 `*** Begin Patch`、一个或多个
+已有文件操作、`*** End Patch`。
+文件操作层只支持 `*** Update File: <path>` 和 `*** Delete File: <path>`；
+`*** Add File` 无效，新增文件必须使用 `create_file`。
+`*** Move to: <new-path>` 只能紧跟在 `*** Update File: <path>` 后面。
+Update File 正文只写 `@@` hunk：上下文行以一个空格开头，新增行以 `+` 开头，
+删除行以 `-` 开头；空白上下文行可以是空行或单独一个空格，新增空白行写 `+`，
+删除空白行写 `-`。不要粘贴完整重写后的文件内容，不要写 `---`/`+++` 文件头。
+`*** End of File` 很少需要；如使用，必须放在已有 hunk 内容之后。"""
 
 PATCH_EXPECTED_HEADERS = [
     "*** Update File: <path>",

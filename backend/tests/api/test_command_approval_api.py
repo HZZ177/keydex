@@ -352,7 +352,7 @@ def test_mcp_approval_decision_api_resolves_mcp_tool_call_without_trusted_comman
             "model_tool_name": "mcp__srv_exec__search",
             "approval_mode": "auto",
             "arguments_preview": {"query": "hello"},
-            "trust_options": ["once", "session", "persistent_tool", "server_readonly"],
+            "trust_options": ["once", "session", "persistent_tool", "persistent_server"],
             "matched_rule": None,
         },
     )
@@ -375,13 +375,84 @@ def test_mcp_approval_decision_api_resolves_mcp_tool_call_without_trusted_comman
     assert payload["trust_scope"] == "session"
     assert payload["server_id"] == "srv_exec"
     assert payload["raw_tool_name"] == "search"
-    assert payload["trust_options"] == ["once", "session", "persistent_tool", "server_readonly"]
+    assert payload["trust_options"] == [
+        "once",
+        "session",
+        "persistent_tool",
+        "persistent_server",
+    ]
     assert repositories.trusted_command_rules.list() == []
     assert repositories.mcp_trust_rules.list(scope="session", session_id="ses-mcp-api")
     assert total == 1
     assert audits[0].metadata["kind"] == "mcp_tool_call"
     assert audits[0].metadata["mcp"]["server_id"] == "srv_exec"
     assert audits[0].metadata["mcp"]["trust_rule_id"]
+
+
+def test_mcp_approval_decision_api_can_trust_entire_mcp_server(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+    repositories = app.state.repositories
+    repositories.sessions.create(
+        session_id="ses-mcp-server-api",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="MCP 服务器信任",
+    )
+    repositories.mcp_servers.create(
+        server_id="srv_exec",
+        name="Execution MCP",
+        transport="streamable_http",
+        url="https://mcp.example.test/mcp",
+        default_tool_approval_mode="prompt",
+    )
+    repositories.command_approvals.create(
+        approval_id="approval-mcp-server-api",
+        session_id="ses-mcp-server-api",
+        command="mcp__srv_exec__search",
+        cwd=".",
+        title="允许 Execution MCP MCP 执行 search？",
+        tool_name="mcp__srv_exec__search",
+        shell="mcp",
+        kind="mcp_tool_call",
+        details={
+            "approval_kind": "mcp_tool_call",
+            "snapshot_id": "snap-a",
+            "server_id": "srv_exec",
+            "server_name": "Execution MCP",
+            "raw_tool_name": "search",
+            "model_tool_name": "mcp__srv_exec__search",
+            "approval_mode": "prompt",
+            "arguments_preview": {"query": "hello"},
+            "trust_options": ["once", "session", "persistent_tool", "persistent_server"],
+            "matched_rule": None,
+        },
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mcp/approvals/approval-mcp-server-api/decision",
+            json={
+                "decision": "approved",
+                "trust_scope": "persistent_server",
+            },
+        )
+
+    server = repositories.mcp_servers.get("srv_exec")
+    audits, total = repositories.command_approval_audit.list(session_id="ses-mcp-server-api")
+    mcp_audits, mcp_total = repositories.mcp_audit_log.list(event_type="server.updated")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "approved"
+    assert payload["trust_scope"] == "persistent_server"
+    assert server is not None
+    assert server.default_tool_approval_mode == "approve"
+    assert repositories.trusted_command_rules.list() == []
+    assert repositories.mcp_trust_rules.list() == []
+    assert total == 1
+    assert audits[0].metadata["mcp"]["server_trusted"] is True
+    assert mcp_total == 1
+    assert mcp_audits[0].detail["default_tool_approval_mode"] == "approve"
+    assert mcp_audits[0].detail["trust_scope"] == "persistent_server"
 
 
 def test_mcp_approval_decision_api_rejects_exec_approval(tmp_path) -> None:

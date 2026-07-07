@@ -129,7 +129,7 @@ export function McpRuntimePill({ runtime, sessionId, runtimeState }: McpRuntimeP
       <button
         className={styles.pill}
         type="button"
-        aria-label="打开 MCP Runtime Panel"
+        aria-label="打开 MCP 运行状态"
         aria-expanded={open}
         data-testid="mcp-runtime-pill"
         onClick={() => setOpen(true)}
@@ -138,23 +138,23 @@ export function McpRuntimePill({ runtime, sessionId, runtimeState }: McpRuntimeP
         <span>MCP</span>
         {loading && !status ? <LoaderCircle size={12} className={styles.spinning} /> : null}
         <em>{view.snapshotLabel}</em>
-        <em>{view.toolsVisible} tools</em>
-        {view.runningCalls > 0 ? <strong>{view.runningCalls} running</strong> : null}
+        <em>{view.toolsVisible} 个工具</em>
+        {view.runningCalls > 0 ? <strong>{view.runningCalls} 个执行中</strong> : null}
       </button>
       <section
         className={styles.panel}
         role="dialog"
-        aria-label="MCP Runtime Panel"
+        aria-label="MCP 运行状态"
         aria-hidden={!open}
         data-open={open ? "true" : "false"}
         data-testid="mcp-runtime-panel"
       >
         <header className={styles.panelHeader}>
           <div>
-            <strong>MCP Runtime</strong>
-            <span>{status?.manager.runtime_status ?? "unknown"}</span>
+            <strong>MCP 运行状态</strong>
+            <span>{runtimeManagerStatusLabel(status?.manager.runtime_status)}</span>
           </div>
-          <button type="button" aria-label="刷新 MCP Runtime 状态" disabled={loading} onClick={() => void loadStatus()}>
+          <button type="button" aria-label="刷新 MCP 运行状态" disabled={loading} onClick={() => void loadStatus()}>
             <RefreshCcw size={13} className={loading ? styles.spinning : undefined} />
           </button>
         </header>
@@ -173,16 +173,16 @@ export function McpRuntimePill({ runtime, sessionId, runtimeState }: McpRuntimeP
         ) : null}
 
         <div className={styles.summaryGrid}>
-          <RuntimeMetric label="Snapshot" value={view.snapshotLabel} />
-          <RuntimeMetric label="Online" value={`${view.serversOnline}/${view.serversTotal}`} />
-          <RuntimeMetric label="Visible tools" value={view.toolsVisible} />
-          <RuntimeMetric label="Session disabled" value={view.disabledForSession} />
-          <RuntimeMetric label="Pending approvals" value={view.pendingApprovals} />
-          <RuntimeMetric label="Running" value={view.runningCalls} />
+          <RuntimeMetric label="运行快照" value={view.snapshotLabel} />
+          <RuntimeMetric label="在线服务" value={`${view.serversOnline}/${view.serversTotal}`} />
+          <RuntimeMetric label="可用工具" value={view.toolsVisible} />
+          <RuntimeMetric label="本会话停用" value={view.disabledForSession} />
+          <RuntimeMetric label="等待确认" value={view.pendingApprovals} />
+          <RuntimeMetric label="执行中" value={view.runningCalls} />
         </div>
 
         <div className={styles.serverList}>
-          {servers.length === 0 ? <div className={styles.emptyState}>暂无 MCP runtime 状态</div> : null}
+          {servers.length === 0 ? <div className={styles.emptyState}>暂无 MCP 运行状态</div> : null}
           {servers.map((server) => (
             <RuntimeServerGroup
               key={server.id}
@@ -206,7 +206,7 @@ export function McpRuntimePill({ runtime, sessionId, runtimeState }: McpRuntimeP
                 <span>{formatElapsed(call.elapsed_ms)}</span>
                 <button
                   type="button"
-                  aria-label={`取消 MCP call ${call.call_id}`}
+                  aria-label={`取消 MCP 调用 ${call.call_id}`}
                   disabled={cancellingCallId === call.call_id}
                   onClick={() => void cancelCall(call)}
                 >
@@ -239,15 +239,15 @@ function RuntimeServerGroup({
       <header>
         <div>
           <strong>{server.name}</strong>
-          <span>{server.transport}</span>
+          <span>{transportLabel(server.transport)}</span>
         </div>
         <span className={styles.statusBadge} data-status={server.enabled ? server.status : "disabled"}>
-          {server.enabled ? server.status : "disabled"}
+          {serverStatusLabel(server)}
         </span>
       </header>
       {server.last_error_message ? <p>{server.last_error_message}</p> : null}
       <div className={styles.toolList}>
-        {visibleTools.length === 0 ? <span className={styles.emptyState}>暂无可见 tools</span> : null}
+        {visibleTools.length === 0 ? <span className={styles.emptyState}>暂无可见工具</span> : null}
         {visibleTools.map((tool) => {
           const disabledReason = runtimeToolDisabledReason(server, tool);
           const enabled = tool.effective_state !== "disabled_for_session";
@@ -257,7 +257,7 @@ function RuntimeServerGroup({
                 type="button"
                 role="switch"
                 aria-checked={enabled}
-                aria-label={disabledReason ? `MCP tool ${tool.raw_name} 不可切换` : `${enabled ? "关闭" : "启用"} MCP tool ${tool.raw_name}`}
+                aria-label={disabledReason ? `MCP 工具 ${tool.raw_name} 不可切换` : `${enabled ? "关闭" : "启用"} MCP 工具 ${tool.raw_name}`}
                 disabled={Boolean(disabledReason) || workingToolId === tool.id}
                 data-checked={enabled ? "true" : "false"}
                 onClick={() => onToggleTool(tool, !enabled)}
@@ -268,8 +268,8 @@ function RuntimeServerGroup({
                 <strong>{tool.raw_name}</strong>
                 <span>{tool.description || tool.model_name}</span>
               </div>
-              <span>{tool.effective_approval_mode ?? tool.approval_mode}</span>
-              <span>{disabledReason || tool.effective_state}</span>
+              <span>{approvalModeLabel(tool.effective_approval_mode ?? tool.approval_mode)}</span>
+              <span>{disabledReason || toolStateLabel(tool.effective_state)}</span>
             </div>
           );
         })}
@@ -283,6 +283,94 @@ function runtimePanelTools(server: McpServerSummary, tools: McpToolSummary[]): M
     return [];
   }
   return tools;
+}
+
+function runtimeManagerStatusLabel(value: string | null | undefined): string {
+  switch (value) {
+    case "ready":
+    case "running":
+    case "started":
+      return "运行中";
+    case "starting":
+      return "启动中";
+    case "stopped":
+      return "已停止";
+    case "error":
+    case "failed":
+      return "异常";
+    default:
+      return "未知";
+  }
+}
+
+function transportLabel(value: string): string {
+  switch (value) {
+    case "stdio":
+      return "本地命令";
+    case "streamable_http":
+      return "HTTP 地址";
+    case "sse":
+      return "SSE 地址";
+    default:
+      return "未知连接方式";
+  }
+}
+
+function serverStatusLabel(server: McpServerSummary): string {
+  if (!server.enabled || server.status === "disabled") {
+    return "已停用";
+  }
+  switch (server.status) {
+    case "online":
+      return "在线";
+    case "offline":
+      return "离线";
+    case "auth_required":
+      return "需要认证";
+    case "error":
+      return "异常";
+    default:
+      return "未知";
+  }
+}
+
+function approvalModeLabel(value: string | null | undefined): string {
+  switch (value) {
+    case "auto":
+    case "approve":
+      return "始终允许";
+    case "prompt":
+      return "每次确认";
+    case "deny":
+      return "始终拒绝";
+    case "inherit":
+      return "继承服务器";
+    default:
+      return "未知";
+  }
+}
+
+function toolStateLabel(value: string | null | undefined): string {
+  switch (value) {
+    case "enabled":
+      return "已启用";
+    case "disabled_persistently":
+      return "已停用";
+    case "disabled_for_session":
+      return "当前会话停用";
+    case "disabled_by_server":
+      return "服务器停用";
+    case "server_offline":
+      return "服务离线";
+    case "removed":
+      return "已移除";
+    case "approval_required":
+      return "需要确认";
+    case "schema_changed":
+      return "参数已变化";
+    default:
+      return "未知";
+  }
 }
 
 function RuntimeMetric({ label, value }: { label: string; value: number | string }) {
@@ -303,7 +391,7 @@ function runtimeView(status: McpRuntimeStatusResponse | null) {
       )
     : 0;
   return {
-    snapshotLabel: snapshot?.id ?? snapshot?.snapshot_id ?? "no snapshot",
+    snapshotLabel: snapshot?.id ?? snapshot?.snapshot_id ?? "无运行快照",
     serversTotal: status?.summary.servers_total ?? snapshot?.servers_total ?? status?.servers.length ?? 0,
     serversOnline: status?.summary.servers_online ?? snapshot?.servers_online ?? 0,
     toolsVisible: snapshot?.tools_visible ?? snapshot?.visible_tools_count ?? status?.summary.tools_enabled ?? 0,
@@ -325,19 +413,19 @@ function groupToolsByServer(tools: McpToolSummary[]): Map<string, McpToolSummary
 
 function runtimeToolDisabledReason(server: McpServerSummary, tool: McpToolSummary): string {
   if (!server.enabled || server.status === "disabled" || tool.effective_state === "disabled_by_server") {
-    return "server disabled";
+    return "服务已停用";
   }
   if (server.status === "offline" || tool.effective_state === "server_offline") {
-    return "server offline";
+    return "服务离线";
   }
   if (server.status === "auth_required") {
-    return "auth required";
+    return "需要重新授权";
   }
   if (tool.effective_state === "disabled_persistently") {
-    return "global policy";
+    return "已停用";
   }
   if (tool.effective_state === "removed") {
-    return "removed";
+    return "已移除";
   }
   return "";
 }
@@ -364,5 +452,5 @@ function errorMessage(reason: unknown): string {
   if (reason && typeof reason === "object" && typeof (reason as { message?: unknown }).message === "string") {
     return (reason as { message: string }).message;
   }
-  return "MCP Runtime 请求失败";
+  return "MCP 运行状态请求失败";
 }

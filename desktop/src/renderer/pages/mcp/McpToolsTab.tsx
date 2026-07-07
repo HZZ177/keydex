@@ -2,55 +2,60 @@ import {
   AlertCircle,
   CheckSquare,
   FileCode2,
-  LoaderCircle,
   RefreshCcw,
   Search,
   Square,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { LoadingSkeleton } from "@/renderer/components/loading";
 import { SettingsSelect } from "@/renderer/pages/settings/components";
 import type { RuntimeBridge } from "@/runtime";
 import type {
   McpApprovalMode,
   McpToolBulkPolicyAction,
-  McpToolDiscoveryStatus,
   McpToolSummary,
 } from "@/types/protocol";
 
 import { mcpErrorMessage, mcpToolEffectiveStateLabel } from "./mcpCopy";
 import styles from "./McpConsolePage.module.css";
 
-const TOOL_STATUS_OPTIONS: Array<{ value: "all" | McpToolDiscoveryStatus; label: string }> = [
-  { value: "all", label: "全部状态" },
-  { value: "new", label: "new" },
-  { value: "unchanged", label: "unchanged" },
-  { value: "schema_changed", label: "Schema 已变化" },
-  { value: "removed", label: "removed" },
+type ToolPresenceFilter = "current" | "removed" | "all";
+type ToolConfiguredApprovalMode = Extract<McpApprovalMode, "inherit" | "prompt" | "approve" | "deny">;
+type ToolApprovalFilter = "all" | ToolConfiguredApprovalMode;
+
+const TOOL_STATUS_OPTIONS: Array<{ value: ToolPresenceFilter; label: string }> = [
+  { value: "current", label: "未移除工具" },
+  { value: "removed", label: "已移除工具" },
+  { value: "all", label: "全部工具" },
 ];
 
 const ENABLED_OPTIONS = [
-  { value: "all", label: "全部启用状态" },
-  { value: "enabled", label: "enabled" },
-  { value: "disabled", label: "disabled" },
+  { value: "all", label: "全部授权状态" },
+  { value: "enabled", label: "已启用" },
+  { value: "disabled", label: "已停用" },
 ] as const;
 
-const APPROVAL_OPTIONS: Array<{ value: "all" | McpApprovalMode; label: string }> = [
-  { value: "all", label: "全部审批" },
-  { value: "inherit", label: "inherit" },
-  { value: "auto", label: "auto" },
-  { value: "prompt", label: "prompt" },
-  { value: "approve", label: "approve" },
-  { value: "deny", label: "deny" },
+const APPROVAL_FILTER_OPTIONS: Array<{ value: ToolApprovalFilter; label: string }> = [
+  { value: "all", label: "全部确认方式" },
+  { value: "inherit", label: "按服务器设置" },
+  { value: "prompt", label: "每次确认" },
+  { value: "approve", label: "始终允许" },
+  { value: "deny", label: "始终拒绝" },
+];
+
+const TOOL_APPROVAL_OPTIONS: Array<{ value: ToolConfiguredApprovalMode; label: string }> = [
+  { value: "inherit", label: "按服务器设置" },
+  { value: "prompt", label: "每次确认" },
+  { value: "approve", label: "始终允许" },
+  { value: "deny", label: "始终拒绝" },
 ];
 
 const BULK_ACTION_OPTIONS: Array<{ value: McpToolBulkPolicyAction; label: string }> = [
-  { value: "enable_selected", label: "启用所选" },
-  { value: "disable_selected", label: "禁用所选" },
-  { value: "keep_selected_only", label: "仅保留所选" },
-  { value: "enable_read_only", label: "启用只读" },
-  { value: "disable_write_tools", label: "禁用写入" },
-  { value: "prompt_all", label: "全部每次审批" },
+  { value: "enable_selected", label: "启用所选工具" },
+  { value: "disable_selected", label: "停用所选工具" },
+  { value: "keep_selected_only", label: "仅启用所选工具" },
+  { value: "prompt_all", label: "全部改为每次确认" },
 ];
 
 const SELECT_REQUIRED_ACTIONS = new Set<McpToolBulkPolicyAction>([
@@ -72,9 +77,9 @@ export function McpToolsTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | McpToolDiscoveryStatus>("all");
+  const [statusFilter, setStatusFilter] = useState<ToolPresenceFilter>("current");
   const [enabledFilter, setEnabledFilter] = useState<(typeof ENABLED_OPTIONS)[number]["value"]>("all");
-  const [approvalFilter, setApprovalFilter] = useState<"all" | McpApprovalMode>("all");
+  const [approvalFilter, setApprovalFilter] = useState<ToolApprovalFilter>("all");
   const [selectedToolIds, setSelectedToolIds] = useState<Set<string>>(() => new Set());
   const [bulkAction, setBulkAction] = useState<McpToolBulkPolicyAction>("disable_selected");
   const [busyKey, setBusyKey] = useState("");
@@ -86,7 +91,7 @@ export function McpToolsTab({
     try {
       const response = await runtime.mcp.listTools(serverId, {
         search: query.trim() || undefined,
-        status: statusFilter === "all" ? undefined : statusFilter,
+        status: statusFilter === "removed" ? "removed" : undefined,
         enabled: enabledFilter === "all" ? undefined : enabledFilter === "enabled",
         limit: 500,
       });
@@ -122,11 +127,13 @@ export function McpToolsTab({
   }, [loadTools]);
 
   const visibleTools = useMemo(() => {
-    if (approvalFilter === "all") {
-      return tools;
-    }
-    return tools.filter((tool) => (tool.effective_approval_mode ?? tool.approval_mode) === approvalFilter);
-  }, [approvalFilter, tools]);
+    return tools.filter((tool) => {
+      if (!toolMatchesPresenceFilter(tool, statusFilter)) {
+        return false;
+      }
+      return approvalFilter === "all" || normalizeToolApprovalMode(tool.approval_mode) === approvalFilter;
+    });
+  }, [approvalFilter, statusFilter, tools]);
 
   const selectedVisibleTools = useMemo(
     () => visibleTools.filter((tool) => selectedToolIds.has(tool.id)),
@@ -176,8 +183,8 @@ export function McpToolsTab({
       replaceTool(updated);
       onNotice(
         enabled
-          ? `已启用 ${tool.raw_name}：下一轮 Agent 运行生效`
-          : `已禁用 ${tool.raw_name}：立即阻止执行，下一轮不再暴露给 Agent`,
+          ? `已启用 ${tool.raw_name}：下一轮智能体运行生效`
+          : `已禁用 ${tool.raw_name}：立即阻止执行，下一轮不再暴露给智能体`,
       );
     } catch (reason) {
       setError(mcpErrorMessage(reason, "更新 MCP 工具策略失败"));
@@ -194,9 +201,9 @@ export function McpToolsTab({
         approval_mode: approvalMode,
       });
       replaceTool(updated);
-      onNotice("审批策略已更新：只影响执行前确认，不改变工具可见性");
+      onNotice("工具确认方式已更新");
     } catch (reason) {
-      setError(mcpErrorMessage(reason, "更新 MCP 工具审批策略失败"));
+      setError(mcpErrorMessage(reason, "更新 MCP 工具确认方式失败"));
     } finally {
       setBusyKey("");
     }
@@ -205,7 +212,7 @@ export function McpToolsTab({
   const applyBulkPolicy = async () => {
     const selectedIds = selectedVisibleTools.map((tool) => tool.id);
     if (SELECT_REQUIRED_ACTIONS.has(bulkAction) && selectedIds.length === 0) {
-      setError("请先选择要批量处理的 tool");
+      setError("请先选择要批量处理的工具");
       return;
     }
     setBusyKey("bulk");
@@ -223,7 +230,7 @@ export function McpToolsTab({
         }
         return response.tools.find((tool) => tool.id === current.id) ?? null;
       });
-      onNotice(`批量策略已应用：${bulkAction}，更新 ${response.updated_count} 个 tool`);
+      onNotice(`批量授权已应用，更新 ${response.updated_count} 个工具`);
     } catch (reason) {
       setError(mcpErrorMessage(reason, "批量更新 MCP 工具策略失败"));
     } finally {
@@ -237,28 +244,31 @@ export function McpToolsTab({
         <label className={styles.searchBox}>
           <Search size={15} />
           <input
-            aria-label="搜索 MCP Tool"
+            aria-label="搜索 MCP 工具"
             value={query}
-            placeholder="搜索 tool"
+            placeholder="搜索工具"
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
         <div className={styles.toolFilters}>
           <SettingsSelect
-            ariaLabel="筛选 MCP Tool 状态"
+            ariaLabel="筛选 MCP 工具显示范围"
+            density="compact"
             options={TOOL_STATUS_OPTIONS}
             value={statusFilter}
             onChange={(value) => setStatusFilter(value)}
           />
           <SettingsSelect
-            ariaLabel="筛选 MCP Tool 启用状态"
+            ariaLabel="筛选 MCP 工具授权状态"
+            density="compact"
             options={[...ENABLED_OPTIONS]}
             value={enabledFilter}
             onChange={(value) => setEnabledFilter(value)}
           />
           <SettingsSelect
-            ariaLabel="筛选 MCP Tool 审批"
-            options={APPROVAL_OPTIONS}
+            ariaLabel="筛选 MCP 工具确认方式"
+            density="compact"
+            options={APPROVAL_FILTER_OPTIONS}
             value={approvalFilter}
             onChange={(value) => setApprovalFilter(value)}
           />
@@ -278,7 +288,7 @@ export function McpToolsTab({
         <button
           className={styles.selectAllButton}
           type="button"
-          aria-label={allVisibleSelected ? "取消选择当前 MCP Tools" : "选择当前 MCP Tools"}
+          aria-label={allVisibleSelected ? "取消选择当前 MCP 工具" : "选择当前 MCP 工具"}
           disabled={visibleTools.length === 0}
           onClick={toggleAllVisible}
         >
@@ -286,7 +296,8 @@ export function McpToolsTab({
           <span>{selectedVisibleTools.length}/{visibleTools.length}</span>
         </button>
         <SettingsSelect
-          ariaLabel="MCP Tool 批量策略"
+          ariaLabel="MCP 工具批量授权"
+          density="compact"
           options={BULK_ACTION_OPTIONS}
           value={bulkAction}
           onChange={(value) => setBulkAction(value)}
@@ -311,16 +322,11 @@ export function McpToolsTab({
 
       <div className={styles.toolsContent} data-has-schema={schemaTool ? "true" : "false"}>
         <div className={styles.toolList} data-testid="mcp-tool-list">
-          {loading ? (
-            <div className={styles.loadingList} data-testid="mcp-tool-loading">
-              <LoaderCircle size={16} className={styles.spinning} />
-              <span>加载 Tools</span>
-            </div>
-          ) : null}
+          {loading ? <ToolListSkeleton /> : null}
           {!loading && visibleTools.length === 0 ? (
             <div className={styles.emptyState} data-testid="mcp-tool-empty">
               <FileCode2 size={18} />
-              <span>{tools.length === 0 ? "暂无 MCP Tools" : "没有匹配的 Tools"}</span>
+              <span>{tools.length === 0 ? "暂无 MCP 工具" : "没有匹配的工具"}</span>
             </div>
           ) : null}
           {!loading
@@ -343,7 +349,7 @@ export function McpToolsTab({
           <aside className={styles.schemaPanel} data-testid="mcp-tool-schema-panel">
             <div className={styles.schemaPanelHeader}>
               <div>
-                <span>Schema</span>
+                <span>参数结构</span>
                 <strong>{schemaTool.raw_name}</strong>
               </div>
               <button type="button" onClick={() => setSchemaTool(null)}>
@@ -355,6 +361,18 @@ export function McpToolsTab({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function ToolListSkeleton() {
+  return (
+    <LoadingSkeleton
+      aria-label="加载 MCP 工具"
+      className={styles.toolListSkeleton}
+      lineCount={6}
+      testId="mcp-tool-loading"
+      width="default"
+    />
   );
 }
 
@@ -376,7 +394,7 @@ function ToolRow({
   onToggleEnabled: (tool: McpToolSummary) => Promise<void>;
 }) {
   const status = tool.discovery_status ?? tool.status ?? "unknown";
-  const approval = tool.effective_approval_mode ?? tool.approval_mode;
+  const configuredApproval = normalizeToolApprovalMode(tool.approval_mode);
   const isRemoved = status === "removed" || tool.effective_state === "removed";
   const isSchemaChanged = status === "schema_changed" || tool.effective_state === "schema_changed";
 
@@ -384,7 +402,7 @@ function ToolRow({
     <article className={styles.toolRow} data-testid="mcp-tool-row">
       <div className={styles.toolSelectCell}>
         <button
-          aria-label={`选择 tool ${tool.raw_name}`}
+          aria-label={`选择工具 ${tool.raw_name}`}
           className={styles.rowCheckButton}
           type="button"
           onClick={() => onSelectedChange(tool.id)}
@@ -398,21 +416,21 @@ function ToolRow({
           <strong>{tool.raw_name}</strong>
           <span className={styles.toolModelName}>{tool.model_name}</span>
         </div>
-        <p>{tool.description || "No description"}</p>
+        <p>{tool.description || "暂无说明"}</p>
         <div className={styles.toolBadgeRow}>
-          <Badge value={String(status)} tone={isSchemaChanged ? "warning" : isRemoved ? "muted" : "neutral"} />
-          <Badge value={`approval ${approval}`} tone={approval === "prompt" || approval === "deny" ? "warning" : "neutral"} />
+          <Badge value={toolPresenceLabel(tool)} tone={isRemoved ? "muted" : "neutral"} />
+          <Badge value={`确认方式：${toolApprovalBadgeLabel(tool)}`} tone={approvalBadgeTone(tool)} />
           <Badge value={effectiveStateLabel(tool.effective_state)} tone={tool.enabled ? "success" : "muted"} />
         </div>
         {isSchemaChanged ? (
-          <div className={styles.schemaChangedNotice}>Schema 已变化，需检查后确认策略</div>
+          <div className={styles.schemaChangedNotice}>参数结构已变化，需检查后确认授权</div>
         ) : null}
       </div>
 
       <div className={styles.toolStateCell}>
-        <span>last used</span>
+        <span>最后使用</span>
         <strong>{formatDate(tool.last_used_at)}</strong>
-        <span>calls</span>
+        <span>调用次数</span>
         <strong>{tool.call_count ?? 0}</strong>
       </div>
 
@@ -420,24 +438,25 @@ function ToolRow({
         <ToggleSwitch
           checked={tool.enabled}
           disabled={busyKey === `enabled:${tool.id}` || isRemoved}
-          label={`启用 tool ${tool.raw_name}`}
+          label={`启用工具 ${tool.raw_name}`}
           onChange={() => void onToggleEnabled(tool)}
         />
         <SettingsSelect
-          ariaLabel={`审批策略 ${tool.raw_name}`}
+          ariaLabel={`确认方式 ${tool.raw_name}`}
+          density="compact"
           disabled={busyKey === `approval:${tool.id}` || isRemoved}
-          options={APPROVAL_OPTIONS.filter((option) => option.value !== "all")}
-          value={tool.approval_mode}
+          options={TOOL_APPROVAL_OPTIONS}
+          value={configuredApproval}
           onChange={(value) => void onApprovalChange(tool, value as McpApprovalMode)}
         />
         <button
           className={styles.smallToolButton}
           type="button"
-          aria-label={`查看 schema ${tool.raw_name}`}
+          aria-label={`查看参数结构 ${tool.raw_name}`}
           onClick={() => onOpenSchema(tool)}
         >
           <FileCode2 size={14} />
-          <span>Schema</span>
+          <span>参数结构</span>
         </button>
       </div>
     </article>
@@ -484,9 +503,87 @@ function effectiveStateLabel(value: string): string {
   return mcpToolEffectiveStateLabel(value);
 }
 
+function normalizeApprovalMode(value: McpApprovalMode | string | undefined): McpApprovalMode {
+  return value === "auto" ? "approve" : (value as McpApprovalMode) || "prompt";
+}
+
+function normalizeToolApprovalMode(value: McpApprovalMode | string | undefined): ToolConfiguredApprovalMode {
+  const normalized = normalizeApprovalMode(value);
+  if (normalized === "inherit" || normalized === "prompt" || normalized === "deny") {
+    return normalized;
+  }
+  return "approve";
+}
+
+function approvalModeLabel(value: McpApprovalMode | string): string {
+  switch (normalizeApprovalMode(value)) {
+    case "inherit":
+      return "按服务器设置";
+    case "prompt":
+      return "每次确认";
+    case "deny":
+      return "始终拒绝";
+    case "approve":
+    default:
+      return "始终允许";
+  }
+}
+
+function serverPermissionLabel(value: McpApprovalMode | string | undefined): string {
+  switch (normalizeApprovalMode(value)) {
+    case "approve":
+      return "信任此服务";
+    case "prompt":
+      return "按请求审批";
+    case "deny":
+      return "始终拒绝";
+    case "inherit":
+    default:
+      return "按服务器设置";
+  }
+}
+
+function toolApprovalBadgeLabel(tool: McpToolSummary): string {
+  const configuredApproval = normalizeToolApprovalMode(tool.approval_mode);
+  if (configuredApproval === "inherit") {
+    return serverPermissionLabel(tool.effective_approval_mode);
+  }
+  return approvalModeLabel(configuredApproval);
+}
+
+function approvalBadgeTone(tool: McpToolSummary): "neutral" | "success" | "warning" | "muted" {
+  const configuredApproval = normalizeToolApprovalMode(tool.approval_mode);
+  if (configuredApproval === "deny" || configuredApproval === "prompt") {
+    return "warning";
+  }
+  if (configuredApproval === "approve") {
+    return "success";
+  }
+  return "neutral";
+}
+
+function toolMatchesPresenceFilter(tool: McpToolSummary, filter: ToolPresenceFilter): boolean {
+  const removed = isRemovedTool(tool);
+  if (filter === "current") {
+    return !removed;
+  }
+  if (filter === "removed") {
+    return removed;
+  }
+  return true;
+}
+
+function toolPresenceLabel(tool: McpToolSummary): string {
+  return isRemovedTool(tool) ? "已移除" : "正常";
+}
+
+function isRemovedTool(tool: McpToolSummary): boolean {
+  return tool.discovery_status === "removed" || tool.status === "removed" || tool.effective_state === "removed";
+}
+
 function formatDate(value: string | null | undefined): string {
   if (!value) {
-    return "never";
+    return "从未";
   }
   return value.replace("T", " ").replace("Z", "");
 }

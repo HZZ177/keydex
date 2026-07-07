@@ -77,7 +77,7 @@ describe("agent protocol types", () => {
 
   it("constructs MCP protocol shapes", () => {
     const approvalKind = "mcp_tool_call" satisfies ApprovalKind;
-    const trustScope = "server_readonly" satisfies CommandApprovalTrustScope;
+    const trustScope = "persistent_server" satisfies CommandApprovalTrustScope;
     const server = {
       id: "srv_1",
       name: "filesystem",
@@ -209,11 +209,13 @@ describe("agent protocol types", () => {
     } satisfies McpImportPreviewResponse;
     const trustRule = {
       id: "trust_1",
-      rule_kind: "server_readonly",
+      rule_kind: "tool_with_params",
       scope: "global",
       approval_mode: "approve",
       hit_count: 0,
       server_id: server.id,
+      raw_tool_name: "read_file",
+      condition: { arguments_sha256: "hash-a" },
       created_at: "2026-07-06T00:00:00Z",
       updated_at: "2026-07-06T00:00:00Z",
     } satisfies McpTrustRule;
@@ -249,14 +251,14 @@ describe("agent protocol types", () => {
     } satisfies McpErrorPayload;
 
     expect(approvalKind).toBe("mcp_tool_call");
-    expect(trustScope).toBe("server_readonly");
+    expect(trustScope).toBe("persistent_server");
     expect(createServer.args).toEqual(["server.js"]);
     expect(detail.auth.secret_ref_keys).toEqual(["api_key"]);
     expect(tool.model_name).toBe(metadata.model_tool_name);
     expect(runtimeStatus.overrides[0].enabled).toBe(false);
     expect(snapshot.tools_visible).toBe(4);
     expect(importPreview.servers[0].action).toBe("create");
-    expect(trustRule.rule_kind).toBe("server_readonly");
+    expect(trustRule.rule_kind).toBe("tool_with_params");
     expect(oauth.token_configured).toBe(true);
     expect(audit.event_type).toBe("refresh.completed");
     expect(error.code).toBe("server_offline");
