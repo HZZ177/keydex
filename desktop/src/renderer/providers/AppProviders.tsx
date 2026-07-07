@@ -6,6 +6,7 @@ import { ThemeProvider } from "./ThemeProvider";
 import { FontProvider } from "./FontProvider";
 import { AgentSessionProvider } from "./AgentSessionProvider";
 import { AppContextMenuProvider } from "./AppContextMenuProvider";
+import { AppUpdateController } from "./AppUpdateController";
 import { NotificationProvider } from "./NotificationProvider";
 import { RuntimeConnectionProvider, type RuntimeConnectionProviderProps } from "./RuntimeConnectionProvider";
 import { WindowClosePreferenceController } from "./WindowClosePreferenceController";
@@ -27,6 +28,7 @@ export function AppProviders({
   return (
     <ThemeProvider>
       <NotificationProvider>
+        <AppUpdateController />
         <AppContextMenuProvider>
           <RuntimeConnectionProvider runtime={runtime} {...runtimeConnection}>
             <WindowClosePreferenceController runtime={runtime} />

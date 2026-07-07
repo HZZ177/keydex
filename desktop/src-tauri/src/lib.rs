@@ -22,6 +22,7 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const WINDOW_CLOSE_REQUESTED_EVENT: &str = "keydex://window-close-requested";
+const ASSOCIATED_FILE_OPEN_REQUESTED_EVENT: &str = "keydex://associated-file-open-requested";
 const TRAY_ID: &str = "keydex-tray";
 const TRAY_SHOW_ID: &str = "show_main_window";
 const TRAY_EXIT_ID: &str = "exit_app";
@@ -30,6 +31,37 @@ const TRAY_EXIT_ID: &str = "exit_app";
 struct SidecarState {
     child: Mutex<Option<Child>>,
     closing: AtomicBool,
+}
+
+#[derive(Default)]
+struct AssociatedFileOpenState {
+    pending_paths: Mutex<Vec<String>>,
+}
+
+impl AssociatedFileOpenState {
+    fn with_paths(paths: Vec<String>) -> Self {
+        Self {
+            pending_paths: Mutex::new(paths),
+        }
+    }
+
+    fn push_paths(&self, paths: Vec<String>) {
+        if paths.is_empty() {
+            return;
+        }
+        if let Ok(mut pending) = self.pending_paths.lock() {
+            for path in paths {
+                if !pending.iter().any(|item| item == &path) {
+                    pending.push(path);
+                }
+            }
+        }
+    }
+
+    fn take_paths(&self) -> Result<Vec<String>, String> {
+        let mut pending = self.pending_paths.lock().map_err(|err| err.to_string())?;
+        Ok(std::mem::take(&mut *pending))
+    }
 }
 
 impl Drop for SidecarState {
@@ -275,6 +307,11 @@ $files = New-Object System.Collections.Specialized.StringCollection
     }
 }
 
+#[tauri::command]
+fn take_associated_file_open_paths(state: State<'_, AssociatedFileOpenState>) -> Result<Vec<String>, String> {
+    state.take_paths()
+}
+
 #[cfg(windows)]
 fn resolve_existing_filesystem_path(path: &str) -> Result<PathBuf, String> {
     let cleaned = path.trim();
@@ -286,6 +323,37 @@ fn resolve_existing_filesystem_path(path: &str) -> Result<PathBuf, String> {
         return Err("文件不存在".to_string());
     }
     path.canonicalize().map_err(|err| err.to_string())
+}
+
+fn collect_associated_markdown_paths<I>(args: I) -> Vec<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    args.into_iter()
+        .filter_map(|arg| {
+            let cleaned = arg.trim();
+            if cleaned.is_empty() {
+                return None;
+            }
+            let path = PathBuf::from(cleaned);
+            if !path.is_file() || !is_supported_markdown_path(&path) {
+                return None;
+            }
+            Some(
+                path.canonicalize()
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .to_string(),
+            )
+        })
+        .collect()
+}
+
+fn is_supported_markdown_path(path: &PathBuf) -> bool {
+    let Some(ext) = path.extension().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown" | "mdx")
 }
 
 fn request_exit(app: &tauri::AppHandle, state: &SidecarState) -> Result<(), String> {
@@ -355,10 +423,22 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 pub fn run() {
+    let startup_associated_paths = collect_associated_markdown_paths(
+        std::env::args_os()
+            .skip(1)
+            .filter_map(|arg| arg.into_string().ok()),
+    );
+
     tauri::Builder::default()
         .manage(SidecarState::default())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .manage(AssociatedFileOpenState::with_paths(startup_associated_paths))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             show_main_window(app);
+            let paths = collect_associated_markdown_paths(args);
+            if !paths.is_empty() {
+                app.state::<AssociatedFileOpenState>().push_paths(paths);
+                let _ = app.emit(ASSOCIATED_FILE_OPEN_REQUESTED_EVENT, ());
+            }
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -377,7 +457,8 @@ pub fn run() {
             request_app_exit,
             open_path_in_file_manager,
             write_text_file,
-            copy_file_to_clipboard
+            copy_file_to_clipboard,
+            take_associated_file_open_paths
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

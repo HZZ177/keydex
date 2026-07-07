@@ -154,6 +154,12 @@
   gap: 7px;
 }
 
+.header[data-size="confirm"][data-has-close="true"] {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
 .header[data-size="form"] {
   border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
   padding: 17px 18px 14px;
@@ -257,6 +263,14 @@
 .header[data-size="drawer"] .closeButton {
   width: 30px;
   height: 30px;
+  border-radius: var(--radius-pill);
+}
+
+.header[data-size="confirm"] .closeButton {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  margin: -5px -5px 0 0;
   border-radius: var(--radius-pill);
 }
 

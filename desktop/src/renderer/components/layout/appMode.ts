@@ -38,6 +38,12 @@ export function workbenchPath(workspaceId?: string, sessionId?: string): string 
   return sessionId ? `${base}/session/${encodeURIComponent(sessionId)}` : base;
 }
 
+export function workbenchFilePreviewPath(path: string, workspaceId?: string): string {
+  const query = new URLSearchParams();
+  query.set("file", path);
+  return `${workbenchPath(workspaceId)}?${query.toString()}`;
+}
+
 export function parseWorkbenchPath(pathname: string): WorkbenchRouteParams | null {
   const path = stripQuery(pathname);
   const segments = path.split("/").filter(Boolean);

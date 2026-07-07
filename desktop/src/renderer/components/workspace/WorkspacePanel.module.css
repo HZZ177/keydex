@@ -284,6 +284,7 @@
 }
 
 .nodeButton {
+  position: relative;
   display: grid;
   width: 100%;
   min-height: 30px;
@@ -297,6 +298,22 @@
   font-size: 12px;
   line-height: 1.35;
   text-align: left;
+}
+
+.nodeButton::before {
+  position: absolute;
+  inset: 2px 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--motion-ease-standard);
+}
+
+.nodeButton > * {
+  position: relative;
+  z-index: 1;
 }
 
 .directoryRow {
@@ -391,8 +408,14 @@
 .nodeButton:hover,
 .nodeButton[data-keyboard-active="true"],
 .nodeButton[data-selected="true"] {
-  background: var(--surface-hover);
+  background: transparent;
   color: var(--color-text-primary);
+}
+
+.nodeButton:hover::before,
+.nodeButton[data-keyboard-active="true"]::before,
+.nodeButton[data-selected="true"]::before {
+  opacity: 1;
 }
 
 .nodeLabel {

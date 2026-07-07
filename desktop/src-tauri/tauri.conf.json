@@ -29,6 +29,16 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown", "mdx"],
+        "name": "Markdown",
+        "description": "Markdown Document",
+        "mimeType": "text/markdown",
+        "role": "Editor",
+        "rank": "Default"
+      }
+    ],
     "resources": ["binaries/agent-server"],
     "windows": {
       "nsis": {
@@ -43,7 +53,7 @@
         "https://github.com/HZZ177/keydex/releases/latest/download/latest.json"
       ],
       "windows": {
-        "installMode": "passive"
+        "installMode": "quiet"
       }
     }
   }

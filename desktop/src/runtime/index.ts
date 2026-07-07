@@ -25,6 +25,11 @@ export {
   downloadAndInstallAppUpdate,
   getCurrentAppVersion,
 } from "./appUpdate";
+export {
+  ASSOCIATED_FILE_OPEN_REQUESTED_EVENT,
+  listenForAssociatedFileOpenRequested,
+  takeAssociatedFileOpenPaths,
+} from "./associatedFiles";
 export type { HttpClientOptions, RequestOptions } from "./httpClient";
 export type { WebSocketConstructor, WebSocketLike, WsClientOptions, WsConnectionStatus } from "./wsClient";
 export type { RuntimeErrorEnvelope, RuntimeHttpErrorParams } from "./errors";

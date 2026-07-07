@@ -108,7 +108,11 @@ export function AppDialog({
         onMouseDown={(event) => event.stopPropagation()}
       >
         {hasHeader ? (
-          <header className={styles.header} data-size={size}>
+          <header
+            className={styles.header}
+            data-size={size}
+            data-has-close={resolvedShowClose && onClose ? "true" : "false"}
+          >
             <div className={styles.titleBlock}>
               {title ? <h2 id={titleId}>{title}</h2> : null}
               {description ? <p id={descriptionId}>{description}</p> : null}

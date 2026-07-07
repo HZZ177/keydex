@@ -11,6 +11,7 @@ import {
   modeSwitchTargetsForPath,
   parseWorkbenchPath,
   PROJECT_PATH,
+  workbenchFilePreviewPath,
   workbenchPath,
 } from "@/renderer/components/layout/appMode";
 import { AppRouter } from "@/renderer/components/layout/Router";
@@ -86,6 +87,10 @@ describe("AppRouter", () => {
     expect(workbenchPath()).toBe("/workbench");
     expect(workbenchPath("workspace A")).toBe("/workbench/workspace%20A");
     expect(workbenchPath("workspace A", "session 1")).toBe("/workbench/workspace%20A/session/session%201");
+    expect(workbenchFilePreviewPath("D:/docs/read me.md")).toBe("/workbench?file=D%3A%2Fdocs%2Fread+me.md");
+    expect(workbenchFilePreviewPath("D:/docs/read me.md", "workspace A")).toBe(
+      "/workbench/workspace%20A?file=D%3A%2Fdocs%2Fread+me.md",
+    );
     expect(parseWorkbenchPath("/workbench")).toEqual({});
     expect(parseWorkbenchPath("/workbench/workspace%20A/session/session%201")).toEqual({
       workspaceId: "workspace A",
@@ -299,6 +304,80 @@ describe("AppRouter", () => {
     });
   });
 
+  it("opens a markdown file as an external workbench preview inside the selected workspace", async () => {
+    const filePath = "D:/docs/README.md";
+    const { runtime } = renderRouter([workbenchFilePreviewPath(filePath)]);
+
+    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("workspace A");
+    });
+    expect(screen.getByTestId("workspace-file-browser")).not.toBeNull();
+    expect(screen.getByTestId("workbench-titlebar-workspace-selector")).not.toBeNull();
+    expect(screen.getByTestId("workbench-assistant-surface")).not.toBeNull();
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    await waitFor(() => {
+      expect(runtime.localPreview.readFile).toHaveBeenCalledWith(filePath);
+    });
+    expect(runtime.workspaces.list).toHaveBeenCalled();
+    expect(runtime.conversation.listSessions).toHaveBeenCalledWith({
+      sessionType: "workspace",
+      workspaceId: "workspace A",
+      pageSize: 50,
+    });
+    expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "");
+    expect((await screen.findAllByText("Intro")).length).toBeGreaterThan(0);
+    const externalTree = screen.getByTestId("workspace-file-browser-tree");
+    fireEvent.click(await within(externalTree).findByTestId("workspace-browser-outline-tab"));
+    expect(await within(externalTree).findByText("Intro")).not.toBeNull();
+  });
+
+  it("previews an external workbench file before the runtime connection is ready", async () => {
+    const filePath = "D:/docs/README.md";
+    const connection = createDeferred<AgentConnection>();
+    const starter = vi.fn(() => connection.promise);
+    const { runtime } = renderRouter([workbenchFilePreviewPath(filePath)], { starter });
+
+    await waitFor(() => expect(starter).toHaveBeenCalledTimes(1));
+    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("");
+    expect(screen.queryByTestId("workbench-workspace-picker")).toBeNull();
+    expect(screen.queryByTestId("workbench-workspace-loading")).toBeNull();
+    expect(screen.getByTestId("workbench-titlebar-workspace-selector")).not.toBeNull();
+    expect(screen.getByTestId("workbench-external-preview-pending-pane")).not.toBeNull();
+    expect(screen.queryByTestId("workspace-file-browser")).toBeNull();
+    expect(screen.queryByTestId("workbench-assistant-surface")).toBeNull();
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    await waitFor(() => {
+      expect(runtime.localPreview.readFile).toHaveBeenCalledWith(filePath);
+    });
+    expect(runtime.workspaces.list).not.toHaveBeenCalled();
+    expect(runtime.conversation.listSessions).not.toHaveBeenCalled();
+    expect(runtime.workspace.listDirectory).not.toHaveBeenCalled();
+    expect(await within(screen.getByTestId("workbench-external-preview-pending-pane")).findByText("Intro")).not.toBeNull();
+
+    await act(async () => {
+      connection.resolve(agentConnection());
+      await connection.promise;
+    });
+
+    await waitFor(() => {
+      expect(runtime.workspaces.list).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("workspace A");
+    });
+    expect(screen.getByTestId("workspace-file-browser")).not.toBeNull();
+    expect(screen.getByTestId("workbench-assistant-surface")).not.toBeNull();
+    expect(screen.queryByTestId("workbench-external-preview-pending-pane")).toBeNull();
+    expect(runtime.conversation.listSessions).toHaveBeenCalledWith({
+      sessionType: "workspace",
+      workspaceId: "workspace A",
+      pageSize: 50,
+    });
+    expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "");
+  });
+
   it("keeps pinned workbench sessions in the sidebar pinned section", async () => {
     renderRouter(["/workbench/workspace%20A"], {
       sessions: [
@@ -493,6 +572,9 @@ describe("AppRouter", () => {
     await waitFor(() => {
       expect(runtime.workspace.readFile).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "README.md");
     });
+    const tree = screen.getByTestId("workspace-file-browser-tree");
+    fireEvent.click(await within(tree).findByTestId("workspace-browser-outline-tab"));
+    expect(await within(tree).findByText("Workbench file")).not.toBeNull();
     expect(screen.queryByTestId("workspace-file-browser-preview")).toBeNull();
     expect(shell.dataset.rightSidebar).toBe("closed");
     expect(screen.queryByLabelText("展开右侧栏")).toBeNull();
@@ -1178,6 +1260,12 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
       list: vi.fn(() => Promise.resolve({ list: [workspace("workspace A", "keydex")], total: 1 })),
       create: () => Promise.reject(new Error("not implemented")),
       get: vi.fn((workspaceId: string) => Promise.resolve(workspace(workspaceId, workspaceId))),
+    },
+    localPreview: {
+      readFile: vi.fn((path: string) =>
+        Promise.resolve({ path, content: "# Local file\n\n## Intro\n\nBody", encoding: "utf-8" }),
+      ),
+      readMedia: vi.fn(),
     },
     workspace: {
       listDirectory,

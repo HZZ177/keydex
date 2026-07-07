@@ -1,7 +1,12 @@
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type PropsWithChildren } from "react";
 
-import { runtimeBridge, type RuntimeBridge } from "@/runtime";
+import {
+  listenForAssociatedFileOpenRequested,
+  runtimeBridge,
+  takeAssociatedFileOpenPaths,
+  type RuntimeBridge,
+} from "@/runtime";
 import type { RuntimeSelectedModel } from "@/renderer/components/model";
 import { subscribeSessionUpdated, type AgentSessionUpdate } from "@/renderer/events/sessionEvents";
 import { queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
@@ -15,7 +20,9 @@ import {
   conversationPath,
   HOME_PATH,
   modeSwitchTargetsForPath,
+  parseWorkbenchPath,
   PROJECT_PATH,
+  workbenchFilePreviewPath,
   workbenchPath,
   WORKBENCH_PATH,
 } from "./appMode";
@@ -106,6 +113,7 @@ export function AppRouter({ runtime = runtimeBridge }: AppRouterProps = {}) {
 function AppRoutes({ runtime }: { runtime: RuntimeBridge }) {
   return (
     <Suspense fallback={null}>
+      <AssociatedFileOpenController />
       <Routes>
         <Route path="/" element={<Navigate to={HOME_PATH} replace />} />
         <Route path="/guid" element={<HomeRoute runtime={runtime} />} />
@@ -129,6 +137,48 @@ function AppRoutes({ runtime }: { runtime: RuntimeBridge }) {
       </Routes>
     </Suspense>
   );
+}
+
+function AssociatedFileOpenController() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const layout = useLayoutState();
+
+  const openAssociatedFiles = useCallback(async () => {
+    const paths = await takeAssociatedFileOpenPaths();
+    const path = paths.map((item) => item.trim()).filter(Boolean).at(-1);
+    if (path) {
+      const activeWorkspaceId =
+        parseWorkbenchPath(location.pathname)?.workspaceId ?? layout.state.lastWorkbenchWorkspaceId ?? undefined;
+      void navigate(workbenchFilePreviewPath(path, activeWorkspaceId));
+    }
+  }, [layout.state.lastWorkbenchWorkspaceId, location.pathname, navigate]);
+
+  useEffect(() => {
+    void openAssociatedFiles();
+  }, [openAssociatedFiles]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listenForAssociatedFileOpenRequested(() => {
+      if (!disposed) {
+        void openAssociatedFiles();
+      }
+    }).then((nextUnlisten) => {
+      if (disposed) {
+        nextUnlisten();
+        return;
+      }
+      unlisten = nextUnlisten;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [openAssociatedFiles]);
+
+  return null;
 }
 
 function EventReplayRoute() {
@@ -216,6 +266,7 @@ function ProjectRoute() {
 function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const { workspaceId, sessionId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const layout = useLayoutState();
   const runtimeConnection = useOptionalRuntimeConnection();
   const backendReady = runtimeConnection?.ready ?? true;
@@ -223,6 +274,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const backendErrorMessage = runtimeConnection?.error?.message ?? "本地服务连接失败";
   const decodedWorkspaceId = safeDecodeParam(workspaceId);
   const decodedSessionId = safeDecodeParam(sessionId);
+  const externalPreviewPath = searchParams.get("file")?.trim() || undefined;
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -343,6 +395,25 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
     () => workspaces.find((workspace) => workspace.id === decodedWorkspaceId) ?? null,
     [decodedWorkspaceId, workspaces],
   );
+  useEffect(() => {
+    if (!externalPreviewPath || decodedWorkspaceId || workspaceLoading || workspaces.length === 0) {
+      return;
+    }
+    const fallbackWorkspaceId = layout.state.lastWorkbenchWorkspaceId
+      ? workspaces.find((workspace) => workspace.id === layout.state.lastWorkbenchWorkspaceId)?.id
+      : undefined;
+    const nextWorkspaceId = fallbackWorkspaceId ?? workspaces[0]?.id;
+    if (nextWorkspaceId) {
+      void navigate(workbenchFilePreviewPath(externalPreviewPath, nextWorkspaceId), { replace: true });
+    }
+  }, [
+    decodedWorkspaceId,
+    externalPreviewPath,
+    layout.state.lastWorkbenchWorkspaceId,
+    navigate,
+    workspaceLoading,
+    workspaces,
+  ]);
   const workspaceProjectEntries = useMemo<SiderEntry[]>(
     () =>
       selectedWorkspace
@@ -442,7 +513,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
       getSessionPath={getWorkbenchSessionPath}
       getWorkspaceNewConversationPath={getWorkbenchNewPath}
       workbenchWorkspaceSelector={
-        decodedWorkspaceId
+        decodedWorkspaceId || externalPreviewPath
           ? {
               value: workspaceSelectorValue,
               workspaces,
@@ -459,6 +530,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
         runtime={runtime}
         workspaceId={decodedWorkspaceId}
         selectedSessionId={decodedSessionId}
+        externalPreviewPath={externalPreviewPath}
         selectedWorkspace={selectedWorkspace}
         workspaces={workspaces}
         workspaceLoading={workspaceLoading}

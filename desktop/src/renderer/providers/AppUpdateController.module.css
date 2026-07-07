@@ -1,0 +1,115 @@
+.details {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.versionLine {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.versionLine strong {
+  color: var(--color-text-primary);
+  font-weight: 650;
+}
+
+.status {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.error {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 36%, var(--color-border-subtle));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-bg-elevated));
+  color: color-mix(in srgb, var(--color-danger) 86%, var(--color-text-primary));
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 8px 10px;
+}
+
+.notes {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.notesTitle {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.notesBody {
+  max-height: 132px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 9px 10px;
+  white-space: pre-wrap;
+}
+
+.progress {
+  display: grid;
+  gap: 7px;
+}
+
+.progressTrack {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+}
+
+.progressValue {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition: width 160ms var(--motion-ease-standard);
+}
+
+.progressIndeterminate .progressValue {
+  width: 34% !important;
+  animation: update-progress-indeterminate 1.15s var(--motion-ease-standard) infinite;
+}
+
+.progressText {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.actionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+@keyframes update-progress-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(320%);
+  }
+}

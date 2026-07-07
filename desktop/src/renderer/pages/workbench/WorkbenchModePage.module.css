@@ -342,6 +342,88 @@
   overflow: hidden;
 }
 
+.externalPreviewPendingPane {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: max-content minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--sidebar-bg);
+  color: var(--color-text-1);
+}
+
+.externalPreviewPendingHeader {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 14px 14px 11px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, transparent);
+}
+
+.externalPreviewPendingLabel {
+  overflow: hidden;
+  color: var(--color-text-3);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: var(--ui-line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.externalPreviewPendingPath {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-1);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: var(--ui-line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.externalPreviewOutline {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  min-height: 0;
+  gap: 1px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.externalPreviewOutlineItem {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--ui-line-height-tight);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.externalPreviewOutlineItem:hover,
+.externalPreviewOutlineItem:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.externalPreviewOutlineItem span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .assistantCapsule {
   position: absolute;
   left: 50%;

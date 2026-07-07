@@ -34,9 +34,12 @@ export interface WorkspaceFileBrowserProps {
   previewRequestId?: number;
   previewRevealTarget?: PreviewFileRevealTarget | null;
   previewPlacement?: "inline" | "external";
+  previewOutline?: MarkdownOutlineItem[];
+  previewOutlineReady?: boolean;
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
   onStartChatFromAnnotation?: (request: PreviewAnnotationChatRequest | PreviewAnnotationChatRequest[]) => void;
   onPreviewPathChange?: (path: string | null) => void;
+  onPreviewOutlineReveal?: (item: MarkdownOutlineItem) => void;
 }
 
 const DEFAULT_TREE_WIDTH = 260;
@@ -64,9 +67,12 @@ export function WorkspaceFileBrowser({
   previewRequestId = 0,
   previewRevealTarget = null,
   previewPlacement = "inline",
+  previewOutline = [],
+  previewOutlineReady = false,
   onQuoteSelection,
   onStartChatFromAnnotation,
   onPreviewPathChange,
+  onPreviewOutlineReveal,
 }: WorkspaceFileBrowserProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<ResizeState | null>(null);
@@ -108,9 +114,12 @@ export function WorkspaceFileBrowser({
     ],
   );
   const previewMounted = Boolean(mountedPreviewPath);
-  const outlineAvailable = Boolean(mountedPreviewPath && isMarkdownPath(mountedPreviewPath));
+  const outlinePath = previewPlacement === "external" ? previewPath : mountedPreviewPath;
+  const activeOutline = previewPlacement === "external" ? previewOutline : markdownOutline;
+  const activeOutlineReady = previewPlacement === "external" ? previewOutlineReady : markdownOutlineReady;
+  const outlineAvailable = Boolean(outlinePath && isMarkdownPath(outlinePath));
   const outlineVisible = outlineAvailable && navigationMode === "outline";
-  const currentPathLabel = formatBrowserPath(mountedPreviewPath);
+  const currentPathLabel = formatBrowserPath(previewPlacement === "external" ? previewPath : mountedPreviewPath);
   const toggleTreeCollapsed = useCallback(() => setTreeCollapsed((collapsed) => !collapsed), []);
 
   const clearPreviewUnmountTimer = useCallback(() => {
@@ -232,10 +241,10 @@ export function WorkspaceFileBrowser({
     setMarkdownOutline([]);
     setMarkdownOutlineReady(false);
     setOutlineRevealRequest(null);
-    if (!mountedPreviewPath || !isMarkdownPath(mountedPreviewPath)) {
+    if (!outlinePath || !isMarkdownPath(outlinePath)) {
       setNavigationMode("files");
     }
-  }, [mountedPreviewPath]);
+  }, [outlinePath]);
 
   const handleMarkdownOutlineChange = useCallback((outline: MarkdownOutlineItem[]) => {
     setMarkdownOutline(outline);
@@ -243,15 +252,25 @@ export function WorkspaceFileBrowser({
   }, []);
 
   const revealMarkdownOutlineItem = useCallback((item: MarkdownOutlineItem) => {
+    if (previewPlacement === "external") {
+      onPreviewOutlineReveal?.(item);
+      return;
+    }
     setOutlineRevealRequest((current) => ({
       requestId: (current?.requestId ?? 0) + 1,
       id: item.id,
       line: item.line,
     }));
-  }, []);
+  }, [onPreviewOutlineReveal, previewPlacement]);
 
   useEffect(() => {
-    if (!previewPath || !previewRequestId || handledPreviewRequestIdRef.current === previewRequestId) {
+    if (!previewPath) {
+      if (previewPlacement === "external") {
+        setSelectedPath(null);
+      }
+      return;
+    }
+    if (!previewRequestId || handledPreviewRequestIdRef.current === previewRequestId) {
       return;
     }
     handledPreviewRequestIdRef.current = previewRequestId;
@@ -372,8 +391,8 @@ export function WorkspaceFileBrowser({
               inert={outlineVisible ? undefined : true}
             >
               <MarkdownOutlinePanel
-                outline={markdownOutline}
-                ready={markdownOutlineReady}
+                outline={activeOutline}
+                ready={activeOutlineReady}
                 onReveal={revealMarkdownOutlineItem}
               />
             </div>
@@ -436,6 +455,7 @@ function BrowserNavigationTabs({
     <div className={styles.navigationTabs} role="group" aria-label="文件导航模式" data-mode={mode}>
       <button
         type="button"
+        data-testid="workspace-browser-files-tab"
         aria-pressed={mode === "files"}
         onClick={() => onModeChange("files")}
       >
@@ -444,6 +464,7 @@ function BrowserNavigationTabs({
       </button>
       <button
         type="button"
+        data-testid="workspace-browser-outline-tab"
         aria-pressed={mode === "outline"}
         onClick={() => onModeChange("outline")}
       >

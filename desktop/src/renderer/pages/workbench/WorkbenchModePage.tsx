@@ -17,6 +17,8 @@ import {
   WorkspaceFileBrowser,
   WorkspaceSelector,
   type FilePreviewRevealRequest,
+  type MarkdownOutlineItem,
+  type MarkdownOutlineRevealRequest,
   type WorkspaceSelection,
 } from "@/renderer/components/workspace";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
@@ -49,6 +51,7 @@ export interface WorkbenchModePageProps {
   runtime: RuntimeBridge;
   workspaceId?: string;
   selectedSessionId?: string;
+  externalPreviewPath?: string;
   selectedWorkspace?: Workspace | null;
   workspaces?: Workspace[];
   workspaceLoading?: boolean;
@@ -97,6 +100,7 @@ export function WorkbenchModePage({
   runtime,
   workspaceId,
   selectedSessionId,
+  externalPreviewPath,
   selectedWorkspace,
   workspaces = [],
   workspaceLoading = false,
@@ -130,6 +134,10 @@ export function WorkbenchModePage({
   const [previewBrowserWidth, setPreviewBrowserWidth] = useState(DEFAULT_WORKBENCH_BROWSER_WIDTH);
   const [workbenchPreviewTabs, setWorkbenchPreviewTabs] =
     useState<WorkbenchPreviewTabsState>(EMPTY_WORKBENCH_PREVIEW_TABS);
+  const [activeMainPreviewOutline, setActiveMainPreviewOutline] = useState<MarkdownOutlineItem[]>([]);
+  const [activeMainPreviewOutlineReady, setActiveMainPreviewOutlineReady] = useState(false);
+  const [mainPreviewOutlineRevealRequest, setMainPreviewOutlineRevealRequest] =
+    useState<MarkdownOutlineRevealRequest | null>(null);
   const activeWorkbenchPreviewTab = useMemo(
     () => workbenchPreviewTabs.tabs.find((tab) => tab.id === workbenchPreviewTabs.activeTabId) ?? null,
     [workbenchPreviewTabs.activeTabId, workbenchPreviewTabs.tabs],
@@ -141,9 +149,9 @@ export function WorkbenchModePage({
     ? { type: "workspace", workspace: selectedWorkspace }
     : { type: "chat" };
   const workspaceLabel = selectedWorkspace?.root_path ?? selectedWorkspace?.name ?? workspaceId;
-  const showPicker = !workspaceId;
-  const showWorkspaceLoading = Boolean(workspaceId && workspaceLoading && !selectedWorkspace);
-  const showWorkspaceUnavailable = Boolean(workspaceId && workspaceError && !selectedWorkspace);
+  const showPicker = !workspaceId && !externalPreviewPath;
+  const showWorkspaceLoading = Boolean(workspaceId && workspaceLoading && !selectedWorkspace && !externalPreviewPath);
+  const showWorkspaceUnavailable = Boolean(workspaceId && workspaceError && !selectedWorkspace && !externalPreviewPath);
   const drawerWidth = layout.state.workbenchAssistantDrawerWidth;
   const drawerInlineWidth = resolveWorkbenchAssistantDockInlineWidth(
     drawerWidth,
@@ -279,7 +287,15 @@ export function WorkbenchModePage({
   const activeAssistantController = btwActive ? btwController : assistantController;
   const workbenchPreviewRenderContext = useMemo<PreviewRenderContext | null>(() => {
     if (!workspaceId) {
-      return null;
+      if (!externalPreviewPath) {
+        return null;
+      }
+      return {
+        panelScopeKey: workbenchExternalPreviewPanelScopeKey(externalPreviewPath),
+        workspaceAvailable: false,
+        workspaceLabel: fileName(externalPreviewPath),
+        runtime,
+      };
     }
     return {
       panelScopeKey: workbenchPreviewPanelScopeKey(workspaceId),
@@ -293,10 +309,16 @@ export function WorkbenchModePage({
   }, [
     activeAssistantController.quoteSelection,
     activeAssistantController.startChatFromAnnotation,
+    externalPreviewPath,
     runtime,
     workspaceId,
     workspaceLabel,
   ]);
+  const resetMainPreviewOutline = useCallback(() => {
+    setActiveMainPreviewOutline([]);
+    setActiveMainPreviewOutlineReady(false);
+    setMainPreviewOutlineRevealRequest(null);
+  }, []);
   const nextMainPreviewRequestId = useCallback(() => {
     mainPreviewRequestSeqRef.current += 1;
     return mainPreviewRequestSeqRef.current;
@@ -309,6 +331,7 @@ export function WorkbenchModePage({
       sourceEntryId: string | null = null,
       requestId?: number,
     ) => {
+      resetMainPreviewOutline();
       const tab: WorkbenchMainPreviewTabState = {
         id: workbenchPreviewTabId(request),
         request,
@@ -331,7 +354,7 @@ export function WorkbenchModePage({
         };
       });
     },
-    [nextMainPreviewRequestId],
+    [nextMainPreviewRequestId, resetMainPreviewOutline],
   );
   const openWorkspaceBrowserFilePreview = useCallback(
     (path: string | null) => {
@@ -343,11 +366,25 @@ export function WorkbenchModePage({
     },
     [openWorkbenchMainPreview, workbenchPreviewRenderContext],
   );
+  const handleMainPreviewMarkdownOutlineChange = useCallback((outline: MarkdownOutlineItem[]) => {
+    setActiveMainPreviewOutline(outline);
+    setActiveMainPreviewOutlineReady(true);
+  }, []);
+  const revealMainPreviewMarkdownOutlineItem = useCallback((item: MarkdownOutlineItem) => {
+    setMainPreviewOutlineRevealRequest((current) => ({
+      requestId: (current?.requestId ?? 0) + 1,
+      id: item.id,
+      line: item.line,
+    }));
+  }, []);
   const selectWorkbenchPreviewTab = useCallback(
     (tabId: string) => {
       const tab = workbenchPreviewTabs.tabs.find((item) => item.id === tabId);
       if (!tab) {
         return;
+      }
+      if (workbenchPreviewTabs.activeTabId !== tabId) {
+        resetMainPreviewOutline();
       }
       setWorkbenchPreviewTabs((current) =>
         current.activeTabId === tabId
@@ -361,11 +398,14 @@ export function WorkbenchModePage({
         previewContext?.switchPreview(tab.sourceEntryId);
       }
     },
-    [previewContext, workbenchPreviewTabs.tabs],
+    [previewContext, resetMainPreviewOutline, workbenchPreviewTabs.activeTabId, workbenchPreviewTabs.tabs],
   );
   const closeWorkbenchPreviewTab = useCallback(
     (tabId: string) => {
       const tab = workbenchPreviewTabs.tabs.find((item) => item.id === tabId) ?? null;
+      if (workbenchPreviewTabs.activeTabId === tabId) {
+        resetMainPreviewOutline();
+      }
       setWorkbenchPreviewTabs((current) => {
         const closingIndex = current.tabs.findIndex((item) => item.id === tabId);
         if (closingIndex === -1) {
@@ -391,7 +431,13 @@ export function WorkbenchModePage({
         previewContext?.setPreviewHostContext(workbenchPreviewRenderContext);
       }
     },
-    [previewContext, workbenchPreviewRenderContext, workbenchPreviewTabs.tabs],
+    [
+      previewContext,
+      resetMainPreviewOutline,
+      workbenchPreviewRenderContext,
+      workbenchPreviewTabs.activeTabId,
+      workbenchPreviewTabs.tabs,
+    ],
   );
   const closeActiveWorkbenchPreviewTab = useCallback(() => {
     if (!activeWorkbenchPreviewTab) {
@@ -441,7 +487,18 @@ export function WorkbenchModePage({
     setWorkbenchPreviewTabs(EMPTY_WORKBENCH_PREVIEW_TABS);
     setBtwSession(null);
     setBtwLoadedHistoryTurnCount(null);
-  }, [selectedSessionId, workspaceId]);
+    resetMainPreviewOutline();
+  }, [externalPreviewPath, resetMainPreviewOutline, selectedSessionId, workspaceId]);
+
+  useEffect(() => {
+    if (!externalPreviewPath || !workbenchPreviewRenderContext) {
+      return;
+    }
+    openWorkbenchMainPreview(
+      { type: "local-file", path: externalPreviewPath },
+      workbenchPreviewRenderContext,
+    );
+  }, [externalPreviewPath, openWorkbenchMainPreview, workbenchPreviewRenderContext]);
 
   useEffect(() => {
     const activeEntry = previewContext?.open ? previewContext.activeEntry : null;
@@ -584,18 +641,30 @@ export function WorkbenchModePage({
               style={{ "--workbench-main-browser-width": `${previewBrowserWidth}px` } as CSSProperties}
             >
               <div className={styles.browserPane} data-main-preview-open={activeWorkbenchPreviewTab ? "true" : "false"}>
-                <WorkspaceFileBrowser
-                  runtime={runtime}
-                  workspaceId={workspaceId}
-                  label={workspaceLabel}
-                  previewPath={activeWorkbenchPreviewPath}
-                  previewRequestId={activeWorkbenchPreviewTab?.requestId ?? 0}
-                  previewRevealTarget={activeWorkbenchPreviewTab?.revealTarget ?? null}
-                  previewPlacement="external"
-                  onPreviewPathChange={openWorkspaceBrowserFilePreview}
-                  onQuoteSelection={activeAssistantController.quoteSelection}
-                  onStartChatFromAnnotation={activeAssistantController.startChatFromAnnotation}
-                />
+                {workspaceId ? (
+                  <WorkspaceFileBrowser
+                    runtime={runtime}
+                    workspaceId={workspaceId}
+                    label={workspaceLabel}
+                    previewPath={activeWorkbenchPreviewPath}
+                    previewRequestId={activeWorkbenchPreviewTab?.requestId ?? 0}
+                    previewRevealTarget={activeWorkbenchPreviewTab?.revealTarget ?? null}
+                    previewPlacement="external"
+                    previewOutline={activeMainPreviewOutline}
+                    previewOutlineReady={activeMainPreviewOutlineReady}
+                    onPreviewPathChange={openWorkspaceBrowserFilePreview}
+                    onPreviewOutlineReveal={revealMainPreviewMarkdownOutlineItem}
+                    onQuoteSelection={activeAssistantController.quoteSelection}
+                    onStartChatFromAnnotation={activeAssistantController.startChatFromAnnotation}
+                  />
+                ) : (
+                  <ExternalPreviewPendingPane
+                    path={externalPreviewPath ?? activeWorkbenchPreviewPath}
+                    outline={activeMainPreviewOutline}
+                    outlineReady={activeMainPreviewOutlineReady}
+                    onOutlineReveal={revealMainPreviewMarkdownOutlineItem}
+                  />
+                )}
               </div>
               {activeWorkbenchPreviewTab ? (
                 <div
@@ -617,33 +686,37 @@ export function WorkbenchModePage({
                   context={activeWorkbenchPreviewTab.renderContext ?? workbenchPreviewRenderContext}
                   fallbackRuntime={runtime}
                   fallbackWorkspaceId={workspaceId}
+                  outlineRevealRequest={mainPreviewOutlineRevealRequest}
                   onCloseActive={closeActiveWorkbenchPreviewTab}
                   onCloseTab={closeWorkbenchPreviewTab}
+                  onMarkdownOutlineChange={handleMainPreviewMarkdownOutlineChange}
                   onSelectTab={selectWorkbenchPreviewTab}
                   tabs={workbenchPreviewTabs.tabs}
                 />
               ) : null}
             </div>
           </div>
-          <WorkbenchAssistantSurface
-            runtime={runtime}
-            workspaceId={workspaceId}
-            workspace={selectedWorkspace}
-            controller={activeAssistantController}
-            creatingSession={btwActive ? false : creatingSession}
-            drawerInlineWidth={drawerInlineWidth}
-            drawerWidth={drawerWidth}
-            btwActive={btwActive}
-            btwLoadedHistoryTurnCount={btwLoadedHistoryTurnCount}
-            onOpenBtwConversation={openWorkbenchBtwConversation}
-            onCloseBtwConversation={closeWorkbenchBtwConversation}
-            onEnsureSession={!btwActive ? ensureWorkbenchSession : undefined}
-            onRequestNewSession={!btwActive && onRequestNewSession ? requestNewWorkbenchSession : undefined}
-            onDrawerWidthCommit={commitDrawerWidth}
-            onDrawerWidthPreview={previewDrawerWidth}
-            onDockTransitionChange={setDockTransitioning}
-            onDockTransitionLayoutChange={updateDockTransitionLayout}
-          />
+          {workspaceId ? (
+            <WorkbenchAssistantSurface
+              runtime={runtime}
+              workspaceId={workspaceId}
+              workspace={selectedWorkspace}
+              controller={activeAssistantController}
+              creatingSession={btwActive ? false : creatingSession}
+              drawerInlineWidth={drawerInlineWidth}
+              drawerWidth={drawerWidth}
+              btwActive={btwActive}
+              btwLoadedHistoryTurnCount={btwLoadedHistoryTurnCount}
+              onOpenBtwConversation={openWorkbenchBtwConversation}
+              onCloseBtwConversation={closeWorkbenchBtwConversation}
+              onEnsureSession={!btwActive ? ensureWorkbenchSession : undefined}
+              onRequestNewSession={!btwActive && onRequestNewSession ? requestNewWorkbenchSession : undefined}
+              onDrawerWidthCommit={commitDrawerWidth}
+              onDrawerWidthPreview={previewDrawerWidth}
+              onDockTransitionChange={setDockTransitioning}
+              onDockTransitionLayoutChange={updateDockTransitionLayout}
+            />
+          ) : null}
         </main>
       )}
     </div>
@@ -678,8 +751,10 @@ function WorkbenchMainPreviewTabs({
   context,
   fallbackRuntime,
   fallbackWorkspaceId,
+  outlineRevealRequest,
   onCloseActive,
   onCloseTab,
+  onMarkdownOutlineChange,
   onSelectTab,
   tabs,
 }: {
@@ -687,8 +762,10 @@ function WorkbenchMainPreviewTabs({
   context: PreviewRenderContext | null;
   fallbackRuntime: RuntimeBridge;
   fallbackWorkspaceId?: string;
+  outlineRevealRequest?: MarkdownOutlineRevealRequest | null;
   onCloseActive: () => void;
   onCloseTab: (tabId: string) => void;
+  onMarkdownOutlineChange?: (outline: MarkdownOutlineItem[]) => void;
   onSelectTab: (tabId: string) => void;
   tabs: WorkbenchMainPreviewTabState[];
 }) {
@@ -875,11 +952,13 @@ function WorkbenchMainPreviewTabs({
         context={context}
         fallbackRuntime={fallbackRuntime}
         fallbackWorkspaceId={fallbackWorkspaceId}
+        outlineRevealRequest={outlineRevealRequest}
         request={activeTab.request}
         requestId={activeTab.requestId}
         revealTarget={activeTab.revealTarget}
         title={activeTab.title}
         onClose={onCloseActive}
+        onMarkdownOutlineChange={onMarkdownOutlineChange}
       />
     </section>
   );
@@ -889,20 +968,24 @@ function WorkbenchMainFilePreview({
   context,
   fallbackRuntime,
   fallbackWorkspaceId,
+  outlineRevealRequest,
   request,
   requestId,
   revealTarget,
   title,
   onClose,
+  onMarkdownOutlineChange,
 }: {
   context: PreviewRenderContext | null;
   fallbackRuntime: RuntimeBridge;
   fallbackWorkspaceId?: string;
+  outlineRevealRequest?: MarkdownOutlineRevealRequest | null;
   request: PreviewRequest;
   requestId: number;
   revealTarget: PreviewFileRevealTarget | null;
   title: string;
   onClose: () => void;
+  onMarkdownOutlineChange?: (outline: MarkdownOutlineItem[]) => void;
 }) {
   const sourceRevealRequest = useMemo<FilePreviewRevealRequest | null>(() => {
     if (!revealTarget) {
@@ -933,7 +1016,9 @@ function WorkbenchMainFilePreview({
         sessionId={context?.sessionId}
         request={request}
         runtime={context?.runtime ?? fallbackRuntime}
+        outlineRevealRequest={outlineRevealRequest}
         sourceRevealRequest={sourceRevealRequest}
+        onMarkdownOutlineChange={onMarkdownOutlineChange}
         onQuoteSelection={context?.onQuoteSelection}
         onStartChatFromAnnotation={context?.onStartChatFromAnnotation}
         onClose={onClose}
@@ -953,6 +1038,46 @@ function WorkbenchAssistantPlaceholder({ disabled = false, label }: { disabled?:
     >
       <span>{label}</span>
     </div>
+  );
+}
+
+function ExternalPreviewPendingPane({
+  path,
+  outline,
+  outlineReady,
+  onOutlineReveal,
+}: {
+  path?: string | null;
+  outline: MarkdownOutlineItem[];
+  outlineReady: boolean;
+  onOutlineReveal: (item: MarkdownOutlineItem) => void;
+}) {
+  const displayPath = path?.trim() ?? "";
+  const displayName = displayPath ? fileName(displayPath) : "Local file";
+  const showOutline = outlineReady && outline.length > 0;
+
+  return (
+    <aside className={styles.externalPreviewPendingPane} data-testid="workbench-external-preview-pending-pane">
+      <header className={styles.externalPreviewPendingHeader} aria-label={displayPath || displayName}>
+        <span className={styles.externalPreviewPendingLabel}>Local file</span>
+        <span className={styles.externalPreviewPendingPath}>{displayName}</span>
+      </header>
+      {showOutline ? (
+        <nav className={styles.externalPreviewOutline} aria-label="Outline">
+          {outline.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={styles.externalPreviewOutlineItem}
+              style={{ paddingLeft: `${Math.min(Math.max(item.level - 1, 0), 5) * 10}px` }}
+              onClick={() => onOutlineReveal(item)}
+            >
+              <span>{item.title}</span>
+            </button>
+          ))}
+        </nav>
+      ) : null}
+    </aside>
   );
 }
 
@@ -1009,4 +1134,8 @@ function previewEntryStamp(entry: { id: string; openedAt: number }): string {
 
 function workbenchPreviewPanelScopeKey(workspaceId: string): string {
   return `workbench:${workspaceId}`;
+}
+
+function workbenchExternalPreviewPanelScopeKey(path: string): string {
+  return `workbench:external:${hashText(path)}`;
 }

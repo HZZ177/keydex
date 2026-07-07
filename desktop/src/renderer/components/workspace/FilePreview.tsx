@@ -209,7 +209,7 @@ export function FilePreview({
   const showPreviewTabs = previewEntries.length > 1;
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const annotationScope = useMemo(() => annotationWorkspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
-  const annotationPath = request.type === "file" ? request.path : null;
+  const annotationPath = request.type === "file" || request.type === "local-file" ? request.path : null;
   const revealPath = isPathPreviewRequest(request)
     ? request.path
     : request.type === "content"

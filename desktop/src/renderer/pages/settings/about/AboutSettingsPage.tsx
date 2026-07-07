@@ -10,6 +10,10 @@ import {
   type PendingAppUpdate,
 } from "@/runtime";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import {
+  appUpdateProgressPercent,
+  appUpdateProgressText,
+} from "@/renderer/utils/appUpdateDisplay";
 
 import styles from "./AboutSettingsPage.module.css";
 
@@ -142,14 +146,17 @@ export function AboutSettingsPage() {
               aria-label="更新下载进度"
               aria-valuemax={100}
               aria-valuemin={0}
-              aria-valuenow={progressPercent(progress)}
+              aria-valuenow={appUpdateProgressPercent(progress)}
               className={`${styles.progress} ${progress.totalBytes ? "" : styles.progressIndeterminate}`}
               role="progressbar"
             >
               <span className={styles.progressTrack}>
-                <span className={styles.progressValue} style={{ width: `${progressPercent(progress)}%` }} />
+                <span
+                  className={styles.progressValue}
+                  style={{ width: `${appUpdateProgressPercent(progress)}%` }}
+                />
               </span>
-              <span className={styles.progressText}>{progressText(progress)}</span>
+              <span className={styles.progressText}>{appUpdateProgressText(progress)}</span>
             </div>
           ) : null}
 
@@ -180,7 +187,7 @@ function updateStatusText(
     return `发现新版本 ${update.version}`;
   }
   if (status === "downloading") {
-    return `正在下载更新 ${progressPercent(progress)}%`;
+    return `正在下载更新 ${appUpdateProgressPercent(progress)}%`;
   }
   if (status === "installed") {
     return "更新已安装，正在重启";
@@ -189,35 +196,6 @@ function updateStatusText(
     return "更新检查失败";
   }
   return "尚未检查更新";
-}
-
-function progressPercent(progress: AppUpdateProgress): number {
-  if (!progress.totalBytes || progress.totalBytes <= 0) {
-    return progress.finished ? 100 : 0;
-  }
-  return Math.min(100, Math.round((progress.downloadedBytes / progress.totalBytes) * 100));
-}
-
-function progressText(progress: AppUpdateProgress): string {
-  if (!progress.totalBytes || progress.totalBytes <= 0) {
-    return `${formatBytes(progress.downloadedBytes)} 已下载`;
-  }
-  return `${formatBytes(progress.downloadedBytes)} / ${formatBytes(progress.totalBytes)}`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  const kib = bytes / 1024;
-  if (kib < 1024) {
-    return `${formatNumber(kib)} KB`;
-  }
-  return `${formatNumber(kib / 1024)} MB`;
-}
-
-function formatNumber(value: number): string {
-  return value >= 100 ? value.toFixed(0) : value.toFixed(1);
 }
 
 function errorMessage(reason: unknown): string {
