@@ -87,7 +87,6 @@ describe("agent protocol types", () => {
       transport: "stdio",
       status: "online",
       tools_count: 3,
-      prompts_count: 1,
       resources_reserved: true,
       last_refresh_at: "2026-07-06T00:00:00Z",
       last_error_message: null,
@@ -115,7 +114,6 @@ describe("agent protocol types", () => {
       default_tool_approval_mode: "auto",
       elicitation_enabled: true,
       sampling_enabled: false,
-      prompt_discovery_enabled: true,
     } satisfies McpServerDetailResponse;
     const tool = {
       id: "tool_1",
@@ -131,7 +129,6 @@ describe("agent protocol types", () => {
       status: "unchanged",
       discovery_status: "unchanged",
       effective_state: "enabled",
-      risk_level: "low",
       approval_mode: "auto",
       effective_approval_mode: "auto",
       annotations: { readOnlyHint: true },
@@ -243,7 +240,6 @@ describe("agent protocol types", () => {
       server_name: "filesystem",
       raw_tool_name: "read_file",
       model_tool_name: "mcp__filesystem__read_file",
-      risk_level: "low",
       snapshot_id: snapshot.snapshot_id,
     } satisfies McpToolEventMetadata;
     const error = {
@@ -381,7 +377,6 @@ describe("agent protocol types", () => {
       server_name: "Ticket MCP",
       raw_tool_name: "search",
       model_tool_name: "mcp__srv_1__search",
-      risk_level: "low",
       metadata: {
         mcp: {
           kind: "mcp_tool",

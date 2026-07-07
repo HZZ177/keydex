@@ -10,9 +10,6 @@ from backend.app.mcp.client import (
     McpClientBase,
     McpClientCapabilities,
     McpClientInitializeResult,
-    McpClientPromptArgument,
-    McpClientPromptResult,
-    McpClientPromptSpec,
     McpClientToolResult,
     McpClientToolSpec,
 )
@@ -36,7 +33,7 @@ def _create_server(repositories: StorageRepositories, server_id: str = "srv_refr
 
 
 @pytest.mark.asyncio
-async def test_refresh_capabilities_persists_tools_prompts_status_and_audit(tmp_path) -> None:
+async def test_refresh_capabilities_persists_tools_status_and_audit(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _create_server(repositories)
     client = FakeDiscoveryClient(
@@ -49,19 +46,6 @@ async def test_refresh_capabilities_persists_tools_prompts_status_and_audit(tmp_
                 raw={"source": "mock"},
             )
         ],
-        prompts=[
-            McpClientPromptSpec(
-                name="triage",
-                description="Triage issue",
-                arguments=[
-                    McpClientPromptArgument(
-                        name="issue",
-                        description="Issue id",
-                        required=True,
-                    )
-                ],
-            )
-        ],
         capabilities=McpClientCapabilities(resources_reserved=True),
     )
     manager = _manager(tmp_path, repositories, client)
@@ -69,25 +53,16 @@ async def test_refresh_capabilities_persists_tools_prompts_status_and_audit(tmp_
     report = await manager.refresh_capabilities("srv_refresh")
 
     tool = repositories.mcp_tools.get_by_raw_name("srv_refresh", "echo")
-    prompt = repositories.mcp_prompts.get_by_raw_name("srv_refresh", "triage")
     status = repositories.mcp_server_status.get("srv_refresh")
     audits, total = repositories.mcp_audit_log.list(event_type="refresh.completed")
 
     assert report.status == "online"
     assert report.tools_count == 1
-    assert report.prompts_count == 1
     assert report.resources_reserved_count == 1
     assert tool.model_name == "mcp__srv_refresh__echo"
     assert tool.input_schema == {"type": "object"}
-    assert tool.risk_level == "low"
-    assert prompt.arguments_schema == {
-        "type": "object",
-        "properties": {"issue": {"type": "string", "description": "Issue id"}},
-        "required": ["issue"],
-    }
     assert status.last_refresh_revision == 1
     assert status.tools_count == 1
-    assert status.prompts_count == 1
     assert status.resources_reserved_count == 1
     assert client.list_resources_calls == 0
     assert total == 1
@@ -100,32 +75,25 @@ async def test_refresh_marks_first_discovery_new_then_unchanged_active(tmp_path)
     _create_server(repositories)
     first_client = FakeDiscoveryClient(
         tools=[_tool("echo", {"type": "object"})],
-        prompts=[_prompt("triage")],
     )
     second_client = FakeDiscoveryClient(
         tools=[_tool("echo", {"type": "object"})],
-        prompts=[_prompt("triage")],
     )
     manager = _manager(tmp_path, repositories, first_client, second_client)
 
     first_report = await manager.refresh_capabilities("srv_refresh")
     first_tool = repositories.mcp_tools.get_by_raw_name("srv_refresh", "echo")
-    first_prompt = repositories.mcp_prompts.get_by_raw_name("srv_refresh", "triage")
     first_schema_hash = first_tool.schema_hash
 
     second_report = await manager.refresh_capabilities("srv_refresh")
     second_tool = repositories.mcp_tools.get_by_raw_name("srv_refresh", "echo")
-    second_prompt = repositories.mcp_prompts.get_by_raw_name("srv_refresh", "triage")
 
     assert first_report.refresh_revision == 1
     assert second_report.refresh_revision == 2
     assert first_tool.discovery_status == "new"
-    assert first_prompt.discovery_status == "new"
     assert second_tool.discovery_status == "active"
-    assert second_prompt.discovery_status == "active"
     assert second_tool.schema_hash == first_schema_hash
     assert second_report.schema_changed_tools_count == 0
-    assert second_report.schema_changed_prompts_count == 0
 
 
 @pytest.mark.asyncio
@@ -139,11 +107,9 @@ async def test_refresh_marks_removed_and_schema_changed_without_losing_model_nam
             _tool("echo", {"type": "object"}),
             _tool("obsolete", {"type": "object"}),
         ],
-        prompts=[_prompt("triage"), _prompt("obsolete_prompt")],
     )
     second_client = FakeDiscoveryClient(
         tools=[_tool("echo", {"type": "object", "required": ["text"]})],
-        prompts=[_prompt("triage", required=True)],
     )
     manager = _manager(tmp_path, repositories, first_client, second_client)
 
@@ -152,22 +118,13 @@ async def test_refresh_marks_removed_and_schema_changed_without_losing_model_nam
 
     echo = repositories.mcp_tools.get_by_raw_name("srv_refresh", "echo")
     obsolete = repositories.mcp_tools.get_by_raw_name("srv_refresh", "obsolete")
-    triage = repositories.mcp_prompts.get_by_raw_name("srv_refresh", "triage")
-    obsolete_prompt = repositories.mcp_prompts.get_by_raw_name(
-        "srv_refresh",
-        "obsolete_prompt",
-    )
 
     assert report.schema_changed_tools_count == 1
     assert report.removed_tools_count == 1
-    assert report.schema_changed_prompts_count == 1
-    assert report.removed_prompts_count == 1
     assert echo.discovery_status == "schema_changed"
     assert echo.model_name == "mcp__srv_refresh__echo"
     assert obsolete.discovery_status == "removed"
     assert obsolete.removed_at is not None
-    assert triage.discovery_status == "schema_changed"
-    assert obsolete_prompt.discovery_status == "removed"
 
 
 @pytest.mark.asyncio
@@ -238,55 +195,6 @@ async def test_refresh_list_tools_failure_preserves_existing_discovery_and_write
 
     assert exc_info.value.code == McpErrorCode.PROTOCOL_ERROR
     assert existing_tool.discovery_status == "new"
-    assert status.status == "error"
-    assert status.last_error_code == "protocol_error"
-    assert total == 1
-    assert audits[0].detail["error_code"] == "protocol_error"
-
-
-@pytest.mark.asyncio
-async def test_refresh_list_prompts_failure_does_not_persist_partial_tool_results(
-    tmp_path,
-) -> None:
-    repositories = _repositories(tmp_path)
-    _create_server(repositories)
-    manager = _manager(
-        tmp_path,
-        repositories,
-        FakeDiscoveryClient(
-            tools=[_tool("existing", {"type": "object"})],
-            prompts=[_prompt("existing_prompt")],
-        ),
-        FakeDiscoveryClient(
-            tools=[
-                _tool("existing", {"type": "object"}),
-                _tool("partial_new", {"type": "object"}),
-            ],
-            prompts=[_prompt("existing_prompt")],
-            list_prompts_error=McpRuntimeError(
-                McpErrorCode.PROTOCOL_ERROR,
-                "list prompts failed",
-            ),
-        ),
-    )
-    await manager.refresh_capabilities("srv_refresh")
-
-    with pytest.raises(McpRuntimeError) as exc_info:
-        await manager.refresh_capabilities("srv_refresh")
-
-    existing_tool = repositories.mcp_tools.get_by_raw_name("srv_refresh", "existing")
-    partial_new = repositories.mcp_tools.get_by_raw_name("srv_refresh", "partial_new")
-    existing_prompt = repositories.mcp_prompts.get_by_raw_name(
-        "srv_refresh",
-        "existing_prompt",
-    )
-    status = repositories.mcp_server_status.get("srv_refresh")
-    audits, total = repositories.mcp_audit_log.list(event_type="refresh.failed")
-
-    assert exc_info.value.code == McpErrorCode.PROTOCOL_ERROR
-    assert existing_tool.discovery_status == "new"
-    assert partial_new is None
-    assert existing_prompt.discovery_status == "new"
     assert status.status == "error"
     assert status.last_error_code == "protocol_error"
     assert total == 1
@@ -393,13 +301,6 @@ def _tool(name: str, input_schema: dict[str, Any]) -> McpClientToolSpec:
     )
 
 
-def _prompt(name: str, *, required: bool = False) -> McpClientPromptSpec:
-    return McpClientPromptSpec(
-        name=name,
-        arguments=[McpClientPromptArgument(name="value", required=required)],
-    )
-
-
 class SequencedClientFactory:
     def __init__(self, clients: list[FakeDiscoveryClient]) -> None:
         self.clients = clients
@@ -416,19 +317,15 @@ class FakeDiscoveryClient(McpClientBase):
         self,
         *,
         tools: list[McpClientToolSpec] | None = None,
-        prompts: list[McpClientPromptSpec] | None = None,
         capabilities: McpClientCapabilities | None = None,
         initialize_error: BaseException | None = None,
         list_tools_error: BaseException | None = None,
-        list_prompts_error: BaseException | None = None,
     ) -> None:
         super().__init__(server_id="srv_refresh")
         self.tools = tools or []
-        self.prompts = prompts or []
         self.capabilities = capabilities or McpClientCapabilities()
         self.initialize_error = initialize_error
         self.list_tools_error = list_tools_error
-        self.list_prompts_error = list_prompts_error
         self.list_resources_calls = 0
         self.shutdown_calls = 0
 
@@ -457,16 +354,6 @@ class FakeDiscoveryClient(McpClientBase):
             raise self.list_tools_error
         return self.tools
 
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        if self.list_prompts_error is not None:
-            raise self.list_prompts_error
-        return self.prompts
-
     async def list_resources(self, *_args: Any, **_kwargs: Any) -> list[Any]:
         self.list_resources_calls += 1
         raise AssertionError("resources are reserved and must not be listed")
@@ -480,16 +367,6 @@ class FakeDiscoveryClient(McpClientBase):
         timeout_sec: float | None = None,
         cancellation: McpCancellationToken | None = None,
     ) -> McpClientToolResult:
-        raise NotImplementedError
-
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
         raise NotImplementedError
 
     async def cancel_call(self, call_id: str) -> bool:

@@ -44,7 +44,6 @@ def _tool(repositories: StorageRepositories, raw_name: str = "tool") -> None:
                 "description": "MCP tool description",
                 "input_schema": {"type": "object"},
                 "schema_hash": f"hash-{raw_name}",
-                "risk_level": "low",
             }
         ],
     )

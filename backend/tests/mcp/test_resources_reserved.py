@@ -105,7 +105,6 @@ def test_reserved_resources_do_not_enter_snapshot_or_local_tool_registry(
         "srv_resources",
         status="online",
         tools_count=0,
-        prompts_count=0,
         resources_reserved_count=1,
     )
     server = repositories.mcp_servers.get("srv_resources")

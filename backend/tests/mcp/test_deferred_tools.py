@@ -19,7 +19,6 @@ def _visible_tool(
     *,
     server_id: str = "srv",
     description: str | None = None,
-    risk_level: str = "unknown",
     input_schema: dict | None = None,
 ) -> McpVisibleTool:
     return McpVisibleTool(
@@ -28,7 +27,6 @@ def _visible_tool(
         model_name=f"mcp__{server_id}__{raw_name}",
         description=description,
         input_schema=input_schema or {"type": "object"},
-        risk_level=risk_level,
         approval_mode="auto",
     )
 
@@ -82,21 +80,19 @@ def test_deferred_planner_exposes_only_active_tools_when_over_threshold() -> Non
     assert plan.include_list_tool is True
 
 
-def test_search_matches_query_server_risk_and_schema_summary() -> None:
+def test_search_matches_query_server_and_schema_summary() -> None:
     index = McpDeferredToolSearchIndex(
         [
             _visible_tool(
                 "create_issue",
                 server_id="github",
                 description="Create a GitHub issue",
-                risk_level="high",
                 input_schema={"properties": {"title": {"type": "string"}}},
             ),
             _visible_tool(
                 "list_tasks",
                 server_id="linear",
                 description="List tasks",
-                risk_level="low",
             ),
         ]
     )
@@ -106,9 +102,6 @@ def test_search_matches_query_server_risk_and_schema_summary() -> None:
     ]
     assert [item.raw_name for item in index.search(query="title")] == ["create_issue"]
     assert [item.raw_name for item in index.search(server_id="linear")] == ["list_tasks"]
-    assert [item.raw_name for item in index.search(risk_level="high")] == [
-        "create_issue"
-    ]
     assert [item.raw_name for item in index.list_tools(limit=1)] == ["create_issue"]
 
 
@@ -228,7 +221,6 @@ def _persist_tool(
                 "description": f"{raw_name} description",
                 "input_schema": {"type": "object"},
                 "schema_hash": f"hash-{raw_name}",
-                "risk_level": "low",
             }
         ],
     )

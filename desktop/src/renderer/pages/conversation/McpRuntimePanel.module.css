@@ -290,7 +290,7 @@
 
 .toolRow {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) minmax(54px, 0.34fr) minmax(70px, 0.45fr) minmax(96px, 0.7fr);
+  grid-template-columns: 42px minmax(0, 1fr) minmax(70px, 0.45fr) minmax(96px, 0.7fr);
   gap: 8px;
   align-items: center;
   min-width: 0;

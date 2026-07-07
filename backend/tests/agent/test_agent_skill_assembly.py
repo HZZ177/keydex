@@ -123,7 +123,6 @@ def _mcp_runtime_tool():
                     "properties": {"query": {"type": "string"}},
                     "required": ["query"],
                 },
-                "risk_level": "low",
                 "approval_mode": "auto",
                 "exposure": "direct",
             }

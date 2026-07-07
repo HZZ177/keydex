@@ -6,12 +6,9 @@ import { AppDialog, DialogButton } from "@/renderer/components/dialog";
 import type {
   McpAuthType,
   McpConnectionTestResponse,
-  McpConnectMode,
   McpOAuthStatusResponse,
-  McpRestartPolicy,
   McpServerCreatePayload,
   McpServerDetailResponse,
-  McpToolExposureMode,
   McpTransport,
 } from "@/types/protocol";
 
@@ -36,9 +33,6 @@ interface KeyValueRow {
 
 interface FormState {
   name: string;
-  description: string;
-  enabled: boolean;
-  required: boolean;
   transport: McpTransport;
   command: string;
   args: string[];
@@ -65,21 +59,6 @@ interface FormState {
   oauthResource: string;
   oauthScopes: string;
   replaceOAuthConfig: boolean;
-  startupTimeoutSec: string;
-  toolTimeoutSec: string;
-  readTimeoutSec: string;
-  sseReadTimeoutSec: string;
-  shutdownTimeoutSec: string;
-  restartPolicy: McpRestartPolicy;
-  connectMode: McpConnectMode;
-  autoRefresh: boolean;
-  refreshIntervalSec: string;
-  defaultToolExposureMode: McpToolExposureMode;
-  defaultToolApprovalMode: "auto" | "prompt" | "approve";
-  supportsParallelToolCalls: boolean;
-  elicitationEnabled: boolean;
-  samplingEnabled: boolean;
-  promptDiscoveryEnabled: boolean;
 }
 
 interface PendingConfirmation {
@@ -95,10 +74,7 @@ const TRANSPORTS: Array<{ value: McpTransport; label: string; description: strin
 
 const DEFAULT_FORM: FormState = {
   name: "",
-  description: "",
-  enabled: true,
-  required: false,
-  transport: "stdio",
+  transport: "streamable_http",
   command: "",
   args: [],
   cwd: "",
@@ -124,21 +100,6 @@ const DEFAULT_FORM: FormState = {
   oauthResource: "",
   oauthScopes: "",
   replaceOAuthConfig: true,
-  startupTimeoutSec: "30",
-  toolTimeoutSec: "60",
-  readTimeoutSec: "60",
-  sseReadTimeoutSec: "300",
-  shutdownTimeoutSec: "10",
-  restartPolicy: "on_failure",
-  connectMode: "on_demand",
-  autoRefresh: true,
-  refreshIntervalSec: "1800",
-  defaultToolExposureMode: "allow_all_except_disabled",
-  defaultToolApprovalMode: "auto",
-  supportsParallelToolCalls: false,
-  elicitationEnabled: true,
-  samplingEnabled: false,
-  promptDiscoveryEnabled: true,
 };
 
 export function McpServerFormDialog({
@@ -162,7 +123,6 @@ export function McpServerFormDialog({
   const [oauthAuthUrl, setOauthAuthUrl] = useState("");
   const [oauthCopyState, setOauthCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
-  const [showAdvancedCreate, setShowAdvancedCreate] = useState(false);
   const [showAdvancedAuth, setShowAdvancedAuth] = useState(false);
   const [showSseTransport, setShowSseTransport] = useState(false);
 
@@ -170,12 +130,10 @@ export function McpServerFormDialog({
   const effectiveServerId = persistedServerId ?? serverId ?? "";
   const title = effectiveMode === "create" ? "添加 MCP Server" : "编辑 MCP Server";
   const busy = loading || saving || testing;
-  const advancedOpen = effectiveMode === "edit" || showAdvancedCreate;
   const showAllTransports = effectiveMode === "edit" || showSseTransport || form.transport === "sse";
   const visibleTransports = showAllTransports
     ? TRANSPORTS
     : TRANSPORTS.filter((transport) => transport.value !== "sse");
-  const useQuickRemoteAuth = effectiveMode === "create" && form.transport === "streamable_http" && !showAdvancedAuth;
 
   useEffect(() => {
     let alive = true;
@@ -183,7 +141,6 @@ export function McpServerFormDialog({
       setLoading(false);
       setForm(DEFAULT_FORM);
       setOriginal(null);
-      setShowAdvancedCreate(false);
       setShowAdvancedAuth(false);
       setShowSseTransport(false);
       return () => {
@@ -226,6 +183,7 @@ export function McpServerFormDialog({
     }),
     [original],
   );
+  const useQuickRemoteAuth = effectiveMode === "create" && form.transport === "streamable_http" && !showAdvancedAuth;
 
   useEffect(() => {
     if (!effectiveServerId || form.authType !== "oauth") {
@@ -244,7 +202,7 @@ export function McpServerFormDialog({
   };
 
   const updateQuickRemoteAuth = (
-    key: "bearerTokenEnvVar" | "headerRows" | "envHeaderRows",
+    key: "bearerTokenEnvVar" | "headerRows",
     value: string | KeyValueRow[],
   ) => {
     setPendingConfirmation(null);
@@ -394,7 +352,7 @@ export function McpServerFormDialog({
   return (
     <AppDialog
       title={title}
-      description="连接配置保存后进入全局 MCP Runtime，Agent 每轮运行时会按快照加载可见工具。"
+      description="配置 MCP Server 连接"
       placement="right"
       size="drawer"
       backdrop="panel"
@@ -465,7 +423,6 @@ export function McpServerFormDialog({
               busy={busy}
               onBearerEnvChange={(value) => updateQuickRemoteAuth("bearerTokenEnvVar", value)}
               onHeaderRowsChange={(rows) => updateQuickRemoteAuth("headerRows", rows)}
-              onEnvHeaderRowsChange={(rows) => updateQuickRemoteAuth("envHeaderRows", rows)}
             />
           ) : null}
           {form.transport !== "stdio" ? (
@@ -490,72 +447,30 @@ export function McpServerFormDialog({
           ) : null}
         </section>
 
-        <details
-          className={styles.advancedDetails}
-          open={advancedOpen}
-          onToggle={(event) => {
-            if (effectiveMode === "create") {
-              setShowAdvancedCreate(event.currentTarget.open);
-            }
-          }}
-        >
-          <summary>高级设置</summary>
-          <div className={styles.advancedContent}>
-            <section className={styles.section} aria-labelledby="mcp-server-advanced-basic-title">
-              <h3 id="mcp-server-advanced-basic-title">基础高级项</h3>
-              <label className={styles.field}>
-                <span>描述</span>
-                <textarea
-                  aria-label="MCP Server 描述"
-                  disabled={busy}
-                  value={form.description}
-                  placeholder="这个 server 会给 Agent 暴露哪些外部能力"
-                  onChange={(event) => update("description", event.target.value)}
-                />
-              </label>
-              <div className={styles.toggleGrid}>
-                <ToggleRow
-                  checked={form.enabled}
-                  disabled={busy}
-                  label="启用"
-                  hint="停用后不会进入 Agent 运行时快照"
-                  onChange={(checked) => update("enabled", checked)}
-                />
-                <ToggleRow
-                  checked={form.required}
-                  disabled={busy}
-                  label="Required"
-                  hint="启动失败时阻断需要 MCP 的 Agent 运行"
-                  onChange={(checked) => update("required", checked)}
-                />
-              </div>
-              {!showAllTransports ? (
-                <button
-                  className={styles.inlineToolButton}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setShowSseTransport(true)}
-                >
-                  显示 SSE transport
-                </button>
-              ) : null}
-              {useQuickRemoteAuth ? (
-                <button
-                  className={styles.inlineToolButton}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => {
-                    setShowAdvancedAuth(true);
-                    setShowAdvancedCreate(true);
-                  }}
-                >
-                  OAuth / Secret refs
-                </button>
-              ) : null}
-            </section>
-            <RuntimePolicyFields form={form} busy={busy} update={update} />
+        {!showAllTransports || useQuickRemoteAuth ? (
+          <div className={styles.inlineActionRow}>
+            {!showAllTransports ? (
+              <button
+                className={styles.inlineToolButton}
+                type="button"
+                disabled={busy}
+                onClick={() => setShowSseTransport(true)}
+              >
+                显示 SSE
+              </button>
+            ) : null}
+            {useQuickRemoteAuth ? (
+              <button
+                className={styles.inlineToolButton}
+                type="button"
+                disabled={busy}
+                onClick={() => setShowAdvancedAuth(true)}
+              >
+                OAuth / Secret refs
+              </button>
+            ) : null}
           </div>
-        </details>
+        ) : null}
 
         {pendingConfirmation ? (
           <section className={styles.confirmBox} role="alert">
@@ -716,13 +631,11 @@ function QuickRemoteAuthFields({
   busy,
   onBearerEnvChange,
   onHeaderRowsChange,
-  onEnvHeaderRowsChange,
 }: {
   form: FormState;
   busy: boolean;
   onBearerEnvChange: (value: string) => void;
   onHeaderRowsChange: (rows: KeyValueRow[]) => void;
-  onEnvHeaderRowsChange: (rows: KeyValueRow[]) => void;
 }) {
   return (
     <div className={styles.quickAuthPanel} aria-label="MCP HTTP 常用鉴权">
@@ -747,18 +660,6 @@ function QuickRemoteAuthFields({
         replaceExisting
         onReplaceExistingChange={() => undefined}
         onChange={onHeaderRowsChange}
-      />
-      <KeyValueEditor
-        title="来自环境变量的标头"
-        addLabel="添加变量"
-        rows={form.envHeaderRows}
-        disabled={busy}
-        keyPlaceholder="Authorization"
-        valuePlaceholder="MCP_TOKEN_ENV"
-        existingKeys={[]}
-        replaceExisting
-        onReplaceExistingChange={() => undefined}
-        onChange={onEnvHeaderRowsChange}
       />
     </div>
   );
@@ -909,154 +810,6 @@ function AuthFields({
           onCopyOAuthUrl={onCopyOAuthUrl}
         />
       ) : null}
-    </section>
-  );
-}
-
-function RuntimePolicyFields({
-  form,
-  busy,
-  update,
-}: {
-  form: FormState;
-  busy: boolean;
-  update: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
-}) {
-  return (
-    <section className={styles.section} aria-labelledby="mcp-server-runtime-title">
-      <h3 id="mcp-server-runtime-title">Timeouts 与运行策略</h3>
-      <div className={styles.numberGrid}>
-        <NumberField
-          label="Startup"
-          value={form.startupTimeoutSec}
-          disabled={busy}
-          onChange={(value) => update("startupTimeoutSec", value)}
-        />
-        <NumberField
-          label="Tool"
-          value={form.toolTimeoutSec}
-          disabled={busy}
-          onChange={(value) => update("toolTimeoutSec", value)}
-        />
-        <NumberField
-          label="Read"
-          value={form.readTimeoutSec}
-          disabled={busy}
-          onChange={(value) => update("readTimeoutSec", value)}
-        />
-        {form.transport === "sse" ? (
-          <NumberField
-            label="SSE Read"
-            value={form.sseReadTimeoutSec}
-            disabled={busy}
-            onChange={(value) => update("sseReadTimeoutSec", value)}
-          />
-        ) : null}
-        <NumberField
-          label="Shutdown"
-          value={form.shutdownTimeoutSec}
-          disabled={busy}
-          onChange={(value) => update("shutdownTimeoutSec", value)}
-        />
-        <NumberField
-          label="Refresh"
-          value={form.refreshIntervalSec}
-          disabled={busy || !form.autoRefresh}
-          onChange={(value) => update("refreshIntervalSec", value)}
-        />
-      </div>
-
-      <div className={styles.selectGrid}>
-        <label className={styles.field}>
-          <span>Restart policy</span>
-          <select
-            aria-label="MCP restart policy"
-            disabled={busy}
-            value={form.restartPolicy}
-            onChange={(event) => update("restartPolicy", event.target.value as McpRestartPolicy)}
-          >
-            <option value="never">never</option>
-            <option value="on_failure">on failure</option>
-            <option value="always">always</option>
-          </select>
-        </label>
-        <label className={styles.field}>
-          <span>Connect mode</span>
-          <select
-            aria-label="MCP connect mode"
-            disabled={busy}
-            value={form.connectMode}
-            onChange={(event) => update("connectMode", event.target.value as McpConnectMode)}
-          >
-            <option value="on_demand">on demand</option>
-            <option value="on_startup">on startup</option>
-          </select>
-        </label>
-        <label className={styles.field}>
-          <span>Tool 默认暴露</span>
-          <select
-            aria-label="MCP 默认 tool 暴露策略"
-            disabled={busy}
-            value={form.defaultToolExposureMode}
-            onChange={(event) => update("defaultToolExposureMode", event.target.value as McpToolExposureMode)}
-          >
-            <option value="allow_all_except_disabled">allow all except disabled</option>
-            <option value="allow_selected_only">allow selected only</option>
-            <option value="read_only_auto">read only auto</option>
-          </select>
-        </label>
-        <label className={styles.field}>
-          <span>Tool 默认审批</span>
-          <select
-            aria-label="MCP 默认 tool 审批策略"
-            disabled={busy}
-            value={form.defaultToolApprovalMode}
-            onChange={(event) => update("defaultToolApprovalMode", event.target.value as "auto" | "prompt" | "approve")}
-          >
-            <option value="auto">auto</option>
-            <option value="prompt">prompt</option>
-            <option value="approve">approve</option>
-          </select>
-        </label>
-      </div>
-
-      <div className={styles.toggleGrid}>
-        <ToggleRow
-          checked={form.autoRefresh}
-          disabled={busy}
-          label="自动刷新"
-          hint="按 refresh interval 定期发现 capabilities"
-          onChange={(checked) => update("autoRefresh", checked)}
-        />
-        <ToggleRow
-          checked={form.supportsParallelToolCalls}
-          disabled={busy}
-          label="并行 Tool Call"
-          hint="允许同一 server 并行执行多个 MCP tool"
-          onChange={(checked) => update("supportsParallelToolCalls", checked)}
-        />
-        <ToggleRow
-          checked={form.elicitationEnabled}
-          disabled={busy}
-          label="Elicitation"
-          hint="允许 MCP server 在调用期间请求用户补充信息"
-          onChange={(checked) => update("elicitationEnabled", checked)}
-        />
-        <ToggleRow
-          checked={form.samplingEnabled}
-          disabled={busy}
-          label="Sampling"
-          hint="允许 MCP server 请求模型采样，开启时保存前会确认"
-          onChange={(checked) => update("samplingEnabled", checked)}
-        />
-        <ToggleRow
-          checked={form.promptDiscoveryEnabled}
-          disabled={busy}
-          label="Prompt discovery"
-          hint="刷新 capabilities 时发现 prompts"
-          onChange={(checked) => update("promptDiscoveryEnabled", checked)}
-        />
-      </div>
     </section>
   );
 }
@@ -1453,32 +1206,6 @@ function ToggleRow({
   );
 }
 
-function NumberField({
-  label,
-  value,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className={styles.field}>
-      <span>{label}</span>
-      <input
-        aria-label={`MCP ${label} timeout`}
-        type="number"
-        min={1}
-        disabled={disabled}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </label>
-  );
-}
-
 function TestResult({ result }: { result: McpConnectionTestResponse }) {
   const capabilities = result.ok ? formatConnectionCapabilities(result.capabilities) : "";
   return (
@@ -1503,7 +1230,6 @@ function formatConnectionCapabilities(capabilities: Record<string, unknown> | un
   const boolLabel = (key: string) => (capabilities[key] === true ? "yes" : "no");
   return [
     `tools: ${boolLabel("tools")}`,
-    `prompts: ${boolLabel("prompts")}`,
     `resources: ${boolLabel("resources_reserved")}`,
   ].join(" · ");
 }
@@ -1512,9 +1238,6 @@ function formFromServer(server: McpServerDetailResponse): FormState {
   return {
     ...DEFAULT_FORM,
     name: server.name ?? "",
-    description: server.description ?? "",
-    enabled: server.enabled,
-    required: server.required,
     transport: server.transport,
     command: server.command ?? "",
     args: server.args?.length ? server.args : [],
@@ -1533,21 +1256,6 @@ function formFromServer(server: McpServerDetailResponse): FormState {
     oauthResource: server.oauth_resource ?? "",
     oauthScopes: (server.oauth_scopes ?? []).join(" "),
     replaceOAuthConfig: !server.oauth_configured,
-    startupTimeoutSec: String(server.startup_timeout_sec ?? DEFAULT_FORM.startupTimeoutSec),
-    toolTimeoutSec: String(server.tool_timeout_sec ?? DEFAULT_FORM.toolTimeoutSec),
-    readTimeoutSec: String(server.read_timeout_sec ?? DEFAULT_FORM.readTimeoutSec),
-    sseReadTimeoutSec: String(server.sse_read_timeout_sec ?? DEFAULT_FORM.sseReadTimeoutSec),
-    shutdownTimeoutSec: String(server.shutdown_timeout_sec ?? DEFAULT_FORM.shutdownTimeoutSec),
-    restartPolicy: server.restart_policy ?? DEFAULT_FORM.restartPolicy,
-    connectMode: server.connect_mode ?? DEFAULT_FORM.connectMode,
-    autoRefresh: server.auto_refresh,
-    refreshIntervalSec: String(server.refresh_interval_sec ?? DEFAULT_FORM.refreshIntervalSec),
-    defaultToolExposureMode: server.default_tool_exposure_mode,
-    defaultToolApprovalMode: server.default_tool_approval_mode,
-    supportsParallelToolCalls: server.supports_parallel_tool_calls ?? false,
-    elicitationEnabled: server.elicitation_enabled,
-    samplingEnabled: server.sampling_enabled,
-    promptDiscoveryEnabled: server.prompt_discovery_enabled,
   };
 }
 
@@ -1565,26 +1273,7 @@ function buildPayload(
 ): McpServerCreatePayload {
   const payload: McpServerCreatePayload = {
     name: form.name.trim(),
-    description: cleanOptional(form.description),
-    enabled: form.enabled,
-    required: form.required,
     transport: form.transport,
-    startup_timeout_sec: positiveInt(form.startupTimeoutSec),
-    tool_timeout_sec: positiveInt(form.toolTimeoutSec),
-    read_timeout_sec: positiveInt(form.readTimeoutSec),
-    sse_read_timeout_sec: positiveInt(form.sseReadTimeoutSec),
-    shutdown_timeout_sec: positiveInt(form.shutdownTimeoutSec),
-    restart_policy: form.restartPolicy,
-    connect_mode: form.connectMode,
-    auto_refresh: form.autoRefresh,
-    refresh_interval_sec: positiveInt(form.refreshIntervalSec),
-    default_tool_exposure_mode: form.defaultToolExposureMode,
-    default_tool_approval_mode: form.defaultToolApprovalMode,
-    supports_parallel_tool_calls: form.supportsParallelToolCalls,
-    elicitation_enabled: form.elicitationEnabled,
-    sampling_enabled: form.samplingEnabled,
-    prompt_discovery_enabled: form.promptDiscoveryEnabled,
-    resource_reserved_policy: null,
   };
 
   if (form.transport === "stdio") {
@@ -1763,19 +1452,6 @@ function validateForm(
       }
     }
   }
-  const numberFields = [
-    ["startup timeout", form.startupTimeoutSec],
-    ["tool timeout", form.toolTimeoutSec],
-    ["read timeout", form.readTimeoutSec],
-    ["sse read timeout", form.sseReadTimeoutSec],
-    ["shutdown timeout", form.shutdownTimeoutSec],
-    ["refresh interval", form.refreshIntervalSec],
-  ];
-  for (const [label, value] of numberFields) {
-    if (!isPositiveInt(value)) {
-      return `${label} 必须是大于 0 的整数`;
-    }
-  }
   const rowError = validateRows(form);
   if (rowError) {
     return rowError;
@@ -1823,18 +1499,6 @@ function describeDangerousChanges(original: McpServerDetailResponse, form: FormS
       messages.push("Message URL 发生变化，保存后会发送到新的消息 endpoint");
     }
   }
-  if (
-    original.default_tool_exposure_mode !== "allow_all_except_disabled"
-    && form.defaultToolExposureMode === "allow_all_except_disabled"
-  ) {
-    messages.push("默认 Tool 暴露策略将改为 allow all except disabled");
-  }
-  if (original.default_tool_approval_mode !== "approve" && form.defaultToolApprovalMode === "approve") {
-    messages.push("默认 Tool 审批策略将改为 approve");
-  }
-  if (!original.sampling_enabled && form.samplingEnabled) {
-    messages.push("Sampling 将被启用，MCP server 可请求模型采样");
-  }
   if (form.authType === "none" && (original.auth_type ?? original.auth?.auth_type) !== "none") {
     messages.push("鉴权方式将改为无鉴权，并清除已保存的 auth 配置引用");
   }
@@ -1876,14 +1540,6 @@ function cleanArray(values: string[]): string[] {
 function cleanOptional(value: string): string | null {
   const cleaned = value.trim();
   return cleaned ? cleaned : null;
-}
-
-function positiveInt(value: string): number {
-  return Number.parseInt(value, 10);
-}
-
-function isPositiveInt(value: string): boolean {
-  return /^\d+$/.test(value.trim()) && Number.parseInt(value, 10) > 0;
 }
 
 function isHttpUrl(value: string): boolean {

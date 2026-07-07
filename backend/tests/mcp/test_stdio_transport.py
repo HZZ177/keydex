@@ -36,16 +36,12 @@ async def test_stdio_transport_initializes_and_lists_with_mock_session() -> None
 
     initialized = await client.initialize()
     tools = await client.list_tools()
-    prompts = await client.list_prompts()
-    prompt = await client.get_prompt("summarize", {"topic": "MCP"})
     tool_result = await client.call_tool("echo", {"text": "hello"}, call_id="call_1")
 
     assert client.status == McpServerStatus.ONLINE
     assert initialized.capabilities.tools is True
     assert tools[0].name == "echo"
     assert tools[0].input_schema == {"type": "object"}
-    assert prompts[0].arguments[0].name == "topic"
-    assert prompt.messages[0]["content"] == "Summarize MCP"
     assert tool_result.call_id == "call_1"
     assert tool_result.content[0]["text"] == "hello"
     assert factory.calls[0].command == sys.executable
@@ -232,7 +228,7 @@ class FakeSession:
         return SimpleNamespace(
             protocolVersion="2025-06-18",
             serverInfo=SimpleNamespace(name="fake-server"),
-            capabilities=SimpleNamespace(tools={}, prompts={}),
+            capabilities=SimpleNamespace(tools={}),
         )
 
     async def list_tools(self) -> SimpleNamespace:
@@ -247,17 +243,6 @@ class FakeSession:
             ]
         )
 
-    async def list_prompts(self) -> SimpleNamespace:
-        return SimpleNamespace(
-            prompts=[
-                SimpleNamespace(
-                    name="summarize",
-                    description="Summarize topic",
-                    arguments=[SimpleNamespace(name="topic", required=True)],
-                )
-            ]
-        )
-
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> SimpleNamespace:
         self.call_started.set()
         if self.block_tool_call:
@@ -267,11 +252,4 @@ class FakeSession:
             structuredContent={"ok": True},
             isError=False,
             meta={"name": name},
-        )
-
-    async def get_prompt(self, name: str, arguments: dict[str, str] | None) -> SimpleNamespace:
-        return SimpleNamespace(
-            description=f"Prompt {name}",
-            messages=[{"role": "user", "content": f"Summarize {arguments['topic']}"}],
-            meta={},
         )

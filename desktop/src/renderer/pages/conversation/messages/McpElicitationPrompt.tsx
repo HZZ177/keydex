@@ -93,7 +93,6 @@ export function McpElicitationPrompt({ message, onResolve }: McpElicitationPromp
       </header>
 
       {request.description ? <p className={styles.description}>{request.description}</p> : null}
-      {request.riskText ? <p className={styles.riskText}>风险说明：{request.riskText}</p> : null}
 
       {pending ? (
         <form
@@ -216,7 +215,6 @@ interface ParsedElicitation {
   serverLabel: string;
   toolLabel: string;
   description: string;
-  riskText: string;
   schema: Record<string, unknown>;
 }
 
@@ -242,7 +240,6 @@ function parseElicitation(message: ConversationMessage): ParsedElicitation {
     serverLabel: stringValue(elicitation.server_name) || stringValue(elicitation.server_id),
     toolLabel: stringValue(elicitation.raw_tool_name),
     description: stringValue(schema.description) || stringValue(elicitation.description),
-    riskText: listText(elicitation.risk_reasons) || listText(schema.risk_reasons),
     schema,
   };
 }
@@ -404,11 +401,4 @@ function numberValue(value: unknown): number {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
-function listText(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value.map(stringValue).filter(Boolean).join("；");
-  }
-  return stringValue(value);
 }

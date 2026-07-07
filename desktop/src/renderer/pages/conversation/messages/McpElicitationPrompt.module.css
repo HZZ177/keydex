@@ -65,17 +65,12 @@
 }
 
 .description,
-.riskText,
 .empty,
 .resolvedState {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.riskText {
-  color: color-mix(in srgb, var(--color-danger) 60%, var(--color-text-secondary));
 }
 
 .form {

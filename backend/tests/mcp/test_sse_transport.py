@@ -163,7 +163,7 @@ class FakeSseSession:
         return SimpleNamespace(
             protocolVersion="2025-06-18",
             serverInfo=SimpleNamespace(name="fake-sse"),
-            capabilities=SimpleNamespace(tools={}, prompts={}),
+            capabilities=SimpleNamespace(tools={}),
         )
 
     async def list_tools(self) -> SimpleNamespace:
@@ -180,9 +180,6 @@ class FakeSseSession:
             ]
         )
 
-    async def list_prompts(self) -> SimpleNamespace:
-        return SimpleNamespace(prompts=[])
-
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> SimpleNamespace:
         return SimpleNamespace(
             content=[{"type": "text", "text": arguments.get("text", "")}],
@@ -190,6 +187,3 @@ class FakeSseSession:
             isError=False,
             meta={},
         )
-
-    async def get_prompt(self, name: str, arguments: dict[str, str] | None) -> SimpleNamespace:
-        return SimpleNamespace(description=name, messages=[], meta={})

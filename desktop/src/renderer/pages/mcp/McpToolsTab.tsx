@@ -9,10 +9,10 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { SettingsSelect } from "@/renderer/pages/settings/components";
 import type { RuntimeBridge } from "@/runtime";
 import type {
   McpApprovalMode,
-  McpRiskLevel,
   McpToolBulkPolicyAction,
   McpToolDiscoveryStatus,
   McpToolSummary,
@@ -27,14 +27,6 @@ const TOOL_STATUS_OPTIONS: Array<{ value: "all" | McpToolDiscoveryStatus; label:
   { value: "unchanged", label: "unchanged" },
   { value: "schema_changed", label: "Schema 已变化" },
   { value: "removed", label: "removed" },
-];
-
-const RISK_OPTIONS: Array<{ value: "all" | McpRiskLevel; label: string }> = [
-  { value: "all", label: "全部风险" },
-  { value: "low", label: "low" },
-  { value: "medium", label: "medium" },
-  { value: "high", label: "high" },
-  { value: "unknown", label: "unknown" },
 ];
 
 const ENABLED_OPTIONS = [
@@ -81,7 +73,6 @@ export function McpToolsTab({
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | McpToolDiscoveryStatus>("all");
-  const [riskFilter, setRiskFilter] = useState<"all" | McpRiskLevel>("all");
   const [enabledFilter, setEnabledFilter] = useState<(typeof ENABLED_OPTIONS)[number]["value"]>("all");
   const [approvalFilter, setApprovalFilter] = useState<"all" | McpApprovalMode>("all");
   const [selectedToolIds, setSelectedToolIds] = useState<Set<string>>(() => new Set());
@@ -96,7 +87,6 @@ export function McpToolsTab({
       const response = await runtime.mcp.listTools(serverId, {
         search: query.trim() || undefined,
         status: statusFilter === "all" ? undefined : statusFilter,
-        risk: riskFilter === "all" ? undefined : riskFilter,
         enabled: enabledFilter === "all" ? undefined : enabledFilter === "enabled",
         limit: 500,
       });
@@ -125,7 +115,7 @@ export function McpToolsTab({
     } finally {
       setLoading(false);
     }
-  }, [enabledFilter, query, riskFilter, runtime, serverId, statusFilter]);
+  }, [enabledFilter, query, runtime, serverId, statusFilter]);
 
   useEffect(() => {
     void loadTools();
@@ -254,50 +244,24 @@ export function McpToolsTab({
           />
         </label>
         <div className={styles.toolFilters}>
-          <select
-            aria-label="筛选 MCP Tool 状态"
+          <SettingsSelect
+            ariaLabel="筛选 MCP Tool 状态"
+            options={TOOL_STATUS_OPTIONS}
             value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as "all" | McpToolDiscoveryStatus)}
-          >
-            {TOOL_STATUS_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="筛选 MCP Tool 风险"
-            value={riskFilter}
-            onChange={(event) => setRiskFilter(event.target.value as "all" | McpRiskLevel)}
-          >
-            {RISK_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="筛选 MCP Tool 启用状态"
+            onChange={(value) => setStatusFilter(value)}
+          />
+          <SettingsSelect
+            ariaLabel="筛选 MCP Tool 启用状态"
+            options={[...ENABLED_OPTIONS]}
             value={enabledFilter}
-            onChange={(event) => setEnabledFilter(event.target.value as (typeof ENABLED_OPTIONS)[number]["value"])}
-          >
-            {ENABLED_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="筛选 MCP Tool 审批"
+            onChange={(value) => setEnabledFilter(value)}
+          />
+          <SettingsSelect
+            ariaLabel="筛选 MCP Tool 审批"
+            options={APPROVAL_OPTIONS}
             value={approvalFilter}
-            onChange={(event) => setApprovalFilter(event.target.value as "all" | McpApprovalMode)}
-          >
-            {APPROVAL_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setApprovalFilter(value)}
+          />
         </div>
         <button
           className={styles.smallToolButton}
@@ -321,17 +285,12 @@ export function McpToolsTab({
           {allVisibleSelected ? <CheckSquare size={15} /> : <Square size={15} />}
           <span>{selectedVisibleTools.length}/{visibleTools.length}</span>
         </button>
-        <select
-          aria-label="MCP Tool 批量策略"
+        <SettingsSelect
+          ariaLabel="MCP Tool 批量策略"
+          options={BULK_ACTION_OPTIONS}
           value={bulkAction}
-          onChange={(event) => setBulkAction(event.target.value as McpToolBulkPolicyAction)}
-        >
-          {BULK_ACTION_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          onChange={(value) => setBulkAction(value)}
+        />
         <button
           className={styles.smallToolButton}
           type="button"
@@ -442,7 +401,6 @@ function ToolRow({
         <p>{tool.description || "No description"}</p>
         <div className={styles.toolBadgeRow}>
           <Badge value={String(status)} tone={isSchemaChanged ? "warning" : isRemoved ? "muted" : "neutral"} />
-          <Badge value={`risk ${tool.risk_level}`} tone={tool.risk_level === "high" ? "warning" : "neutral"} />
           <Badge value={`approval ${approval}`} tone={approval === "prompt" || approval === "deny" ? "warning" : "neutral"} />
           <Badge value={effectiveStateLabel(tool.effective_state)} tone={tool.enabled ? "success" : "muted"} />
         </div>
@@ -465,18 +423,13 @@ function ToolRow({
           label={`启用 tool ${tool.raw_name}`}
           onChange={() => void onToggleEnabled(tool)}
         />
-        <select
-          aria-label={`审批策略 ${tool.raw_name}`}
+        <SettingsSelect
+          ariaLabel={`审批策略 ${tool.raw_name}`}
           disabled={busyKey === `approval:${tool.id}` || isRemoved}
+          options={APPROVAL_OPTIONS.filter((option) => option.value !== "all")}
           value={tool.approval_mode}
-          onChange={(event) => void onApprovalChange(tool, event.target.value as McpApprovalMode)}
-        >
-          {APPROVAL_OPTIONS.filter((option) => option.value !== "all").map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          onChange={(value) => void onApprovalChange(tool, value as McpApprovalMode)}
+        />
         <button
           className={styles.smallToolButton}
           type="button"

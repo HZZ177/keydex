@@ -11,8 +11,6 @@ from backend.app.mcp.client import (
     McpClientBase,
     McpClientCapabilities,
     McpClientInitializeResult,
-    McpClientPromptResult,
-    McpClientPromptSpec,
     McpClientToolResult,
     McpClientToolSpec,
 )
@@ -173,12 +171,9 @@ def _report(server_id: str) -> McpRefreshReport:
         server_id=server_id,
         status="online",
         tools_count=0,
-        prompts_count=0,
         resources_reserved_count=0,
         removed_tools_count=0,
-        removed_prompts_count=0,
         schema_changed_tools_count=0,
-        schema_changed_prompts_count=0,
         refresh_revision=1,
         duration_ms=0,
     )
@@ -265,14 +260,6 @@ class FakeSchedulerClient(McpClientBase):
     ) -> list[McpClientToolSpec]:
         return []
 
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        return []
-
     async def call_tool(
         self,
         raw_tool_name: str,
@@ -282,16 +269,6 @@ class FakeSchedulerClient(McpClientBase):
         timeout_sec: float | None = None,
         cancellation: McpCancellationToken | None = None,
     ) -> McpClientToolResult:
-        raise NotImplementedError
-
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
         raise NotImplementedError
 
     async def cancel_call(self, call_id: str) -> bool:

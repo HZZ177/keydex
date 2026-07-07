@@ -1,6 +1,7 @@
 import { AlertCircle, FileText, LoaderCircle, Plus, RefreshCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { SettingsSelect } from "@/renderer/pages/settings/components";
 import type { RuntimeBridge } from "@/runtime";
 import type {
   McpApprovalMode,
@@ -8,6 +9,7 @@ import type {
   McpConnectMode,
   McpRestartPolicy,
   McpServerDetailResponse,
+  McpToolExposureMode,
   McpTrustApprovalMode,
   McpTrustRule,
   McpTrustRuleKind,
@@ -21,6 +23,12 @@ const SERVER_APPROVAL_OPTIONS: Array<{ value: Extract<McpApprovalMode, "auto" | 
   { value: "auto", label: "auto" },
   { value: "prompt", label: "prompt" },
   { value: "approve", label: "approve" },
+];
+
+const TOOL_EXPOSURE_OPTIONS: Array<{ value: McpToolExposureMode; label: string }> = [
+  { value: "allow_all_except_disabled", label: "allow all except disabled" },
+  { value: "allow_selected_only", label: "allow selected only" },
+  { value: "read_only_auto", label: "read only auto" },
 ];
 
 const TRUST_KIND_OPTIONS: Array<{ value: McpTrustRuleKind; label: string }> = [
@@ -60,13 +68,10 @@ const AUDIT_EVENT_OPTIONS = [
   "refresh.completed",
   "refresh.failed",
   "tool.policy_updated",
-  "prompt.policy_updated",
   "tool.called",
   "tool.failed",
   "tool.cancelled",
   "tool.guard_rejected",
-  "prompt.get",
-  "prompt.failed",
   "runtime.override_set",
   "runtime.override_cleared",
   "approval.requested",
@@ -217,21 +222,29 @@ export function McpTrustTab({
           <div className={styles.policyGrid}>
             <label className={styles.policyField}>
               <span>默认审批</span>
-              <select
-                aria-label="MCP Server 默认审批"
+              <SettingsSelect
+                ariaLabel="MCP Server 默认审批"
+                options={SERVER_APPROVAL_OPTIONS}
                 value={detail.default_tool_approval_mode}
-                onChange={(event) =>
+                onChange={(value) =>
                   void updateApprovalSettings({
-                    default_tool_approval_mode: event.currentTarget.value as Extract<McpApprovalMode, "auto" | "prompt" | "approve">,
+                    default_tool_approval_mode: value,
                   })
                 }
-              >
-                {SERVER_APPROVAL_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              />
+            </label>
+            <label className={styles.policyField}>
+              <span>默认暴露</span>
+              <SettingsSelect
+                ariaLabel="MCP Server 默认暴露"
+                options={TOOL_EXPOSURE_OPTIONS}
+                value={detail.default_tool_exposure_mode}
+                onChange={(value) =>
+                  void updateApprovalSettings({
+                    default_tool_exposure_mode: value,
+                  })
+                }
+              />
             </label>
             <PolicyToggle
               checked={detail.elicitation_enabled}
@@ -266,33 +279,30 @@ export function McpTrustTab({
         <div className={styles.trustCreateGrid}>
           <label className={styles.policyField}>
             <span>规则</span>
-            <select aria-label="Trust rule kind" value={ruleKind} onChange={(event) => setRuleKind(event.currentTarget.value as McpTrustRuleKind)}>
-              {TRUST_KIND_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <SettingsSelect
+              ariaLabel="Trust rule kind"
+              options={TRUST_KIND_OPTIONS}
+              value={ruleKind}
+              onChange={(value) => setRuleKind(value)}
+            />
           </label>
           <label className={styles.policyField}>
             <span>Scope</span>
-            <select aria-label="Trust rule scope" value={ruleScope} onChange={(event) => setRuleScope(event.currentTarget.value as McpTrustRuleScope)}>
-              {TRUST_SCOPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <SettingsSelect
+              ariaLabel="Trust rule scope"
+              options={TRUST_SCOPE_OPTIONS}
+              value={ruleScope}
+              onChange={(value) => setRuleScope(value)}
+            />
           </label>
           <label className={styles.policyField}>
             <span>决策</span>
-            <select aria-label="Trust rule approval" value={ruleApproval} onChange={(event) => setRuleApproval(event.currentTarget.value as McpTrustApprovalMode)}>
-              {TRUST_APPROVAL_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <SettingsSelect
+              ariaLabel="Trust rule approval"
+              options={TRUST_APPROVAL_OPTIONS}
+              value={ruleApproval}
+              onChange={(value) => setRuleApproval(value)}
+            />
           </label>
           <label className={styles.policyField}>
             <span>Tool</span>
@@ -378,6 +388,12 @@ export function McpRuntimePolicyTab({
           </div>
           <div className={styles.policyGrid}>
             <PolicyToggle
+              checked={detail.required}
+              disabled={busy}
+              label="Required"
+              onChange={(checked) => void updateRuntimePolicy({ required: checked })}
+            />
+            <PolicyToggle
               checked={detail.auto_refresh}
               disabled={busy}
               label="自动刷新"
@@ -394,32 +410,74 @@ export function McpRuntimePolicyTab({
               />
             </label>
             <label className={styles.policyField}>
+              <span>启动超时</span>
+              <input
+                aria-label="MCP 启动超时"
+                min={1}
+                type="number"
+                value={detail.startup_timeout_sec}
+                onChange={(event) => void updateRuntimePolicy({ startup_timeout_sec: Number(event.currentTarget.value) })}
+              />
+            </label>
+            <label className={styles.policyField}>
+              <span>工具超时</span>
+              <input
+                aria-label="MCP 工具超时"
+                min={1}
+                type="number"
+                value={detail.tool_timeout_sec}
+                onChange={(event) => void updateRuntimePolicy({ tool_timeout_sec: Number(event.currentTarget.value) })}
+              />
+            </label>
+            <label className={styles.policyField}>
+              <span>读取超时</span>
+              <input
+                aria-label="MCP 读取超时"
+                min={1}
+                type="number"
+                value={detail.read_timeout_sec}
+                onChange={(event) => void updateRuntimePolicy({ read_timeout_sec: Number(event.currentTarget.value) })}
+              />
+            </label>
+            {detail.transport === "sse" ? (
+              <label className={styles.policyField}>
+                <span>SSE 读取超时</span>
+                <input
+                  aria-label="MCP SSE 读取超时"
+                  min={1}
+                  type="number"
+                  value={detail.sse_read_timeout_sec}
+                  onChange={(event) => void updateRuntimePolicy({ sse_read_timeout_sec: Number(event.currentTarget.value) })}
+                />
+              </label>
+            ) : null}
+            <label className={styles.policyField}>
+              <span>关闭超时</span>
+              <input
+                aria-label="MCP 关闭超时"
+                min={1}
+                type="number"
+                value={detail.shutdown_timeout_sec}
+                onChange={(event) => void updateRuntimePolicy({ shutdown_timeout_sec: Number(event.currentTarget.value) })}
+              />
+            </label>
+            <label className={styles.policyField}>
               <span>连接模式</span>
-              <select
-                aria-label="MCP connect mode"
+              <SettingsSelect
+                ariaLabel="MCP connect mode"
+                options={CONNECT_MODE_OPTIONS}
                 value={detail.connect_mode ?? "on_demand"}
-                onChange={(event) => void updateRuntimePolicy({ connect_mode: event.currentTarget.value as McpConnectMode })}
-              >
-                {CONNECT_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                onChange={(value) => void updateRuntimePolicy({ connect_mode: value })}
+              />
             </label>
             <label className={styles.policyField}>
               <span>Restart</span>
-              <select
-                aria-label="MCP restart policy"
+              <SettingsSelect
+                ariaLabel="MCP restart policy"
+                options={RESTART_POLICY_OPTIONS}
                 value={detail.restart_policy ?? "on_failure"}
-                onChange={(event) => void updateRuntimePolicy({ restart_policy: event.currentTarget.value as McpRestartPolicy })}
-              >
-                {RESTART_POLICY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                onChange={(value) => void updateRuntimePolicy({ restart_policy: value })}
+              />
             </label>
             <PolicyToggle
               checked={Boolean(detail.supports_parallel_tool_calls)}
@@ -495,27 +553,33 @@ export function McpLogsTab({ runtime, serverId }: { runtime: RuntimeBridge; serv
   return (
     <div className={styles.logsTab} data-testid="mcp-logs-tab">
       <div className={styles.logFilters}>
-        <select aria-label="筛选 MCP 日志事件" value={eventType} onChange={(event) => updateEventType(event.currentTarget.value)}>
-          <option value="all">全部事件</option>
-          {AUDIT_EVENT_OPTIONS.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-        <select aria-label="筛选 MCP 日志状态" value={statusFilter} onChange={(event) => updateStatusFilter(event.currentTarget.value)}>
-          <option value="all">全部状态</option>
-          <option value="ok">ok</option>
-          <option value="completed">completed</option>
-          <option value="success">success</option>
-          <option value="error">error</option>
-          <option value="failed">failed</option>
-          <option value="approved">approved</option>
-          <option value="denied">denied</option>
-          <option value="rejected">rejected</option>
-          <option value="cancelled">cancelled</option>
-          <option value="pending">pending</option>
-        </select>
+        <SettingsSelect
+          ariaLabel="筛选 MCP 日志事件"
+          options={[
+            { value: "all", label: "全部事件" },
+            ...AUDIT_EVENT_OPTIONS.map((option) => ({ value: option, label: option })),
+          ]}
+          value={eventType}
+          onChange={updateEventType}
+        />
+        <SettingsSelect
+          ariaLabel="筛选 MCP 日志状态"
+          options={[
+            { value: "all", label: "全部状态" },
+            { value: "ok", label: "ok" },
+            { value: "completed", label: "completed" },
+            { value: "success", label: "success" },
+            { value: "error", label: "error" },
+            { value: "failed", label: "failed" },
+            { value: "approved", label: "approved" },
+            { value: "denied", label: "denied" },
+            { value: "rejected", label: "rejected" },
+            { value: "cancelled", label: "cancelled" },
+            { value: "pending", label: "pending" },
+          ]}
+          value={statusFilter}
+          onChange={updateStatusFilter}
+        />
         <button className={styles.smallToolButton} type="button" disabled={loading} onClick={() => void load()}>
           <RefreshCcw size={14} />
           <span>刷新</span>

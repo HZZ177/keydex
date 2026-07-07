@@ -30,9 +30,7 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
         "mcp_servers",
         "mcp_server_status",
         "mcp_tools",
-        "mcp_prompts",
         "mcp_tool_policies",
-        "mcp_prompt_policies",
         "mcp_resources",
         "mcp_resource_templates",
         "mcp_oauth_tokens",
@@ -161,7 +159,6 @@ def test_init_database_creates_mcp_server_schema_and_constraints(tmp_path) -> No
         "supports_parallel_tool_calls",
         "elicitation_enabled",
         "sampling_enabled",
-        "prompt_discovery_enabled",
         "resource_reserved_policy_json",
         "created_at",
         "updated_at",
@@ -180,7 +177,6 @@ def test_init_database_creates_mcp_server_schema_and_constraints(tmp_path) -> No
         "last_error_message",
         "last_error_detail_json",
         "tools_count",
-        "prompts_count",
         "resources_reserved_count",
         "updated_at",
     }.issubset(status_columns)
@@ -194,15 +190,74 @@ def test_init_database_creates_mcp_server_schema_and_constraints(tmp_path) -> No
     }.issubset(status_indexes)
 
 
+def test_init_database_removes_legacy_mcp_prompt_schema(tmp_path) -> None:
+    db_path = tmp_path / "app.db"
+    init_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("alter table mcp_servers add column prompt_discovery_enabled integer")
+        conn.execute("alter table mcp_server_status add column prompts_count integer")
+        conn.execute("alter table mcp_audit_log add column prompt_name text")
+        conn.execute("create table mcp_prompts (id text primary key)")
+        conn.execute("create table mcp_prompt_policies (id text primary key)")
+
+    db = init_database(db_path)
+    with db.connect() as conn:
+        tables = {
+            str(row["name"])
+            for row in conn.execute(
+                "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'"
+            ).fetchall()
+        }
+        server_columns = {
+            str(row["name"]) for row in conn.execute("pragma table_info(mcp_servers)").fetchall()
+        }
+        status_columns = {
+            str(row["name"])
+            for row in conn.execute("pragma table_info(mcp_server_status)").fetchall()
+        }
+        audit_columns = {
+            str(row["name"]) for row in conn.execute("pragma table_info(mcp_audit_log)").fetchall()
+        }
+
+    assert "mcp_prompts" not in tables
+    assert "mcp_prompt_policies" not in tables
+    assert "prompt_discovery_enabled" not in server_columns
+    assert "prompts_count" not in status_columns
+    assert "prompt_name" not in audit_columns
+
+
+def test_init_database_removes_legacy_mcp_risk_schema(tmp_path) -> None:
+    db_path = tmp_path / "app.db"
+    init_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("alter table mcp_tools add column risk_level text")
+        conn.execute("create index idx_mcp_tools_risk on mcp_tools(risk_level)")
+        conn.execute("alter table mcp_tool_policies add column risk_override text")
+
+    db = init_database(db_path)
+    with db.connect() as conn:
+        tool_columns = {
+            str(row["name"]) for row in conn.execute("pragma table_info(mcp_tools)").fetchall()
+        }
+        tool_policy_columns = {
+            str(row["name"])
+            for row in conn.execute("pragma table_info(mcp_tool_policies)").fetchall()
+        }
+        tool_indexes = {
+            str(row["name"]) for row in conn.execute("pragma index_list(mcp_tools)").fetchall()
+        }
+
+    assert "risk_level" not in tool_columns
+    assert "risk_override" not in tool_policy_columns
+    assert "idx_mcp_tools_risk" not in tool_indexes
+
+
 def test_init_database_creates_mcp_discovery_schema_and_constraints(tmp_path) -> None:
     db = init_database(tmp_path / "app.db")
 
     with db.connect() as conn:
         tool_columns = {
             str(row["name"]) for row in conn.execute("pragma table_info(mcp_tools)").fetchall()
-        }
-        prompt_columns = {
-            str(row["name"]) for row in conn.execute("pragma table_info(mcp_prompts)").fetchall()
         }
         resource_columns = {
             str(row["name"]) for row in conn.execute("pragma table_info(mcp_resources)").fetchall()
@@ -213,9 +268,6 @@ def test_init_database_creates_mcp_discovery_schema_and_constraints(tmp_path) ->
         }
         tool_indexes = {
             str(row["name"]) for row in conn.execute("pragma index_list(mcp_tools)").fetchall()
-        }
-        prompt_indexes = {
-            str(row["name"]) for row in conn.execute("pragma index_list(mcp_prompts)").fetchall()
         }
 
         for server_id, name in (("server-a", "Server A"), ("server-b", "Server B")):
@@ -247,16 +299,6 @@ def test_init_database_creates_mcp_discovery_schema_and_constraints(tmp_path) ->
             ) values (
               'tool-b', 'server-b', 'create_issue', 'mcp__b__create_issue',
               'mcp__b', 'create_issue', '{}', 'hash-b',
-              '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z'
-            )
-            """
-        )
-        conn.execute(
-            """
-            insert into mcp_prompts (
-              id, server_id, raw_name, arguments_schema_json, first_seen_at, last_seen_at
-            ) values (
-              'prompt-a', 'server-a', 'triage', '{}',
               '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z'
             )
             """
@@ -306,19 +348,6 @@ def test_init_database_creates_mcp_discovery_schema_and_constraints(tmp_path) ->
                 )
                 """
             )
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                """
-                insert into mcp_prompts (
-                  id, server_id, raw_name, arguments_schema_json, discovery_status,
-                  first_seen_at, last_seen_at
-                ) values (
-                  'prompt-bad', 'server-a', 'bad', '{}', 'stale',
-                  '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z'
-                )
-                """
-            )
-
     assert {
         "id",
         "server_id",
@@ -332,7 +361,6 @@ def test_init_database_creates_mcp_discovery_schema_and_constraints(tmp_path) ->
         "annotations_json",
         "meta_json",
         "schema_hash",
-        "risk_level",
         "discovery_status",
         "first_seen_at",
         "last_seen_at",
@@ -341,19 +369,6 @@ def test_init_database_creates_mcp_discovery_schema_and_constraints(tmp_path) ->
         "call_count",
         "failure_count",
     }.issubset(tool_columns)
-    assert {
-        "id",
-        "server_id",
-        "raw_name",
-        "display_name",
-        "description",
-        "arguments_schema_json",
-        "meta_json",
-        "discovery_status",
-        "first_seen_at",
-        "last_seen_at",
-        "removed_at",
-    }.issubset(prompt_columns)
     assert {
         "id",
         "server_id",
@@ -379,12 +394,7 @@ def test_init_database_creates_mcp_discovery_schema_and_constraints(tmp_path) ->
     assert {
         "idx_mcp_tools_server",
         "idx_mcp_tools_status",
-        "idx_mcp_tools_risk",
     }.issubset(tool_indexes)
-    assert {
-        "idx_mcp_prompts_server",
-        "idx_mcp_prompts_status",
-    }.issubset(prompt_indexes)
     assert resource is not None
     assert resource["reserved_only"] == 1
     assert template is not None
@@ -409,10 +419,6 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
             str(row["name"])
             for row in conn.execute("pragma table_info(mcp_tool_policies)").fetchall()
         }
-        prompt_policy_columns = {
-            str(row["name"])
-            for row in conn.execute("pragma table_info(mcp_prompt_policies)").fetchall()
-        }
         oauth_columns = {
             str(row["name"])
             for row in conn.execute("pragma table_info(mcp_oauth_tokens)").fetchall()
@@ -436,7 +442,6 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
             str(row["name"])
             for table in (
                 "mcp_tool_policies",
-                "mcp_prompt_policies",
                 "mcp_oauth_tokens",
                 "mcp_trust_rules",
                 "mcp_session_tool_overrides",
@@ -452,16 +457,6 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
               id, server_id, raw_tool_name, approval_mode, updated_at
             ) values (
               'tool-policy-a', 'server-a', 'create_issue', 'prompt',
-              '2026-07-06T00:00:00Z'
-            )
-            """
-        )
-        conn.execute(
-            """
-            insert into mcp_prompt_policies (
-              id, server_id, raw_prompt_name, exposure_mode, updated_at
-            ) values (
-              'prompt-policy-a', 'server-a', 'triage', 'manual',
               '2026-07-06T00:00:00Z'
             )
             """
@@ -564,19 +559,10 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
         "enabled",
         "hidden",
         "approval_mode",
-        "risk_override",
         "parameter_constraints_json",
         "schema_change_action",
         "updated_at",
     }.issubset(tool_policy_columns)
-    assert {
-        "id",
-        "server_id",
-        "raw_prompt_name",
-        "enabled",
-        "exposure_mode",
-        "updated_at",
-    }.issubset(prompt_policy_columns)
     assert {
         "id",
         "server_id",
@@ -632,7 +618,6 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
         "event_type",
         "server_id",
         "raw_tool_name",
-        "prompt_name",
         "session_id",
         "turn_id",
         "call_id",
@@ -646,7 +631,6 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
     }.issubset(audit_columns)
     assert {
         "idx_mcp_tool_policies_server",
-        "idx_mcp_prompt_policies_server",
         "idx_mcp_oauth_tokens_server_status",
         "idx_mcp_trust_rules_server_tool",
         "idx_mcp_trust_rules_scope",

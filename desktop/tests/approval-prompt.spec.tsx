@@ -6,7 +6,7 @@ import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { ApprovalRequest } from "@/types/protocol";
 
 describe("ApprovalPrompt", () => {
-  it("renders approval operation, risk, target and collapsible details", () => {
+  it("renders approval operation, target and collapsible details", () => {
     render(<ApprovalPrompt message={approvalMessage()} />);
 
     expect(screen.getByText("允许执行命令")).not.toBeNull();
@@ -16,7 +16,6 @@ describe("ApprovalPrompt", () => {
     expect(screen.getByText("run_cmd")).not.toBeNull();
     expect(screen.getByText("CMD")).not.toBeNull();
     expect(screen.getByText("C:/Windows/System32/cmd.exe")).not.toBeNull();
-    expect(screen.getByText("中")).not.toBeNull();
     expect(screen.queryByText(/workspace_write/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "审批详情" }));
@@ -50,10 +49,8 @@ describe("ApprovalPrompt", () => {
     expect(screen.getByText("Ticket MCP / write")).not.toBeNull();
     expect(screen.getByText("write")).not.toBeNull();
     expect(screen.getByText("mcp__srv_1__write")).not.toBeNull();
-    expect(screen.getByText("写入外部系统；参数包含 title")).not.toBeNull();
     expect(screen.getByText(/"title":"Fix"/)).not.toBeNull();
     expect(screen.getByText("本会话信任；持久信任该工具")).not.toBeNull();
-    expect(screen.getByText("高")).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "允许" }));
 
@@ -75,9 +72,7 @@ describe("ApprovalPrompt", () => {
     expect(screen.getByText("prompt")).not.toBeNull();
     expect(screen.getByText("summary")).not.toBeNull();
     expect(screen.getByText("2")).not.toBeNull();
-    expect(screen.getByText("模型采样会消耗 token；server 可请求生成内容")).not.toBeNull();
     expect(screen.getByText("Summarize ticket status")).not.toBeNull();
-    expect(screen.getByText("高")).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "允许" }));
 
@@ -177,9 +172,7 @@ function samplingApprovalMessage(status: ApprovalRequest["status"] = "pending"):
       sampling_audit_detail: "summary",
       message_count: 2,
       prompt_preview: "Summarize ticket status",
-      risk_reasons: ["模型采样会消耗 token", "server 可请求生成内容"],
     },
-    risk_level: "high",
     status,
     created_at: "2026-06-17T10:00:00Z",
     metadata: {
@@ -216,14 +209,12 @@ function mcpApprovalMessage(): ConversationMessage {
     description: "该工具会向外部工单系统写入数据。",
     details: {
       arguments_preview: { title: "Fix", priority: "high" },
-      risk_reasons: ["写入外部系统", "参数包含 title"],
       trust_options: ["session", "persistent_tool"],
     },
     server_id: "srv-1",
     server_name: "Ticket MCP",
     raw_tool_name: "write",
     model_tool_name: "mcp__srv_1__write",
-    risk_level: "high",
     snapshot_id: "snap-1",
     status: "pending",
     created_at: "2026-06-17T10:00:00Z",

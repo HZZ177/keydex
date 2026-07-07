@@ -48,42 +48,6 @@ class MockMcpTool:
 
 
 @dataclass(frozen=True)
-class MockMcpPromptArgument:
-    name: str
-    description: str | None = None
-    required: bool = False
-
-    def to_sdk(self) -> SimpleNamespace:
-        return SimpleNamespace(
-            name=self.name,
-            description=self.description,
-            required=self.required,
-        )
-
-
-@dataclass(frozen=True)
-class MockMcpPrompt:
-    name: str
-    description: str
-    arguments: list[MockMcpPromptArgument] = field(default_factory=list)
-    template: str = "Summarize {topic}"
-
-    def to_sdk(self) -> SimpleNamespace:
-        return SimpleNamespace(
-            name=self.name,
-            description=self.description,
-            arguments=[argument.to_sdk() for argument in self.arguments],
-        )
-
-    def render(self, arguments: dict[str, Any] | None) -> str:
-        values = {key: str(value) for key, value in (arguments or {}).items()}
-        try:
-            return self.template.format(**values)
-        except KeyError:
-            return self.template
-
-
-@dataclass(frozen=True)
 class MockMcpElicitationRequest:
     request_id: str = "elicitation_mock"
     title: str = "Need additional input"
@@ -145,16 +109,13 @@ class MockMcpServerScenario:
     name: str = "Mock MCP Server"
     protocol_version: str = "2025-06-18"
     tools: list[MockMcpTool] = field(default_factory=lambda: list(DEFAULT_MCP_TOOLS))
-    prompts: list[MockMcpPrompt] = field(default_factory=lambda: list(DEFAULT_MCP_PROMPTS))
     elicitation_request: MockMcpElicitationRequest = field(
         default_factory=MockMcpElicitationRequest
     )
     sampling_request: MockMcpSamplingRequest = field(default_factory=MockMcpSamplingRequest)
     initialize_error: BaseException | None = None
     list_tools_error: BaseException | None = None
-    list_prompts_error: BaseException | None = None
     call_tool_error: BaseException | None = None
-    get_prompt_error: BaseException | None = None
     initialize_delay_sec: float = 0
     list_tools_delay_sec: float = 0
     call_tool_delay_sec: float = 0
@@ -188,22 +149,12 @@ DEFAULT_MCP_TOOLS: tuple[MockMcpTool, ...] = (
         annotations={"openWorldHint": True},
     ),
     MockMcpTool(
-        name="unknown_risk",
-        description="Tool with no risk annotations",
+        name="plain_tool",
+        description="Tool with no annotations",
         input_schema={"type": "object", "properties": {"value": {"type": "string"}}},
         annotations=None,
     ),
 )
-
-DEFAULT_MCP_PROMPTS: tuple[MockMcpPrompt, ...] = (
-    MockMcpPrompt(
-        name="summarize_ticket",
-        description="Summarize a ticket",
-        arguments=[MockMcpPromptArgument(name="topic", description="Ticket topic", required=True)],
-        template="Summarize {topic}",
-    ),
-)
-
 
 def start_mock_mcp_server(
     scenario: MockMcpServerScenario | None = None,
@@ -240,25 +191,6 @@ def schema_changed_scenario() -> MockMcpServerScenario:
                 annotations={"readOnlyHint": True},
             ),
             *DEFAULT_MCP_TOOLS[1:],
-        ],
-        prompts=[
-            MockMcpPrompt(
-                name="summarize_ticket",
-                description="Summarize a ticket for an audience",
-                arguments=[
-                    MockMcpPromptArgument(
-                        name="topic",
-                        description="Ticket topic",
-                        required=True,
-                    ),
-                    MockMcpPromptArgument(
-                        name="audience",
-                        description="Summary audience",
-                        required=True,
-                    ),
-                ],
-                template="Summarize {topic} for {audience}",
-            )
         ],
     )
 
@@ -425,7 +357,6 @@ class MockMcpSession:
         self.entered = False
         self.exited = False
         self.tool_calls: list[dict[str, Any]] = []
-        self.prompt_calls: list[dict[str, Any]] = []
 
     async def __aenter__(self) -> MockMcpSession:
         self.entered = True
@@ -444,7 +375,6 @@ class MockMcpSession:
             serverInfo={"name": self.scenario.name},
             capabilities=SimpleNamespace(
                 tools={},
-                prompts={},
                 sampling={},
                 elicitation={},
             ),
@@ -456,11 +386,6 @@ class MockMcpSession:
         if self.scenario.list_tools_error is not None:
             raise self.scenario.list_tools_error
         return SimpleNamespace(tools=[tool.to_sdk() for tool in self.scenario.tools])
-
-    async def list_prompts(self) -> SimpleNamespace:
-        if self.scenario.list_prompts_error is not None:
-            raise self.scenario.list_prompts_error
-        return SimpleNamespace(prompts=[prompt.to_sdk() for prompt in self.scenario.prompts])
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> SimpleNamespace:
         if self.scenario.call_tool_delay_sec:
@@ -483,18 +408,6 @@ class MockMcpSession:
                 "sampling_request": self.scenario.sampling_request.to_payload(),
             },
         )
-
-    async def get_prompt(self, name: str, arguments: dict[str, Any] | None) -> SimpleNamespace:
-        if self.scenario.get_prompt_error is not None:
-            raise self.scenario.get_prompt_error
-        self.prompt_calls.append({"name": name, "arguments": dict(arguments or {})})
-        prompt = _find_by_name(self.scenario.prompts, name)
-        return SimpleNamespace(
-            description=prompt.description,
-            messages=[{"role": "user", "content": prompt.render(arguments)}],
-            meta={"prompt": name},
-        )
-
 
 class MockOAuthProvider:
     def __init__(self, *, raise_exchange_error: bool = False) -> None:

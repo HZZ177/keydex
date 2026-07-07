@@ -53,7 +53,6 @@ def _tool(
                 "description": f"MCP description {raw_name}",
                 "input_schema": {"type": "object"},
                 "schema_hash": f"hash-{raw_name}",
-                "risk_level": "low",
                 "annotations": {"readOnlyHint": True},
             }
         ],

@@ -1066,7 +1066,6 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
               transport: "stdio",
               status: "online",
               tools_count: 2,
-              prompts_count: 1,
               resources_reserved: true,
               last_refresh_at: "2026-07-06T08:00:00Z",
               last_error_message: null,

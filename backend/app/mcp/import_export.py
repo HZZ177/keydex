@@ -163,11 +163,6 @@ def export_mcp_config(
             for server in servers
             for policy in repositories.mcp_tool_policies.list_by_server(server.id)
         ],
-        "prompt_policies": [
-            _export_prompt_policy(policy)
-            for server in servers
-            for policy in repositories.mcp_prompt_policies.list_by_server(server.id)
-        ],
     }
     if include_trust_rules:
         exported["trust_rules"] = [
@@ -312,7 +307,6 @@ def _export_server(server: McpServerRecord) -> dict[str, Any]:
         "supports_parallel_tool_calls": server.supports_parallel_tool_calls,
         "elicitation_enabled": server.elicitation_enabled,
         "sampling_enabled": server.sampling_enabled,
-        "prompt_discovery_enabled": server.prompt_discovery_enabled,
         "resource_reserved_policy": server.resource_reserved_policy,
     }
 
@@ -324,18 +318,8 @@ def _export_tool_policy(policy: Any) -> dict[str, Any]:
         "enabled": policy.enabled,
         "hidden": policy.hidden,
         "approval_mode": policy.approval_mode,
-        "risk_override": policy.risk_override,
         "schema_change_action": policy.schema_change_action,
         "parameter_constraints": redact_sensitive_data(policy.parameter_constraints or {}),
-    }
-
-
-def _export_prompt_policy(policy: Any) -> dict[str, Any]:
-    return {
-        "server_id": policy.server_id,
-        "raw_prompt_name": policy.raw_prompt_name,
-        "enabled": policy.enabled,
-        "exposure_mode": policy.exposure_mode,
     }
 
 

@@ -112,22 +112,19 @@ def test_mcp_server_status_repository_upserts_errors_and_refresh_counts(tmp_path
 
     first_refresh = repositories.mcp_server_status.update_refresh_counts(
         "mcp-server-a",
-        capabilities={"tools": True, "prompts": True},
+        capabilities={"tools": True},
         server_info={"name": "mock", "version": "1"},
         tools_count=3,
-        prompts_count=2,
         resources_reserved_count=1,
     )
     second_refresh = repositories.mcp_server_status.update_refresh_counts(
         "mcp-server-a",
         tools_count=4,
-        prompts_count=0,
     )
 
     assert first_refresh.status == "online"
     assert first_refresh.last_refresh_revision == 1
     assert first_refresh.tools_count == 3
-    assert first_refresh.prompts_count == 2
     assert first_refresh.resources_reserved_count == 1
     assert second_refresh.last_refresh_revision == 2
     assert second_refresh.tools_count == 4
@@ -188,7 +185,6 @@ def test_mcp_tool_repository_upserts_status_and_filters(tmp_path) -> None:
                 "description": "Create issue",
                 "input_schema": {"type": "object"},
                 "schema_hash": "hash-1",
-                "risk_level": "high",
             },
             {
                 "id": "tool-list",
@@ -198,7 +194,6 @@ def test_mcp_tool_repository_upserts_status_and_filters(tmp_path) -> None:
                 "callable_name": "list_issues",
                 "input_schema": {"type": "object"},
                 "schema_hash": "hash-list",
-                "risk_level": "low",
             },
         ],
     )
@@ -211,11 +206,6 @@ def test_mcp_tool_repository_upserts_status_and_filters(tmp_path) -> None:
         "create_issue",
         "list_issues",
     ]
-    assert [tool.raw_name for tool in repositories.mcp_tools.list_by_server(
-        "mcp-server-a",
-        risk_level="high",
-    )] == ["create_issue"]
-
     changed = repositories.mcp_tools.upsert_many(
         "mcp-server-a",
         [
@@ -226,7 +216,6 @@ def test_mcp_tool_repository_upserts_status_and_filters(tmp_path) -> None:
                 "callable_name": "create_issue",
                 "input_schema": {"type": "object", "required": ["title"]},
                 "schema_hash": "hash-2",
-                "risk_level": "high",
             }
         ],
     )
@@ -267,7 +256,7 @@ def test_mcp_tool_repository_upserts_status_and_filters(tmp_path) -> None:
     )] == ["list_issues"]
 
 
-def test_mcp_prompt_and_resource_repositories_upsert_reserved_records(tmp_path) -> None:
+def test_mcp_resource_repositories_upsert_reserved_records(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     repositories.mcp_servers.create(
         server_id="mcp-server-a",
@@ -275,50 +264,6 @@ def test_mcp_prompt_and_resource_repositories_upsert_reserved_records(tmp_path) 
         transport="stdio",
         command="node",
     )
-
-    prompts = repositories.mcp_prompts.upsert_many(
-        "mcp-server-a",
-        [
-            {
-                "id": "prompt-triage",
-                "raw_name": "triage",
-                "description": "Triage issue",
-                "arguments_schema": {"type": "object"},
-            },
-            {
-                "id": "prompt-summary",
-                "raw_name": "summary",
-                "arguments_schema": {"type": "object"},
-            },
-        ],
-    )
-
-    assert [prompt.raw_name for prompt in prompts] == ["summary", "triage"]
-
-    repositories.mcp_prompts.upsert_many(
-        "mcp-server-a",
-        [
-            {
-                "raw_name": "triage",
-                "arguments_schema": {"type": "object", "required": ["issue"]},
-            }
-        ],
-    )
-    changed = repositories.mcp_prompts.get_by_raw_name("mcp-server-a", "triage")
-
-    assert changed is not None
-    assert changed.discovery_status == "schema_changed"
-
-    removed_count = repositories.mcp_prompts.mark_removed_missing(
-        "mcp-server-a",
-        seen_raw_names=["triage"],
-    )
-
-    assert removed_count == 1
-    assert repositories.mcp_prompts.get_by_raw_name(
-        "mcp-server-a",
-        "summary",
-    ).discovery_status == "removed"
 
     resources = repositories.mcp_resources.upsert_resources(
         "mcp-server-a",
@@ -348,7 +293,7 @@ def test_mcp_prompt_and_resource_repositories_upsert_reserved_records(tmp_path) 
     assert templates[0].uri_template == "file:///{path}"
 
 
-def test_mcp_policy_repositories_bulk_update_and_prompt_policy(tmp_path) -> None:
+def test_mcp_tool_policy_repository_bulk_update(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     repositories.mcp_servers.create(
         server_id="mcp-server-a",
@@ -375,7 +320,6 @@ def test_mcp_policy_repositories_bulk_update_and_prompt_policy(tmp_path) -> None
                 "raw_tool_name": "create_issue",
                 "enabled": False,
                 "approval_mode": "prompt",
-                "risk_override": "high",
                 "parameter_constraints": {"title": {"maxLength": 120}},
             },
             {
@@ -393,17 +337,6 @@ def test_mcp_policy_repositories_bulk_update_and_prompt_policy(tmp_path) -> None
     assert create_policy.enabled is False
     assert create_policy.approval_mode == "prompt"
     assert create_policy.parameter_constraints == {"title": {"maxLength": 120}}
-
-    prompt_policy = repositories.mcp_prompt_policies.upsert(
-        server_id="mcp-server-a",
-        raw_prompt_name="triage",
-        enabled=True,
-        exposure_mode="slash_command",
-    )
-
-    assert prompt_policy.exposure_mode == "slash_command"
-    assert repositories.mcp_prompt_policies.get("mcp-server-a", "triage") == prompt_policy
-
 
 def test_mcp_session_override_snapshot_trust_and_audit_repositories(tmp_path) -> None:
     repositories = _repositories(tmp_path)

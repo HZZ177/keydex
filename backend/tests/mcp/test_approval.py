@@ -5,7 +5,6 @@ import pytest
 from backend.app.mcp.approval import (
     DefaultMcpToolApprovalDecider,
     McpToolApprovalRequest,
-    evaluate_mcp_tool_risk,
     stable_schema_hash,
 )
 from backend.app.mcp.trust import resolve_mcp_tool_approval_policy
@@ -20,89 +19,35 @@ def test_schema_hash_is_stable_for_json_key_order() -> None:
     assert stable_schema_hash(first) == stable_schema_hash(second)
 
 
-def test_risk_uses_annotations() -> None:
-    readonly = evaluate_mcp_tool_risk(
-        raw_tool_name="list_issues",
-        input_schema={"type": "object"},
-        annotations={"readOnlyHint": True},
-    )
-    destructive = evaluate_mcp_tool_risk(
-        raw_tool_name="delete_issue",
-        input_schema={"type": "object"},
-        annotations={"destructiveHint": True},
-    )
-    open_world = evaluate_mcp_tool_risk(
-        raw_tool_name="fetch_url",
-        input_schema={"type": "object"},
-        annotations={"readOnlyHint": True, "openWorldHint": True},
-    )
-
-    assert readonly.risk_level == "low"
-    assert readonly.reasons == ["readOnlyHint=true"]
-    assert destructive.risk_level == "high"
-    assert "destructiveHint=true" in destructive.reasons
-    assert open_world.risk_level == "high"
-    assert "openWorldHint=true" in open_world.reasons
-
-
-def test_sensitive_schema_and_tool_name_raise_risk() -> None:
-    by_schema = evaluate_mcp_tool_risk(
-        raw_tool_name="send_request",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "api_token": {"type": "string"},
-                "callback_url": {"type": "string"},
-            },
-        },
-        annotations={},
-    )
-    by_name = evaluate_mcp_tool_risk(
-        raw_tool_name="delete_file",
-        input_schema={"type": "object"},
-        annotations={},
-    )
-
-    assert by_schema.risk_level == "high"
-    assert by_schema.reasons[0].startswith("sensitive_schema=")
-    assert by_name.risk_level == "high"
-    assert by_name.reasons[0].startswith("sensitive_schema=")
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("approval_mode", "risk_level", "approved", "error_code"),
+    ("approval_mode", "approved", "error_code"),
     [
-        ("auto", "low", True, None),
-        ("auto", "high", False, McpErrorCode.APPROVAL_REQUIRED),
-        ("auto", "unknown", False, McpErrorCode.APPROVAL_REQUIRED),
-        ("prompt", "low", False, McpErrorCode.APPROVAL_REQUIRED),
-        ("approve", "high", True, None),
-        ("deny", "low", False, McpErrorCode.POLICY_DENIED),
+        ("auto", True, None),
+        ("prompt", False, McpErrorCode.APPROVAL_REQUIRED),
+        ("approve", True, None),
+        ("deny", False, McpErrorCode.POLICY_DENIED),
     ],
 )
 async def test_default_approval_decider_applies_auto_prompt_approve_deny(
     approval_mode: str,
-    risk_level: str,
     approved: bool,
     error_code: McpErrorCode | None,
 ) -> None:
     decision = await DefaultMcpToolApprovalDecider().decide(
-        _approval_request(approval_mode=approval_mode, risk_level=risk_level)
+        _approval_request(approval_mode=approval_mode)
     )
 
     assert decision.approved is approved
     assert decision.error_code == error_code
 
 
-def test_effective_approval_policy_uses_readonly_auto_and_risk_reasons(tmp_path) -> None:
+def test_effective_approval_policy_uses_server_default(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _create_server(repositories, default_tool_approval_mode="auto")
     tool = _create_tool(
         repositories,
         annotations={"readOnlyHint": True},
-        meta={"risk_reasons": ["readOnlyHint=true"]},
-        risk_level="low",
     )
 
     policy = resolve_mcp_tool_approval_policy(
@@ -112,8 +57,6 @@ def test_effective_approval_policy_uses_readonly_auto_and_risk_reasons(tmp_path)
     )
 
     assert policy.approval_mode == "auto"
-    assert policy.risk_level == "low"
-    assert policy.risk_reasons == ["readOnlyHint=true"]
 
 
 def test_effective_approval_policy_lets_tool_policy_override_server_default(
@@ -121,12 +64,11 @@ def test_effective_approval_policy_lets_tool_policy_override_server_default(
 ) -> None:
     repositories = _repositories(tmp_path)
     _create_server(repositories, default_tool_approval_mode="approve")
-    tool = _create_tool(repositories, risk_level="low")
+    tool = _create_tool(repositories)
     repositories.mcp_tool_policies.upsert(
         server_id="srv_policy",
         raw_tool_name="search",
         approval_mode="prompt",
-        risk_override="high",
     )
 
     policy = resolve_mcp_tool_approval_policy(
@@ -136,14 +78,11 @@ def test_effective_approval_policy_lets_tool_policy_override_server_default(
     )
 
     assert policy.approval_mode == "prompt"
-    assert policy.risk_level == "high"
-    assert policy.risk_reasons[0] == "risk_override=high"
 
 
 def _approval_request(
     *,
     approval_mode: str,
-    risk_level: str,
 ) -> McpToolApprovalRequest:
     return McpToolApprovalRequest(
         snapshot_id="snap-a",
@@ -152,7 +91,6 @@ def _approval_request(
         server_id="srv_policy",
         raw_tool_name="search",
         model_name="mcp__srv_policy__search",
-        risk_level=risk_level,
         approval_mode=approval_mode,
         arguments={"query": "hello"},
     )
@@ -179,7 +117,6 @@ def _create_server(
 def _create_tool(
     repositories: StorageRepositories,
     *,
-    risk_level: str = "unknown",
     annotations: dict | None = None,
     meta: dict | None = None,
 ):
@@ -196,7 +133,6 @@ def _create_tool(
                 "annotations": annotations,
                 "meta": meta,
                 "schema_hash": "hash-search",
-                "risk_level": risk_level,
             }
         ],
     )

@@ -172,8 +172,6 @@ def approval_to_payload(record: CommandApprovalRequestRecord) -> dict[str, Any]:
                 "server_name": mcp.get("server_name"),
                 "raw_tool_name": mcp.get("raw_tool_name"),
                 "model_tool_name": mcp.get("model_tool_name"),
-                "risk_level": mcp.get("risk_level"),
-                "risk_reasons": details.get("risk_reasons") or [],
                 "snapshot_id": mcp.get("snapshot_id"),
                 "approval_mode": mcp.get("approval_mode"),
                 "arguments_preview": details.get("arguments_preview"),
@@ -194,8 +192,6 @@ def approval_to_payload(record: CommandApprovalRequestRecord) -> dict[str, Any]:
                 "model": mcp.get("model"),
                 "max_tokens": mcp.get("max_tokens"),
                 "approval_mode": mcp.get("approval_mode"),
-                "risk_level": details.get("risk_level"),
-                "risk_reasons": details.get("risk_reasons") or [],
                 "arguments_preview": details.get("arguments_preview"),
                 "metadata": {"mcp": mcp},
             }
@@ -505,7 +501,6 @@ def _mcp_approval_metadata(record: CommandApprovalRequestRecord) -> dict[str, An
         "raw_tool_name": details.get("raw_tool_name"),
         "model_tool_name": details.get("model_tool_name") or record.tool_name,
         "model_name": details.get("model_tool_name") or record.tool_name,
-        "risk_level": details.get("risk_level"),
         "approval_mode": details.get("approval_mode"),
         "call_id": details.get("call_id") or record.run_id,
     }

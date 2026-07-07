@@ -77,7 +77,7 @@ MCP_FEATURE_COVERAGE_CONTRACTS: tuple[McpFeatureCoverageContract, ...] = (
         "MCP-065",
         "MCP-085",
         ("DES 6.2", "DES 6.3"),
-        "initialize, list_tools, list_prompts, schema and refresh audit tests.",
+        "initialize, list_tools, schema and refresh audit tests.",
     ),
     McpFeatureCoverageContract(
         "F06",
@@ -121,22 +121,14 @@ MCP_FEATURE_COVERAGE_CONTRACTS: tuple[McpFeatureCoverageContract, ...] = (
     ),
     McpFeatureCoverageContract(
         "F11",
-        "审批、风险与信任",
+        "审批与信任",
         "MCP-071",
         "MCP-091",
         ("DES 6.2", "DES 6.3"),
-        "risk inference, approval modes, trust rules, and command approval isolation.",
+        "approval modes, trust rules, and command approval isolation.",
     ),
     McpFeatureCoverageContract(
         "F12",
-        "Prompts",
-        "MCP-072",
-        "MCP-092",
-        ("DES 6.2", "DES 6.3"),
-        "prompt discovery, argument validation, materialization, and exposure policy.",
-    ),
-    McpFeatureCoverageContract(
-        "F13",
         "Elicitation",
         "MCP-073",
         "MCP-093",
@@ -144,7 +136,7 @@ MCP_FEATURE_COVERAGE_CONTRACTS: tuple[McpFeatureCoverageContract, ...] = (
         "pending request, WebSocket event, schema mapping, submit, cancel, and timeout.",
     ),
     McpFeatureCoverageContract(
-        "F14",
+        "F13",
         "Sampling",
         "MCP-074",
         "MCP-094",
@@ -152,7 +144,7 @@ MCP_FEATURE_COVERAGE_CONTRACTS: tuple[McpFeatureCoverageContract, ...] = (
         "sampling policy, budget, approval gate, fake model provider, and audit.",
     ),
     McpFeatureCoverageContract(
-        "F15",
+        "F14",
         "Resources 预留",
         "MCP-075",
         "MCP-095",
@@ -160,7 +152,7 @@ MCP_FEATURE_COVERAGE_CONTRACTS: tuple[McpFeatureCoverageContract, ...] = (
         "reserved resources schema, manager/API non-exposure, and runtime exclusion.",
     ),
     McpFeatureCoverageContract(
-        "F16",
+        "F15",
         "Runtime Panel 会话级开关",
         "MCP-076",
         "MCP-096",
@@ -168,7 +160,7 @@ MCP_FEATURE_COVERAGE_CONTRACTS: tuple[McpFeatureCoverageContract, ...] = (
         "runtime status, session override, live guard, cancel API, and panel reducer.",
     ),
     McpFeatureCoverageContract(
-        "F17",
+        "F16",
         "MCP Console 单独页面",
         "MCP-077",
         "MCP-097",
@@ -176,7 +168,7 @@ MCP_FEATURE_COVERAGE_CONTRACTS: tuple[McpFeatureCoverageContract, ...] = (
         "route, server list, form validation, tabs, loading, empty, and error states.",
     ),
     McpFeatureCoverageContract(
-        "F18",
+        "F17",
         "审计、日志与状态",
         "MCP-078",
         "MCP-098",
@@ -184,7 +176,7 @@ MCP_FEATURE_COVERAGE_CONTRACTS: tuple[McpFeatureCoverageContract, ...] = (
         "audit writer, redaction, filters, pagination, status, and frontend details.",
     ),
     McpFeatureCoverageContract(
-        "F19",
+        "F18",
         "导入导出",
         "MCP-079",
         "MCP-099",
@@ -192,7 +184,7 @@ MCP_FEATURE_COVERAGE_CONTRACTS: tuple[McpFeatureCoverageContract, ...] = (
         "config parsers, conflict preview, import apply, export stripping, and errors.",
     ),
     McpFeatureCoverageContract(
-        "F20",
+        "F19",
         "测试基建",
         "MCP-080",
         "MCP-100",
@@ -211,6 +203,6 @@ def e2e_issue_ids() -> tuple[str, ...]:
 
 
 def missing_unit_coverage() -> tuple[str, ...]:
-    expected = {f"MCP-{issue:03d}" for issue in range(61, 81)}
+    expected = {f"MCP-{issue:03d}" for issue in range(61, 81)} - {"MCP-072"}
     actual = set(unit_issue_ids())
     return tuple(sorted(expected - actual))

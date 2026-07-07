@@ -32,7 +32,6 @@ def _request(
         server_id="srv_trust",
         raw_tool_name="search",
         model_name="mcp__srv_trust__search",
-        risk_level="high",
         approval_mode="auto",
         arguments=arguments or {"query": "hello"},
         annotations=annotations or {},

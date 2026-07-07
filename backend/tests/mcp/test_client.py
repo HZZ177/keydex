@@ -11,9 +11,6 @@ from backend.app.mcp.client import (
     McpClientBase,
     McpClientCapabilities,
     McpClientInitializeResult,
-    McpClientPromptArgument,
-    McpClientPromptResult,
-    McpClientPromptSpec,
     McpClientToolResult,
     McpClientToolSpec,
     McpConnectionStateMachine,
@@ -115,11 +112,9 @@ async def test_cancellation_token_and_reserved_resource_methods() -> None:
 async def _manager_like_round_trip(client: McpClient) -> str:
     await client.initialize()
     tools = await client.list_tools()
-    prompts = await client.list_prompts()
-    prompt_result = await client.get_prompt(prompts[0].name, {"topic": "MCP"})
     tool_result = await client.call_tool(
         tools[0].name,
-        {"text": "hello", "prompt": prompt_result.messages[0]["content"]},
+        {"text": "hello"},
         call_id="call_1",
     )
     await client.cancel_call(tool_result.call_id)
@@ -140,7 +135,7 @@ class FakeMcpClient(McpClientBase):
         return McpClientInitializeResult(
             protocol_version="2025-06-18",
             server_info={"name": "fake"},
-            capabilities=McpClientCapabilities(tools=True, prompts=True),
+            capabilities=McpClientCapabilities(tools=True),
         )
 
     async def list_tools(
@@ -159,21 +154,6 @@ class FakeMcpClient(McpClientBase):
             )
         ]
 
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        _raise_if_cancelled(cancellation)
-        return [
-            McpClientPromptSpec(
-                name="summarize",
-                description="Summarize a topic",
-                arguments=[McpClientPromptArgument(name="topic", required=True)],
-            )
-        ]
-
     async def call_tool(
         self,
         raw_tool_name: str,
@@ -189,18 +169,6 @@ class FakeMcpClient(McpClientBase):
             status="success",
             content=[{"type": "text", "text": f"echo: {arguments['text']}"}],
         )
-
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
-        _raise_if_cancelled(cancellation)
-        topic = str((arguments or {}).get("topic") or "")
-        return McpClientPromptResult(messages=[{"role": "user", "content": f"Summarize {topic}"}])
 
     async def cancel_call(self, call_id: str) -> bool:
         return call_id == "call_1"

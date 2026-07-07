@@ -556,7 +556,6 @@ class McpServerRecord:
     supports_parallel_tool_calls: bool
     elicitation_enabled: bool
     sampling_enabled: bool
-    prompt_discovery_enabled: bool
     created_at: str
     updated_at: str
     description: str | None = None
@@ -583,7 +582,6 @@ class McpServerStatusRecord:
     status: str
     last_refresh_revision: int
     tools_count: int
-    prompts_count: int
     resources_reserved_count: int
     updated_at: str
     capabilities: dict[str, Any] | None = None
@@ -605,7 +603,6 @@ class McpToolRecord:
     callable_name: str
     input_schema: dict[str, Any]
     schema_hash: str
-    risk_level: str
     discovery_status: str
     first_seen_at: str
     last_seen_at: str
@@ -617,21 +614,6 @@ class McpToolRecord:
     meta: dict[str, Any] | None = None
     removed_at: str | None = None
     last_used_at: str | None = None
-
-
-@dataclass(frozen=True)
-class McpPromptRecord:
-    id: str
-    server_id: str
-    raw_name: str
-    arguments_schema: dict[str, Any]
-    discovery_status: str
-    first_seen_at: str
-    last_seen_at: str
-    display_name: str | None = None
-    description: str | None = None
-    meta: dict[str, Any] | None = None
-    removed_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -670,18 +652,7 @@ class McpToolPolicyRecord:
     approval_mode: str
     schema_change_action: str
     updated_at: str
-    risk_override: str | None = None
     parameter_constraints: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class McpPromptPolicyRecord:
-    id: str
-    server_id: str
-    raw_prompt_name: str
-    enabled: bool
-    exposure_mode: str
-    updated_at: str
 
 
 @dataclass(frozen=True)
@@ -747,7 +718,6 @@ class McpAuditLogRecord:
     created_at: str
     server_id: str | None = None
     raw_tool_name: str | None = None
-    prompt_name: str | None = None
     session_id: str | None = None
     turn_id: str | None = None
     call_id: str | None = None
@@ -788,7 +758,6 @@ class McpServersRepository:
         "supports_parallel_tool_calls",
         "elicitation_enabled",
         "sampling_enabled",
-        "prompt_discovery_enabled",
     }
     DIRECT_FIELDS = {
         "name",
@@ -856,7 +825,6 @@ class McpServersRepository:
         supports_parallel_tool_calls: bool = False,
         elicitation_enabled: bool = True,
         sampling_enabled: bool = False,
-        prompt_discovery_enabled: bool = True,
         resource_reserved_policy: dict[str, Any] | None = None,
     ) -> McpServerRecord:
         if not name.strip():
@@ -882,10 +850,10 @@ class McpServersRepository:
                   restart_policy, connect_mode, auto_refresh, refresh_interval_sec,
                   default_tool_exposure_mode, default_tool_approval_mode,
                   supports_parallel_tool_calls, elicitation_enabled, sampling_enabled,
-                  prompt_discovery_enabled, resource_reserved_policy_json, created_at, updated_at
+                  resource_reserved_policy_json, created_at, updated_at
                 ) values (
                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -925,7 +893,6 @@ class McpServersRepository:
                     int(supports_parallel_tool_calls),
                     int(elicitation_enabled),
                     int(sampling_enabled),
-                    int(prompt_discovery_enabled),
                     _json_dumps(resource_reserved_policy)
                     if resource_reserved_policy is not None
                     else None,
@@ -1121,7 +1088,6 @@ class McpServersRepository:
             supports_parallel_tool_calls=bool(row["supports_parallel_tool_calls"]),
             elicitation_enabled=bool(row["elicitation_enabled"]),
             sampling_enabled=bool(row["sampling_enabled"]),
-            prompt_discovery_enabled=bool(row["prompt_discovery_enabled"]),
             resource_reserved_policy=_json_loads(row["resource_reserved_policy_json"], None),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -1164,7 +1130,6 @@ class McpServerStatusRepository:
         last_error_message: str | None = None,
         last_error_detail: dict[str, Any] | None = None,
         tools_count: int = 0,
-        prompts_count: int = 0,
         resources_reserved_count: int = 0,
     ) -> McpServerStatusRecord:
         self._validate_status(status)
@@ -1183,9 +1148,9 @@ class McpServerStatusRepository:
                 insert into mcp_server_status (
                   server_id, status, capabilities_json, server_info_json, last_connected_at,
                   last_refresh_at, last_refresh_revision, last_error_code, last_error_message,
-                  last_error_detail_json, tools_count, prompts_count, resources_reserved_count,
+                  last_error_detail_json, tools_count, resources_reserved_count,
                   updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(server_id) do update set
                   status=excluded.status,
                   capabilities_json=excluded.capabilities_json,
@@ -1197,7 +1162,6 @@ class McpServerStatusRepository:
                   last_error_message=excluded.last_error_message,
                   last_error_detail_json=excluded.last_error_detail_json,
                   tools_count=excluded.tools_count,
-                  prompts_count=excluded.prompts_count,
                   resources_reserved_count=excluded.resources_reserved_count,
                   updated_at=excluded.updated_at
                 """,
@@ -1213,7 +1177,6 @@ class McpServerStatusRepository:
                     last_error_message,
                     _json_dumps(last_error_detail) if last_error_detail is not None else None,
                     tools_count,
-                    prompts_count,
                     resources_reserved_count,
                     now,
                 ),
@@ -1273,7 +1236,6 @@ class McpServerStatusRepository:
         capabilities: dict[str, Any] | None = None,
         server_info: dict[str, Any] | None = None,
         tools_count: int = 0,
-        prompts_count: int = 0,
         resources_reserved_count: int = 0,
     ) -> McpServerStatusRecord:
         self._validate_status(status)
@@ -1283,9 +1245,9 @@ class McpServerStatusRepository:
                 """
                 insert into mcp_server_status (
                   server_id, status, capabilities_json, server_info_json, last_connected_at,
-                  last_refresh_at, last_refresh_revision, tools_count, prompts_count,
+                  last_refresh_at, last_refresh_revision, tools_count,
                   resources_reserved_count, updated_at
-                ) values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
                 on conflict(server_id) do update set
                   status=excluded.status,
                   capabilities_json=excluded.capabilities_json,
@@ -1297,7 +1259,6 @@ class McpServerStatusRepository:
                   last_error_message=null,
                   last_error_detail_json=null,
                   tools_count=excluded.tools_count,
-                  prompts_count=excluded.prompts_count,
                   resources_reserved_count=excluded.resources_reserved_count,
                   updated_at=excluded.updated_at
                 """,
@@ -1309,7 +1270,6 @@ class McpServerStatusRepository:
                     now,
                     now,
                     tools_count,
-                    prompts_count,
                     resources_reserved_count,
                     now,
                 ),
@@ -1339,14 +1299,12 @@ class McpServerStatusRepository:
             last_error_message=row["last_error_message"],
             last_error_detail=_json_loads(row["last_error_detail_json"], None),
             tools_count=int(row["tools_count"]),
-            prompts_count=int(row["prompts_count"]),
             resources_reserved_count=int(row["resources_reserved_count"]),
             updated_at=row["updated_at"],
         )
 
 
 class McpToolsRepository:
-    VALID_RISK_LEVELS = {"low", "medium", "high", "unknown"}
     VALID_DISCOVERY_STATUSES = {"new", "active", "removed", "schema_changed"}
 
     def __init__(self, db: Database) -> None:
@@ -1361,8 +1319,6 @@ class McpToolsRepository:
                 callable_namespace = self._required_text(tool, "callable_namespace")
                 callable_name = self._required_text(tool, "callable_name")
                 schema_hash = self._required_text(tool, "schema_hash")
-                risk_level = str(tool.get("risk_level") or "unknown")
-                self._validate_choice("risk_level", risk_level, self.VALID_RISK_LEVELS)
                 input_schema = tool.get("input_schema") or {}
                 if not isinstance(input_schema, dict):
                     raise ValueError("MCP tool input_schema 必须是 JSON 对象")
@@ -1371,9 +1327,9 @@ class McpToolsRepository:
                     insert into mcp_tools (
                       id, server_id, raw_name, model_name, callable_namespace, callable_name,
                       display_name, description, input_schema_json, annotations_json, meta_json,
-                      schema_hash, risk_level, discovery_status, first_seen_at, last_seen_at,
+                      schema_hash, discovery_status, first_seen_at, last_seen_at,
                       removed_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, null)
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, null)
                     on conflict(server_id, raw_name) do update set
                       model_name=excluded.model_name,
                       callable_namespace=excluded.callable_namespace,
@@ -1384,7 +1340,6 @@ class McpToolsRepository:
                       annotations_json=excluded.annotations_json,
                       meta_json=excluded.meta_json,
                       schema_hash=excluded.schema_hash,
-                      risk_level=excluded.risk_level,
                       discovery_status=case
                         when mcp_tools.schema_hash <> excluded.schema_hash
                           then 'schema_changed'
@@ -1408,7 +1363,6 @@ class McpToolsRepository:
                         else None,
                         _json_dumps(tool.get("meta")) if tool.get("meta") is not None else None,
                         schema_hash,
-                        risk_level,
                         now,
                         now,
                     ),
@@ -1522,7 +1476,6 @@ class McpToolsRepository:
         server_id: str,
         *,
         status: str | None = None,
-        risk_level: str | None = None,
         enabled: bool | None = None,
         limit: int = 500,
     ) -> list[McpToolRecord]:
@@ -1532,10 +1485,6 @@ class McpToolsRepository:
             self._validate_choice("discovery_status", status, self.VALID_DISCOVERY_STATUSES)
             filters.append("tools.discovery_status = ?")
             params.append(status)
-        if risk_level is not None:
-            self._validate_choice("risk_level", risk_level, self.VALID_RISK_LEVELS)
-            filters.append("tools.risk_level = ?")
-            params.append(risk_level)
         if enabled is not None:
             filters.append("coalesce(policy.enabled, 1) = ?")
             params.append(int(enabled))
@@ -1589,7 +1538,6 @@ class McpToolsRepository:
             annotations=_json_loads(row["annotations_json"], None),
             meta=_json_loads(row["meta_json"], None),
             schema_hash=row["schema_hash"],
-            risk_level=row["risk_level"],
             discovery_status=row["discovery_status"],
             first_seen_at=row["first_seen_at"],
             last_seen_at=row["last_seen_at"],
@@ -1597,153 +1545,6 @@ class McpToolsRepository:
             last_used_at=row["last_used_at"],
             call_count=int(row["call_count"]),
             failure_count=int(row["failure_count"]),
-        )
-
-
-class McpPromptsRepository:
-    VALID_DISCOVERY_STATUSES = {"new", "active", "removed", "schema_changed"}
-
-    def __init__(self, db: Database) -> None:
-        self.db = db
-
-    def upsert_many(self, server_id: str, prompts: list[dict[str, Any]]) -> list[McpPromptRecord]:
-        now = to_iso_z(utc_now())
-        with self.db.transaction() as conn:
-            for prompt in prompts:
-                raw_name = self._required_text(prompt, "raw_name")
-                arguments_schema = prompt.get("arguments_schema") or {}
-                if not isinstance(arguments_schema, dict):
-                    raise ValueError("MCP prompt arguments_schema 必须是 JSON 对象")
-                conn.execute(
-                    """
-                    insert into mcp_prompts (
-                      id, server_id, raw_name, display_name, description,
-                      arguments_schema_json, meta_json, discovery_status,
-                      first_seen_at, last_seen_at, removed_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, null)
-                    on conflict(server_id, raw_name) do update set
-                      display_name=excluded.display_name,
-                      description=excluded.description,
-                      arguments_schema_json=excluded.arguments_schema_json,
-                      meta_json=excluded.meta_json,
-                      discovery_status=case
-                        when mcp_prompts.arguments_schema_json <> excluded.arguments_schema_json
-                          then 'schema_changed'
-                        else 'active'
-                      end,
-                      last_seen_at=excluded.last_seen_at,
-                      removed_at=null
-                    """,
-                    (
-                        str(prompt.get("id") or new_id()),
-                        server_id,
-                        raw_name,
-                        prompt.get("display_name"),
-                        prompt.get("description"),
-                        _json_dumps(arguments_schema),
-                        _json_dumps(prompt.get("meta")) if prompt.get("meta") is not None else None,
-                        now,
-                        now,
-                    ),
-                )
-        return self.list_by_server(server_id)
-
-    def mark_removed_missing(self, server_id: str, seen_raw_names: list[str]) -> int:
-        now = to_iso_z(utc_now())
-        with self.db.transaction() as conn:
-            if seen_raw_names:
-                placeholders = ", ".join("?" for _ in seen_raw_names)
-                cursor = conn.execute(
-                    f"""
-                    update mcp_prompts set
-                      discovery_status = 'removed',
-                      removed_at = coalesce(removed_at, ?),
-                      last_seen_at = ?
-                    where server_id = ?
-                      and discovery_status <> 'removed'
-                      and raw_name not in ({placeholders})
-                    """,
-                    [now, now, server_id, *seen_raw_names],
-                )
-            else:
-                cursor = conn.execute(
-                    """
-                    update mcp_prompts set
-                      discovery_status = 'removed',
-                      removed_at = coalesce(removed_at, ?),
-                      last_seen_at = ?
-                    where server_id = ? and discovery_status <> 'removed'
-                    """,
-                    (now, now, server_id),
-                )
-        return int(cursor.rowcount or 0)
-
-    def get_by_raw_name(self, server_id: str, raw_name: str) -> McpPromptRecord | None:
-        with self.db.connect() as conn:
-            row = conn.execute(
-                "select * from mcp_prompts where server_id = ? and raw_name = ?",
-                (server_id, raw_name),
-            ).fetchone()
-        return self._from_row(row) if row else None
-
-    def list_by_server(
-        self,
-        server_id: str,
-        *,
-        status: str | None = None,
-        limit: int = 500,
-    ) -> list[McpPromptRecord]:
-        filters = ["server_id = ?"]
-        params: list[Any] = [server_id]
-        if status is not None:
-            self._validate_choice("discovery_status", status, self.VALID_DISCOVERY_STATUSES)
-            filters.append("discovery_status = ?")
-            params.append(status)
-        params.append(max(1, min(limit, 1000)))
-        with self.db.connect() as conn:
-            rows = conn.execute(
-                f"""
-                select * from mcp_prompts
-                where {" and ".join(filters)}
-                order by raw_name asc
-                limit ?
-                """,
-                params,
-            ).fetchall()
-        return [self._from_row(row) for row in rows]
-
-    @staticmethod
-    def _required_text(prompt: dict[str, Any], field_name: str) -> str:
-        value = str(prompt.get(field_name) or "").strip()
-        if not value:
-            raise ValueError(f"MCP prompt {field_name} 不能为空")
-        return value
-
-    @staticmethod
-    def _validate_choice(field_name: str, value: str, allowed: set[str]) -> None:
-        if value not in allowed:
-            expected = ", ".join(sorted(allowed))
-            raise ValueError(
-                f"不支持的 MCP prompt {field_name}: {value}; expected one of: {expected}"
-            )
-
-    @staticmethod
-    def _from_row(row: sqlite3.Row) -> McpPromptRecord:
-        return McpPromptRecord(
-            id=row["id"],
-            server_id=row["server_id"],
-            raw_name=row["raw_name"],
-            display_name=row["display_name"],
-            description=row["description"],
-            arguments_schema=_json_object_loads(
-                row["arguments_schema_json"],
-                field_name="arguments_schema_json",
-            ),
-            meta=_json_loads(row["meta_json"], None),
-            discovery_status=row["discovery_status"],
-            first_seen_at=row["first_seen_at"],
-            last_seen_at=row["last_seen_at"],
-            removed_at=row["removed_at"],
         )
 
 
@@ -1926,11 +1727,10 @@ class McpToolPoliciesRepository:
         enabled: bool = True,
         hidden: bool = False,
         approval_mode: str = "inherit",
-        risk_override: str | None = None,
         parameter_constraints: dict[str, Any] | None = None,
         schema_change_action: str = "require_review",
     ) -> McpToolPolicyRecord:
-        self._validate(approval_mode, risk_override, schema_change_action)
+        self._validate(approval_mode, schema_change_action)
         existing = self.get(server_id, raw_tool_name)
         policy_id = existing.id if existing else new_id()
         now = to_iso_z(utc_now())
@@ -1939,13 +1739,12 @@ class McpToolPoliciesRepository:
                 """
                 insert into mcp_tool_policies (
                   id, server_id, raw_tool_name, enabled, hidden, approval_mode,
-                  risk_override, parameter_constraints_json, schema_change_action, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  parameter_constraints_json, schema_change_action, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(server_id, raw_tool_name) do update set
                   enabled=excluded.enabled,
                   hidden=excluded.hidden,
                   approval_mode=excluded.approval_mode,
-                  risk_override=excluded.risk_override,
                   parameter_constraints_json=excluded.parameter_constraints_json,
                   schema_change_action=excluded.schema_change_action,
                   updated_at=excluded.updated_at
@@ -1957,7 +1756,6 @@ class McpToolPoliciesRepository:
                     int(enabled),
                     int(hidden),
                     approval_mode,
-                    risk_override,
                     _json_dumps(parameter_constraints)
                     if parameter_constraints is not None
                     else None,
@@ -1982,22 +1780,20 @@ class McpToolPoliciesRepository:
                 if not raw_tool_name:
                     raise ValueError("MCP tool policy raw_tool_name 不能为空")
                 approval_mode = str(policy.get("approval_mode") or "inherit")
-                risk_override = policy.get("risk_override")
                 schema_change_action = str(
                     policy.get("schema_change_action") or "require_review"
                 )
-                self._validate(approval_mode, risk_override, schema_change_action)
+                self._validate(approval_mode, schema_change_action)
                 conn.execute(
                     """
                     insert into mcp_tool_policies (
                       id, server_id, raw_tool_name, enabled, hidden, approval_mode,
-                      risk_override, parameter_constraints_json, schema_change_action, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      parameter_constraints_json, schema_change_action, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     on conflict(server_id, raw_tool_name) do update set
                       enabled=excluded.enabled,
                       hidden=excluded.hidden,
                       approval_mode=excluded.approval_mode,
-                      risk_override=excluded.risk_override,
                       parameter_constraints_json=excluded.parameter_constraints_json,
                       schema_change_action=excluded.schema_change_action,
                       updated_at=excluded.updated_at
@@ -2009,7 +1805,6 @@ class McpToolPoliciesRepository:
                         int(bool(policy.get("enabled", True))),
                         int(bool(policy.get("hidden", False))),
                         approval_mode,
-                        risk_override,
                         _json_dumps(policy.get("parameter_constraints"))
                         if policy.get("parameter_constraints") is not None
                         else None,
@@ -2023,13 +1818,10 @@ class McpToolPoliciesRepository:
     def _validate(
         cls,
         approval_mode: str,
-        risk_override: str | None,
         schema_change_action: str,
     ) -> None:
         if approval_mode not in cls.VALID_APPROVAL_MODES:
             raise ValueError(f"不支持的 MCP tool approval_mode: {approval_mode}")
-        if risk_override is not None and risk_override not in cls.VALID_RISK_LEVELS:
-            raise ValueError(f"不支持的 MCP tool risk_override: {risk_override}")
         if schema_change_action not in cls.VALID_SCHEMA_CHANGE_ACTIONS:
             raise ValueError(f"不支持的 MCP tool schema_change_action: {schema_change_action}")
 
@@ -2042,87 +1834,8 @@ class McpToolPoliciesRepository:
             enabled=bool(row["enabled"]),
             hidden=bool(row["hidden"]),
             approval_mode=row["approval_mode"],
-            risk_override=row["risk_override"],
             parameter_constraints=_json_loads(row["parameter_constraints_json"], None),
             schema_change_action=row["schema_change_action"],
-            updated_at=row["updated_at"],
-        )
-
-
-class McpPromptPoliciesRepository:
-    VALID_EXPOSURE_MODES = {"hidden", "manual", "slash_command", "agent_selectable"}
-
-    def __init__(self, db: Database) -> None:
-        self.db = db
-
-    def get(self, server_id: str, raw_prompt_name: str) -> McpPromptPolicyRecord | None:
-        with self.db.connect() as conn:
-            row = conn.execute(
-                """
-                select * from mcp_prompt_policies
-                where server_id = ? and raw_prompt_name = ?
-                """,
-                (server_id, raw_prompt_name),
-            ).fetchone()
-        return self._from_row(row) if row else None
-
-    def list_by_server(self, server_id: str) -> list[McpPromptPolicyRecord]:
-        with self.db.connect() as conn:
-            rows = conn.execute(
-                """
-                select * from mcp_prompt_policies
-                where server_id = ?
-                order by raw_prompt_name asc
-                """,
-                (server_id,),
-            ).fetchall()
-        return [self._from_row(row) for row in rows]
-
-    def upsert(
-        self,
-        *,
-        server_id: str,
-        raw_prompt_name: str,
-        enabled: bool = True,
-        exposure_mode: str = "manual",
-    ) -> McpPromptPolicyRecord:
-        if exposure_mode not in self.VALID_EXPOSURE_MODES:
-            raise ValueError(f"不支持的 MCP prompt exposure_mode: {exposure_mode}")
-        now = to_iso_z(utc_now())
-        existing = self.get(server_id, raw_prompt_name)
-        with self.db.transaction() as conn:
-            conn.execute(
-                """
-                insert into mcp_prompt_policies (
-                  id, server_id, raw_prompt_name, enabled, exposure_mode, updated_at
-                ) values (?, ?, ?, ?, ?, ?)
-                on conflict(server_id, raw_prompt_name) do update set
-                  enabled=excluded.enabled,
-                  exposure_mode=excluded.exposure_mode,
-                  updated_at=excluded.updated_at
-                """,
-                (
-                    existing.id if existing else new_id(),
-                    server_id,
-                    raw_prompt_name,
-                    int(enabled),
-                    exposure_mode,
-                    now,
-                ),
-            )
-        record = self.get(server_id, raw_prompt_name)
-        if record is None:
-            raise RuntimeError(f"写入 MCP prompt policy 后无法读取: {server_id}/{raw_prompt_name}")
-        return record
-
-    @staticmethod
-    def _from_row(row: sqlite3.Row) -> McpPromptPolicyRecord:
-        return McpPromptPolicyRecord(
-            id=row["id"],
-            server_id=row["server_id"],
-            raw_prompt_name=row["raw_prompt_name"],
-            enabled=bool(row["enabled"]),
-            exposure_mode=row["exposure_mode"],
             updated_at=row["updated_at"],
         )
 
@@ -2645,7 +2358,6 @@ class McpAuditLogRepository:
         event_type: str,
         server_id: str | None = None,
         raw_tool_name: str | None = None,
-        prompt_name: str | None = None,
         session_id: str | None = None,
         turn_id: str | None = None,
         call_id: str | None = None,
@@ -2661,17 +2373,16 @@ class McpAuditLogRepository:
             conn.execute(
                 """
                 insert into mcp_audit_log (
-                  id, event_type, server_id, raw_tool_name, prompt_name, session_id,
+                  id, event_type, server_id, raw_tool_name, session_id,
                   turn_id, call_id, approval_id, actor, status, duration_ms, summary,
                   detail_json, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     audit_id,
                     event_type,
                     server_id,
                     raw_tool_name,
-                    prompt_name,
                     session_id,
                     turn_id,
                     call_id,
@@ -2744,7 +2455,6 @@ class McpAuditLogRepository:
             event_type=row["event_type"],
             server_id=row["server_id"],
             raw_tool_name=row["raw_tool_name"],
-            prompt_name=row["prompt_name"],
             session_id=row["session_id"],
             turn_id=row["turn_id"],
             call_id=row["call_id"],
@@ -6405,10 +6115,8 @@ class StorageRepositories:
         self.mcp_servers = McpServersRepository(db)
         self.mcp_server_status = McpServerStatusRepository(db)
         self.mcp_tools = McpToolsRepository(db)
-        self.mcp_prompts = McpPromptsRepository(db)
         self.mcp_resources = McpResourcesRepository(db)
         self.mcp_tool_policies = McpToolPoliciesRepository(db)
-        self.mcp_prompt_policies = McpPromptPoliciesRepository(db)
         self.mcp_session_tool_overrides = McpSessionToolOverridesRepository(db)
         self.mcp_runtime_snapshots = McpRuntimeSnapshotsRepository(db)
         self.mcp_oauth_tokens = McpOAuthTokensRepository(db)

@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge } from "@/runtime";
-import { APP_INSERT_MCP_PROMPT_DRAFT_EVENT, clearPendingMcpPromptDrafts } from "@/renderer/events/mcpPromptDraft";
 import { McpConsolePage } from "@/renderer/pages/mcp/McpConsolePage";
+import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import type {
   McpAuditListResponse,
   McpAuditRecord,
@@ -11,9 +11,6 @@ import type {
   McpExportResponse,
   McpImportPayload,
   McpImportPreviewResponse,
-  McpPromptExposureMode,
-  McpPromptListResponse,
-  McpPromptSummary,
   McpServerDetailResponse,
   McpServerUpdatePayload,
   McpServerSummary,
@@ -33,10 +30,22 @@ describe("McpConsolePage", () => {
     expect(within(list).getByText("Ticketing")).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Filesystem" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Tools" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Prompts" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Resources" })).toBeNull();
     expect(within(screen.getByTestId("mcp-detail-tabs")).getByText("Resources")).not.toBeNull();
     expect(screen.getByText("supported, reserved")).not.toBeNull();
+  });
+
+  it("renders connection tab details instead of the skeleton placeholder", async () => {
+    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures())} />);
+
+    await screen.findByTestId("mcp-server-list");
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+
+    const connectionTab = await screen.findByTestId("mcp-connection-tab");
+    expect(within(connectionTab).getByText("Command")).not.toBeNull();
+    expect(within(connectionTab).getByText("node")).not.toBeNull();
+    expect(within(connectionTab).getByText("启动超时")).not.toBeNull();
+    expect(screen.queryByTestId("mcp-tab-connection")).toBeNull();
   });
 
   it("shows loading, empty and error states", async () => {
@@ -89,13 +98,13 @@ describe("McpConsolePage", () => {
     expect(screen.getByRole("heading", { name: "Ticketing" })).not.toBeNull();
 
     fireEvent.change(screen.getByLabelText("搜索 MCP Server"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("筛选 MCP Server 状态"), { target: { value: "online" } });
+    await chooseSettingsSelect("筛选 MCP Server 状态", "在线");
 
     expect(within(list).getByText("Filesystem")).not.toBeNull();
     expect(within(list).queryByText("Ticketing")).toBeNull();
 
-    fireEvent.change(screen.getByLabelText("筛选 MCP Server 状态"), { target: { value: "all" } });
-    fireEvent.change(screen.getByLabelText("筛选 MCP Server transport"), { target: { value: "sse" } });
+    await chooseSettingsSelect("筛选 MCP Server 状态", "全部状态");
+    await chooseSettingsSelect("筛选 MCP Server transport", "SSE");
 
     expect(within(list).queryByText("Filesystem")).toBeNull();
     expect(within(list).getByText("Ticketing")).not.toBeNull();
@@ -128,7 +137,7 @@ describe("McpConsolePage", () => {
       .mockResolvedValueOnce({ list: [server("srv_delete", "Delete Me")], total: 1, limit: 500, offset: 0 })
       .mockResolvedValueOnce({ list: [], total: 0, limit: 500, offset: 0 });
     const deleteServer = vi.fn().mockResolvedValue({ deleted: true, server_id: "srv_delete" });
-    render(<McpConsolePage runtime={runtimeWithServers([], { listServers, deleteServer })} />);
+    renderMcpConsoleWithNotifications(runtimeWithServers([], { listServers, deleteServer }));
 
     expect(await screen.findByRole("heading", { name: "Delete Me" })).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "删除 MCP Server" }));
@@ -143,24 +152,36 @@ describe("McpConsolePage", () => {
     expect(screen.queryByRole("heading", { name: "Delete Me" })).toBeNull();
   });
 
+  it("toggles server enabled state from the detail actions", async () => {
+    const disabledServer = server("srv_disabled", "Disabled MCP", { enabled: false, status: "disabled" });
+    const toggleServer = vi.fn().mockResolvedValue({ ...disabledServer, enabled: true, status: "unknown" });
+    renderMcpConsoleWithNotifications(runtimeWithServers([disabledServer], { toggleServer }));
+
+    await screen.findByTestId("mcp-server-list");
+    fireEvent.click(await screen.findByRole("button", { name: "启用 MCP Server" }));
+
+    await waitFor(() => expect(toggleServer).toHaveBeenCalledWith("srv_disabled", true));
+    expect(await screen.findByText("MCP Server 已启用：Disabled MCP")).not.toBeNull();
+  });
+
   it("opens the server form and switches transport-specific fields", async () => {
     render(<McpConsolePage runtime={runtimeWithServers(serverFixtures())} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "添加 MCP Server" }));
 
     expect(await screen.findByRole("dialog", { name: "添加 MCP Server" })).not.toBeNull();
-    expect(screen.getByLabelText("stdio command")).not.toBeNull();
-    const advancedSettings = screen.getByText("高级设置").closest("details") as HTMLDetailsElement | null;
-    expect(advancedSettings?.open).toBe(false);
-    expect(screen.queryByRole("radio", { name: /SSE/ })).toBeNull();
-
-    fireEvent.click(screen.getByRole("radio", { name: /HTTP/ }));
     expect(screen.getByLabelText("streamable_http url")).not.toBeNull();
     expect(screen.getByLabelText("bearer token env")).not.toBeNull();
+    expect(screen.queryByText("高级设置")).toBeNull();
+    expect(screen.queryByText("Timeouts 与运行策略")).toBeNull();
+    expect(screen.queryByRole("radio", { name: /SSE/ })).toBeNull();
 
-    fireEvent.click(screen.getByText("高级设置"));
-    expect(advancedSettings?.open).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "显示 SSE transport" }));
+    fireEvent.click(screen.getByRole("radio", { name: /stdio/ }));
+    expect(screen.getByLabelText("stdio command")).not.toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /HTTP/ }));
+    expect(screen.queryByText("来自环境变量的标头")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "显示 SSE" }));
     fireEvent.click(screen.getByRole("radio", { name: /SSE/ }));
     expect(screen.getByLabelText("sse url")).not.toBeNull();
     expect(screen.getByLabelText("sse message url")).not.toBeNull();
@@ -176,6 +197,7 @@ describe("McpConsolePage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "添加 MCP Server" }));
     fireEvent.change(await screen.findByLabelText("MCP Server 名称"), { target: { value: "Local Files" } });
+    fireEvent.click(screen.getByRole("radio", { name: /stdio/ }));
     fireEvent.change(screen.getByLabelText("stdio command"), { target: { value: "node" } });
     fireEvent.change(screen.getByLabelText("stdio arg 1"), { target: { value: "server.js" } });
     fireEvent.click(screen.getByRole("button", { name: "添加 arg" }));
@@ -199,18 +221,19 @@ describe("McpConsolePage", () => {
       ok: true,
       server_id: "srv_caps",
       status: "online",
-      capabilities: { tools: true, prompts: true, resources_reserved: true },
+      capabilities: { tools: true, resources_reserved: true },
     });
     render(<McpConsolePage runtime={runtimeWithServers([], { createServer, getServer, testServer })} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "添加 MCP Server" }));
     fireEvent.change(await screen.findByLabelText("MCP Server 名称"), { target: { value: "Capability MCP" } });
+    fireEvent.click(screen.getByRole("radio", { name: /stdio/ }));
     fireEvent.change(screen.getByLabelText("stdio command"), { target: { value: "node" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并测试" }));
 
     await waitFor(() => expect(testServer).toHaveBeenCalledWith("srv_caps"));
     expect(await screen.findByText("连接测试通过，状态 online")).not.toBeNull();
-    expect(screen.getByText("tools: yes · prompts: yes · resources: yes")).not.toBeNull();
+    expect(screen.getByText("tools: yes · resources: yes")).not.toBeNull();
   });
 
   it("validates required fields before saving", async () => {
@@ -323,7 +346,8 @@ describe("McpConsolePage", () => {
     fireEvent.click(screen.getByRole("button", { name: /^保存$/ }));
 
     await waitFor(() => expect(createServer).toHaveBeenCalledTimes(1));
-    expect(createServer.mock.calls[0][0]).toMatchObject({
+    const payload = createServer.mock.calls[0][0];
+    expect(payload).toMatchObject({
       name: "Remote MCP",
       transport: "streamable_http",
       url: "https://mcp.example.test/mcp",
@@ -335,6 +359,11 @@ describe("McpConsolePage", () => {
       secret_refs: null,
       oauth_config: null,
     });
+    expect(payload).not.toHaveProperty("startup_timeout_sec");
+    expect(payload).not.toHaveProperty("tool_timeout_sec");
+    expect(payload).not.toHaveProperty("default_tool_approval_mode");
+    expect(payload).not.toHaveProperty("default_tool_exposure_mode");
+    expect(payload).not.toHaveProperty("sampling_enabled");
   });
 
   it("renders OAuth status and calls login and clear flows", async () => {
@@ -415,11 +444,6 @@ describe("McpConsolePage", () => {
     await waitFor(() => expect(within(toolList).queryByText("read_file")).toBeNull());
     expect(within(toolList).getByText("write_ticket")).not.toBeNull();
 
-    fireEvent.change(screen.getByLabelText("筛选 MCP Tool 风险"), { target: { value: "high" } });
-
-    await waitFor(() =>
-      expect(listTools).toHaveBeenLastCalledWith("srv_1", expect.objectContaining({ search: "write", risk: "high" })),
-    );
   });
 
   it("updates a single tool visibility and approval policy", async () => {
@@ -430,7 +454,7 @@ describe("McpConsolePage", () => {
       return Promise.resolve(updated);
     });
     const listTools = vi.fn(() => Promise.resolve(toolListResponse(tools)));
-    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { listTools, updateToolPolicy })} />);
+    renderMcpConsoleWithNotifications(runtimeWithServers(serverFixtures(), { listTools, updateToolPolicy }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Tools" }));
     fireEvent.click(await screen.findByRole("switch", { name: "启用 tool read_file" }));
@@ -440,7 +464,7 @@ describe("McpConsolePage", () => {
     );
     expect(await screen.findByText("已禁用 read_file：立即阻止执行，下一轮不再暴露给 Agent")).not.toBeNull();
 
-    fireEvent.change(screen.getByLabelText("审批策略 read_file"), { target: { value: "prompt" } });
+    await chooseSettingsSelect("审批策略 read_file", "prompt");
 
     await waitFor(() =>
       expect(updateToolPolicy).toHaveBeenLastCalledWith("srv_1", "tool_read", { approval_mode: "prompt" }),
@@ -461,11 +485,11 @@ describe("McpConsolePage", () => {
         ),
       }),
     );
-    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { applyToolBulkPolicy })} />);
+    renderMcpConsoleWithNotifications(runtimeWithServers(serverFixtures(), { applyToolBulkPolicy }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Tools" }));
     fireEvent.click(await screen.findByRole("button", { name: "选择 tool read_file" }));
-    fireEvent.change(screen.getByLabelText("MCP Tool 批量策略"), { target: { value: "keep_selected_only" } });
+    await chooseSettingsSelect("MCP Tool 批量策略", "仅保留所选");
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     await waitFor(() =>
@@ -495,107 +519,26 @@ describe("McpConsolePage", () => {
     expect(within(schemaPanel).getByText(/\"amount\"/)).not.toBeNull();
   });
 
-  it("lists prompts and updates prompt exposure policy", async () => {
-    let prompts = promptFixtures();
-    const listPrompts = vi.fn((serverId: string, options: Record<string, unknown> = {}) =>
-      Promise.resolve(promptListResponse(filterPrompts(prompts, options))),
-    );
-    const updatePromptPolicy = vi.fn((serverId: string, promptId: string, payload: { exposure_mode?: McpPromptExposureMode }) => {
-      const updated = {
-        ...prompts.find((prompt) => prompt.id === promptId)!,
-        exposure_mode: payload.exposure_mode ?? "manual",
-      };
-      prompts = prompts.map((prompt) => (prompt.id === promptId ? updated : prompt));
-      return Promise.resolve(updated);
-    });
-    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { listPrompts, updatePromptPolicy })} />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Prompts" }));
-    const promptList = await screen.findByTestId("mcp-prompt-list");
-
-    await waitFor(() => expect(within(promptList).getByText("summarize_ticket")).not.toBeNull());
-    expect(within(promptList).getAllByText("Filesystem").length).toBeGreaterThan(0);
-
-    fireEvent.change(screen.getByLabelText("搜索 MCP Prompt"), { target: { value: "release" } });
-
-    await waitFor(() =>
-      expect(listPrompts).toHaveBeenLastCalledWith("srv_1", expect.objectContaining({ search: "release", limit: 500 })),
-    );
-    await waitFor(() => expect(within(promptList).queryByText("summarize_ticket")).toBeNull());
-    expect(within(promptList).getByText("release_notes")).not.toBeNull();
-
-    fireEvent.change(screen.getByLabelText("暴露策略 release_notes"), { target: { value: "agent_selectable" } });
-
-    await waitFor(() =>
-      expect(updatePromptPolicy).toHaveBeenCalledWith("srv_1", "prompt_release", {
-        exposure_mode: "agent_selectable",
-      }),
-    );
-    expect(await screen.findByText("Prompt 暴露策略已更新：release_notes -> agent_selectable")).not.toBeNull();
-  });
-
-  it("materializes a prompt, copies it and emits an insert draft event", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-    const getPrompt = vi.fn().mockResolvedValue(materializedPrompt());
-    const draftListener = vi.fn();
-    const handleDraft = (event: Event) => draftListener((event as CustomEvent).detail);
-    document.addEventListener(APP_INSERT_MCP_PROMPT_DRAFT_EVENT, handleDraft);
-    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { getPrompt })} />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Prompts" }));
-    fireEvent.change(await screen.findByLabelText("prompt argument topic"), { target: { value: "Q3 roadmap" } });
-    fireEvent.click(screen.getByRole("button", { name: "获取 Prompt" }));
-
-    await waitFor(() => expect(getPrompt).toHaveBeenCalledWith("srv_1", "prompt_summary", { topic: "Q3 roadmap" }));
-    expect(await screen.findByText(/Summarize Q3 roadmap/)).not.toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "复制" }));
-
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Summarize Q3 roadmap")));
-    expect(await screen.findByText("Prompt 已复制")).not.toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "插入草稿" }));
-
-    await waitFor(() => expect(draftListener).toHaveBeenCalledTimes(1));
-    expect(draftListener.mock.calls[0][0]).toMatchObject({
-      serverId: "srv_1",
-      promptId: "prompt_summary",
-      rawName: "summarize_ticket",
-      text: expect.stringContaining("Summarize Q3 roadmap"),
-    });
-    document.removeEventListener(APP_INSERT_MCP_PROMPT_DRAFT_EVENT, handleDraft);
-    clearPendingMcpPromptDrafts();
-  });
-
-  it("shows get prompt errors", async () => {
-    const getPrompt = vi.fn().mockRejectedValue(new Error("prompt server failed"));
-    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { getPrompt })} />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Prompts" }));
-    fireEvent.change(await screen.findByLabelText("prompt argument topic"), { target: { value: "Q3 roadmap" } });
-    fireEvent.click(screen.getByRole("button", { name: "获取 Prompt" }));
-
-    expect((await screen.findByRole("alert")).textContent).toContain("prompt server failed");
-  });
-
   it("updates approval settings from the trust tab", async () => {
     const detail = serverDetail("srv_1", "Filesystem", { default_tool_approval_mode: "auto", sampling_enabled: false });
     const updateServer = vi.fn((serverId: string, payload: McpServerUpdatePayload) =>
       Promise.resolve({ ...detail, ...payload } as McpServerDetailResponse),
     );
-    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { getServer: vi.fn().mockResolvedValue(detail), updateServer })} />);
+    renderMcpConsoleWithNotifications(runtimeWithServers(serverFixtures(), { getServer: vi.fn().mockResolvedValue(detail), updateServer }));
 
     fireEvent.click(await screen.findByRole("button", { name: "审批与信任" }));
-    fireEvent.change(await screen.findByLabelText("MCP Server 默认审批"), { target: { value: "prompt" } });
+    await chooseSettingsSelect("MCP Server 默认审批", "prompt");
 
     await waitFor(() =>
       expect(updateServer).toHaveBeenCalledWith("srv_1", { default_tool_approval_mode: "prompt" }),
     );
     expect(await screen.findByText("MCP 审批策略已保存")).not.toBeNull();
+
+    await chooseSettingsSelect("MCP Server 默认暴露", "allow selected only");
+
+    await waitFor(() =>
+      expect(updateServer).toHaveBeenCalledWith("srv_1", { default_tool_exposure_mode: "allow_selected_only" }),
+    );
   });
 
   it("shows sampling disabled by default with policy summary", async () => {
@@ -620,7 +563,7 @@ describe("McpConsolePage", () => {
       Promise.resolve({ ...detail, ...payload } as McpServerDetailResponse),
     );
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
-    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { getServer: vi.fn().mockResolvedValue(detail), updateServer })} />);
+    renderMcpConsoleWithNotifications(runtimeWithServers(serverFixtures(), { getServer: vi.fn().mockResolvedValue(detail), updateServer }));
 
     fireEvent.click(await screen.findByRole("button", { name: "审批与信任" }));
     const samplingSwitch = await screen.findByRole("switch", { name: "允许 Sampling" });
@@ -640,13 +583,11 @@ describe("McpConsolePage", () => {
 
   it("lists and deletes trust rules", async () => {
     const deleteTrustRule = vi.fn().mockResolvedValue({ deleted: true, rule_id: "trust_1" });
-    render(
-      <McpConsolePage
-        runtime={runtimeWithServers(serverFixtures(), {
-          listTrustRules: vi.fn().mockResolvedValue({ list: trustRuleFixtures() }),
-          deleteTrustRule,
-        })}
-      />,
+    renderMcpConsoleWithNotifications(
+      runtimeWithServers(serverFixtures(), {
+        listTrustRules: vi.fn().mockResolvedValue({ list: trustRuleFixtures() }),
+        deleteTrustRule,
+      }),
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "审批与信任" }));
@@ -666,13 +607,19 @@ describe("McpConsolePage", () => {
     const updateServer = vi.fn((serverId: string, payload: McpServerUpdatePayload) =>
       Promise.resolve({ ...detail, ...payload } as McpServerDetailResponse),
     );
-    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { getServer: vi.fn().mockResolvedValue(detail), updateServer })} />);
+    renderMcpConsoleWithNotifications(runtimeWithServers(serverFixtures(), { getServer: vi.fn().mockResolvedValue(detail), updateServer }));
 
     fireEvent.click(await screen.findByRole("button", { name: "运行策略" }));
-    fireEvent.change(await screen.findByLabelText("MCP connect mode"), { target: { value: "on_startup" } });
+    await chooseSettingsSelect("MCP connect mode", "on startup");
 
     await waitFor(() => expect(updateServer).toHaveBeenCalledWith("srv_1", { connect_mode: "on_startup" }));
     expect(await screen.findByText("MCP 运行策略已保存")).not.toBeNull();
+
+    fireEvent.click(await screen.findByRole("switch", { name: "Required" }));
+    await waitFor(() => expect(updateServer).toHaveBeenCalledWith("srv_1", { required: true }));
+
+    fireEvent.change(await screen.findByLabelText("MCP 启动超时"), { target: { value: "45" } });
+    await waitFor(() => expect(updateServer).toHaveBeenCalledWith("srv_1", { startup_timeout_sec: 45 }));
   });
 
   it("lists, filters and expands audit logs", async () => {
@@ -688,14 +635,14 @@ describe("McpConsolePage", () => {
     fireEvent.click(logList.querySelector("button")!);
     expect(await screen.findByText(/\"field\": \"auto_refresh\"/)).not.toBeNull();
 
-    fireEvent.change(screen.getByLabelText("筛选 MCP 日志事件"), { target: { value: "tool.failed" } });
+    await chooseSettingsSelect("筛选 MCP 日志事件", "tool.failed");
 
     await waitFor(() =>
       expect(listAudit).toHaveBeenLastCalledWith(expect.objectContaining({ server_id: "srv_1", event_type: "tool.failed" })),
     );
     expect((await screen.findAllByText("tool.failed")).length).toBeGreaterThan(0);
 
-    fireEvent.change(screen.getByLabelText("筛选 MCP 日志状态"), { target: { value: "failed" } });
+    await chooseSettingsSelect("筛选 MCP 日志状态", "failed");
 
     await waitFor(() =>
       expect(listAudit).toHaveBeenLastCalledWith(
@@ -730,7 +677,7 @@ describe("McpConsolePage", () => {
     );
     expect(await screen.findByText("11-12 / 12")).not.toBeNull();
 
-    fireEvent.change(screen.getByLabelText("筛选 MCP 日志事件"), { target: { value: "refresh.completed" } });
+    await chooseSettingsSelect("筛选 MCP 日志事件", "refresh.completed");
 
     await waitFor(() =>
       expect(listAudit).toHaveBeenLastCalledWith(expect.objectContaining({ event_type: "refresh.completed", offset: 0 })),
@@ -764,7 +711,7 @@ describe("McpConsolePage", () => {
     render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { listAudit })} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "日志" }));
-    fireEvent.change(await screen.findByLabelText("筛选 MCP 日志事件"), { target: { value: "sampling.requested" } });
+    await chooseSettingsSelect("筛选 MCP 日志事件", "sampling.requested");
 
     await waitFor(() =>
       expect(listAudit).toHaveBeenLastCalledWith(expect.objectContaining({ server_id: "srv_1", event_type: "sampling.requested" })),
@@ -772,7 +719,7 @@ describe("McpConsolePage", () => {
     expect((await screen.findAllByText("sampling.requested")).length).toBeGreaterThan(0);
     expect(await screen.findByText("Sampling requested")).not.toBeNull();
 
-    fireEvent.change(screen.getByLabelText("筛选 MCP 日志事件"), { target: { value: "sampling.completed" } });
+    await chooseSettingsSelect("筛选 MCP 日志事件", "sampling.completed");
 
     await waitFor(() =>
       expect(listAudit).toHaveBeenLastCalledWith(expect.objectContaining({ server_id: "srv_1", event_type: "sampling.completed" })),
@@ -803,12 +750,12 @@ describe("McpConsolePage", () => {
     const importConfig = vi.fn((payload: McpImportPayload) =>
       Promise.resolve(payload.confirm ? applied : preview),
     );
-    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { importConfig })} />);
+    renderMcpConsoleWithNotifications(runtimeWithServers(serverFixtures(), { importConfig }));
 
     fireEvent.click(await screen.findByRole("button", { name: "导入 MCP 配置" }));
     expect(await screen.findByRole("dialog", { name: "导入 MCP 配置" })).not.toBeNull();
 
-    fireEvent.change(screen.getByLabelText("MCP import source"), { target: { value: "claude" } });
+    await chooseSettingsSelect("MCP import source", "Claude Desktop");
     fireEvent.change(screen.getByLabelText("MCP import JSON"), { target: { value: JSON.stringify(config) } });
     fireEvent.click(screen.getByRole("button", { name: "预览导入" }));
 
@@ -849,7 +796,6 @@ describe("McpConsolePage", () => {
         },
       ],
       tool_policies: [],
-      prompt_policies: [],
       trust_rules: [{ scope: "global", rule_kind: "tool", raw_tool_name: "read_file" }],
     } satisfies McpExportResponse;
     const exportConfig = vi.fn((payload?: McpExportPayload) =>
@@ -901,6 +847,23 @@ describe("McpConsolePage", () => {
   });
 });
 
+function renderMcpConsoleWithNotifications(runtime: RuntimeBridge) {
+  return render(
+    <NotificationProvider>
+      <McpConsolePage runtime={runtime} />
+    </NotificationProvider>,
+  );
+}
+
+async function chooseSettingsSelect(ariaLabel: string, optionName: string) {
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${escapeRegExp(ariaLabel)}：`) }));
+  fireEvent.click(await screen.findByRole("option", { name: optionName }));
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function runtimeWithServers(
   servers: McpServerSummary[],
   overrides: Partial<RuntimeBridge["mcp"]> = {},
@@ -925,14 +888,6 @@ function runtimeWithServers(
       applyToolBulkPolicy: vi.fn((serverId: string, payload: { action: string }) =>
         Promise.resolve({ server_id: serverId, action: payload.action, updated_count: 0, tools: toolFixtures() }),
       ),
-      listPrompts: vi.fn(() => Promise.resolve(promptListResponse(promptFixtures()))),
-      updatePromptPolicy: vi.fn((serverId: string, promptId: string, payload: { exposure_mode?: McpPromptExposureMode }) =>
-        Promise.resolve({
-          ...promptFixtures().find((prompt) => prompt.id === promptId)!,
-          exposure_mode: payload.exposure_mode ?? "manual",
-        }),
-      ),
-      getPrompt: vi.fn(() => Promise.resolve(materializedPrompt())),
       listTrustRules: vi.fn(() => Promise.resolve({ list: trustRuleFixtures() })),
       createTrustRule: vi.fn((payload) =>
         Promise.resolve({ ...trustRuleFixtures()[0], ...payload, id: "trust_created" }),
@@ -954,7 +909,6 @@ function runtimeWithServers(
           format: "keydex.mcp.v1",
           servers: [],
           tool_policies: [],
-          prompt_policies: [],
         }),
       ),
       ...overrides,
@@ -988,7 +942,6 @@ function serverFixtures(): McpServerSummary[] {
       resources_reserved: false,
       resources_reserved_count: 1,
       tools_count: 3,
-      prompts_count: 1,
       last_refresh_at: "2026-07-06T08:00:00Z",
     }),
     server("srv_2", "Ticketing", {
@@ -996,7 +949,6 @@ function serverFixtures(): McpServerSummary[] {
       status: "auth_required",
       resources_reserved: false,
       tools_count: 2,
-      prompts_count: 0,
     }),
   ];
 }
@@ -1015,7 +967,6 @@ function server(
     transport: "streamable_http",
     status: "unknown",
     tools_count: 0,
-    prompts_count: 0,
     resources_reserved: false,
     last_refresh_at: null,
     last_error_message: null,
@@ -1061,7 +1012,6 @@ function serverDetail(
     sampling_model_policy: "current_default" | string | null;
     sampling_max_tokens: number | null;
     sampling_audit_detail: "summary" | "none" | "full" | string | null;
-    prompt_discovery_enabled: boolean;
     resource_reserved_policy: Record<string, unknown> | null;
   }> = {},
 ) {
@@ -1101,7 +1051,6 @@ function serverDetail(
     sampling_model_policy: "current_default",
     sampling_max_tokens: 2048,
     sampling_audit_detail: "summary",
-    prompt_discovery_enabled: true,
     resource_reserved_policy: null,
     ...patch,
   };
@@ -1122,7 +1071,6 @@ function toolFixtures(): McpToolSummary[] {
     tool("tool_read", "read_file", {
       description: "Read a workspace file",
       model_name: "mcp__filesystem__read_file",
-      risk_level: "low",
       approval_mode: "auto",
       effective_approval_mode: "auto",
       call_count: 4,
@@ -1138,7 +1086,6 @@ function toolFixtures(): McpToolSummary[] {
     tool("tool_write", "write_ticket", {
       description: "Create or update a ticket",
       model_name: "mcp__ticketing__write_ticket",
-      risk_level: "high",
       approval_mode: "prompt",
       effective_approval_mode: "prompt",
       input_schema: {
@@ -1152,7 +1099,6 @@ function toolFixtures(): McpToolSummary[] {
     tool("tool_calc", "calculate_total", {
       description: "Calculate an order total",
       model_name: "mcp__filesystem__calculate_total",
-      risk_level: "medium",
       approval_mode: "auto",
       effective_approval_mode: "auto",
       discovery_status: "schema_changed",
@@ -1168,7 +1114,6 @@ function toolFixtures(): McpToolSummary[] {
     tool("tool_removed", "old_tool", {
       description: "Removed tool",
       model_name: "mcp__filesystem__old_tool",
-      risk_level: "unknown",
       approval_mode: "auto",
       effective_approval_mode: "auto",
       enabled: false,
@@ -1195,9 +1140,6 @@ function tool(id: string, rawName: string, patch: Partial<McpToolSummary> = {}):
     status: "unchanged",
     discovery_status: "unchanged",
     effective_state: "enabled",
-    risk_level: "low",
-    stored_risk_level: "low",
-    risk_override: null,
     approval_mode: "auto",
     effective_approval_mode: "auto",
     schema_change_action: "require_review",
@@ -1220,16 +1162,12 @@ function toolListResponse(tools: McpToolSummary[]): McpToolListResponse {
 function filterTools(tools: McpToolSummary[], options: Record<string, unknown>): McpToolSummary[] {
   const search = typeof options.search === "string" ? options.search.toLowerCase() : "";
   const status = typeof options.status === "string" ? options.status : "";
-  const risk = typeof options.risk === "string" ? options.risk : "";
   const enabled = typeof options.enabled === "boolean" ? options.enabled : null;
   return tools.filter((item) => {
     if (search && !`${item.raw_name} ${item.model_name} ${item.description ?? ""}`.toLowerCase().includes(search)) {
       return false;
     }
     if (status && item.discovery_status !== status && item.status !== status) {
-      return false;
-    }
-    if (risk && item.risk_level !== risk) {
       return false;
     }
     if (enabled !== null && item.enabled !== enabled) {
@@ -1248,100 +1186,6 @@ function applyToolPolicyPatch(tool: McpToolSummary, payload: Partial<McpToolSumm
     approval_mode: approvalMode,
     effective_approval_mode: approvalMode,
     effective_state: enabled ? "enabled" : "disabled_persistently",
-  };
-}
-
-function promptFixtures(): McpPromptSummary[] {
-  return [
-    prompt("prompt_summary", "summarize_ticket", {
-      description: "Summarize a ticket or topic",
-      argument_count: 1,
-      arguments_schema: {
-        type: "object",
-        required: ["topic"],
-        properties: {
-          topic: { type: "string" },
-        },
-      },
-    }),
-    prompt("prompt_release", "release_notes", {
-      description: "Draft release notes",
-      exposure_mode: "slash_command",
-      argument_count: 1,
-      arguments_schema: {
-        type: "object",
-        properties: {
-          version: { type: "string" },
-        },
-      },
-    }),
-    prompt("prompt_removed", "old_prompt", {
-      description: "Removed prompt",
-      enabled: false,
-      exposure_mode: "hidden",
-      status: "removed",
-      discovery_status: "removed",
-      removed_at: "2026-07-06T09:00:00Z",
-    }),
-  ];
-}
-
-function prompt(id: string, rawName: string, patch: Partial<McpPromptSummary> = {}): McpPromptSummary {
-  return {
-    id,
-    server_id: "srv_1",
-    server_name: "Filesystem",
-    raw_name: rawName,
-    display_name: null,
-    description: null,
-    arguments_schema: { type: "object", properties: {} },
-    enabled: true,
-    exposure_mode: "manual",
-    argument_count: 0,
-    status: "available",
-    discovery_status: "available",
-    first_seen_at: "2026-07-06T08:00:00Z",
-    last_seen_at: "2026-07-06T08:00:00Z",
-    removed_at: null,
-    ...patch,
-  };
-}
-
-function promptListResponse(prompts: McpPromptSummary[]): McpPromptListResponse {
-  return { list: prompts, total: prompts.length, limit: 500 };
-}
-
-function filterPrompts(prompts: McpPromptSummary[], options: Record<string, unknown>): McpPromptSummary[] {
-  const search = typeof options.search === "string" ? options.search.toLowerCase() : "";
-  const status = typeof options.status === "string" ? options.status : "";
-  const enabled = typeof options.enabled === "boolean" ? options.enabled : null;
-  return prompts.filter((item) => {
-    if (search && !`${item.raw_name} ${item.description ?? ""}`.toLowerCase().includes(search)) {
-      return false;
-    }
-    if (status && item.discovery_status !== status && item.status !== status) {
-      return false;
-    }
-    if (enabled !== null && item.enabled !== enabled) {
-      return false;
-    }
-    return true;
-  });
-}
-
-function materializedPrompt() {
-  return {
-    id: "prompt_summary",
-    server_id: "srv_1",
-    server_name: "Filesystem",
-    raw_name: "summarize_ticket",
-    arguments: { topic: "Q3 roadmap" },
-    messages: [
-      {
-        role: "user",
-        content: [{ type: "text", text: "Summarize Q3 roadmap" }],
-      },
-    ],
   };
 }
 
@@ -1373,7 +1217,6 @@ function auditFixtures(): McpAuditRecord[] {
       event_type: "server.updated",
       server_id: "srv_1",
       raw_tool_name: null,
-      prompt_name: null,
       session_id: null,
       turn_id: null,
       call_id: null,
@@ -1390,7 +1233,6 @@ function auditFixtures(): McpAuditRecord[] {
       event_type: "tool.failed",
       server_id: "srv_1",
       raw_tool_name: "write_ticket",
-      prompt_name: null,
       session_id: "session_1",
       turn_id: null,
       call_id: "call_1",
@@ -1407,7 +1249,6 @@ function auditFixtures(): McpAuditRecord[] {
       event_type: "sampling.requested",
       server_id: "srv_1",
       raw_tool_name: null,
-      prompt_name: null,
       session_id: "session_1",
       turn_id: "turn_sampling",
       call_id: "sampling_1",
@@ -1424,7 +1265,6 @@ function auditFixtures(): McpAuditRecord[] {
       event_type: "sampling.completed",
       server_id: "srv_1",
       raw_tool_name: null,
-      prompt_name: null,
       session_id: "session_1",
       turn_id: "turn_sampling",
       call_id: "sampling_1",

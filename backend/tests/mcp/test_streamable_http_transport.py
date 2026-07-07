@@ -145,6 +145,24 @@ async def test_streamable_http_tool_call_uses_tool_timeout() -> None:
     assert exc_info.value.code == McpErrorCode.TIMEOUT
 
 
+@pytest.mark.asyncio
+async def test_streamable_http_shutdown_exits_transport_context_in_same_task() -> None:
+    factory = FakeStreamableHttpContextFactory()
+    client = McpStreamableHttpClient(
+        McpStreamableHttpTransportConfig(
+            server_id="srv_http",
+            url="https://mcp.example.test/mcp",
+        ),
+        streamable_http_client_factory=factory,
+        session_factory=FakeHttpSessionFactory(),
+    )
+
+    await client.initialize()
+    await client.shutdown()
+
+    assert factory.contexts[0].enter_task is factory.contexts[0].exit_task
+
+
 class FakeStreamableHttpContextFactory:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -170,10 +188,16 @@ class FakeStreamableHttpContextFactory:
 
 
 class FakeStreamableHttpContext:
+    def __init__(self) -> None:
+        self.enter_task: asyncio.Task[Any] | None = None
+        self.exit_task: asyncio.Task[Any] | None = None
+
     async def __aenter__(self) -> tuple[str, str, Any]:
+        self.enter_task = asyncio.current_task()
         return "read-stream", "write-stream", lambda: "session-id"
 
     async def __aexit__(self, *_args: Any) -> None:
+        self.exit_task = asyncio.current_task()
         return None
 
 
@@ -221,7 +245,7 @@ class FakeHttpSession:
         return SimpleNamespace(
             protocolVersion="2025-06-18",
             serverInfo=SimpleNamespace(name="fake-http"),
-            capabilities=SimpleNamespace(tools={}, prompts={}),
+            capabilities=SimpleNamespace(tools={}),
         )
 
     async def list_tools(self) -> SimpleNamespace:
@@ -238,9 +262,6 @@ class FakeHttpSession:
             ]
         )
 
-    async def list_prompts(self) -> SimpleNamespace:
-        return SimpleNamespace(prompts=[])
-
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> SimpleNamespace:
         if self.block_tool_call:
             await asyncio.sleep(60)
@@ -250,10 +271,6 @@ class FakeHttpSession:
             isError=False,
             meta={},
         )
-
-    async def get_prompt(self, name: str, arguments: dict[str, str] | None) -> SimpleNamespace:
-        return SimpleNamespace(description=name, messages=[], meta={})
-
 
 def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
     request = httpx.Request("POST", "https://mcp.example.test/mcp")

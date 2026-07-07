@@ -279,7 +279,6 @@ def _configure_mcp_tool(
                     "required": ["query"],
                 },
                 "schema_hash": f"hash-{raw_name}",
-                "risk_level": "low",
             }
             for raw_name in raw_names
         ],

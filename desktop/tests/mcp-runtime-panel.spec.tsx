@@ -25,7 +25,6 @@ describe("MCP Runtime Panel", () => {
     expect(panel.textContent).toContain("Visible tools");
     expect(panel.textContent).toContain("Pending approvals");
     expect(panel.textContent).toContain("read_file description");
-    expect(panel.textContent).toContain("low");
     expect(panel.textContent).toContain("auto");
     expect(panel.textContent).toContain("enabled");
   });
@@ -199,7 +198,7 @@ function runtimeWithStatuses(...statuses: McpRuntimeStatusResponse[]) {
 
 function runtimeStatus(patch: Partial<McpRuntimeStatusResponse> = {}): McpRuntimeStatusResponse {
   const servers = patch.servers ?? [server("srv_1", "Online MCP")];
-  const tools = patch.tools ?? [tool("tool_read", "read_file"), tool("tool_write", "write_ticket", { risk_level: "high" })];
+  const tools = patch.tools ?? [tool("tool_read", "read_file"), tool("tool_write", "write_ticket")];
   const runningCalls = patch.running_calls ?? [];
   const overrides = patch.overrides ?? [];
   return {
@@ -248,7 +247,6 @@ function server(id: string, name: string, patch: Partial<McpServerSummary> = {})
     transport: "streamable_http",
     status: "online",
     tools_count: 2,
-    prompts_count: 0,
     resources_reserved: false,
     last_refresh_at: "2026-07-06T09:00:00Z",
     last_error_message: null,
@@ -271,9 +269,6 @@ function tool(id: string, rawName: string, patch: Partial<McpToolSummary> = {}):
     status: "unchanged",
     discovery_status: "unchanged",
     effective_state: "enabled",
-    risk_level: "low",
-    stored_risk_level: "low",
-    risk_override: null,
     approval_mode: "auto",
     effective_approval_mode: "auto",
     schema_change_action: "require_review",
@@ -298,7 +293,6 @@ function runningCall(): McpRuntimeCallSummary {
     server_name: "Online MCP",
     raw_tool_name: "read_file",
     model_name: "mcp__srv_1__read_file",
-    risk_level: "low",
     approval_mode: "auto",
     started_at: "2026-07-06T09:00:00Z",
     elapsed_ms: 1500,

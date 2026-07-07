@@ -20,7 +20,6 @@ class McpVisibleTool:
     model_name: str
     description: str | None
     input_schema: dict[str, Any]
-    risk_level: str
     approval_mode: str
     annotations: dict[str, Any] | None = None
     server_name: str | None = None
@@ -180,7 +179,6 @@ def _visible_tool(
     approval_mode = (
         policy.approval_mode if policy is not None else server.default_tool_approval_mode
     )
-    risk_level = policy.risk_override if policy and policy.risk_override else tool.risk_level
     return McpVisibleTool(
         server_id=tool.server_id,
         server_name=server.name,
@@ -189,7 +187,6 @@ def _visible_tool(
         description=tool.description,
         input_schema=tool.input_schema,
         annotations=tool.annotations,
-        risk_level=risk_level,
         approval_mode=approval_mode,
     )
 

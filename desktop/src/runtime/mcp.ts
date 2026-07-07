@@ -11,10 +11,6 @@ import type {
   McpOAuthStartPayload,
   McpOAuthStartResponse,
   McpOAuthStatusResponse,
-  McpPromptListResponse,
-  McpPromptMaterializeResponse,
-  McpPromptPolicyUpdatePayload,
-  McpPromptSummary,
   McpRefreshAllResponse,
   McpRefreshResult,
   McpRuntimeCallCancelResponse,
@@ -44,14 +40,6 @@ export interface McpServerListOptions {
 }
 
 export interface McpToolListOptions {
-  status?: string;
-  risk?: string;
-  enabled?: boolean;
-  search?: string;
-  limit?: number;
-}
-
-export interface McpPromptListOptions {
   status?: string;
   enabled?: boolean;
   search?: string;
@@ -94,17 +82,6 @@ export interface McpRuntime {
     serverId: string,
     payload: McpToolBulkPolicyPayload,
   ): Promise<McpToolBulkPolicyResponse>;
-  listPrompts(serverId: string, options?: McpPromptListOptions): Promise<McpPromptListResponse>;
-  updatePromptPolicy(
-    serverId: string,
-    promptId: string,
-    payload: McpPromptPolicyUpdatePayload,
-  ): Promise<McpPromptSummary>;
-  getPrompt(
-    serverId: string,
-    promptId: string,
-    argumentsPayload?: Record<string, unknown>,
-  ): Promise<McpPromptMaterializeResponse>;
   getRuntimeStatus(sessionId: string): Promise<McpRuntimeStatusResponse>;
   setSessionToolOverride(
     sessionId: string,
@@ -205,29 +182,6 @@ export function createMcpRuntime(http: HttpClient): McpRuntime {
         {
           method: "POST",
           body: payload,
-        },
-      );
-    },
-    listPrompts(serverId, options = {}) {
-      return http.request<McpPromptListResponse>(
-        withQuery(`/api/mcp/servers/${encodePath(serverId)}/prompts`, options),
-      );
-    },
-    updatePromptPolicy(serverId, promptId, payload) {
-      return http.request<McpPromptSummary>(
-        `/api/mcp/servers/${encodePath(serverId)}/prompts/${encodePath(promptId)}/policy`,
-        {
-          method: "PATCH",
-          body: payload,
-        },
-      );
-    },
-    getPrompt(serverId, promptId, argumentsPayload = {}) {
-      return http.request<McpPromptMaterializeResponse>(
-        `/api/mcp/servers/${encodePath(serverId)}/prompts/${encodePath(promptId)}/get`,
-        {
-          method: "POST",
-          body: { arguments: argumentsPayload },
         },
       );
     },

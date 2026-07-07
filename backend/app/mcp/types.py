@@ -47,27 +47,6 @@ class McpToolEffectiveState(StrEnum):
     SCHEMA_CHANGED = "schema_changed"
 
 
-class McpPromptExposureMode(StrEnum):
-    HIDDEN = "hidden"
-    MANUAL = "manual"
-    SLASH_COMMAND = "slash_command"
-    AGENT_SELECTABLE = "agent_selectable"
-
-
-class McpPromptDiscoveryStatus(StrEnum):
-    AVAILABLE = "available"
-    REMOVED = "removed"
-    ERROR = "error"
-    UNKNOWN = "unknown"
-
-
-class McpRiskLevel(StrEnum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    UNKNOWN = "unknown"
-
-
 class McpAuthType(StrEnum):
     NONE = "none"
     HEADER_TOKEN = "header_token"
@@ -153,7 +132,6 @@ class McpServerCreateRequest(McpBaseModel):
     supports_parallel_tool_calls: bool = False
     elicitation_enabled: bool = True
     sampling_enabled: bool = False
-    prompt_discovery_enabled: bool = True
     resource_reserved_policy: dict[str, Any] | None = None
 
     @field_validator("name")
@@ -211,7 +189,6 @@ class McpServerUpdateRequest(McpBaseModel):
     supports_parallel_tool_calls: bool | None = None
     elicitation_enabled: bool | None = None
     sampling_enabled: bool | None = None
-    prompt_discovery_enabled: bool | None = None
     resource_reserved_policy: dict[str, Any] | None = None
 
     @field_validator("name")
@@ -255,7 +232,6 @@ class McpServerSummary(McpBaseModel):
     transport: McpTransport
     status: McpServerStatus
     tools_count: int = 0
-    prompts_count: int = 0
     resources_reserved: bool = False
     last_refresh_at: str | None = None
     last_error_message: str | None = None
@@ -274,7 +250,6 @@ class McpServerDetailResponse(McpServerSummary):
     default_tool_approval_mode: McpApprovalMode
     elicitation_enabled: bool
     sampling_enabled: bool
-    prompt_discovery_enabled: bool
 
     @classmethod
     def from_create_request(
@@ -315,7 +290,6 @@ class McpServerDetailResponse(McpServerSummary):
             default_tool_approval_mode=request.default_tool_approval_mode,
             elicitation_enabled=request.elicitation_enabled,
             sampling_enabled=request.sampling_enabled,
-            prompt_discovery_enabled=request.prompt_discovery_enabled,
         )
 
 
@@ -330,23 +304,9 @@ class McpToolSummary(McpBaseModel):
     enabled: bool
     hidden: bool
     effective_state: McpToolEffectiveState
-    risk_level: McpRiskLevel
     approval_mode: McpApprovalMode
     annotations: dict[str, Any] | None = None
     last_used_at: str | None = None
-
-
-class McpPromptSummary(McpBaseModel):
-    id: str
-    server_id: str
-    server_name: str
-    raw_name: str
-    display_name: str | None = None
-    description: str | None = None
-    enabled: bool
-    exposure_mode: McpPromptExposureMode
-    argument_count: int = 0
-    discovery_status: McpPromptDiscoveryStatus
 
 
 class McpRuntimeSnapshotSummary(McpBaseModel):
@@ -367,7 +327,6 @@ class McpToolEventMetadata(McpBaseModel):
     server_name: str
     raw_tool_name: str
     model_tool_name: str
-    risk_level: McpRiskLevel
     snapshot_id: str | None = None
 
 

@@ -875,7 +875,6 @@ describe("agentSessionStore reducer", () => {
         server_name: "Ticket MCP",
         raw_tool_name: "write",
         model_tool_name: "mcp__srv_1__write",
-        risk_level: "high",
         snapshot_id: "snap-1",
         metadata: {
           mcp: {
@@ -891,7 +890,6 @@ describe("agentSessionStore reducer", () => {
       server_id: "srv-1",
       raw_tool_name: "write",
       model_tool_name: "mcp__srv_1__write",
-      risk_level: "high",
       metadata: {
         mcp: {
           kind: "mcp_tool",
@@ -900,7 +898,6 @@ describe("agentSessionStore reducer", () => {
           server_name: "Ticket MCP",
           raw_tool_name: "write",
           model_tool_name: "mcp__srv_1__write",
-          risk_level: "high",
           approval_mode: "prompt",
         },
       },
@@ -1504,7 +1501,6 @@ describe("agentSessionStore reducer", () => {
         server_name: "Ticket MCP",
         raw_tool_name: "search",
         model_tool_name: "mcp__srv_1__search",
-        risk_level: "low",
         metadata: {
           mcp: {
             approval_mode: "auto",
@@ -1522,7 +1518,6 @@ describe("agentSessionStore reducer", () => {
         server_name: "Ticket MCP",
         raw_tool_name: "search",
         model_tool_name: "mcp__srv_1__search",
-        risk_level: "low",
         approval_mode: "auto",
       },
     });
@@ -1542,7 +1537,6 @@ describe("agentSessionStore reducer", () => {
             server_id: "srv-1",
             raw_tool_name: "search",
             model_tool_name: "mcp__srv_1__search",
-            risk_level: "low",
           },
         },
       },

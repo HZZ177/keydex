@@ -17,13 +17,8 @@ def test_mcp_api_harness_starts_router_and_injects_fake_manager(tmp_path) -> Non
         assert response.status_code == 200
         assert response.json()["ok"] is True
         assert response.json()["tools_count"] == 4
-        assert response.json()["prompts_count"] == 1
         assert harness.fake_client_factory.created_server_ids == [server_id]
         assert harness.repositories.mcp_tools.get_by_raw_name(server_id, "read_file") is not None
-        assert harness.repositories.mcp_prompts.get_by_raw_name(
-            server_id,
-            "summarize_ticket",
-        ) is not None
     finally:
         harness.close()
 

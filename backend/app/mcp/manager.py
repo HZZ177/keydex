@@ -27,7 +27,6 @@ from backend.app.mcp.config import McpClientFactory, McpTransportClientFactory
 from backend.app.mcp.discovery import McpDiscoveryService, McpRefreshReport
 from backend.app.mcp.elicitation import McpElicitationService
 from backend.app.mcp.errors import McpRuntimeError, to_mcp_runtime_error
-from backend.app.mcp.prompts import normalize_mcp_prompt_result, validate_prompt_arguments
 from backend.app.mcp.resources import (
     McpResourcesReservedService,
     McpResourceSummary,
@@ -73,7 +72,6 @@ class _RunningToolCall:
     server_name: str
     raw_tool_name: str
     model_name: str
-    risk_level: str
     approval_mode: str
     started_at: str
     started_monotonic: float
@@ -87,7 +85,6 @@ class _RunningToolCall:
             "server_name": self.server_name,
             "raw_tool_name": self.raw_tool_name,
             "model_name": self.model_name,
-            "risk_level": self.risk_level,
             "approval_mode": self.approval_mode,
             "started_at": self.started_at,
             "elapsed_ms": _duration_ms(self.started_monotonic),
@@ -429,7 +426,6 @@ class McpManager:
                     server_id=server.id,
                     raw_tool_name="sampling/createMessage",
                     model_name=_string_or_default(approval_payload.get("model"), "current_default"),
-                    risk_level="high",
                     approval_mode=_string_or_default(
                         approval_payload.get("approval_mode"),
                         "prompt",
@@ -439,7 +435,6 @@ class McpManager:
                         "max_tokens": approval_payload.get("max_tokens"),
                         "message_count": approval_payload.get("message_count"),
                     },
-                    risk_reasons=["MCP server requested model sampling"],
                     trace_id=_call_context_text(call_context, "trace_id"),
                     turn_index=_call_context_int(call_context, "turn_index"),
                     run_id=_call_context_text(call_context, "run_id"),
@@ -477,75 +472,6 @@ class McpManager:
         )
         return _tool_result_with_sampling_result(tool_result, result)
 
-    async def get_prompt(
-        self,
-        *,
-        server_id: str,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> dict[str, Any]:
-        started_at = time.perf_counter()
-        parsed_arguments: dict[str, Any] = {}
-        try:
-            server = self._load_server(server_id)
-            if not server.enabled:
-                self.repositories.mcp_server_status.upsert(server.id, status="disabled")
-                raise McpRuntimeError(McpErrorCode.SERVER_DISABLED)
-            prompt = self.repositories.mcp_prompts.get_by_raw_name(server_id, raw_prompt_name)
-            if prompt is None or prompt.discovery_status == "removed":
-                raise McpRuntimeError(
-                    McpErrorCode.TOOL_NOT_FOUND,
-                    detail={
-                        "kind": "prompt",
-                        "server_id": server_id,
-                        "raw_prompt_name": raw_prompt_name,
-                    },
-                )
-            parsed_arguments = validate_prompt_arguments(prompt.arguments_schema, arguments)
-            client = await self.get_or_connect_client(server_id, cancellation=cancellation)
-            result = await client.get_prompt(
-                raw_prompt_name,
-                parsed_arguments,
-                timeout_sec=server.tool_timeout_sec,
-                cancellation=cancellation,
-            )
-            payload = normalize_mcp_prompt_result(
-                server_id=server_id,
-                raw_prompt_name=raw_prompt_name,
-                arguments=parsed_arguments,
-                result=result,
-            )
-            self.audit_writer.append_event(
-                event_type="prompt.get",
-                server_id=server_id,
-                prompt_name=raw_prompt_name,
-                status="completed",
-                duration_ms=_duration_ms(started_at),
-                summary=f"MCP prompt materialized: {raw_prompt_name}",
-                detail={
-                    "argument_keys": sorted(parsed_arguments),
-                    "message_count": len(payload["messages"]),
-                },
-            )
-            return payload
-        except Exception as exc:
-            runtime_error = to_mcp_runtime_error(exc)
-            self.audit_writer.append_event(
-                event_type="prompt.failed",
-                server_id=server_id,
-                prompt_name=raw_prompt_name,
-                status="failed",
-                duration_ms=_duration_ms(started_at),
-                summary=f"MCP prompt materialization failed: {raw_prompt_name}",
-                detail={
-                    "argument_keys": sorted(parsed_arguments),
-                    "error_code": runtime_error.code.value,
-                    "error_detail": runtime_error.detail,
-                },
-            )
-            raise runtime_error from exc
-
     async def execute_tool(
         self,
         *,
@@ -582,10 +508,8 @@ class McpManager:
                 server_id=server_id,
                 raw_tool_name=raw_tool_name,
                 model_name=allowed.model_name,
-                risk_level=approval_policy.risk_level,
                 approval_mode=approval_policy.approval_mode,
                 arguments=parsed_arguments,
-                risk_reasons=approval_policy.risk_reasons,
                 annotations=allowed.tool.annotations or {},
                 trace_id=_call_context_text(call_context, "trace_id"),
                 turn_index=_call_context_int(call_context, "turn_index"),
@@ -619,7 +543,6 @@ class McpManager:
                 server_name=server.name,
                 raw_tool_name=raw_tool_name,
                 model_name=allowed.model_name,
-                risk_level=approval_policy.risk_level,
                 approval_mode=approval_policy.approval_mode,
             )
             try:
@@ -678,8 +601,6 @@ class McpManager:
                 detail={
                     "snapshot_id": snapshot_id,
                     "model_name": allowed.model_name,
-                    "risk_level": approval_policy.risk_level,
-                    "risk_reasons": approval_policy.risk_reasons,
                     "approval_mode": approval_policy.approval_mode,
                     "argument_keys": sorted(str(key) for key in parsed_arguments),
                     "result_status": result_payload["status"],
@@ -707,8 +628,6 @@ class McpManager:
                         "raw_tool_name": raw_tool_name,
                         "model_name": allowed.model_name,
                         "model_tool_name": allowed.model_name,
-                        "risk_level": approval_policy.risk_level,
-                        "risk_reasons": approval_policy.risk_reasons,
                         "approval_mode": approval_policy.approval_mode,
                         "call_id": call_id,
                     }
@@ -875,7 +794,6 @@ class McpManager:
     ) -> None:
         capabilities = {
             "tools": init_result.capabilities.tools,
-            "prompts": init_result.capabilities.prompts,
             "resources_reserved": init_result.capabilities.resources_reserved,
             "sampling": init_result.capabilities.sampling,
             "elicitation": init_result.capabilities.elicitation,
@@ -914,7 +832,6 @@ class McpManager:
         server_name: str,
         raw_tool_name: str,
         model_name: str,
-        risk_level: str,
         approval_mode: str,
     ) -> None:
         self._running_calls[call_id] = _RunningToolCall(
@@ -925,7 +842,6 @@ class McpManager:
             server_name=server_name,
             raw_tool_name=raw_tool_name,
             model_name=model_name,
-            risk_level=risk_level,
             approval_mode=approval_mode,
             started_at=to_iso_z(utc_now()),
             started_monotonic=time.perf_counter(),
@@ -1053,8 +969,6 @@ def _tool_call_metadata(
         )
         metadata["model_name"] = allowed.model_name
         metadata["model_tool_name"] = allowed.model_name
-        metadata["risk_level"] = approval_policy.risk_level
-        metadata["risk_reasons"] = approval_policy.risk_reasons
         metadata["approval_mode"] = approval_policy.approval_mode
     return metadata
 

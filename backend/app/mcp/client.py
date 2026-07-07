@@ -10,7 +10,6 @@ from backend.app.mcp.types import McpErrorCode, McpServerStatus
 @dataclass(frozen=True)
 class McpClientCapabilities:
     tools: bool = True
-    prompts: bool = True
     resources_reserved: bool = True
     sampling: bool = False
     elicitation: bool = False
@@ -34,34 +33,12 @@ class McpClientToolSpec:
 
 
 @dataclass(frozen=True)
-class McpClientPromptArgument:
-    name: str
-    description: str | None = None
-    required: bool = False
-
-
-@dataclass(frozen=True)
-class McpClientPromptSpec:
-    name: str
-    description: str | None = None
-    arguments: list[McpClientPromptArgument] = field(default_factory=list)
-    raw: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
 class McpClientToolResult:
     call_id: str
     status: str
     content: list[Any]
     structured_content: dict[str, Any] | None = None
     is_error: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class McpClientPromptResult:
-    messages: list[dict[str, Any]]
-    description: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -191,13 +168,6 @@ class McpClient(Protocol):
         cancellation: McpCancellationToken | None = None,
     ) -> list[McpClientToolSpec]: ...
 
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]: ...
-
     async def call_tool(
         self,
         raw_tool_name: str,
@@ -207,15 +177,6 @@ class McpClient(Protocol):
         timeout_sec: float | None = None,
         cancellation: McpCancellationToken | None = None,
     ) -> McpClientToolResult: ...
-
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult: ...
 
     async def cancel_call(self, call_id: str) -> bool: ...
 

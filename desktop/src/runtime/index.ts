@@ -108,7 +108,6 @@ export type {
 } from "./desktopPicker";
 export type {
   McpAuditListOptions,
-  McpPromptListOptions,
   McpRuntime,
   McpServerListOptions,
   McpToolListOptions,

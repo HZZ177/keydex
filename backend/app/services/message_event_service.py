@@ -787,7 +787,6 @@ class MessageEventService:
                 "raw_tool_name",
                 "model_tool_name",
                 "model_name",
-                "risk_level",
                 "approval_mode",
                 "exposure",
                 "call_id",

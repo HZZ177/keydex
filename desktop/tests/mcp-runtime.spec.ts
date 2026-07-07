@@ -23,7 +23,7 @@ describe("McpRuntime", () => {
     });
   });
 
-  it("routes server, tool, prompt and runtime calls through MCP API paths", async () => {
+  it("routes server, tool and runtime calls through MCP API paths", async () => {
     const request = vi.fn(async () => ({}));
     const runtime = createMcpRuntime({ request } as unknown as HttpClient);
 
@@ -34,15 +34,12 @@ describe("McpRuntime", () => {
     await runtime.testServer("srv 1");
     await runtime.refreshServer("srv 1");
     await runtime.refreshServers();
-    await runtime.listTools("srv 1", { risk: "high", enabled: false, search: "write" });
+    await runtime.listTools("srv 1", { enabled: false, search: "write" });
     await runtime.updateToolPolicy("srv 1", "tool/a", { enabled: false, approval_mode: "prompt" });
     await runtime.applyToolBulkPolicy("srv 1", {
       action: "disable_selected",
       raw_tool_names: ["write_file"],
     });
-    await runtime.listPrompts("srv 1", { status: "available" });
-    await runtime.updatePromptPolicy("srv 1", "triage", { exposure_mode: "slash_command" });
-    await runtime.getPrompt("srv 1", "triage", { issue: "KT-1" });
     await runtime.getRuntimeStatus("session 1");
     await runtime.setSessionToolOverride("session 1", "tool/a", {
       enabled: false,
@@ -78,7 +75,7 @@ describe("McpRuntime", () => {
     });
     expect(request).toHaveBeenNthCalledWith(
       8,
-      "/api/mcp/servers/srv%201/tools?risk=high&enabled=false&search=write",
+      "/api/mcp/servers/srv%201/tools?enabled=false&search=write",
     );
     expect(request).toHaveBeenNthCalledWith(9, "/api/mcp/servers/srv%201/tools/tool%2Fa/policy", {
       method: "PATCH",
@@ -88,18 +85,9 @@ describe("McpRuntime", () => {
       method: "POST",
       body: { action: "disable_selected", raw_tool_names: ["write_file"] },
     });
-    expect(request).toHaveBeenNthCalledWith(11, "/api/mcp/servers/srv%201/prompts?status=available");
-    expect(request).toHaveBeenNthCalledWith(12, "/api/mcp/servers/srv%201/prompts/triage/policy", {
-      method: "PATCH",
-      body: { exposure_mode: "slash_command" },
-    });
-    expect(request).toHaveBeenNthCalledWith(13, "/api/mcp/servers/srv%201/prompts/triage/get", {
-      method: "POST",
-      body: { arguments: { issue: "KT-1" } },
-    });
-    expect(request).toHaveBeenNthCalledWith(14, "/api/mcp/runtime/status?session_id=session+1");
+    expect(request).toHaveBeenNthCalledWith(11, "/api/mcp/runtime/status?session_id=session+1");
     expect(request).toHaveBeenNthCalledWith(
-      15,
+      12,
       "/api/mcp/runtime/sessions/session%201/tools/tool%2Fa/override",
       {
         method: "PUT",
@@ -107,11 +95,11 @@ describe("McpRuntime", () => {
       },
     );
     expect(request).toHaveBeenNthCalledWith(
-      16,
+      13,
       "/api/mcp/runtime/sessions/session%201/tools/tool%2Fa/override?server_id=srv+1",
       { method: "DELETE" },
     );
-    expect(request).toHaveBeenNthCalledWith(17, "/api/mcp/runtime/calls/call%201/cancel", {
+    expect(request).toHaveBeenNthCalledWith(14, "/api/mcp/runtime/calls/call%201/cancel", {
       method: "POST",
     });
   });

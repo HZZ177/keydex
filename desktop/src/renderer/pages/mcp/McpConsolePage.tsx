@@ -6,16 +6,18 @@ import {
   LoaderCircle,
   Pencil,
   Plus,
+  Power,
   RefreshCcw,
   Search,
   Server,
-  ShieldCheck,
   Trash2,
   Upload,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ConfirmDialog } from "@/renderer/components/dialog";
+import { SettingsSelect } from "@/renderer/pages/settings/components";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { RuntimeBridge } from "@/runtime";
 import type {
   McpImportPreviewResponse,
@@ -28,7 +30,6 @@ import type {
 import { McpExportDialog, McpImportDialog } from "./McpImportExportDialogs";
 import { McpLogsTab, McpRuntimePolicyTab, McpTrustTab } from "./McpPolicyTabs";
 import { McpServerFormDialog } from "./McpServerFormDialog";
-import { McpPromptsTab } from "./McpPromptsTab";
 import { McpToolsTab } from "./McpToolsTab";
 import { mcpErrorMessage, mcpServerStatusLabel } from "./mcpCopy";
 import styles from "./McpConsolePage.module.css";
@@ -54,7 +55,6 @@ const DETAIL_TABS = [
   { id: "overview", label: "概览" },
   { id: "connection", label: "连接" },
   { id: "tools", label: "Tools" },
-  { id: "prompts", label: "Prompts" },
   { id: "trust", label: "审批与信任" },
   { id: "runtime", label: "运行策略" },
   { id: "logs", label: "日志" },
@@ -64,6 +64,7 @@ type DetailTab = (typeof DETAIL_TABS)[number]["id"];
 type ServerFormState = { mode: "create" } | { mode: "edit"; serverId: string } | null;
 
 export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
+  const notifications = useNotifications();
   const [servers, setServers] = useState<McpServerSummary[]>([]);
   const [selectedServerId, setSelectedServerId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -77,9 +78,13 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [testingServerId, setTestingServerId] = useState("");
+  const [togglingServerId, setTogglingServerId] = useState("");
   const [deletingServerId, setDeletingServerId] = useState("");
   const [deleteConfirmServer, setDeleteConfirmServer] = useState<McpServerSummary | null>(null);
-  const [operationMessage, setOperationMessage] = useState("");
+
+  const notifySuccess = useCallback((message: string) => {
+    notifications.success(message);
+  }, [notifications]);
 
   const loadServers = useCallback(async (preferredServerId?: string) => {
     setLoading(true);
@@ -147,7 +152,6 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
   const refreshAll = async () => {
     setRefreshing(true);
     setError("");
-    setOperationMessage("");
     try {
       await runtime.mcp.refreshServers();
       await loadServers();
@@ -160,29 +164,45 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
 
   const handleServerSaved = useCallback((server: McpServerDetailResponse) => {
     setSelectedServerId(server.id);
-    setOperationMessage("MCP Server 配置已保存");
+    notifySuccess("MCP Server 配置已保存");
     void loadServers(server.id);
-  }, [loadServers]);
+  }, [loadServers, notifySuccess]);
 
   const handleImportApplied = useCallback((response: McpImportPreviewResponse) => {
     const preferredServerId = response.created?.[0]?.id;
-    setOperationMessage(
+    notifySuccess(
       `MCP 导入完成：创建 ${response.created_count ?? 0} 个，跳过 ${response.skipped_count ?? 0} 个`,
     );
     void loadServers(preferredServerId);
-  }, [loadServers]);
+  }, [loadServers, notifySuccess]);
+
+  const toggleSelectedServer = async (server: McpServerSummary) => {
+    setTogglingServerId(server.id);
+    setError("");
+    try {
+      const updated = await runtime.mcp.toggleServer(server.id, !server.enabled);
+      notifySuccess(`MCP Server 已${updated.enabled ? "启用" : "停用"}：${updated.name}`);
+      await loadServers(updated.id);
+    } catch (reason) {
+      setError(mcpErrorMessage(reason, "切换 MCP 服务器启停失败"));
+    } finally {
+      setTogglingServerId("");
+    }
+  };
 
   const testSelectedServer = async (server: McpServerSummary) => {
     setTestingServerId(server.id);
-    setOperationMessage("");
     setError("");
     try {
       const result = await runtime.mcp.testServer(server.id);
-      setOperationMessage(
-        result.ok
-          ? `连接测试通过，状态 ${result.status}`
-          : result.error?.message || `连接测试失败，状态 ${result.status}`,
-      );
+      const message = result.ok
+        ? `连接测试通过，状态 ${result.status}`
+        : result.error?.message || `连接测试失败，状态 ${result.status}`;
+      if (result.ok) {
+        notifications.success(message);
+      } else {
+        notifications.error(message);
+      }
       await loadServers(server.id);
     } catch (reason) {
       setError(mcpErrorMessage(reason, "测试 MCP 服务器连接失败"));
@@ -197,12 +217,11 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
       return;
     }
     setDeletingServerId(server.id);
-    setOperationMessage("");
     setError("");
     try {
       await runtime.mcp.deleteServer(server.id);
       setDeleteConfirmServer(null);
-      setOperationMessage(`MCP Server 已删除：${server.name}`);
+      notifySuccess(`MCP Server 已删除：${server.name}`);
       await loadServers();
     } catch (reason) {
       setError(mcpErrorMessage(reason, "删除 MCP 服务器失败"));
@@ -273,12 +292,6 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
           </button>
         </div>
       ) : null}
-      {operationMessage ? (
-        <div className={styles.notice} role="status">
-          <ShieldCheck size={16} />
-          <span>{operationMessage}</span>
-        </div>
-      ) : null}
 
       <section className={styles.consoleGrid}>
         <aside className={styles.serverPane} aria-label="MCP Server 列表">
@@ -293,28 +306,18 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
               />
             </label>
             <div className={styles.filterRow}>
-              <select
-                aria-label="筛选 MCP Server 状态"
+              <SettingsSelect
+                ariaLabel="筛选 MCP Server 状态"
+                options={STATUS_FILTERS}
                 value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as "all" | McpServerStatus)}
-              >
-                {STATUS_FILTERS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="筛选 MCP Server transport"
+                onChange={(value) => setStatusFilter(value)}
+              />
+              <SettingsSelect
+                ariaLabel="筛选 MCP Server transport"
+                options={TRANSPORT_FILTERS}
                 value={transportFilter}
-                onChange={(event) => setTransportFilter(event.target.value as "all" | McpTransport)}
-              >
-                {TRANSPORT_FILTERS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                onChange={(value) => setTransportFilter(value)}
+              />
             </div>
           </div>
 
@@ -378,6 +381,21 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
                     </button>
                     <button
                       type="button"
+                      aria-label={selectedServer.enabled ? "停用 MCP Server" : "启用 MCP Server"}
+                      disabled={togglingServerId === selectedServer.id}
+                      onClick={() => void toggleSelectedServer(selectedServer)}
+                    >
+                      <Power size={14} />
+                      <span>
+                        {togglingServerId === selectedServer.id
+                          ? "处理中"
+                          : selectedServer.enabled
+                            ? "停用"
+                            : "启用"}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
                       aria-label="测试 MCP Server 连接"
                       disabled={testingServerId === selectedServer.id}
                       onClick={() => void testSelectedServer(selectedServer)}
@@ -398,7 +416,6 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
                   </div>
                   <div className={styles.detailMetrics}>
                     <Metric label="Tools" value={selectedServer.tools_count} />
-                    <Metric label="Prompts" value={selectedServer.prompts_count} />
                     <Metric label="Resources" value={hasReservedResources(selectedServer) ? "reserved" : "-"} />
                   </div>
                 </div>
@@ -420,29 +437,28 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
               <section className={styles.tabPanel} data-testid="mcp-detail-tabs">
                 {activeTab === "overview" ? (
                   <OverviewTab server={selectedServer} />
+                ) : activeTab === "connection" ? (
+                  <McpConnectionTab
+                    runtime={runtime}
+                    server={selectedServer}
+                  />
                 ) : activeTab === "tools" ? (
                   <McpToolsTab
                     runtime={runtime}
                     serverId={selectedServer.id}
-                    onNotice={setOperationMessage}
-                  />
-                ) : activeTab === "prompts" ? (
-                  <McpPromptsTab
-                    runtime={runtime}
-                    serverId={selectedServer.id}
-                    onNotice={setOperationMessage}
+                    onNotice={notifySuccess}
                   />
                 ) : activeTab === "trust" ? (
                   <McpTrustTab
                     runtime={runtime}
                     serverId={selectedServer.id}
-                    onNotice={setOperationMessage}
+                    onNotice={notifySuccess}
                   />
                 ) : activeTab === "runtime" ? (
                   <McpRuntimePolicyTab
                     runtime={runtime}
                     serverId={selectedServer.id}
-                    onNotice={setOperationMessage}
+                    onNotice={notifySuccess}
                   />
                 ) : activeTab === "logs" ? (
                   <McpLogsTab runtime={runtime} serverId={selectedServer.id} />
@@ -522,6 +538,113 @@ function OverviewTab({ server }: { server: McpServerSummary }) {
   );
 }
 
+function McpConnectionTab({
+  runtime,
+  server,
+}: {
+  runtime: RuntimeBridge;
+  server: McpServerSummary;
+}) {
+  const [detail, setDetail] = useState<McpServerDetailResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      setDetail(await runtime.mcp.getServer(server.id));
+    } catch (reason) {
+      setError(mcpErrorMessage(reason, "加载 MCP 连接配置失败"));
+    } finally {
+      setLoading(false);
+    }
+  }, [runtime, server.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (loading && detail === null) {
+    return <SkeletonTab label="connection" />;
+  }
+
+  if (error && detail === null) {
+    return (
+      <div className={styles.inlineError} role="alert" data-testid="mcp-connection-error">
+        <AlertCircle size={15} />
+        <span>{error}</span>
+        <button className={styles.smallToolButton} type="button" onClick={() => void load()}>
+          重试
+        </button>
+      </div>
+    );
+  }
+
+  const current = detail ?? server;
+  const authType = detail?.auth?.auth_type ?? detail?.auth_type ?? "none";
+  const commonRows = [
+    { label: "Transport", value: current.transport },
+    { label: "状态", value: mcpServerStatusLabel(current.status, current.enabled) },
+    { label: "连接模式", value: detail?.connect_mode ?? "-" },
+    { label: "Restart", value: detail?.restart_policy ?? "-" },
+    { label: "最近连接", value: formatRefreshTime(current.last_connected_at) },
+    { label: "最近刷新", value: formatRefreshTime(current.last_refresh_at) },
+  ];
+  const transportRows =
+    current.transport === "stdio"
+      ? [
+          { label: "Command", value: detail?.command || "-" },
+          { label: "Args", value: formatList(detail?.args) },
+          { label: "工作目录", value: detail?.cwd || "-" },
+          { label: "继承环境变量", value: detail?.inherit_environment ? "是" : "否" },
+          { label: "环境变量 Key", value: formatList(detail?.env_keys) },
+        ]
+      : current.transport === "sse"
+        ? [
+            { label: "SSE URL", value: detail?.sse_url || "-" },
+            { label: "Message URL", value: detail?.message_url || "-" },
+            { label: "鉴权方式", value: authType },
+            { label: "Header Key", value: formatList(detail?.header_keys) },
+            { label: "环境变量 Header Key", value: formatList(detail?.env_header_keys) },
+            { label: "Secret Ref Key", value: formatList(detail?.secret_ref_keys) },
+          ]
+        : [
+            { label: "URL", value: detail?.url || "-" },
+            { label: "鉴权方式", value: authType },
+            { label: "Bearer Env", value: detail?.auth?.bearer_token_env_var ?? detail?.bearer_token_env_var ?? "-" },
+            { label: "Header Key", value: formatList(detail?.header_keys) },
+            { label: "环境变量 Header Key", value: formatList(detail?.env_header_keys) },
+            { label: "Secret Ref Key", value: formatList(detail?.secret_ref_keys) },
+            { label: "OAuth", value: detail?.oauth_configured ? "已配置" : "未配置" },
+          ];
+  const timeoutRows = detail
+    ? [
+        { label: "启动超时", value: `${detail.startup_timeout_sec}s` },
+        { label: "工具超时", value: `${detail.tool_timeout_sec}s` },
+        { label: "读取超时", value: `${detail.read_timeout_sec}s` },
+        { label: "关闭超时", value: `${detail.shutdown_timeout_sec}s` },
+      ]
+    : [];
+
+  return (
+    <div className={styles.overviewGrid} data-testid="mcp-connection-tab">
+      {[...commonRows, ...transportRows, ...timeoutRows].map((row) => (
+        <InfoRow key={row.label} label={row.label} value={row.value} />
+      ))}
+      <InfoRow
+        label="最近错误"
+        value={
+          current.last_error_code || current.last_error_message
+            ? mcpErrorMessage({ code: current.last_error_code, message: current.last_error_message })
+            : "-"
+        }
+        wide
+      />
+    </div>
+  );
+}
+
 function hasReservedResources(server: McpServerSummary): boolean {
   return server.resources_reserved || (server.resources_reserved_count ?? 0) > 0;
 }
@@ -594,4 +717,11 @@ function formatRefreshTime(value: string | null | undefined): string {
     return "never";
   }
   return value.replace("T", " ").replace("Z", "");
+}
+
+function formatList(values: string[] | null | undefined): string {
+  if (!values || values.length === 0) {
+    return "-";
+  }
+  return values.join(", ");
 }

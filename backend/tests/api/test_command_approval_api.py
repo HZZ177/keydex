@@ -350,7 +350,6 @@ def test_mcp_approval_decision_api_resolves_mcp_tool_call_without_trusted_comman
             "server_name": "Execution MCP",
             "raw_tool_name": "search",
             "model_tool_name": "mcp__srv_exec__search",
-            "risk_level": "high",
             "approval_mode": "auto",
             "arguments_preview": {"query": "hello"},
             "trust_options": ["once", "session", "persistent_tool", "server_readonly"],

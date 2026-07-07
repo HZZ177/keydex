@@ -268,7 +268,6 @@ function RuntimeServerGroup({
                 <strong>{tool.raw_name}</strong>
                 <span>{tool.description || tool.model_name}</span>
               </div>
-              <span>{tool.risk_level}</span>
               <span>{tool.effective_approval_mode ?? tool.approval_mode}</span>
               <span>{disabledReason || tool.effective_state}</span>
             </div>

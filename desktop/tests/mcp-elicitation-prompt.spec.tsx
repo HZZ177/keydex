@@ -12,7 +12,6 @@ describe("McpElicitationPrompt", () => {
     expect(screen.getByText("补充工单信息")).not.toBeNull();
     expect(screen.getByText("Ticket MCP")).not.toBeNull();
     expect(screen.getByText("create_issue")).not.toBeNull();
-    expect(screen.getByText("风险说明：写入外部系统")).not.toBeNull();
     expect(screen.getByLabelText(/标题/)).not.toBeNull();
     expect(screen.getByLabelText(/优先级/)).not.toBeNull();
     expect(screen.getByLabelText(/详情/)).not.toBeNull();
@@ -94,7 +93,6 @@ function elicitationMessage(status: "pending" | "submitted" | "cancelled" | "tim
         raw_tool_name: "create_issue",
         title: "补充工单信息",
         status,
-        risk_reasons: ["写入外部系统"],
         schema: {
           type: "object",
           description: "工单系统需要补充字段。",

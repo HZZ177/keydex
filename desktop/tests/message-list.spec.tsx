@@ -1991,7 +1991,6 @@ function mcpToolMessage(id: string, rawToolName: string): ConversationMessage {
           server_name: "Ticket MCP",
           raw_tool_name: rawToolName,
           model_tool_name: modelToolName,
-          risk_level: "low",
           approval_mode: "auto",
         },
       },

@@ -624,7 +624,6 @@ async def test_process_agent_events_preserves_mcp_tool_metadata() -> None:
         "server_name": "Ticket MCP",
         "raw_tool_name": "search",
         "model_tool_name": "mcp__srv_1__search",
-        "risk_level": "low",
     }
     await process_agent_events(
         _event_stream(
@@ -678,7 +677,6 @@ async def test_process_agent_events_preserves_mcp_tool_metadata() -> None:
     assert started.payload["raw_tool_name"] == "search"
     assert started.payload["model_tool_name"] == "mcp__srv_1__search"
     assert started.payload["snapshot_id"] == "snap-1"
-    assert started.payload["metadata"]["mcp"]["risk_level"] == "low"
     assert finished.payload["kind"] == "mcp_tool"
     assert finished.payload["tool_call_id"] == "call-mcp"
     assert finished.payload["metadata"]["mcp"]["raw_tool_name"] == "search"

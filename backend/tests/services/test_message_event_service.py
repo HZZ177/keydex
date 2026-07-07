@@ -323,7 +323,6 @@ def test_message_event_service_preserves_mcp_tool_metadata_for_history(tmp_path)
             "server_name": "Fixture MCP",
             "raw_tool_name": "read_fixture",
             "model_tool_name": "mcp__srv_1__read_fixture",
-            "risk_level": "low",
             "metadata": {"mcp": {"approval_mode": "auto"}},
         },
     )
@@ -343,7 +342,6 @@ def test_message_event_service_preserves_mcp_tool_metadata_for_history(tmp_path)
             "server_name": "Fixture MCP",
             "raw_tool_name": "read_fixture",
             "model_tool_name": "mcp__srv_1__read_fixture",
-            "risk_level": "low",
             "ui_payload": {
                 "structured_content": {
                     "key": "runtime-snapshot",
@@ -366,7 +364,6 @@ def test_message_event_service_preserves_mcp_tool_metadata_for_history(tmp_path)
         "server_name": "Fixture MCP",
         "raw_tool_name": "read_fixture",
         "model_tool_name": "mcp__srv_1__read_fixture",
-        "risk_level": "low",
     }
 
     detail = service.get_tool_detail(

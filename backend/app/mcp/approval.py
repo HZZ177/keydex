@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -16,33 +15,6 @@ from backend.app.storage import StorageRepositories
 
 DEFAULT_MCP_APPROVAL_WAIT_SECONDS = 24 * 60 * 60
 
-SENSITIVE_TERMS = {
-    "write",
-    "update",
-    "create",
-    "delete",
-    "remove",
-    "command",
-    "exec",
-    "shell",
-    "token",
-    "secret",
-    "password",
-    "apikey",
-    "api_key",
-    "email",
-    "url",
-    "uri",
-    "path",
-    "file",
-}
-
-
-@dataclass(frozen=True)
-class McpToolRiskEvaluation:
-    risk_level: str
-    reasons: list[str]
-
 
 @dataclass(frozen=True)
 class McpToolApprovalRequest:
@@ -52,10 +24,8 @@ class McpToolApprovalRequest:
     server_id: str
     raw_tool_name: str
     model_name: str
-    risk_level: str
     approval_mode: str
     arguments: dict[str, Any]
-    risk_reasons: list[str] = field(default_factory=list)
     annotations: dict[str, Any] = field(default_factory=dict)
     trace_id: str | None = None
     turn_index: int | None = None
@@ -103,14 +73,8 @@ class DefaultMcpToolApprovalDecider:
             )
         if mode == "approve":
             return McpToolApprovalDecision(approved=True, reason="explicit_approve")
-        if mode == "auto" and request.risk_level == "low":
-            return McpToolApprovalDecision(approved=True, reason="auto_low_risk")
         if mode == "auto":
-            return McpToolApprovalDecision(
-                approved=False,
-                reason="auto_requires_approval",
-                error_code=McpErrorCode.APPROVAL_REQUIRED,
-            )
+            return McpToolApprovalDecision(approved=True, reason="auto_approved")
         return McpToolApprovalDecision(
             approved=False,
             reason="unknown_approval_mode",
@@ -300,8 +264,6 @@ def _approval_details(
             "approval_mode": request.approval_mode,
             "audit_detail": details.get("audit_detail"),
             "message_count": details.get("message_count"),
-            "risk_level": request.risk_level,
-            "risk_reasons": list(request.risk_reasons),
             "arguments_preview": details.get("arguments_preview"),
             "call_id": request.tool_call_id,
             "run_id": request.run_id,
@@ -314,8 +276,6 @@ def _approval_details(
         "raw_tool_name": request.raw_tool_name,
         "tool_name": request.raw_tool_name,
         "model_tool_name": request.model_name,
-        "risk_level": request.risk_level,
-        "risk_reasons": list(request.risk_reasons),
         "approval_mode": request.approval_mode,
         "display_title": _approval_title(repositories, request),
         "call_id": request.tool_call_id,
@@ -365,7 +325,6 @@ def _mcp_metadata(record: Any) -> dict[str, Any]:
             "raw_tool_name": details.get("raw_tool_name"),
             "model_tool_name": details.get("model_tool_name"),
             "model_name": details.get("model_tool_name"),
-            "risk_level": details.get("risk_level"),
             "approval_mode": details.get("approval_mode"),
             "call_id": details.get("call_id"),
         }.items()
@@ -399,9 +358,7 @@ def _append_approval_audit(
             "decision": getattr(record, "decision", None),
             "trust_scope": getattr(record, "trust_scope", None),
             "reject_message": getattr(record, "reject_message", None),
-            "risk_level": details.get("risk_level") or request.risk_level,
             "approval_mode": details.get("approval_mode") or request.approval_mode,
-            "risk_reasons": details.get("risk_reasons") or request.risk_reasons,
         },
     )
 
@@ -419,50 +376,3 @@ def stable_schema_hash(schema: dict[str, Any]) -> str:
 
 def _approval_kind(request: McpToolApprovalRequest) -> str:
     return "mcp_sampling" if request.approval_kind == "mcp_sampling" else "mcp_tool_call"
-
-
-def evaluate_mcp_tool_risk(
-    *,
-    raw_tool_name: str,
-    input_schema: dict[str, Any],
-    annotations: dict[str, Any] | None = None,
-) -> McpToolRiskEvaluation:
-    annotations = annotations or {}
-    reasons: list[str] = []
-    if annotations.get("destructiveHint") is True:
-        reasons.append("destructiveHint=true")
-    if annotations.get("openWorldHint") is True:
-        reasons.append("openWorldHint=true")
-    sensitive_hits = _sensitive_hits(raw_tool_name, input_schema)
-    if sensitive_hits:
-        reasons.append(f"sensitive_schema={','.join(sorted(sensitive_hits))}")
-    if reasons:
-        return McpToolRiskEvaluation(risk_level="high", reasons=reasons)
-    if annotations.get("readOnlyHint") is True and annotations.get("openWorldHint") is not True:
-        return McpToolRiskEvaluation(risk_level="low", reasons=["readOnlyHint=true"])
-    return McpToolRiskEvaluation(risk_level="unknown", reasons=[])
-
-
-def _sensitive_hits(raw_tool_name: str, input_schema: dict[str, Any]) -> set[str]:
-    text_parts = [raw_tool_name]
-    _collect_schema_text(input_schema, text_parts)
-    normalized = " ".join(text_parts).lower()
-    tokens = set(re.findall(r"[a-zA-Z0-9_]+", normalized))
-    compact = re.sub(r"[^a-z0-9]", "", normalized)
-    return {term for term in SENSITIVE_TERMS if term in tokens or term in compact}
-
-
-def _collect_schema_text(value: Any, output: list[str]) -> None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            output.append(str(key))
-            if key in {"title", "description", "format"} and isinstance(item, str):
-                output.append(item)
-            _collect_schema_text(item, output)
-        return
-    if isinstance(value, list):
-        for item in value:
-            _collect_schema_text(item, output)
-        return
-    if isinstance(value, str):
-        output.append(value)

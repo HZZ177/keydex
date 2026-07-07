@@ -107,24 +107,6 @@
   font-family: var(--font-mono);
 }
 
-.riskLine {
-  display: inline-flex;
-  width: fit-content;
-  align-items: center;
-  gap: 6px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-muted);
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: var(--ui-line-height-tight);
-  padding: 5px 7px;
-}
-
-.riskLine strong {
-  color: var(--color-text-primary);
-  font-weight: 650;
-}
-
 .detailsToggle {
   display: inline-flex;
   width: fit-content;

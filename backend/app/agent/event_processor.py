@@ -686,7 +686,6 @@ def _normalize_mcp_metadata(value: Any) -> dict[str, Any] | None:
         **_mcp_optional_text("raw_tool_name", raw_tool_name),
         **_mcp_optional_text("model_tool_name", model_tool_name),
         **_mcp_optional_text("model_name", source.get("model_name") or model_tool_name),
-        **_mcp_optional_text("risk_level", source.get("risk_level")),
         **_mcp_optional_text("approval_mode", source.get("approval_mode")),
         **_mcp_optional_text("exposure", source.get("exposure")),
         **_mcp_optional_text("call_id", source.get("call_id")),
@@ -720,7 +719,6 @@ def _mcp_event_fields(metadata: dict[str, Any] | None) -> dict[str, Any]:
         "server_name",
         "raw_tool_name",
         "model_tool_name",
-        "risk_level",
     ):
         if key in metadata:
             fields[key] = metadata[key]

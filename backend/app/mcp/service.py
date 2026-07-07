@@ -12,8 +12,6 @@ from backend.app.mcp.exposure import McpToolExposureResolver
 from backend.app.mcp.manager import McpManager
 from backend.app.mcp.types import McpServerCreateRequest, McpServerUpdateRequest
 from backend.app.storage import (
-    McpPromptPolicyRecord,
-    McpPromptRecord,
     McpRuntimeSnapshotRecord,
     McpServerRecord,
     McpServerStatusRecord,
@@ -109,7 +107,6 @@ def list_mcp_tools(
     server_id: str,
     *,
     status: str | None = None,
-    risk_level: str | None = None,
     enabled: bool | None = None,
     search: str | None = None,
     limit: int = 500,
@@ -128,8 +125,6 @@ def list_mcp_tools(
     filtered: list[dict[str, Any]] = []
     for tool in tools:
         payload = tool_payload(server, tool, policies.get(tool.raw_name))
-        if risk_level is not None and payload["risk_level"] != risk_level:
-            continue
         if search and not _matches_search(
             search,
             tool.raw_name,
@@ -232,98 +227,6 @@ def apply_mcp_tool_bulk_policy(
         "updated_count": len(updates),
         "tools": refreshed,
     }
-
-
-def list_mcp_prompts(
-    repositories: StorageRepositories,
-    server_id: str,
-    *,
-    status: str | None = None,
-    enabled: bool | None = None,
-    search: str | None = None,
-    limit: int = 500,
-) -> dict[str, Any]:
-    server = require_mcp_server(repositories, server_id)
-    prompts = repositories.mcp_prompts.list_by_server(server_id, status=status, limit=1000)
-    filtered: list[dict[str, Any]] = []
-    for prompt in prompts:
-        policy = repositories.mcp_prompt_policies.get(server_id, prompt.raw_name)
-        payload = prompt_payload(server, prompt, policy)
-        if enabled is not None and payload["enabled"] != enabled:
-            continue
-        if search and not _matches_search(
-            search,
-            prompt.raw_name,
-            prompt.display_name,
-            prompt.description,
-        ):
-            continue
-        filtered.append(payload)
-    resolved_limit = max(1, min(limit, 1000))
-    return {"list": filtered[:resolved_limit], "total": len(filtered), "limit": resolved_limit}
-
-
-def update_mcp_prompt_policy(
-    repositories: StorageRepositories,
-    server_id: str,
-    prompt_id: str,
-    changes: dict[str, Any],
-) -> dict[str, Any]:
-    server = require_mcp_server(repositories, server_id)
-    prompt = require_mcp_prompt(repositories, server_id, prompt_id)
-    existing = repositories.mcp_prompt_policies.get(server_id, prompt.raw_name)
-    enabled = changes.get("enabled") if changes.get("enabled") is not None else (
-        existing.enabled if existing else True
-    )
-    exposure_mode = changes.get("exposure_mode") or (
-        existing.exposure_mode if existing else "manual"
-    )
-    policy = repositories.mcp_prompt_policies.upsert(
-        server_id=server_id,
-        raw_prompt_name=prompt.raw_name,
-        enabled=bool(enabled),
-        exposure_mode=str(exposure_mode),
-    )
-    McpAuditWriter.from_repositories(repositories).append_event(
-        event_type="prompt.policy_updated",
-        server_id=server_id,
-        prompt_name=prompt.raw_name,
-        actor="user",
-        status="ok",
-        summary=f"MCP prompt policy updated: {prompt.raw_name}",
-        detail={
-            "prompt_id": prompt.id,
-            "changes": changes,
-            "policy": {
-                "enabled": policy.enabled,
-                "exposure_mode": policy.exposure_mode,
-            },
-        },
-    )
-    return prompt_payload(server, prompt, policy)
-
-
-async def get_mcp_prompt(
-    manager: McpManager,
-    server_id: str,
-    prompt_id: str,
-    arguments: dict[str, Any] | None,
-) -> dict[str, Any]:
-    server = require_mcp_server(manager.repositories, server_id)
-    prompt = require_mcp_prompt(manager.repositories, server_id, prompt_id)
-    result = await manager.get_prompt(
-        server_id=server_id,
-        raw_prompt_name=prompt.raw_name,
-        arguments=arguments,
-    )
-    result.update(
-        {
-            "id": prompt.id,
-            "server_name": server.name,
-            "display_name": prompt.display_name,
-        }
-    )
-    return result
 
 
 def get_mcp_runtime_status(
@@ -557,17 +460,6 @@ def resolve_mcp_tool_location(
     return matches[0]
 
 
-def require_mcp_prompt(
-    repositories: StorageRepositories,
-    server_id: str,
-    prompt_id: str,
-) -> McpPromptRecord:
-    for prompt in repositories.mcp_prompts.list_by_server(server_id, limit=1000):
-        if prompt.id == prompt_id or prompt.raw_name == prompt_id:
-            return prompt
-    raise McpServiceError("MCP prompt 不存在", code="prompt_not_found")
-
-
 def tool_payload(
     server: McpServerRecord,
     tool: McpToolRecord,
@@ -579,7 +471,6 @@ def tool_payload(
     effective_approval_mode = (
         approval_mode if approval_mode != "inherit" else server.default_tool_approval_mode
     )
-    risk_level = policy.risk_override if policy and policy.risk_override else tool.risk_level
     return {
         "id": tool.id,
         "server_id": tool.server_id,
@@ -595,9 +486,6 @@ def tool_payload(
         "status": tool.discovery_status,
         "discovery_status": tool.discovery_status,
         "effective_state": _tool_effective_state(tool, enabled, hidden),
-        "risk_level": risk_level,
-        "stored_risk_level": tool.risk_level,
-        "risk_override": policy.risk_override if policy is not None else None,
         "approval_mode": approval_mode,
         "effective_approval_mode": effective_approval_mode,
         "schema_change_action": (
@@ -610,33 +498,6 @@ def tool_payload(
         "first_seen_at": tool.first_seen_at,
         "last_seen_at": tool.last_seen_at,
         "removed_at": tool.removed_at,
-    }
-
-
-def prompt_payload(
-    server: McpServerRecord,
-    prompt: McpPromptRecord,
-    policy: McpPromptPolicyRecord | None,
-) -> dict[str, Any]:
-    enabled = policy.enabled if policy is not None else True
-    exposure_mode = policy.exposure_mode if policy is not None else "manual"
-    argument_count = len(prompt.arguments_schema.get("properties") or {})
-    return {
-        "id": prompt.id,
-        "server_id": prompt.server_id,
-        "server_name": server.name,
-        "raw_name": prompt.raw_name,
-        "display_name": prompt.display_name,
-        "description": prompt.description,
-        "arguments_schema": prompt.arguments_schema,
-        "argument_count": argument_count,
-        "enabled": enabled,
-        "exposure_mode": exposure_mode,
-        "status": prompt.discovery_status,
-        "discovery_status": prompt.discovery_status,
-        "first_seen_at": prompt.first_seen_at,
-        "last_seen_at": prompt.last_seen_at,
-        "removed_at": prompt.removed_at,
     }
 
 
@@ -690,7 +551,6 @@ def server_payload(
         "transport": server.transport,
         "status": status.status if status is not None else "unknown",
         "tools_count": status.tools_count if status is not None else 0,
-        "prompts_count": status.prompts_count if status is not None else 0,
         "resources_reserved_count": resources_reserved_count,
         "resources_reserved": resources_reserved_count > 0 or bool(server.resource_reserved_policy),
         "last_connected_at": status.last_connected_at if status is not None else None,
@@ -735,7 +595,6 @@ def server_payload(
             "supports_parallel_tool_calls": server.supports_parallel_tool_calls,
             "elicitation_enabled": server.elicitation_enabled,
             "sampling_enabled": server.sampling_enabled,
-            "prompt_discovery_enabled": server.prompt_discovery_enabled,
             "resource_reserved_policy": server.resource_reserved_policy,
         }
     )
@@ -757,7 +616,6 @@ def _tool_policy_values(policy: McpToolPolicyRecord | None) -> dict[str, Any]:
         "enabled": policy.enabled if policy is not None else True,
         "hidden": policy.hidden if policy is not None else False,
         "approval_mode": policy.approval_mode if policy is not None else "inherit",
-        "risk_override": policy.risk_override if policy is not None else None,
         "parameter_constraints": (
             policy.parameter_constraints if policy is not None else None
         ),
@@ -837,7 +695,6 @@ def _runtime_snapshot_payload(snapshot: McpRuntimeSnapshotRecord) -> dict[str, A
                 "model_name": tool.get("model_name"),
                 "description": tool.get("description"),
                 "exposure": tool.get("exposure") or "direct",
-                "risk_level": tool.get("risk_level"),
             }
             for tool in snapshot.visible_tools
             if isinstance(tool, dict)

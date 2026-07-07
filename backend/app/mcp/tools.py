@@ -34,7 +34,6 @@ class McpDeferredToolSummary:
     raw_name: str
     model_name: str
     description: str | None
-    risk_level: str
 
 
 @dataclass(frozen=True)
@@ -44,7 +43,6 @@ class McpLocalToolMetadata:
     server_name: str | None
     raw_tool_name: str
     model_name: str
-    risk_level: str
     approval_mode: str
     exposure: str
     annotations: dict[str, Any] | None = None
@@ -58,7 +56,6 @@ class McpLocalToolMetadata:
             "raw_tool_name": self.raw_tool_name,
             "model_name": self.model_name,
             "model_tool_name": self.model_name,
-            "risk_level": self.risk_level,
             "approval_mode": self.approval_mode,
             "exposure": self.exposure,
             "annotations": self.annotations,
@@ -76,7 +73,6 @@ class McpToolCallContext:
     server_id: str
     raw_tool_name: str
     model_name: str
-    risk_level: str
     approval_mode: str
     tool_call_id: str | None = None
     run_id: str | None = None
@@ -102,7 +98,6 @@ class McpToolCallContext:
             server_id=tool_metadata.server_id,
             raw_tool_name=tool_metadata.raw_tool_name,
             model_name=tool_metadata.model_name,
-            risk_level=tool_metadata.risk_level,
             approval_mode=tool_metadata.approval_mode,
             tool_call_id=tool_call_id,
             run_id=run_id,
@@ -208,7 +203,7 @@ def mcp_deferred_tools_from_snapshot(
         FunctionTool(
             name=DEFERRED_SEARCH_TOOL_NAME,
             description=(
-                "Search deferred MCP tools by keyword, server, or risk. "
+                "Search deferred MCP tools by keyword or server. "
                 "Returned tools are activated for this session and become callable next turn."
             ),
             parameters=_deferred_search_schema(),
@@ -255,7 +250,6 @@ def _tool_from_contract(
         server_name=_optional_str(contract.get("server_name")),
         raw_tool_name=raw_tool_name,
         model_name=model_name,
-        risk_level=str(contract.get("risk_level") or "unknown"),
         approval_mode=str(contract.get("approval_mode") or "auto"),
         exposure=str(contract.get("exposure") or "direct"),
         annotations=contract.get("annotations")
@@ -291,7 +285,6 @@ def _visible_tool_from_contract(contract: dict[str, Any]) -> McpVisibleTool:
         model_name=_required_str(contract, "model_name"),
         description=_optional_str(contract.get("description")),
         input_schema=dict(input_schema) if isinstance(input_schema, dict) else {"type": "object"},
-        risk_level=str(contract.get("risk_level") or "unknown"),
         approval_mode=str(contract.get("approval_mode") or "auto"),
         annotations=contract.get("annotations")
         if isinstance(contract.get("annotations"), dict)
@@ -305,7 +298,6 @@ def _deferred_search_schema() -> dict[str, Any]:
         "properties": {
             "query": {"type": "string", "description": "Search keywords."},
             "server_id": {"type": "string", "description": "Optional MCP server id filter."},
-            "risk_level": {"type": "string", "description": "Optional risk level filter."},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
         },
     }
@@ -316,7 +308,6 @@ def _deferred_list_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "server_id": {"type": "string", "description": "Optional MCP server id filter."},
-            "risk_level": {"type": "string", "description": "Optional risk level filter."},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
         },
     }
@@ -333,7 +324,6 @@ def _run_deferred_search(
     matches = index.search(
         query=_optional_text_arg(args, "query"),
         server_id=_optional_text_arg(args, "server_id") or None,
-        risk_level=_optional_text_arg(args, "risk_level") or None,
         limit=_int_arg(args, "limit", 20),
     )
     return _deferred_result(
@@ -355,7 +345,6 @@ def _run_deferred_list(
 ) -> dict[str, Any]:
     matches = index.list_tools(
         server_id=_optional_text_arg(args, "server_id") or None,
-        risk_level=_optional_text_arg(args, "risk_level") or None,
         limit=_int_arg(args, "limit", 50),
     )
     return _deferred_result(
@@ -401,7 +390,6 @@ def _summary_payload(summary: McpDeferredToolSummary) -> dict[str, Any]:
         "raw_name": summary.raw_name,
         "model_name": summary.model_name,
         "description": summary.description,
-        "risk_level": summary.risk_level,
         "activation_hint": "Activated for this session; callable next turn.",
     }
 
@@ -431,7 +419,6 @@ class McpDeferredToolSearchIndex:
         *,
         query: str = "",
         server_id: str | None = None,
-        risk_level: str | None = None,
         limit: int = 20,
     ) -> list[McpDeferredToolSummary]:
         normalized_query = query.strip().lower()
@@ -442,7 +429,6 @@ class McpDeferredToolSearchIndex:
                 tool,
                 query=normalized_query,
                 server_id=server_id,
-                risk_level=risk_level,
             )
         ]
         return [_summary(tool) for tool in matches[: _limit(limit)]]
@@ -451,13 +437,11 @@ class McpDeferredToolSearchIndex:
         self,
         *,
         server_id: str | None = None,
-        risk_level: str | None = None,
         limit: int = 50,
     ) -> list[McpDeferredToolSummary]:
         return self.search(
             query="",
             server_id=server_id,
-            risk_level=risk_level,
             limit=limit,
         )
 
@@ -566,11 +550,8 @@ def _matches_filters(
     *,
     query: str,
     server_id: str | None,
-    risk_level: str | None,
 ) -> bool:
     if server_id is not None and tool.server_id != server_id:
-        return False
-    if risk_level is not None and tool.risk_level != risk_level:
         return False
     if not query:
         return True
@@ -595,7 +576,6 @@ def _summary(tool: McpVisibleTool) -> McpDeferredToolSummary:
         raw_name=tool.raw_name,
         model_name=tool.model_name,
         description=tool.description,
-        risk_level=tool.risk_level,
     )
 
 

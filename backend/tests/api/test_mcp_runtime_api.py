@@ -13,8 +13,6 @@ from backend.app.mcp.client import (
     McpClientBase,
     McpClientCapabilities,
     McpClientInitializeResult,
-    McpClientPromptResult,
-    McpClientPromptSpec,
     McpClientToolResult,
     McpClientToolSpec,
 )
@@ -72,7 +70,6 @@ def test_runtime_status_returns_snapshot_servers_and_effective_tools(tmp_path) -
             "model_name": online_tool.model_name,
             "description": online_tool.description,
             "exposure": "direct",
-            "risk_level": "low",
         }
     ]
     assert body["summary"]["servers_total"] == 2
@@ -159,7 +156,6 @@ def test_running_enable_override_reports_next_turn_and_cancel_call(tmp_path) -> 
         server_name="Running MCP",
         raw_tool_name=tool.raw_name,
         model_name=tool.model_name,
-        risk_level="low",
         approval_mode="auto",
     )
 
@@ -213,7 +209,6 @@ def _seed_tool(
                 "description": raw_name,
                 "input_schema": {"type": "object"},
                 "schema_hash": f"hash-{raw_name}",
-                "risk_level": "low" if read_only else "unknown",
                 "annotations": {"readOnlyHint": True} if read_only else {},
             }
         ],
@@ -254,14 +249,6 @@ class CancelFakeMcpClient(McpClientBase):
     ) -> list[McpClientToolSpec]:
         return []
 
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        return []
-
     async def call_tool(
         self,
         raw_tool_name: str,
@@ -276,16 +263,6 @@ class CancelFakeMcpClient(McpClientBase):
             status="success",
             content=[],
         )
-
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
-        return McpClientPromptResult(messages=[])
 
     async def cancel_call(self, call_id: str) -> bool:
         self.cancelled_call_ids.append(call_id)

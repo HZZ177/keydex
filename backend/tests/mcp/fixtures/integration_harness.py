@@ -14,9 +14,6 @@ from backend.app.mcp.client import (
     McpClientBase,
     McpClientCapabilities,
     McpClientInitializeResult,
-    McpClientPromptArgument,
-    McpClientPromptResult,
-    McpClientPromptSpec,
     McpClientToolResult,
     McpClientToolSpec,
 )
@@ -24,7 +21,6 @@ from backend.app.mcp.errors import McpRuntimeError
 from backend.app.mcp.types import McpErrorCode, McpServerStatus
 from backend.app.storage import McpServerRecord, StorageRepositories
 from backend.tests.mcp.fixtures.mock_mcp_servers import (
-    MockMcpPrompt,
     MockMcpServerScenario,
     MockMcpTool,
 )
@@ -66,7 +62,7 @@ MCP_BACKEND_INTEGRATION_GATE_COMMANDS: tuple[McpIntegrationGateCommand, ...] = (
             "-m",
             "pytest",
             "backend\\tests\\api\\test_mcp_server_api.py",
-            "backend\\tests\\api\\test_mcp_tool_prompt_policy_api.py",
+            "backend\\tests\\api\\test_mcp_tool_policy_api.py",
             "backend\\tests\\api\\test_mcp_runtime_api.py",
             "backend\\tests\\api\\test_mcp_oauth_api.py",
             "backend\\tests\\api\\test_mcp_import_export_api.py",
@@ -158,7 +154,6 @@ class McpApiTestHarness:
                     "description": raw_name,
                     "input_schema": {"type": "object"},
                     "schema_hash": f"hash-{raw_name}",
-                    "risk_level": "low" if read_only else "unknown",
                     "annotations": {"readOnlyHint": True} if read_only else {},
                 }
             ],
@@ -199,7 +194,6 @@ class FakeMcpManagerClient(McpClientBase):
         self.scenario = scenario
         self.error = error
         self.tool_calls: list[dict[str, Any]] = []
-        self.prompt_calls: list[dict[str, Any]] = []
 
     async def initialize(
         self,
@@ -215,7 +209,6 @@ class FakeMcpManagerClient(McpClientBase):
             server_info={"name": self.scenario.name},
             capabilities=McpClientCapabilities(
                 tools=True,
-                prompts=True,
                 sampling=True,
                 elicitation=True,
             ),
@@ -228,14 +221,6 @@ class FakeMcpManagerClient(McpClientBase):
         cancellation: McpCancellationToken | None = None,
     ) -> list[McpClientToolSpec]:
         return [_to_tool_spec(tool) for tool in self.scenario.tools]
-
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        return [_to_prompt_spec(prompt) for prompt in self.scenario.prompts]
 
     async def call_tool(
         self,
@@ -254,22 +239,6 @@ class FakeMcpManagerClient(McpClientBase):
             structured_content={"arguments": dict(arguments or {})},
         )
 
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
-        self.prompt_calls.append({"name": raw_prompt_name, "arguments": dict(arguments or {})})
-        prompt = _find_prompt(self.scenario.prompts, raw_prompt_name)
-        return McpClientPromptResult(
-            description=prompt.description,
-            messages=[{"role": "user", "content": prompt.render(arguments)}],
-            metadata={"prompt": raw_prompt_name},
-        )
-
     async def cancel_call(self, call_id: str) -> bool:
         return call_id.startswith("fake") or call_id.startswith("call")
 
@@ -284,25 +253,3 @@ def _to_tool_spec(tool: MockMcpTool) -> McpClientToolSpec:
         input_schema=dict(tool.input_schema),
         annotations=dict(tool.annotations or {}),
     )
-
-
-def _to_prompt_spec(prompt: MockMcpPrompt) -> McpClientPromptSpec:
-    return McpClientPromptSpec(
-        name=prompt.name,
-        description=prompt.description,
-        arguments=[
-            McpClientPromptArgument(
-                name=argument.name,
-                description=argument.description,
-                required=argument.required,
-            )
-            for argument in prompt.arguments
-        ],
-    )
-
-
-def _find_prompt(prompts: list[MockMcpPrompt], raw_prompt_name: str) -> MockMcpPrompt:
-    for prompt in prompts:
-        if prompt.name == raw_prompt_name:
-            return prompt
-    raise McpRuntimeError(McpErrorCode.TOOL_NOT_FOUND)

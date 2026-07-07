@@ -20,7 +20,6 @@ import { useOptionalRightSidebarConversation } from "@/renderer/components/layou
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
-import { subscribeInsertMcpPromptDraft } from "@/renderer/events/mcpPromptDraft";
 import type {
   AgentActionEnvelope,
   AgentSession,
@@ -337,26 +336,6 @@ export function ConversationSessionSurface({
     },
     [goalError, setDraft],
   );
-
-  useEffect(() => {
-    return subscribeInsertMcpPromptDraft((detail) => {
-      if (!detail.text.trim()) {
-        return false;
-      }
-      if (detail.sessionId && detail.sessionId !== threadId) {
-        return false;
-      }
-      if (!detail.sessionId && isSidecar) {
-        return false;
-      }
-      setDraft((current) => (current.trim() ? `${current}\n\n${detail.text}` : detail.text));
-      if (goalError) {
-        setGoalError(null);
-      }
-      notifications.success(`已插入 MCP Prompt：${detail.rawName}`);
-      return true;
-    });
-  }, [goalError, isSidecar, notifications, setDraft, threadId]);
 
   const openBtwConversation = useCallback(() => {
     if (!threadId || !rightSidebarConversation) {

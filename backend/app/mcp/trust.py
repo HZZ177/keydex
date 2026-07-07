@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from backend.app.mcp.approval import evaluate_mcp_tool_risk
 from backend.app.mcp.audit import McpAuditWriter
 from backend.app.storage import McpToolRecord, McpTrustRuleRecord, StorageRepositories
 
@@ -12,8 +11,6 @@ from backend.app.storage import McpToolRecord, McpTrustRuleRecord, StorageReposi
 @dataclass(frozen=True)
 class McpEffectiveApprovalPolicy:
     approval_mode: str
-    risk_level: str
-    risk_reasons: list[str]
 
 
 @dataclass(frozen=True)
@@ -38,36 +35,7 @@ def resolve_mcp_tool_approval_policy(
         if server is not None
         else "auto"
     )
-    risk = evaluate_mcp_tool_risk(
-        raw_tool_name=tool.raw_name,
-        input_schema=tool.input_schema,
-        annotations=tool.annotations,
-    )
-    if policy is not None and policy.risk_override:
-        return McpEffectiveApprovalPolicy(
-            approval_mode=approval_mode,
-            risk_level=policy.risk_override,
-            risk_reasons=[f"risk_override={policy.risk_override}", *_stored_risk_reasons(tool)],
-        )
-    if tool.risk_level != "unknown":
-        return McpEffectiveApprovalPolicy(
-            approval_mode=approval_mode,
-            risk_level=tool.risk_level,
-            risk_reasons=_stored_risk_reasons(tool) or risk.reasons,
-        )
-    return McpEffectiveApprovalPolicy(
-        approval_mode=approval_mode,
-        risk_level=risk.risk_level,
-        risk_reasons=risk.reasons,
-    )
-
-
-def _stored_risk_reasons(tool: McpToolRecord) -> list[str]:
-    meta = tool.meta or {}
-    value = meta.get("risk_reasons")
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value if str(item).strip()]
+    return McpEffectiveApprovalPolicy(approval_mode=approval_mode)
 
 
 def find_mcp_trust_rule_match(

@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, ChevronDown, ShieldCheck, XCircle } from "lucide-react";
+import { Check, ChevronDown, ShieldCheck, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
@@ -48,8 +48,6 @@ export function ApprovalPrompt({ message, onDecision }: ApprovalPromptProps) {
         <span className={styles.icon} aria-hidden="true">
           {approval.status === "rejected" || approval.status === "expired" || approval.status === "cancelled" ? (
             <XCircle size={16} />
-          ) : approval.riskLevel === "high" ? (
-            <AlertTriangle size={16} />
           ) : (
             <ShieldCheck size={16} />
           )}
@@ -78,11 +76,6 @@ export function ApprovalPrompt({ message, onDecision }: ApprovalPromptProps) {
           ))}
         </dl>
       ) : null}
-
-      <div className={styles.riskLine}>
-        <span>风险</span>
-        <strong>{riskLabel(approval.riskLevel)}</strong>
-      </div>
 
       <button
         className={styles.detailsToggle}
@@ -129,7 +122,6 @@ interface ParsedApproval {
   target: string;
   facts: ApprovalFact[];
   detailsText: string;
-  riskLevel: "low" | "medium" | "high";
   status: ApprovalStatus;
 }
 
@@ -152,7 +144,6 @@ function parseApproval(message: ConversationMessage): ParsedApproval {
     target: targetFromDetails(details, kind),
     facts: factsFromDetails(details, kind),
     detailsText: stringify(details),
-    riskLevel: riskFromDetails(details),
     status: (approval?.status ?? message.status ?? "pending") as ApprovalStatus,
   };
 }
@@ -180,8 +171,6 @@ function normalizedApprovalDetails(
     "server_name",
     "raw_tool_name",
     "model_tool_name",
-    "risk_level",
-    "risk_reasons",
     "snapshot_id",
     "approval_mode",
     "arguments_preview",
@@ -251,7 +240,6 @@ function factsFromDetails(details: Record<string, unknown>, kind: ApprovalKind):
     addFact(facts, "服务", details.server_name ?? details.server_id);
     addFact(facts, "MCP 工具", details.raw_tool_name ?? details.tool_name);
     addFact(facts, "模型工具", details.model_tool_name, true);
-    addFact(facts, "风险原因", listText(details.risk_reasons));
     addFact(facts, "参数预览", previewText(details.arguments_preview), true);
     addFact(facts, "信任选项", trustOptionsText(details.trust_options));
     addFact(facts, "匹配规则", previewText(details.matched_rule), true);
@@ -265,7 +253,6 @@ function factsFromDetails(details: Record<string, unknown>, kind: ApprovalKind):
     addFact(facts, "审批策略", details.approval_mode ?? details.sampling_approval_mode);
     addFact(facts, "审计", details.audit_detail ?? details.sampling_audit_detail);
     addFact(facts, "消息数", details.message_count);
-    addFact(facts, "风险原因", listText(details.risk_reasons));
     addFact(facts, "请求摘要", previewText(details.arguments_preview ?? details.prompt_preview ?? details.messages_preview), true);
     return facts;
   }
@@ -307,13 +294,6 @@ function formatTimeout(value: unknown): string {
   return `${value}s`;
 }
 
-function listText(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value.map(scalarText).filter(Boolean).join("；");
-  }
-  return scalarText(value);
-}
-
 function previewText(value: unknown): string {
   if (value === undefined || value === null) {
     return "";
@@ -348,17 +328,6 @@ function trustOptionLabel(value: string): string {
     default:
       return value;
   }
-}
-
-function riskFromDetails(details: Record<string, unknown>): ParsedApproval["riskLevel"] {
-  const risk = details.risk ?? details.risk_level ?? details.level;
-  if (risk === "high" || risk === "medium" || risk === "low") {
-    return risk;
-  }
-  if (details.command || details.path || details.paths) {
-    return "medium";
-  }
-  return "low";
 }
 
 function kindLabel(kind: ApprovalKind): string {
@@ -396,16 +365,6 @@ function statusLabel(status: ApprovalStatus | "submitted", submitted: ApprovalDe
   }
 }
 
-function riskLabel(level: ParsedApproval["riskLevel"]): string {
-  switch (level) {
-    case "high":
-      return "高";
-    case "medium":
-      return "中";
-    case "low":
-      return "低";
-  }
-}
 
 function stringify(value: unknown): string {
   try {

@@ -37,12 +37,16 @@ def test_mcp_backend_test_conventions_are_machine_readable() -> None:
         assert hasattr(module, attribute_name)
 
 
-def test_mcp_feature_contracts_cover_f01_to_f20_and_mcp_061_to_080() -> None:
+def test_mcp_feature_contracts_cover_current_mcp_scope() -> None:
     assert [contract.feature_id for contract in MCP_FEATURE_COVERAGE_CONTRACTS] == [
-        f"F{number:02d}" for number in range(1, 21)
+        f"F{number:02d}" for number in range(1, 20)
     ]
-    assert unit_issue_ids() == tuple(f"MCP-{number:03d}" for number in range(61, 81))
-    assert e2e_issue_ids() == tuple(f"MCP-{number:03d}" for number in range(81, 101))
+    assert unit_issue_ids() == tuple(
+        f"MCP-{number:03d}" for number in (*range(61, 72), *range(73, 81))
+    )
+    assert e2e_issue_ids() == tuple(
+        f"MCP-{number:03d}" for number in (*range(81, 92), *range(93, 101))
+    )
     assert missing_unit_coverage() == ()
 
     for contract in MCP_FEATURE_COVERAGE_CONTRACTS:

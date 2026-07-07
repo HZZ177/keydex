@@ -143,7 +143,6 @@ def _status_by_server(
 def _contract(tool: McpVisibleTool, *, exposure: str) -> dict[str, Any]:
     contract = tool.to_model_contract()
     contract["exposure"] = exposure
-    contract["risk_level"] = tool.risk_level
     contract["approval_mode"] = tool.approval_mode
     return contract
 

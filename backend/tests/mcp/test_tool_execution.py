@@ -15,8 +15,6 @@ from backend.app.mcp.client import (
     McpClientBase,
     McpClientCapabilities,
     McpClientInitializeResult,
-    McpClientPromptResult,
-    McpClientPromptSpec,
     McpClientToolResult,
     McpClientToolSpec,
 )
@@ -41,7 +39,6 @@ def _repositories(tmp_path) -> StorageRepositories:
 def _create_server_and_tool(
     repositories: StorageRepositories,
     *,
-    risk_level: str = "low",
     default_tool_approval_mode: str = "auto",
     annotations: dict[str, Any] | None = None,
     input_schema: dict[str, Any] | None = None,
@@ -74,7 +71,6 @@ def _create_server_and_tool(
                 else input_schema,
                 "annotations": annotations,
                 "schema_hash": "hash-search",
-                "risk_level": risk_level,
             }
         ],
     )
@@ -772,7 +768,7 @@ async def test_execute_tool_stops_before_client_when_approval_rejected(tmp_path)
 async def test_execute_tool_creates_mcp_approval_request_payload(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _create_session(repositories)
-    _create_server_and_tool(repositories, risk_level="high")
+    _create_server_and_tool(repositories, default_tool_approval_mode="prompt")
     dispatcher = RecordingDispatcher()
     manager = McpManager(
         settings=AppSettings(data_dir=tmp_path / "data"),
@@ -804,7 +800,6 @@ async def test_execute_tool_creates_mcp_approval_request_payload(tmp_path) -> No
     assert approval.details["server_name"] == "Execution MCP"
     assert approval.details["raw_tool_name"] == "search"
     assert approval.details["model_tool_name"] == "mcp__srv_exec__search"
-    assert approval.details["risk_level"] == "high"
     assert approval.details["arguments_preview"]["token"] == "***REDACTED***"
     assert approval.details["trust_options"] == [
         "once",
@@ -822,7 +817,7 @@ async def test_execute_tool_creates_mcp_approval_request_payload(tmp_path) -> No
 async def test_execute_tool_continues_after_mcp_approval(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _create_session(repositories)
-    _create_server_and_tool(repositories, risk_level="high")
+    _create_server_and_tool(repositories, default_tool_approval_mode="prompt")
     factory = RecordingExecutionClientFactory()
     manager = McpManager(
         settings=AppSettings(data_dir=tmp_path / "data"),
@@ -868,7 +863,7 @@ async def test_session_trust_created_from_approval_skips_next_tool_approval(
 ) -> None:
     repositories = _repositories(tmp_path)
     _create_session(repositories)
-    _create_server_and_tool(repositories, risk_level="high")
+    _create_server_and_tool(repositories, default_tool_approval_mode="prompt")
     factory = RecordingExecutionClientFactory()
     manager = McpManager(
         settings=AppSettings(data_dir=tmp_path / "data"),
@@ -918,7 +913,7 @@ async def test_persistent_tool_trust_created_from_mcp_approval_is_global_and_mcp
     repositories = _repositories(tmp_path)
     _create_session(repositories)
     _create_session(repositories, session_id="session-b")
-    _create_server_and_tool(repositories, risk_level="high")
+    _create_server_and_tool(repositories, default_tool_approval_mode="prompt")
     factory = RecordingExecutionClientFactory()
     manager = McpManager(
         settings=AppSettings(data_dir=tmp_path / "data"),
@@ -980,7 +975,7 @@ async def test_persistent_tool_trust_created_from_mcp_approval_is_global_and_mcp
 async def test_execute_tool_rejects_mcp_approval_without_client_call(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _create_session(repositories)
-    _create_server_and_tool(repositories, risk_level="high")
+    _create_server_and_tool(repositories, default_tool_approval_mode="prompt")
     factory = RecordingExecutionClientFactory()
     manager = McpManager(
         settings=AppSettings(data_dir=tmp_path / "data"),
@@ -1024,7 +1019,6 @@ async def test_tool_policy_prompt_overrides_server_approve(tmp_path) -> None:
     _create_session(repositories)
     _create_server_and_tool(
         repositories,
-        risk_level="low",
         default_tool_approval_mode="approve",
         annotations={"readOnlyHint": True},
     )
@@ -1056,17 +1050,15 @@ async def test_tool_policy_prompt_overrides_server_approve(tmp_path) -> None:
     result = await task
 
     assert approval.details["approval_mode"] == "prompt"
-    assert approval.details["risk_level"] == "low"
-    assert approval.details["risk_reasons"] == ["readOnlyHint=true"]
     assert result.ok is False
     assert result.error["code"] == "approval_rejected"
 
 
 @pytest.mark.asyncio
-async def test_tool_policy_approve_skips_high_risk_approval(tmp_path) -> None:
+async def test_tool_policy_approve_skips_approval(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _create_session(repositories)
-    _create_server_and_tool(repositories, risk_level="high")
+    _create_server_and_tool(repositories)
     repositories.mcp_tool_policies.upsert(
         server_id="srv_exec",
         raw_tool_name="search",
@@ -1092,7 +1084,6 @@ async def test_tool_policy_approve_skips_high_risk_approval(tmp_path) -> None:
     assert repositories.command_approvals.list_pending(session_id="session-a") == []
     assert factory.clients[0].calls[0]["raw_tool_name"] == "search"
     assert audits[0].detail["approval_mode"] == "approve"
-    assert audits[0].detail["risk_level"] == "high"
 
 
 @pytest.mark.asyncio
@@ -1101,7 +1092,6 @@ async def test_tool_policy_deny_blocks_before_client_call(tmp_path) -> None:
     _create_session(repositories)
     _create_server_and_tool(
         repositories,
-        risk_level="low",
         annotations={"readOnlyHint": True},
     )
     repositories.mcp_tool_policies.upsert(
@@ -1235,14 +1225,6 @@ class RecordingExecutionClient(McpClientBase):
     ) -> list[McpClientToolSpec]:
         return []
 
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        return []
-
     async def call_tool(
         self,
         raw_tool_name: str,
@@ -1269,16 +1251,6 @@ class RecordingExecutionClient(McpClientBase):
             status="success",
             content=[{"type": "text", "text": "result"}],
         )
-
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
-        raise NotImplementedError
 
     async def cancel_call(self, call_id: str) -> bool:
         return False

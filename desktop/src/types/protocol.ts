@@ -146,8 +146,6 @@ export type McpToolExposureMode =
   | "allow_all_except_disabled"
   | "allow_selected_only"
   | "read_only_auto";
-export type McpPromptExposureMode = "hidden" | "manual" | "slash_command" | "agent_selectable";
-export type McpRiskLevel = "low" | "medium" | "high" | "unknown";
 export type McpAuthType = "none" | "header_token" | "bearer_env" | "oauth";
 export type McpRestartPolicy = "never" | "on_failure" | "always";
 export type McpConnectMode = "on_demand" | "on_startup";
@@ -162,7 +160,6 @@ export type McpToolEffectiveState =
   | "approval_required"
   | "removed"
   | "schema_changed";
-export type McpPromptDiscoveryStatus = "available" | "removed" | "error" | "unknown";
 export type McpToolBulkPolicyAction =
   | "enable_selected"
   | "disable_selected"
@@ -215,7 +212,6 @@ export interface McpServerSummary {
   transport: McpTransport;
   status: McpServerStatus;
   tools_count: number;
-  prompts_count: number;
   resources_reserved: boolean;
   resources_reserved_count?: number;
   last_connected_at?: string | null;
@@ -263,7 +259,6 @@ export interface McpServerDetailResponse extends McpServerSummary {
   sampling_model_policy?: "current_default" | string | null;
   sampling_max_tokens?: number | null;
   sampling_audit_detail?: "summary" | "none" | "full" | string | null;
-  prompt_discovery_enabled: boolean;
   resource_reserved_policy?: Record<string, unknown> | null;
 }
 
@@ -281,9 +276,6 @@ export interface McpToolSummary {
   status?: McpToolDiscoveryStatus | string;
   discovery_status?: McpToolDiscoveryStatus | string;
   effective_state: McpToolEffectiveState;
-  risk_level: McpRiskLevel;
-  stored_risk_level?: McpRiskLevel | string;
-  risk_override?: McpRiskLevel | null;
   approval_mode: McpApprovalMode;
   effective_approval_mode?: McpApprovalMode;
   schema_change_action?: McpToolSchemaChangeAction;
@@ -292,24 +284,6 @@ export interface McpToolSummary {
   last_used_at?: string | null;
   call_count?: number;
   failure_count?: number;
-  first_seen_at?: string;
-  last_seen_at?: string;
-  removed_at?: string | null;
-}
-
-export interface McpPromptSummary {
-  id: string;
-  server_id: string;
-  server_name: string;
-  raw_name: string;
-  display_name?: string | null;
-  description?: string | null;
-  arguments_schema?: Record<string, unknown>;
-  enabled: boolean;
-  exposure_mode: McpPromptExposureMode;
-  argument_count: number;
-  status?: McpPromptDiscoveryStatus | string;
-  discovery_status: McpPromptDiscoveryStatus;
   first_seen_at?: string;
   last_seen_at?: string;
   removed_at?: string | null;
@@ -340,7 +314,6 @@ export interface McpToolEventMetadata {
   raw_tool_name?: string;
   model_tool_name?: string;
   model_name?: string;
-  risk_level?: McpRiskLevel | string;
   approval_mode?: McpApprovalMode | string;
   exposure?: string;
   call_id?: string | null;
@@ -396,7 +369,6 @@ export interface McpServerCreatePayload {
   supports_parallel_tool_calls?: boolean;
   elicitation_enabled?: boolean;
   sampling_enabled?: boolean;
-  prompt_discovery_enabled?: boolean;
   resource_reserved_policy?: Record<string, unknown> | null;
 }
 
@@ -407,12 +379,9 @@ export interface McpRefreshResult {
   server_id?: string;
   status?: McpServerStatus | string;
   tools_count?: number;
-  prompts_count?: number;
   resources_reserved_count?: number;
   removed_tools_count?: number;
-  removed_prompts_count?: number;
   schema_changed_tools_count?: number;
-  schema_changed_prompts_count?: number;
   refresh_revision?: number;
   duration_ms?: number;
   error?: McpErrorPayload;
@@ -444,7 +413,6 @@ export interface McpToolPolicyUpdatePayload {
   enabled?: boolean | null;
   hidden?: boolean | null;
   approval_mode?: McpApprovalMode | null;
-  risk_override?: McpRiskLevel | null;
   parameter_constraints?: Record<string, unknown> | null;
   schema_change_action?: McpToolSchemaChangeAction | null;
 }
@@ -460,27 +428,6 @@ export interface McpToolBulkPolicyResponse {
   action: McpToolBulkPolicyAction;
   updated_count: number;
   tools: McpToolSummary[];
-}
-
-export interface McpPromptListResponse {
-  list: McpPromptSummary[];
-  total: number;
-  limit: number;
-}
-
-export interface McpPromptPolicyUpdatePayload {
-  enabled?: boolean | null;
-  exposure_mode?: McpPromptExposureMode | null;
-}
-
-export interface McpPromptMaterializeResponse {
-  id: string;
-  server_id: string;
-  server_name: string;
-  raw_name: string;
-  display_name?: string | null;
-  arguments: Record<string, unknown>;
-  messages: Array<Record<string, unknown>>;
 }
 
 export interface McpSessionToolOverride {
@@ -502,7 +449,6 @@ export interface McpRuntimeCallSummary {
   server_name: string;
   raw_tool_name: string;
   model_name: string;
-  risk_level: McpRiskLevel | string;
   approval_mode: McpApprovalMode | string;
   started_at: string;
   elapsed_ms: number;
@@ -619,7 +565,6 @@ export interface McpExportResponse {
   format: "keydex.mcp.v1" | string;
   servers: Array<Record<string, unknown>>;
   tool_policies: Array<Record<string, unknown>>;
-  prompt_policies: Array<Record<string, unknown>>;
   trust_rules?: Array<Record<string, unknown>>;
 }
 
@@ -628,7 +573,6 @@ export interface McpAuditRecord {
   event_type: string;
   server_id?: string | null;
   raw_tool_name?: string | null;
-  prompt_name?: string | null;
   session_id?: string | null;
   turn_id?: string | null;
   call_id?: string | null;
@@ -875,7 +819,6 @@ export interface CommandApprovalRequest {
   server_name?: string | null;
   raw_tool_name?: string | null;
   model_tool_name?: string | null;
-  risk_level?: McpRiskLevel | string | null;
   snapshot_id?: string | null;
   created_at: string;
   resolved_at?: string | null;
@@ -1543,7 +1486,6 @@ export interface AgentToolEventData {
   server_name?: string | null;
   raw_tool_name?: string;
   model_tool_name?: string;
-  risk_level?: McpRiskLevel | string;
   snapshot_id?: string;
   approval_mode?: McpApprovalMode | string;
   tool?: string;

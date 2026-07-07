@@ -2023,7 +2023,6 @@ function approvalFromData(data: Record<string, unknown>): CommandApprovalRequest
     server_name: nullableString(approval.server_name),
     raw_tool_name: nullableString(approval.raw_tool_name),
     model_tool_name: nullableString(approval.model_tool_name),
-    risk_level: nullableString(approval.risk_level),
     snapshot_id: nullableString(approval.snapshot_id),
     created_at: stringValue(approval.created_at) || new Date().toISOString(),
     resolved_at: nullableString(approval.resolved_at),
@@ -2068,7 +2067,6 @@ function mcpMetadataFromApprovalData(approval: Record<string, unknown>): Record<
   setIfPresent(mcp, "raw_tool_name", rawToolName);
   setIfPresent(mcp, "model_tool_name", modelToolName);
   setIfPresent(mcp, "model_name", stringValue(existing?.model_name) || modelToolName);
-  setIfPresent(mcp, "risk_level", stringValue(approval.risk_level) || stringValue(existing?.risk_level));
   return mcp;
 }
 
@@ -2703,7 +2701,6 @@ function mcpMetadataFromToolData(
   setIfPresent(mcp, "raw_tool_name", rawToolName);
   setIfPresent(mcp, "model_tool_name", modelToolName);
   setIfPresent(mcp, "model_name", stringValue(existing?.model_name) || modelToolName);
-  setIfPresent(mcp, "risk_level", stringValue(record.risk_level) || stringValue(existing?.risk_level));
   setIfPresent(mcp, "approval_mode", stringValue(record.approval_mode) || stringValue(existing?.approval_mode));
   return mcp;
 }

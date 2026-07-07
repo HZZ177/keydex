@@ -267,8 +267,6 @@ function mcpApproval(): CommandApprovalRequest {
       server_name: "Ticket MCP",
       raw_tool_name: "write_fixture",
       model_tool_name: "mcp__srv_1__write_fixture",
-      risk_level: "high",
-      risk_reasons: ["destructiveHint=true"],
       arguments_preview: { title: "Fix", priority: "high" },
       trust_options: ["once", "session", "persistent_tool", "server_readonly"],
     },

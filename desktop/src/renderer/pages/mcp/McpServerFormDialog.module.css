@@ -121,7 +121,6 @@
 
 .field input,
 .field textarea,
-.field select,
 .arrayRow input,
 .mapRow input {
   width: 100%;
@@ -140,7 +139,6 @@
 }
 
 .field input,
-.field select,
 .arrayRow input,
 .mapRow input {
   height: 32px;
@@ -155,7 +153,6 @@
 
 .field input:hover:not(:disabled),
 .field textarea:hover:not(:disabled),
-.field select:hover:not(:disabled),
 .arrayRow input:hover:not(:disabled),
 .mapRow input:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--color-border-default) 76%, transparent);
@@ -164,7 +161,6 @@
 
 .field input:focus,
 .field textarea:focus,
-.field select:focus,
 .arrayRow input:focus,
 .mapRow input:focus {
   border-color: color-mix(in srgb, var(--color-border-3) 58%, var(--color-border-default));
@@ -176,7 +172,6 @@
 
 .field input:disabled,
 .field textarea:disabled,
-.field select:disabled,
 .arrayRow input:disabled,
 .mapRow input:disabled {
   cursor: default;
@@ -342,6 +337,12 @@
 .inlineToolButton {
   justify-self: start;
   padding: 0 9px;
+}
+
+.inlineActionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .arrayRow {
@@ -525,43 +526,10 @@
   white-space: nowrap;
 }
 
-.numberGrid,
 .selectGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px;
-}
-
-.advancedDetails {
-  display: grid;
-  gap: 0;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--color-bg-elevated) 62%, transparent);
-}
-
-.advancedDetails summary {
-  display: flex;
-  min-height: 38px;
-  align-items: center;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0;
-  list-style-position: inside;
-  padding: 0 12px;
-}
-
-.advancedDetails summary:hover {
-  background: color-mix(in srgb, var(--surface-hover) 36%, transparent);
-}
-
-.advancedContent {
-  display: grid;
-  gap: 12px;
-  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 76%, transparent);
-  padding: 12px;
 }
 
 .confirmBox {
@@ -610,7 +578,6 @@
 @media (max-width: 760px) {
   .toggleGrid,
   .segmented,
-  .numberGrid,
   .selectGrid {
     grid-template-columns: 1fr;
   }

@@ -35,9 +35,6 @@ from backend.app.mcp.client import (
     McpClientBase,
     McpClientCapabilities,
     McpClientInitializeResult,
-    McpClientPromptArgument,
-    McpClientPromptResult,
-    McpClientPromptSpec,
     McpClientToolResult,
     McpClientToolSpec,
     status_from_mcp_error_code,
@@ -57,6 +54,13 @@ StdioClientContextFactory = Callable[
 ClientSessionFactory = Callable[..., Any]
 StreamableHttpContextFactory = Callable[..., AbstractAsyncContextManager[tuple[Any, Any, Any]]]
 SseContextFactory = Callable[..., AbstractAsyncContextManager[tuple[Any, Any]]]
+
+
+async def _await_with_timeout(awaitable: Awaitable[Any], timeout_sec: float | None) -> Any:
+    if timeout_sec is None:
+        return await awaitable
+    async with asyncio.timeout(timeout_sec):
+        return await awaitable
 
 
 @dataclass(frozen=True)
@@ -233,9 +237,9 @@ class McpStdioClient(McpClientBase):
         _raise_if_cancelled(cancellation)
         self.transition_status(McpServerStatus.REFRESHING, reason="initialize")
         try:
-            result = await asyncio.wait_for(
+            result = await _await_with_timeout(
                 self._open_and_initialize(cancellation=cancellation),
-                timeout=timeout_sec or self.config.startup_timeout_sec,
+                timeout_sec or self.config.startup_timeout_sec,
             )
         except BaseException as exc:
             await self._close_open_contexts()
@@ -256,20 +260,6 @@ class McpStdioClient(McpClientBase):
             cancellation=cancellation,
         )
         return [_to_tool_spec(tool) for tool in getattr(result, "tools", [])]
-
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        session = self._require_session()
-        result = await self._run_operation(
-            session.list_prompts(),
-            timeout_sec=timeout_sec,
-            cancellation=cancellation,
-        )
-        return [_to_prompt_spec(prompt) for prompt in getattr(result, "prompts", [])]
 
     async def call_tool(
         self,
@@ -295,22 +285,6 @@ class McpStdioClient(McpClientBase):
             self._active_call_tasks.pop(resolved_call_id, None)
         return _to_tool_result(resolved_call_id, result)
 
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
-        session = self._require_session()
-        result = await self._run_operation(
-            session.get_prompt(raw_prompt_name, _string_arguments(arguments)),
-            timeout_sec=timeout_sec,
-            cancellation=cancellation,
-        )
-        return _to_prompt_result(result)
-
     async def cancel_call(self, call_id: str) -> bool:
         task = self._active_call_tasks.get(call_id)
         if task is None:
@@ -320,9 +294,9 @@ class McpStdioClient(McpClientBase):
 
     async def shutdown(self, *, timeout_sec: float | None = None) -> None:
         try:
-            await asyncio.wait_for(
+            await _await_with_timeout(
                 self._close_open_contexts(),
-                timeout=timeout_sec or self.config.shutdown_timeout_sec,
+                timeout_sec or self.config.shutdown_timeout_sec,
             )
         except TimeoutError as exc:
             self.transition_status(McpServerStatus.ERROR, reason="shutdown_timeout")
@@ -360,7 +334,7 @@ class McpStdioClient(McpClientBase):
     ) -> Any:
         _raise_if_cancelled(cancellation)
         try:
-            result = await asyncio.wait_for(awaitable, timeout=timeout_sec)
+            result = await _await_with_timeout(awaitable, timeout_sec)
         except asyncio.CancelledError as exc:
             raise McpRuntimeError(McpErrorCode.CANCELLED) from exc
         except BaseException as exc:
@@ -416,9 +390,9 @@ class McpStreamableHttpClient(McpClientBase):
         _raise_if_cancelled(cancellation)
         self.transition_status(McpServerStatus.REFRESHING, reason="initialize")
         try:
-            result = await asyncio.wait_for(
+            result = await _await_with_timeout(
                 self._open_and_initialize(cancellation=cancellation),
-                timeout=timeout_sec or self.config.connect_timeout_sec,
+                timeout_sec or self.config.connect_timeout_sec,
             )
         except BaseException as exc:
             await self._close_open_contexts()
@@ -439,20 +413,6 @@ class McpStreamableHttpClient(McpClientBase):
             cancellation=cancellation,
         )
         return [_to_tool_spec(tool) for tool in getattr(result, "tools", [])]
-
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        session = self._require_session()
-        result = await self._run_operation(
-            session.list_prompts(),
-            timeout_sec=timeout_sec or self.config.read_timeout_sec,
-            cancellation=cancellation,
-        )
-        return [_to_prompt_spec(prompt) for prompt in getattr(result, "prompts", [])]
 
     async def call_tool(
         self,
@@ -478,22 +438,6 @@ class McpStreamableHttpClient(McpClientBase):
             self._active_call_tasks.pop(resolved_call_id, None)
         return _to_tool_result(resolved_call_id, result)
 
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
-        session = self._require_session()
-        result = await self._run_operation(
-            session.get_prompt(raw_prompt_name, _string_arguments(arguments)),
-            timeout_sec=timeout_sec or self.config.read_timeout_sec,
-            cancellation=cancellation,
-        )
-        return _to_prompt_result(result)
-
     async def cancel_call(self, call_id: str) -> bool:
         task = self._active_call_tasks.get(call_id)
         if task is None:
@@ -503,9 +447,9 @@ class McpStreamableHttpClient(McpClientBase):
 
     async def shutdown(self, *, timeout_sec: float | None = None) -> None:
         try:
-            await asyncio.wait_for(
+            await _await_with_timeout(
                 self._close_open_contexts(),
-                timeout=timeout_sec or self.config.read_timeout_sec,
+                timeout_sec or self.config.read_timeout_sec,
             )
         except TimeoutError as exc:
             self.transition_status(McpServerStatus.ERROR, reason="shutdown_timeout")
@@ -548,7 +492,7 @@ class McpStreamableHttpClient(McpClientBase):
     ) -> Any:
         _raise_if_cancelled(cancellation)
         try:
-            result = await asyncio.wait_for(awaitable, timeout=timeout_sec)
+            result = await _await_with_timeout(awaitable, timeout_sec)
         except asyncio.CancelledError as exc:
             raise McpRuntimeError(McpErrorCode.CANCELLED) from exc
         except BaseException as exc:
@@ -606,9 +550,9 @@ class McpSseClient(McpClientBase):
         _raise_if_cancelled(cancellation)
         self.transition_status(McpServerStatus.REFRESHING, reason="initialize")
         try:
-            result = await asyncio.wait_for(
+            result = await _await_with_timeout(
                 self._open_and_initialize(cancellation=cancellation),
-                timeout=timeout_sec or self.config.connect_timeout_sec,
+                timeout_sec or self.config.connect_timeout_sec,
             )
         except BaseException as exc:
             await self._close_open_contexts()
@@ -629,20 +573,6 @@ class McpSseClient(McpClientBase):
             cancellation=cancellation,
         )
         return [_to_tool_spec(tool) for tool in getattr(result, "tools", [])]
-
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        session = self._require_session()
-        result = await self._run_operation(
-            session.list_prompts(),
-            timeout_sec=timeout_sec or self.config.sse_read_timeout_sec,
-            cancellation=cancellation,
-        )
-        return [_to_prompt_spec(prompt) for prompt in getattr(result, "prompts", [])]
 
     async def call_tool(
         self,
@@ -668,22 +598,6 @@ class McpSseClient(McpClientBase):
             self._active_call_tasks.pop(resolved_call_id, None)
         return _to_tool_result(resolved_call_id, result)
 
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
-        session = self._require_session()
-        result = await self._run_operation(
-            session.get_prompt(raw_prompt_name, _string_arguments(arguments)),
-            timeout_sec=timeout_sec or self.config.sse_read_timeout_sec,
-            cancellation=cancellation,
-        )
-        return _to_prompt_result(result)
-
     async def cancel_call(self, call_id: str) -> bool:
         task = self._active_call_tasks.get(call_id)
         if task is None:
@@ -693,9 +607,9 @@ class McpSseClient(McpClientBase):
 
     async def shutdown(self, *, timeout_sec: float | None = None) -> None:
         try:
-            await asyncio.wait_for(
+            await _await_with_timeout(
                 self._close_open_contexts(),
-                timeout=timeout_sec or self.config.read_timeout_sec,
+                timeout_sec or self.config.read_timeout_sec,
             )
         except TimeoutError as exc:
             self.transition_status(McpServerStatus.ERROR, reason="shutdown_timeout")
@@ -736,7 +650,7 @@ class McpSseClient(McpClientBase):
     ) -> Any:
         _raise_if_cancelled(cancellation)
         try:
-            result = await asyncio.wait_for(awaitable, timeout=timeout_sec)
+            result = await _await_with_timeout(awaitable, timeout_sec)
         except asyncio.CancelledError as exc:
             raise McpRuntimeError(McpErrorCode.CANCELLED) from exc
         except BaseException as exc:
@@ -918,7 +832,6 @@ def _to_initialize_result(result: Any) -> McpClientInitializeResult:
         server_info=_dump_jsonable(getattr(result, "serverInfo", {})),
         capabilities=McpClientCapabilities(
             tools=getattr(capabilities, "tools", None) is not None,
-            prompts=getattr(capabilities, "prompts", None) is not None,
             resources_reserved=True,
             sampling=getattr(capabilities, "sampling", None) is not None,
             elicitation=getattr(capabilities, "elicitation", None) is not None,
@@ -938,23 +851,6 @@ def _to_tool_spec(tool: Any) -> McpClientToolSpec:
     )
 
 
-def _to_prompt_spec(prompt: Any) -> McpClientPromptSpec:
-    arguments = [
-        McpClientPromptArgument(
-            name=str(argument.name),
-            description=getattr(argument, "description", None),
-            required=bool(getattr(argument, "required", False)),
-        )
-        for argument in (getattr(prompt, "arguments", None) or [])
-    ]
-    return McpClientPromptSpec(
-        name=str(prompt.name),
-        description=getattr(prompt, "description", None),
-        arguments=arguments,
-        raw=_dump_jsonable(prompt),
-    )
-
-
 def _to_tool_result(call_id: str, result: Any) -> McpClientToolResult:
     return McpClientToolResult(
         call_id=call_id,
@@ -964,20 +860,6 @@ def _to_tool_result(call_id: str, result: Any) -> McpClientToolResult:
         is_error=bool(getattr(result, "isError", False)),
         metadata=_dump_jsonable(getattr(result, "meta", None)),
     )
-
-
-def _to_prompt_result(result: Any) -> McpClientPromptResult:
-    return McpClientPromptResult(
-        messages=[_dump_jsonable(message) for message in getattr(result, "messages", [])],
-        description=getattr(result, "description", None),
-        metadata=_dump_jsonable(getattr(result, "meta", None)),
-    )
-
-
-def _string_arguments(arguments: dict[str, Any] | None) -> dict[str, str] | None:
-    if arguments is None:
-        return None
-    return {str(key): str(value) for key, value in arguments.items()}
 
 
 def _dump_jsonable(value: Any) -> dict[str, Any]:

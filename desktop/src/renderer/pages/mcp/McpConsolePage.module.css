@@ -1,6 +1,6 @@
 .page {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 14px;
   width: 100%;
   height: 100%;
@@ -82,8 +82,7 @@
   cursor: default;
 }
 
-.error,
-.notice {
+.error {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
@@ -104,13 +103,6 @@
   font: inherit;
   font-size: 12px;
   cursor: pointer;
-}
-
-.notice {
-  grid-template-columns: 16px minmax(0, 1fr);
-  border-color: color-mix(in srgb, var(--color-success-6) 36%, var(--color-border-default));
-  background: color-mix(in srgb, var(--color-success-6) 7%, transparent);
-  color: var(--color-text-secondary);
 }
 
 .consoleGrid {
@@ -174,18 +166,6 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
-}
-
-.filterRow select {
-  min-width: 0;
-  height: 30px;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
-  border-radius: 7px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: 12px;
-  padding: 0 8px;
 }
 
 .serverList {
@@ -473,20 +453,6 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
-}
-
-.toolFilters select,
-.bulkBar select,
-.toolActionCell select {
-  min-width: 0;
-  height: 30px;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
-  border-radius: 7px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: 12px;
-  padding: 0 8px;
 }
 
 .smallToolButton,
@@ -807,220 +773,6 @@
   padding: 10px;
 }
 
-.promptsTab {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-}
-
-.promptFilters {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  min-width: 0;
-}
-
-.promptFilters select,
-.promptRowActions select,
-.promptArgField input,
-.promptArgField select {
-  min-width: 0;
-  height: 30px;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
-  border-radius: 7px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: 12px;
-  padding: 0 8px;
-}
-
-.promptsContent {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
-  gap: 10px;
-  min-width: 0;
-}
-
-.promptList {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-width: 0;
-}
-
-.promptRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 210px);
-  gap: 10px;
-  align-items: start;
-  min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
-  padding: 10px;
-}
-
-.promptRow[data-active="true"] {
-  border-color: color-mix(in srgb, var(--color-text-primary) 22%, var(--color-border-default));
-  background: color-mix(in srgb, var(--surface-active) 52%, var(--color-bg-elevated));
-}
-
-.promptRowMain {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--color-text-primary);
-  font: inherit;
-  padding: 0;
-  text-align: left;
-  cursor: pointer;
-}
-
-.promptTitleRow {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: 9px;
-  align-items: baseline;
-  min-width: 0;
-}
-
-.promptTitleRow strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.promptTitleRow span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.promptDescription {
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.promptRowActions {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  justify-items: start;
-}
-
-.promptPanel {
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 46%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--color-bg-elevated) 82%, transparent);
-  padding: 10px;
-}
-
-.promptPanelHeader,
-.promptPreviewHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-}
-
-.promptPanelHeader div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.promptPanelHeader span {
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-}
-
-.promptPanelHeader strong,
-.promptArguments h3,
-.promptPreviewHeader h3 {
-  margin: 0;
-  color: var(--color-text-primary);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.promptArguments {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  border-top: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
-  padding-top: 10px;
-}
-
-.promptNoArgs {
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-}
-
-.promptArgField {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.promptArgField span,
-.promptArgCheck span {
-  color: var(--color-text-secondary);
-  font-size: 12px;
-}
-
-.promptArgCheck {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.promptPreview {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  border-top: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
-  padding-top: 10px;
-}
-
-.promptPreviewHeader div {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 7px;
-}
-
-.promptPreview pre {
-  min-height: 120px;
-  max-height: 360px;
-  min-width: 0;
-  margin: 0;
-  overflow: auto;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--surface-hover) 28%, transparent);
-  color: var(--color-text-secondary);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
-  font-size: 11px;
-  line-height: 1.55;
-  padding: 10px;
-  white-space: pre-wrap;
-}
-
 .policyTab,
 .logsTab {
   display: grid;
@@ -1078,9 +830,7 @@
   font-size: 11px;
 }
 
-.policyField input,
-.policyField select,
-.logFilters select {
+.policyField input {
   min-width: 0;
   height: 30px;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
@@ -1277,7 +1027,6 @@
   font-weight: 650;
 }
 
-.importExportField select,
 .importExportField textarea {
   width: 100%;
   min-width: 0;
@@ -1290,24 +1039,17 @@
   font-size: 12px;
 }
 
-.importExportField select {
-  height: 32px;
-  padding: 0 9px;
-}
-
 .importExportField textarea {
   min-height: 170px;
   resize: vertical;
   padding: 9px;
 }
 
-.importExportField select:hover:not(:disabled),
 .importExportField textarea:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--color-border-default) 76%, transparent);
   background: color-mix(in srgb, var(--surface-hover) 42%, transparent);
 }
 
-.importExportField select:focus,
 .importExportField textarea:focus {
   border-color: color-mix(in srgb, var(--color-border-3) 58%, var(--color-border-default));
   box-shadow: var(
@@ -1565,8 +1307,6 @@
   .toolsToolbar,
   .toolsContent,
   .toolRow,
-  .promptsContent,
-  .promptRow,
   .policyGrid,
   .trustCreateGrid,
   .trustRuleRow,
@@ -1577,14 +1317,12 @@
     grid-template-columns: 1fr;
   }
 
-  .toolFilters,
-  .promptFilters {
+  .toolFilters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .toolTitleRow,
-  .toolActionCell,
-  .promptTitleRow {
+  .toolActionCell {
     grid-template-columns: 1fr;
   }
 }

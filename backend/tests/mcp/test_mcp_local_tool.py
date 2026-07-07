@@ -84,7 +84,6 @@ def _contract(
             "properties": {"query": {"type": "string"}},
             "required": ["query"],
         },
-        "risk_level": "high",
         "approval_mode": "prompt",
         "exposure": exposure,
         "annotations": {"readOnlyHint": False},
@@ -131,7 +130,6 @@ async def test_mcp_local_tool_metadata_and_fake_executor_call(tmp_path) -> None:
     call_context = executor.calls[0]["call_context"]
     assert call_context.tool_call_id == "call-a"
     assert call_context.run_id == "run-a"
-    assert call_context.risk_level == "high"
     assert call_context.approval_mode == "prompt"
     assert result.metadata["mcp"]["kind"] == "mcp_tool"
     assert result.metadata["mcp"]["server_name"] == "Tools MCP"
@@ -150,7 +148,6 @@ def test_mcp_local_tool_preserves_description_and_langchain_schema(tmp_path) -> 
     )[0]
 
     assert tool.description == "Use exactly this text."
-    assert "high" not in tool.description
     assert "prompt" not in tool.description
     assert tool.to_tool_spec().description == "Use exactly this text."
     assert tool.to_tool_spec().parameters == _contract()["input_schema"]

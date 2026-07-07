@@ -11,8 +11,6 @@ from backend.app.mcp.client import (
     McpClientBase,
     McpClientCapabilities,
     McpClientInitializeResult,
-    McpClientPromptResult,
-    McpClientPromptSpec,
     McpClientToolResult,
     McpClientToolSpec,
 )
@@ -55,7 +53,6 @@ def test_mcp_server_crud_toggle_and_delete_cascade(tmp_path) -> None:
                 "description": "Read file",
                 "input_schema": {"type": "object"},
                 "schema_hash": "hash-read",
-                "risk_level": "low",
             }
         ],
     )
@@ -286,14 +283,6 @@ class FakeMcpClient(McpClientBase):
             )
         ]
 
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        return []
-
     async def call_tool(
         self,
         raw_tool_name: str,
@@ -303,16 +292,6 @@ class FakeMcpClient(McpClientBase):
         timeout_sec: float | None = None,
         cancellation: McpCancellationToken | None = None,
     ) -> McpClientToolResult:
-        raise NotImplementedError
-
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
         raise NotImplementedError
 
     async def cancel_call(self, call_id: str) -> bool:

@@ -10,8 +10,6 @@ from backend.app.mcp.client import (
     McpClientBase,
     McpClientCapabilities,
     McpClientInitializeResult,
-    McpClientPromptResult,
-    McpClientPromptSpec,
     McpClientToolResult,
     McpClientToolSpec,
 )
@@ -224,7 +222,6 @@ async def test_manager_cancel_running_call_delegates_to_cached_client_and_audits
         server_name="Manager MCP srv_manager",
         raw_tool_name="read_fixture",
         model_name="mcp__srv_manager__read_fixture",
-        risk_level="low",
         approval_mode="auto",
     )
 
@@ -285,14 +282,6 @@ class FakeManagerClient(McpClientBase):
     ) -> list[McpClientToolSpec]:
         return []
 
-    async def list_prompts(
-        self,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> list[McpClientPromptSpec]:
-        return []
-
     async def call_tool(
         self,
         raw_tool_name: str,
@@ -302,16 +291,6 @@ class FakeManagerClient(McpClientBase):
         timeout_sec: float | None = None,
         cancellation: McpCancellationToken | None = None,
     ) -> McpClientToolResult:
-        raise NotImplementedError
-
-    async def get_prompt(
-        self,
-        raw_prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout_sec: float | None = None,
-        cancellation: McpCancellationToken | None = None,
-    ) -> McpClientPromptResult:
         raise NotImplementedError
 
     async def cancel_call(self, call_id: str) -> bool:

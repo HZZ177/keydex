@@ -20,8 +20,7 @@ def test_mock_mcp_server_fixture_declares_required_variants() -> None:
     assert tools["read_file"].annotations == {"readOnlyHint": True}
     assert tools["delete_ticket"].annotations == {"destructiveHint": True}
     assert tools["web_lookup"].annotations == {"openWorldHint": True}
-    assert tools["unknown_risk"].annotations is None
-    assert harness.scenario.prompts[0].name == "summarize_ticket"
+    assert tools["plain_tool"].annotations is None
     assert harness.scenario.elicitation_request.to_payload()["schema"]["required"] == ["summary"]
     assert harness.scenario.sampling_request.to_payload()["max_tokens"] == 2048
 
@@ -37,7 +36,6 @@ def test_mock_schema_changed_scenario_is_explicit_and_deterministic() -> None:
     assert baseline_read.name == changed_read.name == "read_file"
     assert baseline_read.input_schema != changed_read.input_schema
     assert changed_read.input_schema["required"] == ["path", "checksum"]
-    assert changed.scenario.prompts[0].arguments[1].name == "audience"
     assert changed_again.scenario.tools[0].input_schema == changed_read.input_schema
 
 
@@ -48,21 +46,18 @@ async def test_mock_stdio_server_initializes_lists_tools_and_calls_tool() -> Non
 
     initialized = await client.initialize()
     tools = await client.list_tools()
-    prompt = await client.get_prompt("summarize_ticket", {"topic": "MCP"})
     result = await client.call_tool("read_file", {"path": "README.md"}, call_id="call_stdio")
     await client.shutdown()
 
     assert initialized.capabilities.tools is True
-    assert initialized.capabilities.prompts is True
     assert initialized.capabilities.sampling is True
     assert initialized.capabilities.elicitation is True
     assert [tool.name for tool in tools] == [
         "read_file",
         "delete_ticket",
         "web_lookup",
-        "unknown_risk",
+        "plain_tool",
     ]
-    assert prompt.messages[0]["content"] == "Summarize MCP"
     assert result.call_id == "call_stdio"
     assert result.status == "success"
     assert result.content == [{"type": "text", "text": "mock:read_file"}]

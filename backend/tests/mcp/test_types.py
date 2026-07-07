@@ -10,7 +10,6 @@ from backend.app.mcp.types import (
     McpApprovalMode,
     McpAuthType,
     McpErrorCode,
-    McpPromptSummary,
     McpRuntimeSnapshotSummary,
     McpServerCreateRequest,
     McpServerDetailResponse,
@@ -49,7 +48,6 @@ def test_tool_summary_rejects_invalid_approval_mode() -> None:
             enabled=True,
             hidden=False,
             effective_state="enabled",
-            risk_level="low",
             approval_mode="always",
         )
 
@@ -109,17 +107,7 @@ def test_public_server_detail_does_not_dump_raw_secret_values() -> None:
     assert "secret:raw-value" not in serialized
 
 
-def test_prompt_and_snapshot_summary_dump_protocol_values() -> None:
-    prompt = McpPromptSummary(
-        id="prompt_1",
-        server_id="srv_1",
-        server_name="files",
-        raw_name="summarize",
-        enabled=True,
-        exposure_mode="manual",
-        argument_count=2,
-        discovery_status="available",
-    )
+def test_runtime_snapshot_summary_dump_protocol_values() -> None:
     snapshot = McpRuntimeSnapshotSummary(
         snapshot_id="snap_1",
         session_id="ses_1",
@@ -132,7 +120,6 @@ def test_prompt_and_snapshot_summary_dump_protocol_values() -> None:
         created_at="2026-07-06T00:00:00Z",
     )
 
-    assert prompt.model_dump(mode="json")["exposure_mode"] == "manual"
     assert snapshot.model_dump(mode="json")["snapshot_id"] == "snap_1"
 
 

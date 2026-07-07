@@ -34,10 +34,8 @@ from backend.app.mcp.service import (
     clear_mcp_session_tool_override,
     create_mcp_server,
     delete_mcp_server,
-    get_mcp_prompt,
     get_mcp_runtime_status,
     get_mcp_server,
-    list_mcp_prompts,
     list_mcp_servers,
     list_mcp_tools,
     refresh_all_mcp_servers,
@@ -45,7 +43,6 @@ from backend.app.mcp.service import (
     set_mcp_server_enabled,
     set_mcp_session_tool_override,
     test_mcp_server_connection,
-    update_mcp_prompt_policy,
     update_mcp_server,
     update_mcp_tool_policy,
 )
@@ -100,10 +97,6 @@ class UpdateMcpToolPolicyRequest(BaseModel):
         default=None,
         pattern="^(inherit|auto|prompt|approve|deny)$",
     )
-    risk_override: str | None = Field(
-        default=None,
-        pattern="^(low|medium|high|unknown)$",
-    )
     parameter_constraints: dict[str, Any] | None = None
     schema_change_action: str | None = Field(
         default=None,
@@ -117,18 +110,6 @@ class BulkMcpToolPolicyRequest(BaseModel):
     )
     tool_ids: list[str] = Field(default_factory=list)
     raw_tool_names: list[str] = Field(default_factory=list)
-
-
-class UpdateMcpPromptPolicyRequest(BaseModel):
-    enabled: bool | None = None
-    exposure_mode: str | None = Field(
-        default=None,
-        pattern="^(hidden|manual|slash_command|agent_selectable)$",
-    )
-
-
-class GetMcpPromptRequest(BaseModel):
-    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class SetMcpSessionToolOverrideRequest(BaseModel):
@@ -278,7 +259,6 @@ async def refresh_server(server_id: str, request: Request) -> dict[str, Any]:
 def list_tools(
     server_id: str,
     status: str | None = None,
-    risk: str | None = None,
     enabled: bool | None = None,
     search: str | None = None,
     limit: int = 500,
@@ -289,7 +269,6 @@ def list_tools(
             repositories,
             server_id,
             status=status,
-            risk_level=risk,
             enabled=enabled,
             search=search,
             limit=limit,
@@ -335,68 +314,6 @@ def patch_tool_policy(
     except (McpServiceError, ValueError) as exc:
         error = exc if isinstance(exc, McpServiceError) else McpServiceError(str(exc))
         raise _mcp_service_http_error(error) from exc
-
-
-@router.get("/servers/{server_id}/prompts", response_model=dict[str, Any])
-def list_prompts(
-    server_id: str,
-    status: str | None = None,
-    enabled: bool | None = None,
-    search: str | None = None,
-    limit: int = 500,
-    repositories: StorageRepositories = RepositoriesDep,
-) -> dict[str, Any]:
-    try:
-        return list_mcp_prompts(
-            repositories,
-            server_id,
-            status=status,
-            enabled=enabled,
-            search=search,
-            limit=limit,
-        )
-    except (McpServiceError, ValueError) as exc:
-        error = exc if isinstance(exc, McpServiceError) else McpServiceError(str(exc))
-        raise _mcp_service_http_error(error) from exc
-
-
-@router.patch("/servers/{server_id}/prompts/{prompt_id}/policy", response_model=dict[str, Any])
-def patch_prompt_policy(
-    server_id: str,
-    prompt_id: str,
-    payload: UpdateMcpPromptPolicyRequest,
-    repositories: StorageRepositories = RepositoriesDep,
-) -> dict[str, Any]:
-    try:
-        return update_mcp_prompt_policy(
-            repositories,
-            server_id,
-            prompt_id,
-            payload.model_dump(mode="json", exclude_unset=True),
-        )
-    except (McpServiceError, ValueError) as exc:
-        error = exc if isinstance(exc, McpServiceError) else McpServiceError(str(exc))
-        raise _mcp_service_http_error(error) from exc
-
-
-@router.post("/servers/{server_id}/prompts/{prompt_id}/get", response_model=dict[str, Any])
-async def materialize_prompt(
-    server_id: str,
-    prompt_id: str,
-    payload: GetMcpPromptRequest,
-    request: Request,
-) -> dict[str, Any]:
-    try:
-        return await get_mcp_prompt(
-            _mcp_manager(request),
-            server_id,
-            prompt_id,
-            payload.arguments,
-        )
-    except McpServiceError as exc:
-        raise _mcp_service_http_error(exc) from exc
-    except McpRuntimeError as exc:
-        raise _mcp_runtime_http_error(exc) from exc
 
 
 @router.get("/runtime/status", response_model=dict[str, Any])
@@ -835,7 +752,6 @@ def _audit_payload(record: Any) -> dict[str, Any]:
         "event_type": record.event_type,
         "server_id": record.server_id,
         "raw_tool_name": record.raw_tool_name,
-        "prompt_name": record.prompt_name,
         "session_id": record.session_id,
         "turn_id": record.turn_id,
         "call_id": record.call_id,
@@ -853,7 +769,6 @@ def _mcp_service_http_error(exc: McpServiceError) -> HTTPException:
     not_found_codes = {
         "server_not_found",
         "tool_not_found",
-        "prompt_not_found",
         "trust_rule_not_found",
     }
     status_code = (

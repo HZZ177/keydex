@@ -492,7 +492,6 @@ interface ParsedMcpToolMetadata {
   serverName: string;
   rawToolName: string;
   modelToolName: string;
-  riskLevel: string;
   approvalMode: string;
   snapshotId: string;
   errorType: string;
@@ -537,7 +536,6 @@ function McpToolDetails({ mcp }: { mcp: ParsedMcpToolMetadata }) {
     ["服务", mcp.serverName || mcp.serverId || MCP_UNKNOWN_SERVER_LABEL, false],
     ["原始工具", mcp.rawToolName, true],
     ["模型工具", mcp.modelToolName, true],
-    ["风险", mcpRiskLabel(mcp.riskLevel), false],
     ["审批", mcpApprovalModeLabel(mcp.approvalMode), false],
     ["快照", mcp.snapshotId, true],
   ];
@@ -617,7 +615,6 @@ function mcpMetadataFromMessage(
     serverName: serverName || serverId || MCP_UNKNOWN_SERVER_LABEL,
     rawToolName: rawToolName || toolName,
     modelToolName: modelToolName || toolName,
-    riskLevel: stringValue(merged.risk_level) || stringValue(merged.riskLevel),
     approvalMode: stringValue(merged.approval_mode) || stringValue(merged.approvalMode),
     snapshotId: stringValue(merged.snapshot_id) || stringValue(merged.snapshotId),
     errorType,
@@ -730,19 +727,6 @@ function mcpErrorLabel(type: string): string {
       return "MCP 工具结果过大";
     default:
       return "";
-  }
-}
-
-function mcpRiskLabel(level: string): string {
-  switch (level) {
-    case "high":
-      return "高";
-    case "medium":
-      return "中";
-    case "low":
-      return "低";
-    default:
-      return level;
   }
 }
 

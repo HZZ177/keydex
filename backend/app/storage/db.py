@@ -85,7 +85,6 @@ create table if not exists mcp_servers (
   supports_parallel_tool_calls integer not null default 0,
   elicitation_enabled integer not null default 1,
   sampling_enabled integer not null default 0,
-  prompt_discovery_enabled integer not null default 1,
   resource_reserved_policy_json text,
   created_at text not null,
   updated_at text not null,
@@ -116,7 +115,6 @@ create table if not exists mcp_server_status (
   last_error_message text,
   last_error_detail_json text,
   tools_count integer not null default 0,
-  prompts_count integer not null default 0,
   resources_reserved_count integer not null default 0,
   updated_at text not null
 );
@@ -138,8 +136,6 @@ create table if not exists mcp_tools (
   annotations_json text,
   meta_json text,
   schema_hash text not null,
-  risk_level text not null default 'unknown'
-    check (risk_level in ('low', 'medium', 'high', 'unknown')),
   discovery_status text not null default 'active'
     check (discovery_status in ('new', 'active', 'removed', 'schema_changed')),
   first_seen_at text not null,
@@ -154,7 +150,6 @@ create table if not exists mcp_tools (
 
 create index if not exists idx_mcp_tools_server on mcp_tools(server_id);
 create index if not exists idx_mcp_tools_status on mcp_tools(discovery_status);
-create index if not exists idx_mcp_tools_risk on mcp_tools(risk_level);
 
 create table if not exists mcp_tool_policies (
   id text primary key,
@@ -164,7 +159,6 @@ create table if not exists mcp_tool_policies (
   hidden integer not null default 0,
   approval_mode text not null default 'inherit'
     check (approval_mode in ('inherit', 'auto', 'prompt', 'approve', 'deny')),
-  risk_override text check (risk_override in ('low', 'medium', 'high', 'unknown')),
   parameter_constraints_json text,
   schema_change_action text not null default 'require_review'
     check (schema_change_action in ('keep_enabled', 'require_review', 'disable')),
@@ -174,39 +168,6 @@ create table if not exists mcp_tool_policies (
 
 create index if not exists idx_mcp_tool_policies_server
   on mcp_tool_policies(server_id);
-
-create table if not exists mcp_prompts (
-  id text primary key,
-  server_id text not null references mcp_servers(id) on delete cascade,
-  raw_name text not null,
-  display_name text,
-  description text,
-  arguments_schema_json text not null default '{}',
-  meta_json text,
-  discovery_status text not null default 'active'
-    check (discovery_status in ('new', 'active', 'removed', 'schema_changed')),
-  first_seen_at text not null,
-  last_seen_at text not null,
-  removed_at text,
-  unique(server_id, raw_name)
-);
-
-create index if not exists idx_mcp_prompts_server on mcp_prompts(server_id);
-create index if not exists idx_mcp_prompts_status on mcp_prompts(discovery_status);
-
-create table if not exists mcp_prompt_policies (
-  id text primary key,
-  server_id text not null references mcp_servers(id) on delete cascade,
-  raw_prompt_name text not null,
-  enabled integer not null default 1,
-  exposure_mode text not null default 'manual'
-    check (exposure_mode in ('hidden', 'manual', 'slash_command', 'agent_selectable')),
-  updated_at text not null,
-  unique(server_id, raw_prompt_name)
-);
-
-create index if not exists idx_mcp_prompt_policies_server
-  on mcp_prompt_policies(server_id);
 
 create table if not exists mcp_resources (
   id text primary key,
@@ -313,7 +274,6 @@ create table if not exists mcp_audit_log (
   event_type text not null,
   server_id text,
   raw_tool_name text,
-  prompt_name text,
   session_id text,
   turn_id text,
   call_id text,
@@ -938,6 +898,8 @@ class Database:
                 "text not null default ''",
             )
             conn.executescript(SCHEMA_UPGRADE_SQL)
+            self._remove_mcp_prompt_schema(conn)
+            self._remove_mcp_risk_schema(conn)
             if should_migrate_legacy_sessions:
                 self._migrate_legacy_sessions_to_default_workspace(
                     conn,
@@ -963,6 +925,30 @@ class Database:
         }
         if column_name not in columns:
             conn.execute(f"alter table {table_name} add column {column_name} {column_definition}")
+
+    @classmethod
+    def _remove_mcp_prompt_schema(cls, conn: sqlite3.Connection) -> None:
+        conn.execute("drop table if exists mcp_prompt_policies")
+        conn.execute("drop table if exists mcp_prompts")
+        cls._drop_column_if_exists(conn, "mcp_servers", "prompt_discovery_enabled")
+        cls._drop_column_if_exists(conn, "mcp_server_status", "prompts_count")
+        cls._drop_column_if_exists(conn, "mcp_audit_log", "prompt_name")
+
+    @classmethod
+    def _remove_mcp_risk_schema(cls, conn: sqlite3.Connection) -> None:
+        conn.execute("drop index if exists idx_mcp_tools_risk")
+        cls._drop_column_if_exists(conn, "mcp_tools", "risk_level")
+        cls._drop_column_if_exists(conn, "mcp_tool_policies", "risk_override")
+
+    @classmethod
+    def _drop_column_if_exists(
+        cls,
+        conn: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+    ) -> None:
+        if column_name in cls._column_names(conn, table_name):
+            conn.execute(f"alter table {table_name} drop column {column_name}")
 
     @staticmethod
     def _migrate_model_default_scopes(conn: sqlite3.Connection) -> None:

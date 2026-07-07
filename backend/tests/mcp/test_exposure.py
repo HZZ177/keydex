@@ -51,7 +51,6 @@ def _tool(
                 "annotations": annotations,
                 "meta": meta,
                 "schema_hash": f"hash-{raw_name}",
-                "risk_level": "unknown",
             }
         ],
     )
@@ -234,7 +233,6 @@ def test_model_contract_uses_mcp_description_without_policy_or_server_text(tmp_p
         server_id="srv_exposure",
         raw_tool_name="tool",
         approval_mode="prompt",
-        risk_override="high",
         parameter_constraints={"properties": {"policyOnly": {"const": "blocked"}}},
     )
 

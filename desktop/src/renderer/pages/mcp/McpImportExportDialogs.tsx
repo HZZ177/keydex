@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 
 import type { RuntimeBridge } from "@/runtime";
 import { AppDialog, DialogButton } from "@/renderer/components/dialog";
+import { SettingsSelect } from "@/renderer/pages/settings/components";
 import type {
   McpExportResponse,
   McpImportConflictStrategy,
@@ -153,37 +154,27 @@ export function McpImportDialog({ runtime, onClose, onImported }: McpImportDialo
         <div className={styles.importOptionsGrid}>
           <label className={styles.importExportField}>
             <span>来源</span>
-            <select
-              aria-label="MCP import source"
+            <SettingsSelect
+              ariaLabel="MCP import source"
+              options={IMPORT_SOURCES}
               value={sourceType}
-              onChange={(event) => {
-                setSourceType(event.target.value as McpImportSourceType);
+              onChange={(value) => {
+                setSourceType(value);
                 resetPreview();
               }}
-            >
-              {IMPORT_SOURCES.map((source) => (
-                <option key={source.value} value={source.value}>
-                  {source.label}
-                </option>
-              ))}
-            </select>
+            />
           </label>
           <label className={styles.importExportField}>
             <span>冲突策略</span>
-            <select
-              aria-label="MCP import conflict strategy"
+            <SettingsSelect
+              ariaLabel="MCP import conflict strategy"
+              options={CONFLICT_STRATEGIES}
               value={conflictStrategy}
-              onChange={(event) => {
-                setConflictStrategy(event.target.value as McpImportConflictStrategy);
+              onChange={(value) => {
+                setConflictStrategy(value);
                 resetPreview();
               }}
-            >
-              {CONFLICT_STRATEGIES.map((strategy) => (
-                <option key={strategy.value} value={strategy.value}>
-                  {strategy.label}
-                </option>
-              ))}
-            </select>
+            />
           </label>
         </div>
 
