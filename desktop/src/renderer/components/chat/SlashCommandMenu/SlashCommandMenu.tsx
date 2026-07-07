@@ -1,12 +1,11 @@
-import { Archive, Box, ChevronLeft, ChevronRight, Command, Minimize2, Search, Sparkles, Target } from "lucide-react";
+import { Archive, Box, ChevronLeft, ChevronRight, Command, Search, Sparkles, Target } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import type { WorkspaceSkillSummary } from "@/runtime";
 
 import styles from "../ComposerPopupMenu/ComposerPopupMenu.module.css";
 import {
-  isDeepContextCompressionSlashCommand,
-  isLightContextCompressionSlashCommand,
+  isContextCompressionSlashCommand,
   type SlashCommand,
 } from "./slashCommands";
 
@@ -176,11 +175,8 @@ function slashCommandIcon(command: SlashCommand) {
   if (command.kind === "goal") {
     return Target;
   }
-  if (isLightContextCompressionSlashCommand(command)) {
+  if (isContextCompressionSlashCommand(command)) {
     return Archive;
-  }
-  if (isDeepContextCompressionSlashCommand(command)) {
-    return Minimize2;
   }
   return Command;
 }

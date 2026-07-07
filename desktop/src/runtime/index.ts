@@ -71,7 +71,6 @@ export type {
   ListSessionsOptions,
   LoadHistoryOptions,
   LoadToolDetailsOptions,
-  ManualContextCompressionPayload,
   UpdateSessionPayload,
 } from "./conversation";
 export type {

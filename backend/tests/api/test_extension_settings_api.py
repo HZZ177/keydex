@@ -37,8 +37,6 @@ def test_extension_settings_api_saves_and_reads_full_config(tmp_path) -> None:
             "enabled": True,
             "context_window_tokens": 32000,
             "trigger_fraction": 0.55,
-            "emergency_fraction": 0.88,
-            "retain_rounds": 4,
         },
     }
     with TestClient(app) as client:
@@ -77,11 +75,10 @@ def test_extension_settings_api_rejects_invalid_title_length(tmp_path) -> None:
     assert response.status_code == 422
 
 
-def test_extension_settings_api_rejects_invalid_compression_thresholds(tmp_path) -> None:
+def test_extension_settings_api_rejects_invalid_compression_threshold(tmp_path) -> None:
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
     payload = _valid_payload()
-    payload["context_compression"]["trigger_fraction"] = 0.9
-    payload["context_compression"]["emergency_fraction"] = 0.9
+    payload["context_compression"]["trigger_fraction"] = 1.0
 
     with TestClient(app) as client:
         response = client.put("/api/settings/extensions", json=payload)
@@ -114,9 +111,7 @@ def test_extension_settings_api_fails_loudly_for_corrupt_persisted_config(tmp_pa
             "context_compression": {
                 "enabled": True,
                 "context_window_tokens": 128000,
-                "trigger_fraction": 0.95,
-                "emergency_fraction": 0.9,
-                "retain_rounds": 2,
+                "trigger_fraction": 1.0,
             },
         },
     )
@@ -143,7 +138,5 @@ def _valid_payload() -> dict:
             "enabled": False,
             "context_window_tokens": 128000,
             "trigger_fraction": 0.75,
-            "emergency_fraction": 0.9,
-            "retain_rounds": 2,
         },
     }

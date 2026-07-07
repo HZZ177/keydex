@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.api.dependencies import get_repositories
 from backend.app.services.agent_runtime import AgentRuntimeInitializationError
@@ -68,7 +68,7 @@ class SessionBranchRequest(BaseModel):
 
 
 class SessionContextCompressionRequest(BaseModel):
-    mode: Literal["light", "deep"]
+    model_config = ConfigDict(extra="forbid")
 
 
 class SessionResponse(BaseModel):
@@ -77,19 +77,12 @@ class SessionResponse(BaseModel):
 
 class SessionContextCompressionResponse(BaseModel):
     success: bool
-    mode: Literal["light", "deep"]
     session_id: str
     active_session_id: str | None = None
-    target_session_id: str | None = None
-    staging_id: int | None = None
-    generation: int | None = None
-    staging_strategy: str | None = None
-    anchor_message_id: str | None = None
-    source_last_message_id: str | None = None
     notice_id: str | None = None
     reason: str | None = None
+    context_compression_epoch: int | None = None
     compression_message_count: int = 0
-    retain_message_count: int = 0
     total_message_count: int = 0
 
 
@@ -374,7 +367,7 @@ async def compress_session_context(
         http_transport=http_transport,
         broadcaster=broadcast,
     )
-    result = await service.compress(session_id=session_id, mode=payload.mode)
+    result = await service.compress(session_id=session_id)
     if not result.success:
         raise _manual_context_compression_error(result)
     return SessionContextCompressionResponse(**result.to_dict())
@@ -563,13 +556,15 @@ def _manual_context_compression_error(result: ManualContextCompressionResult) ->
         "session_not_found": status.HTTP_404_NOT_FOUND,
         "session_busy": status.HTTP_409_CONFLICT,
         "checkpoint_not_found": status.HTTP_409_CONFLICT,
-        "fork_active_session_failed": status.HTTP_409_CONFLICT,
+        "checkpoint_conflict": status.HTTP_409_CONFLICT,
+        "checkpoint_replacement_failed": status.HTTP_409_CONFLICT,
         "context_compression_disabled": status.HTTP_409_CONFLICT,
-        "source_boundary_missing": status.HTTP_409_CONFLICT,
         "model_config_error": status.HTTP_400_BAD_REQUEST,
+        "model_create_error": status.HTTP_400_BAD_REQUEST,
         "llm_error": status.HTTP_502_BAD_GATEWAY,
+        "tool_call_returned": status.HTTP_502_BAD_GATEWAY,
+        "empty_summary_output": status.HTTP_502_BAD_GATEWAY,
         "no_compressible_messages": status.HTTP_400_BAD_REQUEST,
-        "invalid_compression_mode": status.HTTP_400_BAD_REQUEST,
     }.get(base_code, status.HTTP_400_BAD_REQUEST)
     return HTTPException(
         status_code=status_code,
@@ -586,11 +581,13 @@ def _manual_context_compression_error_message(code: str) -> str:
         "session_not_found": "会话不存在",
         "session_busy": "当前会话正在运行，无法主动压缩上下文",
         "checkpoint_not_found": "当前会话没有可压缩的检查点",
-        "fork_active_session_failed": "无法切换到压缩后的会话分支",
+        "checkpoint_conflict": "压缩期间会话上下文已变化，请稍后重试",
+        "checkpoint_replacement_failed": "无法写入压缩后的上下文",
         "context_compression_disabled": "上下文压缩未启用",
-        "source_boundary_missing": "无法确定全量压缩的源消息边界",
-        "model_config_error": "快速模型配置不可用，无法生成压缩摘要",
-        "llm_error": "压缩摘要生成失败",
-        "no_compressible_messages": "当前会话没有可压缩的历史上下文",
-        "invalid_compression_mode": "不支持的上下文压缩模式",
+        "model_config_error": "对话模型配置不可用，无法压缩上下文",
+        "model_create_error": "无法创建对话模型，压缩上下文失败",
+        "llm_error": "模型压缩上下文失败",
+        "tool_call_returned": "模型压缩上下文时返回了工具调用",
+        "empty_summary_output": "模型没有返回有效的压缩摘要",
+        "no_compressible_messages": "当前会话没有可压缩的上下文",
     }.get(code, "主动上下文压缩失败")

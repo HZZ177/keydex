@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langgraph.types import Command
 
 from backend.app.agent.event_processor import process_agent_events
+from backend.app.agent.internal_llm_events import INTERNAL_CONTEXT_COMPRESSION_TAG
 from backend.app.events import DomainEvent, DomainEventType, EventDispatcher
 from backend.app.storage import StorageRepositories, init_database
 
@@ -169,6 +170,51 @@ async def test_process_agent_events_emits_reasoning_from_model_chunks() -> None:
     assert reasoning_events[1].payload["text"] == "先分析"
     assert reasoning_events[1].payload["done"] is True
     assert result.final_content == "最终答案"
+
+
+@pytest.mark.asyncio
+async def test_process_agent_events_ignores_internal_context_compression_llm_events() -> None:
+    emitted: list[DomainEvent] = []
+
+    async def capture(event: DomainEvent) -> None:
+        emitted.append(event)
+
+    result = await process_agent_events(
+        _event_stream(
+            [
+                {
+                    "event": "on_chat_model_stream",
+                    "run_id": "compression_run",
+                    "tags": [INTERNAL_CONTEXT_COMPRESSION_TAG],
+                    "data": {"chunk": AIMessageChunk(content="<分析>内部</分析>")},
+                },
+                {
+                    "event": "on_chat_model_end",
+                    "run_id": "compression_run",
+                    "tags": [INTERNAL_CONTEXT_COMPRESSION_TAG],
+                    "data": {"output": AIMessage(content="<摘要>内部摘要</摘要>")},
+                },
+                {
+                    "event": "on_chat_model_end",
+                    "run_id": "main_run",
+                    "data": {"output": AIMessage(content="真正回答")},
+                },
+            ]
+        ),
+        dispatcher=EventDispatcher([capture]),
+        cancellation=NeverCancelled(),
+        session_id="ses_agent",
+        trace_id="trace_agent",
+        user_id="local-user",
+        active_session_id="ses_agent",
+        turn_index=1,
+    )
+
+    stream_events = [
+        event for event in emitted if event.event_type == DomainEventType.LLM_STREAM.value
+    ]
+    assert result.final_content == "真正回答"
+    assert [event.payload["content"] for event in stream_events] == ["真正回答"]
 
 
 @pytest.mark.asyncio

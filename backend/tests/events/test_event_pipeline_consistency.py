@@ -219,9 +219,10 @@ async def test_context_compression_progress_projects_to_realtime_and_history(tmp
             DomainEventType.MIDDLEWARE_PROGRESS,
             {
                 "middleware": "ContextCompressionMiddleware",
-                "stage": "emergency_triggered",
-                "compression_mode": "emergency",
-                "notice_id": "context-compression:emergency:trace_pipeline",
+                "stage": "compression_started",
+                "compression_mode": "context",
+                "compression_reason": "automatic",
+                "notice_id": "context-compression:trace_pipeline",
                 "session_id": SESSION_ID,
                 "active_session_id": SESSION_ID,
                 "trace_id": TRACE_ID,
@@ -232,9 +233,10 @@ async def test_context_compression_progress_projects_to_realtime_and_history(tmp
             DomainEventType.MIDDLEWARE_PROGRESS,
             {
                 "middleware": "ContextCompressionMiddleware",
-                "stage": "emergency_completed",
-                "compression_mode": "emergency",
-                "notice_id": "context-compression:emergency:trace_pipeline",
+                "stage": "compression_completed",
+                "compression_mode": "context",
+                "compression_reason": "automatic",
+                "notice_id": "context-compression:trace_pipeline",
                 "session_id": SESSION_ID,
                 "active_session_id": SESSION_ID,
                 "trace_id": TRACE_ID,
@@ -258,8 +260,8 @@ async def test_context_compression_progress_projects_to_realtime_and_history(tmp
     ]
     assert len(messages) == 1
     assert messages[0]["role"] == "system"
-    assert messages[0]["content"] == "全量压缩已完成"
-    assert messages[0]["metadata"]["compression"]["stage"] == "emergency_completed"
+    assert messages[0]["content"] == "上下文压缩已完成"
+    assert messages[0]["metadata"]["compression"]["stage"] == "compression_completed"
 
 
 @pytest.mark.asyncio

@@ -62,7 +62,6 @@ export interface ContextWindowUsageStatus {
   thresholdFraction: number;
   thresholdTokenCount: number;
   thresholdUsageFraction: number;
-  emergencyFraction: number | null;
   remainingToThresholdTokens: number;
   callPhase: string;
   callStatus: string;
@@ -266,7 +265,7 @@ export function useConversationPanelModel({
         if (contextStatus) {
           setContextWindowUsage(contextStatus);
         }
-        const message = backgroundCompressionFailureMessage(data);
+        const message = contextCompressionFailureMessage(data);
         if (message) {
           notifications.error(message);
         }
@@ -686,25 +685,13 @@ function runtimeErrorCode(reason: unknown): string | null {
   return null;
 }
 
-function backgroundCompressionFailureMessage(data: AgentMiddlewareProgressData): string {
+function contextCompressionFailureMessage(data: AgentMiddlewareProgressData): string {
   if (data.middleware !== "ContextCompressionMiddleware") {
     return "";
   }
   const stage = typeof data.stage === "string" ? data.stage : "";
-  if (stage === "background_failed") {
-    return "上下文压缩失败，当前对话将继续使用未压缩上下文。";
-  }
-  if (stage === "background_fork_failed") {
-    return "上下文压缩未能切换到压缩分支，当前对话将继续使用原上下文。";
-  }
-  if (stage === "staging_failed") {
-    return "上下文压缩结果应用失败，当前对话将继续使用原上下文。";
-  }
-  if (stage === "manual_light_failed") {
+  if (stage === "compression_failed") {
     return "上下文压缩失败，当前对话将继续使用原上下文。";
-  }
-  if (stage === "manual_deep_failed") {
-    return "全量压缩失败，当前对话将继续使用原上下文。";
   }
   return "";
 }
@@ -775,7 +762,6 @@ function contextWindowUsageFromSnapshot(
     thresholdFraction,
     thresholdTokenCount,
     thresholdUsageFraction,
-    emergencyFraction: positiveNumber(data.emergency_fraction),
     remainingToThresholdTokens:
       numberValue(data.remaining_to_threshold_tokens) ?? thresholdTokenCount - tokenCount,
     callPhase: stringValue(data.call_phase) || "after",

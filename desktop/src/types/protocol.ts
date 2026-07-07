@@ -713,8 +713,6 @@ export interface ContextCompressionRuntimeSettings {
   enabled: boolean;
   context_window_tokens: number;
   trigger_fraction: number;
-  emergency_fraction: number;
-  retain_rounds: number;
 }
 
 export interface AgentRuntimeSettings {
@@ -1233,23 +1231,14 @@ export interface AgentSessionResponse {
   session: AgentSession;
 }
 
-export type ManualContextCompressionMode = "light" | "deep";
-
 export interface ManualContextCompressionResponse {
   success: boolean;
-  mode: ManualContextCompressionMode;
   session_id: string;
   active_session_id: string | null;
-  target_session_id: string | null;
-  staging_id: number | null;
-  generation: number | null;
-  staging_strategy: "anchor_replacement" | "full_replacement" | string | null;
-  anchor_message_id: string | null;
-  source_last_message_id: string | null;
   notice_id: string | null;
   reason: string | null;
+  context_compression_epoch: number | null;
   compression_message_count: number;
-  retain_message_count: number;
   total_message_count: number;
 }
 
@@ -1575,14 +1564,10 @@ export interface AgentMiddlewareProgressData {
   gateway_trace_id?: string;
   error?: string;
   error_type?: string;
-  compression_mode?: "background" | "emergency" | string;
-  manual_mode?: ManualContextCompressionMode | string;
+  compression_mode?: "context" | "snapshot" | string;
+  compression_reason?: "manual" | "automatic" | string;
   notice_id?: string;
   reason?: string | null;
-  staging_id?: number | string | null;
-  staging_strategy?: "anchor_replacement" | "full_replacement" | string | null;
-  anchor_message_id?: string | null;
-  source_last_message_id?: string | null;
   trace_id?: string | null;
   timestamp_ms?: number;
   snapshot_hook?: string;
@@ -1595,7 +1580,6 @@ export interface AgentMiddlewareProgressData {
   window_fraction?: number;
   trigger_fraction?: number;
   threshold_fraction?: number;
-  emergency_fraction?: number;
   threshold_token_count?: number;
   threshold_usage_fraction?: number;
   remaining_to_threshold_tokens?: number;

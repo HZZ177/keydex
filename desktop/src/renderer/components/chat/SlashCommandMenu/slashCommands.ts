@@ -42,25 +42,14 @@ export function goalSlashCommand(): SlashCommand {
   };
 }
 
-export function lightContextCompressionSlashCommand(): SlashCommand {
+export function contextCompressionSlashCommand(): SlashCommand {
   return {
-    id: "context-compression-light",
+    id: "context-compression",
     kind: "builtin",
     label: "压缩上下文",
     title: "压缩上下文",
-    description: "保留最近两轮原文并压缩更早历史",
-    searchText: "compress compact context light qingliang yasuo shangxiawen 上下文 压缩 轻量",
-  };
-}
-
-export function deepContextCompressionSlashCommand(): SlashCommand {
-  return {
-    id: "context-compression-deep",
-    kind: "builtin",
-    label: "全量压缩上下文",
-    title: "全量压缩上下文",
-    description: "全量压缩历史，最大释放上下文空间",
-    searchText: "compress compact context deep full quanliang yasuo 上下文 压缩 全量",
+    description: "压缩当前会话上下文",
+    searchText: "compress compact context yasuo shangxiawen 上下文 压缩",
   };
 }
 
@@ -101,22 +90,14 @@ export function buildSlashCommands(
     commands.push(goalSlashCommand());
   }
   if (options.includeContextCompression !== false) {
-    commands.push(lightContextCompressionSlashCommand(), deepContextCompressionSlashCommand());
+    commands.push(contextCompressionSlashCommand());
   }
   commands.push(skillGroupSlashCommand(skills));
   return commands;
 }
 
-export function isLightContextCompressionSlashCommand(command: SlashCommand): boolean {
-  return command.kind === "builtin" && command.id === "context-compression-light";
-}
-
-export function isDeepContextCompressionSlashCommand(command: SlashCommand): boolean {
-  return command.kind === "builtin" && command.id === "context-compression-deep";
-}
-
 export function isContextCompressionSlashCommand(command: SlashCommand): boolean {
-  return isLightContextCompressionSlashCommand(command) || isDeepContextCompressionSlashCommand(command);
+  return command.kind === "builtin" && command.id === "context-compression";
 }
 
 export function getSlashQuery(value: string): string | null {

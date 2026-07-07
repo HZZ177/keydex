@@ -221,8 +221,9 @@ async def test_persistence_projection_writes_middleware_progress(tmp_path) -> No
             DomainEventType.MIDDLEWARE_PROGRESS,
             {
                 "middleware": "ContextCompressionMiddleware",
-                "stage": "staging_applied",
-                "notice_id": "context-compression:staging:1",
+                "stage": "compression_completed",
+                "compression_mode": "context",
+                "notice_id": "context-compression:trace_1",
             },
         )
     )
@@ -230,7 +231,7 @@ async def test_persistence_projection_writes_middleware_progress(tmp_path) -> No
     events = repositories.message_events.list_by_session("ses_persist")
 
     assert [event.action for event in events] == ["middleware_progress"]
-    assert events[0].data["stage"] == "staging_applied"
+    assert events[0].data["stage"] == "compression_completed"
     assert events[0].data["_canonical"]["action"] == "middleware_progress"
     messages = MessageEventService(repositories.message_events).get_display_messages("ses_persist")
     assert messages[0]["content"] == "上下文压缩已完成"

@@ -2,15 +2,12 @@ export { SlashCommandMenu } from "./SlashCommandMenu";
 export type { SlashCommandMenuProps } from "./SlashCommandMenu";
 export {
   buildSlashCommands,
+  contextCompressionSlashCommand,
   filterSlashCommands,
   filterSlashSkills,
   getSlashQuery,
   goalSlashCommand,
   isContextCompressionSlashCommand,
-  isDeepContextCompressionSlashCommand,
-  isLightContextCompressionSlashCommand,
-  lightContextCompressionSlashCommand,
-  deepContextCompressionSlashCommand,
   removeSlashQuery,
   replaceSlashQuery,
   skillGroupSlashCommand,

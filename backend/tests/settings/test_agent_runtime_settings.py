@@ -25,8 +25,6 @@ def test_agent_runtime_settings_defaults_do_not_enable_new_side_tasks() -> None:
     assert settings.context_compression.enabled is False
     assert settings.context_compression.context_window_tokens == 128000
     assert settings.context_compression.trigger_fraction == 0.75
-    assert settings.context_compression.emergency_fraction == 0.9
-    assert settings.context_compression.retain_rounds == 2
     assert settings.duplicate_tool_call_guard.enabled is True
     assert settings.duplicate_tool_call_guard.max_repeats == 3
 
@@ -48,8 +46,6 @@ def test_save_and_load_agent_runtime_settings_round_trip(tmp_path) -> None:
             "enabled": True,
             "context_window_tokens": 64000,
             "trigger_fraction": 0.6,
-            "emergency_fraction": 0.85,
-            "retain_rounds": 3,
         },
     )
 
@@ -60,12 +56,11 @@ def test_save_and_load_agent_runtime_settings_round_trip(tmp_path) -> None:
     assert loaded.auto_title.max_title_length == 50
     assert loaded.duplicate_tool_call_guard.max_repeats == 4
     assert loaded.context_compression.context_window_tokens == 64000
-    assert loaded.context_compression.retain_rounds == 3
 
 
 def test_agent_runtime_settings_reject_invalid_boundaries() -> None:
     with pytest.raises(ValidationError):
-        ContextCompressionRuntimeSettings(trigger_fraction=0.9, emergency_fraction=0.9)
+        ContextCompressionRuntimeSettings(trigger_fraction=1.0)
 
     with pytest.raises(ValidationError):
         DuplicateToolCallGuardRuntimeSettings(max_repeats=0)
@@ -98,9 +93,7 @@ def test_load_agent_runtime_settings_fails_loudly_for_invalid_persisted_data(tmp
             "context_compression": {
                 "enabled": True,
                 "context_window_tokens": 128000,
-                "trigger_fraction": 0.95,
-                "emergency_fraction": 0.9,
-                "retain_rounds": 2,
+                "trigger_fraction": 1.0,
             },
         },
     )

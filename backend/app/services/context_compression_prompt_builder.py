@@ -1,71 +1,116 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
-L1_SYSTEM_PROMPT = """你正在执行【L1区压缩任务】。
+COMPACTION_PROMPT = """重要：你正在为当前会话生成上下文压缩摘要。
 
-目标：
-将给定的“尚未压缩过的原始历史对话消息”压缩为 L1 结构化活动日志。
+你已经能看到压缩所需的上方对话上下文。请只回复纯文本，且必须严格由一个 <分析> 块和一个 <摘要> 块组成。不要输出 Markdown 代码块、JSON、额外寒暄或结构外说明。
 
-输入特点：
-- 输入已经按“用户轮次”结构化整理；
-- 每个轮次内可能包含：用户输入、AI响应、AI发起工具调用、工具结果；
-- 工具结果可能已经被结构化截断，必须优先保留其中真正影响后续推理的结论、数据、错误信息与约束。
+请使用简体中文撰写所有自然语言内容。原对话中的文件路径、函数名、类名、命令、错误码、配置键、协议字段和必要代码片段保持原文，不要翻译或改写这些标识。
 
-要求：
-1. 保留用户目标、关键约束、关键事实、关键工具结果、明确中间结论、未完成事项；
-2. 保持对话推进线索，按任务演进组织内容，避免纯流水账；
-3. 对工具调用只保留有价值的结果、失败原因、关键返回数据，不保留冗余细节；
-4. 丢弃低价值寒暄、重复表达、无意义噪音；
-5. 不要编造信息；
-6. 输出体量必须严格控制在 5000 tokens 以内，优先保留高价值信息，必要时进一步压缩表达；
-7. 仅通过你自己的输出控制保持内容凝练，不要冗长展开；
-8. 只输出压缩结果正文，不要添加标题、解释、标签、引号、前后缀。"""
+你的任务是详细总结到目前为止的对话，使会话在上下文压缩后可以继续推进。重点保留用户的明确请求、偏好和约束，助手已执行的操作、代码变更、架构决策、错误与修复、测试结果，以及压缩前仍在进行的工作。
 
-L2_SYSTEM_PROMPT = """你正在执行【L2区压缩任务】。
+在最终摘要之前，请在 <分析> 块中做简洁覆盖检查，确认已经覆盖：
 
-目标：
-将给定的“已经压缩过一次的 L1 活动日志”进一步压缩为更稳定的 L2 摘要。
+1. 按时间顺序梳理用户的主要请求和真实意图。
+2. 关键技术概念、架构决策、运行时边界和代码模式。
+3. 已检查、修改或创建的具体文件和代码位置。
+4. 遇到的错误、修复方式，以及导致方向变化的用户反馈。
+5. 已解决的问题和仍在进行的排查。
+6. 会影响任务意图、约束或偏好的用户消息。
+7. 涉及安全、凭证、敏感数据或禁止操作的指令；这些内容必须在摘要中逐字保留。
+8. 明确待办任务，以及压缩发生前正在处理的当前工作。
+9. 可选下一步；只有在它直接承接用户最新请求时才写入。
 
-要求：
-1. 保留长期有效的目标、关键事实、关键决定、关键约束、未完成事项；
-2. 去除短期上下文、过程性噪音和重复表述；
-3. 输出应更凝练、更适合长期保留；
-4. 输出体量必须严格控制在 1500 tokens 以内，只保留最值得长期存档的信息；
-5. 仅通过你自己的输出控制保持内容简洁，不要冗长展开；
-6. 不要编造信息；
-7. 只输出压缩结果正文，不要添加标题、解释、标签、引号、前后缀。"""
+<摘要> 块必须足够详细，使下一轮助手即使看不到原始对话，也能继续同一项任务。需要包含关键文件名、函数名、接口形态、测试命令、重要决策、已知风险和用户偏好。不要编造事实，不要把未验证的推测写成结论。
+
+输出结构：
+
+<分析>
+[简洁列出覆盖检查，不展开冗长推理。]
+</分析>
+
+<摘要>
+1. 主要请求与意图：
+   [详细描述]
+
+2. 关键技术概念：
+   - [概念]
+
+3. 文件与代码位置：
+   - [文件路径]
+     - [重要原因]
+     - [相关修改或观察到的行为]
+
+4. 错误与修复：
+   - [错误]：[修复方式，以及相关用户反馈]
+
+5. 问题解决与当前排查：
+   [已解决问题和仍在进行的排查]
+
+6. 用户消息与约束：
+   - [会影响任务的用户消息、偏好和约束]
+
+7. 待办任务：
+   - [任务]
+
+8. 当前工作状态：
+   [压缩发生前的精确状态]
+
+9. 可选下一步：
+   [仅在直接承接用户最新请求时填写]
+</摘要>
+
+提醒：只输出上述纯文本结构。"""
+
+SUMMARY_BLOCK_PATTERN = re.compile(r"<摘要>\s*(.*?)\s*</摘要>", re.DOTALL)
+ANALYSIS_BLOCK_PATTERN = re.compile(r"<分析>\s*.*?\s*</分析>", re.DOTALL)
 
 
-@dataclass(slots=True)
-class CompressionPromptBundle:
-    system_message: SystemMessage
+@dataclass(frozen=True, slots=True)
+class CompactionPromptBundle:
     human_message: HumanMessage
 
 
-def build_l1_prompt(raw_messages_text: str) -> CompressionPromptBundle:
-    return CompressionPromptBundle(
-        system_message=SystemMessage(content=L1_SYSTEM_PROMPT),
-        human_message=HumanMessage(
-            content=(
-                "以下是当前需要压缩为 L1 的原始历史对话消息。"
-                "输入已经按用户轮次结构化，你需要基于这些轮次生成结构化活动日志：\n\n"
-                f"{raw_messages_text}"
-            )
-        ),
-    )
+def build_compaction_prompt() -> CompactionPromptBundle:
+    return CompactionPromptBundle(human_message=HumanMessage(content=COMPACTION_PROMPT))
 
 
-def build_l2_prompt(existing_l1_text: str) -> CompressionPromptBundle:
-    return CompressionPromptBundle(
-        system_message=SystemMessage(content=L2_SYSTEM_PROMPT),
-        human_message=HumanMessage(
-            content=(
-                "以下是当前需要压缩为 L2 的 L1 活动日志原文，"
-                "请提炼长期保留价值更高的信息：\n\n"
-                f"{existing_l1_text}"
-            )
-        ),
-    )
+def extract_summary_text(content: Any) -> str | None:
+    text = _clean_text_content(content)
+    if not text:
+        return None
+    match = SUMMARY_BLOCK_PATTERN.search(text)
+    if match:
+        return _strip_code_fence(match.group(1).strip()) or None
+    if "<分析" in text or "<analysis" in text.lower():
+        return None
+    return _strip_code_fence(text.strip()) or None
+
+
+def _clean_text_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or ""))
+            else:
+                parts.append(str(item))
+        return "".join(parts).strip()
+    return str(content).strip() if content is not None else ""
+
+
+def _strip_code_fence(text: str) -> str:
+    cleaned = text.strip()
+    if not cleaned.startswith("```"):
+        return cleaned
+    lines = cleaned.splitlines()
+    if len(lines) >= 2 and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1]).strip()
+    return cleaned

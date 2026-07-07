@@ -239,7 +239,11 @@ export function payloadFromAgentMessage(message: AgentChatMessage): Record<strin
 function isContextCompressionMessage(message: AgentChatMessage): boolean {
   const compression = objectValue(message.metadata?.compression);
   const kind = stringValue(compression?.kind);
-  return kind === "context_compression" || kind === "context_compressed";
+  if (kind === "context_compression" || kind === "context_compressed") {
+    return true;
+  }
+  const content = normalizeMessageContent(message.content).trim();
+  return content.startsWith("<keydex_context_compression>");
 }
 
 function isLLMRetryMessage(message: AgentChatMessage): boolean {

@@ -28,8 +28,7 @@ import {
 } from "@/renderer/components/chat/SendBox";
 import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
 import {
-  isDeepContextCompressionSlashCommand,
-  isLightContextCompressionSlashCommand,
+  isContextCompressionSlashCommand,
   type SlashCommand,
 } from "@/renderer/components/chat/SlashCommandMenu";
 import { LoadingSkeleton } from "@/renderer/components/loading";
@@ -91,7 +90,6 @@ import type {
   AgentSession,
   CommandApprovalRequest,
   FileAccessMode,
-  ManualContextCompressionMode,
   Workspace,
 } from "@/types/protocol";
 
@@ -237,7 +235,7 @@ export function WorkbenchAssistantSurface({
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
   const [goalCreating, setGoalCreating] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
-  const [contextCompressionMode, setContextCompressionMode] = useState<ManualContextCompressionMode | null>(null);
+  const [contextCompressionRunning, setContextCompressionRunning] = useState(false);
   const modelSelection = useRuntimeModelSelection(runtime, null, { enabled: backendReady });
   const workspaceSkillScope = useMemo(() => ({ workspaceId }), [workspaceId]);
   const { state: workspaceSkillsState, refresh: refreshWorkspaceSkills } = useWorkspaceSkills({
@@ -379,7 +377,6 @@ export function WorkbenchAssistantSurface({
   const connectionReady = controller.connectionReady;
   const canSend = controller.canSend && !creatingSession && Boolean(workspaceId);
   const canStop = controller.canStop;
-  const contextCompressionRunning = contextCompressionMode !== null;
   const selectedModel = modelSelection.selectedModel;
   const hasComposerContext = Boolean(controller.selectedSkill || composerFiles.length || composerQuotes.length);
   const hasComposerContent = Boolean(controller.draft.trim() || hasComposerContext || goalComposerOpen);
@@ -1274,7 +1271,7 @@ export function WorkbenchAssistantSurface({
   }, [dockToDrawer, panelSessionId, previewContext.reviewPanelRequest, surfaceMode, workspaceId]);
 
   const runContextCompression = useCallback(
-    async (mode: ManualContextCompressionMode) => {
+    async () => {
       if (contextCompressionRunning) {
         notifications.warning("上下文压缩正在执行");
         return;
@@ -1287,15 +1284,15 @@ export function WorkbenchAssistantSurface({
         notifications.warning("本地服务尚未就绪");
         return;
       }
-      setContextCompressionMode(mode);
+      setContextCompressionRunning(true);
       try {
-        await runtime.conversation.compressContext(panelSessionId, { mode });
-        notifications.success(mode === "deep" ? "全量压缩已完成" : "上下文压缩已完成");
+        await runtime.conversation.compressContext(panelSessionId);
+        notifications.success("上下文压缩已完成");
         void controller.reloadHistory().catch(() => undefined);
       } catch (reason) {
         notifications.error(contextCompressionErrorMessage(reason));
       } finally {
-        setContextCompressionMode(null);
+        setContextCompressionRunning(false);
       }
     },
     [
@@ -1315,12 +1312,8 @@ export function WorkbenchAssistantSurface({
         openBtwConversation();
         return;
       }
-      if (isLightContextCompressionSlashCommand(command)) {
-        void runContextCompression("light");
-        return;
-      }
-      if (isDeepContextCompressionSlashCommand(command)) {
-        void runContextCompression("deep");
+      if (isContextCompressionSlashCommand(command)) {
+        void runContextCompression();
         return;
       }
       if (command.id === "goal") {

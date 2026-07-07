@@ -159,7 +159,6 @@ describe("ConversationComposer", () => {
           thresholdFraction: 0.8,
           thresholdTokenCount: 800,
           thresholdUsageFraction: 0.5,
-          emergencyFraction: 0.9,
           remainingToThresholdTokens: 400,
           callPhase: "after",
           callStatus: "completed",
@@ -184,9 +183,7 @@ describe("ConversationComposer", () => {
     expect(Number.parseFloat(progress.style.strokeDashoffset)).toBeCloseTo(circumference * 0.5);
     const tooltip = screen.getByRole("tooltip");
     expect(tooltip.textContent).toContain("上下文压缩进度 50.0%");
-    expect(tooltip.textContent).toContain("全量压缩进度 44.4%");
-    const tooltipText = tooltip.textContent ?? "";
-    expect(tooltipText.indexOf("上下文压缩进度")).toBeLessThan(tooltipText.indexOf("全量压缩进度"));
+    expect(tooltip.textContent).not.toContain("全量压缩进度");
 
     rerender(
       <ConversationComposer
@@ -209,7 +206,6 @@ describe("ConversationComposer", () => {
           thresholdFraction: 0.75,
           thresholdTokenCount: 750,
           thresholdUsageFraction: 820 / 750,
-          emergencyFraction: 0.9,
           remainingToThresholdTokens: -70,
           callPhase: "after",
           callStatus: "completed",
@@ -233,9 +229,8 @@ describe("ConversationComposer", () => {
     expect(Number.parseFloat(progress.style.strokeDashoffset)).toBeCloseTo(0);
     expect(indicator.getAttribute("data-level")).toBe("danger");
     expect(indicator.getAttribute("aria-label")).toContain("上下文压缩进度 109.3%");
-    expect(indicator.getAttribute("aria-label")).toContain("全量压缩进度 91.1%");
     expect(tooltip.querySelector('[data-progress-kind="ambient"]')?.getAttribute("data-level")).toBe("danger");
-    expect(tooltip.querySelector('[data-progress-kind="blocking"]')?.getAttribute("data-level")).toBe("warning");
+    expect(tooltip.querySelector('[data-progress-kind="blocking"]')).toBeNull();
   });
 
   it("does not render Workbench dock controls unless the surface supplies them", () => {

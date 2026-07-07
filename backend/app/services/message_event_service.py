@@ -1439,75 +1439,39 @@ def _is_visible_context_compression_progress(data: dict[str, Any]) -> bool:
     if data.get("middleware") != "ContextCompressionMiddleware":
         return False
     stage = str(data.get("stage") or "")
-    return stage in {
-        "staging_applied",
-        "emergency_triggered",
-        "emergency_failed",
-        "emergency_replacement_failed",
-        "emergency_completed",
-        "manual_light_started",
-        "manual_light_completed",
-        "manual_light_failed",
-        "manual_deep_started",
-        "manual_deep_completed",
-        "manual_deep_failed",
-    }
+    return stage in {"compression_started", "compression_completed", "compression_failed"}
 
 
 def _context_compression_progress_content(data: dict[str, Any]) -> str:
     stage = str(data.get("stage") or "")
-    if stage == "emergency_triggered":
-        return "正在全量压缩上下文"
-    if stage in {"emergency_failed", "emergency_replacement_failed"}:
-        return "全量压缩失败"
-    if stage == "emergency_completed":
-        return "全量压缩已完成"
-    if stage == "manual_light_started":
+    if stage == "compression_started":
         return "正在压缩上下文"
-    if stage == "manual_light_completed":
+    if stage == "compression_completed":
         return "上下文压缩已完成"
-    if stage == "manual_light_failed":
+    if stage == "compression_failed":
         return "上下文压缩失败"
-    if stage == "manual_deep_started":
-        return "正在全量压缩上下文"
-    if stage == "manual_deep_completed":
-        return "全量压缩已完成"
-    if stage == "manual_deep_failed":
-        return "全量压缩失败"
     return "上下文压缩已完成"
 
 
 def _context_compression_status(data: dict[str, Any]) -> str:
     stage = str(data.get("stage") or "")
-    if stage == "emergency_triggered":
+    if stage == "compression_started":
         return "running"
-    if stage in {"emergency_failed", "emergency_replacement_failed"}:
-        return "failed"
-    if stage.endswith("_started"):
-        return "running"
-    if stage.endswith("_failed"):
+    if stage == "compression_failed":
         return "failed"
     return "completed"
 
 
 def _context_compression_metadata(data: dict[str, Any]) -> dict[str, Any]:
     stage = str(data.get("stage") or "")
-    mode = str(data.get("compression_mode") or "")
-    if mode not in {"emergency", "background", "manual_light", "manual_deep"}:
-        if stage.startswith("manual_light_"):
-            mode = "manual_light"
-        elif stage.startswith("manual_deep_"):
-            mode = "manual_deep"
-        else:
-            mode = "emergency" if stage.startswith("emergency_") else "background"
+    mode = str(data.get("compression_mode") or "context")
     return {
         "kind": "context_compression",
         "stage": stage,
         "mode": mode,
         "notice_id": _context_compression_notice_id_from_data(data),
         "reason": data.get("reason"),
-        "staging_id": data.get("staging_id"),
-        "anchor_message_id": data.get("anchor_message_id"),
+        "compression_reason": data.get("compression_reason"),
     }
 
 
@@ -1515,21 +1479,8 @@ def _context_compression_notice_id_from_data(data: dict[str, Any]) -> str:
     notice_id = str(data.get("notice_id") or "").strip()
     if notice_id:
         return notice_id
-    stage = str(data.get("stage") or "")
-    if stage.startswith("emergency_"):
-        notice_key = (
-            data.get("trace_id")
-            or data.get("session_id")
-            or data.get("active_session_id")
-            or ""
-        )
-        return f"context-compression:emergency:{notice_key}"
-    if stage.startswith("manual_"):
-        notice_key = data.get("session_id") or data.get("active_session_id") or ""
-        manual_mode = data.get("manual_mode") or "context"
-        return f"context-compression:manual:{manual_mode}:{notice_key}"
-    notice_key = data.get("staging_id") or data.get("active_session_id") or ""
-    return f"context-compression:staging:{notice_key}"
+    notice_key = data.get("trace_id") or data.get("session_id") or data.get("active_session_id") or ""
+    return f"context-compression:{notice_key}"
 
 
 def _default_context_label(item_type: str, content: str) -> str:

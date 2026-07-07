@@ -184,7 +184,6 @@ export function conversationComposerStatusText(_state: ConversationRuntimeState,
 
 function ContextWindowIndicator({ usage }: { usage: ContextWindowUsageStatus | null }) {
   const thresholdProgress = usage ? clampNonNegative(usage.thresholdUsageFraction) : 0;
-  const emergencyProgress = usage ? emergencyCompressionProgress(usage) : null;
   const ringProgressBasis = thresholdProgress;
   const ringProgress = clamp01(ringProgressBasis);
   const [animatedRingProgress, setAnimatedRingProgress] = useState(0);
@@ -193,11 +192,7 @@ function ContextWindowIndicator({ usage }: { usage: ContextWindowUsageStatus | n
   const dashOffset = circumference * (1 - clamp01(animatedRingProgress));
   const level = usage ? (ringProgressBasis > 1 ? "danger" : ringProgressBasis > 0.9 ? "warning" : "normal") : "idle";
   const ariaLabel = usage
-    ? `当前已使用上下文 ${formatTokens(usage.tokenCount)} tokens，${
-        emergencyProgress === null
-          ? `上下文压缩进度 ${formatPercent(thresholdProgress)}`
-          : `上下文压缩进度 ${formatPercent(thresholdProgress)}，全量压缩进度 ${formatPercent(emergencyProgress)}`
-      }`
+    ? `当前已使用上下文 ${formatTokens(usage.tokenCount)} tokens，上下文压缩进度 ${formatPercent(thresholdProgress)}`
     : "上下文窗口占用等待下一次模型调用";
 
   useEffect(() => {
@@ -248,18 +243,6 @@ function ContextWindowIndicator({ usage }: { usage: ContextWindowUsageStatus | n
                 {formatPercent(thresholdProgress)}
               </span>
             </span>
-            {emergencyProgress === null ? null : (
-              <span className={styles.contextWindowTooltipMeta}>
-                全量压缩进度{" "}
-                <span
-                  className={styles.contextWindowTooltipValue}
-                  data-level={progressValueLevel(emergencyProgress)}
-                  data-progress-kind="blocking"
-                >
-                  {formatPercent(emergencyProgress)}
-                </span>
-              </span>
-            )}
           </>
         ) : (
           <span className={styles.contextWindowTooltipMeta}>
@@ -269,15 +252,6 @@ function ContextWindowIndicator({ usage }: { usage: ContextWindowUsageStatus | n
       </span>
     </span>
   );
-}
-
-function emergencyCompressionProgress(usage: ContextWindowUsageStatus): number | null {
-  const emergencyFraction = usage.emergencyFraction;
-  if (emergencyFraction === null || !Number.isFinite(emergencyFraction) || emergencyFraction <= 0) {
-    return null;
-  }
-  const emergencyThresholdTokenCount = Math.max(1, usage.contextWindow * emergencyFraction);
-  return clampNonNegative(usage.tokenCount / emergencyThresholdTokenCount);
 }
 
 function progressValueLevel(value: number): "normal" | "warning" | "danger" {

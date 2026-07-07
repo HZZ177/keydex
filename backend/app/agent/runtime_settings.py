@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pydantic_core import PydanticCustomError
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.storage import StorageRepositories
 
@@ -32,17 +31,6 @@ class ContextCompressionRuntimeSettings(BaseModel):
     enabled: bool = False
     context_window_tokens: int = Field(default=128000, ge=1000, le=2_000_000)
     trigger_fraction: float = Field(default=0.75, gt=0.0, lt=1.0)
-    emergency_fraction: float = Field(default=0.9, gt=0.0, le=1.0)
-    retain_rounds: int = Field(default=2, ge=0, le=20)
-
-    @model_validator(mode="after")
-    def validate_threshold_order(self) -> ContextCompressionRuntimeSettings:
-        if self.trigger_fraction >= self.emergency_fraction:
-            raise PydanticCustomError(
-                "compression_threshold_order",
-                "trigger_fraction must be less than emergency_fraction",
-            )
-        return self
 
 
 class AgentRuntimeSettings(BaseModel):
@@ -80,8 +68,16 @@ def save_agent_runtime_settings(
 def _drop_removed_runtime_settings(raw: Any) -> Any:
     if not isinstance(raw, dict):
         return raw
-    return {
+    cleaned = {
         key: value
         for key, value in raw.items()
         if key not in REMOVED_RUNTIME_SETTINGS_KEYS
     }
+    context_compression = cleaned.get("context_compression")
+    if isinstance(context_compression, dict):
+        cleaned["context_compression"] = {
+            key: value
+            for key, value in context_compression.items()
+            if key not in {"emergency_fraction", "retain_rounds"}
+        }
+    return cleaned

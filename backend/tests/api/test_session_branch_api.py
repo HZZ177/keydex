@@ -116,44 +116,31 @@ def test_session_context_compression_api_returns_manual_result(tmp_path, monkeyp
 
     app.state.agent_runner = FakeAgentRunner()
 
-    async def fake_compress(self, *, session_id: str, mode: str):
+    async def fake_compress(self, *, session_id: str):
         return ManualContextCompressionResult(
             success=True,
-            mode=mode,
             session_id=session_id,
-            active_session_id="active_compact",
-            target_session_id="active_compact",
-            staging_id=7,
-            generation=2,
-            staging_strategy="full_replacement",
-            source_last_message_id="a2",
-            notice_id="context-compression:manual:deep:ses_source:test",
+            active_session_id="ses_source",
+            notice_id="context-compression:manual:ses_source:test",
+            context_compression_epoch=1,
             compression_message_count=4,
-            retain_message_count=0,
             total_message_count=4,
         )
 
     monkeypatch.setattr(sessions_api.ManualContextCompressionService, "compress", fake_compress)
 
     with TestClient(app) as client:
-        response = client.post("/api/sessions/ses_source/context-compression", json={"mode": "deep"})
+        response = client.post("/api/sessions/ses_source/context-compression", json={})
 
     assert response.status_code == 200
     assert response.json() == {
         "success": True,
-        "mode": "deep",
         "session_id": "ses_source",
-        "active_session_id": "active_compact",
-        "target_session_id": "active_compact",
-        "staging_id": 7,
-        "generation": 2,
-        "staging_strategy": "full_replacement",
-        "anchor_message_id": None,
-        "source_last_message_id": "a2",
-        "notice_id": "context-compression:manual:deep:ses_source:test",
+        "active_session_id": "ses_source",
+        "notice_id": "context-compression:manual:ses_source:test",
         "reason": None,
+        "context_compression_epoch": 1,
         "compression_message_count": 4,
-        "retain_message_count": 0,
         "total_message_count": 4,
     }
 

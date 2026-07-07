@@ -14,7 +14,6 @@ import type {
   AgentSessionListResponse,
   AgentSessionResponse,
   AgentFileAttachment,
-  ManualContextCompressionMode,
   ManualContextCompressionResponse,
   ThreadTask,
   ThreadTaskListResponse,
@@ -92,10 +91,6 @@ export interface SessionBranchPayload {
   turnIndex?: number | null;
 }
 
-export interface ManualContextCompressionPayload {
-  mode: ManualContextCompressionMode;
-}
-
 export interface CreateThreadTaskPayload {
   type?: Extract<ThreadTaskType, "goal">;
   objective: string;
@@ -164,10 +159,7 @@ export interface ConversationRuntime {
   deleteSession(sessionId: string): Promise<void>;
   forkSession(sessionId: string, payload: SessionBranchPayload): Promise<AgentSessionBranchResponse>;
   reverseSession(sessionId: string, payload: SessionBranchPayload): Promise<AgentSessionBranchResponse>;
-  compressContext(
-    sessionId: string,
-    payload: ManualContextCompressionPayload,
-  ): Promise<ManualContextCompressionResponse>;
+  compressContext(sessionId: string): Promise<ManualContextCompressionResponse>;
   loadHistory(sessionId: string, options?: LoadHistoryOptions): Promise<AgentHistoryResponse>;
   loadToolDetails(sessionId: string, ref: LoadToolDetailsOptions): Promise<AgentToolDetails>;
   listThreadTasks(sessionId: string): Promise<ThreadTask[]>;
@@ -229,12 +221,12 @@ export function createConversationRuntime(
         body: branchPayload(payload),
       });
     },
-    compressContext(sessionId, payload) {
+    compressContext(sessionId) {
       return http.request<ManualContextCompressionResponse>(
         `/api/sessions/${encodeURIComponent(sessionId)}/context-compression`,
         {
           method: "POST",
-          body: { mode: payload.mode },
+          body: {},
         },
       );
     },

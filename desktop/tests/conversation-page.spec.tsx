@@ -381,9 +381,9 @@ describe("ConversationPage", () => {
           metadata: {
             compression: {
               kind: "context_compression",
-              stage: "staging_applied",
-              mode: "background",
-              notice_id: "context-compression:staging:1",
+              stage: "compression_completed",
+              mode: "context",
+              notice_id: "context-compression:trace-1",
             },
           },
         }),
@@ -396,7 +396,7 @@ describe("ConversationPage", () => {
     expect(notice.textContent).toContain("上下文压缩已完成");
   });
 
-  it("updates emergency compression divider notices in place", async () => {
+  it("updates context compression divider notices in place", async () => {
     const { runtime, emit } = fakeRuntime();
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
@@ -406,36 +406,38 @@ describe("ConversationPage", () => {
         agentEvent("middleware_progress", {
           session_id: "ses-1",
           middleware: "ContextCompressionMiddleware",
-          stage: "emergency_triggered",
-          compression_mode: "emergency",
-          notice_id: "context-compression:emergency:trace-1",
+          stage: "compression_started",
+          compression_mode: "context",
+          compression_reason: "automatic",
+          notice_id: "context-compression:trace-1",
           trace_id: "trace-1",
         }),
       );
     });
 
-    expect(await screen.findByText("正在全量压缩上下文")).not.toBeNull();
+    expect(await screen.findByText("正在压缩上下文")).not.toBeNull();
 
     await act(async () => {
       emit(
         agentEvent("middleware_progress", {
           session_id: "ses-1",
           middleware: "ContextCompressionMiddleware",
-          stage: "emergency_completed",
-          compression_mode: "emergency",
-          notice_id: "context-compression:emergency:trace-1",
+          stage: "compression_completed",
+          compression_mode: "context",
+          compression_reason: "automatic",
+          notice_id: "context-compression:trace-1",
           trace_id: "trace-1",
         }),
       );
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("context-compression-notice").textContent).toContain("全量压缩已完成");
+      expect(screen.getByTestId("context-compression-notice").textContent).toContain("上下文压缩已完成");
     });
-    expect(screen.queryByText("正在全量压缩上下文")).toBeNull();
+    expect(screen.queryByText("正在压缩上下文")).toBeNull();
   });
 
-  it("starts full compression immediately from the slash command", async () => {
+  it("starts context compression immediately from the slash command", async () => {
     let resolveCompress: (() => void) | null = null;
     const compressContext = vi.fn(
       () =>
@@ -447,14 +449,14 @@ describe("ConversationPage", () => {
     renderConversationWithNotifications(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     const input = await readyComposer();
-    typeComposer("/全量");
+    typeComposer("/压缩");
     await waitFor(() => {
       expect(screen.getByTestId("slash-command-menu")).not.toBeNull();
     });
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => {
-      expect(compressContext).toHaveBeenCalledWith("ses-1", { mode: "deep" });
+      expect(compressContext).toHaveBeenCalledWith("ses-1");
     });
     expect(screen.queryByRole("dialog")).toBeNull();
 
@@ -464,7 +466,7 @@ describe("ConversationPage", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("shows async compression failures as top notifications without adding a divider", async () => {
+  it("shows compression failures as top notifications and a failed divider", async () => {
     const { runtime, emit } = fakeRuntime();
     renderConversationWithNotifications(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
@@ -474,15 +476,18 @@ describe("ConversationPage", () => {
         agentEvent("middleware_progress", {
           session_id: "ses-1",
           middleware: "ContextCompressionMiddleware",
-          stage: "background_failed",
-          compression_mode: "background",
-          reason: "missing_fast_model",
+          stage: "compression_failed",
+          compression_mode: "context",
+          compression_reason: "automatic",
+          reason: "missing_default_chat_model",
+          notice_id: "context-compression:trace-1",
+          trace_id: "trace-1",
         }),
       );
     });
 
     expect((await screen.findByRole("alert")).textContent).toContain("上下文压缩失败");
-    expect(screen.queryByTestId("context-compression-notice")).toBeNull();
+    expect(screen.getByTestId("context-compression-notice").textContent).toContain("上下文压缩失败");
   });
 
   it("updates the context window ring from model-call snapshots", async () => {
@@ -507,7 +512,6 @@ describe("ConversationPage", () => {
           threshold_fraction: 0.75,
           threshold_token_count: 750,
           threshold_usage_fraction: 400 / 750,
-          emergency_fraction: 0.9,
           remaining_to_threshold_tokens: 350,
         }),
       );
@@ -534,7 +538,6 @@ describe("ConversationPage", () => {
           threshold_fraction: 0.75,
           threshold_token_count: 750,
           threshold_usage_fraction: 700 / 750,
-          emergency_fraction: 0.9,
           remaining_to_threshold_tokens: 50,
         }),
       );
@@ -544,15 +547,12 @@ describe("ConversationPage", () => {
     expect(indicator.getAttribute("aria-label")).toContain("当前已使用上下文 700 tokens");
     expect(indicator.getAttribute("data-level")).toBe("warning");
     expect(indicator.getAttribute("aria-label")).toContain("上下文压缩进度 93.3%");
-    expect(indicator.getAttribute("aria-label")).toContain("全量压缩进度 77.8%");
     const tooltip = screen.getByRole("tooltip");
     expect(tooltip.textContent).toContain("当前已使用 700 tokens");
     expect(tooltip.textContent).toContain("上下文压缩进度 93.3%");
-    expect(tooltip.textContent).toContain("全量压缩进度 77.8%");
-    const tooltipText = tooltip.textContent ?? "";
-    expect(tooltipText.indexOf("上下文压缩进度")).toBeLessThan(tooltipText.indexOf("全量压缩进度"));
+    expect(tooltip.textContent).not.toContain("全量压缩进度");
     expect(tooltip.querySelector('[data-progress-kind="ambient"]')?.getAttribute("data-level")).toBe("warning");
-    expect(tooltip.querySelector('[data-progress-kind="blocking"]')?.getAttribute("data-level")).toBe("normal");
+    expect(tooltip.querySelector('[data-progress-kind="blocking"]')).toBeNull();
     expect(tooltip.textContent).not.toContain("700 / 1,000 tokens");
     expect(tooltip.textContent).not.toContain("调用后 · 模型返回");
   });

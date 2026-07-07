@@ -1453,11 +1453,7 @@ function isContextCompressionLoadingNotice(message: ConversationMessage): boolea
 }
 
 function isRunningCompressionStage(stage: unknown): boolean {
-  return (
-    stage === "emergency_triggered" ||
-    stage === "manual_light_started" ||
-    stage === "manual_deep_started"
-  );
+  return stage === "compression_started";
 }
 
 function isRunningCompressionText(message: ConversationMessage): boolean {

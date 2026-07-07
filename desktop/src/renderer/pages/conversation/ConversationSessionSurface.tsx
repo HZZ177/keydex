@@ -10,8 +10,7 @@ import {
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
 import {
-  isDeepContextCompressionSlashCommand,
-  isLightContextCompressionSlashCommand,
+  isContextCompressionSlashCommand,
   type SlashCommand,
 } from "@/renderer/components/chat/SlashCommandMenu";
 import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
@@ -24,7 +23,6 @@ import type {
   AgentActionEnvelope,
   AgentSession,
   AgentSessionFork,
-  ManualContextCompressionMode,
 } from "@/types/protocol";
 import type { FileAccessMode } from "@/types/protocol";
 import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
@@ -91,7 +89,7 @@ export function ConversationSessionSurface({
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [goalCreating, setGoalCreating] = useState(false);
-  const [contextCompressionMode, setContextCompressionMode] = useState<ManualContextCompressionMode | null>(null);
+  const [contextCompressionRunning, setContextCompressionRunning] = useState(false);
   const quickSendConsumedRef = useRef<string | null>(null);
   const pendingQuickSendRef = useRef<QueuedQuickChatSend | null>(null);
   const scrollToBottomAfterSendRef = useRef<(() => void) | null>(null);
@@ -227,7 +225,6 @@ export function ConversationSessionSurface({
   const connectionReady = controller.connectionReady;
   const canSend = controller.canSend;
   const canStop = controller.canStop;
-  const contextCompressionRunning = contextCompressionMode !== null;
   const selectedModelProviderId = modelSelection.selectedModel?.providerId ?? "";
   const selectedModelName = modelSelection.selectedModel?.model ?? "";
   const setSelectedRuntimeModel = modelSelection.setSelectedModel;
@@ -370,7 +367,7 @@ export function ConversationSessionSurface({
   );
 
   const runContextCompression = useCallback(
-    async (mode: ManualContextCompressionMode) => {
+    async () => {
       if (contextCompressionRunning) {
         notifications.warning("上下文压缩正在执行");
         return;
@@ -383,15 +380,15 @@ export function ConversationSessionSurface({
         notifications.warning("本地服务尚未就绪");
         return;
       }
-      setContextCompressionMode(mode);
+      setContextCompressionRunning(true);
       try {
-        await runtime.conversation.compressContext(threadId, { mode });
-        notifications.success(mode === "deep" ? "全量压缩已完成" : "上下文压缩已完成");
+        await runtime.conversation.compressContext(threadId);
+        notifications.success("上下文压缩已完成");
         void controller.reloadHistory().catch(() => undefined);
       } catch (reason) {
         notifications.error(contextCompressionErrorMessage(reason));
       } finally {
-        setContextCompressionMode(null);
+        setContextCompressionRunning(false);
       }
     },
     [
@@ -411,12 +408,8 @@ export function ConversationSessionSurface({
         openBtwConversation();
         return;
       }
-      if (isLightContextCompressionSlashCommand(command)) {
-        void runContextCompression("light");
-        return;
-      }
-      if (isDeepContextCompressionSlashCommand(command)) {
-        void runContextCompression("deep");
+      if (isContextCompressionSlashCommand(command)) {
+        void runContextCompression();
         return;
       }
       if (command.id === "goal") {

@@ -24,10 +24,8 @@ type ExtensionDrafts = {
   compression: ContextCompressionRuntimeSettings;
 };
 
-const FIXED_COMPRESSION_EMERGENCY_FRACTION = 0.9;
-const FIXED_COMPRESSION_RETAIN_ROUNDS = 2;
 const MIN_COMPRESSION_TRIGGER_FRACTION = 0.1;
-const MAX_COMPRESSION_TRIGGER_FRACTION = 0.89;
+const MAX_COMPRESSION_TRIGGER_FRACTION = 0.95;
 const COMPRESSION_TRIGGER_STEP = 0.01;
 
 export function ExtensionSettingsPage({
@@ -67,18 +65,19 @@ export function ExtensionSettingsPage({
   }, [notifications, runtime]);
 
   const fastConfigured = Boolean(defaults?.defaults.fast.configured);
+  const defaultChatConfigured = Boolean(defaults?.defaults.default_chat.configured);
   const titleDraft = drafts?.autoTitle ?? null;
   const duplicateGuardDraft = drafts?.duplicateGuard ?? null;
   const compressionDraft = drafts?.compression ?? null;
   const titleDependencyMissing = Boolean(titleDraft?.enabled && !fastConfigured);
-  const compressionDependencyMissing = Boolean(compressionDraft?.enabled && !fastConfigured);
+  const compressionDependencyMissing = Boolean(compressionDraft?.enabled && !defaultChatConfigured);
   const titleLengthInvalid = titleDraft ? titleDraft.max_title_length < 4 || titleDraft.max_title_length > 50 : false;
   const duplicateGuardInvalid = duplicateGuardDraft
     ? duplicateGuardDraft.max_repeats < 1 || duplicateGuardDraft.max_repeats > 20
     : false;
   const compressionTriggerInvalid = compressionDraft
     ? compressionDraft.trigger_fraction < MIN_COMPRESSION_TRIGGER_FRACTION ||
-      compressionDraft.trigger_fraction >= FIXED_COMPRESSION_EMERGENCY_FRACTION
+      compressionDraft.trigger_fraction > MAX_COMPRESSION_TRIGGER_FRACTION
     : false;
   const compressionWindowInvalid = compressionDraft
     ? compressionDraft.context_window_tokens < 1000 || compressionDraft.context_window_tokens > 2_000_000
@@ -217,7 +216,7 @@ export function ExtensionSettingsPage({
               }
             />
             {compressionDependencyMissing ? (
-              <DependencyWarning message="快速模型未配置，上下文压缩不可用" onOpenModelConfig={onOpenModelConfig} />
+              <DependencyWarning message="默认对话模型未配置，上下文压缩不可用" onOpenModelConfig={onOpenModelConfig} />
             ) : null}
             <CompressionConfigurator
               contextWindowTokens={compressionDraft.context_window_tokens}
@@ -226,7 +225,7 @@ export function ExtensionSettingsPage({
               triggerFraction={compressionDraft.trigger_fraction}
             />
             {compressionTriggerInvalid ? (
-              <div className={styles.fieldError}>触发阈值必须在 10% 到 90% 之间</div>
+              <div className={styles.fieldError}>触发阈值必须在 10% 到 95% 之间</div>
             ) : null}
             {compressionWindowInvalid ? (
               <div className={styles.fieldError}>上下文窗口必须在 1000 到 2000000 token 之间</div>
@@ -345,10 +344,6 @@ function CompressionConfigurator({
   triggerFraction: number;
 }) {
   const triggerTokenCount = Math.max(0, Math.round(contextWindowTokens * triggerFraction));
-  const emergencyTokenCount = Math.max(
-    0,
-    Math.round(contextWindowTokens * FIXED_COMPRESSION_EMERGENCY_FRACTION),
-  );
 
   return (
     <div className={styles.compressionConfigurator}>
@@ -378,7 +373,7 @@ function CompressionConfigurator({
         <CompressionThresholdSlider
           ariaValueText={`${formatPercent(triggerFraction)}，约 ${formatTokenCount(
             triggerTokenCount,
-          )} token 时触发上下文压缩，${formatTokenCount(emergencyTokenCount)} token 时触发全量压缩`}
+          )} token 时自动压缩上下文`}
           label="触发阈值"
           max={MAX_COMPRESSION_TRIGGER_FRACTION}
           min={MIN_COMPRESSION_TRIGGER_FRACTION}
@@ -388,8 +383,7 @@ function CompressionConfigurator({
         />
       <div className={styles.thresholdMeta}>
         <span>
-          约 {formatTokenCount(triggerTokenCount)} token 时触发上下文压缩，{formatTokenCount(emergencyTokenCount)} token
-          时触发全量压缩
+          约 {formatTokenCount(triggerTokenCount)} token 时自动压缩上下文
         </span>
       </div>
       </div>
@@ -578,7 +572,7 @@ function draftsFromSettings(settings: AgentRuntimeSettings): ExtensionDrafts {
   return {
     autoTitle: { ...settings.auto_title, only_when_default_title: true },
     duplicateGuard: settings.duplicate_tool_call_guard,
-    compression: withFixedCompressionPolicy(settings.context_compression),
+    compression: settings.context_compression,
   };
 }
 
@@ -586,17 +580,7 @@ function settingsFromDrafts(drafts: ExtensionDrafts): AgentRuntimeSettings {
   return {
     auto_title: { ...drafts.autoTitle, only_when_default_title: true },
     duplicate_tool_call_guard: drafts.duplicateGuard,
-    context_compression: withFixedCompressionPolicy(drafts.compression),
-  };
-}
-
-function withFixedCompressionPolicy(
-  settings: ContextCompressionRuntimeSettings,
-): ContextCompressionRuntimeSettings {
-  return {
-    ...settings,
-    emergency_fraction: FIXED_COMPRESSION_EMERGENCY_FRACTION,
-    retain_rounds: FIXED_COMPRESSION_RETAIN_ROUNDS,
+    context_compression: drafts.compression,
   };
 }
 

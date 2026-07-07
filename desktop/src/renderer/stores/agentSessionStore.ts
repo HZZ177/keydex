@@ -910,7 +910,9 @@ function isInternalTranscriptContextMessage(data: Record<string, unknown>): bool
   const source = stringValue(data.source);
   const metadata = asRecord(data.metadata);
   const metadataSource = metadata ? stringValue(metadata.source) : "";
+  const content = (stringValue(data.content) || stringValue(data.text)).trim();
   return (
+    isContextCompressionProtocolContent(content) ||
     source === "message_context_item" ||
     source === "message_injection" ||
     source === "skill_activation" ||
@@ -918,6 +920,10 @@ function isInternalTranscriptContextMessage(data: Record<string, unknown>): bool
     metadataSource === "message_injection" ||
     metadataSource === "skill_activation"
   );
+}
+
+function isContextCompressionProtocolContent(content: string): boolean {
+  return content.startsWith("<keydex_context_compression>");
 }
 
 function handleMiddlewareProgress(
@@ -947,8 +953,7 @@ function handleMiddlewareProgress(
       mode: contextCompressionMode(data, stage),
       notice_id: noticeId,
       reason: data.reason ?? null,
-      staging_id: data.staging_id ?? null,
-      anchor_message_id: data.anchor_message_id ?? null,
+      compression_reason: data.compression_reason ?? null,
     },
   };
   const patch: Partial<AgentChatMessage> = {
@@ -3381,19 +3386,7 @@ function threadTaskRunFromData(value: unknown): ThreadTaskRun | null {
 }
 
 function isVisibleCompressionProgressStage(stage: string): boolean {
-  return [
-    "staging_applied",
-    "emergency_triggered",
-    "emergency_failed",
-    "emergency_replacement_failed",
-    "emergency_completed",
-    "manual_light_started",
-    "manual_light_completed",
-    "manual_light_failed",
-    "manual_deep_started",
-    "manual_deep_completed",
-    "manual_deep_failed",
-  ].includes(stage);
+  return ["compression_started", "compression_completed", "compression_failed"].includes(stage);
 }
 
 function isLLMRetryProgress(data: AgentMiddlewareProgressData): boolean {
@@ -3438,47 +3431,23 @@ function llmMaxRetries(data: AgentMiddlewareProgressData): number {
 }
 
 function contextCompressionContent(stage: string): string {
-  if (stage === "emergency_triggered") {
-    return "正在全量压缩上下文";
-  }
-  if (stage === "emergency_failed" || stage === "emergency_replacement_failed") {
-    return "全量压缩失败";
-  }
-  if (stage === "emergency_completed") {
-    return "全量压缩已完成";
-  }
-  if (stage === "manual_light_started") {
+  if (stage === "compression_started") {
     return "正在压缩上下文";
   }
-  if (stage === "manual_light_completed") {
+  if (stage === "compression_completed") {
     return "上下文压缩已完成";
   }
-  if (stage === "manual_light_failed") {
+  if (stage === "compression_failed") {
     return "上下文压缩失败";
-  }
-  if (stage === "manual_deep_started") {
-    return "正在全量压缩上下文";
-  }
-  if (stage === "manual_deep_completed") {
-    return "全量压缩已完成";
-  }
-  if (stage === "manual_deep_failed") {
-    return "全量压缩失败";
   }
   return "上下文压缩已完成";
 }
 
 function contextCompressionStatus(stage: string): AgentChatMessage["status"] {
-  if (stage === "emergency_triggered") {
+  if (stage === "compression_started") {
     return "running";
   }
-  if (stage === "emergency_failed" || stage === "emergency_replacement_failed") {
-    return "failed";
-  }
-  if (stage.endsWith("_started")) {
-    return "running";
-  }
-  if (stage.endsWith("_failed")) {
+  if (stage === "compression_failed") {
     return "failed";
   }
   return "completed";
@@ -3489,7 +3458,7 @@ function contextCompressionMode(data: AgentMiddlewareProgressData, stage: string
   if (mode) {
     return mode;
   }
-  return stage.startsWith("emergency_") ? "emergency" : "background";
+  return "context";
 }
 
 function contextCompressionNoticeId(
@@ -3501,14 +3470,7 @@ function contextCompressionNoticeId(
   if (noticeId) {
     return noticeId;
   }
-  if (stage.startsWith("emergency_")) {
-    return `context-compression:emergency:${stringValue(data.trace_id) || sessionId}`;
-  }
-  if (stage.startsWith("manual_")) {
-    return `context-compression:manual:${stringValue(data.manual_mode) || "context"}:${sessionId}`;
-  }
-  const stagingFallback = stringValue(data.active_session_id) || sessionId;
-  return `context-compression:staging:${String(data.staging_id ?? stagingFallback)}`;
+  return `context-compression:${stage}:${stringValue(data.trace_id) || sessionId}`;
 }
 
 function nextMessageId(state: AgentConversationState, prefix: string, sessionId: string): string {

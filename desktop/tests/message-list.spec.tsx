@@ -144,28 +144,28 @@ describe("MessageList", () => {
 
   it("renders the shared loading icon only for running compression notices", () => {
     const runningCompression = {
-      ...message("m1", "context_compression", "正在全量压缩上下文"),
+      ...message("m1", "context_compression", "正在压缩上下文"),
       status: "running" as const,
       payload: {
         metadata: {
           compression: {
             kind: "context_compression",
-            stage: "manual_deep_started",
-            mode: "manual_deep",
-            notice_id: "context-compression:manual:deep:thread-1:run-1",
+            stage: "compression_started",
+            mode: "context",
+            notice_id: "context-compression:thread-1:run-1",
           },
         },
       },
     };
     const completedCompression = {
-      ...message("m2", "context_compression", "全量压缩已完成"),
+      ...message("m2", "context_compression", "上下文压缩已完成"),
       payload: {
         metadata: {
           compression: {
             kind: "context_compression",
-            stage: "manual_deep_completed",
-            mode: "manual_deep",
-            notice_id: "context-compression:manual:deep:thread-1:run-1",
+            stage: "compression_completed",
+            mode: "context",
+            notice_id: "context-compression:thread-1:run-1",
           },
         },
       },
@@ -191,16 +191,16 @@ describe("MessageList", () => {
       payload: { turnIndex: 1, turn_index: 1, messageEventId: "evt-assistant-1" },
     };
     const compressionNotice = {
-      ...message("m3", "context_compression", "全量压缩已完成"),
+      ...message("m3", "context_compression", "上下文压缩已完成"),
       payload: {
         turnIndex: 1,
         turn_index: 1,
         metadata: {
           compression: {
             kind: "context_compression",
-            stage: "manual_deep_completed",
-            mode: "manual_deep",
-            notice_id: "context-compression:manual:deep:thread-1:run-1",
+            stage: "compression_completed",
+            mode: "context",
+            notice_id: "context-compression:thread-1:run-1",
           },
         },
       },

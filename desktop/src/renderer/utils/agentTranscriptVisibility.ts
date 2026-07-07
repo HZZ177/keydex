@@ -3,7 +3,12 @@ import type { AgentChatMessage, AgentChatMessagePayload } from "@/types/protocol
 type TranscriptMessage = AgentChatMessage | AgentChatMessagePayload;
 
 export function shouldDisplayAgentTranscriptMessage(message: TranscriptMessage): boolean {
-  return !isHiddenForTranscript(message) && !isTaskContinuationUserMessage(message) && !isThreadTaskToolMessage(message);
+  return (
+    !isHiddenForTranscript(message) &&
+    !isContextCompressionProtocolMessage(message) &&
+    !isTaskContinuationUserMessage(message) &&
+    !isThreadTaskToolMessage(message)
+  );
 }
 
 function isHiddenForTranscript(message: TranscriptMessage): boolean {
@@ -23,6 +28,14 @@ function isTaskContinuationUserMessage(message: TranscriptMessage): boolean {
   }
   const threadTask = threadTaskRuntimeContext(message);
   return stringValue(threadTask?.trigger) === "task_continue";
+}
+
+function isContextCompressionProtocolMessage(message: TranscriptMessage): boolean {
+  if (message.role !== "system") {
+    return false;
+  }
+  const content = stringValue(message.content).trim();
+  return content.startsWith("<keydex_context_compression>");
 }
 
 function isThreadTaskToolMessage(message: TranscriptMessage): boolean {

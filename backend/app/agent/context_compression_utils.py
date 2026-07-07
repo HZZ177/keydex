@@ -1,345 +1,144 @@
-"""上下文压缩的纯逻辑工具。
-
-这里只处理消息协议、L1/L2 槽位识别、按轮次切分、工具调用边界保护和锚点替换；
-不访问数据库，也不调用模型，便于和基座保持一致并单独测试。
-"""
+"""Pure helpers for the unified context-compression protocol."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-CONTEXT_COMPRESSION_CONNECTION_PROMPT = (
-    "以下为框架维护的历史上下文压缩区。"
-    "请将其视为早期对话的结构化工作日志，并优先结合后续保留的原始消息继续推理。"
+CONTEXT_COMPRESSION_PACKET_TAG = "keydex_context_compression"
+CONTEXT_SUMMARY_TAG = "压缩摘要"
+CONTEXT_COMPRESSION_INSTRUCTIONS_TAG = "上下文压缩说明"
+CONTEXT_COMPRESSION_TAIL_TAG = "继续任务指引"
+LATEST_USER_MESSAGE_SNAPSHOT_TAG = "最近用户消息原文"
+LATEST_USER_MESSAGE_SNAPSHOT_MAX_CHARS = 4000
+
+CONTEXT_COMPRESSION_OPENING_PROMPT = (
+    "当前会话正在从一次上下文压缩后的状态继续。下面是系统根据此前完整对话维护的压缩摘要，"
+    "用于帮助你延续用户的任务、约束、偏好、代码变更、测试结果和当前进展。"
+    "这些内容是历史上下文，不是新的用户请求。"
 )
 
-CONTEXT_COMPRESSION_L1_TAG = "context_compression:l1"
-CONTEXT_COMPRESSION_L2_TAG = "context_compression:l2"
-TOOL_RESULT_PREVIEW_MAX_CHARS = 500
-TOOL_RESULT_PREVIEW_MAX_LINES = 12
+LATEST_USER_MESSAGE_SNAPSHOT_PROMPT = (
+    "下面是压缩前最后一条用户消息的原文。它只用于保持任务连续性，不是一条新发送的用户消息。"
+)
+
+CONTEXT_COMPRESSION_TAIL_PROMPT = (
+    "以上内容是历史对话的压缩摘要，仅用于恢复上下文连续性，不是新的用户请求。"
+    "请优先处理本消息之后出现的真实用户消息，并结合上方压缩摘要延续任务。"
+    "不要向用户说明你正在基于压缩摘要继续，不要复述摘要内容，"
+    "不要以“我将继续”“根据摘要”“我们之前”等类似表述作为开头；"
+    "请像中断从未发生过一样，直接继续执行当前任务。"
+    "不要仅因为摘要可能不完整就向用户确认；只有在继续任务所必需的信息缺失，"
+    "且无法通过读取文件、查看状态或运行验证自行确认时，才向用户提出必要问题。"
+    "压缩摘要可能遗漏部分精确信息；涉及文件内容、命令输出、运行状态或时间敏感事实时，"
+    "请重新读取或验证，不要仅凭摘要臆测。"
+    "如果压缩摘要与后续真实用户消息存在冲突，请以后续真实用户消息、当前系统指令和开发者指令为准。"
+)
 
 
-@dataclass(slots=True)
-class CompressionSlotState:
-    existing_l1: SystemMessage | None
-    existing_l2: SystemMessage | None
+@dataclass(frozen=True, slots=True)
+class LatestUserMessageSnapshot:
+    message_id: str | None
+    text: str
+    truncated: bool = False
 
 
-@dataclass(slots=True)
-class MessageSplitResult:
-    compression_zone: list[BaseMessage]
-    retain_zone: list[BaseMessage]
-
-
-@dataclass(slots=True)
-class AnchorReplaceResult:
-    anchor_message_id: str | None
+@dataclass(frozen=True, slots=True)
+class CompressionReplacementResult:
     replaced_messages: list[BaseMessage]
-    applied: bool
+    latest_user_snapshot: LatestUserMessageSnapshot | None
+
+    @property
+    def applied(self) -> bool:
+        return bool(self.replaced_messages)
 
 
-@dataclass(slots=True)
-class CompressionStateSnapshot:
-    prefix_messages: list[BaseMessage]
-    raw_messages: list[BaseMessage]
-    slots: CompressionSlotState
-
-
-CompressionPhase = Literal["initial", "second", "steady"]
-
-
-@dataclass(slots=True)
-class CompressionMaterial:
-    phase: CompressionPhase
-    existing_l1_message: SystemMessage | None
-    existing_l2_message: SystemMessage | None
-    existing_l1_content: str | None
-    existing_l2_content: str | None
-    compression_zone_messages: list[BaseMessage]
-    retain_zone_messages: list[BaseMessage]
-    anchor_message_id: str | None
-    trace_id: str | None = None
-    trace_record_id: str | None = None
-    original_session_id: str | None = None
-    active_session_id: str | None = None
-    scene_id: str | None = None
-    scene_version_seq: int | None = None
-    side_event_metadata: dict[str, Any] | None = None
-
-
-def _message_id(message: BaseMessage) -> str | None:
-    return getattr(message, "id", None)
-
-
-def _extract_tagged_content(content: str, level_tag: str) -> str | None:
-    prefix = f"<{level_tag}>\n"
-    suffix = f"\n</{level_tag}>"
-    if content.startswith(prefix) and content.endswith(suffix):
-        return content[len(prefix) : -len(suffix)]
-    return None
-
-
-def _build_compression_message(level_tag: str, content: str) -> SystemMessage:
-    return SystemMessage(content=f"<{level_tag}>\n{content}\n</{level_tag}>")
-
-
-def build_l1_compression_message(content: str) -> SystemMessage:
-    return _build_compression_message(CONTEXT_COMPRESSION_L1_TAG, content)
-
-
-def build_l2_compression_message(content: str) -> SystemMessage:
-    return _build_compression_message(CONTEXT_COMPRESSION_L2_TAG, content)
-
-
-def build_compression_context_messages(
+def build_context_compression_replacement_messages(
     *,
-    l1_content: str,
-    l2_content: str | None = None,
-) -> list[SystemMessage]:
-    messages: list[SystemMessage] = [SystemMessage(content=CONTEXT_COMPRESSION_CONNECTION_PROMPT)]
-    if l2_content:
-        messages.append(build_l2_compression_message(l2_content))
-    messages.append(build_l1_compression_message(l1_content))
-    return messages
-
-
-def is_l1_compression_message(message: BaseMessage) -> bool:
-    return isinstance(message, SystemMessage) and f"<{CONTEXT_COMPRESSION_L1_TAG}>" in str(
-        message.content
-    )
-
-
-def is_l2_compression_message(message: BaseMessage) -> bool:
-    return isinstance(message, SystemMessage) and f"<{CONTEXT_COMPRESSION_L2_TAG}>" in str(
-        message.content
-    )
-
-
-def extract_l1_compression_content(message: BaseMessage) -> str | None:
-    if not is_l1_compression_message(message):
-        return None
-    return _extract_tagged_content(str(message.content), CONTEXT_COMPRESSION_L1_TAG)
-
-
-def extract_l2_compression_content(message: BaseMessage) -> str | None:
-    if not is_l2_compression_message(message):
-        return None
-    return _extract_tagged_content(str(message.content), CONTEXT_COMPRESSION_L2_TAG)
-
-
-def detect_existing_compression_slots(messages: Iterable[BaseMessage]) -> CompressionSlotState:
-    existing_l1: SystemMessage | None = None
-    existing_l2: SystemMessage | None = None
-    for message in messages:
-        if is_l2_compression_message(message):
-            existing_l2 = message
-        elif is_l1_compression_message(message):
-            existing_l1 = message
-    return CompressionSlotState(existing_l1=existing_l1, existing_l2=existing_l2)
-
-
-def split_compression_prefix(messages: Iterable[BaseMessage]) -> CompressionStateSnapshot:
-    prefix_messages: list[BaseMessage] = []
-    raw_messages: list[BaseMessage] = []
-    prefix_locked = False
-
-    for message in messages:
-        is_protocol_message = isinstance(message, SystemMessage) and (
-            str(message.content) == CONTEXT_COMPRESSION_CONNECTION_PROMPT
-            or is_l1_compression_message(message)
-            or is_l2_compression_message(message)
-        )
-        if not prefix_locked and is_protocol_message:
-            prefix_messages.append(message)
-            continue
-        prefix_locked = True
-        raw_messages.append(message)
-
-    return CompressionStateSnapshot(
-        prefix_messages=prefix_messages,
-        raw_messages=raw_messages,
-        slots=detect_existing_compression_slots(prefix_messages),
-    )
-
-
-def adjust_split_index_for_tool_boundary(messages: list[BaseMessage], split_index: int) -> int:
-    if split_index <= 0 or split_index >= len(messages):
-        return split_index
-
-    left = messages[split_index - 1]
-    right = messages[split_index]
-    if (
-        isinstance(left, AIMessage)
-        and getattr(left, "tool_calls", None)
-        and isinstance(right, ToolMessage)
-    ):
-        return split_index - 1
-
-    if isinstance(right, ToolMessage):
-        cursor = split_index - 1
-        while cursor >= 0 and isinstance(messages[cursor], ToolMessage):
-            cursor -= 1
-        if (
-            cursor >= 0
-            and isinstance(messages[cursor], AIMessage)
-            and getattr(messages[cursor], "tool_calls", None)
-        ):
-            return cursor
-    return split_index
-
-
-def split_messages_by_recent_turns(
-    messages: Iterable[BaseMessage],
-    retain_rounds: int,
-) -> MessageSplitResult:
-    message_list = list(messages)
-    if not message_list:
-        return MessageSplitResult(compression_zone=[], retain_zone=[])
-    if retain_rounds <= 0:
-        return MessageSplitResult(compression_zone=message_list, retain_zone=[])
-
-    human_indices = [
-        index for index, message in enumerate(message_list) if isinstance(message, HumanMessage)
+    summary: str,
+    source_messages: Iterable[BaseMessage],
+) -> CompressionReplacementResult:
+    cleaned_summary = summary.strip()
+    if not cleaned_summary:
+        raise ValueError("summary must not be empty")
+    latest_user_snapshot = build_latest_user_message_snapshot(source_messages)
+    summary_sections: list[str] = [
+        f"<{CONTEXT_COMPRESSION_PACKET_TAG}>",
+        f"<{CONTEXT_COMPRESSION_INSTRUCTIONS_TAG}>\n"
+        f"{CONTEXT_COMPRESSION_OPENING_PROMPT}\n"
+        f"</{CONTEXT_COMPRESSION_INSTRUCTIONS_TAG}>",
+        f"<{CONTEXT_SUMMARY_TAG}>\n{cleaned_summary}\n</{CONTEXT_SUMMARY_TAG}>",
     ]
-    if not human_indices:
-        return MessageSplitResult(compression_zone=[], retain_zone=message_list)
-    if len(human_indices) <= retain_rounds:
-        return MessageSplitResult(compression_zone=[], retain_zone=message_list)
-
-    split_index = adjust_split_index_for_tool_boundary(message_list, human_indices[-retain_rounds])
-    return MessageSplitResult(
-        compression_zone=message_list[:split_index],
-        retain_zone=message_list[split_index:],
+    if latest_user_snapshot is not None:
+        summary_sections.extend(
+            [
+                LATEST_USER_MESSAGE_SNAPSHOT_PROMPT,
+                (
+                    f'<{LATEST_USER_MESSAGE_SNAPSHOT_TAG} included="true" '
+                    f'truncated="{str(latest_user_snapshot.truncated).lower()}" '
+                    f'message_id="{_escape_attribute(latest_user_snapshot.message_id)}">\n'
+                    f"{latest_user_snapshot.text}\n"
+                    f"</{LATEST_USER_MESSAGE_SNAPSHOT_TAG}>"
+                ),
+            ]
+        )
+    summary_sections.extend(
+        [
+            f"<{CONTEXT_COMPRESSION_TAIL_TAG}>\n"
+            f"{CONTEXT_COMPRESSION_TAIL_PROMPT}\n"
+            f"</{CONTEXT_COMPRESSION_TAIL_TAG}>",
+            f"</{CONTEXT_COMPRESSION_PACKET_TAG}>",
+        ]
+    )
+    return CompressionReplacementResult(
+        replaced_messages=[SystemMessage(content="\n\n".join(summary_sections))],
+        latest_user_snapshot=latest_user_snapshot,
     )
 
 
-def select_anchor_message_id(messages: Iterable[BaseMessage]) -> str | None:
-    for message in messages:
-        message_id = _message_id(message)
-        if message_id:
-            return message_id
+def is_context_compression_summary_message(message: BaseMessage) -> bool:
+    if not isinstance(message, SystemMessage):
+        return False
+    content = str(message.content)
+    return content.startswith(f"<{CONTEXT_COMPRESSION_PACKET_TAG}>") and content.endswith(
+        f"</{CONTEXT_COMPRESSION_PACKET_TAG}>"
+    )
+
+
+def is_context_compression_protocol_message(message: BaseMessage) -> bool:
+    return is_context_compression_summary_message(message)
+
+
+def build_latest_user_message_snapshot(
+    messages: Iterable[BaseMessage],
+) -> LatestUserMessageSnapshot | None:
+    for message in reversed(list(messages)):
+        if not isinstance(message, HumanMessage):
+            continue
+        text = stringify_message_content(message.content).strip()
+        if not text:
+            return None
+        truncated = False
+        if len(text) > LATEST_USER_MESSAGE_SNAPSHOT_MAX_CHARS:
+            text = text[:LATEST_USER_MESSAGE_SNAPSHOT_MAX_CHARS].rstrip()
+            text = (
+                f"{text}\n...(已截断：仅保留前 "
+                f"{LATEST_USER_MESSAGE_SNAPSHOT_MAX_CHARS} 个字符)"
+            )
+            truncated = True
+        return LatestUserMessageSnapshot(
+            message_id=getattr(message, "id", None),
+            text=text,
+            truncated=truncated,
+        )
     return None
 
 
-def select_last_message_id(messages: Iterable[BaseMessage]) -> str | None:
-    selected: str | None = None
-    for message in messages:
-        message_id = _message_id(message)
-        if message_id:
-            selected = message_id
-    return selected
-
-
-def apply_compression_anchor_replacement(
-    *,
-    messages: Iterable[BaseMessage],
-    anchor_message_id: str | None,
-    l1_content: str,
-    l2_content: str | None = None,
-) -> AnchorReplaceResult:
-    message_list = list(messages)
-    if not anchor_message_id:
-        return AnchorReplaceResult(
-            anchor_message_id=None, replaced_messages=message_list, applied=False
-        )
-
-    anchor_index = next(
-        (
-            index
-            for index, message in enumerate(message_list)
-            if _message_id(message) == anchor_message_id
-        ),
-        None,
-    )
-    if anchor_index is None:
-        return AnchorReplaceResult(
-            anchor_message_id=anchor_message_id,
-            replaced_messages=message_list,
-            applied=False,
-        )
-
-    replaced_messages = (
-        build_compression_context_messages(
-            l1_content=l1_content,
-            l2_content=l2_content,
-        )
-        + message_list[anchor_index:]
-    )
-    return AnchorReplaceResult(
-        anchor_message_id=anchor_message_id,
-        replaced_messages=replaced_messages,
-        applied=True,
-    )
-
-
-def apply_compression_full_replacement(
-    *,
-    l1_content: str,
-    l2_content: str | None = None,
-) -> AnchorReplaceResult:
-    return AnchorReplaceResult(
-        anchor_message_id=None,
-        replaced_messages=build_compression_context_messages(
-            l1_content=l1_content,
-            l2_content=l2_content,
-        ),
-        applied=True,
-    )
-
-
-def apply_compression_full_replacement_after_boundary(
-    *,
-    messages: Iterable[BaseMessage],
-    source_last_message_id: str | None,
-    l1_content: str,
-    l2_content: str | None = None,
-) -> AnchorReplaceResult:
-    message_list = list(messages)
-    if not source_last_message_id:
-        return AnchorReplaceResult(
-            anchor_message_id=None,
-            replaced_messages=message_list,
-            applied=False,
-        )
-    boundary_index = next(
-        (
-            index
-            for index, message in enumerate(message_list)
-            if _message_id(message) == source_last_message_id
-        ),
-        None,
-    )
-    if boundary_index is None:
-        return AnchorReplaceResult(
-            anchor_message_id=source_last_message_id,
-            replaced_messages=message_list,
-            applied=False,
-        )
-    replaced_messages = build_compression_context_messages(
-        l1_content=l1_content,
-        l2_content=l2_content,
-    ) + message_list[boundary_index + 1 :]
-    return AnchorReplaceResult(
-        anchor_message_id=source_last_message_id,
-        replaced_messages=replaced_messages,
-        applied=True,
-    )
-
-
-def detect_compression_phase(snapshot: CompressionStateSnapshot) -> CompressionPhase:
-    if snapshot.slots.existing_l1 is None:
-        return "initial"
-    if snapshot.slots.existing_l2 is None:
-        return "second"
-    return "steady"
-
-
-def _stringify_message_content(content: Any) -> str:
+def stringify_message_content(content: Any) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -360,164 +159,13 @@ def _stringify_message_content(content: Any) -> str:
     return str(content) if content is not None else ""
 
 
-def _truncate_tool_result_text(text: str) -> str:
-    normalized = text.strip()
-    if not normalized:
-        return "(空结果)"
-
-    lines = normalized.splitlines()
-    truncated_by_lines = False
-    if len(lines) > TOOL_RESULT_PREVIEW_MAX_LINES:
-        lines = lines[:TOOL_RESULT_PREVIEW_MAX_LINES]
-        truncated_by_lines = True
-
-    preview = "\n".join(lines)
-    truncated_by_chars = False
-    if len(preview) > TOOL_RESULT_PREVIEW_MAX_CHARS:
-        preview = preview[:TOOL_RESULT_PREVIEW_MAX_CHARS].rstrip()
-        truncated_by_chars = True
-
-    if truncated_by_lines or truncated_by_chars:
-        suffix_parts: list[str] = []
-        if truncated_by_lines:
-            suffix_parts.append(f"仅保留前 {TOOL_RESULT_PREVIEW_MAX_LINES} 行")
-        if truncated_by_chars:
-            suffix_parts.append(f"仅保留前 {TOOL_RESULT_PREVIEW_MAX_CHARS} 字符")
-        preview = f"{preview}\n...(已截断：{'，'.join(suffix_parts)})"
-    return preview
-
-
-def _render_tool_call_summary(message: AIMessage) -> list[str]:
-    lines: list[str] = []
-    tool_calls = getattr(message, "tool_calls", None) or []
-    for index, tool_call in enumerate(tool_calls, start=1):
-        if isinstance(tool_call, dict):
-            name = tool_call.get("name") or "unknown"
-            args = tool_call.get("args")
-            tool_id = tool_call.get("id") or "unknown"
-        else:
-            name = getattr(tool_call, "name", None) or "unknown"
-            args = getattr(tool_call, "args", None)
-            tool_id = getattr(tool_call, "id", None) or "unknown"
-
-        if isinstance(args, str):
-            args_text = args
-        elif args is None:
-            args_text = "{}"
-        else:
-            try:
-                args_text = json.dumps(args, ensure_ascii=False)
-            except TypeError:
-                args_text = str(args)
-        lines.append(f"  - tool_call[{index}]: name={name}, id={tool_id}, args={args_text}")
-    return lines
-
-
-def render_messages_for_compression_input(messages: Iterable[BaseMessage]) -> str:
-    message_list = list(messages)
-    if not message_list:
+def _escape_attribute(value: str | None) -> str:
+    if value is None:
         return ""
-
-    sections: list[str] = []
-    current_turn_lines: list[str] = []
-    current_turn_number = 0
-
-    def flush_turn() -> None:
-        nonlocal current_turn_lines, current_turn_number
-        if not current_turn_lines:
-            return
-        sections.append(
-            f"## 用户轮次 {current_turn_number}\n" + "\n".join(current_turn_lines).strip()
-        )
-        current_turn_lines = []
-
-    for message in message_list:
-        if isinstance(message, HumanMessage):
-            flush_turn()
-            current_turn_number += 1
-            current_turn_lines = [
-                f"[用户输入]\n{_stringify_message_content(message.content).strip()}"
-            ]
-            continue
-
-        if current_turn_number == 0:
-            current_turn_number = 1
-
-        if isinstance(message, AIMessage):
-            ai_text = _stringify_message_content(message.content).strip()
-            if ai_text:
-                current_turn_lines.append(f"[AI响应]\n{ai_text}")
-            tool_call_lines = _render_tool_call_summary(message)
-            if tool_call_lines:
-                current_turn_lines.append("[AI发起工具调用]\n" + "\n".join(tool_call_lines))
-            continue
-
-        if isinstance(message, ToolMessage):
-            tool_id = getattr(message, "tool_call_id", None) or "unknown"
-            preview = _truncate_tool_result_text(_stringify_message_content(message.content))
-            current_turn_lines.append(f"[工具结果][tool_call_id={tool_id}]\n{preview}")
-            continue
-
-        current_turn_lines.append(
-            f"[{type(message).__name__}]\n{_stringify_message_content(message.content).strip()}"
-        )
-
-    flush_turn()
-    return "\n\n".join(section.strip() for section in sections if section.strip()).strip()
-
-
-def extract_compression_material(
-    *,
-    snapshot: CompressionStateSnapshot,
-    split_result: MessageSplitResult,
-    anchor_message_id: str | None,
-    trace_id: str | None = None,
-    trace_record_id: str | None = None,
-    original_session_id: str | None = None,
-    active_session_id: str | None = None,
-    scene_id: str | None = None,
-    scene_version_seq: int | None = None,
-    side_event_metadata: dict[str, Any] | None = None,
-) -> CompressionMaterial:
-    existing_l1 = snapshot.slots.existing_l1
-    existing_l2 = snapshot.slots.existing_l2
-    return CompressionMaterial(
-        phase=detect_compression_phase(snapshot),
-        existing_l1_message=existing_l1,
-        existing_l2_message=existing_l2,
-        existing_l1_content=extract_l1_compression_content(existing_l1) if existing_l1 else None,
-        existing_l2_content=extract_l2_compression_content(existing_l2) if existing_l2 else None,
-        compression_zone_messages=list(split_result.compression_zone),
-        retain_zone_messages=list(split_result.retain_zone),
-        anchor_message_id=anchor_message_id,
-        trace_id=trace_id,
-        trace_record_id=trace_record_id,
-        original_session_id=original_session_id,
-        active_session_id=active_session_id,
-        scene_id=scene_id,
-        scene_version_seq=scene_version_seq,
-        side_event_metadata=dict(side_event_metadata or {}),
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
     )
-
-
-def split_and_prepare_compression(
-    *,
-    messages: Iterable[BaseMessage],
-    retain_rounds: int,
-) -> tuple[CompressionStateSnapshot, MessageSplitResult, str | None]:
-    snapshot = split_compression_prefix(messages)
-    split_result = split_messages_by_recent_turns(snapshot.raw_messages, retain_rounds)
-    anchor_message_id = select_anchor_message_id(split_result.retain_zone)
-    return snapshot, split_result, anchor_message_id
-
-
-def split_and_prepare_emergency_compression(
-    *,
-    messages: Iterable[BaseMessage],
-) -> tuple[CompressionStateSnapshot, MessageSplitResult, str | None]:
-    snapshot = split_compression_prefix(messages)
-    split_result = MessageSplitResult(
-        compression_zone=list(snapshot.raw_messages),
-        retain_zone=[],
-    )
-    return snapshot, split_result, None

@@ -205,16 +205,17 @@ async def test_chat_projection_maps_middleware_progress() -> None:
             DomainEventType.MIDDLEWARE_PROGRESS,
             {
                 "middleware": "ContextCompressionMiddleware",
-                "stage": "emergency_triggered",
-                "notice_id": "context-compression:emergency:trace_1",
+                "stage": "compression_started",
+                "compression_mode": "context",
+                "notice_id": "context-compression:trace_1",
             },
         )
     )
 
     assert adapter.sent[0]["session_id"] == "ses_original"
     assert adapter.sent[0]["action"] == "middleware_progress"
-    assert adapter.sent[0]["data"]["stage"] == "emergency_triggered"
-    assert adapter.sent[0]["data"]["notice_id"] == "context-compression:emergency:trace_1"
+    assert adapter.sent[0]["data"]["stage"] == "compression_started"
+    assert adapter.sent[0]["data"]["notice_id"] == "context-compression:trace_1"
 
 
 @pytest.mark.asyncio

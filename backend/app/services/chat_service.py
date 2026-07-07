@@ -122,6 +122,7 @@ CANCELLED_CHECKPOINT_NOTICE = "[用户在此处取消]"
 MAX_IMAGE_ATTACHMENTS_PER_TURN = 8
 MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024
 SUPPORTED_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+CURRENT_TURN_MESSAGE_MARKER = "_keydex_current_turn"
 
 
 def _build_message_injection_items(runtime_params: dict[str, Any] | None) -> list[InjectedMessage]:
@@ -618,7 +619,7 @@ def _build_user_runtime_message(
     if not image_attachments:
         if not stripped:
             return None
-        return {"role": "user", "content": text}
+        return {"role": "user", "content": text, CURRENT_TURN_MESSAGE_MARKER: True}
 
     content: list[dict[str, Any]] = []
     if stripped:
@@ -630,7 +631,7 @@ def _build_user_runtime_message(
                 "image_url": {"url": _attachment_data_url(record)},
             }
         )
-    return {"role": "user", "content": content}
+    return {"role": "user", "content": content, CURRENT_TURN_MESSAGE_MARKER: True}
 
 
 def _attachment_data_url(record: AttachmentRecord) -> str:
@@ -1473,7 +1474,11 @@ class ChatService:
                 messages_to_send.append(user_message)
             if not messages_to_send:
                 messages_to_send.append(
-                    {"role": "user", "content": "请根据已附加的上下文继续处理。"}
+                    {
+                        "role": "user",
+                        "content": "请根据已附加的上下文继续处理。",
+                        CURRENT_TURN_MESSAGE_MARKER: True,
+                    }
                 )
             event_stream = agent.astream_events(
                 {"messages": messages_to_send},

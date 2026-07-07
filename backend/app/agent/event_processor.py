@@ -10,6 +10,7 @@ from typing import Any
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.types import Command
 
+from backend.app.agent.internal_llm_events import is_internal_context_compression_event
 from backend.app.agent.tool_call_progress import (
     ToolCallChunkPipeline,
     finalize_file_change,
@@ -67,6 +68,9 @@ async def process_agent_events(
             data = event.get("data") or {}
             run_id = str(event.get("run_id") or "")
             name = str(event.get("name") or "")
+
+            if is_internal_context_compression_event(event):
+                continue
 
             if event_type == "on_chat_model_start":
                 continue

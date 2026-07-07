@@ -1289,21 +1289,31 @@ describe("agentSessionStore reducer", () => {
         message_event_id: "evt-context-2",
       },
     });
+    state = reduceAgentWsEvent(state, {
+      action: "system_message",
+      data: {
+        session_id: "ses-1",
+        content:
+          "<keydex_context_compression>\n<压缩摘要>\n摘要\n</压缩摘要>\n</keydex_context_compression>",
+        message_event_id: "evt-context-3",
+        metadata: { source: "message_context_item" },
+      },
+    });
 
     expect(selectAgentMessages(state, "ses-1")).toEqual([]);
   });
 
-  it("appends context compression notices when staging is applied", () => {
+  it("appends context compression notices when compression completes", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, {
       action: "middleware_progress",
       data: {
         session_id: "ses-1",
         middleware: "ContextCompressionMiddleware",
-        stage: "staging_applied",
-        compression_mode: "background",
-        notice_id: "context-compression:staging:1",
-        staging_id: 1,
+        stage: "compression_completed",
+        compression_mode: "context",
+        compression_reason: "manual",
+        notice_id: "context-compression:ses-1:run-1",
         timestamp_ms: 1_782_600_000_000,
       },
     });
@@ -1316,9 +1326,10 @@ describe("agentSessionStore reducer", () => {
         metadata: {
           compression: {
             kind: "context_compression",
-            stage: "staging_applied",
-            mode: "background",
-            notice_id: "context-compression:staging:1",
+            stage: "compression_completed",
+            mode: "context",
+            notice_id: "context-compression:ses-1:run-1",
+            compression_reason: "manual",
           },
         },
       },
@@ -1374,16 +1385,17 @@ describe("agentSessionStore reducer", () => {
     ]);
   });
 
-  it("updates one emergency compression notice through running and terminal states", () => {
+  it("updates one automatic compression notice through running and terminal states", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, {
       action: "middleware_progress",
       data: {
         session_id: "ses-1",
         middleware: "ContextCompressionMiddleware",
-        stage: "emergency_triggered",
-        compression_mode: "emergency",
-        notice_id: "context-compression:emergency:trace-1",
+        stage: "compression_started",
+        compression_mode: "context",
+        compression_reason: "automatic",
+        notice_id: "context-compression:trace-1",
         trace_id: "trace-1",
       },
     });
@@ -1392,9 +1404,10 @@ describe("agentSessionStore reducer", () => {
       data: {
         session_id: "ses-1",
         middleware: "ContextCompressionMiddleware",
-        stage: "emergency_completed",
-        compression_mode: "emergency",
-        notice_id: "context-compression:emergency:trace-1",
+        stage: "compression_completed",
+        compression_mode: "context",
+        compression_reason: "automatic",
+        notice_id: "context-compression:trace-1",
         trace_id: "trace-1",
       },
     });
@@ -1402,13 +1415,14 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentMessages(state, "ses-1")).toMatchObject([
       {
         role: "system",
-        content: "全量压缩已完成",
+        content: "上下文压缩已完成",
         status: "completed",
         metadata: {
           compression: {
-            stage: "emergency_completed",
-            mode: "emergency",
-            notice_id: "context-compression:emergency:trace-1",
+            stage: "compression_completed",
+            mode: "context",
+            notice_id: "context-compression:trace-1",
+            compression_reason: "automatic",
           },
         },
       },
@@ -1416,17 +1430,17 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentMessages(state, "ses-1")).toHaveLength(1);
   });
 
-  it("updates one manual deep compression notice through running and terminal states", () => {
+  it("updates one manual compression notice through running and terminal states", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, {
       action: "middleware_progress",
       data: {
         session_id: "ses-1",
         middleware: "ContextCompressionMiddleware",
-        stage: "manual_deep_started",
-        compression_mode: "manual_deep",
-        manual_mode: "deep",
-        notice_id: "context-compression:manual:deep:ses-1:run-1",
+        stage: "compression_started",
+        compression_mode: "context",
+        compression_reason: "manual",
+        notice_id: "context-compression:ses-1:run-1",
       },
     });
     state = reduceAgentWsEvent(state, {
@@ -1434,25 +1448,24 @@ describe("agentSessionStore reducer", () => {
       data: {
         session_id: "ses-1",
         middleware: "ContextCompressionMiddleware",
-        stage: "manual_deep_completed",
-        compression_mode: "manual_deep",
-        manual_mode: "deep",
-        notice_id: "context-compression:manual:deep:ses-1:run-1",
-        staging_id: 3,
+        stage: "compression_completed",
+        compression_mode: "context",
+        compression_reason: "manual",
+        notice_id: "context-compression:ses-1:run-1",
       },
     });
 
     expect(selectAgentMessages(state, "ses-1")).toMatchObject([
       {
         role: "system",
-        content: "全量压缩已完成",
+        content: "上下文压缩已完成",
         status: "completed",
         metadata: {
           compression: {
-            stage: "manual_deep_completed",
-            mode: "manual_deep",
-            notice_id: "context-compression:manual:deep:ses-1:run-1",
-            staging_id: 3,
+            stage: "compression_completed",
+            mode: "context",
+            notice_id: "context-compression:ses-1:run-1",
+            compression_reason: "manual",
           },
         },
       },

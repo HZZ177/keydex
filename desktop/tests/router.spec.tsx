@@ -1393,8 +1393,6 @@ function defaultExtensionSettings() {
       enabled: false,
       context_window_tokens: 128000,
       trigger_fraction: 0.75,
-      emergency_fraction: 0.9,
-      retain_rounds: 2,
     },
   };
 }

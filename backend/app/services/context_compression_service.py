@@ -1,31 +1,44 @@
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import httpx
+from langchain_core.messages import BaseMessage
 
 from backend.app.agent.context_compression_utils import (
-    CompressionMaterial,
-    render_messages_for_compression_input,
+    CompressionReplacementResult,
+    build_context_compression_replacement_messages,
 )
 from backend.app.agent.factory import AgentFactory, agent_factory
-from backend.app.agent.side_task_model import SideTaskLLM, SideTaskModelError, create_side_task_llm
+from backend.app.agent.internal_llm_events import context_compression_llm_config
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
-from backend.app.services.context_compression_prompt_builder import build_l1_prompt, build_l2_prompt
-from backend.app.storage import StorageRepositories
+from backend.app.model import (
+    ModelSelectionError,
+    ResolvedModelSelection,
+    resolve_model_default,
+    resolve_model_selection,
+)
+from backend.app.services.context_compression_prompt_builder import (
+    build_compaction_prompt,
+    extract_summary_text,
+)
+from backend.app.storage import MODEL_DEFAULT_CHAT, SessionRecord, StorageRepositories
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class CompressionGenerationResult:
     success: bool
-    phase: str
-    new_l1_content: str | None = None
-    new_l2_content: str | None = None
+    reason: Literal["manual", "automatic"]
+    summary: str | None = None
+    replacement_messages: list[BaseMessage] | None = None
     failure_reason: str | None = None
+    model_provider_id: str | None = None
+    model: str | None = None
+    compression_message_count: int = 0
+    total_message_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -39,11 +52,7 @@ class ContextCompressionOutcome:
 
 
 class ContextCompressionService:
-    """只负责调用快速模型生成 L1/L2 压缩正文。
-
-    会话派生、检查点克隆、压缩暂存和消息替换都由中间件处理；
-    这里保持和基座一致的职责边界，避免 service 直接改写主对话状态。
-    """
+    """Generate a unified continuation summary with the current chat model."""
 
     def __init__(
         self,
@@ -59,190 +68,179 @@ class ContextCompressionService:
     async def generate_compression_result(
         self,
         *,
-        material: CompressionMaterial,
+        session: SessionRecord,
+        messages: list[BaseMessage],
+        reason: Literal["manual", "automatic"],
+        trace_id: str | None = None,
+        trace_record_id: str | None = None,
+        active_session_id: str | None = None,
     ) -> CompressionGenerationResult:
-        try:
-            side_task = create_side_task_llm(
-                self.repositories,
-                factory=self.factory,
-                http_transport=self.http_transport,
-                temperature=0.3,
-                max_tokens=2000,
+        message_list = list(messages)
+        if not message_list:
+            return CompressionGenerationResult(
+                success=False,
+                reason=reason,
+                failure_reason="no_compressible_messages",
             )
-        except SideTaskModelError as exc:
+        try:
+            resolved = self._resolve_session_model(session)
+            llm = self.factory.get_or_create_llm(
+                resolved.settings,
+                model=resolved.settings.model,
+                temperature=0,
+                streaming=False,
+                http_transport=self.http_transport,
+                llm_request_logs=self.repositories.llm_request_logs,
+                provider_id=resolved.provider_id,
+                provider_name=resolved.provider_name,
+            )
+        except ModelSelectionError as exc:
             logger.warning(
-                "[ContextCompressionService] 获取快速模型配置失败 | "
-                f"配置范围={exc.scope} | 错误={exc}"
+                "[ContextCompressionService] 获取主模型配置失败 | "
+                f"scope={exc.scope} | code={exc.code} | error={exc}"
             )
             return CompressionGenerationResult(
                 success=False,
-                phase=material.phase,
-                failure_reason=f"model_config_error:{exc}",
-            )
-
-        try:
-            if material.phase == "initial":
-                new_l1 = await self._generate_l1(side_task, material)
-                if not new_l1:
-                    return CompressionGenerationResult(
-                        success=False,
-                        phase=material.phase,
-                        failure_reason="empty_l1_output",
-                    )
-                return CompressionGenerationResult(
-                    success=True,
-                    phase=material.phase,
-                    new_l1_content=new_l1,
-                )
-
-            new_l2, new_l1 = await asyncio.gather(
-                self._generate_l2(side_task, material),
-                self._generate_l1(side_task, material),
-                return_exceptions=True,
-            )
-            for item in (new_l2, new_l1):
-                if isinstance(item, Exception):
-                    raise item
-            if not new_l1:
-                return CompressionGenerationResult(
-                    success=False,
-                    phase=material.phase,
-                    failure_reason="empty_l1_output",
-                )
-            if not new_l2:
-                return CompressionGenerationResult(
-                    success=False,
-                    phase=material.phase,
-                    failure_reason="empty_l2_output",
-                )
-            return CompressionGenerationResult(
-                success=True,
-                phase=material.phase,
-                new_l1_content=str(new_l1),
-                new_l2_content=str(new_l2),
+                reason=reason,
+                failure_reason=f"model_config_error:{exc.code}",
+                total_message_count=len(message_list),
             )
         except Exception as exc:
-            logger.opt(exception=True).warning(
-                f"[ContextCompressionService] 压缩生成失败 | 阶段={material.phase} | 错误={exc}"
-            )
+            logger.warning(f"[ContextCompressionService] 创建主模型失败 | error={exc}")
             return CompressionGenerationResult(
                 success=False,
-                phase=material.phase,
-                failure_reason=f"llm_error:{exc}",
+                reason=reason,
+                failure_reason=f"model_create_error:{exc}",
+                total_message_count=len(message_list),
             )
 
-    async def _generate_l1(
-        self, side_task: SideTaskLLM, material: CompressionMaterial
-    ) -> str | None:
-        raw_messages_text = render_messages_for_compression_input(
-            material.compression_zone_messages
-        )
-        if not raw_messages_text.strip():
-            return None
-        prompt = build_l1_prompt(raw_messages_text)
-        return await self._invoke_compression_llm(
-            side_task=side_task,
-            material=material,
-            level="l1",
-            prompt_messages=[prompt.system_message, prompt.human_message],
-        )
-
-    async def _generate_l2(
-        self, side_task: SideTaskLLM, material: CompressionMaterial
-    ) -> str | None:
-        existing_l1_text = (material.existing_l1_content or "").strip()
-        if not existing_l1_text:
-            return None
-        prompt = build_l2_prompt(existing_l1_text)
-        return await self._invoke_compression_llm(
-            side_task=side_task,
-            material=material,
-            level="l2",
-            prompt_messages=[prompt.system_message, prompt.human_message],
-        )
-
-    async def _invoke_compression_llm(
-        self,
-        *,
-        side_task: SideTaskLLM,
-        material: CompressionMaterial,
-        level: str,
-        prompt_messages: list[Any],
-    ) -> str | None:
+        prompt = build_compaction_prompt()
+        prompt_messages = [*message_list, prompt.human_message]
         side_event_id = new_id()
         started_at_ms = int(time.time() * 1000)
-        trace_id = str(material.trace_id or "")
-        trace_record_id = str(material.trace_record_id or trace_id)
-        session_id = str(material.original_session_id or material.active_session_id or "")
-        request_preview = _preview_messages(prompt_messages)
-        if trace_id and trace_record_id and session_id:
+        if trace_id and trace_record_id:
             self._append_side_event(
                 trace_id=trace_id,
                 trace_record_id=trace_record_id,
-                event_type="context_compression.llm",
                 status="running",
                 side_event_id=side_event_id,
-                material=material,
-                level=level,
-                model=side_task.model,
-                input_data={"messages": request_preview},
+                session=session,
+                active_session_id=active_session_id or session.active_session_id or session.id,
+                model=resolved.settings.model,
+                reason=reason,
                 started_at_ms=started_at_ms,
             )
         try:
-            response = await side_task.llm.ainvoke(prompt_messages)
-            usage = _extract_token_usage(response)
-            output_text = _clean_generated_text(getattr(response, "content", response))
-            if trace_id and trace_record_id and session_id:
-                self._append_side_event(
-                    trace_id=trace_id,
-                    trace_record_id=trace_record_id,
-                    event_type="context_compression.llm",
-                    status="completed" if output_text else "failed",
-                    side_event_id=side_event_id,
-                    material=material,
-                    level=level,
-                    model=side_task.model,
-                    output_data={"content": output_text or ""},
-                    usage=usage,
-                    gateway_trace_id=None,
-                    started_at_ms=started_at_ms,
-                    error=None
-                    if output_text
-                    else {"type": "ValueError", "message": "empty_output"},
-                )
-            return output_text
+            response = await llm.ainvoke(prompt_messages, config=context_compression_llm_config())
         except Exception as exc:
-            if trace_id and trace_record_id and session_id:
+            logger.opt(exception=True).warning(
+                "[ContextCompressionService] 主模型压缩调用失败 | "
+                f"session_id={session.id} | reason={reason} | error={exc}"
+            )
+            if trace_id and trace_record_id:
                 self._append_side_event(
                     trace_id=trace_id,
                     trace_record_id=trace_record_id,
-                    event_type="context_compression.llm",
                     status="failed",
                     side_event_id=side_event_id,
-                    material=material,
-                    level=level,
-                    model=side_task.model,
-                    gateway_trace_id=None,
+                    session=session,
+                    active_session_id=active_session_id or session.active_session_id or session.id,
+                    model=resolved.settings.model,
+                    reason=reason,
                     started_at_ms=started_at_ms,
                     error={"type": type(exc).__name__, "message": str(exc)},
                 )
-            raise
+            return CompressionGenerationResult(
+                success=False,
+                reason=reason,
+                failure_reason=f"llm_error:{exc}",
+                model_provider_id=resolved.provider_id,
+                model=resolved.settings.model,
+                total_message_count=len(message_list),
+            )
+
+        if getattr(response, "tool_calls", None):
+            return CompressionGenerationResult(
+                success=False,
+                reason=reason,
+                failure_reason="tool_call_returned",
+                model_provider_id=resolved.provider_id,
+                model=resolved.settings.model,
+                total_message_count=len(message_list),
+            )
+        summary = extract_summary_text(getattr(response, "content", response))
+        if not summary:
+            return CompressionGenerationResult(
+                success=False,
+                reason=reason,
+                failure_reason="empty_summary_output",
+                model_provider_id=resolved.provider_id,
+                model=resolved.settings.model,
+                total_message_count=len(message_list),
+            )
+        replacement = self._build_replacement(summary=summary, messages=message_list)
+        usage = _extract_token_usage(response)
+        if trace_id and trace_record_id:
+            self._append_side_event(
+                trace_id=trace_id,
+                trace_record_id=trace_record_id,
+                status="completed",
+                side_event_id=side_event_id,
+                session=session,
+                active_session_id=active_session_id or session.active_session_id or session.id,
+                model=resolved.settings.model,
+                reason=reason,
+                usage=usage,
+                started_at_ms=started_at_ms,
+            )
+        return CompressionGenerationResult(
+            success=True,
+            reason=reason,
+            summary=summary,
+            replacement_messages=replacement.replaced_messages,
+            model_provider_id=resolved.provider_id,
+            model=resolved.settings.model,
+            compression_message_count=len(message_list),
+            total_message_count=len(message_list),
+        )
+
+    def _resolve_session_model(self, session: SessionRecord) -> ResolvedModelSelection:
+        provider_id = (session.current_model_provider_id or "").strip()
+        model = (session.current_model or "").strip()
+        if provider_id and model:
+            return resolve_model_selection(
+                self.repositories,
+                provider_id=provider_id,
+                model=model,
+                scope="chat",
+                label="对话模型",
+                code_prefix="context_compression_model",
+            )
+        return resolve_model_default(self.repositories, MODEL_DEFAULT_CHAT)
+
+    @staticmethod
+    def _build_replacement(
+        *,
+        summary: str,
+        messages: list[BaseMessage],
+    ) -> CompressionReplacementResult:
+        return build_context_compression_replacement_messages(
+            summary=summary,
+            source_messages=messages,
+        )
 
     def _append_side_event(
         self,
         *,
         trace_id: str,
         trace_record_id: str,
-        event_type: str,
         status: str,
         side_event_id: str,
-        material: CompressionMaterial,
-        level: str,
+        session: SessionRecord,
+        active_session_id: str,
         model: str,
-        input_data: Any | None = None,
-        output_data: Any | None = None,
+        reason: str,
         usage: dict[str, int] | None = None,
-        gateway_trace_id: str | None = None,
         started_at_ms: int | None = None,
         error: dict[str, str] | None = None,
     ) -> None:
@@ -254,13 +252,11 @@ class ContextCompressionService:
         }
         payload = {
             "side_event_id": side_event_id,
-            "event_type": event_type,
+            "event_type": "context_compression.llm",
             "status": status,
             "name": model,
-            "session_id": material.original_session_id,
-            "active_session_id": material.active_session_id,
-            "input_data": input_data,
-            "output_data": output_data,
+            "session_id": session.id,
+            "active_session_id": active_session_id,
             "error": error,
             "input_tokens": token_usage["input_tokens"],
             "cache_read_tokens": token_usage["cache_read_tokens"],
@@ -268,39 +264,25 @@ class ContextCompressionService:
             "total_tokens": token_usage["total_tokens"],
             "metadata": {
                 "domain": "context_compression",
-                "compression_level": level,
-                "phase": material.phase,
-                "anchor_message_id": material.anchor_message_id,
-                "gateway_trace_id": gateway_trace_id,
+                "reason": reason,
                 "started_at_ms": started_at_ms,
-                **(material.side_event_metadata or {}),
             },
         }
         try:
             self.repositories.trace_event_logs.append(
                 trace_id=trace_id,
                 trace_record_id=trace_record_id,
-                event_type=event_type,
+                event_type="context_compression.llm",
                 source="context_compression_service",
                 idempotency_key=f"{side_event_id}:{status}",
                 timestamp_ms=int(time.time() * 1000),
                 payload=payload,
-                original_session_id=material.original_session_id,
-                active_session_id=material.active_session_id,
+                original_session_id=session.id,
+                active_session_id=active_session_id,
                 tags={"domain": "context_compression", "status": status},
             )
         except Exception as exc:
-            logger.debug(f"[ContextCompressionService] 压缩旁路事件记录失败 | 错误={exc}")
-
-
-def _preview_messages(messages: list[Any]) -> str:
-    parts: list[str] = []
-    for message in messages:
-        role = type(message).__name__
-        content = str(getattr(message, "content", message) or "")
-        parts.append(f"[{role}]\n{content}")
-    text = "\n\n".join(parts)
-    return text if len(text) <= 4000 else f"{text[:4000]}..."
+            logger.debug(f"[ContextCompressionService] 压缩旁路事件记录失败 | error={exc}")
 
 
 def _response_usage(response: Any) -> Any:
@@ -355,25 +337,3 @@ def _extract_token_usage_from_metadata(usage: Any) -> dict[str, int]:
         "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
         "cache_read_tokens": cache_read_tokens,
     }
-
-
-def _clean_generated_text(content: Any) -> str | None:
-    if isinstance(content, str):
-        text = content.strip()
-    elif isinstance(content, list):
-        text = "".join(
-            str(item.get("text") or "") for item in content if isinstance(item, dict)
-        ).strip()
-    else:
-        text = str(content).strip() if content is not None else ""
-    if not text:
-        return None
-    for token in (
-        "<context_compression:l1>",
-        "</context_compression:l1>",
-        "<context_compression:l2>",
-        "</context_compression:l2>",
-    ):
-        text = text.replace(token, "")
-    cleaned = text.strip()
-    return cleaned or None
