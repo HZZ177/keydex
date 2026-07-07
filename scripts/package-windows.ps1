@@ -44,9 +44,16 @@ $Root = Split-Path -Parent $PSScriptRoot
 $BackendPython = Join-Path $Root ".venv\Scripts\python.exe"
 $DesktopDir = Join-Path $Root "desktop"
 $TauriDir = Join-Path $DesktopDir "src-tauri"
+$TauriConfigPath = Join-Path $TauriDir "tauri.conf.json"
+$TauriConfig = Get-Content -Raw -LiteralPath $TauriConfigPath | ConvertFrom-Json
+$AppVersion = [string]$TauriConfig.version
+if ([string]::IsNullOrWhiteSpace($AppVersion)) {
+    throw "未能从 Tauri 配置读取版本号：$TauriConfigPath"
+}
+$InstallerName = "Keydex_${AppVersion}_x64-setup.exe"
 $SidecarDir = Join-Path $Root "desktop\src-tauri\binaries\agent-server"
 $Sidecar = Join-Path $SidecarDir "agent-server.exe"
-$Installer = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\Keydex_0.1.0_x64-setup.exe"
+$Installer = Join-Path $Root "desktop\src-tauri\target\release\bundle\nsis\$InstallerName"
 $ReleaseApp = Join-Path $Root "desktop\src-tauri\target\release\keydex-desktop.exe"
 $ArtifactDir = Join-Path $Root "artifacts\windows"
 
@@ -418,7 +425,7 @@ Invoke-Step "复制发布产物到快速目录" {
     New-Item -ItemType Directory -Force -Path $ArtifactDir | Out-Null
     Stop-ArtifactProcesses -Directory $ArtifactDir
 
-    $artifactInstaller = Join-Path $ArtifactDir "Keydex_0.1.0_x64-setup.exe"
+    $artifactInstaller = Join-Path $ArtifactDir $InstallerName
     $artifactApp = Join-Path $ArtifactDir "keydex-desktop.exe"
     $artifactSidecarDir = Join-Path $ArtifactDir "binaries\agent-server"
     $artifactSidecar = Join-Path $artifactSidecarDir "agent-server.exe"
@@ -461,7 +468,7 @@ Invoke-Step "复制发布产物到快速目录" {
         "Keydex Windows 产物",
         "",
         "主安装包：",
-        "  Keydex_0.1.0_x64-setup.exe",
+        "  $InstallerName",
         "",
         "调试/直接运行二进制：",
         "  keydex-desktop.exe",
@@ -479,7 +486,7 @@ Invoke-Step "复制发布产物到快速目录" {
 $InstallerInfo = Get-Item -LiteralPath $Installer
 $SidecarInfo = Get-Item -LiteralPath $Sidecar
 $SidecarDirBytes = (Get-ChildItem -LiteralPath $SidecarDir -Recurse -File | Measure-Object -Property Length -Sum).Sum
-$ArtifactInstallerInfo = Get-Item -LiteralPath (Join-Path $ArtifactDir "Keydex_0.1.0_x64-setup.exe")
+$ArtifactInstallerInfo = Get-Item -LiteralPath (Join-Path $ArtifactDir $InstallerName)
 
 Write-Host ""
 Write-Host "打包完成。"
