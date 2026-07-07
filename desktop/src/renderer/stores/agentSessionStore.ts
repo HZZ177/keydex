@@ -1805,12 +1805,10 @@ function handleSessionClosed(state: AgentConversationState, data: Record<string,
 }
 
 function handleSessionTitleUpdated(state: AgentConversationState, data: Record<string, unknown>): AgentConversationState {
-  const session = sessionFromData(data);
-  if (session) {
-    return upsertSession(state, session, { select: false });
-  }
-  const sessionId = sessionIdFromData(data);
-  const title = nullableString(data.title);
+  const sessionPayload = asRecord(data.session);
+  const source = sessionPayload ?? data;
+  const sessionId = stringValue(source.id) || sessionIdFromData(data);
+  const title = nullableString(source.title);
   if (!sessionId || title === null) {
     return state;
   }
@@ -1824,8 +1822,8 @@ function handleSessionTitleUpdated(state: AgentConversationState, data: Record<s
     [sessionId]: {
       ...existing,
       title,
-      title_source: nullableString(data.title_source) as AgentSession["title_source"],
-      updated_at: stringValue(data.updated_at) || existing.updated_at,
+      title_source: nullableString(source.title_source) as AgentSession["title_source"],
+      updated_at: stringValue(source.updated_at) || existing.updated_at,
     },
   };
   next.sessionIds = sortSessionIds(Object.values(next.sessionsById));

@@ -117,6 +117,55 @@ describe("agentSessionStore reducer", () => {
     });
   });
 
+  it("preserves workspace metadata when title update events are partial", () => {
+    const workspaceSession: AgentSession = {
+      ...session("ses-workspace", "2026-06-18T08:00:00Z"),
+      session_type: "workspace",
+      workspace_id: "ws-1",
+      cwd: "D:\\Pycharm Projects\\keydex",
+      workspace_roots: ["D:\\Pycharm Projects\\keydex"],
+      workspace: {
+        id: "ws-1",
+        name: "keydex",
+        root_path: "D:\\Pycharm Projects\\keydex",
+        normalized_root_path: "d:/pycharm projects/keydex",
+        type: "project",
+        created_at: "2026-06-18T07:00:00Z",
+        updated_at: "2026-06-18T07:00:00Z",
+        last_opened_at: "2026-06-18T07:00:00Z",
+        is_deleted: false,
+      },
+    };
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [workspaceSession],
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "session_title_updated",
+      data: {
+        session_id: "ses-workspace",
+        title: "自动标题",
+        title_source: "auto",
+        updated_at: "2026-06-18T10:00:00Z",
+      },
+    });
+
+    expect(selectAgentSessions(state)[0]).toMatchObject({
+      id: "ses-workspace",
+      title: "自动标题",
+      title_source: "auto",
+      session_type: "workspace",
+      workspace_id: "ws-1",
+      cwd: "D:\\Pycharm Projects\\keydex",
+      workspace_roots: ["D:\\Pycharm Projects\\keydex"],
+      workspace: {
+        id: "ws-1",
+        root_path: "D:\\Pycharm Projects\\keydex",
+      },
+    });
+  });
+
   it("preserves persisted context window usage when later session payloads omit it", () => {
     const usage = contextWindowUsage("ses-usage", 5371);
     let state = agentConversationReducer(createInitialAgentConversationState(), {
