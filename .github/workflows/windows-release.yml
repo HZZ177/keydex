@@ -8,9 +8,9 @@ on:
         required: true
         type: string
       draft:
-        description: "Create the GitHub Release as a draft"
+        description: "Create the GitHub Release as a draft. Draft releases are not visible to the in-app updater."
         required: true
-        default: true
+        default: false
         type: boolean
       run_tests:
         description: "Run lint and tests before packaging"
