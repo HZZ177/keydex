@@ -162,6 +162,7 @@ export interface FilePreviewProps {
   chrome?: "default" | "panel";
   breadcrumbRootLabel?: string;
   hideBreadcrumbs?: boolean;
+  bottomSafeArea?: string;
 }
 
 export function FilePreview({
@@ -178,6 +179,7 @@ export function FilePreview({
   chrome = "default",
   breadcrumbRootLabel,
   hideBreadcrumbs = false,
+  bottomSafeArea,
 }: FilePreviewProps) {
   const previewRootRef = useRef<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -1625,13 +1627,18 @@ export function FilePreview({
       setCopyState("failed");
     }
   };
+  const previewStyle = bottomSafeArea
+    ? ({ "--file-preview-content-bottom-safe-area": bottomSafeArea } as CSSProperties)
+    : undefined;
 
   return (
     <section
       className={styles.preview}
       data-chrome={chrome}
+      data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
       data-file-preview-root="true"
       aria-label="文件预览"
+      style={previewStyle}
       ref={previewRootRef}
       onKeyDownCapture={handlePreviewKeyDownCapture}
       onFocusCapture={activateFindRoot}
@@ -1688,6 +1695,7 @@ export function FilePreview({
         <div
           className={styles.body}
           data-chrome={chrome}
+          data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
           data-workspace-document-context={isPathPreviewRequest(request) ? "true" : undefined}
           data-workspace-document-name={isPathPreviewRequest(request) ? fileName(request.path) : undefined}
           data-workspace-document-path={isPathPreviewRequest(request) ? request.path : undefined}
@@ -4145,6 +4153,11 @@ function PreviewScrollPane({
     <div className={styles.previewScrollShell}>
       <div ref={setScrollRef} className={className} data-custom-scrollbar="true" {...props}>
         {resolvedChildren}
+        <div
+          className={styles.previewScrollBottomSafeArea}
+          data-file-preview-bottom-safe-area="true"
+          aria-hidden="true"
+        />
       </div>
       <FilePreviewScrollRail
         scrollElement={scrollElement}
@@ -4752,7 +4765,7 @@ function codeMirrorTheme(theme: "light" | "dark"): Extension {
       },
       ".cm-content": {
         minHeight: "100%",
-        padding: "10px 0 14px",
+        padding: "10px 0 calc(14px + var(--file-preview-content-bottom-safe-area, 0px))",
       },
       ".cm-line": {
         padding: "0 24px 0 14px",

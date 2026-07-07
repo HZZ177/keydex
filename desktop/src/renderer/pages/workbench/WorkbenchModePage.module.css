@@ -389,7 +389,8 @@
   min-height: 0;
   gap: 1px;
   overflow: auto;
-  padding: 8px;
+  padding: 8px 8px calc(8px + var(--workbench-main-bottom-safe-area, 0px));
+  scroll-padding-bottom: var(--workbench-main-bottom-safe-area, 0px);
 }
 
 .externalPreviewOutlineItem {

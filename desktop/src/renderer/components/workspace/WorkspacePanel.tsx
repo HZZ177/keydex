@@ -37,6 +37,7 @@ export interface WorkspacePanelProps {
   chrome?: "default" | "panel";
   selectedPath?: string | null;
   revealSelectedPathRequestId?: number;
+  bottomSafeArea?: string;
   onSelectFile?: (path: string) => void;
 }
 
@@ -60,6 +61,7 @@ export function WorkspacePanel({
   chrome = "default",
   selectedPath: controlledSelectedPath,
   revealSelectedPathRequestId = 0,
+  bottomSafeArea,
   onSelectFile,
 }: WorkspacePanelProps) {
   const panelRef = useRef<HTMLElement | null>(null);
@@ -445,14 +447,19 @@ export function WorkspacePanel({
       inline: "nearest",
     });
   }, [keyboardActivePath]);
+  const panelStyle = bottomSafeArea
+    ? ({ "--workspace-panel-bottom-safe-area": bottomSafeArea } as CSSProperties)
+    : undefined;
 
   return (
     <section
       ref={panelRef}
       className={styles.panel}
       data-chrome={chrome}
+      data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
       data-workspace-panel-root="true"
       aria-label="工作区文件树"
+      style={panelStyle}
       onKeyDownCapture={handlePanelKeyDownCapture}
     >
       {chrome === "default" ? (
@@ -508,6 +515,7 @@ export function WorkspacePanel({
         {!initialLoading && !searchLoading && !panelError ? (
           <div
             className={styles.tree}
+            data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
             data-mode={searchActive ? "search" : "tree"}
             ref={treeRef}
             role="tree"

@@ -37,6 +37,7 @@ export interface WorkspaceFileBrowserProps {
   initialNavigationMode?: "files" | "outline";
   previewOutline?: MarkdownOutlineItem[];
   previewOutlineReady?: boolean;
+  bottomSafeArea?: string;
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
   onStartChatFromAnnotation?: (request: PreviewAnnotationChatRequest | PreviewAnnotationChatRequest[]) => void;
   onPreviewPathChange?: (path: string | null) => void;
@@ -71,6 +72,7 @@ export function WorkspaceFileBrowser({
   initialNavigationMode = "files",
   previewOutline = [],
   previewOutlineReady = false,
+  bottomSafeArea,
   onQuoteSelection,
   onStartChatFromAnnotation,
   onPreviewPathChange,
@@ -388,6 +390,7 @@ export function WorkspaceFileBrowser({
               sessionId={sessionId}
               revealSelectedPathRequestId={previewRequestId}
               selectedPath={selectedPath}
+              bottomSafeArea={bottomSafeArea}
               onSelectFile={openPreview}
             />
           </div>
@@ -434,6 +437,7 @@ export function WorkspaceFileBrowser({
                 request={previewRequest}
                 runtime={runtime}
                 chrome="panel"
+                bottomSafeArea={bottomSafeArea}
                 hideBreadcrumbs
                 outlineRevealRequest={outlineRevealRequest}
                 sourceRevealRequest={fileRevealRequest}

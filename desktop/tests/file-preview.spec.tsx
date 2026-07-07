@@ -87,6 +87,35 @@ describe("FilePreview", () => {
     expect(screen.queryByRole("status", { name: "正在准备预览" })).toBeNull();
   });
 
+  it("applies a panel bottom safe area to scrollable preview content", async () => {
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "README.md",
+        content: "# Safe Area\n\nLast line should clear the assistant capsule.",
+        encoding: "utf-8",
+      }),
+    });
+
+    render(
+      <FilePreview
+        request={{ type: "file", path: "README.md" }}
+        sessionId="ses-1"
+        runtime={runtime}
+        chrome="panel"
+        bottomSafeArea="140px"
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Safe Area" })).not.toBeNull();
+    const root = document.querySelector<HTMLElement>("[data-file-preview-root='true']");
+    expect(root?.getAttribute("data-bottom-safe-area")).toBe("true");
+    expect(root?.style.getPropertyValue("--file-preview-content-bottom-safe-area")).toBe("140px");
+    expect(
+      document.querySelector("[data-workspace-document-path='README.md']")?.getAttribute("data-bottom-safe-area"),
+    ).toBe("true");
+    expect(document.querySelector("[data-file-preview-bottom-safe-area='true']")).not.toBeNull();
+  });
+
   it("keeps panel file previews loading through the open animation", async () => {
     let resolveRead:
       | ((value: { content: string; encoding: string; path: string }) => void)

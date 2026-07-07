@@ -1,4 +1,5 @@
 .panel {
+  --workspace-panel-bottom-safe-area: 0px;
   display: grid;
   grid-template-rows: auto auto auto minmax(180px, 1fr);
   gap: 12px;
@@ -202,7 +203,8 @@
   min-height: 0;
   background: var(--sidebar-bg);
   overflow: auto;
-  padding: 1px 0 12px;
+  padding: 1px 0 calc(12px + var(--workspace-panel-bottom-safe-area));
+  scroll-padding-bottom: var(--workspace-panel-bottom-safe-area);
   scrollbar-width: auto;
   scrollbar-color: color-mix(in srgb, var(--color-text-4) 34%, transparent) transparent;
 }

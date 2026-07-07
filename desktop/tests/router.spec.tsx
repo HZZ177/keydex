@@ -607,7 +607,9 @@ describe("AppRouter", () => {
       extra: <WorkbenchFileOpenProbe />,
     });
 
-    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    const workbenchShell = await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 });
+    expect(workbenchShell).not.toBeNull();
+    expect(workbenchShell.style.getPropertyValue("--workbench-main-bottom-safe-area")).toBe("140px");
     const shell = await screen.findByTestId("app-shell", undefined, { timeout: 10000 });
     expect(shell.dataset.rightSidebarEnabled).toBe("false");
     expect(shell.dataset.rightSidebar).toBe("closed");
@@ -619,6 +621,10 @@ describe("AppRouter", () => {
       expect(runtime.workspace.readFile).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "README.md");
     });
     const tree = screen.getByTestId("workspace-file-browser-tree");
+    const workspacePanel = tree.querySelector<HTMLElement>("[data-workspace-panel-root='true']");
+    expect(workspacePanel?.style.getPropertyValue("--workspace-panel-bottom-safe-area")).toBe(
+      "var(--workbench-main-bottom-safe-area, 0px)",
+    );
     fireEvent.click(await within(tree).findByTestId("workspace-browser-outline-tab"));
     expect(await within(tree).findByText("Workbench file")).not.toBeNull();
     expect(screen.queryByTestId("workspace-file-browser-preview")).toBeNull();

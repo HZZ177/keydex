@@ -89,6 +89,8 @@ interface WorkbenchPreviewTabMenuState {
 const DEFAULT_WORKBENCH_BROWSER_WIDTH = 300;
 const MIN_WORKBENCH_BROWSER_WIDTH = 220;
 const MIN_WORKBENCH_MAIN_PREVIEW_WIDTH = 320;
+const WORKBENCH_MAIN_BOTTOM_SAFE_AREA = "140px";
+const WORKBENCH_MAIN_BOTTOM_SAFE_AREA_VAR = "var(--workbench-main-bottom-safe-area, 0px)";
 const WORKBENCH_PREVIEW_TAB_MENU_WIDTH = 148;
 const WORKBENCH_PREVIEW_TAB_MENU_HEIGHT = 136;
 const WORKBENCH_PREVIEW_TAB_MENU_EDGE = 8;
@@ -165,6 +167,7 @@ export function WorkbenchModePage({
   const assistantDrawerInline =
     dockTransitionLayout.reservedWidth > 0 &&
     (dockTransitionLayout.phase === "idle" || dockTransitionLayout.phase === "resize");
+  const workbenchMainBottomSafeArea = assistantDrawerInline ? "0px" : WORKBENCH_MAIN_BOTTOM_SAFE_AREA;
   const applyDrawerInlineWidth = useCallback((width: number) => {
     const nextInlineWidth = resolveWorkbenchAssistantDockInlineWidth(
       clampWorkbenchAssistantDrawerWidth(width),
@@ -652,6 +655,7 @@ export function WorkbenchModePage({
             {
               "--workbench-assistant-dock-inline-size": `${drawerInlineWidth}px`,
               "--workbench-dock-reserved-width": `${dockTransitionLayout.reservedWidth}px`,
+              "--workbench-main-bottom-safe-area": workbenchMainBottomSafeArea,
             } as CSSProperties
           }
           aria-label="工作台"
@@ -671,6 +675,7 @@ export function WorkbenchModePage({
                     runtime={runtime}
                     workspaceId={workspaceId}
                     label={workspaceLabel}
+                    bottomSafeArea={WORKBENCH_MAIN_BOTTOM_SAFE_AREA_VAR}
                     initialNavigationMode={externalPreviewPath ? "outline" : "files"}
                     previewPath={activeWorkbenchPreviewPath}
                     previewRequestId={activeWorkbenchPreviewTab?.requestId ?? 0}
@@ -1050,6 +1055,7 @@ function WorkbenchMainFilePreview({
         onStartChatFromAnnotation={context?.onStartChatFromAnnotation}
         onClose={onClose}
         chrome="panel"
+        bottomSafeArea={WORKBENCH_MAIN_BOTTOM_SAFE_AREA_VAR}
       />
     </div>
   );

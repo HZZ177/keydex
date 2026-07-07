@@ -280,6 +280,21 @@ describe("WorkspacePanel", () => {
     expect(screen.getByText("desktop")).not.toBeNull();
   });
 
+  it("applies a bottom safe area to the file tree scroll container", async () => {
+    const runtime = fakeRuntime({
+      "": [entry("README.md", "README.md", "file", 12)],
+    });
+
+    render(<WorkspacePanel chrome="panel" sessionId="ses-1" label="D:/repo" runtime={runtime} bottomSafeArea="140px" />);
+
+    expect(await screen.findByText("README.md")).not.toBeNull();
+    const panel = document.querySelector<HTMLElement>("[data-workspace-panel-root='true']");
+    const tree = document.querySelector<HTMLElement>("[role='tree']");
+    expect(panel?.getAttribute("data-bottom-safe-area")).toBe("true");
+    expect(panel?.style.getPropertyValue("--workspace-panel-bottom-safe-area")).toBe("140px");
+    expect(tree?.getAttribute("data-bottom-safe-area")).toBe("true");
+  });
+
   it("focuses the file filter from the tree with Ctrl+F", async () => {
     const runtime = fakeRuntime({
       "": [
