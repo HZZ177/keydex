@@ -12,8 +12,8 @@ on:
         required: true
         default: true
         type: boolean
-      skip_tests:
-        description: "Skip tests during packaging"
+      run_tests:
+        description: "Run lint and tests before packaging"
         required: true
         default: false
         type: boolean
@@ -96,7 +96,7 @@ jobs:
             "-RustJobs", "2",
             "-TestWorkers", "2"
           )
-          if ("${{ inputs.skip_tests }}" -eq "true") {
+          if ("${{ inputs.run_tests }}" -ne "true") {
             $args += "-SkipTests"
           }
           & powershell.exe @args
