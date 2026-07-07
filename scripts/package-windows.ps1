@@ -6,6 +6,7 @@
     [switch]$CleanSidecar,
     [switch]$Fast,
     [switch]$Full,
+    [switch]$Sign,
     [switch]$NoSign = $true,
     [ValidateRange(0, 64)]
     [int]$RustJobs = 0,
@@ -21,7 +22,7 @@
 $ErrorActionPreference = "Stop"
 
 if ($Help) {
-    Write-Host "用法：powershell.exe -ExecutionPolicy Bypass -File .\scripts\package-windows.ps1 [-Version 0.1.0] [-Fast|-Full] [-SkipInstall] [-SkipTests] [-SkipRustChecks] [-RebuildSidecar] [-CleanSidecar] [-NoSign] [-RustJobs N] [-TestWorkers N] [-SerialTests] [-LowMemoryRust] [-CleanRustCache]"
+    Write-Host "用法：powershell.exe -ExecutionPolicy Bypass -File .\scripts\package-windows.ps1 [-Version 0.1.0] [-Fast|-Full] [-SkipInstall] [-SkipTests] [-SkipRustChecks] [-RebuildSidecar] [-CleanSidecar] [-Sign|-NoSign] [-RustJobs N] [-TestWorkers N] [-SerialTests] [-LowMemoryRust] [-CleanRustCache]"
     Write-Host ""
     Write-Host "说明："
     Write-Host "- 仅在需要 Windows exe 时执行。日常开发不要默认打包。"
@@ -33,6 +34,7 @@ if ($Help) {
     Write-Host "- -Fast 跳过依赖安装、测试和 Rust 预检查；sidecar 输入未变化时直接复用。"
     Write-Host "- -Full 直接使用全量打包模式，不显示交互选择。"
     Write-Host "- -SkipInstall 跳过依赖安装；-SkipTests 跳过测试。"
+    Write-Host "- -Sign 启用 Tauri 签名，用于生成应用内更新包；本地默认 -NoSign。"
     Write-Host "- -SkipRustChecks 跳过 cargo fmt/check 预检查；Tauri release build 仍会编译 Rust。"
     Write-Host "- -RebuildSidecar 强制重建 sidecar；-CleanSidecar 清理 PyInstaller 缓存后重建。"
     Write-Host "- -RustJobs 设置 Cargo 编译并发；默认 0 表示按本机 CPU 自动并发。"
@@ -44,6 +46,9 @@ if ($Help) {
 }
 
 $Root = Split-Path -Parent $PSScriptRoot
+if ($Sign) {
+    $NoSign = $false
+}
 $BackendPython = Join-Path $Root ".venv\Scripts\python.exe"
 $DesktopDir = Join-Path $Root "desktop"
 $TauriDir = Join-Path $DesktopDir "src-tauri"

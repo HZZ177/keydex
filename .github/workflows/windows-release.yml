@@ -102,7 +102,7 @@ jobs:
             "-ExecutionPolicy", "Bypass",
             "-File", ".\scripts\package-windows.ps1",
             "-Full",
-            "-NoSign:$false",
+            "-Sign",
             "-RustJobs", "2",
             "-TestWorkers", "2"
           )
