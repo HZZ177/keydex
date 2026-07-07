@@ -84,6 +84,7 @@ $ReleaseApp = Join-Path $Root "desktop\src-tauri\target\release\keydex-desktop.e
 $ArtifactDir = Join-Path $Root "artifacts\windows"
 $ReleaseRepository = if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) { "HZZ177/keydex" } else { $env:GITHUB_REPOSITORY }
 $ReleaseTag = if ([string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) { "v$AppVersion" } else { $env:RELEASE_TAG }
+$ExpectUpdaterArtifacts = $false
 
 function Invoke-Step {
     param(
@@ -193,6 +194,33 @@ function Resolve-TauriConfigOverride {
         return $null
     }
     return ($merged | ConvertTo-Json -Depth 100 -Compress)
+}
+
+function Test-TauriUpdaterArtifactsEnabled {
+    param(
+        [string]$ConfigJson
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ConfigJson)) {
+        return $false
+    }
+
+    try {
+        $config = $ConfigJson | ConvertFrom-Json
+    } catch {
+        throw "TAURI_CONFIG 不是有效 JSON，无法判断 updater 产物配置：$ConfigJson"
+    }
+
+    $createUpdaterArtifacts = $config.bundle.createUpdaterArtifacts
+    if ($null -eq $createUpdaterArtifacts) {
+        return $false
+    }
+    if ($createUpdaterArtifacts -is [bool]) {
+        return $createUpdaterArtifacts
+    }
+
+    $textValue = ([string]$createUpdaterArtifacts).Trim()
+    return -not [string]::IsNullOrWhiteSpace($textValue) -and $textValue -ne "false"
 }
 
 function Resolve-RustBuildJobs {
@@ -522,6 +550,13 @@ Invoke-Step "构建 Tauri NSIS 安装包" {
         } else {
             $env:TAURI_CONFIG = $buildTauriConfig
         }
+        $script:ExpectUpdaterArtifacts = Test-TauriUpdaterArtifactsEnabled -ConfigJson $buildTauriConfig
+        if ($script:ExpectUpdaterArtifacts -and $NoSign) {
+            throw "当前配置要求生成 Tauri updater 产物，但 -NoSign 处于启用状态。CI 发版请传 -NoSign:`$false 并配置 TAURI_SIGNING_PRIVATE_KEY。"
+        }
+        if ($script:ExpectUpdaterArtifacts) {
+            Write-Host "Tauri updater 产物：已启用 createUpdaterArtifacts。"
+        }
         if ($useLocalToolsDir) {
             Write-Host "检测到本机 Tauri NSIS 缓存，临时使用项目内工具目录：$localNsisDir"
         }
@@ -562,6 +597,9 @@ Invoke-Step "复制发布产物到快速目录" {
     $hasUpdaterSignature = Test-Path -LiteralPath $UpdaterSignature
     if ($hasUpdaterBundle -xor $hasUpdaterSignature) {
         throw "updater 产物不完整：$UpdaterBundle / $UpdaterSignature"
+    }
+    if ($ExpectUpdaterArtifacts -and -not ($hasUpdaterBundle -and $hasUpdaterSignature)) {
+        throw "已启用 createUpdaterArtifacts，但未生成 updater 产物：$UpdaterBundle / $UpdaterSignature。请检查 TAURI_SIGNING_PRIVATE_KEY、TAURI_CONFIG 和 Tauri build 日志。"
     }
     if ($hasUpdaterBundle) {
         Copy-Artifact -Source $UpdaterBundle -Destination $artifactUpdaterBundle
