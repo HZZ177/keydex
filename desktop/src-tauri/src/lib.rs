@@ -334,7 +334,9 @@ $files = New-Object System.Collections.Specialized.StringCollection
 }
 
 #[tauri::command]
-fn take_associated_file_open_paths(state: State<'_, AssociatedFileOpenState>) -> Result<Vec<String>, String> {
+fn take_associated_file_open_paths(
+    state: State<'_, AssociatedFileOpenState>,
+) -> Result<Vec<String>, String> {
     state.take_paths()
 }
 
@@ -457,7 +459,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(SidecarState::default())
-        .manage(AssociatedFileOpenState::with_paths(startup_associated_paths))
+        .manage(AssociatedFileOpenState::with_paths(
+            startup_associated_paths,
+        ))
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             show_main_window(app);
             let paths = collect_associated_markdown_paths(args);
