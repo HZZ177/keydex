@@ -544,6 +544,7 @@ if ($CleanRustCache) {
 Invoke-Step "构建 Tauri NSIS 安装包" {
     Push-Location $DesktopDir
     $previousTauriConfig = $env:TAURI_CONFIG
+    $buildTauriConfigPath = $null
     try {
         $localNsisDir = Join-Path $TauriDir "target\.tauri\NSIS"
         $useLocalToolsDir = (Test-LocalNsisCache -NsisDir $localNsisDir) -and [string]::IsNullOrWhiteSpace($previousTauriConfig)
@@ -572,7 +573,13 @@ Invoke-Step "构建 Tauri NSIS 安装包" {
         }
         $args = @("run", "tauri:build", "--", "--ci")
         if (-not [string]::IsNullOrWhiteSpace($buildTauriConfig)) {
-            $args += @("--config", $buildTauriConfig)
+            $buildTauriConfigDir = Join-Path $TauriDir "target"
+            New-Item -ItemType Directory -Force -Path $buildTauriConfigDir | Out-Null
+            $buildTauriConfigPath = Join-Path $buildTauriConfigDir "keydex-tauri-build-config.json"
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($buildTauriConfigPath, $buildTauriConfig, $utf8NoBom)
+            Write-Host "Tauri build 配置文件：$buildTauriConfigPath"
+            $args += @("--config", $buildTauriConfigPath)
         }
         if ($NoSign) {
             $args += "--no-sign"
@@ -580,6 +587,9 @@ Invoke-Step "构建 Tauri NSIS 安装包" {
         Invoke-NativeCommand "npm.cmd" $args
     } finally {
         $env:TAURI_CONFIG = $previousTauriConfig
+        if (-not [string]::IsNullOrWhiteSpace($buildTauriConfigPath) -and (Test-Path -LiteralPath $buildTauriConfigPath)) {
+            Remove-Item -LiteralPath $buildTauriConfigPath -Force
+        }
         Pop-Location
     }
 }
