@@ -124,6 +124,16 @@ function Assert-Path {
     }
 }
 
+function Write-Utf8NoBomText {
+    param(
+        [string]$Path,
+        [string]$Content
+    )
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+}
+
 function ConvertTo-OrderedMap {
     param(
         [object]$Value
@@ -576,8 +586,7 @@ Invoke-Step "构建 Tauri NSIS 安装包" {
             $buildTauriConfigDir = Join-Path $TauriDir "target"
             New-Item -ItemType Directory -Force -Path $buildTauriConfigDir | Out-Null
             $buildTauriConfigPath = Join-Path $buildTauriConfigDir "keydex-tauri-build-config.json"
-            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-            [System.IO.File]::WriteAllText($buildTauriConfigPath, $buildTauriConfig, $utf8NoBom)
+            Write-Utf8NoBomText -Path $buildTauriConfigPath -Content $buildTauriConfig
             Write-Host "Tauri build 配置文件：$buildTauriConfigPath"
             $args += @("--config", $buildTauriConfigPath)
         }
@@ -648,7 +657,7 @@ Invoke-Step "复制发布产物到快速目录" {
                 }
             }
         }
-        $latest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $artifactLatestJson
+        Write-Utf8NoBomText -Path $artifactLatestJson -Content ($latest | ConvertTo-Json -Depth 5)
         Write-Host "应用内更新产物模式：$updaterMode"
     } else {
         foreach ($staleUpdaterArtifact in @(
