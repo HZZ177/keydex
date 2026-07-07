@@ -14,16 +14,19 @@
     [switch]$SerialTests,
     [switch]$LowMemoryRust,
     [switch]$CleanRustCache,
+    [string]$Version,
     [switch]$Help
 )
 
 $ErrorActionPreference = "Stop"
 
 if ($Help) {
-    Write-Host "用法：powershell.exe -ExecutionPolicy Bypass -File .\scripts\package-windows.ps1 [-Fast|-Full] [-SkipInstall] [-SkipTests] [-SkipRustChecks] [-RebuildSidecar] [-CleanSidecar] [-NoSign] [-RustJobs N] [-TestWorkers N] [-SerialTests] [-LowMemoryRust] [-CleanRustCache]"
+    Write-Host "用法：powershell.exe -ExecutionPolicy Bypass -File .\scripts\package-windows.ps1 [-Version 0.1.0] [-Fast|-Full] [-SkipInstall] [-SkipTests] [-SkipRustChecks] [-RebuildSidecar] [-CleanSidecar] [-NoSign] [-RustJobs N] [-TestWorkers N] [-SerialTests] [-LowMemoryRust] [-CleanRustCache]"
     Write-Host ""
     Write-Host "说明："
     Write-Host "- 仅在需要 Windows exe 时执行。日常开发不要默认打包。"
+    Write-Host "- 不传 -Fast/-Full 且不在 CI 中运行时，会先让你输入版本号；直接回车使用 tauri.conf.json 当前版本。"
+    Write-Host "- -Version 用于非交互指定本次打包版本，不修改 tauri.conf.json/package.json 源文件。"
     Write-Host "- 不传 -Fast/-Full 时会先让你选择快速打包或全量打包。"
     Write-Host "- 全量打包会安装依赖、运行测试、构建或复用 sidecar，并构建 Tauri 安装包。"
     Write-Host "- Tauri build 会按 tauri.conf.json 的 beforeBuildCommand 构建前端资源，脚本不再重复执行前端 build。"
@@ -46,9 +49,28 @@ $DesktopDir = Join-Path $Root "desktop"
 $TauriDir = Join-Path $DesktopDir "src-tauri"
 $TauriConfigPath = Join-Path $TauriDir "tauri.conf.json"
 $TauriConfig = Get-Content -Raw -LiteralPath $TauriConfigPath | ConvertFrom-Json
-$AppVersion = [string]$TauriConfig.version
-if ([string]::IsNullOrWhiteSpace($AppVersion)) {
+$ConfiguredAppVersion = [string]$TauriConfig.version
+if ([string]::IsNullOrWhiteSpace($ConfiguredAppVersion)) {
     throw "未能从 Tauri 配置读取版本号：$TauriConfigPath"
+}
+$IsCiPackaging = $env:GITHUB_ACTIONS -eq "true" -or $env:CI -eq "true"
+$RequestedAppVersion = if ($null -eq $Version) { "" } else { $Version.Trim() }
+if ([string]::IsNullOrWhiteSpace($RequestedAppVersion) -and -not $IsCiPackaging -and -not $Fast -and -not $Full) {
+    Write-Host ""
+    $RequestedAppVersion = (Read-Host "请输入本次打包版本号，直接回车使用当前版本 $ConfiguredAppVersion").Trim()
+}
+if ([string]::IsNullOrWhiteSpace($RequestedAppVersion)) {
+    $RequestedAppVersion = $ConfiguredAppVersion
+}
+if ($RequestedAppVersion -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$') {
+    throw "版本号格式无效：$RequestedAppVersion。请使用类似 0.1.0 或 0.1.1 的 SemVer 格式。"
+}
+$AppVersion = $RequestedAppVersion
+$UseAppVersionOverride = $AppVersion -ne $ConfiguredAppVersion
+Write-Host ""
+Write-Host "本次打包版本：$AppVersion"
+if ($UseAppVersionOverride) {
+    Write-Host "版本号将通过 TAURI_CONFIG 临时覆盖；不会修改 tauri.conf.json/package.json 源文件。"
 }
 $InstallerName = "Keydex_${AppVersion}_x64-setup.exe"
 $UpdaterBundleName = "Keydex_${AppVersion}_x64-setup.nsis.zip"
@@ -92,6 +114,85 @@ function Assert-Path {
     if (-not (Test-Path $Path)) {
         throw $Message
     }
+}
+
+function ConvertTo-OrderedMap {
+    param(
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $map = [ordered]@{}
+        foreach ($key in $Value.Keys) {
+            $map[$key] = ConvertTo-OrderedMap -Value $Value[$key]
+        }
+        return $map
+    }
+    if ($Value -is [pscustomobject]) {
+        $map = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties) {
+            $map[$property.Name] = ConvertTo-OrderedMap -Value $property.Value
+        }
+        return $map
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        return @($Value | ForEach-Object { ConvertTo-OrderedMap -Value $_ })
+    }
+    return $Value
+}
+
+function Merge-OrderedMap {
+    param(
+        [System.Collections.IDictionary]$Base,
+        [System.Collections.IDictionary]$Override
+    )
+
+    foreach ($key in $Override.Keys) {
+        $baseValue = $Base[$key]
+        $overrideValue = $Override[$key]
+        if ($baseValue -is [System.Collections.IDictionary] -and $overrideValue -is [System.Collections.IDictionary]) {
+            Merge-OrderedMap -Base $baseValue -Override $overrideValue
+        } else {
+            $Base[$key] = $overrideValue
+        }
+    }
+}
+
+function Resolve-TauriConfigOverride {
+    param(
+        [string]$ExistingConfig,
+        [bool]$UseVersion,
+        [string]$ResolvedVersion,
+        [bool]$UseLocalToolsDir
+    )
+
+    $merged = [ordered]@{}
+    if (-not [string]::IsNullOrWhiteSpace($ExistingConfig)) {
+        try {
+            $merged = ConvertTo-OrderedMap -Value ($ExistingConfig | ConvertFrom-Json)
+        } catch {
+            throw "TAURI_CONFIG 不是有效 JSON，无法合并本次打包配置：$ExistingConfig"
+        }
+    }
+
+    $override = [ordered]@{}
+    if ($UseVersion) {
+        $override["version"] = $ResolvedVersion
+    }
+    if ($UseLocalToolsDir) {
+        $override["bundle"] = [ordered]@{
+            useLocalToolsDir = $true
+        }
+    }
+
+    Merge-OrderedMap -Base $merged -Override $override
+    if ($merged.Count -eq 0) {
+        return $null
+    }
+    return ($merged | ConvertTo-Json -Depth 100 -Compress)
 }
 
 function Resolve-RustBuildJobs {
@@ -410,9 +511,22 @@ Invoke-Step "构建 Tauri NSIS 安装包" {
     $previousTauriConfig = $env:TAURI_CONFIG
     try {
         $localNsisDir = Join-Path $TauriDir "target\.tauri\NSIS"
-        if ((Test-LocalNsisCache -NsisDir $localNsisDir) -and [string]::IsNullOrWhiteSpace($env:TAURI_CONFIG)) {
-            $env:TAURI_CONFIG = '{"bundle":{"useLocalToolsDir":true}}'
+        $useLocalToolsDir = (Test-LocalNsisCache -NsisDir $localNsisDir) -and [string]::IsNullOrWhiteSpace($previousTauriConfig)
+        $buildTauriConfig = Resolve-TauriConfigOverride `
+            -ExistingConfig $previousTauriConfig `
+            -UseVersion $UseAppVersionOverride `
+            -ResolvedVersion $AppVersion `
+            -UseLocalToolsDir $useLocalToolsDir
+        if ([string]::IsNullOrWhiteSpace($buildTauriConfig)) {
+            Remove-Item Env:TAURI_CONFIG -ErrorAction SilentlyContinue
+        } else {
+            $env:TAURI_CONFIG = $buildTauriConfig
+        }
+        if ($useLocalToolsDir) {
             Write-Host "检测到本机 Tauri NSIS 缓存，临时使用项目内工具目录：$localNsisDir"
+        }
+        if ($UseAppVersionOverride) {
+            Write-Host "临时覆盖 Tauri 打包版本：$AppVersion"
         }
         $args = @("run", "tauri:build", "--", "--ci")
         if ($NoSign) {
