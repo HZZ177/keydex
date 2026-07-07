@@ -156,12 +156,14 @@ export interface ConversationPanelComposerAccessoryProps {
   model: ConversationPanelModel;
   runtime?: RuntimeBridge;
   showScrollButton?: boolean;
+  onOpenMcpSettings?: () => void;
 }
 
 export function ConversationPanelComposerAccessory({
   model,
   runtime,
   showScrollButton = true,
+  onOpenMcpSettings,
 }: ConversationPanelComposerAccessoryProps) {
   return (
     <ConversationComposerAccessory
@@ -179,6 +181,7 @@ export function ConversationPanelComposerAccessory({
       }
       onUpdateTask={model.updateThreadTask}
       onDeleteTask={model.deleteThreadTask}
+      onOpenMcpSettings={onOpenMcpSettings}
       showScrollToBottom={model.showScrollToBottom}
       showScrollButton={showScrollButton}
       onFilePreview={model.openFileChangePreview}

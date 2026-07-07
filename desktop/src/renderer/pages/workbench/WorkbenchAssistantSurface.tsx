@@ -169,6 +169,7 @@ export interface WorkbenchAssistantSurfaceProps {
   onDrawerWidthCommit?: (width: number) => void;
   onDockTransitionChange?: (transitioning: boolean) => void;
   onDockTransitionLayoutChange?: (state: WorkbenchAssistantDockTransitionState) => void;
+  onOpenMcpSettings?: () => void;
   btwActive?: boolean;
   btwLoadedHistoryTurnCount?: number | null;
   onOpenBtwConversation?: () => Promise<AgentSession | null> | AgentSession | null;
@@ -189,6 +190,7 @@ export function WorkbenchAssistantSurface({
   onDrawerWidthCommit,
   onDockTransitionChange,
   onDockTransitionLayoutChange,
+  onOpenMcpSettings,
   btwActive = false,
   btwLoadedHistoryTurnCount = null,
   onOpenBtwConversation,
@@ -1495,7 +1497,14 @@ export function WorkbenchAssistantSurface({
     />
   );
 
-  const accessory = <ConversationPanelComposerAccessory model={displayPanelModel} showScrollButton={false} />;
+  const accessory = (
+    <ConversationPanelComposerAccessory
+      model={displayPanelModel}
+      runtime={runtime}
+      showScrollButton={false}
+      onOpenMcpSettings={onOpenMcpSettings}
+    />
+  );
 
   const hasCodeBlockMessages = useMemo(
     () => displayPanelModel.messages.some((message) => valueContainsMarkdownCodeFence(message)),

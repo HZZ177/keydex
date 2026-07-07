@@ -4,6 +4,7 @@
   height: 100%;
   min-width: 0;
   max-width: 100%;
+  flex: 1 1 auto;
   align-items: center;
   outline: 0;
   pointer-events: auto;
@@ -25,6 +26,7 @@
   height: 100%;
   min-width: 0;
   max-width: 100%;
+  flex: 1 1 auto;
   align-items: center;
   gap: 7px;
   overflow: hidden;
@@ -38,6 +40,10 @@
   padding: 0 8px 0 4px;
   text-align: left;
   white-space: nowrap;
+}
+
+.pill[data-tone="attention"] {
+  color: color-mix(in srgb, var(--color-warning) 76%, var(--color-text-secondary));
 }
 
 .pill span {
@@ -55,6 +61,10 @@
   text-overflow: ellipsis;
 }
 
+.pill em {
+  flex: 1 1 auto;
+}
+
 .pill strong {
   color: color-mix(in srgb, var(--color-accent) 76%, var(--color-text-secondary));
 }
@@ -65,11 +75,12 @@
   left: 50%;
   z-index: 32;
   display: grid;
-  width: min(760px, calc(100vw - 24px));
-  min-width: min(360px, calc(100vw - 24px));
-  max-height: min(560px, 66vh);
-  gap: 10px;
-  overflow: auto;
+  width: min(360px, calc(100vw - 24px));
+  min-width: min(280px, calc(100vw - 24px));
+  max-height: min(360px, 50vh);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
   border-radius: 8px;
   background: color-mix(in srgb, var(--color-bg-elevated) 99%, var(--surface-muted));
@@ -110,11 +121,11 @@
 .panelHeader div {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: 3px;
 }
 
 .panelHeader strong,
-.runningList h3 {
+.section h3 {
   margin: 0;
   color: var(--color-text-primary);
   font-size: 13px;
@@ -127,13 +138,13 @@
 }
 
 .panelHeader button,
-.runningRow button {
+.panelFooter button {
   display: inline-flex;
-  height: 28px;
+  height: 26px;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 54%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 52%, transparent);
   border-radius: 7px;
   background: transparent;
   color: var(--color-text-secondary);
@@ -144,52 +155,44 @@
 }
 
 .panelHeader button:hover:not(:disabled),
-.runningRow button:hover:not(:disabled) {
+.panelFooter button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
   color: var(--color-text-primary);
 }
 
-.panelHeader button:disabled,
-.runningRow button:disabled,
-.toolRow button:disabled {
+.panelHeader button:disabled {
   cursor: default;
   opacity: 0.52;
 }
 
-.summaryGrid {
+.panelBody {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 7px;
-  min-width: 0;
+  min-height: 0;
+  gap: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-color: color-mix(in srgb, var(--color-text-tertiary) 34%, transparent) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
-.metric {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--surface-bg) 64%, transparent);
-  padding: 7px;
+.panelBody::-webkit-scrollbar {
+  width: 8px;
 }
 
-.metric span {
-  color: var(--color-text-tertiary);
-  font-size: 10px;
+.panelBody::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.metric strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-primary);
-  font-size: 12px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.panelBody::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-tertiary) 28%, transparent);
+  background-clip: padding-box;
 }
 
-.inlineError,
-.notice {
+.inlineError {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr);
   align-items: center;
@@ -203,169 +206,85 @@
   padding: 7px 9px;
 }
 
-.notice {
-  border-color: color-mix(in srgb, var(--color-success-6) 34%, var(--color-border-default));
-  background: color-mix(in srgb, var(--color-success-6) 7%, transparent);
-  color: var(--color-text-secondary);
-}
-
-.serverList,
-.runningList,
-.toolList {
+.summaryBlock {
   display: grid;
-  gap: 8px;
   min-width: 0;
-}
-
-.serverGroup {
-  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
   gap: 8px;
-  min-width: 0;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 42%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-bg-elevated) 78%, transparent);
-  padding: 9px;
+  background: color-mix(in srgb, var(--surface-bg) 58%, transparent);
+  padding: 8px;
 }
 
-.serverGroup header {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
+.summaryBlock[data-tone="attention"] {
+  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-warning) 6%, var(--surface-bg));
 }
 
-.serverGroup header div {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
+.summaryIcon {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: color-mix(in srgb, var(--color-text-tertiary) 84%, var(--color-text-primary));
 }
 
-.serverGroup header strong,
-.runningRow strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--color-text-primary);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.serverGroup header span,
-.serverGroup p,
-.emptyState,
-.runningRow span {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-}
-
-.statusBadge {
-  display: inline-flex;
-  min-height: 20px;
-  flex: 0 0 auto;
-  align-items: center;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  line-height: 1;
-  padding: 0 7px;
-}
-
-.statusBadge[data-status="online"] {
+.summaryBlock[data-tone="ready"] .summaryIcon {
   color: var(--color-success-6);
 }
 
-.statusBadge[data-status="offline"],
-.statusBadge[data-status="auth_required"],
-.statusBadge[data-status="error"] {
+.summaryBlock[data-tone="attention"] .summaryIcon {
   color: var(--color-warning);
 }
 
-.statusBadge[data-status="disabled"] {
-  color: var(--color-text-4);
-}
-
-.toolRow {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) minmax(70px, 0.45fr) minmax(96px, 0.7fr);
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 36%, transparent);
-  border-radius: 7px;
-  padding: 7px;
-}
-
-.toolRow button[role="switch"] {
-  display: inline-flex;
-  width: 38px;
-  height: 24px;
-  align-items: center;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--color-border-3);
-  padding: 2px;
-  cursor: pointer;
-}
-
-.toolRow button[role="switch"] span {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--color-bg-elevated);
-  box-shadow: 0 1px 4px rgb(15 23 42 / 18%);
-  transition: transform 140ms ease;
-}
-
-.toolRow button[role="switch"][data-checked="true"] {
-  background: var(--color-accent);
-}
-
-.toolRow button[role="switch"][data-checked="true"] span {
-  transform: translateX(14px);
-}
-
-.toolRow div {
+.summaryBlock div,
+.section,
+.issueList,
+.runningList {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: 6px;
 }
 
-.toolRow strong {
+.summaryBlock strong,
+.issueRow strong,
+.runningRow strong {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   color: var(--color-text-primary);
   font-size: 12px;
   font-weight: 650;
-}
-
-.toolRow span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-secondary);
-  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.runningRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 8px;
-  align-items: center;
+.summaryBlock span,
+.issueRow span,
+.runningRow span {
   min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 36%, transparent);
-  border-radius: 7px;
-  padding: 8px;
+  overflow-wrap: anywhere;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
-.runningRow div {
+.issueRow,
+.runningRow {
   display: grid;
   min-width: 0;
   gap: 3px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-bg) 48%, transparent);
+  padding: 7px 8px;
+}
+
+.panelFooter {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-end;
+  padding-top: 1px;
 }
 
 .spinning {
@@ -379,16 +298,5 @@
 
   to {
     transform: rotate(360deg);
-  }
-}
-
-@media (max-width: 760px) {
-  .summaryGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .toolRow,
-  .runningRow {
-    grid-template-columns: 1fr;
   }
 }

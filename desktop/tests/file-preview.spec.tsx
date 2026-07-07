@@ -1198,6 +1198,26 @@ describe("FilePreview", () => {
     expect(screen.getByText("test_entrypoints_with_long_name.ts")).not.toBeNull();
   });
 
+  it("renders Windows extended paths without internal prefix or duplicate file root", () => {
+    render(
+      <FilePreview
+        breadcrumbRootLabel="README.md"
+        request={{
+          type: "content",
+          title: "README.md",
+          content: "# Hello\n",
+          contentType: "markdown",
+          sourcePath: "\\\\?\\C:\\Users\\86364\\Desktop\\README.md",
+        }}
+      />,
+    );
+
+    const breadcrumbs = screen.getByTitle("C: / Users / 86364 / Desktop / README.md");
+    expect(breadcrumbs).not.toBeNull();
+    expect(within(breadcrumbs).queryByText("?")).toBeNull();
+    expect(within(breadcrumbs).getAllByText("README.md")).toHaveLength(1);
+  });
+
   it("renders json content as a formatted source viewer", async () => {
     const json = '{"users":[{"name":"Ada","role":"admin"}],"enabled":true}';
     render(

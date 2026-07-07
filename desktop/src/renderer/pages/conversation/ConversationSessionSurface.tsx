@@ -61,6 +61,7 @@ export interface ConversationSessionSurfaceProps {
   previewPanelScopeKey?: string | null;
   sidecarQuoteRequest?: SendBoxExternalQuoteRequest | null;
   sidecarLoadedHistoryTurnCount?: number | null;
+  onOpenMcpSettings?: () => void;
   onOpenModelSettings?: () => void;
   onSidecarQuoteRequestHandled?: (requestId: number) => void;
   onQuickSendConsumed?: () => void;
@@ -78,6 +79,7 @@ export function ConversationSessionSurface({
   previewPanelScopeKey = null,
   sidecarQuoteRequest = null,
   sidecarLoadedHistoryTurnCount = null,
+  onOpenMcpSettings,
   onOpenModelSettings,
   onSidecarQuoteRequestHandled,
   onQuickSendConsumed,
@@ -709,7 +711,7 @@ export function ConversationSessionSurface({
           />
         </div>
         <div className={styles.sidecarComposer}>
-          <ConversationPanelComposerAccessory model={sidecarPanelModel} runtime={runtime} />
+          <ConversationPanelComposerAccessory model={sidecarPanelModel} runtime={runtime} onOpenMcpSettings={onOpenMcpSettings} />
           {composer}
         </div>
       </section>
@@ -729,7 +731,13 @@ export function ConversationSessionSurface({
             }
           : undefined
       }
-      composerAccessory={<ConversationPanelComposerAccessory model={panelModel} runtime={runtime} />}
+      composerAccessory={
+        <ConversationPanelComposerAccessory
+          model={panelModel}
+          runtime={runtime}
+          onOpenMcpSettings={onOpenMcpSettings}
+        />
+      }
       composer={composer}
     >
       <ConversationPanel

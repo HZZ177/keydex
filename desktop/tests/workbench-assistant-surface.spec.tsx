@@ -71,6 +71,28 @@ describe("WorkbenchAssistantSurface", () => {
     });
   });
 
+  it("keeps the MCP accessory selectable in the workbench composer", async () => {
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={fakeController()}
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    openWorkbenchComposerIfCollapsed();
+    fireEvent.click(screen.getByTestId("composer-accessory-switcher"));
+
+    const mcpItem = within(screen.getByTestId("composer-accessory-menu")).getByRole("menuitemradio", { name: /MCP/ });
+    expect((mcpItem as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(mcpItem);
+    expect(await screen.findByTestId("mcp-runtime-pill")).not.toBeNull();
+  });
+
   it("shows persisted context window usage in the drawer workbench composer", async () => {
     render(
       <WorkbenchSurfaceTestProviders>
@@ -2495,7 +2517,46 @@ function fakeRuntime({
       deleteThreadTask,
       listThreadTasks,
     },
+    mcp: {
+      getRuntimeStatus: vi.fn().mockResolvedValue(mcpRuntimeStatus()),
+    },
   } as unknown as RuntimeBridge;
+}
+
+function mcpRuntimeStatus() {
+  return {
+    session_id: "ses-1",
+    manager: {
+      enabled: true,
+      runtime_status: "started",
+      started: true,
+      active_client_count: 1,
+    },
+    snapshot: {
+      id: "snap_1",
+      snapshot_id: "snap_1",
+      session_id: "ses-1",
+      servers_total: 1,
+      servers_online: 1,
+      tools_visible: 2,
+      tools_disabled_for_session: 0,
+      pending_approvals: 0,
+      created_at: "2026-07-06T09:00:00Z",
+    },
+    servers: [],
+    tools: [],
+    overrides: [],
+    running_calls: [],
+    pending_approvals: 0,
+    summary: {
+      servers_total: 1,
+      servers_online: 1,
+      tools_total: 2,
+      tools_enabled: 2,
+      running_calls: 0,
+      pending_approvals: 0,
+    },
+  };
 }
 
 function fakeRuntimeWithEvents({ skills = [] }: { skills?: WorkspaceSkillSummary[] } = {}) {

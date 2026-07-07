@@ -62,6 +62,7 @@ export interface WorkbenchModePageProps {
   onSessionSelected?: (sessionId: string) => void;
   onSessionCreated?: (session: AgentSession) => void;
   onRequestNewSession?: () => void;
+  onOpenMcpSettings?: () => void;
 }
 
 interface WorkbenchMainPreviewTabState {
@@ -111,6 +112,7 @@ export function WorkbenchModePage({
   onSessionSelected,
   onSessionCreated,
   onRequestNewSession,
+  onOpenMcpSettings,
 }: WorkbenchModePageProps) {
   const notifications = useNotifications();
   const runtimeConnection = useOptionalRuntimeConnection();
@@ -142,6 +144,9 @@ export function WorkbenchModePage({
     () => workbenchPreviewTabs.tabs.find((tab) => tab.id === workbenchPreviewTabs.activeTabId) ?? null,
     [workbenchPreviewTabs.activeTabId, workbenchPreviewTabs.tabs],
   );
+  const workbenchPreviewResetKey = externalPreviewPath
+    ? `external:${externalPreviewPath}`
+    : `workspace:${workspaceId ?? ""}:session:${selectedSessionId ?? ""}`;
   const activeWorkbenchPreviewPath = activeWorkbenchPreviewTab
     ? targetPathForPreviewRequest(activeWorkbenchPreviewTab.request)
     : null;
@@ -286,14 +291,14 @@ export function WorkbenchModePage({
   const btwActive = Boolean(btwSession?.id);
   const activeAssistantController = btwActive ? btwController : assistantController;
   const workbenchPreviewRenderContext = useMemo<PreviewRenderContext | null>(() => {
-    if (!workspaceId) {
+    if (!workspaceId || !selectedWorkspace) {
       if (!externalPreviewPath) {
         return null;
       }
       return {
         panelScopeKey: workbenchExternalPreviewPanelScopeKey(externalPreviewPath),
         workspaceAvailable: false,
-        workspaceLabel: fileName(externalPreviewPath),
+        workspaceLabel,
         runtime,
       };
     }
@@ -311,6 +316,7 @@ export function WorkbenchModePage({
     activeAssistantController.startChatFromAnnotation,
     externalPreviewPath,
     runtime,
+    selectedWorkspace,
     workspaceId,
     workspaceLabel,
   ]);
@@ -488,17 +494,35 @@ export function WorkbenchModePage({
     setBtwSession(null);
     setBtwLoadedHistoryTurnCount(null);
     resetMainPreviewOutline();
-  }, [externalPreviewPath, resetMainPreviewOutline, selectedSessionId, workspaceId]);
+  }, [resetMainPreviewOutline, workbenchPreviewResetKey]);
 
   useEffect(() => {
     if (!externalPreviewPath || !workbenchPreviewRenderContext) {
       return;
     }
-    openWorkbenchMainPreview(
-      { type: "local-file", path: externalPreviewPath },
-      workbenchPreviewRenderContext,
-    );
-  }, [externalPreviewPath, openWorkbenchMainPreview, workbenchPreviewRenderContext]);
+    const request: PreviewRequest = { type: "local-file", path: externalPreviewPath };
+    const tabId = workbenchPreviewTabId(request);
+    const existingTab = workbenchPreviewTabs.tabs.find((item) => item.id === tabId);
+    if (!existingTab) {
+      openWorkbenchMainPreview(request, workbenchPreviewRenderContext);
+      return;
+    }
+    if (existingTab.renderContext === workbenchPreviewRenderContext && workbenchPreviewTabs.activeTabId === tabId) {
+      return;
+    }
+    setWorkbenchPreviewTabs((current) => ({
+      activeTabId: tabId,
+      tabs: current.tabs.map((item) =>
+        item.id === tabId ? { ...item, renderContext: workbenchPreviewRenderContext } : item,
+      ),
+    }));
+  }, [
+    externalPreviewPath,
+    openWorkbenchMainPreview,
+    workbenchPreviewRenderContext,
+    workbenchPreviewTabs.activeTabId,
+    workbenchPreviewTabs.tabs,
+  ]);
 
   useEffect(() => {
     const activeEntry = previewContext?.open ? previewContext.activeEntry : null;
@@ -641,11 +665,13 @@ export function WorkbenchModePage({
               style={{ "--workbench-main-browser-width": `${previewBrowserWidth}px` } as CSSProperties}
             >
               <div className={styles.browserPane} data-main-preview-open={activeWorkbenchPreviewTab ? "true" : "false"}>
-                {workspaceId ? (
+                {workspaceId && selectedWorkspace ? (
                   <WorkspaceFileBrowser
+                    key={workspaceId}
                     runtime={runtime}
                     workspaceId={workspaceId}
                     label={workspaceLabel}
+                    initialNavigationMode={externalPreviewPath ? "outline" : "files"}
                     previewPath={activeWorkbenchPreviewPath}
                     previewRequestId={activeWorkbenchPreviewTab?.requestId ?? 0}
                     previewRevealTarget={activeWorkbenchPreviewTab?.revealTarget ?? null}
@@ -696,7 +722,7 @@ export function WorkbenchModePage({
               ) : null}
             </div>
           </div>
-          {workspaceId ? (
+          {workspaceId && selectedWorkspace ? (
             <WorkbenchAssistantSurface
               runtime={runtime}
               workspaceId={workspaceId}
@@ -715,6 +741,7 @@ export function WorkbenchModePage({
               onDrawerWidthPreview={previewDrawerWidth}
               onDockTransitionChange={setDockTransitioning}
               onDockTransitionLayoutChange={updateDockTransitionLayout}
+              onOpenMcpSettings={onOpenMcpSettings}
             />
           ) : null}
         </main>

@@ -10,6 +10,7 @@ export interface ConversationPageProps {
   quickSendId?: string;
   focusTurnIndex?: number | null;
   focusTurnRequestId?: number;
+  onOpenMcpSettings?: () => void;
   onOpenModelSettings?: () => void;
   onQuickSendConsumed?: () => void;
   onNavigateToConversation?: (threadId: string) => void;
@@ -22,6 +23,7 @@ export function ConversationPage({
   quickSendId = "",
   focusTurnIndex = null,
   focusTurnRequestId,
+  onOpenMcpSettings,
   onOpenModelSettings,
   onQuickSendConsumed,
   onNavigateToConversation,
@@ -34,6 +36,7 @@ export function ConversationPage({
       quickSendId={quickSendId}
       focusTurnIndex={focusTurnIndex}
       focusTurnRequestId={focusTurnRequestId}
+      onOpenMcpSettings={onOpenMcpSettings}
       onOpenModelSettings={onOpenModelSettings}
       onQuickSendConsumed={onQuickSendConsumed}
       onNavigateToConversation={onNavigateToConversation}

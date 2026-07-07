@@ -208,6 +208,7 @@ export function FilePreview({
   const activePreviewId = previewContext?.activeEntryId ?? null;
   const showPreviewTabs = previewEntries.length > 1;
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
+  const fileLoadScope = request.type === "file" ? scope : null;
   const annotationScope = useMemo(() => annotationWorkspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const annotationPath = request.type === "file" || request.type === "local-file" ? request.path : null;
   const revealPath = isPathPreviewRequest(request)
@@ -460,7 +461,7 @@ export function FilePreview({
     }
 
     setContent("");
-    if (!runtime || (request.type === "file" && !scope)) {
+    if (!runtime || (request.type === "file" && !fileLoadScope)) {
       setError("工作区预览运行时未就绪");
       setLoading(false);
       return () => {
@@ -483,12 +484,12 @@ export function FilePreview({
               }
             })
         : kind === "image"
-          ? runtime.workspace.readMedia(scope as WorkspaceScope, request.path).then((response) => {
+          ? runtime.workspace.readMedia(fileLoadScope as WorkspaceScope, request.path).then((response) => {
               if (active) {
                 setMedia(response);
               }
             })
-          : runtime.workspace.readFile(scope as WorkspaceScope, request.path).then((response) => {
+          : runtime.workspace.readFile(fileLoadScope as WorkspaceScope, request.path).then((response) => {
               if (active) {
                 setContent(response.content);
               }
@@ -509,7 +510,7 @@ export function FilePreview({
     return () => {
       active = false;
     };
-  }, [kind, scope, runtime, request]);
+  }, [fileLoadScope, kind, runtime, request]);
 
   useEffect(() => {
     if (!usesFileOpenDelay) {
@@ -4962,10 +4963,13 @@ const codeMirrorHighlightStyle = HighlightStyle.define([
 ]);
 
 function PathBreadcrumbs({ path, rootLabel }: { path: string; rootLabel?: string }) {
-  const pathSegments = path.split(/[\\/]/).filter(Boolean);
-  const rootSegment = rootLabel ? fileName(rootLabel) : "";
+  const displayPath = normalizeBreadcrumbPath(path);
+  const pathSegments = displayPath.split(/[\\/]/).filter(Boolean);
+  const rootSegment = rootLabel ? fileName(normalizeBreadcrumbPath(rootLabel)) : "";
+  const shouldPrependRoot =
+    rootSegment && pathSegments[0] !== rootSegment && pathSegments[pathSegments.length - 1] !== rootSegment;
   const displaySegments = [
-    ...(rootSegment && pathSegments[0] !== rootSegment ? [rootSegment] : []),
+    ...(shouldPrependRoot ? [rootSegment] : []),
     ...(pathSegments.length > 0 ? pathSegments : [path]),
   ];
   return (
@@ -5468,6 +5472,14 @@ function FilePreviewFullscreenDialog({
       {children}
     </AppDialog>
   );
+}
+
+function normalizeBreadcrumbPath(path: string): string {
+  return path
+    .replace(/^\\\\\?\\UNC\\/i, "\\\\")
+    .replace(/^\/\/\?\/UNC\//i, "//")
+    .replace(/^\\\\\?\\/i, "")
+    .replace(/^\/\/\?\//i, "");
 }
 
 function calculateMermaidFitScale(viewport: HTMLElement, dimensions: SvgDimensions): number | null {

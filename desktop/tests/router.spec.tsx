@@ -316,6 +316,7 @@ describe("AppRouter", () => {
     expect(screen.getByTestId("workbench-titlebar-workspace-selector")).not.toBeNull();
     expect(screen.getByTestId("workbench-assistant-surface")).not.toBeNull();
     expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTitle("keydex / D: / docs / README.md")).not.toBeNull();
     await waitFor(() => {
       expect(runtime.localPreview.readFile).toHaveBeenCalledWith(filePath);
     });
@@ -328,8 +329,11 @@ describe("AppRouter", () => {
     expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "");
     expect((await screen.findAllByText("Intro")).length).toBeGreaterThan(0);
     const externalTree = screen.getByTestId("workspace-file-browser-tree");
-    fireEvent.click(await within(externalTree).findByTestId("workspace-browser-outline-tab"));
+    expect((await within(externalTree).findByTestId("workspace-browser-outline-tab")).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
     expect(await within(externalTree).findByText("Intro")).not.toBeNull();
+    expect(runtime.localPreview.readFile).toHaveBeenCalledTimes(1);
   });
 
   it("previews an external workbench file before the runtime connection is ready", async () => {
@@ -348,6 +352,7 @@ describe("AppRouter", () => {
     expect(screen.queryByTestId("workspace-file-browser")).toBeNull();
     expect(screen.queryByTestId("workbench-assistant-surface")).toBeNull();
     expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTitle("D: / docs / README.md")).not.toBeNull();
     await waitFor(() => {
       expect(runtime.localPreview.readFile).toHaveBeenCalledWith(filePath);
     });
@@ -376,6 +381,47 @@ describe("AppRouter", () => {
       pageSize: 50,
     });
     expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "");
+    expect(runtime.localPreview.readFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a remembered-workspace external file in outline preview while the runtime starts", async () => {
+    const filePath = "D:/docs/README.md";
+    const connection = createDeferred<AgentConnection>();
+    const starter = vi.fn(() => connection.promise);
+    const { runtime } = renderRouter([workbenchFilePreviewPath(filePath, "workspace A")], { starter });
+
+    await waitFor(() => expect(starter).toHaveBeenCalledTimes(1));
+    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("workspace A");
+    expect(screen.getByTestId("workbench-external-preview-pending-pane")).not.toBeNull();
+    expect(screen.queryByTestId("workspace-file-browser")).toBeNull();
+    expect(screen.queryByTestId("workbench-assistant-surface")).toBeNull();
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTitle("workspace A / D: / docs / README.md")).not.toBeNull();
+    await waitFor(() => {
+      expect(runtime.localPreview.readFile).toHaveBeenCalledWith(filePath);
+    });
+    expect(runtime.workspaces.list).not.toHaveBeenCalled();
+    expect(runtime.workspace.listDirectory).not.toHaveBeenCalled();
+    expect(await within(screen.getByTestId("workbench-external-preview-pending-pane")).findByText("Intro")).not.toBeNull();
+
+    await act(async () => {
+      connection.resolve(agentConnection());
+      await connection.promise;
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-file-browser")).not.toBeNull();
+    });
+    const tree = screen.getByTestId("workspace-file-browser-tree");
+    expect((await within(tree).findByTestId("workspace-browser-outline-tab")).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(await within(tree).findByText("Intro")).not.toBeNull();
+    expect(screen.getByTestId("workbench-assistant-surface")).not.toBeNull();
+    expect(screen.queryByTestId("workbench-external-preview-pending-pane")).toBeNull();
+    expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "");
+    expect(runtime.localPreview.readFile).toHaveBeenCalledTimes(1);
   });
 
   it("keeps pinned workbench sessions in the sidebar pinned section", async () => {

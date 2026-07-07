@@ -44,6 +44,7 @@ export type { HealthResponse, SettingsRuntime } from "./settings";
 export type {
   LocalPreviewFileResponse,
   LocalPreviewMediaResponse,
+  LocalPreviewRuntimeOptions,
   LocalPreviewRuntime,
 } from "./localPreview";
 export type {

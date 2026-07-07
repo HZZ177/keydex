@@ -266,6 +266,7 @@ function ProjectRoute() {
 function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const { workspaceId, sessionId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const layout = useLayoutState();
   const runtimeConnection = useOptionalRuntimeConnection();
@@ -541,6 +542,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
         onSessionSelected={handleWorkbenchSessionSelected}
         onSessionCreated={handleWorkbenchSessionCreated}
         onRequestNewSession={handleWorkbenchNewSessionRequested}
+        onOpenMcpSettings={() => void navigate("/settings/mcp", { state: { from: location.pathname } })}
       />
     </RoutedLayout>
   );
@@ -658,6 +660,7 @@ function ConversationRoute({ runtime }: { runtime: RuntimeBridge }) {
         focusTurnIndex={focusTurnIndex}
         focusTurnRequestId={focusTurnRequestId}
         onQuickSendConsumed={clearQuickSend}
+        onOpenMcpSettings={() => void navigate("/settings/mcp", { state: { from: location.pathname } })}
         onOpenModelSettings={() => void navigate("/settings/model-defaults", { state: { from: location.pathname } })}
         onNavigateToConversation={(nextThreadId) => void navigate(conversationPath(nextThreadId))}
       />

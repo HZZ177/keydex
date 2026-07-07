@@ -40,11 +40,11 @@ describe("SettingsShell", () => {
     expect(screen.queryByText("暂未开放")).toBeNull();
   });
 
-  it("uses a dedicated MCP server icon instead of the extensions icon", () => {
+  it("uses the same MCP icon family as the runtime capsule instead of the extensions icon", () => {
     renderShell("providers");
 
     expect(screen.getByRole("button", { name: "扩展功能" }).getAttribute("data-icon")).toBe("puzzle");
-    expect(screen.getByRole("button", { name: "MCP服务器" }).getAttribute("data-icon")).toBe("server");
+    expect(screen.getByRole("button", { name: "MCP服务器" }).getAttribute("data-icon")).toBe("plug-zap");
   });
 
   it("marks the active settings section", () => {

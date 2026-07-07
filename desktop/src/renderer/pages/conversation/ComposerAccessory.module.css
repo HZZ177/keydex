@@ -21,6 +21,15 @@
   max-width: 66.666%;
 }
 
+.composerAccessoryItem[data-selected-item="mcp-runtime"] {
+  min-width: min(292px, calc(100% - 38px));
+  max-width: min(520px, calc(100% - 38px));
+}
+
+.accessoryShell[data-selected-item="mcp-runtime"] {
+  width: 100%;
+}
+
 .accessoryShell {
   display: inline-flex;
   height: 30px;

@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge } from "@/runtime";
 import { ConversationComposerAccessory } from "@/renderer/pages/conversation/ComposerAccessory";
+import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type {
   McpRuntimeCallSummary,
   McpRuntimeStatusResponse,
@@ -11,94 +12,52 @@ import type {
 } from "@/types/protocol";
 
 describe("MCP Runtime Panel", () => {
-  it("shows snapshot summary and server groups", async () => {
-    renderRuntimePanel(runtimeStatus());
+  it("stays manual by default and renders a compact runtime summary without snapshot or tool switches", async () => {
+    const onOpenSettings = vi.fn();
+    renderRuntimePanel(runtimeStatus(), { onOpenSettings });
 
-    const pill = await screen.findByTestId("mcp-runtime-pill");
-    await waitFor(() => expect(pill.textContent).toContain("snap_1"));
-    expect(pill.textContent).toContain("2 个工具");
+    expect(screen.queryByTestId("mcp-runtime-pill")).toBeNull();
+    expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
+
+    const pill = await selectMcpRuntimePill();
+    await waitFor(() => expect(pill.textContent).toContain("1 个 MCP 服务器 · 2 个 tool"));
+    expect(pill.textContent).not.toContain("snap_1");
 
     fireEvent.click(pill);
 
     const panel = screen.getByTestId("mcp-runtime-panel");
-    expect(panel.textContent).toContain("Online MCP");
-    expect(panel.textContent).toContain("可用工具");
-    expect(panel.textContent).toContain("等待确认");
-    expect(panel.textContent).toContain("read_file description");
-    expect(panel.textContent).toContain("始终允许");
-    expect(panel.textContent).toContain("已启用");
+    expect(panel.textContent).toContain("MCP 当前会话");
+    expect(panel.textContent).toContain("1/1 个服务在线");
+    expect(panel.textContent).toContain("2 个工具可用");
+    expect(panel.textContent).not.toContain("运行快照");
+    expect(panel.textContent).not.toContain("snap_1");
+    expect(panel.textContent).not.toContain("read_file description");
+    expect(within(panel).queryByRole("switch")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开 MCP 设置" }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the panel open when a real click follows hover", async () => {
-    renderRuntimePanel(runtimeStatus());
+  it("automatically shows MCP only for the turn that contains an MCP tool call", async () => {
+    const props = {
+      statusOrRuntime: runtimeStatus(),
+      messages: [userMessage("turn-1"), mcpToolMessage("turn-1")],
+    };
+    const view = renderRuntimePanel(props.statusOrRuntime, { messages: props.messages });
 
-    const pill = await screen.findByTestId("mcp-runtime-pill");
-    fireEvent.mouseEnter(pill);
-    fireEvent.click(pill);
+    expect(await screen.findByTestId("mcp-runtime-pill")).not.toBeNull();
 
-    expect(screen.getByTestId("mcp-runtime-panel").getAttribute("data-open")).toBe("true");
-  });
-
-  it("disables a tool for the current session without changing global policy", async () => {
-    const disabledStatus = runtimeStatus({
-      tools: [tool("tool_read", "read_file", { effective_state: "disabled_for_session" })],
-      overrides: [
-        {
-          id: "override_1",
-          session_id: "sess_1",
-          server_id: "srv_1",
-          raw_tool_name: "read_file",
-          enabled: false,
-          reason: "user_disabled",
-          created_at: "2026-07-06T09:00:00Z",
-        },
-      ],
-    });
-    const { runtime, setSessionToolOverride } = runtimeWithStatuses(runtimeStatus(), disabledStatus);
-    renderRuntimePanel(runtime);
-
-    fireEvent.click(await screen.findByTestId("mcp-runtime-pill"));
-    fireEvent.click(await screen.findByRole("switch", { name: "关闭 MCP 工具 read_file" }));
-
-    await waitFor(() =>
-      expect(setSessionToolOverride).toHaveBeenCalledWith("sess_1", "tool_read", {
-        server_id: "srv_1",
-        enabled: false,
-        reason: "user_disabled_in_runtime_panel",
+    view.rerender(
+      runtimePanelElement(runtimeWithStatuses(runtimeStatus()).runtime, {
+        messages: [...props.messages, userMessage("turn-2")],
       }),
     );
-    expect(await screen.findByText("已在当前会话禁用 read_file")).not.toBeNull();
-    const panel = screen.getByTestId("mcp-runtime-panel");
-    await waitFor(() => expect(panel.textContent).toContain("当前会话停用"));
-    expect(panel.textContent).toMatch(/本会话停用\s*1/);
+
+    expect(screen.queryByTestId("mcp-runtime-pill")).toBeNull();
+    expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
   });
 
-  it("shows next-turn timing when enabling during a running turn", async () => {
-    const disabledStatus = runtimeStatus({
-      tools: [tool("tool_read", "read_file", { effective_state: "disabled_for_session" })],
-      running_calls: [runningCall()],
-    });
-    const { runtime, setSessionToolOverride } = runtimeWithStatuses(disabledStatus);
-    setSessionToolOverride.mockResolvedValue({
-      applies_to_current_run: false,
-      apply_timing: { scope: "next_turn" },
-    });
-    renderRuntimePanel(runtime, "running");
-
-    fireEvent.click(await screen.findByTestId("mcp-runtime-pill"));
-    fireEvent.click(await screen.findByRole("switch", { name: "启用 MCP 工具 read_file" }));
-
-    await waitFor(() =>
-      expect(setSessionToolOverride).toHaveBeenCalledWith("sess_1", "tool_read", {
-        server_id: "srv_1",
-        enabled: true,
-        reason: "user_enabled_in_runtime_panel",
-      }),
-    );
-    expect(await screen.findByText("已启用 read_file，下一轮生效")).not.toBeNull();
-  });
-
-  it("disables switches for offline servers", async () => {
+  it("summarizes issues without rendering the server tool list", async () => {
     renderRuntimePanel(
       runtimeStatus({
         servers: [server("srv_2", "Offline MCP", { status: "offline" })],
@@ -107,26 +66,6 @@ describe("MCP Runtime Panel", () => {
             server_id: "srv_2",
             server_name: "Offline MCP",
             effective_state: "server_offline",
-          }),
-        ],
-      }),
-    );
-
-    fireEvent.click(await screen.findByTestId("mcp-runtime-pill"));
-    const offlineSwitch = await screen.findByRole("switch", { name: "MCP 工具 search_docs 不可切换" });
-
-    expect((offlineSwitch as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByTestId("mcp-runtime-panel").textContent).toContain("服务离线");
-  });
-
-  it("hides tools for disabled servers", async () => {
-    renderRuntimePanel(
-      runtimeStatus({
-        servers: [server("srv_1", "Disabled MCP", { enabled: false, status: "disabled", tools_count: 0 })],
-        tools: [
-          tool("tool_read", "read_file", {
-            server_name: "Disabled MCP",
-            effective_state: "disabled_by_server",
           }),
         ],
         summary: {
@@ -140,40 +79,68 @@ describe("MCP Runtime Panel", () => {
       }),
     );
 
-    fireEvent.click(await screen.findByTestId("mcp-runtime-pill"));
+    fireEvent.click(await selectMcpRuntimePill());
     const panel = screen.getByTestId("mcp-runtime-panel");
 
-    expect(panel.textContent).toContain("Disabled MCP");
-    expect(panel.textContent).toContain("已停用");
-    expect(panel.textContent).toContain("暂无可见工具");
-    expect(panel.textContent).not.toContain("read_file");
-    expect(panel.textContent).not.toContain("read_file description");
+    expect(panel.textContent).toContain("MCP 需要处理");
+    expect(panel.textContent).toContain("Offline MCP");
+    expect(panel.textContent).toContain("服务离线");
+    expect(panel.textContent).not.toContain("search_docs");
+    expect(within(panel).queryByRole("switch")).toBeNull();
   });
 
-  it("cancels a running MCP call", async () => {
-    const before = runtimeStatus({ running_calls: [runningCall()] });
-    const after = runtimeStatus({ running_calls: [] });
-    const { runtime, cancelRuntimeCall } = runtimeWithStatuses(before, after);
-    renderRuntimePanel(runtime, "running");
+  it("shows running MCP calls as status, not cancellable controls", async () => {
+    renderRuntimePanel(runtimeStatus({ running_calls: [runningCall()] }), { runtimeState: "running" });
 
-    fireEvent.click(await screen.findByTestId("mcp-runtime-pill"));
-    fireEvent.click(await screen.findByRole("button", { name: "取消 MCP 调用 call_1" }));
+    fireEvent.click(await selectMcpRuntimePill());
+    const panel = screen.getByTestId("mcp-runtime-panel");
 
-    await waitFor(() => expect(cancelRuntimeCall).toHaveBeenCalledWith("call_1"));
-    expect(await screen.findByText("已取消 read_file")).not.toBeNull();
+    expect(panel.textContent).toContain("MCP 正在执行");
+    expect(panel.textContent).toContain("Online MCP / read_file");
+    expect(panel.textContent).toContain("已运行 2s");
+    expect(within(panel).queryByRole("button", { name: /取消 MCP 调用/ })).toBeNull();
   });
 });
 
-function renderRuntimePanel(statusOrRuntime: McpRuntimeStatusResponse | RuntimeBridge, runtimeState = "idle") {
+async function selectMcpRuntimePill() {
+  fireEvent.click(screen.getByTestId("composer-accessory-switcher"));
+  fireEvent.click(within(screen.getByTestId("composer-accessory-menu")).getByRole("menuitemradio", { name: /MCP/ }));
+  return screen.findByTestId("mcp-runtime-pill");
+}
+
+function renderRuntimePanel(
+  statusOrRuntime: McpRuntimeStatusResponse | RuntimeBridge,
+  options: {
+    messages?: ConversationMessage[];
+    onOpenSettings?: () => void;
+    runtimeState?: string;
+  } = {},
+) {
   const runtime = "mcp" in statusOrRuntime ? statusOrRuntime : runtimeWithStatuses(statusOrRuntime).runtime;
-  return render(
+  return render(runtimePanelElement(runtime, options));
+}
+
+function runtimePanelElement(
+  runtime: RuntimeBridge,
+  {
+    messages = [],
+    onOpenSettings,
+    runtimeState = "idle",
+  }: {
+    messages?: ConversationMessage[];
+    onOpenSettings?: () => void;
+    runtimeState?: string;
+  } = {},
+) {
+  return (
     <ConversationComposerAccessory
-      messages={[]}
+      messages={messages}
       mcpRuntime={{ runtime, sessionId: "sess_1", runtimeState }}
+      onOpenMcpSettings={onOpenSettings}
       showScrollToBottom={false}
       onFilePreview={vi.fn()}
       onScrollToBottom={vi.fn()}
-    />,
+    />
   );
 }
 
@@ -184,16 +151,12 @@ function runtimeWithStatuses(...statuses: McpRuntimeStatusResponse[]) {
     getRuntimeStatus.mockResolvedValueOnce(status);
   }
   getRuntimeStatus.mockResolvedValue(fallback);
-  const setSessionToolOverride = vi.fn().mockResolvedValue({ applies_to_current_run: true });
-  const cancelRuntimeCall = vi.fn().mockResolvedValue({ call_id: "call_1", cancelled: true });
   const runtime = {
     mcp: {
       getRuntimeStatus,
-      setSessionToolOverride,
-      cancelRuntimeCall,
     },
   } as unknown as RuntimeBridge;
-  return { runtime, getRuntimeStatus, setSessionToolOverride, cancelRuntimeCall };
+  return { runtime, getRuntimeStatus };
 }
 
 function runtimeStatus(patch: Partial<McpRuntimeStatusResponse> = {}): McpRuntimeStatusResponse {
@@ -217,23 +180,63 @@ function runtimeStatus(patch: Partial<McpRuntimeStatusResponse> = {}): McpRuntim
       servers_online: servers.filter((item) => item.status === "online").length,
       tools_visible: tools.filter((item) => item.effective_state === "enabled").length,
       tools_disabled_for_session: tools.filter((item) => item.effective_state === "disabled_for_session").length,
-      pending_approvals: 1,
+      pending_approvals: 0,
       created_at: "2026-07-06T09:00:00Z",
     },
     servers,
     tools,
     overrides,
     running_calls: runningCalls,
-    pending_approvals: 1,
+    pending_approvals: 0,
     summary: {
       servers_total: servers.length,
       servers_online: servers.filter((item) => item.status === "online").length,
       tools_total: tools.length,
       tools_enabled: tools.filter((item) => item.effective_state === "enabled").length,
       running_calls: runningCalls.length,
-      pending_approvals: 1,
+      pending_approvals: 0,
     },
     ...patch,
+  };
+}
+
+function userMessage(turnId: string): ConversationMessage {
+  return {
+    id: `user-${turnId}`,
+    threadId: "sess_1",
+    turnId,
+    itemId: `item-user-${turnId}`,
+    kind: "user",
+    content: "run mcp",
+    payload: {},
+    createdAt: "2026-07-06T09:00:00Z",
+    updatedAt: "2026-07-06T09:00:00Z",
+  };
+}
+
+function mcpToolMessage(turnId: string): ConversationMessage {
+  return {
+    id: `tool-${turnId}`,
+    threadId: "sess_1",
+    turnId,
+    itemId: `item-tool-${turnId}`,
+    kind: "tool",
+    status: "completed",
+    content: "mcp__srv_1__read_file",
+    payload: {
+      call: {
+        name: "mcp__srv_1__read_file",
+      },
+      metadata: {
+        mcp: {
+          kind: "mcp_tool",
+          server_id: "srv_1",
+          raw_tool_name: "read_file",
+        },
+      },
+    },
+    createdAt: "2026-07-06T09:00:01Z",
+    updatedAt: "2026-07-06T09:00:01Z",
   };
 }
 

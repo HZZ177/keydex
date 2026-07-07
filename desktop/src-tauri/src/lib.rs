@@ -82,6 +82,13 @@ struct AgentConnection {
     data_dir: String,
 }
 
+#[derive(Serialize)]
+struct LocalTextFileResponse {
+    path: String,
+    content: String,
+    encoding: String,
+}
+
 #[tauri::command]
 fn allocate_port() -> Result<u16, String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|err| err.to_string())?;
@@ -271,6 +278,25 @@ fn write_text_file(path: String, contents: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn read_text_file(path: String) -> Result<LocalTextFileResponse, String> {
+    let cleaned = path.trim();
+    if cleaned.is_empty() {
+        return Err("鏂囦欢璺緞涓嶈兘涓虹┖".to_string());
+    }
+    let requested = PathBuf::from(cleaned);
+    if !requested.is_file() {
+        return Err("鍙兘棰勮鏂囦欢".to_string());
+    }
+    let resolved = requested.canonicalize().unwrap_or(requested);
+    let content = std::fs::read_to_string(&resolved).map_err(|err| err.to_string())?;
+    Ok(LocalTextFileResponse {
+        path: resolved.to_string_lossy().to_string(),
+        content,
+        encoding: "utf-8".to_string(),
+    })
+}
+
+#[tauri::command]
 fn copy_file_to_clipboard(path: String) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -456,6 +482,7 @@ pub fn run() {
             hide_main_window,
             request_app_exit,
             open_path_in_file_manager,
+            read_text_file,
             write_text_file,
             copy_file_to_clipboard,
             take_associated_file_open_paths

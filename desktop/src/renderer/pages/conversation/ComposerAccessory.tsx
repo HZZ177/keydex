@@ -42,6 +42,7 @@ interface ComposerAccessoryStatusItem {
   description: string;
   id: string;
   label: string;
+  manualOnly?: boolean;
   node: ReactNode;
   priority: number;
 }
@@ -53,6 +54,7 @@ export function ConversationComposerAccessory({
   mcpRuntime = null,
   onUpdateTask,
   onDeleteTask,
+  onOpenMcpSettings,
   showScrollToBottom,
   showScrollButton = true,
   onFilePreview,
@@ -68,6 +70,7 @@ export function ConversationComposerAccessory({
   } | null;
   onUpdateTask?: (taskId: string, payload: ThreadTaskUpdatePayload) => Promise<unknown> | unknown;
   onDeleteTask?: (taskId: string) => Promise<unknown> | unknown;
+  onOpenMcpSettings?: () => void;
   showScrollToBottom: boolean;
   showScrollButton?: boolean;
   onFilePreview: (file: FileChangePreview) => void;
@@ -76,6 +79,7 @@ export function ConversationComposerAccessory({
   const runtimeTypingMetrics = useRuntimeTypingMetrics();
   const fileChangeSummary = useMemo(() => buildActiveTurnFileChangeSummary(messages), [messages]);
   const planSummary = useMemo(() => buildActiveTurnPlanSummary(messages), [messages]);
+  const activeTurnHasMcpTool = useMemo(() => activeTurnContainsMcpTool(messages), [messages]);
   const activeTaskRunning = Boolean(
     activeTask && runningTaskRun && runningTaskRun.task_id === activeTask.id && runningTaskRun.status === "running",
   );
@@ -99,14 +103,16 @@ export function ConversationComposerAccessory({
       {
         id: "mcp-runtime",
         active: Boolean(mcpRuntime),
-        description: "当前会话 MCP runtime",
+        description: activeTurnHasMcpTool ? "本轮已调用 MCP 工具" : "当前会话 MCP runtime",
         label: "MCP",
-        priority: 120,
+        manualOnly: !activeTurnHasMcpTool,
+        priority: 160,
         node: mcpRuntime ? (
           <McpRuntimePill
             runtime={mcpRuntime.runtime}
             sessionId={mcpRuntime.sessionId}
             runtimeState={mcpRuntime.runtimeState}
+            onOpenSettings={onOpenMcpSettings}
           />
         ) : null,
       },
@@ -138,21 +144,26 @@ export function ConversationComposerAccessory({
     [
       activeTask,
       activeTaskRunning,
+      activeTurnHasMcpTool,
       fileChangeSummary,
       mcpRuntime,
       onDeleteTask,
       onFilePreview,
+      onOpenMcpSettings,
       onUpdateTask,
       planSummary,
       runtimeTypingMetrics.backlog,
       runtimeTypingMetrics.speed,
     ],
   );
-  const activeItems = useMemo(
-    () => accessoryItems.filter((item) => item.active).sort((left, right) => right.priority - left.priority),
+  const autoActiveItems = useMemo(
+    () =>
+      accessoryItems
+        .filter((item) => item.active && !item.manualOnly)
+        .sort((left, right) => right.priority - left.priority),
     [accessoryItems],
   );
-  const autoSelectedId = activeItems[0]?.id ?? "runtime-typing-speed";
+  const autoSelectedId = autoActiveItems[0]?.id ?? "runtime-typing-speed";
   const [manualSelectedId, setManualSelectedId] = useState<string | null>(null);
   const previousAutoSelectedId = useRef(autoSelectedId);
 
@@ -176,7 +187,11 @@ export function ConversationComposerAccessory({
   const manualSelectedItem = manualSelectedId
     ? accessoryItems.find((item) => item.id === manualSelectedId && item.active)
     : null;
-  const selectedItem = manualSelectedItem ?? activeItems[0] ?? accessoryItems[0];
+  const selectedItem =
+    manualSelectedItem ??
+    autoActiveItems[0] ??
+    accessoryItems.find((item) => item.id === "runtime-typing-speed") ??
+    accessoryItems[0];
 
   return (
     <div className={styles.composerAccessoryBar} aria-label="输入框状态">
@@ -205,6 +220,50 @@ export function ConversationComposerAccessory({
       ) : null}
     </div>
   );
+}
+
+function activeTurnContainsMcpTool(messages: ConversationMessage[]): boolean {
+  const lastUserIndex = messages.findLastIndex((message) => message.kind === "user");
+  return messages.slice(lastUserIndex + 1).some(isMcpToolMessage);
+}
+
+function isMcpToolMessage(message: ConversationMessage): boolean {
+  if (message.kind !== "tool") {
+    return false;
+  }
+  const payload = asRecord(message.payload);
+  const call = asRecord(payload?.call);
+  const result = asRecord(payload?.result);
+  const metadata = asRecord(payload?.metadata);
+  const callMetadata = asRecord(call?.metadata);
+  const resultMetadata = asRecord(result?.metadata);
+  const toolName =
+    stringValue(call?.name) ||
+    stringValue(payload?.tool) ||
+    stringValue(payload?.tool_name) ||
+    stringValue(payload?.toolName);
+  const mcpRecords = [
+    asRecord(metadata?.mcp),
+    asRecord(callMetadata?.mcp),
+    asRecord(resultMetadata?.mcp),
+    asRecord(payload?.mcp),
+    asRecord(call?.mcp),
+    asRecord(result?.mcp),
+  ];
+  return (
+    toolName.startsWith("mcp__") ||
+    mcpRecords.some((record) =>
+      Boolean(record?.kind === "mcp_tool" || record?.server_id || record?.server_name || record?.raw_tool_name),
+    )
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function ComposerAccessorySwitcher({
@@ -251,6 +310,7 @@ function ComposerAccessorySwitcher({
         aria-expanded={open}
         aria-haspopup="menu"
         data-open={open ? "true" : "false"}
+        data-testid="composer-accessory-switcher"
         onClick={() => setOpen((value) => !value)}
       >
         <ChevronsUpDown size={13} />

@@ -34,6 +34,7 @@ export interface WorkspaceFileBrowserProps {
   previewRequestId?: number;
   previewRevealTarget?: PreviewFileRevealTarget | null;
   previewPlacement?: "inline" | "external";
+  initialNavigationMode?: "files" | "outline";
   previewOutline?: MarkdownOutlineItem[];
   previewOutlineReady?: boolean;
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
@@ -67,6 +68,7 @@ export function WorkspaceFileBrowser({
   previewRequestId = 0,
   previewRevealTarget = null,
   previewPlacement = "inline",
+  initialNavigationMode = "files",
   previewOutline = [],
   previewOutlineReady = false,
   onQuoteSelection,
@@ -84,7 +86,7 @@ export function WorkspaceFileBrowser({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_WIDTH);
-  const [navigationMode, setNavigationMode] = useState<BrowserNavigationMode>("files");
+  const [navigationMode, setNavigationMode] = useState<BrowserNavigationMode>(initialNavigationMode);
   const [markdownOutline, setMarkdownOutline] = useState<MarkdownOutlineItem[]>([]);
   const [markdownOutlineReady, setMarkdownOutlineReady] = useState(false);
   const [outlineRevealRequest, setOutlineRevealRequest] = useState<MarkdownOutlineRevealRequest | null>(null);
@@ -245,6 +247,12 @@ export function WorkspaceFileBrowser({
       setNavigationMode("files");
     }
   }, [outlinePath]);
+
+  useEffect(() => {
+    if (initialNavigationMode === "outline" && outlineAvailable) {
+      setNavigationMode("outline");
+    }
+  }, [initialNavigationMode, outlineAvailable, outlinePath]);
 
   const handleMarkdownOutlineChange = useCallback((outline: MarkdownOutlineItem[]) => {
     setMarkdownOutline(outline);
