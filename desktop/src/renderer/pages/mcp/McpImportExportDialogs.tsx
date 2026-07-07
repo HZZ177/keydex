@@ -1,5 +1,5 @@
-import { AlertCircle, CheckCircle2, Clipboard, FileJson, LoaderCircle } from "lucide-react";
-import { useMemo, useState } from "react";
+import { AlertCircle, CheckCircle2, Clipboard, Download, FileJson, LoaderCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { RuntimeBridge } from "@/runtime";
 import { AppDialog, DialogButton } from "@/renderer/components/dialog";
@@ -9,6 +9,7 @@ import type {
   McpImportConflictStrategy,
   McpImportPreviewResponse,
   McpImportSourceType,
+  McpServerSummary,
 } from "@/types/protocol";
 
 import styles from "./McpConsolePage.module.css";
@@ -22,8 +23,11 @@ interface McpImportDialogProps {
 
 interface McpExportDialogProps {
   runtime: RuntimeBridge;
+  servers: McpServerSummary[];
   onClose: () => void;
 }
+
+type ExportFileState = "idle" | "saved" | "downloaded" | "cancelled" | "failed";
 
 const IMPORT_SOURCES: Array<{ value: McpImportSourceType; label: string }> = [
   { value: "keydex", label: "Keydex JSON" },
@@ -205,27 +209,75 @@ export function McpImportDialog({ runtime, onClose, onImported }: McpImportDialo
   );
 }
 
-export function McpExportDialog({ runtime, onClose }: McpExportDialogProps) {
+export function McpExportDialog({ runtime, servers, onClose }: McpExportDialogProps) {
   const [includeTrustRules, setIncludeTrustRules] = useState(false);
+  const [selectedServerIds, setSelectedServerIds] = useState<string[]>(() => servers.map((server) => server.id));
   const [exported, setExported] = useState<McpExportResponse | null>(null);
+  const [exportFilename, setExportFilename] = useState(() => createMcpExportFilename());
   const [error, setError] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [fileState, setFileState] = useState<ExportFileState>("idle");
   const [busy, setBusy] = useState(false);
+  const [fileBusy, setFileBusy] = useState(false);
 
   const serialized = useMemo(
     () => (exported ? JSON.stringify(exported, null, 2) : ""),
     [exported],
   );
+  const selectedServerIdSet = useMemo(() => new Set(selectedServerIds), [selectedServerIds]);
+  const allServersSelected = servers.length > 0 && selectedServerIds.length === servers.length;
+  const canGeneratePreview = servers.length > 0 && selectedServerIds.length > 0 && !busy;
+
+  useEffect(() => {
+    setSelectedServerIds((current) => {
+      const availableIds = new Set(servers.map((server) => server.id));
+      const retained = current.filter((serverId) => availableIds.has(serverId));
+      return retained.length > 0 ? retained : servers.map((server) => server.id);
+    });
+  }, [servers]);
+
+  const resetPreview = () => {
+    setExported(null);
+    setCopyState("idle");
+    setFileState("idle");
+  };
+
+  const toggleServer = (serverId: string) => {
+    resetPreview();
+    setError("");
+    setSelectedServerIds((current) => {
+      const next = new Set(current);
+      if (next.has(serverId)) {
+        next.delete(serverId);
+      } else {
+        next.add(serverId);
+      }
+      return servers.filter((server) => next.has(server.id)).map((server) => server.id);
+    });
+  };
+
+  const toggleAllServers = () => {
+    resetPreview();
+    setError("");
+    setSelectedServerIds(allServersSelected ? [] : servers.map((server) => server.id));
+  };
 
   const runExport = async () => {
+    if (selectedServerIds.length === 0) {
+      setError("请选择至少一个 MCP 服务器");
+      return;
+    }
     setBusy(true);
     setError("");
     setCopyState("idle");
+    setFileState("idle");
     try {
       const response = await runtime.mcp.exportConfig({
         include_trust_rules: includeTrustRules,
+        server_ids: selectedServerIds,
       });
       setExported(response);
+      setExportFilename(createMcpExportFilename());
     } catch (reason) {
       setExported(null);
       setError(errorMessage(reason));
@@ -246,18 +298,44 @@ export function McpExportDialog({ runtime, onClose }: McpExportDialogProps) {
     }
   };
 
+  const exportFile = async () => {
+    if (!serialized) {
+      return;
+    }
+    setFileBusy(true);
+    setError("");
+    setFileState("idle");
+    try {
+      const result = await saveMcpExportFile(serialized, exportFilename);
+      setFileState(result);
+    } catch {
+      setFileState("failed");
+      setError("导出文件失败");
+    } finally {
+      setFileBusy(false);
+    }
+  };
+
   return (
     <AppDialog
       title="导出 MCP 配置"
-      description="导出 Keydex MCP JSON。"
+      description="选择服务器，生成预览后导出 Keydex MCP JSON。"
       onClose={onClose}
       footer={(
         <>
           <DialogButton type="button" onClick={onClose}>
             关闭
           </DialogButton>
-          <DialogButton tone="primary" type="button" disabled={busy} onClick={() => void runExport()}>
-            {busy ? "生成中" : "生成导出"}
+          <DialogButton type="button" disabled={!canGeneratePreview} onClick={() => void runExport()}>
+            {busy ? "生成中" : exported ? "重新生成预览" : "生成预览"}
+          </DialogButton>
+          <DialogButton
+            tone="primary"
+            type="button"
+            disabled={!exported || fileBusy}
+            onClick={() => void exportFile()}
+          >
+            {fileBusy ? "导出中" : "导出文件"}
           </DialogButton>
         </>
       )}
@@ -269,6 +347,40 @@ export function McpExportDialog({ runtime, onClose }: McpExportDialogProps) {
             <span>{error}</span>
           </div>
         ) : null}
+        <div className={styles.exportStep}>
+          <div className={styles.exportStepHeader}>
+            <div>
+              <strong>选择 MCP 服务器</strong>
+              <span>{selectedServerIds.length} / {servers.length} 个服务器</span>
+            </div>
+            <button type="button" disabled={servers.length === 0} onClick={toggleAllServers}>
+              {allServersSelected ? "取消全选" : "全选"}
+            </button>
+          </div>
+          {servers.length === 0 ? (
+            <div className={styles.importExportNotice} role="status">
+              <FileJson size={15} />
+              <span>暂无可导出的 MCP 服务器。</span>
+            </div>
+          ) : (
+            <div className={styles.exportServerList} role="group" aria-label="导出 MCP 服务器">
+              {servers.map((server) => (
+                <label key={server.id} className={styles.exportServerOption}>
+                  <input
+                    aria-label={`导出 MCP 服务器 ${server.name}`}
+                    type="checkbox"
+                    checked={selectedServerIdSet.has(server.id)}
+                    onChange={() => toggleServer(server.id)}
+                  />
+                  <span>
+                    <strong>{server.name}</strong>
+                    <small>{transportLabel(server.transport)} · {server.enabled ? "已启用" : "已停用"}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
         <label className={styles.importExportToggle}>
           <span>
             <strong>包含信任名单</strong>
@@ -278,33 +390,96 @@ export function McpExportDialog({ runtime, onClose }: McpExportDialogProps) {
             aria-label="导出包含信任名单"
             type="checkbox"
             checked={includeTrustRules}
-            onChange={(event) => setIncludeTrustRules(event.target.checked)}
+            onChange={(event) => {
+              setIncludeTrustRules(event.target.checked);
+              resetPreview();
+            }}
           />
         </label>
         <div className={styles.importExportNotice} role="status">
           <FileJson size={15} />
-          <span>导出内容不包含密钥明文或 OAuth 令牌。</span>
+          <span>导出预览和文件都不包含密钥明文或 OAuth 令牌。</span>
         </div>
         {exported ? (
           <div className={styles.exportPreview} data-testid="mcp-export-preview">
             <div className={styles.exportPreviewHeader}>
               <div>
-                <strong>{exported.format}</strong>
-                <span>{exported.servers.length} 个服务器</span>
+                <strong>导出预览</strong>
+                <span>{exported.format} · {exported.servers.length} 个服务器</span>
               </div>
               <button type="button" onClick={() => void copyExport()}>
                 <Clipboard size={14} />
-                <span>复制</span>
+                <span>复制 JSON</span>
               </button>
             </div>
             {copyState === "copied" ? <span className={styles.exportCopyState}>已复制</span> : null}
             {copyState === "failed" ? <span className={styles.exportCopyState}>复制失败</span> : null}
+            {fileState === "saved" ? <span className={styles.exportCopyState}>文件已保存</span> : null}
+            {fileState === "downloaded" ? <span className={styles.exportCopyState}>文件已下载</span> : null}
+            {fileState === "cancelled" ? <span className={styles.exportCopyState}>已取消导出</span> : null}
+            {fileState === "failed" ? <span className={styles.exportCopyState}>导出失败</span> : null}
             <pre>{serialized}</pre>
           </div>
         ) : null}
       </div>
     </AppDialog>
   );
+}
+
+async function saveMcpExportFile(contents: string, filename: string): Promise<ExportFileState> {
+  const nativeResult = await saveTextWithNativeDialog(contents, filename);
+  if (nativeResult !== "unavailable") {
+    return nativeResult;
+  }
+  downloadTextFile(contents, filename);
+  return "downloaded";
+}
+
+async function saveTextWithNativeDialog(
+  contents: string,
+  filename: string,
+): Promise<"saved" | "cancelled" | "unavailable"> {
+  if (!hasTauriInternals()) {
+    return "unavailable";
+  }
+  try {
+    const [{ save }, { invoke }] = await Promise.all([
+      import("@tauri-apps/plugin-dialog"),
+      import("@tauri-apps/api/core"),
+    ]);
+    const path = await save({
+      defaultPath: filename,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!path) {
+      return "cancelled";
+    }
+    await invoke("write_text_file", { path, contents });
+    return "saved";
+  } catch {
+    return "unavailable";
+  }
+}
+
+function hasTauriInternals(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function downloadTextFile(contents: string, filename: string): void {
+  const url = URL.createObjectURL(new Blob([contents], { type: "application/json;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function createMcpExportFilename(): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `keydex-mcp-${timestamp}.json`;
 }
 
 function ImportPreview({ preview }: { preview: McpImportPreviewResponse }) {

@@ -232,6 +232,63 @@ def test_export_strips_secret_plaintext_and_oauth_token_material(tmp_path) -> No
     assert response.json()["servers"][0]["secret_ref_keys"] == ["api_key"]
 
 
+def test_export_filters_selected_servers_policies_and_trust_rules(tmp_path) -> None:
+    client = TestClient(create_app(AppSettings(data_dir=tmp_path / "data")))
+    repositories = client.app.state.repositories
+    selected = repositories.mcp_servers.create(
+        server_id="srv_selected_export",
+        name="Selected Export MCP",
+        transport="streamable_http",
+        url="https://selected.example.test/mcp",
+    )
+    other = repositories.mcp_servers.create(
+        server_id="srv_other_export",
+        name="Other Export MCP",
+        transport="streamable_http",
+        url="https://other.example.test/mcp",
+    )
+    repositories.mcp_tool_policies.bulk_update(
+        selected.id,
+        [{"raw_tool_name": "selected_tool", "approval_mode": "approve"}],
+    )
+    repositories.mcp_tool_policies.bulk_update(
+        other.id,
+        [{"raw_tool_name": "other_tool", "approval_mode": "approve"}],
+    )
+    repositories.mcp_trust_rules.create(
+        rule_id="trust_selected_export",
+        rule_kind="tool",
+        scope="global",
+        approval_mode="approve",
+        server_id=selected.id,
+        raw_tool_name="selected_tool",
+    )
+    repositories.mcp_trust_rules.create(
+        rule_id="trust_other_export",
+        rule_kind="tool",
+        scope="global",
+        approval_mode="approve",
+        server_id=other.id,
+        raw_tool_name="other_tool",
+    )
+
+    response = client.post(
+        "/api/mcp/export",
+        json={"include_trust_rules": True, "server_ids": [selected.id]},
+    )
+    missing = client.post(
+        "/api/mcp/export",
+        json={"include_trust_rules": True, "server_ids": ["missing-server"]},
+    )
+
+    assert response.status_code == 200
+    assert [server["name"] for server in response.json()["servers"]] == ["Selected Export MCP"]
+    assert [policy["server_id"] for policy in response.json()["tool_policies"]] == [selected.id]
+    assert [rule["server_id"] for rule in response.json()["trust_rules"]] == [selected.id]
+    assert missing.status_code == 400
+    assert missing.json()["detail"]["code"] == "server_not_found"
+
+
 def test_export_includes_sanitized_trust_rules_when_requested(tmp_path) -> None:
     client = TestClient(create_app(AppSettings(data_dir=tmp_path / "data")))
     repositories = client.app.state.repositories

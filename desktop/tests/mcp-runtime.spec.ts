@@ -124,7 +124,7 @@ describe("McpRuntime", () => {
       config: { mcp_servers: {} },
       conflict_strategy: "rename",
     });
-    await runtime.exportConfig({ include_trust_rules: true });
+    await runtime.exportConfig({ include_trust_rules: true, server_ids: ["srv 1"] });
     await runtime.resolveApproval("approval 1", {
       decision: "approved",
       trust_scope: "persistent_tool",
@@ -151,7 +151,7 @@ describe("McpRuntime", () => {
     });
     expect(request).toHaveBeenNthCalledWith(2, "/api/mcp/export", {
       method: "POST",
-      body: { include_trust_rules: true },
+      body: { include_trust_rules: true, server_ids: ["srv 1"] },
     });
     expect(request).toHaveBeenNthCalledWith(3, "/api/mcp/approvals/approval%201/decision", {
       method: "POST",

@@ -229,6 +229,7 @@ class McpServerSummary(McpBaseModel):
     enabled: bool
     required: bool
     transport: McpTransport
+    auth_type: McpAuthType = McpAuthType.NONE
     status: McpServerStatus
     tools_count: int = 0
     resources_reserved: bool = False

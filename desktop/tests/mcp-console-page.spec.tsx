@@ -34,6 +34,8 @@ describe("McpConsolePage", () => {
     await selectMcpServer("Filesystem");
 
     expect(await screen.findByRole("heading", { name: "Filesystem" })).not.toBeNull();
+    expect(screen.getByText("无鉴权")).not.toBeNull();
+    expect(screen.queryByText("鉴权方式：无鉴权")).toBeNull();
     expect(screen.getByRole("button", { name: "工具授权" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Resources" })).toBeNull();
     expect(screen.getByRole("button", { name: "权限" })).not.toBeNull();
@@ -925,17 +927,68 @@ describe("McpConsolePage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "导出 MCP 配置" }));
     expect(await screen.findByRole("dialog", { name: "导出 MCP 配置" })).not.toBeNull();
-    expect(screen.getByText("导出内容不包含密钥明文或 OAuth 令牌。")).not.toBeNull();
+    expect(screen.getByText("导出预览和文件都不包含密钥明文或 OAuth 令牌。")).not.toBeNull();
+    expect(screen.getByLabelText("导出 MCP 服务器 Filesystem")).not.toBeNull();
+    expect(screen.getByLabelText("导出 MCP 服务器 Ticketing")).not.toBeNull();
 
     fireEvent.click(screen.getByLabelText("导出包含信任名单"));
-    fireEvent.click(screen.getByRole("button", { name: "生成导出" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
 
-    await waitFor(() => expect(exportConfig).toHaveBeenCalledWith({ include_trust_rules: true }));
+    await waitFor(() =>
+      expect(exportConfig).toHaveBeenCalledWith({
+        include_trust_rules: true,
+        server_ids: ["srv_1", "srv_2"],
+      }),
+    );
     const preview = await screen.findByTestId("mcp-export-preview");
     expect(preview.textContent).toContain("\"trust_rules\"");
     expect(preview.textContent).toContain("secret:configured");
     expect(preview.textContent).not.toContain("raw-secret-value");
     expect(preview.textContent).not.toContain("raw-token");
+  });
+
+  it("exports selected MCP servers as a JSON file", async () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi.fn(() => "blob:mcp-export");
+    const revokeObjectURL = vi.fn();
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    const exportConfig = vi.fn((payload?: McpExportPayload) =>
+      Promise.resolve({
+        format: "keydex.mcp.v1",
+        servers: [{ name: "Filesystem", selected_ids: payload?.server_ids }],
+        tool_policies: [],
+      } satisfies McpExportResponse),
+    );
+
+    try {
+      render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { exportConfig })} />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "导出 MCP 配置" }));
+      fireEvent.click(await screen.findByLabelText("导出 MCP 服务器 Ticketing"));
+      fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
+
+      await waitFor(() =>
+        expect(exportConfig).toHaveBeenCalledWith({
+          include_trust_rules: false,
+          server_ids: ["srv_1"],
+        }),
+      );
+      expect(await screen.findByTestId("mcp-export-preview")).not.toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: "导出文件" }));
+
+      await waitFor(() => expect(anchorClick).toHaveBeenCalledTimes(1));
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:mcp-export");
+      expect(await screen.findByText("文件已下载")).not.toBeNull();
+    } finally {
+      anchorClick.mockRestore();
+      restoreUrlMethod("createObjectURL", originalCreateObjectURL);
+      restoreUrlMethod("revokeObjectURL", originalRevokeObjectURL);
+    }
   });
 
   it("shows import JSON errors and export API errors without leaking sensitive text", async () => {
@@ -959,7 +1012,7 @@ describe("McpConsolePage", () => {
     const closeButtons = within(importDialog).getAllByRole("button", { name: "关闭" });
     fireEvent.click(closeButtons[closeButtons.length - 1]);
     fireEvent.click(await screen.findByRole("button", { name: "导出 MCP 配置" }));
-    fireEvent.click(screen.getByRole("button", { name: "生成导出" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
 
     expect(await screen.findByText("MCP 服务器需要认证，请完成登录或补充凭据。")).not.toBeNull();
     expect(screen.queryByText(/raw-export-token/)).toBeNull();
@@ -987,6 +1040,14 @@ async function selectMcpServer(name: string) {
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function restoreUrlMethod(name: "createObjectURL" | "revokeObjectURL", value: unknown) {
+  if (typeof value === "function") {
+    Object.defineProperty(URL, name, { configurable: true, value });
+    return;
+  }
+  delete (URL as unknown as Record<string, unknown>)[name];
 }
 
 function runtimeWithServers(
@@ -1100,6 +1161,7 @@ function server(
     enabled: true,
     required: false,
     transport: "streamable_http",
+    auth_type: "none",
     status: "unknown",
     tools_count: 0,
     resources_reserved: false,

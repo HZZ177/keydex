@@ -230,6 +230,15 @@ fn open_path_in_file_manager(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    let cleaned = path.trim();
+    if cleaned.is_empty() {
+        return Err("文件路径不能为空".to_string());
+    }
+    std::fs::write(cleaned, contents).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 fn copy_file_to_clipboard(path: String) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -366,6 +375,7 @@ pub fn run() {
             hide_main_window,
             request_app_exit,
             open_path_in_file_manager,
+            write_text_file,
             copy_file_to_clipboard
         ])
         .on_window_event(|window, event| {

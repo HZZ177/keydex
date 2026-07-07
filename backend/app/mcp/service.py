@@ -608,6 +608,7 @@ def server_payload(
         "enabled": server.enabled,
         "required": server.required,
         "transport": server.transport,
+        "auth_type": server.auth_type,
         "status": status.status if status is not None else "unknown",
         "tools_count": status.tools_count if status is not None else 0,
         "resources_reserved_count": resources_reserved_count,

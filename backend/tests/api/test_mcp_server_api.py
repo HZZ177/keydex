@@ -61,6 +61,7 @@ def test_mcp_server_crud_toggle_and_delete_cascade(tmp_path) -> None:
     assert created.status_code == 200
     assert listed.status_code == 200
     assert listed.json()["total"] == 1
+    assert listed.json()["list"][0]["auth_type"] == "none"
     assert detail.status_code == 200
     assert detail.json()["status"] == "unknown"
     assert detail.json()["tools_count"] == 0

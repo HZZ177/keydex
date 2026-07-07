@@ -1,7 +1,5 @@
 import {
   AlertCircle,
-  CheckCircle2,
-  Clock3,
   Download,
   Pencil,
   Plus,
@@ -539,10 +537,9 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
                   <div className={styles.detailTitleRow}>
                     <div className={styles.detailNameBlock}>
                       <h2>{selectedServer.name}</h2>
-                      <div className={styles.detailKicker}>
-                        <StatusIcon status={selectedServer.status} enabled={selectedServer.enabled} />
-                        <span>{selectedServer.transport}</span>
-                      </div>
+                      <p className={styles.detailSubtitle}>
+                        {authTypeLabel(selectedServer.auth_type ?? "none")}
+                      </p>
                     </div>
                     <div className={styles.detailMetrics}>
                       <Metric label="工具" value={selectedServer.tools_count} />
@@ -696,6 +693,7 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
       {exportDialogOpen ? (
         <McpExportDialog
           runtime={runtime}
+          servers={displayedServers}
           onClose={() => setExportDialogOpen(false)}
         />
       ) : null}
@@ -912,6 +910,7 @@ function serverDetailToSummary(server: McpServerDetailResponse): McpServerSummar
     last_error_code: server.last_error_code,
     last_error_message: server.last_error_message,
     last_error_detail: server.last_error_detail,
+    auth_type: server.auth_type ?? server.auth?.auth_type,
     created_at: server.created_at,
     updated_at: server.updated_at,
   };
@@ -934,16 +933,6 @@ function clampMenuCoordinate(value: number, menuSize: number, viewportSize: numb
   const margin = 8;
   const max = Math.max(margin, viewportSize - menuSize - margin);
   return Math.round(Math.min(Math.max(value, margin), max));
-}
-
-function StatusIcon({ status, enabled }: { status: McpServerStatus; enabled: boolean }) {
-  if (!enabled || status === "disabled") {
-    return <Clock3 size={14} />;
-  }
-  if (status === "online") {
-    return <CheckCircle2 size={14} />;
-  }
-  return <AlertCircle size={14} />;
 }
 
 function Metric({ label, value }: { label: string; value: number | string }) {

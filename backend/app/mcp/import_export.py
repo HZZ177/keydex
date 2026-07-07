@@ -153,8 +153,20 @@ def export_mcp_config(
     repositories: StorageRepositories,
     *,
     include_trust_rules: bool = False,
+    server_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     servers, _total = repositories.mcp_servers.list(limit=500)
+    selected_server_ids: set[str] | None = None
+    if server_ids is not None:
+        requested_ids = [str(server_id).strip() for server_id in server_ids]
+        if any(not server_id for server_id in requested_ids):
+            raise McpImportExportError("导出 MCP 服务器 ID 不能为空", code="invalid_server_ids")
+        selected_server_ids = set(requested_ids)
+        known_server_ids = {server.id for server in servers}
+        missing_ids = sorted(selected_server_ids - known_server_ids)
+        if missing_ids:
+            raise McpImportExportError("导出的 MCP 服务器不存在", code="server_not_found")
+        servers = [server for server in servers if server.id in selected_server_ids]
     exported = {
         "format": "keydex.mcp.v1",
         "servers": [_export_server(server) for server in servers],
@@ -165,9 +177,15 @@ def export_mcp_config(
         ],
     }
     if include_trust_rules:
+        trust_rules = repositories.mcp_trust_rules.list(limit=500)
+        if selected_server_ids is not None:
+            trust_rules = [
+                rule for rule in trust_rules
+                if rule.server_id in selected_server_ids
+            ]
         exported["trust_rules"] = [
             _export_trust_rule(rule)
-            for rule in repositories.mcp_trust_rules.list(limit=500)
+            for rule in trust_rules
         ]
     return exported
 

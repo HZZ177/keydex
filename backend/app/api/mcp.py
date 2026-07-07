@@ -133,6 +133,7 @@ class McpImportRequest(BaseModel):
 
 class McpExportRequest(BaseModel):
     include_trust_rules: bool = False
+    server_ids: list[str] | None = None
 
 
 class McpTrustRuleRequest(BaseModel):
@@ -419,10 +420,14 @@ def export_config(
     payload: McpExportRequest,
     repositories: StorageRepositories = RepositoriesDep,
 ) -> dict[str, Any]:
-    return export_mcp_config(
-        repositories,
-        include_trust_rules=payload.include_trust_rules,
-    )
+    try:
+        return export_mcp_config(
+            repositories,
+            include_trust_rules=payload.include_trust_rules,
+            server_ids=payload.server_ids,
+        )
+    except McpImportExportError as exc:
+        raise _mcp_import_export_http_error(exc) from exc
 
 
 @router.get("/audit", response_model=dict[str, Any])

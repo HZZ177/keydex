@@ -207,6 +207,7 @@ export interface McpServerSummary {
   enabled: boolean;
   required: boolean;
   transport: McpTransport;
+  auth_type?: McpAuthType;
   status: McpServerStatus;
   tools_count: number;
   resources_reserved: boolean;
@@ -564,6 +565,7 @@ export interface McpImportPayload {
 
 export interface McpExportPayload {
   include_trust_rules?: boolean;
+  server_ids?: string[];
 }
 
 export interface McpExportResponse {
