@@ -24,7 +24,7 @@ def test_app_settings_exposes_desktop_runtime_defaults(tmp_path) -> None:
     assert settings.mcp_default_startup_timeout_sec == 30
     assert settings.mcp_default_tool_timeout_sec == 60
     assert settings.mcp_max_tool_result_bytes == 262_144
-    assert settings.mcp_auto_refresh_interval_sec == 1_800
+    assert settings.mcp_auto_refresh_interval_sec == 60
     assert settings.mcp_deferred_tool_threshold == 40
 
 

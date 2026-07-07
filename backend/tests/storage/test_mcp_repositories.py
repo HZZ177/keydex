@@ -28,6 +28,7 @@ def test_mcp_server_repository_crud_toggle_filter_and_cascade(tmp_path) -> None:
     assert server.transport == "stdio"
     assert server.args == ["server.js"]
     assert server.env == {"KEY": "VALUE"}
+    assert server.refresh_interval_sec == 60
     assert repositories.mcp_servers.get(server.id) == server
     assert repositories.mcp_server_status.get(server.id).status == "unknown"
 
@@ -86,6 +87,23 @@ def test_mcp_server_repository_crud_toggle_filter_and_cascade(tmp_path) -> None:
             (server.id,),
         ).fetchone()
     assert tool_count["count"] == 0
+
+
+def test_mcp_refresh_interval_old_default_migrates_to_sixty_seconds(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    server = repositories.mcp_servers.create(
+        server_id="mcp-old-refresh-default",
+        name="Old Refresh MCP",
+        transport="streamable_http",
+        url="https://mcp.example.test/mcp",
+    )
+    repositories.mcp_servers.update(server.id, refresh_interval_sec=1800)
+
+    assert repositories.mcp_servers.get(server.id).refresh_interval_sec == 1800
+
+    repositories.db.init_schema()
+
+    assert repositories.mcp_servers.get(server.id).refresh_interval_sec == 60
 
 
 def test_mcp_server_status_repository_upserts_errors_and_refresh_counts(tmp_path) -> None:

@@ -818,7 +818,7 @@ class McpServersRepository:
         restart_policy: str = "on_failure",
         connect_mode: str = "on_demand",
         auto_refresh: bool = True,
-        refresh_interval_sec: int = 1800,
+        refresh_interval_sec: int = 60,
         default_tool_exposure_mode: str = "allow_all_except_disabled",
         default_tool_approval_mode: str = "prompt",
         supports_parallel_tool_calls: bool = False,

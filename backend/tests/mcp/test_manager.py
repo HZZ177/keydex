@@ -30,7 +30,7 @@ def _create_server(
     connect_mode: str = "on_demand",
     enabled: bool = True,
     auto_refresh: bool = True,
-    refresh_interval_sec: int = 1800,
+    refresh_interval_sec: int = 60,
 ) -> None:
     repositories.mcp_servers.create(
         server_id=server_id,

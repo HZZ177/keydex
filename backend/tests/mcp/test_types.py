@@ -25,6 +25,17 @@ def test_server_create_request_rejects_invalid_transport() -> None:
         McpServerCreateRequest(name="files", transport="websocket")
 
 
+def test_server_create_request_defaults_to_sixty_second_refresh() -> None:
+    request = McpServerCreateRequest(
+        name="files",
+        transport=McpTransport.STREAMABLE_HTTP,
+        url="https://mcp.example.test/mcp",
+    )
+
+    assert request.auto_refresh is True
+    assert request.refresh_interval_sec == 60
+
+
 def test_server_summary_rejects_invalid_status() -> None:
     with pytest.raises(ValidationError):
         McpServerSummary(

@@ -116,7 +116,46 @@ describe("NotificationProvider", () => {
     });
     expect(screen.queryByRole("alert")).toBeNull();
   });
+
+  it("shows an expand control only when content overflows", () => {
+    vi.useFakeTimers();
+
+    render(
+      <NotificationProvider>
+        <NotificationHarness />
+      </NotificationProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "show success" }));
+    expect(screen.queryByRole("button", { name: "展开通知内容" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "show long warning" }));
+    const message = screen.getByText(LONG_NOTIFICATION_MESSAGE);
+    Object.defineProperty(message, "clientWidth", { configurable: true, value: 120 });
+    Object.defineProperty(message, "scrollWidth", { configurable: true, value: 420 });
+
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    const expandButton = screen.getByRole("button", { name: "展开通知内容" });
+    expect(screen.getAllByTestId("notification-item").at(-1)?.getAttribute("data-overflowing")).toBe("true");
+
+    fireEvent.click(expandButton);
+
+    const expandedToast = screen.getAllByTestId("notification-item").at(-1);
+    expect(expandedToast?.getAttribute("data-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "收起通知内容" })).not.toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getAllByTestId("notification-item").at(-1)?.getAttribute("data-expanded")).toBe("true");
+  });
 });
+
+const LONG_NOTIFICATION_MESSAGE =
+  "更新检查失败：GitHub Releases 返回了很长的错误信息，需要展开后才能看到完整的状态码、接口路径和响应内容。";
 
 function NotificationHarness() {
   const notifications = useNotifications();
@@ -130,6 +169,9 @@ function NotificationHarness() {
       </button>
       <button type="button" onClick={() => notifications.info("默认消息")}>
         show default info
+      </button>
+      <button type="button" onClick={() => notifications.warning(LONG_NOTIFICATION_MESSAGE, { durationMs: 50 })}>
+        show long warning
       </button>
     </>
   );

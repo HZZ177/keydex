@@ -123,7 +123,7 @@ class McpServerCreateRequest(McpBaseModel):
     restart_policy: str = Field(default="on_failure", pattern="^(never|on_failure|always)$")
     connect_mode: str = Field(default="on_demand", pattern="^(on_startup|on_demand)$")
     auto_refresh: bool = True
-    refresh_interval_sec: int = Field(default=1800, gt=0)
+    refresh_interval_sec: int = Field(default=60, gt=0)
     default_tool_exposure_mode: McpToolExposureMode = (
         McpToolExposureMode.ALLOW_ALL_EXCEPT_DISABLED
     )

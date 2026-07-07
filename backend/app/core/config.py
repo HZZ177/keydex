@@ -37,7 +37,7 @@ class AppSettings(BaseSettings):
     mcp_default_startup_timeout_sec: int = Field(default=30, gt=0)
     mcp_default_tool_timeout_sec: int = Field(default=60, gt=0)
     mcp_max_tool_result_bytes: int = Field(default=262_144, gt=0)
-    mcp_auto_refresh_interval_sec: int = Field(default=1_800, gt=0)
+    mcp_auto_refresh_interval_sec: int = Field(default=60, gt=0)
     mcp_deferred_tool_threshold: int = Field(default=40, ge=1)
 
     model_config = SettingsConfigDict(

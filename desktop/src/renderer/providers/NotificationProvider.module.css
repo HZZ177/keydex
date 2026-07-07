@@ -20,7 +20,7 @@
   max-width: min(520px, 100%);
   min-height: 38px;
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 22px;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   padding: 8px 8px 8px 12px;
@@ -34,6 +34,13 @@
   color: var(--color-text-1);
   pointer-events: auto;
   animation: notification-enter var(--motion-panel) var(--motion-ease-out);
+}
+
+.toast[data-expanded="true"] {
+  width: min(640px, 100%);
+  max-width: min(640px, 100%);
+  align-items: start;
+  border-radius: 18px;
 }
 
 .toast[data-type="success"] {
@@ -73,6 +80,10 @@
   color: var(--notification-accent);
 }
 
+.toast[data-expanded="true"] .icon {
+  margin-top: 3px;
+}
+
 .content {
   min-width: 0;
   display: flex;
@@ -81,6 +92,20 @@
   gap: 8px;
   overflow: hidden;
   text-align: center;
+}
+
+.toast[data-expanded="true"] .content {
+  max-height: min(180px, 36vh);
+  display: grid;
+  align-items: start;
+  justify-items: start;
+  gap: 3px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+  text-align: left;
 }
 
 .title,
@@ -107,6 +132,28 @@
   text-align: center;
 }
 
+.toast[data-expanded="true"] .title,
+.toast[data-expanded="true"] .message {
+  max-width: 100%;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.toast[data-expanded="true"] .actions {
+  align-items: flex-start;
+}
+
+.expandButton,
 .closeButton {
   width: 22px;
   height: 22px;
@@ -117,6 +164,24 @@
   color: var(--color-text-3);
 }
 
+.expandButton {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.96);
+  transition:
+    opacity var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.toast:hover .expandButton,
+.toast:focus-within .expandButton,
+.toast[data-expanded="true"] .expandButton {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.expandButton:hover,
 .closeButton:hover {
   background: var(--surface-hover);
   color: var(--color-text-1);

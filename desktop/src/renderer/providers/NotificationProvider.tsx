@@ -1,4 +1,4 @@
-import { CheckCircle2, Info, TriangleAlert, X, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, Info, TriangleAlert, X, XCircle } from "lucide-react";
 import {
   createContext,
   type PropsWithChildren,
@@ -6,6 +6,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -141,6 +142,12 @@ function NotificationToast({
   onDismiss: (id: string) => void;
   onExited: (id: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const contentRef = useRef<HTMLSpanElement | null>(null);
+  const titleRef = useRef<HTMLSpanElement | null>(null);
+  const messageRef = useRef<HTMLSpanElement | null>(null);
+  const expandedRef = useRef(false);
   const timerRef = useRef<number | null>(null);
   const exitTimerRef = useRef<number | null>(null);
   const startedAtRef = useRef(0);
@@ -169,7 +176,7 @@ function NotificationToast({
 
   const startTimer = useCallback(() => {
     clearTimer();
-    if (item.exiting || item.durationMs <= 0) {
+    if (expandedRef.current || item.exiting || item.durationMs <= 0) {
       return;
     }
     if (remainingMsRef.current <= 0) {
@@ -189,6 +196,33 @@ function NotificationToast({
     clearTimer();
   }, [clearTimer, item.durationMs, item.exiting]);
 
+  const measureOverflow = useCallback(() => {
+    if (expandedRef.current) {
+      return;
+    }
+    const nextOverflowing =
+      hasElementOverflow(contentRef.current) ||
+      hasElementOverflow(titleRef.current) ||
+      hasElementOverflow(messageRef.current);
+    setOverflowing(nextOverflowing);
+    if (!nextOverflowing) {
+      setExpanded(false);
+    }
+  }, []);
+
+  const toggleExpanded = useCallback(() => {
+    setExpanded((current) => {
+      const next = !current;
+      expandedRef.current = next;
+      if (next) {
+        pauseTimer();
+      } else {
+        startTimer();
+      }
+      return next;
+    });
+  }, [pauseTimer, startTimer]);
+
   useEffect(() => {
     if (item.exiting) {
       clearTimer();
@@ -200,6 +234,13 @@ function NotificationToast({
   }, [clearTimer, item.durationMs, item.exiting, startTimer]);
 
   useEffect(() => {
+    expandedRef.current = expanded;
+    if (expanded) {
+      pauseTimer();
+    }
+  }, [expanded, pauseTimer]);
+
+  useEffect(() => {
     if (!item.exiting) {
       return clearExitTimer;
     }
@@ -209,10 +250,45 @@ function NotificationToast({
     return clearExitTimer;
   }, [clearExitTimer, clearTimer, item.exiting, item.id, onExited]);
 
+  useLayoutEffect(() => {
+    expandedRef.current = false;
+    setExpanded(false);
+    setOverflowing(false);
+  }, [item.id]);
+
+  useLayoutEffect(() => {
+    if (!expanded) {
+      measureOverflow();
+    }
+  }, [expanded, item.message, item.title, measureOverflow]);
+
+  useLayoutEffect(() => {
+    measureOverflow();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            measureOverflow();
+          });
+    const observedElements = [contentRef.current, titleRef.current, messageRef.current].filter(
+      (element): element is HTMLSpanElement => element !== null,
+    );
+    for (const element of observedElements) {
+      observer?.observe(element);
+    }
+    window.addEventListener("resize", measureOverflow);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measureOverflow);
+    };
+  }, [item.id, item.message, item.title, measureOverflow]);
+
   return (
     <section
       className={styles.toast}
+      data-expanded={expanded ? "true" : "false"}
       data-exiting={item.exiting ? "true" : "false"}
+      data-overflowing={overflowing ? "true" : "false"}
       data-testid="notification-item"
       data-type={item.type}
       role={item.type === "error" ? "alert" : "status"}
@@ -224,20 +300,47 @@ function NotificationToast({
       <span className={styles.icon} aria-hidden="true">
         {notificationIcon(item.type)}
       </span>
-      <span className={styles.content}>
-        {item.title ? <span className={styles.title}>{item.title}</span> : null}
-        <span className={styles.message}>{item.message}</span>
+      <span className={styles.content} ref={contentRef}>
+        {item.title ? (
+          <span className={styles.title} ref={titleRef}>
+            {item.title}
+          </span>
+        ) : null}
+        <span className={styles.message} ref={messageRef}>
+          {item.message}
+        </span>
       </span>
-      <button
-        className={styles.closeButton}
-        type="button"
-        aria-label="关闭通知"
-        onClick={() => onDismiss(item.id)}
-      >
-        <X size={13} strokeWidth={2} />
-      </button>
+      <span className={styles.actions}>
+        {overflowing ? (
+          <button
+            className={styles.expandButton}
+            type="button"
+            aria-expanded={expanded}
+            aria-label={expanded ? "收起通知内容" : "展开通知内容"}
+            title={expanded ? "收起通知内容" : "展开通知内容"}
+            onClick={toggleExpanded}
+          >
+            {expanded ? <ChevronUp size={13} strokeWidth={2} /> : <ChevronDown size={13} strokeWidth={2} />}
+          </button>
+        ) : null}
+        <button
+          className={styles.closeButton}
+          type="button"
+          aria-label="关闭通知"
+          onClick={() => onDismiss(item.id)}
+        >
+          <X size={13} strokeWidth={2} />
+        </button>
+      </span>
     </section>
   );
+}
+
+function hasElementOverflow(element: HTMLElement | null): boolean {
+  if (!element) {
+    return false;
+  }
+  return element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
 }
 
 function notificationIcon(type: NotificationType): ReactNode {

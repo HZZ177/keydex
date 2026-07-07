@@ -109,7 +109,7 @@ describe("agent protocol types", () => {
       sse_read_timeout_sec: 300,
       shutdown_timeout_sec: 10,
       auto_refresh: true,
-      refresh_interval_sec: 1800,
+      refresh_interval_sec: 60,
       default_tool_exposure_mode: "allow_all_except_disabled",
       default_tool_approval_mode: "auto",
       elicitation_enabled: true,

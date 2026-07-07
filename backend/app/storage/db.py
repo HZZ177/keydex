@@ -73,7 +73,7 @@ create table if not exists mcp_servers (
   connect_mode text not null default 'on_demand'
     check (connect_mode in ('on_startup', 'on_demand')),
   auto_refresh integer not null default 1,
-  refresh_interval_sec integer not null default 1800,
+  refresh_interval_sec integer not null default 60,
   default_tool_exposure_mode text not null default 'allow_all_except_disabled'
     check (default_tool_exposure_mode in (
       'allow_all_except_disabled',
@@ -899,6 +899,7 @@ class Database:
             conn.executescript(SCHEMA_UPGRADE_SQL)
             self._remove_mcp_prompt_schema(conn)
             self._remove_mcp_risk_schema(conn)
+            self._migrate_mcp_refresh_interval_default(conn)
             if should_migrate_legacy_sessions:
                 self._migrate_legacy_sessions_to_default_workspace(
                     conn,
@@ -938,6 +939,16 @@ class Database:
         conn.execute("drop index if exists idx_mcp_tools_risk")
         cls._drop_column_if_exists(conn, "mcp_tools", "risk_level")
         cls._drop_column_if_exists(conn, "mcp_tool_policies", "risk_override")
+
+    @staticmethod
+    def _migrate_mcp_refresh_interval_default(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            update mcp_servers
+               set refresh_interval_sec = 60
+             where refresh_interval_sec = 1800
+            """
+        )
 
     @classmethod
     def _drop_column_if_exists(

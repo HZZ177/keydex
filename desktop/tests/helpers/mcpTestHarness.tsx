@@ -347,7 +347,7 @@ export function mcpServerDetail(
     restart_policy: "on_failure",
     connect_mode: "on_demand",
     auto_refresh: true,
-    refresh_interval_sec: 1800,
+    refresh_interval_sec: 60,
     default_tool_exposure_mode: "allow_all_except_disabled",
     default_tool_approval_mode: "auto",
     supports_parallel_tool_calls: false,
