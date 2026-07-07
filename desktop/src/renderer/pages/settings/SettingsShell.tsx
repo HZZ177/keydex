@@ -1,8 +1,8 @@
 import {
+  AppWindow,
   ArrowLeft,
   BarChart3,
   Bot,
-  Info,
   Moon,
   Palette,
   PanelLeftClose,
@@ -48,7 +48,7 @@ const settingsItems = [
   { id: "mcp", label: "MCP服务器", path: "/settings/mcp", icon: Server, iconName: "server" },
   { id: "config", label: "策略配置", path: "/settings/policy-config", icon: Wrench, iconName: "wrench" },
   { id: "usage", label: "用量统计", path: "/settings/usage", icon: BarChart3, iconName: "bar-chart-3" },
-  { id: "about", label: "关于", path: "/settings/about", icon: Info, iconName: "info" },
+  { id: "about", label: "关于", path: "/settings/about", icon: AppWindow, iconName: "app-window" },
 ] satisfies Array<{ id: SettingsSection; label: string; path: string; icon: LucideIcon; iconName: string }>;
 
 export function SettingsShell({
