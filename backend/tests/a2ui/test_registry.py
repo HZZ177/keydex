@@ -43,6 +43,9 @@ def test_builtin_chart_schema_uses_sdk_chart_group_contract() -> None:
     assert "不等待用户提交" in chart.tool_description
     assert "优先调用" in chart.tool_description
     assert "不要再输出重复 Markdown 表格或图表" in chart.tool_description
+    assert "unit" in chart.tool_description
+    assert "zoom" in chart.tool_description
+    assert "桑基图" in chart.tool_description
     assert chart.input_schema["required"] == ["title", "charts"]
     properties = chart.input_schema["properties"]
     assert "chart_type" not in properties
@@ -50,11 +53,36 @@ def test_builtin_chart_schema_uses_sdk_chart_group_contract() -> None:
     assert "rows" not in properties
 
     chart_item = properties["charts"]["items"]
-    assert chart_item["properties"]["type"]["enum"] == ["trend", "column", "pie"]
+    assert chart_item["properties"]["type"]["enum"] == ["trend", "column", "pie", "sankey"]
     assert chart_item["required"] == ["type"]
-    assert set(chart_item["properties"]) == {"type", "title", "series_label", "items", "series"}
+    assert set(chart_item["properties"]) == {
+        "type",
+        "title",
+        "series_label",
+        "unit",
+        "precision",
+        "prefix",
+        "suffix",
+        "value_format",
+        "mode",
+        "sort",
+        "show_labels",
+        "show_percent",
+        "smooth",
+        "zoom",
+        "items",
+        "series",
+        "nodes",
+        "links",
+    }
+    assert chart_item["properties"]["value_format"]["enum"] == ["number", "percent"]
+    assert chart_item["properties"]["mode"]["enum"] == ["grouped", "stacked"]
+    assert chart_item["properties"]["sort"]["enum"] == ["none", "asc", "desc"]
+    assert chart_item["properties"]["show_labels"]["enum"] == ["auto", "always", "never"]
     assert chart_item["properties"]["items"]["items"]["required"] == ["name", "value"]
     assert chart_item["properties"]["series"]["items"]["required"] == ["name", "items"]
+    assert chart_item["properties"]["nodes"]["items"]["required"] == ["name"]
+    assert chart_item["properties"]["links"]["items"]["required"] == ["source", "target", "value"]
     assert properties["summary"]["type"] == "string"
 
 

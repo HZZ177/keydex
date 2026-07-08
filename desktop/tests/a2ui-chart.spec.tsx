@@ -12,12 +12,14 @@ const echartsMock = vi.hoisted(() => {
   const setOption = vi.fn();
   const resize = vi.fn();
   const dispose = vi.fn();
+  const on = vi.fn();
+  const off = vi.fn();
   const init = vi.fn((container: HTMLElement) => {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     container.appendChild(svg);
-    return { dispose, resize, setOption };
+    return { dispose, off, on, resize, setOption };
   });
-  return { dispose, init, resize, setOption };
+  return { dispose, init, off, on, resize, setOption };
 });
 
 vi.mock("echarts", () => ({
@@ -29,6 +31,8 @@ describe("A2ChartBlock", () => {
     resetA2UIStreamPlayerPlaybackForTests();
     echartsMock.dispose.mockClear();
     echartsMock.init.mockClear();
+    echartsMock.off.mockClear();
+    echartsMock.on.mockClear();
     echartsMock.resize.mockClear();
     echartsMock.setOption.mockClear();
   });
@@ -117,6 +121,354 @@ describe("A2ChartBlock", () => {
     expect(container.querySelector("svg")).not.toBeNull();
   });
 
+  it("renders sankey chart panels with bounded labels and ECharts structure series", () => {
+    render(
+      <A2UIBlock
+        message={chartMessage({
+          title: "结构图表",
+          charts: [
+            {
+              type: "sankey",
+              title: "用户转化流向",
+              unit: "人",
+              nodes: [
+                { name: "访问首页", color: "#2563eb" },
+                { name: "注册" },
+                { name: "创建项目" },
+              ],
+              links: [
+                { source: "访问首页", target: "注册", value: 650 },
+                { source: "注册", target: "创建项目", value: 380 },
+              ],
+            },
+          ],
+        })}
+      />,
+    );
+
+    const panels = screen.getAllByTestId("a2ui-chart-panel");
+    expect(panels.map((panel) => panel.getAttribute("data-chart-type"))).toEqual([
+      "sankey",
+    ]);
+    const surfaces = screen.getAllByTestId("a2ui-echarts-surface");
+    expect(surfaces.map((surface) => surface.getAttribute("data-chart-type"))).toEqual([
+      "sankey",
+    ]);
+    expect(surfaces[0].getAttribute("data-a2ui-chart-data-count")).toBe("5");
+    expect(surfaces[0].getAttribute("data-a2ui-chart-interactions")).toBe("tooltip,adjacencyFocus,dragNode");
+
+    const sankeyOption = echartsMock.setOption.mock.calls[0][0] as {
+      series?: Array<Record<string, unknown>>;
+      tooltip?: { formatter?: (params: unknown) => string };
+    };
+    const sankeySeries = sankeyOption.series?.[0] as {
+      data?: Array<{ name?: string; itemStyle?: Record<string, unknown> }>;
+      label?: { overflow?: string; width?: number };
+      labelLayout?: (params: unknown) => Record<string, unknown>;
+      links?: Array<{ source?: string; target?: string; value?: number }>;
+      type?: string;
+    };
+    expect(sankeySeries.type).toBe("sankey");
+    expect(sankeySeries.data?.map((item) => item.name)).toEqual(["访问首页", "注册", "创建项目"]);
+    expect(sankeySeries.data?.[0].itemStyle).toMatchObject({ color: "#2563eb" });
+    expect(sankeySeries.links).toMatchObject([
+      { source: "访问首页", target: "注册", value: 650 },
+      { source: "注册", target: "创建项目", value: 380 },
+    ]);
+    expect(sankeySeries.label).toMatchObject({ overflow: "truncate", width: 124 });
+    expect(typeof sankeySeries.labelLayout).toBe("function");
+    expect(sankeySeries.labelLayout?.({
+      labelRect: { height: 16, width: 124, x: 560, y: 0 },
+      rect: { height: 16, width: 14, x: 590, y: 0 },
+    })).toMatchObject({
+      align: "right",
+      hideOverlap: true,
+      x: 488,
+    });
+    expect(sankeyOption.tooltip?.formatter?.({
+      data: { source: "访问首页", target: "注册", value: 650 },
+      marker: "",
+    })).toContain("访问首页 → 注册");
+  });
+
+  it("maps chart enhancement fields to ECharts options", () => {
+    render(
+      <A2UIBlock
+        message={chartMessage({
+          title: "增强图表",
+          charts: [
+            {
+              type: "trend",
+              title: "收入趋势",
+              unit: "万元",
+              precision: 1,
+              smooth: false,
+              zoom: true,
+              series: [
+                {
+                  name: "收入",
+                  items: Array.from({ length: 20 }, (_, index) => ({
+                    name: `${index + 1}月`,
+                    value: 80 + index,
+                  })),
+                },
+              ],
+            },
+            {
+              type: "column",
+              title: "渠道对比",
+              suffix: "人",
+              mode: "stacked",
+              sort: "desc",
+              show_labels: "always",
+              series: [
+                {
+                  name: "访问",
+                  items: [
+                    { name: "A", value: 10 },
+                    { name: "B", value: 20 },
+                    { name: "C", value: 5 },
+                  ],
+                },
+                {
+                  name: "转化",
+                  items: [
+                    { name: "A", value: 5 },
+                    { name: "B", value: 1 },
+                    { name: "C", value: 30 },
+                  ],
+                },
+              ],
+            },
+            {
+              type: "pie",
+              title: "占比",
+              value_format: "percent",
+              precision: 1,
+              show_percent: true,
+              sort: "desc",
+              items: [
+                { name: "低", value: 0.2 },
+                { name: "高", value: 0.6 },
+              ],
+            },
+          ],
+        })}
+      />,
+    );
+
+    const trendOption = echartsMock.setOption.mock.calls[0][0] as {
+      dataZoom?: unknown[];
+      series?: Array<Record<string, unknown>>;
+      tooltip?: { formatter?: (params: unknown) => string };
+      yAxis?: { axisLabel?: { formatter?: (value: unknown) => string } };
+    };
+    expect(trendOption.dataZoom).toHaveLength(2);
+    expect(trendOption.series?.[0]).toMatchObject({
+      smooth: false,
+    });
+    expect(trendOption.yAxis?.axisLabel?.formatter?.(123.4)).toBe("123.4万元");
+    expect(trendOption.tooltip?.formatter?.([{ axisValueLabel: "1月", marker: "", seriesName: "收入", value: 123.4 }])).toContain("123.4万元");
+
+    const columnOption = echartsMock.setOption.mock.calls[1][0] as {
+      series?: Array<Record<string, unknown>>;
+      xAxis?: { data?: string[] };
+    };
+    expect(columnOption.xAxis?.data).toEqual(["C", "B", "A"]);
+    expect(columnOption.series?.[0]).toMatchObject({
+      cursor: "pointer",
+      emphasis: {
+        itemStyle: {
+          shadowBlur: 12,
+        },
+      },
+      label: { show: true },
+      stack: "total",
+    });
+    expect(columnOption.series?.[0].selectedMode).toBeUndefined();
+    expect(columnOption.series?.[0].select).toBeUndefined();
+    expect((columnOption.series?.[0].emphasis as { itemStyle?: Record<string, unknown> } | undefined)?.itemStyle?.borderColor).toBeUndefined();
+    expect((columnOption.series?.[0].emphasis as { itemStyle?: Record<string, unknown> } | undefined)?.itemStyle?.borderWidth).toBeUndefined();
+    expect((columnOption.series?.[0].itemStyle as Record<string, unknown> | undefined)?.borderColor).toBe("transparent");
+    expect((columnOption.series?.[0].itemStyle as Record<string, unknown> | undefined)?.borderWidth).toBe(0);
+
+    const pieOption = echartsMock.setOption.mock.calls[2][0] as {
+      series?: Array<{ data?: Array<{ name?: string }>; radius?: string[] }>;
+      tooltip?: { formatter?: (params: unknown) => string };
+    };
+    expect(pieOption.series?.[0].radius).toEqual(["42%", "68%"]);
+    expect(pieOption.series?.[0].data?.map((item) => item.name)).toEqual(["高", "低"]);
+    const pieTooltip = pieOption.tooltip?.formatter?.({ marker: "", name: "高", percent: 60, seriesName: "占比", value: 0.6 }) ?? "";
+    expect(pieTooltip).toContain("60%");
+    expect(pieTooltip).not.toContain("60% · 60%");
+  });
+
+  it("uses custom multi-item selection for column and pie charts without ECharts selection borders", () => {
+    render(
+      <A2UIBlock
+        message={chartMessage({
+          title: "可选图表",
+          charts: [
+            {
+              type: "column",
+              title: "柱状",
+              series: [
+                {
+                  name: "访问",
+                  items: [
+                    { name: "A", value: 10 },
+                    { name: "B", value: 20 },
+                  ],
+                },
+              ],
+            },
+            {
+              type: "pie",
+              title: "占比",
+              items: [
+                { name: "新客", value: 40, color: "#2563eb" },
+                { name: "老客", value: 60, color: "#16a34a" },
+              ],
+            },
+          ],
+        })}
+      />,
+    );
+
+    const clickHandlers = echartsMock.on.mock.calls
+      .filter(([event]) => event === "click")
+      .map(([, handler]) => handler as (params: unknown) => void);
+    expect(clickHandlers).toHaveLength(2);
+
+    act(() => {
+      clickHandlers.forEach((handler) => handler({ dataIndex: 1, seriesIndex: 0, seriesType: "bar" }));
+    });
+
+    const selectedColumnSeries = optionSeries(lastSetOption())[0];
+    const selectedColumnData = selectedColumnSeries.data as Array<{ itemStyle?: Record<string, unknown>; label?: Record<string, unknown> }>;
+    expect(selectedColumnSeries.selectedMode).toBeUndefined();
+    expect(selectedColumnSeries.select).toBeUndefined();
+    expect(selectedColumnData[0].itemStyle).toMatchObject({
+      borderColor: "transparent",
+      borderWidth: 0,
+      opacity: 0.36,
+    });
+    expect(selectedColumnData[0].itemStyle?.color).toBeUndefined();
+    expect(selectedColumnData[1].itemStyle).toBeUndefined();
+    expect(selectedColumnData[1].label).toBeUndefined();
+
+    act(() => {
+      clickHandlers.forEach((handler) => handler({ dataIndex: 0, seriesIndex: 0, seriesType: "bar" }));
+    });
+
+    const multiSelectedColumnData = (optionSeries(lastSetOption())[0].data ?? []) as Array<{ itemStyle?: Record<string, unknown>; label?: Record<string, unknown> }>;
+    expect(multiSelectedColumnData[0].itemStyle).toBeUndefined();
+    expect(multiSelectedColumnData[1].itemStyle).toBeUndefined();
+
+    act(() => {
+      clickHandlers.forEach((handler) => handler({ dataIndex: 0, seriesIndex: 0, seriesType: "bar" }));
+    });
+
+    act(() => {
+      clickHandlers.forEach((handler) => handler({ dataIndex: 0, seriesIndex: 0, seriesType: "pie" }));
+    });
+
+    const selectedPieSeries = optionSeries(lastSetOption())[0];
+    const selectedPieData = selectedPieSeries.data as Array<{ itemStyle?: Record<string, unknown>; label?: Record<string, unknown> }>;
+    expect(selectedPieSeries.selectedMode).toBe("multiple");
+    expect(selectedPieSeries.select).toBeUndefined();
+    expect(selectedPieSeries.selectedOffset).toBe(8);
+    expect(selectedPieData[0]).toMatchObject({
+      selected: true,
+    });
+    expect(selectedPieData[0].itemStyle).toMatchObject({
+      borderColor: "transparent",
+      borderWidth: 0,
+      color: "#2563eb",
+      opacity: 1,
+    });
+    expect(selectedPieData[0].itemStyle?.shadowBlur).toBeUndefined();
+    expect(selectedPieData[0].label).toBeUndefined();
+    expect(selectedPieData[1].itemStyle).toMatchObject({
+      borderColor: "transparent",
+      borderWidth: 0,
+      color: "#16a34a",
+      opacity: 0.36,
+    });
+  });
+
+  it("keeps visual-heavy chart enhancements disabled by default", () => {
+    render(
+      <A2UIBlock
+        message={chartMessage({
+          title: "默认图表",
+          charts: [
+            {
+              type: "trend",
+              title: "趋势",
+              series: [
+                {
+                  name: "访问",
+                  items: Array.from({ length: 20 }, (_, index) => ({
+                    name: `${index + 1}月`,
+                    value: 100 + index,
+                  })),
+                },
+              ],
+            },
+            {
+              type: "column",
+              title: "柱状",
+              series: [
+                {
+                  name: "访问",
+                  items: [
+                    { name: "A", value: 10 },
+                    { name: "B", value: 20 },
+                  ],
+                },
+              ],
+            },
+            {
+              type: "pie",
+              title: "占比",
+              items: [
+                { name: "A", value: 40 },
+                { name: "B", value: 60 },
+              ],
+            },
+          ],
+        })}
+      />,
+    );
+
+    const trendOption = echartsMock.setOption.mock.calls[0][0] as {
+      dataZoom?: unknown;
+      series?: Array<Record<string, unknown>>;
+    };
+    expect(trendOption.dataZoom).toBeUndefined();
+    expect(trendOption.series?.[0]).toMatchObject({
+      smooth: true,
+    });
+
+    const columnOption = echartsMock.setOption.mock.calls[1][0] as {
+      series?: Array<Record<string, unknown>>;
+    };
+    expect(columnOption.series?.[0].label).toMatchObject({ show: false });
+    expect(columnOption.series?.[0].stack).toBeUndefined();
+
+    const pieOption = echartsMock.setOption.mock.calls[2][0] as {
+      series?: Array<Record<string, unknown>>;
+    };
+    expect(pieOption.series?.[0]).toMatchObject({
+      label: { show: true },
+      minAngle: 0,
+      radius: ["42%", "68%"],
+    });
+    const pieLabel = pieOption.series?.[0].label as { formatter?: (params: unknown) => string } | undefined;
+    expect(pieLabel?.formatter?.({ name: "A", percent: 40 })).toBe("A");
+  });
+
   it("does not render legacy single-chart payloads", () => {
     render(
       <A2UIBlock
@@ -173,6 +525,26 @@ describe("A2ChartBlock", () => {
     expect(screen.queryByTestId("a2ui-chart-panel")).toBeNull();
   });
 
+  it("does not render the removed treemap chart type", () => {
+    render(
+      <A2UIBlock
+        message={chartMessage({
+          title: "旧矩形树图",
+          charts: [
+            {
+              type: "treemap",
+              title: "旧类型",
+              items: [{ name: "A", value: 1 }],
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("暂无图表数据")).not.toBeNull();
+    expect(screen.queryByTestId("a2ui-chart-panel")).toBeNull();
+  });
+
   it("shows empty and streaming skeleton states without legacy type fallback", () => {
     const { rerender } = render(
       <A2UIBlock
@@ -211,6 +583,23 @@ describe("A2ChartBlock", () => {
     ]);
     expect(screen.getAllByTestId("a2ui-chart-skeleton")).toHaveLength(3);
     expect(screen.queryByText("暂无图表数据")).toBeNull();
+  });
+
+  it("keeps sankey shells visible while streaming before data arrives", () => {
+    render(
+      <A2UIBlock
+        message={streamingChartMessage(
+          { title: "结构图生成中" },
+          '{"title":"结构图生成中","charts":[{"type":"sankey","title":"流向"}',
+        )}
+      />,
+    );
+
+    const panels = screen.getAllByTestId("a2ui-chart-panel");
+    expect(panels.map((panel) => panel.getAttribute("data-chart-type"))).toEqual([
+      "sankey",
+    ]);
+    expect(screen.getAllByTestId("a2ui-chart-skeleton")).toHaveLength(1);
   });
 
   it("reveals streamed multi-chart payloads in parallel inside each chart", () => {

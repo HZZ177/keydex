@@ -1,6 +1,6 @@
 import * as echarts from "echarts";
 import type { EChartsOption, EChartsType, SeriesOption } from "echarts";
-import { type MutableRefObject, useLayoutEffect, useMemo, useRef } from "react";
+import { type MutableRefObject, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { ParsedA2UIMessage } from "./A2UIBlock";
 import styles from "./A2ChartBlock.module.css";
@@ -13,7 +13,11 @@ export interface A2ChartBlockProps {
   parsed: ParsedA2UIMessage;
 }
 
-type ChartType = "trend" | "column" | "pie";
+type ChartType = "trend" | "column" | "pie" | "sankey";
+type ChartValueFormat = "number" | "percent";
+type ChartColumnMode = "grouped" | "stacked";
+type ChartSortMode = "none" | "asc" | "desc";
+type ChartLabelVisibility = "auto" | "always" | "never";
 
 interface ChartSeries {
   name: string;
@@ -27,13 +31,39 @@ interface ChartPoint {
   color?: string;
 }
 
+interface ChartNode {
+  name: string;
+  value: number | null;
+  color?: string;
+}
+
+interface ChartLink {
+  source: string;
+  target: string;
+  value: number;
+  color?: string;
+}
+
 interface ChartSpec {
   type: ChartType;
   title: string;
   seriesLabel: string;
+  unit: string;
+  precision: number | null;
+  prefix: string;
+  suffix: string;
+  valueFormat: ChartValueFormat;
+  mode: ChartColumnMode;
+  sort: ChartSortMode;
+  showLabels: ChartLabelVisibility;
+  showPercent: boolean;
+  smooth: boolean;
+  zoom: boolean;
   categories: string[];
   series: ChartSeries[];
   points: ChartPoint[];
+  nodes: ChartNode[];
+  links: ChartLink[];
 }
 
 interface ChartPanelSpec {
@@ -42,18 +72,21 @@ interface ChartPanelSpec {
   chart: ChartSpec | null;
 }
 
+interface SelectedChartItem {
+  dataIndex: number;
+  seriesIndex: number;
+}
+
+type SelectedChartItems = SelectedChartItem[];
+
 const COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
 const ECHARTS_FALLBACK_WIDTH = 620;
 const ECHARTS_DEFAULT_HEIGHT = 280;
 const ECHARTS_PIE_HEIGHT = 300;
+const ECHARTS_STRUCTURE_HEIGHT = 360;
 const ECHARTS_STREAM_COMMIT_INTERVAL_MS = 200;
 const ECHARTS_STREAM_ANIMATION_DURATION_MS = 170;
 const ECHARTS_STREAM_MAX_PENDING_OPTIONS = 2;
-const CHART_NUMBER_FORMATTER = new Intl.NumberFormat("zh-CN", {
-  maximumFractionDigits: 2,
-  minimumFractionDigits: 0,
-});
-
 export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
   const isStreaming = isStreamingStatus(parsed.status) || Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
   const animateChartUpdates = Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
@@ -140,9 +173,14 @@ function EChartsChart({
   const pendingTerminalOptionRef = useRef<{ option: EChartsOption; signature: string } | null>(null);
   const pendingCommitTimerRef = useRef<number | null>(null);
   const lastAnimatedCommitAtRef = useRef(0);
-  const option = useMemo(() => buildEChartsOption(chart), [chart]);
-  const optionSignature = useMemo(() => chartOptionSignature(chart), [chart]);
-  const interactionMode = isAxisInteractionChart(chart.type) ? "tooltip,axisPointer,legendToggle" : "tooltip,legendToggle";
+  const [selectedItems, setSelectedItems] = useState<SelectedChartItems>([]);
+  const [surfaceWidth, setSurfaceWidth] = useState(ECHARTS_FALLBACK_WIDTH);
+  const effectiveSelectedItems = isSelectableChart(chart.type) ? selectedItems : [];
+  const chartSignature = useMemo(() => chartOptionSignature(chart), [chart]);
+  const selectedItemSignature = useMemo(() => selectedItemsSignature(effectiveSelectedItems), [effectiveSelectedItems]);
+  const option = useMemo(() => buildEChartsOption(chart, effectiveSelectedItems, surfaceWidth), [chart, effectiveSelectedItems, surfaceWidth]);
+  const optionSignature = useMemo(() => `${chartSignature}|selected:${selectedItemSignature}|width:${surfaceWidth}`, [chartSignature, selectedItemSignature, surfaceWidth]);
+  const interactionMode = chartInteractionMode(chart.type);
 
   heightRef.current = height;
 
@@ -161,6 +199,7 @@ function EChartsChart({
     const resize = () => {
       const width = Math.max(320, Math.round(container.getBoundingClientRect().width || ECHARTS_FALLBACK_WIDTH));
       instance.resize({ height: heightRef.current, width });
+      setSurfaceWidth((current) => current === width ? current : width);
     };
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null;
     observer?.observe(container);
@@ -188,6 +227,30 @@ function EChartsChart({
     const width = Math.max(320, Math.round(container.getBoundingClientRect().width || ECHARTS_FALLBACK_WIDTH));
     instance.resize({ height, width });
   }, [height]);
+
+  useLayoutEffect(() => {
+    const instance = chartRef.current;
+    if (!instance || !isSelectableChart(chart.type)) {
+      return;
+    }
+    const handleClick = (params: unknown) => {
+      const record = asRecord(params);
+      const seriesType = scalarText(record?.seriesType);
+      if ((chart.type === "column" && seriesType !== "bar") || (chart.type === "pie" && seriesType !== "pie")) {
+        return;
+      }
+      const seriesIndex = numberValue(record?.seriesIndex);
+      const dataIndex = numberValue(record?.dataIndex);
+      if (seriesIndex === null || dataIndex === null) {
+        return;
+      }
+      setSelectedItems((current) => toggleSelectedItem(current, { dataIndex, seriesIndex }));
+    };
+    instance.on("click", handleClick);
+    return () => {
+      instance.off("click", handleClick);
+    };
+  }, [chart.type]);
 
   useLayoutEffect(() => {
     const instance = chartRef.current;
@@ -244,10 +307,15 @@ function EChartsChart({
       data-a2ui-chart-animation={animateUpdates ? "enabled" : "settled"}
       data-a2ui-chart-data-count={chartDataCount(chart)}
       data-a2ui-chart-engine="echarts"
+      data-a2ui-chart-format={chart.valueFormat}
       data-a2ui-chart-interactions={interactionMode}
+      data-a2ui-chart-labels={chart.showLabels}
+      data-a2ui-chart-mode={chart.type === "column" ? chart.mode : ""}
       data-a2ui-chart-paced-commit={animateUpdates ? "true" : "false"}
       data-a2ui-chart-stream-adapter="setOption-diff"
       data-a2ui-chart-tooltip={isAxisInteractionChart(chart.type) ? "axis" : "item"}
+      data-a2ui-chart-unit={chart.unit}
+      data-a2ui-chart-zoom={chart.zoom ? "true" : "false"}
       data-chart-type={chart.type}
       data-testid="a2ui-echarts-surface"
       role="img"
@@ -435,35 +503,58 @@ function chartHeight(chart: ChartSpec): number {
   if (chart.type === "pie") {
     return ECHARTS_PIE_HEIGHT;
   }
+  if (chart.type === "sankey") {
+    return ECHARTS_STRUCTURE_HEIGHT;
+  }
   return ECHARTS_DEFAULT_HEIGHT;
 }
 
 function chartOptionSignature(chart: ChartSpec): string {
   return safeJsonStringify({
     categories: chart.categories,
+    links: chart.links,
+    mode: chart.mode,
+    nodes: chart.nodes,
     points: chart.points,
+    precision: chart.precision,
+    prefix: chart.prefix,
     series: chart.series,
     seriesLabel: chart.seriesLabel,
+    showLabels: chart.showLabels,
+    showPercent: chart.showPercent,
+    smooth: chart.smooth,
+    sort: chart.sort,
+    suffix: chart.suffix,
     title: chart.title,
     type: chart.type,
+    unit: chart.unit,
+    valueFormat: chart.valueFormat,
+    zoom: chart.zoom,
   });
 }
 
-function buildEChartsOption(chart: ChartSpec): EChartsOption {
+function buildEChartsOption(chart: ChartSpec, selectedItems: SelectedChartItems = [], layoutWidth = ECHARTS_FALLBACK_WIDTH): EChartsOption {
   if (chart.type === "pie") {
-    return buildPieOption(chart);
+    return buildPieOption(chart, selectedItems);
   }
-  return buildCartesianOption(chart);
+  if (chart.type === "sankey") {
+    return buildSankeyOption(chart, layoutWidth);
+  }
+  return buildCartesianOption(chart, selectedItems);
 }
 
-function buildCartesianOption(chart: ChartSpec): EChartsOption {
-  const categories = chart.categories.length ? chart.categories : defaultCategories(chart.series);
+function buildCartesianOption(chart: ChartSpec, selectedItems: SelectedChartItems): EChartsOption {
+  const prepared = prepareCartesianData(chart);
+  const { categories } = prepared;
   const isTrend = chart.type === "trend";
-  const series = chart.series.map((item, index): SeriesOption => {
+  const hasZoom = chart.zoom && shouldUseDataZoom(categories.length);
+  const showValueLabels = shouldShowValueLabels(chart);
+  const series = prepared.series.map((item, index): SeriesOption => {
     const data = categories.map((category, pointIndex) => ({
       id: `${chart.type}:${index}:${item.name}:${category}`,
       name: category,
       value: numberValue(item.data[pointIndex]),
+      ...(!isTrend ? selectedDataItemState("column", selectedItems, index, pointIndex) ?? {} : {}),
     }));
     if (isTrend) {
       return {
@@ -473,7 +564,8 @@ function buildCartesianOption(chart: ChartSpec): EChartsOption {
         data,
         animationDelay: staggerAnimationDelay,
         animationDelayUpdate: staggerAnimationDelay,
-        smooth: true,
+        smooth: chart.smooth,
+        sampling: data.length > 80 ? "lttb" : undefined,
         showSymbol: false,
         symbol: "circle",
         symbolSize: 6,
@@ -489,7 +581,7 @@ function buildCartesianOption(chart: ChartSpec): EChartsOption {
         areaStyle: {
           opacity: 0.055,
         },
-      };
+      } as SeriesOption;
     }
     return {
       id: `column:${index}:${item.name}`,
@@ -499,18 +591,42 @@ function buildCartesianOption(chart: ChartSpec): EChartsOption {
       animationDelay: staggerAnimationDelay,
       animationDelayUpdate: staggerAnimationDelay,
       barMaxWidth: 30,
+      cursor: "pointer",
+      stack: chart.mode === "stacked" ? "total" : undefined,
+      blur: {
+        itemStyle: {
+          opacity: 0.56,
+        },
+      },
       emphasis: {
         focus: "series",
+        itemStyle: {
+          shadowBlur: 12,
+          shadowColor: "rgba(37, 99, 235, 0.24)",
+        },
+        label: {
+          fontWeight: 700,
+        },
       },
       itemStyle: {
+        borderColor: "transparent",
+        borderWidth: 0,
         borderRadius: [5, 5, 2, 2],
       },
-    };
+      label: {
+        show: showValueLabels,
+        color: "#334155",
+        fontSize: 11,
+        formatter: (params: unknown) => formatChartValue(chart, tooltipParam(params).value),
+        position: "top",
+      },
+    } as SeriesOption;
   });
 
   return withBaseChartOption(chart, {
+    dataZoom: hasZoom ? cartesianDataZoom(categories.length) : undefined,
     grid: {
-      bottom: 34,
+      bottom: hasZoom ? 62 : 34,
       containLabel: true,
       left: 14,
       right: 12,
@@ -523,7 +639,6 @@ function buildCartesianOption(chart: ChartSpec): EChartsOption {
       axisPointer: {
         animation: true,
         type: isTrend ? "cross" : "shadow",
-        snap: true,
         label: {
           backgroundColor: "#334155",
           color: "#ffffff",
@@ -542,8 +657,9 @@ function buildCartesianOption(chart: ChartSpec): EChartsOption {
         shadowStyle: {
           color: "rgba(100, 116, 139, 0.10)",
         },
+        snap: !isTrend,
       },
-      formatter: axisTooltipFormatter,
+      formatter: (params: unknown) => axisTooltipFormatter(params, chart),
       trigger: "axis",
     },
     xAxis: {
@@ -573,7 +689,7 @@ function buildCartesianOption(chart: ChartSpec): EChartsOption {
       axisLabel: {
         color: "#64748b",
         fontSize: 11,
-        formatter: compactNumberLabel,
+        formatter: (value: unknown) => formatAxisValue(chart, value),
       },
       splitLine: {
         lineStyle: {
@@ -585,8 +701,9 @@ function buildCartesianOption(chart: ChartSpec): EChartsOption {
   });
 }
 
-function buildPieOption(chart: ChartSpec): EChartsOption {
-  const points = pointsForChart(chart);
+function buildPieOption(chart: ChartSpec, selectedItems: SelectedChartItems): EChartsOption {
+  const points = sortChartPoints(pointsForChart(chart), chart.sort);
+  const showLabels = shouldShowValueLabels(chart);
   return withBaseChartOption(chart, {
     legend: legendOption("bottom"),
     series: [
@@ -596,24 +713,36 @@ function buildPieOption(chart: ChartSpec): EChartsOption {
         type: "pie",
         data: points.map((point, index) => ({
           id: `pie:${point.label}`,
-          itemStyle: point.color ? { color: point.color } : undefined,
+          ...(mergeDataItemState(
+            point.color ? { itemStyle: { color: point.color } } : undefined,
+            selectedDataItemState("pie", selectedItems, 0, index),
+          ) ?? {}),
           name: point.label,
+          selected: isSelectedDataItem(selectedItems, 0, index) ? true : undefined,
           value: point.value,
-          selected: index === 0 && points.length > 1 ? false : undefined,
         })),
         animationDelay: staggerAnimationDelay,
         animationDelayUpdate: staggerAnimationDelay,
-        radius: ["0%", "68%"],
+        radius: ["42%", "68%"],
         center: ["50%", "46%"],
+        selectedMode: "multiple",
+        selectedOffset: 8,
         avoidLabelOverlap: true,
+        minAngle: 0,
         emphasis: {
           focus: "self",
           scale: true,
           scaleSize: 7,
         },
         label: {
+          show: showLabels,
           color: "#475569",
-          formatter: "{b}",
+          formatter: (params: unknown) => pieLabelFormatter(params, chart),
+          overflow: "truncate",
+          width: 128,
+        },
+        labelLayout: {
+          hideOverlap: true,
         },
         labelLine: {
           lineStyle: {
@@ -625,10 +754,192 @@ function buildPieOption(chart: ChartSpec): EChartsOption {
     ],
     tooltip: {
       ...tooltipBaseOption(),
-      formatter: itemTooltipFormatter,
+      formatter: (params: unknown) => itemTooltipFormatter(params, chart),
       trigger: "item",
     },
   });
+}
+
+function buildSankeyOption(chart: ChartSpec, layoutWidth: number): EChartsOption {
+  const nodes = sankeyNodesForChart(chart);
+  const labelWidth = sankeyLabelWidth(layoutWidth);
+  return withBaseChartOption(chart, {
+    series: [
+      {
+        id: "sankey",
+        name: chart.title || "流向",
+        type: "sankey",
+        data: nodes.map((node) => ({
+          name: node.name,
+          value: node.value ?? undefined,
+          itemStyle: node.color ? { color: node.color } : undefined,
+        })),
+        links: chart.links.map((link, index) => ({
+          id: `sankey:${index}:${link.source}:${link.target}`,
+          source: link.source,
+          target: link.target,
+          value: link.value,
+          lineStyle: link.color ? { color: link.color } : undefined,
+        })),
+        animationDelay: staggerAnimationDelay,
+        animationDelayUpdate: staggerAnimationDelay,
+        draggable: true,
+        emphasis: {
+          focus: "adjacency",
+          lineStyle: {
+            opacity: 0.72,
+          },
+        },
+        label: {
+          color: "#334155",
+          fontSize: 11,
+          ellipsis: "...",
+          overflow: "truncate",
+          width: labelWidth,
+        },
+        labelLayout: sankeyLabelLayout(layoutWidth),
+        layoutIterations: 32,
+        lineStyle: {
+          color: "gradient",
+          curveness: 0.5,
+          opacity: 0.34,
+        },
+        nodeAlign: "justify",
+        nodeGap: 13,
+        nodeWidth: 14,
+        top: 18,
+        right: 18,
+        bottom: 18,
+        left: 18,
+      } as SeriesOption,
+    ],
+    tooltip: {
+      ...tooltipBaseOption(),
+      formatter: (params: unknown) => sankeyTooltipFormatter(params, chart),
+      trigger: "item",
+    },
+  });
+}
+
+function selectedDataItemState(
+  chartType: Extract<ChartType, "column" | "pie">,
+  selectedItems: SelectedChartItems,
+  seriesIndex: number,
+  dataIndex: number,
+): { itemStyle?: Record<string, unknown>; label?: Record<string, unknown> } | undefined {
+  if (!selectedItems.length) {
+    return undefined;
+  }
+  if (selectedItems.some((item) => item.seriesIndex === seriesIndex && item.dataIndex === dataIndex)) {
+    return chartType === "pie"
+      ? {
+          itemStyle: {
+            borderColor: "transparent",
+            borderWidth: 0,
+            opacity: 1,
+          },
+        }
+      : undefined;
+  }
+  return {
+    itemStyle: {
+      borderColor: "transparent",
+      borderWidth: 0,
+      opacity: 0.36,
+      shadowBlur: 0,
+    },
+    label: {
+      fontWeight: 400,
+    },
+  };
+}
+
+function isSelectedDataItem(items: SelectedChartItems, seriesIndex: number, dataIndex: number): boolean {
+  return items.some((item) => item.seriesIndex === seriesIndex && item.dataIndex === dataIndex);
+}
+
+function toggleSelectedItem(items: SelectedChartItems, next: SelectedChartItem): SelectedChartItems {
+  const exists = items.some((item) => item.seriesIndex === next.seriesIndex && item.dataIndex === next.dataIndex);
+  if (exists) {
+    return items.filter((item) => item.seriesIndex !== next.seriesIndex || item.dataIndex !== next.dataIndex);
+  }
+  return [...items, next];
+}
+
+function selectedItemsSignature(items: SelectedChartItems): string {
+  if (!items.length) {
+    return "-";
+  }
+  return [...items]
+    .sort((left, right) => left.seriesIndex - right.seriesIndex || left.dataIndex - right.dataIndex)
+    .map((item) => `${item.seriesIndex}:${item.dataIndex}`)
+    .join(",");
+}
+
+function mergeDataItemState(
+  base: { itemStyle?: Record<string, unknown>; label?: Record<string, unknown> } | undefined,
+  state: { itemStyle?: Record<string, unknown>; label?: Record<string, unknown> } | undefined,
+): { itemStyle?: Record<string, unknown>; label?: Record<string, unknown> } | undefined {
+  if (!base && !state) {
+    return undefined;
+  }
+  const itemStyle = {
+    ...(base?.itemStyle ?? {}),
+    ...(state?.itemStyle ?? {}),
+  };
+  const label = {
+    ...(base?.label ?? {}),
+    ...(state?.label ?? {}),
+  };
+  return {
+    ...(base ?? {}),
+    ...(state ?? {}),
+    ...(Object.keys(itemStyle).length ? { itemStyle } : {}),
+    ...(Object.keys(label).length ? { label } : {}),
+  };
+}
+
+function sankeyNodesForChart(chart: ChartSpec): ChartNode[] {
+  const byName = new Map<string, ChartNode>();
+  chart.nodes.forEach((node) => {
+    byName.set(node.name, node);
+  });
+  chart.links.forEach((link) => {
+    if (!byName.has(link.source)) {
+      byName.set(link.source, { name: link.source, value: null });
+    }
+    if (!byName.has(link.target)) {
+      byName.set(link.target, { name: link.target, value: null });
+    }
+  });
+  return Array.from(byName.values());
+}
+
+function sankeyLabelWidth(layoutWidth: number): number {
+  return Math.max(72, Math.min(132, Math.round(layoutWidth * 0.2)));
+}
+
+function sankeyLabelLayout(layoutWidth: number): (params: unknown) => Record<string, unknown> {
+  return (params: unknown) => {
+    const record = asRecord(params);
+    const labelRect = asRecord(record?.labelRect);
+    const x = numberValue(labelRect?.x);
+    const width = numberValue(labelRect?.width);
+    if (x === null || width === null) {
+      return { hideOverlap: true };
+    }
+    const padding = 8;
+    const maxX = Math.max(padding, layoutWidth - width - padding);
+    const clampedX = Math.max(padding, Math.min(x, maxX));
+    if (Math.abs(clampedX - x) < 0.5) {
+      return { hideOverlap: true };
+    }
+    return {
+      align: clampedX < x ? "right" : scalarText(record?.align) || "left",
+      hideOverlap: true,
+      x: clampedX,
+    };
+  };
 }
 
 function withBaseChartOption(chart: ChartSpec, option: EChartsOption): EChartsOption {
@@ -655,8 +966,100 @@ function isAxisInteractionChart(type: ChartType): boolean {
   return type === "trend" || type === "column";
 }
 
+function chartInteractionMode(type: ChartType): string {
+  if (isAxisInteractionChart(type)) {
+    return "tooltip,axisPointer,legendToggle";
+  }
+  if (type === "sankey") {
+    return "tooltip,adjacencyFocus,dragNode";
+  }
+  return "tooltip,legendToggle";
+}
+
+function isSelectableChart(type: ChartType): boolean {
+  return type === "column" || type === "pie";
+}
+
 function staggerAnimationDelay(dataIndex: number): number {
   return Math.min(dataIndex * 34, 220);
+}
+
+function prepareCartesianData(chart: ChartSpec): { categories: string[]; series: ChartSeries[] } {
+  const categories = chart.categories.length ? chart.categories : defaultCategories(chart.series);
+  if (chart.type !== "column" || chart.sort === "none" || categories.length <= 1) {
+    return { categories, series: chart.series };
+  }
+  const order = categories
+    .map((_, index) => ({
+      index,
+      total: chart.series.reduce((sum, item) => sum + (numberValue(item.data[index]) ?? 0), 0),
+    }))
+    .sort((left, right) => chart.sort === "asc" ? left.total - right.total : right.total - left.total)
+    .map((item) => item.index);
+  return {
+    categories: order.map((index) => categories[index] ?? `项 ${index + 1}`),
+    series: chart.series.map((item) => ({
+      ...item,
+      categories: order.map((index) => item.categories[index] ?? categories[index] ?? `项 ${index + 1}`),
+      data: order.map((index) => item.data[index] ?? null),
+    })),
+  };
+}
+
+function sortChartPoints(points: ChartPoint[], sort: ChartSortMode): ChartPoint[] {
+  if (sort === "none") {
+    return points;
+  }
+  return [...points].sort((left, right) => sort === "asc" ? left.value - right.value : right.value - left.value);
+}
+
+function shouldUseDataZoom(categoryCount: number): boolean {
+  return categoryCount > 1;
+}
+
+function cartesianDataZoom(categoryCount: number): EChartsOption["dataZoom"] {
+  const end = Math.max(18, Math.min(100, Math.round((18 / Math.max(categoryCount, 1)) * 100)));
+  return [
+    {
+      type: "inside",
+      xAxisIndex: 0,
+      filterMode: "none",
+      start: 0,
+      end,
+    },
+    {
+      type: "slider",
+      xAxisIndex: 0,
+      filterMode: "none",
+      bottom: 6,
+      height: 18,
+      start: 0,
+      end,
+      borderColor: "rgba(148, 163, 184, 0.28)",
+      fillerColor: "rgba(37, 99, 235, 0.12)",
+      handleStyle: {
+        color: "#ffffff",
+        borderColor: "#94a3b8",
+      },
+      moveHandleStyle: {
+        color: "#94a3b8",
+      },
+      showDetail: false,
+    },
+  ];
+}
+
+function shouldShowValueLabels(chart: ChartSpec): boolean {
+  if (chart.showLabels === "always") {
+    return true;
+  }
+  if (chart.showLabels === "never") {
+    return false;
+  }
+  if (chart.type === "pie") {
+    return true;
+  }
+  return false;
 }
 
 function legendOption(position: "top" | "bottom"): EChartsOption["legend"] {
@@ -705,27 +1108,46 @@ function tooltipBaseOption(): NonNullable<EChartsOption["tooltip"]> {
   };
 }
 
-function axisTooltipFormatter(params: unknown): string {
+function axisTooltipFormatter(params: unknown, chart: ChartSpec): string {
   const items = (Array.isArray(params) ? params : [params]).map(tooltipParam);
   const title = escapeHtml(String(items[0]?.axisValueLabel || items[0]?.name || ""));
   const rows = items
     .filter((item) => item.seriesName)
-    .map((item) => tooltipRow(item.marker, item.seriesName, item.value))
+    .sort((left, right) => (numberValue(right.value) ?? Number.NEGATIVE_INFINITY) - (numberValue(left.value) ?? Number.NEGATIVE_INFINITY))
+    .map((item) => tooltipRow(item.marker, item.seriesName, item.value, chart))
     .join("");
   return `<div class="${styles.tooltip}"><div class="${styles.tooltipTitle}">${title}</div>${rows}</div>`;
 }
 
-function itemTooltipFormatter(params: unknown): string {
+function itemTooltipFormatter(params: unknown, chart: ChartSpec): string {
   const item = tooltipParam(params);
-  return `<div class="${styles.tooltip}"><div class="${styles.tooltipTitle}">${escapeHtml(item.name)}</div>${tooltipRow(item.marker, item.seriesName, item.value)}</div>`;
+  const percent = chart.type === "pie" && chart.showPercent && chart.valueFormat !== "percent" && item.percent !== null
+    ? `${formatNumberWithPrecision(item.percent, chart.precision ?? 1)}%`
+    : "";
+  return `<div class="${styles.tooltip}"><div class="${styles.tooltipTitle}">${escapeHtml(item.name)}</div>${tooltipRow(item.marker, item.seriesName, item.value, chart, percent)}</div>`;
 }
 
-function tooltipRow(marker: string, label: string, value: unknown): string {
+function sankeyTooltipFormatter(params: unknown, chart: ChartSpec): string {
+  const record = asRecord(params);
+  const data = asRecord(record?.data);
+  const source = scalarText(data?.source);
+  const target = scalarText(data?.target);
+  const marker = scalarText(record?.marker);
+  if (source && target) {
+    const title = `${source} → ${target}`;
+    return `<div class="${styles.tooltip}"><div class="${styles.tooltipTitle}">${escapeHtml(title)}</div>${tooltipRow(marker, chart.seriesLabel || "流量", data?.value, chart)}</div>`;
+  }
+  const name = scalarText(record?.name) || scalarText(data?.name);
+  return `<div class="${styles.tooltip}"><div class="${styles.tooltipTitle}">${escapeHtml(name)}</div>${tooltipRow(marker, chart.seriesLabel || "节点", data?.value ?? record?.value, chart)}</div>`;
+}
+
+function tooltipRow(marker: string, label: string, value: unknown, chart: ChartSpec, extra = ""): string {
+  const valueText = [formatChartValue(chart, value), extra].filter(Boolean).join(" · ");
   return [
     `<div class="${styles.tooltipRow}">`,
     marker,
     `<span class="${styles.tooltipLabel}">${escapeHtml(label)}</span>`,
-    `<strong>${escapeHtml(formatTooltipValue(value))}</strong>`,
+    `<strong>${escapeHtml(valueText)}</strong>`,
     "</div>",
   ].join("");
 }
@@ -734,6 +1156,7 @@ function tooltipParam(value: unknown): {
   axisValueLabel: string;
   marker: string;
   name: string;
+  percent: number | null;
   seriesName: string;
   value: unknown;
 } {
@@ -742,6 +1165,7 @@ function tooltipParam(value: unknown): {
     axisValueLabel: scalarText(record?.axisValueLabel),
     marker: scalarText(record?.marker),
     name: scalarText(record?.name),
+    percent: numberValue(record?.percent),
     seriesName: scalarText(record?.seriesName),
     value: record?.value,
   };
@@ -752,23 +1176,54 @@ function compactAxisLabel(value: unknown): string {
   return text.length > 8 ? `${text.slice(0, 8)}...` : text;
 }
 
-function compactNumberLabel(value: unknown): string {
-  const number = numberValue(value);
-  if (number === null) {
-    return scalarText(value);
-  }
-  if (Math.abs(number) >= 10000) {
-    return `${CHART_NUMBER_FORMATTER.format(number / 10000)}万`;
-  }
-  return CHART_NUMBER_FORMATTER.format(number);
+function formatAxisValue(chart: ChartSpec, value: unknown): string {
+  return formatChartValue(chart, value, { compact: true });
 }
 
-function formatTooltipValue(value: unknown): string {
+function formatChartValue(
+  chart: ChartSpec,
+  value: unknown,
+  options: { compact?: boolean } = {},
+): string {
   if (Array.isArray(value)) {
-    return value.map(formatTooltipValue).join(" / ");
+    return value.map((item) => formatChartValue(chart, item, options)).join(" / ");
   }
   const number = numberValue(value);
-  return number === null ? scalarText(value) || "-" : formatNumber(number);
+  if (number === null) {
+    return scalarText(value) || "-";
+  }
+  const isPercent = chart.valueFormat === "percent";
+  const normalized = isPercent && Math.abs(number) <= 1 ? number * 100 : number;
+  const precision = chart.precision ?? (isPercent ? 1 : options.compact ? 1 : 2);
+  const suffix = chart.suffix || (isPercent ? chart.unit || "%" : chart.unit);
+  const canCompact = options.compact
+    && !isPercent
+    && Math.abs(normalized) >= 10000
+    && !/[A-Za-z]/.test(suffix)
+    && !suffix.includes("万");
+  const formatted = canCompact
+    ? `${formatNumberWithPrecision(normalized / 10000, precision)}万`
+    : formatNumberWithPrecision(normalized, precision);
+  return `${chart.prefix}${formatted}${unitSeparator(suffix)}${suffix}`;
+}
+
+function formatNumberWithPrecision(value: number, precision: number): string {
+  return new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits: Math.max(0, Math.min(6, precision)),
+    minimumFractionDigits: 0,
+  }).format(Object.is(value, -0) ? 0 : value);
+}
+
+function unitSeparator(unit: string): string {
+  return unit && /^[A-Za-z]/.test(unit) ? " " : "";
+}
+
+function pieLabelFormatter(params: unknown, chart: ChartSpec): string {
+  const item = tooltipParam(params);
+  const percent = chart.showPercent && item.percent !== null
+    ? ` ${formatNumberWithPrecision(item.percent, chart.precision ?? 1)}%`
+    : "";
+  return `${item.name}${percent}`;
 }
 
 function escapeHtml(value: string): string {
@@ -897,17 +1352,35 @@ function chartSpecFromRecord(
   const series = normalizeSeries(record, directPoints, isCartesian ? structureRecord : null);
   const categories = chartCategories(series, directPoints, structurePoints);
   const points = directPoints.length ? directPoints : pointsFromSeries(series[0]);
+  const nodes = type === "sankey" ? normalizeNodes(record.nodes, structureRecord?.nodes) : [];
+  const links = type === "sankey" ? normalizeLinks(record.links, structureRecord?.links) : [];
   return {
     type,
     title: scalarText(record.title) || scalarText(structureRecord?.title),
     seriesLabel: seriesLabel || scalarText(structureRecord?.series_label),
+    unit: scalarText(record.unit) || scalarText(structureRecord?.unit),
+    precision: normalizePrecision(record.precision) ?? normalizePrecision(structureRecord?.precision),
+    prefix: scalarText(record.prefix) || scalarText(structureRecord?.prefix),
+    suffix: scalarText(record.suffix) || scalarText(structureRecord?.suffix),
+    valueFormat: normalizeValueFormat(record.value_format) ?? normalizeValueFormat(structureRecord?.value_format) ?? "number",
+    mode: normalizeColumnMode(record.mode) ?? normalizeColumnMode(structureRecord?.mode) ?? "grouped",
+    sort: normalizeSortMode(record.sort) ?? normalizeSortMode(structureRecord?.sort) ?? "none",
+    showLabels: normalizeLabelVisibility(record.show_labels) ?? normalizeLabelVisibility(structureRecord?.show_labels) ?? "auto",
+    showPercent: booleanValue(record.show_percent) ?? booleanValue(structureRecord?.show_percent) ?? false,
+    smooth: booleanValue(record.smooth) ?? booleanValue(structureRecord?.smooth) ?? true,
+    zoom: booleanValue(record.zoom) ?? booleanValue(structureRecord?.zoom) ?? false,
     categories,
     series,
     points,
+    nodes,
+    links,
   };
 }
 
 function hasChartData(chart: ChartSpec): boolean {
+  if (chart.type === "sankey") {
+    return chart.links.length > 0;
+  }
   return chart.series.some((series) => series.data.some((value) => value !== null)) || chart.points.length > 0;
 }
 
@@ -939,23 +1412,63 @@ function firstChartRecord(payload: Record<string, unknown>): Record<string, unkn
 
 function chartTypeFromBuffer(buffer: unknown): ChartType | null {
   const text = typeof buffer === "string" ? buffer : "";
-  const match = text.match(/"type"\s*:\s*"(pie|column|trend)"/i);
+  const match = text.match(/"type"\s*:\s*"(pie|column|trend|sankey)"/i);
   return normalizeChartType(match?.[1]);
 }
 
 function chartTypesFromBuffer(buffer: unknown): ChartType[] {
   const text = typeof buffer === "string" ? buffer : "";
-  return Array.from(text.matchAll(/"type"\s*:\s*"(pie|column|trend)"/gi))
+  return Array.from(text.matchAll(/"type"\s*:\s*"(pie|column|trend|sankey)"/gi))
     .map((match) => normalizeChartType(match[1]))
     .filter((type): type is ChartType => Boolean(type));
 }
 
 function normalizeChartType(value: unknown): ChartType | null {
   const type = scalarText(value).toLowerCase();
-  if (type === "pie" || type === "column" || type === "trend") {
+  if (type === "pie" || type === "column" || type === "trend" || type === "sankey") {
     return type as ChartType;
   }
   return null;
+}
+
+function normalizeValueFormat(value: unknown): ChartValueFormat | null {
+  const type = scalarText(value).toLowerCase();
+  if (type === "number" || type === "percent") {
+    return type;
+  }
+  return null;
+}
+
+function normalizeColumnMode(value: unknown): ChartColumnMode | null {
+  const mode = scalarText(value).toLowerCase();
+  if (mode === "grouped" || mode === "stacked") {
+    return mode;
+  }
+  return null;
+}
+
+function normalizeSortMode(value: unknown): ChartSortMode | null {
+  const mode = scalarText(value).toLowerCase();
+  if (mode === "none" || mode === "asc" || mode === "desc") {
+    return mode;
+  }
+  return null;
+}
+
+function normalizeLabelVisibility(value: unknown): ChartLabelVisibility | null {
+  const visibility = scalarText(value).toLowerCase();
+  if (visibility === "auto" || visibility === "always" || visibility === "never") {
+    return visibility;
+  }
+  return null;
+}
+
+function normalizePrecision(value: unknown): number | null {
+  const number = numberValue(value);
+  if (number === null || !Number.isInteger(number) || number < 0 || number > 6) {
+    return null;
+  }
+  return number;
 }
 
 function normalizeSeries(
@@ -1042,6 +1555,57 @@ function normalizePoints(value: unknown): ChartPoint[] {
   return [];
 }
 
+function normalizeNodes(value: unknown, structureValue: unknown): ChartNode[] {
+  const source = Array.isArray(value) && value.length ? value : structureValue;
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  return source
+    .map((item): ChartNode | null => {
+      const record = asRecord(item);
+      if (!record) {
+        return null;
+      }
+      const name = scalarText(record.name);
+      if (!name) {
+        return null;
+      }
+      return {
+        name,
+        value: numberValue(record.value),
+        color: scalarText(record.color) || undefined,
+      };
+    })
+    .filter((item): item is ChartNode => Boolean(item));
+}
+
+function normalizeLinks(value: unknown, structureValue: unknown): ChartLink[] {
+  const source = Array.isArray(value) && value.length ? value : structureValue;
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  return source
+    .map((item): ChartLink | null => {
+      const record = asRecord(item);
+      if (!record) {
+        return null;
+      }
+      const sourceName = scalarText(record.source);
+      const targetName = scalarText(record.target);
+      const valueNumber = numberValue(record.value);
+      if (!sourceName || !targetName || valueNumber === null) {
+        return null;
+      }
+      return {
+        source: sourceName,
+        target: targetName,
+        value: valueNumber,
+        color: scalarText(record.color) || undefined,
+      };
+    })
+    .filter((item): item is ChartLink => Boolean(item));
+}
+
 function pointsForChart(chart: ChartSpec): ChartPoint[] {
   if (chart.points.length) {
     return chart.points;
@@ -1122,6 +1686,9 @@ function chartDataCount(chart: ChartSpec): number {
   if (chart.type === "pie") {
     return pointsForChart(chart).length;
   }
+  if (chart.type === "sankey") {
+    return chart.nodes.length + chart.links.length;
+  }
   return chart.series.reduce((sum, series) => sum + series.data.filter((value) => value !== null).length, 0);
 }
 
@@ -1156,6 +1723,20 @@ function numberValue(value: unknown): number | null {
   return null;
 }
 
+function booleanValue(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const text = scalarText(value).toLowerCase();
+  if (text === "true" || text === "yes" || text === "1" || text === "是") {
+    return true;
+  }
+  if (text === "false" || text === "no" || text === "0" || text === "否") {
+    return false;
+  }
+  return null;
+}
+
 function scalarText(value: unknown): string {
   if (typeof value === "string") {
     return value.trim();
@@ -1167,13 +1748,6 @@ function scalarText(value: unknown): string {
     return value ? "是" : "否";
   }
   return "";
-}
-
-function formatNumber(value: number): string {
-  if (!Number.isFinite(value)) {
-    return "";
-  }
-  return CHART_NUMBER_FORMATTER.format(Object.is(value, -0) ? 0 : value);
 }
 
 function safeJsonStringify(value: unknown): string {

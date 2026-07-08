@@ -125,7 +125,7 @@ def _chart_data_item_schema() -> dict[str, Any]:
                 "description": "数据点名称。所有图表类型的类别标签都使用该字段。",
             },
             "value": {"type": "number", "description": "数据点数值。"},
-            "color": {"type": "string", "description": "饼图可用的自定义颜色。"},
+            "color": {"type": "string", "description": "可选自定义颜色。"},
         },
         required=["name", "value"],
     )
@@ -145,6 +145,29 @@ def _chart_series_schema() -> dict[str, Any]:
     )
 
 
+def _chart_node_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "name": {"type": "string", "minLength": 1, "description": "桑基图节点名称。"},
+            "value": {"type": "number", "description": "节点辅助数值，可选。"},
+            "color": {"type": "string", "description": "节点可选自定义颜色。"},
+        },
+        required=["name"],
+    )
+
+
+def _chart_link_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "source": {"type": "string", "minLength": 1, "description": "桑基图流向起点节点名称。"},
+            "target": {"type": "string", "minLength": 1, "description": "桑基图流向终点节点名称。"},
+            "value": {"type": "number", "description": "该流向的权重或数值。"},
+            "color": {"type": "string", "description": "流向线条可选自定义颜色。"},
+        },
+        required=["source", "target", "value"],
+    )
+
+
 def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
     return (
         A2UIToolDefinition(
@@ -153,7 +176,10 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             tool_description=(
                 "当回复需要自然呈现趋势、分布、对比、占比等结构化数据时优先调用，"
                 "A2UI 图表就是正文内容，不要再输出重复 Markdown 表格或图表，也不要写“可视化如下”。"
-                "支持趋势图、柱状图或饼图；一次调用必须用 charts 数组承载一个或多个图表；"
+                "支持趋势图、柱状图、环形饼图或桑基图；一次调用必须用 charts 数组承载一个或多个图表；"
+                "饼图固定使用环形样式；仅在用户明确需要或表达确实依赖时使用 unit、precision、value_format、mode、sort、show_labels、show_percent、smooth、zoom；"
+                "不要为了装饰默认开启标签或缩放。"
+                "桑基图用 nodes 和 links 表达流向。"
                 "summary 是字符串；不要使用 chart_type、categories、series.data、table 等旧字段。"
                 "该工具只渲染界面，不等待用户提交。"
             ),
@@ -168,13 +194,48 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
                             properties={
                                 "type": {
                                     "type": "string",
-                                    "enum": ["trend", "column", "pie"],
-                                    "description": "图表类型：trend 趋势图，column 柱状图，pie 饼图。",
+                                    "enum": ["trend", "column", "pie", "sankey"],
+                                    "description": "图表类型：trend 趋势图，column 柱状图，pie 环形饼图，sankey 桑基图。",
                                 },
                                 "title": {"type": "string", "description": "该图表标题，不传则不显示。"},
                                 "series_label": {
                                     "type": "string",
                                     "description": "单系列场景的提示标签，不传则使用默认值。",
+                                },
+                                "unit": {"type": "string", "description": "数值单位，例如 元、万元、GB、%。"},
+                                "precision": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 6,
+                                    "description": "数值小数位数，范围 0-6。",
+                                },
+                                "prefix": {"type": "string", "description": "数值前缀，例如 ¥ 或 $。"},
+                                "suffix": {"type": "string", "description": "数值后缀；不传时可使用 unit。"},
+                                "value_format": {
+                                    "type": "string",
+                                    "enum": ["number", "percent"],
+                                    "description": "数值格式：number 普通数字，percent 百分比。",
+                                },
+                                "mode": {
+                                    "type": "string",
+                                    "enum": ["grouped", "stacked"],
+                                    "description": "柱状图模式，仅 type=column 时使用；grouped 分组，stacked 堆叠。",
+                                },
+                                "sort": {
+                                    "type": "string",
+                                    "enum": ["none", "asc", "desc"],
+                                    "description": "排序方式；柱状图和饼图可用，none 保持原始顺序。",
+                                },
+                                "show_labels": {
+                                    "type": "string",
+                                    "enum": ["auto", "always", "never"],
+                                    "description": "是否显示图形数值标签；auto 根据数据量自动决定。",
+                                },
+                                "show_percent": {"type": "boolean", "description": "饼图是否显示占比，仅 type=pie 时使用。"},
+                                "smooth": {"type": "boolean", "description": "趋势图是否使用平滑曲线；默认 true，保持平滑趋势线。"},
+                                "zoom": {
+                                    "type": "boolean",
+                                    "description": "坐标图是否显示缩放控件；仅在数据量大且用户需要拖拽查看时使用。",
                                 },
                                 "items": {
                                     "type": "array",
@@ -185,6 +246,16 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
                                     "type": "array",
                                     "items": _chart_series_schema(),
                                     "description": "多系列数据，趋势图和柱状图常用；每个系列使用 items，不使用 data。",
+                                },
+                                "nodes": {
+                                    "type": "array",
+                                    "items": _chart_node_schema(),
+                                    "description": "桑基图节点列表；每个节点使用 name，可选 value 和 color。",
+                                },
+                                "links": {
+                                    "type": "array",
+                                    "items": _chart_link_schema(),
+                                    "description": "桑基图流向列表；每条流向使用 source、target、value。",
                                 },
                             },
                             required=["type"],
