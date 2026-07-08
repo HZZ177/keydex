@@ -33,7 +33,7 @@ describe("A2ChartBlock", () => {
     echartsMock.setOption.mockClear();
   });
 
-  it("renders one SDK chart payload with column, trend, pie, funnel and horizontal bar panels", () => {
+  it("renders one SDK chart payload with column, trend and pie panels", () => {
     const { container } = render(
       <A2UIBlock
         message={chartMessage({
@@ -82,24 +82,6 @@ describe("A2ChartBlock", () => {
                 { name: "老客", value: 60, color: "#16a34a" },
               ],
             },
-            {
-              type: "funnel",
-              title: "转化漏斗",
-              items: [
-                { name: "曝光", value: 1000, ratio: 100 },
-                { name: "点击", value: 360, ratio: 36 },
-              ],
-            },
-            {
-              type: "horizontal_bar",
-              title: "显存分项估算",
-              series_label: "显存",
-              items: [
-                { name: "模型权重 BF16", value: 6.6, color: "#3b82f6" },
-                { name: "梯度 FP32", value: 13.2, color: "#65a30d" },
-                { name: "Adam 优化器", value: 26.4, color: "#d97706" },
-              ],
-            },
           ],
         })}
       />,
@@ -110,19 +92,17 @@ describe("A2ChartBlock", () => {
       "column",
       "trend",
       "pie",
-      "funnel",
-      "horizontal_bar",
     ]);
     expect(screen.getAllByText("组合图表")).toHaveLength(1);
-    expect(screen.getByText("数据截止到今天")).not.toBeNull();
+    const summary = screen.getByText("数据截止到今天");
+    expect(summary).not.toBeNull();
+    expect(summary.compareDocumentPosition(panels[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const surfaces = screen.getAllByTestId("a2ui-echarts-surface");
-    expect(surfaces).toHaveLength(5);
+    expect(surfaces).toHaveLength(3);
     expect(surfaces.map((surface) => surface.getAttribute("data-chart-type"))).toEqual([
       "column",
       "trend",
       "pie",
-      "funnel",
-      "horizontal_bar",
     ]);
     expect(surfaces.every((surface) => surface.getAttribute("data-a2ui-chart-engine") === "echarts")).toBe(true);
     expect(surfaces.every((surface) => surface.getAttribute("data-a2ui-chart-stream-adapter") === "setOption-diff")).toBe(true);
@@ -131,25 +111,9 @@ describe("A2ChartBlock", () => {
     expect(surfaces[1].getAttribute("data-a2ui-chart-data-count")).toBe("3");
     expect(surfaces[1].getAttribute("data-a2ui-chart-category-count")).toBe("3");
     expect(surfaces[2].getAttribute("data-a2ui-chart-data-count")).toBe("2");
-    expect(surfaces[3].getAttribute("data-a2ui-chart-data-count")).toBe("2");
-    expect(surfaces[4].getAttribute("data-a2ui-chart-data-count")).toBe("3");
-    expect(surfaces[4].getAttribute("data-a2ui-chart-category-count")).toBe("3");
     expect(surfaces[1].getAttribute("data-a2ui-chart-interactions")).toBe("tooltip,axisPointer,legendToggle");
     expect(surfaces[1].getAttribute("data-a2ui-chart-tooltip")).toBe("axis");
-    expect(surfaces[4].getAttribute("data-a2ui-chart-interactions")).toBe("tooltip,axisPointer,legendToggle");
-    expect(surfaces[4].getAttribute("data-a2ui-chart-tooltip")).toBe("axis");
     expect(echartsMock.setOption.mock.calls.every(([option]) => (option as Record<string, unknown>).animation === false)).toBe(true);
-    const horizontalOption = echartsMock.setOption.mock.calls[4][0] as {
-      series?: Array<Record<string, unknown>>;
-      xAxis?: Record<string, unknown>;
-      yAxis?: Record<string, unknown>;
-    };
-    expect(horizontalOption.xAxis).toMatchObject({ type: "value", show: false });
-    expect(horizontalOption.yAxis).toMatchObject({ type: "category", inverse: true });
-    expect(horizontalOption.series?.[0]).toMatchObject({
-      showBackground: true,
-      type: "bar",
-    });
     expect(container.querySelector("svg")).not.toBeNull();
   });
 
@@ -161,6 +125,46 @@ describe("A2ChartBlock", () => {
           chart_type: "column",
           categories: ["微信", "抖音"],
           series: [{ name: "点击", data: [120, 90] }],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("暂无图表数据")).not.toBeNull();
+    expect(screen.queryByTestId("a2ui-chart-panel")).toBeNull();
+  });
+
+  it("does not render the removed horizontal_bar chart type", () => {
+    render(
+      <A2UIBlock
+        message={chartMessage({
+          title: "旧横向类型",
+          charts: [
+            {
+              type: "horizontal_bar",
+              title: "旧类型",
+              items: [{ name: "A", value: 1 }],
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("暂无图表数据")).not.toBeNull();
+    expect(screen.queryByTestId("a2ui-chart-panel")).toBeNull();
+  });
+
+  it("does not render the removed funnel chart type", () => {
+    render(
+      <A2UIBlock
+        message={chartMessage({
+          title: "旧漏斗类型",
+          charts: [
+            {
+              type: "funnel",
+              title: "旧类型",
+              items: [{ name: "A", value: 1 }],
+            },
+          ],
         })}
       />,
     );
@@ -194,7 +198,7 @@ describe("A2ChartBlock", () => {
       <A2UIBlock
         message={streamingChartMessage(
           { title: "多图生成中" },
-          '{"title":"多图生成中","charts":[{"type":"column","title":"渠道"},{"type":"pie","title":"占比"},{"type":"funnel","title":"漏斗"}',
+          '{"title":"多图生成中","charts":[{"type":"column","title":"渠道"},{"type":"pie","title":"占比"},{"type":"trend","title":"趋势"}',
         )}
       />,
     );
@@ -203,7 +207,7 @@ describe("A2ChartBlock", () => {
     expect(panels.map((panel) => panel.getAttribute("data-chart-type"))).toEqual([
       "column",
       "pie",
-      "funnel",
+      "trend",
     ]);
     expect(screen.getAllByTestId("a2ui-chart-skeleton")).toHaveLength(3);
     expect(screen.queryByText("暂无图表数据")).toBeNull();
@@ -308,7 +312,7 @@ describe("A2ChartBlock", () => {
         charts: [
           {
             type: "column",
-            title: "横向数据",
+            title: "柱状数据",
             series: [
               {
                 name: "数量",
@@ -328,7 +332,7 @@ describe("A2ChartBlock", () => {
         charts: [
           {
             type: "column",
-            title: "横向数据",
+            title: "柱状数据",
             series: [
               {
                 name: "数量",
