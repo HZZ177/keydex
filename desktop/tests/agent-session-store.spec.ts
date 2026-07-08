@@ -1322,7 +1322,7 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
   });
 
-  it("keeps live A2UI stream debug details when completed history hydrates from created-only events", () => {
+  it("keeps live A2UI playback identity when completed history hydrates from created-only events", () => {
     const streamId = "a2ui:confirm:tool-1";
     let state = createInitialAgentConversationState();
 
@@ -1432,7 +1432,7 @@ describe("agentSessionStore reducer", () => {
     const messages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "a2ui");
     expect(messages).toHaveLength(1);
     expect(messages[0].id).toBe(liveA2UIId);
-    expect(messages[0].hydratedFromHistory).toBe(true);
+    expect(messages[0].hydratedFromHistory).toBeFalsy();
     expect(messages[0].a2uiDebug).toMatchObject({
       status: "created",
       streamId,

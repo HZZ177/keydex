@@ -644,7 +644,9 @@ function preserveStableLocalA2UIMessages(
       ...message,
       id: local.id,
       timestamp: local.timestamp,
-      hydratedFromHistory: message.hydratedFromHistory,
+      hydratedFromHistory: shouldPreserveLiveA2UIPlayback(local)
+        ? local.hydratedFromHistory
+        : message.hydratedFromHistory,
       a2ui: message.a2ui ?? local.a2ui,
       a2uiDebug: message.a2uiDebug ?? local.a2uiDebug,
       contentType: message.contentType ?? local.contentType ?? "a2ui",
@@ -707,6 +709,21 @@ function a2UIIdentityValues(message: AgentChatMessage): Set<string> {
     ]
       .map((value) => stringValue(value))
       .filter(Boolean),
+  );
+}
+
+function shouldPreserveLiveA2UIPlayback(message: AgentChatMessage): boolean {
+  if (message.hydratedFromHistory === true) {
+    return false;
+  }
+  const debug = message.a2uiDebug;
+  if (!debug) {
+    return false;
+  }
+  return (
+    Number(debug.chunkCount ?? 0) > 0 ||
+    stringValue(debug.argsBuffer).length > 0 ||
+    (debug.rawEvents ?? []).some((event) => stringValue(event.action).startsWith("a2ui_stream_"))
   );
 }
 

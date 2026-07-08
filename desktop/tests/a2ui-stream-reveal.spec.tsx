@@ -112,6 +112,43 @@ describe("useA2UIStreamReveal", () => {
 
     unmount();
   });
+
+  it("keeps draining a completed chart payload after a partial stream instead of jumping to all points", () => {
+    vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
+    try {
+      const snapshots: Array<{ rendered: number; total: number; visibleItems: number }> = [];
+      const { rerender } = render(<PlayerProbe parsed={streamingPartialChartMessage(2)} snapshots={snapshots} />);
+
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+
+      const visibleBeforeFinal = visiblePlayerItems();
+      expect(visibleBeforeFinal).toBeGreaterThan(0);
+      expect(visibleBeforeFinal).toBeLessThan(20);
+
+      rerender(<PlayerProbe parsed={streamBackedCreatedChartMessage(20)} snapshots={snapshots} />);
+
+      expect(visiblePlayerItems()).toBeLessThan(20);
+
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+
+      expect(visiblePlayerItems()).toBeLessThan(20);
+
+      act(() => {
+        vi.advanceTimersByTime(6_000);
+      });
+
+      expect(visiblePlayerItems()).toBe(20);
+    } finally {
+      restoreRaf();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 });
 
 function RevealProbe({
@@ -156,7 +193,14 @@ function PlayerProbe({
     total: player.totalElementCount,
     visibleItems: firstSeriesVisibleItems(player.payload),
   });
-  return <div data-testid="a2ui-player-probe" />;
+  return (
+    <div
+      data-testid="a2ui-player-probe"
+      data-rendered={player.renderedElementCount}
+      data-total={player.totalElementCount}
+      data-visible-items={firstSeriesVisibleItems(player.payload)}
+    />
+  );
 }
 
 function parsedMessage(chunkCount: number): ParsedA2UIMessage {
@@ -191,25 +235,42 @@ function parsedMessage(chunkCount: number): ParsedA2UIMessage {
   };
 }
 
-function streamBackedCreatedChartMessage(itemCount: number): ParsedA2UIMessage {
-  const payload = {
-    title: "简单趋势图",
-    charts: [
-      {
-        type: "trend",
-        title: "访问趋势",
-        series: [
-          {
-            name: "访问量",
-            items: Array.from({ length: itemCount }, (_, index) => ({
-              name: `第 ${index + 1} 天`,
-              value: index + 1,
-            })),
-          },
-        ],
-      },
-    ],
+function streamingPartialChartMessage(itemCount: number): ParsedA2UIMessage {
+  const payload = chartPayload(itemCount);
+  const argsBuffer = JSON.stringify(payload);
+  return {
+    a2ui: null,
+    debug: {
+      id: "probe-stream",
+      status: "streaming",
+      renderKey: "chart",
+      mode: "render",
+      streamId: "probe-stream",
+      toolCallId: "probe-tool",
+      traceId: "probe-trace",
+      turnIndex: 1,
+      chunkCount: 12,
+      argsBuffer,
+      argsTextLength: argsBuffer.length,
+      jsonParseStatus: "partial",
+      parsedArgs: payload,
+      rawEvents: [],
+      updatedAt: 1_700_000_000_000,
+    },
+    payload,
+    interaction: null,
+    renderKey: "chart",
+    mode: "render",
+    status: "streaming",
+    interactionId: "",
+    streamText: argsBuffer,
+    parseError: "",
+    historyHydrated: false,
   };
+}
+
+function streamBackedCreatedChartMessage(itemCount: number): ParsedA2UIMessage {
+  const payload = chartPayload(itemCount);
   const argsBuffer = JSON.stringify(payload);
   return {
     a2ui: {
@@ -253,12 +314,50 @@ function streamBackedCreatedChartMessage(itemCount: number): ParsedA2UIMessage {
   };
 }
 
+function chartPayload(itemCount: number): Record<string, unknown> {
+  return {
+    title: "简单趋势图",
+    charts: [
+      {
+        type: "trend",
+        title: "访问趋势",
+        series: [
+          {
+            name: "访问量",
+            items: Array.from({ length: itemCount }, (_, index) => ({
+              name: `第 ${index + 1} 天`,
+              value: index + 1,
+            })),
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function firstSeriesVisibleItems(payload: Record<string, unknown>): number {
   const charts = Array.isArray(payload.charts) ? payload.charts : [];
   const chart = asRecord(charts[0]);
   const series = Array.isArray(chart?.series) ? chart.series : [];
   const firstSeries = asRecord(series[0]);
   return Array.isArray(firstSeries?.items) ? firstSeries.items.length : 0;
+}
+
+function visiblePlayerItems(): number {
+  return Number(screen.getByTestId("a2ui-player-probe").getAttribute("data-visible-items"));
+}
+
+function installTimerBackedRaf(): () => void {
+  const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => (
+    window.setTimeout(() => callback(performance.now()), 0) as unknown as number
+  ));
+  const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((handle) => {
+    window.clearTimeout(handle);
+  });
+  return () => {
+    requestFrame.mockRestore();
+    cancelFrame.mockRestore();
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
