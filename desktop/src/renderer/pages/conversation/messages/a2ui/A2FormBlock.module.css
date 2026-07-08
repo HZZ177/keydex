@@ -475,10 +475,6 @@
   padding: 0;
 }
 
-.result[data-result-status="cancelled"] {
-  opacity: 0.72;
-}
-
 .valueGrid {
   display: grid;
   min-width: 0;

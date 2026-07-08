@@ -20,14 +20,11 @@
 
 .block[data-status="streaming"],
 .block[data-status="started"],
-.block[data-status="finished"],
-.block[data-resume-status="started"],
-.block[data-resume-status="deferred"] {
+.block[data-status="finished"] {
   border-color: transparent;
 }
 
-.block[data-status="failed"],
-.block[data-resume-status="failed"] {
+.block[data-status="failed"] {
   border-color: transparent;
 }
 
@@ -180,23 +177,6 @@
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.errorLine {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-  color: color-mix(in srgb, var(--color-danger) 84%, var(--color-text-secondary));
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.errorLine span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 @media (max-width: 420px) {

@@ -134,10 +134,39 @@ describe("A2FormBlock", () => {
     expect(result.getByText("微信")).not.toBeNull();
     expect(result.getByText("短信")).not.toBeNull();
     expect(result.getByText("是")).not.toBeNull();
+    expect(result.getByText("本次填写已提交")).not.toBeNull();
     expect(result.getByText("备注")).not.toBeNull();
     expect(result.getByText("已确认")).not.toBeNull();
     expect(result.queryByText("已提交表单")).toBeNull();
     expect(result.queryByText(/恢复状态/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "提交参数" })).toBeNull();
+  });
+
+  it("renders cancelled forms with an explicit interaction outcome", () => {
+    render(
+      <A2UIBlock
+        message={formMessage({
+          interaction: {
+            interaction_id: "int-form-1",
+            status: "cancelled",
+            can_submit: false,
+            cancel_reason: "用户取消",
+            resume_status: "succeeded",
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const result = within(screen.getByTestId("a2ui-form-result"));
+    expect(screen.getByTestId("a2ui-form-result").getAttribute("data-result-status")).toBe("cancelled");
+    expect(result.getByText("标题")).not.toBeNull();
+    expect(result.getAllByText("未填写").length).toBeGreaterThan(0);
+    expect(result.getByText("已取消本次填写")).not.toBeNull();
+    expect(result.queryByText(/原因/)).toBeNull();
+    expect(result.queryByText(/恢复状态/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "取消" })).toBeNull();
     expect(screen.queryByRole("button", { name: "提交参数" })).toBeNull();
   });
 

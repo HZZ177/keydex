@@ -39,6 +39,8 @@ describe("A2UIBlock", () => {
     );
 
     expect(screen.getByTestId("a2ui-block").getAttribute("data-render-key")).toBe("chart");
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-lifecycle")).toBe("settled");
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-outcome")).toBe("none");
     expect(screen.getAllByText("销售趋势")).toHaveLength(1);
     expect(screen.getByText("已生成")).toBeTruthy();
     expect(screen.getByText("近 4 个季度")).toBeTruthy();
@@ -132,6 +134,8 @@ describe("A2UIBlock", () => {
     );
 
     expect(screen.getByTestId("a2ui-block").getAttribute("data-status")).toBe("streaming");
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-lifecycle")).toBe("streaming");
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-presentation")).toBe("live");
     expect(screen.getByText("生成中")).toBeTruthy();
     expect(screen.getByTestId("a2ui-choice")).toBeTruthy();
     expect(screen.getAllByText("周末怎么过").length).toBeGreaterThanOrEqual(1);
@@ -190,6 +194,8 @@ describe("A2UIBlock", () => {
     );
 
     expect(screen.getByTestId("a2ui-block").getAttribute("data-status")).toBe("failed");
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-lifecycle")).toBe("failed");
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-outcome")).toBe("tool_failed");
     expect(screen.getByTestId("a2ui-error-line").textContent).toContain("A2UI 渲染失败，等待重新生成");
     expect(screen.queryByTestId("a2ui-chart-panel")).toBeNull();
     expect(screen.queryByTestId("a2ui-stream-preview")).toBeNull();
@@ -203,6 +209,11 @@ describe("A2UIBlock", () => {
       mode: "interactive",
       status: "waiting_input",
       interactionId: "int-1",
+      renderState: {
+        lifecycle: "waiting_input",
+        outcome: "none",
+        presentation: "live",
+      },
     });
 
     render(<A2UIBlock message={message} onSubmit={() => undefined} onCancel={() => undefined} />);

@@ -24,6 +24,8 @@ import { A2ChoiceBlock } from "./A2ChoiceBlock";
 import { A2UIDebugInfoButton } from "./A2UIDebugInfoButton";
 import { A2UIDebugPanel } from "./A2UIDebugPanel";
 import { A2FormBlock } from "./A2FormBlock";
+import { resolveA2UIRenderState, type A2UIRenderState } from "./A2UIState";
+import { A2UIInlineError } from "./A2UIStateLine";
 import { type A2UIStreamPlayerState, useA2UIStreamPlayer } from "./useA2UIStreamPlayer";
 
 export const A2UI_DEBUG_INFO_DEFAULT_VISIBLE = false;
@@ -57,6 +59,7 @@ export interface ParsedA2UIMessage {
   renderKey: A2UIRenderKey | string;
   mode: string;
   status: A2UIDebugLifecycleStatus | string;
+  renderState: A2UIRenderState;
   interactionId: string;
   streamText: string;
   parseError: string;
@@ -92,7 +95,9 @@ export function A2UIBlock({ message, onSubmit, onCancel, debugInfoEnabled, child
       data-render-key={parsed.renderKey}
       data-mode={parsed.mode}
       data-status={parsed.status}
-      data-resume-status={resumeStatus(parsed) || undefined}
+      data-lifecycle={parsed.renderState.lifecycle}
+      data-outcome={parsed.renderState.outcome}
+      data-presentation={parsed.renderState.presentation}
       data-interactive-ready={interactiveReady ? "true" : "false"}
       aria-label={`${renderKeyLabel(parsed.renderKey)} A2UI：${title}`}
     >
@@ -160,25 +165,25 @@ function renderBuiltInContent(
   onCancel?: A2UICancelHandler,
 ): ReactNode {
   if (parsed.renderKey === "chart") {
-    if (parsed.status === "failed") {
-      return <A2UIErrorLine message={parsed.parseError} />;
+    if (parsed.renderState.isFailed) {
+      return <A2UIInlineError message={parsed.parseError} />;
     }
     return <A2ChartBlock parsed={parsed} />;
   }
   if (parsed.renderKey === "choice") {
-    if (parsed.status === "failed") {
-      return <A2UIErrorLine message={parsed.parseError} />;
+    if (parsed.renderState.isFailed) {
+      return <A2UIInlineError message={parsed.parseError} />;
     }
     return <A2ChoiceBlock message={message} parsed={parsed} onSubmit={onSubmit} onCancel={onCancel} />;
   }
   if (parsed.renderKey === "form") {
-    if (parsed.status === "failed") {
-      return <A2UIErrorLine message={parsed.parseError} />;
+    if (parsed.renderState.isFailed) {
+      return <A2UIInlineError message={parsed.parseError} />;
     }
     return <A2FormBlock message={message} parsed={parsed} onSubmit={onSubmit} onCancel={onCancel} />;
   }
-  if (parsed.status === "failed") {
-    return <A2UIErrorLine message={parsed.parseError} />;
+  if (parsed.renderState.isFailed) {
+    return <A2UIInlineError message={parsed.parseError} />;
   }
   return null;
 }
@@ -202,10 +207,19 @@ export function parseA2UIMessage(message: ConversationMessage): ParsedA2UIMessag
   const streamPayload = asRecord(debug?.parsedArgs);
   const payload = shouldUseStreamPayload(a2ui, status, streamPayload) ? streamPayload : finalPayload;
   const streamText = stringValue(debug?.argsBuffer).trim();
+  const parseError = stringValue(debug?.error) || stringValue(debug?.parseError);
+  const historyHydrated = message.payload.historyHydrated === true;
+  const renderState = resolveA2UIRenderState({
+    status,
+    mode,
+    interaction,
+    historyHydrated,
+  });
   return {
     a2ui,
     debug,
     payload,
+    renderState,
     interaction,
     renderKey,
     mode,
@@ -216,19 +230,9 @@ export function parseA2UIMessage(message: ConversationMessage): ParsedA2UIMessag
       stringValue(message.payload.interactionId) ||
       stringValue(message.payload.interaction_id),
     streamText,
-    parseError: stringValue(debug?.error) || stringValue(debug?.parseError),
-    historyHydrated: message.payload.historyHydrated === true,
+    parseError,
+    historyHydrated,
   };
-}
-
-function A2UIErrorLine({ message }: { message: string }) {
-  const text = message ? `A2UI 渲染失败，等待重新生成：${message}` : "A2UI 渲染失败，等待重新生成";
-  return (
-    <div className={styles.errorLine} data-testid="a2ui-error-line" title={message || undefined}>
-      <AlertTriangle size={14} aria-hidden="true" />
-      <span>{text}</span>
-    </div>
-  );
 }
 
 function a2uiTitle(parsed: ParsedA2UIMessage): string {
@@ -362,10 +366,6 @@ function shouldUseStreamPayload(
   }
   const normalized = status.toLowerCase();
   return normalized === "started" || normalized === "streaming" || normalized === "finished";
-}
-
-function resumeStatus(parsed: ParsedA2UIMessage): string {
-  return resumeStatusFromInteraction(parsed.interaction?.resume_status);
 }
 
 function resumeStatusFromInteraction(status: unknown): string {

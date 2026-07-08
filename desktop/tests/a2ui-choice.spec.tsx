@@ -116,10 +116,39 @@ describe("A2ChoiceBlock", () => {
     const result = within(screen.getByTestId("a2ui-choice-result"));
     expect(result.getByText("方案 A")).not.toBeNull();
     expect(result.getByText("方案 C")).not.toBeNull();
+    expect(result.getByText("本次选择已提交 · 2 项")).not.toBeNull();
     expect(result.getByText("备注")).not.toBeNull();
     expect(result.getByText("组合推进")).not.toBeNull();
     expect(result.queryByText("已提交选择")).toBeNull();
     expect(result.queryByText(/恢复状态/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "提交选择" })).toBeNull();
+  });
+
+  it("renders cancelled choices with an explicit interaction outcome", () => {
+    render(
+      <A2UIBlock
+        message={choiceMessage({
+          interaction: {
+            interaction_id: "int-choice-1",
+            status: "cancelled",
+            can_submit: false,
+            cancel_reason: "用户取消",
+            resume_status: "succeeded",
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const result = within(screen.getByTestId("a2ui-choice-result"));
+    expect(screen.getByTestId("a2ui-choice-result").getAttribute("data-result-status")).toBe("cancelled");
+    expect(result.getByText("方案 A")).not.toBeNull();
+    expect(result.getByText("方案 B")).not.toBeNull();
+    expect(result.getByText("已取消本次选择")).not.toBeNull();
+    expect(result.queryByText(/原因/)).toBeNull();
+    expect(result.queryByText(/恢复状态/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "取消" })).toBeNull();
     expect(screen.queryByRole("button", { name: "提交选择" })).toBeNull();
   });
 

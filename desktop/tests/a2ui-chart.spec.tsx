@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { A2UIBlock } from "@/renderer/pages/conversation/messages";
 import type { ParsedA2UIMessage } from "@/renderer/pages/conversation/messages/a2ui/A2UIBlock";
 import { A2ChartBlock } from "@/renderer/pages/conversation/messages/a2ui/A2ChartBlock";
+import { resolveA2UIRenderState } from "@/renderer/pages/conversation/messages/a2ui/A2UIState";
 import { resetA2UIStreamPlayerPlaybackForTests } from "@/renderer/pages/conversation/messages/a2ui/useA2UIStreamPlayer";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { A2UIDebugBlockState, A2UIObject } from "@/types/protocol";
@@ -1406,6 +1407,12 @@ function parsedChart(
     payload,
     renderKey: "chart",
     status: "completed",
+    renderState: resolveA2UIRenderState({
+      status: "completed",
+      mode: "render",
+      interaction: null,
+      historyHydrated: false,
+    }),
     streamPlayer: {
       enabled: true,
       phase,

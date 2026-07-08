@@ -9,6 +9,8 @@ import type {
   ParsedA2UIMessage,
 } from "./A2UIBlock";
 import styles from "./A2FormBlock.module.css";
+import type { A2UIRenderState } from "./A2UIState";
+import { A2UIStateLine } from "./A2UIStateLine";
 import {
   A2UIMotionItem,
   A2UIMotionRoot,
@@ -52,8 +54,7 @@ interface FormModel {
   status: string;
   submittedValues: Record<string, unknown>;
   submittedNote: string;
-  cancelReason: string;
-  resumeStatus: string;
+  renderState: A2UIRenderState;
 }
 
 type FormValues = Record<string, unknown>;
@@ -495,6 +496,7 @@ function FormResult({ model }: { model: FormModel }) {
     return (
       <div className={styles.result} data-result-status="cancelled" data-testid="a2ui-form-result">
         <ReadonlyFormValues fields={model.fields} values={{}} emptyText="未填写" />
+        <FormOutcomeLine model={model} />
       </div>
     );
   }
@@ -502,6 +504,7 @@ function FormResult({ model }: { model: FormModel }) {
     return (
       <div className={styles.result} data-result-status="submitted" data-testid="a2ui-form-result">
         <ReadonlyFormValues fields={model.fields} values={model.submittedValues} />
+        <FormOutcomeLine model={model} />
         {model.submittedNote ? <ReadonlyFormNote value={model.submittedNote} /> : null}
       </div>
     );
@@ -511,6 +514,24 @@ function FormResult({ model }: { model: FormModel }) {
       <ReadonlyFormValues fields={model.fields} values={{}} emptyText="-" />
     </div>
   );
+}
+
+function FormOutcomeLine({ model }: { model: FormModel }) {
+  if (model.renderState.outcome === "submitted") {
+    return (
+      <A2UIStateLine tone="success" testId="a2ui-form-state-line">
+        本次填写已提交
+      </A2UIStateLine>
+    );
+  }
+  if (model.renderState.outcome === "cancelled_by_user") {
+    return (
+      <A2UIStateLine tone="warning" testId="a2ui-form-state-line">
+        已取消本次填写
+      </A2UIStateLine>
+    );
+  }
+  return null;
 }
 
 function ReadonlyFormValues({
@@ -588,8 +609,7 @@ function formModel(parsed: ParsedA2UIMessage): FormModel {
     status: normalizeStatus(interaction?.status ?? parsed.status),
     submittedValues: asRecord(submitResult?.values) ?? asRecord(submitResult) ?? {},
     submittedNote: scalarText(submitResult?.note) || scalarText(submitResult?.comment),
-    cancelReason: scalarText(interaction?.cancel_reason),
-    resumeStatus: scalarText(interaction?.resume_status),
+    renderState: parsed.renderState,
   };
 }
 

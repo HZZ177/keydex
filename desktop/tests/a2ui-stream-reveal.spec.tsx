@@ -6,6 +6,7 @@ import {
   type ParsedA2UIMessage,
   buildA2UIRevealResetKey,
   resetA2UIStreamPlayerPlaybackForTests,
+  resolveA2UIRenderState,
   useA2UIStreamPlayer,
   useA2UIStreamReveal,
 } from "@/renderer/pages/conversation/messages/a2ui";
@@ -99,6 +100,7 @@ describe("useA2UIStreamReveal", () => {
       },
       debug: streaming.debug ? { ...streaming.debug, status: "created" } : null,
       status: "created",
+      renderState: renderStateFor("created"),
     };
 
     expect(buildA2UIRevealResetKey(created)).toBe(buildA2UIRevealResetKey(streaming));
@@ -270,6 +272,15 @@ function PlayerProbe({
   );
 }
 
+function renderStateFor(status: string) {
+  return resolveA2UIRenderState({
+    status,
+    mode: "render",
+    interaction: null,
+    historyHydrated: false,
+  });
+}
+
 function parsedMessage(chunkCount: number): ParsedA2UIMessage {
   const argsBuffer = chunkCount > 0 ? "{\"title\":\"流式\"}" : "";
   return {
@@ -295,6 +306,7 @@ function parsedMessage(chunkCount: number): ParsedA2UIMessage {
     renderKey: "chart",
     mode: "render",
     status: chunkCount > 0 ? "streaming" : "created",
+    renderState: renderStateFor(chunkCount > 0 ? "streaming" : "created"),
     interactionId: "",
     streamText: argsBuffer,
     parseError: "",
@@ -329,6 +341,7 @@ function streamingPartialChartMessage(itemCount: number): ParsedA2UIMessage {
     renderKey: "chart",
     mode: "render",
     status: "streaming",
+    renderState: renderStateFor("streaming"),
     interactionId: "",
     streamText: argsBuffer,
     parseError: "",
@@ -374,6 +387,7 @@ function streamBackedCreatedChartMessage(itemCount: number): ParsedA2UIMessage {
     renderKey: "chart",
     mode: "render",
     status: "created",
+    renderState: renderStateFor("created"),
     interactionId: "",
     streamText: argsBuffer,
     parseError: "",

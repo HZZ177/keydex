@@ -9,6 +9,8 @@ import type {
   ParsedA2UIMessage,
 } from "./A2UIBlock";
 import styles from "./A2ChoiceBlock.module.css";
+import type { A2UIRenderState } from "./A2UIState";
+import { A2UIStateLine } from "./A2UIStateLine";
 import {
   A2UIMotionItem,
   A2UIMotionRoot,
@@ -42,8 +44,7 @@ interface ChoiceModel {
   status: string;
   selectedValues: string[];
   note: string;
-  cancelReason: string;
-  resumeStatus: string;
+  renderState: A2UIRenderState;
 }
 
 export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceBlockProps) {
@@ -262,6 +263,7 @@ function ChoiceResult({ model }: { model: ChoiceModel }) {
             ))}
           </div>
         ) : null}
+        <ChoiceOutcomeLine model={model} selectedCount={selectedValues.size} />
         {model.note ? <ReadonlyNote value={model.note} /> : null}
       </div>
     );
@@ -269,8 +271,27 @@ function ChoiceResult({ model }: { model: ChoiceModel }) {
   return (
     <div className={styles.readonlyState} data-result-status={resultStatus} data-testid="a2ui-choice-result">
       <ReadonlyChoiceOptions model={model} selectedValues={selectedValues} />
+      <ChoiceOutcomeLine model={model} selectedCount={selectedValues.size} />
     </div>
   );
+}
+
+function ChoiceOutcomeLine({ model, selectedCount }: { model: ChoiceModel; selectedCount: number }) {
+  if (model.renderState.outcome === "submitted") {
+    return (
+      <A2UIStateLine tone="success" testId="a2ui-choice-state-line">
+        {selectedCount ? `本次选择已提交 · ${selectedCount} 项` : "本次选择已提交"}
+      </A2UIStateLine>
+    );
+  }
+  if (model.renderState.outcome === "cancelled_by_user") {
+    return (
+      <A2UIStateLine tone="warning" testId="a2ui-choice-state-line">
+        已取消本次选择
+      </A2UIStateLine>
+    );
+  }
+  return null;
 }
 
 function ReadonlyChoiceOptions({ model, selectedValues }: { model: ChoiceModel; selectedValues: Set<string> }) {
@@ -342,8 +363,7 @@ function choiceModel(parsed: ParsedA2UIMessage): ChoiceModel {
     status: normalizeStatus(interaction?.status ?? parsed.status),
     selectedValues: selectedResult,
     note: noteFrom(interaction?.submit_result),
-    cancelReason: scalarText(interaction?.cancel_reason),
-    resumeStatus: scalarText(interaction?.resume_status),
+    renderState: parsed.renderState,
   };
 }
 
