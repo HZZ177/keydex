@@ -748,6 +748,78 @@ describe("AppRouter", () => {
     expect(shell.dataset.rightSidebar).toBe("closed");
   });
 
+  it("scrolls overflowed workbench preview tabs from active tabs and arrow buttons", async () => {
+    const scrollToDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTo");
+    const scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
+      if (typeof options === "object" && typeof options.left === "number") {
+        this.scrollLeft = options.left;
+      }
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+
+    try {
+      renderRouter(["/workbench/workspace%20A/session/session%201"], {
+        extra: <WorkbenchFileOpenProbe />,
+      });
+
+      expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+      fireEvent.click(screen.getByTestId("open-workbench-file-readme"));
+      expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+      fireEvent.click(screen.getByTestId("open-workbench-file-package"));
+      expect(await screen.findByRole("tab", { name: "package.json" }, { timeout: 10000 })).not.toBeNull();
+      fireEvent.click(screen.getByTestId("open-workbench-file-main"));
+      expect(await screen.findByRole("tab", { name: "main.tsx" }, { timeout: 10000 })).not.toBeNull();
+
+      const tabStrip = screen.getByTestId("workbench-preview-tab-strip") as HTMLDivElement;
+      Object.defineProperty(tabStrip, "clientWidth", { configurable: true, value: 120 });
+      Object.defineProperty(tabStrip, "scrollWidth", { configurable: true, value: 570 });
+      Object.defineProperty(tabStrip, "scrollLeft", { configurable: true, writable: true, value: 280 });
+      vi.spyOn(tabStrip, "getBoundingClientRect").mockReturnValue(domRect({ left: 0, right: 120, width: 120 }));
+      fireEvent.scroll(tabStrip);
+      expect(await screen.findByTestId("workbench-preview-tab-scroll-left")).not.toBeNull();
+      expect(await screen.findByTestId("workbench-preview-tab-scroll-right")).not.toBeNull();
+
+      const readmeTab = screen.getByRole("tab", { name: "README.md" }).closest<HTMLElement>("[data-preview-tab='true']");
+      if (!readmeTab) {
+        throw new Error("README workbench preview tab not found");
+      }
+      vi.spyOn(readmeTab, "getBoundingClientRect").mockReturnValue(domRect({ left: -170, right: -50, width: 120 }));
+
+      scrollTo.mockClear();
+      fireEvent.click(screen.getByRole("tab", { name: "README.md" }), { clientX: 60 });
+      await waitFor(() => {
+        expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "auto" }));
+      });
+      const activeTabScroll = scrollTo.mock.calls.find(
+        ([options]) => typeof options === "object" && options.behavior === "auto",
+      )?.[0] as ScrollToOptions | undefined;
+      expect(activeTabScroll?.left).toBeLessThan(280);
+
+      scrollTo.mockClear();
+      tabStrip.scrollLeft = 0;
+      fireEvent.scroll(tabStrip);
+      const rightScrollButton = await screen.findByTestId("workbench-preview-tab-scroll-right");
+      expect((rightScrollButton as HTMLButtonElement).disabled).toBe(false);
+      fireEvent.click(rightScrollButton);
+      await waitFor(() => {
+        expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+      });
+      const edgeScroll = scrollTo.mock.calls.find(
+        ([options]) => typeof options === "object" && options.behavior === "smooth",
+      )?.[0] as ScrollToOptions | undefined;
+      expect(edgeScroll?.left).toBeGreaterThan(0);
+    } finally {
+      if (scrollToDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, "scrollTo", scrollToDescriptor);
+      } else {
+        delete (HTMLElement.prototype as { scrollTo?: HTMLElement["scrollTo"] }).scrollTo;
+      }
+    }
+  });
+
   it("supports the workbench main preview tab context menu", async () => {
     renderRouter(["/workbench/workspace%20A/session/session%201"], {
       extra: <WorkbenchFileOpenProbe />,
@@ -1454,6 +1526,22 @@ function dispatchPointer(target: EventTarget, type: string, props: Record<string
     Object.defineProperty(event, key, { configurable: true, value });
   }
   target.dispatchEvent(event);
+}
+
+function domRect(rect: { left: number; right: number; width: number; top?: number; height?: number }): DOMRect {
+  const top = rect.top ?? 0;
+  const height = rect.height ?? 34;
+  return {
+    bottom: top + height,
+    height,
+    left: rect.left,
+    right: rect.right,
+    top,
+    width: rect.width,
+    x: rect.left,
+    y: top,
+    toJSON: () => ({}),
+  };
 }
 
 function fakeChannel(onStatus?: (status: WsConnectionStatus) => void, chat: ReturnType<typeof vi.fn> = vi.fn()): ChatChannel {

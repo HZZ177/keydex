@@ -165,17 +165,72 @@
   overflow: hidden;
 }
 
-.previewTabStrip {
+.previewTabRail {
   display: flex;
   min-width: 0;
   height: 34px;
+  align-items: stretch;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  background: var(--color-bg-elevated);
+}
+
+.previewTabStrip {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
   align-items: end;
   gap: 2px;
   overflow-x: auto;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
-  background: var(--color-bg-elevated);
+  overflow-y: hidden;
   padding: 4px 8px 0;
-  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.previewTabStrip::-webkit-scrollbar {
+  display: none;
+}
+
+.previewTabRail[data-overflow="true"] .previewTabStrip {
+  padding-inline: 4px;
+}
+
+.previewTabScrollButton {
+  display: inline-grid;
+  width: 28px;
+  height: 34px;
+  flex: 0 0 28px;
+  place-items: center;
+  border: 0;
+  background: color-mix(in srgb, var(--color-bg-elevated) 92%, var(--surface-bg));
+  color: var(--color-text-3);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-standard),
+    color var(--motion-fast) var(--motion-ease-standard),
+    opacity var(--motion-fast) var(--motion-ease-standard);
+}
+
+.previewTabScrollButtonLeft {
+  border-right: 1px solid color-mix(in srgb, var(--color-border-subtle) 76%, transparent);
+}
+
+.previewTabScrollButtonRight {
+  border-left: 1px solid color-mix(in srgb, var(--color-border-subtle) 76%, transparent);
+}
+
+.previewTabScrollButton:hover:not(:disabled),
+.previewTabScrollButton:focus-visible:not(:disabled) {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.previewTabScrollButton:disabled {
+  cursor: default;
+  color: var(--color-text-4);
+  opacity: 0.42;
 }
 
 .previewTab {

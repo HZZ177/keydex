@@ -63,6 +63,15 @@ describe("style foundation", () => {
     expect(sider).toMatch(/\.sider\[data-collapsed="true"\]\s+\.footer::before\s*{[^}]*right:\s*0/s);
   });
 
+  it("keeps workbench preview tabs scrollable without a visible native scrollbar", () => {
+    const workbench = readSource("renderer/pages/workbench/WorkbenchModePage.module.css");
+
+    expect(workbench).toMatch(/\.previewTabStrip\s*{[^}]*overflow-x:\s*auto/s);
+    expect(workbench).toMatch(/\.previewTabStrip\s*{[^}]*overflow-y:\s*hidden/s);
+    expect(workbench).toMatch(/\.previewTabStrip\s*{[^}]*scrollbar-width:\s*none/s);
+    expect(workbench).toMatch(/\.previewTabStrip::-webkit-scrollbar\s*{[^}]*display:\s*none/s);
+  });
+
   it("keeps conversation vertical scrolling inside the message document area", () => {
     const layout = readSource("renderer/components/layout/Layout.module.css");
     const sider = readSource("renderer/components/layout/Sider/Sider.module.css");

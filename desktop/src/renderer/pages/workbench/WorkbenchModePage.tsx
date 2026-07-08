@@ -1,4 +1,4 @@
-import { PanelLeftClose, PanelRightClose, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, PanelLeftClose, PanelRightClose, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -89,6 +89,12 @@ interface WorkbenchPreviewTabMenuState {
   position: CSSProperties;
 }
 
+interface WorkbenchPreviewTabScrollState {
+  hasOverflow: boolean;
+  canScrollLeft: boolean;
+  canScrollRight: boolean;
+}
+
 const DEFAULT_WORKBENCH_BROWSER_WIDTH = 300;
 const MIN_WORKBENCH_BROWSER_WIDTH = 220;
 const MIN_WORKBENCH_MAIN_PREVIEW_WIDTH = 320;
@@ -97,6 +103,12 @@ const WORKBENCH_MAIN_BOTTOM_SAFE_AREA_VAR = "var(--workbench-main-bottom-safe-ar
 const WORKBENCH_PREVIEW_TAB_MENU_WIDTH = 148;
 const WORKBENCH_PREVIEW_TAB_MENU_HEIGHT = 136;
 const WORKBENCH_PREVIEW_TAB_MENU_EDGE = 8;
+const WORKBENCH_PREVIEW_TAB_SCROLL_PADDING = 8;
+const EMPTY_WORKBENCH_PREVIEW_TAB_SCROLL_STATE: WorkbenchPreviewTabScrollState = {
+  hasOverflow: false,
+  canScrollLeft: false,
+  canScrollRight: false,
+};
 const EMPTY_WORKBENCH_PREVIEW_TABS: WorkbenchPreviewTabsState = {
   activeTabId: null,
   tabs: [],
@@ -848,6 +860,63 @@ function workbenchPreviewTabMenuPosition(clientX: number, clientY: number): CSSP
   };
 }
 
+function scrollWorkbenchPreviewTabStripTo(strip: HTMLElement, left: number, behavior: ScrollBehavior) {
+  const maxScrollLeft = Math.max(0, strip.scrollWidth - strip.clientWidth);
+  const nextScrollLeft = clampNumber(left, 0, maxScrollLeft);
+  if (Math.abs(nextScrollLeft - strip.scrollLeft) < 1) {
+    return;
+  }
+  if (typeof strip.scrollTo === "function") {
+    strip.scrollTo({ left: nextScrollLeft, behavior });
+  } else {
+    strip.scrollLeft = nextScrollLeft;
+  }
+}
+
+function scrollWorkbenchPreviewTabStripBy(strip: HTMLElement, delta: number, behavior: ScrollBehavior = "smooth") {
+  scrollWorkbenchPreviewTabStripTo(strip, strip.scrollLeft + delta, behavior);
+}
+
+function scrollWorkbenchPreviewTabIntoView(
+  strip: HTMLElement,
+  tab: HTMLElement,
+  behavior: ScrollBehavior = "auto",
+) {
+  if (strip.scrollWidth <= strip.clientWidth) {
+    return;
+  }
+  const stripRect = strip.getBoundingClientRect();
+  const tabRect = tab.getBoundingClientRect();
+  const leftOverflow = tabRect.left - stripRect.left;
+  const rightOverflow = tabRect.right - stripRect.right;
+
+  if (leftOverflow < 0) {
+    scrollWorkbenchPreviewTabStripTo(
+      strip,
+      strip.scrollLeft + leftOverflow - WORKBENCH_PREVIEW_TAB_SCROLL_PADDING,
+      behavior,
+    );
+    return;
+  }
+
+  if (rightOverflow > 0) {
+    scrollWorkbenchPreviewTabStripTo(
+      strip,
+      strip.scrollLeft + rightOverflow + WORKBENCH_PREVIEW_TAB_SCROLL_PADDING,
+      behavior,
+    );
+  }
+}
+
+function workbenchPreviewTabScrollState(strip: HTMLElement): WorkbenchPreviewTabScrollState {
+  const maxScrollLeft = Math.max(0, strip.scrollWidth - strip.clientWidth);
+  return {
+    hasOverflow: maxScrollLeft > 1,
+    canScrollLeft: strip.scrollLeft > 1,
+    canScrollRight: strip.scrollLeft < maxScrollLeft - 1,
+  };
+}
+
 function WorkbenchMainPreviewTabs({
   activeTab,
   context,
@@ -872,9 +941,21 @@ function WorkbenchMainPreviewTabs({
   tabs: WorkbenchMainPreviewTabState[];
 }) {
   const tabMenuRef = useRef<HTMLDivElement | null>(null);
+  const tabStripRef = useRef<HTMLDivElement | null>(null);
+  const previewTabElementsRef = useRef(new Map<string, HTMLDivElement>());
   const [tabMenu, setTabMenu] = useState<WorkbenchPreviewTabMenuState | null>(null);
+  const [tabScrollState, setTabScrollState] = useState<WorkbenchPreviewTabScrollState>(
+    EMPTY_WORKBENCH_PREVIEW_TAB_SCROLL_STATE,
+  );
   const closeTabMenu = useCallback(() => {
     setTabMenu(null);
+  }, []);
+  const setPreviewTabElement = useCallback((tabId: string, element: HTMLDivElement | null) => {
+    if (element) {
+      previewTabElementsRef.current.set(tabId, element);
+    } else {
+      previewTabElementsRef.current.delete(tabId);
+    }
   }, []);
   const openTabMenu = useCallback((event: MouseEvent<HTMLElement>, tabId: string) => {
     event.preventDefault();
@@ -903,6 +984,17 @@ function WorkbenchMainPreviewTabs({
       all: tabIds,
     };
   }, [tabMenu?.tabId, tabs]);
+  const updateTabScrollState = useCallback(() => {
+    const strip = tabStripRef.current;
+    const nextState = strip ? workbenchPreviewTabScrollState(strip) : EMPTY_WORKBENCH_PREVIEW_TAB_SCROLL_STATE;
+    setTabScrollState((current) =>
+      current.hasOverflow === nextState.hasOverflow &&
+      current.canScrollLeft === nextState.canScrollLeft &&
+      current.canScrollRight === nextState.canScrollRight
+        ? current
+        : nextState,
+    );
+  }, []);
   const closeTabMenuTargets = useCallback(
     (tabIds: string[]) => {
       closeTabMenu();
@@ -910,6 +1002,41 @@ function WorkbenchMainPreviewTabs({
     },
     [closeTabMenu, onCloseTab],
   );
+  const scrollPreviewTabs = useCallback((direction: "left" | "right") => {
+    const strip = tabStripRef.current;
+    if (!strip) {
+      return;
+    }
+    const scrollDistance = Math.max(120, strip.clientWidth * 0.75);
+    scrollWorkbenchPreviewTabStripBy(strip, direction === "left" ? -scrollDistance : scrollDistance);
+    updateTabScrollState();
+  }, [updateTabScrollState]);
+
+  useEffect(() => {
+    const strip = tabStripRef.current;
+    const activeTabElement = previewTabElementsRef.current.get(activeTab.id);
+    if (strip && activeTabElement) {
+      scrollWorkbenchPreviewTabIntoView(strip, activeTabElement);
+    }
+    updateTabScrollState();
+  }, [activeTab.id, tabs.length, updateTabScrollState]);
+
+  useEffect(() => {
+    const strip = tabStripRef.current;
+    updateTabScrollState();
+    window.addEventListener("resize", updateTabScrollState);
+
+    if (typeof ResizeObserver === "undefined" || !strip) {
+      return () => window.removeEventListener("resize", updateTabScrollState);
+    }
+
+    const resizeObserver = new ResizeObserver(updateTabScrollState);
+    resizeObserver.observe(strip);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateTabScrollState);
+    };
+  }, [tabs.length, updateTabScrollState]);
 
   useEffect(() => {
     if (!tabMenu) {
@@ -963,43 +1090,80 @@ function WorkbenchMainPreviewTabs({
       data-open-tab-count={tabs.length}
       data-testid="workbench-main-file-preview"
     >
-      <div className={styles.previewTabStrip} role="tablist" aria-label="工作台文件预览">
-        {tabs.map((tab) => {
-          const active = tab.id === activeTab.id;
-          return (
-            <div
-              className={styles.previewTab}
-              data-active={active ? "true" : "false"}
-              data-app-context-menu="local"
-              data-menu-open={tabMenu?.tabId === tab.id ? "true" : undefined}
-              key={tab.id}
-              onContextMenu={(event) => openTabMenu(event, tab.id)}
-            >
-              <button
-                className={styles.previewTabMain}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                title={tab.sourceLabel}
-                onClick={() => onSelectTab(tab.id)}
+      <div className={styles.previewTabRail} data-overflow={tabScrollState.hasOverflow ? "true" : "false"}>
+        {tabScrollState.hasOverflow ? (
+          <button
+            className={`${styles.previewTabScrollButton} ${styles.previewTabScrollButtonLeft}`}
+            type="button"
+            aria-label="向左移动预览tab"
+            title="向左移动预览tab"
+            data-testid="workbench-preview-tab-scroll-left"
+            disabled={!tabScrollState.canScrollLeft}
+            onClick={() => scrollPreviewTabs("left")}
+          >
+            <ChevronLeft size={14} strokeWidth={2} />
+          </button>
+        ) : null}
+        <div
+          className={styles.previewTabStrip}
+          data-testid="workbench-preview-tab-strip"
+          ref={tabStripRef}
+          role="tablist"
+          aria-label="工作台文件预览"
+          onScroll={updateTabScrollState}
+        >
+          {tabs.map((tab) => {
+            const active = tab.id === activeTab.id;
+            return (
+              <div
+                className={styles.previewTab}
+                data-active={active ? "true" : "false"}
+                data-app-context-menu="local"
+                data-menu-open={tabMenu?.tabId === tab.id ? "true" : undefined}
+                data-preview-tab="true"
+                key={tab.id}
+                ref={(element) => setPreviewTabElement(tab.id, element)}
+                onContextMenu={(event) => openTabMenu(event, tab.id)}
               >
-                <span className={styles.previewTabTitle}>{tab.title}</span>
-              </button>
-              <button
-                className={styles.previewTabClose}
-                type="button"
-                aria-label={`关闭预览 ${tab.title}`}
-                title={`关闭预览 ${tab.title}`}
-                onClick={(event: MouseEvent<HTMLButtonElement>) => {
-                  event.stopPropagation();
-                  onCloseTab(tab.id);
-                }}
-              >
-                <X size={12} strokeWidth={2} />
-              </button>
-            </div>
-          );
-        })}
+                <button
+                  className={styles.previewTabMain}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  title={tab.sourceLabel}
+                  onClick={() => onSelectTab(tab.id)}
+                >
+                  <span className={styles.previewTabTitle}>{tab.title}</span>
+                </button>
+                <button
+                  className={styles.previewTabClose}
+                  type="button"
+                  aria-label={`关闭预览 ${tab.title}`}
+                  title={`关闭预览 ${tab.title}`}
+                  onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                    event.stopPropagation();
+                    onCloseTab(tab.id);
+                  }}
+                >
+                  <X size={12} strokeWidth={2} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        {tabScrollState.hasOverflow ? (
+          <button
+            className={`${styles.previewTabScrollButton} ${styles.previewTabScrollButtonRight}`}
+            type="button"
+            aria-label="向右移动预览tab"
+            title="向右移动预览tab"
+            data-testid="workbench-preview-tab-scroll-right"
+            disabled={!tabScrollState.canScrollRight}
+            onClick={() => scrollPreviewTabs("right")}
+          >
+            <ChevronRight size={14} strokeWidth={2} />
+          </button>
+        ) : null}
       </div>
       {tabMenu ? (
         <div
