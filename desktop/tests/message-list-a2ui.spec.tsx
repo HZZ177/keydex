@@ -88,76 +88,30 @@ describe("MessageList A2UI callback contract", () => {
     expect(screen.getByText("等待输入")).toBeTruthy();
   });
 
-  it("anchors concurrent streaming A2UI auto-scroll to the first active component", async () => {
-    const scrollRecorder = installA2UIScrollIntoViewRecorder();
+  it("uses the normal message-list bottom follow instead of A2UI stream anchors", async () => {
+    const scrollRecorder = installScrollIntoViewRecorder();
     try {
-      const { rerender } = render(
+      render(
         <MessageList
           messages={[
             conversationStreamingA2UIMessage("agent:a2ui-1", "streaming"),
             conversationStreamingA2UIMessage("agent:a2ui-2", "streaming"),
-            conversationStreamingA2UIMessage("agent:a2ui-3", "streaming"),
           ]}
           isProcessing
         />,
       );
 
-      await waitFor(() => expect(scrollRecorder.messageIds).toContain("agent:a2ui-1"));
-      expect(scrollRecorder.messageIds).toEqual(["agent:a2ui-1"]);
-
-      rerender(
-        <MessageList
-          messages={[
-            conversationStreamingA2UIMessage("agent:a2ui-1", "created"),
-            conversationStreamingA2UIMessage("agent:a2ui-2", "streaming"),
-            conversationStreamingA2UIMessage("agent:a2ui-3", "streaming"),
-          ]}
-          isProcessing
-        />,
-      );
-
-      await waitFor(() => expect(scrollRecorder.messageIds).toContain("agent:a2ui-2"));
-      expect(scrollRecorder.messageIds).toEqual(["agent:a2ui-1", "agent:a2ui-2"]);
+      await nextAnimationFrame();
+      expect(screen.getAllByTestId("a2ui-block")).toHaveLength(2);
+      expect(screen.getByTestId("message-list-scroll").getAttribute("data-a2ui-stream-anchor-message-id")).toBeNull();
+      expect(scrollRecorder.scrollIntoView).not.toHaveBeenCalled();
     } finally {
       scrollRecorder.restore();
     }
   });
 
-  it("skips completed A2UI components when advancing the streaming auto-scroll anchor", async () => {
-    const scrollRecorder = installA2UIScrollIntoViewRecorder();
-    try {
-      const { rerender } = render(
-        <MessageList
-          messages={[
-            conversationStreamingA2UIMessage("agent:a2ui-1", "streaming"),
-            conversationStreamingA2UIMessage("agent:a2ui-2", "streaming"),
-            conversationStreamingA2UIMessage("agent:a2ui-3", "streaming"),
-          ]}
-          isProcessing
-        />,
-      );
-
-      await waitFor(() => expect(scrollRecorder.messageIds).toContain("agent:a2ui-1"));
-      rerender(
-        <MessageList
-          messages={[
-            conversationStreamingA2UIMessage("agent:a2ui-1", "created"),
-            conversationStreamingA2UIMessage("agent:a2ui-2", "created"),
-            conversationStreamingA2UIMessage("agent:a2ui-3", "streaming"),
-          ]}
-          isProcessing
-        />,
-      );
-
-      await waitFor(() => expect(scrollRecorder.messageIds).toContain("agent:a2ui-3"));
-      expect(scrollRecorder.messageIds).toEqual(["agent:a2ui-1", "agent:a2ui-3"]);
-    } finally {
-      scrollRecorder.restore();
-    }
-  });
-
-  it("does not pull the viewport back to the A2UI stream anchor after manual scrolling", async () => {
-    const scrollRecorder = installA2UIScrollIntoViewRecorder();
+  it("does not pull the viewport back after manual scrolling while A2UI streams", async () => {
+    const scrollRecorder = installScrollIntoViewRecorder();
     try {
       const { rerender } = render(
         <MessageList
@@ -169,7 +123,6 @@ describe("MessageList A2UI callback contract", () => {
         />,
       );
 
-      await waitFor(() => expect(scrollRecorder.messageIds).toContain("agent:a2ui-1"));
       const scroller = screen.getByTestId("message-list-scroll");
       defineScrollMetric(scroller, "clientHeight", 400);
       defineScrollMetric(scroller, "scrollHeight", 2000);
@@ -398,29 +351,24 @@ function a2uiDebugWith(a2ui: A2UIObject, interaction: A2UIInteractionState): A2U
   };
 }
 
-function installA2UIScrollIntoViewRecorder() {
-  const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
-  const messageIds: string[] = [];
-  const scrollIntoView = vi.fn(function scrollIntoView(this: Element) {
-    messageIds.push((this as HTMLElement).dataset.a2uiMessageId ?? "");
-  });
+function installScrollIntoViewRecorder() {
+  const scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+  const scrollIntoView = vi.fn();
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,
     value: scrollIntoView,
   });
   return {
-    messageIds,
     scrollIntoView,
     clear: () => {
-      messageIds.length = 0;
       scrollIntoView.mockClear();
     },
     restore: () => {
-      if (descriptor) {
-        Object.defineProperty(Element.prototype, "scrollIntoView", descriptor);
-        return;
+      if (scrollIntoViewDescriptor) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", scrollIntoViewDescriptor);
+      } else {
+        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
       }
-      delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
     },
   };
 }

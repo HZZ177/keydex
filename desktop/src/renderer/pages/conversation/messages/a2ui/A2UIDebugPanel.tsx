@@ -39,7 +39,7 @@ export function A2UIDebugPanel({ message, parsed, onClose }: A2UIDebugPanelProps
   return (
     <section className={styles.panel} data-testid="a2ui-debug-panel" aria-label="A2UI 调试信息">
       <header className={styles.header}>
-        <div>
+        <div className={styles.titleArea}>
           <div className={styles.title}>A2UI 调试信息</div>
           <div className={styles.subtitle}>
             {parsed.renderKey} · {parsed.interactionId || parsed.debug?.streamId || message.id}

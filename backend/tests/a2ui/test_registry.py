@@ -41,6 +41,8 @@ def test_builtin_chart_schema_uses_sdk_chart_group_contract() -> None:
     assert "summary 是字符串" in chart.tool_description
     assert "chart_type" in chart.tool_description
     assert "不等待用户提交" in chart.tool_description
+    assert "优先调用" in chart.tool_description
+    assert "不要再输出重复 Markdown 表格或图表" in chart.tool_description
     assert chart.input_schema["required"] == ["title", "charts"]
     properties = chart.input_schema["properties"]
     assert "chart_type" not in properties
@@ -54,6 +56,17 @@ def test_builtin_chart_schema_uses_sdk_chart_group_contract() -> None:
     assert chart_item["properties"]["items"]["items"]["required"] == ["name", "value"]
     assert chart_item["properties"]["series"]["items"]["required"] == ["name", "items"]
     assert properties["summary"]["type"] == "string"
+
+
+def test_interactive_tool_descriptions_encourage_suitable_a2ui_usage() -> None:
+    registry = build_builtin_a2ui_registry()
+
+    assert "明确授权" in registry.require("confirm").tool_description
+    assert "优先调用" in registry.require("confirm").tool_description
+    assert "多个可行方案" in registry.require("choice").tool_description
+    assert "优先调用" in registry.require("choice").tool_description
+    assert "缺少多个关键参数" in registry.require("form").tool_description
+    assert "优先调用" in registry.require("form").tool_description
 
 
 def test_registry_rejects_render_key_conflicts_with_existing_tools() -> None:

@@ -55,6 +55,8 @@ const CHART_NUMBER_FORMATTER = new Intl.NumberFormat("zh-CN", {
 
 export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
   const isStreaming = isStreamingStatus(parsed.status) || Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
+  const animateInitialCharts = !parsed.historyHydrated;
+  const animateChartUpdates = isStreaming || !isRuntimeBackedChart(parsed);
   const payload = parsed.payload;
   const normalizedPanels = useMemo(() => normalizeChartPanels(payload, isStreaming, parsed), [isStreaming, parsed, payload]);
   const panels = useStableChartPanels(normalizedPanels, isStreaming, chartPanelStabilityKey(parsed));
@@ -84,7 +86,7 @@ export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
                 {panel.title}
               </A2UIMotionItem>
             ) : null}
-            {panel.chart ? renderChart(panel.chart) : <ChartSkeleton type={panel.type} />}
+            {panel.chart ? renderChart(panel.chart, animateInitialCharts, animateChartUpdates) : <ChartSkeleton type={panel.type} />}
           </A2UIMotionItem>
         ))
       ) : isStreaming ? (
@@ -103,16 +105,31 @@ export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
 
 function renderChart(
   chart: ChartSpec,
+  animateInitial: boolean,
+  animateUpdates: boolean,
 ) {
-  return <EChartsChart chart={chart} />;
+  return <EChartsChart chart={chart} animateInitial={animateInitial} animateUpdates={animateUpdates} />;
 }
 
-function EChartsChart({ chart }: { chart: ChartSpec }) {
+function EChartsChart({
+  chart,
+  animateInitial,
+  animateUpdates,
+}: {
+  chart: ChartSpec;
+  animateInitial: boolean;
+  animateUpdates: boolean;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<EChartsType | null>(null);
-  const height = chartHeight(chart.type);
+  const height = chartHeight(chart);
+  const heightRef = useRef(height);
+  const lastOptionSignatureRef = useRef("");
   const option = useMemo(() => buildEChartsOption(chart), [chart]);
+  const optionSignature = useMemo(() => chartOptionSignature(chart), [chart]);
   const interactionMode = chart.type === "trend" || chart.type === "column" ? "tooltip,axisPointer,legendToggle" : "tooltip,legendToggle";
+
+  heightRef.current = height;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -128,7 +145,7 @@ function EChartsChart({ chart }: { chart: ChartSpec }) {
 
     const resize = () => {
       const width = Math.max(320, Math.round(container.getBoundingClientRect().width || ECHARTS_FALLBACK_WIDTH));
-      instance.resize({ height, width });
+      instance.resize({ height: heightRef.current, width });
     };
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null;
     observer?.observe(container);
@@ -139,23 +156,42 @@ function EChartsChart({ chart }: { chart: ChartSpec }) {
       chartRef.current = null;
       instance.dispose();
     };
+  }, []);
+
+  useEffect(() => {
+    const instance = chartRef.current;
+    const container = containerRef.current;
+    if (!instance || !container) {
+      return;
+    }
+    const width = Math.max(320, Math.round(container.getBoundingClientRect().width || ECHARTS_FALLBACK_WIDTH));
+    instance.resize({ height, width });
   }, [height]);
 
   useEffect(() => {
-    chartRef.current?.setOption(option, {
+    const instance = chartRef.current;
+    if (!instance || lastOptionSignatureRef.current === optionSignature) {
+      return;
+    }
+    const isInitialOption = !lastOptionSignatureRef.current;
+    lastOptionSignatureRef.current = optionSignature;
+    const shouldAnimate = animateUpdates || (isInitialOption && animateInitial);
+    instance.setOption(shouldAnimate ? option : withoutEChartsAnimation(option), {
       lazyUpdate: false,
       notMerge: false,
     });
-  }, [option]);
+  }, [animateInitial, animateUpdates, option, optionSignature]);
 
   return (
     <div
       ref={containerRef}
       className={styles.echartsSurface}
       data-a2ui-chart-category-count={chart.categories.length}
+      data-a2ui-chart-animation={animateUpdates ? "enabled" : "settled"}
       data-a2ui-chart-data-count={chartDataCount(chart)}
       data-a2ui-chart-engine="echarts"
       data-a2ui-chart-interactions={interactionMode}
+      data-a2ui-chart-stream-adapter="setOption-diff"
       data-a2ui-chart-tooltip={chart.type === "trend" || chart.type === "column" ? "axis" : "item"}
       data-chart-type={chart.type}
       data-testid="a2ui-echarts-surface"
@@ -166,14 +202,53 @@ function EChartsChart({ chart }: { chart: ChartSpec }) {
   );
 }
 
-function chartHeight(type: ChartType): number {
-  if (type === "pie") {
+function withoutEChartsAnimation(option: EChartsOption): EChartsOption {
+  const series = Array.isArray(option.series)
+    ? option.series.map(withoutSeriesAnimation)
+    : option.series
+      ? withoutSeriesAnimation(option.series as SeriesOption)
+      : option.series;
+  return {
+    ...option,
+    animation: false,
+    animationDelay: 0,
+    animationDelayUpdate: 0,
+    animationDuration: 0,
+    animationDurationUpdate: 0,
+    series,
+  } as EChartsOption;
+}
+
+function withoutSeriesAnimation(series: SeriesOption): SeriesOption {
+  return {
+    ...series,
+    animation: false,
+    animationDelay: 0,
+    animationDelayUpdate: 0,
+    animationDuration: 0,
+    animationDurationUpdate: 0,
+  } as SeriesOption;
+}
+
+function chartHeight(chart: ChartSpec): number {
+  if (chart.type === "pie") {
     return ECHARTS_PIE_HEIGHT;
   }
-  if (type === "funnel") {
-    return ECHARTS_FUNNEL_HEIGHT;
+  if (chart.type === "funnel") {
+    return Math.max(ECHARTS_FUNNEL_HEIGHT, 92 + pointsForChart(chart).length * 42);
   }
   return ECHARTS_DEFAULT_HEIGHT;
+}
+
+function chartOptionSignature(chart: ChartSpec): string {
+  return safeJsonStringify({
+    categories: chart.categories,
+    points: chart.points,
+    series: chart.series,
+    seriesLabel: chart.seriesLabel,
+    title: chart.title,
+    type: chart.type,
+  });
 }
 
 function buildEChartsOption(chart: ChartSpec): EChartsOption {
@@ -190,7 +265,11 @@ function buildCartesianOption(chart: ChartSpec): EChartsOption {
   const categories = chart.categories.length ? chart.categories : defaultCategories(chart.series);
   const isTrend = chart.type === "trend";
   const series = chart.series.map((item, index): SeriesOption => {
-    const data = categories.map((_, pointIndex) => numberValue(item.data[pointIndex]));
+    const data = categories.map((category, pointIndex) => ({
+      id: `${chart.type}:${index}:${item.name}:${category}`,
+      name: category,
+      value: numberValue(item.data[pointIndex]),
+    }));
     if (isTrend) {
       return {
         id: `trend:${index}:${item.name}`,
@@ -321,6 +400,7 @@ function buildPieOption(chart: ChartSpec): EChartsOption {
         name: chart.seriesLabel || chart.title || "数据",
         type: "pie",
         data: points.map((point, index) => ({
+          id: `pie:${point.label}`,
           itemStyle: point.color ? { color: point.color } : undefined,
           name: point.label,
           value: point.value,
@@ -366,6 +446,7 @@ function buildFunnelOption(chart: ChartSpec): EChartsOption {
         name: chart.seriesLabel || chart.title || "数据",
         type: "funnel",
         data: points.map((point) => ({
+          id: `funnel:${point.label}`,
           itemStyle: point.color ? { color: point.color } : undefined,
           name: point.label,
           value: point.value,
@@ -589,6 +670,17 @@ function ChartSkeleton({ type }: { type: ChartType }) {
 function isStreamingStatus(status: string): boolean {
   const normalized = status.toLowerCase();
   return normalized === "started" || normalized === "streaming" || normalized === "finished";
+}
+
+function isRuntimeBackedChart(parsed: ParsedA2UIMessage): boolean {
+  return Boolean(
+    parsed.a2ui?.stream_id ||
+      parsed.a2ui?.tool_call_id ||
+      parsed.debug?.streamId ||
+      parsed.debug?.toolCallId ||
+      Number(parsed.debug?.chunkCount ?? 0) > 0 ||
+      parsed.streamText,
+  );
 }
 
 function normalizeChartPanels(
@@ -945,4 +1037,12 @@ function formatNumber(value: number): string {
     return "";
   }
   return CHART_NUMBER_FORMATTER.format(Object.is(value, -0) ? 0 : value);
+}
+
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }

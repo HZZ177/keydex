@@ -18,6 +18,16 @@ describe("A2UI content layout contract", () => {
     expect(formCss).not.toMatch(/\.valueItem\s+dd\s*{[^}]*(overflow:\s*hidden|text-overflow|white-space:\s*nowrap)/s);
     expect(chartSource).not.toContain("truncate(");
   });
+
+  it("keeps the A2UI debug panel header actions inside the panel with long ids", () => {
+    const debugCss = readSource("renderer/pages/conversation/messages/a2ui/A2UIDebugPanel.module.css");
+
+    expect(debugCss).toMatch(/\.titleArea\s*{[^}]*min-width:\s*0/s);
+    expect(debugCss).toMatch(/\.titleArea\s*{[^}]*flex:\s*1 1 auto/s);
+    expect(debugCss).toMatch(/\.actions\s*{[^}]*flex:\s*0 0 auto/s);
+    expect(debugCss).toMatch(/\.actions\s*{[^}]*margin-left:\s*auto/s);
+    expect(debugCss).toMatch(/\.subtitle\s*{[^}]*text-overflow:\s*ellipsis/s);
+  });
 });
 
 function readSource(relativePath: string): string {

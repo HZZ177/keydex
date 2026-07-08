@@ -14,7 +14,13 @@ interface PlayerRuntime {
   raf: number | null;
   renderedElementCount: number;
   sourceSignature: string;
+  streamBackedSeen: boolean;
   timer: number | null;
+}
+
+interface InitialPlayerState {
+  runtime: PlayerRuntime;
+  snapshot: A2UIStreamPlayerState;
 }
 
 export interface A2UIStreamPlayerRootProps {
@@ -41,19 +47,22 @@ export interface A2UIStreamPlayerState {
   totalElementCount: number;
 }
 
-const MIN_INTERVAL_MS = 120;
-const MAX_INTERVAL_MS = 260;
-const MIN_RENDER_DURATION_MS = 1_300;
+const MIN_INTERVAL_MS = 160;
+const MAX_INTERVAL_MS = 420;
+const MIN_RENDER_DURATION_MS = 1_800;
 const FAST_STREAM_THRESHOLD_MS = 420;
-const CATCH_UP_INTERVAL_MS = 140;
+const CATCH_UP_INTERVAL_MS = 160;
+const FINAL_SETTLE_DELAY_MS = 760;
+const SMALL_PAYLOAD_SLOW_REVEAL_THRESHOLD = 8;
 const STREAMING_STATUSES = new Set(["started", "streaming", "finished"]);
 const DISABLED_STATUSES = new Set(["submitted", "cancelled", "failed", "missing"]);
 
 export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayerState {
   const playerKey = useMemo(() => buildA2UIStreamPlayerKey(parsed), [parsed]);
   const sourceSignature = useMemo(() => safeJsonStringify(parsed.payload), [parsed.payload]);
-  const [snapshot, setSnapshot] = useState(() => createSnapshot(parsed.payload, "idle", 0, false));
-  const runtimeRef = useRef<PlayerRuntime>(createRuntime(playerKey, parsed.payload, sourceSignature));
+  const [initialState] = useState(() => createInitialPlayerState(playerKey, parsed, sourceSignature));
+  const [snapshot, setSnapshot] = useState(() => initialState.snapshot);
+  const runtimeRef = useRef<PlayerRuntime>(initialState.runtime);
 
   const commit = useCallback((enabled: boolean) => {
     const runtime = runtimeRef.current;
@@ -84,6 +93,26 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
     runtime.displayPayload = slicePayloadByRenderedCount(runtime.latestPayload, runtime.renderedElementCount);
   }, []);
 
+  const scheduleFinalize = useCallback((enabled: boolean) => {
+    const runtime = runtimeRef.current;
+    if (!runtime.finalPayload || runtime.phase === "created") {
+      return;
+    }
+    if (runtime.raf !== null || runtime.timer !== null) {
+      return;
+    }
+    if (typeof window === "undefined") {
+      finalizeRuntimePayload(runtime);
+      commit(enabled);
+      return;
+    }
+    runtime.timer = window.setTimeout(() => {
+      runtime.timer = null;
+      finalizeRuntimePayload(runtime);
+      commit(enabled);
+    }, FINAL_SETTLE_DELAY_MS);
+  }, [commit]);
+
   const scheduleNext = useCallback((enabled: boolean) => {
     const runtime = runtimeRef.current;
     if (!enabled || runtime.phase === "created" || runtime.phase === "failed" || typeof window === "undefined") {
@@ -95,19 +124,24 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
     const total = getTotalElementCount(runtime.latestPayload);
     if (total <= 0) {
       runtime.displayPayload = runtime.latestPayload;
-      runtime.phase = runtime.finalPayload ? "created" : runtime.phase;
+      if (runtime.finalPayload) {
+        scheduleFinalize(enabled);
+      }
       commit(enabled);
       return;
     }
     if (runtime.renderedElementCount >= total) {
-      runtime.displayPayload = runtime.finalPayload ?? runtime.latestPayload;
-      runtime.phase = runtime.finalPayload ? "created" : runtime.phase;
+      if (runtime.finalPayload) {
+        scheduleFinalize(enabled);
+      } else {
+        runtime.displayPayload = runtime.latestPayload;
+      }
       commit(enabled);
       return;
     }
 
     if (runtime.renderedElementCount === 0) {
-      runtime.renderedElementCount = 1;
+      runtime.renderedElementCount = initialRenderedElementCount(runtime.latestPayload);
       updateDisplayPayload();
       commit(enabled);
     }
@@ -121,8 +155,7 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
         runtime.renderedElementCount = Math.min(runtime.renderedElementCount + 1, latestTotal);
         updateDisplayPayload();
         if (runtime.renderedElementCount >= latestTotal && runtime.finalPayload) {
-          runtime.displayPayload = runtime.finalPayload;
-          runtime.phase = "created";
+          scheduleFinalize(enabled);
           commit(enabled);
           return;
         }
@@ -130,11 +163,11 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
         scheduleNext(enabled);
       }, interval);
     });
-  }, [commit, updateDisplayPayload]);
+  }, [commit, scheduleFinalize, updateDisplayPayload]);
 
   useEffect(() => {
     const status = normalizeStatus(parsed.status);
-    const streamBacked = hasStreamEvidence(parsed);
+    const streamBackedInCurrentFrame = hasStreamEvidence(parsed);
     let runtime = runtimeRef.current;
 
     if (runtime.key !== playerKey) {
@@ -142,6 +175,10 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
       runtime = createRuntime(playerKey, parsed.payload, sourceSignature);
       runtimeRef.current = runtime;
     }
+    if (streamBackedInCurrentFrame) {
+      runtime.streamBackedSeen = true;
+    }
+    const streamBacked = streamBackedInCurrentFrame || runtime.streamBackedSeen;
     const rememberedTotal = getTotalElementCount(runtime.latestPayload);
     const incomingTotal = getTotalElementCount(parsed.payload);
     const shouldPlay = shouldUseStreamPlayer(parsed, streamBacked, Math.max(rememberedTotal, incomingTotal));
@@ -199,7 +236,11 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
       runtime.phase = "previewing";
     }
 
-    updateDisplayPayload();
+    if (runtime.finalPayload && runtime.renderedElementCount >= getTotalElementCount(runtime.latestPayload)) {
+      scheduleFinalize(true);
+    } else {
+      updateDisplayPayload();
+    }
     commit(true);
     scheduleNext(true);
   }, [
@@ -207,6 +248,7 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
     commit,
     parsed,
     playerKey,
+    scheduleFinalize,
     scheduleNext,
     sourceSignature,
     updateDisplayPayload,
@@ -239,7 +281,41 @@ function createRuntime(key: string, payload: Record<string, unknown>, sourceSign
     raf: null,
     renderedElementCount: 0,
     sourceSignature,
+    streamBackedSeen: false,
     timer: null,
+  };
+}
+
+function createInitialPlayerState(
+  key: string,
+  parsed: ParsedA2UIMessage,
+  sourceSignature: string,
+): InitialPlayerState {
+  const runtime = createRuntime(key, parsed.payload, sourceSignature);
+  const status = normalizeStatus(parsed.status);
+  const streamBacked = hasStreamEvidence(parsed);
+  const totalElementCount = getTotalElementCount(parsed.payload);
+  const shouldPlay = shouldUseStreamPlayer(parsed, streamBacked, totalElementCount);
+
+  if (!shouldPlay) {
+    runtime.finalPayload = parsed.payload;
+    runtime.renderedElementCount = totalElementCount;
+    runtime.phase = status === "failed" || status === "missing" ? "failed" : "created";
+    return {
+      runtime,
+      snapshot: createSnapshot(runtime.displayPayload, runtime.phase, runtime.renderedElementCount, false),
+    };
+  }
+
+  const isFinalPayload = Boolean(parsed.a2ui) || (!STREAMING_STATUSES.has(status) && streamBacked);
+  runtime.streamBackedSeen = streamBacked;
+  runtime.finalPayload = isFinalPayload ? parsed.payload : null;
+  runtime.phase = isFinalPayload ? "waiting_created" : "previewing";
+  runtime.displayPayload = slicePayloadByRenderedCount(parsed.payload, 0);
+
+  return {
+    runtime,
+    snapshot: createSnapshot(runtime.displayPayload, runtime.phase, 0, true, totalElementCount),
   };
 }
 
@@ -307,6 +383,9 @@ function shouldUseStreamPlayer(parsed: ParsedA2UIMessage, streamBacked: boolean,
 }
 
 function hasStreamEvidence(parsed: ParsedA2UIMessage): boolean {
+  if (parsed.historyHydrated) {
+    return false;
+  }
   return Number(parsed.debug?.chunkCount ?? 0) > 0 || Boolean(parsed.streamText);
 }
 
@@ -318,8 +397,9 @@ function calculateInterval(runtime: PlayerRuntime): number {
   }
   const elapsed = runtime.firstChunkTime === null ? 0 : nowMs() - runtime.firstChunkTime;
   if (runtime.finalPayload) {
-    if (elapsed < FAST_STREAM_THRESHOLD_MS) {
-      return Math.max(MIN_INTERVAL_MS, Math.min(MAX_INTERVAL_MS, MIN_RENDER_DURATION_MS / remaining));
+    const visibleInterval = Math.max(MIN_INTERVAL_MS, Math.min(MAX_INTERVAL_MS, MIN_RENDER_DURATION_MS / remaining));
+    if (elapsed < FAST_STREAM_THRESHOLD_MS || total <= SMALL_PAYLOAD_SLOW_REVEAL_THRESHOLD) {
+      return visibleInterval;
     }
     return CATCH_UP_INTERVAL_MS;
   }
@@ -355,6 +435,25 @@ function slicePayloadByRenderedCount(payload: Record<string, unknown>, renderedE
 
 function getTotalElementCount(payload: Record<string, unknown>): number {
   return getPayloadElementCount(payload);
+}
+
+function initialRenderedElementCount(payload: Record<string, unknown>): number {
+  return Math.max(1, getLeafArrayPaths(payload).length || 1);
+}
+
+function finalizeRuntimePayload(runtime: PlayerRuntime): void {
+  if (!runtime.finalPayload) {
+    return;
+  }
+  runtime.renderedElementCount = getTotalElementCount(runtime.latestPayload);
+  if (!arePayloadsEquivalent(runtime.displayPayload, runtime.finalPayload)) {
+    runtime.displayPayload = runtime.finalPayload;
+  }
+  runtime.phase = "created";
+}
+
+function arePayloadsEquivalent(current: Record<string, unknown>, next: Record<string, unknown>): boolean {
+  return current === next || safeJsonStringify(current) === safeJsonStringify(next);
 }
 
 function getPayloadElementCount(payload: Record<string, unknown>): number {

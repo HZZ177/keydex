@@ -150,6 +150,7 @@ export function payloadFromAgentMessage(message: AgentChatMessage): Record<strin
     toolDetailsDeferred: message.toolDetailsDeferred,
     toolSummary: message.toolSummary,
     metadata: message.metadata,
+    historyHydrated: message.hydratedFromHistory,
   };
   const turnError = turnErrorFromMessage(message);
   if (turnError) {

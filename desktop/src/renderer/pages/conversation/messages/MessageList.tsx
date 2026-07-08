@@ -53,8 +53,6 @@ const LOAD_OLDER_TRIGGER_PX = 44;
 const LOAD_OLDER_ARM_PX = 120;
 const TURN_NAVIGATION_RETRY_FRAMES = 8;
 const TURN_FOCUS_FLASH_DURATION_MS = 1300;
-const A2UI_STREAM_ANCHOR_RETRY_FRAMES = 8;
-const A2UI_STREAMING_STATUSES = new Set(["started", "streaming", "finished"]);
 
 export interface MessageListProps {
   messages: ConversationMessage[];
@@ -159,8 +157,6 @@ export function MessageList({
   const staticTurnRefsRef = useRef<Array<HTMLDivElement | null>>([]);
   const flashTurnFrameRef = useRef<number | null>(null);
   const flashTurnTimeoutRef = useRef<number | null>(null);
-  const a2uiMessageRefsRef = useRef<Map<string, HTMLDivElement>>(new Map());
-  const previousA2UIStreamAnchorIdRef = useRef<string | null>(null);
   const previousTurnSummaryRef = useRef<{ count: number; lastId: string | null } | null>(null);
   const [showOlderTrigger, setShowOlderTrigger] = useState(false);
   const [flashingTurnIndex, setFlashingTurnIndex] = useState<number | null>(null);
@@ -208,9 +204,7 @@ export function MessageList({
     [displayTurns, turnNavigationRequest],
   );
   const externalTurnNavigationRequestId = turnNavigationRequest?.requestId;
-  const activeA2UIStreamAnchor = useMemo(() => findFirstStreamingA2UIAnchor(displayBlocks), [displayBlocks]);
-  const activeA2UIStreamAnchorId = activeA2UIStreamAnchor?.messageId ?? null;
-  const shouldAutoFollowMessages = externalTurnNavigationIndex === null && activeA2UIStreamAnchorId === null;
+  const shouldAutoFollowMessages = externalTurnNavigationIndex === null;
   const staticAutoScroll = useAutoScroll({
     deps: [displayBlocks, isProcessing],
     itemCount: displayBlocks.length,
@@ -228,14 +222,6 @@ export function MessageList({
 
   const setVisibleTurnIndexesIfChanged = useCallback((nextVisibleIndexes: Set<number>) => {
     setVisibleTurnIndexes((current) => (areNumberSetsEqual(current, nextVisibleIndexes) ? current : nextVisibleIndexes));
-  }, []);
-
-  const setA2UIMessageRef = useCallback((messageId: string, node: HTMLDivElement | null) => {
-    if (node) {
-      a2uiMessageRefsRef.current.set(messageId, node);
-      return;
-    }
-    a2uiMessageRefsRef.current.delete(messageId);
   }, []);
 
   const requestLoadOlder = useCallback(
@@ -620,94 +606,6 @@ export function MessageList({
     [autoScroll.virtuosoRef, displayTurns.length, setVisibleTurnIndexesIfChanged, timeline.turnBlockIndexes, useStaticList],
   );
 
-  const cancelActiveScrollAnimation = useCallback(() => {
-    if (useStaticList) {
-      staticAutoScroll.cancelScrollAnimation();
-      return;
-    }
-    autoScroll.cancelScrollAnimation();
-  }, [autoScroll.cancelScrollAnimation, staticAutoScroll.cancelScrollAnimation, useStaticList]);
-
-  const scrollToA2UIStreamAnchor = useCallback(
-    (anchor: A2UIStreamAnchor): boolean => {
-      cancelActiveScrollAnimation();
-      const behavior: ScrollBehavior = prefersReducedMotion() ? "auto" : "smooth";
-      const target = a2uiMessageRefsRef.current.get(anchor.messageId);
-      if (typeof target?.scrollIntoView === "function") {
-        target.scrollIntoView({
-          block: "start",
-          inline: "nearest",
-          behavior,
-        });
-        if (anchor.turnIndex !== null) {
-          setVisibleTurnIndexesIfChanged(new Set([anchor.turnIndex]));
-        }
-        return true;
-      }
-
-      if (!useStaticList) {
-        autoScroll.virtuosoRef.current?.scrollToIndex({
-          align: "start",
-          behavior: behavior === "smooth" ? "smooth" : "auto",
-          index: anchor.blockIndex,
-        });
-      }
-      return false;
-    },
-    [autoScroll.virtuosoRef, cancelActiveScrollAnimation, setVisibleTurnIndexesIfChanged, useStaticList],
-  );
-
-  useLayoutEffect(() => {
-    if (loading || externalTurnNavigationIndex !== null) {
-      return;
-    }
-    if (!activeA2UIStreamAnchor) {
-      previousA2UIStreamAnchorIdRef.current = null;
-      return;
-    }
-    if (scrollControls.userPinnedScroll) {
-      previousA2UIStreamAnchorIdRef.current = activeA2UIStreamAnchor.messageId;
-      return;
-    }
-    if (previousA2UIStreamAnchorIdRef.current === activeA2UIStreamAnchor.messageId) {
-      return;
-    }
-
-    previousA2UIStreamAnchorIdRef.current = activeA2UIStreamAnchor.messageId;
-    if (scrollToA2UIStreamAnchor(activeA2UIStreamAnchor) || typeof window === "undefined") {
-      return;
-    }
-
-    let cancelled = false;
-    let frameId: number | null = null;
-    let remainingAttempts = A2UI_STREAM_ANCHOR_RETRY_FRAMES;
-    const attemptScroll = () => {
-      frameId = null;
-      if (cancelled || scrollControls.userPinnedScroll) {
-        return;
-      }
-      const scrolled = scrollToA2UIStreamAnchor(activeA2UIStreamAnchor);
-      remainingAttempts -= 1;
-      if (scrolled || remainingAttempts <= 0) {
-        return;
-      }
-      frameId = window.requestAnimationFrame(attemptScroll);
-    };
-    frameId = window.requestAnimationFrame(attemptScroll);
-    return () => {
-      cancelled = true;
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-    };
-  }, [
-    activeA2UIStreamAnchor,
-    externalTurnNavigationIndex,
-    loading,
-    scrollControls.userPinnedScroll,
-    scrollToA2UIStreamAnchor,
-  ]);
-
   useEffect(() => {
     if (externalTurnNavigationRequestId === undefined || loading || externalTurnNavigationIndex === null) {
       return;
@@ -788,7 +686,6 @@ export function MessageList({
             onNavigateToForkSource,
             showForkSourceMarkers,
             onReverseFromMessage,
-            setA2UIMessageRef,
             setStaticTurnRef: (turnIndex, node) => {
               staticTurnRefsRef.current[turnIndex] = node;
             },
@@ -843,7 +740,6 @@ export function MessageList({
           onNavigateToForkSource,
           showForkSourceMarkers,
           onReverseFromMessage,
-          setA2UIMessageRef,
           isProcessing,
         })
       }
@@ -1023,7 +919,6 @@ function renderTimelineBlock({
   onNavigateToForkSource,
   showForkSourceMarkers,
   onReverseFromMessage,
-  setA2UIMessageRef,
   setStaticTurnRef,
   isProcessing,
 }: {
@@ -1048,26 +943,17 @@ function renderTimelineBlock({
   onNavigateToForkSource?: (fork: AgentSessionFork) => void;
   showForkSourceMarkers: boolean;
   onReverseFromMessage?: (message: ConversationMessage) => void;
-  setA2UIMessageRef?: (messageId: string, node: HTMLDivElement | null) => void;
   setStaticTurnRef?: (turnIndex: number, node: HTMLDivElement | null) => void;
   isProcessing: boolean;
 }): ReactNode {
   if (block.type === "event") {
-    const a2uiMessage = a2UIMessageFromItem(block.item);
     return (
       <div
         className={styles.item}
-        data-a2ui-message-id={a2uiMessage?.id}
-        data-a2ui-streaming={a2uiMessage && isStreamingA2UIMessage(a2uiMessage) ? "true" : undefined}
         data-kind={block.kind}
         data-testid="message-timeline-event"
         role="listitem"
         key={block.id}
-        ref={
-          a2uiMessage && setA2UIMessageRef
-            ? (node) => setA2UIMessageRef(a2uiMessage.id, node)
-            : undefined
-        }
       >
         {renderMessageItem({
           item: block.item,
@@ -1124,7 +1010,6 @@ function renderTimelineBlock({
         onNavigateToForkSource,
         showForkSourceMarkers,
         onReverseFromMessage,
-        setA2UIMessageRef,
       })}
     </div>
   );
@@ -1152,7 +1037,6 @@ function renderMessageTurn({
   onNavigateToForkSource,
   showForkSourceMarkers,
   onReverseFromMessage,
-  setA2UIMessageRef,
 }: {
   turn: MessageTurn;
   hideThreadTaskStatusSummary?: boolean;
@@ -1175,53 +1059,42 @@ function renderMessageTurn({
   onNavigateToForkSource?: (fork: AgentSessionFork) => void;
   showForkSourceMarkers: boolean;
   onReverseFromMessage?: (message: ConversationMessage) => void;
-  setA2UIMessageRef?: (messageId: string, node: HTMLDivElement | null) => void;
 }) {
   const statusMessages = hideThreadTaskStatusSummary ? [] : threadTaskStatusMessagesFromTurn(turn);
   const renderableItems = turn.items.filter((item) => !isThreadTaskStatusItem(item) && !isTurnMarkerItem(item));
   const focusAssistantItemId = focusFlash ? findLastAssistantItemId(renderableItems) : null;
-  const renderedItems = renderableItems.map((item) => {
-    const a2uiMessage = a2UIMessageFromItem(item);
-    return (
-      <div
-        className={styles.item}
-        data-a2ui-message-id={a2uiMessage?.id}
-        data-a2ui-streaming={a2uiMessage && isStreamingA2UIMessage(a2uiMessage) ? "true" : undefined}
-        data-focus-flash={item.id === focusAssistantItemId ? "true" : undefined}
-        data-kind={itemKind(item)}
-        role="listitem"
-        key={item.id}
-        ref={
-          a2uiMessage && setA2UIMessageRef
-            ? (node) => setA2UIMessageRef(a2uiMessage.id, node)
-            : undefined
-        }
-      >
-        {renderMessageItem({
-          item,
-          renderMessage,
-          footerMessage: assistantTurnFooters.footerByItemId.get(item.id),
-          showTurnEndStreamingCursor: turnEndStreamingCursor.cursorAfterItemIds.has(item.id),
-          suppressStreamingCursorMessageIds: turnEndStreamingCursor.suppressedMessageIds,
-          workspaceRuntime,
-          workspaceScope,
-          onApprovalDecision,
-          onResolveMcpElicitation,
-          onA2UISubmit,
-          onA2UICancel,
-          onFilePreview,
-          onLoadToolDetails,
-          onTerminateCommand,
-          onQuoteSelection,
-          onAskSelectionInBtwConversation,
-          onForkFromMessage,
-          onNavigateToForkSource,
-          showForkSourceMarkers,
-          onReverseFromMessage,
-        })}
-      </div>
-    );
-  });
+  const renderedItems = renderableItems.map((item) => (
+    <div
+      className={styles.item}
+      data-focus-flash={item.id === focusAssistantItemId ? "true" : undefined}
+      data-kind={itemKind(item)}
+      role="listitem"
+      key={item.id}
+    >
+      {renderMessageItem({
+        item,
+        renderMessage,
+        footerMessage: assistantTurnFooters.footerByItemId.get(item.id),
+        showTurnEndStreamingCursor: turnEndStreamingCursor.cursorAfterItemIds.has(item.id),
+        suppressStreamingCursorMessageIds: turnEndStreamingCursor.suppressedMessageIds,
+        workspaceRuntime,
+        workspaceScope,
+        onApprovalDecision,
+        onResolveMcpElicitation,
+        onA2UISubmit,
+        onA2UICancel,
+        onFilePreview,
+        onLoadToolDetails,
+        onTerminateCommand,
+        onQuoteSelection,
+        onAskSelectionInBtwConversation,
+        onForkFromMessage,
+        onNavigateToForkSource,
+        showForkSourceMarkers,
+        onReverseFromMessage,
+      })}
+    </div>
+  ));
   const summaryItem = statusMessages.length ? (
     <div
       className={styles.item}
@@ -1812,12 +1685,6 @@ interface TurnEndStreamingCursor {
   cursorAfterItemIds: Set<string>;
 }
 
-interface A2UIStreamAnchor {
-  messageId: string;
-  blockIndex: number;
-  turnIndex: number | null;
-}
-
 function buildConversationTimeline(displayItems: ProcessedMessageItem[]): ConversationTimeline {
   const blocks: TimelineBlock[] = [];
   const turns: MessageTurn[] = [];
@@ -2011,64 +1878,6 @@ function buildTurnNavigationItems(turns: MessageTurn[]): ConversationTurnNavigat
 
 function messagesFromProcessedItem(item: ProcessedMessageItem): ConversationMessage[] {
   return item.type === "message" ? [item.message] : item.messages;
-}
-
-function findFirstStreamingA2UIAnchor(blocks: TimelineBlock[]): A2UIStreamAnchor | null {
-  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
-    const block = blocks[blockIndex];
-    if (!block) {
-      continue;
-    }
-    if (block.type === "event") {
-      const message = firstStreamingA2UIMessageFromItem(block.item);
-      if (message) {
-        return { messageId: message.id, blockIndex, turnIndex: null };
-      }
-      continue;
-    }
-    for (const item of block.turn.items) {
-      const message = firstStreamingA2UIMessageFromItem(item);
-      if (message) {
-        return { messageId: message.id, blockIndex, turnIndex: block.turnIndex };
-      }
-    }
-  }
-  return null;
-}
-
-function firstStreamingA2UIMessageFromItem(item: ProcessedMessageItem): ConversationMessage | null {
-  return messagesFromProcessedItem(item).find(isStreamingA2UIMessage) ?? null;
-}
-
-function a2UIMessageFromItem(item: ProcessedMessageItem): ConversationMessage | null {
-  return messagesFromProcessedItem(item).find((message) => message.kind === "a2ui") ?? null;
-}
-
-function isStreamingA2UIMessage(message: ConversationMessage): boolean {
-  if (message.kind !== "a2ui") {
-    return false;
-  }
-  const status = a2UIMessageLifecycleStatus(message);
-  return Boolean(status && A2UI_STREAMING_STATUSES.has(status));
-}
-
-function a2UIMessageLifecycleStatus(message: ConversationMessage): string {
-  const debug = recordValue(message.payload.a2uiDebug);
-  const a2ui = recordValue(message.payload.a2ui);
-  const interaction =
-    recordValue(a2ui?.interaction) ??
-    recordValue(debug?.interaction) ??
-    recordValue(message.payload.interaction);
-  return (
-    normalizeA2UIStatus(interaction?.status) ||
-    normalizeA2UIStatus(debug?.status) ||
-    normalizeA2UIStatus(message.status)
-  );
-}
-
-function normalizeA2UIStatus(value: unknown): string {
-  const status = stringRecordValue(value).toLowerCase();
-  return status === "waiting_user_input" ? "waiting_input" : status;
 }
 
 function isThreadTaskStatusItem(item: ProcessedMessageItem): boolean {

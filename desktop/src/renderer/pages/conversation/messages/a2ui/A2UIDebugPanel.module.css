@@ -49,9 +49,14 @@
 .header {
   display: flex;
   min-width: 0;
-  align-items: start;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+}
+
+.titleArea {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .title {
@@ -76,11 +81,13 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 
 .actionButton {
   min-height: 24px;
   padding: 0 8px;
+  white-space: nowrap;
 }
 
 .iconButton {

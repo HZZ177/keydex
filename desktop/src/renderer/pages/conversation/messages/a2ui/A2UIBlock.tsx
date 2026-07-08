@@ -62,6 +62,7 @@ export interface ParsedA2UIMessage {
   interactionId: string;
   streamText: string;
   parseError: string;
+  historyHydrated: boolean;
 }
 
 export function A2UIBlock({ message, onSubmit, onCancel, debugInfoEnabled, children }: A2UIBlockProps) {
@@ -213,6 +214,7 @@ export function parseA2UIMessage(message: ConversationMessage): ParsedA2UIMessag
       stringValue(message.payload.interaction_id),
     streamText,
     parseError: stringValue(debug?.parseError),
+    historyHydrated: message.payload.historyHydrated === true,
   };
 }
 

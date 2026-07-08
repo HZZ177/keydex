@@ -1322,6 +1322,129 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
   });
 
+  it("keeps live A2UI stream debug details when completed history hydrates from created-only events", () => {
+    const streamId = "a2ui:confirm:tool-1";
+    let state = createInitialAgentConversationState();
+
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_start",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-1",
+        turn_index: 2,
+        render_key: "confirm",
+        stream_id: streamId,
+        tool_call_id: "tool-1",
+        stream: { status: "start", chunk_index: 0, args_text_length: 0 },
+        timestamp_ms: 1_800_000_000_000,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_chunk",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-1",
+        turn_index: 2,
+        render_key: "confirm",
+        stream_id: streamId,
+        tool_call_id: "tool-1",
+        stream: {
+          status: "chunk",
+          chunk_index: 1,
+          args_delta: '{"title":"确认"}',
+          args_text_length: 16,
+        },
+        timestamp_ms: 1_800_000_000_001,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_finish",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-1",
+        turn_index: 2,
+        render_key: "confirm",
+        stream_id: streamId,
+        tool_call_id: "tool-1",
+        stream: { status: "finish", args_text_length: 16, finish_reason: "tool_args_completed" },
+        timestamp_ms: 1_800_000_000_002,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-1",
+        turn_index: 2,
+        stream_id: streamId,
+        interaction_id: "int-1",
+        a2ui: a2uiObject({
+          render_key: "confirm",
+          mode: "interactive",
+          stream_id: streamId,
+          tool_call_id: "tool-1",
+          interaction: {
+            interaction_id: "int-1",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        }),
+        timestamp_ms: 1_800_000_000_003,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "completed",
+      data: {
+        session_id: "ses-1",
+        status: "completed",
+        final_content: "",
+        timestamp_ms: 1_800_000_000_004,
+      },
+    });
+    const liveA2UIId = selectAgentMessages(state, "ses-1").find((message) => message.role === "a2ui")?.id;
+    expect(liveA2UIId).toBeTruthy();
+
+    state = agentConversationReducer(state, {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        {
+          id: "hist-a2ui-1",
+          role: "a2ui",
+          content: "",
+          contentType: "a2ui",
+          timestamp: 1_800_000_000_003,
+          a2ui: a2uiObject({
+            render_key: "confirm",
+            mode: "interactive",
+            stream_id: streamId,
+            tool_call_id: "tool-1",
+            interaction: {
+              interaction_id: "int-1",
+              status: "waiting_user_input",
+              can_submit: true,
+            },
+          }),
+        },
+      ]),
+    });
+
+    const messages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "a2ui");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].id).toBe(liveA2UIId);
+    expect(messages[0].hydratedFromHistory).toBe(true);
+    expect(messages[0].a2uiDebug).toMatchObject({
+      status: "created",
+      streamId,
+      interactionId: "int-1",
+      chunkCount: 1,
+      argsBuffer: '{"title":"确认"}',
+    });
+    expect(messages[0].a2uiDebug?.rawEvents.map((event) => event.action)).toEqual(
+      expect.arrayContaining(["a2ui_stream_start", "a2ui_stream_chunk", "a2ui_stream_finish", "a2ui_created"]),
+    );
+  });
+
   it("creates A2UI messages from created events without a preview", () => {
     const state = reduceAgentWsEvent(createInitialAgentConversationState(), {
       action: "a2ui_created",

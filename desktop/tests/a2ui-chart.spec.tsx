@@ -1,11 +1,36 @@
 import { act, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { A2UIBlock } from "@/renderer/pages/conversation/messages";
+import type { ParsedA2UIMessage } from "@/renderer/pages/conversation/messages/a2ui/A2UIBlock";
+import { A2ChartBlock } from "@/renderer/pages/conversation/messages/a2ui/A2ChartBlock";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { A2UIDebugBlockState, A2UIObject } from "@/types/protocol";
 
+const echartsMock = vi.hoisted(() => {
+  const setOption = vi.fn();
+  const resize = vi.fn();
+  const dispose = vi.fn();
+  const init = vi.fn((container: HTMLElement) => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    container.appendChild(svg);
+    return { dispose, resize, setOption };
+  });
+  return { dispose, init, resize, setOption };
+});
+
+vi.mock("echarts", () => ({
+  init: echartsMock.init,
+}));
+
 describe("A2ChartBlock", () => {
+  beforeEach(() => {
+    echartsMock.dispose.mockClear();
+    echartsMock.init.mockClear();
+    echartsMock.resize.mockClear();
+    echartsMock.setOption.mockClear();
+  });
+
   it("renders one SDK chart payload with column, trend, pie and funnel panels", () => {
     const { container } = render(
       <A2UIBlock
@@ -86,14 +111,16 @@ describe("A2ChartBlock", () => {
       "funnel",
     ]);
     expect(surfaces.every((surface) => surface.getAttribute("data-a2ui-chart-engine") === "echarts")).toBe(true);
-      expect(surfaces[0].getAttribute("data-a2ui-chart-data-count")).toBe("4");
-      expect(surfaces[0].getAttribute("data-a2ui-chart-category-count")).toBe("2");
-      expect(surfaces[1].getAttribute("data-a2ui-chart-data-count")).toBe("3");
-      expect(surfaces[1].getAttribute("data-a2ui-chart-category-count")).toBe("3");
+    expect(surfaces.every((surface) => surface.getAttribute("data-a2ui-chart-stream-adapter") === "setOption-diff")).toBe(true);
+    expect(surfaces[0].getAttribute("data-a2ui-chart-data-count")).toBe("4");
+    expect(surfaces[0].getAttribute("data-a2ui-chart-category-count")).toBe("2");
+    expect(surfaces[1].getAttribute("data-a2ui-chart-data-count")).toBe("3");
+    expect(surfaces[1].getAttribute("data-a2ui-chart-category-count")).toBe("3");
     expect(surfaces[2].getAttribute("data-a2ui-chart-data-count")).toBe("2");
     expect(surfaces[3].getAttribute("data-a2ui-chart-data-count")).toBe("2");
     expect(surfaces[1].getAttribute("data-a2ui-chart-interactions")).toBe("tooltip,axisPointer,legendToggle");
     expect(surfaces[1].getAttribute("data-a2ui-chart-tooltip")).toBe("axis");
+    expect(echartsMock.setOption.mock.calls.every(([option]) => (option as Record<string, unknown>).animation === true)).toBe(true);
     expect(container.querySelector("svg")).not.toBeNull();
   });
 
@@ -196,8 +223,12 @@ describe("A2ChartBlock", () => {
 
       const panels = screen.getAllByTestId("a2ui-chart-panel");
       expect(panels).toHaveLength(2);
-      expect(totalChartDataCount()).toBe(1);
-      expect(screen.getByTestId("a2ui-echarts-surface").getAttribute("data-a2ui-chart-category-count")).toBe("1");
+      expect(chartDataCounts()).toEqual([1, 1]);
+      expect(totalChartDataCount()).toBe(2);
+      expect(screen.getAllByTestId("a2ui-echarts-surface").map((surface) => surface.getAttribute("data-a2ui-chart-category-count"))).toEqual([
+        "1",
+        "1",
+      ]);
 
       act(() => {
         vi.advanceTimersByTime(1_600);
@@ -282,16 +313,204 @@ describe("A2ChartBlock", () => {
       const { rerender } = render(<A2UIBlock message={streamingChartMessage(fullPayload)} />);
 
       act(() => {
-        vi.advanceTimersByTime(1_200);
+        vi.advanceTimersByTime(1_500);
       });
       expect(chartDataCounts()).toEqual([4]);
+      const surface = screen.getByTestId("a2ui-echarts-surface");
 
       rerender(<A2UIBlock message={streamingChartMessage(shorterPayload)} />);
       expect(chartDataCounts()).toEqual([4]);
 
       rerender(<A2UIBlock message={streamedCreatedChartMessage(fullPayload, "stream-chart-stream", "tool-chart-stream")} />);
       expect(chartDataCounts()).toEqual([4]);
+      expect(screen.getByTestId("a2ui-echarts-surface")).toBe(surface);
       expect(screen.getByTestId("a2ui-chart").getAttribute("data-a2ui-reveal-visible")).toBe("4");
+    } finally {
+      restoreRaf();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("continues chart reveal instead of flushing complete data when later agent completion drops stream evidence", () => {
+    vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
+    try {
+      const fullPayload = {
+        title: "完成帧保护",
+        charts: [
+          {
+            type: "column",
+            title: "增长数据",
+            series: [
+              {
+                name: "数量",
+                items: [
+                  { name: "A", value: 10 },
+                  { name: "B", value: 20 },
+                  { name: "C", value: 30 },
+                  { name: "D", value: 40 },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const { rerender } = render(
+        <A2UIBlock message={streamedCreatedChartMessage(fullPayload, "stream-chart-stream", "tool-chart-stream")} />,
+      );
+
+      expect(chartDataCounts()).toEqual([1]);
+      rerender(
+        <A2UIBlock
+          message={streamedCreatedChartMessageWithoutStreamEvidence(
+            fullPayload,
+            "stream-chart-stream",
+            "tool-chart-stream",
+          )}
+        />,
+      );
+
+      expect(chartDataCounts()).toEqual([1]);
+      expect(screen.getByTestId("a2ui-chart").getAttribute("data-a2ui-player-phase")).toBe("waiting_created");
+
+      act(() => {
+        vi.advanceTimersByTime(2_200);
+      });
+
+      expect(chartDataCounts()).toEqual([4]);
+      expect(screen.getByTestId("a2ui-chart").getAttribute("data-a2ui-player-phase")).toBe("created");
+    } finally {
+      restoreRaf();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not replay ECharts animation when a stream-backed chart settles", () => {
+    const activePayload = {
+      title: "终态动画保护",
+      charts: [
+        {
+          type: "column",
+          title: "增长数据",
+          series: [
+            {
+              name: "数量",
+              items: [
+                { name: "A", value: 10 },
+                { name: "B", value: 20 },
+                { name: "C", value: 30 },
+                { name: "D", value: 40 },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const settledPayload = {
+      ...activePayload,
+      charts: [
+        {
+          ...activePayload.charts[0],
+          title: "增长数据（终态）",
+        },
+      ],
+    };
+
+    const { rerender } = render(<A2ChartBlock parsed={parsedChart(activePayload, "waiting_created")} />);
+
+    const surface = screen.getByTestId("a2ui-echarts-surface");
+    expect(surface.getAttribute("data-a2ui-chart-animation")).toBe("enabled");
+    expect(lastSetOption().animation).toBe(true);
+
+    rerender(<A2ChartBlock parsed={parsedChart(settledPayload, "created")} />);
+
+    expect(screen.getByTestId("a2ui-echarts-surface")).toBe(surface);
+    expect(surface.getAttribute("data-a2ui-chart-animation")).toBe("settled");
+    const terminalOption = lastSetOption();
+    expect(terminalOption.animation).toBe(false);
+    expect(terminalOption.animationDuration).toBe(0);
+    expect(optionSeries(terminalOption).every((series) => series.animation === false)).toBe(true);
+  });
+
+  it("does not replay streamed chart chunks when rendering hydrated history", () => {
+    render(
+      <A2UIBlock
+        message={historyHydratedChartMessage({
+          title: "历史图表",
+          charts: [
+            {
+              type: "column",
+              title: "历史数据",
+              series: [
+                {
+                  name: "数量",
+                  items: [
+                    { name: "A", value: 10 },
+                    { name: "B", value: 20 },
+                    { name: "C", value: 30 },
+                    { name: "D", value: 40 },
+                  ],
+                },
+              ],
+            },
+          ],
+        })}
+      />,
+    );
+
+    const chart = screen.getByTestId("a2ui-chart");
+    const surface = screen.getByTestId("a2ui-echarts-surface");
+    expect(chart.getAttribute("data-a2ui-player-enabled")).toBe("false");
+    expect(surface.getAttribute("data-a2ui-chart-data-count")).toBe("4");
+    expect(surface.getAttribute("data-a2ui-chart-animation")).toBe("settled");
+    expect(lastSetOption().animation).toBe(false);
+  });
+
+  it("keeps a visible reveal pace for small fast chart payloads", () => {
+    vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
+    try {
+      render(
+        <A2UIBlock
+          message={streamedCreatedChartMessage({
+            title: "小数据节奏",
+            charts: [
+              {
+                type: "column",
+                title: "四项数据",
+                series: [
+                  {
+                    name: "数量",
+                    items: [
+                      { name: "A", value: 10 },
+                      { name: "B", value: 20 },
+                      { name: "C", value: 30 },
+                      { name: "D", value: 40 },
+                    ],
+                  },
+                ],
+              },
+            ],
+          })}
+        />,
+      );
+
+      expect(chartDataCounts()).toEqual([1]);
+
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+
+      expect(chartDataCounts()).toEqual([1]);
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(chartDataCounts()).toEqual([2]);
     } finally {
       restoreRaf();
       vi.clearAllTimers();
@@ -328,7 +547,7 @@ describe("A2ChartBlock", () => {
       );
 
       act(() => {
-        vi.advanceTimersByTime(1_200);
+        vi.advanceTimersByTime(1_500);
       });
       expect(chartDataCounts()).toEqual([4]);
 
@@ -394,7 +613,7 @@ describe("A2ChartBlock", () => {
       expect(screen.queryByTestId("a2ui-chart-skeleton")).toBeNull();
 
       act(() => {
-        vi.advanceTimersByTime(300);
+        vi.advanceTimersByTime(500);
       });
 
       expect(chartDataCounts()).toEqual([2]);
@@ -446,7 +665,7 @@ describe("A2ChartBlock", () => {
       expect(chartDataCounts()[0]).toBeLessThan(6);
 
       act(() => {
-        vi.advanceTimersByTime(1_600);
+        vi.advanceTimersByTime(1_900);
       });
 
       expect(chartDataCounts()).toEqual([6]);
@@ -475,6 +694,19 @@ function chartDataCounts(): number[] {
   return screen
     .getAllByTestId("a2ui-echarts-surface")
     .map((surface) => Number(surface.getAttribute("data-a2ui-chart-data-count")));
+}
+
+function lastSetOption(): Record<string, unknown> {
+  const calls = echartsMock.setOption.mock.calls;
+  return (calls[calls.length - 1]?.[0] ?? {}) as Record<string, unknown>;
+}
+
+function optionSeries(option: Record<string, unknown>): Array<Record<string, unknown>> {
+  const series = option.series;
+  if (Array.isArray(series)) {
+    return series.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+  }
+  return series && typeof series === "object" ? [series as Record<string, unknown>] : [];
 }
 
 function totalChartDataCount(): number {
@@ -513,6 +745,50 @@ function chartMessage(payload: Record<string, unknown>): ConversationMessage {
     },
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
+  };
+}
+
+function parsedChart(
+  payload: Record<string, unknown>,
+  phase: NonNullable<ParsedA2UIMessage["streamPlayer"]>["phase"],
+): ParsedA2UIMessage {
+  const a2ui = chartObject(payload, "stream-direct-chart", "tool-direct-chart");
+  const debug = chartDebug(a2ui);
+  const totalElementCount = 4;
+  const running = phase !== "created";
+  return {
+    a2ui,
+    debug,
+    interaction: null,
+    interactionId: "",
+    mode: "render",
+    parseError: "",
+    historyHydrated: false,
+    payload,
+    renderKey: "chart",
+    status: "completed",
+    streamPlayer: {
+      enabled: true,
+      phase,
+      payload,
+      renderedElementCount: totalElementCount,
+      rootProps: {
+        "data-a2ui-player-enabled": "true",
+        "data-a2ui-player-phase": phase,
+        "data-a2ui-player-rendered": totalElementCount,
+        "data-a2ui-player-total": totalElementCount,
+        "data-a2ui-player-running": running ? "true" : "false",
+        "data-a2ui-reveal-enabled": "true",
+        "data-a2ui-reveal-total": totalElementCount,
+        "data-a2ui-reveal-visible": totalElementCount,
+        "data-a2ui-reveal-backlog": 0,
+        "data-a2ui-reveal-speed": running ? 7 : 0,
+        "data-a2ui-reveal-running": running ? "true" : "false",
+      },
+      running,
+      totalElementCount,
+    },
+    streamText: "",
   };
 }
 
@@ -635,6 +911,42 @@ function streamedCreatedChartMessage(
     },
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
+  };
+}
+
+function historyHydratedChartMessage(payload: Record<string, unknown>): ConversationMessage {
+  const message = streamedCreatedChartMessage(payload, "history-chart-stream", "history-chart-tool");
+  return {
+    ...message,
+    id: "agent:hist:ses-1:1:a2ui",
+    payload: {
+      ...message.payload,
+      historyHydrated: true,
+    },
+  };
+}
+
+function streamedCreatedChartMessageWithoutStreamEvidence(
+  payload: Record<string, unknown>,
+  streamId: string,
+  toolCallId: string,
+): ConversationMessage {
+  const message = streamedCreatedChartMessage(payload, streamId, toolCallId);
+  const debug = message.payload.a2uiDebug as A2UIDebugBlockState;
+  return {
+    ...message,
+    payload: {
+      ...message.payload,
+      a2uiDebug: {
+        ...debug,
+        argsBuffer: "",
+        argsTextLength: 0,
+        chunkCount: 0,
+        jsonParseStatus: "empty",
+        parsedArgs: undefined,
+        rawEvents: [],
+      },
+    },
   };
 }
 

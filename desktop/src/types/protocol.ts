@@ -1688,6 +1688,7 @@ export interface AgentChatMessage {
   uiPayload?: Record<string, unknown>;
   fileChanges?: AgentFileChange[];
   metadata?: Record<string, unknown>;
+  hydratedFromHistory?: boolean;
   a2ui?: A2UIObject | null;
   a2uiDebug?: A2UIDebugBlockState;
   approval?: CommandApprovalRequest;

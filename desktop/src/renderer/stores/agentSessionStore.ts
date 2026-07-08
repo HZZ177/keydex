@@ -3,6 +3,8 @@ import type {
   AgentChatMessage,
   AgentChatMessagePayload,
   AgentCompletedPayload,
+  A2UIDebugBlockState,
+  A2UIDebugRawEvent,
   AgentErrorData,
   CommandApprovalRequest,
   AgentGhostStats,
@@ -600,11 +602,13 @@ function mergeActiveLocalMessages(
   hydratedMessages: AgentChatMessage[],
   previousView?: AgentSessionViewState,
 ): AgentChatMessage[] {
+  const hydratedWithA2UIDebug = mergeHydratedA2UIDebugMessages(hydratedMessages, previousView);
+  const hydratedWithStableA2UI = preserveStableLocalA2UIMessages(hydratedWithA2UIDebug, previousView);
   if (!previousView || !isActiveRuntimeState(previousView.runtimeState)) {
-    return hydratedMessages;
+    return hydratedWithStableA2UI;
   }
 
-  const merged = [...hydratedMessages];
+  const merged = [...hydratedWithStableA2UI];
   for (const message of previousView.messages) {
     if (!shouldPreserveActiveLocalMessage(message)) {
       continue;
@@ -615,6 +619,153 @@ function mergeActiveLocalMessages(
     merged.push(cloneMessage(message));
   }
   return merged;
+}
+
+function preserveStableLocalA2UIMessages(
+  hydratedMessages: AgentChatMessage[],
+  previousView?: AgentSessionViewState,
+): AgentChatMessage[] {
+  if (!previousView) {
+    return hydratedMessages;
+  }
+  const localA2UIMessages = previousView.messages.filter((message) => message.role === "a2ui");
+  if (!localA2UIMessages.length) {
+    return hydratedMessages;
+  }
+  return hydratedMessages.map((message) => {
+    if (message.role !== "a2ui") {
+      return message;
+    }
+    const local = localA2UIMessages.find((candidate) => isSameA2UIIdentity(message, candidate));
+    if (!local) {
+      return message;
+    }
+    return {
+      ...message,
+      id: local.id,
+      timestamp: local.timestamp,
+      hydratedFromHistory: message.hydratedFromHistory,
+      a2ui: message.a2ui ?? local.a2ui,
+      a2uiDebug: message.a2uiDebug ?? local.a2uiDebug,
+      contentType: message.contentType ?? local.contentType ?? "a2ui",
+      content_type: message.content_type ?? local.content_type ?? "a2ui",
+    };
+  });
+}
+
+function mergeHydratedA2UIDebugMessages(
+  hydratedMessages: AgentChatMessage[],
+  previousView?: AgentSessionViewState,
+): AgentChatMessage[] {
+  if (!previousView) {
+    return hydratedMessages;
+  }
+  const localA2UIMessages = previousView.messages.filter((message) => message.role === "a2ui" && message.a2uiDebug);
+  if (!localA2UIMessages.length) {
+    return hydratedMessages;
+  }
+  return hydratedMessages.map((message) => {
+    if (message.role !== "a2ui" || !message.a2uiDebug) {
+      return message;
+    }
+    const local = localA2UIMessages.find((candidate) => isSameA2UIIdentity(message, candidate));
+    if (!local?.a2uiDebug || !isRicherA2UIDebug(local.a2uiDebug, message.a2uiDebug)) {
+      return message;
+    }
+    return {
+      ...message,
+      a2ui: message.a2ui ?? local.a2ui,
+      a2uiDebug: mergeA2UIDebugForHydration(message.a2uiDebug, local.a2uiDebug),
+      contentType: message.contentType ?? "a2ui",
+      content_type: message.content_type ?? "a2ui",
+    };
+  });
+}
+
+function isSameA2UIIdentity(left: AgentChatMessage, right: AgentChatMessage): boolean {
+  const leftIds = a2UIIdentityValues(left);
+  if (!leftIds.size) {
+    return false;
+  }
+  for (const value of a2UIIdentityValues(right)) {
+    if (leftIds.has(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function a2UIIdentityValues(message: AgentChatMessage): Set<string> {
+  return new Set(
+    [
+      message.a2ui?.stream_id,
+      message.a2uiDebug?.streamId,
+      message.a2ui?.interaction?.interaction_id,
+      message.a2uiDebug?.interactionId,
+      message.a2ui?.tool_call_id,
+      message.a2uiDebug?.toolCallId,
+    ]
+      .map((value) => stringValue(value))
+      .filter(Boolean),
+  );
+}
+
+function isRicherA2UIDebug(local: A2UIDebugBlockState, hydrated: A2UIDebugBlockState): boolean {
+  return a2UIDebugRichness(local) > a2UIDebugRichness(hydrated);
+}
+
+function a2UIDebugRichness(debug: A2UIDebugBlockState): number {
+  return Number(debug.chunkCount ?? 0) * 10_000
+    + (debug.rawEvents?.length ?? 0) * 100
+    + stringValue(debug.argsBuffer).length;
+}
+
+function mergeA2UIDebugForHydration(
+  hydrated: A2UIDebugBlockState,
+  local: A2UIDebugBlockState,
+): A2UIDebugBlockState {
+  const localBufferIsRicher = stringValue(local.argsBuffer).length > stringValue(hydrated.argsBuffer).length;
+  const rawEvents = mergeA2UIDebugRawEvents(local.rawEvents ?? [], hydrated.rawEvents ?? []);
+  return {
+    ...hydrated,
+    argsBuffer: localBufferIsRicher ? local.argsBuffer : hydrated.argsBuffer,
+    argsTextLength: Math.max(Number(hydrated.argsTextLength ?? 0), Number(local.argsTextLength ?? 0)),
+    chunkCount: Math.max(Number(hydrated.chunkCount ?? 0), Number(local.chunkCount ?? 0)),
+    finishReason: hydrated.finishReason ?? local.finishReason,
+    jsonParseStatus: localBufferIsRicher ? local.jsonParseStatus : hydrated.jsonParseStatus,
+    latestChunk: local.latestChunk ?? hydrated.latestChunk,
+    parseError: hydrated.parseError ?? local.parseError,
+    parsedArgs: local.parsedArgs ?? hydrated.parsedArgs,
+    rawEvents,
+    updatedAt: Math.max(Number(hydrated.updatedAt ?? 0), Number(local.updatedAt ?? 0)),
+  };
+}
+
+function mergeA2UIDebugRawEvents(
+  localEvents: A2UIDebugRawEvent[],
+  hydratedEvents: A2UIDebugRawEvent[],
+): A2UIDebugRawEvent[] {
+  const merged: A2UIDebugRawEvent[] = [];
+  const seen = new Set<string>();
+  for (const event of [...localEvents, ...hydratedEvents]) {
+    const key = a2UIRawEventKey(event);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push({
+      ...event,
+      data: { ...event.data },
+    });
+  }
+  return merged.sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0));
+}
+
+function a2UIRawEventKey(event: A2UIDebugRawEvent): string {
+  if (event.id && !event.id.startsWith("a2ui-event:")) {
+    return event.id;
+  }
+  return `${event.action}:${event.timestamp}:${stableJsonStringify(event.data)}`;
 }
 
 function shouldPreserveActiveLocalMessage(message: AgentChatMessage): boolean {
@@ -648,6 +799,9 @@ function isEquivalentHydratedMessage(candidate: AgentChatMessage, localMessage: 
   }
   if (candidate.role !== localMessage.role) {
     return false;
+  }
+  if (localMessage.role === "a2ui") {
+    return isSameA2UIIdentity(candidate, localMessage);
   }
   if (localMessage.role === "user") {
     return (
@@ -2122,6 +2276,7 @@ function historyMessageFromPayload(
     sessionId: payload.sessionId ?? sessionId,
     timestamp: payload.timestamp ?? Date.now() + index,
     content,
+    hydratedFromHistory: true,
     ghostStats,
     streaming: false,
     status: normalizeHistoryStatus(payload),
@@ -3786,6 +3941,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function stableJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function scalarStringValue(value: unknown): string {

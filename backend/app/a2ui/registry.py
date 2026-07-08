@@ -157,7 +157,9 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             render_key="chart",
             mode="render",
             tool_description=(
-                "展示漏斗图、趋势图、柱状图或饼图。一次调用必须用 charts 数组承载一个或多个图表；"
+                "当回复需要自然呈现趋势、分布、对比、漏斗、占比等结构化数据时优先调用，"
+                "A2UI 图表就是正文内容，不要再输出重复 Markdown 表格或图表，也不要写“可视化如下”。"
+                "支持漏斗图、趋势图、柱状图或饼图；一次调用必须用 charts 数组承载一个或多个图表；"
                 "summary 是字符串；不要使用 chart_type、categories、series.data、table 等旧字段。"
                 "该工具只渲染界面，不等待用户提交。"
             ),
@@ -203,7 +205,8 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             render_key="confirm",
             mode="interactive",
             tool_description=(
-                "在继续执行前，请用户确认或拒绝一个明确动作；该工具会等待用户提交或取消。"
+                "当继续执行需要用户明确授权、确认风险、删除、覆盖、写入、提交或执行不可轻易撤销的动作时优先调用，"
+                "请用户确认或拒绝一个明确动作；该工具会等待用户提交或取消。"
             ),
             input_schema=_object_schema(
                 properties={
@@ -227,6 +230,7 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             render_key="choice",
             mode="interactive",
             tool_description=(
+                "当存在多个可行方案、范围、对象、格式、路径或下一步动作，需要用户从候选项中决定时优先调用，"
                 "展示单选或多选决策项；该工具会等待用户选择或取消后继续执行。"
             ),
             input_schema=_object_schema(
@@ -260,7 +264,10 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
         A2UIToolDefinition(
             render_key="form",
             mode="interactive",
-            tool_description="在继续执行前，通过小型表单收集结构化输入；该工具会等待用户提交或取消。",
+            tool_description=(
+                "当缺少多个关键参数或需要用户补充结构化信息时优先调用，通过小型表单收集输入；"
+                "该工具会等待用户提交或取消。"
+            ),
             input_schema=_object_schema(
                 properties={
                     "title": {"type": "string", "minLength": 1, "description": "表单标题。"},
