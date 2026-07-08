@@ -433,6 +433,11 @@ describe("AppRouter", () => {
     expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
     fireEvent.click(screen.getByTestId("open-workbench-file-package"));
     expect(await screen.findByRole("tab", { name: "package.json" }, { timeout: 10000 })).not.toBeNull();
+    await act(async () => {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(screen.getByRole("tab", { name: "package.json" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "README.md" }).getAttribute("aria-selected")).toBe("false");
     expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("2");
 
     fireEvent.click(

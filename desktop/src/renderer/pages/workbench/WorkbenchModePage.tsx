@@ -551,11 +551,11 @@ export function WorkbenchModePage({
       openWorkbenchMainPreview(request, workbenchPreviewRenderContext);
       return;
     }
-    if (existingTab.renderContext === workbenchPreviewRenderContext && workbenchPreviewTabs.activeTabId === tabId) {
+    if (existingTab.renderContext === workbenchPreviewRenderContext) {
       return;
     }
     setWorkbenchPreviewTabs((current) => ({
-      activeTabId: tabId,
+      activeTabId: current.activeTabId ?? tabId,
       tabs: current.tabs.map((item) =>
         item.id === tabId ? { ...item, renderContext: workbenchPreviewRenderContext } : item,
       ),
@@ -564,7 +564,6 @@ export function WorkbenchModePage({
     externalPreviewPath,
     openWorkbenchMainPreview,
     workbenchPreviewRenderContext,
-    workbenchPreviewTabs.activeTabId,
     workbenchPreviewTabs.tabs,
   ]);
 
