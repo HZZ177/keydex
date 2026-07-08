@@ -40,7 +40,7 @@ describe("A2UI shared component states", () => {
     expect(screen.getByTestId("a2ui-chart-panel").getAttribute("data-chart-type")).toBe("column");
   });
 
-  it("renders pie chart values in a full side list with formatted numbers", () => {
+  it("renders pie charts through the shared ECharts surface", () => {
     render(
       <A2UIBlock
         message={a2uiMessage("chart", {
@@ -61,12 +61,12 @@ describe("A2UI shared component states", () => {
     );
 
     const panel = screen.getByTestId("a2ui-chart-panel");
-    const list = screen.getByTestId("a2ui-chart-pie-list");
+    const surface = screen.getByTestId("a2ui-echarts-surface");
     expect(panel.getAttribute("data-chart-type")).toBe("pie");
-    expect(screen.getByTestId("a2ui-chart-pie-layout")).toBeTruthy();
-    expect(within(list).getByText("932.33")).toBeTruthy();
-    expect(within(list).getByText("3,190.98")).toBeTruthy();
-    expect(list.textContent).not.toContain("932.325791");
+    expect(surface.getAttribute("data-a2ui-chart-engine")).toBe("echarts");
+    expect(surface.getAttribute("data-a2ui-chart-tooltip")).toBe("item");
+    expect(surface.getAttribute("data-a2ui-chart-interactions")).toBe("tooltip,legendToggle");
+    expect(surface.getAttribute("data-a2ui-chart-data-count")).toBe("2");
   });
 
   it("does not expose editable form controls after a submitted form is restored", () => {

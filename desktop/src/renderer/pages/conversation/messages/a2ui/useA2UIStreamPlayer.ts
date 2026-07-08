@@ -41,11 +41,11 @@ export interface A2UIStreamPlayerState {
   totalElementCount: number;
 }
 
-const MIN_INTERVAL_MS = 70;
-const MAX_INTERVAL_MS = 240;
-const MIN_RENDER_DURATION_MS = 900;
+const MIN_INTERVAL_MS = 120;
+const MAX_INTERVAL_MS = 260;
+const MIN_RENDER_DURATION_MS = 1_300;
 const FAST_STREAM_THRESHOLD_MS = 420;
-const CATCH_UP_INTERVAL_MS = 90;
+const CATCH_UP_INTERVAL_MS = 140;
 const STREAMING_STATUSES = new Set(["started", "streaming", "finished"]);
 const DISABLED_STATUSES = new Set(["submitted", "cancelled", "failed", "missing"]);
 
@@ -170,11 +170,20 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
 
     const sameSource = runtime.sourceSignature === sourceSignature;
     const isFinalPayload = Boolean(parsed.a2ui) || (!STREAMING_STATUSES.has(status) && streamBacked);
+    const shouldKeepRenderedPayload =
+      isFinalPayload &&
+      !parsed.a2ui &&
+      rememberedTotal > 0 &&
+      incomingTotal === 0;
     if (!sameSource) {
-      runtime.latestPayload = isFinalPayload
+      runtime.latestPayload = shouldKeepRenderedPayload
+        ? runtime.latestPayload
+        : isFinalPayload
         ? parsed.payload
         : mergeStreamingPayload(runtime.latestPayload, parsed.payload);
-      runtime.sourceSignature = sourceSignature;
+      if (!shouldKeepRenderedPayload) {
+        runtime.sourceSignature = sourceSignature;
+      }
     }
 
     if (runtime.firstChunkTime === null) {
@@ -182,9 +191,10 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
     }
 
     if (isFinalPayload) {
-      runtime.finalPayload = parsed.payload;
-      runtime.latestPayload = parsed.payload;
-      runtime.phase = runtime.renderedElementCount >= getTotalElementCount(parsed.payload) ? "created" : "waiting_created";
+      const finalPayload = shouldKeepRenderedPayload ? runtime.latestPayload : parsed.payload;
+      runtime.finalPayload = finalPayload;
+      runtime.latestPayload = finalPayload;
+      runtime.phase = runtime.renderedElementCount >= getTotalElementCount(finalPayload) ? "created" : "waiting_created";
     } else {
       runtime.phase = "previewing";
     }
@@ -330,31 +340,21 @@ function slicePayloadByRenderedCount(payload: Record<string, unknown>, renderedE
   }
 
   const result = cloneJsonRecord(payload);
+  const visibleCounts = distributeVisibleLeafCounts(payload, arrayPaths, renderedElementCount);
   for (const path of arrayPaths) {
     const parent = resolveParent(result, path);
     if (!parent || !Array.isArray(parent.record[parent.key])) {
       continue;
     }
     const list = parent.record[parent.key] as unknown[];
-    const showCount = Math.min(renderedElementCount, list.length);
+    const showCount = Math.min(visibleCounts.get(path) ?? 0, list.length);
     parent.record[parent.key] = list.slice(0, showCount);
   }
   return result;
 }
 
 function getTotalElementCount(payload: Record<string, unknown>): number {
-  const arrayPaths = getLeafArrayPaths(payload);
-  if (!arrayPaths.length) {
-    return Object.keys(payload).length;
-  }
-  let count = 0;
-  for (const path of arrayPaths) {
-    const value = resolvePath(payload, path);
-    if (Array.isArray(value)) {
-      count = Math.max(count, value.length);
-    }
-  }
-  return count;
+  return getPayloadElementCount(payload);
 }
 
 function getPayloadElementCount(payload: Record<string, unknown>): number {
@@ -370,6 +370,31 @@ function getPayloadElementCount(payload: Record<string, unknown>): number {
     }
   }
   return count;
+}
+
+function distributeVisibleLeafCounts(
+  payload: Record<string, unknown>,
+  arrayPaths: string[],
+  renderedElementCount: number,
+): Map<string, number> {
+  const lengths = arrayPaths.map((path) => {
+    const value = resolvePath(payload, path);
+    return Array.isArray(value) ? value.length : 0;
+  });
+  const visibleCounts = new Map(arrayPaths.map((path) => [path, 0]));
+  let remaining = Math.max(0, renderedElementCount);
+  while (remaining > 0 && lengths.some((length, index) => (visibleCounts.get(arrayPaths[index]) ?? 0) < length)) {
+    for (let index = 0; index < arrayPaths.length && remaining > 0; index += 1) {
+      const path = arrayPaths[index];
+      const current = visibleCounts.get(path) ?? 0;
+      if (current >= lengths[index]) {
+        continue;
+      }
+      visibleCounts.set(path, current + 1);
+      remaining -= 1;
+    }
+  }
+  return visibleCounts;
 }
 
 function getLeafArrayPaths(value: Record<string, unknown>, prefix = ""): string[] {

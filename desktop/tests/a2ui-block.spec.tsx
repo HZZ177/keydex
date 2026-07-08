@@ -83,7 +83,9 @@ describe("A2UIBlock", () => {
 
     expect(screen.getByTestId("a2ui-block").getAttribute("data-status")).toBe("created");
     expect(screen.getByText("已生成")).toBeTruthy();
-    const column = screen.getByTestId("a2ui-chart-column");
+    const surface = screen.getByTestId("a2ui-echarts-surface");
+    expect(surface.getAttribute("data-a2ui-chart-engine")).toBe("echarts");
+    expect(surface.getAttribute("data-a2ui-chart-data-count")).toBe("1");
 
     rerender(
       <A2UIBlock
@@ -101,7 +103,7 @@ describe("A2UIBlock", () => {
     );
 
     expect(screen.getByTestId("a2ui-block").getAttribute("data-status")).toBe("created");
-    expect(screen.getByTestId("a2ui-chart-column")).toBe(column);
+    expect(screen.getByTestId("a2ui-echarts-surface")).toBe(surface);
   });
 
   it("renders streaming debug buffers before a created object is complete", () => {

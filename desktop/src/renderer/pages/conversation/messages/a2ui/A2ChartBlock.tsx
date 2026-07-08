@@ -1,13 +1,13 @@
-import { useMemo, useRef } from "react";
+import * as echarts from "echarts";
+import type { EChartsOption, EChartsType, SeriesOption } from "echarts";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { ParsedA2UIMessage } from "./A2UIBlock";
 import styles from "./A2ChartBlock.module.css";
 import {
   A2UIMotionItem,
   A2UIMotionRoot,
-  a2uiMotionItemProps,
 } from "./A2UIMotion";
-import revealStyles from "./A2UIReveal.module.css";
 
 export interface A2ChartBlockProps {
   parsed: ParsedA2UIMessage;
@@ -44,11 +44,10 @@ interface ChartPanelSpec {
 }
 
 const COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
-const SVG_WIDTH = 560;
-const SVG_HEIGHT = 240;
-const PIE_SVG_WIDTH = 260;
-const PIE_SVG_HEIGHT = 220;
-const PADDING = { bottom: 38, left: 42, right: 20, top: 18 };
+const ECHARTS_FALLBACK_WIDTH = 620;
+const ECHARTS_DEFAULT_HEIGHT = 280;
+const ECHARTS_PIE_HEIGHT = 300;
+const ECHARTS_FUNNEL_HEIGHT = 270;
 const CHART_NUMBER_FORMATTER = new Intl.NumberFormat("zh-CN", {
   maximumFractionDigits: 2,
   minimumFractionDigits: 0,
@@ -86,9 +85,6 @@ export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
               </A2UIMotionItem>
             ) : null}
             {panel.chart ? renderChart(panel.chart) : <ChartSkeleton type={panel.type} />}
-            {panel.chart?.series.length && panel.chart.series.length > 1 && (panel.chart.type === "column" || panel.chart.type === "trend") ? (
-              <ChartLegend series={panel.chart.series} />
-            ) : null}
           </A2UIMotionItem>
         ))
       ) : isStreaming ? (
@@ -108,227 +104,452 @@ export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
 function renderChart(
   chart: ChartSpec,
 ) {
-  if (chart.type === "pie") {
-    return <PieChart chart={chart} points={pointsForChart(chart)} />;
+  return <EChartsChart chart={chart} />;
+}
+
+function EChartsChart({ chart }: { chart: ChartSpec }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<EChartsType | null>(null);
+  const height = chartHeight(chart.type);
+  const option = useMemo(() => buildEChartsOption(chart), [chart]);
+  const interactionMode = chart.type === "trend" || chart.type === "column" ? "tooltip,axisPointer,legendToggle" : "tooltip,legendToggle";
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    const instance = echarts.init(container, undefined, {
+      height,
+      renderer: "svg",
+      width: ECHARTS_FALLBACK_WIDTH,
+    });
+    chartRef.current = instance;
+
+    const resize = () => {
+      const width = Math.max(320, Math.round(container.getBoundingClientRect().width || ECHARTS_FALLBACK_WIDTH));
+      instance.resize({ height, width });
+    };
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null;
+    observer?.observe(container);
+    resize();
+
+    return () => {
+      observer?.disconnect();
+      chartRef.current = null;
+      instance.dispose();
+    };
+  }, [height]);
+
+  useEffect(() => {
+    chartRef.current?.setOption(option, {
+      lazyUpdate: false,
+      notMerge: false,
+    });
+  }, [option]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={styles.echartsSurface}
+      data-a2ui-chart-category-count={chart.categories.length}
+      data-a2ui-chart-data-count={chartDataCount(chart)}
+      data-a2ui-chart-engine="echarts"
+      data-a2ui-chart-interactions={interactionMode}
+      data-a2ui-chart-tooltip={chart.type === "trend" || chart.type === "column" ? "axis" : "item"}
+      data-chart-type={chart.type}
+      data-testid="a2ui-echarts-surface"
+      role="img"
+      aria-label={chart.title || `${chart.type} chart`}
+      style={{ minHeight: height }}
+    />
+  );
+}
+
+function chartHeight(type: ChartType): number {
+  if (type === "pie") {
+    return ECHARTS_PIE_HEIGHT;
   }
-  if (chart.type === "trend") {
-    return <TrendChart chart={chart} />;
+  if (type === "funnel") {
+    return ECHARTS_FUNNEL_HEIGHT;
+  }
+  return ECHARTS_DEFAULT_HEIGHT;
+}
+
+function buildEChartsOption(chart: ChartSpec): EChartsOption {
+  if (chart.type === "pie") {
+    return buildPieOption(chart);
   }
   if (chart.type === "funnel") {
-    return <FunnelChart chart={chart} points={pointsForChart(chart)} />;
+    return buildFunnelOption(chart);
   }
-  return <ColumnChart chart={chart} />;
+  return buildCartesianOption(chart);
 }
 
-function ColumnChart({
-  chart,
-}: {
-  chart: ChartSpec;
-}) {
-  const plotWidth = SVG_WIDTH - PADDING.left - PADDING.right;
-  const plotHeight = SVG_HEIGHT - PADDING.top - PADDING.bottom;
-  const values = chart.series.flatMap((series) => series.data.map(numberValue)).filter((value) => value !== null) as number[];
-  const max = Math.max(1, ...values);
+function buildCartesianOption(chart: ChartSpec): EChartsOption {
   const categories = chart.categories.length ? chart.categories : defaultCategories(chart.series);
-  const groupWidth = plotWidth / Math.max(1, categories.length);
-  const barWidth = Math.max(5, (groupWidth - 12) / Math.max(1, chart.series.length));
+  const isTrend = chart.type === "trend";
+  const series = chart.series.map((item, index): SeriesOption => {
+    const data = categories.map((_, pointIndex) => numberValue(item.data[pointIndex]));
+    if (isTrend) {
+      return {
+        id: `trend:${index}:${item.name}`,
+        name: item.name,
+        type: "line",
+        data,
+        animationDelay: staggerAnimationDelay,
+        animationDelayUpdate: staggerAnimationDelay,
+        smooth: true,
+        showSymbol: false,
+        symbol: "circle",
+        symbolSize: 6,
+        connectNulls: false,
+        emphasis: {
+          focus: "series",
+          lineStyle: { width: 3.4 },
+          scale: true,
+        },
+        lineStyle: {
+          width: 2.4,
+        },
+        areaStyle: {
+          opacity: 0.055,
+        },
+      };
+    }
+    return {
+      id: `column:${index}:${item.name}`,
+      name: item.name,
+      type: "bar",
+      data,
+      animationDelay: staggerAnimationDelay,
+      animationDelayUpdate: staggerAnimationDelay,
+      barMaxWidth: 30,
+      emphasis: {
+        focus: "series",
+      },
+      itemStyle: {
+        borderRadius: [5, 5, 2, 2],
+      },
+    };
+  });
 
-  return (
-    <svg className={styles.svg} viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} role="img" aria-label={chart.title || "column chart"}>
-      <ChartAxes />
-      {chart.series.map((series, seriesIndex) =>
-        categories.map((category, index) => {
-          const value = numberValue(series.data[index]);
-          if (value === null) {
-            return null;
-          }
-          const height = (value / max) * plotHeight;
-          const x = PADDING.left + index * groupWidth + 6 + seriesIndex * barWidth;
-          const y = PADDING.top + plotHeight - height;
-          return (
-            <g
-              {...a2uiMotionItemProps(`chart:column:${seriesIndex}:${index}:${series.name}:${category}`, "chart-column")}
-              className={revealStyles.motionItem}
-              key={`${series.name}:${category}:${seriesIndex}:${index}`}
-            >
-              <rect
-                className={revealStyles.revealBar}
-                data-testid="a2ui-chart-column"
-                fill={COLORS[seriesIndex % COLORS.length]}
-                height={height}
-                rx="3"
-                width={Math.max(4, barWidth - 3)}
-                x={x}
-                y={y}
-              >
-                <title>{tooltipText(series.name, category, value)}</title>
-              </rect>
-            </g>
-          );
-        }),
-      )}
-      {categories.map((category, index) => (
-        <text className={styles.label} key={category} textAnchor="middle" x={PADDING.left + index * groupWidth + groupWidth / 2} y={SVG_HEIGHT - 14}>
-          {category}
-        </text>
-      ))}
-    </svg>
-  );
+  return withBaseChartOption(chart, {
+    grid: {
+      bottom: 34,
+      containLabel: true,
+      left: 14,
+      right: 12,
+      top: 34,
+    },
+    legend: legendOption("top"),
+    series,
+    tooltip: {
+      ...tooltipBaseOption(),
+      axisPointer: {
+        animation: true,
+        type: isTrend ? "cross" : "shadow",
+        snap: true,
+        label: {
+          backgroundColor: "#334155",
+          color: "#ffffff",
+          fontSize: 11,
+        },
+        lineStyle: {
+          color: "#64748b",
+          type: "dashed",
+          width: 1,
+        },
+        crossStyle: {
+          color: "#64748b",
+          type: "dashed",
+          width: 1,
+        },
+        shadowStyle: {
+          color: "rgba(100, 116, 139, 0.10)",
+        },
+      },
+      formatter: axisTooltipFormatter,
+      trigger: "axis",
+    },
+    xAxis: {
+      type: "category",
+      boundaryGap: !isTrend,
+      data: categories,
+      axisLabel: {
+        color: "#64748b",
+        fontSize: 11,
+        hideOverlap: true,
+        formatter: compactAxisLabel,
+      },
+      axisLine: {
+        lineStyle: {
+          color: "#cbd5e1",
+        },
+      },
+      axisTick: {
+        alignWithLabel: true,
+        lineStyle: {
+          color: "#cbd5e1",
+        },
+      },
+    },
+    yAxis: {
+      type: "value",
+      axisLabel: {
+        color: "#64748b",
+        fontSize: 11,
+        formatter: compactNumberLabel,
+      },
+      splitLine: {
+        lineStyle: {
+          color: "#e5e7eb",
+          type: "dashed",
+        },
+      },
+    },
+  });
 }
 
-function TrendChart({
-  chart,
-}: {
-  chart: ChartSpec;
-}) {
-  const plotWidth = SVG_WIDTH - PADDING.left - PADDING.right;
-  const plotHeight = SVG_HEIGHT - PADDING.top - PADDING.bottom;
-  const values = chart.series.flatMap((series) => series.data.map(numberValue)).filter((value) => value !== null) as number[];
-  const max = Math.max(1, ...values);
-  const categories = chart.categories.length ? chart.categories : defaultCategories(chart.series);
-  const step = categories.length > 1 ? plotWidth / (categories.length - 1) : plotWidth;
-
-  return (
-    <svg className={styles.svg} viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} role="img" aria-label={chart.title || "trend chart"}>
-      <ChartAxes />
-      {chart.series.map((series, seriesIndex) => {
-        const points = categories.map((_, index) => {
-          const value = numberValue(series.data[index]);
-          if (value === null) {
-            return null;
-          }
-          const x = PADDING.left + index * step;
-          const y = PADDING.top + plotHeight - (value / max) * plotHeight;
-          return { category: categories[index] || `项 ${index + 1}`, point: `${x},${y}`, value };
-        }).filter((item): item is { category: string; point: string; value: number } => Boolean(item));
-        return (
-          <g
-            {...a2uiMotionItemProps(`chart:trend:${seriesIndex}:${series.name}`, "chart-trend")}
-            className={revealStyles.motionItem}
-            key={series.name}
-          >
-            <polyline
-              className={revealStyles.revealLine}
-              fill="none"
-              points={points.map((item) => item.point).join(" ")}
-              stroke={COLORS[seriesIndex % COLORS.length]}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="2.4"
-            />
-            {points.map(({ category, point, value }, index) => {
-              const [x, y] = point.split(",").map(Number);
-              return (
-                <g
-                  {...a2uiMotionItemProps(`chart:point:${seriesIndex}:${index}:${series.name}:${category}`, "chart-point")}
-                  className={revealStyles.motionItem}
-                  key={`${series.name}:${index}`}
-                >
-                  <circle
-                    className={revealStyles.revealPoint}
-                    cx={x}
-                    cy={y}
-                    fill={COLORS[seriesIndex % COLORS.length]}
-                    r="3"
-                  >
-                    <title>{tooltipText(series.name, category, value)}</title>
-                  </circle>
-                </g>
-              );
-            })}
-          </g>
-        );
-      })}
-      {categories.map((category, index) => (
-        <text className={styles.label} key={category} textAnchor="middle" x={PADDING.left + index * step} y={SVG_HEIGHT - 14}>
-          {category}
-        </text>
-      ))}
-    </svg>
-  );
+function buildPieOption(chart: ChartSpec): EChartsOption {
+  const points = pointsForChart(chart);
+  return withBaseChartOption(chart, {
+    legend: legendOption("bottom"),
+    series: [
+      {
+        id: "pie",
+        name: chart.seriesLabel || chart.title || "数据",
+        type: "pie",
+        data: points.map((point, index) => ({
+          itemStyle: point.color ? { color: point.color } : undefined,
+          name: point.label,
+          value: point.value,
+          selected: index === 0 && points.length > 1 ? false : undefined,
+        })),
+        animationDelay: staggerAnimationDelay,
+        animationDelayUpdate: staggerAnimationDelay,
+        radius: ["0%", "68%"],
+        center: ["50%", "46%"],
+        avoidLabelOverlap: true,
+        emphasis: {
+          focus: "self",
+          scale: true,
+          scaleSize: 7,
+        },
+        label: {
+          color: "#475569",
+          formatter: "{b}",
+        },
+        labelLine: {
+          lineStyle: {
+            color: "#94a3b8",
+          },
+          smooth: true,
+        },
+      },
+    ],
+    tooltip: {
+      ...tooltipBaseOption(),
+      formatter: itemTooltipFormatter,
+      trigger: "item",
+    },
+  });
 }
 
-function PieChart({
-  chart,
-  points,
-}: {
-  chart: ChartSpec;
-  points: ChartPoint[];
-}) {
-  const total = points.reduce((sum, point) => sum + Math.max(0, point.value), 0);
-  if (!points.length || total <= 0) {
-    return <div className={styles.empty}>暂无饼图数据</div>;
+function buildFunnelOption(chart: ChartSpec): EChartsOption {
+  const points = pointsForChart(chart);
+  return withBaseChartOption(chart, {
+    legend: legendOption("top"),
+    series: [
+      {
+        id: "funnel",
+        name: chart.seriesLabel || chart.title || "数据",
+        type: "funnel",
+        data: points.map((point) => ({
+          itemStyle: point.color ? { color: point.color } : undefined,
+          name: point.label,
+          value: point.value,
+        })),
+        animationDelay: staggerAnimationDelay,
+        animationDelayUpdate: staggerAnimationDelay,
+        top: 36,
+        bottom: 8,
+        left: "10%",
+        right: "14%",
+        minSize: "8%",
+        maxSize: "92%",
+        sort: "none",
+        gap: 8,
+        emphasis: {
+          focus: "self",
+          label: {
+            fontWeight: 700,
+          },
+        },
+        itemStyle: {
+          borderColor: "#ffffff",
+          borderWidth: 1,
+        },
+        label: {
+          color: "#475569",
+          formatter: (params: unknown) => {
+            const item = tooltipParam(params);
+            return `${item.name || ""} · ${formatTooltipValue(item.value)}`;
+          },
+        },
+      },
+    ],
+    tooltip: {
+      ...tooltipBaseOption(),
+      formatter: itemTooltipFormatter,
+      trigger: "item",
+    },
+  });
+}
+
+function withBaseChartOption(chart: ChartSpec, option: EChartsOption): EChartsOption {
+  return {
+    animation: true,
+    animationDuration: 420,
+    animationDurationUpdate: 220,
+    animationEasing: "cubicOut",
+    animationEasingUpdate: "cubicOut",
+    animationThreshold: 3000,
+    aria: {
+      enabled: true,
+    },
+    color: COLORS,
+    textStyle: {
+      color: "#334155",
+      fontFamily: "Inter, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+    },
+    ...option,
+  };
+}
+
+function staggerAnimationDelay(dataIndex: number): number {
+  return Math.min(dataIndex * 34, 220);
+}
+
+function legendOption(position: "top" | "bottom"): EChartsOption["legend"] {
+  return {
+    type: "scroll",
+    selectedMode: true,
+    left: 0,
+    right: 0,
+    ...(position === "bottom" ? { bottom: 0 } : { top: 0 }),
+    icon: "roundRect",
+    itemGap: 12,
+    itemHeight: 8,
+    itemWidth: 10,
+    pageIconColor: "#64748b",
+    pageIconInactiveColor: "#cbd5e1",
+    pageTextStyle: {
+      color: "#64748b",
+      fontSize: 10,
+    },
+    textStyle: {
+      color: "#64748b",
+      fontSize: 11,
+      overflow: "truncate",
+      width: 92,
+    },
+  };
+}
+
+function tooltipBaseOption(): NonNullable<EChartsOption["tooltip"]> {
+  return {
+    appendToBody: false,
+    backgroundColor: "rgba(255, 255, 255, 0.98)",
+    borderColor: "rgba(148, 163, 184, 0.32)",
+    borderRadius: 8,
+    borderWidth: 1,
+    confine: true,
+    extraCssText: "box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);",
+    padding: [8, 10],
+    transitionDuration: 0.14,
+    triggerOn: "mousemove|click",
+    textStyle: {
+      color: "#334155",
+      fontSize: 12,
+      lineHeight: 18,
+    },
+  };
+}
+
+function axisTooltipFormatter(params: unknown): string {
+  const items = (Array.isArray(params) ? params : [params]).map(tooltipParam);
+  const title = escapeHtml(String(items[0]?.axisValueLabel || items[0]?.name || ""));
+  const rows = items
+    .filter((item) => item.seriesName)
+    .map((item) => tooltipRow(item.marker, item.seriesName, item.value))
+    .join("");
+  return `<div class="${styles.tooltip}"><div class="${styles.tooltipTitle}">${title}</div>${rows}</div>`;
+}
+
+function itemTooltipFormatter(params: unknown): string {
+  const item = tooltipParam(params);
+  return `<div class="${styles.tooltip}"><div class="${styles.tooltipTitle}">${escapeHtml(item.name)}</div>${tooltipRow(item.marker, item.seriesName, item.value)}</div>`;
+}
+
+function tooltipRow(marker: string, label: string, value: unknown): string {
+  return [
+    `<div class="${styles.tooltipRow}">`,
+    marker,
+    `<span class="${styles.tooltipLabel}">${escapeHtml(label)}</span>`,
+    `<strong>${escapeHtml(formatTooltipValue(value))}</strong>`,
+    "</div>",
+  ].join("");
+}
+
+function tooltipParam(value: unknown): {
+  axisValueLabel: string;
+  marker: string;
+  name: string;
+  seriesName: string;
+  value: unknown;
+} {
+  const record = asRecord(value);
+  return {
+    axisValueLabel: scalarText(record?.axisValueLabel),
+    marker: scalarText(record?.marker),
+    name: scalarText(record?.name),
+    seriesName: scalarText(record?.seriesName),
+    value: record?.value,
+  };
+}
+
+function compactAxisLabel(value: unknown): string {
+  const text = scalarText(value);
+  return text.length > 8 ? `${text.slice(0, 8)}...` : text;
+}
+
+function compactNumberLabel(value: unknown): string {
+  const number = numberValue(value);
+  if (number === null) {
+    return scalarText(value);
   }
-  let startAngle = -90;
-  const center = { x: PIE_SVG_WIDTH / 2, y: PIE_SVG_HEIGHT / 2 };
-  const radius = 76;
-  return (
-    <div className={styles.pieLayout} data-testid="a2ui-chart-pie-layout">
-      <svg
-        className={[styles.svg, styles.pieSvg].join(" ")}
-        viewBox={`0 0 ${PIE_SVG_WIDTH} ${PIE_SVG_HEIGHT}`}
-        role="img"
-        aria-label="pie chart"
-      >
-        {points.map((point, index) => {
-          const angle = (Math.max(0, point.value) / total) * 360;
-          const path = describeArc(center.x, center.y, radius, startAngle, startAngle + angle);
-          startAngle += angle;
-          return (
-            <g
-              {...a2uiMotionItemProps(`chart:pie:${index}:${point.label}`, "chart-pie")}
-              className={revealStyles.motionItem}
-              key={`${point.label}:${index}`}
-            >
-              <path className={revealStyles.revealPoint} d={path} fill={point.color || COLORS[index % COLORS.length]}>
-                <title>{tooltipText(point.label, "", point.value)}</title>
-              </path>
-            </g>
-          );
-        })}
-      </svg>
-      <ChartPointList points={points} />
-    </div>
-  );
+  if (Math.abs(number) >= 10000) {
+    return `${CHART_NUMBER_FORMATTER.format(number / 10000)}万`;
+  }
+  return CHART_NUMBER_FORMATTER.format(number);
 }
 
-function FunnelChart({
-  chart,
-  points,
-}: {
-  chart: ChartSpec;
-  points: ChartPoint[];
-}) {
-  const max = Math.max(1, ...points.map((point) => point.value));
-  return (
-    <div className={styles.funnelList} role="img" aria-label={chart.title || "funnel chart"}>
-      {points.map((point, index) => {
-        const width = `${Math.max(8, (point.value / max) * 100)}%`;
-        return (
-          <A2UIMotionItem
-            className={[styles.funnelRow, revealStyles.motionItem].join(" ")}
-            key={point.label}
-            motionKey={`chart:funnel:${index}:${point.label}`}
-            motionKind="chart-funnel"
-          >
-            <div className={styles.funnelMeta}>
-              <span className={styles.funnelName} title={point.label}>{point.label}</span>
-              <span className={styles.funnelValue} title={formatNumber(point.value)}>{formatNumber(point.value)}</span>
-            </div>
-            <div className={styles.funnelTrack} title={tooltipText(point.label, "", point.value)}>
-              <span
-                className={[styles.funnelBar, revealStyles.revealBar].join(" ")}
-                style={{ width, backgroundColor: point.color || COLORS[index % COLORS.length] }}
-              />
-            </div>
-            {point.ratio !== undefined ? (
-              <span className={styles.funnelRatio}>{formatNumber(point.ratio)}%</span>
-            ) : null}
-          </A2UIMotionItem>
-        );
-      })}
-    </div>
-  );
+function formatTooltipValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map(formatTooltipValue).join(" / ");
+  }
+  const number = numberValue(value);
+  return number === null ? scalarText(value) || "-" : formatNumber(number);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function ChartSkeleton({ type }: { type: ChartType }) {
@@ -365,69 +586,6 @@ function ChartSkeleton({ type }: { type: ChartType }) {
   );
 }
 
-function ChartAxes() {
-  const plotHeight = SVG_HEIGHT - PADDING.top - PADDING.bottom;
-  const plotWidth = SVG_WIDTH - PADDING.left - PADDING.right;
-  return (
-    <g>
-      {[0, 0.25, 0.5, 0.75, 1].map((tick) => (
-        <line
-          className={styles.gridLine}
-          key={tick}
-          x1={PADDING.left}
-          x2={SVG_WIDTH - PADDING.right}
-          y1={PADDING.top + plotHeight * tick}
-          y2={PADDING.top + plotHeight * tick}
-        />
-      ))}
-      <line className={styles.axis} x1={PADDING.left} x2={PADDING.left} y1={PADDING.top} y2={PADDING.top + plotHeight} />
-      <line className={styles.axis} x1={PADDING.left} x2={PADDING.left + plotWidth} y1={PADDING.top + plotHeight} y2={PADDING.top + plotHeight} />
-    </g>
-  );
-}
-
-function ChartLegend({ series }: { series: ChartSeries[] }) {
-  return (
-    <div className={styles.legend}>
-      {series.map((item, index) => (
-        <A2UIMotionItem
-          as="span"
-          className={styles.legendItem}
-          key={item.name}
-          motionKey={`chart:legend:${index}:${item.name}`}
-          motionKind="chart-legend"
-        >
-          <span className={styles.legendSwatch} style={{ backgroundColor: COLORS[index % COLORS.length] }} />
-          <span className={styles.legendText} title={item.name}>{item.name}</span>
-        </A2UIMotionItem>
-      ))}
-    </div>
-  );
-}
-
-function ChartPointList({ points }: { points: ChartPoint[] }) {
-  if (!points.length) {
-    return null;
-  }
-  return (
-    <div className={styles.pointList} data-testid="a2ui-chart-pie-list">
-      {points.map((item, index) => (
-        <A2UIMotionItem
-          as="div"
-          className={styles.pointItem}
-          key={`${item.label}:${index}`}
-          motionKey={`chart:point-list:${index}:${item.label}`}
-          motionKind="chart-point-list"
-        >
-          <span className={styles.legendSwatch} style={{ backgroundColor: COLORS[index % COLORS.length] }} />
-          <span className={styles.pointName} title={item.label}>{item.label}</span>
-          <span className={styles.pointValue} title={formatNumber(item.value)}>{formatNumber(item.value)}</span>
-        </A2UIMotionItem>
-      ))}
-    </div>
-  );
-}
-
 function isStreamingStatus(status: string): boolean {
   const normalized = status.toLowerCase();
   return normalized === "started" || normalized === "streaming" || normalized === "finished";
@@ -438,12 +596,13 @@ function normalizeChartPanels(
   isStreaming: boolean,
   parsed: ParsedA2UIMessage,
 ): ChartPanelSpec[] {
+  const structureCharts = chartStructureRecords(parsed);
   const panels = Array.isArray(payload.charts)
     ? payload.charts
-      .map(asRecord)
-      .filter((chart): chart is Record<string, unknown> => Boolean(chart))
-      .map((record): ChartPanelSpec | null => {
-        const chart = chartSpecFromRecord(record);
+      .map((item, index) => ({ index, record: asRecord(item) }))
+      .filter((item): item is { index: number; record: Record<string, unknown> } => Boolean(item.record))
+      .map(({ index, record }): ChartPanelSpec | null => {
+        const chart = chartSpecFromRecord(record, structureCharts[index]);
         if (!chart) {
           return null;
         }
@@ -477,20 +636,43 @@ function normalizeChartPanels(
   ];
 }
 
-function chartSpecFromRecord(record: Record<string, unknown>): ChartSpec | null {
-  const type = normalizeChartType(record.type);
+function chartStructureRecords(parsed: ParsedA2UIMessage): Array<Record<string, unknown> | null> {
+  if (parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created") {
+    return [];
+  }
+  const payloads = [
+    asRecord(parsed.a2ui?.payload),
+    asRecord(parsed.debug?.payload),
+    asRecord(parsed.debug?.parsedArgs),
+  ];
+  for (const payload of payloads) {
+    if (!payload || !Array.isArray(payload.charts)) {
+      continue;
+    }
+    return payload.charts.map((item) => asRecord(item));
+  }
+  return [];
+}
+
+function chartSpecFromRecord(
+  record: Record<string, unknown>,
+  structureRecord?: Record<string, unknown> | null,
+): ChartSpec | null {
+  const type = normalizeChartType(record.type) ?? normalizeChartType(structureRecord?.type);
   if (!type) {
     return null;
   }
   const seriesLabel = scalarText(record.series_label);
+  const isCartesian = type === "column" || type === "trend";
   const directPoints = normalizePoints(record.items);
-  const series = normalizeSeries(record, directPoints);
-  const categories = chartCategories(series, directPoints);
+  const structurePoints = isCartesian ? normalizePoints(structureRecord?.items) : [];
+  const series = normalizeSeries(record, directPoints, isCartesian ? structureRecord : null);
+  const categories = chartCategories(series, directPoints, structurePoints);
   const points = directPoints.length ? directPoints : pointsFromSeries(series[0]);
   return {
     type,
-    title: scalarText(record.title),
-    seriesLabel,
+    title: scalarText(record.title) || scalarText(structureRecord?.title),
+    seriesLabel: seriesLabel || scalarText(structureRecord?.series_label),
     categories,
     series,
     points,
@@ -548,7 +730,14 @@ function normalizeChartType(value: unknown): ChartType | null {
   return null;
 }
 
-function normalizeSeries(record: Record<string, unknown>, directPoints: ChartPoint[]): ChartSeries[] {
+function normalizeSeries(
+  record: Record<string, unknown>,
+  directPoints: ChartPoint[],
+  structureRecord?: Record<string, unknown> | null,
+): ChartSeries[] {
+  const structureSeries = Array.isArray(structureRecord?.series)
+    ? structureRecord.series.map(asRecord).filter((item): item is Record<string, unknown> => Boolean(item))
+    : [];
   if (!Array.isArray(record.series)) {
     if (!directPoints.length) {
       return [];
@@ -561,13 +750,37 @@ function normalizeSeries(record: Record<string, unknown>, directPoints: ChartPoi
       },
     ];
   }
-  return record.series
+  const visibleSeries = record.series.map(asRecord);
+  if (structureSeries.length) {
+    return structureSeries
+      .map((seriesRecord, index): ChartSeries | null => {
+        if (!Array.isArray(seriesRecord.items)) {
+          return null;
+        }
+        const visibleRecord = asRecord(visibleSeries[index]);
+        const structurePoints = normalizePoints(seriesRecord.items);
+        const visiblePoints = visibleRecord && Array.isArray(visibleRecord.items)
+          ? normalizePoints(visibleRecord.items)
+          : [];
+        return {
+          name: scalarText(seriesRecord.name) || `系列 ${index + 1}`,
+          data: structurePoints.map((_, pointIndex) => visiblePoints[pointIndex]?.value ?? null),
+          categories: structurePoints.map((point) => point.label),
+        };
+      })
+      .filter((item): item is ChartSeries => Boolean(item));
+  }
+  const sourceSeries = structureSeries.length ? structureSeries : visibleSeries;
+  return sourceSeries
     .map((item, index): ChartSeries | null => {
       const seriesRecord = asRecord(item);
+      const visibleRecord = asRecord(visibleSeries[index]);
       if (!seriesRecord || !Array.isArray(seriesRecord.items)) {
         return null;
       }
-      const points = normalizePoints(seriesRecord.items);
+      const points = visibleRecord && Array.isArray(visibleRecord.items)
+        ? normalizePoints(visibleRecord.items)
+        : normalizePoints(seriesRecord.items);
       return {
         name: scalarText(seriesRecord.name) || `系列 ${index + 1}`,
         data: points.map((point) => point.value),
@@ -610,10 +823,13 @@ function pointsForChart(chart: ChartSpec): ChartPoint[] {
   return pointsFromSeries(chart.series[0]);
 }
 
-function chartCategories(series: ChartSeries[], points: ChartPoint[]): string[] {
+function chartCategories(series: ChartSeries[], points: ChartPoint[], structurePoints: ChartPoint[] = []): string[] {
   const seriesCategories = series.find((item) => item.categories.length)?.categories ?? [];
   if (seriesCategories.length) {
     return seriesCategories;
+  }
+  if (structurePoints.length) {
+    return structurePoints.map((point) => point.label);
   }
   return points.map((point) => point.label);
 }
@@ -677,8 +893,10 @@ function stablePanelKey(panel: ChartPanelSpec, index: number): string {
 }
 
 function chartDataCount(chart: ChartSpec): number {
-  const seriesCount = chart.series.reduce((sum, series) => sum + series.data.filter((value) => value !== null).length, 0);
-  return seriesCount + chart.points.length;
+  if (chart.type === "pie" || chart.type === "funnel") {
+    return pointsForChart(chart).length;
+  }
+  return chart.series.reduce((sum, series) => sum + series.data.filter((value) => value !== null).length, 0);
 }
 
 function chartPanelStabilityKey(parsed: ParsedA2UIMessage): string {
@@ -727,23 +945,4 @@ function formatNumber(value: number): string {
     return "";
   }
   return CHART_NUMBER_FORMATTER.format(Object.is(value, -0) ? 0 : value);
-}
-
-function tooltipText(series: string, category: string, value: number): string {
-  return [series, category].filter(Boolean).join(" · ") + `: ${formatNumber(value)}`;
-}
-
-function polarToCartesian(centerX: number, centerY: number, radius: number, angleInDegrees: number) {
-  const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180;
-  return {
-    x: centerX + radius * Math.cos(angleInRadians),
-    y: centerY + radius * Math.sin(angleInRadians),
-  };
-}
-
-function describeArc(x: number, y: number, radius: number, startAngle: number, endAngle: number): string {
-  const start = polarToCartesian(x, y, radius, endAngle);
-  const end = polarToCartesian(x, y, radius, startAngle);
-  const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
-  return ["M", x, y, "L", start.x, start.y, "A", radius, radius, 0, largeArcFlag, 0, end.x, end.y, "Z"].join(" ");
 }

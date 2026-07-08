@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { A2UIBlock } from "@/renderer/pages/conversation/messages";
@@ -77,15 +77,24 @@ describe("A2ChartBlock", () => {
     ]);
     expect(screen.getAllByText("组合图表")).toHaveLength(1);
     expect(screen.getByText("数据截止到今天")).not.toBeNull();
-    expect(screen.getAllByText("点击").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("转化")).not.toBeNull();
-    expect(container.querySelector("title")?.textContent).toBe("点击 · 微信: 120");
-
-    const pieList = screen.getByTestId("a2ui-chart-pie-list");
-    expect(within(pieList).getByText("新客")).not.toBeNull();
-    expect(within(pieList).getByText("40")).not.toBeNull();
-    expect(within(panels[3]).getByText("曝光")).not.toBeNull();
-    expect(within(panels[3]).getByText("1,000")).not.toBeNull();
+    const surfaces = screen.getAllByTestId("a2ui-echarts-surface");
+    expect(surfaces).toHaveLength(4);
+    expect(surfaces.map((surface) => surface.getAttribute("data-chart-type"))).toEqual([
+      "column",
+      "trend",
+      "pie",
+      "funnel",
+    ]);
+    expect(surfaces.every((surface) => surface.getAttribute("data-a2ui-chart-engine") === "echarts")).toBe(true);
+      expect(surfaces[0].getAttribute("data-a2ui-chart-data-count")).toBe("4");
+      expect(surfaces[0].getAttribute("data-a2ui-chart-category-count")).toBe("2");
+      expect(surfaces[1].getAttribute("data-a2ui-chart-data-count")).toBe("3");
+      expect(surfaces[1].getAttribute("data-a2ui-chart-category-count")).toBe("3");
+    expect(surfaces[2].getAttribute("data-a2ui-chart-data-count")).toBe("2");
+    expect(surfaces[3].getAttribute("data-a2ui-chart-data-count")).toBe("2");
+    expect(surfaces[1].getAttribute("data-a2ui-chart-interactions")).toBe("tooltip,axisPointer,legendToggle");
+    expect(surfaces[1].getAttribute("data-a2ui-chart-tooltip")).toBe("axis");
+    expect(container.querySelector("svg")).not.toBeNull();
   });
 
   it("does not render legacy single-chart payloads", () => {
@@ -146,6 +155,7 @@ describe("A2ChartBlock", () => {
 
   it("reveals streamed multi-chart payloads in parallel inside each chart", () => {
     vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
     try {
       render(
         <A2UIBlock
@@ -186,16 +196,16 @@ describe("A2ChartBlock", () => {
 
       const panels = screen.getAllByTestId("a2ui-chart-panel");
       expect(panels).toHaveLength(2);
-      expect(within(panels[0]).queryAllByTestId("a2ui-chart-column")).toHaveLength(1);
-      expect(within(panels[1]).queryAllByTestId("a2ui-chart-column")).toHaveLength(1);
+      expect(totalChartDataCount()).toBe(1);
+      expect(screen.getByTestId("a2ui-echarts-surface").getAttribute("data-a2ui-chart-category-count")).toBe("1");
 
       act(() => {
         vi.advanceTimersByTime(1_600);
       });
 
-      expect(within(panels[0]).queryAllByTestId("a2ui-chart-column")).toHaveLength(2);
-      expect(within(panels[1]).queryAllByTestId("a2ui-chart-column")).toHaveLength(3);
+      expect(chartDataCounts()).toEqual([2, 3]);
     } finally {
+      restoreRaf();
       vi.clearAllTimers();
       vi.useRealTimers();
     }
@@ -220,17 +230,18 @@ describe("A2ChartBlock", () => {
     const { rerender } = render(<A2UIBlock message={streamingChartMessage(stablePayload)} />);
 
     expect(screen.getByTestId("a2ui-chart-panel")).not.toBeNull();
-    expect(screen.getByTestId("a2ui-chart-column")).not.toBeNull();
+    expect(screen.getByTestId("a2ui-echarts-surface").getAttribute("data-a2ui-chart-data-count")).toBe("1");
 
     rerender(<A2UIBlock message={streamingChartMessage({ title: "解析缺口" }, '{"title":"解析缺口","charts":[')} />);
 
     expect(screen.getByTestId("a2ui-chart-panel")).not.toBeNull();
-    expect(screen.getByTestId("a2ui-chart-column")).not.toBeNull();
+    expect(screen.getByTestId("a2ui-echarts-surface").getAttribute("data-a2ui-chart-data-count")).toBe("1");
     expect(screen.queryByText("暂无图表数据")).toBeNull();
   });
 
   it("does not shrink already revealed chart items when a later stream parse is shorter", () => {
     vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
     try {
       const fullPayload = {
         title: "流式回退保护",
@@ -268,21 +279,66 @@ describe("A2ChartBlock", () => {
         ],
       };
 
-      const { container, rerender } = render(<A2UIBlock message={streamingChartMessage(fullPayload)} />);
-      const visibleColumns = () => container.querySelectorAll('[data-testid="a2ui-chart-column"]').length;
+      const { rerender } = render(<A2UIBlock message={streamingChartMessage(fullPayload)} />);
 
       act(() => {
         vi.advanceTimersByTime(1_200);
       });
-      expect(visibleColumns()).toBe(4);
+      expect(chartDataCounts()).toEqual([4]);
 
       rerender(<A2UIBlock message={streamingChartMessage(shorterPayload)} />);
-      expect(visibleColumns()).toBe(4);
+      expect(chartDataCounts()).toEqual([4]);
 
       rerender(<A2UIBlock message={streamedCreatedChartMessage(fullPayload, "stream-chart-stream", "tool-chart-stream")} />);
-      expect(visibleColumns()).toBe(4);
+      expect(chartDataCounts()).toEqual([4]);
       expect(screen.getByTestId("a2ui-chart").getAttribute("data-a2ui-reveal-visible")).toBe("4");
     } finally {
+      restoreRaf();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the rendered chart visible when a terminal stream update has no final payload yet", () => {
+    vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
+    try {
+      const fullPayload = {
+        title: "终态空包保护",
+        charts: [
+          {
+            type: "column",
+            title: "完整数据",
+            series: [
+              {
+                name: "数量",
+                items: [
+                  { name: "A", value: 10 },
+                  { name: "B", value: 20 },
+                  { name: "C", value: 30 },
+                  { name: "D", value: 40 },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      const { rerender } = render(
+        <A2UIBlock message={streamedCreatedChartMessage(fullPayload, "stream-chart-terminal", "tool-chart-terminal")} />,
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(1_200);
+      });
+      expect(chartDataCounts()).toEqual([4]);
+
+      rerender(<A2UIBlock message={terminalEmptyChartMessage("stream-chart-terminal", "tool-chart-terminal")} />);
+
+      expect(chartDataCounts()).toEqual([4]);
+      expect(screen.queryByTestId("a2ui-chart-skeleton")).toBeNull();
+      expect(screen.queryByText("暂无图表数据")).toBeNull();
+    } finally {
+      restoreRaf();
       vi.clearAllTimers();
       vi.useRealTimers();
     }
@@ -290,6 +346,7 @@ describe("A2ChartBlock", () => {
 
   it("does not flash back to skeleton when a stable stream receives new chart items", () => {
     vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
     try {
       const firstPayload = {
         title: "稳定增长",
@@ -324,26 +381,26 @@ describe("A2ChartBlock", () => {
           },
         ],
       };
-      const { container, rerender } = render(
+      const { rerender } = render(
         <A2UIBlock message={withDebugId(streamingChartMessage(firstPayload), "chunk-1")} />,
       );
-      const visibleColumns = () => container.querySelectorAll('[data-testid="a2ui-chart-column"]').length;
 
-      expect(visibleColumns()).toBe(1);
+      expect(chartDataCounts()).toEqual([1]);
       expect(screen.queryByTestId("a2ui-chart-skeleton")).toBeNull();
 
       rerender(<A2UIBlock message={withDebugId(streamingChartMessage(secondPayload), "chunk-2")} />);
 
-      expect(visibleColumns()).toBe(1);
+      expect(chartDataCounts()).toEqual([1]);
       expect(screen.queryByTestId("a2ui-chart-skeleton")).toBeNull();
 
       act(() => {
         vi.advanceTimersByTime(300);
       });
 
-      expect(visibleColumns()).toBe(2);
+      expect(chartDataCounts()).toEqual([2]);
       expect(screen.queryByTestId("a2ui-chart-skeleton")).toBeNull();
     } finally {
+      restoreRaf();
       vi.clearAllTimers();
       vi.useRealTimers();
     }
@@ -351,8 +408,9 @@ describe("A2ChartBlock", () => {
 
   it("reveals streamed created chart payloads element by element", () => {
     vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
     try {
-      const { container } = render(
+      render(
         <A2UIBlock
           message={streamedCreatedChartMessage({
             title: "流式柱状图",
@@ -384,21 +442,44 @@ describe("A2ChartBlock", () => {
         />,
       );
 
-      const visibleColumns = () => container.querySelectorAll('[data-testid="a2ui-chart-column"]').length;
-      expect(visibleColumns()).toBeGreaterThan(0);
-      expect(visibleColumns()).toBeLessThan(6);
+      expect(chartDataCounts()[0]).toBeGreaterThan(0);
+      expect(chartDataCounts()[0]).toBeLessThan(6);
 
       act(() => {
         vi.advanceTimersByTime(1_600);
       });
 
-      expect(visibleColumns()).toBe(6);
+      expect(chartDataCounts()).toEqual([6]);
     } finally {
+      restoreRaf();
       vi.clearAllTimers();
       vi.useRealTimers();
     }
   });
 });
+
+function installTimerBackedRaf(): () => void {
+  const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => (
+    window.setTimeout(() => callback(performance.now()), 0) as unknown as number
+  ));
+  const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((handle) => {
+    window.clearTimeout(handle);
+  });
+  return () => {
+    requestFrame.mockRestore();
+    cancelFrame.mockRestore();
+  };
+}
+
+function chartDataCounts(): number[] {
+  return screen
+    .getAllByTestId("a2ui-echarts-surface")
+    .map((surface) => Number(surface.getAttribute("data-a2ui-chart-data-count")));
+}
+
+function totalChartDataCount(): number {
+  return chartDataCounts().reduce((sum, count) => sum + count, 0);
+}
 
 function withDebugId(message: ConversationMessage, id: string): ConversationMessage {
   const debug = message.payload.a2uiDebug as A2UIDebugBlockState;
@@ -551,6 +632,45 @@ function streamedCreatedChartMessage(
       },
       renderKey: "chart",
       streamId: "stream-chart-1",
+    },
+    createdAt: "2026-07-08T00:00:00.000Z",
+    updatedAt: "2026-07-08T00:00:00.000Z",
+  };
+}
+
+function terminalEmptyChartMessage(
+  streamId: string,
+  toolCallId: string,
+): ConversationMessage {
+  return {
+    id: "agent:a2ui-chart-terminal-empty",
+    threadId: "ses-1",
+    turnId: null,
+    itemId: "a2ui-chart-terminal-empty",
+    kind: "a2ui",
+    status: "completed",
+    content: "",
+    payload: {
+      a2ui: null,
+      a2uiDebug: {
+        id: streamId,
+        status: "created",
+        renderKey: "chart",
+        mode: "render",
+        streamId,
+        toolCallId,
+        traceId: "trace-stream",
+        turnIndex: 1,
+        chunkCount: 154,
+        argsBuffer: "",
+        argsTextLength: 0,
+        jsonParseStatus: "empty",
+        payload: {},
+        rawEvents: [],
+        updatedAt: 1_700_000_000_050,
+      },
+      renderKey: "chart",
+      streamId,
     },
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
