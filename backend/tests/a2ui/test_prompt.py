@@ -21,6 +21,9 @@ def test_a2ui_prompt_lists_builtin_tools_and_resume_semantics() -> None:
     assert "应优先考虑 A2UI" in prompt
     assert "等待用户提交或取消" in prompt
     assert "恢复执行图" in prompt
+    assert "推荐项、默认值和字段帮助" in prompt
+    assert "`confirm`" not in prompt
+    assert "模拟权限审批" in prompt
     assert "configure" not in prompt.lower()
     assert "仅当可视化界面或用户输入能明显提升" not in prompt
 

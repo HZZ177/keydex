@@ -2,7 +2,6 @@ import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
-  ClipboardCheck,
   Loader2,
   MousePointerClick,
   Rows3,
@@ -22,7 +21,6 @@ import type {
 import styles from "./A2UIBlock.module.css";
 import { A2ChartBlock } from "./A2ChartBlock";
 import { A2ChoiceBlock } from "./A2ChoiceBlock";
-import { A2ConfirmBlock } from "./A2ConfirmBlock";
 import { A2UIDebugInfoButton } from "./A2UIDebugInfoButton";
 import { A2UIDebugPanel } from "./A2UIDebugPanel";
 import { A2FormBlock } from "./A2FormBlock";
@@ -167,23 +165,20 @@ function renderBuiltInContent(
     }
     return <A2ChartBlock parsed={parsed} />;
   }
-  if (!parsed.a2ui) {
+  if (parsed.renderKey === "choice") {
     if (parsed.status === "failed") {
       return <A2UIErrorLine message={parsed.parseError} />;
     }
-    return null;
-  }
-  if (parsed.status === "failed") {
-    return <A2UIErrorLine message={parsed.parseError} />;
-  }
-  if (parsed.renderKey === "confirm") {
-    return <A2ConfirmBlock message={message} parsed={parsed} onSubmit={onSubmit} onCancel={onCancel} />;
-  }
-  if (parsed.renderKey === "choice") {
     return <A2ChoiceBlock message={message} parsed={parsed} onSubmit={onSubmit} onCancel={onCancel} />;
   }
   if (parsed.renderKey === "form") {
+    if (parsed.status === "failed") {
+      return <A2UIErrorLine message={parsed.parseError} />;
+    }
     return <A2FormBlock message={message} parsed={parsed} onSubmit={onSubmit} onCancel={onCancel} />;
+  }
+  if (parsed.status === "failed") {
+    return <A2UIErrorLine message={parsed.parseError} />;
   }
   return null;
 }
@@ -387,8 +382,6 @@ function renderKeyIcon(renderKey: string, tone: string) {
   switch (renderKey) {
     case "chart":
       return <BarChart3 size={15} />;
-    case "confirm":
-      return <ClipboardCheck size={15} />;
     case "choice":
       return <MousePointerClick size={15} />;
     case "form":
@@ -402,8 +395,6 @@ function renderKeyLabel(renderKey: string): string {
   switch (renderKey) {
     case "chart":
       return "图表";
-    case "confirm":
-      return "确认";
     case "choice":
       return "选择";
     case "form":

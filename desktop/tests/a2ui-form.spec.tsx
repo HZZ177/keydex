@@ -23,7 +23,8 @@ describe("A2FormBlock", () => {
 
     fireEvent.change(screen.getByLabelText(/标题/), { target: { value: "发布活动" } });
     fireEvent.change(screen.getByLabelText(/预算/), { target: { value: "1200" } });
-    fireEvent.change(screen.getByLabelText(/渠道/), { target: { value: "wechat" } });
+    fireEvent.click(screen.getByLabelText(/渠道/));
+    fireEvent.click(screen.getByRole("option", { name: "微信" }));
     fireEvent.click(screen.getByLabelText(/短信/));
     fireEvent.click(screen.getByLabelText(/邮件/));
     fireEvent.click(screen.getByLabelText(/确认执行/));
@@ -40,6 +41,51 @@ describe("A2FormBlock", () => {
           confirm: true,
         },
         note: "参数已确认",
+      }, "ses-1");
+    });
+  });
+
+  it("applies defaults, field help and numeric range validation", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <A2UIBlock
+        message={formMessage({
+          payload: {
+            fields: [
+              {
+                name: "budget",
+                label: "预算",
+                type: "number",
+                required: true,
+                default_value: "1200",
+                min: 100,
+                max: 1000,
+                help: "填写本次执行预算",
+              },
+            ],
+            submit_label: "确认参数",
+          },
+        })}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("1 个字段，1 个必填")).not.toBeNull();
+    expect(screen.getByText("填写本次执行预算")).not.toBeNull();
+    expect((screen.getByLabelText(/预算/) as HTMLInputElement).value).toBe("1200");
+
+    fireEvent.click(screen.getByRole("button", { name: "确认参数" }));
+
+    expect(screen.getByText("不能大于 1000")).not.toBeNull();
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText(/预算/), { target: { value: "800" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认参数" }));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith("int-form-1", {
+        values: { budget: 800 },
       }, "ses-1");
     });
   });
@@ -74,6 +120,7 @@ describe("A2FormBlock", () => {
               },
               note: "已确认",
             },
+            resume_status: "succeeded",
           },
         })}
         onSubmit={vi.fn()}
@@ -82,13 +129,15 @@ describe("A2FormBlock", () => {
     );
 
     const result = within(screen.getByTestId("a2ui-form-result"));
-    expect(result.getByText("已提交表单")).not.toBeNull();
     expect(result.getByText("发布活动")).not.toBeNull();
     expect(result.getByText("1200")).not.toBeNull();
     expect(result.getByText("微信")).not.toBeNull();
     expect(result.getByText("短信")).not.toBeNull();
     expect(result.getByText("是")).not.toBeNull();
-    expect(result.getByText("备注：已确认")).not.toBeNull();
+    expect(result.getByText("备注")).not.toBeNull();
+    expect(result.getByText("已确认")).not.toBeNull();
+    expect(result.queryByText("已提交表单")).toBeNull();
+    expect(result.queryByText(/恢复状态/)).toBeNull();
     expect(screen.queryByRole("button", { name: "提交参数" })).toBeNull();
   });
 
@@ -113,17 +162,38 @@ describe("A2FormBlock", () => {
       vi.useRealTimers();
     }
   });
+
+  it("renders streaming form debug payloads as form UI before the created object arrives", () => {
+    const message = formMessage({
+      payload: {
+        fields: [
+          { name: "title", label: "标题", type: "text", required: true },
+          { name: "budget", label: "预算", type: "number" },
+        ],
+      },
+    });
+
+    render(<A2UIBlock message={withStreamingPlaceholderDebug(message)} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+
+    expect(screen.getByTestId("a2ui-form")).not.toBeNull();
+    expect(within(screen.getByTestId("a2ui-form")).getByText("请补充执行参数")).not.toBeNull();
+    expect(screen.getByLabelText(/标题/)).not.toBeNull();
+    expect(screen.queryByTestId("a2ui-payload-summary")).toBeNull();
+    expect(screen.queryByTestId("a2ui-stream-preview")).toBeNull();
+    expect((screen.getByRole("button", { name: "提交参数" }) as HTMLButtonElement).disabled).toBe(true);
+  });
 });
 
 function formMessage(options: {
   interaction?: A2UIInteractionState;
+  payload?: Record<string, unknown>;
 } = {}): ConversationMessage {
   const interaction = options.interaction ?? {
     interaction_id: "int-form-1",
     status: "waiting_user_input",
     can_submit: true,
   };
-  const a2ui = formObject(interaction);
+  const a2ui = formObject(interaction, options.payload ?? {});
   return {
     id: "agent:a2ui-form-1",
     threadId: "ses-1",
@@ -145,7 +215,7 @@ function formMessage(options: {
   };
 }
 
-function formObject(interaction: A2UIInteractionState): A2UIObject {
+function formObject(interaction: A2UIInteractionState, payload: Record<string, unknown> = {}): A2UIObject {
   return {
     render_key: "form",
     mode: "interactive",
@@ -180,6 +250,7 @@ function formObject(interaction: A2UIInteractionState): A2UIObject {
         },
         { name: "confirm", label: "确认执行", type: "boolean", required: true },
       ],
+      ...payload,
     },
     input_schema: {},
     submit_schema: {},
@@ -228,6 +299,41 @@ function withStreamedDebug(message: ConversationMessage): ConversationMessage {
         jsonParseStatus: "valid",
         parsedArgs: a2ui.payload,
       },
+    },
+  };
+}
+
+function withStreamingPlaceholderDebug(message: ConversationMessage): ConversationMessage {
+  const a2ui = message.payload.a2ui as A2UIObject;
+  const argsBuffer = JSON.stringify(a2ui.payload);
+  return {
+    ...message,
+    payload: {
+      ...message.payload,
+      a2ui: null,
+      interaction: undefined,
+      interactionId: "",
+      a2uiDebug: {
+        id: "stream-form-placeholder",
+        status: "streaming",
+        renderKey: "form",
+        mode: "interactive",
+        streamId: "stream-form-placeholder",
+        interactionId: "",
+        toolCallId: "tool-form-placeholder",
+        traceId: "trace-1",
+        turnIndex: 1,
+        chunkCount: 24,
+        argsBuffer,
+        argsTextLength: argsBuffer.length,
+        jsonParseStatus: "valid",
+        parsedArgs: a2ui.payload,
+        payload: {},
+        inputSchema: {},
+        submitSchema: {},
+        rawEvents: [],
+        updatedAt: 1_700_000_000_010,
+      } satisfies A2UIDebugBlockState,
     },
   };
 }

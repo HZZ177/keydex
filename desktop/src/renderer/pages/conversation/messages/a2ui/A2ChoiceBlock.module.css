@@ -1,7 +1,25 @@
 .choice {
+  --a2ui-choice-border-hover: color-mix(in srgb, var(--color-text-primary) 14%, var(--color-border-default));
+  --a2ui-choice-border-active: color-mix(in srgb, var(--color-text-primary) 18%, var(--color-border-default));
+  --a2ui-choice-selected-border: color-mix(in srgb, var(--color-text-primary) 22%, var(--color-border-default));
+  --a2ui-choice-ring: none;
   display: grid;
   min-width: 0;
-  gap: 12px;
+  gap: 14px;
+}
+
+.intro {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 1.45;
 }
 
 .description {
@@ -19,44 +37,159 @@
 }
 
 .option {
+  position: relative;
   display: grid;
   min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 9px;
+  grid-template-columns: 17px minmax(0, 1fr);
+  gap: 11px;
   align-items: start;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 72%, transparent);
   color: var(--color-text-primary);
   cursor: pointer;
-  padding: 8px 9px;
+  padding: 11px 12px;
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    border-color 160ms var(--motion-ease-out),
+    box-shadow 160ms var(--motion-ease-out),
+    transform 160ms var(--motion-ease-out);
+}
+
+.option::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: -1px;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color 160ms var(--motion-ease-out);
 }
 
 .option:hover {
-  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
+  border-color: color-mix(in srgb, var(--color-border-default) 92%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, var(--surface-muted));
 }
 
 .option[data-selected="true"] {
-  border-color: color-mix(in srgb, var(--color-info-6) 28%, transparent);
-  background: color-mix(in srgb, var(--color-info-6) 5%, transparent);
+  border-color: var(--a2ui-choice-selected-border);
+  background: color-mix(in srgb, var(--surface-muted) 76%, var(--color-bg-elevated));
+}
+
+.option[data-selected="true"]::before {
+  background: var(--color-text-primary);
 }
 
 .option[data-disabled="true"] {
   cursor: not-allowed;
-  opacity: 0.68;
+  opacity: 0.62;
+}
+
+.option[data-readonly="true"] {
+  cursor: default;
+}
+
+.option[data-readonly="true"]:hover {
+  border-color: color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 72%, transparent);
+}
+
+.option[data-readonly="true"][data-selected="true"]:hover {
+  border-color: var(--a2ui-choice-selected-border);
+  background: color-mix(in srgb, var(--surface-muted) 76%, var(--color-bg-elevated));
+}
+
+.option[data-dimmed="true"] {
+  opacity: 0.58;
 }
 
 .option input {
-  width: 14px;
-  height: 14px;
+  position: relative;
+  width: 16px;
+  height: 16px;
   margin: 2px 0 0;
-  accent-color: var(--color-info-6);
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--color-text-primary) 16%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-bg-elevated) 96%, var(--surface-muted));
+  cursor: inherit;
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    border-color 160ms var(--motion-ease-out),
+    box-shadow 160ms var(--motion-ease-out);
+}
+
+.option input[type="checkbox"] {
+  border-radius: 4px;
+}
+
+.option input[type="radio"] {
+  border-radius: 999px;
+}
+
+.option input::after {
+  content: "";
+  position: absolute;
+  opacity: 0;
+  transition:
+    opacity 120ms var(--motion-ease-out),
+    transform 120ms var(--motion-ease-out);
+}
+
+.option input[type="checkbox"]::after {
+  top: 2px;
+  left: 5px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--color-text-inverse);
+  border-width: 0 1.7px 1.7px 0;
+  transform: rotate(42deg) scale(0.82);
+}
+
+.option input[type="radio"]::after {
+  inset: 4px;
+  border-radius: 999px;
+  background: var(--color-text-inverse);
+  transform: scale(0.72);
+}
+
+.option input:checked {
+  border-color: var(--color-text-primary);
+  background: var(--color-text-primary);
+}
+
+.option input:checked::after {
+  opacity: 1;
+  transform: rotate(42deg) scale(1);
+}
+
+.option input[type="radio"]:checked::after {
+  transform: scale(1);
+}
+
+.option:focus-within {
+  border-color: var(--a2ui-choice-border-active);
+  box-shadow: var(--a2ui-choice-ring);
+  outline: none;
+}
+
+.option[data-readonly="true"]:focus-within {
+  box-shadow: none;
 }
 
 .optionText {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: 4px;
+}
+
+.optionHeader {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .optionLabel {
@@ -66,10 +199,34 @@
   line-height: 1.45;
 }
 
+.recommendedBadge,
+.optionBadge {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 18px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 76%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-muted) 78%, transparent);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  overflow-wrap: anywhere;
+  padding: 0 6px;
+}
+
+.recommendedBadge {
+  border-color: color-mix(in srgb, var(--color-success-6) 24%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-success-6) 8%, transparent);
+  color: color-mix(in srgb, var(--color-success-6) 72%, var(--color-text-primary));
+}
+
 .optionDescription {
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .note {
@@ -86,26 +243,36 @@
 .note textarea {
   box-sizing: border-box;
   width: 100%;
-  min-height: 58px;
+  min-height: 64px;
   resize: vertical;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
-  border-radius: 7px;
-  background: var(--color-bg-elevated);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 94%, var(--surface-muted));
   color: var(--color-text-primary);
   font: inherit;
   font-size: 12px;
   line-height: 1.55;
-  padding: 8px 10px;
+  padding: 9px 11px;
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    border-color 160ms var(--motion-ease-out),
+    box-shadow 160ms var(--motion-ease-out);
+}
+
+.note textarea:hover:not(:disabled) {
+  border-color: var(--a2ui-choice-border-hover);
+  background: color-mix(in srgb, var(--color-bg-elevated) 98%, var(--surface-muted));
 }
 
 .note textarea:focus {
-  outline: 2px solid color-mix(in srgb, var(--color-info-6) 28%, transparent);
-  outline-offset: 1px;
+  border-color: var(--a2ui-choice-border-active);
+  box-shadow: var(--a2ui-choice-ring);
+  outline: none;
 }
 
 .note textarea:disabled {
   cursor: not-allowed;
-  background: color-mix(in srgb, var(--surface-muted) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-muted) 76%, transparent);
   color: var(--color-text-tertiary);
 }
 
@@ -113,6 +280,13 @@
   color: var(--color-text-tertiary);
   font-size: 11px;
   line-height: 1.4;
+  text-align: right;
+}
+
+.previewEmpty {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .error {
@@ -130,59 +304,82 @@
 
 .button {
   display: inline-flex;
-  min-height: 30px;
+  min-height: 32px;
   align-items: center;
   gap: 6px;
   justify-content: center;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
-  border-radius: 7px;
-  background: var(--color-bg-elevated);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 94%, var(--surface-muted));
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
   line-height: 1;
-  padding: 0 11px;
+  padding: 0 12px;
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    border-color 160ms var(--motion-ease-out),
+    color 160ms var(--motion-ease-out),
+    box-shadow 160ms var(--motion-ease-out);
 }
 
 .button:hover:not(:disabled) {
+  border-color: var(--a2ui-choice-border-hover);
   background: var(--surface-hover);
   color: var(--color-text-primary);
 }
 
-.button:focus-visible,
-.option:focus-within {
-  outline: 2px solid color-mix(in srgb, var(--color-info-6) 30%, transparent);
-  outline-offset: 1px;
+.button:focus-visible {
+  box-shadow: var(--a2ui-choice-ring);
+  outline: none;
 }
 
 .button:disabled {
   cursor: not-allowed;
-  opacity: 0.58;
+  opacity: 0.54;
 }
 
 .submitButton {
-  border-color: color-mix(in srgb, var(--color-info-6) 38%, var(--color-border-default));
-  color: color-mix(in srgb, var(--color-info-6) 84%, var(--color-text-primary));
+  border-color: color-mix(in srgb, var(--color-text-primary) 74%, transparent);
+  background: var(--color-text-primary);
+  color: var(--color-text-inverse);
 }
 
-.result {
+.submitButton:hover:not(:disabled) {
+  border-color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-primary) 92%, var(--surface-hover));
+  color: var(--color-text-inverse);
+}
+
+.readonlyState {
   display: grid;
   min-width: 0;
-  gap: 6px;
-  border: 0;
-  border-left: 2px solid color-mix(in srgb, var(--color-info-6) 34%, transparent);
-  border-radius: 0;
-  background: transparent;
+  gap: 10px;
+}
+
+.readonlyState[data-result-status="cancelled"] {
+  opacity: 0.72;
+}
+
+.readonlyNote {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.readonlyNote span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.readonlyNote p {
+  margin: 0;
   color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 1.55;
-  padding: 2px 0 2px 10px;
-}
-
-.result strong {
-  color: var(--color-text-primary);
-  font-weight: 650;
+  overflow-wrap: anywhere;
 }
 
 .selectedList {
@@ -196,13 +393,24 @@
   max-width: 100%;
   min-height: 22px;
   align-items: center;
-  border: 1px solid color-mix(in srgb, var(--color-info-6) 32%, var(--color-border-default));
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 82%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-info-6) 6%, var(--color-bg-elevated));
-  color: color-mix(in srgb, var(--color-info-6) 82%, var(--color-text-primary));
+  background: color-mix(in srgb, var(--surface-muted) 76%, transparent);
+  color: var(--color-text-primary);
   font-size: 11px;
   line-height: 1.35;
   overflow-wrap: anywhere;
   padding: 4px 8px;
   white-space: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .option,
+  .option::before,
+  .option input,
+  .option input::after,
+  .note textarea,
+  .button {
+    transition: none;
+  }
 }

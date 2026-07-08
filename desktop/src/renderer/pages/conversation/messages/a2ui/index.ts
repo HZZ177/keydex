@@ -4,8 +4,6 @@ export { A2ChartBlock } from "./A2ChartBlock";
 export type { A2ChartBlockProps } from "./A2ChartBlock";
 export { A2ChoiceBlock } from "./A2ChoiceBlock";
 export type { A2ChoiceBlockProps } from "./A2ChoiceBlock";
-export { A2ConfirmBlock } from "./A2ConfirmBlock";
-export type { A2ConfirmBlockProps } from "./A2ConfirmBlock";
 export { A2UIMotionItem, A2UIMotionRoot, a2uiMotionItemProps, useA2UILayoutMotion } from "./A2UIMotion";
 export { A2UIDebugInfoButton } from "./A2UIDebugInfoButton";
 export type { A2UIDebugInfoButtonProps } from "./A2UIDebugInfoButton";

@@ -52,6 +52,38 @@ describe("A2ChoiceBlock", () => {
     });
   });
 
+  it("renders recommended, default and disabled options as decision metadata", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <A2UIBlock
+        message={choiceMessage({
+          payload: {
+            default_values: ["b"],
+            options: [
+              { label: "方案 A", value: "a", description: "依赖较多", disabled: true, badge: "暂不可用" },
+              { label: "方案 B", value: "b", description: "收益最高", recommended: true },
+            ],
+          },
+        })}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("推荐")).not.toBeNull();
+    expect(screen.getByText("暂不可用")).not.toBeNull();
+    expect(screen.getByText("已选 1 项 / 单选")).not.toBeNull();
+    expect((screen.getByLabelText(/方案 A/) as HTMLInputElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith("int-choice-1", {
+        selected_values: ["b"],
+      }, "ses-1");
+    });
+  });
+
   it("sends cancel with a note reason", async () => {
     const onCancel = vi.fn().mockResolvedValue(undefined);
     render(<A2UIBlock message={choiceMessage()} onSubmit={vi.fn()} onCancel={onCancel} />);
@@ -73,6 +105,7 @@ describe("A2ChoiceBlock", () => {
             status: "submitted",
             can_submit: false,
             submit_result: { selected_values: ["a", "c"], note: "组合推进" },
+            resume_status: "succeeded",
           },
         })}
         onSubmit={vi.fn()}
@@ -81,10 +114,12 @@ describe("A2ChoiceBlock", () => {
     );
 
     const result = within(screen.getByTestId("a2ui-choice-result"));
-    expect(result.getByText("已提交选择")).not.toBeNull();
     expect(result.getByText("方案 A")).not.toBeNull();
     expect(result.getByText("方案 C")).not.toBeNull();
-    expect(result.getByText("备注：组合推进")).not.toBeNull();
+    expect(result.getByText("备注")).not.toBeNull();
+    expect(result.getByText("组合推进")).not.toBeNull();
+    expect(result.queryByText("已提交选择")).toBeNull();
+    expect(result.queryByText(/恢复状态/)).toBeNull();
     expect(screen.queryByRole("button", { name: "提交选择" })).toBeNull();
   });
 

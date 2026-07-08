@@ -7,14 +7,12 @@ describe("A2UI content layout contract", () => {
   it("does not cap or internally scroll business component content", () => {
     const chartCss = readSource("renderer/pages/conversation/messages/a2ui/A2ChartBlock.module.css");
     const blockCss = readSource("renderer/pages/conversation/messages/a2ui/A2UIBlock.module.css");
-    const confirmCss = readSource("renderer/pages/conversation/messages/a2ui/A2ConfirmBlock.module.css");
     const formCss = readSource("renderer/pages/conversation/messages/a2ui/A2FormBlock.module.css");
     const chartSource = readSource("renderer/pages/conversation/messages/a2ui/A2ChartBlock.tsx");
 
     expect(chartCss).not.toContain("max-height:");
     expect(chartCss).not.toMatch(/\.pointList\s*{[^}]*overflow:\s*auto/s);
     expect(blockCss).not.toMatch(/\.streamPreview\s*{[^}]*(max-height|overflow:\s*auto)/s);
-    expect(confirmCss).not.toMatch(/\.riskTag\s*{[^}]*(overflow:\s*hidden|text-overflow|white-space:\s*nowrap)/s);
     expect(formCss).not.toMatch(/\.valueItem\s+dd\s*{[^}]*(overflow:\s*hidden|text-overflow|white-space:\s*nowrap)/s);
     expect(chartSource).not.toContain("truncate(");
   });

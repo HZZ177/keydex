@@ -44,7 +44,7 @@ describe("A2UI debug info", () => {
     expect(panel.getByText("message_id")).not.toBeNull();
     expect(panel.getByText("agent:a2ui-debug-1")).not.toBeNull();
     expect(panel.getByText("render_key")).not.toBeNull();
-    expect(panel.getByText("confirm")).not.toBeNull();
+    expect(panel.getByText("choice")).not.toBeNull();
     expect(panel.getByText("interaction_id")).not.toBeNull();
     expect(panel.getByText("int-debug-1")).not.toBeNull();
     expect(panel.getByText("resume.status")).not.toBeNull();
@@ -52,13 +52,13 @@ describe("A2UI debug info", () => {
     expect(panel.getByText("json_parse_status")).not.toBeNull();
     expect(panel.getAllByText("valid").length).toBeGreaterThan(0);
     expect(panel.getByText("Stream Buffer")).not.toBeNull();
-    expect(panel.getByTestId("a2ui-debug-stream-buffer").textContent).toContain("确认发布");
-    expect(panel.getByTestId("a2ui-debug-latest-chunk").textContent).toContain("确认");
-    expect(panel.getByTestId("a2ui-debug-raw-event-1-chunk").textContent).toContain('"title":"确认发布"');
-    expect(panel.getByTestId("a2ui-debug-raw-event-2-chunk").textContent).toContain('"confirm_label":"确认"');
+    expect(panel.getByTestId("a2ui-debug-stream-buffer").textContent).toContain("选择发布方式");
+    expect(panel.getByTestId("a2ui-debug-latest-chunk").textContent).toContain("立即发布");
+    expect(panel.getByTestId("a2ui-debug-raw-event-1-chunk").textContent).toContain('"title":"选择发布方式"');
+    expect(panel.getByTestId("a2ui-debug-raw-event-2-chunk").textContent).toContain('"label":"立即发布"');
     expect(panel.getByTestId("a2ui-debug-raw-events").textContent).toContain("a2ui_submit_ack");
 
-    expect(panel.queryByRole("button", { name: "确认" })).toBeNull();
+    expect(panel.queryByRole("button", { name: "提交选择" })).toBeNull();
     expect(panel.queryByRole("button", { name: "取消" })).toBeNull();
     expect(onSubmit).not.toHaveBeenCalled();
     expect(onCancel).not.toHaveBeenCalled();
@@ -97,7 +97,7 @@ describe("A2UI debug info", () => {
     const copied = JSON.parse(writeText.mock.calls[0][0]);
     expect(copied.ids).toMatchObject({
       message_id: "agent:a2ui-debug-1",
-      render_key: "confirm",
+      render_key: "choice",
       interaction_id: "int-debug-1",
     });
     expect(copied.lifecycle).toMatchObject({
@@ -111,7 +111,7 @@ describe("A2UI debug info", () => {
     });
     expect(copied.raw_event_timeline[1]).toMatchObject({
       action: "a2ui_stream_chunk",
-      chunkText: '{"title":"确认发布"',
+      chunkText: '{"title":"选择发布方式"',
     });
     expect(copied.raw_events.some((event: { action: string }) => event.action === "a2ui_submit_ack")).toBe(true);
     expect(screen.getByRole("button", { name: "复制调试 JSON" }).getAttribute("data-copy-state")).toBe("copied");
@@ -177,7 +177,7 @@ function debugInteraction(interactionId: string): A2UIInteractionState {
     status: "submitted",
     can_submit: false,
     submit_request_id: "req-submit-debug",
-    submit_result: { confirmed: true, note: "已确认" },
+    submit_result: { selected_values: ["now"], note: "已选择" },
     resume_status: "failed",
     resume_group_id: "resume-group-debug",
     pending_count: 0,
@@ -187,19 +187,19 @@ function debugInteraction(interactionId: string): A2UIInteractionState {
 
 function debugA2UI(interaction: A2UIInteractionState): A2UIObject {
   return {
-    render_key: "confirm",
+    render_key: "choice",
     mode: "interactive",
     stream_id: `stream-${interaction.interaction_id}`,
     tool_call_id: "tool-debug",
     trace_id: "trace-debug",
     turn_index: 3,
     payload: {
-      title: "确认发布",
-      description: "发布后用户可见",
-      confirm_label: "确认",
+      title: "选择发布方式",
+      description: "选择后继续",
+      options: [{ label: "立即发布", value: "now" }],
     },
     input_schema: { type: "object" },
-    submit_schema: { type: "object", properties: { confirmed: { type: "boolean" } } },
+    submit_schema: { type: "object", properties: { selected_values: { type: "array" } } },
     interaction,
   };
 }
@@ -216,9 +216,9 @@ function debugState(a2ui: A2UIObject, interaction: A2UIInteractionState, rawActi
     traceId: a2ui.trace_id,
     turnIndex: a2ui.turn_index,
     chunkCount: 2,
-    argsBuffer: '{"title":"确认发布","confirm_label":"确认"}',
-    argsTextLength: 41,
-    latestChunk: '"confirm_label":"确认"}',
+    argsBuffer: '{"title":"选择发布方式","options":[{"label":"立即发布","value":"now"}]}',
+    argsTextLength: 69,
+    latestChunk: '"label":"立即发布","value":"now"}]}',
     jsonParseStatus: "valid",
     parsedArgs: a2ui.payload,
     finishReason: "tool_call_done",
@@ -254,8 +254,8 @@ function debugState(a2ui: A2UIObject, interaction: A2UIInteractionState, rawActi
           stream: {
             status: "chunk",
             chunk_index: 1,
-            args_delta: '{"title":"确认发布"',
-            args_text_length: 15,
+            args_delta: '{"title":"选择发布方式"',
+            args_text_length: 16,
           },
         },
       },
@@ -270,8 +270,8 @@ function debugState(a2ui: A2UIObject, interaction: A2UIInteractionState, rawActi
           stream: {
             status: "chunk",
             chunk_index: 2,
-            args_delta: ',"confirm_label":"确认"}',
-            args_text_length: 41,
+            args_delta: ',"options":[{"label":"立即发布","value":"now"}]}',
+            args_text_length: 69,
           },
         },
       },
@@ -285,7 +285,7 @@ function debugState(a2ui: A2UIObject, interaction: A2UIInteractionState, rawActi
           tool_call_id: a2ui.tool_call_id,
           stream: {
             status: "finish",
-            args_text_length: 41,
+            args_text_length: 69,
             finish_reason: "tool_call_done",
           },
         },

@@ -45,7 +45,7 @@
 
 .iconButton:hover,
 .actionButton:hover {
-  border-color: color-mix(in srgb, var(--color-info-6) 36%, var(--color-border-default));
+  border-color: color-mix(in srgb, var(--color-text-primary) 16%, var(--color-border-default));
   background: color-mix(in srgb, var(--surface-muted) 76%, transparent);
   color: var(--color-text-primary);
   opacity: 1;
@@ -58,7 +58,7 @@
 
 .iconButton:focus-visible,
 .actionButton:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-info-6) 44%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--color-text-primary) 18%, var(--color-border-default));
   outline-offset: 2px;
 }
 
@@ -391,8 +391,8 @@
   min-width: 0;
   overflow: hidden;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--color-info-6) 10%, transparent);
-  color: color-mix(in srgb, var(--color-info-6) 88%, var(--color-text-primary));
+  background: color-mix(in srgb, var(--surface-muted) 76%, transparent);
+  color: var(--color-text-secondary);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 650;

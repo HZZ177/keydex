@@ -9,20 +9,23 @@ describe("A2UI accessibility and status states", () => {
   it("exposes interactive commands through role/name without icon noise", () => {
     render(
       <A2UIBlock
-        message={a2uiMessage("confirm", {
-          title: "确认预算调整",
-          description: "将华东区预算增加 10%",
-          confirm_label: "执行调整",
-          cancel_label: "暂不调整",
+        message={a2uiMessage("choice", {
+          title: "选择预算方案",
+          description: "选择华东区预算调整方式",
+          options: [
+            { label: "增加 10%", value: "increase_10", recommended: true },
+            { label: "保持不变", value: "keep" },
+          ],
         })}
         onSubmit={vi.fn()}
         onCancel={vi.fn()}
       />,
     );
 
-    expect(screen.getByTestId("a2ui-block").getAttribute("aria-label")).toContain("确认 A2UI：确认预算调整");
-    expect(screen.getByRole("button", { name: "执行调整" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "暂不调整" })).not.toBeNull();
+    expect(screen.getByTestId("a2ui-block").getAttribute("aria-label")).toContain("选择 A2UI：选择预算方案");
+    expect(screen.getByLabelText(/增加 10%/)).not.toBeNull();
+    expect(screen.getByRole("button", { name: "提交选择" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "取消" })).not.toBeNull();
     expect(screen.getByLabelText("备注")).not.toBeNull();
   });
 
@@ -30,7 +33,14 @@ describe("A2UI accessibility and status states", () => {
     const onSubmit = vi.fn();
     const onCancel = vi.fn();
     const { rerender } = render(
-      <A2UIBlock message={a2uiMessage("confirm", { title: "确认发布" })} onSubmit={onSubmit} onCancel={onCancel} />,
+      <A2UIBlock
+        message={a2uiMessage("choice", {
+          title: "选择发布方式",
+          options: [{ label: "立即发布", value: "now" }],
+        })}
+        onSubmit={onSubmit}
+        onCancel={onCancel}
+      />,
     );
 
     expect(screen.getByTestId("a2ui-status").textContent).toBe("等待输入");
@@ -38,7 +48,10 @@ describe("A2UI accessibility and status states", () => {
 
     rerender(
       <A2UIBlock
-        message={a2uiMessage("confirm", { title: "确认发布" }, submittedInteraction({ resume_status: "started" }))}
+        message={a2uiMessage("choice", {
+          title: "选择发布方式",
+          options: [{ label: "立即发布", value: "now" }],
+        }, submittedInteraction({ resume_status: "started" }))}
         onSubmit={onSubmit}
         onCancel={onCancel}
       />,
@@ -46,11 +59,14 @@ describe("A2UI accessibility and status states", () => {
 
     expect(screen.getByTestId("a2ui-status").textContent).toBe("继续执行中");
     expect(screen.getByTestId("a2ui-block").getAttribute("data-interactive-ready")).toBe("false");
-    expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "提交选择" })).toBeNull();
 
     rerender(
       <A2UIBlock
-        message={a2uiMessage("confirm", { title: "确认发布" }, cancelledInteraction())}
+        message={a2uiMessage("choice", {
+          title: "选择发布方式",
+          options: [{ label: "立即发布", value: "now" }],
+        }, cancelledInteraction())}
         onSubmit={onSubmit}
         onCancel={onCancel}
       />,
@@ -61,7 +77,10 @@ describe("A2UI accessibility and status states", () => {
 
     rerender(
       <A2UIBlock
-        message={a2uiMessage("confirm", { title: "确认发布" }, submittedInteraction({ resume_status: "failed" }))}
+        message={a2uiMessage("choice", {
+          title: "选择发布方式",
+          options: [{ label: "立即发布", value: "now" }],
+        }, submittedInteraction({ resume_status: "failed" }))}
         onSubmit={onSubmit}
         onCancel={onCancel}
       />,
@@ -179,7 +198,7 @@ function submittedInteraction(patch: Partial<A2UIInteractionState> = {}): A2UIIn
     interaction_id: "int-1",
     status: "submitted",
     can_submit: false,
-    submit_result: { confirmed: true },
+    submit_result: { selected_values: ["now"] },
     resume_status: "succeeded",
     ...patch,
   };

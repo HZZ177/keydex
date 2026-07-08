@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from backend.app.a2ui.registry import build_builtin_a2ui_registry
 from backend.app.a2ui.schemas import (
     A2UIInteractionState,
     A2UIObject,
@@ -29,10 +30,10 @@ def test_a2ui_object_accepts_render_without_interaction() -> None:
 def test_a2ui_object_requires_interaction_for_interactive() -> None:
     with pytest.raises(ValidationError, match="requires interaction"):
         A2UIObject(
-            render_key="confirm",
+            render_key="choice",
             mode="interactive",
             stream_id="stream-1",
-            payload={"title": "Confirm"},
+            payload={"title": "选择方案"},
             input_schema={"type": "object"},
             submit_schema={"type": "object"},
         )
@@ -40,11 +41,11 @@ def test_a2ui_object_requires_interaction_for_interactive() -> None:
 
 def test_a2ui_object_accepts_interactive_interaction_state() -> None:
     a2ui = A2UIObject(
-        render_key="confirm",
+        render_key="choice",
         mode="interactive",
         stream_id="stream-1",
         tool_call_id="tool-call-1",
-        payload={"title": "Confirm"},
+        payload={"title": "选择方案"},
         input_schema={"type": "object"},
         submit_schema={"type": "object"},
         interaction=A2UIInteractionState(
@@ -165,6 +166,43 @@ def test_validate_payload_does_not_coerce_numeric_strings_when_string_is_allowed
     )
 
     assert result == {"value": "123"}
+
+
+def test_validate_payload_accepts_builtin_interactive_enhancement_fields() -> None:
+    registry = build_builtin_a2ui_registry()
+
+    choice = validate_payload(
+        {
+            "title": "请选择方案",
+            "options": [
+                {"label": "方案 A", "value": "a", "recommended": True, "badge": "推荐"},
+                {"label": "方案 B", "value": "b", "disabled": True},
+            ],
+            "default_values": ["a"],
+        },
+        registry.require("choice").input_schema,
+    )
+    form = validate_payload(
+        {
+            "title": "补充参数",
+            "fields": [
+                {
+                    "name": "budget",
+                    "label": "预算",
+                    "type": "number",
+                    "default_value": "800",
+                    "help": "填写预算",
+                    "min": "100",
+                    "max": 1000,
+                    "step": 10,
+                }
+            ],
+        },
+        registry.require("form").input_schema,
+    )
+
+    assert choice["options"][0]["recommended"] is True
+    assert form["fields"][0]["min"] == 100
 
 
 @pytest.mark.parametrize("value", ["12万", "1,2", "", "NaN", "Infinity"])

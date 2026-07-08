@@ -16,7 +16,6 @@ def test_builtin_registry_contains_only_supported_render_keys() -> None:
 
     assert set(registry.render_keys) == BUILTIN_A2UI_RENDER_KEYS
     assert registry.require("chart").mode == "render"
-    assert registry.require("confirm").mode == "interactive"
     assert registry.require("choice").mode == "interactive"
     assert registry.require("form").mode == "interactive"
 
@@ -89,12 +88,24 @@ def test_builtin_chart_schema_uses_sdk_chart_group_contract() -> None:
 def test_interactive_tool_descriptions_encourage_suitable_a2ui_usage() -> None:
     registry = build_builtin_a2ui_registry()
 
-    assert "明确授权" in registry.require("confirm").tool_description
-    assert "优先调用" in registry.require("confirm").tool_description
     assert "多个可行方案" in registry.require("choice").tool_description
     assert "优先调用" in registry.require("choice").tool_description
     assert "缺少多个关键参数" in registry.require("form").tool_description
     assert "优先调用" in registry.require("form").tool_description
+
+
+def test_interactive_schemas_include_mature_inline_ui_metadata() -> None:
+    registry = build_builtin_a2ui_registry()
+
+    choice_properties = registry.require("choice").input_schema["properties"]
+    choice_option_properties = choice_properties["options"]["items"]["properties"]
+    assert "default_values" in choice_properties
+    assert {"badge", "recommended", "disabled"}.issubset(choice_option_properties)
+
+    form_field_properties = registry.require("form").input_schema["properties"]["fields"]["items"]["properties"]
+    form_option_properties = form_field_properties["options"]["items"]["properties"]
+    assert {"help", "default_value", "min", "max", "step"}.issubset(form_field_properties)
+    assert {"badge", "disabled"}.issubset(form_option_properties)
 
 
 def test_registry_rejects_render_key_conflicts_with_existing_tools() -> None:

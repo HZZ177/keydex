@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 A2UIMode = Literal["render", "interactive"]
-BUILTIN_A2UI_RENDER_KEYS = frozenset({"chart", "confirm", "choice", "form"})
+BUILTIN_A2UI_RENDER_KEYS = frozenset({"chart", "choice", "form"})
 _RENDER_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
@@ -111,9 +111,19 @@ def _option_schema() -> dict[str, Any]:
             "label": {"type": "string", "minLength": 1, "description": "展示给用户看的选项名称。"},
             "value": {"type": "string", "minLength": 1, "description": "提交给运行时的稳定选项值。"},
             "description": {"type": "string", "description": "选项的补充说明，可选。"},
+            "badge": {"type": "string", "description": "选项旁边的短标签，例如 推荐、低风险、较快，可选。"},
+            "recommended": {"type": "boolean", "description": "是否标记为推荐选项，可选。"},
+            "disabled": {"type": "boolean", "description": "是否暂不可选；只在需要解释候选但不允许用户选择时使用。"},
         },
         required=["label", "value"],
     )
+
+
+def _default_value_schema(description: str) -> dict[str, Any]:
+    return {
+        "type": ["string", "number", "boolean", "array", "null"],
+        "description": description,
+    }
 
 
 def _chart_data_item_schema() -> dict[str, Any]:
@@ -267,36 +277,12 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             submit_schema=_object_schema(properties={}),
         ),
         A2UIToolDefinition(
-            render_key="confirm",
-            mode="interactive",
-            tool_description=(
-                "当继续执行需要用户明确授权、确认风险、删除、覆盖、写入、提交或执行不可轻易撤销的动作时优先调用，"
-                "请用户确认或拒绝一个明确动作；该工具会等待用户提交或取消。"
-            ),
-            input_schema=_object_schema(
-                properties={
-                    "title": {"type": "string", "minLength": 1, "description": "确认卡片标题。"},
-                    "description": {"type": "string", "description": "需要用户确认的动作、影响或风险说明。"},
-                    "confirm_label": {"type": "string", "description": "确认按钮文案，可选。"},
-                    "cancel_label": {"type": "string", "description": "取消按钮文案，可选。"},
-                    "danger": {"type": "boolean", "description": "是否为高风险操作。高风险操作会要求用户额外确认。"},
-                },
-                required=["title"],
-            ),
-            submit_schema=_object_schema(
-                properties={
-                    "confirmed": {"type": "boolean", "description": "用户是否确认继续执行。"},
-                    "note": {"type": "string", "description": "用户填写的备注，可选。"},
-                },
-                required=["confirmed"],
-            ),
-        ),
-        A2UIToolDefinition(
             render_key="choice",
             mode="interactive",
             tool_description=(
                 "当存在多个可行方案、范围、对象、格式、路径或下一步动作，需要用户从候选项中决定时优先调用，"
-                "展示单选或多选决策项；该工具会等待用户选择或取消后继续执行。"
+                "展示单选或多选决策项；可以用 recommended、badge、description 帮用户快速判断，"
+                "可以用 default_values 给出合理默认选择；该工具会等待用户选择或取消后继续执行。"
             ),
             input_schema=_object_schema(
                 properties={
@@ -308,6 +294,11 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
                         "minItems": 1,
                         "items": _option_schema(),
                         "description": "候选项列表。",
+                    },
+                    "default_values": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "默认选中的 option.value 列表；单选只使用第一个有效值。",
                     },
                     "min_selected": {"type": "integer", "minimum": 0, "description": "最少需要选择的数量。"},
                     "max_selected": {"type": "integer", "minimum": 1, "description": "最多允许选择的数量。"},
@@ -331,7 +322,8 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             mode="interactive",
             tool_description=(
                 "当缺少多个关键参数或需要用户补充结构化信息时优先调用，通过小型表单收集输入；"
-                "该工具会等待用户提交或取消。"
+                "字段应保持少而关键；可为字段提供 help、default_value、placeholder、min/max/step，"
+                "让用户能快速确认并提交；该工具会等待用户提交或取消。"
             ),
             input_schema=_object_schema(
                 properties={
@@ -360,6 +352,11 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
                                 },
                                 "required": {"type": "boolean", "description": "该字段是否必填。"},
                                 "placeholder": {"type": "string", "description": "输入框占位提示，可选。"},
+                                "help": {"type": "string", "description": "字段下方的简短填写说明，可选。"},
+                                "default_value": _default_value_schema("字段默认值，可选。"),
+                                "min": {"type": "number", "description": "number 字段最小值，可选。"},
+                                "max": {"type": "number", "description": "number 字段最大值，可选。"},
+                                "step": {"type": "number", "description": "number 字段步长，可选。"},
                                 "options": {
                                     "type": "array",
                                     "items": _option_schema(),

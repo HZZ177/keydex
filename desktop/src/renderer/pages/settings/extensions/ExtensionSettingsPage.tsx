@@ -242,7 +242,7 @@ export function ExtensionSettingsPage({
           <div className={styles.settingsPanel} data-settings-panel>
             <SettingRow
               title="A2UI 交互组件"
-              description="允许智能体在对话中生成确认、选择、表单、图表四类内置 A2UI 卡片；关闭后只影响后续新对话能力"
+              description="允许智能体在对话中生成图表、选择、表单三类内置 A2UI；关闭后只影响后续新对话能力"
               control={
                 <ToggleSwitch
                   checked={a2uiDraft.enabled}
@@ -263,10 +263,9 @@ export function ExtensionSettingsPage({
               }
             />
             <div className={styles.a2uiSummary} aria-label="当前支持的 A2UI 类型">
-              <span>确认</span>
+              <span>图表</span>
               <span>选择</span>
               <span>表单</span>
-              <span>图表</span>
             </div>
           </div>
 

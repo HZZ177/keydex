@@ -1,7 +1,7 @@
 export { ApprovalPrompt } from "./ApprovalPrompt";
 export type { ApprovalDecisionHandler, ApprovalPromptProps } from "./ApprovalPrompt";
-export { A2ChartBlock, A2ChoiceBlock, A2ConfirmBlock, A2FormBlock, A2UIDebugInfoButton, A2UIDebugPanel, A2UIBlock, parseA2UIMessage } from "./a2ui";
-export type { A2ChartBlockProps, A2ChoiceBlockProps, A2ConfirmBlockProps, A2FormBlockProps, A2UIDebugInfoButtonProps, A2UIDebugPanelProps, A2UIBlockProps, A2UICancelHandler, A2UISubmitHandler } from "./a2ui";
+export { A2ChartBlock, A2ChoiceBlock, A2FormBlock, A2UIDebugInfoButton, A2UIDebugPanel, A2UIBlock, parseA2UIMessage } from "./a2ui";
+export type { A2ChartBlockProps, A2ChoiceBlockProps, A2FormBlockProps, A2UIDebugInfoButtonProps, A2UIDebugPanelProps, A2UIBlockProps, A2UICancelHandler, A2UISubmitHandler } from "./a2ui";
 export { CommandExecutionBlock } from "./CommandExecutionBlock";
 export type { CommandExecutionBlockProps } from "./CommandExecutionBlock";
 export { ConversationTurnNavigator } from "./ConversationTurnNavigator";

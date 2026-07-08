@@ -22,10 +22,10 @@ def test_a2ui_stream_bridge_reuses_tool_call_chunk_pipeline_for_stream_payloads(
             content="",
             tool_call_chunks=[
                 {
-                    "id": "call_confirm",
+                    "id": "call_choice",
                     "index": 0,
-                    "name": "confirm",
-                    "args": '{"title":"是否继续',
+                    "name": "choice",
+                    "args": '{"title":"选择方案","options":[{"label":"继续","value":"yes"',
                 }
             ],
         ),
@@ -39,7 +39,7 @@ def test_a2ui_stream_bridge_reuses_tool_call_chunk_pipeline_for_stream_payloads(
                     "id": None,
                     "index": 0,
                     "name": None,
-                    "args": '?","description":"现在执行部署"}',
+                    "args": '}],"description":"现在执行部署"}',
                 }
             ],
         ),
@@ -50,11 +50,11 @@ def test_a2ui_stream_bridge_reuses_tool_call_chunk_pipeline_for_stream_payloads(
     assert is_a2ui_stream_payload(first_progress[0]) is True
     assert a2ui_stream_event_type(first_progress[0]) == DomainEventType.A2UI_STREAM_STARTED.value
     first_payload = strip_a2ui_stream_marker(first_progress[0])
-    assert first_payload["render_key"] == "confirm"
-    assert first_payload["stream_id"] == "trace-1:a2ui:call_confirm"
-    assert first_payload["stream_group_id"] == "trace-1:a2ui:call_confirm"
+    assert first_payload["render_key"] == "choice"
+    assert first_payload["stream_id"] == "trace-1:a2ui:call_choice"
+    assert first_payload["stream_group_id"] == "trace-1:a2ui:call_choice"
     assert first_payload["stream"]["status"] == "start"
-    assert first_payload["stream"]["args_delta"] == '{"title":"是否继续'
+    assert first_payload["stream"]["args_delta"] == '{"title":"选择方案","options":[{"label":"继续","value":"yes"'
     assert first_payload["stream"]["json_parse_status"] == "partial"
 
     assert len(second_progress) == 1
@@ -62,7 +62,8 @@ def test_a2ui_stream_bridge_reuses_tool_call_chunk_pipeline_for_stream_payloads(
     second_payload = strip_a2ui_stream_marker(second_progress[0])
     assert second_payload["stream"]["status"] == "chunk"
     assert second_payload["stream"]["parsed_payload"] == {
-        "title": "是否继续?",
+        "title": "选择方案",
+        "options": [{"label": "继续", "value": "yes"}],
         "description": "现在执行部署",
     }
     assert second_payload["stream"]["json_parse_status"] == "complete"
@@ -77,33 +78,36 @@ def test_a2ui_stream_bridge_finishes_by_tool_call_id() -> None:
             content="",
             tool_call_chunks=[
                 {
-                    "id": "call_confirm",
+                    "id": "call_choice",
                     "index": 0,
-                    "name": "confirm",
-                    "args": '{"title":"是否继续?"}',
+                    "name": "choice",
+                    "args": '{"title":"选择方案","options":[{"label":"继续","value":"yes"}]}',
                 }
             ],
         ),
         model_run_id="model-run-1",
     )
 
-    finished = bridge.finish_for_tool_call("call_confirm")
-    repeated = bridge.finish_for_tool_call("call_confirm")
+    finished = bridge.finish_for_tool_call("call_choice")
+    repeated = bridge.finish_for_tool_call("call_choice")
 
     assert finished is not None
     assert a2ui_stream_event_type(finished) == DomainEventType.A2UI_STREAM_FINISHED.value
     payload = strip_a2ui_stream_marker(finished)
-    assert payload["stream_id"] == "trace-1:a2ui:call_confirm"
-    assert payload["stream_group_id"] == "trace-1:a2ui:call_confirm"
+    assert payload["stream_id"] == "trace-1:a2ui:call_choice"
+    assert payload["stream_group_id"] == "trace-1:a2ui:call_choice"
     assert payload["stream"]["status"] == "finish"
     assert payload["stream"]["finish_reason"] == "tool_call_started"
-    assert payload["stream"]["parsed_payload"] == {"title": "是否继续?"}
-    stream_context = consume_a2ui_stream_context("confirm", tool_call_id="call_confirm")
+    assert payload["stream"]["parsed_payload"] == {
+        "title": "选择方案",
+        "options": [{"label": "继续", "value": "yes"}],
+    }
+    stream_context = consume_a2ui_stream_context("choice", tool_call_id="call_choice")
     assert stream_context == {
-        "stream_id": "trace-1:a2ui:call_confirm",
-        "stream_group_id": "trace-1:a2ui:call_confirm",
-        "tool_call_id": "call_confirm",
-        "render_key": "confirm",
+        "stream_id": "trace-1:a2ui:call_choice",
+        "stream_group_id": "trace-1:a2ui:call_choice",
+        "tool_call_id": "call_choice",
+        "render_key": "choice",
         "run_id": "",
     }
     assert repeated is None

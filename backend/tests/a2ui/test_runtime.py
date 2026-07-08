@@ -205,7 +205,7 @@ async def test_a2ui_runtime_interactive_creates_interaction_waits_and_interrupts
 
     def interrupt_fn(payload: dict[str, Any]) -> dict[str, Any]:
         interrupted.update(payload)
-        return {"confirmed": True}
+        return {"selected_values": ["yes"]}
 
     registry = build_builtin_a2ui_registry()
     runtime = A2UIRuntime(
@@ -217,8 +217,8 @@ async def test_a2ui_runtime_interactive_creates_interaction_waits_and_interrupts
 
     result = json.loads(
         await runtime.handle_tool_call(
-            registry.require("confirm"),
-            {"title": "是否继续?"},
+            registry.require("choice"),
+            {"title": "选择方案", "options": [{"label": "继续", "value": "yes"}]},
             _context(tmp_path),
             {
                 "tool_call_id": "tool-call-1",
@@ -230,7 +230,7 @@ async def test_a2ui_runtime_interactive_creates_interaction_waits_and_interrupts
     records = repositories.a2ui_interactions.list_by_session("session-1")
     assert len(records) == 1
     record = records[0]
-    assert record.render_key == "confirm"
+    assert record.render_key == "choice"
     assert record.tool_call_id == "tool-call-1"
     assert record.checkpoint_id == "checkpoint-1"
     assert record.interrupt_id == "tool-call-1"
@@ -238,7 +238,7 @@ async def test_a2ui_runtime_interactive_creates_interaction_waits_and_interrupts
     assert repositories.sessions.get("session-1").status == "waiting_input"
     assert result["status"] == "resumed"
     assert result["interaction_id"] == record.id
-    assert result["resume"] == {"confirmed": True}
+    assert result["resume"] == {"selected_values": ["yes"]}
     assert [event["event_type"] for event in dispatcher.events] == [
         DomainEventType.A2UI_CREATED.value,
         DomainEventType.TURN_WAITING_INPUT.value,
@@ -274,8 +274,8 @@ async def test_a2ui_runtime_backfills_langgraph_interrupt_id(tmp_path) -> None:
 
     with pytest.raises(GraphInterrupt):
         await runtime.handle_tool_call(
-            registry.require("confirm"),
-            {"title": "是否继续?"},
+            registry.require("choice"),
+            {"title": "选择方案", "options": [{"label": "继续", "value": "yes"}]},
             _context(tmp_path),
             {"tool_call_id": "tool-call-1"},
         )
@@ -300,11 +300,11 @@ async def test_a2ui_runtime_consumes_resume_payload_without_duplicate_interactio
         turn_index=3,
         tool_call_id="tool-call-1",
         stream_id="trace-1:a2ui:tool-call-1",
-        render_key="confirm",
+        render_key="choice",
         mode="interactive",
-        payload={"title": "是否继续?"},
-        input_schema=registry.require("confirm").input_schema,
-        submit_schema_snapshot=registry.require("confirm").submit_schema,
+        payload={"title": "选择方案", "options": [{"label": "继续", "value": "yes"}]},
+        input_schema=registry.require("choice").input_schema,
+        submit_schema_snapshot=registry.require("choice").submit_schema,
         langgraph_thread_id="thread-1",
         checkpoint_ns="",
         checkpoint_id="checkpoint-1",
@@ -314,20 +314,20 @@ async def test_a2ui_runtime_consumes_resume_payload_without_duplicate_interactio
     resume_payload = {
         "status": "submitted",
         "interaction_id": "a2ui-existing",
-        "render_key": "confirm",
-        "submit_result": {"confirmed": True},
+        "render_key": "choice",
+        "submit_result": {"selected_values": ["yes"]},
     }
     token = set_a2ui_resume_context(
         build_a2ui_resume_context(
             payloads_by_tool_call_id={"tool-call-1": resume_payload},
-            payloads_by_render_key={"confirm": [resume_payload]},
+            payloads_by_render_key={"choice": [resume_payload]},
         )
     )
     try:
         result = json.loads(
             await runtime.handle_tool_call(
-                registry.require("confirm"),
-                {"title": "是否继续?"},
+                registry.require("choice"),
+                {"title": "选择方案", "options": [{"label": "继续", "value": "yes"}]},
                 _context(tmp_path),
                 {"tool_call_id": "tool-call-1"},
             )
@@ -349,7 +349,7 @@ async def test_a2ui_runtime_rejects_invalid_payload(tmp_path) -> None:
 
     with pytest.raises(A2UISchemaValidationError, match="title"):
         await runtime.handle_tool_call(
-            registry.require("confirm"),
+            registry.require("choice"),
             {"description": "缺少标题"},
             _context(tmp_path),
             {"tool_call_id": "tool-call-1"},

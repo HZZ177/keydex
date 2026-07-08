@@ -56,10 +56,10 @@ async def test_event_processor_splits_a2ui_stream_and_skips_regular_tool_cards()
                             content="",
                             tool_call_chunks=[
                                 {
-                                    "id": "call_confirm",
+                                    "id": "call_choice",
                                     "index": 0,
-                                    "name": "confirm",
-                                    "args": '{"title":"是否继续',
+                                    "name": "choice",
+                                    "args": '{"title":"选择方案","options":[{"label":"继续","value":"yes"',
                                 }
                             ],
                         )
@@ -76,7 +76,7 @@ async def test_event_processor_splits_a2ui_stream_and_skips_regular_tool_cards()
                                     "id": None,
                                     "index": 0,
                                     "name": None,
-                                    "args": '?"}',
+                                    "args": '}]}',
                                 }
                             ],
                         )
@@ -84,14 +84,14 @@ async def test_event_processor_splits_a2ui_stream_and_skips_regular_tool_cards()
                 },
                 {
                     "event": "on_tool_start",
-                    "run_id": "tool_confirm",
-                    "name": "confirm",
-                    "data": {"input": {"title": "是否继续?"}},
+                    "run_id": "tool_choice",
+                    "name": "choice",
+                    "data": {"input": {"title": "选择方案", "options": [{"label": "继续", "value": "yes"}]}},
                 },
                 {
                     "event": "on_tool_end",
-                    "run_id": "tool_confirm",
-                    "name": "confirm",
+                    "run_id": "tool_choice",
+                    "name": "choice",
                     "data": {"output": '{"status":"resumed"}'},
                 },
             ]
@@ -120,9 +120,12 @@ async def test_event_processor_splits_a2ui_stream_and_skips_regular_tool_cards()
         for event in emitted
     )
     assert emitted[0].payload["stream"]["status"] == "start"
-    assert emitted[1].payload["stream"]["parsed_payload"] == {"title": "是否继续?"}
+    assert emitted[1].payload["stream"]["parsed_payload"] == {
+        "title": "选择方案",
+        "options": [{"label": "继续", "value": "yes"}],
+    }
     assert emitted[2].payload["stream"]["status"] == "finish"
-    assert emitted[2].payload["stream_id"] == "trace-1:a2ui:call_confirm"
+    assert emitted[2].payload["stream_id"] == "trace-1:a2ui:call_choice"
 
 
 @pytest.mark.asyncio

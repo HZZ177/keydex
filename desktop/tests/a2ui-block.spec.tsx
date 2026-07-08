@@ -106,7 +106,12 @@ describe("A2UIBlock", () => {
     expect(screen.getByTestId("a2ui-echarts-surface")).toBe(surface);
   });
 
-  it("renders streaming debug buffers before a created object is complete", () => {
+  it("renders streaming interactive debug payloads as built-in UI before a created object is complete", () => {
+    const payload = {
+      title: "周末怎么过",
+      description: "选择一种打开方式",
+      options: [{ label: "睡到自然醒", value: "sleep_in" }],
+    };
     render(
       <A2UIBlock
         message={a2uiMessage({
@@ -114,18 +119,25 @@ describe("A2UIBlock", () => {
           debug: a2uiDebug({
             a2ui: undefined,
             status: "streaming",
-            renderKey: "confirm",
+            renderKey: "choice",
             mode: "interactive",
-            argsBuffer: '{"title":"确认删除"',
-            jsonParseStatus: "partial",
+            parsedArgs: payload,
+            argsBuffer: JSON.stringify(payload),
+            jsonParseStatus: "valid",
           }),
         })}
+        onSubmit={() => undefined}
+        onCancel={() => undefined}
       />,
     );
 
     expect(screen.getByTestId("a2ui-block").getAttribute("data-status")).toBe("streaming");
     expect(screen.getByText("生成中")).toBeTruthy();
-    expect(screen.getByTestId("a2ui-stream-preview").textContent).toContain('"title":"确认删除"');
+    expect(screen.getByTestId("a2ui-choice")).toBeTruthy();
+    expect(screen.getAllByText("周末怎么过").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByLabelText(/睡到自然醒/)).toBeTruthy();
+    expect(screen.queryByTestId("a2ui-payload-summary")).toBeNull();
+    expect(screen.queryByTestId("a2ui-stream-preview")).toBeNull();
   });
 
   it("uses the streamed chart type for an empty chart skeleton", () => {
@@ -187,7 +199,7 @@ describe("A2UIBlock", () => {
     const message = a2uiMessage();
 
     expect(parseA2UIMessage(message)).toMatchObject({
-      renderKey: "confirm",
+      renderKey: "choice",
       mode: "interactive",
       status: "waiting_input",
       interactionId: "int-1",
@@ -226,15 +238,16 @@ function a2uiMessage(options: { a2ui?: A2UIObject | null; debug?: A2UIDebugBlock
 
 function a2uiObject(patch: Partial<A2UIObject> = {}): A2UIObject {
   return {
-    render_key: "confirm",
+    render_key: "choice",
     mode: "interactive",
     stream_id: "stream-1",
     tool_call_id: "tool-1",
     trace_id: "trace-1",
     turn_index: 1,
     payload: {
-      title: "确认发布",
-      description: "发布后用户可见",
+      title: "选择方案",
+      description: "选择一个后继续",
+      options: [{ label: "方案 A", value: "a" }],
     },
     input_schema: {},
     submit_schema: {},

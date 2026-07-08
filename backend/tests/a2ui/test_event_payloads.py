@@ -13,7 +13,7 @@ from backend.app.a2ui.schemas import A2UIInteractionState, A2UIObject, A2UIResum
 def test_build_a2ui_stream_payload_contains_incremental_stream_metadata() -> None:
     payload = build_a2ui_stream_payload(
         status="chunk",
-        render_key="confirm",
+        render_key="choice",
         stream_id="stream-1",
         tool_call_id="tool-call-1",
         stream_group_id="stream-group-1",
@@ -23,7 +23,7 @@ def test_build_a2ui_stream_payload_contains_incremental_stream_metadata() -> Non
         json_parse_status="partial",
     )
 
-    assert payload["render_key"] == "confirm"
+    assert payload["render_key"] == "choice"
     assert payload["stream_id"] == "stream-1"
     assert payload["stream_group_id"] == "stream-group-1"
     assert payload["tool_call_id"] == "tool-call-1"
@@ -39,7 +39,7 @@ def test_build_a2ui_created_payload_flattens_key_ids_and_embeds_object() -> None
 
     payload = build_a2ui_created_payload(a2ui)
 
-    assert payload["render_key"] == "confirm"
+    assert payload["render_key"] == "choice"
     assert payload["stream_id"] == "stream-1"
     assert payload["tool_call_id"] == "tool-call-1"
     assert payload["interaction_id"] == "a2ui-1"
@@ -61,7 +61,7 @@ def test_build_waiting_input_payload_contains_checkpoint_and_reason() -> None:
     assert payload["reason"] == "a2ui"
     assert payload["interaction_id"] == "a2ui-1"
     assert payload["checkpoint"]["checkpoint_id"] == "checkpoint-1"
-    assert payload["a2ui"]["render_key"] == "confirm"
+    assert payload["a2ui"]["render_key"] == "choice"
 
 
 def test_ack_payloads_include_resume_summary() -> None:
@@ -75,7 +75,7 @@ def test_ack_payloads_include_resume_summary() -> None:
         interaction_id="a2ui-1",
         request_id="submit-1",
         status="submitted",
-        submit_result={"confirmed": True},
+        submit_result={"selected_values": ["yes"]},
         resume=resume,
     )
     cancel_ack = build_cancel_ack_payload(
@@ -88,20 +88,20 @@ def test_ack_payloads_include_resume_summary() -> None:
 
     assert submit_ack["resume"]["status"] == "deferred"
     assert submit_ack["resume"]["pending_count"] == 1
-    assert submit_ack["submit_result"] == {"confirmed": True}
+    assert submit_ack["submit_result"] == {"selected_values": ["yes"]}
     assert cancel_ack["cancel_reason"] == "user_cancelled"
     assert cancel_ack["resume"]["resume_group_id"] == "group-1"
 
 
 def _interactive_a2ui() -> A2UIObject:
     return A2UIObject(
-        render_key="confirm",
+        render_key="choice",
         mode="interactive",
         stream_id="stream-1",
         tool_call_id="tool-call-1",
         trace_id="trace-1",
         turn_index=1,
-        payload={"title": "Confirm"},
+        payload={"title": "选择方案", "options": [{"label": "继续", "value": "yes"}]},
         input_schema={"type": "object"},
         submit_schema={"type": "object"},
         interaction=A2UIInteractionState(

@@ -1,7 +1,29 @@
 .form {
+  --a2ui-control-height: 42px;
+  --a2ui-control-radius: 8px;
+  --a2ui-control-bg: color-mix(in srgb, var(--color-bg-elevated) 94%, var(--surface-muted));
+  --a2ui-control-border: color-mix(in srgb, var(--color-border-default) 76%, transparent);
+  --a2ui-control-border-hover: color-mix(in srgb, var(--color-text-primary) 14%, var(--color-border-default));
+  --a2ui-control-border-active: color-mix(in srgb, var(--color-text-primary) 18%, var(--color-border-default));
+  --a2ui-control-selected-border: color-mix(in srgb, var(--color-text-primary) 22%, var(--color-border-default));
+  --a2ui-control-ring: none;
   display: grid;
   min-width: 0;
-  gap: 12px;
+  gap: 14px;
+}
+
+.intro {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 1.45;
 }
 
 .description {
@@ -12,16 +34,50 @@
   white-space: pre-wrap;
 }
 
+.meta {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .fields {
   display: grid;
   min-width: 0;
-  gap: 11px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
 }
 
 .field {
+  position: relative;
   display: grid;
   min-width: 0;
-  gap: 6px;
+  align-content: start;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 74%, transparent);
+  padding: 12px 13px;
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    border-color 160ms var(--motion-ease-out),
+    box-shadow 160ms var(--motion-ease-out);
+}
+
+.field:hover {
+  border-color: color-mix(in srgb, var(--color-border-default) 88%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, var(--surface-muted));
+}
+
+.field:focus-within {
+  border-color: var(--a2ui-control-border-active);
+  box-shadow: var(--a2ui-control-ring);
+  z-index: 45;
+}
+
+.field[data-field-type="textarea"],
+.field[data-field-type="multiselect"],
+.field[data-field-type="boolean"] {
+  grid-column: 1 / -1;
 }
 
 .label {
@@ -42,42 +98,169 @@
 .field input[type="text"],
 .field input[type="number"],
 .field input[type="date"],
-.field select,
 .field textarea,
-.note textarea {
+.note textarea,
+.selectTrigger {
   box-sizing: border-box;
   width: 100%;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
-  border-radius: 7px;
-  background: var(--color-bg-elevated);
+  min-height: var(--a2ui-control-height);
+  border: 1px solid var(--a2ui-control-border);
+  border-radius: var(--a2ui-control-radius);
+  background: var(--a2ui-control-bg);
   color: var(--color-text-primary);
   font: inherit;
   font-size: 12px;
   line-height: 1.55;
-  padding: 8px 10px;
+  padding: 9px 11px;
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    border-color 160ms var(--motion-ease-out),
+    box-shadow 160ms var(--motion-ease-out),
+    color 160ms var(--motion-ease-out);
+}
+
+.field input[type="number"] {
+  appearance: textfield;
+}
+
+.field input[type="number"]::-webkit-outer-spin-button,
+.field input[type="number"]::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
 }
 
 .field textarea,
 .note textarea {
-  min-height: 72px;
+  min-height: 78px;
   resize: vertical;
 }
 
+.field input:hover:not(:disabled),
+.field textarea:hover:not(:disabled),
+.note textarea:hover:not(:disabled),
+.selectTrigger:hover:not(:disabled) {
+  border-color: var(--a2ui-control-border-hover);
+  background: color-mix(in srgb, var(--color-bg-elevated) 98%, var(--surface-muted));
+}
+
 .field input:focus,
-.field select:focus,
 .field textarea:focus,
-.note textarea:focus {
-  outline: 2px solid color-mix(in srgb, var(--color-info-6) 28%, transparent);
-  outline-offset: 1px;
+.note textarea:focus,
+.selectTrigger:focus-visible {
+  border-color: var(--a2ui-control-border-active);
+  box-shadow: var(--a2ui-control-ring);
+  outline: none;
 }
 
 .field input:disabled,
-.field select:disabled,
 .field textarea:disabled,
-.note textarea:disabled {
+.note textarea:disabled,
+.selectTrigger:disabled {
   cursor: not-allowed;
-  background: color-mix(in srgb, var(--surface-muted) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-muted) 76%, transparent);
   color: var(--color-text-tertiary);
+}
+
+.selectRoot {
+  position: relative;
+  min-width: 0;
+}
+
+.selectTrigger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.selectTrigger svg {
+  color: var(--color-text-tertiary);
+  transition: transform 160ms var(--motion-ease-out);
+}
+
+.selectRoot[data-open="true"] .selectTrigger svg {
+  transform: rotate(180deg);
+}
+
+.selectValue,
+.selectPlaceholder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectPlaceholder {
+  color: var(--color-text-tertiary);
+}
+
+.selectMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  display: grid;
+  width: 100%;
+  min-width: min(240px, 100%);
+  max-height: 236px;
+  overflow: auto;
+  gap: 2px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 62%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 98%, var(--surface-bg));
+  box-shadow:
+    0 18px 48px rgb(15 23 42 / 12%),
+    0 2px 10px rgb(15 23 42 / 5%);
+  padding: 5px;
+  animation: a2uiSelectIn 140ms var(--motion-ease-out) both;
+  backdrop-filter: blur(18px);
+}
+
+.selectOption {
+  display: grid;
+  min-width: 0;
+  min-height: 30px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.selectOption:hover:not(:disabled),
+.selectOption:focus-visible:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.selectOption[data-selected="true"] {
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
+  color: var(--color-text-primary);
+  font-weight: 620;
+}
+
+.selectOption:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.selectOptionCheck {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  color: var(--color-text-primary);
 }
 
 .checkboxLabel {
@@ -86,21 +269,120 @@
   align-items: center;
   gap: 8px;
   color: var(--color-text-secondary);
+  cursor: pointer;
   font-size: 12px;
   line-height: 1.5;
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    border-color 160ms var(--motion-ease-out),
+    color 160ms var(--motion-ease-out),
+    box-shadow 160ms var(--motion-ease-out);
 }
 
 .checkboxLabel input {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--color-info-6);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.checkboxMark {
+  position: relative;
+  display: inline-grid;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-text-primary) 16%, var(--color-border-default));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 96%, var(--surface-muted));
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    border-color 160ms var(--motion-ease-out),
+    box-shadow 160ms var(--motion-ease-out);
+}
+
+.checkboxMark::after {
+  content: "";
+  width: 4px;
+  height: 7px;
+  border: solid var(--color-text-inverse);
+  border-width: 0 1.6px 1.6px 0;
+  opacity: 0;
+  transform: rotate(42deg) translateY(-1px) scale(0.82);
+  transition:
+    opacity 120ms var(--motion-ease-out),
+    transform 120ms var(--motion-ease-out);
+}
+
+.checkboxLabel:hover:not([data-disabled="true"]) {
+  color: var(--color-text-primary);
+}
+
+.checkboxLabel:hover:not([data-disabled="true"]) .checkboxMark {
+  border-color: var(--a2ui-control-border-hover);
+  background: var(--color-bg-elevated);
+}
+
+.checkboxLabel:focus-within {
+  box-shadow: var(--a2ui-control-ring);
+}
+
+.checkboxLabel[data-selected="true"] {
+  color: var(--color-text-primary);
+}
+
+.checkboxLabel[data-selected="true"] .checkboxMark {
+  border-color: var(--color-text-primary);
+  background: var(--color-text-primary);
+}
+
+.checkboxLabel[data-selected="true"] .checkboxMark::after {
+  opacity: 1;
+  transform: rotate(42deg) translateY(-1px) scale(1);
+}
+
+.checkboxLabel[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .multiOptions {
-  display: grid;
+  display: flex;
   min-width: 0;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.multiOptions .checkboxLabel,
+.field[data-field-type="boolean"] .checkboxLabel {
+  min-height: 30px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 84%, transparent);
+  padding: 0 11px 0 9px;
+}
+
+.multiOptions .checkboxLabel:hover:not([data-disabled="true"]),
+.field[data-field-type="boolean"] .checkboxLabel:hover:not([data-disabled="true"]) {
+  border-color: color-mix(in srgb, var(--color-border-default) 90%, transparent);
+  background: var(--surface-hover);
+}
+
+.multiOptions .checkboxLabel[data-selected="true"],
+.field[data-field-type="boolean"] .checkboxLabel[data-selected="true"] {
+  border-color: var(--a2ui-control-selected-border);
+  background: color-mix(in srgb, var(--surface-muted) 76%, var(--color-bg-elevated));
+}
+
+.helpText {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .fieldError {
@@ -129,64 +411,78 @@
 
 .button {
   display: inline-flex;
-  min-height: 30px;
+  min-height: 32px;
   align-items: center;
   gap: 6px;
   justify-content: center;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
-  border-radius: 7px;
-  background: var(--color-bg-elevated);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 94%, var(--surface-muted));
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
   line-height: 1;
-  padding: 0 11px;
+  padding: 0 12px;
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    border-color 160ms var(--motion-ease-out),
+    color 160ms var(--motion-ease-out),
+    box-shadow 160ms var(--motion-ease-out);
 }
 
 .button:hover:not(:disabled) {
+  border-color: var(--a2ui-control-border-hover);
   background: var(--surface-hover);
   color: var(--color-text-primary);
 }
 
 .button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-info-6) 30%, transparent);
-  outline-offset: 1px;
+  box-shadow: var(--a2ui-control-ring);
+  outline: none;
 }
 
 .button:disabled {
   cursor: not-allowed;
-  opacity: 0.58;
+  opacity: 0.54;
+}
+
+.previewEmpty {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .submitButton {
-  border-color: color-mix(in srgb, var(--color-info-6) 38%, var(--color-border-default));
-  color: color-mix(in srgb, var(--color-info-6) 84%, var(--color-text-primary));
+  border-color: color-mix(in srgb, var(--color-text-primary) 74%, transparent);
+  background: var(--color-text-primary);
+  color: var(--color-text-inverse);
+}
+
+.submitButton:hover:not(:disabled) {
+  border-color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-primary) 92%, var(--surface-hover));
+  color: var(--color-text-inverse);
 }
 
 .result {
   display: grid;
   min-width: 0;
-  gap: 8px;
-  border: 0;
-  border-left: 2px solid color-mix(in srgb, var(--color-info-6) 34%, transparent);
-  border-radius: 0;
-  background: transparent;
+  gap: 12px;
   color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 1.55;
-  padding: 2px 0 2px 10px;
+  padding: 0;
 }
 
-.result strong {
-  color: var(--color-text-primary);
-  font-weight: 650;
+.result[data-result-status="cancelled"] {
+  opacity: 0.72;
 }
 
 .valueGrid {
   display: grid;
   min-width: 0;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
   margin: 0;
 }
@@ -195,6 +491,10 @@
   display: grid;
   min-width: 0;
   gap: 3px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-muted) 62%, transparent);
+  padding: 8px 9px;
 }
 
 .valueItem dt {
@@ -211,8 +511,62 @@
   white-space: pre-wrap;
 }
 
+.readonlyNote {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.readonlyNote span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.readonlyNote p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
 .error {
   color: color-mix(in srgb, var(--color-danger) 82%, var(--color-text-primary));
   font-size: 12px;
   line-height: 1.5;
+}
+
+@keyframes a2uiSelectIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 640px) {
+  .fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .field,
+  .button,
+  .selectTrigger,
+  .selectTrigger svg,
+  .checkboxLabel,
+  .checkboxMark,
+  .checkboxMark::after {
+    transition: none;
+  }
+
+  .selectMenu {
+    animation: none;
+  }
 }

@@ -19,12 +19,12 @@ describe("MessageList A2UI callback contract", () => {
       buildA2UICancelPayload(sessionId, interactionId, cancelReason, "req-cancel"),
     );
 
-    expect(onSubmit("int-1", { confirmed: true }, "ses-1")).toEqual({
+    expect(onSubmit("int-1", { selected_values: ["now"] }, "ses-1")).toEqual({
       action: "a2ui_submit",
       session_id: "ses-1",
       interaction_id: "int-1",
       request_id: "req-submit",
-      submit_result: { confirmed: true },
+      submit_result: { selected_values: ["now"] },
     });
     expect(onCancel("int-1", "user_cancelled", "ses-1")).toEqual({
       action: "a2ui_cancel",
@@ -44,10 +44,10 @@ describe("MessageList A2UI callback contract", () => {
       />,
     );
 
-    expect(screen.getByTestId("a2ui-block").getAttribute("data-render-key")).toBe("confirm");
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-render-key")).toBe("choice");
     expect(screen.getByTestId("a2ui-block").getAttribute("data-interactive-ready")).toBe("true");
     expect(screen.queryByRole("button", { name: "查看 A2UI 调试信息" })).toBeNull();
-    expect(screen.getByText("确认发布")).toBeTruthy();
+    expect(screen.getAllByText("选择发布方式").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("等待输入")).toBeTruthy();
   });
 
@@ -74,7 +74,7 @@ describe("MessageList A2UI callback contract", () => {
               interaction_id: "int-submitted",
               status: "submitted",
               can_submit: false,
-              submit_result: { confirmed: true },
+              submit_result: { selected_values: ["now"] },
               resume_status: "succeeded",
             },
           }),
@@ -95,9 +95,10 @@ describe("MessageList A2UI callback contract", () => {
 
     const blocks = screen.getAllByTestId("a2ui-block");
     expect(blocks).toHaveLength(2);
-    expect(blocks.map((block) => block.getAttribute("data-render-key"))).toEqual(["confirm", "confirm"]);
+    expect(blocks.map((block) => block.getAttribute("data-render-key"))).toEqual(["choice", "choice"]);
     expect(blocks.map((block) => block.getAttribute("data-status"))).toEqual(["submitted", "waiting_input"]);
-    expect(screen.getByText("已提交确认")).toBeTruthy();
+    expect(screen.queryByText("已提交选择")).toBeNull();
+    expect(screen.getAllByText("立即发布").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("等待输入")).toBeTruthy();
   });
 
@@ -180,8 +181,8 @@ describe("MessageList A2UI callback contract", () => {
     expect(converted.kind).toBe("a2ui");
     expect(converted.status).toBe("pending");
     expect(converted.payload).toMatchObject({
-      a2ui: { render_key: "confirm", stream_id: "stream-1" },
-      renderKey: "confirm",
+      a2ui: { render_key: "choice", stream_id: "stream-1" },
+      renderKey: "choice",
       interactionId: "int-1",
     });
   });
@@ -318,15 +319,16 @@ function a2uiObject(): A2UIObject {
 
 function a2uiObjectWith(streamId: string, interaction: A2UIInteractionState): A2UIObject {
   return {
-    render_key: "confirm",
+    render_key: "choice",
     mode: "interactive",
     stream_id: streamId,
     tool_call_id: "tool-1",
     trace_id: "trace-1",
     turn_index: 1,
     payload: {
-      title: "确认发布",
-      description: "发布后用户可见",
+      title: "选择发布方式",
+      description: "选择后继续",
+      options: [{ label: "立即发布", value: "now" }],
     },
     input_schema: {},
     submit_schema: {},
@@ -343,7 +345,7 @@ function a2uiDebugWith(a2ui: A2UIObject, interaction: A2UIInteractionState): A2U
   return {
     id: a2ui.stream_id,
     status: interaction.status === "waiting_user_input" ? "waiting_input" : interaction.status === "submitted" ? "submitted" : "cancelled",
-    renderKey: "confirm",
+    renderKey: "choice",
     mode: "interactive",
     streamId: a2ui.stream_id,
     interactionId: interaction.interaction_id,

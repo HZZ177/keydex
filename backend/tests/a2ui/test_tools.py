@@ -19,12 +19,12 @@ def test_a2ui_registry_to_langchain_tools_uses_render_key_names_and_metadata(tmp
     )
 
     by_name = {tool.name: tool for tool in tools}
-    assert set(by_name) == {"chart", "confirm", "choice", "form"}
+    assert set(by_name) == {"chart", "choice", "form"}
     assert by_name["chart"].metadata == {
         "a2ui": {"render_key": "chart", "mode": "render", "stream_enabled": True}
     }
-    assert by_name["confirm"].metadata == {
-        "a2ui": {"render_key": "confirm", "mode": "interactive", "stream_enabled": True}
+    assert by_name["choice"].metadata == {
+        "a2ui": {"render_key": "choice", "mode": "interactive", "stream_enabled": True}
     }
     assert by_name["choice"].args_schema["type"] == "object"
     assert by_name["form"].description
@@ -49,12 +49,19 @@ async def test_a2ui_langchain_tool_invokes_handler_with_definition_args_and_cont
         handler=handler,
     )[1]
 
-    payload = json.loads(await tool.ainvoke({"title": "Confirm"}))
+    payload = json.loads(await tool.ainvoke({
+        "title": "选择方案",
+        "options": [{"label": "方案 A", "value": "a"}],
+    }))
 
-    assert tool.name == "confirm"
-    assert payload == {"ok": True, "render_key": "confirm", "args": {"title": "Confirm"}}
-    assert captured["definition"].render_key == "confirm"
-    assert captured["args"] == {"title": "Confirm"}
+    assert tool.name == "choice"
+    assert payload == {
+        "ok": True,
+        "render_key": "choice",
+        "args": {"title": "选择方案", "options": [{"label": "方案 A", "value": "a"}]},
+    }
+    assert captured["definition"].render_key == "choice"
+    assert captured["args"] == {"title": "选择方案", "options": [{"label": "方案 A", "value": "a"}]}
     assert captured["context"].session_id == "session-1"
 
 
@@ -78,16 +85,16 @@ async def test_a2ui_langchain_tool_injects_tool_call_id_from_tool_call(
     payload = await tool.ainvoke(
         {
             "type": "tool_call",
-            "id": "call-confirm-1",
-            "name": "confirm",
-            "args": {"title": "Confirm"},
+            "id": "call-choice-1",
+            "name": "choice",
+            "args": {"title": "选择方案", "options": [{"label": "方案 A", "value": "a"}]},
         }
     )
 
     assert json.loads(payload.content) == {"ok": True}
-    assert payload.tool_call_id == "call-confirm-1"
-    assert captured["args"] == {"title": "Confirm"}
-    assert captured["metadata"]["tool_call_id"] == "call-confirm-1"
+    assert payload.tool_call_id == "call-choice-1"
+    assert captured["args"] == {"title": "选择方案", "options": [{"label": "方案 A", "value": "a"}]}
+    assert captured["metadata"]["tool_call_id"] == "call-choice-1"
 
 
 async def _echo_handler(definition, args, context, config):
