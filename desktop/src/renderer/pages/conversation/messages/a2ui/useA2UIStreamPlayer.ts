@@ -158,22 +158,19 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
 
     const interval = calculateInterval(runtime);
     const step = calculateElementStep(runtime, interval);
-    runtime.raf = window.requestAnimationFrame(() => {
-      runtime.raf = null;
-      runtime.timer = window.setTimeout(() => {
-        runtime.timer = null;
-        const latestTotal = getTotalElementCount(runtime.latestPayload);
-        runtime.renderedElementCount = Math.min(runtime.renderedElementCount + step, latestTotal);
-        updateDisplayPayload();
-        if (runtime.renderedElementCount >= latestTotal && runtime.finalPayload) {
-          scheduleFinalize(enabled);
-          commit(enabled);
-          return;
-        }
+    runtime.timer = window.setTimeout(() => {
+      runtime.timer = null;
+      const latestTotal = getTotalElementCount(runtime.latestPayload);
+      runtime.renderedElementCount = Math.min(runtime.renderedElementCount + step, latestTotal);
+      updateDisplayPayload();
+      if (runtime.renderedElementCount >= latestTotal && runtime.finalPayload) {
+        scheduleFinalize(enabled);
         commit(enabled);
-        scheduleNext(enabled);
-      }, interval);
-    });
+        return;
+      }
+      commit(enabled);
+      scheduleNext(enabled);
+    }, interval);
   }, [commit, scheduleFinalize, updateDisplayPayload]);
 
   useEffect(() => {

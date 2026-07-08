@@ -28,7 +28,7 @@ describe("A2FormBlock", () => {
     fireEvent.click(screen.getByLabelText(/短信/));
     fireEvent.click(screen.getByLabelText(/邮件/));
     fireEvent.click(screen.getByLabelText(/确认执行/));
-    fireEvent.change(screen.getByLabelText("备注"), { target: { value: "参数已确认" } });
+    fireEvent.change(screen.getByLabelText("不对！输入信息告诉 Keydex 应该怎么做"), { target: { value: "参数已确认" } });
     fireEvent.click(screen.getByRole("button", { name: "提交参数" }));
 
     await waitFor(() => {
@@ -90,11 +90,70 @@ describe("A2FormBlock", () => {
     });
   });
 
+  it("uses the interactive motion layer for form fields and floating select menus", () => {
+    render(<A2UIBlock message={formMessage()} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+
+    expect(screen.getByTestId("a2ui-form").getAttribute("data-a2ui-interactive-motion")).toBe("true");
+    expect(screen.getByTestId("a2ui-form").getAttribute("data-a2ui-motion-state")).toBe("active");
+
+    const titleField = screen.getByLabelText(/标题/).closest("[data-a2ui-interactive-item]");
+    expect(titleField?.getAttribute("data-a2ui-motion-variant")).toBe("field");
+    expect(titleField?.getAttribute("data-filled")).toBe("false");
+    expect(titleField?.getAttribute("tabindex")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText(/标题/), { target: { value: "发布活动" } });
+
+    expect(screen.getByLabelText(/标题/).closest("[data-a2ui-interactive-item]")?.getAttribute("data-filled")).toBe("true");
+    expect(screen.getByTestId("a2ui-form").getAttribute("data-a2ui-motion-state")).toBe("dirty");
+
+    fireEvent.click(screen.getByLabelText(/渠道/));
+
+    expect(screen.getByRole("listbox").getAttribute("data-a2ui-floating-motion")).toBe("true");
+    expect(screen.getByRole("option", { name: "微信" }).getAttribute("data-a2ui-floating-motion-item")).toBe("true");
+    expect(screen.getByRole("button", { name: "提交参数" }).getAttribute("data-a2ui-action-motion")).toBe("true");
+  });
+
+  it("animates the action badge through loading and done states", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveSubmit!: () => void;
+      const onSubmit = vi.fn(() => new Promise<void>((resolve) => {
+        resolveSubmit = resolve;
+      }));
+      render(
+        <A2UIBlock
+          message={formMessage({ payload: { fields: [] } })}
+          onSubmit={onSubmit}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "提交参数" }));
+
+      expect(screen.getByRole("button", { name: "提交中" }).getAttribute("data-badge-state")).toBe("loading");
+
+      await act(async () => {
+        resolveSubmit();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(screen.getByRole("button", { name: "已提交" }).getAttribute("data-badge-state")).toBe("done");
+
+      await act(async () => {
+        vi.advanceTimersByTime(420);
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sends cancel with a note reason", async () => {
     const onCancel = vi.fn().mockResolvedValue(undefined);
     render(<A2UIBlock message={formMessage()} onSubmit={vi.fn()} onCancel={onCancel} />);
 
-    fireEvent.change(screen.getByLabelText("备注"), { target: { value: "资料不足" } });
+    fireEvent.change(screen.getByLabelText("不对！输入信息告诉 Keydex 应该怎么做"), { target: { value: "资料不足" } });
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
 
     await waitFor(() => {
@@ -135,7 +194,7 @@ describe("A2FormBlock", () => {
     expect(result.getByText("短信")).not.toBeNull();
     expect(result.getByText("是")).not.toBeNull();
     expect(result.getByText("本次填写已提交")).not.toBeNull();
-    expect(result.getByText("备注")).not.toBeNull();
+    expect(result.getByText("给 Keydex 的补充信息")).not.toBeNull();
     expect(result.getByText("已确认")).not.toBeNull();
     expect(result.queryByText("已提交表单")).toBeNull();
     expect(result.queryByText(/恢复状态/)).toBeNull();

@@ -14,7 +14,7 @@ describe("A2ChoiceBlock", () => {
     expect(submitButton.disabled).toBe(true);
 
     fireEvent.click(screen.getByLabelText(/方案 B/));
-    fireEvent.change(screen.getByLabelText("备注"), { target: { value: "优先收益" } });
+    fireEvent.change(screen.getByLabelText("不对！输入信息告诉 Keydex 应该怎么做"), { target: { value: "优先收益" } });
     fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
 
     await waitFor(() => {
@@ -84,11 +84,67 @@ describe("A2ChoiceBlock", () => {
     });
   });
 
+  it("uses the interactive motion layer for choice scenes and option selection", () => {
+    render(<A2UIBlock message={choiceMessage()} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+
+    expect(screen.getByTestId("a2ui-choice").getAttribute("data-a2ui-interactive-motion")).toBe("true");
+    expect(screen.getByTestId("a2ui-choice").getAttribute("data-a2ui-motion-state")).toBe("active");
+
+    const option = screen.getByLabelText(/方案 A/).closest("label");
+    expect(option?.getAttribute("data-a2ui-interactive-item")).toBe("true");
+    expect(option?.getAttribute("data-a2ui-motion-variant")).toBe("option");
+    expect(option?.getAttribute("tabindex")).toBeNull();
+    expect(option?.querySelector("[data-a2ui-choice-morph]")).not.toBeNull();
+
+    fireEvent.click(screen.getByLabelText(/方案 A/));
+
+    expect(screen.getByTestId("a2ui-choice").getAttribute("data-a2ui-motion-state")).toBe("dirty");
+    expect(option?.getAttribute("data-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: "提交选择" }).getAttribute("data-a2ui-action-motion")).toBe("true");
+
+    fireEvent.click(screen.getByLabelText(/方案 A/));
+
+    expect(screen.getByTestId("a2ui-choice").getAttribute("data-a2ui-motion-state")).toBe("active");
+    expect(option?.getAttribute("data-selected")).toBe("false");
+    expect((screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("animates the action badge through loading and done states", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveSubmit!: () => void;
+      const onSubmit = vi.fn(() => new Promise<void>((resolve) => {
+        resolveSubmit = resolve;
+      }));
+      render(<A2UIBlock message={choiceMessage()} onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+      fireEvent.click(screen.getByLabelText(/方案 A/));
+      fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
+
+      expect(screen.getByRole("button", { name: "提交中" }).getAttribute("data-badge-state")).toBe("loading");
+
+      await act(async () => {
+        resolveSubmit();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(screen.getByRole("button", { name: "已提交" }).getAttribute("data-badge-state")).toBe("done");
+
+      await act(async () => {
+        vi.advanceTimersByTime(420);
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sends cancel with a note reason", async () => {
     const onCancel = vi.fn().mockResolvedValue(undefined);
     render(<A2UIBlock message={choiceMessage()} onSubmit={vi.fn()} onCancel={onCancel} />);
 
-    fireEvent.change(screen.getByLabelText("备注"), { target: { value: "暂不选择" } });
+    fireEvent.change(screen.getByLabelText("不对！输入信息告诉 Keydex 应该怎么做"), { target: { value: "暂不选择" } });
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
 
     await waitFor(() => {
@@ -117,7 +173,7 @@ describe("A2ChoiceBlock", () => {
     expect(result.getByText("方案 A")).not.toBeNull();
     expect(result.getByText("方案 C")).not.toBeNull();
     expect(result.getByText("本次选择已提交 · 2 项")).not.toBeNull();
-    expect(result.getByText("备注")).not.toBeNull();
+    expect(result.getByText("给 Keydex 的补充信息")).not.toBeNull();
     expect(result.getByText("组合推进")).not.toBeNull();
     expect(result.queryByText("已提交选择")).toBeNull();
     expect(result.queryByText(/恢复状态/)).toBeNull();

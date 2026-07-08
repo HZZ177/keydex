@@ -1,5 +1,4 @@
-import { Check, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
@@ -12,10 +11,11 @@ import styles from "./A2ChoiceBlock.module.css";
 import type { A2UIRenderState } from "./A2UIState";
 import { A2UIStateLine } from "./A2UIStateLine";
 import {
-  A2UIMotionItem,
-  A2UIMotionRoot,
+  A2ActionMotionButton,
+  A2InteractiveMotionItem,
+  A2InteractiveMotionRoot,
+  A2MotionPresence,
 } from "./A2UIMotion";
-import revealStyles from "./A2UIReveal.module.css";
 
 export interface A2ChoiceBlockProps {
   message: ConversationMessage;
@@ -47,13 +47,25 @@ interface ChoiceModel {
   renderState: A2UIRenderState;
 }
 
+type ActionKind = "submit" | "cancel";
+type ActionBadgeStage = "idle" | "loading" | "done";
+type ActionBadgePhase = {
+  kind: ActionKind;
+  stage: Exclude<ActionBadgeStage, "idle">;
+};
+
+const ACTION_BADGE_DONE_MS = 420;
+
 export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceBlockProps) {
   const model = useMemo(() => choiceModel(parsed), [parsed]);
   const [selectedValues, setSelectedValues] = useState<string[]>(() => initialSelection(model));
   const [note, setNote] = useState("");
   const [localSubmitting, setLocalSubmitting] = useState<"submit" | "cancel" | null>(null);
+  const [actionPhase, setActionPhase] = useState<ActionBadgePhase | null>(null);
   const [localSubmitted, setLocalSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const actionTokenRef = useRef(0);
   const actionable =
     model.status === "waiting_input" &&
     Boolean(parsed.interactionId) &&
@@ -63,11 +75,33 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
   const canSubmit = actionable && Boolean(onSubmit) && !localSubmitting && !validation;
   const canCancel = actionable && Boolean(onCancel) && !localSubmitting;
   const showInputPreview = model.status === "waiting_input" || isStreamingPreviewStatus(model.status);
+  const motionLive = shouldUseInteractiveChoiceMotion(parsed, model.status);
+  const motionState = choiceMotionState({
+    error,
+    localSubmitted,
+    localSubmitting,
+    selectedCount: selectedValues.length,
+    status: model.status,
+  });
+  const cancelBadgeStage = actionBadgeStage(actionPhase, "cancel");
+  const submitBadgeStage = actionBadgeStage(actionPhase, "submit");
+  const cancelButtonLabel = actionBadgeLabel(cancelBadgeStage, "取消", "取消中", "已取消");
+  const submitButtonLabel = actionBadgeLabel(submitBadgeStage, "提交选择", "提交中", "已提交");
+  const actionState =
+    actionPhase?.kind ?? localSubmitting ?? (localSubmitted ? "submitted" : selectedValues.length ? "dirty" : "idle");
 
   useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    actionTokenRef.current += 1;
     setSelectedValues(initialSelection(model));
     setNote("");
     setLocalSubmitting(null);
+    setActionPhase(null);
     setLocalSubmitted(false);
     setError(null);
   }, [parsed.interactionId, model.status]);
@@ -81,7 +115,7 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
     }
     setSelectedValues((current) => {
       if (!model.multiple) {
-        return [value];
+        return current.includes(value) ? [] : [value];
       }
       if (current.includes(value)) {
         return current.filter((item) => item !== value);
@@ -97,7 +131,10 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
     if (!canSubmit || !onSubmit || !parsed.interactionId) {
       return;
     }
+    const actionToken = actionTokenRef.current + 1;
+    actionTokenRef.current = actionToken;
     setLocalSubmitting("submit");
+    setActionPhase({ kind: "submit", stage: "loading" });
     setError(null);
     try {
       const trimmed = note.trim();
@@ -109,11 +146,23 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
         },
         message.threadId,
       );
-      setLocalSubmitted(true);
+      if (!mountedRef.current || actionTokenRef.current !== actionToken) {
+        return;
+      }
+      setActionPhase({ kind: "submit", stage: "done" });
+      await waitForActionBadgeDone();
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setLocalSubmitted(true);
+      }
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setError(errorMessage(reason));
+        setActionPhase(null);
+      }
     } finally {
-      setLocalSubmitting(null);
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setLocalSubmitting(null);
+      }
     }
   };
 
@@ -121,158 +170,262 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
     if (!canCancel || !onCancel || !parsed.interactionId) {
       return;
     }
+    const actionToken = actionTokenRef.current + 1;
+    actionTokenRef.current = actionToken;
     setLocalSubmitting("cancel");
+    setActionPhase({ kind: "cancel", stage: "loading" });
     setError(null);
     try {
       await onCancel(parsed.interactionId, note.trim() || "用户取消", message.threadId);
-      setLocalSubmitted(true);
+      if (!mountedRef.current || actionTokenRef.current !== actionToken) {
+        return;
+      }
+      setActionPhase({ kind: "cancel", stage: "done" });
+      await waitForActionBadgeDone();
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setLocalSubmitted(true);
+      }
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setError(errorMessage(reason));
+        setActionPhase(null);
+      }
     } finally {
-      setLocalSubmitting(null);
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setLocalSubmitting(null);
+      }
     }
   };
 
   return (
-    <A2UIMotionRoot as="section" className={styles.choice} data-testid="a2ui-choice" {...parsed.streamPlayer?.rootProps}>
-      <A2UIMotionItem
-        as="div"
-        className={[styles.intro, revealStyles.revealCompactItem].join(" ")}
+    <A2InteractiveMotionRoot
+      className={styles.choice}
+      data-testid="a2ui-choice"
+      live={motionLive}
+      motionScope={interactiveChoiceMotionScope(message.id, parsed)}
+      motionState={motionState}
+      {...parsed.streamPlayer?.rootProps}
+    >
+      <A2InteractiveMotionItem
+        className={styles.intro}
+        live={motionLive}
         motionKey="choice:intro"
         motionKind="choice-intro"
+        variant="intro"
       >
         <h3 className={styles.title}>{model.title}</h3>
         {model.description ? <p className={styles.description}>{model.description}</p> : null}
-      </A2UIMotionItem>
-      {showInputPreview ? (
-        <>
-          <div className={styles.options} role={model.multiple ? "group" : "radiogroup"} aria-label="选项">
-            {model.options.map((option, index) => {
-              const unitKey = choiceOptionUnitKey(option, index);
-              const selected = selectedValues.includes(option.value);
-              return (
-                <A2UIMotionItem
-                  as="label"
-                  className={[styles.option, revealStyles.revealItem].join(" ")}
-                  data-selected={selected ? "true" : "false"}
-                  data-disabled={!actionable || option.disabled ? "true" : "false"}
-                  data-recommended={option.recommended ? "true" : "false"}
-                  key={option.value}
-                  motionKey={unitKey}
-                  motionKind="choice-option"
+      </A2InteractiveMotionItem>
+      <A2MotionPresence>
+        {showInputPreview ? (
+          <A2InteractiveMotionItem
+            className={styles.stage}
+            key="choice-input"
+            live={motionLive}
+            motionKey="choice:input-stage"
+            motionKind="choice-stage"
+            variant="scene"
+          >
+            <div className={styles.timelineShell}>
+              <div className={styles.options} role={model.multiple ? "group" : "radiogroup"} aria-label="选项">
+                {model.options.map((option, index) => {
+                  const unitKey = choiceOptionUnitKey(option, index);
+                  const selected = selectedValues.includes(option.value);
+                  const interactive = actionable && !localSubmitting && !option.disabled;
+                  return (
+                    <A2InteractiveMotionItem
+                      as="label"
+                      className={styles.option}
+                      data-selected={selected ? "true" : "false"}
+                      data-disabled={!actionable || option.disabled ? "true" : "false"}
+                      data-recommended={option.recommended ? "true" : "false"}
+                      interactive={interactive}
+                      key={option.value}
+                      live={motionLive}
+                      motionKey={unitKey}
+                      motionKind="choice-option"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        toggle(option.value);
+                      }}
+                      order={index + 1}
+                      selected={selected}
+                      variant="option"
+                    >
+                      <span className={styles.optionEffect} aria-hidden="true" />
+                      <OptionMorphIndicator />
+                      <input
+                        type={model.multiple ? "checkbox" : "radio"}
+                        name={`${message.id}:choice`}
+                        value={option.value}
+                        checked={selected}
+                        disabled={!actionable || option.disabled || Boolean(localSubmitting)}
+                        readOnly
+                      />
+                      <span className={styles.optionText}>
+                        <span className={styles.optionHeader}>
+                          <span className={styles.optionLabel}>{option.label}</span>
+                          {option.recommended ? <span className={styles.recommendedBadge}>推荐</span> : null}
+                          {option.badge ? <span className={styles.optionBadge}>{option.badge}</span> : null}
+                        </span>
+                        {option.description ? <span className={styles.optionDescription}>{option.description}</span> : null}
+                      </span>
+                    </A2InteractiveMotionItem>
+                  );
+                })}
+              </div>
+            </div>
+            {!model.options.length ? (
+              <A2InteractiveMotionItem
+                className={styles.previewEmpty}
+                live={motionLive}
+                motionKey="choice:preview-empty"
+                motionKind="choice-preview-empty"
+                variant="compact"
+              >
+                正在生成选项
+              </A2InteractiveMotionItem>
+            ) : null}
+            <div className={styles.workflowFooter}>
+              <A2InteractiveMotionItem
+                className={styles.correctionPanel}
+                live={motionLive}
+                motionKey="choice:correction"
+                motionKind="choice-correction"
+                variant="field"
+              >
+                <label htmlFor={`${message.id}:a2ui-choice-correction`}>
+                  不对！输入信息告诉 Keydex 应该怎么做
+                </label>
+                <textarea
+                  id={`${message.id}:a2ui-choice-correction`}
+                  value={note}
+                  maxLength={500}
+                  disabled={!actionable || Boolean(localSubmitting)}
+                  placeholder="例如：换一组更保守的选项，或者补充一个新的判断条件..."
+                  onChange={(event) => setNote(event.currentTarget.value)}
+                />
+              </A2InteractiveMotionItem>
+              <div className={styles.actionStatus}>
+                <A2InteractiveMotionItem
+                  className={styles.help}
+                  live={motionLive}
+                  motionKey="choice:help"
+                  motionKind="choice-help"
+                  variant="tray"
                 >
-                  <input
-                    type={model.multiple ? "checkbox" : "radio"}
-                    name={`${message.id}:choice`}
-                    value={option.value}
-                    checked={selected}
-                    disabled={!actionable || option.disabled || Boolean(localSubmitting)}
-                    onChange={() => toggle(option.value)}
-                  />
-                  <span className={styles.optionText}>
-                    <span className={styles.optionHeader}>
-                      <span className={styles.optionLabel}>{option.label}</span>
-                      {option.recommended ? <span className={styles.recommendedBadge}>推荐</span> : null}
-                      {option.badge ? <span className={styles.optionBadge}>{option.badge}</span> : null}
-                    </span>
-                    {option.description ? <span className={styles.optionDescription}>{option.description}</span> : null}
-                  </span>
-                </A2UIMotionItem>
-              );
-            })}
-          </div>
-          {!model.options.length ? (
-            <A2UIMotionItem
-              as="div"
-              className={[styles.previewEmpty, revealStyles.revealCompactItem].join(" ")}
-              motionKey="choice:preview-empty"
-              motionKind="choice-preview-empty"
-            >
-              正在生成选项
-            </A2UIMotionItem>
-          ) : null}
-          <A2UIMotionItem
-            as="div"
-            className={[styles.help, revealStyles.revealCompactItem].join(" ")}
-            motionKey="choice:help"
-            motionKind="choice-help"
-          >
-            {choiceHelp(model, selectedValues.length)}
-          </A2UIMotionItem>
-          <A2UIMotionItem
-            as="div"
-            className={[styles.note, revealStyles.revealCompactItem].join(" ")}
-            motionKey="choice:note"
-            motionKind="choice-note"
-          >
-            <label htmlFor={`${message.id}:a2ui-choice-note`}>备注</label>
-            <textarea
-              id={`${message.id}:a2ui-choice-note`}
-              value={note}
-              maxLength={500}
-              disabled={!actionable || Boolean(localSubmitting)}
-              placeholder="可选"
-              onChange={(event) => setNote(event.currentTarget.value)}
-            />
-          </A2UIMotionItem>
-          {model.status === "waiting_input" && validation ? <div className={styles.error}>{validation}</div> : null}
-          <A2UIMotionItem
-            as="div"
-            className={[styles.actions, revealStyles.revealCompactItem].join(" ")}
-            aria-label="选择操作"
-            motionKey="choice:actions"
-            motionKind="choice-actions"
-          >
-            <button className={styles.button} type="button" disabled={!canCancel} onClick={() => void cancel()}>
-              <X size={13} aria-hidden="true" />
-              <span>{localSubmitting === "cancel" ? "正在取消" : "取消"}</span>
-            </button>
-            <button
-              className={[styles.button, styles.submitButton].join(" ")}
-              type="button"
-              disabled={!canSubmit}
-              onClick={() => void submit()}
-            >
-              <Check size={13} aria-hidden="true" />
-              <span>{localSubmitting === "submit" ? "正在提交" : "提交选择"}</span>
-            </button>
-          </A2UIMotionItem>
-        </>
-      ) : (
-        <ChoiceResult model={model} />
-      )}
+                  {choiceHelp(model, selectedValues.length)}
+                </A2InteractiveMotionItem>
+                {model.status === "waiting_input" && validation ? <div className={styles.error}>{validation}</div> : null}
+              </div>
+              <A2InteractiveMotionItem
+                className={styles.actions}
+                aria-label="选择操作"
+                data-action-state={actionState}
+                live={motionLive}
+                motionKey="choice:actions"
+                motionKind="choice-actions"
+                variant="dock"
+              >
+                <A2ActionMotionButton
+                  aria-label={cancelButtonLabel}
+                  className={styles.button}
+                  data-badge-state={cancelBadgeStage}
+                  type="button"
+                  disabled={!canCancel}
+                  onClick={() => void cancel()}
+                >
+                  <ActionBadgeContent doneLabel="已取消" idleLabel="取消" loadingLabel="取消中" stage={cancelBadgeStage} />
+                </A2ActionMotionButton>
+                <A2ActionMotionButton
+                  aria-label={submitButtonLabel}
+                  className={[styles.button, styles.submitButton].join(" ")}
+                  data-badge-state={submitBadgeStage}
+                  type="button"
+                  disabled={!canSubmit}
+                  onClick={() => void submit()}
+                >
+                  <ActionBadgeContent doneLabel="已提交" idleLabel="提交选择" loadingLabel="提交中" stage={submitBadgeStage} />
+                </A2ActionMotionButton>
+              </A2InteractiveMotionItem>
+            </div>
+          </A2InteractiveMotionItem>
+        ) : (
+          <ChoiceResult live={motionLive} model={model} />
+        )}
+      </A2MotionPresence>
       {error ? <div className={styles.error}>{error}</div> : null}
-    </A2UIMotionRoot>
+    </A2InteractiveMotionRoot>
   );
 }
 
-function ChoiceResult({ model }: { model: ChoiceModel }) {
+function ActionBadgeContent({
+  doneLabel,
+  idleLabel,
+  loadingLabel,
+  stage,
+}: {
+  doneLabel: string;
+  idleLabel: string;
+  loadingLabel: string;
+  stage: ActionBadgeStage;
+}) {
+  return (
+    <>
+      <span className={styles.buttonSignal} aria-hidden="true" />
+      <span className={styles.buttonLabel} aria-hidden="true">
+        <span data-active={stage === "idle" ? "true" : "false"}>{idleLabel}</span>
+        <span data-active={stage === "loading" ? "true" : "false"}>{loadingLabel}</span>
+        <span data-active={stage === "done" ? "true" : "false"}>{doneLabel}</span>
+      </span>
+    </>
+  );
+}
+
+function ChoiceResult({ live, model }: { live: boolean; model: ChoiceModel }) {
   const selectedValues = new Set(model.selectedValues);
-  const selectedLabels = model.selectedValues.map((value) => labelForValue(model.options, value));
   const resultStatus = model.status === "submitted" ? "submitted" : model.status === "cancelled" ? "cancelled" : "pending";
   if (model.status === "submitted") {
     return (
-      <div className={styles.readonlyState} data-result-status={resultStatus} data-testid="a2ui-choice-result">
+      <A2InteractiveMotionItem
+        className={styles.readonlyState}
+        data-result-status={resultStatus}
+        data-testid="a2ui-choice-result"
+        key="choice-result"
+        live={live}
+        motionKey="choice:result"
+        motionKind="choice-result"
+        variant="result"
+      >
         <ReadonlyChoiceOptions model={model} selectedValues={selectedValues} />
-        {!model.options.length && selectedLabels.length ? (
-          <div className={styles.selectedList}>
-            {selectedLabels.map((label) => (
-              <span className={styles.selectedPill} key={label}>
-                {label}
-              </span>
-            ))}
-          </div>
-        ) : null}
         <ChoiceOutcomeLine model={model} selectedCount={selectedValues.size} />
         {model.note ? <ReadonlyNote value={model.note} /> : null}
-      </div>
+      </A2InteractiveMotionItem>
     );
   }
   return (
-    <div className={styles.readonlyState} data-result-status={resultStatus} data-testid="a2ui-choice-result">
+    <A2InteractiveMotionItem
+      className={styles.readonlyState}
+      data-result-status={resultStatus}
+      data-testid="a2ui-choice-result"
+      key="choice-result"
+      live={live}
+      motionKey="choice:result"
+      motionKind="choice-result"
+      variant="result"
+    >
       <ReadonlyChoiceOptions model={model} selectedValues={selectedValues} />
       <ChoiceOutcomeLine model={model} selectedCount={selectedValues.size} />
-    </div>
+    </A2InteractiveMotionItem>
+  );
+}
+
+function OptionMorphIndicator() {
+  return (
+    <span className={styles.optionMorph} data-a2ui-choice-morph="true" aria-hidden="true">
+      <span />
+      <span />
+    </span>
   );
 }
 
@@ -315,6 +468,8 @@ function ReadonlyChoiceOptions({ model, selectedValues }: { model: ChoiceModel; 
             key={option.value || index}
             role="listitem"
           >
+            <span className={styles.optionEffect} aria-hidden="true" />
+            <OptionMorphIndicator />
             <input
               aria-hidden="true"
               checked={selected}
@@ -341,7 +496,7 @@ function ReadonlyChoiceOptions({ model, selectedValues }: { model: ChoiceModel; 
 function ReadonlyNote({ value }: { value: string }) {
   return (
     <div className={styles.readonlyNote}>
-      <span>备注</span>
+      <span>给 Keydex 的补充信息</span>
       <p>{value}</p>
     </div>
   );
@@ -403,6 +558,26 @@ function choiceHelp(model: ChoiceModel, selectedCount: number): string {
     return `${selectedText} / 多选，至少 ${model.minSelected} 项`;
   }
   return `${selectedText} / 多选`;
+}
+
+function actionBadgeStage(phase: ActionBadgePhase | null, kind: ActionKind): ActionBadgeStage {
+  return phase?.kind === kind ? phase.stage : "idle";
+}
+
+function actionBadgeLabel(stage: ActionBadgeStage, idle: string, loading: string, done: string): string {
+  if (stage === "loading") {
+    return loading;
+  }
+  if (stage === "done") {
+    return done;
+  }
+  return idle;
+}
+
+function waitForActionBadgeDone(): Promise<void> {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ACTION_BADGE_DONE_MS);
+  });
 }
 
 function choiceOptions(value: unknown): ChoiceOption[] {
@@ -468,6 +643,58 @@ function normalizeStatus(value: unknown): string {
 
 function isStreamingPreviewStatus(status: string): boolean {
   return status === "started" || status === "streaming" || status === "finished";
+}
+
+function shouldUseInteractiveChoiceMotion(parsed: ParsedA2UIMessage, status: string): boolean {
+  if (parsed.historyHydrated) {
+    return false;
+  }
+  return Boolean(parsed.streamPlayer?.enabled) ||
+    status === "waiting_input" ||
+    status === "submitted" ||
+    status === "cancelled" ||
+    isStreamingPreviewStatus(status);
+}
+
+function interactiveChoiceMotionScope(messageId: string, parsed: ParsedA2UIMessage): string {
+  return [
+    parsed.a2ui?.stream_id,
+    parsed.debug?.streamId,
+    parsed.interactionId,
+    messageId,
+    "choice",
+  ].filter(Boolean).join(":");
+}
+
+function choiceMotionState({
+  error,
+  localSubmitted,
+  localSubmitting,
+  selectedCount,
+  status,
+}: {
+  error: string | null;
+  localSubmitted: boolean;
+  localSubmitting: "submit" | "cancel" | null;
+  selectedCount: number;
+  status: string;
+}) {
+  if (error) {
+    return "error";
+  }
+  if (localSubmitting) {
+    return "submitting";
+  }
+  if (localSubmitted || status === "submitted") {
+    return "submitted";
+  }
+  if (status === "cancelled") {
+    return "cancelled";
+  }
+  if (selectedCount) {
+    return "dirty";
+  }
+  return "active";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

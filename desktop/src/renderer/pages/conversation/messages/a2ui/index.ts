@@ -4,7 +4,18 @@ export { A2ChartBlock } from "./A2ChartBlock";
 export type { A2ChartBlockProps } from "./A2ChartBlock";
 export { A2ChoiceBlock } from "./A2ChoiceBlock";
 export type { A2ChoiceBlockProps } from "./A2ChoiceBlock";
-export { A2UIMotionItem, A2UIMotionRoot, a2uiMotionItemProps, useA2UILayoutMotion } from "./A2UIMotion";
+export {
+  A2ActionMotionButton,
+  A2FloatingMotionItem,
+  A2FloatingMotionPanel,
+  A2InteractiveMotionItem,
+  A2InteractiveMotionRoot,
+  A2MotionPresence,
+  A2UIMotionItem,
+  A2UIMotionRoot,
+  a2uiMotionItemProps,
+  useA2UILayoutMotion,
+} from "./A2UIMotion";
 export { A2UIDebugInfoButton } from "./A2UIDebugInfoButton";
 export type { A2UIDebugInfoButtonProps } from "./A2UIDebugInfoButton";
 export { A2UIDebugPanel } from "./A2UIDebugPanel";

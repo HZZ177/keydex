@@ -1,4 +1,4 @@
-import { Check, ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
@@ -12,10 +12,13 @@ import styles from "./A2FormBlock.module.css";
 import type { A2UIRenderState } from "./A2UIState";
 import { A2UIStateLine } from "./A2UIStateLine";
 import {
-  A2UIMotionItem,
-  A2UIMotionRoot,
+  A2ActionMotionButton,
+  A2FloatingMotionItem,
+  A2FloatingMotionPanel,
+  A2InteractiveMotionItem,
+  A2InteractiveMotionRoot,
+  A2MotionPresence,
 } from "./A2UIMotion";
-import revealStyles from "./A2UIReveal.module.css";
 
 export interface A2FormBlockProps {
   message: ConversationMessage;
@@ -58,6 +61,14 @@ interface FormModel {
 }
 
 type FormValues = Record<string, unknown>;
+type ActionKind = "submit" | "cancel";
+type ActionBadgeStage = "idle" | "loading" | "done";
+type ActionBadgePhase = {
+  kind: ActionKind;
+  stage: Exclude<ActionBadgeStage, "idle">;
+};
+
+const ACTION_BADGE_DONE_MS = 420;
 
 export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlockProps) {
   const model = useMemo(() => formModel(parsed), [parsed]);
@@ -65,8 +76,11 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
   const [note, setNote] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [localSubmitting, setLocalSubmitting] = useState<"submit" | "cancel" | null>(null);
+  const [actionPhase, setActionPhase] = useState<ActionBadgePhase | null>(null);
   const [localSubmitted, setLocalSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const actionTokenRef = useRef(0);
   const actionable =
     model.status === "waiting_input" &&
     Boolean(parsed.interactionId) &&
@@ -75,12 +89,34 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
   const canSubmit = actionable && Boolean(onSubmit) && !localSubmitting;
   const canCancel = actionable && Boolean(onCancel) && !localSubmitting;
   const showInputPreview = model.status === "waiting_input" || isStreamingPreviewStatus(model.status);
+  const motionLive = shouldUseInteractiveFormMotion(parsed, model.status);
+  const motionState = formMotionState({
+    error,
+    localSubmitted,
+    localSubmitting,
+    status: model.status,
+    values,
+  });
+  const cancelBadgeStage = actionBadgeStage(actionPhase, "cancel");
+  const submitBadgeStage = actionBadgeStage(actionPhase, "submit");
+  const cancelButtonLabel = actionBadgeLabel(cancelBadgeStage, "取消", "取消中", "已取消");
+  const submitButtonLabel = actionBadgeLabel(submitBadgeStage, model.submitLabel, "提交中", "已提交");
+  const actionState =
+    actionPhase?.kind ?? localSubmitting ?? (localSubmitted ? "submitted" : hasAnyFormValue(values) ? "dirty" : "idle");
 
   useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    actionTokenRef.current += 1;
     setValues(initialValues(model));
     setNote("");
     setErrors({});
     setLocalSubmitting(null);
+    setActionPhase(null);
     setLocalSubmitted(false);
     setError(null);
   }, [parsed.interactionId, model.status]);
@@ -106,7 +142,10 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
       setErrors(nextErrors);
       return;
     }
+    const actionToken = actionTokenRef.current + 1;
+    actionTokenRef.current = actionToken;
     setLocalSubmitting("submit");
+    setActionPhase({ kind: "submit", stage: "loading" });
     setError(null);
     try {
       const trimmed = note.trim();
@@ -118,11 +157,23 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
         },
         message.threadId,
       );
-      setLocalSubmitted(true);
+      if (!mountedRef.current || actionTokenRef.current !== actionToken) {
+        return;
+      }
+      setActionPhase({ kind: "submit", stage: "done" });
+      await waitForActionBadgeDone();
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setLocalSubmitted(true);
+      }
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setError(errorMessage(reason));
+        setActionPhase(null);
+      }
     } finally {
-      setLocalSubmitting(null);
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setLocalSubmitting(null);
+      }
     }
   };
 
@@ -130,100 +181,229 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
     if (!canCancel || !onCancel || !parsed.interactionId) {
       return;
     }
+    const actionToken = actionTokenRef.current + 1;
+    actionTokenRef.current = actionToken;
     setLocalSubmitting("cancel");
+    setActionPhase({ kind: "cancel", stage: "loading" });
     setError(null);
     try {
       await onCancel(parsed.interactionId, note.trim() || "用户取消", message.threadId);
-      setLocalSubmitted(true);
+      if (!mountedRef.current || actionTokenRef.current !== actionToken) {
+        return;
+      }
+      setActionPhase({ kind: "cancel", stage: "done" });
+      await waitForActionBadgeDone();
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setLocalSubmitted(true);
+      }
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setError(errorMessage(reason));
+        setActionPhase(null);
+      }
     } finally {
-      setLocalSubmitting(null);
+      if (mountedRef.current && actionTokenRef.current === actionToken) {
+        setLocalSubmitting(null);
+      }
     }
   };
 
   return (
-    <A2UIMotionRoot as="section" className={styles.form} data-testid="a2ui-form" {...parsed.streamPlayer?.rootProps}>
-      <A2UIMotionItem
-        as="div"
-        className={[styles.intro, revealStyles.revealCompactItem].join(" ")}
+    <A2InteractiveMotionRoot
+      className={styles.form}
+      data-testid="a2ui-form"
+      live={motionLive}
+      motionScope={interactiveFormMotionScope(message.id, parsed)}
+      motionState={motionState}
+      {...parsed.streamPlayer?.rootProps}
+    >
+      <A2InteractiveMotionItem
+        className={styles.intro}
+        live={motionLive}
         motionKey="form:intro"
         motionKind="form-intro"
+        variant="intro"
       >
         <h3 className={styles.title}>{model.title}</h3>
         {model.description ? <p className={styles.description}>{model.description}</p> : null}
         <div className={styles.meta}>{formMeta(model)}</div>
-      </A2UIMotionItem>
-      {showInputPreview ? (
-        <>
-          <div className={styles.fields}>
-            {model.fields.map((field) => {
-              return (
-                <FormFieldControl
+      </A2InteractiveMotionItem>
+      <A2MotionPresence>
+        {showInputPreview ? (
+          <A2InteractiveMotionItem
+            className={styles.stage}
+            key="form-input"
+            live={motionLive}
+            motionKey="form:input-stage"
+            motionKind="form-stage"
+            variant="scene"
+          >
+            <div className={styles.workspace}>
+              <FieldProgressRail
+                errors={errors}
+                fields={model.fields}
+                live={motionLive}
+                values={values}
+              />
+              <div className={styles.fields}>
+                {model.fields.map((field, index) => {
+                  return (
+                    <FormFieldControl
+                      disabled={!actionable || Boolean(localSubmitting)}
+                      error={errors[field.name]}
+                      field={field}
+                      idPrefix={message.id}
+                      key={field.name}
+                      live={motionLive}
+                      order={index + 1}
+                      value={values[field.name]}
+                      onChange={(value) => updateValue(field, value)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+            {!model.fields.length ? (
+              <A2InteractiveMotionItem
+                className={styles.previewEmpty}
+                live={motionLive}
+                motionKey="form:preview-empty"
+                motionKind="form-preview-empty"
+                variant="compact"
+              >
+                正在生成字段
+              </A2InteractiveMotionItem>
+            ) : null}
+            <div className={styles.footerComposer}>
+              <A2InteractiveMotionItem
+                className={styles.correctionPanel}
+                live={motionLive}
+                motionKey="form:correction"
+                motionKind="form-correction"
+                variant="field"
+              >
+                <label htmlFor={`${message.id}:a2ui-form-correction`}>
+                  不对！输入信息告诉 Keydex 应该怎么做
+                </label>
+                <textarea
+                  id={`${message.id}:a2ui-form-correction`}
+                  value={note}
+                  maxLength={500}
                   disabled={!actionable || Boolean(localSubmitting)}
-                  error={errors[field.name]}
-                  field={field}
-                  idPrefix={message.id}
-                  key={field.name}
-                  value={values[field.name]}
-                  onChange={(value) => updateValue(field, value)}
+                  placeholder="例如：字段不对、选项不够、或者告诉 Keydex 重新按什么方向生成..."
+                  onChange={(event) => setNote(event.currentTarget.value)}
                 />
-              );
-            })}
-          </div>
-          {!model.fields.length ? (
-            <A2UIMotionItem
-              as="div"
-              className={[styles.previewEmpty, revealStyles.revealCompactItem].join(" ")}
-              motionKey="form:preview-empty"
-              motionKind="form-preview-empty"
-            >
-              正在生成字段
-            </A2UIMotionItem>
-          ) : null}
-          <A2UIMotionItem
-            as="div"
-            className={[styles.note, revealStyles.revealCompactItem].join(" ")}
-            motionKey="form:note"
-            motionKind="form-note"
-          >
-            <label htmlFor={`${message.id}:a2ui-form-note`}>备注</label>
-            <textarea
-              id={`${message.id}:a2ui-form-note`}
-              value={note}
-              maxLength={500}
-              disabled={!actionable || Boolean(localSubmitting)}
-              placeholder="可选"
-              onChange={(event) => setNote(event.currentTarget.value)}
-            />
-          </A2UIMotionItem>
-          <A2UIMotionItem
-            as="div"
-            className={[styles.actions, revealStyles.revealCompactItem].join(" ")}
-            aria-label="表单操作"
-            motionKey="form:actions"
-            motionKind="form-actions"
-          >
-            <button className={styles.button} type="button" disabled={!canCancel} onClick={() => void cancel()}>
-              <X size={13} aria-hidden="true" />
-              <span>{localSubmitting === "cancel" ? "正在取消" : "取消"}</span>
-            </button>
-            <button
-              className={[styles.button, styles.submitButton].join(" ")}
-              type="button"
-              disabled={!canSubmit}
-              onClick={() => void submit()}
-            >
-              <Check size={13} aria-hidden="true" />
-              <span>{localSubmitting === "submit" ? "正在提交" : model.submitLabel}</span>
-            </button>
-          </A2UIMotionItem>
-        </>
-      ) : (
-        <FormResult model={model} />
-      )}
+              </A2InteractiveMotionItem>
+              <A2InteractiveMotionItem
+                className={styles.actions}
+                aria-label="表单操作"
+                data-action-state={actionState}
+                live={motionLive}
+                motionKey="form:actions"
+                motionKind="form-actions"
+                variant="dock"
+              >
+                <A2ActionMotionButton
+                  aria-label={cancelButtonLabel}
+                  className={styles.button}
+                  data-badge-state={cancelBadgeStage}
+                  type="button"
+                  disabled={!canCancel}
+                  onClick={() => void cancel()}
+                >
+                  <ActionBadgeContent doneLabel="已取消" idleLabel="取消" loadingLabel="取消中" stage={cancelBadgeStage} />
+                </A2ActionMotionButton>
+                <A2ActionMotionButton
+                  aria-label={submitButtonLabel}
+                  className={[styles.button, styles.submitButton].join(" ")}
+                  data-badge-state={submitBadgeStage}
+                  type="button"
+                  disabled={!canSubmit}
+                  onClick={() => void submit()}
+                >
+                  <ActionBadgeContent doneLabel="已提交" idleLabel={model.submitLabel} loadingLabel="提交中" stage={submitBadgeStage} />
+                </A2ActionMotionButton>
+              </A2InteractiveMotionItem>
+            </div>
+          </A2InteractiveMotionItem>
+        ) : (
+          <FormResult live={motionLive} model={model} />
+        )}
+      </A2MotionPresence>
       {error ? <div className={styles.error}>{error}</div> : null}
-    </A2UIMotionRoot>
+    </A2InteractiveMotionRoot>
+  );
+}
+
+function ActionBadgeContent({
+  doneLabel,
+  idleLabel,
+  loadingLabel,
+  stage,
+}: {
+  doneLabel: string;
+  idleLabel: string;
+  loadingLabel: string;
+  stage: ActionBadgeStage;
+}) {
+  return (
+    <>
+      <span className={styles.buttonSignal} aria-hidden="true" />
+      <span className={styles.buttonLabel} aria-hidden="true">
+        <span data-active={stage === "idle" ? "true" : "false"}>{idleLabel}</span>
+        <span data-active={stage === "loading" ? "true" : "false"}>{loadingLabel}</span>
+        <span data-active={stage === "done" ? "true" : "false"}>{doneLabel}</span>
+      </span>
+    </>
+  );
+}
+
+function FieldProgressRail({
+  errors,
+  fields,
+  live,
+  values,
+}: {
+  errors: Record<string, string>;
+  fields: FormField[];
+  live: boolean;
+  values: FormValues;
+}) {
+  if (!fields.length) {
+    return null;
+  }
+  const filledCount = fields.filter((field) => isFieldFilled(field, values[field.name])).length;
+  return (
+    <A2InteractiveMotionItem
+      className={styles.progressRail}
+      live={live}
+      motionKey="form:progress-rail"
+      motionKind="form-progress-rail"
+      variant="tray"
+    >
+      <div className={styles.progressSummary}>
+        <span>信息轨道</span>
+        <strong>{filledCount}/{fields.length}</strong>
+      </div>
+      <div className={styles.progressItems}>
+        {fields.map((field, index) => {
+          const filled = isFieldFilled(field, values[field.name]);
+          const hasError = Boolean(errors[field.name]);
+          return (
+            <span
+              className={styles.progressItem}
+              data-error={hasError ? "true" : "false"}
+              data-filled={filled ? "true" : "false"}
+              key={field.name}
+              title={field.label}
+            >
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <strong>{field.label}</strong>
+            </span>
+          );
+        })}
+      </div>
+    </A2InteractiveMotionItem>
   );
 }
 
@@ -233,6 +413,8 @@ function FormFieldControl({
   value,
   disabled,
   error,
+  live,
+  order,
   onChange,
 }: {
   field: FormField;
@@ -240,49 +422,72 @@ function FormFieldControl({
   value: unknown;
   disabled: boolean;
   error?: string;
+  live: boolean;
+  order: number;
   onChange: (value: unknown) => void;
 }) {
   const id = `${idPrefix}:a2ui-form:${field.name}`;
+  const filled = isFieldFilled(field, value);
   return (
-    <A2UIMotionItem
-      as="div"
-      className={[styles.field, revealStyles.revealItem].join(" ")}
+    <A2InteractiveMotionItem
+      className={styles.field}
+      data-error={error ? "true" : "false"}
       data-field-type={field.type}
+      data-filled={filled ? "true" : "false"}
+      data-required={field.required ? "true" : "false"}
+      interactive={!disabled}
+      live={live}
       motionKey={formFieldUnitKey(field)}
       motionKind="form-field"
+      order={order}
+      selected={filled}
+      variant="field"
     >
-      {field.type === "boolean" ? (
-        <label
-          className={styles.checkboxLabel}
-          data-disabled={disabled ? "true" : "false"}
-          data-selected={value === true ? "true" : "false"}
-          htmlFor={id}
-        >
-          <input
-            id={id}
-            type="checkbox"
-            checked={value === true}
-            disabled={disabled}
-            onChange={(event) => onChange(event.currentTarget.checked)}
-          />
-          <span aria-hidden="true" className={styles.checkboxMark} />
-          <span>
-            {field.label}
+      <span className={styles.fieldIndex} aria-hidden="true">
+        {String(order).padStart(2, "0")}
+      </span>
+      <div className={styles.fieldBrief}>
+        {field.type === "boolean" ? (
+          <span className={styles.label}>
+            <span>{field.label}</span>
             {field.required ? <span className={styles.required}>*</span> : null}
           </span>
-        </label>
-      ) : (
-        <>
+        ) : (
           <label className={styles.label} htmlFor={id}>
             <span>{field.label}</span>
             {field.required ? <span className={styles.required}>*</span> : null}
           </label>
-          {renderFieldInput(field, id, value, disabled, onChange)}
-        </>
-      )}
-      {field.help ? <div className={styles.helpText}>{field.help}</div> : null}
-      {error ? <div className={styles.fieldError}>{error}</div> : null}
-    </A2UIMotionItem>
+        )}
+        <div className={styles.fieldMetaLine}>
+          <span>{fieldTypeLabel(field)}</span>
+          {field.required ? <span>必填</span> : <span>可选</span>}
+        </div>
+        {field.help ? <div className={styles.helpText}>{field.help}</div> : null}
+        {error ? <div className={styles.fieldError}>{error}</div> : null}
+      </div>
+      <div className={styles.controlArea}>
+        {field.type === "boolean" ? (
+          <label
+            className={styles.checkboxLabel}
+            data-disabled={disabled ? "true" : "false"}
+            data-selected={value === true ? "true" : "false"}
+            htmlFor={id}
+          >
+            <input
+              id={id}
+              type="checkbox"
+              checked={value === true}
+              disabled={disabled}
+              onChange={(event) => onChange(event.currentTarget.checked)}
+            />
+            <span aria-hidden="true" className={styles.checkboxMark} />
+            <span>{value === true ? `${field.label} · 已确认` : field.label}</span>
+          </label>
+        ) : (
+          renderFieldInput(field, id, value, disabled, onChange)
+        )}
+      </div>
+    </A2InteractiveMotionItem>
   );
 }
 
@@ -452,9 +657,10 @@ function SelectField({
         </span>
         <ChevronDown aria-hidden="true" size={14} />
       </button>
-      {open ? (
-        <div className={styles.selectMenu} id={listboxId} role="listbox" aria-labelledby={id}>
-          <button
+      <A2MotionPresence preserveExit>
+        {open ? (
+          <A2FloatingMotionPanel className={styles.selectMenu} id={listboxId} role="listbox" aria-labelledby={id}>
+          <A2FloatingMotionItem
             aria-selected={!value}
             className={styles.selectOption}
             data-selected={!value ? "true" : "false"}
@@ -464,11 +670,11 @@ function SelectField({
           >
             <span className={styles.selectOptionCheck}>{!value ? <Check aria-hidden="true" size={13} /> : null}</span>
             <span>请选择</span>
-          </button>
+          </A2FloatingMotionItem>
           {field.options.map((option) => {
             const selected = option.value === value;
             return (
-              <button
+              <A2FloatingMotionItem
                 aria-selected={selected}
                 className={styles.selectOption}
                 data-selected={selected ? "true" : "false"}
@@ -482,37 +688,65 @@ function SelectField({
                   {selected ? <Check aria-hidden="true" size={13} /> : null}
                 </span>
                 <span>{option.label}</span>
-              </button>
+              </A2FloatingMotionItem>
             );
           })}
-        </div>
-      ) : null}
+          </A2FloatingMotionPanel>
+        ) : null}
+      </A2MotionPresence>
     </div>
   );
 }
 
-function FormResult({ model }: { model: FormModel }) {
+function FormResult({ live, model }: { live: boolean; model: FormModel }) {
   if (model.status === "cancelled") {
     return (
-      <div className={styles.result} data-result-status="cancelled" data-testid="a2ui-form-result">
+      <A2InteractiveMotionItem
+        className={styles.result}
+        data-result-status="cancelled"
+        data-testid="a2ui-form-result"
+        key="form-result"
+        live={live}
+        motionKey="form:result"
+        motionKind="form-result"
+        variant="result"
+      >
         <ReadonlyFormValues fields={model.fields} values={{}} emptyText="未填写" />
         <FormOutcomeLine model={model} />
-      </div>
+      </A2InteractiveMotionItem>
     );
   }
   if (model.status === "submitted") {
     return (
-      <div className={styles.result} data-result-status="submitted" data-testid="a2ui-form-result">
+      <A2InteractiveMotionItem
+        className={styles.result}
+        data-result-status="submitted"
+        data-testid="a2ui-form-result"
+        key="form-result"
+        live={live}
+        motionKey="form:result"
+        motionKind="form-result"
+        variant="result"
+      >
         <ReadonlyFormValues fields={model.fields} values={model.submittedValues} />
         <FormOutcomeLine model={model} />
         {model.submittedNote ? <ReadonlyFormNote value={model.submittedNote} /> : null}
-      </div>
+      </A2InteractiveMotionItem>
     );
   }
   return (
-    <div className={styles.result} data-result-status="pending" data-testid="a2ui-form-result">
+    <A2InteractiveMotionItem
+      className={styles.result}
+      data-result-status="pending"
+      data-testid="a2ui-form-result"
+      key="form-result"
+      live={live}
+      motionKey="form:result"
+      motionKind="form-result"
+      variant="result"
+    >
       <ReadonlyFormValues fields={model.fields} values={{}} emptyText="-" />
-    </div>
+    </A2InteractiveMotionItem>
   );
 }
 
@@ -551,8 +785,15 @@ function ReadonlyFormValues({
       {fields.map((field) => {
         const value = readonlyFormValue(values[field.name], field, emptyText);
         return (
-          <div className={styles.valueItem} key={field.name}>
-            <dt>{field.label}</dt>
+          <div
+            className={styles.valueItem}
+            data-empty={value === emptyText ? "true" : "false"}
+            key={field.name}
+          >
+            <dt>
+              <span>{field.label}</span>
+              <em>{fieldTypeLabel(field)}</em>
+            </dt>
             <dd title={value}>{value}</dd>
           </div>
         );
@@ -564,7 +805,7 @@ function ReadonlyFormValues({
 function ReadonlyFormNote({ value }: { value: string }) {
   return (
     <div className={styles.readonlyNote}>
-      <span>备注</span>
+      <span>给 Keydex 的补充信息</span>
       <p>{value}</p>
     </div>
   );
@@ -595,6 +836,45 @@ function formMeta(model: FormModel): string {
     return `${model.fields.length} 个字段`;
   }
   return `${model.fields.length} 个字段，${requiredCount} 个必填`;
+}
+
+function actionBadgeStage(phase: ActionBadgePhase | null, kind: ActionKind): ActionBadgeStage {
+  return phase?.kind === kind ? phase.stage : "idle";
+}
+
+function actionBadgeLabel(stage: ActionBadgeStage, idle: string, loading: string, done: string): string {
+  if (stage === "loading") {
+    return loading;
+  }
+  if (stage === "done") {
+    return done;
+  }
+  return idle;
+}
+
+function waitForActionBadgeDone(): Promise<void> {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ACTION_BADGE_DONE_MS);
+  });
+}
+
+function fieldTypeLabel(field: FormField): string {
+  switch (field.type) {
+    case "textarea":
+      return "长文本";
+    case "number":
+      return "数字";
+    case "boolean":
+      return "确认项";
+    case "select":
+      return "单选";
+    case "multiselect":
+      return "多选";
+    case "date":
+      return "日期";
+    default:
+      return "文本";
+  }
 }
 
 function formModel(parsed: ParsedA2UIMessage): FormModel {
@@ -814,6 +1094,80 @@ function normalizeStatus(value: unknown): string {
 
 function isStreamingPreviewStatus(status: string): boolean {
   return status === "started" || status === "streaming" || status === "finished";
+}
+
+function shouldUseInteractiveFormMotion(parsed: ParsedA2UIMessage, status: string): boolean {
+  if (parsed.historyHydrated) {
+    return false;
+  }
+  return Boolean(parsed.streamPlayer?.enabled) ||
+    status === "waiting_input" ||
+    status === "submitted" ||
+    status === "cancelled" ||
+    isStreamingPreviewStatus(status);
+}
+
+function interactiveFormMotionScope(messageId: string, parsed: ParsedA2UIMessage): string {
+  return [
+    parsed.a2ui?.stream_id,
+    parsed.debug?.streamId,
+    parsed.interactionId,
+    messageId,
+    "form",
+  ].filter(Boolean).join(":");
+}
+
+function formMotionState({
+  error,
+  localSubmitted,
+  localSubmitting,
+  status,
+  values,
+}: {
+  error: string | null;
+  localSubmitted: boolean;
+  localSubmitting: "submit" | "cancel" | null;
+  status: string;
+  values: FormValues;
+}) {
+  if (error) {
+    return "error";
+  }
+  if (localSubmitting) {
+    return "submitting";
+  }
+  if (localSubmitted || status === "submitted") {
+    return "submitted";
+  }
+  if (status === "cancelled") {
+    return "cancelled";
+  }
+  if (hasAnyFormValue(values)) {
+    return "dirty";
+  }
+  return "active";
+}
+
+function hasAnyFormValue(values: FormValues): boolean {
+  return Object.values(values).some((value) => {
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+    if (typeof value === "boolean") {
+      return value;
+    }
+    return stringValue(value) !== "";
+  });
+}
+
+function isFieldFilled(field: FormField, value: unknown): boolean {
+  if (field.type === "boolean") {
+    return value === true;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return stringValue(value) !== "";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

@@ -26,7 +26,7 @@ describe("A2UI accessibility and status states", () => {
     expect(screen.getByLabelText(/增加 10%/)).not.toBeNull();
     expect(screen.getByRole("button", { name: "提交选择" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "取消" })).not.toBeNull();
-    expect(screen.getByLabelText("备注")).not.toBeNull();
+    expect(screen.getByLabelText("不对！输入信息告诉 Keydex 应该怎么做")).not.toBeNull();
   });
 
   it("keeps waiting, submitted, cancelled and resume-running labels distinct", () => {
