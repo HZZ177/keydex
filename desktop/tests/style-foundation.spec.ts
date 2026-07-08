@@ -128,6 +128,8 @@ describe("style foundation", () => {
     expect(messageList).not.toContain("@container (max-width: 1052px)");
     expect(messageList).toMatch(/\.virtualList\s*{[^}]*padding-bottom:\s*0/s);
     expect(messageList).toMatch(/\.virtualBottomSpacer\s*{[^}]*height:\s*var\(--message-list-bottom-buffer\)/s);
+    expect(messageList).toMatch(/\.item\[data-kind="a2ui"\]\s*{[^}]*content-visibility:\s*auto/s);
+    expect(messageList).toMatch(/\.item\[data-kind="a2ui"\]\s*{[^}]*contain-intrinsic-size:\s*auto 560px/s);
     expect(messageList).not.toMatch(/\.list\s*{[^}]*justify-content:\s*flex-end/s);
     expect(messageList).not.toContain("scrollSeekPlaceholder");
     expect(messageText).not.toMatch(/\.codeViewport\s*{[^}]*transition:\s*[^}]*max-height/s);

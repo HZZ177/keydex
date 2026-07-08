@@ -7,6 +7,7 @@ import { Layout } from "@/renderer/components/layout/Layout";
 import type { RuntimeBridge } from "@/runtime";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { MessageText } from "@/renderer/pages/conversation/messages";
+import { useA2UIRenderSuspension } from "@/renderer/pages/conversation/messages/a2ui/A2UIRenderSuspensionContext";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
@@ -27,6 +28,11 @@ function renderLayoutWithPreview(ui: ReactElement) {
       </LayoutStateProvider>
     </ThemeProvider>,
   );
+}
+
+function A2UISuspensionProbe() {
+  const suspended = useA2UIRenderSuspension();
+  return <div data-testid="a2ui-suspension-probe" data-suspended={suspended ? "true" : "false"} />;
 }
 
 describe("Layout", () => {
@@ -105,6 +111,34 @@ describe("Layout", () => {
     fireEvent.doubleClick(handle);
 
     expect(shell.getAttribute("style")).toContain("--sidebar-width: 286px");
+  });
+
+  it("suspends A2UI rendering while resizing the main sidebar", async () => {
+    renderLayout(
+      <Layout>
+        <A2UISuspensionProbe />
+      </Layout>,
+    );
+
+    const probe = screen.getByTestId("a2ui-suspension-probe");
+    const handle = screen.getByRole("separator", { name: "调整侧边栏宽度" });
+    expect(probe.getAttribute("data-suspended")).toBe("false");
+
+    act(() => {
+      dispatchPointer(handle, "pointerdown", { button: 0, pointerId: 12, clientX: 286 });
+    });
+
+    await waitFor(() => {
+      expect(probe.getAttribute("data-suspended")).toBe("true");
+    });
+
+    act(() => {
+      dispatchPointer(window, "pointerup", { pointerId: 12, clientX: 286 });
+    });
+
+    await waitFor(() => {
+      expect(probe.getAttribute("data-suspended")).toBe("false");
+    });
   });
 
   it("toggles, maximizes and resizes the conversation right sidebar", () => {
@@ -244,11 +278,12 @@ describe("Layout", () => {
   it("marks the right sidebar as resizing only during pointer drag", async () => {
     renderLayout(
       <Layout>
-        <div>content</div>
+        <A2UISuspensionProbe />
       </Layout>,
     );
 
     const shell = screen.getByTestId("app-shell");
+    const probe = screen.getByTestId("a2ui-suspension-probe");
     const openButton = document.querySelector<HTMLButtonElement>("[data-icon='panel-right-open']");
     if (!openButton) {
       throw new Error("Right sidebar open button not found");
@@ -265,6 +300,7 @@ describe("Layout", () => {
 
     await waitFor(() => {
       expect(shell.dataset.rightSidebarResizing).toBe("true");
+      expect(probe.getAttribute("data-suspended")).toBe("true");
     });
 
     act(() => {
@@ -273,6 +309,7 @@ describe("Layout", () => {
 
     await waitFor(() => {
       expect(shell.dataset.rightSidebarResizing).toBeUndefined();
+      expect(probe.getAttribute("data-suspended")).toBe("false");
     });
   });
 

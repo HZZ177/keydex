@@ -37,6 +37,7 @@ import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/
 import { FileReviewPanel } from "@/renderer/components/review/FileReviewDiff";
 import { useWorkspaceSkills } from "@/renderer/hooks/useWorkspaceSkills";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
+import { useHeldActiveFlag } from "@/renderer/hooks/useHeldActiveFlag";
 import {
   clampWorkbenchAssistantDrawerWidth,
   DEFAULT_WORKBENCH_ASSISTANT_DRAWER_WIDTH,
@@ -529,6 +530,7 @@ export function WorkbenchAssistantSurface({
     onCommit: commitDrawerWidth,
     previewMode: onDrawerWidthPreview ? "sync" : "raf",
   });
+  const drawerA2UIRenderSuspended = useHeldActiveFlag(drawerResize.dragging, 180);
   const resetDrawerWidth = () => {
     if (!renderDrawerContent) {
       return;
@@ -1549,6 +1551,7 @@ export function WorkbenchAssistantSurface({
       topNotice={btwHistoryNotice}
       showForkSourceMarkers={!btwActive}
       showForkActions={!btwActive}
+      a2uiRenderSuspended={drawerA2UIRenderSuspended}
       className={styles.drawerPanel}
     />
   ) : null;

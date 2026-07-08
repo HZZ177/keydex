@@ -48,6 +48,8 @@ import { useVirtuosoAutoScroll } from "./useVirtuosoAutoScroll";
 
 const STATIC_MESSAGE_LIST_ITEM_LIMIT = 160;
 const INTERACTIVE_PANEL_STATIC_MESSAGE_LIST_ITEM_LIMIT = 48;
+const A2UI_STATIC_MESSAGE_LIST_WEIGHT_LIMIT = 12;
+const INTERACTIVE_PANEL_A2UI_STATIC_MESSAGE_LIST_WEIGHT_LIMIT = 6;
 const VIRTUAL_MESSAGE_VIEWPORT_BUFFER = { bottom: 2600, top: 1800 } as const;
 const LOAD_OLDER_TRIGGER_PX = 44;
 const LOAD_OLDER_ARM_PX = 120;
@@ -74,6 +76,7 @@ export interface MessageListProps {
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled?: boolean;
+  a2uiRenderSuspended?: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -133,6 +136,7 @@ export function MessageList({
   onApprovalDecision,
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled = false,
+  a2uiRenderSuspended = false,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -198,7 +202,8 @@ export function MessageList({
     () => collectTurnEndStreamingCursor(displayTurns, isProcessing),
     [displayTurns, isProcessing],
   );
-  const useStaticList = shouldUseStaticMessageList(displayBlocks.length, performanceProfile);
+  const a2uiRenderPressure = useMemo(() => calculateA2UIRenderPressure(displayBlocks), [displayBlocks]);
+  const useStaticList = shouldUseStaticMessageList(displayBlocks.length, performanceProfile, a2uiRenderPressure);
   const [visibleTurnIndexes, setVisibleTurnIndexes] = useState<Set<number>>(() => new Set([0]));
   const listMode = useStaticList ? "static" : "virtual";
   const externalTurnNavigationIndex = useMemo(
@@ -678,6 +683,7 @@ export function MessageList({
             onApprovalDecision,
             onResolveMcpElicitation,
             a2uiDebugInfoEnabled,
+            a2uiRenderSuspended,
             onA2UISubmit,
             onA2UICancel,
             onFilePreview,
@@ -733,6 +739,7 @@ export function MessageList({
           onApprovalDecision,
           onResolveMcpElicitation,
           a2uiDebugInfoEnabled,
+          a2uiRenderSuspended,
           onA2UISubmit,
           onA2UICancel,
           onFilePreview,
@@ -754,6 +761,9 @@ export function MessageList({
     <section
       className={styles.root}
       data-list-mode={listMode}
+      data-a2ui-count={a2uiRenderPressure.count}
+      data-a2ui-render-suspended={a2uiRenderSuspended ? "true" : "false"}
+      data-a2ui-weight={a2uiRenderPressure.weight}
       data-message-list-variant={variant}
       data-performance-profile={performanceProfile}
       data-turn-navigator={showTurnNavigator ? "true" : "false"}
@@ -913,6 +923,7 @@ function renderTimelineBlock({
   onApprovalDecision,
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
+  a2uiRenderSuspended,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -938,6 +949,7 @@ function renderTimelineBlock({
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled: boolean;
+  a2uiRenderSuspended: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -971,6 +983,7 @@ function renderTimelineBlock({
           onApprovalDecision,
           onResolveMcpElicitation,
           a2uiDebugInfoEnabled,
+          a2uiRenderSuspended,
           onA2UISubmit,
           onA2UICancel,
           onFilePreview,
@@ -1007,6 +1020,7 @@ function renderTimelineBlock({
         onApprovalDecision,
         onResolveMcpElicitation,
         a2uiDebugInfoEnabled,
+        a2uiRenderSuspended,
         onA2UISubmit,
         onA2UICancel,
         onFilePreview,
@@ -1035,6 +1049,7 @@ function renderMessageTurn({
   onApprovalDecision,
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
+  a2uiRenderSuspended,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -1058,6 +1073,7 @@ function renderMessageTurn({
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled: boolean;
+  a2uiRenderSuspended: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -1092,6 +1108,7 @@ function renderMessageTurn({
         onApprovalDecision,
         onResolveMcpElicitation,
         a2uiDebugInfoEnabled,
+        a2uiRenderSuspended,
         onA2UISubmit,
         onA2UICancel,
         onFilePreview,
@@ -1147,6 +1164,7 @@ function renderMessageItem({
   onApprovalDecision,
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
+  a2uiRenderSuspended,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -1169,6 +1187,7 @@ function renderMessageItem({
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled: boolean;
+  a2uiRenderSuspended: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -1193,6 +1212,7 @@ function renderMessageItem({
         onApprovalDecision={onApprovalDecision}
         onResolveMcpElicitation={onResolveMcpElicitation}
         a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
+        a2uiRenderSuspended={a2uiRenderSuspended}
         onA2UISubmit={onA2UISubmit}
         onA2UICancel={onA2UICancel}
         onFilePreview={onFilePreview}
@@ -1363,6 +1383,7 @@ function DefaultMessage({
   onApprovalDecision,
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
+  a2uiRenderSuspended,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -1379,6 +1400,7 @@ function DefaultMessage({
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled?: boolean;
+  a2uiRenderSuspended?: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -1430,6 +1452,7 @@ function DefaultMessage({
       <A2UIBlock
         message={message}
         debugInfoEnabled={a2uiDebugInfoEnabled}
+        renderSuspended={a2uiRenderSuspended}
         onSubmit={onA2UISubmit}
         onCancel={onA2UICancel}
       />
@@ -1561,7 +1584,70 @@ function itemKind(item: ProcessedMessageItem): ConversationMessage["kind"] | str
   return item.type === "message" ? item.message.kind : item.groupKind;
 }
 
-function shouldUseStaticMessageList(itemCount: number, performanceProfile: MessageListPerformanceProfile): boolean {
+interface A2UIRenderPressure {
+  count: number;
+  weight: number;
+}
+
+function calculateA2UIRenderPressure(blocks: TimelineBlock[]): A2UIRenderPressure {
+  let count = 0;
+  let weight = 0;
+  for (const block of blocks) {
+    const messages =
+      block.type === "event"
+        ? messagesFromProcessedItem(block.item)
+        : block.turn.items.flatMap(messagesFromProcessedItem);
+    for (const message of messages) {
+      if (message.kind !== "a2ui") {
+        continue;
+      }
+      count += 1;
+      weight += a2uiMessageRenderWeight(message);
+    }
+  }
+  return { count, weight };
+}
+
+function a2uiMessageRenderWeight(message: ConversationMessage): number {
+  const renderKey = a2uiMessageRenderKey(message);
+  if (renderKey === "chart") {
+    return Math.max(3, a2uiChartCount(message) * 2);
+  }
+  if (renderKey === "choice" || renderKey === "form") {
+    return 2;
+  }
+  return 1;
+}
+
+function a2uiMessageRenderKey(message: ConversationMessage): string {
+  const a2ui = recordValue(message.payload.a2ui);
+  const debug = recordValue(message.payload.a2uiDebug);
+  return (
+    stringRecordValue(message.payload.renderKey) ||
+    stringRecordValue(message.payload.render_key) ||
+    stringRecordValue(a2ui?.render_key) ||
+    stringRecordValue(debug?.renderKey) ||
+    stringRecordValue(debug?.render_key)
+  );
+}
+
+function a2uiChartCount(message: ConversationMessage): number {
+  const a2ui = recordValue(message.payload.a2ui);
+  const debug = recordValue(message.payload.a2uiDebug);
+  const payload =
+    recordValue(a2ui?.payload) ??
+    recordValue(debug?.payload) ??
+    recordValue(debug?.parsedArgs) ??
+    recordValue(message.payload.payload);
+  const charts = payload?.charts;
+  return Array.isArray(charts) && charts.length ? charts.length : 1;
+}
+
+function shouldUseStaticMessageList(
+  itemCount: number,
+  performanceProfile: MessageListPerformanceProfile,
+  a2uiRenderPressure: A2UIRenderPressure = { count: 0, weight: 0 },
+): boolean {
   const userAgent =
     typeof navigator === "undefined" || typeof navigator.userAgent !== "string"
       ? ""
@@ -1573,6 +1659,13 @@ function shouldUseStaticMessageList(itemCount: number, performanceProfile: Messa
     performanceProfile === "interactivePanel"
       ? INTERACTIVE_PANEL_STATIC_MESSAGE_LIST_ITEM_LIMIT
       : STATIC_MESSAGE_LIST_ITEM_LIMIT;
+  const a2uiStaticWeightLimit =
+    performanceProfile === "interactivePanel"
+      ? INTERACTIVE_PANEL_A2UI_STATIC_MESSAGE_LIST_WEIGHT_LIMIT
+      : A2UI_STATIC_MESSAGE_LIST_WEIGHT_LIMIT;
+  if (a2uiRenderPressure.weight > a2uiStaticWeightLimit) {
+    return false;
+  }
   return itemCount <= staticItemLimit;
 }
 

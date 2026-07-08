@@ -51,6 +51,32 @@ describe("MessageList A2UI callback contract", () => {
     expect(screen.getByText("等待输入")).toBeTruthy();
   });
 
+  it("switches to virtual mode when many turns contain A2UI blocks", () => {
+    withBrowserListEnvironment(() => {
+      render(
+        <MessageList
+          messages={Array.from({ length: 19 }, (_, index) => conversationA2UITurn(index + 1)).flat()}
+          onA2UISubmit={vi.fn()}
+          onA2UICancel={vi.fn()}
+        />,
+      );
+
+      const root = screen.getByTestId("message-list");
+      expect(root.getAttribute("data-list-mode")).toBe("virtual");
+      expect(root.getAttribute("data-a2ui-count")).toBe("19");
+      expect(Number(root.getAttribute("data-a2ui-weight"))).toBeGreaterThan(12);
+    });
+  });
+
+  it("passes resize suspension into A2UI message rendering", () => {
+    render(<MessageList messages={[conversationStreamingA2UIMessage("agent:a2ui-chart", "created")]} a2uiRenderSuspended />);
+
+    expect(screen.getByTestId("message-list").getAttribute("data-a2ui-render-suspended")).toBe("true");
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-a2ui-suspended")).toBe("resize");
+    expect(screen.getByTestId("a2ui-resize-placeholder")).toBeTruthy();
+    expect(screen.queryByTestId("a2ui-echarts-surface")).toBeNull();
+  });
+
   it("shows the A2UI debug entry only when enabled by settings", () => {
     render(
       <MessageList
@@ -187,6 +213,60 @@ describe("MessageList A2UI callback contract", () => {
     });
   });
 });
+
+function conversationA2UITurn(index: number): ConversationMessage[] {
+  const streamId = `stream-${index}`;
+  const interaction: A2UIInteractionState = {
+    interaction_id: `int-${index}`,
+    status: "waiting_user_input",
+    can_submit: true,
+  };
+  const a2ui = {
+    ...a2uiObjectWith(streamId, interaction),
+    turn_index: index,
+  };
+  return [
+    {
+      id: `user-${index}`,
+      threadId: "ses-1",
+      turnId: `turn-${index}`,
+      itemId: `user-${index}`,
+      kind: "user",
+      status: "completed",
+      content: `第 ${index} 轮`,
+      payload: {
+        turnIndex: index,
+        turn_index: index,
+      },
+      createdAt: "2026-07-08T00:00:00.000Z",
+      updatedAt: "2026-07-08T00:00:00.000Z",
+    },
+    {
+      id: `agent:a2ui-${index}`,
+      threadId: "ses-1",
+      turnId: `turn-${index}`,
+      itemId: `a2ui-${index}`,
+      kind: "a2ui",
+      status: "pending",
+      content: "",
+      payload: {
+        a2ui,
+        a2uiDebug: {
+          ...a2uiDebugWith(a2ui, interaction),
+          turnIndex: index,
+        },
+        interaction,
+        interactionId: interaction.interaction_id,
+        renderKey: a2ui.render_key,
+        streamId,
+        turnIndex: index,
+        turn_index: index,
+      },
+      createdAt: "2026-07-08T00:00:00.000Z",
+      updatedAt: "2026-07-08T00:00:00.000Z",
+    },
+  ];
+}
 
 function conversationA2UIMessage(): ConversationMessage {
   const a2ui = a2uiObject();
@@ -386,6 +466,42 @@ function installScrollIntoViewRecorder() {
       }
     },
   };
+}
+
+function withBrowserListEnvironment(run: () => void) {
+  const originalResizeObserver = globalThis.ResizeObserver;
+  const originalUserAgent = navigator.userAgent;
+  class FakeResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    value: FakeResizeObserver,
+  });
+  Object.defineProperty(navigator, "userAgent", {
+    configurable: true,
+    value: "Mozilla/5.0 Chrome",
+  });
+
+  try {
+    run();
+  } finally {
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: originalUserAgent,
+    });
+    if (originalResizeObserver) {
+      Object.defineProperty(globalThis, "ResizeObserver", {
+        configurable: true,
+        value: originalResizeObserver,
+      });
+    } else {
+      delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+    }
+  }
 }
 
 function defineScrollMetric(element: HTMLElement, key: "clientHeight" | "scrollHeight", value: number): void {

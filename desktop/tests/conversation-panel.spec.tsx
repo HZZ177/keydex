@@ -7,6 +7,7 @@ import {
   ConversationPanelComposerAccessory,
   type ConversationPanelVariant,
 } from "../src/renderer/pages/conversation/ConversationPanel";
+import { A2UIRenderSuspensionProvider } from "../src/renderer/pages/conversation/messages/a2ui/A2UIRenderSuspensionContext";
 import type { ConversationPanelModel } from "../src/renderer/pages/conversation/useConversationPanelModel";
 import type { ConversationMessage } from "../src/renderer/stores/conversationStore";
 
@@ -59,6 +60,22 @@ describe("ConversationPanel", () => {
     );
 
     expect(screen.getByTestId("message-list").getAttribute("data-performance-profile")).toBe("interactivePanel");
+  });
+
+  it("inherits layout-level A2UI render suspension for main conversation content", () => {
+    render(
+      <A2UIRenderSuspensionProvider suspended>
+        <ConversationPanel
+          model={panelModel({ messages: [a2uiConversationMessage()] })}
+          workspaceRuntime={fakeRuntime()}
+        />
+      </A2UIRenderSuspensionProvider>,
+    );
+
+    expect(screen.getByTestId("message-list").getAttribute("data-a2ui-render-suspended")).toBe("true");
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-a2ui-suspended")).toBe("resize");
+    expect(screen.getByTestId("a2ui-resize-placeholder")).not.toBeNull();
+    expect(screen.queryByTestId("a2ui-choice")).toBeNull();
   });
 
   it("renders a green top notice inside the shared message list", () => {
@@ -362,6 +379,70 @@ function message(
     status: kind === "error" ? "failed" : "completed",
     content,
     payload,
+    createdAt: "2026-06-27T00:00:00.000Z",
+    updatedAt: "2026-06-27T00:00:00.000Z",
+  };
+}
+
+function a2uiConversationMessage(): ConversationMessage {
+  const a2ui = {
+    render_key: "choice",
+    mode: "interactive",
+    stream_id: "stream-choice",
+    tool_call_id: "tool-choice",
+    trace_id: "trace-choice",
+    turn_index: 1,
+    payload: {
+      title: "选择发布方式",
+      description: "选一个继续",
+      options: [{ label: "立即发布", value: "now" }],
+    },
+    input_schema: {},
+    submit_schema: {},
+    interaction: {
+      interaction_id: "interaction-choice",
+      status: "waiting_user_input",
+      can_submit: true,
+    },
+  };
+
+  return {
+    id: "agent:a2ui-choice",
+    threadId: "ses-1",
+    turnId: "turn-1",
+    itemId: "a2ui-choice",
+    kind: "a2ui",
+    status: "pending",
+    content: "",
+    payload: {
+      a2ui,
+      a2uiDebug: {
+        id: "stream-choice",
+        status: "created",
+        renderKey: "choice",
+        mode: "interactive",
+        streamId: "stream-choice",
+        interactionId: "interaction-choice",
+        toolCallId: "tool-choice",
+        traceId: "trace-choice",
+        turnIndex: 1,
+        chunkCount: 0,
+        argsBuffer: "",
+        argsTextLength: 0,
+        jsonParseStatus: "valid",
+        a2ui,
+        payload: a2ui.payload,
+        inputSchema: {},
+        submitSchema: {},
+        interaction: a2ui.interaction,
+        rawEvents: [],
+        updatedAt: 1_700_000_000_000,
+      },
+      interaction: a2ui.interaction,
+      interactionId: "interaction-choice",
+      renderKey: "choice",
+      streamId: "stream-choice",
+    },
     createdAt: "2026-06-27T00:00:00.000Z",
     updatedAt: "2026-06-27T00:00:00.000Z",
   };

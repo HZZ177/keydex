@@ -179,6 +179,76 @@
   line-height: 1.6;
 }
 
+.resizePlaceholderBlock {
+  min-height: 220px;
+  contain: layout paint style;
+}
+
+.resizePlaceholder {
+  display: grid;
+  min-height: 220px;
+  align-content: center;
+  gap: 18px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 68%, transparent);
+  border-radius: 16px;
+  background:
+    linear-gradient(105deg, transparent 0%, color-mix(in srgb, var(--color-bg-elevated) 72%, transparent) 48%, transparent 100%),
+    color-mix(in srgb, var(--color-bg-base) 86%, transparent);
+  padding: 22px;
+}
+
+.resizePlaceholderHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.resizePlaceholderHeader span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resizePlaceholderHeader small {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.resizePlaceholderBody {
+  display: grid;
+  gap: 10px;
+}
+
+.resizePlaceholderBody span {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+}
+
+.resizePlaceholderBody span:nth-child(1) {
+  width: 74%;
+}
+
+.resizePlaceholderBody span:nth-child(2) {
+  width: 56%;
+}
+
+.resizePlaceholderBody span:nth-child(3) {
+  width: 64%;
+}
+
 @media (max-width: 420px) {
   .header {
     top: -2px;

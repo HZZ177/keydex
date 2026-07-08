@@ -10,6 +10,7 @@ import {
   type MessageListTurnNavigationRequest,
   type MessageListTurnNavigatorMode,
 } from "./messages";
+import { useA2UIRenderSuspension } from "./messages/a2ui/A2UIRenderSuspensionContext";
 import type { ConversationPanelModel } from "./useConversationPanelModel";
 
 import styles from "./ConversationPanel.module.css";
@@ -29,6 +30,7 @@ export interface ConversationPanelProps {
   turnNavigationRequest?: MessageListTurnNavigationRequest | null;
   topNotice?: MessageListTopNotice | null;
   a2uiDebugInfoEnabled?: boolean;
+  a2uiRenderSuspended?: boolean;
   showForkSourceMarkers?: boolean;
   showForkActions?: boolean;
   onAskSelectionInBtwConversation?: (text: string) => void;
@@ -48,11 +50,15 @@ export function ConversationPanel({
   turnNavigationRequest,
   topNotice = null,
   a2uiDebugInfoEnabled = false,
+  a2uiRenderSuspended = false,
   showForkSourceMarkers = true,
   showForkActions = true,
   onAskSelectionInBtwConversation,
   className = "",
 }: ConversationPanelProps) {
+  const inheritedA2UIRenderSuspended = useA2UIRenderSuspension();
+  const effectiveA2UIRenderSuspended = a2uiRenderSuspended || inheritedA2UIRenderSuspended;
+
   return (
     <div
       className={[styles.panel, className].filter(Boolean).join(" ")}
@@ -73,6 +79,7 @@ export function ConversationPanel({
         onLoadToolDetails={model.loadToolDetails}
         onTerminateCommand={model.terminateCommand}
         a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
+        a2uiRenderSuspended={effectiveA2UIRenderSuspended}
         onA2UISubmit={model.submitA2UI}
         onA2UICancel={model.cancelA2UI}
         onResolveMcpElicitation={model.resolveMcpElicitation}

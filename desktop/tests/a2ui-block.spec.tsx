@@ -221,6 +221,43 @@ describe("A2UIBlock", () => {
     expect(screen.getByTestId("a2ui-block").getAttribute("data-interactive-ready")).toBe("true");
     expect(screen.getByText("等待输入")).toBeTruthy();
   });
+
+  it("replaces heavy chart rendering with a lightweight placeholder while resize suspended", () => {
+    render(
+      <A2UIBlock
+        renderSuspended
+        message={a2uiMessage({
+          a2ui: a2uiObject({
+            render_key: "chart",
+            mode: "render",
+            payload: {
+              title: "侧栏图表",
+              charts: [
+                {
+                  type: "column",
+                  title: "侧栏图表",
+                  series: [{ name: "数量", items: [{ name: "A", value: 10 }] }],
+                },
+              ],
+            },
+            interaction: null,
+          }),
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-a2ui-suspended")).toBe("resize");
+    expect(screen.getByTestId("a2ui-resize-placeholder").textContent).toContain("调整布局中");
+    expect(screen.queryByTestId("a2ui-echarts-surface")).toBeNull();
+  });
+
+  it("also replaces actionable interactive A2UI with a lightweight placeholder while resize suspended", () => {
+    render(<A2UIBlock renderSuspended message={a2uiMessage()} onSubmit={() => undefined} onCancel={() => undefined} />);
+
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-a2ui-suspended")).toBe("resize");
+    expect(screen.getByTestId("a2ui-resize-placeholder").textContent).toContain("调整布局中");
+    expect(screen.queryByTestId("a2ui-choice")).toBeNull();
+  });
 });
 
 function a2uiMessage(options: { a2ui?: A2UIObject | null; debug?: A2UIDebugBlockState } = {}): ConversationMessage {

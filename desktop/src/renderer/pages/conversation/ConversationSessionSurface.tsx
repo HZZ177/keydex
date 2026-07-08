@@ -59,6 +59,7 @@ export interface ConversationSessionSurfaceProps {
   previewPanelScopeKey?: string | null;
   sidecarQuoteRequest?: SendBoxExternalQuoteRequest | null;
   sidecarLoadedHistoryTurnCount?: number | null;
+  a2uiRenderSuspended?: boolean;
   onOpenMcpSettings?: () => void;
   onOpenModelSettings?: () => void;
   onSidecarQuoteRequestHandled?: (requestId: number) => void;
@@ -77,6 +78,7 @@ export function ConversationSessionSurface({
   previewPanelScopeKey = null,
   sidecarQuoteRequest = null,
   sidecarLoadedHistoryTurnCount = null,
+  a2uiRenderSuspended = false,
   onOpenMcpSettings,
   onOpenModelSettings,
   onSidecarQuoteRequestHandled,
@@ -726,6 +728,7 @@ export function ConversationSessionSurface({
             emptyText="旁路对话暂无消息"
             emptyTestId="btw-conversation-empty"
             a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
+            a2uiRenderSuspended={a2uiRenderSuspended}
           />
         </div>
         <div className={styles.sidecarComposer}>
@@ -767,6 +770,7 @@ export function ConversationSessionSurface({
         emptyText="还没有消息，输入需求开始对话。"
         emptyTestId="conversation-empty"
         a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
+        a2uiRenderSuspended={a2uiRenderSuspended}
       />
     </ChatLayout>
   );

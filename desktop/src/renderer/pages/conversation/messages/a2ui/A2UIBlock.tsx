@@ -47,6 +47,7 @@ export interface A2UIBlockProps {
   onSubmit?: A2UISubmitHandler;
   onCancel?: A2UICancelHandler;
   debugInfoEnabled?: boolean;
+  renderSuspended?: boolean;
   children?: ReactNode;
 }
 
@@ -66,7 +67,15 @@ export interface ParsedA2UIMessage {
   historyHydrated: boolean;
 }
 
-export function A2UIBlock({ message, onSubmit, onCancel, debugInfoEnabled, children }: A2UIBlockProps) {
+export function A2UIBlock(props: A2UIBlockProps) {
+  if (props.renderSuspended) {
+    const parsed = parseA2UIMessage(props.message);
+    return <A2UIResizePlaceholder parsed={parsed} />;
+  }
+  return <A2UIBlockContent {...props} />;
+}
+
+function A2UIBlockContent({ message, onSubmit, onCancel, debugInfoEnabled, children }: A2UIBlockProps) {
   const [debugOpen, setDebugOpen] = useState(false);
   const rawParsed = useMemo(() => parseA2UIMessage(message), [message]);
   const streamPlayer = useA2UIStreamPlayer(rawParsed);
@@ -154,6 +163,37 @@ export function A2UIBlock({ message, onSubmit, onCancel, debugInfoEnabled, child
       {showDebugInfo && debugOpen ? (
         <A2UIDebugPanel message={message} parsed={parsed} onClose={() => setDebugOpen(false)} />
       ) : null}
+    </article>
+  );
+}
+
+function A2UIResizePlaceholder({ parsed }: { parsed: ParsedA2UIMessage }) {
+  const title = a2uiTitle(parsed);
+  return (
+    <article
+      className={[styles.block, styles.resizePlaceholderBlock].filter(Boolean).join(" ")}
+      data-testid="a2ui-block"
+      data-a2ui-suspended="resize"
+      data-render-key={parsed.renderKey}
+      data-mode={parsed.mode}
+      data-status={parsed.status}
+      data-lifecycle={parsed.renderState.lifecycle}
+      data-outcome={parsed.renderState.outcome}
+      data-presentation={parsed.renderState.presentation}
+      aria-busy="true"
+      aria-label={`${renderKeyLabel(parsed.renderKey)} A2UI：调整布局中`}
+    >
+      <div className={styles.resizePlaceholder} data-testid="a2ui-resize-placeholder">
+        <div className={styles.resizePlaceholderHeader}>
+          <span title={title}>{title}</span>
+          <small>调整布局中</small>
+        </div>
+        <div className={styles.resizePlaceholderBody} aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
     </article>
   );
 }

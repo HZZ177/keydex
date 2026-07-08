@@ -170,6 +170,11 @@
   overflow-anchor: none;
 }
 
+.item[data-kind="a2ui"] {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 560px;
+}
+
 .item[data-kind="skill"],
 .item:has(+ .item[data-kind="skill"]) {
   padding-bottom: 10px;

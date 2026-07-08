@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 
@@ -18,6 +19,7 @@ interface SidebarResizeHandleProps {
   width: number;
   onResizePreview?: (width: number) => void;
   onResize: (width: number) => void;
+  onResizeDragChange?: (dragging: boolean) => void;
 }
 
 const KEYBOARD_STEP = 12;
@@ -27,6 +29,7 @@ export function SidebarResizeHandle({
   width,
   onResizePreview,
   onResize,
+  onResizeDragChange,
 }: SidebarResizeHandleProps) {
   const getDragWidth = useCallback(
     (startWidth: number, startX: number, clientX: number) => clampSidebarWidth(startWidth + clientX - startX),
@@ -39,6 +42,15 @@ export function SidebarResizeHandle({
     onPreview: onResizePreview,
     onCommit: onResize,
   });
+
+  useEffect(() => {
+    onResizeDragChange?.(dragging);
+    return () => {
+      if (dragging) {
+        onResizeDragChange?.(false);
+      }
+    };
+  }, [dragging, onResizeDragChange]);
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (disabled) {

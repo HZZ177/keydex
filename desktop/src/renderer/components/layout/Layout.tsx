@@ -31,6 +31,7 @@ import { flushSync } from "react-dom";
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
+import { useHeldActiveFlag } from "@/renderer/hooks/useHeldActiveFlag";
 import {
   MAX_RIGHT_SIDEBAR_RATIO,
   MIN_RIGHT_SIDEBAR_RATIO,
@@ -50,6 +51,7 @@ import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { ConnectionStatus } from "@/renderer/components/runtime";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import { FileReviewPanel } from "@/renderer/components/review/FileReviewDiff";
+import { A2UIRenderSuspensionProvider } from "@/renderer/pages/conversation/messages/a2ui/A2UIRenderSuspensionContext";
 import type { SelectedQuote } from "@/renderer/components/chat/SendBox";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
 import type { AppMode } from "@/renderer/components/layout/appMode";
@@ -266,6 +268,8 @@ export function Layout({
   const shellWidthRef = useRef(initialShellWidth());
   const shellMeasureFrameRef = useRef<number | null>(null);
   const [rightSidebarMode, setRightSidebarMode] = useState<"split" | "maximized">("split");
+  const [sidebarResizeActive, setSidebarResizeActive] = useState(false);
+  const [rightSidebarResizeActive, setRightSidebarResizeActive] = useState(false);
   const [rightSidebarPanelStateByScope, setRightSidebarPanelStateByScope] = useState<Record<string, RightSidebarScopePanelState>>({});
   const [productShowcasePhase, setProductShowcasePhase] = useState<ProductShowcaseOverlayPhase | null>(null);
   const { state, actions } = useLayoutState();
@@ -304,6 +308,10 @@ export function Layout({
   const rightSidebarMaxRatio = rightSidebarGeometry.maxRatio;
   const rightSidebarRatio = rightSidebarGeometry.ratio;
   const rightSidebarWidth = rightSidebarGeometry.width;
+  const a2uiRenderSuspendedForLayoutResize = useHeldActiveFlag(
+    sidebarResizeActive || rightSidebarResizeActive,
+    180,
+  );
   const getRightSidebarMaxRatio = useCallback(
     (availableWidth: number) => maxRightSidebarRatioWithContentGuard(availableWidth, guardContentMinWidthRef.current),
     [],
@@ -312,6 +320,9 @@ export function Layout({
     (width: number) => setLivePanelWidth("--sidebar-width", width),
     [setLivePanelWidth],
   );
+  const setSidebarResizing = useCallback((resizing: boolean) => {
+    setSidebarResizeActive((current) => (current === resizing ? current : resizing));
+  }, []);
   const previewRightSidebarRatio = useCallback(
     (ratio: number) => {
       const shell = shellRef.current;
@@ -360,6 +371,7 @@ export function Layout({
   }, [applyRightSidebarGeometry]);
   const setRightSidebarResizing = useCallback((resizing: boolean) => {
     const shell = shellRef.current;
+    setRightSidebarResizeActive((current) => (current === resizing ? current : resizing));
     if (!shell) {
       return;
     }
@@ -779,132 +791,136 @@ export function Layout({
 
   return (
     <RightSidebarConversationContext.Provider value={rightSidebarConversationValue}>
-    <div
-      ref={shellRef}
-      className={styles.shell}
-      data-testid="app-shell"
-      data-sidebar={collapsed ? "collapsed" : "expanded"}
-      data-sidebar-motion={sidebarMotion ? "true" : "false"}
-      data-right-sidebar={rightSidebarOpen ? "open" : "closed"}
-      data-right-sidebar-enabled={globalRightSidebarEnabled ? "true" : "false"}
-      data-right-sidebar-mode={rightSidebarMaximized ? "maximized" : "split"}
-      data-right-sidebar-motion={rightSidebarMotion ? "true" : "false"}
-      data-right-sidebar-placement={state.rightSidebarPlacement}
-      data-workspace={state.workspaceOpen ? "open" : "closed"}
-      data-preview={state.previewOpen ? "open" : "closed"}
-      style={
-        {
-          "--sidebar-width": `${state.sidebarWidth}px`,
-          "--content-min-width": `${FULL_CONTENT_MIN_WIDTH}px`,
-          "--right-sidebar-ratio": String(rightSidebarRatio),
-          "--right-sidebar-width": `${rightSidebarWidth}px`,
-          "--workspace-panel-width": `${state.workspaceWidth}px`,
-          "--preview-panel-width": `${state.previewWidth}px`,
-        } as CSSProperties
-      }
-    >
-      <Titlebar
-        title={title}
-        onBrandClick={openProductShowcase}
-        modeSwitch={{
-          currentMode: appMode,
-          onModeChange: switchAppMode,
-        }}
-        workbenchWorkspaceSelector={workbenchWorkspaceSelector}
-      />
-
-      {showRuntimeStatus && runtimeConnection ? (
-        <ConnectionStatus
-          state={runtimeConnection.runtimeState}
-          onClearAll={runtimeConnection.clearAllErrors}
-          onClearError={runtimeConnection.clearError}
-          onRetry={runtimeConnection.retry}
+      <div
+        ref={shellRef}
+        className={styles.shell}
+        data-testid="app-shell"
+        data-sidebar={collapsed ? "collapsed" : "expanded"}
+        data-sidebar-motion={sidebarMotion ? "true" : "false"}
+        data-right-sidebar={rightSidebarOpen ? "open" : "closed"}
+        data-right-sidebar-enabled={globalRightSidebarEnabled ? "true" : "false"}
+        data-right-sidebar-mode={rightSidebarMaximized ? "maximized" : "split"}
+        data-right-sidebar-motion={rightSidebarMotion ? "true" : "false"}
+        data-right-sidebar-placement={state.rightSidebarPlacement}
+        data-workspace={state.workspaceOpen ? "open" : "closed"}
+        data-preview={state.previewOpen ? "open" : "closed"}
+        style={
+          {
+            "--sidebar-width": `${state.sidebarWidth}px`,
+            "--content-min-width": `${FULL_CONTENT_MIN_WIDTH}px`,
+            "--right-sidebar-ratio": String(rightSidebarRatio),
+            "--right-sidebar-width": `${rightSidebarWidth}px`,
+            "--workspace-panel-width": `${state.workspaceWidth}px`,
+            "--preview-panel-width": `${state.previewWidth}px`,
+          } as CSSProperties
+        }
+      >
+        <Titlebar
+          title={title}
+          onBrandClick={openProductShowcase}
+          modeSwitch={{
+            currentMode: appMode,
+            onModeChange: switchAppMode,
+          }}
+          workbenchWorkspaceSelector={workbenchWorkspaceSelector}
         />
-      ) : null}
 
-      <div className={styles.body}>
-        {sidebarEnabled ? (
-          <>
-            <Sider
-              appMode={appMode}
-              runtime={runtime}
-              activePath={activePath}
-              collapsed={collapsed}
-              projects={projects}
-              conversations={conversations}
-              showChatBucket={showChatBucket}
-              newConversationPath={newConversationPath}
-              deleteActiveFallbackPath={deleteActiveFallbackPath}
-              getSessionPath={getSessionPath}
-              getWorkspaceNewConversationPath={getWorkspaceNewConversationPath}
-              onToggleSidebar={toggleSidebar}
-              onNavigate={navigateFromShell}
-            />
-            <SidebarResizeHandle
-              disabled={collapsed}
-              width={state.sidebarWidth}
-              onResizePreview={previewSidebarWidth}
-              onResize={actions.setSidebarWidth}
-            />
-          </>
+        {showRuntimeStatus && runtimeConnection ? (
+          <ConnectionStatus
+            state={runtimeConnection.runtimeState}
+            onClearAll={runtimeConnection.clearAllErrors}
+            onClearError={runtimeConnection.clearError}
+            onRetry={runtimeConnection.retry}
+          />
         ) : null}
 
-        <section className={styles.content} data-content={contentMode} aria-label="主内容区">
-          <div className={styles.readingColumn} data-content={contentMode}>
-            {children}
+        <A2UIRenderSuspensionProvider suspended={a2uiRenderSuspendedForLayoutResize}>
+          <div className={styles.body}>
+            {sidebarEnabled ? (
+              <>
+                <Sider
+                  appMode={appMode}
+                  runtime={runtime}
+                  activePath={activePath}
+                  collapsed={collapsed}
+                  projects={projects}
+                  conversations={conversations}
+                  showChatBucket={showChatBucket}
+                  newConversationPath={newConversationPath}
+                  deleteActiveFallbackPath={deleteActiveFallbackPath}
+                  getSessionPath={getSessionPath}
+                  getWorkspaceNewConversationPath={getWorkspaceNewConversationPath}
+                  onToggleSidebar={toggleSidebar}
+                  onNavigate={navigateFromShell}
+                />
+                <SidebarResizeHandle
+                  disabled={collapsed}
+                  width={state.sidebarWidth}
+                  onResizePreview={previewSidebarWidth}
+                  onResize={actions.setSidebarWidth}
+                  onResizeDragChange={setSidebarResizing}
+                />
+              </>
+            ) : null}
+
+            <section className={styles.content} data-content={contentMode} aria-label="主内容区">
+              <div className={styles.readingColumn} data-content={contentMode}>
+                {children}
+              </div>
+            </section>
+            {globalRightSidebarEnabled && !rightSidebarOpen ? (
+              <button
+                className={styles.contentRightSidebarToggle}
+                data-icon={rightSidebarOnLeft ? "panel-left-open" : "panel-right-open"}
+                type="button"
+                aria-label={openRightSidebarLabel}
+                title={openRightSidebarLabel}
+                onClick={openRightSidebar}
+              >
+                <OpenRightSidebarIcon size={17} strokeWidth={2.1} />
+              </button>
+            ) : null}
+
+            {globalRightSidebarEnabled ? (
+              <>
+                <RightSidebarResizeHandle
+                  disabled={!rightSidebarOpen || rightSidebarMaximized}
+                  ratio={rightSidebarRatio}
+                  maxRatio={rightSidebarMaxRatio}
+                  getMaxRatio={getLiveRightSidebarMaxRatio}
+                  placement={state.rightSidebarPlacement}
+                  getAvailableWidth={getRightSidebarAvailableWidth}
+                  onResizePreview={previewRightSidebarRatio}
+                  onResize={actions.setRightSidebarRatio}
+                  onResizeDragChange={setRightSidebarResizing}
+                  onSwapPlacement={swapRightSidebarPlacement}
+                />
+                <RightSidebarPanel
+                  open={rightSidebarOpen}
+                  maximized={rightSidebarMaximized}
+                  placement={state.rightSidebarPlacement}
+                  runtime={runtime}
+                  a2uiRenderSuspended={a2uiRenderSuspendedForLayoutResize}
+                  panelStateByScope={rightSidebarPanelStateByScope}
+                  setPanelStateByScope={setRightSidebarPanelStateByScope}
+                  onNavigateToConversation={(sessionId) => onNavigate?.(resolveSessionPath(sessionId, getSessionPath))}
+                  onOpenModelSettings={() => onNavigate?.("/settings/model-defaults")}
+                  onClose={closeRightSidebar}
+                  onMaximize={maximizeRightSidebar}
+                  onRestore={restoreRightSidebar}
+                />
+              </>
+            ) : null}
           </div>
-        </section>
-        {globalRightSidebarEnabled && !rightSidebarOpen ? (
-          <button
-            className={styles.contentRightSidebarToggle}
-            data-icon={rightSidebarOnLeft ? "panel-left-open" : "panel-right-open"}
-            type="button"
-            aria-label={openRightSidebarLabel}
-            title={openRightSidebarLabel}
-            onClick={openRightSidebar}
-          >
-            <OpenRightSidebarIcon size={17} strokeWidth={2.1} />
-          </button>
-        ) : null}
-
-        {globalRightSidebarEnabled ? (
-          <>
-            <RightSidebarResizeHandle
-              disabled={!rightSidebarOpen || rightSidebarMaximized}
-              ratio={rightSidebarRatio}
-              maxRatio={rightSidebarMaxRatio}
-              getMaxRatio={getLiveRightSidebarMaxRatio}
-              placement={state.rightSidebarPlacement}
-              getAvailableWidth={getRightSidebarAvailableWidth}
-              onResizePreview={previewRightSidebarRatio}
-              onResize={actions.setRightSidebarRatio}
-              onResizeDragChange={setRightSidebarResizing}
-              onSwapPlacement={swapRightSidebarPlacement}
-            />
-            <RightSidebarPanel
-              open={rightSidebarOpen}
-              maximized={rightSidebarMaximized}
-              placement={state.rightSidebarPlacement}
-              runtime={runtime}
-              panelStateByScope={rightSidebarPanelStateByScope}
-              setPanelStateByScope={setRightSidebarPanelStateByScope}
-              onNavigateToConversation={(sessionId) => onNavigate?.(resolveSessionPath(sessionId, getSessionPath))}
-              onOpenModelSettings={() => onNavigate?.("/settings/model-defaults")}
-              onClose={closeRightSidebar}
-              onMaximize={maximizeRightSidebar}
-              onRestore={restoreRightSidebar}
-            />
-          </>
+        </A2UIRenderSuspensionProvider>
+        {productShowcasePhase ? (
+          <ProductShowcaseOverlay
+            phase={productShowcasePhase}
+            onRequestClose={closeProductShowcase}
+            onExited={handleProductShowcaseExited}
+          />
         ) : null}
       </div>
-      {productShowcasePhase ? (
-        <ProductShowcaseOverlay
-          phase={productShowcasePhase}
-          onRequestClose={closeProductShowcase}
-          onExited={handleProductShowcaseExited}
-        />
-      ) : null}
-    </div>
     </RightSidebarConversationContext.Provider>
   );
 }
@@ -914,6 +930,7 @@ function RightSidebarPanel({
   maximized,
   placement,
   runtime,
+  a2uiRenderSuspended,
   panelStateByScope,
   setPanelStateByScope,
   onNavigateToConversation,
@@ -926,6 +943,7 @@ function RightSidebarPanel({
   maximized: boolean;
   placement: RightSidebarPlacement;
   runtime: RuntimeBridge;
+  a2uiRenderSuspended: boolean;
   panelStateByScope: Record<string, RightSidebarScopePanelState>;
   setPanelStateByScope: Dispatch<SetStateAction<Record<string, RightSidebarScopePanelState>>>;
   onNavigateToConversation?: (sessionId: string) => void;
@@ -1983,6 +2001,7 @@ function RightSidebarPanel({
                       previewPanelScopeKey={activeScopeKey}
                       sidecarQuoteRequest={conversationPanel.quoteRequest}
                       sidecarLoadedHistoryTurnCount={conversationPanel.loadedHistoryTurnCount}
+                      a2uiRenderSuspended={a2uiRenderSuspended}
                       onSidecarQuoteRequestHandled={(requestId) =>
                         handleConversationQuoteRequestHandled(panelId, requestId)
                       }
