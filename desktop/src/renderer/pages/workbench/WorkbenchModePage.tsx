@@ -52,6 +52,7 @@ export interface WorkbenchModePageProps {
   workspaceId?: string;
   selectedSessionId?: string;
   externalPreviewPath?: string;
+  externalPreviewIntentPath?: string;
   selectedWorkspace?: Workspace | null;
   workspaces?: Workspace[];
   workspaceLoading?: boolean;
@@ -62,6 +63,7 @@ export interface WorkbenchModePageProps {
   onSessionSelected?: (sessionId: string) => void;
   onSessionCreated?: (session: AgentSession) => void;
   onRequestNewSession?: () => void;
+  onExternalPreviewIntentConsumed?: () => void;
   onExternalPreviewClosed?: () => void;
   onOpenMcpSettings?: () => void;
 }
@@ -105,6 +107,7 @@ export function WorkbenchModePage({
   workspaceId,
   selectedSessionId,
   externalPreviewPath,
+  externalPreviewIntentPath,
   selectedWorkspace,
   workspaces = [],
   workspaceLoading = false,
@@ -115,6 +118,7 @@ export function WorkbenchModePage({
   onSessionSelected,
   onSessionCreated,
   onRequestNewSession,
+  onExternalPreviewIntentConsumed,
   onExternalPreviewClosed,
   onOpenMcpSettings,
 }: WorkbenchModePageProps) {
@@ -512,14 +516,8 @@ export function WorkbenchModePage({
     };
     const workspaceScopeChanged =
       previousScope.workspaceId !== workspaceId || previousScope.selectedSessionId !== selectedSessionId;
-    const externalPreviewChanged = previousScope.externalPreviewPath !== externalPreviewPath;
-    const externalPreviewStable = Boolean(
-      externalPreviewPath && previousScope.externalPreviewPath === externalPreviewPath,
-    );
-    const onlyExternalPreviewCleared = Boolean(
-      !workspaceScopeChanged && previousScope.externalPreviewPath && !externalPreviewPath,
-    );
-    if ((!workspaceScopeChanged && !externalPreviewChanged) || externalPreviewStable || onlyExternalPreviewCleared) {
+    const externalPreviewInvolved = Boolean(previousScope.externalPreviewPath || externalPreviewPath);
+    if (!workspaceScopeChanged || externalPreviewInvolved) {
       return;
     }
     handledFilePanelRequestIdRef.current = previewContext?.filePanelRequest?.requestId ?? 0;
@@ -538,20 +536,22 @@ export function WorkbenchModePage({
   ]);
 
   useEffect(() => {
-    if (!externalPreviewPath || !workbenchPreviewRenderContext) {
+    if (!externalPreviewIntentPath || !workbenchPreviewRenderContext) {
       return;
     }
-    if (closedExternalPreviewPathRef.current === externalPreviewPath) {
+    if (closedExternalPreviewPathRef.current === externalPreviewIntentPath) {
       return;
     }
-    const request: PreviewRequest = { type: "local-file", path: externalPreviewPath };
+    const request: PreviewRequest = { type: "local-file", path: externalPreviewIntentPath };
     const tabId = workbenchPreviewTabId(request);
     const existingTab = workbenchPreviewTabs.tabs.find((item) => item.id === tabId);
     if (!existingTab) {
       openWorkbenchMainPreview(request, workbenchPreviewRenderContext);
+      onExternalPreviewIntentConsumed?.();
       return;
     }
     if (existingTab.renderContext === workbenchPreviewRenderContext) {
+      onExternalPreviewIntentConsumed?.();
       return;
     }
     setWorkbenchPreviewTabs((current) => ({
@@ -560,19 +560,42 @@ export function WorkbenchModePage({
         item.id === tabId ? { ...item, renderContext: workbenchPreviewRenderContext } : item,
       ),
     }));
+    onExternalPreviewIntentConsumed?.();
   }, [
-    externalPreviewPath,
+    externalPreviewIntentPath,
+    onExternalPreviewIntentConsumed,
     openWorkbenchMainPreview,
     workbenchPreviewRenderContext,
     workbenchPreviewTabs.tabs,
   ]);
 
   useEffect(() => {
-    if (!closedExternalPreviewPathRef.current || closedExternalPreviewPathRef.current === externalPreviewPath) {
+    if (!externalPreviewPath || !workbenchPreviewRenderContext) {
+      return;
+    }
+    const request: PreviewRequest = { type: "local-file", path: externalPreviewPath };
+    const tabId = workbenchPreviewTabId(request);
+    const existingTab = workbenchPreviewTabs.tabs.find((item) => item.id === tabId);
+    if (!existingTab || existingTab.renderContext === workbenchPreviewRenderContext) {
+      return;
+    }
+    setWorkbenchPreviewTabs((current) => ({
+      activeTabId: current.activeTabId,
+      tabs: current.tabs.map((item) =>
+        item.id === tabId ? { ...item, renderContext: workbenchPreviewRenderContext } : item,
+      ),
+    }));
+  }, [externalPreviewPath, workbenchPreviewRenderContext, workbenchPreviewTabs.tabs]);
+
+  useEffect(() => {
+    if (
+      !closedExternalPreviewPathRef.current ||
+      closedExternalPreviewPathRef.current === externalPreviewIntentPath
+    ) {
       return;
     }
     closedExternalPreviewPathRef.current = null;
-  }, [externalPreviewPath]);
+  }, [externalPreviewIntentPath]);
 
   useEffect(() => {
     const activeEntry = previewContext?.open ? previewContext.activeEntry : null;

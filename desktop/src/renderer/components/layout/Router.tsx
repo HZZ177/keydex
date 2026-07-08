@@ -275,11 +275,20 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const backendErrorMessage = runtimeConnection?.error?.message ?? "本地服务连接失败";
   const decodedWorkspaceId = safeDecodeParam(workspaceId);
   const decodedSessionId = safeDecodeParam(sessionId);
-  const externalPreviewPath = searchParams.get("file")?.trim() || undefined;
+  const externalPreviewIntentPath = searchParams.get("file")?.trim() || undefined;
+  const [externalPreviewPath, setExternalPreviewPath] = useState<string | null>(
+    () => externalPreviewIntentPath ?? null,
+  );
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaceSessions, setWorkspaceSessions] = useState<AgentSession[]>([]);
+
+  useEffect(() => {
+    if (externalPreviewIntentPath) {
+      setExternalPreviewPath(externalPreviewIntentPath);
+    }
+  }, [externalPreviewIntentPath]);
 
   useEffect(() => {
     if (!backendReady) {
@@ -405,7 +414,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
       : undefined;
     const nextWorkspaceId = fallbackWorkspaceId ?? workspaces[0]?.id;
     if (nextWorkspaceId) {
-      void navigate(workbenchFilePreviewPath(externalPreviewPath, nextWorkspaceId), { replace: true });
+      void navigate(workbenchPath(nextWorkspaceId), { replace: true });
     }
   }, [
     decodedWorkspaceId,
@@ -501,15 +510,22 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
     }
     void navigate(workbenchPath(decodedWorkspaceId));
   }, [decodedWorkspaceId, navigate]);
-  const handleExternalPreviewClosed = useCallback(() => {
-    if (!externalPreviewPath) {
+  const clearExternalPreviewIntent = useCallback(() => {
+    const nextSearchParams = new URLSearchParams(location.search);
+    if (!nextSearchParams.has("file")) {
       return;
     }
-    const nextSearchParams = new URLSearchParams(location.search);
     nextSearchParams.delete("file");
     const nextSearch = nextSearchParams.toString();
     void navigate(`${location.pathname}${nextSearch ? `?${nextSearch}` : ""}`, { replace: true });
-  }, [externalPreviewPath, location.pathname, location.search, navigate]);
+  }, [location.pathname, location.search, navigate]);
+  const handleExternalPreviewIntentConsumed = useCallback(() => {
+    clearExternalPreviewIntent();
+  }, [clearExternalPreviewIntent]);
+  const handleExternalPreviewClosed = useCallback(() => {
+    setExternalPreviewPath(null);
+    clearExternalPreviewIntent();
+  }, [clearExternalPreviewIntent]);
 
   return (
     <RoutedLayout
@@ -540,7 +556,8 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
         runtime={runtime}
         workspaceId={decodedWorkspaceId}
         selectedSessionId={decodedSessionId}
-        externalPreviewPath={externalPreviewPath}
+        externalPreviewPath={externalPreviewPath ?? undefined}
+        externalPreviewIntentPath={externalPreviewIntentPath}
         selectedWorkspace={selectedWorkspace}
         workspaces={workspaces}
         workspaceLoading={workspaceLoading}
@@ -551,6 +568,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
         onSessionSelected={handleWorkbenchSessionSelected}
         onSessionCreated={handleWorkbenchSessionCreated}
         onRequestNewSession={handleWorkbenchNewSessionRequested}
+        onExternalPreviewIntentConsumed={handleExternalPreviewIntentConsumed}
         onExternalPreviewClosed={handleExternalPreviewClosed}
         onOpenMcpSettings={() => void navigate("/settings/mcp", { state: { from: location.pathname } })}
       />
