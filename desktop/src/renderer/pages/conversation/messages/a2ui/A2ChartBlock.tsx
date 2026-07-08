@@ -624,7 +624,7 @@ function buildCartesianOption(chart: ChartSpec, selectedItems: SelectedChartItem
   });
 
   return withBaseChartOption(chart, {
-    dataZoom: hasZoom ? cartesianDataZoom(categories.length) : undefined,
+    dataZoom: hasZoom ? cartesianDataZoom() : undefined,
     grid: {
       bottom: hasZoom ? 62 : 34,
       containLabel: true,
@@ -1017,24 +1017,27 @@ function shouldUseDataZoom(categoryCount: number): boolean {
   return categoryCount > 1;
 }
 
-function cartesianDataZoom(categoryCount: number): EChartsOption["dataZoom"] {
-  const end = Math.max(18, Math.min(100, Math.round((18 / Math.max(categoryCount, 1)) * 100)));
+function cartesianDataZoom(): EChartsOption["dataZoom"] {
   return [
     {
+      id: "a2ui-cartesian-inside-zoom",
       type: "inside",
       xAxisIndex: 0,
       filterMode: "none",
+      rangeMode: ["percent", "percent"],
       start: 0,
-      end,
+      end: 100,
     },
     {
+      id: "a2ui-cartesian-slider-zoom",
       type: "slider",
       xAxisIndex: 0,
       filterMode: "none",
+      rangeMode: ["percent", "percent"],
       bottom: 6,
       height: 18,
       start: 0,
-      end,
+      end: 100,
       borderColor: "rgba(148, 163, 184, 0.28)",
       fillerColor: "rgba(37, 99, 235, 0.12)",
       handleStyle: {

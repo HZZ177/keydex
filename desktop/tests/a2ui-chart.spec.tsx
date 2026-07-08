@@ -1258,6 +1258,49 @@ describe("A2ChartBlock", () => {
     }
   });
 
+  it("keeps zoomed streaming trend charts on the full generated range", () => {
+    vi.useFakeTimers();
+    try {
+      const payloadWithCount = (count: number) => ({
+        title: "大数据缩放趋势",
+        charts: [
+          {
+            type: "trend",
+            title: "访问趋势",
+            zoom: true,
+            series: [
+              {
+                name: "访问量",
+                items: Array.from({ length: count }, (_, index) => ({
+                  name: `点 ${index + 1}`,
+                  value: index + 1,
+                })),
+              },
+            ],
+          },
+        ],
+      });
+      const { rerender } = render(<A2ChartBlock parsed={parsedChart(payloadWithCount(2), "waiting_created")} />);
+      const initialZoom = lastDataZoom();
+      expect(initialZoom[0]).toMatchObject({ end: 100, start: 0 });
+
+      rerender(<A2ChartBlock parsed={parsedChart(payloadWithCount(260), "waiting_created")} />);
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      const streamingZoom = lastDataZoom();
+      expect(streamingZoom).toHaveLength(2);
+      expect(streamingZoom[0]).toMatchObject({ end: 100, rangeMode: ["percent", "percent"], start: 0 });
+      expect(streamingZoom[1]).toMatchObject({ end: 100, rangeMode: ["percent", "percent"], start: 0 });
+      expect(lastOptionDataCount()).toBe(260);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("reveals live streaming chart payloads element by element", () => {
     vi.useFakeTimers();
     const restoreRaf = installTimerBackedRaf();
@@ -1332,6 +1375,13 @@ function chartDataCounts(): number[] {
 function lastSetOption(): Record<string, unknown> {
   const calls = echartsMock.setOption.mock.calls;
   return (calls[calls.length - 1]?.[0] ?? {}) as Record<string, unknown>;
+}
+
+function lastDataZoom(): Array<Record<string, unknown>> {
+  const dataZoom = lastSetOption().dataZoom;
+  return Array.isArray(dataZoom)
+    ? dataZoom.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+    : [];
 }
 
 function optionSeries(option: Record<string, unknown>): Array<Record<string, unknown>> {
