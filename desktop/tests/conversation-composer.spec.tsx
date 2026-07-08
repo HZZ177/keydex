@@ -77,6 +77,33 @@ describe("ConversationComposer", () => {
     expect(onSend).toHaveBeenCalledWith([], [], []);
   });
 
+  it("uses the page interaction placeholder while A2UI is waiting for input", () => {
+    render(
+      <ConversationComposer
+        value=""
+        runtimeState="waiting_input"
+        canSend={false}
+        canStop={false}
+        connectionReady
+        modelSelection={modelSelection()}
+        workspaceSkills={[]}
+        selectedSkill={null}
+        externalFileRequest={null}
+        externalQuoteRequest={null}
+        placeholder="要求后续变更"
+        onChange={vi.fn()}
+        onSkillChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByRole("textbox", { name: "继续输入" });
+    expect(input.getAttribute("data-placeholder")).toBe("请先完成页面交互");
+    expect(input.getAttribute("aria-disabled")).toBe("true");
+    expect(input.getAttribute("contenteditable")).toBe("false");
+  });
+
   it("focuses the model search field when opened from the composer toolbar", async () => {
     render(
       <ConversationComposer

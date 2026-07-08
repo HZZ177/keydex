@@ -69,12 +69,14 @@ interface SessionIndicator {
   isStreaming: boolean;
   hasUnread: boolean;
   waitingApproval: boolean;
+  waitingInteraction: boolean;
 }
 
 const EMPTY_SESSION_INDICATOR: SessionIndicator = {
   isStreaming: false,
   hasUnread: false,
   waitingApproval: false,
+  waitingInteraction: false,
 };
 
 const WORKSPACE_SESSION_PREVIEW_LIMIT = 5;
@@ -211,16 +213,24 @@ export function Sider({
       Object.entries(sharedSessionState).map(([sessionId, state]) => {
         const waitingApproval =
           state.runtimeState === "waiting_approval"
-          || state.runtimeState === "waiting_input"
           || Boolean(state.pendingApproval);
+        const waitingInteraction = !waitingApproval && state.runtimeState === "waiting_input";
         const isStreaming =
-          !waitingApproval && (state.runtimeState === "running" || state.runtimeState === "cancelling" || state.isStreaming);
+          !waitingApproval
+          && !waitingInteraction
+          && (state.runtimeState === "running" || state.runtimeState === "cancelling" || state.isStreaming);
         return [
           sessionId,
           {
             isStreaming,
             waitingApproval,
-            hasUnread: state.hasUnread && !isStreaming && !waitingApproval && !isActivePath(activePath, getSessionPath(sessionId)),
+            waitingInteraction,
+            hasUnread:
+              state.hasUnread
+              && !isStreaming
+              && !waitingApproval
+              && !waitingInteraction
+              && !isActivePath(activePath, getSessionPath(sessionId)),
           },
         ];
       }),
@@ -1358,9 +1368,19 @@ function SiderSection({
     const active = isActivePath(activePath, path);
     const indicator = sessionIndicators[item.id] ?? EMPTY_SESSION_INDICATOR;
     const showUpdatedTime = Boolean(
-      item.updatedAt && !indicator.isStreaming && !indicator.hasUnread && !indicator.waitingApproval,
+      item.updatedAt
+      && !indicator.isStreaming
+      && !indicator.hasUnread
+      && !indicator.waitingApproval
+      && !indicator.waitingInteraction,
     );
-    const hasMeta = Boolean(showUpdatedTime || indicator.isStreaming || indicator.hasUnread || indicator.waitingApproval);
+    const hasMeta = Boolean(
+      showUpdatedTime
+      || indicator.isStreaming
+      || indicator.hasUnread
+      || indicator.waitingApproval
+      || indicator.waitingInteraction,
+    );
     const menuOpen = actionMenuId === item.id;
     const menuVisible = menuOpen || closingActionMenuId === item.id;
     const canShowHoverCard = editing?.id !== item.id && confirmDeleteId !== item.id && !menuVisible;
@@ -1602,7 +1622,7 @@ function SiderSection({
                   onMouseLeave={() => setHoveredSession(null)}
                   type="button"
                 >
-                  {indicator.isStreaming && !indicator.waitingApproval ? (
+                  {indicator.isStreaming && !indicator.waitingApproval && !indicator.waitingInteraction ? (
                     <span
                       className={styles.collapsedSessionLoading}
                       data-collapsed-loading="true"
@@ -1743,9 +1763,10 @@ function SessionStatusIndicators({
   indicator: SessionIndicator;
   collapsed?: boolean;
 }) {
-  if (!indicator.isStreaming && !indicator.hasUnread && !indicator.waitingApproval) {
+  if (!indicator.isStreaming && !indicator.hasUnread && !indicator.waitingApproval && !indicator.waitingInteraction) {
     return null;
   }
+  const waitingTitle = indicator.waitingApproval ? "等待批准" : "等待交互";
   return (
     <span
       className={styles.historyIndicators}
@@ -1754,19 +1775,22 @@ function SessionStatusIndicators({
       data-streaming={indicator.isStreaming ? "true" : "false"}
       data-unread={indicator.hasUnread ? "true" : "false"}
       data-waiting-approval={indicator.waitingApproval ? "true" : "false"}
+      data-waiting-interaction={indicator.waitingInteraction ? "true" : "false"}
       aria-hidden={collapsed ? "true" : undefined}
     >
-      {indicator.waitingApproval ? (
+      {indicator.waitingApproval || indicator.waitingInteraction ? (
         collapsed ? (
-          <span className={styles.historyApprovalDot} title="等待批准" />
+          <span className={styles.historyApprovalDot} title={waitingTitle} />
         ) : (
           <span className={styles.historyApprovalBadge}>
-            <ShieldCheck size={12} />
-            <span>等待批准</span>
+            {indicator.waitingApproval ? <ShieldCheck size={12} /> : <MessageCircle size={12} />}
+            <span>{waitingTitle}</span>
           </span>
         )
       ) : null}
-      {indicator.isStreaming && !indicator.waitingApproval ? <span className={styles.historyStreamingSpinner} /> : null}
+      {indicator.isStreaming && !indicator.waitingApproval && !indicator.waitingInteraction ? (
+        <span className={styles.historyStreamingSpinner} />
+      ) : null}
       {indicator.hasUnread ? <span className={styles.historyUnreadDot} /> : null}
     </span>
   );

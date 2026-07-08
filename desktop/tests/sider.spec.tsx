@@ -928,6 +928,62 @@ describe("Sider", () => {
     expect(backgroundRow.querySelector('[data-waiting-approval="true"]')).toBeNull();
   });
 
+  it("shows waiting interaction instead of waiting approval for A2UI input blocking", async () => {
+    let emit: (event: AgentActionEnvelope) => void = () => undefined;
+    const runtime = fakeRuntime([
+      thread({ id: "thread-a", title: "当前会话" }),
+      thread({ id: "thread-b", title: "交互会话" }),
+    ]);
+    const channel: ChatChannel = {
+      close: vi.fn(),
+      getStatus: vi.fn<() => WsConnectionStatus>(() => "open"),
+      getSessionId: vi.fn(() => null),
+      createSession: vi.fn(),
+      bindSession: vi.fn(),
+      unbindSession: vi.fn(),
+      chat: vi.fn(),
+      submitA2UI: vi.fn(),
+      cancelA2UI: vi.fn(),
+      approvalDecision: vi.fn(),
+      cancel: vi.fn(),
+      terminateCommand: vi.fn(),
+      requestStatus: vi.fn(),
+      ping: vi.fn(),
+    };
+    runtime.conversation.openChatChannel = vi.fn((onEvent, options?: { onStatus?: (status: "open") => void }) => {
+      emit = onEvent;
+      options?.onStatus?.("open");
+      return channel;
+    });
+
+    renderSider(
+      <AgentSessionProvider runtime={runtime}>
+        <Sider runtime={runtime} activePath="/conversation/thread-a" />
+      </AgentSessionProvider>,
+    );
+
+    await screen.findByText("交互会话");
+
+    act(() => {
+      emit({
+        action: "status",
+        data: {
+          status: "idle",
+          waiting_input_sessions: [{ session_id: "thread-b" }],
+        },
+      });
+    });
+
+    const backgroundButton = screen.getByRole("button", { name: "交互会话" });
+    const backgroundRow = backgroundButton.parentElement!;
+    const indicator = backgroundRow.querySelector('[data-session-indicators="true"]');
+    expect(indicator?.getAttribute("data-waiting-approval")).toBe("false");
+    expect(indicator?.getAttribute("data-waiting-interaction")).toBe("true");
+    expect(indicator?.textContent).toContain("等待交互");
+    expect(indicator?.textContent).not.toContain("等待批准");
+    expect(backgroundRow.querySelector("time")).toBeNull();
+  });
+
   it("renders collapsed background loading in the session button center", async () => {
     let emit: (event: AgentActionEnvelope) => void = () => undefined;
     const runtime = fakeRuntime([

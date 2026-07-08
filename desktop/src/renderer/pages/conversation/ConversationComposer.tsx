@@ -112,6 +112,8 @@ export function ConversationComposer({
   modelSelectorPlacement = "top",
   contextWindowUsage = null,
 }: ConversationComposerProps) {
+  const effectivePlaceholder = runtimeState === "waiting_input" ? "请先完成页面交互" : placeholder;
+
   return (
     <SendBox
       value={value}
@@ -121,7 +123,7 @@ export function ConversationComposer({
       statusText={conversationComposerStatusText(runtimeState, connectionReady)}
       variant="keydex"
       className={className}
-      placeholder={placeholder}
+      placeholder={effectivePlaceholder}
       ariaLabel={ariaLabel}
       inputLabel={inputLabel}
       autoFocusKey={autoFocusKey}
