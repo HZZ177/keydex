@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { A2UIBlock } from "@/renderer/pages/conversation/messages";
 import type { ParsedA2UIMessage } from "@/renderer/pages/conversation/messages/a2ui/A2UIBlock";
 import { A2ChartBlock } from "@/renderer/pages/conversation/messages/a2ui/A2ChartBlock";
+import { resetA2UIStreamPlayerPlaybackForTests } from "@/renderer/pages/conversation/messages/a2ui/useA2UIStreamPlayer";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { A2UIDebugBlockState, A2UIObject } from "@/types/protocol";
 
@@ -25,13 +26,14 @@ vi.mock("echarts", () => ({
 
 describe("A2ChartBlock", () => {
   beforeEach(() => {
+    resetA2UIStreamPlayerPlaybackForTests();
     echartsMock.dispose.mockClear();
     echartsMock.init.mockClear();
     echartsMock.resize.mockClear();
     echartsMock.setOption.mockClear();
   });
 
-  it("renders one SDK chart payload with column, trend, pie and funnel panels", () => {
+  it("renders one SDK chart payload with column, trend, pie, funnel and horizontal bar panels", () => {
     const { container } = render(
       <A2UIBlock
         message={chartMessage({
@@ -88,6 +90,16 @@ describe("A2ChartBlock", () => {
                 { name: "点击", value: 360, ratio: 36 },
               ],
             },
+            {
+              type: "horizontal_bar",
+              title: "显存分项估算",
+              series_label: "显存",
+              items: [
+                { name: "模型权重 BF16", value: 6.6, color: "#3b82f6" },
+                { name: "梯度 FP32", value: 13.2, color: "#65a30d" },
+                { name: "Adam 优化器", value: 26.4, color: "#d97706" },
+              ],
+            },
           ],
         })}
       />,
@@ -99,16 +111,18 @@ describe("A2ChartBlock", () => {
       "trend",
       "pie",
       "funnel",
+      "horizontal_bar",
     ]);
     expect(screen.getAllByText("组合图表")).toHaveLength(1);
     expect(screen.getByText("数据截止到今天")).not.toBeNull();
     const surfaces = screen.getAllByTestId("a2ui-echarts-surface");
-    expect(surfaces).toHaveLength(4);
+    expect(surfaces).toHaveLength(5);
     expect(surfaces.map((surface) => surface.getAttribute("data-chart-type"))).toEqual([
       "column",
       "trend",
       "pie",
       "funnel",
+      "horizontal_bar",
     ]);
     expect(surfaces.every((surface) => surface.getAttribute("data-a2ui-chart-engine") === "echarts")).toBe(true);
     expect(surfaces.every((surface) => surface.getAttribute("data-a2ui-chart-stream-adapter") === "setOption-diff")).toBe(true);
@@ -118,9 +132,24 @@ describe("A2ChartBlock", () => {
     expect(surfaces[1].getAttribute("data-a2ui-chart-category-count")).toBe("3");
     expect(surfaces[2].getAttribute("data-a2ui-chart-data-count")).toBe("2");
     expect(surfaces[3].getAttribute("data-a2ui-chart-data-count")).toBe("2");
+    expect(surfaces[4].getAttribute("data-a2ui-chart-data-count")).toBe("3");
+    expect(surfaces[4].getAttribute("data-a2ui-chart-category-count")).toBe("3");
     expect(surfaces[1].getAttribute("data-a2ui-chart-interactions")).toBe("tooltip,axisPointer,legendToggle");
     expect(surfaces[1].getAttribute("data-a2ui-chart-tooltip")).toBe("axis");
+    expect(surfaces[4].getAttribute("data-a2ui-chart-interactions")).toBe("tooltip,axisPointer,legendToggle");
+    expect(surfaces[4].getAttribute("data-a2ui-chart-tooltip")).toBe("axis");
     expect(echartsMock.setOption.mock.calls.every(([option]) => (option as Record<string, unknown>).animation === false)).toBe(true);
+    const horizontalOption = echartsMock.setOption.mock.calls[4][0] as {
+      series?: Array<Record<string, unknown>>;
+      xAxis?: Record<string, unknown>;
+      yAxis?: Record<string, unknown>;
+    };
+    expect(horizontalOption.xAxis).toMatchObject({ type: "value", show: false });
+    expect(horizontalOption.yAxis).toMatchObject({ type: "category", inverse: true });
+    expect(horizontalOption.series?.[0]).toMatchObject({
+      showBackground: true,
+      type: "bar",
+    });
     expect(container.querySelector("svg")).not.toBeNull();
   });
 
@@ -469,38 +498,57 @@ describe("A2ChartBlock", () => {
     expect(lastSetOption().animation).toBe(false);
   });
 
-  it("does not start stream playback from a completed created message even when debug chunks are present", () => {
-    render(
-      <A2UIBlock
-        message={streamedCreatedChartMessage({
-          title: "已完成图表",
-          charts: [
-            {
-              type: "column",
-              title: "完整数据",
-              series: [
-                {
-                  name: "数量",
-                  items: [
-                    { name: "A", value: 10 },
-                    { name: "B", value: 20 },
-                    { name: "C", value: 30 },
-                    { name: "D", value: 40 },
-                  ],
-                },
-              ],
-            },
-          ],
-        })}
-      />,
-    );
+  it("reveals a live created frame when raw stream lifecycle events are present", () => {
+    vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
+    try {
+      render(
+        <A2UIBlock
+          message={streamedCreatedChartMessage({
+            title: "已完成图表",
+            charts: [
+              {
+                type: "column",
+                title: "完整数据",
+                series: [
+                  {
+                    name: "数量",
+                    items: [
+                      { name: "A", value: 10 },
+                      { name: "B", value: 20 },
+                      { name: "C", value: 30 },
+                      { name: "D", value: 40 },
+                    ],
+                  },
+                ],
+              },
+            ],
+          })}
+        />,
+      );
 
-    const chart = screen.getByTestId("a2ui-chart");
-    const surface = screen.getByTestId("a2ui-echarts-surface");
-    expect(chart.getAttribute("data-a2ui-player-enabled")).toBe("false");
-    expect(surface.getAttribute("data-a2ui-chart-data-count")).toBe("4");
-    expect(surface.getAttribute("data-a2ui-chart-animation")).toBe("settled");
-    expect(lastSetOption().animation).toBe(false);
+      const chart = screen.getByTestId("a2ui-chart");
+      expect(chart.getAttribute("data-a2ui-player-enabled")).toBe("true");
+      expect(chartDataCounts()[0]).toBeGreaterThan(0);
+      expect(chartDataCounts()[0]).toBeLessThan(4);
+
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+
+      expect(chartDataCounts()[0]).toBeLessThan(4);
+
+      act(() => {
+        vi.advanceTimersByTime(2_400);
+      });
+
+      expect(chartDataCounts()).toEqual([4]);
+      expect(screen.getByTestId("a2ui-chart").getAttribute("data-a2ui-player-phase")).toBe("created");
+    } finally {
+      restoreRaf();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it("does not replay stream animation when a completed A2UI remounts after the turn settles", () => {

@@ -19,6 +19,15 @@ describe("A2UI content layout contract", () => {
     expect(chartSource).not.toContain("truncate(");
   });
 
+  it("renders chart captions as centered text below the chart surface", () => {
+    const chartCss = readSource("renderer/pages/conversation/messages/a2ui/A2ChartBlock.module.css");
+
+    expect(chartCss).toMatch(/\.panelTitle\s*{[^}]*justify-self:\s*center/s);
+    expect(chartCss).toMatch(/\.panelTitle\s*{[^}]*text-align:\s*center/s);
+    expect(chartCss).toMatch(/\.summary\s*{[^}]*justify-self:\s*center/s);
+    expect(chartCss).toMatch(/\.summary\s*{[^}]*text-align:\s*center/s);
+  });
+
   it("keeps the A2UI debug panel header actions inside the panel with long ids", () => {
     const debugCss = readSource("renderer/pages/conversation/messages/a2ui/A2UIDebugPanel.module.css");
 
@@ -27,6 +36,16 @@ describe("A2UI content layout contract", () => {
     expect(debugCss).toMatch(/\.actions\s*{[^}]*flex:\s*0 0 auto/s);
     expect(debugCss).toMatch(/\.actions\s*{[^}]*margin-left:\s*auto/s);
     expect(debugCss).toMatch(/\.subtitle\s*{[^}]*text-overflow:\s*ellipsis/s);
+  });
+
+  it("keeps A2UI status metadata hidden and the debug trigger visually neutral", () => {
+    const blockCss = readSource("renderer/pages/conversation/messages/a2ui/A2UIBlock.module.css");
+    const debugCss = readSource("renderer/pages/conversation/messages/a2ui/A2UIDebugPanel.module.css");
+
+    expect(blockCss).toContain(".statusMeta");
+    expect(blockCss).not.toContain(".status {");
+    expect(debugCss).toMatch(/\.debugButton:focus-visible\s*{[^}]*outline:\s*1px solid color-mix\(in srgb, var\(--color-border-default\)/s);
+    expect(debugCss).not.toMatch(/\.debugButton:focus-visible\s*{[^}]*color-info-6/s);
   });
 });
 

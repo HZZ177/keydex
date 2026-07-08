@@ -1493,6 +1493,10 @@ function defaultExtensionSettings() {
       context_window_tokens: 128000,
       trigger_fraction: 0.75,
     },
+    a2ui: {
+      enabled: true,
+      debug_info_enabled: false,
+    },
   };
 }
 

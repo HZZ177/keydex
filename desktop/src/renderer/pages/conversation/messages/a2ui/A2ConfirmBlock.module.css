@@ -17,13 +17,14 @@
   min-width: 0;
   align-items: flex-start;
   gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--color-warning) 38%, var(--color-border-default));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--color-warning) 7%, var(--color-bg-elevated));
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--color-warning) 54%, transparent);
+  border-radius: 0;
+  background: transparent;
   color: color-mix(in srgb, var(--color-warning) 88%, var(--color-text-primary));
   font-size: 12px;
   line-height: 1.55;
-  padding: 9px 10px;
+  padding: 2px 0 2px 10px;
 }
 
 .riskTags {
@@ -155,13 +156,14 @@
   display: grid;
   min-width: 0;
   gap: 6px;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--surface-muted) 54%, transparent);
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--color-success-6) 34%, transparent);
+  border-radius: 0;
+  background: transparent;
   color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 1.55;
-  padding: 9px 10px;
+  padding: 2px 0 2px 10px;
 }
 
 .result strong {

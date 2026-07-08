@@ -16,13 +16,30 @@ describe("A2UI debug info", () => {
     });
   });
 
-  it("shows the default debug button and opens a read-only detail panel", () => {
+  it("keeps the debug button hidden by default", () => {
+    render(<A2UIBlock message={debugMessage()} />);
+
+    expect(screen.queryByRole("button", { name: "查看 A2UI 调试信息" })).toBeNull();
+  });
+
+  it("shows the debug button when enabled and opens a read-only detail panel", () => {
     const onSubmit = vi.fn();
     const onCancel = vi.fn();
-    render(<A2UIBlock message={debugMessage()} onSubmit={onSubmit} onCancel={onCancel} />);
+    render(
+      <A2UIBlock
+        message={debugMessage()}
+        debugInfoEnabled
+        onSubmit={onSubmit}
+        onCancel={onCancel}
+      />,
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: "查看 A2UI 调试信息" }));
+    const debugButton = screen.getByRole("button", { name: "查看 A2UI 调试信息" });
+    expect(debugButton.textContent).toBe("!");
+    fireEvent.click(debugButton);
 
+    expect(screen.getByTestId("a2ui-debug-modal")).not.toBeNull();
+    expect(screen.getByRole("dialog", { name: "A2UI 调试信息" })).toBe(screen.getByTestId("a2ui-debug-panel"));
     const panel = within(screen.getByTestId("a2ui-debug-panel"));
     expect(panel.getByText("message_id")).not.toBeNull();
     expect(panel.getByText("agent:a2ui-debug-1")).not.toBeNull();
@@ -47,6 +64,20 @@ describe("A2UI debug info", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
+  it("closes the modal debug panel from backdrop and Escape", () => {
+    render(<A2UIBlock message={debugMessage()} debugInfoEnabled />);
+
+    fireEvent.click(screen.getByRole("button", { name: "查看 A2UI 调试信息" }));
+    expect(screen.getByRole("dialog", { name: "A2UI 调试信息" })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "点击遮罩关闭 A2UI 调试信息" }));
+    expect(screen.queryByRole("dialog", { name: "A2UI 调试信息" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看 A2UI 调试信息" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "A2UI 调试信息" })).toBeNull();
+  });
+
   it("hides the debug button when the centralized flag is disabled at the entry", () => {
     render(<A2UIBlock message={debugMessage()} debugInfoEnabled={false} />);
 
@@ -54,7 +85,7 @@ describe("A2UI debug info", () => {
   });
 
   it("copies the complete debug JSON", async () => {
-    render(<A2UIBlock message={debugMessage()} />);
+    render(<A2UIBlock message={debugMessage()} debugInfoEnabled />);
 
     fireEvent.click(screen.getByRole("button", { name: "查看 A2UI 调试信息" }));
     fireEvent.click(screen.getByRole("button", { name: "复制调试 JSON" }));
@@ -89,8 +120,14 @@ describe("A2UI debug info", () => {
   it("opens independent debug panels for multiple cards", () => {
     render(
       <>
-        <A2UIBlock message={debugMessage({ messageId: "agent:a2ui-debug-1", interactionId: "int-debug-1", rawAction: "a2ui_submit_ack" })} />
-        <A2UIBlock message={debugMessage({ messageId: "agent:a2ui-debug-2", interactionId: "int-debug-2", rawAction: "a2ui_cancel_ack" })} />
+        <A2UIBlock
+          message={debugMessage({ messageId: "agent:a2ui-debug-1", interactionId: "int-debug-1", rawAction: "a2ui_submit_ack" })}
+          debugInfoEnabled
+        />
+        <A2UIBlock
+          message={debugMessage({ messageId: "agent:a2ui-debug-2", interactionId: "int-debug-2", rawAction: "a2ui_cancel_ack" })}
+          debugInfoEnabled
+        />
       </>,
     );
 

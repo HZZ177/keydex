@@ -49,7 +49,9 @@ export interface A2UIStreamPlayerState {
 
 const MIN_INTERVAL_MS = 220;
 const MAX_INTERVAL_MS = 360;
+const SMALL_PAYLOAD_MAX_INTERVAL_MS = 520;
 const MIN_RENDER_DURATION_MS = 2_200;
+const SMALL_PAYLOAD_MIN_RENDER_DURATION_MS = 2_600;
 const FAST_STREAM_THRESHOLD_MS = 600;
 const CATCH_UP_INTERVAL_MS = 240;
 const FINAL_SETTLE_DELAY_MS = 520;
@@ -59,6 +61,11 @@ const BACKLOG_WARMUP_VISIBLE_THRESHOLD = 20;
 const BACKLOG_WARMUP_MAX_UNITS_PER_TICK = 6;
 const BACKLOG_MAX_UNITS_PER_TICK = 32;
 const STREAMING_STATUSES = new Set(["started", "streaming", "finished"]);
+const settledPlaybackKeys = new Set<string>();
+
+export function resetA2UIStreamPlayerPlaybackForTests(): void {
+  settledPlaybackKeys.clear();
+}
 
 export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayerState {
   const playerKey = useMemo(() => buildA2UIStreamPlayerKey(parsed), [parsed]);
@@ -172,6 +179,7 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
   useEffect(() => {
     const status = normalizeStatus(parsed.status);
     const liveStreamFrame = isLiveStreamFrame(parsed);
+    const replayableCreatedFrame = isReplayableStreamBackedCreatedFrame(parsed, playerKey);
     let runtime = runtimeRef.current;
 
     if (runtime.key !== playerKey) {
@@ -179,7 +187,7 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
       runtime = createRuntime(playerKey, parsed.payload, sourceSignature);
       runtimeRef.current = runtime;
     }
-    if (liveStreamFrame) {
+    if (liveStreamFrame || replayableCreatedFrame) {
       runtime.streamPlaybackStarted = true;
     }
     const streamPlaybackStarted = runtime.streamPlaybackStarted;
@@ -298,8 +306,9 @@ function createInitialPlayerState(
   const runtime = createRuntime(key, parsed.payload, sourceSignature);
   const status = normalizeStatus(parsed.status);
   const liveStreamFrame = isLiveStreamFrame(parsed);
+  const replayableCreatedFrame = isReplayableStreamBackedCreatedFrame(parsed, key);
   const totalElementCount = getTotalElementCount(parsed.payload);
-  const shouldPlay = shouldUseStreamPlayer(parsed, liveStreamFrame, totalElementCount);
+  const shouldPlay = shouldUseStreamPlayer(parsed, liveStreamFrame || replayableCreatedFrame, totalElementCount);
 
   if (!shouldPlay) {
     runtime.finalPayload = parsed.payload;
@@ -315,11 +324,12 @@ function createInitialPlayerState(
   runtime.streamPlaybackStarted = true;
   runtime.finalPayload = isFinalPayload ? parsed.payload : null;
   runtime.phase = isFinalPayload ? "waiting_created" : "previewing";
-  runtime.displayPayload = slicePayloadByRenderedCount(parsed.payload, 0);
+  runtime.renderedElementCount = initialRenderedElementCount(parsed.payload);
+  runtime.displayPayload = slicePayloadByRenderedCount(parsed.payload, runtime.renderedElementCount);
 
   return {
     runtime,
-    snapshot: createSnapshot(runtime.displayPayload, runtime.phase, 0, true, totalElementCount),
+    snapshot: createSnapshot(runtime.displayPayload, runtime.phase, runtime.renderedElementCount, true, totalElementCount),
   };
 }
 
@@ -394,7 +404,54 @@ function isLiveStreamFrame(parsed: ParsedA2UIMessage): boolean {
   if (parsed.historyHydrated) {
     return false;
   }
-  return !parsed.a2ui && STREAMING_STATUSES.has(normalizeStatus(parsed.status));
+  return (
+    (!parsed.a2ui && STREAMING_STATUSES.has(normalizeStatus(parsed.status))) ||
+    isInteractiveWaitingFrameWithStreamEvidence(parsed)
+  );
+}
+
+function isReplayableStreamBackedCreatedFrame(parsed: ParsedA2UIMessage, key: string): boolean {
+  if (
+    parsed.historyHydrated ||
+    settledPlaybackKeys.has(key) ||
+    !parsed.a2ui ||
+    normalizeStatus(parsed.status) !== "created"
+  ) {
+    return false;
+  }
+  return hasRawStreamLifecycleEvidence(parsed) || hasCreatedLifecycleEvidence(parsed);
+}
+
+function hasRawStreamLifecycleEvidence(parsed: ParsedA2UIMessage): boolean {
+  return Boolean(
+    parsed.debug?.rawEvents?.some((event) => {
+      const action = typeof event.action === "string" ? event.action : "";
+      return action === "a2ui_stream_start" ||
+        action === "a2ui_stream_chunk" ||
+        action === "a2ui_stream_finish" ||
+        action === "a2ui.stream.start" ||
+        action === "a2ui.stream.chunk" ||
+        action === "a2ui.stream.finish";
+    }),
+  );
+}
+
+function hasCreatedLifecycleEvidence(parsed: ParsedA2UIMessage): boolean {
+  return Boolean(
+    parsed.debug?.rawEvents?.some((event) => {
+      const action = typeof event.action === "string" ? event.action : "";
+      return action === "a2ui_created" || action === "a2ui.created";
+    }),
+  );
+}
+
+function isInteractiveWaitingFrameWithStreamEvidence(parsed: ParsedA2UIMessage): boolean {
+  return (
+    Boolean(parsed.a2ui) &&
+    parsed.mode === "interactive" &&
+    normalizeStatus(parsed.status) === "waiting_input" &&
+    (positiveInteger(parsed.debug?.chunkCount) > 0 || parsed.streamText.length > 0)
+  );
 }
 
 function calculateInterval(runtime: PlayerRuntime): number {
@@ -405,7 +462,10 @@ function calculateInterval(runtime: PlayerRuntime): number {
   }
   const elapsed = runtime.firstChunkTime === null ? 0 : nowMs() - runtime.firstChunkTime;
   if (runtime.finalPayload) {
-    const visibleInterval = Math.max(MIN_INTERVAL_MS, Math.min(MAX_INTERVAL_MS, MIN_RENDER_DURATION_MS / remaining));
+    const isSmallPayload = total <= SMALL_PAYLOAD_SLOW_REVEAL_THRESHOLD;
+    const renderDuration = isSmallPayload ? SMALL_PAYLOAD_MIN_RENDER_DURATION_MS : MIN_RENDER_DURATION_MS;
+    const maxInterval = isSmallPayload ? SMALL_PAYLOAD_MAX_INTERVAL_MS : MAX_INTERVAL_MS;
+    const visibleInterval = Math.max(MIN_INTERVAL_MS, Math.min(maxInterval, renderDuration / remaining));
     if (elapsed < FAST_STREAM_THRESHOLD_MS || total <= SMALL_PAYLOAD_SLOW_REVEAL_THRESHOLD) {
       return visibleInterval;
     }
@@ -476,6 +536,7 @@ function finalizeRuntimePayload(runtime: PlayerRuntime): void {
     runtime.displayPayload = runtime.finalPayload;
   }
   runtime.phase = "created";
+  settledPlaybackKeys.add(runtime.key);
 }
 
 function arePayloadsEquivalent(current: Record<string, unknown>, next: Record<string, unknown>): boolean {
@@ -622,6 +683,10 @@ function stringIdentity(value: unknown): string {
     return String(value);
   }
   return "";
+}
+
+function positiveInteger(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 function safeJsonStringify(value: unknown): string {

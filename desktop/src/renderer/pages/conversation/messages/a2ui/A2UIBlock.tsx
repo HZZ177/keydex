@@ -28,7 +28,7 @@ import { A2UIDebugPanel } from "./A2UIDebugPanel";
 import { A2FormBlock } from "./A2FormBlock";
 import { type A2UIStreamPlayerState, useA2UIStreamPlayer } from "./useA2UIStreamPlayer";
 
-export const A2UI_DEBUG_INFO_DEFAULT_VISIBLE = true;
+export const A2UI_DEBUG_INFO_DEFAULT_VISIBLE = false;
 
 export type A2UISubmitHandler = (
   interactionId: string,
@@ -112,11 +112,10 @@ export function A2UIBlock({ message, onSubmit, onCancel, debugInfoEnabled, child
             {parsed.interactionId ? <span>{parsed.interactionId}</span> : null}
           </div>
         </div>
+        <span className={styles.statusMeta} data-testid="a2ui-status">
+          {status.label}
+        </span>
         <div className={styles.headerActions}>
-          <span className={styles.status} data-tone={status.tone} data-testid="a2ui-status">
-            {status.showSpinner ? <Loader2 className={styles.spinner} size={12} aria-hidden="true" /> : null}
-            {status.label}
-          </span>
           {showDebugInfo ? (
             <A2UIDebugInfoButton expanded={debugOpen} onClick={() => setDebugOpen((current) => !current)} />
           ) : null}
@@ -286,33 +285,33 @@ function addFact(facts: Array<{ label: string; value: string }>, label: string, 
 function statusView(
   status: string,
   interaction: Partial<A2UIInteractionState> | null,
-): { label: string; tone: "running" | "pending" | "failed" | "done" | "default"; showSpinner: boolean } {
+): { label: string; tone: "running" | "pending" | "failed" | "done" | "default" } {
   const normalized = statusFromInteraction(interaction?.status) || status.toLowerCase();
   const resume = resumeStatusFromInteraction(interaction?.resume_status);
   if (resume === "started" || resume === "deferred") {
-    return { label: "继续执行中", tone: "running", showSpinner: true };
+    return { label: "继续执行中", tone: "running" };
   }
   if (resume === "failed") {
-    return { label: "失败", tone: "failed", showSpinner: false };
+    return { label: "失败", tone: "failed" };
   }
   switch (normalized) {
     case "started":
     case "streaming":
     case "finished":
-      return { label: "生成中", tone: "running", showSpinner: true };
+      return { label: "生成中", tone: "running" };
     case "waiting_input":
-      return { label: "等待输入", tone: "pending", showSpinner: false };
+      return { label: "等待输入", tone: "pending" };
     case "submitted":
-      return { label: "已提交", tone: "done", showSpinner: false };
+      return { label: "已提交", tone: "done" };
     case "cancelled":
-      return { label: "已取消", tone: "default", showSpinner: false };
+      return { label: "已取消", tone: "default" };
     case "failed":
     case "missing":
-      return { label: "失败", tone: "failed", showSpinner: false };
+      return { label: "失败", tone: "failed" };
     case "created":
-      return { label: "已生成", tone: "done", showSpinner: false };
+      return { label: "已生成", tone: "done" };
     default:
-      return { label: "就绪", tone: "default", showSpinner: false };
+      return { label: "就绪", tone: "default" };
   }
 }
 

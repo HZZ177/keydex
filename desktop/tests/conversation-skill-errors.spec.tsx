@@ -10,10 +10,16 @@ import type { AgentActionEnvelope, AgentHistoryResponse, AgentSession, Workspace
 
 describe("ConversationPage skill errors", () => {
   it("force reloads workspace skills and clears the skill capsule when skill_not_found arrives", async () => {
-    const workspaceListSkills = vi
-      .fn()
-      .mockResolvedValueOnce(skillsResponse())
-      .mockResolvedValueOnce(skillsResponse({ skills: [] }));
+    let forceReloadCount = 0;
+    const workspaceListSkills = vi.fn().mockImplementation(
+      (_params: { sessionId: string }, options?: { forceReload?: boolean }) => {
+        if (options?.forceReload) {
+          forceReloadCount += 1;
+          return Promise.resolve(forceReloadCount >= 2 ? skillsResponse({ skills: [] }) : skillsResponse());
+        }
+        return Promise.resolve(skillsResponse());
+      },
+    );
     const { runtime, emit } = fakeRuntime({ workspaceListSkills });
 
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
@@ -22,9 +28,8 @@ describe("ConversationPage skill errors", () => {
       expect(workspaceListSkills).toHaveBeenCalledWith({ sessionId: "ses-1" }, { forceReload: false });
     });
     typeComposer("/");
-    await screen.findByRole("option", { name: /Skill/ });
+    fireEvent.mouseDown(await screen.findByRole("option", { name: /^Skill\b/ }));
     const input = screen.getByLabelText("继续输入");
-    fireEvent.keyDown(input, { key: "Enter" });
     await screen.findByRole("option", { name: /dev-plan/ });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(screen.getByText("dev-plan")).not.toBeNull();
@@ -38,7 +43,7 @@ describe("ConversationPage skill errors", () => {
     });
 
     await waitFor(() => {
-      expect(workspaceListSkills).toHaveBeenNthCalledWith(2, { sessionId: "ses-1" }, { forceReload: true });
+      expect(workspaceListSkills).toHaveBeenCalledWith({ sessionId: "ses-1" }, { forceReload: true });
     });
     expect(screen.queryByText("dev-plan")).toBeNull();
     expect((await screen.findByTestId("notification-item")).textContent).toContain("已刷新 Skill 列表");
@@ -111,6 +116,7 @@ function fakeRuntime({
         },
       }),
       getModelDefaults: vi.fn().mockResolvedValue(modelDefaultsResponse()),
+      getExtensionSettings: vi.fn().mockResolvedValue(defaultExtensionSettings()),
     },
     models: {
       listProviders: vi.fn().mockResolvedValue([modelProvider()]),
@@ -128,6 +134,15 @@ function fakeRuntime({
     emit(event: AgentActionEnvelope) {
       handler?.(event);
     },
+  };
+}
+
+function defaultExtensionSettings() {
+  return {
+    auto_title: { enabled: false, only_when_default_title: true, max_title_length: 20 },
+    duplicate_tool_call_guard: { enabled: true, max_repeats: 3 },
+    context_compression: { enabled: false, context_window_tokens: 128000, trigger_fraction: 0.75 },
+    a2ui: { enabled: true, debug_info_enabled: false },
   };
 }
 

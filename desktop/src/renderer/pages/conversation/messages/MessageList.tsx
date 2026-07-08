@@ -73,6 +73,7 @@ export interface MessageListProps {
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
+  a2uiDebugInfoEnabled?: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -131,6 +132,7 @@ export function MessageList({
   workspaceScope,
   onApprovalDecision,
   onResolveMcpElicitation,
+  a2uiDebugInfoEnabled = false,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -675,6 +677,7 @@ export function MessageList({
             workspaceScope,
             onApprovalDecision,
             onResolveMcpElicitation,
+            a2uiDebugInfoEnabled,
             onA2UISubmit,
             onA2UICancel,
             onFilePreview,
@@ -729,6 +732,7 @@ export function MessageList({
           workspaceScope,
           onApprovalDecision,
           onResolveMcpElicitation,
+          a2uiDebugInfoEnabled,
           onA2UISubmit,
           onA2UICancel,
           onFilePreview,
@@ -908,6 +912,7 @@ function renderTimelineBlock({
   workspaceScope,
   onApprovalDecision,
   onResolveMcpElicitation,
+  a2uiDebugInfoEnabled,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -932,6 +937,7 @@ function renderTimelineBlock({
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
+  a2uiDebugInfoEnabled: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -964,6 +970,7 @@ function renderTimelineBlock({
           workspaceScope,
           onApprovalDecision,
           onResolveMcpElicitation,
+          a2uiDebugInfoEnabled,
           onA2UISubmit,
           onA2UICancel,
           onFilePreview,
@@ -999,6 +1006,7 @@ function renderTimelineBlock({
         workspaceScope,
         onApprovalDecision,
         onResolveMcpElicitation,
+        a2uiDebugInfoEnabled,
         onA2UISubmit,
         onA2UICancel,
         onFilePreview,
@@ -1026,6 +1034,7 @@ function renderMessageTurn({
   workspaceScope,
   onApprovalDecision,
   onResolveMcpElicitation,
+  a2uiDebugInfoEnabled,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -1048,6 +1057,7 @@ function renderMessageTurn({
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
+  a2uiDebugInfoEnabled: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -1081,6 +1091,7 @@ function renderMessageTurn({
         workspaceScope,
         onApprovalDecision,
         onResolveMcpElicitation,
+        a2uiDebugInfoEnabled,
         onA2UISubmit,
         onA2UICancel,
         onFilePreview,
@@ -1135,6 +1146,7 @@ function renderMessageItem({
   workspaceScope,
   onApprovalDecision,
   onResolveMcpElicitation,
+  a2uiDebugInfoEnabled,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -1156,6 +1168,7 @@ function renderMessageItem({
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
+  a2uiDebugInfoEnabled: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -1179,6 +1192,7 @@ function renderMessageItem({
         workspaceScope={workspaceScope}
         onApprovalDecision={onApprovalDecision}
         onResolveMcpElicitation={onResolveMcpElicitation}
+        a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
         onA2UISubmit={onA2UISubmit}
         onA2UICancel={onA2UICancel}
         onFilePreview={onFilePreview}
@@ -1348,6 +1362,7 @@ function DefaultMessage({
   workspaceScope,
   onApprovalDecision,
   onResolveMcpElicitation,
+  a2uiDebugInfoEnabled,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -1363,6 +1378,7 @@ function DefaultMessage({
   workspaceScope?: WorkspaceScope | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
+  a2uiDebugInfoEnabled?: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -1410,7 +1426,14 @@ function DefaultMessage({
     return <McpElicitationPrompt message={message} onResolve={onResolveMcpElicitation} />;
   }
   if (message.kind === "a2ui") {
-    return <A2UIBlock message={message} onSubmit={onA2UISubmit} onCancel={onA2UICancel} />;
+    return (
+      <A2UIBlock
+        message={message}
+        debugInfoEnabled={a2uiDebugInfoEnabled}
+        onSubmit={onA2UISubmit}
+        onCancel={onA2UICancel}
+      />
+    );
   }
   if (message.kind === "error") {
     return <ErrorItem message={message} />;

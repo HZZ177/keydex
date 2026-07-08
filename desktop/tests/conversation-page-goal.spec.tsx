@@ -255,6 +255,7 @@ function fakeRuntime({
         },
       }),
       getModelDefaults: vi.fn().mockResolvedValue(modelDefaultsResponse()),
+      getExtensionSettings: vi.fn().mockResolvedValue(defaultExtensionSettings()),
     },
     models: {
       listProviders: vi.fn().mockResolvedValue([modelProvider()]),
@@ -279,6 +280,15 @@ function fakeRuntime({
     emit(event: AgentActionEnvelope) {
       handler?.(event);
     },
+  };
+}
+
+function defaultExtensionSettings() {
+  return {
+    auto_title: { enabled: false, only_when_default_title: true, max_title_length: 20 },
+    duplicate_tool_call_guard: { enabled: true, max_repeats: 3 },
+    context_compression: { enabled: false, context_window_tokens: 128000, trigger_fraction: 0.75 },
+    a2ui: { enabled: true, debug_info_enabled: false },
   };
 }
 

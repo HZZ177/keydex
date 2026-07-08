@@ -1,6 +1,6 @@
 import * as echarts from "echarts";
 import type { EChartsOption, EChartsType, SeriesOption } from "echarts";
-import { type MutableRefObject, useEffect, useMemo, useRef } from "react";
+import { type MutableRefObject, useLayoutEffect, useMemo, useRef } from "react";
 
 import type { ParsedA2UIMessage } from "./A2UIBlock";
 import styles from "./A2ChartBlock.module.css";
@@ -13,7 +13,7 @@ export interface A2ChartBlockProps {
   parsed: ParsedA2UIMessage;
 }
 
-type ChartType = "funnel" | "trend" | "column" | "pie";
+type ChartType = "funnel" | "trend" | "column" | "horizontal_bar" | "pie";
 
 interface ChartSeries {
   name: string;
@@ -48,6 +48,8 @@ const ECHARTS_FALLBACK_WIDTH = 620;
 const ECHARTS_DEFAULT_HEIGHT = 280;
 const ECHARTS_PIE_HEIGHT = 300;
 const ECHARTS_FUNNEL_HEIGHT = 270;
+const ECHARTS_HORIZONTAL_BAR_MIN_HEIGHT = 210;
+const ECHARTS_HORIZONTAL_BAR_ROW_HEIGHT = 36;
 const ECHARTS_STREAM_COMMIT_INTERVAL_MS = 200;
 const ECHARTS_STREAM_ANIMATION_DURATION_MS = 170;
 const ECHARTS_STREAM_MAX_PENDING_OPTIONS = 2;
@@ -69,41 +71,51 @@ export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
   return (
     <A2UIMotionRoot as="section" className={styles.chart} data-testid="a2ui-chart" {...parsed.streamPlayer?.rootProps}>
       {panels.length ? (
-        panels.map((panel, index) => (
-          <A2UIMotionItem
-            as="div"
-            className={styles.panel}
-            data-chart-type={panel.type}
-            data-testid="a2ui-chart-panel"
-            key={`${index}:${panel.type}`}
-            motionKey={`chart:panel:${index}:${panel.type}`}
-            motionKind="chart-panel"
-          >
-            {panel.title ? (
-              <A2UIMotionItem
-                as="div"
-                className={styles.panelTitle}
-                motionKey={`chart:panel:${index}:title`}
-                motionKind="chart-title"
-              >
-                {panel.title}
-              </A2UIMotionItem>
-            ) : null}
-            {panel.chart ? renderChart(panel.chart, animateInitialCharts, animateChartUpdates) : <ChartSkeleton type={panel.type} />}
-          </A2UIMotionItem>
-        ))
+        panels.map((panel, index) => {
+          const caption = chartPanelCaption(panel.title, summary, panels.length);
+          return (
+            <A2UIMotionItem
+              as="div"
+              className={styles.panel}
+              data-chart-type={panel.type}
+              data-testid="a2ui-chart-panel"
+              key={`${index}:${panel.type}`}
+              motionKey={`chart:panel:${index}:${panel.type}`}
+              motionKind="chart-panel"
+            >
+              {panel.chart ? renderChart(panel.chart, animateInitialCharts, animateChartUpdates) : <ChartSkeleton type={panel.type} />}
+              {caption ? (
+                <A2UIMotionItem
+                  as="div"
+                  className={styles.panelTitle}
+                  motionKey={`chart:panel:${index}:title`}
+                  motionKind="chart-title"
+                >
+                  {caption}
+                </A2UIMotionItem>
+              ) : null}
+            </A2UIMotionItem>
+          );
+        })
       ) : isStreaming ? (
         <ChartSkeleton type={skeletonType} />
       ) : (
         <div className={styles.empty}>暂无图表数据</div>
       )}
-      {summary ? (
+      {summary && panels.length !== 1 ? (
         <A2UIMotionItem as="p" className={styles.summary} motionKey="chart:summary" motionKind="chart-summary">
           {summary}
         </A2UIMotionItem>
       ) : null}
     </A2UIMotionRoot>
   );
+}
+
+function chartPanelCaption(panelTitle: string, summary: string, panelCount: number): string {
+  if (panelCount === 1 && summary) {
+    return summary;
+  }
+  return panelTitle;
 }
 
 function renderChart(
@@ -134,11 +146,11 @@ function EChartsChart({
   const lastAnimatedCommitAtRef = useRef(0);
   const option = useMemo(() => buildEChartsOption(chart), [chart]);
   const optionSignature = useMemo(() => chartOptionSignature(chart), [chart]);
-  const interactionMode = chart.type === "trend" || chart.type === "column" ? "tooltip,axisPointer,legendToggle" : "tooltip,legendToggle";
+  const interactionMode = isAxisInteractionChart(chart.type) ? "tooltip,axisPointer,legendToggle" : "tooltip,legendToggle";
 
   heightRef.current = height;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) {
       return;
@@ -171,7 +183,7 @@ function EChartsChart({
     };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const instance = chartRef.current;
     const container = containerRef.current;
     if (!instance || !container) {
@@ -181,7 +193,7 @@ function EChartsChart({
     instance.resize({ height, width });
   }, [height]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const instance = chartRef.current;
     if (!instance || lastOptionSignatureRef.current === optionSignature) {
       return;
@@ -239,7 +251,7 @@ function EChartsChart({
       data-a2ui-chart-interactions={interactionMode}
       data-a2ui-chart-paced-commit={animateUpdates ? "true" : "false"}
       data-a2ui-chart-stream-adapter="setOption-diff"
-      data-a2ui-chart-tooltip={chart.type === "trend" || chart.type === "column" ? "axis" : "item"}
+      data-a2ui-chart-tooltip={isAxisInteractionChart(chart.type) ? "axis" : "item"}
       data-chart-type={chart.type}
       data-testid="a2ui-echarts-surface"
       role="img"
@@ -430,6 +442,9 @@ function chartHeight(chart: ChartSpec): number {
   if (chart.type === "funnel") {
     return Math.max(ECHARTS_FUNNEL_HEIGHT, 92 + pointsForChart(chart).length * 42);
   }
+  if (chart.type === "horizontal_bar") {
+    return Math.max(ECHARTS_HORIZONTAL_BAR_MIN_HEIGHT, 76 + pointsForChart(chart).length * ECHARTS_HORIZONTAL_BAR_ROW_HEIGHT);
+  }
   return ECHARTS_DEFAULT_HEIGHT;
 }
 
@@ -451,7 +466,99 @@ function buildEChartsOption(chart: ChartSpec): EChartsOption {
   if (chart.type === "funnel") {
     return buildFunnelOption(chart);
   }
+  if (chart.type === "horizontal_bar") {
+    return buildHorizontalBarOption(chart);
+  }
   return buildCartesianOption(chart);
+}
+
+function buildHorizontalBarOption(chart: ChartSpec): EChartsOption {
+  const points = pointsForChart(chart);
+  const maxValue = Math.max(0, ...points.map((point) => point.value));
+  return withBaseChartOption(chart, {
+    grid: {
+      bottom: 8,
+      containLabel: true,
+      left: 12,
+      right: 86,
+      top: 16,
+    },
+    series: [
+      {
+        id: "horizontal_bar",
+        name: chart.seriesLabel || chart.title || "数据",
+        type: "bar",
+        data: points.map((point, index) => ({
+          id: `horizontal_bar:${point.label}`,
+          itemStyle: {
+            borderRadius: 999,
+            color: point.color || COLORS[index % COLORS.length],
+          },
+          name: point.label,
+          value: point.value,
+        })),
+        animationDelay: staggerAnimationDelay,
+        animationDelayUpdate: staggerAnimationDelay,
+        barMaxWidth: 18,
+        barMinHeight: 6,
+        showBackground: true,
+        backgroundStyle: {
+          borderRadius: 999,
+          color: "rgba(15, 23, 42, 0.075)",
+        },
+        emphasis: {
+          focus: "self",
+        },
+        itemStyle: {
+          borderRadius: 999,
+        },
+        label: {
+          show: true,
+          position: "right",
+          distance: 12,
+          color: "#334155",
+          fontSize: 12,
+          fontWeight: 700,
+          formatter: (params: unknown) => formatTooltipValue(tooltipParam(params).value),
+        },
+      },
+    ],
+    tooltip: {
+      ...tooltipBaseOption(),
+      axisPointer: {
+        type: "shadow",
+        shadowStyle: {
+          color: "rgba(100, 116, 139, 0.08)",
+        },
+      },
+      formatter: axisTooltipFormatter,
+      trigger: "axis",
+    },
+    xAxis: {
+      type: "value",
+      show: false,
+      max: maxValue > 0 ? maxValue * 1.12 : undefined,
+    },
+    yAxis: {
+      type: "category",
+      inverse: true,
+      data: points.map((point) => point.label),
+      axisLabel: {
+        color: "#475569",
+        fontSize: 12,
+        fontWeight: 600,
+        hideOverlap: false,
+        overflow: "truncate",
+        width: 118,
+      },
+      axisLine: {
+        show: false,
+      },
+      axisTick: {
+        show: false,
+      },
+    },
+  });
 }
 
 function buildCartesianOption(chart: ChartSpec): EChartsOption {
@@ -701,6 +808,10 @@ function withBaseChartOption(chart: ChartSpec, option: EChartsOption): EChartsOp
   };
 }
 
+function isAxisInteractionChart(type: ChartType): boolean {
+  return type === "trend" || type === "column" || type === "horizontal_bar";
+}
+
 function staggerAnimationDelay(dataIndex: number): number {
   return Math.min(dataIndex * 34, 220);
 }
@@ -937,7 +1048,7 @@ function chartSpecFromRecord(
     return null;
   }
   const seriesLabel = scalarText(record.series_label);
-  const isCartesian = type === "column" || type === "trend";
+  const isCartesian = type === "column" || type === "trend" || type === "horizontal_bar";
   const directPoints = normalizePoints(record.items);
   const structurePoints = isCartesian ? normalizePoints(structureRecord?.items) : [];
   const series = normalizeSeries(record, directPoints, isCartesian ? structureRecord : null);
@@ -985,20 +1096,20 @@ function firstChartRecord(payload: Record<string, unknown>): Record<string, unkn
 
 function chartTypeFromBuffer(buffer: unknown): ChartType | null {
   const text = typeof buffer === "string" ? buffer : "";
-  const match = text.match(/"type"\s*:\s*"(pie|column|funnel|trend)"/i);
+  const match = text.match(/"type"\s*:\s*"(pie|column|funnel|trend|horizontal_bar)"/i);
   return normalizeChartType(match?.[1]);
 }
 
 function chartTypesFromBuffer(buffer: unknown): ChartType[] {
   const text = typeof buffer === "string" ? buffer : "";
-  return Array.from(text.matchAll(/"type"\s*:\s*"(pie|column|funnel|trend)"/gi))
+  return Array.from(text.matchAll(/"type"\s*:\s*"(pie|column|funnel|trend|horizontal_bar)"/gi))
     .map((match) => normalizeChartType(match[1]))
     .filter((type): type is ChartType => Boolean(type));
 }
 
 function normalizeChartType(value: unknown): ChartType | null {
   const type = scalarText(value).toLowerCase();
-  if (type === "pie" || type === "column" || type === "funnel" || type === "trend") {
+  if (type === "pie" || type === "column" || type === "funnel" || type === "trend" || type === "horizontal_bar") {
     return type as ChartType;
   }
   return null;
@@ -1167,7 +1278,7 @@ function stablePanelKey(panel: ChartPanelSpec, index: number): string {
 }
 
 function chartDataCount(chart: ChartSpec): number {
-  if (chart.type === "pie" || chart.type === "funnel") {
+  if (chart.type === "pie" || chart.type === "funnel" || chart.type === "horizontal_bar") {
     return pointsForChart(chart).length;
   }
   return chart.series.reduce((sum, series) => sum + series.data.filter((value) => value !== null).length, 0);

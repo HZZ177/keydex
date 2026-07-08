@@ -29,6 +29,7 @@ describe("ExtensionSettingsPage", () => {
     expect(screen.getByText("A2UI 交互组件")).not.toBeNull();
     expect(screen.getByText(/确认、选择、表单、图表/)).not.toBeNull();
     expect(screen.getByRole("switch", { name: "启用 A2UI" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("switch", { name: "显示 A2UI 调试入口" }).getAttribute("aria-checked")).toBe("false");
     expect(screen.queryByText(/schema/i)).toBeNull();
     expect(screen.queryByText(/render_key/i)).toBeNull();
     expect(screen.queryByText("固定策略")).toBeNull();
@@ -79,6 +80,7 @@ describe("ExtensionSettingsPage", () => {
         },
         a2ui: {
           enabled: true,
+          debug_info_enabled: false,
         },
       });
     });
@@ -90,7 +92,7 @@ describe("ExtensionSettingsPage", () => {
     const runtime = fakeRuntime({
       saveExtensionSettings,
       settings: {
-        a2ui: { enabled: false },
+        a2ui: { enabled: false, debug_info_enabled: false },
       },
     });
 
@@ -98,6 +100,7 @@ describe("ExtensionSettingsPage", () => {
 
     await screen.findByText("A2UI 交互组件");
     expect(screen.getByRole("switch", { name: "启用 A2UI" }).getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByRole("switch", { name: "显示 A2UI 调试入口" }).getAttribute("aria-checked")).toBe("false");
     expect(screen.getByText(/关闭后只影响后续新对话能力/)).not.toBeNull();
     expect(screen.getByText("确认")).not.toBeNull();
     expect(screen.getByText("选择")).not.toBeNull();
@@ -107,12 +110,13 @@ describe("ExtensionSettingsPage", () => {
     expect(screen.queryByLabelText(/render_key/i)).toBeNull();
 
     fireEvent.click(screen.getByRole("switch", { name: "启用 A2UI" }));
+    fireEvent.click(screen.getByRole("switch", { name: "显示 A2UI 调试入口" }));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
       expect(saveExtensionSettings).toHaveBeenCalledWith({
         ...defaultExtensionSettings(),
-        a2ui: { enabled: true },
+        a2ui: { enabled: true, debug_info_enabled: true },
       });
     });
   });
@@ -301,6 +305,7 @@ function defaultExtensionSettings(): AgentRuntimeSettings {
     },
     a2ui: {
       enabled: true,
+      debug_info_enabled: false,
     },
   };
 }

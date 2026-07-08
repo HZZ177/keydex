@@ -1,15 +1,20 @@
 import { act, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   type A2UIRevealUnit,
   type ParsedA2UIMessage,
   buildA2UIRevealResetKey,
+  resetA2UIStreamPlayerPlaybackForTests,
   useA2UIStreamPlayer,
   useA2UIStreamReveal,
 } from "@/renderer/pages/conversation/messages/a2ui";
 
 describe("useA2UIStreamReveal", () => {
+  beforeEach(() => {
+    resetA2UIStreamPlayerPlaybackForTests();
+  });
+
   it("uses a low-frequency backlog-driven cadence to drain A2UI semantic units", () => {
     vi.useFakeTimers();
     try {
@@ -111,6 +116,37 @@ describe("useA2UIStreamReveal", () => {
     });
 
     unmount();
+  });
+
+  it("reveals a small live created-only payload from the first semantic item", () => {
+    vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
+    try {
+      const snapshots: Array<{ rendered: number; total: number; visibleItems: number }> = [];
+      render(<PlayerProbe parsed={liveCreatedOnlyChartMessage(4)} snapshots={snapshots} />);
+
+      expect(snapshots[0]).toEqual({
+        rendered: 1,
+        total: 4,
+        visibleItems: 1,
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+
+      expect(visiblePlayerItems()).toBeLessThan(4);
+
+      act(() => {
+        vi.advanceTimersByTime(2_400);
+      });
+
+      expect(visiblePlayerItems()).toBe(4);
+    } finally {
+      restoreRaf();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it("keeps draining a completed chart payload after a partial stream instead of jumping to all points", () => {
@@ -342,6 +378,32 @@ function streamBackedCreatedChartMessage(itemCount: number): ParsedA2UIMessage {
     streamText: argsBuffer,
     parseError: "",
     historyHydrated: false,
+  };
+}
+
+function liveCreatedOnlyChartMessage(itemCount: number): ParsedA2UIMessage {
+  const parsed = streamBackedCreatedChartMessage(itemCount);
+  return {
+    ...parsed,
+    debug: parsed.debug
+      ? {
+          ...parsed.debug,
+          chunkCount: 0,
+          argsBuffer: "",
+          argsTextLength: 0,
+          jsonParseStatus: "empty",
+          parsedArgs: undefined,
+          rawEvents: [
+            {
+              id: "created-1",
+              action: "a2ui_created",
+              timestamp: 1_700_000_000_001,
+              data: { a2ui: parsed.a2ui },
+            },
+          ],
+        }
+      : null,
+    streamText: "",
   };
 }
 

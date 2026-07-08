@@ -1,32 +1,44 @@
 .chart {
   display: grid;
   min-width: 0;
-  gap: 14px;
+  gap: 16px;
 }
 
 .summary {
-  margin: 0;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.55;
+  justify-self: center;
+  max-width: min(560px, 100%);
+  margin: -4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.65;
+  text-align: center;
   white-space: pre-wrap;
 }
 
 .panel {
   display: grid;
   min-width: 0;
-  gap: 9px;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-muted) 36%, transparent);
-  padding: 10px;
+  gap: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.panel + .panel {
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 64%, transparent);
+  padding-top: 16px;
 }
 
 .panelTitle {
-  color: var(--color-text-primary);
+  justify-self: center;
+  max-width: min(560px, 100%);
+  margin-top: -8px;
+  color: var(--color-text-secondary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 500;
   line-height: 1.45;
+  text-align: center;
 }
 
 .echartsSurface {
@@ -82,10 +94,10 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: end;
   gap: 12px;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-muted) 30%, transparent);
-  padding: 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 0;
 }
 
 .skeletonBar {

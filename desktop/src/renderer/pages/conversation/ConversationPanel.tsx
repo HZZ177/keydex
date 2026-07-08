@@ -28,6 +28,7 @@ export interface ConversationPanelProps {
   turnNavigatorMode?: MessageListTurnNavigatorMode;
   turnNavigationRequest?: MessageListTurnNavigationRequest | null;
   topNotice?: MessageListTopNotice | null;
+  a2uiDebugInfoEnabled?: boolean;
   showForkSourceMarkers?: boolean;
   showForkActions?: boolean;
   onAskSelectionInBtwConversation?: (text: string) => void;
@@ -46,6 +47,7 @@ export function ConversationPanel({
   turnNavigatorMode,
   turnNavigationRequest,
   topNotice = null,
+  a2uiDebugInfoEnabled = false,
   showForkSourceMarkers = true,
   showForkActions = true,
   onAskSelectionInBtwConversation,
@@ -70,6 +72,7 @@ export function ConversationPanel({
         onFilePreview={model.openFileChangePreview}
         onLoadToolDetails={model.loadToolDetails}
         onTerminateCommand={model.terminateCommand}
+        a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
         onA2UISubmit={model.submitA2UI}
         onA2UICancel={model.cancelA2UI}
         onResolveMcpElicitation={model.resolveMcpElicitation}

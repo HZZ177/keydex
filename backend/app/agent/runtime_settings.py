@@ -37,6 +37,7 @@ class A2UIRuntimeSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     enabled: bool = True
+    debug_info_enabled: bool = False
 
 
 class AgentRuntimeSettings(BaseModel):

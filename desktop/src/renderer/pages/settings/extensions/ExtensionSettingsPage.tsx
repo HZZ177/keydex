@@ -251,6 +251,17 @@ export function ExtensionSettingsPage({
                 />
               }
             />
+            <SettingRow
+              title="调试入口"
+              description="在 A2UI 组件右上角显示调试感叹号入口，用于查看流式缓冲、事件块和渲染状态"
+              control={
+                <ToggleSwitch
+                  checked={a2uiDraft.debug_info_enabled}
+                  label="显示 A2UI 调试入口"
+                  onChange={(debug_info_enabled) => updateA2UIDraft({ debug_info_enabled })}
+                />
+              }
+            />
             <div className={styles.a2uiSummary} aria-label="当前支持的 A2UI 类型">
               <span>确认</span>
               <span>选择</span>

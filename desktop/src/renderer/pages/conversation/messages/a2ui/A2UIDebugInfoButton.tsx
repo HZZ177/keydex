@@ -1,5 +1,3 @@
-import { Info } from "lucide-react";
-
 import styles from "./A2UIDebugPanel.module.css";
 
 export interface A2UIDebugInfoButtonProps {
@@ -13,11 +11,14 @@ export function A2UIDebugInfoButton({ expanded, onClick }: A2UIDebugInfoButtonPr
       className={styles.debugButton}
       type="button"
       aria-expanded={expanded}
+      aria-haspopup="dialog"
       aria-label={expanded ? "隐藏 A2UI 调试信息" : "查看 A2UI 调试信息"}
       title={expanded ? "隐藏 A2UI 调试信息" : "查看 A2UI 调试信息"}
       onClick={onClick}
     >
-      <Info size={13} aria-hidden="true" />
+      <span className={styles.debugMark} aria-hidden="true">
+        !
+      </span>
     </button>
   );
 }

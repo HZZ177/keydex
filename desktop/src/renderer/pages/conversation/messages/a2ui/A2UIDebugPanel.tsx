@@ -1,5 +1,6 @@
 import { Check, Copy, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { A2UIDebugRawEvent } from "@/types/protocol";
@@ -17,6 +18,7 @@ export interface A2UIDebugPanelProps {
 type CopyState = "idle" | "copied" | "failed";
 
 export function A2UIDebugPanel({ message, parsed, onClose }: A2UIDebugPanelProps) {
+  const titleId = useId();
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const rawEvents = parsed.debug?.rawEvents ?? [];
   const streamBuffer = useMemo(() => buildStreamBuffer(parsed), [parsed]);
@@ -27,6 +29,17 @@ export function A2UIDebugPanel({ message, parsed, onClose }: A2UIDebugPanelProps
   );
   const json = useMemo(() => stringifyJson(snapshot), [snapshot]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   const copyJson = async () => {
     try {
       await copyText(json);
@@ -36,87 +49,107 @@ export function A2UIDebugPanel({ message, parsed, onClose }: A2UIDebugPanelProps
     }
   };
 
-  return (
-    <section className={styles.panel} data-testid="a2ui-debug-panel" aria-label="A2UI 调试信息">
-      <header className={styles.header}>
-        <div className={styles.titleArea}>
-          <div className={styles.title}>A2UI 调试信息</div>
-          <div className={styles.subtitle}>
-            {parsed.renderKey} · {parsed.interactionId || parsed.debug?.streamId || message.id}
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className={styles.modalLayer} data-testid="a2ui-debug-modal">
+      <button className={styles.backdrop} type="button" aria-label="点击遮罩关闭 A2UI 调试信息" onClick={onClose} />
+      <section
+        className={styles.panel}
+        data-testid="a2ui-debug-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
+        <header className={styles.header}>
+          <div className={styles.titleArea}>
+            <div className={styles.title} id={titleId}>
+              A2UI 调试信息
+            </div>
+            <div className={styles.subtitle}>
+              {parsed.renderKey} · {parsed.interactionId || parsed.debug?.streamId || message.id}
+            </div>
           </div>
+          <div className={styles.actions}>
+            <button
+              className={styles.actionButton}
+              type="button"
+              aria-label="复制调试 JSON"
+              data-copy-state={copyState}
+              onClick={() => void copyJson()}
+            >
+              {copyState === "copied" ? (
+                <Check size={13} aria-hidden="true" />
+              ) : (
+                <Copy size={13} aria-hidden="true" />
+              )}
+              <span>{copyState === "failed" ? "复制失败" : copyState === "copied" ? "已复制" : "复制 JSON"}</span>
+            </button>
+            <button className={styles.iconButton} type="button" aria-label="关闭调试信息" onClick={onClose}>
+              <X size={13} aria-hidden="true" />
+            </button>
+          </div>
+        </header>
+
+        <div className={styles.summaryBar}>
+          <SummaryItem label="status" value={parsed.status} tone={statusTone(parsed.status)} />
+          <SummaryItem label="stream" value={parsed.debug?.streamId ?? parsed.a2ui?.stream_id} />
+          <SummaryItem label="chunks" value={streamBuffer.chunkCount} />
+          <SummaryItem label="parse" value={streamBuffer.jsonParseStatus} tone={parseTone(streamBuffer.jsonParseStatus)} />
+          <SummaryItem label="events" value={rawEvents.length} />
         </div>
-        <div className={styles.actions}>
-          <button
-            className={styles.actionButton}
-            type="button"
-            aria-label="复制调试 JSON"
-            data-copy-state={copyState}
-            onClick={() => void copyJson()}
-          >
-            {copyState === "copied" ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
-            <span>{copyState === "failed" ? "复制失败" : copyState === "copied" ? "已复制" : "复制 JSON"}</span>
-          </button>
-          <button className={styles.iconButton} type="button" aria-label="关闭调试信息" onClick={onClose}>
-            <X size={13} aria-hidden="true" />
-          </button>
-        </div>
-      </header>
 
-      <div className={styles.summaryBar}>
-        <SummaryItem label="status" value={parsed.status} tone={statusTone(parsed.status)} />
-        <SummaryItem label="stream" value={parsed.debug?.streamId ?? parsed.a2ui?.stream_id} />
-        <SummaryItem label="chunks" value={streamBuffer.chunkCount} />
-        <SummaryItem label="parse" value={streamBuffer.jsonParseStatus} tone={parseTone(streamBuffer.jsonParseStatus)} />
-        <SummaryItem label="events" value={rawEvents.length} />
-      </div>
+        <DebugSection
+          title="定位信息"
+          rows={[
+            ["message_id", message.id],
+            ["item_id", message.itemId],
+            ["render_key", parsed.renderKey],
+            ["mode", parsed.mode],
+            ["stream_id", parsed.a2ui?.stream_id ?? parsed.debug?.streamId],
+            ["interaction_id", parsed.interactionId],
+            ["tool_call_id", parsed.a2ui?.tool_call_id ?? parsed.debug?.toolCallId],
+            ["trace_id", parsed.a2ui?.trace_id ?? parsed.debug?.traceId],
+            ["turn_index", parsed.a2ui?.turn_index ?? parsed.debug?.turnIndex],
+          ]}
+        />
 
-      <DebugSection
-        title="定位信息"
-        rows={[
-          ["message_id", message.id],
-          ["item_id", message.itemId],
-          ["render_key", parsed.renderKey],
-          ["mode", parsed.mode],
-          ["stream_id", parsed.a2ui?.stream_id ?? parsed.debug?.streamId],
-          ["interaction_id", parsed.interactionId],
-          ["tool_call_id", parsed.a2ui?.tool_call_id ?? parsed.debug?.toolCallId],
-          ["trace_id", parsed.a2ui?.trace_id ?? parsed.debug?.traceId],
-          ["turn_index", parsed.a2ui?.turn_index ?? parsed.debug?.turnIndex],
-        ]}
-      />
+        <DebugSection
+          title="生命周期"
+          rows={[
+            ["status", parsed.status],
+            ["interaction.status", parsed.interaction?.status],
+            ["can_submit", parsed.interaction?.can_submit],
+            ["submit_request_id", parsed.interaction?.submit_request_id],
+            ["cancel_request_id", parsed.interaction?.cancel_request_id],
+            ["resume.status", parsed.interaction?.resume_status],
+            ["resume_group_id", parsed.interaction?.resume_group_id],
+            ["pending_count", parsed.interaction?.pending_count],
+            ["resume_error", parsed.interaction?.resume_error ?? parsed.interaction?.error],
+          ]}
+        />
 
-      <DebugSection
-        title="生命周期"
-        rows={[
-          ["status", parsed.status],
-          ["interaction.status", parsed.interaction?.status],
-          ["can_submit", parsed.interaction?.can_submit],
-          ["submit_request_id", parsed.interaction?.submit_request_id],
-          ["cancel_request_id", parsed.interaction?.cancel_request_id],
-          ["resume.status", parsed.interaction?.resume_status],
-          ["resume_group_id", parsed.interaction?.resume_group_id],
-          ["pending_count", parsed.interaction?.pending_count],
-          ["resume_error", parsed.interaction?.resume_error ?? parsed.interaction?.error],
-        ]}
-      />
+        <StreamBufferPanel buffer={streamBuffer} />
+        <RawEventsTimeline events={eventTimeline} />
 
-      <StreamBufferPanel buffer={streamBuffer} />
-      <RawEventsTimeline events={eventTimeline} />
+        <DebugSection
+          title="交互结果"
+          rows={[
+            ["submit_result", parsed.interaction?.submit_result],
+            ["cancel_reason", parsed.interaction?.cancel_reason],
+          ]}
+        />
 
-      <DebugSection
-        title="交互结果"
-        rows={[
-          ["submit_result", parsed.interaction?.submit_result],
-          ["cancel_reason", parsed.interaction?.cancel_reason],
-        ]}
-      />
-
-      <JsonBlock title="最终 Payload" value={parsed.payload} />
-      <JsonBlock title="Parsed Preview" value={parsed.debug?.parsedArgs ?? parsed.debug?.payload ?? parsed.payload} />
-      <JsonBlock title="Created Frame" value={parsed.debug?.createdFrame ?? null} />
-      <JsonBlock title="Input Schema" value={parsed.a2ui?.input_schema ?? parsed.debug?.inputSchema ?? {}} />
-      <JsonBlock title="Submit Schema" value={parsed.a2ui?.submit_schema ?? parsed.debug?.submitSchema ?? {}} />
-    </section>
+        <JsonBlock title="最终 Payload" value={parsed.payload} />
+        <JsonBlock title="Parsed Preview" value={parsed.debug?.parsedArgs ?? parsed.debug?.payload ?? parsed.payload} />
+        <JsonBlock title="Created Frame" value={parsed.debug?.createdFrame ?? null} />
+        <JsonBlock title="Input Schema" value={parsed.a2ui?.input_schema ?? parsed.debug?.inputSchema ?? {}} />
+        <JsonBlock title="Submit Schema" value={parsed.a2ui?.submit_schema ?? parsed.debug?.submitSchema ?? {}} />
+      </section>
+    </div>,
+    document.body,
   );
 }
 

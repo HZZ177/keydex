@@ -131,7 +131,7 @@ def _chart_data_item_schema() -> dict[str, Any]:
                 "maximum": 100,
                 "description": "漏斗图专用的转化比例，范围 0-100。",
             },
-            "color": {"type": "string", "description": "饼图专用的自定义扇区颜色。"},
+            "color": {"type": "string", "description": "饼图或横向条形图可用的自定义颜色。"},
         },
         required=["name", "value"],
     )
@@ -159,7 +159,7 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             tool_description=(
                 "当回复需要自然呈现趋势、分布、对比、漏斗、占比等结构化数据时优先调用，"
                 "A2UI 图表就是正文内容，不要再输出重复 Markdown 表格或图表，也不要写“可视化如下”。"
-                "支持漏斗图、趋势图、柱状图或饼图；一次调用必须用 charts 数组承载一个或多个图表；"
+                "支持漏斗图、趋势图、柱状图、横向条形图或饼图；一次调用必须用 charts 数组承载一个或多个图表；"
                 "summary 是字符串；不要使用 chart_type、categories、series.data、table 等旧字段。"
                 "该工具只渲染界面，不等待用户提交。"
             ),
@@ -174,8 +174,8 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
                             properties={
                                 "type": {
                                     "type": "string",
-                                    "enum": ["funnel", "trend", "column", "pie"],
-                                    "description": "图表类型：funnel 漏斗图，trend 趋势图，column 柱状图，pie 饼图。",
+                                    "enum": ["funnel", "trend", "column", "horizontal_bar", "pie"],
+                                    "description": "图表类型：funnel 漏斗图，trend 趋势图，column 柱状图，horizontal_bar 横向条形图，pie 饼图。",
                                 },
                                 "title": {"type": "string", "description": "该图表标题，不传则不显示。"},
                                 "series_label": {

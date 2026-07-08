@@ -736,6 +736,7 @@ export interface ContextCompressionRuntimeSettings {
 
 export interface A2UIRuntimeSettings {
   enabled: boolean;
+  debug_info_enabled: boolean;
 }
 
 export interface AgentRuntimeSettings {

@@ -50,7 +50,7 @@ def test_builtin_chart_schema_uses_sdk_chart_group_contract() -> None:
     assert "rows" not in properties
 
     chart_item = properties["charts"]["items"]
-    assert chart_item["properties"]["type"]["enum"] == ["funnel", "trend", "column", "pie"]
+    assert chart_item["properties"]["type"]["enum"] == ["funnel", "trend", "column", "horizontal_bar", "pie"]
     assert chart_item["required"] == ["type"]
     assert set(chart_item["properties"]) == {"type", "title", "series_label", "items", "series"}
     assert chart_item["properties"]["items"]["items"]["required"] == ["name", "value"]

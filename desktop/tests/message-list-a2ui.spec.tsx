@@ -46,9 +46,22 @@ describe("MessageList A2UI callback contract", () => {
 
     expect(screen.getByTestId("a2ui-block").getAttribute("data-render-key")).toBe("confirm");
     expect(screen.getByTestId("a2ui-block").getAttribute("data-interactive-ready")).toBe("true");
-    expect(screen.getByRole("button", { name: "查看 A2UI 调试信息" })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "查看 A2UI 调试信息" })).toBeNull();
     expect(screen.getByText("确认发布")).toBeTruthy();
     expect(screen.getByText("等待输入")).toBeTruthy();
+  });
+
+  it("shows the A2UI debug entry only when enabled by settings", () => {
+    render(
+      <MessageList
+        messages={[conversationA2UIMessage()]}
+        a2uiDebugInfoEnabled
+        onA2UISubmit={vi.fn()}
+        onA2UICancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "查看 A2UI 调试信息" })).not.toBeNull();
   });
 
   it("renders same render-key A2UI cards with independent statuses", () => {

@@ -86,6 +86,7 @@ export function ConversationSessionSurface({
   const isSidecar = mode === "sidecar";
   const [allowPersistentTrust, setAllowPersistentTrust] = useState(true);
   const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>("workspace_trusted");
+  const [a2uiDebugInfoEnabled, setA2UIDebugInfoEnabled] = useState(false);
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [goalCreating, setGoalCreating] = useState(false);
@@ -313,6 +314,29 @@ export function ConversationSessionSurface({
         if (active) {
           setAllowPersistentTrust(true);
           setFileAccessMode("workspace_trusted");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [backendReady, runtime]);
+
+  useEffect(() => {
+    if (!backendReady) {
+      setA2UIDebugInfoEnabled(false);
+      return;
+    }
+    let active = true;
+    void runtime.settings
+      .getExtensionSettings()
+      .then((settings) => {
+        if (active) {
+          setA2UIDebugInfoEnabled(Boolean(settings.a2ui.debug_info_enabled));
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setA2UIDebugInfoEnabled(false);
         }
       });
     return () => {
@@ -701,6 +725,7 @@ export function ConversationSessionSurface({
             showForkActions={false}
             emptyText="旁路对话暂无消息"
             emptyTestId="btw-conversation-empty"
+            a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
           />
         </div>
         <div className={styles.sidecarComposer}>
@@ -741,6 +766,7 @@ export function ConversationSessionSurface({
         onAskSelectionInBtwConversation={rightSidebarConversation ? askSelectionInBtwConversation : undefined}
         emptyText="还没有消息，输入需求开始对话。"
         emptyTestId="conversation-empty"
+        a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
       />
     </ChatLayout>
   );

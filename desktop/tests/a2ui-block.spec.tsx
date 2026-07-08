@@ -39,7 +39,7 @@ describe("A2UIBlock", () => {
     );
 
     expect(screen.getByTestId("a2ui-block").getAttribute("data-render-key")).toBe("chart");
-    expect(screen.getAllByText("销售趋势")).toHaveLength(2);
+    expect(screen.getAllByText("销售趋势")).toHaveLength(1);
     expect(screen.getByText("已生成")).toBeTruthy();
     expect(screen.getByText("近 4 个季度")).toBeTruthy();
     expect(screen.getByTestId("a2ui-chart-panel").getAttribute("data-chart-type")).toBe("trend");
