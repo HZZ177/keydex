@@ -12,8 +12,9 @@ import {
   Upload,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { runtimeBridge, type ModelProvider, type RuntimeBridge } from "@/runtime";
 import { AppDialog } from "@/renderer/components/dialog";
@@ -50,6 +51,12 @@ type TokenHeatWallCell = {
 type TokenHeatWallMarker = {
   column: number;
   label: string;
+};
+type TokenHeatTooltipState = {
+  title: string;
+  value: number;
+  left: number;
+  top: number;
 };
 
 const PAGE_SIZE = 12;
@@ -643,10 +650,78 @@ async function loadUsageTrend({
 export function TokenHeatWall({ points, bucket }: { points: UsageTrendPoint[]; bucket: TokenHeatBucket }) {
   const [hoveredColumn, setHoveredColumn] = useState<number | null>(null);
   const [hoveredTime, setHoveredTime] = useState<string | null>(null);
+  const [tooltip, setTooltip] = useState<TokenHeatTooltipState | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
   const heatWall = useMemo(() => buildTokenHeatWall(points), [points]);
   const heatWallStyle = {
     "--heat-columns": heatWall.columns,
   } as CSSProperties;
+
+  useEffect(() => {
+    if (!tooltip) {
+      return;
+    }
+    const hide = () => {
+      setHoveredColumn(null);
+      setHoveredTime(null);
+      setTooltip(null);
+    };
+    document.addEventListener("scroll", hide, true);
+    window.addEventListener("resize", hide);
+    return () => {
+      document.removeEventListener("scroll", hide, true);
+      window.removeEventListener("resize", hide);
+    };
+  }, [tooltip]);
+
+  useLayoutEffect(() => {
+    if (!tooltip) {
+      return;
+    }
+    const element = tooltipRef.current;
+    if (!element) {
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return;
+    }
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    const viewportMargin = 8;
+    const deltaLeft =
+      rect.left < viewportMargin
+        ? viewportMargin - rect.left
+        : rect.right > viewportWidth - viewportMargin
+          ? viewportWidth - viewportMargin - rect.right
+          : 0;
+    const deltaTop =
+      rect.top < viewportMargin
+        ? viewportMargin - rect.top
+        : rect.bottom > viewportHeight - viewportMargin
+          ? viewportHeight - viewportMargin - rect.bottom
+          : 0;
+
+    if (Math.abs(deltaLeft) < 0.5 && Math.abs(deltaTop) < 0.5) {
+      return;
+    }
+
+    setTooltip((current) =>
+      current
+        ? {
+            ...current,
+            left: Math.round(current.left + deltaLeft),
+            top: Math.round(current.top + deltaTop),
+          }
+        : current,
+    );
+  }, [tooltip]);
+
+  function hideTooltip() {
+    setHoveredColumn(null);
+    setHoveredTime(null);
+    setTooltip(null);
+  }
 
   return (
     <div className={styles.heatWall} data-empty={points.length === 0 ? "true" : "false"} data-testid="usage-token-heatwall">
@@ -667,6 +742,7 @@ export function TokenHeatWall({ points, bucket }: { points: UsageTrendPoint[]; b
                   const label = isWeekly ? cell.weeklyTooltip : cell.tooltip;
                   const level = isWeekly ? cell.weeklyLevel : cell.level;
                   const value = isWeekly ? cell.weeklyTotalTokens : cell.totalTokens;
+                  const tooltipTitle = isWeekly ? cell.weekLabel : formatHeatCellDate(cell.time);
                   const outsideRange = isWeekly ? false : cell.outsideRange;
                   const active =
                     isWeekly && hoveredColumn !== null
@@ -680,30 +756,28 @@ export function TokenHeatWall({ points, bucket }: { points: UsageTrendPoint[]; b
                       data-level={level}
                       data-outside={outsideRange ? "true" : "false"}
                       key={cell.time}
-                      onBlur={() => {
-                        setHoveredColumn(null);
-                        setHoveredTime(null);
-                      }}
-                      onFocus={() => {
+                      onBlur={hideTooltip}
+                      onFocus={(event) => {
                         setHoveredColumn(cell.column);
                         setHoveredTime(cell.time);
+                        setTooltip({
+                          title: tooltipTitle,
+                          value,
+                          ...positionHeatTooltip(event.currentTarget),
+                        });
                       }}
-                      onMouseEnter={() => {
+                      onMouseEnter={(event) => {
                         setHoveredColumn(cell.column);
                         setHoveredTime(cell.time);
+                        setTooltip({
+                          title: tooltipTitle,
+                          value,
+                          ...positionHeatTooltip(event.currentTarget),
+                        });
                       }}
-                      onMouseLeave={() => {
-                        setHoveredColumn(null);
-                        setHoveredTime(null);
-                      }}
-                      title={label}
+                      onMouseLeave={hideTooltip}
                       type="button"
-                    >
-                      <span className={styles.heatCellTooltip} role="tooltip">
-                        <strong>{isWeekly ? cell.weekLabel : formatHeatCellDate(cell.time)}</strong>
-                        <span>总 Token {formatNumber(value)}</span>
-                      </span>
-                    </button>
+                    />
                   );
                 })}
               </div>
@@ -730,8 +804,30 @@ export function TokenHeatWall({ points, bucket }: { points: UsageTrendPoint[]; b
           </div>
         </>
       )}
+      {tooltip
+        ? createPortal(
+            <div
+              className={styles.heatCellTooltip}
+              ref={tooltipRef}
+              role="tooltip"
+              style={{ left: tooltip.left, top: tooltip.top }}
+            >
+              <strong>{tooltip.title}</strong>
+              <span>总 Token {formatNumber(tooltip.value)}</span>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
+}
+
+function positionHeatTooltip(target: HTMLElement) {
+  const rect = target.getBoundingClientRect();
+  return {
+    left: Math.round(rect.left + rect.width / 2),
+    top: Math.round(rect.top),
+  };
 }
 
 export function UsageTrendChart({ points }: { points: UsageTrendPoint[] }) {

@@ -149,6 +149,37 @@ describe("useA2UIStreamReveal", () => {
       vi.useRealTimers();
     }
   });
+
+  it("batches very large chart payloads so stream playback does not accumulate hundreds of ticks", () => {
+    vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
+    try {
+      const snapshots: Array<{ rendered: number; total: number; visibleItems: number }> = [];
+      const { rerender } = render(<PlayerProbe parsed={streamingPartialChartMessage(2)} snapshots={snapshots} />);
+
+      rerender(<PlayerProbe parsed={streamBackedCreatedChartMessage(260)} snapshots={snapshots} />);
+
+      expect(visiblePlayerItems()).toBeGreaterThan(0);
+      expect(visiblePlayerItems()).toBeLessThan(260);
+
+      act(() => {
+        vi.advanceTimersByTime(1_200);
+      });
+
+      expect(visiblePlayerItems()).toBeGreaterThanOrEqual(20);
+      expect(visiblePlayerItems()).toBeLessThan(260);
+
+      act(() => {
+        vi.advanceTimersByTime(2_400);
+      });
+
+      expect(visiblePlayerItems()).toBe(260);
+    } finally {
+      restoreRaf();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 });
 
 function RevealProbe({

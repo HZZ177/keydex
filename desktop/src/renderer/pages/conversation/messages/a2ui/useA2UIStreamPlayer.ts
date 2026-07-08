@@ -47,13 +47,17 @@ export interface A2UIStreamPlayerState {
   totalElementCount: number;
 }
 
-const MIN_INTERVAL_MS = 160;
-const MAX_INTERVAL_MS = 420;
-const MIN_RENDER_DURATION_MS = 1_800;
-const FAST_STREAM_THRESHOLD_MS = 420;
-const CATCH_UP_INTERVAL_MS = 260;
-const FINAL_SETTLE_DELAY_MS = 760;
-const SMALL_PAYLOAD_SLOW_REVEAL_THRESHOLD = 8;
+const MIN_INTERVAL_MS = 220;
+const MAX_INTERVAL_MS = 360;
+const MIN_RENDER_DURATION_MS = 2_200;
+const FAST_STREAM_THRESHOLD_MS = 600;
+const CATCH_UP_INTERVAL_MS = 240;
+const FINAL_SETTLE_DELAY_MS = 520;
+const SMALL_PAYLOAD_SLOW_REVEAL_THRESHOLD = 10;
+const BACKLOG_DRAIN_TARGET_MS = 2_000;
+const BACKLOG_WARMUP_VISIBLE_THRESHOLD = 20;
+const BACKLOG_WARMUP_MAX_UNITS_PER_TICK = 6;
+const BACKLOG_MAX_UNITS_PER_TICK = 32;
 const STREAMING_STATUSES = new Set(["started", "streaming", "finished"]);
 
 export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayerState {
@@ -146,12 +150,13 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
     }
 
     const interval = calculateInterval(runtime);
+    const step = calculateElementStep(runtime, interval);
     runtime.raf = window.requestAnimationFrame(() => {
       runtime.raf = null;
       runtime.timer = window.setTimeout(() => {
         runtime.timer = null;
         const latestTotal = getTotalElementCount(runtime.latestPayload);
-        runtime.renderedElementCount = Math.min(runtime.renderedElementCount + 1, latestTotal);
+        runtime.renderedElementCount = Math.min(runtime.renderedElementCount + step, latestTotal);
         updateDisplayPayload();
         if (runtime.renderedElementCount >= latestTotal && runtime.finalPayload) {
           scheduleFinalize(enabled);
@@ -408,6 +413,24 @@ function calculateInterval(runtime: PlayerRuntime): number {
   }
   const targetTotal = Math.max(900, Math.min(2600, total * 110));
   return Math.max(MIN_INTERVAL_MS, Math.min(MAX_INTERVAL_MS, targetTotal / Math.max(1, total)));
+}
+
+function calculateElementStep(runtime: PlayerRuntime, intervalMs: number): number {
+  const total = getTotalElementCount(runtime.latestPayload);
+  const remaining = total - runtime.renderedElementCount;
+  if (remaining <= 0) {
+    return 0;
+  }
+  if (total <= SMALL_PAYLOAD_SLOW_REVEAL_THRESHOLD) {
+    return 1;
+  }
+  const targetTicks = Math.max(1, Math.ceil(BACKLOG_DRAIN_TARGET_MS / Math.max(1, intervalMs)));
+  const effectiveBacklog = Math.max(remaining, total - BACKLOG_WARMUP_VISIBLE_THRESHOLD);
+  const targetStep = Math.ceil(effectiveBacklog / targetTicks);
+  const maxUnitsPerTick = runtime.renderedElementCount < BACKLOG_WARMUP_VISIBLE_THRESHOLD
+    ? BACKLOG_WARMUP_MAX_UNITS_PER_TICK
+    : BACKLOG_MAX_UNITS_PER_TICK;
+  return Math.max(1, Math.min(maxUnitsPerTick, targetStep, remaining));
 }
 
 function slicePayloadByRenderedCount(payload: Record<string, unknown>, renderedElementCount: number): Record<string, unknown> {

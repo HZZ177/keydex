@@ -713,6 +713,109 @@ describe("A2ChartBlock", () => {
     }
   });
 
+  it("paces ECharts stream commits instead of applying every fast chart update", () => {
+    vi.useFakeTimers();
+    try {
+      const payloadWithCount = (count: number) => ({
+        title: "快速流式",
+        charts: [
+          {
+            type: "column",
+            title: "快速增长",
+            series: [
+              {
+                name: "数量",
+                items: Array.from({ length: count }, (_, index) => ({
+                  name: `项 ${index + 1}`,
+                  value: (index + 1) * 10,
+                })),
+              },
+            ],
+          },
+        ],
+      });
+      const { rerender } = render(<A2ChartBlock parsed={parsedChart(payloadWithCount(1), "waiting_created")} />);
+      const initialCalls = echartsMock.setOption.mock.calls.length;
+
+      rerender(<A2ChartBlock parsed={parsedChart(payloadWithCount(2), "waiting_created")} />);
+      rerender(<A2ChartBlock parsed={parsedChart(payloadWithCount(3), "waiting_created")} />);
+
+      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls);
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 1);
+      expect(lastOptionDataCount()).toBe(2);
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 2);
+      expect(lastOptionDataCount()).toBe(3);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("collapses stale ECharts stream options when fast updates outpace chart commits", () => {
+    vi.useFakeTimers();
+    try {
+      const payloadWithCount = (count: number) => ({
+        title: "大数据流式",
+        charts: [
+          {
+            type: "trend",
+            title: "访问趋势",
+            series: [
+              {
+                name: "访问量",
+                items: Array.from({ length: count }, (_, index) => ({
+                  name: `点 ${index + 1}`,
+                  value: index + 1,
+                })),
+              },
+            ],
+          },
+        ],
+      });
+      const { rerender } = render(<A2ChartBlock parsed={parsedChart(payloadWithCount(1), "waiting_created")} />);
+      const initialCalls = echartsMock.setOption.mock.calls.length;
+
+      for (let count = 2; count <= 20; count += 1) {
+        rerender(<A2ChartBlock parsed={parsedChart(payloadWithCount(count), "waiting_created")} />);
+      }
+
+      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls);
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 1);
+      expect(lastOptionDataCount()).toBe(2);
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 2);
+      expect(lastOptionDataCount()).toBe(20);
+
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 2);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("reveals live streaming chart payloads element by element", () => {
     vi.useFakeTimers();
     const restoreRaf = installTimerBackedRaf();
@@ -795,6 +898,13 @@ function optionSeries(option: Record<string, unknown>): Array<Record<string, unk
     return series.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
   }
   return series && typeof series === "object" ? [series as Record<string, unknown>] : [];
+}
+
+function lastOptionDataCount(): number {
+  return optionSeries(lastSetOption()).reduce((sum, series) => {
+    const data = series.data;
+    return sum + (Array.isArray(data) ? data.length : 0);
+  }, 0);
 }
 
 function totalChartDataCount(): number {

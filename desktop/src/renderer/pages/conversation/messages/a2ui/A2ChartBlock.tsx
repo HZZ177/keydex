@@ -1,6 +1,6 @@
 import * as echarts from "echarts";
 import type { EChartsOption, EChartsType, SeriesOption } from "echarts";
-import { useEffect, useMemo, useRef } from "react";
+import { type MutableRefObject, useEffect, useMemo, useRef } from "react";
 
 import type { ParsedA2UIMessage } from "./A2UIBlock";
 import styles from "./A2ChartBlock.module.css";
@@ -48,6 +48,9 @@ const ECHARTS_FALLBACK_WIDTH = 620;
 const ECHARTS_DEFAULT_HEIGHT = 280;
 const ECHARTS_PIE_HEIGHT = 300;
 const ECHARTS_FUNNEL_HEIGHT = 270;
+const ECHARTS_STREAM_COMMIT_INTERVAL_MS = 200;
+const ECHARTS_STREAM_ANIMATION_DURATION_MS = 170;
+const ECHARTS_STREAM_MAX_PENDING_OPTIONS = 2;
 const CHART_NUMBER_FORMATTER = new Intl.NumberFormat("zh-CN", {
   maximumFractionDigits: 2,
   minimumFractionDigits: 0,
@@ -125,6 +128,10 @@ function EChartsChart({
   const height = chartHeight(chart);
   const heightRef = useRef(height);
   const lastOptionSignatureRef = useRef("");
+  const pendingAnimatedOptionsRef = useRef<Array<{ option: EChartsOption; signature: string }>>([]);
+  const pendingTerminalOptionRef = useRef<{ option: EChartsOption; signature: string } | null>(null);
+  const pendingCommitTimerRef = useRef<number | null>(null);
+  const lastAnimatedCommitAtRef = useRef(0);
   const option = useMemo(() => buildEChartsOption(chart), [chart]);
   const optionSignature = useMemo(() => chartOptionSignature(chart), [chart]);
   const interactionMode = chart.type === "trend" || chart.type === "column" ? "tooltip,axisPointer,legendToggle" : "tooltip,legendToggle";
@@ -153,6 +160,12 @@ function EChartsChart({
 
     return () => {
       observer?.disconnect();
+      if (pendingCommitTimerRef.current !== null) {
+        window.clearTimeout(pendingCommitTimerRef.current);
+        pendingCommitTimerRef.current = null;
+      }
+      pendingAnimatedOptionsRef.current = [];
+      pendingTerminalOptionRef.current = null;
       chartRef.current = null;
       instance.dispose();
     };
@@ -174,12 +187,45 @@ function EChartsChart({
       return;
     }
     const isInitialOption = !lastOptionSignatureRef.current;
-    lastOptionSignatureRef.current = optionSignature;
     const shouldAnimate = animateUpdates || (isInitialOption && animateInitial);
-    instance.setOption(shouldAnimate ? option : withoutEChartsAnimation(option), {
-      lazyUpdate: false,
-      notMerge: false,
-    });
+    if (shouldAnimate) {
+      if (isInitialOption) {
+        applyEChartsOption(
+          instance,
+          withStreamingEChartsAnimation(option),
+          optionSignature,
+          lastOptionSignatureRef,
+          true,
+        );
+        lastAnimatedCommitAtRef.current = nowMs();
+        return;
+      }
+      enqueueAnimatedEChartsOption({
+        instance,
+        lastAnimatedCommitAtRef,
+        lastOptionSignatureRef,
+        option,
+        pendingAnimatedOptionsRef,
+        pendingCommitTimerRef,
+        pendingTerminalOptionRef,
+        signature: optionSignature,
+      });
+      return;
+    }
+    const terminalOption = withoutEChartsAnimation(option);
+    if (pendingAnimatedOptionsRef.current.length || pendingCommitTimerRef.current !== null) {
+      pendingTerminalOptionRef.current = { option: terminalOption, signature: optionSignature };
+      scheduleQueuedEChartsCommit({
+        instance,
+        lastAnimatedCommitAtRef,
+        lastOptionSignatureRef,
+        pendingAnimatedOptionsRef,
+        pendingCommitTimerRef,
+        pendingTerminalOptionRef,
+      });
+      return;
+    }
+    applyEChartsOption(instance, terminalOption, optionSignature, lastOptionSignatureRef, false, true);
   }, [animateInitial, animateUpdates, option, optionSignature]);
 
   return (
@@ -191,6 +237,7 @@ function EChartsChart({
       data-a2ui-chart-data-count={chartDataCount(chart)}
       data-a2ui-chart-engine="echarts"
       data-a2ui-chart-interactions={interactionMode}
+      data-a2ui-chart-paced-commit={animateUpdates ? "true" : "false"}
       data-a2ui-chart-stream-adapter="setOption-diff"
       data-a2ui-chart-tooltip={chart.type === "trend" || chart.type === "column" ? "axis" : "item"}
       data-chart-type={chart.type}
@@ -200,6 +247,125 @@ function EChartsChart({
       style={{ minHeight: height }}
     />
   );
+}
+
+function enqueueAnimatedEChartsOption({
+  instance,
+  lastAnimatedCommitAtRef,
+  lastOptionSignatureRef,
+  option,
+  pendingAnimatedOptionsRef,
+  pendingCommitTimerRef,
+  pendingTerminalOptionRef,
+  signature,
+}: {
+  instance: EChartsType;
+  lastAnimatedCommitAtRef: MutableRefObject<number>;
+  lastOptionSignatureRef: MutableRefObject<string>;
+  option: EChartsOption;
+  pendingAnimatedOptionsRef: MutableRefObject<Array<{ option: EChartsOption; signature: string }>>;
+  pendingCommitTimerRef: MutableRefObject<number | null>;
+  pendingTerminalOptionRef: MutableRefObject<{ option: EChartsOption; signature: string } | null>;
+  signature: string;
+}) {
+  if (
+    pendingAnimatedOptionsRef.current.some((item) => item.signature === signature) ||
+    pendingTerminalOptionRef.current?.signature === signature
+  ) {
+    return;
+  }
+  pendingAnimatedOptionsRef.current.push({
+    option: withStreamingEChartsAnimation(option),
+    signature,
+  });
+  pendingAnimatedOptionsRef.current = collapsePendingAnimatedEChartsOptions(pendingAnimatedOptionsRef.current);
+  scheduleQueuedEChartsCommit({
+    instance,
+    lastAnimatedCommitAtRef,
+    lastOptionSignatureRef,
+    pendingAnimatedOptionsRef,
+    pendingCommitTimerRef,
+    pendingTerminalOptionRef,
+  });
+}
+
+function collapsePendingAnimatedEChartsOptions(
+  pendingOptions: Array<{ option: EChartsOption; signature: string }>,
+): Array<{ option: EChartsOption; signature: string }> {
+  if (pendingOptions.length <= ECHARTS_STREAM_MAX_PENDING_OPTIONS) {
+    return pendingOptions;
+  }
+  const first = pendingOptions[0];
+  const latest = pendingOptions[pendingOptions.length - 1];
+  return first.signature === latest.signature ? [first] : [first, latest];
+}
+
+function scheduleQueuedEChartsCommit({
+  instance,
+  lastAnimatedCommitAtRef,
+  lastOptionSignatureRef,
+  pendingAnimatedOptionsRef,
+  pendingCommitTimerRef,
+  pendingTerminalOptionRef,
+}: {
+  instance: EChartsType;
+  lastAnimatedCommitAtRef: MutableRefObject<number>;
+  lastOptionSignatureRef: MutableRefObject<string>;
+  pendingAnimatedOptionsRef: MutableRefObject<Array<{ option: EChartsOption; signature: string }>>;
+  pendingCommitTimerRef: MutableRefObject<number | null>;
+  pendingTerminalOptionRef: MutableRefObject<{ option: EChartsOption; signature: string } | null>;
+}) {
+  if (pendingCommitTimerRef.current !== null || typeof window === "undefined") {
+    return;
+  }
+  const elapsed = nowMs() - lastAnimatedCommitAtRef.current;
+  const delay = pendingAnimatedOptionsRef.current.length
+    ? Math.max(0, ECHARTS_STREAM_COMMIT_INTERVAL_MS - elapsed)
+    : 0;
+  pendingCommitTimerRef.current = window.setTimeout(() => {
+    pendingCommitTimerRef.current = null;
+    const next = pendingAnimatedOptionsRef.current.shift();
+    if (next) {
+      applyEChartsOption(instance, next.option, next.signature, lastOptionSignatureRef, true);
+      lastAnimatedCommitAtRef.current = nowMs();
+      scheduleQueuedEChartsCommit({
+        instance,
+        lastAnimatedCommitAtRef,
+        lastOptionSignatureRef,
+        pendingAnimatedOptionsRef,
+        pendingCommitTimerRef,
+        pendingTerminalOptionRef,
+      });
+      return;
+    }
+    const terminal = pendingTerminalOptionRef.current;
+    if (terminal) {
+      pendingTerminalOptionRef.current = null;
+      applyEChartsOption(instance, terminal.option, terminal.signature, lastOptionSignatureRef, false, true);
+    }
+  }, delay);
+}
+
+function applyEChartsOption(
+  instance: EChartsType,
+  option: EChartsOption,
+  signature: string,
+  lastOptionSignatureRef: MutableRefObject<string>,
+  lazyUpdate: boolean,
+  force = false,
+) {
+  if (!force && lastOptionSignatureRef.current === signature) {
+    return;
+  }
+  lastOptionSignatureRef.current = signature;
+  instance.setOption(option, {
+    lazyUpdate,
+    notMerge: false,
+  });
+}
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 }
 
 function withoutEChartsAnimation(option: EChartsOption): EChartsOption {
@@ -217,6 +383,33 @@ function withoutEChartsAnimation(option: EChartsOption): EChartsOption {
     animationDurationUpdate: 0,
     series,
   } as EChartsOption;
+}
+
+function withStreamingEChartsAnimation(option: EChartsOption): EChartsOption {
+  const series = Array.isArray(option.series)
+    ? option.series.map(withStreamingSeriesAnimation)
+    : option.series
+      ? withStreamingSeriesAnimation(option.series as SeriesOption)
+      : option.series;
+  return {
+    ...option,
+    animation: true,
+    animationDelay: 0,
+    animationDelayUpdate: 0,
+    animationDurationUpdate: ECHARTS_STREAM_ANIMATION_DURATION_MS,
+    animationEasingUpdate: "cubicOut",
+    series,
+  } as EChartsOption;
+}
+
+function withStreamingSeriesAnimation(series: SeriesOption): SeriesOption {
+  return {
+    ...series,
+    animation: true,
+    animationDelay: 0,
+    animationDelayUpdate: 0,
+    animationDurationUpdate: ECHARTS_STREAM_ANIMATION_DURATION_MS,
+  } as SeriesOption;
 }
 
 function withoutSeriesAnimation(series: SeriesOption): SeriesOption {

@@ -623,12 +623,11 @@
 }
 
 .heatCellTooltip {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  z-index: 6;
+  position: fixed;
+  z-index: 220;
   display: grid;
   min-width: max-content;
+  max-width: min(220px, calc(100vw - 24px));
   gap: 3px;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 58%, transparent);
   border-radius: 8px;
@@ -637,13 +636,11 @@
     0 14px 36px rgb(15 23 42 / 12%),
     0 2px 8px rgb(15 23 42 / 5%);
   color: var(--color-text-primary);
-  opacity: 0;
   padding: 7px 9px;
   pointer-events: none;
-  transform: translate(-50%, 4px);
-  transition:
-    opacity var(--motion-fast) var(--motion-ease-out),
-    transform var(--motion-fast) var(--motion-ease-out);
+  transform: translate(-50%, calc(-100% - 8px));
+  animation: heatTooltipIn 120ms var(--motion-ease-out) both;
+  backdrop-filter: blur(18px);
 }
 
 .heatCellTooltip::after {
@@ -670,12 +667,6 @@
   font-family: var(--font-mono);
   font-size: 10px;
   line-height: var(--ui-line-height-tight);
-}
-
-.heatCell:hover .heatCellTooltip,
-.heatCell:focus-visible .heatCellTooltip {
-  opacity: 1;
-  transform: translate(-50%, 0);
 }
 
 .heatWallAxis {
@@ -734,6 +725,23 @@
 
 .heatWallLegendLevels i[data-level="4"] {
   background: var(--heat-level-4);
+}
+
+@keyframes heatTooltipIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-100% - 4px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, calc(-100% - 8px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heatCellTooltip {
+    animation: none;
+  }
 }
 
 .heatWallEmpty {

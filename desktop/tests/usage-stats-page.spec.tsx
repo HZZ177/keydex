@@ -390,9 +390,15 @@ describe("UsageStatsPage", () => {
     expect(heatWall.textContent).toContain("一");
     expect(heatWall.textContent).toContain("日");
     expect(screen.queryByText("18,445 Token")).toBeNull();
-    expect(cell.getAttribute("title")).toBe("06/19 · 总 Token 18,445");
+    expect(cell.getAttribute("title")).toBeNull();
     expect(cell.getAttribute("data-level")).toBe("4");
-    expect(screen.getByText("总 Token 18,445")).not.toBeNull();
+    expect(screen.queryByText("总 Token 18,445")).toBeNull();
+    fireEvent.mouseEnter(cell);
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toContain("06/19");
+    expect(tooltip.textContent).toContain("总 Token 18,445");
+    expect(tooltip.parentElement).toBe(document.body);
+    expect(heatWall.contains(tooltip)).toBe(false);
   });
 
   it("highlights the whole heat wall week in weekly mode", () => {
