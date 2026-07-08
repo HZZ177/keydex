@@ -3,12 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents.middleware import AgentMiddleware
 
 from backend.app.agent.middleware.auto_title import AutoTitleMiddleware
 from backend.app.agent.middleware.context_compression import ContextCompressionMiddleware
 from backend.app.agent.middleware.duplicate_tool_call_guard import (
     DuplicateToolCallGuardMiddleware,
+)
+from backend.app.agent.middleware.invalid_tool_call_recovery import (
+    InvalidToolCallRecoveryMiddleware,
 )
 from backend.app.agent.middleware.tool_error_handling import ToolErrorHandlingMiddleware
 from backend.app.agent.runtime_settings import (
@@ -34,6 +38,7 @@ def build_default_middleware(
 
     settings = runtime_settings or default_agent_runtime_settings()
     middlewares: list[AgentMiddleware] = [
+        PatchToolCallsMiddleware(),
         ToolCallPresetMiddleware(),
         SkillActivationInjectionMiddleware(),
     ]
@@ -69,4 +74,5 @@ def build_default_middleware(
                 max_repeats=settings.duplicate_tool_call_guard.max_repeats,
             )
         )
+    middlewares.append(InvalidToolCallRecoveryMiddleware())
     return tuple(middlewares)

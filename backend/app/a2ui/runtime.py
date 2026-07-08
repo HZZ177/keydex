@@ -67,6 +67,7 @@ class A2UIRuntime:
     ) -> str:
         payload = validate_payload(args, definition.input_schema)
         tool_call_id = _tool_call_id_from_config(config) or str(context.metadata.get("tool_call_id") or "")
+        run_id = _run_id_from_config(config) or str(context.metadata.get("run_id") or "").strip()
         if definition.mode == "interactive":
             resume_payload = consume_a2ui_resume_payload(
                 definition.render_key,
@@ -77,12 +78,14 @@ class A2UIRuntime:
         stream_context = consume_a2ui_stream_context(
             definition.render_key,
             tool_call_id=tool_call_id,
+            run_id=run_id,
         )
         if not tool_call_id and stream_context:
             tool_call_id = str(stream_context.get("tool_call_id") or "").strip()
         if not tool_call_id:
             tool_call_id = new_id()
         stream_id = str((stream_context or {}).get("stream_id") or "").strip()
+        stream_group_id = str((stream_context or {}).get("stream_group_id") or "").strip()
         if not stream_id:
             stream_id = resolve_a2ui_stream_id(
                 render_key=definition.render_key,
@@ -96,6 +99,7 @@ class A2UIRuntime:
                 context=context,
                 stream_id=stream_id,
                 tool_call_id=tool_call_id,
+                stream_group_id=stream_group_id,
             )
         return await self._handle_interactive(
             definition=definition,
@@ -104,6 +108,7 @@ class A2UIRuntime:
             config=config,
             stream_id=stream_id,
             tool_call_id=tool_call_id,
+            stream_group_id=stream_group_id,
         )
 
     async def _handle_render(
@@ -114,6 +119,7 @@ class A2UIRuntime:
         context: ToolExecutionContext,
         stream_id: str,
         tool_call_id: str,
+        stream_group_id: str,
     ) -> str:
         a2ui = A2UIObject(
             render_key=definition.render_key,
@@ -127,6 +133,8 @@ class A2UIRuntime:
             submit_schema=definition.submit_schema,
         )
         created_payload = build_a2ui_created_payload(a2ui)
+        if stream_group_id:
+            created_payload["stream_group_id"] = stream_group_id
         await self._emit(
             DomainEventType.A2UI_CREATED,
             payload=created_payload,
@@ -150,6 +158,7 @@ class A2UIRuntime:
         config: RunnableConfig | None,
         stream_id: str,
         tool_call_id: str,
+        stream_group_id: str,
     ) -> str:
         checkpoint = _checkpoint_from_context(context, config)
         resume_group_id = build_resume_group_id(
@@ -180,7 +189,11 @@ class A2UIRuntime:
         self.repositories.sessions.update(record.session_id, status="waiting_input")
         a2ui = a2ui_object_from_record(record)
         created_payload = build_a2ui_created_payload(a2ui)
+        if stream_group_id:
+            created_payload["stream_group_id"] = stream_group_id
         waiting_payload = build_waiting_input_payload(a2ui=a2ui, checkpoint=checkpoint)
+        if stream_group_id:
+            waiting_payload["stream_group_id"] = stream_group_id
         await self._emit(DomainEventType.A2UI_CREATED, payload=created_payload, context=context)
         await self._emit(DomainEventType.TURN_WAITING_INPUT, payload=waiting_payload, context=context)
         try:
@@ -264,6 +277,22 @@ def _tool_call_id_from_config(config: RunnableConfig | None) -> str | None:
         if not isinstance(container, dict):
             continue
         value = str(container.get("tool_call_id") or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _run_id_from_config(config: RunnableConfig | None) -> str | None:
+    if not config:
+        return None
+    value = str(config.get("run_id") or "").strip()
+    if value:
+        return value
+    for key in ("configurable", "metadata"):
+        container = config.get(key)
+        if not isinstance(container, dict):
+            continue
+        value = str(container.get("run_id") or "").strip()
         if value:
             return value
     return None

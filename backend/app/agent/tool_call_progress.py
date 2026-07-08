@@ -21,6 +21,7 @@ class ToolCallChunkState:
     key: str
     tool_call_id: str = ""
     index: int | None = None
+    model_run_id: str = ""
     name: str = ""
     args_text: str = ""
     args: dict[str, Any] = field(default_factory=dict)
@@ -42,6 +43,7 @@ class ToolCallChunkPipeline:
     ) -> None:
         self._states: dict[str, ToolCallChunkState] = {}
         self._index_keys: dict[str, str] = {}
+        self._loose_index_keys: dict[int, str] = {}
         self._run_keys: dict[str, str] = {}
         self._collectors: dict[str, ToolProgressCollector] = {}
         for collector in collectors or default_collectors():
@@ -52,6 +54,12 @@ class ToolCallChunkPipeline:
         progress: list[dict[str, Any]] = []
         for delta in extract_tool_call_chunks(chunk, model_run_id=model_run_id):
             index_key = f"{model_run_id}:{delta.index}" if delta.index is not None else ""
+            loose_index_key = delta.index if delta.index is not None else None
+            can_continue_loose_index = (
+                loose_index_key is not None
+                and not delta.tool_call_id
+                and not delta.name
+            )
             state_key = delta.key
             if delta.tool_call_id and index_key:
                 existing_key = self._index_keys.get(index_key)
@@ -60,8 +68,13 @@ class ToolCallChunkPipeline:
                 else:
                     self._index_keys[index_key] = delta.key
             elif index_key:
-                state_key = self._index_keys.get(index_key, delta.key)
+                state_key = self._index_keys.get(index_key, "")
+                if not state_key and can_continue_loose_index:
+                    state_key = self._loose_index_keys.get(loose_index_key, "")
+                state_key = state_key or delta.key
                 self._index_keys.setdefault(index_key, state_key)
+            if loose_index_key is not None and delta.name:
+                self._loose_index_keys.setdefault(loose_index_key, state_key)
 
             state = self._states.setdefault(
                 state_key,
@@ -69,8 +82,11 @@ class ToolCallChunkPipeline:
                     key=state_key,
                     tool_call_id=delta.tool_call_id,
                     index=delta.index,
+                    model_run_id=model_run_id,
                 ),
             )
+            if not state.model_run_id:
+                state.model_run_id = model_run_id
             if delta.tool_call_id:
                 state.tool_call_id = delta.tool_call_id
             if delta.index is not None:
@@ -128,6 +144,8 @@ class ToolCallChunkPipeline:
         state = candidates[0][1]
         state.bound_run_id = run_id
         self._run_keys[run_id] = state.key
+        if state.index is not None:
+            self._loose_index_keys.pop(state.index, None)
         return state.tool_call_id or state.key
 
     def tool_call_id_for_run(self, run_id: str) -> str:

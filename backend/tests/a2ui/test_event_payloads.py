@@ -16,6 +16,7 @@ def test_build_a2ui_stream_payload_contains_incremental_stream_metadata() -> Non
         render_key="confirm",
         stream_id="stream-1",
         tool_call_id="tool-call-1",
+        stream_group_id="stream-group-1",
         chunk_index=2,
         args_delta='{"title"',
         args_text_length=8,
@@ -24,6 +25,7 @@ def test_build_a2ui_stream_payload_contains_incremental_stream_metadata() -> Non
 
     assert payload["render_key"] == "confirm"
     assert payload["stream_id"] == "stream-1"
+    assert payload["stream_group_id"] == "stream-group-1"
     assert payload["tool_call_id"] == "tool-call-1"
     assert payload["stream"]["status"] == "chunk"
     assert payload["stream"]["chunk_index"] == 2

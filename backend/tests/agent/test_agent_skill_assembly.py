@@ -3,12 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+
 from backend.app.agent import AgentRunner
 from backend.app.agent.factory import AgentFactory
 from backend.app.agent.middleware.builder import build_default_middleware
 from backend.app.agent.middleware.context_compression import ContextCompressionMiddleware
 from backend.app.agent.middleware.duplicate_tool_call_guard import (
     DuplicateToolCallGuardMiddleware,
+)
+from backend.app.agent.middleware.invalid_tool_call_recovery import (
+    InvalidToolCallRecoveryMiddleware,
 )
 from backend.app.agent.middleware.tool_error_handling import ToolErrorHandlingMiddleware
 from backend.app.agent.runtime_settings import AgentRuntimeSettings
@@ -218,10 +223,12 @@ def test_default_middleware_order_matches_skill_design() -> None:
     middleware = build_default_middleware()
 
     assert [type(item) for item in middleware] == [
+        PatchToolCallsMiddleware,
         ToolCallPresetMiddleware,
         SkillActivationInjectionMiddleware,
         ToolErrorHandlingMiddleware,
         DuplicateToolCallGuardMiddleware,
+        InvalidToolCallRecoveryMiddleware,
     ]
 
 
@@ -234,11 +241,13 @@ def test_default_middleware_includes_context_compression_when_enabled(tmp_path) 
     )
 
     assert [type(item) for item in middleware] == [
+        PatchToolCallsMiddleware,
         ToolCallPresetMiddleware,
         SkillActivationInjectionMiddleware,
         ContextCompressionMiddleware,
         ToolErrorHandlingMiddleware,
         DuplicateToolCallGuardMiddleware,
+        InvalidToolCallRecoveryMiddleware,
     ]
 
 

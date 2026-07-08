@@ -14,7 +14,7 @@ interface PlayerRuntime {
   raf: number | null;
   renderedElementCount: number;
   sourceSignature: string;
-  streamBackedSeen: boolean;
+  streamPlaybackStarted: boolean;
   timer: number | null;
 }
 
@@ -55,7 +55,6 @@ const CATCH_UP_INTERVAL_MS = 260;
 const FINAL_SETTLE_DELAY_MS = 760;
 const SMALL_PAYLOAD_SLOW_REVEAL_THRESHOLD = 8;
 const STREAMING_STATUSES = new Set(["started", "streaming", "finished"]);
-const DISABLED_STATUSES = new Set(["submitted", "cancelled", "failed", "missing"]);
 
 export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayerState {
   const playerKey = useMemo(() => buildA2UIStreamPlayerKey(parsed), [parsed]);
@@ -167,7 +166,7 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
 
   useEffect(() => {
     const status = normalizeStatus(parsed.status);
-    const streamBackedInCurrentFrame = hasStreamEvidence(parsed);
+    const liveStreamFrame = isLiveStreamFrame(parsed);
     let runtime = runtimeRef.current;
 
     if (runtime.key !== playerKey) {
@@ -175,13 +174,13 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
       runtime = createRuntime(playerKey, parsed.payload, sourceSignature);
       runtimeRef.current = runtime;
     }
-    if (streamBackedInCurrentFrame) {
-      runtime.streamBackedSeen = true;
+    if (liveStreamFrame) {
+      runtime.streamPlaybackStarted = true;
     }
-    const streamBacked = streamBackedInCurrentFrame || runtime.streamBackedSeen;
+    const streamPlaybackStarted = runtime.streamPlaybackStarted;
     const rememberedTotal = getTotalElementCount(runtime.latestPayload);
     const incomingTotal = getTotalElementCount(parsed.payload);
-    const shouldPlay = shouldUseStreamPlayer(parsed, streamBacked, Math.max(rememberedTotal, incomingTotal));
+    const shouldPlay = shouldUseStreamPlayer(parsed, streamPlaybackStarted, Math.max(rememberedTotal, incomingTotal));
     if (
       parsed.mode === "render" &&
       runtime.phase === "created" &&
@@ -206,7 +205,7 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayer
     }
 
     const sameSource = runtime.sourceSignature === sourceSignature;
-    const isFinalPayload = Boolean(parsed.a2ui) || (!STREAMING_STATUSES.has(status) && streamBacked);
+    const isFinalPayload = Boolean(parsed.a2ui) || (!STREAMING_STATUSES.has(status) && streamPlaybackStarted);
     const shouldKeepRenderedPayload =
       isFinalPayload &&
       !parsed.a2ui &&
@@ -281,7 +280,7 @@ function createRuntime(key: string, payload: Record<string, unknown>, sourceSign
     raf: null,
     renderedElementCount: 0,
     sourceSignature,
-    streamBackedSeen: false,
+    streamPlaybackStarted: false,
     timer: null,
   };
 }
@@ -293,9 +292,9 @@ function createInitialPlayerState(
 ): InitialPlayerState {
   const runtime = createRuntime(key, parsed.payload, sourceSignature);
   const status = normalizeStatus(parsed.status);
-  const streamBacked = hasStreamEvidence(parsed);
+  const liveStreamFrame = isLiveStreamFrame(parsed);
   const totalElementCount = getTotalElementCount(parsed.payload);
-  const shouldPlay = shouldUseStreamPlayer(parsed, streamBacked, totalElementCount);
+  const shouldPlay = shouldUseStreamPlayer(parsed, liveStreamFrame, totalElementCount);
 
   if (!shouldPlay) {
     runtime.finalPayload = parsed.payload;
@@ -307,8 +306,8 @@ function createInitialPlayerState(
     };
   }
 
-  const isFinalPayload = Boolean(parsed.a2ui) || (!STREAMING_STATUSES.has(status) && streamBacked);
-  runtime.streamBackedSeen = streamBacked;
+  const isFinalPayload = Boolean(parsed.a2ui) || (!STREAMING_STATUSES.has(status) && liveStreamFrame);
+  runtime.streamPlaybackStarted = true;
   runtime.finalPayload = isFinalPayload ? parsed.payload : null;
   runtime.phase = isFinalPayload ? "waiting_created" : "previewing";
   runtime.displayPayload = slicePayloadByRenderedCount(parsed.payload, 0);
@@ -357,6 +356,7 @@ export function buildA2UIStreamPlayerKey(parsed: ParsedA2UIMessage): string {
   const streamIdentity =
     stringIdentity(parsed.a2ui?.stream_id) ||
     stringIdentity(parsed.debug?.streamId) ||
+    stringIdentity(parsed.debug?.streamGroupId) ||
     stringIdentity(parsed.a2ui?.tool_call_id) ||
     stringIdentity(parsed.debug?.toolCallId) ||
     stringIdentity(parsed.interactionId) ||
@@ -374,19 +374,22 @@ function traceTurnIdentity(parsed: ParsedA2UIMessage): string {
   return [traceId, turnIndex].filter(Boolean).join(":");
 }
 
-function shouldUseStreamPlayer(parsed: ParsedA2UIMessage, streamBacked: boolean, knownElementCount: number): boolean {
-  if (!streamBacked || prefersReducedMotion()) {
+function shouldUseStreamPlayer(
+  parsed: ParsedA2UIMessage,
+  streamPlaybackStarted: boolean,
+  knownElementCount: number,
+): boolean {
+  if (parsed.historyHydrated || !streamPlaybackStarted || prefersReducedMotion()) {
     return false;
   }
-  const status = normalizeStatus(parsed.status);
-  return !DISABLED_STATUSES.has(status) && knownElementCount > 0;
+  return knownElementCount > 0;
 }
 
-function hasStreamEvidence(parsed: ParsedA2UIMessage): boolean {
+function isLiveStreamFrame(parsed: ParsedA2UIMessage): boolean {
   if (parsed.historyHydrated) {
     return false;
   }
-  return Number(parsed.debug?.chunkCount ?? 0) > 0 || Boolean(parsed.streamText);
+  return !parsed.a2ui && STREAMING_STATUSES.has(normalizeStatus(parsed.status));
 }
 
 function calculateInterval(runtime: PlayerRuntime): number {

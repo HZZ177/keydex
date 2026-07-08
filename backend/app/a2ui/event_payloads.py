@@ -13,6 +13,7 @@ def build_a2ui_stream_payload(
     render_key: str,
     stream_id: str,
     tool_call_id: str | None,
+    stream_group_id: str | None = None,
     chunk_index: int,
     args_delta: str = "",
     args_text_length: int = 0,
@@ -38,6 +39,7 @@ def build_a2ui_stream_payload(
     return {
         "render_key": render_key,
         "stream_id": stream_id,
+        **({"stream_group_id": stream_group_id} if stream_group_id else {}),
         "tool_call_id": tool_call_id,
         "stream": stream,
     }

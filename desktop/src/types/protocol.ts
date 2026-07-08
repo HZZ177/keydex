@@ -1473,6 +1473,7 @@ export interface A2UIStreamActionData {
   render_key: A2UIRenderKey;
   mode?: A2UIMode;
   stream_id: string;
+  stream_group_id?: string | null;
   tool_call_id?: string | null;
   stream: A2UIStreamFrame;
 }
@@ -1484,6 +1485,7 @@ export interface A2UICreatedActionData {
   render_key?: A2UIRenderKey;
   mode?: A2UIMode;
   stream_id?: string;
+  stream_group_id?: string | null;
   tool_call_id?: string | null;
   interaction_id?: string;
   interaction?: A2UIInteractionState | null;
@@ -1496,6 +1498,7 @@ export interface A2UIWaitingInputActionData {
   interaction_id: string;
   render_key: A2UIRenderKey;
   stream_id: string;
+  stream_group_id?: string | null;
   tool_call_id?: string | null;
   a2ui?: A2UIObject;
   checkpoint?: Record<string, unknown>;
@@ -1551,6 +1554,7 @@ export interface A2UIDebugBlockState {
   renderKey?: string;
   mode?: A2UIMode | string;
   streamId?: string;
+  streamGroupId?: string | null;
   interactionId?: string;
   toolCallId?: string | null;
   traceId?: string | null;

@@ -3,8 +3,15 @@ from __future__ import annotations
 import pytest
 from langchain.agents.middleware import ToolCallRequest
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.errors import GraphInterrupt
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.types import Interrupt
 
 from backend.app.agent.context_compression_utils import (
@@ -21,6 +28,9 @@ from backend.app.agent.middleware.context_compression import (
 )
 from backend.app.agent.middleware.duplicate_tool_call_guard import (
     DuplicateToolCallGuardMiddleware,
+)
+from backend.app.agent.middleware.invalid_tool_call_recovery import (
+    InvalidToolCallRecoveryMiddleware,
 )
 from backend.app.agent.middleware.tool_error_handling import ToolErrorHandlingMiddleware
 from backend.app.agent.runtime_settings import (
@@ -58,7 +68,42 @@ async def test_tool_error_handling_middleware_returns_error_tool_message() -> No
     assert isinstance(result, ToolMessage)
     assert result.status == "error"
     assert result.tool_call_id == "call_1"
+    assert result.name == "read_file"
     assert "boom" in result.content
+    assert "调整参数后重试" in result.content
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_call_recovery_patches_tool_message_and_retries() -> None:
+    middleware = InvalidToolCallRecoveryMiddleware()
+    ai_message = AIMessage(content="")
+    ai_message.invalid_tool_calls = [
+        {"name": "chart", "args": '{"title":', "id": "call_bad"}
+    ]
+
+    result = await middleware.aafter_agent(
+        {"messages": [HumanMessage(content="画一个图"), ai_message]},
+        None,
+    )
+
+    assert result is not None
+    assert result["jump_to"] == "model"
+    messages = result["messages"]
+    assert isinstance(messages[0], RemoveMessage)
+    assert messages[0].id == REMOVE_ALL_MESSAGES
+    patched_ai = messages[2]
+    assert isinstance(patched_ai, AIMessage)
+    assert patched_ai.invalid_tool_calls == []
+    assert patched_ai.tool_calls[0]["id"] == "call_bad"
+    assert patched_ai.tool_calls[0]["name"] == "chart"
+    tool_message = messages[3]
+    assert isinstance(tool_message, ToolMessage)
+    assert tool_message.status == "error"
+    assert tool_message.tool_call_id == "call_bad"
+    assert tool_message.content.startswith(
+        InvalidToolCallRecoveryMiddleware.RECOVERY_MESSAGE_PREFIX
+    )
+    assert "请修正参数后重新发起工具调用" in tool_message.content
 
 
 @pytest.mark.asyncio

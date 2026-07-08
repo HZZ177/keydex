@@ -199,6 +199,51 @@ def test_pipeline_merges_tool_call_chunks_by_index_when_id_arrives_late() -> Non
     assert pipeline.tool_call_id_for_run("tool_run_write") == "call_write"
 
 
+def test_pipeline_keeps_active_index_stream_when_model_run_id_drifts() -> None:
+    pipeline = ToolCallChunkPipeline()
+
+    first_progress = pipeline.process_chunk(
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {
+                    "id": None,
+                    "index": 0,
+                    "name": "write_file",
+                    "args": '{"path":"a.txt"',
+                }
+            ],
+        ),
+        model_run_id="model_run_a",
+    )
+    second_progress = pipeline.process_chunk(
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {
+                    "id": None,
+                    "index": 0,
+                    "name": None,
+                    "args": ',"content":"hello"}',
+                }
+            ],
+        ),
+        model_run_id="model_run_b",
+    )
+    tool_call_id = pipeline.bind_tool_run(
+        run_id="tool_run_write",
+        tool_name="write_file",
+        params={"path": "a.txt", "content": "hello"},
+    )
+
+    assert first_progress[0]["tool_call_id"] == "model_run_a:0"
+    assert second_progress[0]["tool_call_id"] == "model_run_a:0"
+    assert second_progress[0]["files"][0]["path"] == "a.txt"
+    assert second_progress[0]["files"][0]["added_lines"] == 1
+    assert tool_call_id == "model_run_a:0"
+    assert pipeline.tool_call_id_for_run("tool_run_write") == "model_run_a:0"
+
+
 def test_pipeline_handles_interleaved_write_file_tool_calls() -> None:
     pipeline = ToolCallChunkPipeline()
     chunk = AIMessageChunk(

@@ -34,6 +34,7 @@ export interface A2UIEventSnapshot {
   renderKey?: A2UIRenderKey;
   mode?: string;
   streamId?: string;
+  streamGroupId?: string;
   interactionId?: string;
   toolCallId?: string | null;
   argsDelta?: string;
@@ -120,6 +121,7 @@ export function extractA2UIEventSnapshot(data: unknown): A2UIEventSnapshot {
       | undefined,
     mode: readNonEmptyString(root.mode, a2ui?.mode),
     streamId: readNonEmptyString(root.stream_id, root.streamId, a2ui?.stream_id, a2uiRecord?.streamId),
+    streamGroupId: readNonEmptyString(root.stream_group_id, root.streamGroupId, a2uiRecord?.streamGroupId),
     interactionId: readNonEmptyString(
       root.interaction_id,
       root.interactionId,
@@ -145,6 +147,7 @@ export function extractA2UIEventSnapshot(data: unknown): A2UIEventSnapshot {
 export function buildA2UIDebugKey(action: string, snapshot: A2UIEventSnapshot): string {
   return (
     snapshot.streamId ||
+    snapshot.streamGroupId ||
     snapshot.interactionId ||
     snapshot.toolCallId ||
     [
@@ -168,6 +171,7 @@ export function createA2UIDebugState(
     renderKey: snapshot.renderKey,
     mode: snapshot.mode,
     streamId: snapshot.streamId,
+    streamGroupId: snapshot.streamGroupId,
     interactionId: snapshot.interactionId,
     toolCallId: snapshot.toolCallId,
     traceId: snapshot.traceId,
@@ -193,6 +197,7 @@ export function mergeA2UIDebugSnapshot(
 ): void {
   debug.renderKey = snapshot.renderKey || debug.renderKey;
   debug.mode = snapshot.mode || debug.mode;
+  debug.streamGroupId = snapshot.streamGroupId || debug.streamGroupId;
   debug.streamId = snapshot.streamId || debug.streamId;
   debug.interactionId = snapshot.interactionId || debug.interactionId;
   debug.toolCallId = snapshot.toolCallId || debug.toolCallId;

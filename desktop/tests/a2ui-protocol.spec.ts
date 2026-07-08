@@ -51,6 +51,7 @@ describe("A2UI protocol utilities", () => {
     const snapshot = extractA2UIEventSnapshot({
       trace_id: "trace-1",
       turn_index: 3,
+      stream_group_id: "stream-group-confirm",
       stream: {
         status: "chunk",
         chunk_index: 2,
@@ -79,6 +80,7 @@ describe("A2UI protocol utilities", () => {
       renderKey: "confirm",
       mode: "interactive",
       streamId: "stream-confirm",
+      streamGroupId: "stream-group-confirm",
       interactionId: "int-confirm",
       toolCallId: "tool-confirm",
       argsDelta: '"title":"确认"',
@@ -151,6 +153,167 @@ describe("A2UI protocol utilities", () => {
     });
   });
 
+  it("upgrades a weak stream placeholder when the stable stream identity arrives", () => {
+    const cache = new A2UIStreamCache();
+
+    const started = cache.apply("a2ui_stream_start", {
+      trace_id: "trace-weak",
+      turn_index: 5,
+      render_key: "chart",
+      stream: { status: "start", chunk_index: 0, args_delta: '{"title":"图表"', args_text_length: 13 },
+    }, {
+      idFactory: () => "msg-weak-start",
+      now: 4000,
+    });
+    const chunk = cache.apply("a2ui_stream_chunk", {
+      trace_id: "trace-weak",
+      turn_index: 5,
+      render_key: "chart",
+      stream_id: "trace-weak:a2ui:call-chart",
+      tool_call_id: "call-chart",
+      stream: {
+        status: "chunk",
+        chunk_index: 1,
+        args_delta: ',"charts":[{"type":"column"}]}',
+        args_text_length: 42,
+      },
+    }, {
+      idFactory: () => "msg-strong-chunk",
+      now: 4001,
+    });
+
+    expect(started.created).toBe(true);
+    expect(chunk.created).toBe(false);
+    expect(chunk.messages).toHaveLength(1);
+    expect(chunk.message).toMatchObject({
+      id: "msg-weak-start",
+      role: "a2ui",
+      streaming: true,
+      a2uiDebug: {
+        id: "trace-weak:a2ui:call-chart",
+        streamId: "trace-weak:a2ui:call-chart",
+        toolCallId: "call-chart",
+        chunkCount: 1,
+      },
+    });
+    expect(chunk.message?.a2uiDebug?.rawEvents.map((event) => event.action)).toEqual([
+      "a2ui_stream_start",
+      "a2ui_stream_chunk",
+    ]);
+  });
+
+  it("merges A2UI stream chunks by explicit stream group when stream id drifts", () => {
+    const cache = new A2UIStreamCache();
+    const groupId = "trace-drift:a2ui:model-run:0";
+
+    const started = cache.apply("a2ui_stream_start", {
+      trace_id: "trace-drift",
+      turn_index: 2,
+      render_key: "chart",
+      stream_group_id: groupId,
+      stream_id: "trace-drift:a2ui:model-run-a:0",
+      tool_call_id: "model-run-a:0",
+      stream: {
+        status: "start",
+        chunk_index: 0,
+        args_delta: '{"title":"趋势图"',
+        args_text: '{"title":"趋势图"',
+        args_text_length: 13,
+      },
+    }, { now: 4100 });
+    const chunk = cache.apply("a2ui_stream_chunk", {
+      trace_id: "trace-drift",
+      turn_index: 2,
+      render_key: "chart",
+      stream_group_id: groupId,
+      stream_id: "trace-drift:a2ui:model-run-b:0",
+      tool_call_id: "model-run-b:0",
+      stream: {
+        status: "chunk",
+        chunk_index: 1,
+        args_delta: ',"charts":[{"type":"line"}]}',
+        args_text: '{"title":"趋势图","charts":[{"type":"line"}]}',
+        args_text_length: 42,
+      },
+    }, { now: 4101 });
+    const finished = cache.apply("a2ui_stream_finish", {
+      trace_id: "trace-drift",
+      turn_index: 2,
+      render_key: "chart",
+      stream_group_id: groupId,
+      stream_id: "trace-drift:a2ui:model-run-c:0",
+      tool_call_id: "model-run-c:0",
+      stream: {
+        status: "finish",
+        args_text: '{"title":"趋势图","charts":[{"type":"line"}]}',
+        args_text_length: 42,
+        finish_reason: "tool_args_completed",
+      },
+    }, { now: 4102 });
+
+    expect(started.created).toBe(true);
+    expect(chunk.created).toBe(false);
+    expect(finished.created).toBe(false);
+    expect(finished.messages).toHaveLength(1);
+    expect(finished.message?.a2uiDebug).toMatchObject({
+      id: "trace-drift:a2ui:model-run-a:0",
+      streamGroupId: groupId,
+      status: "finished",
+      chunkCount: 1,
+      argsBuffer: '{"title":"趋势图","charts":[{"type":"line"}]}',
+      jsonParseStatus: "valid",
+      parsedArgs: { title: "趋势图", charts: [{ type: "line" }] },
+    });
+    expect(finished.message?.a2uiDebug?.rawEvents.map((event) => event.action)).toEqual([
+      "a2ui_stream_start",
+      "a2ui_stream_chunk",
+      "a2ui_stream_finish",
+    ]);
+  });
+
+  it("removes discarded stream placeholders before retry", () => {
+    const cache = new A2UIStreamCache();
+
+    cache.apply("a2ui_stream_start", {
+      render_key: "chart",
+      stream_id: "trace-1:a2ui:call_bad",
+      tool_call_id: "call_bad",
+      stream: {
+        status: "start",
+        args_delta: "{\"title\":",
+        args_text: "{\"title\":",
+        args_text_length: 9,
+      },
+    });
+    const discarded = cache.apply("a2ui_stream_finish", {
+      render_key: "chart",
+      stream_id: "trace-1:a2ui:call_bad",
+      tool_call_id: "call_bad",
+      stream: {
+        status: "finish",
+        args_text: "{\"title\":",
+        args_text_length: 9,
+        finish_reason: "invalid_tool_call",
+      },
+    });
+    cache.apply("a2ui_stream_start", {
+      render_key: "chart",
+      stream_id: "trace-1:a2ui:call_good",
+      tool_call_id: "call_good",
+      stream: {
+        status: "start",
+        args_delta: "{\"title\":\"有效图表\"}",
+        args_text: "{\"title\":\"有效图表\"}",
+        args_text_length: 16,
+      },
+    });
+
+    const snapshot = cache.snapshot();
+    expect(discarded.messages).toHaveLength(0);
+    expect(snapshot).toHaveLength(1);
+    expect(snapshot[0]?.a2uiDebug?.streamId).toBe("trace-1:a2ui:call_good");
+  });
+
   it("keeps A2UI stream buffers monotonic from start delta and authoritative args text", () => {
     const debug = createA2UIDebugState("debug-chart", {
       renderKey: "chart",
@@ -211,6 +374,41 @@ describe("A2UI protocol utilities", () => {
       a2ui: { render_key: "chart", mode: "render" },
       a2uiDebug: { status: "created" },
     });
+  });
+
+  it("ignores duplicated A2UI created events with the same semantic identity", () => {
+    const cache = new A2UIStreamCache();
+    const payload = {
+      render_key: "chart",
+      mode: "render",
+      stream_id: "chart-stream",
+      tool_call_id: "tool-chart",
+      trace_id: "trace-1",
+      turn_index: 1,
+      a2ui: a2uiObject({
+        render_key: "chart",
+        mode: "render",
+        stream_id: "chart-stream",
+        tool_call_id: "tool-chart",
+        interaction: null,
+      }),
+    };
+
+    const first = cache.apply("a2ui_created", payload, {
+      idFactory: () => "msg-a2ui",
+      now: 2000,
+    });
+    const duplicated = cache.apply("a2ui_created", payload, {
+      idFactory: () => "msg-a2ui-duplicated",
+      now: 2001,
+    });
+
+    const snapshot = cache.snapshot();
+    expect(first.created).toBe(true);
+    expect(duplicated.message).toBeNull();
+    expect(snapshot).toHaveLength(1);
+    expect(snapshot[0]?.id).toBe("msg-a2ui");
+    expect(snapshot[0]?.a2uiDebug?.rawEvents).toHaveLength(1);
   });
 
   it("does not let non-terminal interaction snapshots overwrite submitted or cancelled state", () => {

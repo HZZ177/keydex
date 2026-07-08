@@ -55,8 +55,8 @@ const CHART_NUMBER_FORMATTER = new Intl.NumberFormat("zh-CN", {
 
 export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
   const isStreaming = isStreamingStatus(parsed.status) || Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
-  const animateInitialCharts = !parsed.historyHydrated;
-  const animateChartUpdates = isStreaming || !isRuntimeBackedChart(parsed);
+  const animateChartUpdates = Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
+  const animateInitialCharts = animateChartUpdates;
   const payload = parsed.payload;
   const normalizedPanels = useMemo(() => normalizeChartPanels(payload, isStreaming, parsed), [isStreaming, parsed, payload]);
   const panels = useStableChartPanels(normalizedPanels, isStreaming, chartPanelStabilityKey(parsed));
@@ -672,17 +672,6 @@ function isStreamingStatus(status: string): boolean {
   return normalized === "started" || normalized === "streaming" || normalized === "finished";
 }
 
-function isRuntimeBackedChart(parsed: ParsedA2UIMessage): boolean {
-  return Boolean(
-    parsed.a2ui?.stream_id ||
-      parsed.a2ui?.tool_call_id ||
-      parsed.debug?.streamId ||
-      parsed.debug?.toolCallId ||
-      Number(parsed.debug?.chunkCount ?? 0) > 0 ||
-      parsed.streamText,
-  );
-}
-
 function normalizeChartPanels(
   payload: Record<string, unknown>,
   isStreaming: boolean,
@@ -992,12 +981,15 @@ function chartDataCount(chart: ChartSpec): number {
 }
 
 function chartPanelStabilityKey(parsed: ParsedA2UIMessage): string {
-  return [
-    scalarText(parsed.a2ui?.stream_id),
+  const identity = [
     scalarText(parsed.debug?.streamId),
+    scalarText(parsed.a2ui?.stream_id),
+    scalarText(parsed.debug?.streamGroupId),
     scalarText(parsed.a2ui?.tool_call_id),
     scalarText(parsed.debug?.toolCallId),
     scalarText(parsed.interactionId),
+  ].find(Boolean);
+  return identity || [
     scalarText(parsed.debug?.traceId),
     scalarText(parsed.debug?.turnIndex),
     parsed.renderKey,

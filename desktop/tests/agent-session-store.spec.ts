@@ -1322,6 +1322,93 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
   });
 
+  it("merges A2UI stream preview by stream group when stream id changes during streaming", () => {
+    const streamGroupId = "trace-drift:a2ui:model-run:0";
+    let state = createInitialAgentConversationState();
+
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_start",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-drift",
+        turn_index: 2,
+        render_key: "chart",
+        stream_group_id: streamGroupId,
+        stream_id: "trace-drift:a2ui:model-run-a:0",
+        tool_call_id: "model-run-a:0",
+        stream: {
+          status: "start",
+          chunk_index: 0,
+          args_delta: '{"title":"产品功能使用趋势"',
+          args_text: '{"title":"产品功能使用趋势"',
+          args_text_length: 16,
+        },
+        timestamp_ms: 1_800_000_000_000,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_chunk",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-drift",
+        turn_index: 2,
+        render_key: "chart",
+        stream_group_id: streamGroupId,
+        stream_id: "trace-drift:a2ui:model-run-b:0",
+        tool_call_id: "model-run-b:0",
+        stream: {
+          status: "chunk",
+          chunk_index: 1,
+          args_delta: ',"charts":[{"type":"line"}]}',
+          args_text: '{"title":"产品功能使用趋势","charts":[{"type":"line"}]}',
+          args_text_length: 44,
+        },
+        timestamp_ms: 1_800_000_000_001,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_finish",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-drift",
+        turn_index: 2,
+        render_key: "chart",
+        stream_group_id: streamGroupId,
+        stream_id: "trace-drift:a2ui:model-run-c:0",
+        tool_call_id: "model-run-c:0",
+        stream: {
+          status: "finish",
+          args_text: '{"title":"产品功能使用趋势","charts":[{"type":"line"}]}',
+          args_text_length: 44,
+          finish_reason: "tool_args_completed",
+        },
+        timestamp_ms: 1_800_000_000_002,
+      },
+    });
+
+    const messages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "a2ui");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: "a2ui",
+      streaming: false,
+      traceId: "trace-drift",
+      turnIndex: 2,
+      a2uiDebug: {
+        id: "trace-drift:a2ui:model-run-a:0",
+        streamGroupId,
+        status: "finished",
+        chunkCount: 1,
+        argsBuffer: '{"title":"产品功能使用趋势","charts":[{"type":"line"}]}',
+        parsedArgs: { title: "产品功能使用趋势", charts: [{ type: "line" }] },
+      },
+    });
+    expect(messages[0].a2uiDebug?.rawEvents.map((event) => event.action)).toEqual([
+      "a2ui_stream_start",
+      "a2ui_stream_chunk",
+      "a2ui_stream_finish",
+    ]);
+  });
+
   it("keeps live A2UI playback identity when completed history hydrates from created-only events", () => {
     const streamId = "a2ui:confirm:tool-1";
     let state = createInitialAgentConversationState();
@@ -1443,6 +1530,62 @@ describe("agentSessionStore reducer", () => {
     expect(messages[0].a2uiDebug?.rawEvents.map((event) => event.action)).toEqual(
       expect.arrayContaining(["a2ui_stream_start", "a2ui_stream_chunk", "a2ui_stream_finish", "a2ui_created"]),
     );
+  });
+
+  it("does not duplicate a live weak A2UI placeholder when history hydrates with the stable stream identity", () => {
+    let state = createInitialAgentConversationState();
+
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_start",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-weak",
+        turn_index: 3,
+        render_key: "chart",
+        stream: {
+          status: "start",
+          chunk_index: 0,
+          args_delta: '{"title":"实时图表"',
+          args_text_length: 16,
+        },
+        timestamp_ms: 1_800_000_001_000,
+      },
+    });
+    const liveA2UIId = selectAgentMessages(state, "ses-1").find((message) => message.role === "a2ui")?.id;
+    expect(liveA2UIId).toBeTruthy();
+
+    state = agentConversationReducer(state, {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        {
+          id: "hist-a2ui-weak",
+          role: "a2ui",
+          content: "",
+          contentType: "a2ui",
+          timestamp: 1_800_000_001_001,
+          a2ui: a2uiObject({
+            render_key: "chart",
+            mode: "render",
+            stream_id: "trace-weak:a2ui:call-chart",
+            tool_call_id: "call-chart",
+            trace_id: "trace-weak",
+            turn_index: 3,
+            interaction: null,
+          }),
+        },
+      ]),
+    });
+
+    const messages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "a2ui");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].id).toBe(liveA2UIId);
+    expect(messages[0].hydratedFromHistory).toBeFalsy();
+    expect(messages[0].a2ui).toMatchObject({
+      render_key: "chart",
+      stream_id: "trace-weak:a2ui:call-chart",
+      tool_call_id: "call-chart",
+    });
   });
 
   it("creates A2UI messages from created events without a preview", () => {

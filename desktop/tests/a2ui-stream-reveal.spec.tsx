@@ -99,15 +99,15 @@ describe("useA2UIStreamReveal", () => {
     expect(buildA2UIRevealResetKey(created)).toBe(buildA2UIRevealResetKey(streaming));
   });
 
-  it("does not expose a complete final payload on the first stream-backed player render", () => {
+  it("shows a completed created payload immediately when no live stream frame started", () => {
     const snapshots: Array<{ rendered: number; total: number; visibleItems: number }> = [];
     const parsed = streamBackedCreatedChartMessage(6);
     const { unmount } = render(<PlayerProbe parsed={parsed} snapshots={snapshots} />);
 
     expect(snapshots[0]).toEqual({
-      rendered: 0,
+      rendered: 6,
       total: 6,
-      visibleItems: 0,
+      visibleItems: 6,
     });
 
     unmount();

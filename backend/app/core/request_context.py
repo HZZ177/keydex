@@ -199,6 +199,7 @@ def consume_a2ui_stream_context(
     render_key: str,
     *,
     tool_call_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any] | None:
     normalized_key = str(render_key or "").strip()
     if not normalized_key:
@@ -212,6 +213,7 @@ def consume_a2ui_stream_context(
         return None
 
     normalized_tool_call_id = str(tool_call_id or "").strip()
+    normalized_run_id = str(run_id or "").strip()
     matched_index = 0
     if normalized_tool_call_id:
         for index, item in enumerate(queue):
@@ -219,7 +221,12 @@ def consume_a2ui_stream_context(
                 matched_index = index
                 break
         else:
-            return None
+            matched_index = 0
+    if normalized_run_id:
+        for index, item in enumerate(queue):
+            if str((item or {}).get("run_id") or "").strip() == normalized_run_id:
+                matched_index = index
+                break
 
     value = dict(queue.pop(matched_index) or {})
     if queue:

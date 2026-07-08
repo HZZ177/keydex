@@ -121,7 +121,7 @@ async def test_a2ui_runtime_reuses_registered_stream_context(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a2ui_runtime_does_not_consume_mismatched_stream_context(tmp_path) -> None:
+async def test_a2ui_runtime_consumes_queued_stream_context_when_tool_call_id_mismatches(tmp_path) -> None:
     clear_a2ui_stream_context()
     repositories = _repositories(tmp_path)
     dispatcher = RecordingDispatcher()
@@ -146,12 +146,52 @@ async def test_a2ui_runtime_does_not_consume_mismatched_stream_context(tmp_path)
         )
     )
 
-    assert result["stream_id"] == "trace-1:a2ui:tool-call-1"
-    assert consume_a2ui_stream_context("chart", tool_call_id="other-call") == {
-        "stream_id": "trace-1:a2ui:other-call",
-        "tool_call_id": "other-call",
+    assert result["stream_id"] == "trace-1:a2ui:other-call"
+    assert dispatcher.events[0]["payload"]["a2ui"]["tool_call_id"] == "tool-call-1"
+    assert consume_a2ui_stream_context("chart", tool_call_id="other-call") is None
+
+
+@pytest.mark.asyncio
+async def test_a2ui_runtime_prefers_stream_context_with_matching_run_id(tmp_path) -> None:
+    clear_a2ui_stream_context()
+    repositories = _repositories(tmp_path)
+    dispatcher = RecordingDispatcher()
+    registry = build_builtin_a2ui_registry()
+    runtime = A2UIRuntime(repositories=repositories, dispatcher=dispatcher, registry=registry)
+    register_a2ui_stream_context(
+        "chart",
+        {
+            "stream_id": "trace-1:a2ui:older-call",
+            "tool_call_id": "older-call",
+            "render_key": "chart",
+            "run_id": "older-run",
+        },
+    )
+    register_a2ui_stream_context(
+        "chart",
+        {
+            "stream_id": "trace-1:a2ui:current-call",
+            "tool_call_id": "current-call",
+            "render_key": "chart",
+            "run_id": "tool-run-1",
+        },
+    )
+
+    result = json.loads(
+        await runtime.handle_tool_call(
+            registry.require("chart"),
+            {"title": "Metrics", "charts": [{"type": "column", "items": [{"name": "一月", "value": 120}]}]},
+            _context(tmp_path),
+            {"tool_call_id": "missing-call", "run_id": "tool-run-1"},
+        )
+    )
+
+    assert result["stream_id"] == "trace-1:a2ui:current-call"
+    assert consume_a2ui_stream_context("chart", tool_call_id="older-call") == {
+        "stream_id": "trace-1:a2ui:older-call",
+        "tool_call_id": "older-call",
         "render_key": "chart",
-        "run_id": "run-1",
+        "run_id": "older-run",
     }
 
 

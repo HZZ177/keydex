@@ -11,17 +11,17 @@ from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
-from backend.app.agent.internal_llm_events import is_internal_context_compression_event
-from backend.app.agent.tool_call_progress import (
-    ToolCallChunkPipeline,
-    default_collectors,
-    finalize_file_change,
-)
 from backend.app.a2ui.stream_bridge import (
     A2UIStreamBridge,
     a2ui_stream_event_type,
     is_a2ui_stream_payload,
     strip_a2ui_stream_marker,
+)
+from backend.app.agent.internal_llm_events import is_internal_context_compression_event
+from backend.app.agent.tool_call_progress import (
+    ToolCallChunkPipeline,
+    default_collectors,
+    finalize_file_change,
 )
 from backend.app.core.logger import logger
 from backend.app.events import DomainEventType, EventDispatcher
@@ -108,6 +108,31 @@ async def process_agent_events(
                 continue
 
             if event_type == "on_chat_model_end":
+                output = data.get("output")
+                invalid_tool_calls = _message_invalid_tool_calls(output)
+                if invalid_tool_calls:
+                    await _discard_a2ui_streams(
+                        bridge=a2ui_stream_bridge,
+                        dispatcher=dispatcher,
+                        finish_reason="invalid_tool_call",
+                        session_id=session_id,
+                        trace_id=trace_id,
+                        user_id=user_id,
+                        active_session_id=active_session_id,
+                        run_id=run_id,
+                        turn_index=turn_index,
+                    )
+                else:
+                    await _finish_a2ui_streams_for_model_end(
+                        bridge=a2ui_stream_bridge,
+                        dispatcher=dispatcher,
+                        session_id=session_id,
+                        trace_id=trace_id,
+                        user_id=user_id,
+                        active_session_id=active_session_id,
+                        run_id=run_id,
+                        turn_index=turn_index,
+                    )
                 _collect_usage(data.get("output"), result)
                 if result.latest_llm_token_usage:
                     logger.info(
@@ -317,10 +342,32 @@ async def process_agent_events(
             f"turn_index={turn_index} | trace_id={trace_id} | "
             f"partial_content_len={len(result.final_content)}"
         )
+        await _discard_a2ui_streams(
+            bridge=a2ui_stream_bridge,
+            dispatcher=dispatcher,
+            finish_reason="turn_cancelled",
+            session_id=session_id,
+            trace_id=trace_id,
+            user_id=user_id,
+            active_session_id=active_session_id,
+            run_id="",
+            turn_index=turn_index,
+        )
         await _close_event_stream(event_stream)
     except GraphInterrupt as exc:
         if not _is_a2ui_graph_interrupt(exc):
             raise
+        await _discard_a2ui_streams(
+            bridge=a2ui_stream_bridge,
+            dispatcher=dispatcher,
+            finish_reason="a2ui_waiting_input",
+            session_id=session_id,
+            trace_id=trace_id,
+            user_id=user_id,
+            active_session_id=active_session_id,
+            run_id="",
+            turn_index=turn_index,
+        )
         logger.info(
             f"[AgentEvents] A2UI 等待用户输入，中止本轮事件处理 | session_id={session_id} | "
             f"turn_index={turn_index} | trace_id={trace_id}"
@@ -479,7 +526,7 @@ async def _finish_a2ui_stream_for_tool_start(
 ) -> None:
     payload = None
     if tool_call_id:
-        payload = bridge.finish_for_tool_call(tool_call_id)
+        payload = bridge.finish_for_tool_call(tool_call_id, run_id=run_id)
     if payload is None and run_id:
         payload = bridge.finish_for_run_id(run_id)
     if payload is None:
@@ -494,6 +541,55 @@ async def _finish_a2ui_stream_for_tool_start(
         run_id=run_id,
         turn_index=turn_index,
     )
+
+
+async def _finish_a2ui_streams_for_model_end(
+    *,
+    bridge: A2UIStreamBridge,
+    dispatcher: EventDispatcher,
+    session_id: str,
+    trace_id: str,
+    user_id: str,
+    active_session_id: str,
+    run_id: str,
+    turn_index: int,
+) -> None:
+    for payload in bridge.finish_for_model_end():
+        await _emit_a2ui_stream_payload(
+            dispatcher=dispatcher,
+            payload=payload,
+            session_id=session_id,
+            trace_id=trace_id,
+            user_id=user_id,
+            active_session_id=active_session_id,
+            run_id=run_id,
+            turn_index=turn_index,
+        )
+
+
+async def _discard_a2ui_streams(
+    *,
+    bridge: A2UIStreamBridge,
+    dispatcher: EventDispatcher,
+    finish_reason: str,
+    session_id: str,
+    trace_id: str,
+    user_id: str,
+    active_session_id: str,
+    run_id: str,
+    turn_index: int,
+) -> None:
+    for payload in bridge.discard_all(finish_reason=finish_reason):
+        await _emit_a2ui_stream_payload(
+            dispatcher=dispatcher,
+            payload=payload,
+            session_id=session_id,
+            trace_id=trace_id,
+            user_id=user_id,
+            active_session_id=active_session_id,
+            run_id=run_id,
+            turn_index=turn_index,
+        )
 
 
 async def _flush_reasoning(
@@ -544,6 +640,17 @@ def _message_text(message: Any) -> str:
                 parts.append(str(item.get("text") or ""))
         return "".join(parts)
     return ""
+
+
+def _message_invalid_tool_calls(message: Any) -> list[Any]:
+    raw = getattr(message, "invalid_tool_calls", None)
+    if raw is None and isinstance(message, dict):
+        raw = message.get("invalid_tool_calls")
+    if raw is None:
+        additional_kwargs = getattr(message, "additional_kwargs", None)
+        if isinstance(additional_kwargs, dict):
+            raw = additional_kwargs.get("invalid_tool_calls")
+    return list(raw or []) if isinstance(raw, list) else []
 
 
 def _metadata_text(metadata: dict[str, Any], key: str) -> str:

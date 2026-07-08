@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk
 from langgraph.errors import GraphInterrupt
 from langgraph.types import Interrupt
 
@@ -163,7 +163,10 @@ async def test_event_processor_keeps_one_a2ui_stream_when_tool_call_id_arrives_l
                                     "id": "call_chart",
                                     "index": 0,
                                     "name": None,
-                                    "args": ',"charts":[{"type":"column","items":[{"name":"一月","value":12}]}]}',
+                                    "args": (
+                                        ',"charts":[{"type":"column",'
+                                        '"items":[{"name":"一月","value":12}]}]}'
+                                    ),
                                 }
                             ],
                         )
@@ -215,6 +218,219 @@ async def test_event_processor_keeps_one_a2ui_stream_when_tool_call_id_arrives_l
     ]
     assert emitted[1].payload["tool_call_id"] == "call_chart"
     assert emitted[2].payload["tool_call_id"] == "call_chart"
+
+
+@pytest.mark.asyncio
+async def test_event_processor_keeps_one_a2ui_stream_when_model_run_id_drifts() -> None:
+    emitted: list[DomainEvent] = []
+
+    async def capture(event: DomainEvent) -> None:
+        emitted.append(event)
+
+    await process_agent_events(
+        _event_stream(
+            [
+                {
+                    "event": "on_chat_model_stream",
+                    "run_id": "model_run_a",
+                    "data": {
+                        "chunk": AIMessageChunk(
+                            content="",
+                            tool_call_chunks=[
+                                {
+                                    "id": None,
+                                    "index": 0,
+                                    "name": "chart",
+                                    "args": '{"title":"产品功能使用趋势"',
+                                }
+                            ],
+                        )
+                    },
+                },
+                {
+                    "event": "on_chat_model_stream",
+                    "run_id": "model_run_b",
+                    "data": {
+                        "chunk": AIMessageChunk(
+                            content="",
+                            tool_call_chunks=[
+                                {
+                                    "id": None,
+                                    "index": 0,
+                                    "name": None,
+                                    "args": (
+                                        ',"charts":[{"type":"line",'
+                                        '"items":[{"name":"W1","value":420}]}]}'
+                                    ),
+                                }
+                            ],
+                        )
+                    },
+                },
+                {
+                    "event": "on_tool_start",
+                    "run_id": "tool_chart",
+                    "name": "chart",
+                    "data": {
+                        "input": {
+                            "title": "产品功能使用趋势",
+                            "charts": [
+                                {
+                                    "type": "line",
+                                    "items": [{"name": "W1", "value": 420}],
+                                }
+                            ],
+                        }
+                    },
+                },
+                {
+                    "event": "on_tool_end",
+                    "run_id": "tool_chart",
+                    "name": "chart",
+                    "data": {"output": '{"status":"rendered"}'},
+                },
+            ]
+        ),
+        dispatcher=EventDispatcher([capture]),
+        cancellation=NeverCancelled(),
+        session_id="session-1",
+        trace_id="trace-1",
+        user_id="local-user",
+        active_session_id="session-1",
+        turn_index=1,
+    )
+
+    assert [event.event_type for event in emitted] == [
+        DomainEventType.A2UI_STREAM_STARTED.value,
+        DomainEventType.A2UI_STREAM_CHUNK.value,
+        DomainEventType.A2UI_STREAM_FINISHED.value,
+    ]
+    stream_ids = [event.payload["stream_id"] for event in emitted]
+    assert stream_ids == [
+        "trace-1:a2ui:model_run_a:0",
+        "trace-1:a2ui:model_run_a:0",
+        "trace-1:a2ui:model_run_a:0",
+    ]
+    assert [event.payload["stream_group_id"] for event in emitted] == stream_ids
+    assert emitted[1].payload["stream"]["parsed_payload"] == {
+        "title": "产品功能使用趋势",
+        "charts": [{"type": "line", "items": [{"name": "W1", "value": 420}]}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_event_processor_discards_invalid_a2ui_stream_before_retry() -> None:
+    emitted: list[DomainEvent] = []
+
+    async def capture(event: DomainEvent) -> None:
+        emitted.append(event)
+
+    invalid_output = AIMessage(content="")
+    invalid_output.invalid_tool_calls = [
+        {"name": "chart", "args": '{"title":', "id": "call_bad"}
+    ]
+    valid_output = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "chart",
+                "args": {
+                    "title": "有效图表",
+                    "charts": [{"type": "column"}],
+                },
+                "id": "call_good",
+            }
+        ],
+    )
+
+    await process_agent_events(
+        _event_stream(
+            [
+                {
+                    "event": "on_chat_model_stream",
+                    "run_id": "model_bad",
+                    "data": {
+                        "chunk": AIMessageChunk(
+                            content="",
+                            tool_call_chunks=[
+                                {
+                                    "id": "call_bad",
+                                    "index": 0,
+                                    "name": "chart",
+                                    "args": '{"title":',
+                                }
+                            ],
+                        )
+                    },
+                },
+                {
+                    "event": "on_chat_model_end",
+                    "run_id": "model_bad",
+                    "data": {"output": invalid_output},
+                },
+                {
+                    "event": "on_chat_model_stream",
+                    "run_id": "model_good",
+                    "data": {
+                        "chunk": AIMessageChunk(
+                            content="",
+                            tool_call_chunks=[
+                                {
+                                    "id": "call_good",
+                                    "index": 0,
+                                    "name": "chart",
+                                    "args": (
+                                        '{"title":"有效图表",'
+                                        '"charts":[{"type":"column"}]}'
+                                    ),
+                                }
+                            ],
+                        )
+                    },
+                },
+                {
+                    "event": "on_chat_model_end",
+                    "run_id": "model_good",
+                    "data": {"output": valid_output},
+                },
+                {
+                    "event": "on_tool_start",
+                    "run_id": "tool_chart",
+                    "name": "chart",
+                    "data": {
+                        "input": {
+                            "title": "有效图表",
+                            "charts": [{"type": "column"}],
+                        }
+                    },
+                },
+                {
+                    "event": "on_tool_end",
+                    "run_id": "tool_chart",
+                    "name": "chart",
+                    "data": {"output": '{"status":"rendered"}'},
+                },
+            ]
+        ),
+        dispatcher=EventDispatcher([capture]),
+        cancellation=NeverCancelled(),
+        session_id="session-1",
+        trace_id="trace-1",
+        user_id="local-user",
+        active_session_id="session-1",
+        turn_index=1,
+    )
+
+    assert [event.event_type for event in emitted] == [
+        DomainEventType.A2UI_STREAM_STARTED.value,
+        DomainEventType.A2UI_STREAM_FINISHED.value,
+        DomainEventType.A2UI_STREAM_STARTED.value,
+        DomainEventType.A2UI_STREAM_FINISHED.value,
+    ]
+    assert emitted[1].payload["stream_id"] == "trace-1:a2ui:call_bad"
+    assert emitted[1].payload["stream"]["finish_reason"] == "invalid_tool_call"
+    assert emitted[3].payload["stream_id"] == "trace-1:a2ui:call_good"
+    assert emitted[3].payload["stream"]["finish_reason"] == "tool_args_completed"
 
 
 @pytest.mark.asyncio
