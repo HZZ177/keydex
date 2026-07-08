@@ -223,6 +223,8 @@ function fakeRuntime({
     bindSession: vi.fn(),
     unbindSession: vi.fn(),
     chat,
+    submitA2UI: vi.fn(),
+    cancelA2UI: vi.fn(),
     approvalDecision: vi.fn(),
     cancel: vi.fn(),
     terminateCommand: vi.fn(),

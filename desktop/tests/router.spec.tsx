@@ -1464,6 +1464,8 @@ function fakeChannel(onStatus?: (status: WsConnectionStatus) => void, chat: Retu
       sessionId = null;
     },
     chat,
+    submitA2UI: () => undefined,
+    cancelA2UI: () => undefined,
     approvalDecision: () => undefined,
     cancel: () => undefined,
     terminateCommand: () => undefined,
