@@ -314,6 +314,59 @@ describe("A2UI protocol utilities", () => {
     expect(snapshot[0]?.a2uiDebug?.streamId).toBe("trace-1:a2ui:call_good");
   });
 
+  it("keeps tool error streams as failed cards before retry", () => {
+    const cache = new A2UIStreamCache();
+
+    cache.apply("a2ui_stream_start", {
+      render_key: "chart",
+      stream_id: "trace-1:a2ui:call_bad",
+      tool_call_id: "call_bad",
+      stream: {
+        status: "start",
+        args_delta: "{\"title\":\"错误图表\"",
+        args_text: "{\"title\":\"错误图表\"",
+        args_text_length: 15,
+      },
+    });
+    const failed = cache.apply("a2ui_stream_finish", {
+      render_key: "chart",
+      stream_id: "trace-1:a2ui:call_bad",
+      tool_call_id: "call_bad",
+      stream: {
+        status: "failed",
+        args_text: "{\"title\":\"错误图表\"",
+        args_text_length: 15,
+        finish_reason: "tool_error",
+        error: "$.charts[0].items[0].value: expected number",
+      },
+    });
+    cache.apply("a2ui_stream_start", {
+      render_key: "chart",
+      stream_id: "trace-1:a2ui:call_retry",
+      tool_call_id: "call_retry",
+      stream: {
+        status: "start",
+        args_delta: "{\"title\":\"重试图表\"}",
+        args_text: "{\"title\":\"重试图表\"}",
+        args_text_length: 16,
+      },
+    });
+
+    const snapshot = cache.snapshot();
+    expect(failed.messages).toHaveLength(1);
+    expect(failed.message?.a2uiDebug).toMatchObject({
+      status: "failed",
+      finishReason: "tool_error",
+      error: "$.charts[0].items[0].value: expected number",
+      parseError: "$.charts[0].items[0].value: expected number",
+    });
+    expect(snapshot).toHaveLength(2);
+    expect(snapshot[0]?.a2uiDebug?.streamId).toBe("trace-1:a2ui:call_bad");
+    expect(snapshot[0]?.a2uiDebug?.status).toBe("failed");
+    expect(snapshot[1]?.a2uiDebug?.streamId).toBe("trace-1:a2ui:call_retry");
+    expect(snapshot[1]?.a2uiDebug?.status).toBe("started");
+  });
+
   it("keeps A2UI stream buffers monotonic from start delta and authoritative args text", () => {
     const debug = createA2UIDebugState("debug-chart", {
       renderKey: "chart",

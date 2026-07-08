@@ -50,8 +50,8 @@ class ToolErrorHandlingMiddleware(AgentMiddleware):
             raise
         except Exception as exc:
             tool_call = request.tool_call or {}
-            logger.opt(exception=True).error(
+            logger.warning(
                 f"[AgentMiddleware] 工具调用异常已转换为工具消息 | "
-                f"工具={tool_call.get('name') or '-'} | 错误={exc}"
+                f"工具={tool_call.get('name') or '-'} | 错误类型={type(exc).__name__} | 错误={exc}"
             )
             return self._build_error_message(request, exc)

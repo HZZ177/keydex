@@ -110,3 +110,67 @@ def test_validate_payload_rejects_number_above_maximum() -> None:
                 "additionalProperties": False,
             },
         )
+
+
+def test_validate_payload_coerces_numeric_strings_for_number_and_integer_fields() -> None:
+    result = validate_payload(
+        {
+            "chart": {
+                "items": [
+                    {"name": "访问", "value": "1,234"},
+                    {"name": "转化", "value": "56.7"},
+                ],
+                "rank": "2",
+            }
+        },
+        {
+            "type": "object",
+            "properties": {
+                "chart": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "value": {"type": "number"},
+                                },
+                                "required": ["name", "value"],
+                            },
+                        },
+                        "rank": {"type": "integer"},
+                    },
+                }
+            },
+        },
+    )
+
+    assert result == {
+        "chart": {
+            "items": [
+                {"name": "访问", "value": 1234},
+                {"name": "转化", "value": 56.7},
+            ],
+            "rank": 2,
+        }
+    }
+
+
+def test_validate_payload_does_not_coerce_numeric_strings_when_string_is_allowed() -> None:
+    result = validate_payload(
+        {"value": "123"},
+        {"type": "object", "properties": {"value": {"type": ["string", "number"]}}},
+    )
+
+    assert result == {"value": "123"}
+
+
+@pytest.mark.parametrize("value", ["12万", "1,2", "", "NaN", "Infinity"])
+def test_validate_payload_rejects_non_strict_numeric_strings(value: str) -> None:
+    with pytest.raises(A2UISchemaValidationError, match="expected number"):
+        validate_payload(
+            {"value": value},
+            {"type": "object", "properties": {"value": {"type": "number"}}},
+        )

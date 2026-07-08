@@ -39,6 +39,18 @@ class A2UIStreamBridge:
     def discard_all(self, *, finish_reason: str) -> list[dict[str, Any]]:
         return self.collector.discard_all(finish_reason=finish_reason)
 
+    def fail_for_tool_call(
+        self,
+        tool_call_id: str,
+        *,
+        run_id: str = "",
+        error: str = "",
+    ) -> dict[str, Any] | None:
+        return self.collector.fail_for_tool_call(tool_call_id, run_id=run_id, error=error)
+
+    def fail_for_run_id(self, run_id: str, *, error: str = "") -> dict[str, Any] | None:
+        return self.collector.fail_for_run_id(run_id, error=error)
+
 
 class A2UIStreamCollector:
     def __init__(self, registry: A2UIRegistry, *, trace_id: str | None = None) -> None:
@@ -107,6 +119,27 @@ class A2UIStreamCollector:
         if state is None:
             return None
         return self._finish_for_created(state, finish_reason="tool_call_started")
+
+    def fail_for_tool_call(
+        self,
+        tool_call_id: str,
+        *,
+        run_id: str = "",
+        error: str = "",
+    ) -> dict[str, Any] | None:
+        state = self._states_by_tool_call_id.get(tool_call_id)
+        if state is None:
+            return None
+        if run_id and not state.bound_run_id:
+            state.bound_run_id = run_id
+            self._states_by_run_id[run_id] = state
+        return self._fail_state(state, error=error)
+
+    def fail_for_run_id(self, run_id: str, *, error: str = "") -> dict[str, Any] | None:
+        state = self._states_by_run_id.get(run_id)
+        if state is None:
+            return None
+        return self._fail_state(state, error=error)
 
     def finish_for_model_end(self) -> list[dict[str, Any]]:
         payloads: list[dict[str, Any]] = []
@@ -195,6 +228,41 @@ class A2UIStreamCollector:
         )
         return payload
 
+    def _fail_state(self, state: ToolCallChunkState, *, error: str) -> dict[str, Any] | None:
+        if not self.registry.is_a2ui_tool(state.name):
+            return None
+        key = _stream_key(state)
+        chunk_index = self._chunk_indexes.get(key, 0)
+        self._chunk_indexes[key] = chunk_index + 1
+        payload = _with_event_type(
+            build_a2ui_stream_payload(
+                status="failed",
+                render_key=state.name,
+                stream_id=resolve_a2ui_stream_id(
+                    render_key=state.name,
+                    tool_call_id=key,
+                    trace_id=self.trace_id,
+                ),
+                tool_call_id=_payload_tool_call_id(state),
+                stream_group_id=resolve_a2ui_stream_id(
+                    render_key=state.name,
+                    tool_call_id=_stream_group_key(state),
+                    trace_id=self.trace_id,
+                ),
+                chunk_index=chunk_index,
+                args_delta="",
+                args_text_length=len(state.args_text),
+                args_text=state.args_text,
+                parsed_payload=dict(state.args) if state.args else None,
+                json_parse_status=_json_parse_status(state),
+                finish_reason="tool_error",
+                error=error,
+            ),
+            DomainEventType.A2UI_STREAM_FINISHED,
+        )
+        self._clear_state(key=key, state=state)
+        return payload
+
     def _register_stream_context(self, state: ToolCallChunkState) -> None:
         if not self.registry.is_a2ui_tool(state.name):
             return
@@ -233,6 +301,22 @@ class A2UIStreamCollector:
         self._source_to_stream_key.clear()
         self._finished_keys.clear()
         self._registered_keys.clear()
+
+    def _clear_state(self, *, key: str, state: ToolCallChunkState) -> None:
+        self._seen_keys.discard(key)
+        self._chunk_indexes.pop(key, None)
+        self._stream_states.pop(key, None)
+        self._finished_keys.discard(key)
+        self._registered_keys.discard(key)
+        for source_key, stream_key in list(self._source_to_stream_key.items()):
+            if stream_key == key:
+                self._source_to_stream_key.pop(source_key, None)
+        for tool_call_id, indexed_state in list(self._states_by_tool_call_id.items()):
+            if indexed_state is state:
+                self._states_by_tool_call_id.pop(tool_call_id, None)
+        for run_id, indexed_state in list(self._states_by_run_id.items()):
+            if indexed_state is state:
+                self._states_by_run_id.pop(run_id, None)
 
     def _merge_stream_state(self, incoming: ToolCallChunkState) -> ToolCallChunkState:
         stream_key = self._resolve_stream_state_key(incoming)

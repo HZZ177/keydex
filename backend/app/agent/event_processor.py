@@ -299,9 +299,27 @@ async def process_agent_events(
             if event_type == "on_tool_error":
                 started_at = tool_start_times.pop(run_id, time.perf_counter())
                 duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
-                if a2ui_stream_bridge.registry.is_a2ui_tool(name):
-                    continue
                 error_text = str(data.get("error") or event.get("error") or "工具执行失败")
+                if a2ui_stream_bridge.registry.is_a2ui_tool(name):
+                    logger.warning(
+                        f"[AgentEvents] A2UI 工具异常 | session_id={session_id} | "
+                        f"turn_index={turn_index} | trace_id={trace_id} | tool={name} | "
+                        f"run_id={run_id} | duration_ms={duration_ms} | error={error_text}"
+                    )
+                    tool_call_id = tool_chunk_pipeline.tool_call_id_for_run(run_id)
+                    await _fail_a2ui_stream_for_tool_error(
+                        bridge=a2ui_stream_bridge,
+                        dispatcher=dispatcher,
+                        tool_call_id=tool_call_id,
+                        run_id=run_id,
+                        error=error_text,
+                        session_id=session_id,
+                        trace_id=trace_id,
+                        user_id=user_id,
+                        active_session_id=active_session_id,
+                        turn_index=turn_index,
+                    )
+                    continue
                 mcp_metadata = _mcp_metadata_from_event(event=event, data=data)
                 tool_call_id = tool_chunk_pipeline.tool_call_id_for_run(run_id)
                 logger.warning(
@@ -529,6 +547,38 @@ async def _finish_a2ui_stream_for_tool_start(
         payload = bridge.finish_for_tool_call(tool_call_id, run_id=run_id)
     if payload is None and run_id:
         payload = bridge.finish_for_run_id(run_id)
+    if payload is None:
+        return
+    await _emit_a2ui_stream_payload(
+        dispatcher=dispatcher,
+        payload=payload,
+        session_id=session_id,
+        trace_id=trace_id,
+        user_id=user_id,
+        active_session_id=active_session_id,
+        run_id=run_id,
+        turn_index=turn_index,
+    )
+
+
+async def _fail_a2ui_stream_for_tool_error(
+    *,
+    bridge: A2UIStreamBridge,
+    dispatcher: EventDispatcher,
+    tool_call_id: str,
+    run_id: str,
+    error: str,
+    session_id: str,
+    trace_id: str,
+    user_id: str,
+    active_session_id: str,
+    turn_index: int,
+) -> None:
+    payload = None
+    if tool_call_id:
+        payload = bridge.fail_for_tool_call(tool_call_id, run_id=run_id, error=error)
+    if payload is None and run_id:
+        payload = bridge.fail_for_run_id(run_id, error=error)
     if payload is None:
         return
     await _emit_a2ui_stream_payload(

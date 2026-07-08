@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from backend.app.a2ui.schemas import A2UIObject, A2UIResumeSummary
 
-StreamStatus = Literal["start", "chunk", "finish"]
+StreamStatus = Literal["start", "chunk", "finish", "failed"]
 
 
 def build_a2ui_stream_payload(
@@ -21,6 +21,7 @@ def build_a2ui_stream_payload(
     parsed_payload: dict[str, Any] | None = None,
     json_parse_status: str | None = None,
     finish_reason: str | None = None,
+    error: str | None = None,
 ) -> dict[str, Any]:
     stream = {
         "status": status,
@@ -36,6 +37,8 @@ def build_a2ui_stream_payload(
         stream["json_parse_status"] = json_parse_status
     if finish_reason is not None:
         stream["finish_reason"] = finish_reason
+    if error:
+        stream["error"] = error
     return {
         "render_key": render_key,
         "stream_id": stream_id,

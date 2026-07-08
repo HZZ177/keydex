@@ -1398,6 +1398,7 @@ export type A2UIStreamStatus =
   | "start"
   | "chunk"
   | "finish"
+  | "failed"
   | "started"
   | "streaming"
   | "finished"
@@ -1464,6 +1465,7 @@ export interface A2UIStreamFrame {
   parsed_payload?: Record<string, unknown> | null;
   json_parse_status?: A2UIJsonParseStatus;
   finish_reason?: string | null;
+  error?: string | null;
 }
 
 export interface A2UIStreamActionData {
@@ -1566,6 +1568,7 @@ export interface A2UIDebugBlockState {
   jsonParseStatus: A2UIJsonParseStatus;
   parsedArgs?: unknown;
   parseError?: string;
+  error?: string | null;
   finishReason?: string | null;
   a2ui?: A2UIObject | Record<string, unknown>;
   createdFrame?: Record<string, unknown>;

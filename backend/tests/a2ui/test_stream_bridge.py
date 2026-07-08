@@ -169,6 +169,45 @@ def test_a2ui_stream_bridge_discard_all_does_not_register_for_created() -> None:
     assert consume_a2ui_stream_context("chart", tool_call_id="call_bad") is None
 
 
+def test_a2ui_stream_bridge_tool_error_replaces_finished_stream() -> None:
+    clear_a2ui_stream_context()
+    bridge = A2UIStreamBridge(trace_id="trace-1")
+    pipeline = ToolCallChunkPipeline(collectors=bridge.collectors)
+    pipeline.process_chunk(
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {
+                    "id": "call_chart",
+                    "index": 0,
+                    "name": "chart",
+                    "args": '{"title":"趋势","charts":[{"type":"trend"}]}',
+                }
+            ],
+        ),
+        model_run_id="model-run-1",
+    )
+
+    model_end_payloads = bridge.finish_for_model_end()
+    tool_start_payload = bridge.finish_for_tool_call("call_chart", run_id="tool_chart")
+    failed = bridge.fail_for_tool_call(
+        "call_chart",
+        run_id="tool_chart",
+        error="$.charts[0].series[0].items[6].value: expected number",
+    )
+    repeated_failed = bridge.fail_for_tool_call("call_chart", run_id="tool_chart", error="重复错误")
+
+    assert len(model_end_payloads) == 1
+    assert tool_start_payload is None
+    assert failed is not None
+    payload = strip_a2ui_stream_marker(failed)
+    assert payload["stream_id"] == "trace-1:a2ui:call_chart"
+    assert payload["stream"]["status"] == "failed"
+    assert payload["stream"]["finish_reason"] == "tool_error"
+    assert payload["stream"]["error"] == "$.charts[0].series[0].items[6].value: expected number"
+    assert repeated_failed is None
+
+
 def test_a2ui_stream_bridge_keeps_stream_id_stable_when_tool_call_id_arrives_late() -> None:
     clear_a2ui_stream_context()
     bridge = A2UIStreamBridge(trace_id="trace-1")

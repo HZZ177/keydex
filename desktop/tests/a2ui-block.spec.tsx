@@ -158,6 +158,31 @@ describe("A2UIBlock", () => {
     expect(skeleton.getAttribute("aria-label")).toBe("饼图生成中");
   });
 
+  it("replaces a failed streaming chart with a lightweight error line", () => {
+    render(
+      <A2UIBlock
+        message={a2uiMessage({
+          a2ui: null,
+          debug: a2uiDebug({
+            a2ui: undefined,
+            status: "failed",
+            renderKey: "chart",
+            mode: "render",
+            argsBuffer: '{"title":"错误图表"',
+            error: "$.charts[0].items[0].value: expected number",
+            finishReason: "tool_error",
+            jsonParseStatus: "invalid",
+          }),
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("a2ui-block").getAttribute("data-status")).toBe("failed");
+    expect(screen.getByTestId("a2ui-error-line").textContent).toContain("A2UI 渲染失败，等待重新生成");
+    expect(screen.queryByTestId("a2ui-chart-panel")).toBeNull();
+    expect(screen.queryByTestId("a2ui-stream-preview")).toBeNull();
+  });
+
   it("normalizes waiting interaction status for interactive cards", () => {
     const message = a2uiMessage();
 

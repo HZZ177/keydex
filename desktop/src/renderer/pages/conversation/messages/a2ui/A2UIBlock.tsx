@@ -163,10 +163,19 @@ function renderBuiltInContent(
   onCancel?: A2UICancelHandler,
 ): ReactNode {
   if (parsed.renderKey === "chart") {
+    if (parsed.status === "failed") {
+      return <A2UIErrorLine message={parsed.parseError} />;
+    }
     return <A2ChartBlock parsed={parsed} />;
   }
   if (!parsed.a2ui) {
+    if (parsed.status === "failed") {
+      return <A2UIErrorLine message={parsed.parseError} />;
+    }
     return null;
+  }
+  if (parsed.status === "failed") {
+    return <A2UIErrorLine message={parsed.parseError} />;
   }
   if (parsed.renderKey === "confirm") {
     return <A2ConfirmBlock message={message} parsed={parsed} onSubmit={onSubmit} onCancel={onCancel} />;
@@ -213,9 +222,19 @@ export function parseA2UIMessage(message: ConversationMessage): ParsedA2UIMessag
       stringValue(message.payload.interactionId) ||
       stringValue(message.payload.interaction_id),
     streamText,
-    parseError: stringValue(debug?.parseError),
+    parseError: stringValue(debug?.error) || stringValue(debug?.parseError),
     historyHydrated: message.payload.historyHydrated === true,
   };
+}
+
+function A2UIErrorLine({ message }: { message: string }) {
+  const text = message ? `A2UI 渲染失败，等待重新生成：${message}` : "A2UI 渲染失败，等待重新生成";
+  return (
+    <div className={styles.errorLine} data-testid="a2ui-error-line" title={message || undefined}>
+      <AlertTriangle size={14} aria-hidden="true" />
+      <span>{text}</span>
+    </div>
+  );
 }
 
 function a2uiTitle(parsed: ParsedA2UIMessage): string {

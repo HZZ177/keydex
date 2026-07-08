@@ -434,6 +434,95 @@ async def test_event_processor_discards_invalid_a2ui_stream_before_retry() -> No
 
 
 @pytest.mark.asyncio
+async def test_event_processor_marks_a2ui_stream_failed_on_tool_error() -> None:
+    emitted: list[DomainEvent] = []
+
+    async def capture(event: DomainEvent) -> None:
+        emitted.append(event)
+
+    output = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "chart",
+                "args": {
+                    "title": "错误图表",
+                    "charts": [{"type": "column"}],
+                },
+                "id": "call_chart",
+            }
+        ],
+    )
+
+    await process_agent_events(
+        _event_stream(
+            [
+                {
+                    "event": "on_chat_model_stream",
+                    "run_id": "model_chart",
+                    "data": {
+                        "chunk": AIMessageChunk(
+                            content="",
+                            tool_call_chunks=[
+                                {
+                                    "id": "call_chart",
+                                    "index": 0,
+                                    "name": "chart",
+                                    "args": (
+                                        '{"title":"错误图表",'
+                                        '"charts":[{"type":"column"}]}'
+                                    ),
+                                }
+                            ],
+                        )
+                    },
+                },
+                {
+                    "event": "on_chat_model_end",
+                    "run_id": "model_chart",
+                    "data": {"output": output},
+                },
+                {
+                    "event": "on_tool_start",
+                    "run_id": "tool_chart",
+                    "name": "chart",
+                    "data": {
+                        "input": {
+                            "title": "错误图表",
+                            "charts": [{"type": "column"}],
+                        }
+                    },
+                },
+                {
+                    "event": "on_tool_error",
+                    "run_id": "tool_chart",
+                    "name": "chart",
+                    "data": {"error": "$.charts[0].items[0].value: expected number"},
+                },
+            ]
+        ),
+        dispatcher=EventDispatcher([capture]),
+        cancellation=NeverCancelled(),
+        session_id="session-1",
+        trace_id="trace-1",
+        user_id="local-user",
+        active_session_id="session-1",
+        turn_index=1,
+    )
+
+    assert [event.event_type for event in emitted] == [
+        DomainEventType.A2UI_STREAM_STARTED.value,
+        DomainEventType.A2UI_STREAM_FINISHED.value,
+        DomainEventType.A2UI_STREAM_FINISHED.value,
+    ]
+    assert emitted[1].payload["stream"]["finish_reason"] == "tool_args_completed"
+    assert emitted[2].payload["stream_id"] == "trace-1:a2ui:call_chart"
+    assert emitted[2].payload["stream"]["status"] == "failed"
+    assert emitted[2].payload["stream"]["finish_reason"] == "tool_error"
+    assert emitted[2].payload["stream"]["error"] == "$.charts[0].items[0].value: expected number"
+
+
+@pytest.mark.asyncio
 async def test_event_processor_returns_on_a2ui_graph_interrupt() -> None:
     emitted: list[DomainEvent] = []
 

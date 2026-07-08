@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -13,6 +15,12 @@ A2UIResumeStatus = Literal["not_started", "deferred", "started", "succeeded", "f
 
 class A2UISchemaValidationError(ValueError):
     pass
+
+
+_INTEGER_TEXT_PATTERN = re.compile(r"^[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)$")
+_NUMBER_TEXT_PATTERN = re.compile(
+    r"^[+-]?(?:(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"
+)
 
 
 class A2UIInteractionState(BaseModel):
@@ -138,8 +146,7 @@ def validate_submit_result(
 ) -> dict[str, Any]:
     if not isinstance(submit_result, dict):
         raise A2UISchemaValidationError("submit_result must be an object")
-    _validate_schema_value(submit_result, submit_schema_snapshot, path="$")
-    return dict(submit_result)
+    return _validate_schema_value(dict(submit_result), submit_schema_snapshot, path="$")
 
 
 def validate_payload(
@@ -148,15 +155,15 @@ def validate_payload(
 ) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise A2UISchemaValidationError("payload must be an object")
-    _validate_schema_value(payload, input_schema, path="$")
-    return dict(payload)
+    return _validate_schema_value(dict(payload), input_schema, path="$")
 
 
-def _validate_schema_value(value: Any, schema: dict[str, Any], *, path: str) -> None:
+def _validate_schema_value(value: Any, schema: dict[str, Any], *, path: str) -> Any:
     if not isinstance(schema, dict):
         raise A2UISchemaValidationError(f"{path}: schema must be an object")
 
     expected_type = schema.get("type")
+    value = _coerce_json_type(value, expected_type)
     if expected_type is not None and not _matches_json_type(value, expected_type):
         raise A2UISchemaValidationError(f"{path}: expected {expected_type}")
 
@@ -181,10 +188,13 @@ def _validate_schema_value(value: Any, schema: dict[str, Any], *, path: str) -> 
             raise A2UISchemaValidationError(f"{path}: array has too few items")
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
-            for index, item in enumerate(value):
+            value = [
                 _validate_schema_value(item, item_schema, path=f"{path}[{index}]")
+                for index, item in enumerate(value)
+            ]
 
     if isinstance(value, dict):
+        value = dict(value)
         required = schema.get("required") or []
         for key in required:
             if key not in value:
@@ -195,10 +205,56 @@ def _validate_schema_value(value: Any, schema: dict[str, Any], *, path: str) -> 
         for key, item in value.items():
             item_schema = properties.get(key)
             if isinstance(item_schema, dict):
-                _validate_schema_value(item, item_schema, path=f"{path}.{key}")
+                value[key] = _validate_schema_value(item, item_schema, path=f"{path}.{key}")
                 continue
             if schema.get("additionalProperties") is False:
                 raise A2UISchemaValidationError(f"{path}.{key}: additional property is not allowed")
+
+    return value
+
+
+def _coerce_json_type(value: Any, expected_type: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    if expected_type is None:
+        return value
+    if isinstance(expected_type, list):
+        if _matches_json_type(value, expected_type):
+            return value
+        if "integer" in expected_type:
+            coerced = _coerce_integer_text(value)
+            if coerced is not None:
+                return coerced
+        if "number" in expected_type:
+            coerced = _coerce_number_text(value)
+            if coerced is not None:
+                return coerced
+        return value
+    if expected_type == "integer":
+        coerced = _coerce_integer_text(value)
+        return value if coerced is None else coerced
+    if expected_type == "number":
+        coerced = _coerce_number_text(value)
+        return value if coerced is None else coerced
+    return value
+
+
+def _coerce_integer_text(value: str) -> int | None:
+    text = value.strip()
+    if not _INTEGER_TEXT_PATTERN.fullmatch(text):
+        return None
+    return int(text.replace(",", ""))
+
+
+def _coerce_number_text(value: str) -> int | float | None:
+    text = value.strip()
+    if not _NUMBER_TEXT_PATTERN.fullmatch(text):
+        return None
+    normalized = text.replace(",", "")
+    if _INTEGER_TEXT_PATTERN.fullmatch(text):
+        return int(normalized)
+    parsed = float(normalized)
+    return parsed if math.isfinite(parsed) else None
 
 
 def _matches_json_type(value: Any, expected_type: Any) -> bool:

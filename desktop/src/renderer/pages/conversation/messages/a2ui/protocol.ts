@@ -42,6 +42,7 @@ export interface A2UIEventSnapshot {
   argsTextLength?: number;
   chunkIndex?: number;
   finishReason?: string;
+  error?: string;
   streamStatus?: string;
   a2ui?: A2UIObject;
   interaction?: A2UIInteractionState | Record<string, unknown>;
@@ -134,6 +135,7 @@ export function extractA2UIEventSnapshot(data: unknown): A2UIEventSnapshot {
     argsTextLength: readNumber(stream.args_text_length, stream.argsTextLength, root.args_text_length),
     chunkIndex: readNumber(stream.chunk_index, stream.chunkIndex),
     finishReason: readNonEmptyString(stream.finish_reason, stream.finishReason),
+    error: readNonEmptyString(stream.error, stream.message, root.error, root.message),
     streamStatus: readNonEmptyString(stream.status),
     a2ui,
     interaction,
@@ -204,6 +206,7 @@ export function mergeA2UIDebugSnapshot(
   debug.traceId = snapshot.traceId || debug.traceId;
   debug.turnIndex = snapshot.turnIndex ?? debug.turnIndex;
   debug.finishReason = snapshot.finishReason || debug.finishReason;
+  debug.error = snapshot.error || debug.error;
 
   if (snapshot.a2ui) {
     debug.a2ui = {
@@ -266,6 +269,10 @@ export function applyA2UIEventToDebug(
     debug.argsTextLength = snapshot.argsTextLength ?? debug.argsBuffer.length;
     debug.finishReason = snapshot.finishReason || debug.finishReason;
     applyBufferParse(debug, true);
+    debug.error = snapshot.error || debug.error;
+    if (debug.status === "failed" && snapshot.error) {
+      debug.parseError = snapshot.error;
+    }
     return;
   }
 

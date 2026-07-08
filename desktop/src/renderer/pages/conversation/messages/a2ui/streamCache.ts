@@ -250,7 +250,7 @@ function isDiscardedA2UIStreamFinish(
     return false;
   }
   const reason = snapshot.finishReason || "";
-  return Boolean(reason && reason !== "tool_call_started" && reason !== "tool_args_completed");
+  return reason === "invalid_tool_call" || reason === "turn_cancelled" || reason === "a2ui_waiting_input";
 }
 
 function isDuplicateA2UIEvent(
