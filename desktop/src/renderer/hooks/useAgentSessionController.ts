@@ -17,6 +17,7 @@ import {
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
 import { subscribeAddWorkspaceFileToChat } from "@/renderer/events/workspaceFileContext";
+import { buildA2UICancelPayload, buildA2UISubmitPayload } from "@/renderer/pages/conversation/messages/a2ui";
 import type { RuntimeSelectedModel } from "@/renderer/components/model";
 import { emitSessionEventsFromRuntimeEvent } from "@/renderer/events/sessionEvents";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
@@ -141,6 +142,16 @@ export interface AgentSessionController {
   ) => Promise<boolean>;
   stop: () => void;
   terminateCommand: (commandId: string) => Promise<void>;
+  submitA2UI: (
+    interactionId: string,
+    submitResult: Record<string, unknown>,
+    targetSessionId?: string | null,
+  ) => Promise<void>;
+  cancelA2UI: (
+    interactionId: string,
+    cancelReason?: string | null,
+    targetSessionId?: string | null,
+  ) => Promise<void>;
   resolveMcpElicitation: (payload: McpElicitationResolvePayload) => Promise<void>;
   submitApproval: (decision: CommandApprovalDecisionPayload) => Promise<void>;
   approvalSubmitting: boolean;
@@ -781,6 +792,82 @@ export function useAgentSessionController({
     [dispatch, onNotice, sessionId, setRuntimeDetail, sharedRuntimeContext, wsStatus],
   );
 
+  const submitA2UI = useCallback(
+    async (
+      interactionId: string,
+      submitResult: Record<string, unknown>,
+      targetSessionId?: string | null,
+    ) => {
+      const sid = targetSessionId?.trim() || sessionId;
+      if (!sid || !interactionId.trim()) {
+        return;
+      }
+      if (wsStatus !== "open") {
+        const message = "对话连接尚未就绪";
+        setRuntimeDetail(message);
+        onNotice?.(message, "warning");
+        return;
+      }
+
+      setRuntimeDetail(null);
+      try {
+        const payload = buildA2UISubmitPayload(sid, interactionId, submitResult);
+        if (sharedRuntimeContext) {
+          sharedRuntimeContext.submitA2UI(payload);
+        } else {
+          const channel = channelRef.current;
+          if (!channel) {
+            throw new Error("对话连接尚未就绪");
+          }
+          channel.submitA2UI(payload);
+        }
+      } catch (reason) {
+        const message = errorMessage(reason);
+        setRuntimeDetail(publicRuntimeDetail(message));
+        appendLocalError(dispatch, sid, message);
+      }
+    },
+    [dispatch, onNotice, sessionId, setRuntimeDetail, sharedRuntimeContext, wsStatus],
+  );
+
+  const cancelA2UI = useCallback(
+    async (
+      interactionId: string,
+      cancelReason?: string | null,
+      targetSessionId?: string | null,
+    ) => {
+      const sid = targetSessionId?.trim() || sessionId;
+      if (!sid || !interactionId.trim()) {
+        return;
+      }
+      if (wsStatus !== "open") {
+        const message = "对话连接尚未就绪";
+        setRuntimeDetail(message);
+        onNotice?.(message, "warning");
+        return;
+      }
+
+      setRuntimeDetail(null);
+      try {
+        const payload = buildA2UICancelPayload(sid, interactionId, cancelReason);
+        if (sharedRuntimeContext) {
+          sharedRuntimeContext.cancelA2UI(payload);
+        } else {
+          const channel = channelRef.current;
+          if (!channel) {
+            throw new Error("对话连接尚未就绪");
+          }
+          channel.cancelA2UI(payload);
+        }
+      } catch (reason) {
+        const message = errorMessage(reason);
+        setRuntimeDetail(publicRuntimeDetail(message));
+        appendLocalError(dispatch, sid, message);
+      }
+    },
+    [dispatch, onNotice, sessionId, setRuntimeDetail, sharedRuntimeContext, wsStatus],
+  );
+
   const resolveMcpElicitation = useCallback(
     async (payload: McpElicitationResolvePayload) => {
       if (!payload.elicitation_id.trim()) {
@@ -883,6 +970,8 @@ export function useAgentSessionController({
       send,
       stop,
       terminateCommand,
+      submitA2UI,
+      cancelA2UI,
       resolveMcpElicitation,
       submitApproval,
       approvalSubmitting,
@@ -894,6 +983,7 @@ export function useAgentSessionController({
       approvalSubmitting,
       canSend,
       canStop,
+      cancelA2UI,
       connectionReady,
       dispatch,
       draft,
@@ -917,6 +1007,7 @@ export function useAgentSessionController({
       startChatFromAnnotation,
       state,
       stop,
+      submitA2UI,
       submitApproval,
       terminateCommand,
       usingSharedRuntime,
@@ -932,6 +1023,9 @@ export function toConversationRuntimeState(state: string): ConversationRuntimeSt
   if (state === "waiting_approval") {
     return "waiting_approval";
   }
+  if (state === "waiting_input") {
+    return "waiting_input";
+  }
   if (state === "cancelling") {
     return "cancelling";
   }
@@ -946,7 +1040,11 @@ export function isAgentControllerBusy(state: ConversationRuntimeState): boolean 
 }
 
 function isBusy(state: ConversationRuntimeState): boolean {
-  return state === "starting" || state === "running" || state === "waiting_approval" || state === "cancelling";
+  return state === "starting"
+    || state === "running"
+    || state === "waiting_approval"
+    || state === "waiting_input"
+    || state === "cancelling";
 }
 
 function sessionTitleFromPreparedMessage(text: string, contextItems: AgentContextItem[]): string {

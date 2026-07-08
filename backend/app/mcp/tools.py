@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from backend.app.mcp.audit import redact_sensitive_data, redact_sensitive_text
+from backend.app.mcp.audit import McpAuditWriter, redact_sensitive_data, redact_sensitive_text
 from backend.app.mcp.errors import McpRuntimeError, to_mcp_runtime_error
 from backend.app.mcp.exposure import McpVisibleTool
 from backend.app.mcp.types import McpErrorCode
@@ -23,17 +23,28 @@ from backend.app.tools.base import (
     validate_tool_schema,
 )
 
-DEFERRED_SEARCH_TOOL_NAME = "search_mcp_tools"
-DEFERRED_LIST_TOOL_NAME = "list_mcp_tools"
+MCP_CAPABILITY_DISCOVERY_TOOL_NAME = "discover_mcp_tools"
 DEFAULT_ACTIVE_TOOL_TTL_SEC = 600.0
 
 
 @dataclass(frozen=True)
-class McpDeferredToolSummary:
+class McpOnDemandToolSummary:
     server_id: str
     raw_name: str
     model_name: str
     description: str | None
+
+
+@dataclass(frozen=True)
+class _IndexedCapabilityTool:
+    tool: McpVisibleTool
+    haystack: str
+    raw_name: str
+    model_name: str
+    server_id: str
+    server_name: str
+    description: str
+    schema_text: str
 
 
 @dataclass(frozen=True)
@@ -189,48 +200,68 @@ def mcp_local_tools_from_snapshot(
     return tools
 
 
-def mcp_deferred_tools_from_snapshot(
+def mcp_capability_discovery_tools_from_snapshot(
     snapshot: McpRuntimeSnapshotRecord,
     active_window: McpActiveToolWindow,
     *,
     ttl_sec: float = DEFAULT_ACTIVE_TOOL_TTL_SEC,
 ) -> list[FunctionTool]:
-    deferred_tools = _deferred_visible_tools(snapshot)
-    if not deferred_tools:
-        return []
-    index = McpDeferredToolSearchIndex(deferred_tools)
+    on_demand_tools = _on_demand_visible_tools(snapshot)
+    capability_directory = _snapshot_capability_directory(snapshot)
+    index = McpCapabilitySearchIndex(
+        on_demand_tools,
+        capability_directory=capability_directory,
+    )
     return [
         FunctionTool(
-            name=DEFERRED_SEARCH_TOOL_NAME,
-            description=(
-                "Search deferred MCP tools by keyword or server. "
-                "Returned tools are activated for this session and become callable next turn."
-            ),
-            parameters=_deferred_search_schema(),
-            handler=lambda args, context: _run_deferred_search(
+            name=MCP_CAPABILITY_DISCOVERY_TOOL_NAME,
+            description=_capability_discovery_description(snapshot, on_demand_tools),
+            parameters=_capability_discovery_schema(),
+            handler=lambda args, context: _run_capability_discovery(
                 args,
                 context,
                 index=index,
-                active_window=active_window,
-                ttl_sec=ttl_sec,
-            ),
-        ),
-        FunctionTool(
-            name=DEFERRED_LIST_TOOL_NAME,
-            description=(
-                "List deferred MCP tools without exposing every tool in the prompt. "
-                "Returned tools are activated for this session and become callable next turn."
-            ),
-            parameters=_deferred_list_schema(),
-            handler=lambda args, context: _run_deferred_list(
-                args,
-                context,
-                index=index,
+                capability_directory=capability_directory,
                 active_window=active_window,
                 ttl_sec=ttl_sec,
             ),
         ),
     ]
+
+
+def _capability_discovery_description(
+    snapshot: McpRuntimeSnapshotRecord,
+    on_demand_tools: Sequence[McpVisibleTool],
+) -> str:
+    if not on_demand_tools:
+        return (
+            "MCP 能力发现入口：当前没有需要按需加载的 MCP 工具。"
+            "如果用户请求的能力不在当前工具列表中，先告知当前 MCP 目录为空。"
+        )
+    source_summary = _capability_source_summary(on_demand_tools)
+    total = len(on_demand_tools)
+    return (
+        f"MCP 能力发现入口：当前按需目录包含 {total} 个工具，来源：{source_summary}。"
+        "当用户请求的能力不在已直接可用工具中，或需要查找某个 MCP 服务器能力时调用。"
+        "不带 query 会返回目录摘要；带 query 会搜索并激活命中工具，"
+        "激活后可按返回的 model_name 调用目标工具。"
+    )
+
+
+def _capability_source_summary(on_demand_tools: Sequence[McpVisibleTool]) -> str:
+    counts: dict[str, int] = {}
+    for tool in on_demand_tools:
+        source_name = (tool.server_name or tool.server_id).strip()
+        counts[source_name] = counts.get(source_name, 0) + 1
+    parts = [
+        f"{server_name}（{count} 个工具）"
+        for server_name, count in sorted(counts.items(), key=lambda item: item[0])
+    ]
+    if len(parts) <= 6:
+        return "、".join(parts)
+    visible_parts = parts[:6]
+    visible_parts.append(f"另有 {len(parts) - 6} 个来源")
+    return "、".join(visible_parts)
 
 
 def _tool_from_contract(
@@ -265,12 +296,12 @@ def _tool_from_contract(
     )
 
 
-def _deferred_visible_tools(snapshot: McpRuntimeSnapshotRecord) -> list[McpVisibleTool]:
+def _on_demand_visible_tools(snapshot: McpRuntimeSnapshotRecord) -> list[McpVisibleTool]:
     tools: list[McpVisibleTool] = []
     for contract in snapshot.visible_tools:
         if not isinstance(contract, dict):
             continue
-        if str(contract.get("exposure") or "direct") != "deferred":
+        if str(contract.get("exposure") or "direct") != "on_demand":
             continue
         tools.append(_visible_tool_from_contract(contract))
     return tools
@@ -292,105 +323,224 @@ def _visible_tool_from_contract(contract: dict[str, Any]) -> McpVisibleTool:
     )
 
 
-def _deferred_search_schema() -> dict[str, Any]:
+def _capability_discovery_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Search keywords."},
             "server_id": {"type": "string", "description": "Optional MCP server id filter."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum tools returned and activated when query is provided.",
+            },
         },
     }
 
 
-def _deferred_list_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "server_id": {"type": "string", "description": "Optional MCP server id filter."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-        },
-    }
-
-
-def _run_deferred_search(
+def _run_capability_discovery(
     args: dict[str, Any],
     context: ToolExecutionContext,
     *,
-    index: McpDeferredToolSearchIndex,
+    index: McpCapabilitySearchIndex,
+    capability_directory: list[dict[str, Any]],
     active_window: McpActiveToolWindow,
     ttl_sec: float,
 ) -> dict[str, Any]:
+    query = _optional_text_arg(args, "query")
+    default_limit = 1 if query else 20
     matches = index.search(
-        query=_optional_text_arg(args, "query"),
+        query=query,
         server_id=_optional_text_arg(args, "server_id") or None,
-        limit=_int_arg(args, "limit", 20),
+        limit=_int_arg(args, "limit", default_limit),
     )
-    return _deferred_result(
-        action="search",
+    should_activate = bool(query)
+    return _capability_discovery_result(
+        action="search" if should_activate else "directory",
+        query=query or None,
         summaries=matches,
+        capability_directory=capability_directory,
         context=context,
         active_window=active_window,
         ttl_sec=ttl_sec,
+        activate=should_activate,
     )
 
 
-def _run_deferred_list(
-    args: dict[str, Any],
-    context: ToolExecutionContext,
-    *,
-    index: McpDeferredToolSearchIndex,
-    active_window: McpActiveToolWindow,
-    ttl_sec: float,
-) -> dict[str, Any]:
-    matches = index.list_tools(
-        server_id=_optional_text_arg(args, "server_id") or None,
-        limit=_int_arg(args, "limit", 50),
-    )
-    return _deferred_result(
-        action="list",
-        summaries=matches,
-        context=context,
-        active_window=active_window,
-        ttl_sec=ttl_sec,
-    )
-
-
-def _deferred_result(
+def _capability_discovery_result(
     *,
     action: str,
-    summaries: list[McpDeferredToolSummary],
+    query: str | None,
+    summaries: list[McpOnDemandToolSummary],
+    capability_directory: list[dict[str, Any]],
     context: ToolExecutionContext,
     active_window: McpActiveToolWindow,
     ttl_sec: float,
+    activate: bool,
 ) -> dict[str, Any]:
-    for summary in summaries:
-        active_window.activate(
-            session_id=context.session_id,
-            model_name=summary.model_name,
-            ttl_sec=ttl_sec,
-        )
+    activated_model_names: list[str] = []
+    if activate:
+        for summary in summaries:
+            active_window.activate(
+                session_id=context.session_id,
+                model_name=summary.model_name,
+                ttl_sec=ttl_sec,
+            )
+            activated_model_names.append(summary.model_name)
+    _audit_capability_discovery(
+        action=action,
+        query=query,
+        summaries=summaries,
+        capability_directory=capability_directory,
+        context=context,
+        activated_model_names=activated_model_names,
+    )
     return {
         "action": action,
+        "query": query,
+        "servers": capability_directory,
         "tools": [_summary_payload(summary) for summary in summaries],
         "count": len(summaries),
+        "empty_state": _capability_empty_state(
+            action=action,
+            query=query,
+            summaries=summaries,
+            capability_directory=capability_directory,
+        ),
         "activation": {
             "scope": "session",
-            "available_next_turn": True,
+            "activated": activate,
             "ttl_sec": ttl_sec,
-            "activated_model_names": [summary.model_name for summary in summaries],
-            "hint": "Use the selected model tool name in the next turn.",
+            "activated_model_names": activated_model_names,
+            "hint": "Use the selected model tool name after it is activated.",
         },
     }
 
 
-def _summary_payload(summary: McpDeferredToolSummary) -> dict[str, Any]:
+def _audit_capability_discovery(
+    *,
+    action: str,
+    query: str | None,
+    summaries: list[McpOnDemandToolSummary],
+    capability_directory: list[dict[str, Any]],
+    context: ToolExecutionContext,
+    activated_model_names: list[str],
+) -> None:
+    repositories = context.metadata.get("repositories")
+    if repositories is None or not hasattr(repositories, "mcp_audit_log"):
+        return
+    server_ids = sorted({summary.server_id for summary in summaries})
+    McpAuditWriter.from_repositories(repositories).append_event(
+        event_type="tool.discovery",
+        server_id=server_ids[0] if len(server_ids) == 1 else None,
+        session_id=context.session_id,
+        turn_id=str(context.turn_index),
+        actor="agent",
+        status="ok",
+        summary=f"MCP capability discovery {action}: {len(summaries)} match(es)",
+        detail={
+            "action": action,
+            "query": query,
+            "match_count": len(summaries),
+            "activated_model_names": activated_model_names,
+            "matched_tools": [
+                {
+                    "server_id": summary.server_id,
+                    "raw_name": summary.raw_name,
+                    "model_name": summary.model_name,
+                }
+                for summary in summaries
+            ],
+            "server_count": len(capability_directory),
+        },
+    )
+
+
+def _capability_empty_state(
+    *,
+    action: str,
+    query: str | None,
+    summaries: list[McpOnDemandToolSummary],
+    capability_directory: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if summaries:
+        return None
+    if not capability_directory:
+        return {
+            "reason": "no_servers",
+            "message": "当前没有配置 MCP 服务器。",
+        }
+    on_demand_total = sum(
+        _non_negative_int(item.get("on_demand_tool_count"))
+        for item in capability_directory
+    )
+    if action == "search" and query and on_demand_total > 0:
+        return {
+            "reason": "no_match",
+            "message": "未找到匹配的 MCP 工具，未激活任何工具。",
+        }
+    available_total = sum(
+        _non_negative_int(item.get("available_tool_count"))
+        for item in capability_directory
+    )
+    if available_total > 0:
+        return {
+            "reason": "no_on_demand_tools",
+            "message": "当前 MCP 工具已直接可用，没有需要按需加载的工具。",
+        }
+    statuses = {_optional_str(item.get("status")) or "unknown" for item in capability_directory}
+    if "auth_required" in statuses:
+        return {
+            "reason": "auth_required",
+            "message": "MCP 服务器需要认证后才会提供可用工具。",
+        }
+    if statuses <= {"offline", "disabled", "error", "unknown", "refreshing"}:
+        return {
+            "reason": "no_online_servers",
+            "message": "当前没有在线可用的 MCP 服务器工具。",
+        }
+    return {
+        "reason": "no_tools",
+        "message": "当前 MCP 服务器暂无可用工具，请刷新服务器后再试。",
+    }
+
+
+def _snapshot_capability_directory(snapshot: McpRuntimeSnapshotRecord) -> list[dict[str, Any]]:
+    raw_directory = snapshot.capability_directory
+    if not isinstance(raw_directory, list):
+        return []
+    directory: list[dict[str, Any]] = []
+    for item in raw_directory:
+        if isinstance(item, dict):
+            directory.append(
+                {
+                    "server_id": _optional_str(item.get("server_id")),
+                    "server_name": _optional_str(item.get("server_name")),
+                    "status": _optional_str(item.get("status")) or "unknown",
+                    "status_label": _optional_str(item.get("status_label")) or "未知",
+                    "available_tool_count": _non_negative_int(
+                        item.get("available_tool_count")
+                    ),
+                    "direct_tool_count": _non_negative_int(item.get("direct_tool_count")),
+                    "on_demand_tool_count": _non_negative_int(
+                        item.get("on_demand_tool_count")
+                    ),
+                    "requires_auth": bool(item.get("requires_auth")),
+                    "has_on_demand_tools": bool(item.get("has_on_demand_tools")),
+                    "capability_keywords": _string_list(item.get("capability_keywords")),
+                }
+            )
+    return directory
+
+
+def _summary_payload(summary: McpOnDemandToolSummary) -> dict[str, Any]:
     return {
         "server_id": summary.server_id,
         "raw_name": summary.raw_name,
         "model_name": summary.model_name,
         "description": summary.description,
-        "activation_hint": "Activated for this session; callable next turn.",
+        "activation_hint": "Activated for this session; callable after activation.",
     }
 
 
@@ -410,9 +560,39 @@ def _int_arg(args: dict[str, Any], key: str, default: int) -> int:
     return default
 
 
-class McpDeferredToolSearchIndex:
-    def __init__(self, tools: Sequence[McpVisibleTool]) -> None:
+def _non_negative_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return max(0, int(value))
+    return 0
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        normalized = _optional_str(item)
+        if normalized is not None:
+            result.append(normalized)
+    return result[:5]
+
+
+class McpCapabilitySearchIndex:
+    def __init__(
+        self,
+        tools: Sequence[McpVisibleTool],
+        *,
+        capability_directory: Sequence[dict[str, Any]] = (),
+    ) -> None:
         self.tools = list(tools)
+        self._entries = [
+            _index_capability_tool(tool)
+            for tool in self.tools
+        ]
 
     def search(
         self,
@@ -420,25 +600,40 @@ class McpDeferredToolSearchIndex:
         query: str = "",
         server_id: str | None = None,
         limit: int = 20,
-    ) -> list[McpDeferredToolSummary]:
+    ) -> list[McpOnDemandToolSummary]:
         normalized_query = query.strip().lower()
-        matches = [
-            tool
-            for tool in self.tools
-            if _matches_filters(
-                tool,
+        matches: list[tuple[int, _IndexedCapabilityTool]] = []
+        for entry in self._entries:
+            if not _matches_filters(
+                entry,
                 query=normalized_query,
                 server_id=server_id,
+            ):
+                continue
+            matches.append((_search_score(entry, normalized_query), entry))
+        matches.sort(
+            key=lambda item: (
+                -item[0],
+                _sort_server_name(item[1].tool),
+                item[1].tool.raw_name,
             )
-        ]
-        return [_summary(tool) for tool in matches[: _limit(limit)]]
+        )
+        unique_tools: list[McpVisibleTool] = []
+        seen_model_names: set[str] = set()
+        for _score, entry in matches:
+            tool = entry.tool
+            if tool.model_name in seen_model_names:
+                continue
+            seen_model_names.add(tool.model_name)
+            unique_tools.append(tool)
+        return [_summary(tool) for tool in unique_tools[: _limit(limit)]]
 
     def list_tools(
         self,
         *,
         server_id: str | None = None,
         limit: int = 50,
-    ) -> list[McpDeferredToolSummary]:
+    ) -> list[McpOnDemandToolSummary]:
         return self.search(
             query="",
             server_id=server_id,
@@ -546,32 +741,89 @@ def normalize_mcp_tool_result(
 
 
 def _matches_filters(
-    tool: McpVisibleTool,
+    entry: _IndexedCapabilityTool,
     *,
     query: str,
     server_id: str | None,
 ) -> bool:
-    if server_id is not None and tool.server_id != server_id:
+    if server_id is not None and entry.tool.server_id != server_id:
         return False
     if not query:
         return True
-    return query in _haystack(tool)
+    return query in entry.haystack
 
 
-def _haystack(tool: McpVisibleTool) -> str:
-    return " ".join(
-        [
-            tool.server_id,
-            tool.raw_name,
-            tool.model_name,
-            tool.description or "",
-            json.dumps(tool.input_schema, ensure_ascii=False, sort_keys=True),
-        ]
-    ).lower()
+def _index_capability_tool(tool: McpVisibleTool) -> _IndexedCapabilityTool:
+    schema_text = _schema_search_text(tool.input_schema).lower()
+    return _IndexedCapabilityTool(
+        tool=tool,
+        raw_name=tool.raw_name.lower(),
+        model_name=tool.model_name.lower(),
+        server_id=tool.server_id.lower(),
+        server_name=(tool.server_name or "").lower(),
+        description=(tool.description or "").lower(),
+        schema_text=schema_text,
+        haystack=" ".join(
+            [
+                tool.server_id,
+                tool.server_name or "",
+                tool.raw_name,
+                tool.model_name,
+                tool.description or "",
+                schema_text,
+            ]
+        ).lower(),
+    )
 
 
-def _summary(tool: McpVisibleTool) -> McpDeferredToolSummary:
-    return McpDeferredToolSummary(
+def _search_score(entry: _IndexedCapabilityTool, query: str) -> int:
+    if not query:
+        return 0
+    if query == entry.raw_name or query == entry.model_name:
+        return 1000
+    if query in entry.raw_name or query in entry.model_name:
+        return 900
+    if query == entry.server_id or (entry.server_name and query == entry.server_name):
+        return 850
+    if query in entry.server_id or query in entry.server_name:
+        return 800
+    if query in entry.description:
+        return 700
+    if query in entry.schema_text:
+        return 600
+    return 100
+
+
+def _sort_server_name(tool: McpVisibleTool) -> str:
+    return (tool.server_name or tool.server_id).lower()
+
+
+def _schema_search_text(schema: dict[str, Any]) -> str:
+    parts: list[str] = []
+
+    def collect(value: Any, field_name: str | None = None) -> None:
+        if field_name:
+            parts.append(field_name)
+        if not isinstance(value, dict):
+            return
+        for key in ("title", "description"):
+            text = value.get(key)
+            if isinstance(text, str):
+                parts.append(text)
+        properties = value.get("properties")
+        if isinstance(properties, dict):
+            for property_name, property_schema in properties.items():
+                collect(property_schema, str(property_name))
+        items = value.get("items")
+        if isinstance(items, dict):
+            collect(items)
+
+    collect(schema)
+    return " ".join(parts)
+
+
+def _summary(tool: McpVisibleTool) -> McpOnDemandToolSummary:
+    return McpOnDemandToolSummary(
         server_id=tool.server_id,
         raw_name=tool.raw_name,
         model_name=tool.model_name,

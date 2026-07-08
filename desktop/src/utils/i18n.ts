@@ -28,6 +28,7 @@ const threadStatusLabels: Record<ThreadStatus, string> = {
   idle: "空闲",
   running: "执行中",
   waiting_approval: "等待审批",
+  waiting_input: "等待输入",
   failed: "失败",
 };
 

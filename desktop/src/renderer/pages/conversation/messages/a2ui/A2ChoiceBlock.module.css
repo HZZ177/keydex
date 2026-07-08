@@ -1,0 +1,207 @@
+.choice {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.description {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.options {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.option {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 78%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 42%, transparent);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  padding: 10px;
+}
+
+.option:hover {
+  background: var(--surface-hover);
+}
+
+.option[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--color-info-6) 38%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-info-6) 6%, var(--color-bg-elevated));
+}
+
+.option[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.option input {
+  width: 14px;
+  height: 14px;
+  margin: 2px 0 0;
+  accent-color: var(--color-info-6);
+}
+
+.optionText {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.optionLabel {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.optionDescription {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.note {
+  display: grid;
+  gap: 5px;
+}
+
+.note label {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.note textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 58px;
+  resize: vertical;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 8px 10px;
+}
+
+.note textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--color-info-6) 28%, transparent);
+  outline-offset: 1px;
+}
+
+.note textarea:disabled {
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--surface-muted) 70%, transparent);
+  color: var(--color-text-tertiary);
+}
+
+.help {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.error {
+  color: color-mix(in srgb, var(--color-danger) 82%, var(--color-text-primary));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 11px;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.button:focus-visible,
+.option:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--color-info-6) 30%, transparent);
+  outline-offset: 1px;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.submitButton {
+  border-color: color-mix(in srgb, var(--color-info-6) 38%, var(--color-border-default));
+  color: color-mix(in srgb, var(--color-info-6) 84%, var(--color-text-primary));
+}
+
+.result {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-muted) 54%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 9px 10px;
+}
+
+.result strong {
+  color: var(--color-text-primary);
+  font-weight: 650;
+}
+
+.selectedList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.selectedPill {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 22px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-info-6) 32%, var(--color-border-default));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-info-6) 6%, var(--color-bg-elevated));
+  color: color-mix(in srgb, var(--color-info-6) 82%, var(--color-text-primary));
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  padding: 4px 8px;
+  white-space: normal;
+}

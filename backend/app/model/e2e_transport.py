@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 E2E_MODEL_ID = "e2e-keydex-stream"
+MCP_DISCOVERY_TOOL_NAME = "discover_mcp_tools"
 
 
 def create_e2e_model_transport(*, delay_ms: int = 80) -> httpx.MockTransport:
@@ -393,31 +394,27 @@ def _mcp_deferred_chunks(payload: dict[str, Any], user_message: str) -> list[str
         )
 
     if "list" in lowered or "列表" in user_message:
-        tool_name = _mcp_exact_tool_name(payload, "list_mcp_tools")
+        tool_name = _mcp_exact_tool_name(payload, MCP_DISCOVERY_TOOL_NAME)
         arguments = {"limit": 5}
-        action = "list"
+        action = "directory"
     elif "search" in lowered or "搜索" in user_message:
-        tool_name = _mcp_exact_tool_name(payload, "search_mcp_tools")
+        tool_name = _mcp_exact_tool_name(payload, MCP_DISCOVERY_TOOL_NAME)
         arguments = {"query": _mcp_deferred_search_query(user_message, target), "limit": 10}
-        action = "search"
+        action = "discover"
     else:
         tool_name = _mcp_model_tool_name(payload, target)
         arguments = _mcp_tool_arguments(target, user_message)
         action = "call"
 
-    if action in {"search", "list"} and "strict" in lowered:
+    if action in {"discover", "directory"} and "strict" in lowered:
         tool_names = _payload_tool_names(payload)
         direct_mcp_tools = [name for name in tool_names if name.startswith("mcp__")]
-        missing_deferred_tools = [
-            name
-            for name in ("search_mcp_tools", "list_mcp_tools")
-            if name not in tool_names
-        ]
-        if direct_mcp_tools or missing_deferred_tools:
+        discovery_missing = MCP_DISCOVERY_TOOL_NAME not in tool_names
+        if direct_mcp_tools or discovery_missing:
             return _content_chunks(
                 payload,
                 "MCP Deferred strict exposure failed: "
-                f"direct={direct_mcp_tools}; missing={missing_deferred_tools}; "
+                f"direct={direct_mcp_tools}; discovery_missing={discovery_missing}; "
                 f"available tools: {', '.join(tool_names) or 'none'}",
                 usage={"prompt_tokens": 18, "completion_tokens": 12},
             )
@@ -469,6 +466,9 @@ def _mcp_deferred_search_query(user_message: str, default: str) -> str:
 
 def _mcp_target_from_user_message(user_message: str) -> str:
     lowered = user_message.lower()
+    generated_tool_match = re.search(r"\btool_[0-9]{2,4}\b", lowered)
+    if generated_tool_match:
+        return generated_tool_match.group(0)
     for raw_name in (
         "read_fixture",
         "write_fixture",

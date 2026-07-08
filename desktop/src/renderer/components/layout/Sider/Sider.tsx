@@ -209,7 +209,10 @@ export function Sider({
   const sessionIndicators = useMemo<Record<string, SessionIndicator>>(() => {
     return Object.fromEntries(
       Object.entries(sharedSessionState).map(([sessionId, state]) => {
-        const waitingApproval = state.runtimeState === "waiting_approval" || Boolean(state.pendingApproval);
+        const waitingApproval =
+          state.runtimeState === "waiting_approval"
+          || state.runtimeState === "waiting_input"
+          || Boolean(state.pendingApproval);
         const isStreaming =
           !waitingApproval && (state.runtimeState === "running" || state.runtimeState === "cancelling" || state.isStreaming);
         return [

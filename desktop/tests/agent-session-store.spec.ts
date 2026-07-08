@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AGENT_CHAT_ACTIONS,
+  type A2UIObject,
   type AgentActionEnvelope,
   type AgentChatAction,
   type AgentChatMessage,
@@ -32,6 +33,15 @@ describe("agentSessionStore reducer", () => {
       "bind_ok",
       "unbind_ok",
       "stream",
+      "a2ui_stream_start",
+      "a2ui_stream_chunk",
+      "a2ui_stream_finish",
+      "a2ui_created",
+      "waiting_input",
+      "a2ui_submit_ack",
+      "a2ui_cancel_ack",
+      "a2ui_resume",
+      "a2ui_waiting_input",
       "system_message",
       "completed",
       "cancelled",
@@ -1197,6 +1207,764 @@ describe("agentSessionStore reducer", () => {
     });
   });
 
+  it("preserves waiting_input session status as a runtime state", () => {
+    const state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [session("ses-a2ui", "2026-06-18T09:00:00Z", "waiting_input")],
+    });
+
+    expect(selectAgentSessionState(state, "ses-a2ui")).toMatchObject({
+      status: "waiting_input",
+      runtimeState: "waiting_input",
+    });
+    expect(selectAgentRuntimeState(state, "ses-a2ui")).toBe("waiting_input");
+  });
+
+  it("merges A2UI stream preview and created events by stream id", () => {
+    const streamId = "a2ui:confirm:tool-1";
+    let state = createInitialAgentConversationState();
+
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_start",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-1",
+        turn_index: 2,
+        render_key: "confirm",
+        stream_id: streamId,
+        tool_call_id: "tool-1",
+        stream: { status: "start", chunk_index: 0, args_text_length: 0 },
+        timestamp_ms: 1_800_000_000_000,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_chunk",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-1",
+        turn_index: 2,
+        render_key: "confirm",
+        stream_id: streamId,
+        tool_call_id: "tool-1",
+        stream: {
+          status: "chunk",
+          chunk_index: 1,
+          args_delta: '{"title":"确认"',
+          args_text_length: 14,
+        },
+        timestamp_ms: 1_800_000_000_001,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_finish",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-1",
+        turn_index: 2,
+        render_key: "confirm",
+        stream_id: streamId,
+        tool_call_id: "tool-1",
+        stream: { status: "finish", args_text_length: 14, finish_reason: "tool_args_completed" },
+        timestamp_ms: 1_800_000_000_002,
+      },
+    });
+
+    let messages = selectAgentMessages(state, "ses-1");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: "a2ui",
+      sessionId: "ses-1",
+      streaming: false,
+      traceId: "trace-1",
+      turnIndex: 2,
+      a2uiDebug: {
+        status: "finished",
+        chunkCount: 1,
+        argsBuffer: '{"title":"确认"',
+        parsedArgs: { title: "确认" },
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-1",
+        turn_index: 2,
+        stream_id: streamId,
+        interaction_id: "int-1",
+        a2ui: a2uiObject({
+          render_key: "confirm",
+          mode: "interactive",
+          stream_id: streamId,
+          tool_call_id: "tool-1",
+          interaction: {
+            interaction_id: "int-1",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        }),
+        timestamp_ms: 1_800_000_000_003,
+      },
+    });
+
+    messages = selectAgentMessages(state, "ses-1");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: "a2ui",
+      a2ui: { render_key: "confirm", stream_id: streamId },
+      a2uiDebug: {
+        status: "created",
+        streamId,
+        interactionId: "int-1",
+      },
+    });
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
+  });
+
+  it("creates A2UI messages from created events without a preview", () => {
+    const state = reduceAgentWsEvent(createInitialAgentConversationState(), {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-chart",
+        turn_index: 1,
+        a2ui: a2uiObject({
+          render_key: "chart",
+          mode: "render",
+          stream_id: "chart-stream",
+          interaction: null,
+        }),
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        role: "a2ui",
+        contentType: "a2ui",
+        a2ui: { render_key: "chart", mode: "render" },
+        a2uiDebug: { status: "created", streamId: "chart-stream" },
+      },
+    ]);
+  });
+
+  it("keeps multiple A2UI cards with the same render key isolated", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        a2ui: a2uiObject({
+          render_key: "choice",
+          mode: "interactive",
+          stream_id: "choice-stream-1",
+          tool_call_id: "choice-tool-1",
+          interaction: {
+            interaction_id: "choice-1",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        }),
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        a2ui: a2uiObject({
+          render_key: "choice",
+          mode: "interactive",
+          stream_id: "choice-stream-2",
+          tool_call_id: "choice-tool-2",
+          interaction: {
+            interaction_id: "choice-2",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        }),
+      },
+    });
+
+    const messages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "a2ui");
+    expect(messages).toHaveLength(2);
+    expect(messages.map((message) => message.a2uiDebug?.streamId)).toEqual(["choice-stream-1", "choice-stream-2"]);
+    expect(messages.map((message) => message.a2uiDebug?.interactionId)).toEqual(["choice-1", "choice-2"]);
+  });
+
+  it("sets waiting_input runtime state from A2UI waiting events", () => {
+    let state = reduceAgentWsEvent(createInitialAgentConversationState(), {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        a2ui: a2uiObject({
+          stream_id: "confirm-stream",
+          interaction: {
+            interaction_id: "int-1",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        }),
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "waiting_input",
+      data: {
+        session_id: "ses-1",
+        interaction_id: "int-1",
+        render_key: "confirm",
+        stream_id: "confirm-stream",
+        checkpoint: { checkpoint_id: "ckpt-1" },
+      },
+    });
+
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("waiting_input");
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      status: "waiting_input",
+      isStreaming: false,
+      isCancelling: false,
+    });
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      role: "a2ui",
+      streaming: false,
+      a2uiDebug: {
+        status: "waiting_input",
+        interaction: {
+          interaction_id: "int-1",
+          status: "waiting_user_input",
+          can_submit: true,
+        },
+      },
+    });
+  });
+
+  it("updates A2UI submit ack and keeps waiting when resume is deferred", () => {
+    let state = reduceAgentWsEvent(createInitialAgentConversationState(), {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        a2ui: a2uiObject({
+          stream_id: "confirm-stream",
+          interaction: {
+            interaction_id: "int-1",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        }),
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_submit_ack",
+      data: {
+        session_id: "ses-1",
+        interaction_id: "int-1",
+        request_id: "req-submit",
+        status: "submitted",
+        submit_result: { confirmed: true },
+        interaction: {
+          interaction_id: "int-1",
+          status: "submitted",
+          can_submit: false,
+          submit_request_id: "req-submit",
+          submit_result: { confirmed: true },
+          resume_status: "deferred",
+          resume_group_id: "group-1",
+          pending_count: 1,
+        },
+        resume: {
+          status: "deferred",
+          started: false,
+          resume_group_id: "group-1",
+          pending_count: 1,
+        },
+      },
+    });
+
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("waiting_input");
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      a2uiDebug: {
+        status: "submitted",
+        interaction: {
+          interaction_id: "int-1",
+          status: "submitted",
+          can_submit: false,
+          submit_request_id: "req-submit",
+          submit_result: { confirmed: true },
+          resume_status: "deferred",
+        },
+      },
+    });
+  });
+
+  it("updates A2UI cancel ack and resumes running when resume starts", () => {
+    let state = reduceAgentWsEvent(createInitialAgentConversationState(), {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        a2ui: a2uiObject({
+          stream_id: "confirm-stream",
+          interaction: {
+            interaction_id: "int-1",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        }),
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_cancel_ack",
+      data: {
+        session_id: "ses-1",
+        interaction_id: "int-1",
+        request_id: "req-cancel",
+        status: "cancelled",
+        cancel_reason: "用户取消",
+        interaction: {
+          interaction_id: "int-1",
+          status: "cancelled",
+          can_submit: false,
+          cancel_request_id: "req-cancel",
+          cancel_reason: "用户取消",
+          resume_status: "started",
+        },
+        resume: {
+          status: "started",
+          started: true,
+          pending_count: 0,
+        },
+      },
+    });
+
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      a2uiDebug: {
+        status: "cancelled",
+        interaction: {
+          interaction_id: "int-1",
+          status: "cancelled",
+          can_submit: false,
+          cancel_request_id: "req-cancel",
+          cancel_reason: "用户取消",
+        },
+      },
+    });
+  });
+
+  it("isolates same-render-key A2UI ack and resume states by interaction id", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        a2ui: a2uiObject({
+          render_key: "confirm",
+          mode: "interactive",
+          stream_id: "confirm-stream-1",
+          tool_call_id: "confirm-tool-1",
+          interaction: {
+            interaction_id: "confirm-1",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        }),
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        a2ui: a2uiObject({
+          render_key: "confirm",
+          mode: "interactive",
+          stream_id: "confirm-stream-2",
+          tool_call_id: "confirm-tool-2",
+          interaction: {
+            interaction_id: "confirm-2",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        }),
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "waiting_input",
+      data: {
+        session_id: "ses-1",
+        interaction_id: "confirm-1",
+        render_key: "confirm",
+        stream_id: "confirm-stream-1",
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "waiting_input",
+      data: {
+        session_id: "ses-1",
+        interaction_id: "confirm-2",
+        render_key: "confirm",
+        stream_id: "confirm-stream-2",
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_submit_ack",
+      data: {
+        session_id: "ses-1",
+        interaction_id: "confirm-1",
+        request_id: "req-submit-1",
+        status: "submitted",
+        submit_result: { confirmed: true },
+        interaction: {
+          interaction_id: "confirm-1",
+          status: "submitted",
+          can_submit: false,
+          submit_request_id: "req-submit-1",
+          submit_result: { confirmed: true },
+          resume_status: "deferred",
+          resume_group_id: "group-1",
+          pending_count: 1,
+        },
+        resume: {
+          status: "deferred",
+          started: false,
+          resume_group_id: "group-1",
+          pending_count: 1,
+        },
+      },
+    });
+
+    let messages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "a2ui");
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("waiting_input");
+    expect(messages).toHaveLength(2);
+    expect(messages[0].a2uiDebug).toMatchObject({
+      interactionId: "confirm-1",
+      status: "submitted",
+      interaction: {
+        interaction_id: "confirm-1",
+        status: "submitted",
+        can_submit: false,
+        resume_status: "deferred",
+        pending_count: 1,
+      },
+    });
+    expect(messages[1].a2uiDebug).toMatchObject({
+      interactionId: "confirm-2",
+      status: "waiting_input",
+      interaction: {
+        interaction_id: "confirm-2",
+        status: "waiting_user_input",
+        can_submit: true,
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_resume",
+      data: {
+        session_id: "ses-1",
+        interaction_id: "confirm-1",
+        resume_status: "failed",
+        resume_group_id: "group-1",
+        pending_count: 1,
+        error: "resume failed",
+      },
+    });
+
+    messages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "a2ui");
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("waiting_input");
+    expect(messages[0].a2uiDebug).toMatchObject({
+      interactionId: "confirm-1",
+      interaction: {
+        interaction_id: "confirm-1",
+        status: "submitted",
+        resume_status: "failed",
+        resume_error: "resume failed",
+      },
+    });
+    expect(messages[1].a2uiDebug).toMatchObject({
+      interactionId: "confirm-2",
+      status: "waiting_input",
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_submit_ack",
+      data: {
+        session_id: "ses-1",
+        interaction_id: "confirm-2",
+        request_id: "req-submit-2",
+        status: "submitted",
+        submit_result: { confirmed: true },
+        interaction: {
+          interaction_id: "confirm-2",
+          status: "submitted",
+          can_submit: false,
+          submit_request_id: "req-submit-2",
+          submit_result: { confirmed: true },
+          resume_status: "started",
+          resume_group_id: "group-1",
+          pending_count: 0,
+        },
+        resume: {
+          status: "started",
+          started: true,
+          resume_group_id: "group-1",
+          pending_count: 0,
+        },
+      },
+    });
+
+    messages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "a2ui");
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
+    expect(messages.map((message) => message.a2uiDebug?.interactionId)).toEqual(["confirm-1", "confirm-2"]);
+    expect(messages[0].a2uiDebug?.interaction).toMatchObject({
+      interaction_id: "confirm-1",
+      status: "submitted",
+      resume_status: "failed",
+    });
+    expect(messages[1].a2uiDebug?.interaction).toMatchObject({
+      interaction_id: "confirm-2",
+      status: "submitted",
+      resume_status: "started",
+    });
+  });
+
+  it("treats A2UI resume succeeded as terminal when no waiting interaction remains", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-resume",
+        turn_index: 1,
+        a2ui: a2uiObject({
+          stream_id: "confirm-stream",
+          interaction: {
+            interaction_id: "confirm-1",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        }),
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_submit_ack",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-resume",
+        interaction_id: "confirm-1",
+        status: "submitted",
+        submit_result: { confirmed: true },
+        interaction: {
+          interaction_id: "confirm-1",
+          status: "submitted",
+          can_submit: false,
+          submit_result: { confirmed: true },
+          resume_status: "started",
+        },
+        resume: {
+          status: "started",
+          started: true,
+          pending_count: 0,
+        },
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "stream",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-resume",
+        turn_index: 1,
+        content: "审批卡片已呈现在上方。",
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_resume",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-resume",
+        turn_index: 1,
+        interaction_id: "confirm-1",
+        resume_status: "succeeded",
+      },
+    });
+
+    const sessionState = selectAgentSessionState(state, "ses-1");
+    const assistantMessages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "assistant");
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("idle");
+    expect(sessionState).toMatchObject({ status: "active", isStreaming: false });
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]).toMatchObject({
+      content: "审批卡片已呈现在上方。",
+      streaming: false,
+    });
+  });
+
+  it("merges completed final content into the streamed assistant by trace when turn index differs", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "stream",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-resume",
+        turn_index: 1,
+        content: "审批卡片已呈现在上方。",
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "completed",
+      data: {
+        session_id: "ses-1",
+        trace_id: "trace-resume",
+        turn_index: 2,
+        status: "completed",
+        final_content: "审批卡片已呈现在上方。",
+      },
+    });
+
+    const assistantMessages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "assistant");
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("idle");
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]).toMatchObject({
+      content: "审批卡片已呈现在上方。",
+      streaming: false,
+      traceId: "trace-resume",
+    });
+  });
+
+  it("marks sessions from waiting_input status payload without unread side effects", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [session("ses-a", "2026-06-18T08:00:00Z"), session("ses-b", "2026-06-18T09:00:00Z")],
+    });
+    state = agentConversationReducer(state, { type: "session/select", sessionId: "ses-a" });
+
+    state = reduceAgentWsEvent(state, {
+      action: "status",
+      data: {
+        status: "idle",
+        waiting_input_sessions: [{ session_id: "ses-b" }],
+      },
+    });
+
+    expect(selectAgentSessionState(state, "ses-b")).toMatchObject({
+      runtimeState: "waiting_input",
+      isStreaming: false,
+      hasUnread: false,
+    });
+    expect(selectAgentSessions(state)[0]).toMatchObject({ id: "ses-b", status: "waiting_input" });
+  });
+
+  it("restores A2UI messages and waiting_input state from history", () => {
+    const state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        {
+          role: "a2ui",
+          content: "",
+          contentType: "a2ui",
+          a2ui: a2uiObject({
+            render_key: "form",
+            mode: "interactive",
+            stream_id: "form-stream",
+            interaction: {
+              interaction_id: "form-1",
+              status: "waiting_user_input",
+              can_submit: true,
+            },
+          }),
+        },
+      ]),
+    });
+
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("waiting_input");
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        role: "a2ui",
+        contentType: "a2ui",
+        a2ui: { render_key: "form", stream_id: "form-stream" },
+        a2uiDebug: {
+          status: "created",
+          streamId: "form-stream",
+          interactionId: "form-1",
+          interaction: {
+            interaction_id: "form-1",
+            status: "waiting_user_input",
+            can_submit: true,
+          },
+        },
+      },
+    ]);
+  });
+
+  it("restores multiple same-render-key A2UI cards from history without merging states", () => {
+    const state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        {
+          role: "a2ui",
+          content: "",
+          contentType: "a2ui",
+          a2ui: a2uiObject({
+            render_key: "choice",
+            mode: "interactive",
+            stream_id: "choice-history-1",
+            interaction: {
+              interaction_id: "choice-history-1",
+              status: "submitted",
+              can_submit: false,
+              submit_result: { selected_values: ["a"] },
+              resume_status: "succeeded",
+            },
+          }),
+        },
+        {
+          role: "a2ui",
+          content: "",
+          contentType: "a2ui",
+          a2ui: a2uiObject({
+            render_key: "choice",
+            mode: "interactive",
+            stream_id: "choice-history-2",
+            interaction: {
+              interaction_id: "choice-history-2",
+              status: "waiting_user_input",
+              can_submit: true,
+              resume_status: "not_started",
+            },
+          }),
+        },
+      ]),
+    });
+
+    const messages = selectAgentMessages(state, "ses-1");
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("waiting_input");
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      a2ui: { render_key: "choice", stream_id: "choice-history-1" },
+      a2uiDebug: {
+        interactionId: "choice-history-1",
+        interaction: {
+          interaction_id: "choice-history-1",
+          status: "submitted",
+          can_submit: false,
+        },
+      },
+    });
+    expect(messages[1]).toMatchObject({
+      a2ui: { render_key: "choice", stream_id: "choice-history-2" },
+      a2uiDebug: {
+        interactionId: "choice-history-2",
+        interaction: {
+          interaction_id: "choice-history-2",
+          status: "waiting_user_input",
+          can_submit: true,
+        },
+      },
+    });
+  });
+
   it("keeps reasoning panels in event order when tools interleave", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, {
@@ -2320,6 +3088,26 @@ function approvalHistoryMessage(approval: CommandApprovalRequest): AgentChatMess
     content: approval.status === "pending" ? "等待批准执行命令: pnpm test" : "已处理命令审批",
     approval,
     status: approval.status,
+  };
+}
+
+function a2uiObject(patch: Partial<A2UIObject>): A2UIObject {
+  return {
+    render_key: "confirm",
+    mode: "interactive",
+    stream_id: "stream-1",
+    tool_call_id: "tool-1",
+    trace_id: "trace-1",
+    turn_index: 1,
+    payload: { title: "确认" },
+    input_schema: { type: "object" },
+    submit_schema: { type: "object" },
+    interaction: {
+      interaction_id: "int-1",
+      status: "waiting_user_input",
+      can_submit: true,
+    },
+    ...patch,
   };
 }
 

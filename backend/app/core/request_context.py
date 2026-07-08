@@ -20,6 +20,14 @@ tool_call_preset_var: ContextVar[Any | None] = ContextVar("tool_call_preset", de
 skill_catalog_var: ContextVar[Any | None] = ContextVar("skill_catalog", default=None)
 keydex_snapshot_var: ContextVar[Any | None] = ContextVar("keydex_snapshot", default=None)
 event_dispatcher_var: ContextVar[Any | None] = ContextVar("event_dispatcher", default=None)
+a2ui_stream_context_var: ContextVar[dict[str, list[dict[str, Any]]]] = ContextVar(
+    "a2ui_stream_context",
+    default={},
+)
+a2ui_resume_context_var: ContextVar[Any | None] = ContextVar(
+    "a2ui_resume_context",
+    default=None,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +42,8 @@ class RequestContextToken:
     skill_catalog: Token[Any | None] | None = None
     keydex_snapshot: Token[Any | None] | None = None
     event_dispatcher: Token[Any | None] | None = None
+    a2ui_stream_context: Token[dict[str, list[dict[str, Any]]]] | None = None
+    a2ui_resume_context: Token[Any | None] | None = None
 
 
 @dataclass
@@ -55,6 +65,7 @@ def set_request_context(
     keydex_snapshot: KeydexWorkspaceRuntimeSnapshot | None = None,
     event_dispatcher: EventDispatcher | None = None,
 ) -> RequestContextToken:
+    should_reset_a2ui_context = trace_id is not None or session_id is not None
     return RequestContextToken(
         trace_id=trace_id_var.set(trace_id) if trace_id is not None else None,
         session_id=session_id_var.set(session_id) if session_id is not None else None,
@@ -76,10 +87,20 @@ def set_request_context(
         event_dispatcher=event_dispatcher_var.set(event_dispatcher)
         if event_dispatcher is not None
         else None,
+        a2ui_stream_context=a2ui_stream_context_var.set({})
+        if should_reset_a2ui_context
+        else None,
+        a2ui_resume_context=a2ui_resume_context_var.set(None)
+        if should_reset_a2ui_context
+        else None,
     )
 
 
 def reset_request_context(token: RequestContextToken) -> None:
+    if token.a2ui_resume_context is not None:
+        a2ui_resume_context_var.reset(token.a2ui_resume_context)
+    if token.a2ui_stream_context is not None:
+        a2ui_stream_context_var.reset(token.a2ui_stream_context)
     if token.event_dispatcher is not None:
         event_dispatcher_var.reset(token.event_dispatcher)
     if token.keydex_snapshot is not None:
@@ -160,3 +181,82 @@ def get_keydex_snapshot() -> KeydexWorkspaceRuntimeSnapshot | None:
 
 def get_event_dispatcher() -> EventDispatcher | None:
     return event_dispatcher_var.get()
+
+
+def register_a2ui_stream_context(render_key: str, value: dict[str, Any]) -> None:
+    normalized_key = str(render_key or "").strip()
+    if not normalized_key:
+        return
+    current = {
+        key: list(items or [])
+        for key, items in (a2ui_stream_context_var.get() or {}).items()
+    }
+    current.setdefault(normalized_key, []).append(dict(value or {}))
+    a2ui_stream_context_var.set(current)
+
+
+def consume_a2ui_stream_context(
+    render_key: str,
+    *,
+    tool_call_id: str | None = None,
+) -> dict[str, Any] | None:
+    normalized_key = str(render_key or "").strip()
+    if not normalized_key:
+        return None
+    current = {
+        key: list(items or [])
+        for key, items in (a2ui_stream_context_var.get() or {}).items()
+    }
+    queue = current.get(normalized_key) or []
+    if not queue:
+        return None
+
+    normalized_tool_call_id = str(tool_call_id or "").strip()
+    matched_index = 0
+    if normalized_tool_call_id:
+        for index, item in enumerate(queue):
+            if str((item or {}).get("tool_call_id") or "").strip() == normalized_tool_call_id:
+                matched_index = index
+                break
+        else:
+            return None
+
+    value = dict(queue.pop(matched_index) or {})
+    if queue:
+        current[normalized_key] = queue
+    else:
+        current.pop(normalized_key, None)
+    a2ui_stream_context_var.set(current)
+    return value
+
+
+def clear_a2ui_stream_context() -> None:
+    a2ui_stream_context_var.set({})
+
+
+def set_a2ui_resume_context(value: Any | None) -> Token[Any | None]:
+    return a2ui_resume_context_var.set(value)
+
+
+def reset_a2ui_resume_context(token: Token[Any | None]) -> None:
+    a2ui_resume_context_var.reset(token)
+
+
+def consume_a2ui_resume_payload(
+    render_key: str,
+    *,
+    tool_call_id: str | None = None,
+) -> dict[str, Any] | None:
+    normalized_key = str(render_key or "").strip()
+    if not normalized_key:
+        return None
+    context = a2ui_resume_context_var.get()
+    consume = getattr(context, "consume", None)
+    if not callable(consume):
+        return None
+    payload = consume(render_key=normalized_key, tool_call_id=tool_call_id)
+    return dict(payload) if isinstance(payload, dict) else None
+
+
+def clear_a2ui_resume_context() -> None:
+    a2ui_resume_context_var.set(None)

@@ -6,6 +6,7 @@ from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, ToolCallRequest
 from langchain_core.messages import ToolMessage
+from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 from backend.app.agent.middleware.common import DuplicateToolForceStopError
@@ -23,6 +24,8 @@ class ToolErrorHandlingMiddleware(AgentMiddleware):
         try:
             return await handler(request)
         except DuplicateToolForceStopError:
+            raise
+        except GraphInterrupt:
             raise
         except Exception as exc:
             tool_call = request.tool_call or {}

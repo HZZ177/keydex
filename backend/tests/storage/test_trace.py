@@ -179,3 +179,21 @@ def test_trace_record_failed_status_and_validation(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="不支持的 trace 状态"):
         repositories.trace_records.finish("trace_failed", status="paused")
+
+
+def test_trace_record_allows_waiting_input_status(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    repositories.trace_records.create(
+        trace_id="trace_waiting_input",
+        session_id="ses_trace",
+        scene_id="desktop-agent",
+        user_id="local-user",
+        turn_index=3,
+        root_node_id="node_root",
+    )
+
+    waiting = repositories.trace_records.finish("trace_waiting_input", status="waiting_input")
+
+    assert waiting is not None
+    assert waiting.status == "waiting_input"
+    assert waiting.end_time is not None

@@ -41,6 +41,7 @@ const AUDIT_EVENT_OPTIONS = [
   { value: "refresh.completed", label: "刷新完成" },
   { value: "refresh.failed", label: "刷新失败" },
   { value: "tool.policy_updated", label: "工具授权已更新" },
+  { value: "tool.discovery", label: "工具发现" },
   { value: "tool.called", label: "工具调用完成" },
   { value: "tool.failed", label: "工具调用失败" },
   { value: "tool.cancelled", label: "工具调用取消" },

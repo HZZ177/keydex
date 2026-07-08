@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import type {
+  A2UIRuntimeSettings,
   AgentRuntimeSettings,
   AutoTitleRuntimeSettings,
   ContextCompressionRuntimeSettings,
@@ -22,6 +23,7 @@ type ExtensionDrafts = {
   autoTitle: AutoTitleRuntimeSettings;
   duplicateGuard: DuplicateToolCallGuardRuntimeSettings;
   compression: ContextCompressionRuntimeSettings;
+  a2ui: A2UIRuntimeSettings;
 };
 
 const MIN_COMPRESSION_TRIGGER_FRACTION = 0.1;
@@ -69,6 +71,7 @@ export function ExtensionSettingsPage({
   const titleDraft = drafts?.autoTitle ?? null;
   const duplicateGuardDraft = drafts?.duplicateGuard ?? null;
   const compressionDraft = drafts?.compression ?? null;
+  const a2uiDraft = drafts?.a2ui ?? null;
   const titleDependencyMissing = Boolean(titleDraft?.enabled && !fastConfigured);
   const compressionDependencyMissing = Boolean(compressionDraft?.enabled && !defaultChatConfigured);
   const titleLengthInvalid = titleDraft ? titleDraft.max_title_length < 4 || titleDraft.max_title_length > 50 : false;
@@ -111,6 +114,10 @@ export function ExtensionSettingsPage({
     updateDrafts((current) => ({ ...current, compression: { ...current.compression, ...patch } }));
   };
 
+  const updateA2UIDraft = (patch: Partial<A2UIRuntimeSettings>) => {
+    updateDrafts((current) => ({ ...current, a2ui: { ...current.a2ui, ...patch } }));
+  };
+
   const saveExtensionPage = async () => {
     if (!drafts || !canSave) {
       return;
@@ -138,7 +145,7 @@ export function ExtensionSettingsPage({
 
       {loading ? <div className={styles.muted} data-settings-muted>正在读取扩展功能配置</div> : null}
 
-      {!loading && drafts && titleDraft && duplicateGuardDraft && compressionDraft ? (
+      {!loading && drafts && titleDraft && duplicateGuardDraft && compressionDraft && a2uiDraft ? (
         <section className={styles.settingsGroup} data-settings-group aria-labelledby="extension-feature-title">
           <div className={styles.groupHeader} data-settings-group-header>
             <h2 id="extension-feature-title">功能模块</h2>
@@ -230,6 +237,26 @@ export function ExtensionSettingsPage({
             {compressionWindowInvalid ? (
               <div className={styles.fieldError}>上下文窗口必须在 1000 到 2000000 token 之间</div>
             ) : null}
+          </div>
+
+          <div className={styles.settingsPanel} data-settings-panel>
+            <SettingRow
+              title="A2UI 交互组件"
+              description="允许智能体在对话中生成确认、选择、表单、图表四类内置 A2UI 卡片；关闭后只影响后续新对话能力"
+              control={
+                <ToggleSwitch
+                  checked={a2uiDraft.enabled}
+                  label="启用 A2UI"
+                  onChange={(enabled) => updateA2UIDraft({ enabled })}
+                />
+              }
+            />
+            <div className={styles.a2uiSummary} aria-label="当前支持的 A2UI 类型">
+              <span>确认</span>
+              <span>选择</span>
+              <span>表单</span>
+              <span>图表</span>
+            </div>
           </div>
 
           <div className={styles.actions}>
@@ -573,6 +600,7 @@ function draftsFromSettings(settings: AgentRuntimeSettings): ExtensionDrafts {
     autoTitle: { ...settings.auto_title, only_when_default_title: true },
     duplicateGuard: settings.duplicate_tool_call_guard,
     compression: settings.context_compression,
+    a2ui: settings.a2ui,
   };
 }
 
@@ -581,6 +609,7 @@ function settingsFromDrafts(drafts: ExtensionDrafts): AgentRuntimeSettings {
     auto_title: { ...drafts.autoTitle, only_when_default_title: true },
     duplicate_tool_call_guard: drafts.duplicateGuard,
     context_compression: drafts.compression,
+    a2ui: drafts.a2ui,
   };
 }
 

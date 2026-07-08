@@ -36,7 +36,7 @@ def test_runtime_status_returns_snapshot_servers_and_effective_tools(tmp_path) -
     offline_tool = _seed_tool(repositories, offline_server, "search_docs")
     repositories.mcp_server_status.upsert(online_server, status="online")
     repositories.mcp_server_status.upsert(offline_server, status="offline")
-    snapshot = McpRuntimeSnapshotBuilder(repositories, deferred_threshold=20).build_snapshot(
+    snapshot = McpRuntimeSnapshotBuilder(repositories, direct_tool_budget=20).build_snapshot(
         McpRuntimeSnapshotContext(session_id="sess-runtime")
     )
     repositories.command_approvals.create(
@@ -72,6 +72,18 @@ def test_runtime_status_returns_snapshot_servers_and_effective_tools(tmp_path) -
             "exposure": "direct",
         }
     ]
+    directory = {
+        item["server_id"]: item for item in body["snapshot"]["capability_directory"]
+    }
+    assert directory[online_server]["status"] == "online"
+    assert directory[online_server]["available_tool_count"] == 1
+    assert directory[online_server]["direct_tool_count"] == 1
+    assert directory[offline_server]["status"] == "offline"
+    assert directory[offline_server]["status_label"] == "离线"
+    assert directory[offline_server]["available_tool_count"] == 0
+    assert body["snapshot"]["direct_available_tools"] == 1
+    assert body["snapshot"]["on_demand_tools"] == 0
+    assert body["snapshot"]["unavailable_tools"] == 1
     assert body["summary"]["servers_total"] == 2
     assert body["summary"]["servers_online"] == 1
     assert body["pending_approvals"] == 1

@@ -70,6 +70,8 @@ export function ConversationPanel({
         onFilePreview={model.openFileChangePreview}
         onLoadToolDetails={model.loadToolDetails}
         onTerminateCommand={model.terminateCommand}
+        onA2UISubmit={model.submitA2UI}
+        onA2UICancel={model.cancelA2UI}
         onResolveMcpElicitation={model.resolveMcpElicitation}
         onQuoteSelection={model.quoteSelection}
         onAskSelectionInBtwConversation={onAskSelectionInBtwConversation}

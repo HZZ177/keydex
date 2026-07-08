@@ -4,15 +4,20 @@ import json
 from datetime import datetime
 from typing import Any
 
+from backend.app.a2ui.schemas import a2ui_object_from_record
 from backend.app.events.actions import CompletedEventItemAction, ReplayAction
-from backend.app.storage import MessageEventRecord
+from backend.app.storage import A2UIInteractionsRepository, MessageEventRecord
 
 _TOOL_PREVIEW_TEXT_LIMIT = 1000
 
 
 class MessageEventService:
-    def __init__(self, repository) -> None:
+    def __init__(self, repository, a2ui_interactions_repository=None) -> None:
         self._repository = repository
+        self._a2ui_interactions_repository = (
+            a2ui_interactions_repository
+            or self._derive_a2ui_interactions_repository(repository)
+        )
 
     def get_display_messages(
         self,
@@ -20,10 +25,11 @@ class MessageEventService:
         *,
         include_tool_details: bool = True,
     ) -> list[dict[str, Any]]:
-        return self._aggregate_events(
+        messages = self._aggregate_events(
             self._repository.list_by_session(session_id),
             include_tool_details=include_tool_details,
         )
+        return self._enrich_a2ui_messages(messages)
 
     def get_turn_messages(
         self,
@@ -32,10 +38,11 @@ class MessageEventService:
         *,
         include_tool_details: bool = True,
     ) -> list[dict[str, Any]]:
-        return self._aggregate_events(
+        messages = self._aggregate_events(
             self._repository.list_by_turn(session_id, turn_index),
             include_tool_details=include_tool_details,
         )
+        return self._enrich_a2ui_messages(messages)
 
     def get_tool_detail(
         self,
@@ -215,6 +222,14 @@ class MessageEventService:
                     data,
                     include_tool_details=include_tool_details,
                 )
+                continue
+
+            if action == ReplayAction.A2UI_CREATED.value:
+                messages.append(self._build_a2ui_message(event, data))
+                continue
+
+            if action == ReplayAction.WAITING_INPUT.value:
+                self._apply_a2ui_waiting_input(messages, data)
                 continue
 
             if action == ReplayAction.APPROVAL_REQUESTED.value:
@@ -402,6 +417,105 @@ class MessageEventService:
         data = dict(event.data or {})
         data.pop("_canonical", None)
         return data
+
+    @staticmethod
+    def _derive_a2ui_interactions_repository(repository):
+        db = getattr(repository, "db", None)
+        if db is None:
+            return None
+        return A2UIInteractionsRepository(db)
+
+    def _enrich_a2ui_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self._a2ui_interactions_repository is None:
+            return messages
+        for message in self._iter_a2ui_messages(messages):
+            a2ui = message["a2ui"]
+            interaction_id = self._a2ui_interaction_id(a2ui)
+            if not interaction_id:
+                continue
+            interaction = self._a2ui_interactions_repository.get(interaction_id)
+            if interaction is None:
+                current = dict(a2ui.get("interaction") or {})
+                current.update(
+                    {
+                        "interaction_id": interaction_id,
+                        "status": "missing",
+                        "can_submit": False,
+                        "error": "interaction_not_found",
+                    }
+                )
+                a2ui["interaction"] = current
+                continue
+            enriched = a2ui_object_from_record(interaction).model_dump(mode="json")
+            a2ui.update(enriched)
+        return messages
+
+    @staticmethod
+    def _build_a2ui_message(
+        event: MessageEventRecord,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        a2ui = dict(data.get("a2ui") or {})
+        interaction = data.get("interaction")
+        if isinstance(interaction, dict) and "interaction" not in a2ui:
+            a2ui["interaction"] = dict(interaction)
+        for key in ("render_key", "mode", "stream_id", "tool_call_id", "trace_id", "turn_index"):
+            if key in data and key not in a2ui:
+                a2ui[key] = data.get(key)
+        message = {
+            "role": "a2ui",
+            "content": "",
+            "contentType": "a2ui",
+            "content_type": "a2ui",
+            "a2ui": a2ui,
+            "timestamp": MessageEventService._event_timestamp_ms(event),
+            "messageEventId": event.id,
+            "turnIndex": event.turn_index,
+        }
+        trace_id = str(data.get("trace_id") or a2ui.get("trace_id") or "").strip()
+        if trace_id:
+            message["traceId"] = trace_id
+        return message
+
+    @staticmethod
+    def _iter_a2ui_messages(messages: list[dict[str, Any]]):
+        for message in messages:
+            if message.get("role") == "a2ui" and isinstance(message.get("a2ui"), dict):
+                yield message
+
+    @staticmethod
+    def _a2ui_interaction_id(a2ui: dict[str, Any]) -> str:
+        interaction = a2ui.get("interaction")
+        if isinstance(interaction, dict):
+            interaction_id = str(interaction.get("interaction_id") or "").strip()
+            if interaction_id:
+                return interaction_id
+        return str(a2ui.get("interaction_id") or "").strip()
+
+    @staticmethod
+    def _apply_a2ui_waiting_input(
+        messages: list[dict[str, Any]],
+        data: dict[str, Any],
+    ) -> None:
+        interaction_id = str(data.get("interaction_id") or "").strip()
+        if not interaction_id:
+            return
+        for message in reversed(messages):
+            if message.get("role") != "a2ui" or not isinstance(message.get("a2ui"), dict):
+                continue
+            a2ui = message["a2ui"]
+            if MessageEventService._a2ui_interaction_id(a2ui) != interaction_id:
+                continue
+            interaction = dict(a2ui.get("interaction") or {})
+            interaction["interaction_id"] = interaction_id
+            interaction["status"] = interaction.get("status") or "waiting_user_input"
+            interaction["can_submit"] = True
+            a2ui["interaction"] = interaction
+            a2ui["waiting_input"] = {
+                "reason": data.get("reason"),
+                "checkpoint": data.get("checkpoint") or {},
+            }
+            return
 
     @staticmethod
     def _canonical_source(event: MessageEventRecord) -> str:

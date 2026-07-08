@@ -176,6 +176,10 @@ async def test_execute_tool_success_updates_counters_and_audit(tmp_path) -> None
     assert tool.call_count == 1
     assert tool.failure_count == 0
     assert tool.last_used_at is not None
+    usage = repositories.mcp_session_tool_usage.get("session-a", "srv_exec", "search")
+    assert usage is not None
+    assert usage.model_name == "mcp__srv_exec__search"
+    assert usage.success_count == 1
     assert total == 1
     assert audits[0].status == "completed"
     assert audits[0].detail["snapshot_id"] == "snap-a"
@@ -609,6 +613,7 @@ async def test_execute_tool_returns_result_too_large_when_truncated_payload_cann
     assert result.error["code"] == "result_too_large"
     assert tool.call_count == 1
     assert tool.failure_count == 1
+    assert repositories.mcp_session_tool_usage.get("session-a", "srv_exec", "search") is None
     assert total == 1
     assert audits[0].detail["error_code"] == "result_too_large"
 
@@ -692,6 +697,49 @@ async def test_execute_tool_rejects_schema_invalid_arguments_before_client_call(
     assert total == 1
     assert audits[0].detail["error_code"] == "validation_error"
     assert audits[0].detail["error_detail"] == expected_detail
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_live_guard_rejects_disabled_tool_before_client_call(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    _create_server_and_tool(repositories)
+    repositories.mcp_tool_policies.upsert(
+        server_id="srv_exec",
+        raw_tool_name="search",
+        enabled=False,
+    )
+    factory = RecordingExecutionClientFactory()
+    manager = McpManager(
+        settings=AppSettings(data_dir=tmp_path / "data"),
+        repositories=repositories,
+        client_factory=factory,
+    )
+
+    result = await manager.execute_tool(
+        snapshot_id="snap-activated",
+        server_id="srv_exec",
+        raw_tool_name="search",
+        arguments={"query": "hello"},
+        call_context=_context(),
+    )
+
+    tool = repositories.mcp_tools.get_by_raw_name("srv_exec", "search")
+    failed, failed_total = repositories.mcp_audit_log.list(event_type="tool.failed")
+    rejected, rejected_total = repositories.mcp_audit_log.list(
+        event_type="tool.guard_rejected"
+    )
+    assert result.ok is False
+    assert result.error["code"] == "tool_disabled_by_policy"
+    assert factory.created == []
+    assert tool.call_count == 0
+    assert tool.failure_count == 0
+    assert repositories.mcp_session_tool_usage.get("session-a", "srv_exec", "search") is None
+    assert failed_total == 1
+    assert failed[0].detail["snapshot_id"] == "snap-activated"
+    assert rejected_total == 1
+    assert rejected[0].detail["reason"] == "tool_disabled_by_policy"
 
 
 @pytest.mark.asyncio

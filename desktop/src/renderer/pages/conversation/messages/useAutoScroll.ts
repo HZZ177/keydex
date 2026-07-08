@@ -29,6 +29,7 @@ export interface UseAutoScrollResult {
   handleScroll: (event: UIEvent<HTMLDivElement>) => void;
   handleWheel: (event: WheelEvent<HTMLDivElement>) => void;
   handlePointerDown: () => void;
+  cancelScrollAnimation: () => void;
   scrollToBottom: (behavior?: ScrollBehavior) => void;
 }
 
@@ -334,6 +335,7 @@ export function useAutoScroll({ deps, itemCount = 0, autoFollow = true }: UseAut
     handleScroll,
     handleWheel,
     handlePointerDown,
+    cancelScrollAnimation,
     scrollToBottom,
   };
 }

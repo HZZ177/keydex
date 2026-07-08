@@ -248,9 +248,27 @@
   gap: 6px;
 }
 
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.metricTile {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 38%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-bg) 46%, transparent);
+  padding: 7px 8px;
+}
+
 .summaryBlock strong,
 .issueRow strong,
-.runningRow strong {
+.runningRow strong,
+.metricTile strong,
+.emptyPanelState strong {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-primary);
@@ -262,7 +280,9 @@
 
 .summaryBlock span,
 .issueRow span,
-.runningRow span {
+.runningRow span,
+.metricTile span,
+.emptyPanelState span {
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--color-text-tertiary);
@@ -278,6 +298,18 @@
   border-radius: 7px;
   background: color-mix(in srgb, var(--surface-bg) 48%, transparent);
   padding: 7px 8px;
+}
+
+.emptyPanelState {
+  display: grid;
+  min-height: 82px;
+  place-items: center;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 34%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-bg) 38%, transparent);
+  padding: 12px;
+  text-align: center;
 }
 
 .panelFooter {

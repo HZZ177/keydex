@@ -42,7 +42,7 @@ def test_domain_event_requires_core_fields() -> None:
         DomainEvent(event_type=DomainEventType.TURN_STARTED.value, source="", payload={})
 
 
-def test_event_enums_cover_core_contract_and_exclude_a2ui() -> None:
+def test_event_enums_cover_core_contract_and_include_a2ui() -> None:
     required_domain_events = {
         DomainEventType.MESSAGE_USER_CREATED,
         DomainEventType.LLM_STREAM,
@@ -51,15 +51,26 @@ def test_event_enums_cover_core_contract_and_exclude_a2ui() -> None:
         DomainEventType.LLM_TOOL_FINISHED,
         DomainEventType.LLM_TOOL_FAILED,
         DomainEventType.TURN_STARTED,
+        DomainEventType.TURN_WAITING_INPUT,
         DomainEventType.TURN_COMPLETED,
         DomainEventType.TURN_CANCELLED,
         DomainEventType.TURN_FAILED,
         DomainEventType.REASONING_STREAM,
         DomainEventType.REASONING_FINISHED,
+        DomainEventType.A2UI_STREAM_STARTED,
+        DomainEventType.A2UI_STREAM_CHUNK,
+        DomainEventType.A2UI_STREAM_FINISHED,
+        DomainEventType.A2UI_CREATED,
+        DomainEventType.A2UI_SUBMITTED,
+        DomainEventType.A2UI_CANCELLED,
+        DomainEventType.A2UI_RESUME_DEFERRED,
+        DomainEventType.A2UI_RESUME_STARTED,
+        DomainEventType.A2UI_RESUME_SUCCEEDED,
+        DomainEventType.A2UI_RESUME_FAILED,
     }
 
     assert required_domain_events.issubset(CORE_EVENT_TYPES)
-    assert not any(event.value.startswith("a2ui.") for event in DomainEventType)
+    assert ensure_known_event_type("a2ui.created") is DomainEventType.A2UI_CREATED
 
 
 def test_external_action_enums_match_source_contract() -> None:
@@ -71,13 +82,21 @@ def test_external_action_enums_match_source_contract() -> None:
     assert ChatAction.TASK_RUN_FINISHED.value == "task_run_finished"
     assert ChatAction.REASONING.value == "reasoning"
     assert ChatAction.MIDDLEWARE_PROGRESS.value == "middleware_progress"
+    assert ChatAction.A2UI_STREAM_START.value == "a2ui_stream_start"
+    assert ChatAction.A2UI_CREATED.value == "a2ui_created"
+    assert ChatAction.WAITING_INPUT.value == "waiting_input"
+    assert ChatAction.A2UI_SUBMIT_ACK.value == "a2ui_submit_ack"
     assert ReplayAction.STREAM_BATCH.value == "stream_batch"
     assert ReplayAction.MEMORY_RECALLED.value == "memory_recalled"
     assert ReplayAction.TASK_DELETED.value == "task_deleted"
     assert ReplayAction.MIDDLEWARE_PROGRESS.value == "middleware_progress"
+    assert ReplayAction.A2UI_CREATED.value == "a2ui_created"
+    assert ReplayAction.WAITING_INPUT.value == "waiting_input"
     assert CompletedEventItemAction.REASONING_MESSAGE.value == "reasoning_message"
     assert ChatInboundAction.CREATE_SESSION.value == "create_session"
     assert ChatInboundAction.SCHEDULED_CHAT.value == "scheduled_chat"
+    assert ChatInboundAction.A2UI_SUBMIT.value == "a2ui_submit"
+    assert ChatInboundAction.A2UI_CANCEL.value == "a2ui_cancel"
 
 
 def test_unknown_event_type_is_rejected_explicitly() -> None:

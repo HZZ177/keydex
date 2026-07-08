@@ -303,6 +303,7 @@ class McpToolSummary(McpBaseModel):
     description: str | None = None
     enabled: bool
     hidden: bool
+    priority_available: bool = False
     effective_state: McpToolEffectiveState
     approval_mode: McpApprovalMode
     annotations: dict[str, Any] | None = None
@@ -310,9 +311,19 @@ class McpToolSummary(McpBaseModel):
 
 
 class McpRuntimeSnapshotSummary(McpBaseModel):
+    id: str | None = None
     snapshot_id: str
     session_id: str
     turn_id: str | None = None
+    tool_inventory_revision: int | None = None
+    visible_tools_count: int | None = None
+    visible_tools: list[dict[str, Any]] = Field(default_factory=list)
+    server_status: dict[str, Any] = Field(default_factory=dict)
+    policy_summary: dict[str, Any] = Field(default_factory=dict)
+    capability_directory: list[dict[str, Any]] = Field(default_factory=list)
+    direct_available_tools: int = 0
+    on_demand_tools: int = 0
+    unavailable_tools: int = 0
     servers_total: int
     servers_online: int
     tools_visible: int

@@ -1,4 +1,4 @@
-import { Archive, Box, ChevronLeft, ChevronRight, Command, Search, Sparkles, Target } from "lucide-react";
+import { Box, ChevronLeft, ChevronRight, Command, MessagesSquare, Search, Sparkles, Target } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import type { WorkspaceSkillSummary } from "@/runtime";
@@ -175,10 +175,38 @@ function slashCommandIcon(command: SlashCommand) {
   if (command.kind === "goal") {
     return Target;
   }
+  if (command.kind === "builtin" && command.id === "bypass-conversation") {
+    return MessagesSquare;
+  }
   if (isContextCompressionSlashCommand(command)) {
-    return Archive;
+    return StaticProgressRingIcon;
   }
   return Command;
+}
+
+function StaticProgressRingIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height={size}
+      viewBox="0 0 16 16"
+      width={size}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <circle cx="8" cy="8" opacity="0.22" r="5.5" stroke="currentColor" strokeWidth="2" />
+      <circle
+        cx="8"
+        cy="8"
+        r="5.5"
+        stroke="currentColor"
+        strokeDasharray="8.64 25.92"
+        strokeLinecap="round"
+        strokeWidth="2"
+        transform="rotate(-90 8 8)"
+      />
+    </svg>
+  );
 }
 
 function SkillItem({

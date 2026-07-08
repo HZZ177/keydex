@@ -1278,7 +1278,11 @@ export function SendBox({
 }
 
 function isBusy(state: ConversationRuntimeState): boolean {
-  return state === "starting" || state === "running" || state === "waiting_approval" || state === "cancelling";
+  return state === "starting"
+    || state === "running"
+    || state === "waiting_approval"
+    || state === "waiting_input"
+    || state === "cancelling";
 }
 
 function filesArray(files: FileList | File[] | null): File[] {

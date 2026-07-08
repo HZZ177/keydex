@@ -156,6 +156,7 @@ create table if not exists mcp_tool_policies (
   raw_tool_name text not null,
   enabled integer not null default 1,
   hidden integer not null default 0,
+  priority_available integer not null default 0,
   approval_mode text not null default 'inherit'
     check (approval_mode in ('inherit', 'auto', 'prompt', 'approve', 'deny')),
   parameter_constraints_json text,
@@ -167,6 +168,19 @@ create table if not exists mcp_tool_policies (
 
 create index if not exists idx_mcp_tool_policies_server
   on mcp_tool_policies(server_id);
+
+create table if not exists mcp_session_tool_usage (
+  session_id text not null,
+  server_id text not null references mcp_servers(id) on delete cascade,
+  raw_tool_name text not null,
+  model_name text not null,
+  success_count integer not null default 0,
+  last_success_at text not null,
+  primary key(session_id, server_id, raw_tool_name)
+);
+
+create index if not exists idx_mcp_session_tool_usage_recent
+  on mcp_session_tool_usage(session_id, last_success_at desc);
 
 create table if not exists mcp_resources (
   id text primary key,
@@ -262,6 +276,10 @@ create table if not exists mcp_runtime_snapshots (
   visible_tools_json text not null,
   server_status_json text not null,
   policy_summary_json text not null,
+  capability_directory_json text not null default '[]',
+  direct_available_tools integer not null default 0,
+  on_demand_tools integer not null default 0,
+  unavailable_tools integer not null default 0,
   created_at text not null
 );
 
@@ -511,6 +529,55 @@ create index if not exists idx_message_events_session_id on message_events(sessi
 create index if not exists idx_message_events_session_seq on message_events(session_id, seq);
 create unique index if not exists idx_message_events_session_seq_unique
   on message_events(session_id, seq);
+
+create table if not exists a2ui_interactions (
+  id text primary key,
+  session_id text not null,
+  trace_id text,
+  active_session_id text,
+  turn_index integer not null default 0,
+  tool_call_id text,
+  stream_id text not null,
+  render_key text not null,
+  mode text not null check (mode in ('render', 'interactive')),
+  payload_json text not null default '{}',
+  input_schema_json text not null default '{}',
+  submit_schema_snapshot_json text not null default '{}',
+  status text not null default 'waiting_user_input'
+    check (status in ('waiting_user_input', 'submitted', 'cancelled')),
+  submit_request_id text,
+  cancel_request_id text,
+  submit_result_json text,
+  cancel_reason text,
+  langgraph_thread_id text,
+  checkpoint_ns text not null default '',
+  checkpoint_id text,
+  interrupt_id text,
+  resume_group_id text,
+  resume_status text not null default 'not_started'
+    check (resume_status in ('not_started', 'deferred', 'started', 'succeeded', 'failed')),
+  resume_payload_json text,
+  resume_error text,
+  created_at text not null,
+  updated_at text not null,
+  submitted_at text,
+  cancelled_at text,
+  resume_started_at text,
+  resume_finished_at text,
+  is_deleted integer not null default 0
+);
+
+create index if not exists idx_a2ui_interactions_session_status
+  on a2ui_interactions(session_id, status, created_at);
+create index if not exists idx_a2ui_interactions_session_turn
+  on a2ui_interactions(session_id, turn_index, created_at);
+create index if not exists idx_a2ui_interactions_resume_group
+  on a2ui_interactions(resume_group_id, status, resume_status);
+create index if not exists idx_a2ui_interactions_tool_call
+  on a2ui_interactions(session_id, trace_id, tool_call_id);
+create unique index if not exists idx_a2ui_interactions_session_tool_call_unique
+  on a2ui_interactions(session_id, tool_call_id)
+  where tool_call_id is not null;
 
 create table if not exists compression_staging (
   id integer primary key autoincrement,
@@ -895,6 +962,36 @@ class Database:
                 "trusted_command_rules",
                 "shell_path",
                 "text not null default ''",
+            )
+            self._ensure_column(
+                conn,
+                "mcp_runtime_snapshots",
+                "capability_directory_json",
+                "text not null default '[]'",
+            )
+            self._ensure_column(
+                conn,
+                "mcp_runtime_snapshots",
+                "direct_available_tools",
+                "integer not null default 0",
+            )
+            self._ensure_column(
+                conn,
+                "mcp_runtime_snapshots",
+                "on_demand_tools",
+                "integer not null default 0",
+            )
+            self._ensure_column(
+                conn,
+                "mcp_runtime_snapshots",
+                "unavailable_tools",
+                "integer not null default 0",
+            )
+            self._ensure_column(
+                conn,
+                "mcp_tool_policies",
+                "priority_available",
+                "integer not null default 0",
             )
             conn.executescript(SCHEMA_UPGRADE_SQL)
             self._remove_mcp_prompt_schema(conn)

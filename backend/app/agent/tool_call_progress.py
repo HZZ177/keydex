@@ -24,6 +24,7 @@ class ToolCallChunkState:
     name: str = ""
     args_text: str = ""
     args: dict[str, Any] = field(default_factory=dict)
+    last_args_delta: str = ""
     last_progress_fingerprint: str = ""
     bound_run_id: str = ""
 
@@ -53,9 +54,14 @@ class ToolCallChunkPipeline:
             index_key = f"{model_run_id}:{delta.index}" if delta.index is not None else ""
             state_key = delta.key
             if delta.tool_call_id and index_key:
-                self._index_keys[index_key] = delta.key
+                existing_key = self._index_keys.get(index_key)
+                if existing_key:
+                    state_key = existing_key
+                else:
+                    self._index_keys[index_key] = delta.key
             elif index_key:
                 state_key = self._index_keys.get(index_key, delta.key)
+                self._index_keys.setdefault(index_key, state_key)
 
             state = self._states.setdefault(
                 state_key,
@@ -72,11 +78,16 @@ class ToolCallChunkPipeline:
             if delta.name:
                 state.name = delta.name
             if isinstance(delta.args, str):
+                state.last_args_delta = delta.args
                 state.args_text += delta.args
                 state.args.update(parse_partial_json_object(state.args_text))
             elif isinstance(delta.args, dict):
                 state.args.update(delta.args)
-                state.args_text = merge_json_text(state.args_text, delta.args)
+                merged_args_text = merge_json_text(state.args_text, delta.args)
+                state.last_args_delta = merged_args_text if not state.args_text else ""
+                state.args_text = merged_args_text
+            else:
+                state.last_args_delta = ""
 
             collector = self._collectors.get(state.name)
             if collector is None:

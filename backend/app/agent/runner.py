@@ -6,6 +6,10 @@ from typing import Any
 import httpx
 from langchain_core.messages import SystemMessage
 
+from backend.app.a2ui.prompt import build_a2ui_prompt_section
+from backend.app.a2ui.registry import build_builtin_a2ui_registry
+from backend.app.a2ui.runtime import A2UIRuntime
+from backend.app.a2ui.tools import a2ui_registry_to_langchain_tools
 from backend.app.agent.factory import AgentFactory, agent_factory
 from backend.app.agent.langchain_tools import registry_to_langchain_tools, tools_to_langchain_tools
 from backend.app.agent.middleware.builder import build_default_middleware
@@ -91,6 +95,8 @@ class AgentRunner:
         )
         command_settings = None
         command_runtime: CommandRuntime | None = None
+        runtime_settings = self._runtime_settings_provider()
+        a2ui_registry = None
         tools = []
         if enable_tools:
             tools = registry_to_langchain_tools(
@@ -116,6 +122,31 @@ class AgentRunner:
                         context_factory=lambda: tool_context,
                     )
                 )
+            dispatcher = tool_context.metadata.get("dispatcher")
+            if runtime_settings.a2ui.enabled and repositories is not None and dispatcher is not None:
+                reserved_tool_names = {
+                    str(getattr(tool, "name", "") or "")
+                    for tool in tools
+                    if str(getattr(tool, "name", "") or "")
+                }
+                try:
+                    a2ui_registry = build_builtin_a2ui_registry(
+                        reserved_tool_names=reserved_tool_names
+                    )
+                except ValueError as exc:
+                    raise AgentAssemblyError(str(exc)) from exc
+                a2ui_runtime = A2UIRuntime(
+                    repositories=repositories,
+                    dispatcher=dispatcher,
+                    registry=a2ui_registry,
+                )
+                tools.extend(
+                    a2ui_registry_to_langchain_tools(
+                        a2ui_registry,
+                        context_factory=lambda: tool_context,
+                        handler=a2ui_runtime.handle_tool_call,
+                    )
+                )
         if enable_tools and isinstance(tool_context.metadata.get("skill_catalog"), SkillCatalog):
             tools.append(load_skill)
         resolved_system_prompt = (
@@ -130,12 +161,17 @@ class AgentRunner:
             command_settings if enable_tools else None,
         )
         prompt = f"{prompt}\n\n{command_prompt}" if prompt else command_prompt
+        a2ui_prompt = build_a2ui_prompt_section(
+            enabled=bool(enable_tools and runtime_settings.a2ui.enabled and a2ui_registry),
+            registry=a2ui_registry,
+        )
+        if a2ui_prompt:
+            prompt = f"{prompt}\n\n{a2ui_prompt}" if prompt else a2ui_prompt
         logger.info(
             f"[AgentRunner] 组装 agent | model={model} | tools={len(tools)} | "
             f"tools_enabled={enable_tools} | prompt_len={len(prompt)} | "
             f"skill_index_len={len(skill_index)} | workspace_root={tool_context.workspace_root}"
         )
-        runtime_settings = self._runtime_settings_provider()
         return self.factory.create_agent(
             model=llm,
             tools=tools,

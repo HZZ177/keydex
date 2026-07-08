@@ -77,6 +77,30 @@ THREAD_TASK_RUN_STATUSES = frozenset(
         THREAD_TASK_RUN_STATUS_CANCELLED,
     }
 )
+A2UI_STATUS_WAITING_USER_INPUT = "waiting_user_input"
+A2UI_STATUS_SUBMITTED = "submitted"
+A2UI_STATUS_CANCELLED = "cancelled"
+A2UI_STATUSES = frozenset(
+    {
+        A2UI_STATUS_WAITING_USER_INPUT,
+        A2UI_STATUS_SUBMITTED,
+        A2UI_STATUS_CANCELLED,
+    }
+)
+A2UI_RESUME_STATUS_NOT_STARTED = "not_started"
+A2UI_RESUME_STATUS_DEFERRED = "deferred"
+A2UI_RESUME_STATUS_STARTED = "started"
+A2UI_RESUME_STATUS_SUCCEEDED = "succeeded"
+A2UI_RESUME_STATUS_FAILED = "failed"
+A2UI_RESUME_STATUSES = frozenset(
+    {
+        A2UI_RESUME_STATUS_NOT_STARTED,
+        A2UI_RESUME_STATUS_DEFERRED,
+        A2UI_RESUME_STATUS_STARTED,
+        A2UI_RESUME_STATUS_SUCCEEDED,
+        A2UI_RESUME_STATUS_FAILED,
+    }
+)
 _UNSET = object()
 
 
@@ -127,6 +151,16 @@ def _json_array_loads(value: str | None, *, field_name: str) -> list[Any]:
     if not isinstance(loaded, list):
         raise ValueError(f"{field_name} 必须是 JSON 数组")
     return loaded
+
+
+def _non_negative_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return max(0, int(value))
+    return default
 
 
 @dataclass(frozen=True)
@@ -341,6 +375,46 @@ class MessageEventRecord:
     updated_at: str
     trace_record_id: str | None = None
     is_deleted: bool = False
+
+
+@dataclass(frozen=True)
+class A2UIInteractionRecord:
+    id: str
+    session_id: str
+    stream_id: str
+    render_key: str
+    mode: str
+    payload: dict[str, Any]
+    input_schema: dict[str, Any]
+    submit_schema_snapshot: dict[str, Any]
+    status: str
+    resume_status: str
+    created_at: str
+    updated_at: str
+    trace_id: str | None = None
+    active_session_id: str | None = None
+    turn_index: int = 0
+    tool_call_id: str | None = None
+    submit_request_id: str | None = None
+    cancel_request_id: str | None = None
+    submit_result: dict[str, Any] | None = None
+    cancel_reason: str | None = None
+    langgraph_thread_id: str | None = None
+    checkpoint_ns: str = ""
+    checkpoint_id: str | None = None
+    interrupt_id: str | None = None
+    resume_group_id: str | None = None
+    resume_payload: dict[str, Any] | None = None
+    resume_error: str | None = None
+    submitted_at: str | None = None
+    cancelled_at: str | None = None
+    resume_started_at: str | None = None
+    resume_finished_at: str | None = None
+    is_deleted: bool = False
+
+    @property
+    def can_submit(self) -> bool:
+        return self.status == A2UI_STATUS_WAITING_USER_INPUT and not self.is_deleted
 
 
 @dataclass(frozen=True)
@@ -649,6 +723,7 @@ class McpToolPolicyRecord:
     raw_tool_name: str
     enabled: bool
     hidden: bool
+    priority_available: bool
     approval_mode: str
     schema_change_action: str
     updated_at: str
@@ -668,6 +743,16 @@ class McpSessionToolOverrideRecord:
 
 
 @dataclass(frozen=True)
+class McpSessionToolUsageRecord:
+    session_id: str
+    server_id: str
+    raw_tool_name: str
+    model_name: str
+    success_count: int
+    last_success_at: str
+
+
+@dataclass(frozen=True)
 class McpRuntimeSnapshotRecord:
     id: str
     session_id: str
@@ -677,6 +762,10 @@ class McpRuntimeSnapshotRecord:
     policy_summary: dict[str, Any]
     created_at: str
     turn_id: str | None = None
+    capability_directory: list[Any] = field(default_factory=list)
+    direct_available_tools: int = 0
+    on_demand_tools: int = 0
+    unavailable_tools: int = 0
 
 
 @dataclass(frozen=True)
@@ -1725,6 +1814,7 @@ class McpToolPoliciesRepository:
         raw_tool_name: str,
         enabled: bool = True,
         hidden: bool = False,
+        priority_available: bool = False,
         approval_mode: str = "inherit",
         parameter_constraints: dict[str, Any] | None = None,
         schema_change_action: str = "require_review",
@@ -1737,12 +1827,13 @@ class McpToolPoliciesRepository:
             conn.execute(
                 """
                 insert into mcp_tool_policies (
-                  id, server_id, raw_tool_name, enabled, hidden, approval_mode,
-                  parameter_constraints_json, schema_change_action, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  id, server_id, raw_tool_name, enabled, hidden, priority_available,
+                  approval_mode, parameter_constraints_json, schema_change_action, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(server_id, raw_tool_name) do update set
                   enabled=excluded.enabled,
                   hidden=excluded.hidden,
+                  priority_available=excluded.priority_available,
                   approval_mode=excluded.approval_mode,
                   parameter_constraints_json=excluded.parameter_constraints_json,
                   schema_change_action=excluded.schema_change_action,
@@ -1754,6 +1845,7 @@ class McpToolPoliciesRepository:
                     raw_tool_name,
                     int(enabled),
                     int(hidden),
+                    int(priority_available),
                     approval_mode,
                     _json_dumps(parameter_constraints)
                     if parameter_constraints is not None
@@ -1786,12 +1878,13 @@ class McpToolPoliciesRepository:
                 conn.execute(
                     """
                     insert into mcp_tool_policies (
-                      id, server_id, raw_tool_name, enabled, hidden, approval_mode,
-                      parameter_constraints_json, schema_change_action, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      id, server_id, raw_tool_name, enabled, hidden, priority_available,
+                      approval_mode, parameter_constraints_json, schema_change_action, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     on conflict(server_id, raw_tool_name) do update set
                       enabled=excluded.enabled,
                       hidden=excluded.hidden,
+                      priority_available=excluded.priority_available,
                       approval_mode=excluded.approval_mode,
                       parameter_constraints_json=excluded.parameter_constraints_json,
                       schema_change_action=excluded.schema_change_action,
@@ -1803,6 +1896,7 @@ class McpToolPoliciesRepository:
                         raw_tool_name,
                         int(bool(policy.get("enabled", True))),
                         int(bool(policy.get("hidden", False))),
+                        int(bool(policy.get("priority_available", False))),
                         approval_mode,
                         _json_dumps(policy.get("parameter_constraints"))
                         if policy.get("parameter_constraints") is not None
@@ -1832,6 +1926,7 @@ class McpToolPoliciesRepository:
             raw_tool_name=row["raw_tool_name"],
             enabled=bool(row["enabled"]),
             hidden=bool(row["hidden"]),
+            priority_available=bool(row["priority_available"]),
             approval_mode=row["approval_mode"],
             parameter_constraints=_json_loads(row["parameter_constraints_json"], None),
             schema_change_action=row["schema_change_action"],
@@ -1936,6 +2031,80 @@ class McpSessionToolOverridesRepository:
         )
 
 
+class McpSessionToolUsageRepository:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def record_success(
+        self,
+        *,
+        session_id: str,
+        server_id: str,
+        raw_tool_name: str,
+        model_name: str,
+    ) -> McpSessionToolUsageRecord:
+        now = to_iso_z(utc_now())
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                insert into mcp_session_tool_usage (
+                  session_id, server_id, raw_tool_name, model_name,
+                  success_count, last_success_at
+                ) values (?, ?, ?, ?, 1, ?)
+                on conflict(session_id, server_id, raw_tool_name) do update set
+                  model_name=excluded.model_name,
+                  success_count=mcp_session_tool_usage.success_count + 1,
+                  last_success_at=excluded.last_success_at
+                """,
+                (session_id, server_id, raw_tool_name, model_name, now),
+            )
+        record = self.get(session_id, server_id, raw_tool_name)
+        if record is None:
+            raise RuntimeError("写入 MCP session tool usage 后无法读取")
+        return record
+
+    def get(
+        self,
+        session_id: str,
+        server_id: str,
+        raw_tool_name: str,
+    ) -> McpSessionToolUsageRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """
+                select * from mcp_session_tool_usage
+                where session_id = ? and server_id = ? and raw_tool_name = ?
+                """,
+                (session_id, server_id, raw_tool_name),
+            ).fetchone()
+        return self._from_row(row) if row else None
+
+    def list_recent_model_names(self, session_id: str, *, limit: int = 20) -> list[str]:
+        resolved_limit = max(1, min(limit, 100))
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                select model_name from mcp_session_tool_usage
+                where session_id = ?
+                order by last_success_at desc, model_name asc
+                limit ?
+                """,
+                (session_id, resolved_limit),
+            ).fetchall()
+        return [str(row["model_name"]) for row in rows]
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> McpSessionToolUsageRecord:
+        return McpSessionToolUsageRecord(
+            session_id=row["session_id"],
+            server_id=row["server_id"],
+            raw_tool_name=row["raw_tool_name"],
+            model_name=row["model_name"],
+            success_count=int(row["success_count"]),
+            last_success_at=row["last_success_at"],
+        )
+
+
 class McpRuntimeSnapshotsRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -1949,16 +2118,25 @@ class McpRuntimeSnapshotsRepository:
         visible_tools: list[Any],
         server_status: dict[str, Any],
         policy_summary: dict[str, Any],
+        capability_directory: list[Any] | None = None,
+        direct_available_tools: int | None = None,
+        on_demand_tools: int | None = None,
+        unavailable_tools: int | None = None,
         turn_id: str | None = None,
     ) -> McpRuntimeSnapshotRecord:
         now = to_iso_z(utc_now())
+        resolved_capability_directory = capability_directory or []
+        resolved_direct_available_tools = _non_negative_int(direct_available_tools)
+        resolved_on_demand_tools = _non_negative_int(on_demand_tools)
+        resolved_unavailable_tools = _non_negative_int(unavailable_tools)
         with self.db.transaction() as conn:
             conn.execute(
                 """
                 insert into mcp_runtime_snapshots (
                   id, session_id, turn_id, tool_inventory_revision, visible_tools_json,
-                  server_status_json, policy_summary_json, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                  server_status_json, policy_summary_json, capability_directory_json,
+                  direct_available_tools, on_demand_tools, unavailable_tools, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     snapshot_id,
@@ -1968,6 +2146,10 @@ class McpRuntimeSnapshotsRepository:
                     _json_dumps(visible_tools),
                     _json_dumps(server_status),
                     _json_dumps(policy_summary),
+                    _json_dumps(resolved_capability_directory),
+                    resolved_direct_available_tools,
+                    resolved_on_demand_tools,
+                    resolved_unavailable_tools,
                     now,
                 ),
             )
@@ -2029,6 +2211,13 @@ class McpRuntimeSnapshotsRepository:
                 field_name="policy_summary_json",
             ),
             created_at=row["created_at"],
+            capability_directory=_json_array_loads(
+                row["capability_directory_json"],
+                field_name="capability_directory_json",
+            ),
+            direct_available_tools=int(row["direct_available_tools"]),
+            on_demand_tools=int(row["on_demand_tools"]),
+            unavailable_tools=int(row["unavailable_tools"]),
         )
 
 
@@ -2820,7 +3009,14 @@ class WorkspacesRepository:
 
 class SessionsRepository:
     INTERNAL_CONTEXT_COMPRESSION_SESSION_TAG = "__context_compression_active__"
-    VALID_STATUSES = {"active", "closed", "failed", "running", "waiting_approval"}
+    VALID_STATUSES = {
+        "active",
+        "closed",
+        "failed",
+        "running",
+        "waiting_approval",
+        "waiting_input",
+    }
     VALID_SESSION_TYPES = {"workspace", "chat"}
     VALID_TITLE_SOURCES = {"auto_candidate", "auto", "manual"}
 
@@ -4016,6 +4212,438 @@ class WorkspaceFileAnnotationsRepository:
         )
 
 
+class A2UIInteractionsRepository:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def create(
+        self,
+        *,
+        session_id: str,
+        stream_id: str,
+        render_key: str,
+        mode: str,
+        payload: dict[str, Any],
+        input_schema: dict[str, Any],
+        submit_schema_snapshot: dict[str, Any],
+        interaction_id: str | None = None,
+        trace_id: str | None = None,
+        active_session_id: str | None = None,
+        turn_index: int = 0,
+        tool_call_id: str | None = None,
+        langgraph_thread_id: str | None = None,
+        checkpoint_ns: str = "",
+        checkpoint_id: str | None = None,
+        interrupt_id: str | None = None,
+        resume_group_id: str | None = None,
+    ) -> A2UIInteractionRecord:
+        self._validate_status(A2UI_STATUS_WAITING_USER_INPUT)
+        self._validate_resume_status(A2UI_RESUME_STATUS_NOT_STARTED)
+        resolved_id = interaction_id or new_id()
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            conn.execute(
+                """
+                insert into a2ui_interactions (
+                  id, session_id, trace_id, active_session_id, turn_index,
+                  tool_call_id, stream_id, render_key, mode, payload_json,
+                  input_schema_json, submit_schema_snapshot_json, status,
+                  langgraph_thread_id, checkpoint_ns, checkpoint_id, interrupt_id,
+                  resume_group_id, resume_status, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    resolved_id,
+                    session_id,
+                    trace_id,
+                    active_session_id,
+                    int(turn_index),
+                    tool_call_id,
+                    stream_id,
+                    render_key,
+                    mode,
+                    _json_dumps(payload),
+                    _json_dumps(input_schema),
+                    _json_dumps(submit_schema_snapshot),
+                    A2UI_STATUS_WAITING_USER_INPUT,
+                    langgraph_thread_id,
+                    checkpoint_ns,
+                    checkpoint_id,
+                    interrupt_id,
+                    resume_group_id,
+                    A2UI_RESUME_STATUS_NOT_STARTED,
+                    now,
+                    now,
+                ),
+            )
+        record = self.get(resolved_id)
+        if record is None:
+            raise RuntimeError(f"创建 A2UI interaction 后无法读取: {resolved_id}")
+        return record
+
+    def get(
+        self,
+        interaction_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> A2UIInteractionRecord | None:
+        query = "select * from a2ui_interactions where id = ?"
+        params: list[Any] = [interaction_id]
+        if not include_deleted:
+            query += " and is_deleted = 0"
+        with self.db.connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        return self._from_row(row) if row else None
+
+    def list_by_session(
+        self,
+        session_id: str,
+        *,
+        include_deleted: bool = False,
+        limit: int = 1000,
+    ) -> list[A2UIInteractionRecord]:
+        query = "select * from a2ui_interactions where session_id = ?"
+        params: list[Any] = [session_id]
+        if not include_deleted:
+            query += " and is_deleted = 0"
+        query += " order by created_at asc, id asc limit ?"
+        params.append(max(1, min(limit, 5000)))
+        with self.db.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def get_waiting_by_session(self, session_id: str) -> list[A2UIInteractionRecord]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                select * from a2ui_interactions
+                where session_id = ?
+                  and status = ?
+                  and is_deleted = 0
+                order by created_at asc, id asc
+                """,
+                (session_id, A2UI_STATUS_WAITING_USER_INPUT),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def submit(
+        self,
+        interaction_id: str,
+        *,
+        request_id: str,
+        submit_result: dict[str, Any],
+        resume_payload: dict[str, Any] | None = None,
+    ) -> A2UIInteractionRecord:
+        return self._close_interaction(
+            interaction_id,
+            status=A2UI_STATUS_SUBMITTED,
+            request_id=request_id,
+            result=submit_result,
+            reason=None,
+            resume_payload=resume_payload,
+        )
+
+    def cancel(
+        self,
+        interaction_id: str,
+        *,
+        request_id: str,
+        cancel_reason: str | None = None,
+        resume_payload: dict[str, Any] | None = None,
+    ) -> A2UIInteractionRecord:
+        return self._close_interaction(
+            interaction_id,
+            status=A2UI_STATUS_CANCELLED,
+            request_id=request_id,
+            result=None,
+            reason=cancel_reason,
+            resume_payload=resume_payload,
+        )
+
+    def mark_resume_deferred(self, interaction_id: str) -> A2UIInteractionRecord:
+        return self._mark_resume_status(
+            [interaction_id],
+            resume_status=A2UI_RESUME_STATUS_DEFERRED,
+        )[0]
+
+    def update_interrupt_id(
+        self,
+        interaction_id: str,
+        interrupt_id: str,
+    ) -> A2UIInteractionRecord:
+        normalized_interrupt_id = str(interrupt_id or "").strip()
+        if not normalized_interrupt_id:
+            raise ValueError("A2UI interrupt_id 不能为空")
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "select * from a2ui_interactions where id = ? and is_deleted = 0",
+                (interaction_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"A2UI interaction 不存在: {interaction_id}")
+            conn.execute(
+                """
+                update a2ui_interactions
+                set interrupt_id = ?, updated_at = ?
+                where id = ?
+                """,
+                (normalized_interrupt_id, now, interaction_id),
+            )
+        record = self.get(interaction_id)
+        if record is None:
+            raise RuntimeError(f"更新 A2UI interrupt_id 后无法读取: {interaction_id}")
+        return record
+
+    def mark_resume_started(
+        self,
+        interaction_ids: list[str],
+        *,
+        resume_payload: dict[str, Any] | None = None,
+    ) -> list[A2UIInteractionRecord]:
+        return self._mark_resume_status(
+            interaction_ids,
+            resume_status=A2UI_RESUME_STATUS_STARTED,
+            resume_payload=resume_payload,
+            started=True,
+        )
+
+    def mark_resume_finished(
+        self,
+        interaction_ids: list[str],
+        *,
+        resume_payload: dict[str, Any] | None = None,
+    ) -> list[A2UIInteractionRecord]:
+        return self._mark_resume_status(
+            interaction_ids,
+            resume_status=A2UI_RESUME_STATUS_SUCCEEDED,
+            resume_payload=resume_payload,
+            finished=True,
+        )
+
+    def mark_resume_failed(
+        self,
+        interaction_ids: list[str],
+        *,
+        error: str,
+        resume_payload: dict[str, Any] | None = None,
+    ) -> list[A2UIInteractionRecord]:
+        return self._mark_resume_status(
+            interaction_ids,
+            resume_status=A2UI_RESUME_STATUS_FAILED,
+            resume_payload=resume_payload,
+            error=error,
+            finished=True,
+        )
+
+    def list_resume_group_peers(
+        self,
+        *,
+        resume_group_id: str,
+        include_interaction_id: str | None = None,
+    ) -> list[A2UIInteractionRecord]:
+        query = """
+            select * from a2ui_interactions
+            where resume_group_id = ?
+              and is_deleted = 0
+              and (
+                resume_status = ?
+        """
+        params: list[Any] = [resume_group_id, A2UI_RESUME_STATUS_NOT_STARTED]
+        if include_interaction_id:
+            query += " or id = ?"
+            params.append(include_interaction_id)
+        query += ") order by created_at asc, id asc"
+        with self.db.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def _close_interaction(
+        self,
+        interaction_id: str,
+        *,
+        status: str,
+        request_id: str,
+        result: dict[str, Any] | None,
+        reason: str | None,
+        resume_payload: dict[str, Any] | None,
+    ) -> A2UIInteractionRecord:
+        self._validate_status(status)
+        now = to_iso_z(utc_now())
+        request_column = "submit_request_id" if status == A2UI_STATUS_SUBMITTED else "cancel_request_id"
+        with self.db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "select * from a2ui_interactions where id = ? and is_deleted = 0",
+                (interaction_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"A2UI interaction 不存在: {interaction_id}")
+            current = self._from_row(row)
+            existing_request_id = getattr(current, request_column)
+            if current.status == status and existing_request_id == request_id:
+                return current
+            if current.status != A2UI_STATUS_WAITING_USER_INPUT:
+                raise ValueError(
+                    f"A2UI interaction 已关闭: {interaction_id} status={current.status}"
+                )
+            if status == A2UI_STATUS_SUBMITTED:
+                conn.execute(
+                    """
+                    update a2ui_interactions
+                    set status = ?,
+                        submit_request_id = ?,
+                        submit_result_json = ?,
+                        resume_payload_json = coalesce(?, resume_payload_json),
+                        submitted_at = ?,
+                        updated_at = ?
+                    where id = ?
+                    """,
+                    (
+                        status,
+                        request_id,
+                        _json_dumps(result or {}),
+                        _json_dumps(resume_payload) if resume_payload is not None else None,
+                        now,
+                        now,
+                        interaction_id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    update a2ui_interactions
+                    set status = ?,
+                        cancel_request_id = ?,
+                        cancel_reason = ?,
+                        resume_payload_json = coalesce(?, resume_payload_json),
+                        cancelled_at = ?,
+                        updated_at = ?
+                    where id = ?
+                    """,
+                    (
+                        status,
+                        request_id,
+                        reason,
+                        _json_dumps(resume_payload) if resume_payload is not None else None,
+                        now,
+                        now,
+                        interaction_id,
+                    ),
+                )
+        record = self.get(interaction_id)
+        if record is None:
+            raise RuntimeError(f"更新 A2UI interaction 后无法读取: {interaction_id}")
+        return record
+
+    def _mark_resume_status(
+        self,
+        interaction_ids: list[str],
+        *,
+        resume_status: str,
+        resume_payload: dict[str, Any] | None = None,
+        error: str | None = None,
+        started: bool = False,
+        finished: bool = False,
+    ) -> list[A2UIInteractionRecord]:
+        self._validate_resume_status(resume_status)
+        ids = [interaction_id for interaction_id in interaction_ids if interaction_id]
+        if not ids:
+            return []
+        now = to_iso_z(utc_now())
+        assignments = ["resume_status = ?", "updated_at = ?"]
+        params: list[Any] = [resume_status, now]
+        if resume_payload is not None:
+            assignments.append("resume_payload_json = ?")
+            params.append(_json_dumps(resume_payload))
+        if error is not None:
+            assignments.append("resume_error = ?")
+            params.append(error)
+        if started:
+            assignments.append("resume_started_at = coalesce(resume_started_at, ?)")
+            params.append(now)
+        if finished:
+            assignments.append("resume_finished_at = ?")
+            params.append(now)
+        placeholders = ",".join("?" for _ in ids)
+        params.extend(ids)
+        with self.db.transaction(immediate=True) as conn:
+            conn.execute(
+                f"""
+                update a2ui_interactions
+                set {", ".join(assignments)}
+                where id in ({placeholders})
+                  and is_deleted = 0
+                """,
+                params,
+            )
+        return [record for record_id in ids if (record := self.get(record_id)) is not None]
+
+    @classmethod
+    def _validate_status(cls, status: str) -> None:
+        if status not in A2UI_STATUSES:
+            raise ValueError(f"不支持的 A2UI interaction status: {status}")
+
+    @classmethod
+    def _validate_resume_status(cls, status: str) -> None:
+        if status not in A2UI_RESUME_STATUSES:
+            raise ValueError(f"不支持的 A2UI resume_status: {status}")
+
+    @staticmethod
+    def _json_object_or_none(value: str | None, *, field_name: str) -> dict[str, Any] | None:
+        if value is None or value == "":
+            return None
+        return _json_object_loads(value, field_name=field_name)
+
+    @classmethod
+    def _from_row(cls, row: sqlite3.Row) -> A2UIInteractionRecord:
+        return A2UIInteractionRecord(
+            id=row["id"],
+            session_id=row["session_id"],
+            trace_id=row["trace_id"],
+            active_session_id=row["active_session_id"],
+            turn_index=int(row["turn_index"]),
+            tool_call_id=row["tool_call_id"],
+            stream_id=row["stream_id"],
+            render_key=row["render_key"],
+            mode=row["mode"],
+            payload=_json_object_loads(row["payload_json"], field_name="payload_json"),
+            input_schema=_json_object_loads(
+                row["input_schema_json"],
+                field_name="input_schema_json",
+            ),
+            submit_schema_snapshot=_json_object_loads(
+                row["submit_schema_snapshot_json"],
+                field_name="submit_schema_snapshot_json",
+            ),
+            status=row["status"],
+            submit_request_id=row["submit_request_id"],
+            cancel_request_id=row["cancel_request_id"],
+            submit_result=cls._json_object_or_none(
+                row["submit_result_json"],
+                field_name="submit_result_json",
+            ),
+            cancel_reason=row["cancel_reason"],
+            langgraph_thread_id=row["langgraph_thread_id"],
+            checkpoint_ns=row["checkpoint_ns"] or "",
+            checkpoint_id=row["checkpoint_id"],
+            interrupt_id=row["interrupt_id"],
+            resume_group_id=row["resume_group_id"],
+            resume_status=row["resume_status"],
+            resume_payload=cls._json_object_or_none(
+                row["resume_payload_json"],
+                field_name="resume_payload_json",
+            ),
+            resume_error=row["resume_error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            submitted_at=row["submitted_at"],
+            cancelled_at=row["cancelled_at"],
+            resume_started_at=row["resume_started_at"],
+            resume_finished_at=row["resume_finished_at"],
+            is_deleted=bool(row["is_deleted"]),
+        )
+
+
 class MessageEventsRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -4774,7 +5402,7 @@ class CompressionStagingRepository:
 
 
 class TraceRecordsRepository:
-    VALID_STATUSES = {"running", "completed", "failed", "cancelled"}
+    VALID_STATUSES = {"running", "completed", "failed", "cancelled", "waiting_input"}
 
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -6117,6 +6745,7 @@ class StorageRepositories:
         self.mcp_resources = McpResourcesRepository(db)
         self.mcp_tool_policies = McpToolPoliciesRepository(db)
         self.mcp_session_tool_overrides = McpSessionToolOverridesRepository(db)
+        self.mcp_session_tool_usage = McpSessionToolUsageRepository(db)
         self.mcp_runtime_snapshots = McpRuntimeSnapshotsRepository(db)
         self.mcp_oauth_tokens = McpOAuthTokensRepository(db)
         self.mcp_trust_rules = McpTrustRulesRepository(db)
@@ -6128,6 +6757,7 @@ class StorageRepositories:
         self.session_forks = SessionForksRepository(db)
         self.attachments = AttachmentsRepository(db)
         self.workspace_file_annotations = WorkspaceFileAnnotationsRepository(db)
+        self.a2ui_interactions = A2UIInteractionsRepository(db)
         self.message_events = MessageEventsRepository(db)
         self.thread_tasks = ThreadTasksRepository(db)
         self.thread_task_runs = ThreadTaskRunsRepository(db)

@@ -12,7 +12,7 @@ import type {
 } from "@/types/protocol";
 
 describe("MCP Runtime Panel", () => {
-  it("stays manual by default and renders a compact runtime summary without snapshot or tool switches", async () => {
+  it("stays manual by default and renders compact capability status without technical controls", async () => {
     const onOpenSettings = vi.fn();
     renderRuntimePanel(runtimeStatus(), { onOpenSettings });
 
@@ -20,8 +20,9 @@ describe("MCP Runtime Panel", () => {
     expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
 
     const pill = await selectMcpRuntimePill();
-    await waitFor(() => expect(pill.textContent).toContain("1 个 MCP 服务器 · 2 个 tool"));
+    await waitFor(() => expect(pill.textContent).toContain("1 个 MCP 服务器 · 2 个工具"));
     expect(pill.textContent).not.toContain("snap_1");
+    expect(pill.textContent).not.toMatch(/\b(runtime|snapshot|deferred|threshold|tool)\b/iu);
 
     fireEvent.click(pill);
 
@@ -29,13 +30,36 @@ describe("MCP Runtime Panel", () => {
     expect(panel.textContent).toContain("MCP 当前会话");
     expect(panel.textContent).toContain("1/1 个服务在线");
     expect(panel.textContent).toContain("2 个工具可用");
+    expect(panel.textContent).toContain("能力状态");
+    expect(panel.textContent).toContain("能力目录");
+    expect(panel.textContent).toContain("1 个服务");
+    expect(panel.textContent).toContain("直接可用");
+    expect(panel.textContent).toContain("按需加载");
+    expect(panel.textContent).toContain("Online MCP");
+    expect(panel.textContent).toContain("在线，直接可用 1 个，按需加载 1 个");
+    expect(panel.textContent).toContain("最近激活");
+    expect(panel.textContent).toContain("Online MCP / read_file");
+    expect(panel.textContent).toContain("已在当前会话直接可用");
     expect(panel.textContent).not.toContain("运行快照");
     expect(panel.textContent).not.toContain("snap_1");
     expect(panel.textContent).not.toContain("read_file description");
+    expect(panel.textContent).not.toMatch(/\b(runtime|snapshot|deferred|threshold|tool)\b/iu);
     expect(within(panel).queryByRole("switch")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "打开 MCP 设置" }));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an empty capability state before a runtime snapshot exists", async () => {
+    renderRuntimePanel(runtimeStatus({ snapshot: null }));
+
+    fireEvent.click(await selectMcpRuntimePill());
+    const panel = screen.getByTestId("mcp-runtime-panel");
+
+    expect(panel.textContent).toContain("暂无能力数据");
+    expect(panel.textContent).toContain("发送消息后会显示当前会话可用的 MCP 能力。");
+    expect(panel.textContent).not.toContain("运行快照");
+    expect(panel.textContent).not.toMatch(/\b(runtime|snapshot|deferred|threshold|tool)\b/iu);
   });
 
   it("automatically shows MCP only for the turn that contains an MCP tool call", async () => {
@@ -164,6 +188,15 @@ function runtimeStatus(patch: Partial<McpRuntimeStatusResponse> = {}): McpRuntim
   const tools = patch.tools ?? [tool("tool_read", "read_file"), tool("tool_write", "write_ticket")];
   const runningCalls = patch.running_calls ?? [];
   const overrides = patch.overrides ?? [];
+  const enabledTools = tools.filter((item) => item.effective_state === "enabled");
+  const visibleTools = enabledTools.map((item, index) => ({
+    server_id: item.server_id,
+    server_name: item.server_name,
+    raw_name: item.raw_name,
+    model_name: item.model_name,
+    description: item.description,
+    exposure: index === 0 ? "direct" : "on_demand",
+  }));
   return {
     session_id: "sess_1",
     manager: {
@@ -181,6 +214,21 @@ function runtimeStatus(patch: Partial<McpRuntimeStatusResponse> = {}): McpRuntim
       tools_visible: tools.filter((item) => item.effective_state === "enabled").length,
       tools_disabled_for_session: tools.filter((item) => item.effective_state === "disabled_for_session").length,
       pending_approvals: 0,
+      visible_tools: visibleTools,
+      capability_directory: servers.map((item) => ({
+        server_id: item.id,
+        server_name: item.name,
+        status: item.status,
+        status_label: item.status === "online" ? "在线" : item.status,
+        direct_tool_count: item.id === "srv_1" ? 1 : 0,
+        on_demand_tool_count: item.id === "srv_1" ? Math.max(0, enabledTools.length - 1) : 0,
+      })),
+      direct_available_tools: enabledTools.length > 0 ? 1 : 0,
+      on_demand_tools: Math.max(0, enabledTools.length - 1),
+      unavailable_tools: tools.length - enabledTools.length,
+      policy_summary: {
+        active_model_names: visibleTools.slice(0, 1).map((item) => item.model_name),
+      },
       created_at: "2026-07-06T09:00:00Z",
     },
     servers,

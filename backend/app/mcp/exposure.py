@@ -23,6 +23,7 @@ class McpVisibleTool:
     approval_mode: str
     annotations: dict[str, Any] | None = None
     server_name: str | None = None
+    priority_available: bool = False
 
     def to_model_contract(self) -> dict[str, Any]:
         return {
@@ -32,6 +33,7 @@ class McpVisibleTool:
             "model_name": self.model_name,
             "description": self.description,
             "input_schema": self.input_schema,
+            "priority_available": self.priority_available,
         }
 
 
@@ -54,48 +56,66 @@ class McpExposureResult:
 
 @dataclass(frozen=True)
 class McpExposurePlan:
-    mode: str
+    availability: str
     direct_tools: list[McpVisibleTool]
-    deferred_tools: list[McpVisibleTool]
-    include_search_tool: bool
-    include_list_tool: bool
+    on_demand_tools: list[McpVisibleTool]
+    has_on_demand_catalog: bool
 
 
-class McpDeferredExposurePlanner:
+class McpDirectInjectionPlanner:
     def __init__(
         self,
         *,
-        direct_threshold: int,
-        force_deferred: bool = False,
+        direct_tool_budget: int,
+        force_on_demand: bool = False,
     ) -> None:
-        self.direct_threshold = max(1, direct_threshold)
-        self.force_deferred = force_deferred
+        self.direct_tool_budget = max(1, direct_tool_budget)
+        self.force_on_demand = force_on_demand
 
     def plan(
         self,
         exposure: McpExposureResult,
         *,
         active_model_names: set[str] | None = None,
+        recent_model_names: Sequence[str] | None = None,
+        priority_model_names: Sequence[str] | None = None,
     ) -> McpExposurePlan:
-        active = active_model_names or set()
-        if not self.force_deferred and len(exposure.visible_tools) <= self.direct_threshold:
+        if not self.force_on_demand and len(exposure.visible_tools) <= self.direct_tool_budget:
             return McpExposurePlan(
-                mode="direct",
+                availability="direct",
                 direct_tools=list(exposure.visible_tools),
-                deferred_tools=[],
-                include_search_tool=False,
-                include_list_tool=False,
+                on_demand_tools=[],
+                has_on_demand_catalog=False,
             )
-        direct_tools = [tool for tool in exposure.visible_tools if tool.model_name in active]
-        deferred_tools = [
-            tool for tool in exposure.visible_tools if tool.model_name not in active
+        if self.force_on_demand:
+            return McpExposurePlan(
+                availability="with_on_demand_catalog",
+                direct_tools=[],
+                on_demand_tools=list(exposure.visible_tools),
+                has_on_demand_catalog=bool(exposure.visible_tools),
+            )
+        # Over-budget servers do not prefill the direct list. Only tools explicitly
+        # activated by the discovery entry become directly callable, capped by the
+        # same direct-tool budget.
+        active = active_model_names or set()
+        direct_tools: list[McpVisibleTool] = []
+        for tool in exposure.visible_tools:
+            if tool.model_name not in active:
+                continue
+            direct_tools.append(tool)
+            if len(direct_tools) >= self.direct_tool_budget:
+                break
+        direct_model_names = {tool.model_name for tool in direct_tools}
+        on_demand_tools = [
+            tool
+            for tool in exposure.visible_tools
+            if tool.model_name not in direct_model_names
         ]
         return McpExposurePlan(
-            mode="deferred",
+            availability="with_on_demand_catalog",
             direct_tools=direct_tools,
-            deferred_tools=deferred_tools,
-            include_search_tool=bool(deferred_tools),
-            include_list_tool=bool(deferred_tools),
+            on_demand_tools=on_demand_tools,
+            has_on_demand_catalog=bool(on_demand_tools),
         )
 
 
@@ -188,6 +208,7 @@ def _visible_tool(
         input_schema=tool.input_schema,
         annotations=tool.annotations,
         approval_mode=approval_mode,
+        priority_available=policy.priority_available if policy is not None else False,
     )
 
 

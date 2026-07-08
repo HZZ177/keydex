@@ -62,6 +62,7 @@ export interface WorkbenchModePageProps {
   onSessionSelected?: (sessionId: string) => void;
   onSessionCreated?: (session: AgentSession) => void;
   onRequestNewSession?: () => void;
+  onExternalPreviewClosed?: () => void;
   onOpenMcpSettings?: () => void;
 }
 
@@ -114,6 +115,7 @@ export function WorkbenchModePage({
   onSessionSelected,
   onSessionCreated,
   onRequestNewSession,
+  onExternalPreviewClosed,
   onOpenMcpSettings,
 }: WorkbenchModePageProps) {
   const notifications = useNotifications();
@@ -146,9 +148,12 @@ export function WorkbenchModePage({
     () => workbenchPreviewTabs.tabs.find((tab) => tab.id === workbenchPreviewTabs.activeTabId) ?? null,
     [workbenchPreviewTabs.activeTabId, workbenchPreviewTabs.tabs],
   );
-  const workbenchPreviewResetKey = externalPreviewPath
-    ? `external:${externalPreviewPath}`
-    : `workspace:${workspaceId ?? ""}:session:${selectedSessionId ?? ""}`;
+  const previousPreviewResetScopeRef = useRef({
+    externalPreviewPath,
+    selectedSessionId,
+    workspaceId,
+  });
+  const closedExternalPreviewPathRef = useRef<string | null>(null);
   const activeWorkbenchPreviewPath = activeWorkbenchPreviewTab
     ? targetPathForPreviewRequest(activeWorkbenchPreviewTab.request)
     : null;
@@ -412,6 +417,8 @@ export function WorkbenchModePage({
   const closeWorkbenchPreviewTab = useCallback(
     (tabId: string) => {
       const tab = workbenchPreviewTabs.tabs.find((item) => item.id === tabId) ?? null;
+      const closingExternalPreview =
+        tab?.request.type === "local-file" && externalPreviewPath && tab.request.path === externalPreviewPath;
       if (workbenchPreviewTabs.activeTabId === tabId) {
         resetMainPreviewOutline();
       }
@@ -439,8 +446,14 @@ export function WorkbenchModePage({
       if (workbenchPreviewRenderContext) {
         previewContext?.setPreviewHostContext(workbenchPreviewRenderContext);
       }
+      if (closingExternalPreview) {
+        closedExternalPreviewPathRef.current = externalPreviewPath;
+        onExternalPreviewClosed?.();
+      }
     },
     [
+      externalPreviewPath,
+      onExternalPreviewClosed,
       previewContext,
       resetMainPreviewOutline,
       workbenchPreviewRenderContext,
@@ -491,16 +504,44 @@ export function WorkbenchModePage({
   }, []);
 
   useEffect(() => {
+    const previousScope = previousPreviewResetScopeRef.current;
+    previousPreviewResetScopeRef.current = {
+      externalPreviewPath,
+      selectedSessionId,
+      workspaceId,
+    };
+    const workspaceScopeChanged =
+      previousScope.workspaceId !== workspaceId || previousScope.selectedSessionId !== selectedSessionId;
+    const externalPreviewChanged = previousScope.externalPreviewPath !== externalPreviewPath;
+    const externalPreviewStable = Boolean(
+      externalPreviewPath && previousScope.externalPreviewPath === externalPreviewPath,
+    );
+    const onlyExternalPreviewCleared = Boolean(
+      !workspaceScopeChanged && previousScope.externalPreviewPath && !externalPreviewPath,
+    );
+    if ((!workspaceScopeChanged && !externalPreviewChanged) || externalPreviewStable || onlyExternalPreviewCleared) {
+      return;
+    }
     handledFilePanelRequestIdRef.current = previewContext?.filePanelRequest?.requestId ?? 0;
     handledPreviewEntryStampRef.current = previewContext?.activeEntry ? previewEntryStamp(previewContext.activeEntry) : "";
     setWorkbenchPreviewTabs(EMPTY_WORKBENCH_PREVIEW_TABS);
     setBtwSession(null);
     setBtwLoadedHistoryTurnCount(null);
     resetMainPreviewOutline();
-  }, [resetMainPreviewOutline, workbenchPreviewResetKey]);
+  }, [
+    externalPreviewPath,
+    previewContext?.activeEntry,
+    previewContext?.filePanelRequest?.requestId,
+    resetMainPreviewOutline,
+    selectedSessionId,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     if (!externalPreviewPath || !workbenchPreviewRenderContext) {
+      return;
+    }
+    if (closedExternalPreviewPathRef.current === externalPreviewPath) {
       return;
     }
     const request: PreviewRequest = { type: "local-file", path: externalPreviewPath };
@@ -526,6 +567,13 @@ export function WorkbenchModePage({
     workbenchPreviewTabs.activeTabId,
     workbenchPreviewTabs.tabs,
   ]);
+
+  useEffect(() => {
+    if (!closedExternalPreviewPathRef.current || closedExternalPreviewPathRef.current === externalPreviewPath) {
+      return;
+    }
+    closedExternalPreviewPathRef.current = null;
+  }, [externalPreviewPath]);
 
   useEffect(() => {
     const activeEntry = previewContext?.open ? previewContext.activeEntry : null;

@@ -277,6 +277,62 @@ async def test_persistence_projection_ignores_tool_progress_but_persists_final_f
 
 
 @pytest.mark.asyncio
+async def test_persistence_projection_persists_a2ui_created_and_waiting_only(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    projection = PersistenceProjection(
+        repository=repositories.message_events,
+        session_id="ses_persist",
+        turn_index=1,
+    )
+
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_STREAM_STARTED,
+            {"stream_id": "stream-1", "render_key": "confirm"},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_CREATED,
+            {
+                "interaction_id": "a2ui-1",
+                "a2ui": {
+                    "render_key": "confirm",
+                    "mode": "interactive",
+                    "stream_id": "stream-1",
+                },
+            },
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.TURN_WAITING_INPUT,
+            {"interaction_id": "a2ui-1", "reason": "a2ui"},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_SUBMITTED,
+            {"interaction_id": "a2ui-1", "request_id": "submit-1"},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_CANCELLED,
+            {"interaction_id": "a2ui-1", "request_id": "cancel-1"},
+        )
+    )
+
+    events = repositories.message_events.list_by_session("ses_persist")
+
+    assert [event.action for event in events] == ["a2ui_created", "waiting_input"]
+    assert events[0].data["interaction_id"] == "a2ui-1"
+    assert events[0].data["_canonical"]["event_type"] == "a2ui.created"
+    assert events[1].data["reason"] == "a2ui"
+    assert events[1].data["_canonical"]["event_type"] == "turn.waiting_input"
+
+
+@pytest.mark.asyncio
 async def test_persistence_projection_keeps_subagent_stream_separate(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     projection = PersistenceProjection(

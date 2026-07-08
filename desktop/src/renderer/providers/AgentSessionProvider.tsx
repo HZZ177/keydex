@@ -18,7 +18,7 @@ import {
   type RuntimeBridge,
   type WsConnectionStatus,
 } from "@/runtime";
-import type { AgentActionEnvelope } from "@/types/protocol";
+import type { A2UICancelActionPayload, A2UISubmitActionPayload, AgentActionEnvelope } from "@/types/protocol";
 import type { McpElicitationResolvePayload } from "@/types/protocol";
 import { emitSessionEventsFromRuntimeEvent } from "@/renderer/events/sessionEvents";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
@@ -39,6 +39,8 @@ export interface AgentSessionRuntimeContextValue {
   bindSession: (sessionId: string) => void;
   subscribeEvent: (listener: (event: AgentActionEnvelope) => void) => () => void;
   chat: (payload: ChatPayload) => void;
+  submitA2UI: (payload: A2UISubmitActionPayload) => void;
+  cancelA2UI: (payload: A2UICancelActionPayload) => void;
   cancel: (sessionId?: string) => void;
   terminateCommand: (sessionId: string, commandId: string) => void;
   resolveMcpElicitation: (payload: McpElicitationResolvePayload) => void;
@@ -159,6 +161,22 @@ export function AgentSessionProvider({
     channel.cancel(sessionId);
   }, []);
 
+  const submitA2UI = useCallback((payload: A2UISubmitActionPayload) => {
+    const channel = channelRef.current;
+    if (!channel || channel.getStatus() !== "open") {
+      throw new Error("对话连接尚未就绪");
+    }
+    channel.submitA2UI(payload);
+  }, []);
+
+  const cancelA2UI = useCallback((payload: A2UICancelActionPayload) => {
+    const channel = channelRef.current;
+    if (!channel || channel.getStatus() !== "open") {
+      throw new Error("对话连接尚未就绪");
+    }
+    channel.cancelA2UI(payload);
+  }, []);
+
   const terminateCommand = useCallback((sessionId: string, commandId: string) => {
     const channel = channelRef.current;
     if (!channel || channel.getStatus() !== "open") {
@@ -197,12 +215,14 @@ export function AgentSessionProvider({
       bindSession,
       subscribeEvent,
       chat,
+      submitA2UI,
+      cancelA2UI,
       cancel,
       terminateCommand,
       resolveMcpElicitation,
       ping,
     }),
-    [bindSession, cancel, chat, ping, resolveMcpElicitation, runtime, runtimeDetail, state, subscribeEvent, terminateCommand, wsStatus],
+    [bindSession, cancel, cancelA2UI, chat, ping, resolveMcpElicitation, runtime, runtimeDetail, state, submitA2UI, subscribeEvent, terminateCommand, wsStatus],
   );
 
   return (

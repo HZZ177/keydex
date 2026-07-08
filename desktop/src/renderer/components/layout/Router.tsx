@@ -501,6 +501,15 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
     }
     void navigate(workbenchPath(decodedWorkspaceId));
   }, [decodedWorkspaceId, navigate]);
+  const handleExternalPreviewClosed = useCallback(() => {
+    if (!externalPreviewPath) {
+      return;
+    }
+    const nextSearchParams = new URLSearchParams(location.search);
+    nextSearchParams.delete("file");
+    const nextSearch = nextSearchParams.toString();
+    void navigate(`${location.pathname}${nextSearch ? `?${nextSearch}` : ""}`, { replace: true });
+  }, [externalPreviewPath, location.pathname, location.search, navigate]);
 
   return (
     <RoutedLayout
@@ -542,6 +551,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
         onSessionSelected={handleWorkbenchSessionSelected}
         onSessionCreated={handleWorkbenchSessionCreated}
         onRequestNewSession={handleWorkbenchNewSessionRequested}
+        onExternalPreviewClosed={handleExternalPreviewClosed}
         onOpenMcpSettings={() => void navigate("/settings/mcp", { state: { from: location.pathname } })}
       />
     </RoutedLayout>

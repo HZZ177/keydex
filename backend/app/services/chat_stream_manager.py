@@ -182,9 +182,28 @@ class ChatStreamManager:
             if repositories is not None and hasattr(repositories, "command_approvals")
             else []
         )
+        waiting_input_records = (
+            repositories.sessions.list(status="waiting_input")
+            if repositories is not None and hasattr(repositories, "sessions")
+            else []
+        )
         waiting_session_ids = sorted({approval.session_id for approval in pending})
+        waiting_input_session_ids = sorted(
+            {
+                record.id
+                for record in waiting_input_records
+                if not cleaned or record.id == cleaned
+            }
+        )
+        running = {
+            key: run
+            for key, run in running.items()
+            if key not in set(waiting_input_session_ids)
+        }
         status = "idle"
-        if cleaned and cleaned in waiting_session_ids:
+        if cleaned and cleaned in waiting_input_session_ids:
+            status = "waiting_input"
+        elif cleaned and cleaned in waiting_session_ids:
             status = "waiting_approval"
         elif cleaned and cleaned in running:
             status = "running"
@@ -196,6 +215,9 @@ class ChatStreamManager:
                 for key, run in sorted(running.items())
             ],
             "waiting_approval_sessions": [{"session_id": key} for key in waiting_session_ids],
+            "waiting_input_sessions": [
+                {"session_id": key} for key in waiting_input_session_ids
+            ],
             "pending_approvals": [
                 {
                     "session_id": approval.session_id,

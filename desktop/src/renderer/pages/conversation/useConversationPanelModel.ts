@@ -611,6 +611,8 @@ export function useConversationPanelModel({
     loadingOlderHistory: controller.loadingOlderHistory,
     loadOlderHistory: controller.loadOlderHistory,
     terminateCommand: controller.terminateCommand,
+    submitA2UI: controller.submitA2UI,
+    cancelA2UI: controller.cancelA2UI,
     resolveMcpElicitation: controller.resolveMcpElicitation,
     messageWorkspaceScope,
     workspaceAvailable,

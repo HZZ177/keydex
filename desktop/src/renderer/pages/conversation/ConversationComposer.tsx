@@ -175,7 +175,11 @@ export function ConversationComposer({
 }
 
 export function isConversationBusy(state: ConversationRuntimeState): boolean {
-  return state === "starting" || state === "running" || state === "waiting_approval" || state === "cancelling";
+  return state === "starting"
+    || state === "running"
+    || state === "waiting_approval"
+    || state === "waiting_input"
+    || state === "cancelling";
 }
 
 export function conversationComposerStatusText(_state: ConversationRuntimeState, _connectionReady: boolean): string {

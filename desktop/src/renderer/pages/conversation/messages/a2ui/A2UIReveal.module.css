@@ -1,0 +1,150 @@
+.motionRoot {
+  min-width: 0;
+  transition: min-height 260ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.motionItem {
+  transform-box: border-box;
+  transform-origin: center;
+  transition:
+    opacity 220ms ease,
+    transform 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 220ms ease,
+    border-color 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.motionItem:is(g, rect, circle, path, polyline) {
+  transform-box: fill-box;
+}
+
+.motionItem[data-a2ui-player-phase="update"] {
+  animation: a2ui-player-update 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.revealItem {
+  animation: a2ui-reveal-item 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+}
+
+.revealCompactItem {
+  animation: a2ui-reveal-compact 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+}
+
+.revealBar {
+  animation: a2ui-reveal-bar 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  will-change: opacity, transform;
+}
+
+.revealPoint {
+  animation: a2ui-reveal-point 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: opacity, transform;
+}
+
+.revealLine {
+  animation: a2ui-reveal-line 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity;
+}
+
+.revealBar,
+.revealPoint,
+.revealLine {
+  transition:
+    opacity 220ms ease,
+    transform 560ms cubic-bezier(0.16, 1, 0.3, 1),
+    x 560ms cubic-bezier(0.16, 1, 0.3, 1),
+    y 560ms cubic-bezier(0.16, 1, 0.3, 1),
+    width 560ms cubic-bezier(0.16, 1, 0.3, 1),
+    height 560ms cubic-bezier(0.16, 1, 0.3, 1),
+    cx 560ms cubic-bezier(0.16, 1, 0.3, 1),
+    cy 560ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes a2ui-reveal-item {
+  from {
+    opacity: 0;
+    transform: translateY(7px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes a2ui-reveal-compact {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes a2ui-reveal-bar {
+  from {
+    opacity: 0.2;
+    transform: scaleY(0.02);
+  }
+
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+@keyframes a2ui-reveal-point {
+  from {
+    opacity: 0;
+    transform: scale(0.62);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes a2ui-reveal-line {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes a2ui-player-update {
+  0% {
+    filter: saturate(1);
+  }
+
+  35% {
+    filter: saturate(1.22);
+  }
+
+  100% {
+    filter: saturate(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .revealItem,
+  .revealCompactItem,
+  .revealBar,
+  .revealPoint,
+  .revealLine,
+  .motionItem[data-a2ui-player-phase="update"] {
+    animation: none;
+  }
+}

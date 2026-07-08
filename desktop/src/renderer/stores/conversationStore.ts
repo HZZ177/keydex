@@ -15,6 +15,7 @@ export type ConversationRuntimeState =
   | "starting"
   | "running"
   | "waiting_approval"
+  | "waiting_input"
   | "cancelling"
   | "failed";
 
@@ -29,6 +30,7 @@ export type ConversationMessageKind =
   | "file_change"
   | "approval"
   | "mcp_elicitation"
+  | "a2ui"
   | "error"
   | "cancelled"
   | "context_compression"
@@ -463,6 +465,9 @@ function runtimeStateFromThread(thread: Thread): ConversationRuntimeState {
   }
   if (thread.status === "waiting_approval") {
     return "waiting_approval";
+  }
+  if (thread.status === "waiting_input") {
+    return "waiting_input";
   }
   if (thread.status === "failed") {
     return "failed";

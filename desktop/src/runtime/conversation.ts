@@ -1,4 +1,6 @@
 import type {
+  A2UICancelActionPayload,
+  A2UISubmitActionPayload,
   AgentContextItem,
   AgentActionEnvelope,
   AgentChatMessagePayload,
@@ -135,6 +137,8 @@ export interface ChatChannel {
   bindSession(sessionId: string): void;
   unbindSession(sessionId?: string): void;
   chat(payload: ChatPayload): void;
+  submitA2UI(payload: A2UISubmitActionPayload): void;
+  cancelA2UI(payload: A2UICancelActionPayload): void;
   approvalDecision(approvalId: string, decision: CommandApprovalDecisionPayload): void;
   resolveMcpElicitation?(payload: McpElicitationResolvePayload): void;
   cancel(sessionId?: string): void;
@@ -302,6 +306,8 @@ export function createConversationRuntime(
         bindSession: (sessionId) => client.bindSession(sessionId),
         unbindSession: (sessionId) => client.unbindSession(sessionId),
         chat: (payload) => client.chat(payload),
+        submitA2UI: (payload) => client.submitA2UI(payload),
+        cancelA2UI: (payload) => client.cancelA2UI(payload),
         approvalDecision: (approvalId, decision) =>
           client.sendAction("approval_decision", {
             approval_id: approvalId,

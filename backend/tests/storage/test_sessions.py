@@ -28,6 +28,13 @@ def test_session_repository_create_get_and_list(tmp_path) -> None:
         title="第二轮",
         status="running",
     )
+    waiting = repositories.sessions.create(
+        session_id="ses_waiting_input",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="等待输入",
+        status="waiting_input",
+    )
 
     assert first.id == "ses_first"
     assert first.status == "active"
@@ -41,8 +48,9 @@ def test_session_repository_create_get_and_list(tmp_path) -> None:
     assert repositories.sessions.get("ses_first") == first
 
     sessions = repositories.sessions.list(user_id="local-user", scene_id="desktop-agent")
-    assert [session.id for session in sessions] == [second.id, first.id]
+    assert [session.id for session in sessions] == [waiting.id, second.id, first.id]
     assert repositories.sessions.list(status="running") == [second]
+    assert repositories.sessions.list(status="waiting_input") == [waiting]
 
 
 def test_session_repository_hides_internal_context_compression_sessions_by_default(
@@ -182,13 +190,13 @@ def test_session_repository_update_status_title_and_touch(tmp_path) -> None:
     updated = repositories.sessions.update(
         session.id,
         title="新标题",
-        status="running",
+        status="waiting_input",
         active_session_id="ses_active",
     )
 
     assert updated is not None
     assert updated.title == "新标题"
-    assert updated.status == "running"
+    assert updated.status == "waiting_input"
     assert updated.active_session_id == "ses_active"
     assert updated.updated_at >= session.updated_at
 

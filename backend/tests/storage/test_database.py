@@ -31,6 +31,7 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
         "mcp_server_status",
         "mcp_tools",
         "mcp_tool_policies",
+        "mcp_session_tool_usage",
         "mcp_resources",
         "mcp_resource_templates",
         "mcp_oauth_tokens",
@@ -42,6 +43,7 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
         "sessions",
         "session_forks",
         "message_events",
+        "a2ui_interactions",
         "compression_staging",
         "trace_record",
         "llm_request_logs",
@@ -431,6 +433,10 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
             str(row["name"])
             for row in conn.execute("pragma table_info(mcp_session_tool_overrides)").fetchall()
         }
+        usage_columns = {
+            str(row["name"])
+            for row in conn.execute("pragma table_info(mcp_session_tool_usage)").fetchall()
+        }
         snapshot_columns = {
             str(row["name"])
             for row in conn.execute("pragma table_info(mcp_runtime_snapshots)").fetchall()
@@ -445,6 +451,7 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
                 "mcp_oauth_tokens",
                 "mcp_trust_rules",
                 "mcp_session_tool_overrides",
+                "mcp_session_tool_usage",
                 "mcp_runtime_snapshots",
                 "mcp_audit_log",
             )
@@ -492,6 +499,17 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
             ) values (
               'override-a', 'session-a', 'server-a', 'create_issue', 0,
               '2026-07-06T00:00:00Z'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into mcp_session_tool_usage (
+              session_id, server_id, raw_tool_name, model_name,
+              success_count, last_success_at
+            ) values (
+              'session-a', 'server-a', 'create_issue', 'mcp__server_a__create_issue',
+              1, '2026-07-06T00:00:00Z'
             )
             """
         )
@@ -558,6 +576,7 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
         "raw_tool_name",
         "enabled",
         "hidden",
+        "priority_available",
         "approval_mode",
         "parameter_constraints_json",
         "schema_change_action",
@@ -604,6 +623,14 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
         "expires_at",
     }.issubset(override_columns)
     assert {
+        "session_id",
+        "server_id",
+        "raw_tool_name",
+        "model_name",
+        "success_count",
+        "last_success_at",
+    }.issubset(usage_columns)
+    assert {
         "id",
         "session_id",
         "turn_id",
@@ -611,6 +638,10 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
         "visible_tools_json",
         "server_status_json",
         "policy_summary_json",
+        "capability_directory_json",
+        "direct_available_tools",
+        "on_demand_tools",
+        "unavailable_tools",
         "created_at",
     }.issubset(snapshot_columns)
     assert {
@@ -635,6 +666,7 @@ def test_init_database_creates_mcp_policy_runtime_oauth_and_audit_schema(tmp_pat
         "idx_mcp_trust_rules_server_tool",
         "idx_mcp_trust_rules_scope",
         "idx_mcp_session_tool_overrides_session",
+        "idx_mcp_session_tool_usage_recent",
         "idx_mcp_runtime_snapshots_session_turn",
         "idx_mcp_audit_log_server_created",
         "idx_mcp_audit_log_session_created",
@@ -938,6 +970,104 @@ def test_init_database_creates_compression_staging_schema(tmp_path) -> None:
     assert {
         "idx_compression_staging_original_status_target",
         "idx_compression_staging_original_generation",
+    }.issubset(indexes)
+
+
+def test_init_database_creates_a2ui_interactions_schema(tmp_path) -> None:
+    db_path = tmp_path / "app.db"
+    init_database(db_path)
+    db = init_database(db_path)
+
+    with db.connect() as conn:
+        columns = {
+            str(row["name"])
+            for row in conn.execute("pragma table_info(a2ui_interactions)").fetchall()
+        }
+        indexes = {
+            str(row["name"])
+            for row in conn.execute("pragma index_list(a2ui_interactions)").fetchall()
+        }
+
+        conn.execute(
+            """
+            insert into a2ui_interactions (
+              id, session_id, trace_id, turn_index, tool_call_id, stream_id,
+              render_key, mode, payload_json, input_schema_json,
+              submit_schema_snapshot_json, created_at, updated_at
+            ) values (
+              'a2ui-1', 'session-1', 'trace-1', 1, 'tool-call-1', 'stream-1',
+              'confirm', 'interactive', '{}', '{}', '{}',
+              '2026-07-08T00:00:00Z', '2026-07-08T00:00:00Z'
+            )
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                insert into a2ui_interactions (
+                  id, session_id, turn_index, stream_id, render_key, mode,
+                  status, created_at, updated_at
+                ) values (
+                  'a2ui-bad-status', 'session-1', 1, 'stream-bad', 'confirm',
+                  'interactive', 'waiting', '2026-07-08T00:00:00Z',
+                  '2026-07-08T00:00:00Z'
+                )
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                insert into a2ui_interactions (
+                  id, session_id, turn_index, stream_id, render_key, mode,
+                  resume_status, created_at, updated_at
+                ) values (
+                  'a2ui-bad-resume', 'session-1', 1, 'stream-bad-resume', 'confirm',
+                  'interactive', 'running', '2026-07-08T00:00:00Z',
+                  '2026-07-08T00:00:00Z'
+                )
+                """
+            )
+
+    assert {
+        "id",
+        "session_id",
+        "trace_id",
+        "active_session_id",
+        "turn_index",
+        "tool_call_id",
+        "stream_id",
+        "render_key",
+        "mode",
+        "payload_json",
+        "input_schema_json",
+        "submit_schema_snapshot_json",
+        "status",
+        "submit_request_id",
+        "cancel_request_id",
+        "submit_result_json",
+        "cancel_reason",
+        "langgraph_thread_id",
+        "checkpoint_ns",
+        "checkpoint_id",
+        "interrupt_id",
+        "resume_group_id",
+        "resume_status",
+        "resume_payload_json",
+        "resume_error",
+        "created_at",
+        "updated_at",
+        "submitted_at",
+        "cancelled_at",
+        "resume_started_at",
+        "resume_finished_at",
+        "is_deleted",
+    }.issubset(columns)
+    assert {
+        "idx_a2ui_interactions_session_status",
+        "idx_a2ui_interactions_session_turn",
+        "idx_a2ui_interactions_resume_group",
+        "idx_a2ui_interactions_tool_call",
+        "idx_a2ui_interactions_session_tool_call_unique",
     }.issubset(indexes)
 
 

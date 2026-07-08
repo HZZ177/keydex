@@ -8,8 +8,8 @@ from backend.app.mcp.errors import McpRuntimeError
 from backend.app.mcp.manager import McpManager
 from backend.app.mcp.resources import McpResourcesReservedService
 from backend.app.mcp.runtime import McpRuntimeSnapshotBuilder, McpRuntimeSnapshotContext
-from backend.app.mcp.service import server_payload
-from backend.app.mcp.tools import McpDeferredToolSearchIndex, mcp_local_tools_from_snapshot
+from backend.app.mcp.service import list_mcp_tools, server_payload
+from backend.app.mcp.tools import McpCapabilitySearchIndex, mcp_local_tools_from_snapshot
 from backend.app.mcp.types import McpErrorCode
 from backend.app.storage import StorageRepositories, init_database
 
@@ -113,10 +113,10 @@ def test_reserved_resources_do_not_enter_snapshot_or_local_tool_registry(
 
     snapshot = McpRuntimeSnapshotBuilder(
         repositories,
-        deferred_threshold=40,
+        direct_tool_budget=40,
     ).build_snapshot(McpRuntimeSnapshotContext(session_id="session-a"))
     tools = mcp_local_tools_from_snapshot(snapshot, executor=object())
-    search_index = McpDeferredToolSearchIndex(snapshot.visible_tools)
+    search_index = McpCapabilitySearchIndex(snapshot.visible_tools)
 
     assert payload["resources_reserved_count"] == 1
     assert payload["resources_reserved"] is True
@@ -124,3 +124,55 @@ def test_reserved_resources_do_not_enter_snapshot_or_local_tool_registry(
     assert tools == []
     assert search_index.list_tools() == []
     assert search_index.search(query="guide") == []
+
+
+def test_server_payload_reports_tool_availability_stats(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("KEYDEX_MCP_DIRECT_TOOL_BUDGET", "3")
+    repositories = _repositories(tmp_path)
+    _create_server(repositories)
+    repositories.mcp_server_status.update_refresh_counts(
+        "srv_resources",
+        status="online",
+        tools_count=5,
+        resources_reserved_count=0,
+    )
+    repositories.mcp_tools.upsert_many(
+        "srv_resources",
+        [
+            {
+                "raw_name": f"tool_{index}",
+                "model_name": f"mcp__srv_resources__tool_{index}",
+                "callable_namespace": "mcp__srv_resources",
+                "callable_name": f"tool_{index}",
+                "description": f"Tool {index}",
+                "input_schema": {"type": "object"},
+                "schema_hash": f"hash-{index}",
+            }
+            for index in range(5)
+        ],
+    )
+    repositories.mcp_tools.record_call_result("srv_resources", "tool_0", success=True)
+
+    server = repositories.mcp_servers.get("srv_resources")
+    assert server is not None
+    payload = server_payload(repositories, server, detail=False)
+
+    assert payload["tools_count"] == 5
+    assert payload["direct_tools_count"] == 0
+    assert payload["on_demand_tools_count"] == 5
+    assert payload["recently_used_tools_count"] == 1
+
+    repositories.mcp_tool_policies.upsert(
+        server_id="srv_resources",
+        raw_tool_name="tool_4",
+        enabled=False,
+    )
+    listed_tools = list_mcp_tools(repositories, "srv_resources", limit=1000)["list"]
+    availability_by_name = {
+        str(tool["raw_name"]): tool["availability_mode"]
+        for tool in listed_tools
+    }
+
+    assert list(availability_by_name.values()).count("direct") == 0
+    assert list(availability_by_name.values()).count("on_demand") == 4
+    assert availability_by_name["tool_4"] == "disabled"

@@ -8,12 +8,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
+from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 from backend.app.agent.internal_llm_events import is_internal_context_compression_event
 from backend.app.agent.tool_call_progress import (
     ToolCallChunkPipeline,
+    default_collectors,
     finalize_file_change,
+)
+from backend.app.a2ui.stream_bridge import (
+    A2UIStreamBridge,
+    a2ui_stream_event_type,
+    is_a2ui_stream_payload,
+    strip_a2ui_stream_marker,
 )
 from backend.app.core.logger import logger
 from backend.app.events import DomainEventType, EventDispatcher
@@ -48,7 +56,10 @@ async def process_agent_events(
     result = AgentEventResult()
     tool_start_times: dict[str, float] = {}
     reasoning_parts_by_run_id: dict[str, list[str]] = {}
-    tool_chunk_pipeline = ToolCallChunkPipeline()
+    a2ui_stream_bridge = A2UIStreamBridge(trace_id=trace_id)
+    tool_chunk_pipeline = ToolCallChunkPipeline(
+        collectors=[*default_collectors(), *a2ui_stream_bridge.collectors]
+    )
     stream_chunk_count = 0
     reasoning_chunk_count = 0
     tool_progress_count = 0
@@ -150,11 +161,24 @@ async def process_agent_events(
                     tool_name=name,
                     params=_make_json_serializable(data.get("input")),
                 )
+                await _finish_a2ui_stream_for_tool_start(
+                    bridge=a2ui_stream_bridge,
+                    dispatcher=dispatcher,
+                    tool_call_id=tool_call_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                    trace_id=trace_id,
+                    user_id=user_id,
+                    active_session_id=active_session_id,
+                    turn_index=turn_index,
+                )
                 logger.info(
                     f"[AgentEvents] 工具开始 | session_id={session_id} | "
                     f"turn_index={turn_index} | trace_id={trace_id} | "
                     f"tool={name} | run_id={run_id}"
                 )
+                if a2ui_stream_bridge.registry.is_a2ui_tool(name):
+                    continue
                 await dispatcher.emit_event(
                     event_type=DomainEventType.LLM_TOOL_STARTED.value,
                     source="langchain_event_handler",
@@ -181,6 +205,8 @@ async def process_agent_events(
             if event_type == "on_tool_end":
                 started_at = tool_start_times.pop(run_id, time.perf_counter())
                 duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+                if a2ui_stream_bridge.registry.is_a2ui_tool(name):
+                    continue
                 output = data.get("output")
                 is_error = _tool_output_is_error(output)
                 result_text = _stringify_tool_output(output)
@@ -248,6 +274,8 @@ async def process_agent_events(
             if event_type == "on_tool_error":
                 started_at = tool_start_times.pop(run_id, time.perf_counter())
                 duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+                if a2ui_stream_bridge.registry.is_a2ui_tool(name):
+                    continue
                 error_text = str(data.get("error") or event.get("error") or "工具执行失败")
                 mcp_metadata = _mcp_metadata_from_event(event=event, data=data)
                 tool_call_id = tool_chunk_pipeline.tool_call_id_for_run(run_id)
@@ -290,6 +318,13 @@ async def process_agent_events(
             f"partial_content_len={len(result.final_content)}"
         )
         await _close_event_stream(event_stream)
+    except GraphInterrupt as exc:
+        if not _is_a2ui_graph_interrupt(exc):
+            raise
+        logger.info(
+            f"[AgentEvents] A2UI 等待用户输入，中止本轮事件处理 | session_id={session_id} | "
+            f"turn_index={turn_index} | trace_id={trace_id}"
+        )
     finally:
         await dispatcher.flush()
         logger.info(
@@ -324,6 +359,19 @@ async def _handle_chat_model_stream(
     emitted_tool_progress = 0
 
     for payload in tool_progress_payloads:
+        if is_a2ui_stream_payload(payload):
+            await _emit_a2ui_stream_payload(
+                dispatcher=dispatcher,
+                payload=payload,
+                session_id=session_id,
+                trace_id=trace_id,
+                user_id=user_id,
+                active_session_id=active_session_id,
+                run_id=run_id,
+                turn_index=turn_index,
+            )
+            emitted_tool_progress += 1
+            continue
         payload = {
             **payload,
             "session_id": session_id,
@@ -383,6 +431,69 @@ async def _handle_chat_model_stream(
         )
 
     return emitted_tool_progress
+
+
+async def _emit_a2ui_stream_payload(
+    *,
+    dispatcher: EventDispatcher,
+    payload: dict[str, Any],
+    session_id: str,
+    trace_id: str,
+    user_id: str,
+    active_session_id: str,
+    run_id: str,
+    turn_index: int,
+) -> None:
+    event_type = a2ui_stream_event_type(payload)
+    if not event_type:
+        return
+    clean_payload = {
+        **strip_a2ui_stream_marker(payload),
+        "session_id": session_id,
+        "trace_id": trace_id,
+    }
+    await dispatcher.emit_event(
+        event_type=event_type,
+        source="langchain_event_handler",
+        payload=clean_payload,
+        trace_id=trace_id,
+        user_id=user_id,
+        original_session_id=session_id,
+        active_session_id=active_session_id,
+        run_id=run_id,
+        turn_index=turn_index,
+    )
+
+
+async def _finish_a2ui_stream_for_tool_start(
+    *,
+    bridge: A2UIStreamBridge,
+    dispatcher: EventDispatcher,
+    tool_call_id: str,
+    run_id: str,
+    session_id: str,
+    trace_id: str,
+    user_id: str,
+    active_session_id: str,
+    turn_index: int,
+) -> None:
+    payload = None
+    if tool_call_id:
+        payload = bridge.finish_for_tool_call(tool_call_id)
+    if payload is None and run_id:
+        payload = bridge.finish_for_run_id(run_id)
+    if payload is None:
+        return
+    await _emit_a2ui_stream_payload(
+        dispatcher=dispatcher,
+        payload=payload,
+        session_id=session_id,
+        trace_id=trace_id,
+        user_id=user_id,
+        active_session_id=active_session_id,
+        run_id=run_id,
+        turn_index=turn_index,
+    )
 
 
 async def _flush_reasoning(
@@ -741,6 +852,24 @@ def _make_json_serializable(obj: Any) -> Any:
     if hasattr(obj, "content"):
         return {"content": _make_json_serializable(getattr(obj, "content", ""))}
     return str(obj)
+
+
+def _is_a2ui_graph_interrupt(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, dict):
+        return (
+            str(value.get("reason") or "") == "a2ui"
+            and bool(str(value.get("interaction_id") or "").strip())
+        )
+    interrupt_value = getattr(value, "value", None)
+    if interrupt_value is not None and _is_a2ui_graph_interrupt(interrupt_value):
+        return True
+    if isinstance(value, (list, tuple, set)):
+        return any(_is_a2ui_graph_interrupt(item) for item in value)
+    if isinstance(value, BaseException):
+        return any(_is_a2ui_graph_interrupt(arg) for arg in getattr(value, "args", ()) or ())
+    return False
 
 
 async def _close_event_stream(event_stream: AsyncIterator[dict[str, Any]]) -> None:

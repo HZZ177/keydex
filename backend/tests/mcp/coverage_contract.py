@@ -105,11 +105,11 @@ MCP_FEATURE_COVERAGE_CONTRACTS: tuple[McpFeatureCoverageContract, ...] = (
     ),
     McpFeatureCoverageContract(
         "F09",
-        "Direct/Deferred Tool Exposure",
+        "直接注入预算与能力目录",
         "MCP-069",
         "MCP-089",
         ("DES 6.2", "DES 6.3"),
-        "deferred threshold, search/list/activation, TTL, and visibility tests.",
+        "direct budget, capability directory, discover_mcp_tools activation, TTL, and visibility tests.",
     ),
     McpFeatureCoverageContract(
         "F10",

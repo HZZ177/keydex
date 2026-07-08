@@ -1,4 +1,6 @@
 import type {
+  A2UICancelActionPayload,
+  A2UISubmitActionPayload,
   AgentActionEnvelope,
   AgentChatAction,
   AgentInboundAction,
@@ -116,6 +118,16 @@ export class RuntimeWsClient {
 
   chat(data: Record<string, unknown>) {
     this.sendAction("chat", this.withSession(data));
+  }
+
+  submitA2UI(payload: A2UISubmitActionPayload) {
+    const { action: _action, ...data } = this.withSession({ ...payload });
+    this.sendAction("a2ui_submit", data);
+  }
+
+  cancelA2UI(payload: A2UICancelActionPayload) {
+    const { action: _action, ...data } = this.withSession({ ...payload });
+    this.sendAction("a2ui_cancel", data);
   }
 
   cancel(sessionId = this.sessionId) {

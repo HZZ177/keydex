@@ -1,0 +1,217 @@
+.form {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.description {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.fields {
+  display: grid;
+  min-width: 0;
+  gap: 11px;
+}
+
+.field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.required {
+  color: color-mix(in srgb, var(--color-danger) 82%, var(--color-text-secondary));
+}
+
+.field input[type="text"],
+.field input[type="number"],
+.field input[type="date"],
+.field select,
+.field textarea,
+.note textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 8px 10px;
+}
+
+.field textarea,
+.note textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus,
+.note textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--color-info-6) 28%, transparent);
+  outline-offset: 1px;
+}
+
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled,
+.note textarea:disabled {
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--surface-muted) 70%, transparent);
+  color: var(--color-text-tertiary);
+}
+
+.checkboxLabel {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.checkboxLabel input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--color-info-6);
+}
+
+.multiOptions {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.fieldError {
+  color: color-mix(in srgb, var(--color-danger) 82%, var(--color-text-primary));
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.note {
+  display: grid;
+  gap: 5px;
+}
+
+.note label {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 11px;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-info-6) 30%, transparent);
+  outline-offset: 1px;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.submitButton {
+  border-color: color-mix(in srgb, var(--color-info-6) 38%, var(--color-border-default));
+  color: color-mix(in srgb, var(--color-info-6) 84%, var(--color-text-primary));
+}
+
+.result {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-muted) 54%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 9px 10px;
+}
+
+.result strong {
+  color: var(--color-text-primary);
+  font-weight: 650;
+}
+
+.valueGrid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.valueItem {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.valueItem dt {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.valueItem dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.error {
+  color: color-mix(in srgb, var(--color-danger) 82%, var(--color-text-primary));
+  font-size: 12px;
+  line-height: 1.5;
+}

@@ -7,6 +7,17 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from backend.app.a2ui.interaction_service import (
+    A2UIInteractionService,
+    A2UIInteractionServiceError,
+)
+from backend.app.a2ui.resume_service import (
+    A2UIResumeService,
+    A2UIResumeServiceError,
+    A2UIResumeSnapshot,
+    A2UIResumeStartResult,
+)
+from backend.app.a2ui.schemas import interaction_state_from_record
 from backend.app.command_approval import (
     ApprovalService,
     CommandApprovalDecision,
@@ -17,12 +28,15 @@ from backend.app.command_approval import (
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.request_context import trace_id_var
+from backend.app.events import ChatProjection, EventDispatcher, PersistenceProjection
+from backend.app.model import ModelSelectionError, resolve_model_selection
 from backend.app.mcp.elicitation import McpElicitationError
 from backend.app.services.chat_stream_manager import (
     ChatStreamAlreadyRunningError,
     ChatStreamMissingSessionError,
 )
 from backend.app.services.chat_types import ChatRequest
+from backend.app.services.chat_service import PRACTICAL_NO_RECURSION_LIMIT
 from backend.app.services.session_service import (
     SessionNotFoundError,
     SessionService,
@@ -31,6 +45,7 @@ from backend.app.services.session_service import (
 from backend.app.services.workspace_service import (
     WorkspaceServiceError,
 )
+from backend.app.storage import MODEL_DEFAULT_CHAT
 from backend.app.tools.command_runtime import command_process_manager
 
 router = APIRouter(prefix="/agent-base/ws", tags=["websocket"])
@@ -180,6 +195,23 @@ async def chat_websocket(websocket: WebSocket) -> None:
                         await send_error("missing_session", "session_id 必填")
                         continue
                     session = session_service.get_session_detail(session_id)
+                    waiting_interactions = repositories.a2ui_interactions.get_waiting_by_session(
+                        session_id
+                    )
+                    if waiting_interactions:
+                        await send(
+                            "a2ui_waiting_input",
+                            {
+                                "session_id": session_id,
+                                "pending_interactions": [
+                                    interaction_state_from_record(record).model_dump(
+                                        mode="json"
+                                    )
+                                    for record in waiting_interactions
+                                ],
+                            },
+                        )
+                        continue
                     bound_session_id = session_id
                     bound_session_ids.add(session_id)
                     await stream_manager.subscribe(session_id, adapter)
@@ -197,6 +229,80 @@ async def chat_websocket(websocket: WebSocket) -> None:
                             attachments=_attachments(payload),
                         )
                     )
+                    continue
+
+                if action == "a2ui_submit":
+                    session_id = str(payload.get("session_id") or bound_session_id or "").strip()
+                    if not session_id:
+                        await send_error("missing_session", "session_id 必填")
+                        continue
+                    if not str(payload.get("interaction_id") or "").strip():
+                        await send_error("missing_interaction", "interaction_id 必填")
+                        continue
+                    payload["session_id"] = session_id
+                    try:
+                        result = await A2UIInteractionService(
+                            repositories=repositories,
+                            dispatcher=EventDispatcher(),
+                        ).submit(payload)
+                        resume_result = await _start_a2ui_resume(
+                            websocket=websocket,
+                            runtime=runtime,
+                            repositories=repositories,
+                            adapter=adapter,
+                            interaction_id=result.interaction.id,
+                            turn_index=result.interaction.turn_index,
+                            should_resume=result.should_resume,
+                        )
+                    except A2UIInteractionServiceError as exc:
+                        await send_error(exc.code, exc.message, {"session_id": session_id})
+                        continue
+                    except (A2UIResumeServiceError, ModelSelectionError) as exc:
+                        await send_error(
+                            getattr(exc, "code", "a2ui_resume_failed"),
+                            str(exc),
+                            {"session_id": session_id},
+                        )
+                        continue
+                    _apply_resume_result(result.ack_payload, resume_result)
+                    await send("a2ui_submit_ack", result.ack_payload)
+                    continue
+
+                if action == "a2ui_cancel":
+                    session_id = str(payload.get("session_id") or bound_session_id or "").strip()
+                    if not session_id:
+                        await send_error("missing_session", "session_id 必填")
+                        continue
+                    if not str(payload.get("interaction_id") or "").strip():
+                        await send_error("missing_interaction", "interaction_id 必填")
+                        continue
+                    payload["session_id"] = session_id
+                    try:
+                        result = await A2UIInteractionService(
+                            repositories=repositories,
+                            dispatcher=EventDispatcher(),
+                        ).cancel(payload)
+                        resume_result = await _start_a2ui_resume(
+                            websocket=websocket,
+                            runtime=runtime,
+                            repositories=repositories,
+                            adapter=adapter,
+                            interaction_id=result.interaction.id,
+                            turn_index=result.interaction.turn_index,
+                            should_resume=result.should_resume,
+                        )
+                    except A2UIInteractionServiceError as exc:
+                        await send_error(exc.code, exc.message, {"session_id": session_id})
+                        continue
+                    except (A2UIResumeServiceError, ModelSelectionError) as exc:
+                        await send_error(
+                            getattr(exc, "code", "a2ui_resume_failed"),
+                            str(exc),
+                            {"session_id": session_id},
+                        )
+                        continue
+                    _apply_resume_result(result.ack_payload, resume_result)
+                    await send("a2ui_cancel_ack", result.ack_payload)
                     continue
 
                 if action == "cancel":
@@ -355,6 +461,139 @@ def _payload(message: dict[str, Any]) -> dict[str, Any]:
     if isinstance(nested, dict):
         return nested
     return {key: value for key, value in message.items() if key != "action"}
+
+
+async def _start_a2ui_resume(
+    *,
+    websocket: WebSocket,
+    runtime: Any,
+    repositories: Any,
+    adapter: WebSocketChannelAdapter,
+    interaction_id: str,
+    turn_index: int,
+    should_resume: bool,
+) -> A2UIResumeStartResult | None:
+    interaction = repositories.a2ui_interactions.get(interaction_id)
+    if interaction is None:
+        return None
+    if not should_resume:
+        return None
+    override = getattr(websocket.app.state, "a2ui_resume_service", None)
+    service = override or await _build_a2ui_resume_service(
+        runtime=runtime,
+        repositories=repositories,
+        adapter=adapter,
+        session_id=interaction.session_id,
+        turn_index=turn_index,
+    )
+    return await service.start_resume(interaction_id, background=True)
+
+
+async def _build_a2ui_resume_service(
+    *,
+    runtime: Any,
+    repositories: Any,
+    adapter: WebSocketChannelAdapter,
+    session_id: str,
+    turn_index: int,
+) -> A2UIResumeService:
+    chat_service = await _resolve_chat_service(runtime)
+    dispatcher = EventDispatcher()
+    dispatcher.register_projection(
+        PersistenceProjection(
+            repository=repositories.message_events,
+            session_id=session_id,
+            turn_index=turn_index,
+        )
+    )
+    dispatcher.register_projection(ChatProjection(adapter))
+
+    async def agent_factory(snapshot: A2UIResumeSnapshot) -> Any:
+        session = repositories.sessions.get(snapshot.session_id)
+        if session is None:
+            raise A2UIResumeServiceError(
+                f"A2UI resume session not found: {snapshot.session_id}"
+            )
+        provider_id = str(session.current_model_provider_id or "").strip()
+        model = str(session.current_model or "").strip()
+        model_selection = resolve_model_selection(
+            repositories,
+            provider_id=provider_id,
+            model=model,
+            scope=MODEL_DEFAULT_CHAT,
+            label="对话模型",
+            code_prefix="chat_model",
+        )
+        request = ChatRequest(
+            session_id=session.id,
+            message="",
+            user_id=session.user_id,
+            scene_id=session.scene_id,
+            provider_id=provider_id,
+            model=model,
+        )
+        tool_context, enable_tools = chat_service._build_tool_context(
+            request=request,
+            session=session,
+            trace_id=snapshot.trace_id or "",
+            turn_index=snapshot.turn_index,
+        )
+        tool_context.metadata["repositories"] = repositories
+        tool_context.metadata["thread_task_service"] = chat_service.thread_task_service
+        tool_context.metadata["dispatcher"] = dispatcher
+        tool_context.metadata["data_dir"] = str(chat_service.settings.data_dir)
+        tool_context.metadata["active_session_id"] = (
+            snapshot.langgraph_thread_id
+            or snapshot.active_session_id
+            or snapshot.session_id
+        )
+        tool_context.metadata["thread_id"] = tool_context.metadata["active_session_id"]
+        tool_context.metadata["checkpoint_ns"] = snapshot.checkpoint_ns
+        runtime_tools = chat_service._build_mcp_runtime_tools(
+            session=session,
+            tool_context=tool_context,
+            enable_tools=enable_tools,
+        )
+        return await asyncio.to_thread(
+            chat_service.agent_runner.create_agent,
+            model=model,
+            model_settings=model_selection.settings,
+            system_prompt=None,
+            tool_context=tool_context,
+            enable_tools=enable_tools,
+            runtime_tools=runtime_tools,
+        )
+
+    return A2UIResumeService(
+        repositories=repositories,
+        dispatcher=dispatcher,
+        agent_factory=agent_factory,
+        recursion_limit=PRACTICAL_NO_RECURSION_LIMIT,
+    )
+
+
+async def _resolve_chat_service(runtime: Any) -> Any:
+    chat_service = runtime.chat_service
+    provider = getattr(chat_service, "provider", None)
+    get_chat_service = getattr(provider, "get_chat_service_async", None)
+    if callable(get_chat_service):
+        return await get_chat_service()
+    return chat_service
+
+
+def _apply_resume_result(
+    ack_payload: dict[str, Any],
+    resume_result: A2UIResumeStartResult | None,
+) -> None:
+    if resume_result is None:
+        return
+    resume = ack_payload.setdefault("resume", {})
+    resume["status"] = resume_result.resume_status
+    resume["started"] = resume_result.started
+    resume["resume_group_id"] = resume_result.resume_group_id
+    resume["pending_count"] = resume_result.pending_count
+    if resume_result.reason:
+        resume["reason"] = resume_result.reason
 
 
 def _runtime_params(payload: dict[str, Any]) -> dict[str, Any] | None:

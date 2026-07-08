@@ -28,6 +28,9 @@ describe("McpConsolePage", () => {
     const list = await screen.findByTestId("mcp-server-list");
     expect(within(list).getByText("Filesystem")).not.toBeNull();
     expect(within(list).getByText("Ticketing")).not.toBeNull();
+    expect(within(list).getByText("直接可用 2")).not.toBeNull();
+    expect(within(list).getByText("按需加载 1")).not.toBeNull();
+    expect(within(list).getByText("最近使用 1")).not.toBeNull();
     expect(screen.getByTestId("mcp-detail-empty")).not.toBeNull();
     expect(screen.queryByRole("heading", { name: "Filesystem" })).toBeNull();
 
@@ -35,11 +38,17 @@ describe("McpConsolePage", () => {
 
     expect(await screen.findByRole("heading", { name: "Filesystem" })).not.toBeNull();
     expect(screen.getByText("无鉴权")).not.toBeNull();
+    expect(screen.getByText("直接可用")).not.toBeNull();
+    expect(screen.getByText("按需加载")).not.toBeNull();
+    expect(screen.getByText("最近使用")).not.toBeNull();
     expect(screen.queryByText("鉴权方式：无鉴权")).toBeNull();
     expect(screen.getByRole("button", { name: "工具授权" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Resources" })).toBeNull();
     expect(screen.getByRole("button", { name: "权限" })).not.toBeNull();
     expect(screen.getByText("已支持，暂不开放读取")).not.toBeNull();
+    expect(screen.getByTestId("mcp-console-page").textContent).not.toMatch(
+      /\b(runtime|snapshot|deferred|threshold|tool)\b/iu,
+    );
   });
 
   it("renders connection tab details instead of the skeleton placeholder", async () => {
@@ -168,9 +177,18 @@ describe("McpConsolePage", () => {
   it("refreshes the selected MCP server only from the detail refresh action", async () => {
     const refreshServer = vi.fn().mockResolvedValue({ ok: true, server_id: "srv_1", status: "online" });
     const listTools = vi.fn(() => Promise.resolve(toolListResponse(toolFixtures())));
-    renderMcpConsoleWithNotifications(runtimeWithServers(serverFixtures(), { refreshServer, listTools }));
+    const refreshedServers = serverFixtures().map((item) =>
+      item.id === "srv_1"
+        ? { ...item, direct_tools_count: 3, on_demand_tools_count: 0, recently_used_tools_count: 2 }
+        : item,
+    );
+    const listServers = vi.fn()
+      .mockResolvedValueOnce({ list: serverFixtures(), total: 2, limit: 500, offset: 0 })
+      .mockResolvedValue({ list: refreshedServers, total: 2, limit: 500, offset: 0 });
+    renderMcpConsoleWithNotifications(runtimeWithServers([], { refreshServer, listTools, listServers }));
 
     await selectMcpServer("Filesystem");
+    expect(screen.getByText("直接可用 2")).not.toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "工具授权" }));
     await waitFor(() => expect(listTools).toHaveBeenCalledWith("srv_1", expect.objectContaining({ limit: 500 })));
     const toolLoadsBeforeRefresh = listTools.mock.calls.length;
@@ -179,6 +197,9 @@ describe("McpConsolePage", () => {
 
     await waitFor(() => expect(refreshServer).toHaveBeenCalledWith("srv_1"));
     expect(await screen.findByText("服务器刷新完成，状态 在线")).not.toBeNull();
+    await waitFor(() => expect(screen.getByText("直接可用 3")).not.toBeNull());
+    expect(screen.getAllByText("按需加载 0").length).toBeGreaterThan(0);
+    expect(screen.getByText("最近使用 2")).not.toBeNull();
     await waitFor(() => expect(listTools.mock.calls.length).toBeGreaterThan(toolLoadsBeforeRefresh));
   });
 
@@ -576,11 +597,34 @@ describe("McpConsolePage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "工具授权" }));
     const currentToolList = () => within(screen.getByTestId("mcp-tool-list"));
 
-    expect(await screen.findByRole("button", { name: "筛选 MCP 工具显示范围：未移除工具" })).not.toBeNull();
+    expect(await screen.findByRole("button", { name: "筛选 MCP 工具显示范围：全部工具" })).not.toBeNull();
     await waitFor(() => expect(currentToolList().getByText("read_file")).not.toBeNull());
     expect(currentToolList().getByText("write_ticket")).not.toBeNull();
-    expect(currentToolList().queryByText("old_tool")).toBeNull();
+    expect(currentToolList().getByText("old_tool")).not.toBeNull();
     expect(currentToolList().getAllByText("确认方式：按请求审批").length).toBeGreaterThan(0);
+    expect(currentToolList().getByText("直接可用")).not.toBeNull();
+    expect(currentToolList().getByText("按需加载")).not.toBeNull();
+    expect(currentToolList().getAllByText("已停用").length).toBeGreaterThan(0);
+
+    await chooseSettingsSelect("筛选 MCP 工具显示范围", "直接可用");
+
+    await waitFor(() => expect(currentToolList().getByText("read_file")).not.toBeNull());
+    expect(currentToolList().queryByText("write_ticket")).toBeNull();
+    expect(currentToolList().queryByText("old_tool")).toBeNull();
+
+    await chooseSettingsSelect("筛选 MCP 工具显示范围", "按需加载");
+
+    await waitFor(() => expect(currentToolList().queryByText("read_file")).toBeNull());
+    expect(currentToolList().getByText("write_ticket")).not.toBeNull();
+    expect(currentToolList().queryByText("old_tool")).toBeNull();
+
+    await chooseSettingsSelect("筛选 MCP 工具显示范围", "已停用");
+
+    await waitFor(() => expect(currentToolList().queryByText("read_file")).toBeNull());
+    expect(currentToolList().getByText("calculate_total")).not.toBeNull();
+    expect(currentToolList().getByText("old_tool")).not.toBeNull();
+
+    await chooseSettingsSelect("筛选 MCP 工具显示范围", "全部工具");
 
     await chooseSettingsSelect("筛选 MCP 工具确认方式", "按服务器设置");
 
@@ -607,6 +651,46 @@ describe("McpConsolePage", () => {
     await waitFor(() => expect(currentToolList().queryByText("read_file")).toBeNull());
     expect(currentToolList().getByText("write_ticket")).not.toBeNull();
 
+    await chooseSettingsSelect("筛选 MCP 工具显示范围", "直接可用");
+
+    await waitFor(() => expect(screen.getByTestId("mcp-tool-empty")).not.toBeNull());
+    expect(currentToolList().getByText("没有匹配的工具")).not.toBeNull();
+  });
+
+  it("keeps a 59 tool MCP server navigable with direct and on-demand filters", async () => {
+    const largeServer = server("srv_large", "Large MCP", {
+      status: "online",
+      tools_count: 59,
+      direct_tools_count: 5,
+      on_demand_tools_count: 54,
+      recently_used_tools_count: 0,
+    });
+    const largeTools = largeToolFixtures(59);
+    const listTools = vi.fn((_serverId: string, options: Record<string, unknown> = {}) =>
+      Promise.resolve(toolListResponse(filterTools(largeTools, options))),
+    );
+    render(<McpConsolePage runtime={runtimeWithServers([largeServer], { listTools })} />);
+
+    await selectMcpServer("Large MCP");
+    expect(screen.getByText("直接可用 5")).not.toBeNull();
+    expect(screen.getByText("按需加载 54")).not.toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "工具授权" }));
+    const currentToolList = () => within(screen.getByTestId("mcp-tool-list"));
+
+    await waitFor(() => expect(currentToolList().getByText("tool_00")).not.toBeNull());
+    expect(currentToolList().getByText("tool_58")).not.toBeNull();
+
+    await chooseSettingsSelect("筛选 MCP 工具显示范围", "按需加载");
+
+    await waitFor(() => expect(currentToolList().queryByText("tool_00")).toBeNull());
+    expect(currentToolList().getByText("tool_05")).not.toBeNull();
+    expect(currentToolList().getByText("tool_58")).not.toBeNull();
+
+    await chooseSettingsSelect("筛选 MCP 工具显示范围", "直接可用");
+
+    await waitFor(() => expect(currentToolList().getByText("tool_00")).not.toBeNull());
+    expect(currentToolList().queryByText("tool_05")).toBeNull();
+    expect(currentToolList().queryByText("tool_58")).toBeNull();
   });
 
   it("updates a single tool visibility and approval policy", async () => {
@@ -621,6 +705,14 @@ describe("McpConsolePage", () => {
 
     await selectMcpServer("Filesystem");
     fireEvent.click(await screen.findByRole("button", { name: "工具授权" }));
+    fireEvent.click(await screen.findByRole("switch", { name: "优先可用 read_file" }));
+
+    await waitFor(() =>
+      expect(updateToolPolicy).toHaveBeenCalledWith("srv_1", "tool_read", { priority_available: true }),
+    );
+    expect(await screen.findByText("已设为优先可用")).not.toBeNull();
+    await waitFor(() => expect(screen.getAllByText("优先可用").length).toBeGreaterThan(0));
+
     fireEvent.click(await screen.findByRole("switch", { name: "启用工具 read_file" }));
 
     await waitFor(() =>
@@ -673,7 +765,7 @@ describe("McpConsolePage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "工具授权" }));
 
     expect(await screen.findByText("参数结构已变化，需检查后确认授权")).not.toBeNull();
-    expect(screen.queryByText("old_tool")).toBeNull();
+    expect(screen.getByText("old_tool")).not.toBeNull();
     expect(document.querySelector('[class*="toolsContent"]')?.getAttribute("data-has-schema")).toBe("false");
 
     fireEvent.click(screen.getByRole("button", { name: "查看参数结构 calculate_total" }));
@@ -684,10 +776,11 @@ describe("McpConsolePage", () => {
     expect(within(schemaPanel).getByText(/\"type\": \"object\"/)).not.toBeNull();
     expect(within(schemaPanel).getByText(/\"amount\"/)).not.toBeNull();
 
-    await chooseSettingsSelect("筛选 MCP 工具显示范围", "已移除工具");
+    await chooseSettingsSelect("筛选 MCP 工具显示范围", "已停用");
 
+    await waitFor(() => expect(screen.getAllByText("calculate_total").length).toBeGreaterThan(0));
     expect(await screen.findByText("old_tool")).not.toBeNull();
-    expect(screen.getAllByText("已移除").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("已停用").length).toBeGreaterThan(0);
   });
 
   it("updates server permission modes from the permissions tab", async () => {
@@ -1163,6 +1256,9 @@ function serverFixtures(): McpServerSummary[] {
       resources_reserved: false,
       resources_reserved_count: 1,
       tools_count: 3,
+      direct_tools_count: 2,
+      on_demand_tools_count: 1,
+      recently_used_tools_count: 1,
       last_refresh_at: "2026-07-06T08:00:00Z",
     }),
     server("srv_2", "Ticketing", {
@@ -1170,6 +1266,9 @@ function serverFixtures(): McpServerSummary[] {
       status: "auth_required",
       resources_reserved: false,
       tools_count: 2,
+      direct_tools_count: 0,
+      on_demand_tools_count: 0,
+      recently_used_tools_count: 0,
     }),
   ];
 }
@@ -1189,6 +1288,9 @@ function server(
     auth_type: "none",
     status: "unknown",
     tools_count: 0,
+    direct_tools_count: 0,
+    on_demand_tools_count: 0,
+    recently_used_tools_count: 0,
     resources_reserved: false,
     last_refresh_at: null,
     last_error_message: null,
@@ -1295,6 +1397,7 @@ function toolFixtures(): McpToolSummary[] {
       model_name: "mcp__filesystem__read_file",
       approval_mode: "inherit",
       effective_approval_mode: "prompt",
+      availability_mode: "direct",
       call_count: 4,
       last_used_at: "2026-07-06T09:15:00Z",
       input_schema: {
@@ -1310,6 +1413,7 @@ function toolFixtures(): McpToolSummary[] {
       model_name: "mcp__ticketing__write_ticket",
       approval_mode: "prompt",
       effective_approval_mode: "prompt",
+      availability_mode: "on_demand",
       input_schema: {
         type: "object",
         properties: {
@@ -1326,6 +1430,7 @@ function toolFixtures(): McpToolSummary[] {
       discovery_status: "schema_changed",
       status: "schema_changed",
       effective_state: "schema_changed",
+      availability_mode: "disabled",
       input_schema: {
         type: "object",
         properties: {
@@ -1342,9 +1447,31 @@ function toolFixtures(): McpToolSummary[] {
       discovery_status: "removed",
       status: "removed",
       effective_state: "removed",
+      availability_mode: "disabled",
       removed_at: "2026-07-06T09:00:00Z",
     }),
   ];
+}
+
+function largeToolFixtures(count: number): McpToolSummary[] {
+  return Array.from({ length: count }, (_, index) => {
+    const rawName = `tool_${String(index).padStart(2, "0")}`;
+    return tool(`large_${index}`, rawName, {
+      server_id: "srv_large",
+      server_name: "Large MCP",
+      model_name: `mcp__large__${rawName}`,
+      description: `Large MCP tool ${index}`,
+      availability_mode: index < 5 ? "direct" : "on_demand",
+      approval_mode: "inherit",
+      effective_approval_mode: "prompt",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+        },
+      },
+    });
+  });
 }
 
 function tool(id: string, rawName: string, patch: Partial<McpToolSummary> = {}): McpToolSummary {
@@ -1359,6 +1486,8 @@ function tool(id: string, rawName: string, patch: Partial<McpToolSummary> = {}):
     input_schema: { type: "object", properties: {} },
     enabled: true,
     hidden: false,
+    priority_available: false,
+    availability_mode: "direct",
     status: "active",
     discovery_status: "active",
     effective_state: "enabled",
@@ -1401,10 +1530,15 @@ function filterTools(tools: McpToolSummary[], options: Record<string, unknown>):
 
 function applyToolPolicyPatch(tool: McpToolSummary, payload: Partial<McpToolSummary>): McpToolSummary {
   const enabled = typeof payload.enabled === "boolean" ? payload.enabled : tool.enabled;
+  const priorityAvailable =
+    typeof payload.priority_available === "boolean"
+      ? payload.priority_available
+      : Boolean(tool.priority_available);
   const approvalMode = payload.approval_mode ?? tool.approval_mode;
   return {
     ...tool,
     enabled,
+    priority_available: priorityAvailable,
     approval_mode: approvalMode,
     effective_approval_mode: approvalMode === "inherit" ? "prompt" : approvalMode,
     effective_state: enabled ? "enabled" : "disabled_persistently",

@@ -26,6 +26,11 @@ describe("ExtensionSettingsPage", () => {
     expect(screen.getByText("期望标题最大长度")).not.toBeNull();
     expect(screen.getByLabelText("期望标题最大长度")).toHaveProperty("value", "48");
     expect(screen.getByText("模型上下文窗口")).not.toBeNull();
+    expect(screen.getByText("A2UI 交互组件")).not.toBeNull();
+    expect(screen.getByText(/确认、选择、表单、图表/)).not.toBeNull();
+    expect(screen.getByRole("switch", { name: "启用 A2UI" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.queryByText(/schema/i)).toBeNull();
+    expect(screen.queryByText(/render_key/i)).toBeNull();
     expect(screen.queryByText("固定策略")).toBeNull();
     expect(screen.queryByText("保留最近 2 轮")).toBeNull();
     expect(screen.queryByText("紧急压缩 90%")).toBeNull();
@@ -72,9 +77,44 @@ describe("ExtensionSettingsPage", () => {
           context_window_tokens: 64000,
           trigger_fraction: 0.6,
         },
+        a2ui: {
+          enabled: true,
+        },
       });
     });
     expect(await screen.findByText("扩展功能配置已保存")).not.toBeNull();
+  });
+
+  it("saves and restores the built-in A2UI switch without custom configuration fields", async () => {
+    const saveExtensionSettings = vi.fn((payload: AgentRuntimeSettings) => Promise.resolve(payload));
+    const runtime = fakeRuntime({
+      saveExtensionSettings,
+      settings: {
+        a2ui: { enabled: false },
+      },
+    });
+
+    renderWithNotifications(<ExtensionSettingsPage runtime={runtime} />);
+
+    await screen.findByText("A2UI 交互组件");
+    expect(screen.getByRole("switch", { name: "启用 A2UI" }).getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText(/关闭后只影响后续新对话能力/)).not.toBeNull();
+    expect(screen.getByText("确认")).not.toBeNull();
+    expect(screen.getByText("选择")).not.toBeNull();
+    expect(screen.getByText("表单")).not.toBeNull();
+    expect(screen.getByText("图表")).not.toBeNull();
+    expect(screen.queryByLabelText(/schema/i)).toBeNull();
+    expect(screen.queryByLabelText(/render_key/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole("switch", { name: "启用 A2UI" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(saveExtensionSettings).toHaveBeenCalledWith({
+        ...defaultExtensionSettings(),
+        a2ui: { enabled: true },
+      });
+    });
   });
 
   it("saves disabled switch states through the page-level save button", async () => {
@@ -239,6 +279,7 @@ function mergeSettings(
       ...patch.duplicate_tool_call_guard,
     },
     context_compression: { ...base.context_compression, ...patch.context_compression },
+    a2ui: { ...base.a2ui, ...patch.a2ui },
   };
 }
 
@@ -257,6 +298,9 @@ function defaultExtensionSettings(): AgentRuntimeSettings {
       enabled: false,
       context_window_tokens: 128000,
       trigger_fraction: 0.75,
+    },
+    a2ui: {
+      enabled: true,
     },
   };
 }

@@ -132,6 +132,43 @@ export function McpRuntimePill({ runtime, sessionId, runtimeState, onOpenSetting
             </div>
           </section>
 
+          {view.hasSnapshot ? (
+            <section className={styles.section} aria-label="MCP 能力状态">
+              <h3>能力状态</h3>
+              <div className={styles.metricsGrid}>
+                <MetricTile label="能力目录" value={`${view.capabilityServerCount} 个服务`} />
+                <MetricTile label="直接可用" value={`${view.directToolCount} 个工具`} />
+                <MetricTile label="按需加载" value={`${view.onDemandToolCount} 个工具`} />
+              </div>
+              {view.capabilityServers.length > 0 ? (
+                <div className={styles.issueList}>
+                  {view.capabilityServers.slice(0, 3).map((server) => (
+                    <div className={styles.issueRow} key={server.id}>
+                      <strong>{server.name}</strong>
+                      <span>{server.description}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {view.activeTools.length > 0 ? (
+                <div className={styles.runningList} aria-label="最近激活">
+                  <h3>最近激活</h3>
+                  {view.activeTools.slice(0, 3).map((tool) => (
+                    <div key={tool.modelName} className={styles.runningRow}>
+                      <strong>{tool.serverName || "未知 MCP 服务"} / {tool.rawName}</strong>
+                      <span>已在当前会话直接可用</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          ) : (
+            <section className={styles.emptyPanelState} aria-label="MCP 能力状态">
+              <strong>暂无能力数据</strong>
+              <span>发送消息后会显示当前会话可用的 MCP 能力。</span>
+            </section>
+          )}
+
           {view.issues.length > 0 ? (
             <section className={styles.section} aria-label="MCP 需要处理">
               <h3>需要处理</h3>
@@ -180,6 +217,15 @@ export function McpRuntimePill({ runtime, sessionId, runtimeState, onOpenSetting
   );
 }
 
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className={styles.metricTile}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 interface RuntimePanelIssue {
   description: string;
   kind: string;
@@ -187,7 +233,13 @@ interface RuntimePanelIssue {
 }
 
 interface RuntimePanelView {
+  activeTools: RuntimePanelActiveTool[];
+  capabilityServerCount: number;
+  capabilityServers: RuntimePanelCapabilityServer[];
+  directToolCount: number;
+  hasSnapshot: boolean;
   issues: RuntimePanelIssue[];
+  onDemandToolCount: number;
   pillLabel: string;
   runningCalls: McpRuntimeCallSummary[];
   statusLabel: string;
@@ -196,10 +248,28 @@ interface RuntimePanelView {
   tone: "ready" | "attention" | "muted";
 }
 
+interface RuntimePanelCapabilityServer {
+  description: string;
+  id: string;
+  name: string;
+}
+
+interface RuntimePanelActiveTool {
+  modelName: string;
+  rawName: string;
+  serverName: string;
+}
+
 function runtimeView(status: McpRuntimeStatusResponse | null, error: string): RuntimePanelView {
   if (error) {
     return {
       issues: [],
+      activeTools: [],
+      capabilityServerCount: 0,
+      capabilityServers: [],
+      directToolCount: 0,
+      hasSnapshot: false,
+      onDemandToolCount: 0,
       pillLabel: "请求失败",
       runningCalls: [],
       statusLabel: "状态读取失败",
@@ -211,6 +281,12 @@ function runtimeView(status: McpRuntimeStatusResponse | null, error: string): Ru
   if (!status) {
     return {
       issues: [],
+      activeTools: [],
+      capabilityServerCount: 0,
+      capabilityServers: [],
+      directToolCount: 0,
+      hasSnapshot: false,
+      onDemandToolCount: 0,
       pillLabel: "读取中",
       runningCalls: [],
       statusLabel: "正在读取",
@@ -222,6 +298,12 @@ function runtimeView(status: McpRuntimeStatusResponse | null, error: string): Ru
   if (!status.manager.enabled) {
     return {
       issues: [],
+      activeTools: [],
+      capabilityServerCount: 0,
+      capabilityServers: [],
+      directToolCount: 0,
+      hasSnapshot: Boolean(status.snapshot),
+      onDemandToolCount: 0,
       pillLabel: "已关闭",
       runningCalls: status.running_calls,
       statusLabel: runtimeManagerStatusLabel(status.manager.runtime_status),
@@ -233,6 +315,10 @@ function runtimeView(status: McpRuntimeStatusResponse | null, error: string): Ru
 
   const issues = runtimeIssues(status);
   const toolsVisible = visibleToolCount(status);
+  const directToolCount = snapshotNumber(status, "direct_available_tools");
+  const onDemandToolCount = snapshotNumber(status, "on_demand_tools");
+  const capabilityServers = capabilityServerSummaries(status);
+  const activeTools = activeToolSummaries(status);
   const serversTotal = totalServerCount(status);
   const serversOnline = status.summary.servers_online ?? status.servers.filter((server) => server.status === "online").length;
   const pendingApprovals = status.pending_approvals ?? status.summary.pending_approvals ?? 0;
@@ -247,6 +333,10 @@ function runtimeView(status: McpRuntimeStatusResponse | null, error: string): Ru
           ? "MCP 需要处理"
           : "MCP 可用";
   const summaryParts = [`${serversOnline}/${serversTotal} 个服务在线`, `${toolsVisible} 个工具可用`];
+  if (status.snapshot) {
+    summaryParts.push(`直接可用 ${directToolCount} 个`);
+    summaryParts.push(`按需加载 ${onDemandToolCount} 个`);
+  }
   if (pendingApprovals > 0) {
     summaryParts.push(`${pendingApprovals} 个请求等待确认`);
   }
@@ -255,14 +345,68 @@ function runtimeView(status: McpRuntimeStatusResponse | null, error: string): Ru
   }
 
   return {
+    activeTools,
+    capabilityServerCount: capabilityServers.length,
+    capabilityServers,
+    directToolCount,
+    hasSnapshot: Boolean(status.snapshot),
     issues,
-    pillLabel: `${serversTotal} 个 MCP 服务器 · ${toolsVisible} 个 tool`,
+    onDemandToolCount,
+    pillLabel: `${serversTotal} 个 MCP 服务器 · ${toolsVisible} 个工具`,
     runningCalls,
     statusLabel: runtimeManagerStatusLabel(status.manager.runtime_status),
     summary: summaryParts.join("，"),
     title,
     tone,
   };
+}
+
+function snapshotNumber(
+  status: McpRuntimeStatusResponse,
+  field: "direct_available_tools" | "on_demand_tools" | "unavailable_tools",
+): number {
+  const value = status.snapshot?.[field];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function capabilityServerSummaries(status: McpRuntimeStatusResponse): RuntimePanelCapabilityServer[] {
+  const directory = status.snapshot?.capability_directory;
+  if (!Array.isArray(directory)) {
+    return [];
+  }
+  return directory
+    .map((item) => {
+      const id = stringValue(item.server_id);
+      const name = stringValue(item.server_name) || id || "未知 MCP 服务";
+      const statusLabel = stringValue(item.status_label) || stringValue(item.status) || "未知";
+      const directCount = numberValue(item.direct_tool_count);
+      const onDemandCount = numberValue(item.on_demand_tool_count);
+      return {
+        id: id || name,
+        name,
+        description: `${statusLabel}，直接可用 ${directCount} 个，按需加载 ${onDemandCount} 个`,
+      };
+    })
+    .filter((item) => item.id || item.name);
+}
+
+function activeToolSummaries(status: McpRuntimeStatusResponse): RuntimePanelActiveTool[] {
+  const activeNames = new Set(arrayOfStrings(status.snapshot?.policy_summary?.active_model_names));
+  const tools = status.snapshot?.visible_tools;
+  if (!activeNames.size || !Array.isArray(tools)) {
+    return [];
+  }
+  return tools
+    .filter((tool) => {
+      const modelName = stringValue(tool.model_name);
+      return modelName && activeNames.has(modelName);
+    })
+    .map((tool) => ({
+      modelName: stringValue(tool.model_name),
+      rawName: stringValue(tool.raw_name) || "未知工具",
+      serverName: stringValue(tool.server_name),
+    }))
+    .filter((tool) => tool.modelName);
 }
 
 function runtimeIssues(status: McpRuntimeStatusResponse): RuntimePanelIssue[] {
@@ -337,6 +481,20 @@ function runtimeManagerStatusLabel(value: string | null | undefined): string {
     default:
       return "未知";
   }
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function arrayOfStrings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
 }
 
 function formatElapsed(ms: number): string {

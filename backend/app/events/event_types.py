@@ -34,6 +34,17 @@ class DomainEventType(StrEnum):
     LLM_TOOL_FINISHED = "llm.tool.finished"
     LLM_TOOL_FAILED = "llm.tool.failed"
 
+    A2UI_STREAM_STARTED = "a2ui.stream.start"
+    A2UI_STREAM_CHUNK = "a2ui.stream.chunk"
+    A2UI_STREAM_FINISHED = "a2ui.stream.finish"
+    A2UI_CREATED = "a2ui.created"
+    A2UI_SUBMITTED = "a2ui.submitted"
+    A2UI_CANCELLED = "a2ui.cancelled"
+    A2UI_RESUME_DEFERRED = "a2ui.resume.deferred"
+    A2UI_RESUME_STARTED = "a2ui.resume.started"
+    A2UI_RESUME_SUCCEEDED = "a2ui.resume.succeeded"
+    A2UI_RESUME_FAILED = "a2ui.resume.failed"
+
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_RESOLVED = "approval.resolved"
 
@@ -56,6 +67,7 @@ class DomainEventType(StrEnum):
     MEMORY_RECALLED = "memory.recalled"
 
     TURN_STARTED = "turn.started"
+    TURN_WAITING_INPUT = "turn.waiting_input"
     TURN_COMPLETED = "turn.completed"
     TURN_CANCELLED = "turn.cancelled"
     TURN_FAILED = "turn.failed"
@@ -82,6 +94,16 @@ CORE_EVENT_TYPES = frozenset(
         DomainEventType.LLM_TOOL_PROGRESS,
         DomainEventType.LLM_TOOL_FINISHED,
         DomainEventType.LLM_TOOL_FAILED,
+        DomainEventType.A2UI_STREAM_STARTED,
+        DomainEventType.A2UI_STREAM_CHUNK,
+        DomainEventType.A2UI_STREAM_FINISHED,
+        DomainEventType.A2UI_CREATED,
+        DomainEventType.A2UI_SUBMITTED,
+        DomainEventType.A2UI_CANCELLED,
+        DomainEventType.A2UI_RESUME_DEFERRED,
+        DomainEventType.A2UI_RESUME_STARTED,
+        DomainEventType.A2UI_RESUME_SUCCEEDED,
+        DomainEventType.A2UI_RESUME_FAILED,
         DomainEventType.APPROVAL_REQUESTED,
         DomainEventType.APPROVAL_RESOLVED,
         DomainEventType.SUBAGENT_STARTED,
@@ -89,6 +111,7 @@ CORE_EVENT_TYPES = frozenset(
         DomainEventType.SUBAGENT_FAILED,
         DomainEventType.MEMORY_RECALLED,
         DomainEventType.TURN_STARTED,
+        DomainEventType.TURN_WAITING_INPUT,
         DomainEventType.TURN_COMPLETED,
         DomainEventType.TURN_CANCELLED,
         DomainEventType.TURN_FAILED,

@@ -143,7 +143,7 @@ function parseApproval(message: ConversationMessage): ParsedApproval {
     description: approval?.description ?? "",
     target: targetFromDetails(details, kind),
     facts: factsFromDetails(details, kind),
-    detailsText: stringify(details),
+    detailsText: detailsTextFromDetails(details, kind),
     status: (approval?.status ?? message.status ?? "pending") as ApprovalStatus,
   };
 }
@@ -239,11 +239,10 @@ function factsFromDetails(details: Record<string, unknown>, kind: ApprovalKind):
   if (kind === "mcp_tool_call") {
     addFact(facts, "服务", details.server_name ?? details.server_id);
     addFact(facts, "工具", details.raw_tool_name ?? details.tool_name);
-    addFact(facts, "工具名称", details.model_tool_name, true);
-    addFact(facts, "参数预览", previewText(details.arguments_preview), true);
+    addFact(facts, "参数摘要", previewText(details.arguments_preview), true);
+    addFact(facts, "确认方式", approvalModeText(details.approval_mode));
     addFact(facts, "可选信任方式", trustOptionsText(details.trust_options));
     addFact(facts, "命中的信任项", previewText(details.matched_rule), true);
-    addFact(facts, "本次工具版本", details.snapshot_id, true);
     return facts;
   }
   if (kind === "mcp_sampling") {
@@ -264,6 +263,20 @@ function factsFromDetails(details: Record<string, unknown>, kind: ApprovalKind):
   addFact(facts, "超时", formatTimeout(details.timeout_seconds));
   addFact(facts, "工作区", details.workspace_root, true);
   return facts;
+}
+
+function detailsTextFromDetails(details: Record<string, unknown>, kind: ApprovalKind): string {
+  if (kind === "mcp_tool_call") {
+    return stringify({
+      server: scalarText(details.server_name) || scalarText(details.server_id),
+      tool: scalarText(details.raw_tool_name) || scalarText(details.tool_name),
+      arguments_preview: previewText(details.arguments_preview),
+      approval_mode: approvalModeText(details.approval_mode),
+      trust_options: trustOptionsText(details.trust_options),
+      matched_rule: previewText(details.matched_rule),
+    });
+  }
+  return stringify(details);
 }
 
 function addFact(facts: ApprovalFact[], label: string, value: unknown, mono = false): void {

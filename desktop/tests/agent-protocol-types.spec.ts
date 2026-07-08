@@ -5,6 +5,15 @@ import {
   AGENT_COMPLETED_EVENT_ITEM_ACTIONS,
   AGENT_INBOUND_ACTIONS,
   AGENT_REPLAY_ACTIONS,
+  type A2UIAckActionData,
+  type A2UICancelActionPayload,
+  type A2UICreatedActionData,
+  type A2UIObject,
+  type A2UIResumeActionData,
+  type A2UIStreamActionData,
+  type A2UISubmitActionPayload,
+  type A2UIWaitingInputActionData,
+  type A2UIWaitingInputStatusItem,
   type ApprovalKind,
   type CommandApprovalTrustScope,
   type AgentActionEnvelope,
@@ -37,6 +46,15 @@ describe("agent protocol types", () => {
   it("exposes action constants aligned with the backend event contract", () => {
     expect(AGENT_CHAT_ACTIONS).toContain("session_created");
     expect(AGENT_CHAT_ACTIONS).toContain("stream");
+    expect(AGENT_CHAT_ACTIONS).toContain("a2ui_stream_start");
+    expect(AGENT_CHAT_ACTIONS).toContain("a2ui_stream_chunk");
+    expect(AGENT_CHAT_ACTIONS).toContain("a2ui_stream_finish");
+    expect(AGENT_CHAT_ACTIONS).toContain("a2ui_created");
+    expect(AGENT_CHAT_ACTIONS).toContain("waiting_input");
+    expect(AGENT_CHAT_ACTIONS).toContain("a2ui_submit_ack");
+    expect(AGENT_CHAT_ACTIONS).toContain("a2ui_cancel_ack");
+    expect(AGENT_CHAT_ACTIONS).toContain("a2ui_resume");
+    expect(AGENT_CHAT_ACTIONS).toContain("a2ui_waiting_input");
     expect(AGENT_CHAT_ACTIONS).toContain("tool_start");
     expect(AGENT_CHAT_ACTIONS).toContain("tool_progress");
     expect(AGENT_CHAT_ACTIONS).toContain("tool_end");
@@ -56,6 +74,8 @@ describe("agent protocol types", () => {
     expect(AGENT_CHAT_ACTIONS).toContain("mcp_elicitation_resolved");
     expect(AGENT_CHAT_ACTIONS).toContain("mcp_oauth_required");
     expect(AGENT_REPLAY_ACTIONS).toContain("stream_batch");
+    expect(AGENT_REPLAY_ACTIONS).toContain("a2ui_created");
+    expect(AGENT_REPLAY_ACTIONS).toContain("waiting_input");
     expect(AGENT_REPLAY_ACTIONS).toContain("reasoning");
     expect(AGENT_REPLAY_ACTIONS).toContain("task_updated");
     expect(AGENT_REPLAY_ACTIONS).toContain("task_run_finished");
@@ -72,6 +92,8 @@ describe("agent protocol types", () => {
     ]);
     expect(AGENT_INBOUND_ACTIONS).toContain("create_session");
     expect(AGENT_INBOUND_ACTIONS).toContain("bind_session");
+    expect(AGENT_INBOUND_ACTIONS).toContain("a2ui_submit");
+    expect(AGENT_INBOUND_ACTIONS).toContain("a2ui_cancel");
     expect(AGENT_INBOUND_ACTIONS).toContain("cancel");
   });
 
@@ -332,6 +354,11 @@ describe("agent protocol types", () => {
       }),
       message("reasoning", "正在分析", { reasoningKind: "progress_fact" }),
       message("error", "模型失败", { traceId: "trace_failed" }),
+      message("a2ui", "", {
+        contentType: "a2ui",
+        content_type: "a2ui",
+        a2ui: a2uiObject("chart", "render"),
+      }),
       message("turn", "", { turnIndex: 3, metadata: { kind: "turn_started", source: "thread_task" } }),
       message("thread_task", "目标已完成", {
         toolName: "update_thread_task",
@@ -349,12 +376,188 @@ describe("agent protocol types", () => {
       "subagent",
       "reasoning",
       "error",
+      "a2ui",
       "turn",
       "thread_task",
     ]);
     expect(messages[0].attachments?.[0].name).toBe("REQ.md");
     expect(messages[1].ghostStats?.traceId).toBe("trace_1");
     expect(messages[2].toolName).toBe("read_file");
+    expect(messages[7].a2ui?.render_key).toBe("chart");
+  });
+
+  it("constructs A2UI protocol shapes for builtin render keys", () => {
+    const chart = a2uiObject("chart", "render", {
+      payload: {
+        title: "Token 使用趋势",
+        series: [{ name: "输入", data: [10, 12, 8] }],
+      },
+      interaction: null,
+    });
+    const confirm = a2uiObject("confirm", "interactive", {
+      payload: {
+        title: "确认执行",
+        description: "是否继续写入文件",
+        confirm_label: "执行",
+        cancel_label: "不执行",
+      },
+      interaction: {
+        interaction_id: "int_confirm",
+        status: "waiting_user_input",
+        can_submit: true,
+        resume_status: "not_started",
+      },
+    });
+    const choice = a2uiObject("choice", "interactive", {
+      payload: {
+        title: "选择方案",
+        multiple: true,
+        options: [
+          { value: "a", label: "方案 A" },
+          { value: "b", label: "方案 B" },
+        ],
+      },
+      interaction: {
+        interaction_id: "int_choice",
+        status: "submitted",
+        can_submit: false,
+        submit_request_id: "req_choice",
+        submit_result: { selected_values: ["a"] },
+        resume_status: "started",
+      },
+    });
+    const form = a2uiObject("form", "interactive", {
+      payload: {
+        title: "补充信息",
+        fields: [{ name: "reason", label: "原因", type: "textarea", required: true }],
+      },
+      interaction: {
+        interaction_id: "int_form",
+        status: "cancelled",
+        can_submit: false,
+        cancel_request_id: "req_form",
+        cancel_reason: "用户取消",
+        resume_status: "succeeded",
+      },
+    });
+    const stream = {
+      session_id: "ses_1",
+      trace_id: "trace_a2ui",
+      turn_index: 4,
+      render_key: "confirm",
+      mode: "interactive",
+      stream_id: "a2ui:confirm:tool_call_1",
+      tool_call_id: "tool_call_1",
+      stream: {
+        status: "chunk",
+        chunk_index: 2,
+        args_delta: "\"title\":\"确认\"",
+        args_text_length: 24,
+        parsed_payload: { title: "确认" },
+        json_parse_status: "partial",
+      },
+    } satisfies A2UIStreamActionData;
+    const created = {
+      session_id: "ses_1",
+      trace_id: "trace_a2ui",
+      turn_index: 4,
+      render_key: "confirm",
+      mode: "interactive",
+      stream_id: stream.stream_id,
+      tool_call_id: "tool_call_1",
+      interaction_id: "int_confirm",
+      interaction: confirm.interaction,
+      a2ui: confirm,
+    } satisfies A2UICreatedActionData;
+    const waiting = {
+      session_id: "ses_1",
+      reason: "a2ui",
+      interaction_id: "int_confirm",
+      render_key: "confirm",
+      stream_id: stream.stream_id,
+      tool_call_id: "tool_call_1",
+      a2ui: confirm,
+      checkpoint: { checkpoint_id: "ckpt_1" },
+    } satisfies A2UIWaitingInputActionData;
+    const pending = {
+      session_id: "ses_1",
+      interaction_id: "int_confirm",
+      status: "waiting_user_input",
+      can_submit: true,
+      render_key: "confirm",
+      stream_id: stream.stream_id,
+    } satisfies A2UIWaitingInputStatusItem;
+    const submit = {
+      action: "a2ui_submit",
+      session_id: "ses_1",
+      interaction_id: "int_confirm",
+      request_id: "req_submit",
+      submit_result: { confirmed: true, note: "继续" },
+    } satisfies A2UISubmitActionPayload;
+    const cancel = {
+      action: "a2ui_cancel",
+      session_id: "ses_1",
+      interaction_id: "int_confirm",
+      request_id: "req_cancel",
+      cancel_reason: "稍后处理",
+    } satisfies A2UICancelActionPayload;
+    const submitAck = {
+      session_id: "ses_1",
+      interaction_id: "int_confirm",
+      request_id: submit.request_id,
+      status: "submitted",
+      can_submit: false,
+      idempotent: false,
+      interaction: {
+        interaction_id: "int_confirm",
+        status: "submitted",
+        can_submit: false,
+        submit_request_id: submit.request_id,
+        submit_result: submit.submit_result,
+        resume_status: "deferred",
+        resume_group_id: "group_1",
+        pending_count: 1,
+      },
+      submit_result: submit.submit_result,
+      resume: {
+        status: "deferred",
+        started: false,
+        resume_group_id: "group_1",
+        pending_count: 1,
+        reason: "waiting_for_group",
+      },
+    } satisfies A2UIAckActionData;
+    const cancelAck = {
+      session_id: "ses_1",
+      interaction_id: "int_confirm",
+      request_id: cancel.request_id,
+      status: "cancelled",
+      can_submit: false,
+      cancel_reason: cancel.cancel_reason,
+      resume: { status: "started", started: true, pending_count: 0 },
+    } satisfies A2UIAckActionData;
+    const resume = {
+      session_id: "ses_1",
+      interaction_id: "int_confirm",
+      resume_status: "succeeded",
+      resume_group_id: "group_1",
+      pending_count: 0,
+      resume_payload: { status: "submitted", interaction_id: "int_confirm" },
+      resume_items: [{ interaction_id: "int_confirm" }],
+    } satisfies A2UIResumeActionData;
+
+    expect([chart, confirm, choice, form].map((item) => item.render_key)).toEqual([
+      "chart",
+      "confirm",
+      "choice",
+      "form",
+    ]);
+    expect(created.a2ui.interaction?.interaction_id).toBe(waiting.interaction_id);
+    expect(pending.can_submit).toBe(true);
+    expect(stream.stream.json_parse_status).toBe("partial");
+    expect(submitAck.resume?.status).toBe("deferred");
+    expect(cancelAck.status).toBe("cancelled");
+    expect(resume.resume_status).toBe("succeeded");
   });
 
   it("constructs tool and completed websocket payloads", () => {
@@ -558,6 +761,33 @@ describe("agent protocol types", () => {
     expect(statusUpdated.data.summary).toBe("目标已完成");
   });
 });
+
+function a2uiObject(
+  renderKey: A2UIObject["render_key"],
+  mode: A2UIObject["mode"],
+  patch: Partial<A2UIObject> = {},
+): A2UIObject {
+  return {
+    render_key: renderKey,
+    mode,
+    stream_id: `stream_${renderKey}`,
+    tool_call_id: `tool_${renderKey}`,
+    trace_id: "trace_a2ui",
+    turn_index: 4,
+    payload: { title: `${renderKey} title` },
+    input_schema: { type: "object" },
+    submit_schema: { type: "object" },
+    interaction: mode === "interactive"
+      ? {
+          interaction_id: `int_${renderKey}`,
+          status: "waiting_user_input",
+          can_submit: true,
+          resume_status: "not_started",
+        }
+      : null,
+    ...patch,
+  };
+}
 
 function message(
   role: AgentChatMessage["role"],

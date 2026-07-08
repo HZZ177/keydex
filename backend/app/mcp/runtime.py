@@ -7,7 +7,7 @@ from backend.app.core.ids import new_id
 from backend.app.mcp.audit import McpAuditWriter
 from backend.app.mcp.errors import McpRuntimeError
 from backend.app.mcp.exposure import (
-    McpDeferredExposurePlanner,
+    McpDirectInjectionPlanner,
     McpToolExposureResolver,
     McpVisibleTool,
 )
@@ -27,6 +27,8 @@ class McpRuntimeSnapshotContext:
     turn_id: str | None = None
     workspace_session: bool = True
     active_model_names: set[str] = field(default_factory=set)
+    recent_model_names: list[str] = field(default_factory=list)
+    priority_model_names: list[str] = field(default_factory=list)
 
 
 class McpRuntimeSnapshotBuilder:
@@ -34,16 +36,16 @@ class McpRuntimeSnapshotBuilder:
         self,
         repositories: StorageRepositories,
         *,
-        deferred_threshold: int,
+        direct_tool_budget: int,
     ) -> None:
         self.repositories = repositories
-        self.deferred_threshold = deferred_threshold
+        self.direct_tool_budget = direct_tool_budget
 
     def build_snapshot(
         self,
         context: McpRuntimeSnapshotContext,
     ) -> McpRuntimeSnapshotRecord:
-        servers, _total = self.repositories.mcp_servers.list(enabled=True, limit=500)
+        servers, _total = self.repositories.mcp_servers.list(limit=500)
         statuses = _status_by_server(self.repositories, servers)
         self._raise_for_required_server_failures(servers, statuses)
         if not context.workspace_session:
@@ -52,13 +54,17 @@ class McpRuntimeSnapshotBuilder:
                 servers=servers,
                 statuses=statuses,
                 visible_tools=[],
-                policy_summary={"workspace_session": False, "mode": "disabled"},
+                policy_summary={
+                    "workspace_session": False,
+                    "availability": "unavailable",
+                    "reason": "not_workspace_session",
+                },
             )
 
         tools = []
         policies = []
         for server in servers:
-            tools.extend(self.repositories.mcp_tools.list_by_server(server.id))
+            tools.extend(self.repositories.mcp_tools.list_by_server(server.id, limit=1000))
             policies.extend(self.repositories.mcp_tool_policies.list_by_server(server.id))
         exposure = McpToolExposureResolver().resolve(
             servers=servers,
@@ -69,12 +75,30 @@ class McpRuntimeSnapshotBuilder:
                 context.session_id
             ),
         )
-        plan = McpDeferredExposurePlanner(
-            direct_threshold=self.deferred_threshold
-        ).plan(exposure, active_model_names=context.active_model_names)
+        recent_model_names = (
+            context.recent_model_names
+            or self.repositories.mcp_session_tool_usage.list_recent_model_names(
+                context.session_id
+            )
+        )
+        plan = McpDirectInjectionPlanner(
+            direct_tool_budget=self.direct_tool_budget
+        ).plan(
+            exposure,
+            active_model_names=context.active_model_names,
+            recent_model_names=recent_model_names,
+            priority_model_names=context.priority_model_names,
+        )
+        capability_directory = _capability_directory_payload(
+            servers=servers,
+            statuses=statuses,
+            exposure=exposure,
+            direct_tools=plan.direct_tools,
+            on_demand_tools=plan.on_demand_tools,
+        )
         visible_tools = [
             _contract(tool, exposure="direct") for tool in plan.direct_tools
-        ] + [_contract(tool, exposure="deferred") for tool in plan.deferred_tools]
+        ] + [_contract(tool, exposure="on_demand") for tool in plan.on_demand_tools]
         return self._save_snapshot(
             context,
             servers=servers,
@@ -82,12 +106,14 @@ class McpRuntimeSnapshotBuilder:
             visible_tools=visible_tools,
             policy_summary={
                 "workspace_session": True,
-                "mode": plan.mode,
-                "direct_tools": len(plan.direct_tools),
-                "deferred_tools": len(plan.deferred_tools),
-                "hidden_tools": len(exposure.hidden_tools),
-                "include_search_tool": plan.include_search_tool,
-                "include_list_tool": plan.include_list_tool,
+                "availability": plan.availability,
+                "direct_tool_budget": self.direct_tool_budget,
+                "direct_available_tools": len(plan.direct_tools),
+                "on_demand_tools": len(plan.on_demand_tools),
+                "unavailable_tools": len(exposure.hidden_tools),
+                "has_on_demand_catalog": plan.has_on_demand_catalog,
+                "capability_directory": capability_directory,
+                "active_model_names": sorted(context.active_model_names),
             },
         )
 
@@ -108,6 +134,14 @@ class McpRuntimeSnapshotBuilder:
             visible_tools=visible_tools,
             server_status=_server_status_payload(servers, statuses),
             policy_summary=policy_summary,
+            capability_directory=policy_summary.get("capability_directory")
+            if isinstance(policy_summary.get("capability_directory"), list)
+            else [],
+            direct_available_tools=_non_negative_int(
+                policy_summary.get("direct_available_tools")
+            ),
+            on_demand_tools=_non_negative_int(policy_summary.get("on_demand_tools")),
+            unavailable_tools=_non_negative_int(policy_summary.get("unavailable_tools")),
         )
 
     def _raise_for_required_server_failures(
@@ -116,6 +150,8 @@ class McpRuntimeSnapshotBuilder:
         statuses: dict[str, McpServerStatusRecord | None],
     ) -> None:
         for server in servers:
+            if not server.enabled:
+                continue
             if not server.required:
                 continue
             status = statuses.get(server.id)
@@ -168,6 +204,90 @@ def _server_status_payload(
             "last_error_code": status.last_error_code if status is not None else None,
             }
     return payload
+
+
+def _capability_directory_payload(
+    *,
+    servers: list[McpServerRecord],
+    statuses: dict[str, McpServerStatusRecord | None],
+    exposure: Any,
+    direct_tools: list[McpVisibleTool],
+    on_demand_tools: list[McpVisibleTool],
+) -> list[dict[str, Any]]:
+    direct_count = _tool_count_by_server(direct_tools)
+    on_demand_count = _tool_count_by_server(on_demand_tools)
+    visible_count = _tool_count_by_server(exposure.visible_tools)
+    unavailable_count: dict[str, int] = {}
+    for hidden in exposure.hidden_tools:
+        unavailable_count[hidden.server_id] = unavailable_count.get(hidden.server_id, 0) + 1
+    keywords = _capability_keywords_by_server([*direct_tools, *on_demand_tools])
+    directory: list[dict[str, Any]] = []
+    for server in servers:
+        status_value = _directory_status(server, statuses.get(server.id))
+        available_tool_count = visible_count.get(server.id, 0)
+        directory.append(
+            {
+                "server_id": server.id,
+                "server_name": server.name,
+                "status": status_value,
+                "status_label": _directory_status_label(status_value),
+                "available_tool_count": available_tool_count,
+                "direct_tool_count": direct_count.get(server.id, 0),
+                "on_demand_tool_count": on_demand_count.get(server.id, 0),
+                "unavailable_tool_count": unavailable_count.get(server.id, 0),
+                "requires_auth": status_value == "auth_required",
+                "has_on_demand_tools": on_demand_count.get(server.id, 0) > 0,
+                "capability_keywords": keywords.get(server.id, []),
+            }
+        )
+    return directory
+
+
+def _tool_count_by_server(tools: list[McpVisibleTool]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for tool in tools:
+        counts[tool.server_id] = counts.get(tool.server_id, 0) + 1
+    return counts
+
+
+def _capability_keywords_by_server(tools: list[McpVisibleTool]) -> dict[str, list[str]]:
+    keywords: dict[str, list[str]] = {}
+    for tool in tools:
+        values = keywords.setdefault(tool.server_id, [])
+        if tool.raw_name not in values:
+            values.append(tool.raw_name)
+        if len(values) > 5:
+            del values[5:]
+    return keywords
+
+
+def _directory_status(
+    server: McpServerRecord,
+    status: McpServerStatusRecord | None,
+) -> str:
+    if not server.enabled:
+        return "disabled"
+    return status.status if status is not None else "unknown"
+
+
+def _directory_status_label(status: str) -> str:
+    return {
+        "online": "在线",
+        "offline": "离线",
+        "auth_required": "需要认证",
+        "error": "异常",
+        "disabled": "已停用",
+        "refreshing": "刷新中",
+        "unknown": "未知",
+    }.get(status, "未知")
+
+
+def _non_negative_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(0, value)
+    return 0
 
 
 @dataclass(frozen=True)

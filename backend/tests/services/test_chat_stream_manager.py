@@ -167,6 +167,7 @@ async def test_chat_stream_manager_unsubscribe_does_not_cancel_running_turn() ->
         "status": "idle",
         "running_sessions": [],
         "waiting_approval_sessions": [],
+        "waiting_input_sessions": [],
         "pending_approvals": [],
     }
 
@@ -200,6 +201,7 @@ async def test_chat_stream_manager_finish_notifies_thread_task_runtime_after_idl
                 "status": "idle",
                 "running_sessions": [],
                 "waiting_approval_sessions": [],
+                "waiting_input_sessions": [],
                 "pending_approvals": [],
             },
         }
@@ -361,5 +363,26 @@ async def test_chat_stream_manager_cancel_interrupts_running_task() -> None:
         "status": "idle",
         "running_sessions": [],
         "waiting_approval_sessions": [],
+        "waiting_input_sessions": [],
         "pending_approvals": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_manager_reports_waiting_input_sessions(tmp_path) -> None:
+    repositories = StorageRepositories(init_database(tmp_path / "app.db"))
+    repositories.sessions.create(
+        session_id="ses-a",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        status="waiting_input",
+    )
+    service = BlockingChatService()
+    service.repositories = repositories
+    manager = ChatStreamManager(service)  # type: ignore[arg-type]
+
+    status = await manager.status("ses-a")
+
+    assert status["status"] == "waiting_input"
+    assert status["running_sessions"] == []
+    assert status["waiting_input_sessions"] == [{"session_id": "ses-a"}]

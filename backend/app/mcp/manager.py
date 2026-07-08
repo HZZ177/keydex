@@ -590,6 +590,13 @@ class McpManager:
                 raw_tool_name,
                 success=True,
             )
+            if session_id:
+                self.repositories.mcp_session_tool_usage.record_success(
+                    session_id=session_id,
+                    server_id=server_id,
+                    raw_tool_name=raw_tool_name,
+                    model_name=allowed.model_name,
+                )
             self._append_tool_audit(
                 event_type="tool.called",
                 server_id=server_id,

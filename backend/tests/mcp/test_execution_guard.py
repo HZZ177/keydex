@@ -72,7 +72,7 @@ def test_guard_rejects_session_disabled_tool_and_next_snapshot_excludes_it(tmp_p
     repositories = _repositories(tmp_path)
     _create_server(repositories)
     _tool(repositories)
-    before = McpRuntimeSnapshotBuilder(repositories, deferred_threshold=40).build_snapshot(
+    before = McpRuntimeSnapshotBuilder(repositories, direct_tool_budget=40).build_snapshot(
         McpRuntimeSnapshotContext(session_id="session-a")
     )
     repositories.mcp_session_tool_overrides.set(
@@ -88,7 +88,7 @@ def test_guard_rejects_session_disabled_tool_and_next_snapshot_excludes_it(tmp_p
             server_id="srv_guard",
             raw_tool_name="tool",
         )
-    after = McpRuntimeSnapshotBuilder(repositories, deferred_threshold=40).build_snapshot(
+    after = McpRuntimeSnapshotBuilder(repositories, direct_tool_budget=40).build_snapshot(
         McpRuntimeSnapshotContext(session_id="session-a")
     )
 
@@ -173,7 +173,7 @@ def test_guard_rejects_policy_disabled_after_schema_was_sent(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _create_server(repositories)
     _tool(repositories)
-    snapshot = McpRuntimeSnapshotBuilder(repositories, deferred_threshold=40).build_snapshot(
+    snapshot = McpRuntimeSnapshotBuilder(repositories, direct_tool_budget=40).build_snapshot(
         McpRuntimeSnapshotContext(session_id="session-a")
     )
     repositories.mcp_tool_policies.upsert(
@@ -188,7 +188,7 @@ def test_guard_rejects_policy_disabled_after_schema_was_sent(tmp_path) -> None:
             server_id="srv_guard",
             raw_tool_name="tool",
         )
-    next_snapshot = McpRuntimeSnapshotBuilder(repositories, deferred_threshold=40).build_snapshot(
+    next_snapshot = McpRuntimeSnapshotBuilder(repositories, direct_tool_budget=40).build_snapshot(
         McpRuntimeSnapshotContext(session_id="session-a")
     )
 

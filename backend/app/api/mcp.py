@@ -99,6 +99,7 @@ class TestMcpServerConnectionRequest(BaseModel):
 class UpdateMcpToolPolicyRequest(BaseModel):
     enabled: bool | None = None
     hidden: bool | None = None
+    priority_available: bool | None = None
     approval_mode: str | None = Field(
         default=None,
         pattern="^(inherit|auto|prompt|approve|deny)$",

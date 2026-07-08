@@ -274,6 +274,51 @@ def test_mcp_tool_repository_upserts_status_and_filters(tmp_path) -> None:
     )] == ["list_issues"]
 
 
+def test_mcp_session_tool_usage_records_recent_success_by_session(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    repositories.mcp_servers.create(
+        server_id="mcp-server-a",
+        name="Local MCP",
+        transport="stdio",
+        command="node",
+    )
+
+    repositories.mcp_session_tool_usage.record_success(
+        session_id="session-a",
+        server_id="mcp-server-a",
+        raw_tool_name="list_issues",
+        model_name="mcp__local__list_issues",
+    )
+    latest = repositories.mcp_session_tool_usage.record_success(
+        session_id="session-a",
+        server_id="mcp-server-a",
+        raw_tool_name="create_issue",
+        model_name="mcp__local__create_issue",
+    )
+    repeated = repositories.mcp_session_tool_usage.record_success(
+        session_id="session-a",
+        server_id="mcp-server-a",
+        raw_tool_name="create_issue",
+        model_name="mcp__local__create_issue",
+    )
+    repositories.mcp_session_tool_usage.record_success(
+        session_id="session-b",
+        server_id="mcp-server-a",
+        raw_tool_name="delete_issue",
+        model_name="mcp__local__delete_issue",
+    )
+
+    assert latest.success_count == 1
+    assert repeated.success_count == 2
+    assert repositories.mcp_session_tool_usage.list_recent_model_names("session-a") == [
+        "mcp__local__create_issue",
+        "mcp__local__list_issues",
+    ]
+    assert repositories.mcp_session_tool_usage.list_recent_model_names("session-b") == [
+        "mcp__local__delete_issue"
+    ]
+
+
 def test_mcp_resource_repositories_upsert_reserved_records(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     repositories.mcp_servers.create(
@@ -337,6 +382,7 @@ def test_mcp_tool_policy_repository_bulk_update(tmp_path) -> None:
             {
                 "raw_tool_name": "create_issue",
                 "enabled": False,
+                "priority_available": True,
                 "approval_mode": "prompt",
                 "parameter_constraints": {"title": {"maxLength": 120}},
             },
@@ -353,6 +399,7 @@ def test_mcp_tool_policy_repository_bulk_update(tmp_path) -> None:
     create_policy = repositories.mcp_tool_policies.get("mcp-server-a", "create_issue")
     assert create_policy is not None
     assert create_policy.enabled is False
+    assert create_policy.priority_available is True
     assert create_policy.approval_mode == "prompt"
     assert create_policy.parameter_constraints == {"title": {"maxLength": 120}}
 
@@ -393,13 +440,54 @@ def test_mcp_session_override_snapshot_trust_and_audit_repositories(tmp_path) ->
         visible_tools=[{"model_name": "mcp__local__create_issue"}],
         server_status={"mcp-server-a": "online"},
         policy_summary={"approval": "auto"},
+        capability_directory=[
+            {
+                "server_id": "mcp-server-a",
+                "server_name": "Local MCP",
+                "status": "online",
+                "available_tool_count": 1,
+            }
+        ],
+        direct_available_tools=1,
+        on_demand_tools=0,
+        unavailable_tools=2,
     )
 
     assert snapshot.visible_tools == [{"model_name": "mcp__local__create_issue"}]
+    assert snapshot.capability_directory == [
+        {
+            "server_id": "mcp-server-a",
+            "server_name": "Local MCP",
+            "status": "online",
+            "available_tool_count": 1,
+        }
+    ]
+    assert snapshot.direct_available_tools == 1
+    assert snapshot.on_demand_tools == 0
+    assert snapshot.unavailable_tools == 2
     assert repositories.mcp_runtime_snapshots.list_by_session(
         "session-a",
         turn_id="turn-a",
     ) == [snapshot]
+
+    legacy_summary_snapshot = repositories.mcp_runtime_snapshots.save(
+        snapshot_id="snapshot-legacy-summary",
+        session_id="session-a",
+        tool_inventory_revision=1,
+        visible_tools=[],
+        server_status={},
+        policy_summary={
+            "capability_directory": [{"server_id": "legacy"}],
+            "direct_available_tools": 9,
+            "on_demand_tools": 8,
+            "unavailable_tools": 7,
+        },
+    )
+
+    assert legacy_summary_snapshot.capability_directory == []
+    assert legacy_summary_snapshot.direct_available_tools == 0
+    assert legacy_summary_snapshot.on_demand_tools == 0
+    assert legacy_summary_snapshot.unavailable_tools == 0
 
     trust = repositories.mcp_trust_rules.create(
         rule_id="trust-a",
@@ -458,3 +546,38 @@ def test_mcp_session_override_snapshot_trust_and_audit_repositories(tmp_path) ->
         "create_issue",
     ) is True
     assert repositories.mcp_trust_rules.delete(trust.id) is True
+
+
+def test_mcp_runtime_snapshot_rejects_malformed_json_shapes(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    with repositories.db.transaction() as conn:
+        conn.execute(
+            """
+            insert into mcp_runtime_snapshots (
+              id, session_id, tool_inventory_revision, visible_tools_json,
+              server_status_json, policy_summary_json, capability_directory_json,
+              created_at
+            ) values (
+              'snapshot-bad-visible', 'session-a', 1, '{}',
+              '{}', '{}', '[]', '2026-07-08T00:00:00Z'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into mcp_runtime_snapshots (
+              id, session_id, tool_inventory_revision, visible_tools_json,
+              server_status_json, policy_summary_json, capability_directory_json,
+              created_at
+            ) values (
+              'snapshot-bad-directory', 'session-a', 1, '[]',
+              '{}', '{}', '{}', '2026-07-08T00:00:00Z'
+            )
+            """
+        )
+
+    with pytest.raises(ValueError, match="visible_tools_json 必须是 JSON 数组"):
+        repositories.mcp_runtime_snapshots.get("snapshot-bad-visible")
+
+    with pytest.raises(ValueError, match="capability_directory_json 必须是 JSON 数组"):
+        repositories.mcp_runtime_snapshots.get("snapshot-bad-directory")

@@ -4,6 +4,8 @@ import pytest
 from langchain.agents.middleware import ToolCallRequest
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.errors import GraphInterrupt
+from langgraph.types import Interrupt
 
 from backend.app.agent.context_compression_utils import (
     build_context_compression_replacement_messages,
@@ -82,6 +84,17 @@ async def test_tool_error_handling_does_not_swallow_force_stop_errors() -> None:
 
     with pytest.raises(DuplicateToolForceStopError):
         await middleware.awrap_tool_call(_request(), duplicate_handler)
+
+
+@pytest.mark.asyncio
+async def test_tool_error_handling_does_not_swallow_graph_interrupts() -> None:
+    middleware = ToolErrorHandlingMiddleware()
+
+    async def interrupting_handler(request: ToolCallRequest) -> ToolMessage:
+        raise GraphInterrupt((Interrupt(value={"reason": "a2ui"}, id="interrupt-1"),))
+
+    with pytest.raises(GraphInterrupt):
+        await middleware.awrap_tool_call(_request(), interrupting_handler)
 
 
 def test_build_default_middleware_honors_auto_title_config(tmp_path) -> None:

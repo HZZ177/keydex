@@ -509,6 +509,11 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
                         <span>{server.transport}</span>
                         <span>{formatRefreshTime(server.last_refresh_at)}</span>
                       </span>
+                      <span className={styles.serverStats} aria-label={`${server.name} MCP 工具可用统计`}>
+                        <span>直接可用 {server.direct_tools_count ?? 0}</span>
+                        <span>按需加载 {server.on_demand_tools_count ?? 0}</span>
+                        <span>最近使用 {server.recently_used_tools_count ?? 0}</span>
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -542,7 +547,9 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
                       </p>
                     </div>
                     <div className={styles.detailMetrics}>
-                      <Metric label="工具" value={selectedServer.tools_count} />
+                      <Metric label="直接可用" value={selectedServer.direct_tools_count ?? 0} />
+                      <Metric label="按需加载" value={selectedServer.on_demand_tools_count ?? 0} />
+                      <Metric label="最近使用" value={selectedServer.recently_used_tools_count ?? 0} />
                       <Metric label="资源" value={hasReservedResources(selectedServer) ? "已预留" : "-"} />
                     </div>
                   </div>

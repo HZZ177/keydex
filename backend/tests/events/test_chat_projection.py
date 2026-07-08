@@ -167,6 +167,87 @@ async def test_chat_projection_maps_tool_lifecycle_to_tool_actions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_projection_maps_a2ui_realtime_events() -> None:
+    adapter = RecordingChatAdapter()
+    projection = ChatProjection(adapter)
+
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_STREAM_STARTED,
+            {"stream_id": "stream-1", "render_key": "confirm"},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_STREAM_CHUNK,
+            {
+                "stream_id": "stream-1",
+                "render_key": "confirm",
+                "stream": {"chunk_index": 1},
+            },
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_STREAM_FINISHED,
+            {"stream_id": "stream-1", "render_key": "confirm"},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_CREATED,
+            {"interaction_id": "a2ui-1", "a2ui": {"render_key": "confirm"}},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.TURN_WAITING_INPUT,
+            {"interaction_id": "a2ui-1", "reason": "a2ui"},
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_SUBMITTED,
+            {
+                "interaction_id": "a2ui-1",
+                "request_id": "submit-1",
+                "resume": {"status": "started"},
+            },
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_CANCELLED,
+            {
+                "interaction_id": "a2ui-2",
+                "request_id": "cancel-1",
+                "resume": {"status": "deferred"},
+            },
+        )
+    )
+    await projection.handle(
+        _event(
+            DomainEventType.A2UI_RESUME_SUCCEEDED,
+            {"interaction_id": "a2ui-1", "resume": {"status": "succeeded"}},
+        )
+    )
+
+    assert [item["action"] for item in adapter.sent] == [
+        "a2ui_stream_start",
+        "a2ui_stream_chunk",
+        "a2ui_stream_finish",
+        "a2ui_created",
+        "waiting_input",
+        "a2ui_submit_ack",
+        "a2ui_cancel_ack",
+        "a2ui_resume",
+    ]
+    assert adapter.sent[3]["data"]["interaction_id"] == "a2ui-1"
+    assert adapter.sent[4]["data"]["reason"] == "a2ui"
+    assert adapter.sent[5]["data"]["resume"]["status"] == "started"
+
+
+@pytest.mark.asyncio
 async def test_chat_projection_maps_turn_terminal_states() -> None:
     adapter = RecordingChatAdapter()
     projection = ChatProjection(adapter)

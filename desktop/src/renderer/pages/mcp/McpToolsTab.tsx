@@ -20,21 +20,16 @@ import type {
 import { mcpErrorMessage, mcpToolEffectiveStateLabel } from "./mcpCopy";
 import styles from "./McpConsolePage.module.css";
 
-type ToolPresenceFilter = "current" | "removed" | "all";
+type ToolAvailabilityFilter = "all" | "direct" | "on_demand" | "disabled";
 type ToolConfiguredApprovalMode = Extract<McpApprovalMode, "inherit" | "prompt" | "approve" | "deny">;
 type ToolApprovalFilter = "all" | ToolConfiguredApprovalMode;
 
-const TOOL_STATUS_OPTIONS: Array<{ value: ToolPresenceFilter; label: string }> = [
-  { value: "current", label: "未移除工具" },
-  { value: "removed", label: "已移除工具" },
+const TOOL_STATUS_OPTIONS: Array<{ value: ToolAvailabilityFilter; label: string }> = [
   { value: "all", label: "全部工具" },
-];
-
-const ENABLED_OPTIONS = [
-  { value: "all", label: "全部授权状态" },
-  { value: "enabled", label: "已启用" },
+  { value: "direct", label: "直接可用" },
+  { value: "on_demand", label: "按需加载" },
   { value: "disabled", label: "已停用" },
-] as const;
+];
 
 const APPROVAL_FILTER_OPTIONS: Array<{ value: ToolApprovalFilter; label: string }> = [
   { value: "all", label: "全部确认方式" },
@@ -77,8 +72,7 @@ export function McpToolsTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<ToolPresenceFilter>("current");
-  const [enabledFilter, setEnabledFilter] = useState<(typeof ENABLED_OPTIONS)[number]["value"]>("all");
+  const [statusFilter, setStatusFilter] = useState<ToolAvailabilityFilter>("all");
   const [approvalFilter, setApprovalFilter] = useState<ToolApprovalFilter>("all");
   const [selectedToolIds, setSelectedToolIds] = useState<Set<string>>(() => new Set());
   const [bulkAction, setBulkAction] = useState<McpToolBulkPolicyAction>("disable_selected");
@@ -91,8 +85,6 @@ export function McpToolsTab({
     try {
       const response = await runtime.mcp.listTools(serverId, {
         search: query.trim() || undefined,
-        status: statusFilter === "removed" ? "removed" : undefined,
-        enabled: enabledFilter === "all" ? undefined : enabledFilter === "enabled",
         limit: 500,
       });
       setTools(response.list);
@@ -120,7 +112,7 @@ export function McpToolsTab({
     } finally {
       setLoading(false);
     }
-  }, [enabledFilter, query, runtime, serverId, statusFilter]);
+  }, [query, runtime, serverId]);
 
   useEffect(() => {
     void loadTools();
@@ -128,7 +120,7 @@ export function McpToolsTab({
 
   const visibleTools = useMemo(() => {
     return tools.filter((tool) => {
-      if (!toolMatchesPresenceFilter(tool, statusFilter)) {
+      if (!toolMatchesAvailabilityFilter(tool, statusFilter)) {
         return false;
       }
       return approvalFilter === "all" || normalizeToolApprovalMode(tool.approval_mode) === approvalFilter;
@@ -188,6 +180,23 @@ export function McpToolsTab({
       );
     } catch (reason) {
       setError(mcpErrorMessage(reason, "更新 MCP 工具策略失败"));
+    } finally {
+      setBusyKey("");
+    }
+  };
+
+  const updateToolPriority = async (tool: McpToolSummary) => {
+    setBusyKey(`priority:${tool.id}`);
+    setError("");
+    try {
+      const priority_available = !tool.priority_available;
+      const updated = await runtime.mcp.updateToolPolicy(serverId, tool.id, {
+        priority_available,
+      });
+      replaceTool(updated);
+      onNotice(priority_available ? "已设为优先可用" : "已取消优先可用");
+    } catch (reason) {
+      setError(mcpErrorMessage(reason, "更新 MCP 工具优先可用失败"));
     } finally {
       setBusyKey("");
     }
@@ -257,13 +266,6 @@ export function McpToolsTab({
             options={TOOL_STATUS_OPTIONS}
             value={statusFilter}
             onChange={(value) => setStatusFilter(value)}
-          />
-          <SettingsSelect
-            ariaLabel="筛选 MCP 工具授权状态"
-            density="compact"
-            options={[...ENABLED_OPTIONS]}
-            value={enabledFilter}
-            onChange={(value) => setEnabledFilter(value)}
           />
           <SettingsSelect
             ariaLabel="筛选 MCP 工具确认方式"
@@ -338,6 +340,7 @@ export function McpToolsTab({
                   selected={selectedToolIds.has(tool.id)}
                   onApprovalChange={updateToolApproval}
                   onOpenSchema={setSchemaTool}
+                  onPriorityChange={updateToolPriority}
                   onSelectedChange={toggleSelected}
                   onToggleEnabled={updateToolEnabled}
                 />
@@ -382,6 +385,7 @@ function ToolRow({
   selected,
   onApprovalChange,
   onOpenSchema,
+  onPriorityChange,
   onSelectedChange,
   onToggleEnabled,
 }: {
@@ -390,6 +394,7 @@ function ToolRow({
   selected: boolean;
   onApprovalChange: (tool: McpToolSummary, approvalMode: McpApprovalMode) => Promise<void>;
   onOpenSchema: (tool: McpToolSummary) => void;
+  onPriorityChange: (tool: McpToolSummary) => Promise<void>;
   onSelectedChange: (toolId: string) => void;
   onToggleEnabled: (tool: McpToolSummary) => Promise<void>;
 }) {
@@ -418,7 +423,11 @@ function ToolRow({
         </div>
         <p>{tool.description || "暂无说明"}</p>
         <div className={styles.toolBadgeRow}>
-          <Badge value={toolPresenceLabel(tool)} tone={isRemoved ? "muted" : "neutral"} />
+          <Badge
+            value={toolAvailabilityLabel(tool)}
+            tone={toolAvailabilityMode(tool) === "disabled" ? "muted" : "neutral"}
+          />
+          {tool.priority_available ? <Badge value="优先可用" tone="success" /> : null}
           <Badge value={`确认方式：${toolApprovalBadgeLabel(tool)}`} tone={approvalBadgeTone(tool)} />
           <Badge value={effectiveStateLabel(tool.effective_state)} tone={tool.enabled ? "success" : "muted"} />
         </div>
@@ -435,12 +444,24 @@ function ToolRow({
       </div>
 
       <div className={styles.toolActionCell}>
-        <ToggleSwitch
-          checked={tool.enabled}
-          disabled={busyKey === `enabled:${tool.id}` || isRemoved}
-          label={`启用工具 ${tool.raw_name}`}
-          onChange={() => void onToggleEnabled(tool)}
-        />
+        <div className={styles.toolSwitchControl}>
+          <span>启用</span>
+          <ToggleSwitch
+            checked={tool.enabled}
+            disabled={busyKey === `enabled:${tool.id}` || isRemoved}
+            label={`启用工具 ${tool.raw_name}`}
+            onChange={() => void onToggleEnabled(tool)}
+          />
+        </div>
+        <div className={styles.toolSwitchControl}>
+          <span>优先可用</span>
+          <ToggleSwitch
+            checked={Boolean(tool.priority_available)}
+            disabled={busyKey === `priority:${tool.id}` || isRemoved}
+            label={`优先可用 ${tool.raw_name}`}
+            onChange={() => void onPriorityChange(tool)}
+          />
+        </div>
         <SettingsSelect
           ariaLabel={`确认方式 ${tool.raw_name}`}
           density="compact"
@@ -562,19 +583,33 @@ function approvalBadgeTone(tool: McpToolSummary): "neutral" | "success" | "warni
   return "neutral";
 }
 
-function toolMatchesPresenceFilter(tool: McpToolSummary, filter: ToolPresenceFilter): boolean {
-  const removed = isRemovedTool(tool);
-  if (filter === "current") {
-    return !removed;
+function toolMatchesAvailabilityFilter(tool: McpToolSummary, filter: ToolAvailabilityFilter): boolean {
+  if (filter === "all") {
+    return true;
   }
-  if (filter === "removed") {
-    return removed;
-  }
-  return true;
+  return toolAvailabilityMode(tool) === filter;
 }
 
-function toolPresenceLabel(tool: McpToolSummary): string {
-  return isRemovedTool(tool) ? "已移除" : "正常";
+function toolAvailabilityLabel(tool: McpToolSummary): string {
+  switch (toolAvailabilityMode(tool)) {
+    case "direct":
+      return "直接可用";
+    case "on_demand":
+      return "按需加载";
+    case "disabled":
+    default:
+      return "已停用";
+  }
+}
+
+function toolAvailabilityMode(tool: McpToolSummary): ToolAvailabilityFilter {
+  if (!tool.enabled || tool.hidden || tool.effective_state !== "enabled" || isRemovedTool(tool)) {
+    return "disabled";
+  }
+  if (tool.availability_mode === "direct" || tool.availability_mode === "on_demand") {
+    return tool.availability_mode;
+  }
+  return "direct";
 }
 
 function isRemovedTool(tool: McpToolSummary): boolean {

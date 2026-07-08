@@ -44,6 +44,9 @@ export function conversationKindFromAgent(message: AgentChatMessage): Conversati
     }
     return isCommandToolName(message.toolName) ? "command" : "tool";
   }
+  if (message.role === "a2ui" || message.contentType === "a2ui" || message.content_type === "a2ui") {
+    return "a2ui";
+  }
   if (message.cancelled || message.status === "cancelled") {
     return "cancelled";
   }
@@ -98,6 +101,22 @@ export function conversationStatusFromAgent(message: AgentChatMessage): Conversa
     }
     if (status === "error") {
       return "failed";
+    }
+    return "completed";
+  }
+  if (message.role === "a2ui" || message.contentType === "a2ui" || message.content_type === "a2ui") {
+    const status = String(message.a2uiDebug?.status ?? message.a2ui?.interaction?.status ?? message.status ?? "");
+    if (status === "started" || status === "streaming" || status === "finished") {
+      return "running";
+    }
+    if (status === "waiting_input" || status === "waiting_user_input") {
+      return "pending";
+    }
+    if (status === "failed" || status === "missing") {
+      return "failed";
+    }
+    if (status === "cancelled") {
+      return "cancelled";
     }
     return "completed";
   }
@@ -212,6 +231,23 @@ export function payloadFromAgentMessage(message: AgentChatMessage): Record<strin
     return {
       ...base,
       elicitation: metadata?.mcp_elicitation,
+    };
+  }
+
+  if (message.role === "a2ui" || message.contentType === "a2ui" || message.content_type === "a2ui") {
+    return {
+      ...base,
+      a2ui: message.a2ui,
+      a2uiDebug: message.a2uiDebug,
+      contentType: message.contentType,
+      content_type: message.content_type,
+      renderKey: message.a2ui?.render_key ?? message.a2uiDebug?.renderKey,
+      render_key: message.a2ui?.render_key ?? message.a2uiDebug?.renderKey,
+      streamId: message.a2ui?.stream_id ?? message.a2uiDebug?.streamId,
+      stream_id: message.a2ui?.stream_id ?? message.a2uiDebug?.streamId,
+      interaction: message.a2ui?.interaction ?? message.a2uiDebug?.interaction,
+      interactionId: message.a2ui?.interaction?.interaction_id ?? message.a2uiDebug?.interactionId,
+      interaction_id: message.a2ui?.interaction?.interaction_id ?? message.a2uiDebug?.interactionId,
     };
   }
 

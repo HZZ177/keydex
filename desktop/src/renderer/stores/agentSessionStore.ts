@@ -33,8 +33,20 @@ import type {
 } from "@/types/protocol";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import { shouldDisplayAgentTranscriptMessage } from "@/renderer/utils/agentTranscriptVisibility";
+import {
+  getA2UIAckResumeStatus,
+  hasWaitingA2UIInput,
+  mergeA2UIEventIntoMessages,
+} from "@/renderer/pages/conversation/messages/a2ui";
 
-export type AgentSessionRuntimeState = "idle" | "running" | "waiting_approval" | "cancelling" | "failed" | "closed";
+export type AgentSessionRuntimeState =
+  | "idle"
+  | "running"
+  | "waiting_approval"
+  | "waiting_input"
+  | "cancelling"
+  | "failed"
+  | "closed";
 const DEFAULT_MCP_ELICITATION_TITLE = "MCP 请求补充信息";
 
 export interface AgentSessionViewState {
@@ -148,6 +160,17 @@ export function reduceAgentWsEvent(
       break;
     case "stream":
       next = handleStream(state, event.data as unknown as AgentStreamActionData);
+      break;
+    case "a2ui_stream_start":
+    case "a2ui_stream_chunk":
+    case "a2ui_stream_finish":
+    case "a2ui_created":
+    case "waiting_input":
+    case "a2ui_submit_ack":
+    case "a2ui_cancel_ack":
+    case "a2ui_resume":
+    case "a2ui_waiting_input":
+      next = handleA2UIEvent(state, event.action, event.data);
       break;
     case "turn_started":
       next = handleTurnStarted(state, event.data as unknown as AgentTurnStartedData);
@@ -336,6 +359,7 @@ function markUnreadFromEvent(
     currentView?.isStreaming ||
     currentView?.runtimeState === "running" ||
     currentView?.runtimeState === "waiting_approval" ||
+    currentView?.runtimeState === "waiting_input" ||
     currentView?.runtimeState === "cancelling"
   ) {
     return state;
@@ -365,6 +389,24 @@ function runningSessionIdsFromStatus(data: Record<string, unknown>): string[] {
 
 function waitingApprovalSessionIdsFromStatus(data: Record<string, unknown>): string[] {
   const value = data.waiting_approval_sessions;
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+      if (item && typeof item === "object") {
+        return stringValue((item as { session_id?: unknown }).session_id);
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+function waitingInputSessionIdsFromStatus(data: Record<string, unknown>): string[] {
+  const value = data.waiting_input_sessions;
   if (!Array.isArray(value)) {
     return [];
   }
@@ -629,11 +671,14 @@ function applyHydratedRuntimeState(view: AgentSessionViewState, previousView?: A
   const hasStreamingMessage = view.messages.some((message) => Boolean(message.streaming));
   const pendingApproval = pendingApprovalForHydratedView(view.messages, previousView);
   const pendingElicitation = pendingElicitationForHydratedView(view.messages, previousView);
+  const pendingA2UIInput = hasWaitingA2UIInput(view.messages);
   let runtimeState = pendingApproval || pendingElicitation
     ? "waiting_approval"
-    : hasStreamingMessage
-      ? "running"
-      : runtimeStateFromSessionStatus(view.status);
+    : pendingA2UIInput
+      ? "waiting_input"
+      : hasStreamingMessage
+        ? "running"
+        : runtimeStateFromSessionStatus(view.status);
 
   if (runtimeState === "idle" && previousView && isActiveRuntimeState(previousView.runtimeState)) {
     runtimeState = previousView.runtimeState === "waiting_approval" ? runtimeState : previousView.runtimeState;
@@ -873,6 +918,218 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
   view.isStreaming = true;
   markTurnInProgress(view);
   return next;
+}
+
+function handleA2UIEvent(
+  state: AgentConversationState,
+  action: string,
+  data: Record<string, unknown>,
+): AgentConversationState {
+  const sessionId = sessionIdFromData(data) || state.selectedSessionId || "";
+  if (!sessionId) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  const eventTimestamp = timestampFromData(data);
+  if (action === "a2ui_stream_start") {
+    closeTopLevelTextStreams(view);
+  }
+  const pendingInteractions = Array.isArray(data.pending_interactions) ? data.pending_interactions : [];
+  let result = action === "a2ui_waiting_input" && pendingInteractions.length > 0
+    ? {
+        action: null,
+        created: false,
+        debug: null,
+        message: null,
+        messages: view.messages,
+      }
+    : mergeA2UIEventIntoMessages(view.messages, action, data, {
+        idFactory: () => nextMessageId(next, "a2ui", sessionId),
+        now: eventTimestamp,
+        sessionId,
+      });
+  for (const pendingInteraction of pendingInteractions) {
+    const pendingRecord = asRecord(pendingInteraction);
+    result = mergeA2UIEventIntoMessages(result.messages, "waiting_input", {
+      session_id: sessionId,
+      interaction: pendingInteraction,
+      interaction_id: pendingRecord ? stringValue(pendingRecord.interaction_id) : "",
+    }, {
+      idFactory: () => nextMessageId(next, "a2ui", sessionId),
+      now: eventTimestamp,
+      sessionId,
+    });
+  }
+  if (!result.message || !result.debug) {
+    if (action === "a2ui_waiting_input") {
+      view.runtimeState = "waiting_input";
+      view.isStreaming = false;
+      view.isCancelling = false;
+      updateSessionStatus(next, sessionId, "waiting_input");
+      return next;
+    }
+    return state;
+  }
+  view.messages = result.messages;
+  result.message.sessionId = sessionId;
+  applyTurnFields(result.message, numberValue(data.turn_index), stringValue(data.trace_id));
+  if (action === "a2ui_stream_start" || action === "a2ui_stream_chunk") {
+    view.isStreaming = true;
+    markTurnInProgress(view);
+    updateSessionStatus(next, sessionId, "running");
+  } else if (action === "waiting_input" || action === "a2ui_waiting_input") {
+    closeAllMessageStreams(view);
+    view.runtimeState = "waiting_input";
+    view.isStreaming = false;
+    view.isCancelling = false;
+    updateSessionStatus(next, sessionId, "waiting_input");
+  } else if (action === "a2ui_submit_ack" || action === "a2ui_cancel_ack") {
+    applyA2UIAckRuntimeState(next, view, sessionId, getA2UIAckResumeStatus(data));
+  } else if (action === "a2ui_resume") {
+    applyA2UIResumeRuntimeState(next, view, sessionId, stringValue(data.resume_status));
+  } else {
+    view.isStreaming = hasStreamingMessage(view);
+    markTurnInProgress(view);
+    updateSessionStatus(next, sessionId, "running");
+  }
+  return next;
+}
+
+function closeAllMessageStreams(view: AgentSessionViewState): void {
+  for (const message of view.messages) {
+    if (message.streaming) {
+      message.streaming = false;
+      if (message.status === "streaming") {
+        message.status = undefined;
+      }
+    }
+    if (message.role === "subagent") {
+      closeSubagentTextStreams(message);
+    }
+  }
+}
+
+function applyA2UIAckRuntimeState(
+  state: AgentConversationState,
+  view: AgentSessionViewState,
+  sessionId: string,
+  resumeStatus: string | undefined,
+): void {
+  const normalized = resumeStatus?.toLowerCase();
+  if (normalized === "deferred" || hasWaitingA2UIInput(view.messages)) {
+    view.runtimeState = "waiting_input";
+    view.isStreaming = false;
+    view.isCancelling = false;
+    updateSessionStatus(state, sessionId, "waiting_input");
+    return;
+  }
+  if (normalized === "failed") {
+    if (hasWaitingA2UIInput(view.messages)) {
+      view.runtimeState = "waiting_input";
+      view.isStreaming = false;
+      view.isCancelling = false;
+      updateSessionStatus(state, sessionId, "waiting_input");
+      return;
+    }
+    view.runtimeState = "failed";
+    view.isStreaming = false;
+    view.isCancelling = false;
+    updateSessionStatus(state, sessionId, "failed");
+    return;
+  }
+  if (normalized === "succeeded" || normalized === "not_started") {
+    settleA2UITerminalRuntimeState(state, view, sessionId);
+    return;
+  }
+  view.runtimeState = "running";
+  view.isStreaming = true;
+  view.isCancelling = false;
+  updateSessionStatus(state, sessionId, "running");
+}
+
+function applyA2UIResumeRuntimeState(
+  state: AgentConversationState,
+  view: AgentSessionViewState,
+  sessionId: string,
+  resumeStatus: string,
+): void {
+  const normalized = resumeStatus.toLowerCase();
+  if (normalized === "deferred") {
+    view.runtimeState = "waiting_input";
+    view.isStreaming = false;
+    view.isCancelling = false;
+    updateSessionStatus(state, sessionId, "waiting_input");
+    return;
+  }
+  if (normalized === "failed") {
+    if (hasWaitingA2UIInput(view.messages)) {
+      view.runtimeState = "waiting_input";
+      view.isStreaming = false;
+      view.isCancelling = false;
+      updateSessionStatus(state, sessionId, "waiting_input");
+      return;
+    }
+    view.runtimeState = "failed";
+    view.isStreaming = false;
+    view.isCancelling = false;
+    updateSessionStatus(state, sessionId, "failed");
+    return;
+  }
+  if (normalized === "succeeded") {
+    settleA2UITerminalRuntimeState(state, view, sessionId);
+    return;
+  }
+  if (normalized === "started") {
+    if (hasWaitingA2UIInput(view.messages)) {
+      view.runtimeState = "waiting_input";
+      view.isStreaming = false;
+      view.isCancelling = false;
+      updateSessionStatus(state, sessionId, "waiting_input");
+      return;
+    }
+    view.runtimeState = "running";
+    view.isStreaming = true;
+    view.isCancelling = false;
+    updateSessionStatus(state, sessionId, "running");
+  }
+}
+
+function settleA2UITerminalRuntimeState(
+  state: AgentConversationState,
+  view: AgentSessionViewState,
+  sessionId: string,
+): void {
+  closeAllMessageStreams(view);
+  view.isCancelling = false;
+  if (hasWaitingA2UIInput(view.messages)) {
+    view.runtimeState = "waiting_input";
+    view.isStreaming = false;
+    updateSessionStatus(state, sessionId, "waiting_input");
+    return;
+  }
+  view.runtimeState = "idle";
+  view.isStreaming = false;
+  updateSessionStatus(state, sessionId, "active");
+}
+
+function updateSessionStatus(
+  state: AgentConversationState,
+  sessionId: string,
+  status: AgentSessionStatus,
+): void {
+  const view = state.sessionStateById[sessionId];
+  if (view) {
+    view.status = status;
+  }
+  const existing = state.sessionsById[sessionId];
+  if (!existing) {
+    return;
+  }
+  state.sessionsById = {
+    ...state.sessionsById,
+    [sessionId]: { ...existing, status },
+  };
 }
 
 function handleSystemMessage(state: AgentConversationState, data: Record<string, unknown>): AgentConversationState {
@@ -1413,26 +1670,8 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
   const view = ensureSessionState(next, sessionId);
   const finalContent = stringValue(payload.final_content);
   const payloadTurnIndex = numberValue(payload.turn_index);
-  const target =
-    [...view.messages]
-      .reverse()
-      .find(
-        (message) =>
-          message.role === "assistant" &&
-          isSameBusinessTurn(message, payloadTurnIndex) &&
-          !message.cancelled &&
-          message.status !== "cancelled" &&
-          message.content.trim(),
-      ) ??
-    [...view.messages]
-      .reverse()
-      .find(
-        (message) =>
-          message.role === "assistant" &&
-          isSameBusinessTurn(message, payloadTurnIndex) &&
-          !message.cancelled &&
-          message.status !== "cancelled",
-      );
+  const payloadTraceId = stringValue(payload.trace_id);
+  const target = findCompletedAssistantTarget(view, payloadTurnIndex, payloadTraceId);
 
   let completedTarget = target;
   if (!completedTarget && finalContent) {
@@ -1483,6 +1722,27 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
   view.pendingElicitation = null;
   view.runtimeState = payload.status === "failed" ? "failed" : "idle";
   return next;
+}
+
+function findCompletedAssistantTarget(
+  view: AgentSessionViewState,
+  turnIndex: number | null,
+  traceId: string,
+): AgentChatMessage | undefined {
+  const candidates = [...view.messages]
+    .reverse()
+    .filter(
+      (message) =>
+        message.role === "assistant" &&
+        !message.cancelled &&
+        message.status !== "cancelled",
+    );
+  return (
+    candidates.find((message) => isSameBusinessTurn(message, turnIndex) && message.content.trim()) ??
+    candidates.find((message) => isSameBusinessTurn(message, turnIndex)) ??
+    (traceId ? candidates.find((message) => message.traceId === traceId && message.content.trim()) : undefined) ??
+    (traceId ? candidates.find((message) => message.traceId === traceId) : undefined)
+  );
 }
 
 function handleCancelled(state: AgentConversationState, data: Record<string, unknown>): AgentConversationState {
@@ -1713,6 +1973,14 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
     waitingView.runtimeState = "waiting_approval";
     waitingView.isStreaming = false;
     waitingView.isCancelling = false;
+    updateSessionStatus(next, waitingSessionId, "waiting_approval");
+  }
+  for (const waitingSessionId of waitingInputSessionIdsFromStatus(data)) {
+    const waitingView = ensureSessionState(next, waitingSessionId);
+    waitingView.runtimeState = "waiting_input";
+    waitingView.isStreaming = false;
+    waitingView.isCancelling = false;
+    updateSessionStatus(next, waitingSessionId, "waiting_input");
   }
   if (!sessionId) {
     return next;
@@ -1848,7 +2116,7 @@ function historyMessageFromPayload(
         }
       : undefined);
 
-  return {
+  const message: AgentChatMessage = {
     ...payload,
     id: payload.id ?? historyMessageId(sessionId, payload, index, content),
     sessionId: payload.sessionId ?? sessionId,
@@ -1859,6 +2127,29 @@ function historyMessageFromPayload(
     status: normalizeHistoryStatus(payload),
     subagentItems: payload.subagentItems?.map(normalizeSubagentHistoryItem),
     subagentToolCalls: payload.subagentToolCalls?.map(normalizeToolHistoryCall),
+  };
+  if (message.role !== "a2ui" || !message.a2ui) {
+    return message;
+  }
+  const restored = mergeA2UIEventIntoMessages([], "a2ui_created", {
+    ...payload,
+    session_id: sessionId,
+    a2ui: message.a2ui,
+    interaction: message.a2ui.interaction ?? undefined,
+  }, {
+    idFactory: () => message.id,
+    now: message.timestamp,
+    sessionId,
+  }).message;
+  if (!restored?.a2uiDebug) {
+    return message;
+  }
+  return {
+    ...message,
+    contentType: message.contentType ?? "a2ui",
+    content_type: message.content_type ?? "a2ui",
+    a2uiDebug: restored.a2uiDebug,
+    streaming: false,
   };
 }
 
@@ -3201,6 +3492,9 @@ function runtimeStateFromSessionStatus(status: AgentSessionStatus): AgentSession
   if (status === "waiting_approval") {
     return "waiting_approval";
   }
+  if (status === "waiting_input") {
+    return "waiting_input";
+  }
   if (status === "failed") {
     return "failed";
   }
@@ -3224,7 +3518,7 @@ function mergeIncomingRuntimeState(
 }
 
 function isActiveRuntimeState(state: AgentSessionRuntimeState): boolean {
-  return state === "running" || state === "waiting_approval" || state === "cancelling";
+  return state === "running" || state === "waiting_approval" || state === "waiting_input" || state === "cancelling";
 }
 
 function sessionIdFromData(data: Record<string, unknown>): string {
@@ -3535,11 +3829,22 @@ function isAgentSessionType(value: string): value is AgentSessionType {
 }
 
 function isAgentSessionStatus(value: string): value is AgentSessionStatus {
-  return value === "active" || value === "running" || value === "waiting_approval" || value === "closed" || value === "failed";
+  return value === "active"
+    || value === "running"
+    || value === "waiting_approval"
+    || value === "waiting_input"
+    || value === "closed"
+    || value === "failed";
 }
 
 function isRuntimeState(value: string): value is AgentSessionRuntimeState {
-  return value === "idle" || value === "running" || value === "waiting_approval" || value === "cancelling" || value === "failed" || value === "closed";
+  return value === "idle"
+    || value === "running"
+    || value === "waiting_approval"
+    || value === "waiting_input"
+    || value === "cancelling"
+    || value === "failed"
+    || value === "closed";
 }
 
 function isApprovalStatus(value: string): value is CommandApprovalRequest["status"] {

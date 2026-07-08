@@ -14,6 +14,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 - checkpoint / fork / reverse：完成态 trace 可从 checkpoint 派生分支；reverse 在原 session 内回退到用户消息发送前的 checkpoint。
 - 上下文压缩：以 checkpoint-safe 的 active session fork 方式实现，不原地裁剪原会话历史。
 - 系统消息可见性：系统提示进入实时投影与历史回放，用于压缩成功/失败、Skill 激活等轻量提示。
+- A2UI 交互卡片：内置确认、选择、表单、图表四类组件，支持 stream 渲染、等待输入、submit/cancel ack、resume 状态和历史回放。
 
 本期明确不做：
 
@@ -37,6 +38,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 | reverse / undo | 无 checkpoint 管理与恢复操作 | 当前 API 未暴露 checkpoint | 缺失 |
 | 上下文压缩 | 无压缩中间件 | `backend/app/agent/middleware.py` | 缺失 |
 | 中间件事件 | DomainEventType 有 middleware 事件，但 projection 未接入，当前中间件也基本不发事件 | `backend/app/events/event_types.py`, `backend/app/events/chat_projection.py`, `backend/app/events/persistence_projection.py` | 协议预留，闭环缺失 |
+| A2UI 交互卡片 | 已内置确认/选择/表单/图表组件、A2UI 事件协议、前端 submit/cancel/resume 状态更新和调试信息面板 | `backend/app/agent/a2ui/*`, `backend/app/events/a2ui_runtime.py`, `desktop/src/renderer/pages/conversation/messages/a2ui/*`, `desktop/src/renderer/stores/agentSessionStore.ts` | 作为 Keydex 内置能力保留总开关，不做平台式组件配置 |
 
 ## 3. 基座项目可借鉴能力
 
@@ -105,6 +107,9 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
     "trigger_fraction": 0.75,
     "emergency_fraction": 0.9,
     "retain_rounds": 2
+  },
+  "a2ui": {
+    "enabled": true
   }
 }
 ```
@@ -126,6 +131,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 - [x] 重复阻断进入实时错误和历史回放。
 - [x] 新增 AutoTitle 服务/中间件：使用 fast model，异步写回 session title。
 - [x] WebSocket/前端补 `session.title_updated` 事件，侧栏标题实时更新。
+- [x] 新增内置 A2UI 能力：工具注册、事件投影、确认/选择/表单/图表渲染、submit/cancel/resume 闭环和调试信息面板。
 - [ ] LLM side task 请求分类统计可继续增强；当前 E2E fake transport 已覆盖标题/压缩 side task 的 deterministic 输出。
 
 验收标准：
@@ -133,6 +139,7 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 - 用户能在设置里配置默认对话模型和快速模型。
 - 新会话首轮完成后标题可自动更新，失败不影响主回复。
 - 所有新增能力无 mock fallback，配置缺失时行为明确。
+- 用户能通过扩展功能里的 A2UI 总开关控制新运行是否注入 A2UI 能力；历史卡片和已等待交互按状态继续渲染。
 
 ### P1: Checkpoint 产品化与可恢复
 
@@ -200,18 +207,32 @@ Keydex 当前更像一个本地桌面工作台内的 workspace-first agent runti
 本期实现范围：
 
 - 供应商配置与模型配置拆分；模型配置页管理 `main`/`fast` role。
-- 扩展功能页管理自动标题、重复工具调用保护、上下文压缩。
+- 扩展功能页管理自动标题、重复工具调用保护、上下文压缩、A2UI 总开关。
 - 自动标题和上下文压缩使用快速模型 side task。
 - Session fork 基于完成态 trace/checkpoint 创建新分支；reverse 基于 input checkpoint 在当前 session 内真实回退。
 - 上下文压缩基于 active session fork：源会话记录压缩成功/失败提示，压缩分支写入摘要并保留最近轮次。
 - E2E fake model transport 在 `KEYDEX_E2E_MODEL_TRANSPORT=true` 时启用，覆盖主链路流式输出和快速模型非流式 side task。
+- A2UI 前端不依赖 `@yongce/a2ui-pc` 或 `@yongce/a2ui-core`。桌面端直接渲染自研组件，不提供 render_key、schema、权限或组件注册的用户自定义页面。第一期卡片保留“查看 A2UI 调试信息”按钮，用于检查 stream、interaction、ack、resume、原始事件和解析状态。
 
 主要验证入口：
 
 ```powershell
 .venv\Scripts\python.exe -m pytest backend/tests/model backend/tests/agent/test_side_task_model.py backend/tests/services/test_session_title_service.py backend/tests/services/test_context_compression_service.py
-pnpm --dir desktop exec vitest run tests/model-settings-page.spec.tsx tests/runtime-model-selector.spec.tsx tests/extension-settings-page.spec.tsx tests/agent-session-store.spec.ts
+pnpm --dir desktop exec vitest run tests/model-settings-page.spec.tsx tests/runtime-model-selector.spec.tsx tests/extension-settings-page.spec.tsx tests/agent-session-store.spec.ts tests/a2ui-no-sdk-dependency.spec.ts
 pnpm run test:e2e:runtime-foundation
+node .dev/e2e/a2ui-settings-toggle.mjs
+node .dev/e2e/a2ui-chart-render.mjs
+node .dev/e2e/a2ui-confirm-submit-resume.mjs
+node .dev/e2e/a2ui-confirm-cancel-resume.mjs
+node .dev/e2e/a2ui-choice-submit-resume.mjs
+node .dev/e2e/a2ui-form-submit-resume.mjs
+node .dev/e2e/a2ui-pending-chat-block.mjs
+node .dev/e2e/a2ui-history-restore.mjs
+node .dev/e2e/a2ui-disabled-no-tools.mjs
+node .dev/e2e/a2ui-resume-failure.mjs
+node .dev/e2e/a2ui-same-render-key-sequential.mjs
+node .dev/e2e/a2ui-parallel-interactions-resume.mjs
+node .dev/e2e/a2ui-debug-info-panel.mjs
 ```
 
 `pnpm run test:e2e:runtime-foundation` 不是默认 verify 的一部分，按需执行，避免日常验证成本过高。

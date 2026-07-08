@@ -5,12 +5,13 @@ from contextlib import suppress
 from dataclasses import asdict
 from typing import Any
 
+from backend.app.core.config import AppSettings
 from backend.app.core.ids import new_id
 from backend.app.core.time import to_iso_z, utc_now
 from backend.app.mcp.audit import McpAuditWriter
 from backend.app.mcp.client import status_from_mcp_error_code
 from backend.app.mcp.errors import McpRuntimeError, to_mcp_runtime_error
-from backend.app.mcp.exposure import McpToolExposureResolver
+from backend.app.mcp.exposure import McpDirectInjectionPlanner, McpToolExposureResolver
 from backend.app.mcp.manager import McpManager
 from backend.app.mcp.types import McpServerCreateRequest, McpServerUpdateRequest
 from backend.app.storage import (
@@ -44,8 +45,17 @@ def list_mcp_servers(
         limit=limit,
         offset=offset,
     )
+    availability_stats = _mcp_availability_stats_by_server(repositories)
     return {
-        "list": [server_payload(repositories, server, detail=False) for server in servers],
+        "list": [
+            server_payload(
+                repositories,
+                server,
+                detail=False,
+                availability_stats=availability_stats,
+            )
+            for server in servers
+        ],
         "total": total,
         "limit": max(1, min(limit, 500)),
         "offset": max(0, offset),
@@ -124,9 +134,18 @@ def list_mcp_tools(
         policy.raw_tool_name: policy
         for policy in repositories.mcp_tool_policies.list_by_server(server_id)
     }
+    availability_by_raw_name = _mcp_tool_availability_by_raw_name(
+        repositories,
+        server_id,
+    )
     filtered: list[dict[str, Any]] = []
     for tool in tools:
-        payload = tool_payload(server, tool, policies.get(tool.raw_name))
+        payload = tool_payload(
+            server,
+            tool,
+            policies.get(tool.raw_name),
+            availability_mode=availability_by_raw_name.get(tool.raw_name),
+        )
         if search and not _matches_search(
             search,
             tool.raw_name,
@@ -170,7 +189,16 @@ def update_mcp_tool_policy(
             "policy": _tool_policy_values(policy),
         },
     )
-    return tool_payload(server, tool, policy)
+    availability_by_raw_name = _mcp_tool_availability_by_raw_name(
+        repositories,
+        server_id,
+    )
+    return tool_payload(
+        server,
+        tool,
+        policy,
+        availability_mode=availability_by_raw_name.get(tool.raw_name),
+    )
 
 
 def apply_mcp_tool_bulk_policy(
@@ -523,13 +551,17 @@ def tool_payload(
     server: McpServerRecord,
     tool: McpToolRecord,
     policy: McpToolPolicyRecord | None,
+    *,
+    availability_mode: str | None = None,
 ) -> dict[str, Any]:
     enabled = policy.enabled if policy is not None else True
     hidden = policy.hidden if policy is not None else False
+    priority_available = policy.priority_available if policy is not None else False
     approval_mode = policy.approval_mode if policy is not None else "inherit"
     effective_approval_mode = (
         approval_mode if approval_mode != "inherit" else server.default_tool_approval_mode
     )
+    effective_state = _tool_effective_state(tool, enabled, hidden)
     return {
         "id": tool.id,
         "server_id": tool.server_id,
@@ -542,9 +574,12 @@ def tool_payload(
         "annotations": tool.annotations or {},
         "enabled": enabled,
         "hidden": hidden,
+        "priority_available": priority_available,
+        "availability_mode": availability_mode
+        or ("direct" if effective_state == "enabled" else "disabled"),
         "status": tool.discovery_status,
         "discovery_status": tool.discovery_status,
-        "effective_state": _tool_effective_state(tool, enabled, hidden),
+        "effective_state": effective_state,
         "approval_mode": approval_mode,
         "effective_approval_mode": effective_approval_mode,
         "schema_change_action": (
@@ -598,9 +633,14 @@ def server_payload(
     server: McpServerRecord,
     *,
     detail: bool = True,
+    availability_stats: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     status = repositories.mcp_server_status.get(server.id)
     resources_reserved_count = status.resources_reserved_count if status is not None else 0
+    stats = (availability_stats or _mcp_availability_stats_by_server(repositories)).get(
+        server.id,
+        {},
+    )
     payload: dict[str, Any] = {
         "id": server.id,
         "name": server.name,
@@ -611,6 +651,9 @@ def server_payload(
         "auth_type": server.auth_type,
         "status": status.status if status is not None else "unknown",
         "tools_count": status.tools_count if status is not None else 0,
+        "direct_tools_count": stats.get("direct_tools_count", 0),
+        "on_demand_tools_count": stats.get("on_demand_tools_count", 0),
+        "recently_used_tools_count": stats.get("recently_used_tools_count", 0),
         "resources_reserved_count": resources_reserved_count,
         "resources_reserved": resources_reserved_count > 0 or bool(server.resource_reserved_policy),
         "last_connected_at": status.last_connected_at if status is not None else None,
@@ -661,6 +704,83 @@ def server_payload(
     return payload
 
 
+def _mcp_availability_stats_by_server(
+    repositories: StorageRepositories,
+) -> dict[str, dict[str, int]]:
+    servers, _total = repositories.mcp_servers.list(limit=500)
+    if not servers:
+        return {}
+    statuses = {
+        server.id: repositories.mcp_server_status.get(server.id) or "unknown"
+        for server in servers
+    }
+    tools: list[McpToolRecord] = []
+    policies: list[McpToolPolicyRecord] = []
+    for server in servers:
+        tools.extend(repositories.mcp_tools.list_by_server(server.id, limit=1000))
+        policies.extend(repositories.mcp_tool_policies.list_by_server(server.id))
+    exposure = McpToolExposureResolver().resolve(
+        servers=servers,
+        statuses=statuses,
+        tools=tools,
+        policies=policies,
+    )
+    plan = McpDirectInjectionPlanner(
+        direct_tool_budget=AppSettings().mcp_direct_tool_budget,
+    ).plan(exposure)
+    stats = {
+        server.id: {
+            "direct_tools_count": 0,
+            "on_demand_tools_count": 0,
+            "recently_used_tools_count": 0,
+        }
+        for server in servers
+    }
+    for tool in plan.direct_tools:
+        stats[tool.server_id]["direct_tools_count"] += 1
+    for tool in plan.on_demand_tools:
+        stats[tool.server_id]["on_demand_tools_count"] += 1
+    for tool in tools:
+        if tool.last_used_at:
+            stats[tool.server_id]["recently_used_tools_count"] += 1
+    return stats
+
+
+def _mcp_tool_availability_by_raw_name(
+    repositories: StorageRepositories,
+    server_id: str,
+) -> dict[str, str]:
+    servers, _total = repositories.mcp_servers.list(limit=500)
+    if not servers:
+        return {}
+    statuses = {
+        server.id: repositories.mcp_server_status.get(server.id) or "unknown"
+        for server in servers
+    }
+    tools: list[McpToolRecord] = []
+    policies: list[McpToolPolicyRecord] = []
+    for server in servers:
+        tools.extend(repositories.mcp_tools.list_by_server(server.id, limit=1000))
+        policies.extend(repositories.mcp_tool_policies.list_by_server(server.id))
+    exposure = McpToolExposureResolver().resolve(
+        servers=servers,
+        statuses=statuses,
+        tools=tools,
+        policies=policies,
+    )
+    plan = McpDirectInjectionPlanner(
+        direct_tool_budget=AppSettings().mcp_direct_tool_budget,
+    ).plan(exposure)
+    availability: dict[str, str] = {}
+    for tool in plan.direct_tools:
+        if tool.server_id == server_id:
+            availability[tool.raw_name] = "direct"
+    for tool in plan.on_demand_tools:
+        if tool.server_id == server_id:
+            availability[tool.raw_name] = "on_demand"
+    return availability
+
+
 _BULK_TOOL_POLICY_ACTIONS = {
     "enable_selected",
     "disable_selected",
@@ -673,6 +793,9 @@ def _tool_policy_values(policy: McpToolPolicyRecord | None) -> dict[str, Any]:
     return {
         "enabled": policy.enabled if policy is not None else True,
         "hidden": policy.hidden if policy is not None else False,
+        "priority_available": (
+            policy.priority_available if policy is not None else False
+        ),
         "approval_mode": policy.approval_mode if policy is not None else "inherit",
         "parameter_constraints": (
             policy.parameter_constraints if policy is not None else None
@@ -758,6 +881,10 @@ def _runtime_snapshot_payload(snapshot: McpRuntimeSnapshotRecord) -> dict[str, A
         ],
         "server_status": snapshot.server_status,
         "policy_summary": snapshot.policy_summary,
+        "capability_directory": snapshot.capability_directory,
+        "direct_available_tools": snapshot.direct_available_tools,
+        "on_demand_tools": snapshot.on_demand_tools,
+        "unavailable_tools": snapshot.unavailable_tools,
         "created_at": snapshot.created_at,
     }
 

@@ -56,6 +56,12 @@ function statusView(state: ConversationRuntimeState, detail?: string | null) {
         text: "等待权限确认",
         detail: detail ?? "需要你允许或拒绝后才能继续",
       };
+    case "waiting_input":
+      return {
+        icon: <ShieldQuestion size={15} />,
+        text: "等待交互输入",
+        detail: detail ?? "需要你完成卡片交互后才能继续",
+      };
     case "cancelling":
       return {
         icon: <CircleStop size={15} />,

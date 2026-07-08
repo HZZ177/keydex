@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
@@ -316,16 +318,8 @@ async def test_e2e_transport_can_drive_mcp_deferred_search_tool() -> None:
                     {
                         "type": "function",
                         "function": {
-                            "name": "search_mcp_tools",
-                            "description": "Search deferred MCP tools.",
-                            "parameters": {"type": "object"},
-                        },
-                    },
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "list_mcp_tools",
-                            "description": "List deferred MCP tools.",
+                            "name": "discover_mcp_tools",
+                            "description": "Discover MCP tools.",
                             "parameters": {"type": "object"},
                         },
                     },
@@ -335,7 +329,7 @@ async def test_e2e_transport_can_drive_mcp_deferred_search_tool() -> None:
 
     body = response.text
     assert response.status_code == 200
-    assert "search_mcp_tools" in body
+    assert "discover_mcp_tools" in body
     assert "read_fixture" in body
     assert "finish_reason\": \"tool_calls" in body
 
@@ -357,10 +351,10 @@ async def test_e2e_transport_can_drive_mcp_deferred_activated_tool_next_turn() -
                         "role": "assistant",
                         "tool_calls": [
                             {
-                                "id": "call_e2e_mcp_deferred_search_read_fixture",
+                                "id": "call_e2e_mcp_deferred_discover_read_fixture",
                                 "type": "function",
                                 "function": {
-                                    "name": "search_mcp_tools",
+                                    "name": "discover_mcp_tools",
                                     "arguments": "{\"query\":\"read_fixture\",\"limit\":10}",
                                 },
                             }
@@ -368,7 +362,7 @@ async def test_e2e_transport_can_drive_mcp_deferred_activated_tool_next_turn() -
                     },
                     {
                         "role": "tool",
-                        "tool_call_id": "call_e2e_mcp_deferred_search_read_fixture",
+                        "tool_call_id": "call_e2e_mcp_deferred_discover_read_fixture",
                         "content": "{\"tools\":[{\"model_name\":\"mcp__srv_e2e__read_fixture\"}]}",
                     },
                     {"role": "user", "content": "MCP Deferred call read_fixture"},
@@ -377,8 +371,8 @@ async def test_e2e_transport_can_drive_mcp_deferred_activated_tool_next_turn() -
                     {
                         "type": "function",
                         "function": {
-                            "name": "search_mcp_tools",
-                            "description": "Search deferred MCP tools.",
+                            "name": "discover_mcp_tools",
+                            "description": "Discover MCP tools.",
                             "parameters": {"type": "object"},
                         },
                     },
@@ -399,6 +393,104 @@ async def test_e2e_transport_can_drive_mcp_deferred_activated_tool_next_turn() -
     assert "mcp__srv_e2e__read_fixture" in body
     assert "runtime-snapshot" in body
     assert "finish_reason\": \"tool_calls" in body
+
+
+@pytest.mark.asyncio
+async def test_e2e_transport_can_discover_and_call_target_from_59_mcp_tools() -> None:
+    target_raw_name = "tool_58"
+    target_model_name = f"mcp__srv_e2e__{target_raw_name}"
+    discovery_tool = {
+        "type": "function",
+        "function": {
+            "name": "discover_mcp_tools",
+            "description": "Discover 59 MCP tools.",
+            "parameters": {"type": "object"},
+        },
+    }
+    direct_tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": f"mcp__srv_e2e__tool_{index:02d}",
+                "description": f"Direct MCP tool {index:02d}.",
+                "parameters": {"type": "object"},
+            },
+        }
+        for index in range(5)
+    ]
+
+    async with httpx.AsyncClient(
+        base_url="http://e2e-model.test",
+        transport=create_e2e_model_transport(delay_ms=0),
+    ) as client:
+        search_response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "messages": [{"role": "user", "content": "MCP Deferred search tool_58"}],
+                "tools": [discovery_tool, *direct_tools],
+            },
+        )
+        call_response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "messages": [
+                    {"role": "user", "content": "MCP Deferred search tool_58"},
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call_e2e_mcp_deferred_discover_tool_58",
+                                "type": "function",
+                                "function": {
+                                    "name": "discover_mcp_tools",
+                                    "arguments": json.dumps(
+                                        {"query": target_raw_name, "limit": 10},
+                                        separators=(",", ":"),
+                                    ),
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_e2e_mcp_deferred_discover_tool_58",
+                        "content": json.dumps(
+                            {"tools": [{"model_name": target_model_name}]},
+                            separators=(",", ":"),
+                        ),
+                    },
+                    {"role": "user", "content": "MCP Deferred call tool_58"},
+                ],
+                "tools": [
+                    discovery_tool,
+                    *direct_tools,
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": target_model_name,
+                            "description": "Activated MCP target tool.",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                ],
+            },
+        )
+
+    search_body = search_response.text
+    call_body = call_response.text
+    assert search_response.status_code == 200
+    assert "discover_mcp_tools" in search_body
+    assert target_raw_name in search_body
+    assert target_model_name not in search_body
+    assert "finish_reason\": \"tool_calls" in search_body
+    assert call_response.status_code == 200
+    assert target_model_name in call_body
+    assert "runtime-snapshot" in call_body
+    assert "finish_reason\": \"tool_calls" in call_body
 
 
 @pytest.mark.asyncio

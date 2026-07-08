@@ -21,6 +21,7 @@ def test_tool_list_filters_and_single_policy_patch(tmp_path) -> None:
         json={
             "enabled": False,
             "hidden": True,
+            "priority_available": True,
             "approval_mode": "prompt",
             "schema_change_action": "disable",
         },
@@ -32,6 +33,7 @@ def test_tool_list_filters_and_single_policy_patch(tmp_path) -> None:
     assert patched.json()["raw_name"] == "write_file"
     assert patched.json()["enabled"] is False
     assert patched.json()["hidden"] is True
+    assert patched.json()["priority_available"] is True
     assert patched.json()["approval_mode"] == "prompt"
     assert patched.json()["schema_change_action"] == "disable"
     assert searched.status_code == 200
@@ -50,6 +52,8 @@ def test_tool_list_filters_and_single_policy_patch(tmp_path) -> None:
     assert audits[0].raw_tool_name == "write_file"
     assert audits[0].status == "ok"
     assert audits[0].detail["changes"]["enabled"] is False
+    assert audits[0].detail["changes"]["priority_available"] is True
+    assert audits[0].detail["policy"]["priority_available"] is True
     assert audits[0].detail["policy"]["approval_mode"] == "prompt"
 
 

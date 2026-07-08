@@ -20,9 +20,8 @@ from backend.app.command_approval import CommandSettings, save_command_settings
 from backend.app.core.config import AppSettings
 from backend.app.core.time import to_iso_z, utc_now
 from backend.app.mcp.tools import (
-    DEFERRED_LIST_TOOL_NAME,
-    DEFERRED_SEARCH_TOOL_NAME,
-    mcp_deferred_tools_from_snapshot,
+    MCP_CAPABILITY_DISCOVERY_TOOL_NAME,
+    mcp_capability_discovery_tools_from_snapshot,
 )
 from backend.app.model import ModelSettings
 from backend.app.services import ChatCancellationToken, ChatRequest, ChatService
@@ -74,6 +73,7 @@ class FakeAgentFactory(AgentFactory):
         self.requested_models: list[str] = []
         self.created_tool_counts: list[int] = []
         self.created_tool_names: list[list[str]] = []
+        self.created_tool_descriptions: list[dict[str, str]] = []
         self.system_prompts: list[str] = []
 
     def get_or_create_llm(
@@ -102,6 +102,12 @@ class FakeAgentFactory(AgentFactory):
     ) -> Any:
         self.created_tool_counts.append(len(tools))
         self.created_tool_names.append([str(getattr(tool, "name", "")) for tool in tools])
+        self.created_tool_descriptions.append(
+            {
+                str(getattr(tool, "name", "")): str(getattr(tool, "description", "") or "")
+                for tool in tools
+            }
+        )
         self.system_prompts.append(str(getattr(system_prompt, "content", system_prompt) or ""))
         return super().create_agent(
             model=model,
@@ -550,7 +556,7 @@ async def test_chat_service_injects_mcp_runtime_tools_for_workspace_session(tmp_
         model,
         mcp_manager=FakeMcpManager(),
     )
-    _configure_mcp_tool(repositories)
+    _configure_mcp_tool(repositories, raw_names=("search", "create_ticket"))
     workspace = repositories.workspaces.create(workspace_id="ws_mcp", root_path=project)
     session = repositories.sessions.create(
         session_id="ses_mcp_workspace",
@@ -573,6 +579,8 @@ async def test_chat_service_injects_mcp_runtime_tools_for_workspace_session(tmp_
 
     assert result.status == "completed"
     assert "mcp__srv_chat_mcp__search" in factory.created_tool_names[-1]
+    assert "mcp__srv_chat_mcp__create_ticket" in factory.created_tool_names[-1]
+    assert factory.created_tool_names[-1].count(MCP_CAPABILITY_DISCOVERY_TOOL_NAME) == 1
     snapshots = repositories.mcp_runtime_snapshots.list_by_session(session.id)
     assert len(snapshots) == 1
     mcp_tool_names = [
@@ -581,8 +589,76 @@ async def test_chat_service_injects_mcp_runtime_tools_for_workspace_session(tmp_
         if tool_name.startswith("mcp__")
     ]
     assert snapshots[0].session_id == session.id
-    assert snapshots[0].visible_tools[0]["model_name"] == "mcp__srv_chat_mcp__search"
+    assert {tool["model_name"] for tool in snapshots[0].visible_tools} == {
+        "mcp__srv_chat_mcp__search",
+        "mcp__srv_chat_mcp__create_ticket",
+    }
     assert [tool["model_name"] for tool in snapshots[0].visible_tools] == mcp_tool_names
+    assert {tool["exposure"] for tool in snapshots[0].visible_tools} == {"direct"}
+    assert snapshots[0].policy_summary["availability"] == "direct"
+    assert snapshots[0].policy_summary["has_on_demand_catalog"] is False
+    assert snapshots[0].direct_available_tools == 2
+    assert snapshots[0].on_demand_tools == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_service_large_mcp_toolset_keeps_discovery_and_server_summary(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="已完成")])
+    service, repositories, _checkpointer, factory = _service(
+        tmp_path,
+        model,
+        settings=AppSettings(
+            data_dir=tmp_path / "data",
+            workspace_root=tmp_path,
+            mcp_direct_tool_budget=5,
+        ),
+        mcp_manager=FakeMcpManager(),
+    )
+    raw_names = tuple(f"tool_{index:02d}" for index in range(59))
+    _configure_mcp_tool(repositories, raw_names=raw_names)
+    workspace = repositories.workspaces.create(workspace_id="ws_mcp_large", root_path=project)
+    session = repositories.sessions.create(
+        session_id="ses_mcp_large",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="使用很多 MCP 工具",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    assert result.status == "completed"
+    created_tools = factory.created_tool_names[-1]
+    direct_mcp_tools = [name for name in created_tools if name.startswith("mcp__")]
+    assert direct_mcp_tools == []
+    assert MCP_CAPABILITY_DISCOVERY_TOOL_NAME in created_tools
+    discovery_description = factory.created_tool_descriptions[-1][MCP_CAPABILITY_DISCOVERY_TOOL_NAME]
+    assert "Chat MCP" in discovery_description
+    assert "59 个工具" in discovery_description
+    snapshots = repositories.mcp_runtime_snapshots.list_by_session(session.id)
+    assert len(snapshots) == 1
+    snapshot = snapshots[0]
+    assert len(snapshot.visible_tools) == 59
+    assert snapshot.direct_available_tools == 0
+    assert snapshot.on_demand_tools == 59
+    assert snapshot.policy_summary["availability"] == "with_on_demand_catalog"
+    assert snapshot.policy_summary["has_on_demand_catalog"] is True
+    assert snapshot.capability_directory == snapshot.policy_summary["capability_directory"]
+    assert snapshot.capability_directory[0]["server_name"] == "Chat MCP"
+    assert snapshot.capability_directory[0]["available_tool_count"] == 59
+    assert snapshot.capability_directory[0]["direct_tool_count"] == 0
+    assert snapshot.capability_directory[0]["on_demand_tool_count"] == 59
 
 
 @pytest.mark.asyncio
@@ -598,7 +674,7 @@ async def test_chat_service_deferred_mcp_tools_activate_for_next_turn(tmp_path) 
         settings=AppSettings(
             data_dir=tmp_path / "data",
             workspace_root=tmp_path,
-            mcp_deferred_tool_threshold=1,
+            mcp_direct_tool_budget=1,
         ),
         mcp_manager=FakeMcpManager(),
     )
@@ -624,15 +700,19 @@ async def test_chat_service_deferred_mcp_tools_activate_for_next_turn(tmp_path) 
     )
 
     assert first.status == "completed"
-    assert DEFERRED_SEARCH_TOOL_NAME in factory.created_tool_names[-1]
-    assert DEFERRED_LIST_TOOL_NAME in factory.created_tool_names[-1]
-    assert not any(name.startswith("mcp__") for name in factory.created_tool_names[-1])
+    assert MCP_CAPABILITY_DISCOVERY_TOOL_NAME in factory.created_tool_names[-1]
+    assert factory.created_tool_names[-1].count(MCP_CAPABILITY_DISCOVERY_TOOL_NAME) == 1
+    assert "search_mcp_tools" not in factory.created_tool_names[-1]
+    assert "list_mcp_tools" not in factory.created_tool_names[-1]
+    assert {
+        name for name in factory.created_tool_names[-1] if name.startswith("mcp__")
+    } == set()
     first_snapshot = repositories.mcp_runtime_snapshots.list_by_session(session.id)[0]
-    assert first_snapshot.policy_summary["mode"] == "deferred"
-    assert first_snapshot.policy_summary["direct_tools"] == 0
-    assert first_snapshot.policy_summary["deferred_tools"] == 2
+    assert first_snapshot.policy_summary["availability"] == "with_on_demand_catalog"
+    assert first_snapshot.policy_summary["direct_available_tools"] == 0
+    assert first_snapshot.policy_summary["on_demand_tools"] == 2
 
-    search_tool = mcp_deferred_tools_from_snapshot(
+    search_tool = mcp_capability_discovery_tools_from_snapshot(
         first_snapshot,
         service.mcp_active_tool_window,
     )[0]
@@ -664,10 +744,73 @@ async def test_chat_service_deferred_mcp_tools_activate_for_next_turn(tmp_path) 
     assert second.status == "completed"
     assert "mcp__srv_chat_mcp__target_report" in factory.created_tool_names[-1]
     assert "mcp__srv_chat_mcp__other_report" not in factory.created_tool_names[-1]
-    assert DEFERRED_SEARCH_TOOL_NAME in factory.created_tool_names[-1]
+    assert MCP_CAPABILITY_DISCOVERY_TOOL_NAME in factory.created_tool_names[-1]
     latest_snapshot = repositories.mcp_runtime_snapshots.list_by_session(session.id)[0]
-    assert latest_snapshot.policy_summary["direct_tools"] == 1
-    assert latest_snapshot.policy_summary["deferred_tools"] == 1
+    assert latest_snapshot.policy_summary["direct_available_tools"] == 1
+    assert latest_snapshot.policy_summary["on_demand_tools"] == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_service_mcp_discovery_rebuilds_tools_in_same_run(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    model = ToolFriendlyFakeModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": MCP_CAPABILITY_DISCOVERY_TOOL_NAME,
+                        "args": {"query": "target_report"},
+                        "id": "call_discover_mcp",
+                    }
+                ],
+            ),
+            AIMessage(content="已继续"),
+        ]
+    )
+    service, repositories, _checkpointer, factory = _service(
+        tmp_path,
+        model,
+        settings=AppSettings(
+            data_dir=tmp_path / "data",
+            workspace_root=tmp_path,
+            mcp_direct_tool_budget=1,
+        ),
+        mcp_manager=FakeMcpManager(),
+    )
+    _configure_mcp_tool(repositories, raw_names=("target_report", "other_report"))
+    workspace = repositories.workspaces.create(workspace_id="ws_mcp_same_run", root_path=project)
+    session = repositories.sessions.create(
+        session_id="ses_mcp_same_run",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="查找并调用目标 MCP 工具",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    assert result.status == "completed"
+    assert len(factory.created_tool_names) >= 2
+    assert MCP_CAPABILITY_DISCOVERY_TOOL_NAME in factory.created_tool_names[0]
+    assert "mcp__srv_chat_mcp__target_report" not in factory.created_tool_names[0]
+    assert "mcp__srv_chat_mcp__target_report" in factory.created_tool_names[1]
+    assert "mcp__srv_chat_mcp__other_report" not in factory.created_tool_names[1]
+    snapshots = repositories.mcp_runtime_snapshots.list_by_session(session.id)
+    assert snapshots[0].direct_available_tools == 1
+    assert snapshots[0].on_demand_tools == 1
+    assert snapshots[1].direct_available_tools == 0
+    assert snapshots[1].on_demand_tools == 2
 
 
 @pytest.mark.asyncio

@@ -45,7 +45,7 @@ from backend.app.mcp.runtime import McpRuntimeSnapshotBuilder, McpRuntimeSnapsho
 from backend.app.mcp.tools import (
     McpActiveToolWindow,
     McpToolExecutor,
-    mcp_deferred_tools_from_snapshot,
+    mcp_capability_discovery_tools_from_snapshot,
     mcp_local_tools_from_snapshot,
 )
 from backend.app.model import ModelSelectionError, ResolvedModelSelection, resolve_model_selection
@@ -1138,6 +1138,22 @@ class ChatService:
             )
 
             duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+            if self.repositories.a2ui_interactions.get_waiting_by_session(session.id):
+                self.repositories.sessions.update(session.id, status="waiting_input")
+                self._finish_trace(
+                    trace_id,
+                    status="waiting_input",
+                    duration_ms=duration_ms,
+                    output_checkpoint_id=outcome.output_checkpoint_id,
+                    output_checkpoint_ns=outcome.output_checkpoint_ns,
+                )
+                return ChatTurnResult(
+                    session_id=session.id,
+                    trace_id=trace_id,
+                    turn_index=turn_index,
+                    status="waiting_input",
+                    final_content=outcome.event_result.final_content,
+                )
             if token.is_cancelled():
                 command_process_manager.terminate_turn(
                     session_id=session.id,
@@ -1417,9 +1433,13 @@ class ChatService:
         tool_context.metadata["thread_task_service"] = self.thread_task_service
         tool_context.metadata["dispatcher"] = dispatcher
         tool_context.metadata["data_dir"] = str(self.settings.data_dir)
+        tool_context.metadata["active_session_id"] = active_session_id
+        tool_context.metadata["thread_id"] = active_session_id
+        tool_context.metadata["checkpoint_ns"] = ""
         tool_context.metadata["file_access_mode"] = load_command_settings(
             self.repositories
         ).file_access_mode
+        mcp_active_before = self.mcp_active_tool_window.active_model_names(session.id)
         runtime_tools = self._build_mcp_runtime_tools(
             session=session,
             tool_context=tool_context,
@@ -1506,6 +1526,56 @@ class ChatService:
                     content=event_result.final_content,
                     runtime_messages=messages_to_send,
                 )
+            elif self._mcp_activation_requires_continuation(
+                session_id=session.id,
+                active_before=mcp_active_before,
+            ):
+                continuation_runtime_tools = self._build_mcp_runtime_tools(
+                    session=session,
+                    tool_context=tool_context,
+                    enable_tools=enable_tools,
+                )
+                if any(
+                    str(getattr(tool, "name", "") or "").startswith("mcp__")
+                    for tool in continuation_runtime_tools
+                ):
+                    logger.info(
+                        "[AgentLoop] MCP 能力已激活，重建 agent 继续当前任务 | "
+                        f"session_id={session.id} | turn_index={turn_index} | "
+                        f"trace_id={trace_id}"
+                    )
+                    continuation_agent = await asyncio.to_thread(
+                        self.agent_runner.create_agent,
+                        model=request.model.strip(),
+                        model_settings=model_selection.settings,
+                        system_prompt=request.system_prompt,
+                        tool_context=tool_context,
+                        enable_tools=enable_tools,
+                        runtime_tools=continuation_runtime_tools,
+                    )
+                    continuation_stream = continuation_agent.astream_events(
+                        {
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": "请继续当前任务，必要时调用刚激活的 MCP 工具。",
+                                    CURRENT_TURN_MESSAGE_MARKER: True,
+                                }
+                            ]
+                        },
+                        config=run_config,
+                        version="v2",
+                    )
+                    event_result = await process_agent_events(
+                        continuation_stream,
+                        dispatcher=dispatcher,
+                        cancellation=cancellation,
+                        session_id=session.id,
+                        trace_id=trace_id,
+                        user_id=request.user_id or session.user_id,
+                        active_session_id=active_session_id,
+                        turn_index=turn_index,
+                    )
         finally:
             reset_request_context(agent_context_token)
         checkpoint_config = await self.agent_runner.get_latest_checkpoint_config(
@@ -1524,6 +1594,15 @@ class ChatService:
             output_checkpoint_id=checkpoint_config.get("checkpoint_id"),
             output_checkpoint_ns=str(checkpoint_config.get("checkpoint_ns") or ""),
         )
+
+    def _mcp_activation_requires_continuation(
+        self,
+        *,
+        session_id: str,
+        active_before: set[str],
+    ) -> bool:
+        active_after = self.mcp_active_tool_window.active_model_names(session_id)
+        return bool(active_after - active_before)
 
     def _build_tool_context(
         self,
@@ -1586,7 +1665,7 @@ class ChatService:
             return []
         snapshot = McpRuntimeSnapshotBuilder(
             self.repositories,
-            deferred_threshold=self.settings.mcp_deferred_tool_threshold,
+            direct_tool_budget=self.settings.mcp_direct_tool_budget,
         ).build_snapshot(
             McpRuntimeSnapshotContext(
                 session_id=session.id,
@@ -1599,7 +1678,10 @@ class ChatService:
         tool_context.metadata["mcp_snapshot"] = snapshot
         return [
             *mcp_local_tools_from_snapshot(snapshot, self.mcp_manager),
-            *mcp_deferred_tools_from_snapshot(snapshot, self.mcp_active_tool_window),
+            *mcp_capability_discovery_tools_from_snapshot(
+                snapshot,
+                self.mcp_active_tool_window,
+            ),
         ]
 
     def _validate_skill_activation(

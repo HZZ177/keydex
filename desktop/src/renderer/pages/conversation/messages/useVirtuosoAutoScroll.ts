@@ -10,10 +10,12 @@ type VirtuosoScrollBehavior = "auto" | "smooth";
 export interface UseVirtuosoAutoScrollResult {
   virtuosoRef: RefObject<VirtuosoHandle | null>;
   showScrollToBottom: boolean;
+  userPinnedScroll: boolean;
   followOutput: FollowOutput;
   setScrollerRef: (ref: HTMLElement | Window | null) => void;
   handleAtBottomStateChange: (atBottom: boolean) => void;
   handleTotalListHeightChanged: () => void;
+  cancelScrollAnimation: () => void;
   scrollToBottom: (behavior?: ScrollBehavior) => void;
 }
 
@@ -34,6 +36,7 @@ export function useVirtuosoAutoScroll(
   const scrollbarDragActiveRef = useRef(false);
   const scrollAnimationFrameRef = useRef<number | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [userPinnedScroll, setUserPinnedScroll] = useState(false);
 
   const cancelScrollAnimation = useCallback(() => {
     if (scrollAnimationFrameRef.current !== null) {
@@ -61,6 +64,7 @@ export function useVirtuosoAutoScroll(
       userPinnedRef.current = true;
     }
 
+    setUserPinnedScroll(userPinnedRef.current);
     setShowScrollToBottom(bottomGap > AT_BOTTOM_THRESHOLD_PX);
     return atBottom;
   }, []);
@@ -86,6 +90,7 @@ export function useVirtuosoAutoScroll(
       userInputActiveRef.current = false;
       scrollbarDragActiveRef.current = false;
       atBottomRef.current = true;
+      setUserPinnedScroll(false);
       setShowScrollToBottom(false);
 
       const scrollBehavior = toVirtuosoScrollBehavior(behavior);
@@ -120,6 +125,7 @@ export function useVirtuosoAutoScroll(
       userInputActiveRef.current = false;
       scrollbarDragActiveRef.current = false;
     }
+    setUserPinnedScroll(userPinnedRef.current);
     setShowScrollToBottom(!atBottom);
   }, []);
 
@@ -196,6 +202,7 @@ export function useVirtuosoAutoScroll(
       userPinnedRef.current = false;
       userInputActiveRef.current = false;
       scrollbarDragActiveRef.current = false;
+      setUserPinnedScroll(false);
       return;
     }
 
@@ -213,10 +220,12 @@ export function useVirtuosoAutoScroll(
   return {
     virtuosoRef,
     showScrollToBottom,
+    userPinnedScroll,
     followOutput,
     setScrollerRef,
     handleAtBottomStateChange,
     handleTotalListHeightChanged,
+    cancelScrollAnimation,
     scrollToBottom,
   };
 }

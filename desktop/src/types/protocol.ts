@@ -1,5 +1,5 @@
 export type PermissionMode = "read_only" | "workspace_write" | "full_access";
-export type ThreadStatus = "idle" | "running" | "waiting_approval" | "failed";
+export type ThreadStatus = "idle" | "running" | "waiting_approval" | "waiting_input" | "failed";
 export type TurnStatus = "queued" | "in_progress" | "completed" | "failed" | "cancelled";
 export type ThreadItemStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 
@@ -150,6 +150,7 @@ export type McpRestartPolicy = "never" | "on_failure" | "always";
 export type McpConnectMode = "on_demand" | "on_startup";
 export type McpToolSchemaChangeAction = "keep_enabled" | "require_review" | "disable";
 export type McpToolDiscoveryStatus = "new" | "active" | "removed" | "schema_changed";
+export type McpToolAvailabilityMode = "direct" | "on_demand" | "disabled";
 export type McpToolEffectiveState =
   | "enabled"
   | "disabled_persistently"
@@ -210,6 +211,9 @@ export interface McpServerSummary {
   auth_type?: McpAuthType;
   status: McpServerStatus;
   tools_count: number;
+  direct_tools_count?: number;
+  on_demand_tools_count?: number;
+  recently_used_tools_count?: number;
   resources_reserved: boolean;
   resources_reserved_count?: number;
   last_connected_at?: string | null;
@@ -271,6 +275,8 @@ export interface McpToolSummary {
   input_schema?: Record<string, unknown>;
   enabled: boolean;
   hidden: boolean;
+  priority_available?: boolean;
+  availability_mode?: McpToolAvailabilityMode | string;
   status?: McpToolDiscoveryStatus | string;
   discovery_status?: McpToolDiscoveryStatus | string;
   effective_state: McpToolEffectiveState;
@@ -294,8 +300,20 @@ export interface McpRuntimeSnapshotSummary {
   turn_id?: string | null;
   tool_inventory_revision?: number;
   visible_tools_count?: number;
+  visible_tools?: Array<{
+    server_id?: string | null;
+    server_name?: string | null;
+    raw_name?: string | null;
+    model_name?: string | null;
+    description?: string | null;
+    exposure?: string | null;
+  }>;
   server_status?: Record<string, unknown>;
   policy_summary?: Record<string, unknown>;
+  capability_directory?: Array<Record<string, unknown>>;
+  direct_available_tools?: number;
+  on_demand_tools?: number;
+  unavailable_tools?: number;
   servers_total?: number;
   servers_online?: number;
   tools_visible?: number;
@@ -418,6 +436,7 @@ export interface McpToolListResponse {
 export interface McpToolPolicyUpdatePayload {
   enabled?: boolean | null;
   hidden?: boolean | null;
+  priority_available?: boolean | null;
   approval_mode?: McpApprovalMode | null;
   parameter_constraints?: Record<string, unknown> | null;
   schema_change_action?: McpToolSchemaChangeAction | null;
@@ -715,10 +734,15 @@ export interface ContextCompressionRuntimeSettings {
   trigger_fraction: number;
 }
 
+export interface A2UIRuntimeSettings {
+  enabled: boolean;
+}
+
 export interface AgentRuntimeSettings {
   auto_title: AutoTitleRuntimeSettings;
   duplicate_tool_call_guard: DuplicateToolCallGuardRuntimeSettings;
   context_compression: ContextCompressionRuntimeSettings;
+  a2ui: A2UIRuntimeSettings;
 }
 
 export type AppFontFamily = "system" | "maple-mono" | "jetbrains-mono";
@@ -973,6 +997,15 @@ export const AGENT_CHAT_ACTIONS = [
   "bind_ok",
   "unbind_ok",
   "stream",
+  "a2ui_stream_start",
+  "a2ui_stream_chunk",
+  "a2ui_stream_finish",
+  "a2ui_created",
+  "waiting_input",
+  "a2ui_submit_ack",
+  "a2ui_cancel_ack",
+  "a2ui_resume",
+  "a2ui_waiting_input",
   "system_message",
   "completed",
   "cancelled",
@@ -1014,6 +1047,8 @@ export const AGENT_REPLAY_ACTIONS = [
   "user_message",
   "system_message",
   "ai_message",
+  "a2ui_created",
+  "waiting_input",
   "stream_batch",
   "tool_start",
   "tool_end",
@@ -1060,6 +1095,8 @@ export const AGENT_INBOUND_ACTIONS = [
   "bind_session",
   "unbind_session",
   "chat",
+  "a2ui_submit",
+  "a2ui_cancel",
   "scheduled_chat",
   "close_session",
   "cancel",
@@ -1073,7 +1110,7 @@ export const AGENT_INBOUND_ACTIONS = [
 export type AgentInboundAction = (typeof AGENT_INBOUND_ACTIONS)[number];
 
 export type AgentSessionType = "chat" | "workspace";
-export type AgentSessionStatus = "active" | "running" | "waiting_approval" | "closed" | "failed";
+export type AgentSessionStatus = "active" | "running" | "waiting_approval" | "waiting_input" | "closed" | "failed";
 export type AgentChatRole =
   | "user"
   | "assistant"
@@ -1083,6 +1120,7 @@ export type AgentChatRole =
   | "reasoning"
   | "approval"
   | "mcp_elicitation"
+  | "a2ui"
   | "error"
   | "turn"
   | "thread_task";
@@ -1341,6 +1379,216 @@ export interface AgentTraceQueryContext {
   end_time?: string;
 }
 
+export type A2UIRenderKey = "chart" | "confirm" | "choice" | "form" | (string & {});
+export type A2UIMode = "render" | "interactive";
+export type A2UIInteractionStatus =
+  | "waiting_user_input"
+  | "submitted"
+  | "cancelled"
+  | "missing"
+  | (string & {});
+export type A2UIResumeStatus =
+  | "not_started"
+  | "deferred"
+  | "started"
+  | "succeeded"
+  | "failed"
+  | (string & {});
+export type A2UIStreamStatus =
+  | "start"
+  | "chunk"
+  | "finish"
+  | "started"
+  | "streaming"
+  | "finished"
+  | (string & {});
+export type A2UIJsonParseStatus = "empty" | "partial" | "valid" | "invalid" | (string & {});
+export type A2UIDebugLifecycleStatus =
+  | "idle"
+  | "started"
+  | "streaming"
+  | "finished"
+  | "created"
+  | "waiting_input"
+  | "submitted"
+  | "cancelled"
+  | "failed";
+
+export interface A2UIResumeSummary {
+  status: A2UIResumeStatus;
+  started?: boolean;
+  resume_group_id?: string | null;
+  pending_count?: number;
+  error?: string | null;
+  reason?: string | null;
+}
+
+export interface A2UIInteractionState {
+  interaction_id: string;
+  status: A2UIInteractionStatus;
+  can_submit: boolean;
+  submit_request_id?: string | null;
+  cancel_request_id?: string | null;
+  submit_result?: Record<string, unknown> | null;
+  cancel_reason?: string | null;
+  resume_status?: A2UIResumeStatus;
+  resume_group_id?: string | null;
+  pending_count?: number | null;
+  resume_error?: string | null;
+  error?: string | null;
+}
+
+export interface A2UIObject {
+  render_key: A2UIRenderKey;
+  mode: A2UIMode;
+  stream_id: string;
+  tool_call_id?: string | null;
+  trace_id?: string | null;
+  turn_index?: number | null;
+  payload: Record<string, unknown>;
+  input_schema: Record<string, unknown>;
+  submit_schema: Record<string, unknown>;
+  interaction?: A2UIInteractionState | null;
+  waiting_input?: {
+    reason?: string | null;
+    checkpoint?: Record<string, unknown>;
+  };
+}
+
+export interface A2UIStreamFrame {
+  status: A2UIStreamStatus;
+  chunk_index?: number;
+  args_delta?: string;
+  args_text_length?: number;
+  args_text?: string;
+  parsed_payload?: Record<string, unknown> | null;
+  json_parse_status?: A2UIJsonParseStatus;
+  finish_reason?: string | null;
+}
+
+export interface A2UIStreamActionData {
+  session_id?: string;
+  trace_id?: string | null;
+  turn_index?: number | null;
+  render_key: A2UIRenderKey;
+  mode?: A2UIMode;
+  stream_id: string;
+  tool_call_id?: string | null;
+  stream: A2UIStreamFrame;
+}
+
+export interface A2UICreatedActionData {
+  session_id?: string;
+  trace_id?: string | null;
+  turn_index?: number | null;
+  render_key?: A2UIRenderKey;
+  mode?: A2UIMode;
+  stream_id?: string;
+  tool_call_id?: string | null;
+  interaction_id?: string;
+  interaction?: A2UIInteractionState | null;
+  a2ui: A2UIObject;
+}
+
+export interface A2UIWaitingInputActionData {
+  session_id?: string;
+  reason?: string;
+  interaction_id: string;
+  render_key: A2UIRenderKey;
+  stream_id: string;
+  tool_call_id?: string | null;
+  a2ui?: A2UIObject;
+  checkpoint?: Record<string, unknown>;
+}
+
+export interface A2UIWaitingInputStatusItem extends Partial<A2UIInteractionState> {
+  session_id?: string;
+  interaction_id: string;
+  render_key?: A2UIRenderKey;
+  stream_id?: string;
+  tool_call_id?: string | null;
+}
+
+export interface A2UIAckActionData {
+  session_id?: string;
+  trace_id?: string | null;
+  turn_index?: number | null;
+  render_key?: A2UIRenderKey;
+  stream_id?: string;
+  tool_call_id?: string | null;
+  interaction_id: string;
+  request_id: string;
+  status: A2UIInteractionStatus;
+  can_submit?: boolean;
+  idempotent?: boolean;
+  interaction?: A2UIInteractionState;
+  submit_result?: Record<string, unknown>;
+  cancel_reason?: string | null;
+  resume?: A2UIResumeSummary;
+}
+
+export interface A2UIResumeActionData {
+  session_id?: string;
+  interaction_id?: string;
+  resume_status?: A2UIResumeStatus;
+  resume_group_id?: string | null;
+  pending_count?: number;
+  error?: string | null;
+  resume_payload?: Record<string, unknown>;
+  resume_items?: Array<Record<string, unknown>>;
+}
+
+export interface A2UIDebugRawEvent {
+  id: string;
+  action: string;
+  timestamp: number;
+  data: Record<string, unknown>;
+}
+
+export interface A2UIDebugBlockState {
+  id: string;
+  status: A2UIDebugLifecycleStatus;
+  renderKey?: string;
+  mode?: A2UIMode | string;
+  streamId?: string;
+  interactionId?: string;
+  toolCallId?: string | null;
+  traceId?: string | null;
+  turnIndex?: number | null;
+  chunkCount: number;
+  argsBuffer: string;
+  argsTextLength: number;
+  latestChunk?: string;
+  jsonParseStatus: A2UIJsonParseStatus;
+  parsedArgs?: unknown;
+  parseError?: string;
+  finishReason?: string | null;
+  a2ui?: A2UIObject | Record<string, unknown>;
+  createdFrame?: Record<string, unknown>;
+  payload?: unknown;
+  inputSchema?: Record<string, unknown>;
+  submitSchema?: Record<string, unknown>;
+  interaction?: A2UIInteractionState | Record<string, unknown>;
+  rawEvents: A2UIDebugRawEvent[];
+  updatedAt: number;
+}
+
+export interface A2UISubmitActionPayload {
+  action: "a2ui_submit";
+  session_id: string;
+  interaction_id: string;
+  request_id: string;
+  submit_result: Record<string, unknown>;
+}
+
+export interface A2UICancelActionPayload {
+  action: "a2ui_cancel";
+  session_id: string;
+  interaction_id: string;
+  request_id: string;
+  cancel_reason?: string | null;
+}
+
 export interface AgentToolCall {
   id?: string;
   messageEventId?: string;
@@ -1415,6 +1663,8 @@ export interface AgentChatMessage {
   turnIndex?: number | null;
   role: AgentChatRole;
   content: string;
+  contentType?: "a2ui" | string;
+  content_type?: "a2ui" | string;
   timestamp: number;
   contextItems?: AgentContextItem[];
   reasoningKind?: AgentReasoningKind;
@@ -1438,6 +1688,8 @@ export interface AgentChatMessage {
   uiPayload?: Record<string, unknown>;
   fileChanges?: AgentFileChange[];
   metadata?: Record<string, unknown>;
+  a2ui?: A2UIObject | null;
+  a2uiDebug?: A2UIDebugBlockState;
   approval?: CommandApprovalRequest;
   subagentName?: string;
   subagentId?: string;

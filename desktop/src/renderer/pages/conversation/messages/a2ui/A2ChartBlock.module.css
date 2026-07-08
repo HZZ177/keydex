@@ -1,0 +1,329 @@
+.chart {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+}
+
+.summary {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.panel {
+  display: grid;
+  min-width: 0;
+  gap: 9px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 36%, transparent);
+  padding: 10px;
+}
+
+.panelTitle {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  overflow: visible;
+}
+
+.pieLayout {
+  display: grid;
+  min-width: 0;
+  min-height: 230px;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(190px, 1fr);
+  align-items: center;
+  gap: 28px;
+}
+
+.pieSvg {
+  min-width: 0;
+  min-height: 220px;
+}
+
+.axis {
+  stroke: color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  stroke-width: 1;
+}
+
+.gridLine {
+  stroke: color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
+  stroke-width: 1;
+}
+
+.label {
+  fill: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
+.legend {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.legendItem {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.legendSwatch {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 2px;
+}
+
+.legendText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pointList {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 7px;
+  padding-right: 4px;
+}
+
+.pointItem {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.pointName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pointValue {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.funnelList {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  padding: 8px 2px 2px;
+}
+
+.funnelRow {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(110px, 0.7fr) minmax(180px, 2fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.funnelMeta {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.funnelName {
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.funnelValue,
+.funnelRatio {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.funnelTrack {
+  position: relative;
+  min-width: 0;
+  height: 24px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-muted) 72%, transparent);
+}
+
+.funnelBar {
+  display: block;
+  height: 100%;
+  min-width: 12px;
+  border-radius: inherit;
+}
+
+.empty {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.skeleton {
+  display: grid;
+  min-height: 220px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 30%, transparent);
+  padding: 18px;
+}
+
+.skeletonBar {
+  display: block;
+  min-height: 34px;
+  border-radius: 6px 6px 3px 3px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-border-subtle) 64%, transparent),
+    color-mix(in srgb, var(--surface-muted) 70%, transparent),
+    color-mix(in srgb, var(--color-border-subtle) 64%, transparent)
+  );
+  background-size: 180% 100%;
+  animation: a2ui-chart-skeleton 1.2s ease-in-out infinite;
+}
+
+.skeletonBar:nth-child(1) {
+  height: 46%;
+}
+
+.skeletonBar:nth-child(2) {
+  height: 72%;
+}
+
+.skeletonBar:nth-child(3) {
+  height: 58%;
+}
+
+.skeletonBar:nth-child(4) {
+  height: 84%;
+}
+
+.skeleton[data-chart-skeleton-type="pie"] {
+  grid-template-columns: minmax(140px, 0.75fr) minmax(150px, 1fr);
+  align-items: center;
+  gap: 28px;
+}
+
+.skeletonPie {
+  display: block;
+  width: min(150px, 72%);
+  aspect-ratio: 1;
+  justify-self: center;
+  border-radius: 999px;
+  background:
+    conic-gradient(
+      from 20deg,
+      color-mix(in srgb, var(--color-border-subtle) 70%, transparent),
+      color-mix(in srgb, var(--surface-muted) 74%, transparent),
+      color-mix(in srgb, var(--color-border-subtle) 62%, transparent),
+      color-mix(in srgb, var(--surface-muted) 70%, transparent)
+    );
+  animation: a2ui-chart-skeleton 1.2s ease-in-out infinite;
+}
+
+.skeletonList {
+  display: grid;
+  gap: 10px;
+}
+
+.skeletonLine {
+  display: block;
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-border-subtle) 64%, transparent),
+    color-mix(in srgb, var(--surface-muted) 70%, transparent),
+    color-mix(in srgb, var(--color-border-subtle) 64%, transparent)
+  );
+  background-size: 180% 100%;
+  animation: a2ui-chart-skeleton 1.2s ease-in-out infinite;
+}
+
+.skeletonLine:nth-child(1) {
+  width: 78%;
+}
+
+.skeletonLine:nth-child(2) {
+  width: 92%;
+}
+
+.skeletonLine:nth-child(3) {
+  width: 68%;
+}
+
+.skeletonLine:nth-child(4) {
+  width: 84%;
+}
+
+@media (max-width: 560px) {
+  .pieLayout {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .pointList {
+    align-content: start;
+  }
+
+  .skeleton[data-chart-skeleton-type="pie"] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .funnelRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .funnelMeta {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .funnelRatio {
+    justify-self: start;
+  }
+}
+
+@keyframes a2ui-chart-skeleton {
+  0% {
+    background-position: 100% 0;
+  }
+
+  100% {
+    background-position: -100% 0;
+  }
+}

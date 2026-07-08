@@ -424,6 +424,28 @@ describe("AppRouter", () => {
     expect(runtime.localPreview.readFile).toHaveBeenCalledTimes(1);
   });
 
+  it("closes an external workbench preview tab without reopening it from the file route", async () => {
+    const filePath = "D:/docs/README.md";
+    renderRouter([workbenchFilePreviewPath(filePath, "workspace A")], {
+      extra: <WorkbenchFileOpenProbe />,
+    });
+
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    fireEvent.click(screen.getByTestId("open-workbench-file-package"));
+    expect(await screen.findByRole("tab", { name: "package.json" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("2");
+
+    fireEvent.click(
+      within(screen.getByTestId("workbench-main-file-preview")).getByRole("button", { name: /README\.md/ }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByRole("tab", { name: "README.md" })).toBeNull();
+    });
+    expect(screen.getByRole("tab", { name: "package.json" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("1");
+  });
+
   it("keeps pinned workbench sessions in the sidebar pinned section", async () => {
     renderRouter(["/workbench/workspace%20A"], {
       sessions: [

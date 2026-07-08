@@ -48,9 +48,19 @@ describe("ApprovalPrompt", () => {
     expect(screen.getByText("MCP 工具调用")).not.toBeNull();
     expect(screen.getByText("Ticket MCP / write")).not.toBeNull();
     expect(screen.getByText("write")).not.toBeNull();
-    expect(screen.getByText("mcp__srv_1__write")).not.toBeNull();
+    expect(screen.getByText("每次确认")).not.toBeNull();
     expect(screen.getByText(/"title":"Fix"/)).not.toBeNull();
     expect(screen.getByText("本会话信任；始终信任该工具；信任此 MCP 服务器")).not.toBeNull();
+    expect(screen.queryByText("mcp__srv_1__write")).toBeNull();
+    expect(screen.queryByText("snap-1")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认详情" }));
+    expect(screen.getByText(/"server": "Ticket MCP"/)).not.toBeNull();
+    expect(screen.getByText(/"tool": "write"/)).not.toBeNull();
+    expect(screen.queryByText(/model_tool_name/)).toBeNull();
+    expect(screen.queryByText(/snapshot_id/)).toBeNull();
+    expect(screen.queryByText(/mcp__srv_1__write/)).toBeNull();
+    expect(screen.queryByText(/snap-1/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "允许" }));
 

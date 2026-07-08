@@ -236,7 +236,8 @@
 }
 
 .serverItemHeader,
-.serverMeta {
+.serverMeta,
+.serverStats {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -262,6 +263,21 @@
   gap: 7px;
   color: var(--color-text-tertiary);
   font-size: 11px;
+}
+
+.serverStats {
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.serverStats span {
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 44%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 70%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 7px;
 }
 
 .serverToggleButton {
@@ -480,6 +496,7 @@
 
 .detailTitleBlock {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -519,7 +536,7 @@
 .detailMetrics {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: repeat(2, minmax(66px, auto));
+  grid-template-columns: repeat(4, minmax(58px, auto));
   gap: 6px;
   align-self: stretch;
 }
@@ -883,15 +900,32 @@
 
 .toolActionCell {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
   align-items: center;
   min-width: 0;
 }
 
 .toolActionCell .smallToolButton {
-  grid-column: 1 / -1;
   width: fit-content;
+}
+
+.toolSwitchControl {
+  display: flex;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.toolSwitchControl > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toggle {
@@ -1795,7 +1829,7 @@
   .detailMetrics {
     width: 100%;
     min-width: 0;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .toolsToolbar,
