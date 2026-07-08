@@ -23,10 +23,11 @@ describe("A2UI accessibility and status states", () => {
     );
 
     expect(screen.getByTestId("a2ui-block").getAttribute("aria-label")).toContain("选择 A2UI：选择预算方案");
-    expect(screen.getByLabelText(/增加 10%/)).not.toBeNull();
+    expect(screen.getByText("增加 10%")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "选择 增加 10%" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "提交选择" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "取消" })).not.toBeNull();
-    expect(screen.getByLabelText("不对！输入信息告诉 Keydex 应该怎么做")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "以上都不对！我来告诉keydex应该怎么做" })).not.toBeNull();
   });
 
   it("keeps waiting, submitted, cancelled and resume-running labels distinct", () => {
@@ -109,7 +110,7 @@ describe("A2UI accessibility and status states", () => {
     const submitButton = screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement;
     expect(submitButton.disabled).toBe(true);
 
-    fireEvent.click(screen.getByLabelText(/方案 A/));
+    fireEvent.click(screen.getByRole("button", { name: "选择 方案 A" }));
     fireEvent.click(submitButton);
 
     expect(onSubmit).not.toHaveBeenCalled();

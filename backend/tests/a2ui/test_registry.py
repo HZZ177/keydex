@@ -90,6 +90,8 @@ def test_interactive_tool_descriptions_encourage_suitable_a2ui_usage() -> None:
 
     assert "多个可行方案" in registry.require("choice").tool_description
     assert "优先调用" in registry.require("choice").tool_description
+    assert "画廊卡片" in registry.require("choice").tool_description
+    assert "以上都不对" in registry.require("choice").tool_description
     assert "缺少多个关键参数" in registry.require("form").tool_description
     assert "优先调用" in registry.require("form").tool_description
 
@@ -101,6 +103,8 @@ def test_interactive_schemas_include_mature_inline_ui_metadata() -> None:
     choice_option_properties = choice_properties["options"]["items"]["properties"]
     assert "default_values" in choice_properties
     assert {"badge", "recommended", "disabled"}.issubset(choice_option_properties)
+    assert "卡片主标题" in choice_option_properties["label"]["description"]
+    assert "卡片主体说明" in choice_option_properties["description"]["description"]
 
     form_field_properties = registry.require("form").input_schema["properties"]["fields"]["items"]["properties"]
     form_option_properties = form_field_properties["options"]["items"]["properties"]

@@ -77,6 +77,24 @@ def test_validate_submit_result_accepts_schema_subset() -> None:
     assert result == {"confirmed": True, "note": "ok"}
 
 
+def test_builtin_choice_submit_schema_accepts_correction_note() -> None:
+    registry = build_builtin_a2ui_registry()
+    result = validate_submit_result(
+        {
+            "selected_values": [],
+            "result_type": "correction",
+            "correction_note": "换一组更稳妥的方案",
+        },
+        registry.require("choice").submit_schema,
+    )
+
+    assert result == {
+        "selected_values": [],
+        "result_type": "correction",
+        "correction_note": "换一组更稳妥的方案",
+    }
+
+
 def test_validate_submit_result_rejects_missing_required_field() -> None:
     with pytest.raises(A2UISchemaValidationError, match="required"):
         validate_submit_result(

@@ -47,6 +47,8 @@ type InteractiveMotionVariant =
   | "tray"
   | "receipt";
 
+export type A2InteractiveMotionTransition = ComponentProps<typeof motion.div>["transition"];
+
 interface A2InteractiveMotionRootProps extends ComponentProps<typeof motion.section> {
   children?: ReactNode;
   live?: boolean;
@@ -59,6 +61,8 @@ interface A2InteractiveMotionItemProps extends HTMLAttributes<HTMLElement> {
   children?: ReactNode;
   interactive?: boolean;
   live?: boolean;
+  motionLayout?: ComponentProps<typeof motion.div>["layout"];
+  motionTransition?: A2InteractiveMotionTransition;
   motionKey: string;
   motionKind?: string;
   order?: number;
@@ -384,6 +388,8 @@ export function A2InteractiveMotionItem({
   className,
   interactive = false,
   live = false,
+  motionLayout = "position",
+  motionTransition,
   motionKey,
   motionKind,
   order = 0,
@@ -402,7 +408,8 @@ export function A2InteractiveMotionItem({
     animate: "visible",
     exit: "exit",
     variants: variantsFor(variant),
-    layout: "position" as const,
+    layout: motionLayout,
+    transition: motionTransition,
     whileHover: interactive ? hoverMotionFor(variant, selected) : undefined,
   };
 
@@ -562,11 +569,7 @@ function joinClassNames(...classNames: Array<string | undefined>): string {
 
 function hoverMotionFor(variant: InteractiveMotionVariant, selected: boolean) {
   if (variant === "option") {
-    return {
-      y: selected ? -4 : -5,
-      scale: selected ? 1.012 : 1.008,
-      transition: { duration: 0.22, ease: A2UI_MOTION_EASE },
-    };
+    return undefined;
   }
   if (variant === "field") {
     return {

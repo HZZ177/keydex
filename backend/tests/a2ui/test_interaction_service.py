@@ -9,6 +9,7 @@ from backend.app.a2ui.interaction_service import (
     A2UIInteractionService,
     A2UIInteractionServiceError,
 )
+from backend.app.a2ui.registry import build_builtin_a2ui_registry
 from backend.app.events.event_types import DomainEventType
 from backend.app.storage import (
     A2UI_STATUS_CANCELLED,
@@ -65,6 +66,56 @@ async def test_submit_success_validates_schema_updates_record_and_emits_event(tm
         DomainEventType.A2UI_SUBMITTED.value
     ]
     assert dispatcher.events[0]["payload"]["interaction_id"] == "a2ui-1"
+
+
+@pytest.mark.asyncio
+async def test_choice_correction_submit_builds_agent_instruction(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    dispatcher = RecordingDispatcher()
+    service = A2UIInteractionService(repositories=repositories, dispatcher=dispatcher)
+    registry = build_builtin_a2ui_registry()
+    _create_interaction(
+        repositories,
+        interaction_id="choice-1",
+        render_key="choice",
+        payload={
+            "title": "选择方案",
+            "options": [
+                {"label": "方案 A", "value": "a"},
+                {"label": "方案 B", "value": "b"},
+            ],
+        },
+        input_schema=registry.require("choice").input_schema,
+        submit_schema_snapshot=registry.require("choice").submit_schema,
+    )
+
+    result = await service.submit(
+        {
+            "interaction_id": "choice-1",
+            "request_id": "submit-1",
+            "session_id": "session-1",
+            "submit_result": {
+                "selected_values": [],
+                "result_type": "correction",
+                "correction_note": "换一组更稳妥的方案",
+            },
+        }
+    )
+
+    assert result.resume_payload == {
+        "status": A2UI_STATUS_SUBMITTED,
+        "interaction_id": "choice-1",
+        "submit_result": {
+            "selected_values": [],
+            "result_type": "correction",
+            "correction_note": "换一组更稳妥的方案",
+        },
+        "agent_instruction": (
+            "用户选择了“以上都不对”，并补充意见：换一组更稳妥的方案。"
+            "请根据该意见重新调整后续回复或重新生成候选项，不要继续按原候选项执行。"
+        ),
+    }
+    assert result.ack_payload["submit_result"]["correction_note"] == "换一组更稳妥的方案"
 
 
 @pytest.mark.asyncio
@@ -223,6 +274,10 @@ def _create_interaction(
     repositories: StorageRepositories,
     *,
     interaction_id: str,
+    render_key: str = "confirm",
+    payload: dict[str, Any] | None = None,
+    input_schema: dict[str, Any] | None = None,
+    submit_schema_snapshot: dict[str, Any] | None = None,
 ) -> None:
     repositories.a2ui_interactions.create(
         interaction_id=interaction_id,
@@ -232,11 +287,11 @@ def _create_interaction(
         turn_index=1,
         tool_call_id=f"tool-{interaction_id}",
         stream_id=f"stream-{interaction_id}",
-        render_key="confirm",
+        render_key=render_key,
         mode="interactive",
-        payload={"title": "Confirm"},
-        input_schema={"type": "object"},
-        submit_schema_snapshot={
+        payload=payload or {"title": "Confirm"},
+        input_schema=input_schema or {"type": "object"},
+        submit_schema_snapshot=submit_schema_snapshot or {
             "type": "object",
             "properties": {"confirmed": {"type": "boolean"}},
             "required": ["confirmed"],

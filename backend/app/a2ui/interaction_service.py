@@ -101,11 +101,7 @@ class A2UIInteractionService:
                 str(exc),
             ) from exc
 
-        resume_payload = {
-            "status": A2UI_STATUS_SUBMITTED,
-            "interaction_id": current.id,
-            "submit_result": submit_result,
-        }
+        resume_payload = _build_submit_resume_payload(current, submit_result)
         updated = self.repositories.a2ui_interactions.submit(
             current.id,
             request_id=parsed.request_id,
@@ -313,6 +309,79 @@ def _resume_summary(interaction: A2UIInteractionRecord) -> A2UIResumeSummary:
         pending_count=0,
         error=interaction.resume_error,
     )
+
+
+def _build_submit_resume_payload(
+    interaction: A2UIInteractionRecord,
+    submit_result: dict[str, Any],
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": A2UI_STATUS_SUBMITTED,
+        "interaction_id": interaction.id,
+        "submit_result": submit_result,
+    }
+    if interaction.render_key == "choice":
+        agent_instruction = _choice_agent_instruction(interaction.payload, submit_result)
+        if agent_instruction:
+            payload["agent_instruction"] = agent_instruction
+    return payload
+
+
+def _choice_agent_instruction(
+    choice_payload: dict[str, Any] | None,
+    submit_result: dict[str, Any],
+) -> str:
+    selected_values = _string_list(submit_result.get("selected_values"))
+    correction_note = _scalar_text(
+        submit_result.get("correction_note")
+        or submit_result.get("note")
+        or submit_result.get("comment")
+    )
+    result_type = _scalar_text(submit_result.get("result_type")).lower()
+    if result_type == "correction" or (correction_note and not selected_values):
+        return (
+            "用户选择了“以上都不对”，并补充意见："
+            f"{correction_note}。请根据该意见重新调整后续回复或重新生成候选项，不要继续按原候选项执行。"
+        )
+
+    if not selected_values:
+        return "用户没有选择任何候选项。"
+
+    labels = _choice_labels_for_values(choice_payload or {}, selected_values)
+    selected_text = "、".join(labels or selected_values)
+    return f"用户已选择：{selected_text}。请按用户选择继续。"
+
+
+def _choice_labels_for_values(
+    choice_payload: dict[str, Any],
+    selected_values: list[str],
+) -> list[str]:
+    options = choice_payload.get("options")
+    if not isinstance(options, list):
+        return []
+    label_by_value: dict[str, str] = {}
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        value = _scalar_text(option.get("value"))
+        label = _scalar_text(option.get("label"))
+        if value:
+            label_by_value[value] = label or value
+    return [label_by_value.get(value, value) for value in selected_values]
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in (_scalar_text(item) for item in value) if item]
+
+
+def _scalar_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return ""
 
 
 def _enrich_ack_payload(

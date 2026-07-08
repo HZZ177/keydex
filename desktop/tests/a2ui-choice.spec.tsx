@@ -5,6 +5,21 @@ import { A2UIBlock } from "@/renderer/pages/conversation/messages";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { A2UIDebugBlockState, A2UIInteractionState, A2UIObject } from "@/types/protocol";
 
+const CORRECTION_BUTTON = "以上都不对！我来告诉keydex应该怎么做";
+const CORRECTION_LABEL = "我来告诉keydex应该怎么做";
+
+function optionElement(label: RegExp | string): HTMLElement {
+  const option = screen.getByText(label).closest<HTMLElement>("[data-option-value]");
+  if (!option) {
+    throw new Error(`Missing choice option for ${String(label)}`);
+  }
+  return option;
+}
+
+function clickChoiceButton(label: string) {
+  fireEvent.click(screen.getByRole("button", { name: `选择 ${label}` }));
+}
+
 describe("A2ChoiceBlock", () => {
   it("submits a single selected value", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
@@ -12,15 +27,41 @@ describe("A2ChoiceBlock", () => {
 
     const submitButton = screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement;
     expect(submitButton.disabled).toBe(true);
+    expect(screen.queryByText("请选择一个选项")).toBeNull();
+    expect(screen.queryByLabelText(CORRECTION_LABEL)).toBeNull();
 
-    fireEvent.click(screen.getByLabelText(/方案 B/));
-    fireEvent.change(screen.getByLabelText("不对！输入信息告诉 Keydex 应该怎么做"), { target: { value: "优先收益" } });
+    clickChoiceButton("方案 B");
     fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith("int-choice-1", {
         selected_values: ["b"],
-        note: "优先收益",
+      }, "ses-1");
+    });
+  });
+
+  it("submits correction note as an exclusive choice", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<A2UIBlock message={choiceMessage()} onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+    const option = optionElement(/方案 A/);
+    clickChoiceButton("方案 A");
+    expect(option.getAttribute("data-selected")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: CORRECTION_BUTTON }));
+
+    expect(option.getAttribute("data-selected")).toBe("false");
+    expect(screen.queryByText("请输入说明")).toBeNull();
+    expect((screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(CORRECTION_LABEL), { target: { value: "换一组更稳妥的方案" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith("int-choice-1", {
+        selected_values: [],
+        result_type: "correction",
+        correction_note: "换一组更稳妥的方案",
       }, "ses-1");
     });
   });
@@ -37,12 +78,12 @@ describe("A2ChoiceBlock", () => {
       />,
     );
 
-    fireEvent.click(screen.getByLabelText(/方案 A/));
+    clickChoiceButton("方案 A");
 
     expect(screen.getByText("请至少选择 2 个选项")).not.toBeNull();
     expect((screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByLabelText(/方案 B/));
+    clickChoiceButton("方案 B");
     fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
 
     await waitFor(() => {
@@ -73,7 +114,7 @@ describe("A2ChoiceBlock", () => {
     expect(screen.getByText("推荐")).not.toBeNull();
     expect(screen.getByText("暂不可用")).not.toBeNull();
     expect(screen.getByText("已选 1 项 / 单选")).not.toBeNull();
-    expect((screen.getByLabelText(/方案 A/) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "选择 方案 A" }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
 
@@ -84,29 +125,238 @@ describe("A2ChoiceBlock", () => {
     });
   });
 
-  it("uses the interactive motion layer for choice scenes and option selection", () => {
+  it("shows long card content in a delayed hover popover without changing selection", async () => {
+    vi.useFakeTimers();
+    try {
+      const longDescription = "这是一个很长的选项说明，用来解释完整背景、适用条件、执行步骤、风险边界和后续动作，应该在悬浮窗完整展示，而不是占据页面布局。它还会继续补充上下文、约束、预期收益、失败处理和用户需要提前确认的信息。";
+      render(
+        <A2UIBlock
+          message={choiceMessage({
+            payload: {
+              options: Array.from({ length: 10 }, (_, index) => ({
+                label: `选项 ${index + 1}`,
+                value: `option_${index + 1}`,
+                description: longDescription,
+              })),
+            },
+          })}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      const options = screen.getByRole("radiogroup", { name: "选项" });
+      expect(options.getAttribute("data-choice-density")).toBe("dense");
+      expect(options.getAttribute("data-a2ui-choice-layout")).toBe("coverflow");
+      expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
+
+      const option = options.querySelector<HTMLInputElement>('input[value="option_1"]')?.closest<HTMLElement>("[data-option-value]");
+      const content = option?.querySelector<HTMLElement>("[data-a2ui-choice-content]");
+      expect(option?.textContent).not.toContain(longDescription);
+      expect(content).not.toBeNull();
+
+      fireEvent.pointerDown(option as HTMLElement, { button: 0, clientX: 120, pointerId: 1 });
+      fireEvent.pointerMove(options, { clientX: 180, pointerId: 1 });
+      fireEvent.pointerUp(options, { clientX: 180, pointerId: 1 });
+
+      await act(async () => {
+        vi.advanceTimersByTime(260);
+      });
+      expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
+
+      fireEvent.mouseEnter(content as HTMLElement);
+      await act(async () => {
+        vi.advanceTimersByTime(499);
+      });
+      expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
+
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      const popover = screen.getByTestId("a2ui-choice-detail");
+      expect(popover.textContent).toContain(longDescription);
+      expect(popover.getAttribute("data-state")).toBe("open");
+      expect(popover.getAttribute("data-placement")).toBe("bottom");
+      expect(option?.getAttribute("data-selected")).toBe("false");
+
+      fireEvent.mouseLeave(content as HTMLElement);
+      await act(async () => {
+        vi.advanceTimersByTime(120);
+      });
+      fireEvent.mouseEnter(popover);
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(screen.getByTestId("a2ui-choice-detail").textContent).toContain(longDescription);
+
+      fireEvent.mouseLeave(popover);
+      await act(async () => {
+        vi.advanceTimersByTime(260);
+      });
+      expect(screen.getByTestId("a2ui-choice-detail").getAttribute("data-state")).toBe("closing");
+
+      await act(async () => {
+        vi.advanceTimersByTime(160);
+      });
+      expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens the detail popover upward when there is not enough bottom space", async () => {
+    vi.useFakeTimers();
+    const clientHeightSpy = vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(360);
+    const clientWidthSpy = vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(900);
+    try {
+      const longDescription = "这个选项包含很多完整说明，需要在详情悬浮窗展示。当前位置靠近底部时，悬浮窗应该向上弹出，而不是挤到页面底部之外。这里继续补充上下文、适用条件、风险说明、预期结果和用户需要确认的信息，确保卡片正文会被截断。";
+      render(
+        <A2UIBlock
+          message={choiceMessage({
+            payload: {
+              options: [{ label: "靠近底部", value: "bottom_edge", description: longDescription }],
+            },
+          })}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      const option = screen
+        .getByRole("radiogroup", { name: "选项" })
+        .querySelector<HTMLElement>('[data-option-value="bottom_edge"]');
+      expect(option).not.toBeNull();
+      const content = (option as HTMLElement).querySelector<HTMLElement>("[data-a2ui-choice-content]");
+      expect(content).not.toBeNull();
+      const rectSpy = vi.spyOn(content as HTMLElement, "getBoundingClientRect").mockReturnValue({
+        bottom: 220,
+        height: 40,
+        left: 320,
+        right: 500,
+        top: 180,
+        width: 180,
+        x: 320,
+        y: 180,
+        toJSON: () => ({}),
+      } as DOMRect);
+
+      fireEvent.mouseEnter(content as HTMLElement);
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+
+      const popover = screen.getByTestId("a2ui-choice-detail");
+      expect(popover.getAttribute("data-placement")).toBe("top");
+      expect(popover.style.maxHeight).toBe("154px");
+      rectSpy.mockRestore();
+    } finally {
+      clientHeightSpy.mockRestore();
+      clientWidthSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("hides the top slider for choice galleries with ten or fewer options", () => {
+    render(
+      <A2UIBlock
+        message={choiceMessage({
+          payload: {
+            options: Array.from({ length: 10 }, (_, index) => ({
+              label: `少量选项 ${index + 1}`,
+              value: `compact_${index + 1}`,
+              description: `第 ${index + 1} 个选项`,
+            })),
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("slider", { name: "快速定位选项" })).toBeNull();
+  });
+
+  it("uses a top slider to jump across dense choice galleries with more than ten options", async () => {
+    render(
+      <A2UIBlock
+        message={choiceMessage({
+          payload: {
+            options: Array.from({ length: 11 }, (_, index) => ({
+              label: `密集选项 ${index + 1}`,
+              value: `dense_${index + 1}`,
+              description: `第 ${index + 1} 个选项`,
+            })),
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const slider = screen.getByRole("slider", { name: "快速定位选项" });
+    expect(slider.getAttribute("aria-valuemax")).toBe("10");
+    expect(slider.getAttribute("aria-valuenow")).toBe("2");
+    expect(slider.getAttribute("aria-valuetext")).toBe("3/11");
+    expect(slider.textContent).toBe("3/11");
+
+    fireEvent.keyDown(slider, { key: "End" });
+
+    await waitFor(() => {
+      expect(optionElement(/密集选项 11/).getAttribute("data-coverflow-position")).toBe("center");
+    });
+    expect(slider.getAttribute("aria-valuenow")).toBe("10");
+    expect(slider.getAttribute("aria-valuetext")).toBe("11/11");
+    expect(slider.textContent).toBe("11/11");
+  });
+
+  it("uses the interactive motion layer for choice scenes and option selection", async () => {
     render(<A2UIBlock message={choiceMessage()} onSubmit={vi.fn()} onCancel={vi.fn()} />);
 
     expect(screen.getByTestId("a2ui-choice").getAttribute("data-a2ui-interactive-motion")).toBe("true");
     expect(screen.getByTestId("a2ui-choice").getAttribute("data-a2ui-motion-state")).toBe("active");
+    expect(screen.getByRole("radiogroup", { name: "选项" }).getAttribute("data-a2ui-choice-layout")).toBe("coverflow");
 
-    const option = screen.getByLabelText(/方案 A/).closest("label");
+    const option = optionElement(/方案 A/);
     expect(option?.getAttribute("data-a2ui-interactive-item")).toBe("true");
     expect(option?.getAttribute("data-a2ui-motion-variant")).toBe("option");
+    expect(option?.getAttribute("data-coverflow-position")).toBe("prev");
+    expect(optionElement(/方案 B/).getAttribute("data-coverflow-position")).toBe("center");
     expect(option?.getAttribute("tabindex")).toBeNull();
     expect(option?.querySelector("[data-a2ui-choice-morph]")).not.toBeNull();
+    expect(option?.querySelector("[data-a2ui-choice-card]")).not.toBeNull();
 
-    fireEvent.click(screen.getByLabelText(/方案 A/));
+    fireEvent.click(option);
+
+    expect(screen.getByTestId("a2ui-choice").getAttribute("data-a2ui-motion-state")).toBe("active");
+    expect(option?.getAttribute("data-selected")).toBe("false");
+    await waitFor(() => {
+      expect(option?.getAttribute("data-coverflow-position")).toBe("center");
+    });
+    expect((screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(within(option).getByRole("button", { name: "选择 方案 A" }));
 
     expect(screen.getByTestId("a2ui-choice").getAttribute("data-a2ui-motion-state")).toBe("dirty");
     expect(option?.getAttribute("data-selected")).toBe("true");
     expect(screen.getByRole("button", { name: "提交选择" }).getAttribute("data-a2ui-action-motion")).toBe("true");
 
-    fireEvent.click(screen.getByLabelText(/方案 A/));
+    fireEvent.click(within(option).getByRole("button", { name: "取消选择 方案 A" }));
 
     expect(screen.getByTestId("a2ui-choice").getAttribute("data-a2ui-motion-state")).toBe("active");
     expect(option?.getAttribute("data-selected")).toBe("false");
     expect((screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("does not center a card when only its selection button is clicked", async () => {
+    render(<A2UIBlock message={choiceMessage()} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+
+    clickChoiceButton("方案 C");
+
+    await waitFor(() => {
+      expect(optionElement(/方案 C/).getAttribute("data-selected")).toBe("true");
+    });
+    expect(optionElement(/方案 B/).getAttribute("data-coverflow-position")).toBe("center");
+    expect(optionElement(/方案 C/).getAttribute("data-coverflow-position")).toBe("next");
   });
 
   it("animates the action badge through loading and done states", async () => {
@@ -118,7 +368,7 @@ describe("A2ChoiceBlock", () => {
       }));
       render(<A2UIBlock message={choiceMessage()} onSubmit={onSubmit} onCancel={vi.fn()} />);
 
-      fireEvent.click(screen.getByLabelText(/方案 A/));
+      clickChoiceButton("方案 A");
       fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
 
       expect(screen.getByRole("button", { name: "提交中" }).getAttribute("data-badge-state")).toBe("loading");
@@ -144,11 +394,23 @@ describe("A2ChoiceBlock", () => {
     const onCancel = vi.fn().mockResolvedValue(undefined);
     render(<A2UIBlock message={choiceMessage()} onSubmit={vi.fn()} onCancel={onCancel} />);
 
-    fireEvent.change(screen.getByLabelText("不对！输入信息告诉 Keydex 应该怎么做"), { target: { value: "暂不选择" } });
+    fireEvent.click(screen.getByRole("button", { name: CORRECTION_BUTTON }));
+    fireEvent.change(screen.getByLabelText(CORRECTION_LABEL), { target: { value: "暂不选择" } });
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
 
     await waitFor(() => {
       expect(onCancel).toHaveBeenCalledWith("int-choice-1", "暂不选择", "ses-1");
+    });
+  });
+
+  it("sends default cancel reason when correction is not open", async () => {
+    const onCancel = vi.fn().mockResolvedValue(undefined);
+    render(<A2UIBlock message={choiceMessage()} onSubmit={vi.fn()} onCancel={onCancel} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+
+    await waitFor(() => {
+      expect(onCancel).toHaveBeenCalledWith("int-choice-1", "用户取消", "ses-1");
     });
   });
 
@@ -160,7 +422,7 @@ describe("A2ChoiceBlock", () => {
             interaction_id: "int-choice-1",
             status: "submitted",
             can_submit: false,
-            submit_result: { selected_values: ["a", "c"], note: "组合推进" },
+            submit_result: { selected_values: ["a", "c"], correction_note: "组合推进" },
             resume_status: "succeeded",
           },
         })}
@@ -172,12 +434,90 @@ describe("A2ChoiceBlock", () => {
     const result = within(screen.getByTestId("a2ui-choice-result"));
     expect(result.getByText("方案 A")).not.toBeNull();
     expect(result.getByText("方案 C")).not.toBeNull();
+    const historyList = result.getByRole("list", { name: "历史选项" });
+    expect(historyList.getAttribute("data-a2ui-choice-track")).toBe("true");
+    expect(historyList.querySelectorAll("[data-option-value]").length).toBe(3);
+    const historyViewport = historyList.parentElement as HTMLElement;
+    expect(historyViewport.getAttribute("data-a2ui-choice-draggable")).toBe("true");
+    fireEvent.pointerDown(historyViewport, { button: 0, clientX: 180, pointerId: 1 });
+    expect(historyViewport.getAttribute("data-dragging")).toBe("true");
+    fireEvent.pointerMove(historyViewport, { clientX: 120, pointerId: 1 });
+    fireEvent.pointerUp(historyViewport, { clientX: 120, pointerId: 1 });
+    expect(historyViewport.hasAttribute("data-dragging")).toBe(false);
     expect(result.getByText("本次选择已提交 · 2 项")).not.toBeNull();
     expect(result.getByText("给 Keydex 的补充信息")).not.toBeNull();
     expect(result.getByText("组合推进")).not.toBeNull();
     expect(result.queryByText("已提交选择")).toBeNull();
     expect(result.queryByText(/恢复状态/)).toBeNull();
     expect(screen.queryByRole("button", { name: "提交选择" })).toBeNull();
+  });
+
+  it("hides the top slider for historical choice galleries with ten or fewer options", () => {
+    render(
+      <A2UIBlock
+        message={choiceMessage({
+          payload: {
+            options: Array.from({ length: 10 }, (_, index) => ({
+              label: `历史少量选项 ${index + 1}`,
+              value: `history_compact_${index + 1}`,
+              description: `历史第 ${index + 1} 个选项`,
+            })),
+          },
+          interaction: {
+            interaction_id: "int-choice-1",
+            status: "submitted",
+            can_submit: false,
+            submit_result: { selected_values: ["history_compact_4"] },
+            resume_status: "succeeded",
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const result = within(screen.getByTestId("a2ui-choice-result"));
+    expect(result.queryByRole("slider", { name: "快速定位历史选项" })).toBeNull();
+  });
+
+  it("uses a top slider for dense historical choice galleries with more than ten options", async () => {
+    render(
+      <A2UIBlock
+        message={choiceMessage({
+          payload: {
+            options: Array.from({ length: 11 }, (_, index) => ({
+              label: `历史选项 ${index + 1}`,
+              value: `history_${index + 1}`,
+              description: `历史第 ${index + 1} 个选项`,
+            })),
+          },
+          interaction: {
+            interaction_id: "int-choice-1",
+            status: "submitted",
+            can_submit: false,
+            submit_result: { selected_values: ["history_4"] },
+            resume_status: "succeeded",
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const result = within(screen.getByTestId("a2ui-choice-result"));
+    const slider = result.getByRole("slider", { name: "快速定位历史选项" });
+    expect(slider.getAttribute("aria-valuenow")).toBe("3");
+    expect(slider.getAttribute("aria-valuetext")).toBe("4/11");
+    expect(slider.textContent).toBe("4/11");
+
+    fireEvent.keyDown(slider, { key: "End" });
+
+    await waitFor(() => {
+      expect(optionElement(/历史选项 11/).getAttribute("data-coverflow-position")).toBe("center");
+    });
+    expect(slider.getAttribute("aria-valuenow")).toBe("10");
+    expect(slider.getAttribute("aria-valuetext")).toBe("11/11");
+    expect(slider.textContent).toBe("11/11");
   });
 
   it("renders cancelled choices with an explicit interaction outcome", () => {
@@ -215,8 +555,9 @@ describe("A2ChoiceBlock", () => {
 
       const choice = screen.getByTestId("a2ui-choice");
       expect(choice.getAttribute("data-a2ui-reveal-enabled")).toBe("true");
-      expect(screen.getByLabelText(/方案 A/)).not.toBeNull();
-      expect(screen.queryByLabelText(/方案 B/)).toBeNull();
+      expect(screen.getByText("正在生成选项中，请稍后...")).not.toBeNull();
+      expect(screen.getByText(/方案 A/)).not.toBeNull();
+      expect(screen.queryByText(/方案 B/)).toBeNull();
       const submitButton = screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement;
       expect(submitButton.disabled).toBe(true);
 
@@ -224,11 +565,86 @@ describe("A2ChoiceBlock", () => {
         vi.advanceTimersByTime(1_600);
       });
 
-      expect(screen.getByLabelText(/方案 B/)).not.toBeNull();
+      expect(screen.getByText(/方案 B/)).not.toBeNull();
       expect(screen.getByRole("button", { name: "提交选择" })).not.toBeNull();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps streamed cards visible when stream identity upgrades before the next parsable payload", () => {
+    const { rerender } = render(
+      <A2UIBlock
+        message={choiceStreamMessage({
+          payload: {
+            title: "请选择",
+            options: [{ label: "方案 A", value: "a", description: "先出现的选项" }],
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/方案 A/)).not.toBeNull();
+    expect(screen.queryByText("正在生成选项")).toBeNull();
+    expect(screen.getByText("正在生成选项中，请稍后...")).not.toBeNull();
+
+    rerender(
+      <A2UIBlock
+        message={choiceStreamMessage({
+          argsBuffer: "{\"title\":\"请选择\",\"options\":[",
+          chunkCount: 2,
+          parsedArgs: undefined,
+          streamId: "stream-choice-upgraded",
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/方案 A/)).not.toBeNull();
+    expect(screen.queryByText("正在生成选项")).toBeNull();
+    expect(screen.getByText("正在生成选项中，请稍后...")).not.toBeNull();
+  });
+
+  it("keeps the latest streamed choice card centered while options grow", async () => {
+    const { rerender } = render(
+      <A2UIBlock
+        message={choiceStreamMessage({
+          payload: {
+            title: "请选择",
+            options: [{ label: "方案 A", value: "a", description: "先出现的选项" }],
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(optionElement(/方案 A/).getAttribute("data-coverflow-position")).toBe("center");
+
+    rerender(
+      <A2UIBlock
+        message={choiceStreamMessage({
+          chunkCount: 2,
+          payload: {
+            title: "请选择",
+            options: [
+              { label: "方案 A", value: "a", description: "先出现的选项" },
+              { label: "方案 B", value: "b", description: "最新生成的选项" },
+            ],
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(optionElement(/方案 B/).getAttribute("data-coverflow-position")).toBe("center");
+    });
+    expect(screen.getByText("正在生成选项中，请稍后...")).not.toBeNull();
   });
 });
 
@@ -329,5 +745,66 @@ function withStreamedDebug(message: ConversationMessage): ConversationMessage {
         parsedArgs: a2ui.payload,
       },
     },
+  };
+}
+
+function choiceStreamMessage({
+  argsBuffer,
+  chunkCount = 1,
+  parsedArgs,
+  payload,
+  streamId,
+}: {
+  argsBuffer?: string;
+  chunkCount?: number;
+  parsedArgs?: Record<string, unknown>;
+  payload?: Record<string, unknown>;
+  streamId?: string;
+}): ConversationMessage {
+  const resolvedPayload = payload ?? parsedArgs;
+  return {
+    id: "agent:a2ui-choice-streaming",
+    threadId: "ses-1",
+    turnId: null,
+    itemId: "a2ui-choice-streaming",
+    kind: "a2ui",
+    status: "in_progress",
+    content: "",
+    payload: {
+      a2uiDebug: {
+        id: streamId ?? "a2ui:trace-choice-stream:1:choice:a2ui_stream_chunk",
+        status: "streaming",
+        renderKey: "choice",
+        mode: "interactive",
+        streamId,
+        traceId: "trace-choice-stream",
+        turnIndex: 1,
+        chunkCount,
+        argsBuffer: argsBuffer ?? JSON.stringify(resolvedPayload ?? {}),
+        argsTextLength: (argsBuffer ?? JSON.stringify(resolvedPayload ?? {})).length,
+        jsonParseStatus: resolvedPayload ? "partial" : "empty",
+        parsedArgs: resolvedPayload,
+        rawEvents: [{
+          id: `stream-choice-event-${chunkCount}`,
+          action: "a2ui_stream_chunk",
+          timestamp: 1_700_000_000_000 + chunkCount,
+          data: {
+            render_key: "choice",
+            trace_id: "trace-choice-stream",
+            turn_index: 1,
+            ...(streamId ? { stream_id: streamId } : {}),
+            stream: {
+              args_delta: "",
+              chunk_index: chunkCount,
+              status: "streaming",
+            },
+          },
+        }],
+        updatedAt: 1_700_000_000_000 + chunkCount,
+      },
+      renderKey: "choice",
+    },
+    createdAt: "2026-07-08T00:00:00.000Z",
+    updatedAt: "2026-07-08T00:00:00.000Z",
   };
 }

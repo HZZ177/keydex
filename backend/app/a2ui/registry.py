@@ -108,10 +108,16 @@ def _object_schema(
 def _option_schema() -> dict[str, Any]:
     return _object_schema(
         properties={
-            "label": {"type": "string", "minLength": 1, "description": "展示给用户看的选项名称。"},
+            "label": {"type": "string", "minLength": 1, "description": "卡片主标题，短而明确。"},
             "value": {"type": "string", "minLength": 1, "description": "提交给运行时的稳定选项值。"},
-            "description": {"type": "string", "description": "选项的补充说明，可选。"},
-            "badge": {"type": "string", "description": "选项旁边的短标签，例如 推荐、低风险、较快，可选。"},
+            "description": {
+                "type": "string",
+                "description": "卡片主体说明，说明关键差异、适用场景、风险或下一步影响，可选。",
+            },
+            "badge": {
+                "type": "string",
+                "description": "卡片短标签，例如 推荐、低风险、快速、保守、实验性，可选。",
+            },
             "recommended": {"type": "boolean", "description": "是否标记为推荐选项，可选。"},
             "disabled": {"type": "boolean", "description": "是否暂不可选；只在需要解释候选但不允许用户选择时使用。"},
         },
@@ -280,9 +286,13 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             render_key="choice",
             mode="interactive",
             tool_description=(
-                "当存在多个可行方案、范围、对象、格式、路径或下一步动作，需要用户从候选项中决定时优先调用，"
-                "展示单选或多选决策项；可以用 recommended、badge、description 帮用户快速判断，"
-                "可以用 default_values 给出合理默认选择；该工具会等待用户选择或取消后继续执行。"
+                "当存在多个可行方案、范围、对象、格式、路径或下一步动作，需要用户从候选项中决定时优先调用。"
+                "choice 会以画廊卡片形式展示单选或多选候选项，适合每个候选项都有名称、标签和简短说明的场景；"
+                "每个 option 都会成为一张候选卡片，因此 label 应清晰短促，badge 用于表达类别、推荐、风险或成本，"
+                "description 用于说明选择依据、适用场景或关键差异，不要只给一组没有解释的短词。"
+                "可以用 recommended、disabled、default_values 引导用户快速决策。"
+                "候选项数量较多时仍可使用，但应保证每个候选项信息密度足够；简单 yes/no 或权限审批不要使用 choice。"
+                "该工具会等待用户选择、取消，或选择“以上都不对”并提交修正意见后继续执行。"
             ),
             input_schema=_object_schema(
                 properties={
@@ -311,6 +321,15 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "用户选择的 option.value 列表。",
+                    },
+                    "result_type": {
+                        "type": "string",
+                        "enum": ["selection", "correction"],
+                        "description": "提交类型：selection 表示选择候选项，correction 表示用户认为以上选项都不对并提交补充意见。",
+                    },
+                    "correction_note": {
+                        "type": "string",
+                        "description": "当 result_type=correction 时，用户输入的修正意见。",
                     },
                     "note": {"type": "string", "description": "用户填写的备注，可选。"},
                 },

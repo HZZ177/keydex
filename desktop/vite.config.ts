@@ -30,6 +30,10 @@ export default defineConfig({
     },
     dedupe: ["react", "react-dom", ...CODEMIRROR_DEDUPE],
   },
+  optimizeDeps: {
+    entries: ["index.html"],
+    include: ["@radix-ui/react-slider"],
+  },
   test: {
     environment: "jsdom",
     exclude: [...configDefaults.exclude, "e2e/**"],
