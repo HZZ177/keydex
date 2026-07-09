@@ -12,6 +12,7 @@ import {
   Upload,
   Zap,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -19,6 +20,7 @@ import { createPortal } from "react-dom";
 import { runtimeBridge, type ModelProvider, type RuntimeBridge } from "@/runtime";
 import { AppDialog } from "@/renderer/components/dialog";
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
+import { prefersReducedMotion } from "@/renderer/utils/motionPreference";
 import type {
   UsageRequestDetail,
   UsageRequestListResponse,
@@ -62,6 +64,18 @@ type TokenHeatTooltipState = {
 const PAGE_SIZE = 12;
 const TREND_PROGRESSIVE_POINT_THRESHOLD = 240;
 const TREND_BATCH_POINT_LIMIT = 168;
+const TOKEN_HEAT_RIPPLE_DELAY_PER_DISTANCE = 0.018;
+const TOKEN_HEAT_RIPPLE_EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];
+const TOKEN_HEAT_LEVELS = [0, 1, 2, 3, 4, 5, 6, 7, 8] as const;
+const TOKEN_HEAT_RIPPLE_INITIAL_SCALE = 0.28;
+const TOKEN_HEAT_RIPPLE_SPRING = {
+  type: "spring",
+  stiffness: 300,
+  damping: 14,
+  mass: 0.75,
+  restDelta: 0.001,
+  restSpeed: 0.001,
+} as const;
 const EMPTY_SUMMARY: UsageSummary = {
   request_count: 0,
   total_tokens: 0,
@@ -99,6 +113,7 @@ export function UsageStatsPage({ runtime = runtimeBridge, onNavigateToConversati
   const [heatBucket, setHeatBucket] = useState<TokenHeatBucket>("day");
   const [page, setPage] = useState(1);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [heatRefreshNonce, setHeatRefreshNonce] = useState(0);
   const [summary, setSummary] = useState<UsageSummary>(EMPTY_SUMMARY);
   const [trend, setTrend] = useState<UsageTrendPoint[]>([]);
   const [heatTrend, setHeatTrend] = useState<UsageTrendPoint[]>([]);
@@ -111,7 +126,7 @@ export function UsageStatsPage({ runtime = runtimeBridge, onNavigateToConversati
   const [statsError, setStatsError] = useState<string | null>(null);
   const [requestsError, setRequestsError] = useState<string | null>(null);
   const timezoneOffsetMinutes = useMemo(() => -new Date().getTimezoneOffset(), []);
-  const heatRange = useMemo(() => computeHeatWallRange(), [refreshNonce]);
+  const heatRange = useMemo(() => computeHeatWallRange(), [heatRefreshNonce, refreshNonce]);
 
   const range = useMemo(
     () =>
@@ -298,10 +313,22 @@ export function UsageStatsPage({ runtime = runtimeBridge, onNavigateToConversati
                     每周
                   </button>
                 </div>
-                {heatLoading ? <Loader2 className={styles.spin} size={16} /> : null}
+                <button
+                  aria-label="刷新年度概览"
+                  className={styles.heatRefreshButton}
+                  disabled={heatLoading}
+                  onClick={() => setHeatRefreshNonce((value) => value + 1)}
+                  type="button"
+                >
+                  {heatLoading ? <Loader2 className={styles.spin} size={14} /> : <RefreshCw size={14} />}
+                </button>
               </div>
             </div>
-            <TokenHeatWall points={heatTrend} bucket={heatBucket} />
+            <TokenHeatWall
+              points={heatTrend}
+              bucket={heatBucket}
+              rippleKey={`${refreshNonce}:${heatRefreshNonce}:${selectedModel}`}
+            />
           </section>
         </section>
       </section>
@@ -647,12 +674,22 @@ async function loadUsageTrend({
   return completeUsageTrendPoints(mergedPoints, bucket, range, timezoneOffsetMinutes);
 }
 
-export function TokenHeatWall({ points, bucket }: { points: UsageTrendPoint[]; bucket: TokenHeatBucket }) {
+export function TokenHeatWall({
+  points,
+  bucket,
+  rippleKey = "initial",
+}: {
+  points: UsageTrendPoint[];
+  bucket: TokenHeatBucket;
+  rippleKey?: string;
+}) {
   const [hoveredColumn, setHoveredColumn] = useState<number | null>(null);
   const [hoveredTime, setHoveredTime] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<TokenHeatTooltipState | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const reducedMotion = prefersReducedMotion();
   const heatWall = useMemo(() => buildTokenHeatWall(points), [points]);
+  const heatRippleOrigin = useMemo(() => computeTokenHeatRippleOrigin(heatWall.cells), [heatWall.cells]);
   const heatWallStyle = {
     "--heat-columns": heatWall.columns,
   } as CSSProperties;
@@ -749,7 +786,7 @@ export function TokenHeatWall({ points, bucket }: { points: UsageTrendPoint[]; b
                       ? hoveredColumn === cell.column
                       : hoveredTime === cell.time;
                   return (
-                    <button
+                    <motion.button
                       aria-label={label}
                       className={styles.heatCell}
                       data-active={active ? "true" : "false"}
@@ -777,7 +814,40 @@ export function TokenHeatWall({ points, bucket }: { points: UsageTrendPoint[]; b
                       }}
                       onMouseLeave={hideTooltip}
                       type="button"
-                    />
+                      whileHover={
+                        reducedMotion
+                          ? undefined
+                          : { y: -1, transition: { duration: 0.14, ease: TOKEN_HEAT_RIPPLE_EASE } }
+                      }
+                    >
+                      <motion.span
+                        aria-hidden="true"
+                        animate={
+                          reducedMotion
+                            ? undefined
+                            : {
+                                opacity: 1,
+                                scale: 1,
+                              }
+                        }
+                        className={styles.heatCellVisual}
+                        data-ripple-key={rippleKey}
+                        initial={
+                          reducedMotion
+                            ? false
+                            : {
+                                opacity: 0,
+                                scale: TOKEN_HEAT_RIPPLE_INITIAL_SCALE,
+                              }
+                        }
+                        key={`${cell.time}-${rippleKey}`}
+                        transition={
+                          reducedMotion
+                            ? undefined
+                            : tokenHeatRippleTransition(tokenHeatRippleDelay(cell, heatRippleOrigin))
+                        }
+                      />
+                    </motion.button>
                   );
                 })}
               </div>
@@ -796,7 +866,7 @@ export function TokenHeatWall({ points, bucket }: { points: UsageTrendPoint[]; b
           <div className={styles.heatWallLegend} aria-hidden="true">
             <span>少</span>
             <span className={styles.heatWallLegendLevels}>
-              {[0, 1, 2, 3, 4].map((level) => (
+              {TOKEN_HEAT_LEVELS.map((level) => (
                 <i data-level={level} key={level} />
               ))}
             </span>
@@ -828,6 +898,36 @@ function positionHeatTooltip(target: HTMLElement) {
     left: Math.round(rect.left + rect.width / 2),
     top: Math.round(rect.top),
   };
+}
+
+function computeTokenHeatRippleOrigin(cells: TokenHeatWallCell[]) {
+  for (let index = cells.length - 1; index >= 0; index -= 1) {
+    const cell = cells[index];
+    if (!cell.outsideRange && cell.totalTokens > 0) {
+      return { column: cell.column, row: tokenHeatCellRow(cell) };
+    }
+  }
+  const lastCell = cells[cells.length - 1];
+  return {
+    column: lastCell?.column ?? 0,
+    row: 3,
+  };
+}
+
+function tokenHeatRippleDelay(cell: TokenHeatWallCell, origin: { column: number; row: number }) {
+  const distance = Math.hypot(cell.column - origin.column, tokenHeatCellRow(cell) - origin.row);
+  return distance * TOKEN_HEAT_RIPPLE_DELAY_PER_DISTANCE;
+}
+
+function tokenHeatRippleTransition(delay: number) {
+  return {
+    opacity: { delay, duration: 0.08, ease: TOKEN_HEAT_RIPPLE_EASE },
+    scale: { delay, ...TOKEN_HEAT_RIPPLE_SPRING },
+  };
+}
+
+function tokenHeatCellRow(cell: Pick<TokenHeatWallCell, "time">) {
+  return heatDayRow(parseHeatDate(cell.time));
 }
 
 export function UsageTrendChart({ points }: { points: UsageTrendPoint[] }) {
@@ -1028,17 +1128,8 @@ function tokenHeatLevel(totalTokens: number, maxTokens: number) {
   if (totalTokens <= 0 || maxTokens <= 0) {
     return 0;
   }
-  const ratio = totalTokens / maxTokens;
-  if (ratio >= 0.75) {
-    return 4;
-  }
-  if (ratio >= 0.45) {
-    return 3;
-  }
-  if (ratio >= 0.18) {
-    return 2;
-  }
-  return 1;
+  const ratio = Math.min(1, totalTokens / maxTokens);
+  return Math.max(1, Math.ceil(ratio * 8));
 }
 
 function parseHeatDate(value: string) {

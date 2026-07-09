@@ -161,6 +161,56 @@ describe("UsageStatsPage", () => {
     });
   });
 
+  it("refreshes the annual heat wall from the compact header action only", async () => {
+    const runtime = fakeRuntime({
+      heatTrend: {
+        points: [
+          trendPoint({
+            time: "2026-06-19",
+            request_count: 1,
+            input_tokens: 80,
+            output_tokens: 20,
+            total_tokens: 100,
+          }),
+        ],
+      },
+    });
+
+    render(<UsageStatsPage runtime={runtime} />);
+
+    await screen.findByText("24");
+    const summaryCalls = runtime.usage.getSummary.mock.calls.length;
+    const heatCalls = runtime.usage.getTrend.mock.calls.filter(([options]) => options.bucket === "day" && options.startTime)
+      .length;
+    let beforeRippleKey = "";
+    await waitFor(() => {
+      beforeRippleKey =
+        screen
+          .getByTestId("usage-token-heatwall")
+          .querySelector("[data-ripple-key]")
+          ?.getAttribute("data-ripple-key") ?? "";
+      expect(beforeRippleKey).not.toBe("");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新年度概览" }));
+
+    await waitFor(() => {
+      const nextHeatCalls = runtime.usage.getTrend.mock.calls.filter(
+        ([options]) => options.bucket === "day" && options.startTime,
+      ).length;
+      expect(nextHeatCalls).toBeGreaterThan(heatCalls);
+    });
+    await waitFor(() => {
+      expect(
+        screen
+          .getByTestId("usage-token-heatwall")
+          .querySelector("[data-ripple-key]")
+          ?.getAttribute("data-ripple-key"),
+      ).not.toBe(beforeRippleKey);
+    });
+    expect(runtime.usage.getSummary).toHaveBeenCalledTimes(summaryCalls);
+  });
+
   it("closes the model filter menu from outside interactions", async () => {
     const runtime = fakeRuntime();
 
@@ -391,7 +441,7 @@ describe("UsageStatsPage", () => {
     expect(heatWall.textContent).toContain("日");
     expect(screen.queryByText("18,445 Token")).toBeNull();
     expect(cell.getAttribute("title")).toBeNull();
-    expect(cell.getAttribute("data-level")).toBe("4");
+    expect(cell.getAttribute("data-level")).toBe("8");
     expect(screen.queryByText("总 Token 18,445")).toBeNull();
     fireEvent.mouseEnter(cell);
     const tooltip = screen.getByRole("tooltip");
@@ -421,7 +471,7 @@ describe("UsageStatsPage", () => {
     const weekCells = screen.getAllByRole("button", { name: "06/15 - 06/21 · 总 Token 18,445" });
 
     expect(weekCells).toHaveLength(7);
-    expect(weekCells.every((cell) => cell.getAttribute("data-level") === "4")).toBe(true);
+    expect(weekCells.every((cell) => cell.getAttribute("data-level") === "8")).toBe(true);
     expect(weekCells.every((cell) => cell.getAttribute("data-outside") === "false")).toBe(true);
     fireEvent.mouseEnter(weekCells[4]);
     expect(weekCells.every((cell) => cell.getAttribute("data-active") === "true")).toBe(true);
@@ -476,6 +526,7 @@ describe("UsageStatsPage", () => {
 interface FakeRuntimeOptions {
   summary?: UsageSummary;
   trend?: UsageTrendResponse;
+  heatTrend?: UsageTrendResponse;
   requests?: UsageRequestListResponse;
   detail?: UsageRequestDetail;
   providers?: ModelProvider[];
@@ -506,6 +557,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}) {
       },
     ],
   };
+  const heatTrend = options.heatTrend ?? { points: [] };
   const requests = options.requests ?? defaultRequests();
   const detail = options.detail ?? {
     request: requests.list[0],
@@ -563,7 +615,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}) {
       ),
       getTrend: vi.fn((query?: { bucket?: string; startTime?: string; endTime?: string }) => {
         if (query?.bucket === "day" && query.startTime && query.endTime && isYearRange(query.startTime, query.endTime)) {
-          return Promise.resolve({ points: [] });
+          return Promise.resolve(heatTrend);
         }
         return Promise.resolve(trend);
       }),

@@ -128,6 +128,28 @@
   );
 }
 
+.heatRefreshButton {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 62%, transparent);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  padding: 0;
+}
+
+.heatRefreshButton:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.heatRefreshButton:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
 .toolbar,
 .controlStrip {
   display: inline-flex;
@@ -187,6 +209,7 @@
 .pagination button:focus-visible,
 .modelMenu button:focus-visible,
 .bucketToggle button:focus-visible,
+.heatRefreshButton:focus-visible,
 .heatCell:focus-visible,
 .table tr:focus-visible {
   outline: 0;
@@ -520,15 +543,22 @@
 }
 
 .heatWall {
-  --heat-empty: color-mix(in srgb, var(--surface-muted) 78%, transparent);
-  --heat-warm-1: #f59e0b;
-  --heat-warm-2: #f97316;
-  --heat-warm-3: #ef4444;
-  --heat-level-1: color-mix(in srgb, var(--heat-warm-1) 18%, var(--surface-muted));
-  --heat-level-2: color-mix(in srgb, var(--heat-warm-1) 34%, var(--heat-warm-2) 10%, var(--surface-muted));
-  --heat-level-3: color-mix(in srgb, var(--heat-warm-2) 58%, var(--surface-muted));
-  --heat-level-4: color-mix(in srgb, var(--heat-warm-3) 72%, var(--heat-warm-2));
-  --heat-glow: 249 115 22;
+  --heat-empty: color-mix(in srgb, var(--surface-hover) 72%, var(--color-bg-elevated));
+  --heat-violet-1: #ddd6fe;
+  --heat-violet-2: #c4b5fd;
+  --heat-violet-3: #a78bfa;
+  --heat-violet-4: #8b5cf6;
+  --heat-violet-5: #7c3aed;
+  --heat-violet-6: #6d28d9;
+  --heat-level-1: color-mix(in srgb, var(--heat-violet-2) 62%, var(--surface-muted));
+  --heat-level-2: color-mix(in srgb, var(--heat-violet-2) 76%, var(--surface-muted));
+  --heat-level-3: color-mix(in srgb, var(--heat-violet-3) 56%, var(--surface-muted));
+  --heat-level-4: color-mix(in srgb, var(--heat-violet-3) 64%, var(--surface-muted));
+  --heat-level-5: color-mix(in srgb, var(--heat-violet-4) 62%, var(--surface-muted));
+  --heat-level-6: color-mix(in srgb, var(--heat-violet-4) 78%, var(--heat-violet-3));
+  --heat-level-7: color-mix(in srgb, var(--heat-violet-5) 84%, var(--heat-violet-4));
+  --heat-level-8: color-mix(in srgb, var(--heat-violet-6) 90%, var(--heat-violet-5));
+  --heat-glow: 139 92 246;
 
   display: grid;
   min-width: 0;
@@ -574,6 +604,7 @@
   grid-template-columns: repeat(var(--heat-columns), minmax(0, 1fr));
   grid-template-rows: repeat(7, auto);
   gap: var(--heat-gap);
+  overflow: visible;
 }
 
 .heatCell {
@@ -582,42 +613,71 @@
   aspect-ratio: 1;
   border: 0;
   border-radius: 3px;
-  background: var(--heat-empty);
+  background: transparent;
+  overflow: visible;
   padding: 0;
-  transition:
-    background-color var(--motion-fast) var(--motion-ease-out),
-    border-color var(--motion-fast) var(--motion-ease-out),
-    transform var(--motion-fast) var(--motion-ease-out);
+  transform-origin: center;
 }
 
 .heatCell:hover {
   z-index: 3;
-  transform: translateY(-1px);
 }
 
-.heatCell[data-level="1"] {
+.heatCellVisual {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--heat-empty);
+  pointer-events: none;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
+  transform-origin: center;
+  will-change: opacity, transform;
+}
+
+.heatCell[data-level="1"] .heatCellVisual {
   background: var(--heat-level-1);
 }
 
-.heatCell[data-level="2"] {
+.heatCell[data-level="2"] .heatCellVisual {
   background: var(--heat-level-2);
 }
 
-.heatCell[data-level="3"] {
+.heatCell[data-level="3"] .heatCellVisual {
   background: var(--heat-level-3);
 }
 
-.heatCell[data-level="4"] {
+.heatCell[data-level="4"] .heatCellVisual {
   background: var(--heat-level-4);
-  box-shadow: 0 0 0 1px rgb(var(--heat-glow) / 14%);
+}
+
+.heatCell[data-level="5"] .heatCellVisual {
+  background: var(--heat-level-5);
+}
+
+.heatCell[data-level="6"] .heatCellVisual {
+  background: var(--heat-level-6);
+}
+
+.heatCell[data-level="7"] .heatCellVisual {
+  background: var(--heat-level-7);
+}
+
+.heatCell[data-level="8"] .heatCellVisual {
+  background: var(--heat-level-8);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 28%, transparent),
+    0 0 0 1px rgb(var(--heat-glow) / 14%);
 }
 
 .heatCell[data-outside="true"] {
-  opacity: 0.38;
+  opacity: 0.5;
 }
 
-.heatCell[data-active="true"] {
+.heatCell[data-active="true"] .heatCellVisual {
   box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 38%, transparent),
     0 0 0 1px rgb(var(--heat-glow) / 42%),
     0 8px 18px rgb(var(--heat-glow) / 15%);
 }
@@ -725,6 +785,22 @@
 
 .heatWallLegendLevels i[data-level="4"] {
   background: var(--heat-level-4);
+}
+
+.heatWallLegendLevels i[data-level="5"] {
+  background: var(--heat-level-5);
+}
+
+.heatWallLegendLevels i[data-level="6"] {
+  background: var(--heat-level-6);
+}
+
+.heatWallLegendLevels i[data-level="7"] {
+  background: var(--heat-level-7);
+}
+
+.heatWallLegendLevels i[data-level="8"] {
+  background: var(--heat-level-8);
 }
 
 @keyframes heatTooltipIn {
