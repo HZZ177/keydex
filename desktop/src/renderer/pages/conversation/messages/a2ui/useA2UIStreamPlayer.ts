@@ -67,8 +67,8 @@ export function resetA2UIStreamPlayerPlaybackForTests(): void {
   settledPlaybackKeys.clear();
 }
 
-export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage): A2UIStreamPlayerState {
-  const playerKey = useMemo(() => buildA2UIStreamPlayerKey(parsed), [parsed]);
+export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage, scopeKey = ""): A2UIStreamPlayerState {
+  const playerKey = useMemo(() => buildA2UIStreamPlayerKey(parsed, scopeKey), [parsed, scopeKey]);
   const sourceSignature = useMemo(() => safeJsonStringify(parsed.payload), [parsed.payload]);
   const [initialState] = useState(() => createInitialPlayerState(playerKey, parsed, sourceSignature));
   const [snapshot, setSnapshot] = useState(() => initialState.snapshot);
@@ -364,7 +364,8 @@ function createSnapshot(
   };
 }
 
-export function buildA2UIStreamPlayerKey(parsed: ParsedA2UIMessage): string {
+export function buildA2UIStreamPlayerKey(parsed: ParsedA2UIMessage, scopeKey = ""): string {
+  const scopedIdentity = stringIdentity(scopeKey);
   const streamIdentity =
     stringIdentity(parsed.a2ui?.stream_id) ||
     stringIdentity(parsed.debug?.streamId) ||
@@ -372,6 +373,7 @@ export function buildA2UIStreamPlayerKey(parsed: ParsedA2UIMessage): string {
     stringIdentity(parsed.a2ui?.tool_call_id) ||
     stringIdentity(parsed.debug?.toolCallId) ||
     stringIdentity(parsed.interactionId) ||
+    scopedIdentity ||
     traceTurnIdentity(parsed) ||
     "a2ui";
   return [streamIdentity, parsed.renderKey].filter(Boolean).join(":");

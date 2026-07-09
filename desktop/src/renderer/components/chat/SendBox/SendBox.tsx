@@ -100,6 +100,7 @@ export interface SendBoxProps {
   workspaceRoots?: string[];
   externalFileRequest?: SendBoxExternalFileRequest | null;
   externalQuoteRequest?: SendBoxExternalQuoteRequest | null;
+  externalContextRequest?: SendBoxExternalContextRequest | null;
   selectedFiles?: SelectedFile[];
   selectedQuotes?: SelectedQuote[];
   leftHint?: ReactNode;
@@ -126,6 +127,7 @@ export interface SendBoxProps {
   onRefreshWorkspaceSkills?: () => void | Promise<void>;
   onExternalFileRequestHandled?: (requestId: number) => void;
   onExternalQuoteRequestHandled?: (requestId: number) => void;
+  onExternalContextRequestHandled?: (requestId: number) => void;
   onListWorkspaceDirectory?: (path: string) => Promise<WorkspaceSearchResult[]>;
   onSearchWorkspace?: WorkspaceFileSearchFn;
 }
@@ -140,6 +142,13 @@ export interface SendBoxExternalQuoteRequest {
   requestId: number;
   quote?: SelectedQuote | null;
   quotes?: SelectedQuote[];
+}
+
+export interface SendBoxExternalContextRequest {
+  requestId: number;
+  files?: SelectedFile[];
+  quotes?: SelectedQuote[];
+  attachments?: SelectedImageAttachment[];
 }
 
 type SlashMenuItem =
@@ -169,6 +178,7 @@ export function SendBox({
   workspaceRoots = [],
   externalFileRequest = null,
   externalQuoteRequest = null,
+  externalContextRequest = null,
   selectedFiles: controlledSelectedFiles,
   selectedQuotes: controlledSelectedQuotes,
   leftHint = null,
@@ -191,6 +201,7 @@ export function SendBox({
   onRefreshWorkspaceSkills,
   onExternalFileRequestHandled,
   onExternalQuoteRequestHandled,
+  onExternalContextRequestHandled,
   onListWorkspaceDirectory,
   onSearchWorkspace,
 }: SendBoxProps) {
@@ -199,8 +210,10 @@ export function SendBox({
   const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
   const attachmentMenuRef = useRef<HTMLDivElement | null>(null);
   const imagePreviewObjectUrlsRef = useRef<Set<string>>(new Set());
+  const imageAttachmentPreviewLoadKeysRef = useRef<Set<string>>(new Set());
   const handledExternalFileRequestIdRef = useRef<number | null>(null);
   const handledExternalQuoteRequestIdRef = useRef<number | null>(null);
+  const handledExternalContextRequestIdRef = useRef<number | null>(null);
   const [focused, setFocused] = useState(false);
   const [slashMode, setSlashMode] = useState<"root" | "skills">("root");
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
@@ -321,6 +334,34 @@ export function SendBox({
     });
     setActiveImagePreview(null);
   }, [revokePreviewUrl]);
+  const replaceImageAttachments = useCallback(
+    (attachments: SelectedImageAttachment[]) => {
+      setImageAttachments((current) => {
+        current.forEach((item) => revokePreviewUrl(item.previewUrl));
+        attachments.forEach((item) => rememberPreviewUrl(item.previewUrl));
+        return attachments;
+      });
+      setActiveImagePreview(null);
+    },
+    [rememberPreviewUrl, revokePreviewUrl],
+  );
+  const updateImageAttachmentPreview = useCallback(
+    (attachmentId: string, previewUrl: string) => {
+      if (!attachmentId || !previewUrl) {
+        return;
+      }
+      rememberPreviewUrl(previewUrl);
+      setImageAttachments((current) =>
+        current.map((item) =>
+          item.attachment_id === attachmentId && !item.previewUrl ? { ...item, previewUrl } : item,
+        ),
+      );
+      setActiveImagePreview((current) =>
+        current?.attachment_id === attachmentId && !current.previewUrl ? { ...current, previewUrl } : current,
+      );
+    },
+    [rememberPreviewUrl],
+  );
   const canSubmit =
     !busy &&
     !attachmentLoading &&
@@ -499,6 +540,54 @@ export function SendBox({
       setAtBrowseState(null);
     }
   }, [atBrowseState, atQuery, editorValue]);
+
+  useEffect(() => {
+    imageAttachments.forEach((attachment) => {
+      const attachmentId = attachment.attachment_id || attachment.id;
+      if (attachment.previewUrl || !attachmentId || imageAttachmentPreviewLoadKeysRef.current.has(attachmentId)) {
+        return;
+      }
+      imageAttachmentPreviewLoadKeysRef.current.add(attachmentId);
+      void runtime.attachments
+        .readMedia(attachmentId)
+        .then((media) => {
+          updateImageAttachmentPreview(attachmentId, media.data_url);
+        })
+        .catch(() => {
+          imageAttachmentPreviewLoadKeysRef.current.delete(attachmentId);
+        });
+    });
+  }, [imageAttachments, runtime, updateImageAttachmentPreview]);
+
+  useEffect(() => {
+    if (!externalContextRequest) {
+      return;
+    }
+    if (handledExternalContextRequestIdRef.current === externalContextRequest.requestId) {
+      return;
+    }
+    handledExternalContextRequestIdRef.current = externalContextRequest.requestId;
+    const files = canUseFileContext ? externalContextRequest.files ?? [] : [];
+    const quotes = externalContextRequest.quotes ?? [];
+    dispatchFileSelection({ type: "clear" });
+    dispatchQuoteSelection({ type: "clear" });
+    if (files.length) {
+      dispatchFileSelection(files.length === 1 ? { type: "add", file: files[0] } : { type: "addMany", files });
+    }
+    if (quotes.length) {
+      dispatchQuoteSelection(quotes.length === 1 ? { type: "add", quote: quotes[0] } : { type: "addMany", quotes });
+    }
+    replaceImageAttachments(externalContextRequest.attachments ?? []);
+    onExternalContextRequestHandled?.(externalContextRequest.requestId);
+    inputRef.current?.focus();
+  }, [
+    canUseFileContext,
+    dispatchFileSelection,
+    dispatchQuoteSelection,
+    externalContextRequest,
+    onExternalContextRequestHandled,
+    replaceImageAttachments,
+  ]);
 
   useEffect(() => {
     if (!externalFileRequest || !canUseFileContext) {

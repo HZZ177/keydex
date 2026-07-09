@@ -252,6 +252,14 @@
   --a2ui-choice-coverflow-shadow-skew-x: 0deg;
   --a2ui-choice-coverflow-shadow-x: 0px;
   --a2ui-choice-coverflow-shadow-y: 15px;
+  --a2ui-choice-card-border: color-mix(in srgb, var(--color-border-default) 56%, transparent);
+  --a2ui-choice-card-bg-top: color-mix(in srgb, var(--surface-muted) 38%, var(--color-bg-elevated));
+  --a2ui-choice-card-bg-bottom: color-mix(in srgb, var(--surface-muted) 58%, var(--color-bg-elevated));
+  --a2ui-choice-card-bg-base: color-mix(in srgb, var(--surface-muted) 46%, var(--color-bg-elevated));
+  --a2ui-choice-card-text-opacity: 1;
+  --a2ui-choice-card-filter: none;
+  --a2ui-choice-selected-frame-outer: color-mix(in srgb, var(--color-success-6) 0%, transparent);
+  --a2ui-choice-selected-frame-inner: color-mix(in srgb, var(--color-success-6) 0%, transparent);
   position: relative;
   display: block;
   flex: 0 0 184px;
@@ -417,16 +425,21 @@
   height: 100%;
   min-height: inherit;
   grid-template-rows: auto 1fr;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 56%, transparent);
+  border: 1px solid var(--a2ui-choice-card-border);
   border-radius: inherit;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-elevated) 96%, transparent), color-mix(in srgb, var(--surface-muted) 34%, var(--color-bg-elevated))),
-    var(--color-bg-elevated);
+    linear-gradient(
+      180deg,
+      var(--a2ui-choice-card-bg-top),
+      var(--a2ui-choice-card-bg-bottom)
+    ),
+    var(--a2ui-choice-card-bg-base);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 88%, transparent),
     0 1px 1px color-mix(in srgb, var(--color-text-primary) 6%, transparent),
     0 9px 18px -14px color-mix(in srgb, var(--color-text-primary) 30%, transparent),
     0 22px 38px -30px color-mix(in srgb, var(--color-text-primary) 18%, transparent);
+  filter: var(--a2ui-choice-card-filter);
   overflow: hidden;
   padding: 16px;
   opacity: var(--a2ui-choice-coverflow-opacity);
@@ -476,6 +489,7 @@
   letter-spacing: 0;
   line-height: 1;
   transform: translateZ(18px);
+  transition: opacity 180ms var(--motion-ease-out);
 }
 
 .option:hover .optionFace {
@@ -487,7 +501,7 @@
     0 26px 42px -32px color-mix(in srgb, var(--color-text-primary) 20%, transparent);
 }
 
-.option:hover .optionFace::before {
+.option:not([data-selected="true"]):hover .optionFace::before {
   content: none;
 }
 
@@ -653,6 +667,12 @@
   transform: translate(-50%, -50%) scale(0.4);
 }
 
+.option[data-selected="true"] {
+  --a2ui-choice-card-border: color-mix(in srgb, var(--color-success-6) 20%, var(--color-border-default));
+  --a2ui-choice-selected-frame-outer: color-mix(in srgb, var(--color-success-6) 26%, transparent);
+  --a2ui-choice-selected-frame-inner: color-mix(in srgb, var(--color-success-6) 16%, transparent);
+}
+
 .option[data-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.56;
@@ -662,7 +682,7 @@
   cursor: default;
 }
 
-.option[data-readonly="true"]:hover .optionFace {
+.option[data-readonly="true"]:not([data-selected="true"]):hover .optionFace {
   border-color: color-mix(in srgb, var(--color-border-subtle) 78%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 88%, transparent),
@@ -671,13 +691,45 @@
     0 22px 38px -30px color-mix(in srgb, var(--color-text-primary) 18%, transparent);
 }
 
-.option[data-readonly="true"]:hover .optionFace::before {
+.option[data-readonly="true"]:not([data-selected="true"]):hover .optionFace::before {
   opacity: 0;
 }
 
+.option[data-selected="true"] .optionFace::before,
+.option[data-selected="true"] .optionFace::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  transform: translateZ(2px);
+}
+
+.option[data-selected="true"] .optionFace::before {
+  inset: 7px;
+  border: 1px solid var(--a2ui-choice-selected-frame-outer);
+  border-radius: 20px;
+  opacity: 0.76;
+}
+
+.option[data-selected="true"] .optionFace::after {
+  inset: 11px;
+  border: 1px solid var(--a2ui-choice-selected-frame-inner);
+  border-radius: 16px;
+  opacity: 0.78;
+}
+
 .option[data-dimmed="true"] {
-  opacity: 0.54;
-  filter: saturate(0.76);
+  --a2ui-choice-card-border: color-mix(in srgb, var(--color-border-default) 46%, transparent);
+  --a2ui-choice-card-bg-top: color-mix(in srgb, var(--surface-muted) 54%, var(--color-bg-elevated));
+  --a2ui-choice-card-bg-bottom: color-mix(in srgb, var(--surface-muted) 70%, var(--color-bg-elevated));
+  --a2ui-choice-card-bg-base: color-mix(in srgb, var(--surface-muted) 62%, var(--color-bg-elevated));
+  --a2ui-choice-card-text-opacity: 0.74;
+  --a2ui-choice-card-filter: saturate(0.88);
+}
+
+.option[data-dimmed="true"] .optionCorner,
+.option[data-dimmed="true"] .optionText {
+  opacity: var(--a2ui-choice-card-text-opacity);
 }
 
 .option input {
@@ -765,6 +817,7 @@
 
 .optionDescription {
   align-self: start;
+  box-sizing: border-box;
   color: var(--color-text-tertiary);
   display: -webkit-box;
   font-size: 12px;
@@ -773,6 +826,7 @@
   line-height: 1.62;
   overflow: hidden;
   overflow-wrap: anywhere;
+  padding: 1px 2px;
 }
 
 .optionDescriptionShell {
@@ -840,7 +894,7 @@
   min-height: 0;
   max-height: none;
   align-self: stretch;
-  padding-right: 6px;
+  padding: 1px 6px 1px 2px;
   -webkit-line-clamp: unset;
   overflow: auto;
   overscroll-behavior: contain;

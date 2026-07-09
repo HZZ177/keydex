@@ -73,6 +73,7 @@ type ChoiceCarouselDragState = {
 };
 
 const ACTION_BADGE_DONE_MS = 420;
+const ACTION_BADGE_LOADING_MS = 120;
 const CHOICE_CAROUSEL_SLIDER_THRESHOLD = 10;
 const OPTION_CARD_DESCRIPTION_LIMIT = 96;
 const CHOICE_CARD_LAYOUT_TRANSITION: A2InteractiveMotionTransition = {
@@ -450,7 +451,7 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
     setError(null);
     try {
       const trimmed = note.trim();
-      await onSubmit(
+      const submitPromise = onSubmit(
         parsed.interactionId,
         {
           selected_values: correctionMode ? [] : selectedValues,
@@ -458,6 +459,17 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
         },
         message.threadId,
       );
+      if (!mountedRef.current || actionTokenRef.current !== actionToken) {
+        return;
+      }
+      void Promise.resolve(submitPromise).catch((reason) => {
+        if (mountedRef.current && actionTokenRef.current === actionToken) {
+          setError(errorMessage(reason));
+          setActionPhase(null);
+          setLocalSubmitted(false);
+        }
+      });
+      await waitForActionBadgeLoading();
       if (!mountedRef.current || actionTokenRef.current !== actionToken) {
         return;
       }
@@ -488,7 +500,18 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
     setActionPhase({ kind: "cancel", stage: "loading" });
     setError(null);
     try {
-      await onCancel(parsed.interactionId, note.trim() || "用户取消", message.threadId);
+      const cancelPromise = onCancel(parsed.interactionId, note.trim() || "用户取消", message.threadId);
+      if (!mountedRef.current || actionTokenRef.current !== actionToken) {
+        return;
+      }
+      void Promise.resolve(cancelPromise).catch((reason) => {
+        if (mountedRef.current && actionTokenRef.current === actionToken) {
+          setError(errorMessage(reason));
+          setActionPhase(null);
+          setLocalSubmitted(false);
+        }
+      });
+      await waitForActionBadgeLoading();
       if (!mountedRef.current || actionTokenRef.current !== actionToken) {
         return;
       }
@@ -1899,6 +1922,12 @@ function actionBadgeLabel(stage: ActionBadgeStage, idle: string, loading: string
 function waitForActionBadgeDone(): Promise<void> {
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, ACTION_BADGE_DONE_MS);
+  });
+}
+
+function waitForActionBadgeLoading(): Promise<void> {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ACTION_BADGE_LOADING_MS);
   });
 }
 

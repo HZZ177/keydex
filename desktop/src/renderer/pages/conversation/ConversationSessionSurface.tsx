@@ -134,6 +134,7 @@ export function ConversationSessionSurface({
   });
   const draft = controller.draft;
   const setDraft = controller.setDraft;
+  const composerContextRequest = controller.composerContextRequest;
   const fileChipRequest = controller.fileChipRequest;
   const quoteChipRequest = controller.quoteChipRequest;
   const selectedSkill = controller.selectedSkill;
@@ -704,6 +705,7 @@ export function ConversationSessionSurface({
         onOpenFileReference={panelModel.openFileReference}
         onSlashCommand={handleSlashCommand}
         onRefreshWorkspaceSkills={() => panelModel.refreshWorkspaceSkills({ forceReload: true })}
+        externalContextRequest={composerContextRequest}
         externalFileRequest={fileChipRequest}
         externalQuoteRequest={sidecarExternalQuoteRequest ?? quoteChipRequest}
         onExternalQuoteRequestHandled={handleExternalQuoteRequestHandled}

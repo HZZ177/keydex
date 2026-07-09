@@ -10,6 +10,7 @@ import {
 import {
   agentAttachmentFromSelected,
   selectedQuoteFromText,
+  type SendBoxExternalContextRequest,
   type SendBoxExternalFileRequest,
   type SendBoxExternalQuoteRequest,
   type SelectedFile,
@@ -106,6 +107,8 @@ export interface AgentSessionController {
   setDraft: (value: string | ((current: string) => string)) => void;
   selectedSkill: WorkspaceSkillSummary | null;
   setSelectedSkill: (skill: WorkspaceSkillSummary | null) => void;
+  restoreComposerDraft: (draft: AgentSessionControllerComposerDraft) => void;
+  composerContextRequest: SendBoxExternalContextRequest | null;
   fileChipRequest: SendBoxExternalFileRequest | null;
   quoteChipRequest: SendBoxExternalQuoteRequest | null;
   loading: boolean;
@@ -158,6 +161,14 @@ export interface AgentSessionController {
   approvalError: string | null;
 }
 
+export interface AgentSessionControllerComposerDraft {
+  value: string;
+  files?: SelectedFile[];
+  quotes?: SelectedQuote[];
+  attachments?: SelectedImageAttachment[];
+  selectedSkill?: WorkspaceSkillSummary | null;
+}
+
 export function useAgentSessionController({
   runtime,
   sessionId = "",
@@ -178,6 +189,7 @@ export function useAgentSessionController({
   const [draft, setDraft] = useState("");
   const [fileChipRequest, setFileChipRequest] = useState<SendBoxExternalFileRequest | null>(null);
   const [quoteChipRequest, setQuoteChipRequest] = useState<SendBoxExternalQuoteRequest | null>(null);
+  const [composerContextRequest, setComposerContextRequest] = useState<SendBoxExternalContextRequest | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<WorkspaceSkillSummary | null>(null);
   const [requestState, setRequestState] = useState<AgentSessionRuntimeState | null>(null);
   const [localRuntimeDetail, setLocalRuntimeDetail] = useState<string | null>(null);
@@ -567,6 +579,17 @@ export function useAgentSessionController({
     });
   }, [session?.workspace_id, sessionId]);
 
+  const restoreComposerDraft = useCallback((nextDraft: AgentSessionControllerComposerDraft) => {
+    setDraft(nextDraft.value);
+    setSelectedSkill(nextDraft.selectedSkill ?? null);
+    setComposerContextRequest((current) => ({
+      requestId: (current?.requestId ?? 0) + 1,
+      files: nextDraft.files ?? [],
+      quotes: nextDraft.quotes ?? [],
+      attachments: nextDraft.attachments ?? [],
+    }));
+  }, []);
+
   const resolveSessionId = useCallback(
     async (message: string, contextItems: AgentContextItem[], model: RuntimeSelectedModel | null) => {
       if (sessionId) {
@@ -938,19 +961,21 @@ export function useAgentSessionController({
   return useMemo(
     () => ({
       state,
-    dispatch,
-    session,
-    sessionViewState,
-    threadTasks,
-    activeTask,
-    taskRunState,
-    agentMessages,
+      dispatch,
+      session,
+      sessionViewState,
+      threadTasks,
+      activeTask,
+      taskRunState,
+      agentMessages,
       runtimeState,
       pendingApproval,
       draft,
       setDraft,
       selectedSkill,
       setSelectedSkill,
+      restoreComposerDraft,
+      composerContextRequest,
       fileChipRequest,
       quoteChipRequest,
       loading,
@@ -988,6 +1013,7 @@ export function useAgentSessionController({
       dispatch,
       draft,
       fileChipRequest,
+      composerContextRequest,
       loadOlderHistory,
       loading,
       loadingOlderHistory,
@@ -998,6 +1024,7 @@ export function useAgentSessionController({
       runtimeDetail,
       runtimeState,
       resolveMcpElicitation,
+      restoreComposerDraft,
       selectedSkill,
       send,
       sendText,

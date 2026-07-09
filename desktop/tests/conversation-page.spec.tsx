@@ -747,6 +747,181 @@ describe("ConversationPage", () => {
     expect((await screen.findByTestId("notification-item")).textContent).toContain("已回溯到此处");
   });
 
+  it("restores structured composer context when reversing a user message", async () => {
+    const session = agentSession({
+      id: "ses-1",
+      title: "Workspace session",
+      session_type: "workspace",
+      workspace_id: "ws-1",
+      cwd: "D:/repo",
+      workspace_roots: ["D:/repo"],
+      workspace: workspace("ws-1", "repo", "D:/repo"),
+    });
+    const initialHistory = [
+      historyMessage("user", "please review", {
+        messageEventId: "evt-user-1",
+        contextItems: [
+          {
+            id: "skill:dev-plan",
+            type: "skill",
+            label: "/dev-plan",
+            content: "Plan work",
+            source: "workspace",
+            skill_name: "dev-plan",
+            skillName: "dev-plan",
+            description: "Plan work",
+            locator: ".keydex/skills/dev-plan/SKILL.md",
+            metadata: {
+              kind: "skill",
+              skill_name: "dev-plan",
+              source: "workspace",
+              description: "Plan work",
+              locator: ".keydex/skills/dev-plan/SKILL.md",
+            },
+          },
+          {
+            id: "quote:main",
+            type: "source_quote",
+            label: "main.ts",
+            content: "export const answer = 42;",
+            role: "HumanMessage",
+            source: "follow",
+            path: "src/main.ts",
+            name: "main.ts",
+            fileType: "file",
+            metadata: {
+              kind: "source_quote",
+              source: "selection",
+              path: "src/main.ts",
+              name: "main.ts",
+              line_start: 3,
+              line_end: 4,
+              source_start: 20,
+              source_end: 45,
+            },
+          },
+          {
+            id: "file:readme",
+            type: "file",
+            label: "README.md",
+            content: "workspace file: README.md",
+            role: "HumanMessage",
+            source: "follow",
+            path: "README.md",
+            name: "README.md",
+            fileType: "file",
+            metadata: {
+              kind: "file",
+              source: "workspace",
+              path: "README.md",
+              name: "README.md",
+              fileType: "file",
+            },
+          },
+        ],
+        attachments: [
+          {
+            id: "att-1",
+            attachment_id: "att-1",
+            type: "image",
+            name: "chart.png",
+            path: "D:/repo/chart.png",
+            source: "picker",
+            mime_type: "image/png",
+            size: 128,
+          },
+        ],
+      }),
+      historyMessage("assistant", "done", { messageEventId: "evt-ai-1" }),
+    ];
+    const loadHistory = vi
+      .fn()
+      .mockResolvedValueOnce(historyResponse(session, initialHistory))
+      .mockResolvedValue(historyResponse(session, []));
+    const reverseSession = vi.fn().mockResolvedValue({
+      session,
+      source: branchSource({ message_event_id: "evt-user-1", checkpoint_id: null }),
+    });
+    const chat = vi.fn();
+    const { runtime } = fakeRuntime({
+      session,
+      chat,
+      loadHistory,
+      reverseSession,
+      workspaceListSkills: vi.fn().mockResolvedValue({
+        workspace_root: "D:/repo",
+        fingerprint: "test-fingerprint",
+        loaded_at: "2026-06-25T12:00:00Z",
+        skills: [
+          {
+            name: "dev-plan",
+            description: "Plan work",
+            source: "workspace",
+            label: "/dev-plan",
+            locator: ".keydex/skills/dev-plan/SKILL.md",
+          },
+        ],
+        diagnostics: [],
+      }),
+    });
+
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "回溯到此处" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认回溯" }));
+
+    const dock = await screen.findByTestId("conversation-composer");
+    await waitFor(() => {
+      expect(within(dock).getByRole("textbox").textContent).toBe("please review");
+      expect(dock.textContent).toContain("dev-plan");
+      expect(dock.textContent).toContain("main.ts");
+      expect(dock.textContent).toContain("README.md");
+      expect(dock.querySelector('[title="chart.png"]')).not.toBeNull();
+      expect(runtime.attachments.readMedia).toHaveBeenCalledWith("att-1");
+      expect(dock.querySelector('img[src="data:image/png;base64,AA=="]')).not.toBeNull();
+    });
+
+    const previewButton = dock.querySelector<HTMLButtonElement>('[title="chart.png"]');
+    expect(previewButton).not.toBeNull();
+    fireEvent.click(previewButton!);
+    const dialog = await screen.findByRole("dialog", { name: "chart.png" });
+    expect(dialog.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,AA==");
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    const sendButton = dock.querySelector<HTMLButtonElement>('button[type="submit"]');
+    expect(sendButton).not.toBeNull();
+    await waitFor(() => {
+      expect(sendButton?.disabled).toBe(false);
+    });
+    fireEvent.click(sendButton!);
+
+    await waitFor(() => {
+      expect(chat).toHaveBeenCalled();
+    });
+    const payload = chat.mock.calls[0][0];
+    expect(payload.message).toBe("please review");
+    expect(payload.attachments).toEqual([
+      {
+        id: "att-1",
+        attachment_id: "att-1",
+        type: "image",
+        name: "chart.png",
+        path: "D:/repo/chart.png",
+        source: "picker",
+        mime_type: "image/png",
+        size: 128,
+      },
+    ]);
+    expect(payload.runtime_params.skill_activation).toEqual({
+      skill_name: "dev-plan",
+      source: "workspace",
+      origin: "slash",
+    });
+    expect(payload.runtime_params.message_injection).toHaveLength(2);
+    expect(JSON.stringify(payload.runtime_params.message_injection)).toContain("src/main.ts");
+    expect(JSON.stringify(payload.runtime_params.message_injection)).toContain("README.md");
+  });
+
   it("shows reverse failure copy with a reverse-specific prefix", async () => {
     const session = agentSession({ id: "ses-1", title: "源会话" });
     const reverseSession = vi.fn().mockRejectedValue({
@@ -3009,6 +3184,21 @@ function fakeRuntime({
       ),
       readMedia: vi.fn(),
       search: workspaceSearch,
+    },
+    attachments: {
+      uploadImage: vi.fn(),
+      uploadLocalFile: vi.fn(),
+      registerImagePath: vi.fn(),
+      importImageUrl: vi.fn(),
+      readMedia: vi.fn().mockResolvedValue({
+        attachment_id: "att-1",
+        path: "D:/repo/chart.png",
+        name: "chart.png",
+        media_type: "image",
+        mime_type: "image/png",
+        size: 128,
+        data_url: "data:image/png;base64,AA==",
+      }),
     },
   } as unknown as RuntimeBridge;
   return {

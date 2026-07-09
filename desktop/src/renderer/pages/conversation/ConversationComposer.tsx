@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import {
   SendBox,
+  type SendBoxExternalContextRequest,
   type SendBoxExternalFileRequest,
   type SendBoxExternalQuoteRequest,
   type SelectedFile,
@@ -54,6 +55,8 @@ export interface ConversationComposerProps {
   onRefreshWorkspaceSkills?: () => void | Promise<void>;
   onExternalFileRequestHandled?: (requestId: number) => void;
   onExternalQuoteRequestHandled?: (requestId: number) => void;
+  onExternalContextRequestHandled?: (requestId: number) => void;
+  externalContextRequest?: SendBoxExternalContextRequest | null;
   externalFileRequest: SendBoxExternalFileRequest | null;
   externalQuoteRequest: SendBoxExternalQuoteRequest | null;
   controls?: ReactNode;
@@ -101,6 +104,8 @@ export function ConversationComposer({
   onRefreshWorkspaceSkills,
   onExternalFileRequestHandled,
   onExternalQuoteRequestHandled,
+  onExternalContextRequestHandled,
+  externalContextRequest = null,
   externalFileRequest,
   externalQuoteRequest,
   controls,
@@ -169,6 +174,8 @@ export function ConversationComposer({
       onRefreshWorkspaceSkills={onRefreshWorkspaceSkills}
       onExternalFileRequestHandled={onExternalFileRequestHandled}
       onExternalQuoteRequestHandled={onExternalQuoteRequestHandled}
+      onExternalContextRequestHandled={onExternalContextRequestHandled}
+      externalContextRequest={externalContextRequest}
       externalFileRequest={externalFileRequest}
       externalQuoteRequest={externalQuoteRequest}
       allowFileSelection={Boolean(onSearchWorkspace || onListWorkspaceDirectory)}

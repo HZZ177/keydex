@@ -427,6 +427,49 @@ describe("A2ChoiceBlock", () => {
     }
   });
 
+  it("does not keep notification stack cancel loading when another interaction remains pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const onCancel = vi.fn(() => new Promise<void>(() => undefined));
+      render(
+        <A2UIBlock
+          message={choiceMessage({
+            payload: {
+              presentation_mode: "notification_stack",
+              options: [
+                { label: "通知 A", value: "notice_a", description: "第一条通知" },
+                { label: "通知 B", value: "notice_b", description: "第二条通知" },
+              ],
+            },
+          })}
+          onSubmit={vi.fn()}
+          onCancel={onCancel}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "取消" }));
+
+      expect(onCancel).toHaveBeenCalledWith("int-choice-1", "用户取消", "ses-1");
+      expect(screen.getByRole("button", { name: "取消中" }).getAttribute("data-badge-state")).toBe("loading");
+
+      await act(async () => {
+        vi.advanceTimersByTime(120);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByRole("button", { name: "已取消" }).getAttribute("data-badge-state")).toBe("done");
+
+      await act(async () => {
+        vi.advanceTimersByTime(420);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByRole("button", { name: "已取消" }).getAttribute("data-badge-state")).toBe("done");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not center a card when only its selection button is clicked", async () => {
     render(<A2UIBlock message={choiceMessage()} onSubmit={vi.fn()} onCancel={vi.fn()} />);
 
@@ -439,13 +482,10 @@ describe("A2ChoiceBlock", () => {
     expect(optionElement(/方案 C/).getAttribute("data-coverflow-position")).toBe("next");
   });
 
-  it("animates the action badge through loading and done states", async () => {
+  it("does not keep the submit badge loading when the transport promise hangs", async () => {
     vi.useFakeTimers();
     try {
-      let resolveSubmit!: () => void;
-      const onSubmit = vi.fn(() => new Promise<void>((resolve) => {
-        resolveSubmit = resolve;
-      }));
+      const onSubmit = vi.fn(() => new Promise<void>(() => undefined));
       render(<A2UIBlock message={choiceMessage()} onSubmit={onSubmit} onCancel={vi.fn()} />);
 
       clickChoiceButton("方案 A");
@@ -454,7 +494,7 @@ describe("A2ChoiceBlock", () => {
       expect(screen.getByRole("button", { name: "提交中" }).getAttribute("data-badge-state")).toBe("loading");
 
       await act(async () => {
-        resolveSubmit();
+        vi.advanceTimersByTime(120);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -465,6 +505,8 @@ describe("A2ChoiceBlock", () => {
         vi.advanceTimersByTime(420);
         await Promise.resolve();
       });
+
+      expect(screen.getByRole("button", { name: "已提交" }).getAttribute("data-badge-state")).toBe("done");
     } finally {
       vi.useRealTimers();
     }

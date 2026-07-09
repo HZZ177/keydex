@@ -99,6 +99,8 @@ def test_interactive_tool_descriptions_encourage_suitable_a2ui_usage() -> None:
     assert "以上都不对" in registry.require("choice").tool_description
     assert "缺少多个关键参数" in registry.require("form").tool_description
     assert "优先调用" in registry.require("form").tool_description
+    assert "信息装配台" in registry.require("form").tool_description
+    assert "独立字段槽" in registry.require("form").tool_description
 
 
 def test_interactive_schemas_include_mature_inline_ui_metadata() -> None:
@@ -115,8 +117,11 @@ def test_interactive_schemas_include_mature_inline_ui_metadata() -> None:
 
     form_field_properties = registry.require("form").input_schema["properties"]["fields"]["items"]["properties"]
     form_option_properties = form_field_properties["options"]["items"]["properties"]
+    form_submit_properties = registry.require("form").submit_schema["properties"]
     assert {"help", "default_value", "min", "max", "step"}.issubset(form_field_properties)
     assert {"badge", "disabled"}.issubset(form_option_properties)
+    assert form_submit_properties["result_type"]["enum"] == ["values", "correction"]
+    assert "correction_note" in form_submit_properties
 
 
 def test_registry_rejects_render_key_conflicts_with_existing_tools() -> None:

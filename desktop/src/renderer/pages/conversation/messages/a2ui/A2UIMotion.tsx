@@ -597,8 +597,7 @@ function hoverMotionFor(variant: InteractiveMotionVariant, selected: boolean) {
   }
   if (variant === "field") {
     return {
-      y: -5,
-      scale: 1.006,
+      y: -2,
       transition: { duration: 0.24, ease: A2UI_MOTION_EASE },
     };
   }

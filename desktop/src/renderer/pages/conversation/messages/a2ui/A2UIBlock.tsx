@@ -78,7 +78,7 @@ export function A2UIBlock(props: A2UIBlockProps) {
 function A2UIBlockContent({ message, onSubmit, onCancel, debugInfoEnabled, children }: A2UIBlockProps) {
   const [debugOpen, setDebugOpen] = useState(false);
   const rawParsed = useMemo(() => parseA2UIMessage(message), [message]);
-  const streamPlayer = useA2UIStreamPlayer(rawParsed);
+  const streamPlayer = useA2UIStreamPlayer(rawParsed, message.id);
   const parsed = useMemo(
     () => ({
       ...rawParsed,

@@ -348,8 +348,11 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             mode="interactive",
             tool_description=(
                 "当缺少多个关键参数或需要用户补充结构化信息时优先调用，通过小型表单收集输入；"
-                "字段应保持少而关键；可为字段提供 help、default_value、placeholder、min/max/step，"
-                "让用户能快速确认并提交；该工具会等待用户提交或取消。"
+                "前端会把字段渲染成类似信息装配台的独立字段槽，而不是传统后台表单；"
+                "字段应保持少而关键，优先 3-7 个，避免把可通过上下文推断的信息也要求用户填写；"
+                "每个字段尽量提供清晰 label、placeholder、help，select/multiselect 必须提供简短明确的 options；"
+                "number 字段可提供 min/max/step，必要时可给 default_value 让用户快速确认；"
+                "该工具会等待用户提交或取消，适合收集结构化参数，不适合普通追问一句话即可解决的场景。"
             ),
             input_schema=_object_schema(
                 properties={
@@ -399,6 +402,15 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             submit_schema=_object_schema(
                 properties={
                     "values": {"type": "object", "description": "用户提交的表单值，键为 fields.name。"},
+                    "result_type": {
+                        "type": "string",
+                        "enum": ["values", "correction"],
+                        "description": "提交类型：values 表示提交表单字段，correction 表示用户认为以上信息不对并提交修正说明。",
+                    },
+                    "correction_note": {
+                        "type": "string",
+                        "description": "当 result_type=correction 时，用户输入的修正说明。",
+                    },
                     "note": {"type": "string", "description": "用户填写的备注，可选。"},
                 },
                 required=["values"],

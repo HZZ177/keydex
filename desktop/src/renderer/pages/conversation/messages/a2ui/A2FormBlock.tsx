@@ -1,4 +1,14 @@
-import { Check, ChevronDown } from "lucide-react";
+import {
+  CalendarDays,
+  Check,
+  ChevronDown,
+  CircleDot,
+  Hash,
+  ListChecks,
+  Pilcrow,
+  ToggleLeft,
+  Type as TextIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
@@ -67,17 +77,26 @@ type ActionBadgePhase = {
   kind: ActionKind;
   stage: Exclude<ActionBadgeStage, "idle">;
 };
+type FormCompletion = {
+  filledCount: number;
+  requiredCount: number;
+  requiredFilledCount: number;
+  totalCount: number;
+};
 
 const ACTION_BADGE_DONE_MS = 420;
+const ACTION_BADGE_LOADING_MS = 120;
 
 export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlockProps) {
-  const model = useMemo(() => formModel(parsed), [parsed]);
+  const rawModel = useMemo(() => formModel(parsed), [parsed]);
+  const model = useStableFormModel(rawModel, parsed, message.id);
   const [values, setValues] = useState<FormValues>(() => initialValues(model));
   const [note, setNote] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [localSubmitting, setLocalSubmitting] = useState<"submit" | "cancel" | null>(null);
   const [actionPhase, setActionPhase] = useState<ActionBadgePhase | null>(null);
   const [localSubmitted, setLocalSubmitted] = useState(false);
+  const [correctionMode, setCorrectionMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const actionTokenRef = useRef(0);
@@ -86,10 +105,13 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
     Boolean(parsed.interactionId) &&
     parsed.interaction?.can_submit !== false &&
     !localSubmitted;
-  const canSubmit = actionable && Boolean(onSubmit) && !localSubmitting;
+  const canSubmit = actionable && Boolean(onSubmit) && !localSubmitting && (!correctionMode || Boolean(note.trim()));
   const canCancel = actionable && Boolean(onCancel) && !localSubmitting;
   const showInputPreview = model.status === "waiting_input" || isStreamingPreviewStatus(model.status);
+  const formStreaming = isStreamingPreviewStatus(model.status) && !parsed.historyHydrated;
   const motionLive = shouldUseInteractiveFormMotion(parsed, model.status);
+  const fieldInputsDisabled = correctionMode || Boolean(localSubmitting);
+  const completion = formCompletion(model.fields, values);
   const motionState = formMotionState({
     error,
     localSubmitted,
@@ -102,7 +124,7 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
   const cancelButtonLabel = actionBadgeLabel(cancelBadgeStage, "取消", "取消中", "已取消");
   const submitButtonLabel = actionBadgeLabel(submitBadgeStage, model.submitLabel, "提交中", "已提交");
   const actionState =
-    actionPhase?.kind ?? localSubmitting ?? (localSubmitted ? "submitted" : hasAnyFormValue(values) ? "dirty" : "idle");
+    actionPhase?.kind ?? localSubmitting ?? (localSubmitted ? "submitted" : hasAnyFormValue(values) || correctionMode ? "dirty" : "idle");
 
   useEffect(() => {
     return () => {
@@ -118,6 +140,7 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
     setLocalSubmitting(null);
     setActionPhase(null);
     setLocalSubmitted(false);
+    setCorrectionMode(false);
     setError(null);
   }, [parsed.interactionId, model.status]);
 
@@ -133,14 +156,33 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
     });
   };
 
+  const toggleCorrectionMode = () => {
+    if (!actionable || localSubmitting) {
+      return;
+    }
+    setCorrectionMode((current) => {
+      const next = !current;
+      if (next) {
+        setValues(emptyFormValues(model.fields));
+        setErrors({});
+      } else {
+        setNote("");
+      }
+      return next;
+    });
+  };
+
   const submit = async () => {
     if (!canSubmit || !onSubmit || !parsed.interactionId) {
       return;
     }
-    const nextErrors = validateValues(model.fields, values);
-    if (Object.keys(nextErrors).length) {
-      setErrors(nextErrors);
-      return;
+    const trimmed = note.trim();
+    if (!correctionMode) {
+      const nextErrors = validateValues(model.fields, values);
+      if (Object.keys(nextErrors).length) {
+        setErrors(nextErrors);
+        return;
+      }
     }
     const actionToken = actionTokenRef.current + 1;
     actionTokenRef.current = actionToken;
@@ -148,15 +190,31 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
     setActionPhase({ kind: "submit", stage: "loading" });
     setError(null);
     try {
-      const trimmed = note.trim();
-      await onSubmit(
+      const submitPromise = onSubmit(
         parsed.interactionId,
-        {
-          values: normalizedSubmitValues(model.fields, values),
-          ...(trimmed ? { note: trimmed } : {}),
-        },
+        correctionMode
+          ? {
+              values: {},
+              result_type: "correction",
+              correction_note: trimmed,
+            }
+          : {
+              values: normalizedSubmitValues(model.fields, values),
+              ...(trimmed ? { note: trimmed } : {}),
+            },
         message.threadId,
       );
+      if (!mountedRef.current || actionTokenRef.current !== actionToken) {
+        return;
+      }
+      void Promise.resolve(submitPromise).catch((reason) => {
+        if (mountedRef.current && actionTokenRef.current === actionToken) {
+          setError(errorMessage(reason));
+          setActionPhase(null);
+          setLocalSubmitted(false);
+        }
+      });
+      await waitForActionBadgeLoading();
       if (!mountedRef.current || actionTokenRef.current !== actionToken) {
         return;
       }
@@ -187,7 +245,18 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
     setActionPhase({ kind: "cancel", stage: "loading" });
     setError(null);
     try {
-      await onCancel(parsed.interactionId, note.trim() || "用户取消", message.threadId);
+      const cancelPromise = onCancel(parsed.interactionId, note.trim() || "用户取消", message.threadId);
+      if (!mountedRef.current || actionTokenRef.current !== actionToken) {
+        return;
+      }
+      void Promise.resolve(cancelPromise).catch((reason) => {
+        if (mountedRef.current && actionTokenRef.current === actionToken) {
+          setError(errorMessage(reason));
+          setActionPhase(null);
+          setLocalSubmitted(false);
+        }
+      });
+      await waitForActionBadgeLoading();
       if (!mountedRef.current || actionTokenRef.current !== actionToken) {
         return;
       }
@@ -217,17 +286,19 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
       motionState={motionState}
       {...parsed.streamPlayer?.rootProps}
     >
-      <A2InteractiveMotionItem
-        className={styles.intro}
-        live={motionLive}
-        motionKey="form:intro"
-        motionKind="form-intro"
-        variant="intro"
-      >
-        <h3 className={styles.title}>{model.title}</h3>
-        {model.description ? <p className={styles.description}>{model.description}</p> : null}
-        <div className={styles.meta}>{formMeta(model)}</div>
-      </A2InteractiveMotionItem>
+      {!showInputPreview ? (
+        <A2InteractiveMotionItem
+          className={styles.intro}
+          live={motionLive}
+          motionKey="form:intro"
+          motionKind="form-intro"
+          variant="intro"
+        >
+          <h3 className={styles.title}>{model.title}</h3>
+          {model.description ? <p className={styles.description}>{model.description}</p> : null}
+          <div className={styles.meta}>{formMeta(model)}</div>
+        </A2InteractiveMotionItem>
+      ) : null}
       <A2MotionPresence>
         {showInputPreview ? (
           <A2InteractiveMotionItem
@@ -239,17 +310,19 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
             variant="scene"
           >
             <div className={styles.workspace}>
-              <FieldProgressRail
+              <FormCanvasHeader
+                completion={completion}
                 errors={errors}
                 fields={model.fields}
                 live={motionLive}
+                model={model}
                 values={values}
               />
               <div className={styles.fields}>
                 {model.fields.map((field, index) => {
                   return (
                     <FormFieldControl
-                      disabled={!actionable || Boolean(localSubmitting)}
+                      disabled={!actionable || fieldInputsDisabled}
                       error={errors[field.name]}
                       field={field}
                       idPrefix={message.id}
@@ -274,6 +347,17 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
                 正在生成字段
               </A2InteractiveMotionItem>
             ) : null}
+            {model.fields.length ? (
+              <A2InteractiveMotionItem
+                className={styles.help}
+                live={motionLive}
+                motionKey="form:help"
+                motionKind="form-help"
+                variant="tray"
+              >
+                {formStreaming ? "正在生成字段中，请稍后..." : formHelpText(completion)}
+              </A2InteractiveMotionItem>
+            ) : null}
             <div className={styles.footerComposer}>
               <A2InteractiveMotionItem
                 className={styles.correctionPanel}
@@ -282,17 +366,29 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
                 motionKind="form-correction"
                 variant="field"
               >
-                <label htmlFor={`${message.id}:a2ui-form-correction`}>
-                  不对！输入信息告诉 Keydex 应该怎么做
-                </label>
-                <textarea
-                  id={`${message.id}:a2ui-form-correction`}
-                  value={note}
-                  maxLength={500}
+                <button
+                  aria-expanded={correctionMode}
+                  aria-controls={`${message.id}:a2ui-form-correction`}
+                  className={styles.correctionToggle}
+                  data-selected={correctionMode ? "true" : "false"}
                   disabled={!actionable || Boolean(localSubmitting)}
-                  placeholder="例如：字段不对、选项不够、或者告诉 Keydex 重新按什么方向生成..."
-                  onChange={(event) => setNote(event.currentTarget.value)}
-                />
+                  type="button"
+                  onClick={toggleCorrectionMode}
+                >
+                  以上信息不对！我来告诉 Keydex 应该怎么做
+                </button>
+                {correctionMode ? (
+                  <textarea
+                    aria-label="我来告诉 Keydex 应该怎么做"
+                    autoFocus
+                    id={`${message.id}:a2ui-form-correction`}
+                    value={note}
+                    maxLength={500}
+                    disabled={!actionable || Boolean(localSubmitting)}
+                    placeholder="例如：字段不对、还需要补充其他信息，或者换一种提问方式..."
+                    onChange={(event) => setNote(event.currentTarget.value)}
+                  />
+                ) : null}
               </A2InteractiveMotionItem>
               <A2InteractiveMotionItem
                 className={styles.actions}
@@ -358,51 +454,53 @@ function ActionBadgeContent({
   );
 }
 
-function FieldProgressRail({
+function FormCanvasHeader({
+  completion,
   errors,
   fields,
   live,
+  model,
   values,
 }: {
+  completion: FormCompletion;
   errors: Record<string, string>;
   fields: FormField[];
   live: boolean;
+  model: FormModel;
   values: FormValues;
 }) {
   if (!fields.length) {
-    return null;
+    return (
+      <A2InteractiveMotionItem
+        className={styles.canvasHeader}
+        live={live}
+        motionKey="form:canvas-header"
+        motionKind="form-canvas-header"
+        variant="tray"
+      >
+        <div className={styles.canvasHeading}>
+          <h3 className={styles.title}>{model.title}</h3>
+          {model.description ? <p className={styles.description}>{model.description}</p> : null}
+        </div>
+        <span className={styles.completionPill}>暂无字段</span>
+      </A2InteractiveMotionItem>
+    );
   }
-  const filledCount = fields.filter((field) => isFieldFilled(field, values[field.name])).length;
   return (
     <A2InteractiveMotionItem
-      className={styles.progressRail}
+      className={styles.canvasHeader}
       live={live}
-      motionKey="form:progress-rail"
-      motionKind="form-progress-rail"
+      motionKey="form:canvas-header"
+      motionKind="form-canvas-header"
       variant="tray"
     >
-      <div className={styles.progressSummary}>
-        <span>信息轨道</span>
-        <strong>{filledCount}/{fields.length}</strong>
+      <div className={styles.canvasHeading}>
+        <h3 className={styles.title}>{model.title}</h3>
+        {model.description ? <p className={styles.description}>{model.description}</p> : null}
       </div>
-      <div className={styles.progressItems}>
-        {fields.map((field, index) => {
-          const filled = isFieldFilled(field, values[field.name]);
-          const hasError = Boolean(errors[field.name]);
-          return (
-            <span
-              className={styles.progressItem}
-              data-error={hasError ? "true" : "false"}
-              data-filled={filled ? "true" : "false"}
-              key={field.name}
-              title={field.label}
-            >
-              <span>{String(index + 1).padStart(2, "0")}</span>
-              <strong>{field.label}</strong>
-            </span>
-          );
-        })}
-      </div>
+      <span className={styles.completionPill}>
+        已完成 {completion.filledCount}/{completion.totalCount} · {completion.requiredCount} 个必填
+      </span>
     </A2InteractiveMotionItem>
   );
 }
@@ -443,10 +541,13 @@ function FormFieldControl({
       selected={filled}
       variant="field"
     >
-      <span className={styles.fieldIndex} aria-hidden="true">
-        {String(order).padStart(2, "0")}
-      </span>
       <div className={styles.fieldBrief}>
+        <span className={styles.fieldIcon} aria-hidden="true">
+          {fieldTypeIcon(field)}
+        </span>
+        <span className={styles.fieldIndex} aria-hidden="true">
+          {String(order).padStart(2, "0")}
+        </span>
         {field.type === "boolean" ? (
           <span className={styles.label}>
             <span>{field.label}</span>
@@ -481,7 +582,7 @@ function FormFieldControl({
               onChange={(event) => onChange(event.currentTarget.checked)}
             />
             <span aria-hidden="true" className={styles.checkboxMark} />
-            <span>{value === true ? `${field.label} · 已确认` : field.label}</span>
+            <span>{field.label}</span>
           </label>
         ) : (
           renderFieldInput(field, id, value, disabled, onChange)
@@ -838,6 +939,40 @@ function formMeta(model: FormModel): string {
   return `${model.fields.length} 个字段，${requiredCount} 个必填`;
 }
 
+function formCompletion(fields: FormField[], values: FormValues): FormCompletion {
+  let filledCount = 0;
+  let requiredCount = 0;
+  let requiredFilledCount = 0;
+  for (const field of fields) {
+    const filled = isFieldFilled(field, values[field.name]);
+    if (filled) {
+      filledCount += 1;
+    }
+    if (field.required) {
+      requiredCount += 1;
+      if (filled) {
+        requiredFilledCount += 1;
+      }
+    }
+  }
+  return {
+    filledCount,
+    requiredCount,
+    requiredFilledCount,
+    totalCount: fields.length,
+  };
+}
+
+function formHelpText(completion: FormCompletion): string {
+  if (!completion.totalCount) {
+    return "暂无字段";
+  }
+  if (!completion.requiredCount) {
+    return `已完成 ${completion.filledCount}/${completion.totalCount}`;
+  }
+  return `已完成 ${completion.filledCount}/${completion.totalCount} · 必填 ${completion.requiredFilledCount}/${completion.requiredCount}`;
+}
+
 function actionBadgeStage(phase: ActionBadgePhase | null, kind: ActionKind): ActionBadgeStage {
   return phase?.kind === kind ? phase.stage : "idle";
 }
@@ -855,6 +990,12 @@ function actionBadgeLabel(stage: ActionBadgeStage, idle: string, loading: string
 function waitForActionBadgeDone(): Promise<void> {
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, ACTION_BADGE_DONE_MS);
+  });
+}
+
+function waitForActionBadgeLoading(): Promise<void> {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ACTION_BADGE_LOADING_MS);
   });
 }
 
@@ -877,6 +1018,25 @@ function fieldTypeLabel(field: FormField): string {
   }
 }
 
+function fieldTypeIcon(field: FormField) {
+  switch (field.type) {
+    case "textarea":
+      return <Pilcrow size={13} strokeWidth={1.9} />;
+    case "number":
+      return <Hash size={13} strokeWidth={1.9} />;
+    case "boolean":
+      return <ToggleLeft size={13} strokeWidth={1.9} />;
+    case "select":
+      return <CircleDot size={13} strokeWidth={1.9} />;
+    case "multiselect":
+      return <ListChecks size={13} strokeWidth={1.9} />;
+    case "date":
+      return <CalendarDays size={13} strokeWidth={1.9} />;
+    default:
+      return <TextIcon size={13} strokeWidth={1.9} />;
+  }
+}
+
 function formModel(parsed: ParsedA2UIMessage): FormModel {
   const payload = parsed.payload;
   const interaction = parsed.interaction;
@@ -888,9 +1048,37 @@ function formModel(parsed: ParsedA2UIMessage): FormModel {
     fields: formFields(payload.fields),
     status: normalizeStatus(interaction?.status ?? parsed.status),
     submittedValues: asRecord(submitResult?.values) ?? asRecord(submitResult) ?? {},
-    submittedNote: scalarText(submitResult?.note) || scalarText(submitResult?.comment),
+    submittedNote: scalarText(submitResult?.correction_note) || scalarText(submitResult?.note) || scalarText(submitResult?.comment),
     renderState: parsed.renderState,
   };
+}
+
+function useStableFormModel(model: FormModel, parsed: ParsedA2UIMessage, messageId: string): FormModel {
+  const previousRef = useRef<{ key: string; model: FormModel } | null>(null);
+  const key = formStreamStabilityKey(parsed, messageId);
+  const previewing =
+    isStreamingPreviewStatus(model.status) ||
+    Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
+  const previous = previousRef.current;
+
+  if (!previewing) {
+    previousRef.current = { key, model };
+    return model;
+  }
+
+  if (previous?.key === key && previous.model.fields.length > model.fields.length) {
+    return {
+      ...model,
+      fields: previous.model.fields,
+    };
+  }
+
+  previousRef.current = { key, model };
+  return model;
+}
+
+function formStreamStabilityKey(parsed: ParsedA2UIMessage, messageId: string): string {
+  return [messageId, parsed.renderKey || "form"].filter(Boolean).join(":");
 }
 
 function formFieldUnitKey(field: FormField): string {
@@ -968,6 +1156,20 @@ function initialValues(model: FormModel): FormValues {
       values[field.name] = normalizeDefaultFieldValue(field);
       continue;
     }
+    if (field.type === "boolean") {
+      values[field.name] = false;
+    } else if (field.type === "multiselect") {
+      values[field.name] = [];
+    } else {
+      values[field.name] = "";
+    }
+  }
+  return values;
+}
+
+function emptyFormValues(fields: FormField[]): FormValues {
+  const values: FormValues = {};
+  for (const field of fields) {
     if (field.type === "boolean") {
       values[field.name] = false;
     } else if (field.type === "multiselect") {

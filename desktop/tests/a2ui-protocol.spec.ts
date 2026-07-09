@@ -202,6 +202,45 @@ describe("A2UI protocol utilities", () => {
     ]);
   });
 
+  it("keeps concurrent choice and form streams isolated in one turn", () => {
+    const cache = new A2UIStreamCache();
+
+    cache.apply("a2ui_stream_start", {
+      trace_id: "trace-parallel",
+      turn_index: 2,
+      render_key: "form",
+      stream: {
+        status: "start",
+        chunk_index: 0,
+        args_delta: '{"title":"表单"',
+        args_text_length: 13,
+      },
+    }, {
+      idFactory: () => "msg-form",
+      now: 5_000,
+    });
+    cache.apply("a2ui_stream_start", {
+      trace_id: "trace-parallel",
+      turn_index: 2,
+      render_key: "choice",
+      stream: {
+        status: "start",
+        chunk_index: 0,
+        args_delta: '{"title":"选择"',
+        args_text_length: 13,
+      },
+    }, {
+      idFactory: () => "msg-choice",
+      now: 5_001,
+    });
+
+    const snapshot = cache.snapshot();
+
+    expect(snapshot).toHaveLength(2);
+    expect(snapshot.map((message) => message.a2uiDebug?.renderKey).sort()).toEqual(["choice", "form"]);
+    expect(snapshot.map((message) => message.id).sort()).toEqual(["msg-choice", "msg-form"]);
+  });
+
   it("merges A2UI stream chunks by explicit stream group when stream id drifts", () => {
     const cache = new A2UIStreamCache();
     const groupId = "trace-drift:a2ui:model-run:0";

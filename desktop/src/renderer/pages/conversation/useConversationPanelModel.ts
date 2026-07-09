@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { RuntimeBridge, WorkspaceEntry, WorkspaceSearchResult } from "@/runtime";
-import type { SelectedFile } from "@/renderer/components/chat/SendBox";
+import type { RuntimeBridge, WorkspaceEntry, WorkspaceSearchResult, WorkspaceSkillSummary } from "@/runtime";
+import {
+  selectedImageAttachmentFromAgent,
+  selectedQuoteFromText,
+  type SelectedFile,
+  type SelectedImageAttachment,
+  type SelectedQuote,
+} from "@/renderer/components/chat/SendBox";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import { useWorkspaceSkills } from "@/renderer/hooks/useWorkspaceSkills";
-import type { AgentSessionController } from "@/renderer/hooks/useAgentSessionController";
+import type {
+  AgentSessionController,
+  AgentSessionControllerComposerDraft,
+} from "@/renderer/hooks/useAgentSessionController";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import {
   usePreview,
@@ -27,6 +36,8 @@ import type {
   AgentActionEnvelope,
   AgentErrorData,
   AgentMiddlewareProgressData,
+  AgentContextItem,
+  AgentFileAttachment,
   AgentSession,
   AgentSessionFork,
   ThreadTask,
@@ -480,7 +491,7 @@ export function useConversationPanelModel({
         } else {
           controller.dispatch({ type: "session/upsert", session: response.session });
           await controller.reloadHistory();
-          controller.setDraft(message.content);
+          controller.restoreComposerDraft(composerDraftFromMessage(message));
         }
       } catch (reason) {
         notifications.error(branchActionErrorMessage(mode, reason));
@@ -821,6 +832,190 @@ function runtimeSideEffectKey(event: AgentActionEnvelope): string {
   return "";
 }
 
+function composerDraftFromMessage(message: ConversationMessage): AgentSessionControllerComposerDraft {
+  const contextItems = contextItemsFromMessagePayload(message.payload);
+  const contextDraft = composerDraftContextFromItems(contextItems);
+  return {
+    value: message.content,
+    ...contextDraft,
+    attachments: imageAttachmentsFromMessagePayload(message.payload),
+  };
+}
+
+function contextItemsFromMessagePayload(payload: Record<string, unknown>): AgentContextItem[] {
+  const raw = payload.contextItems;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((item): item is AgentContextItem => Boolean(item && typeof item === "object"));
+}
+
+function composerDraftContextFromItems(
+  items: AgentContextItem[],
+): Pick<AgentSessionControllerComposerDraft, "files" | "quotes" | "selectedSkill"> {
+  const files: SelectedFile[] = [];
+  const quotes: SelectedQuote[] = [];
+  let selectedSkill: WorkspaceSkillSummary | null = null;
+
+  items.forEach((item, index) => {
+    const metadata = objectRecord(item.metadata);
+    const type = contextItemType(item, metadata);
+    if (type === "skill") {
+      selectedSkill ??= selectedSkillFromContextItem(item, metadata);
+      return;
+    }
+    if (type === "source_quote" || type === "quote") {
+      const quote = selectedQuoteFromContextItem(item, metadata, type);
+      if (quote) {
+        quotes.push(quote);
+      }
+      return;
+    }
+    if (type === "file") {
+      const file = selectedFileFromContextItem(item, metadata, index);
+      if (file) {
+        files.push(file);
+      }
+    }
+  });
+
+  return { files, quotes, selectedSkill };
+}
+
+function contextItemType(item: AgentContextItem, metadata: Record<string, unknown> | null): string {
+  return trimmedString(item.type) || trimmedString(metadata?.kind);
+}
+
+function selectedSkillFromContextItem(
+  item: AgentContextItem,
+  metadata: Record<string, unknown> | null,
+): WorkspaceSkillSummary | null {
+  const name =
+    trimmedString(item.skill_name) ||
+    trimmedString(item.skillName) ||
+    trimmedString(metadata?.skill_name) ||
+    trimmedString(metadata?.skillName) ||
+    trimmedString(item.label).replace(/^\//, "");
+  if (!name) {
+    return null;
+  }
+  const source = workspaceSkillSource(trimmedString(item.source) || trimmedString(metadata?.source));
+  const label = trimmedString(item.label) || `/${name}`;
+  const locator = trimmedString(item.locator) || trimmedString(metadata?.locator) || `.keydex/skills/${name}/SKILL.md`;
+  return {
+    name,
+    description: trimmedString(item.description) || trimmedString(metadata?.description) || trimmedString(item.content),
+    source,
+    label,
+    locator,
+  };
+}
+
+function selectedQuoteFromContextItem(
+  item: AgentContextItem,
+  metadata: Record<string, unknown> | null,
+  type: string,
+): SelectedQuote | null {
+  const content = trimmedString(item.content);
+  if (!content) {
+    return null;
+  }
+  const annotationId = trimmedString(metadata?.annotation_id) || trimmedString(item.metadata?.annotationId);
+  const annotationComment =
+    trimmedString(metadata?.annotation_comment) || trimmedString(item.metadata?.annotationComment);
+  const source: SelectedQuote["source"] =
+    annotationId || trimmedString(metadata?.source) === "annotation" ? "annotation" : "selection";
+  const path = trimmedString(item.path) || trimmedString(metadata?.path);
+  if (type === "source_quote" && path) {
+    return selectedQuoteFromText(content, {
+      source,
+      annotationId,
+      annotationComment,
+      file: {
+        path,
+        name: trimmedString(item.name) || trimmedString(metadata?.name) || fileName(path),
+        lineStart: optionalNumber(metadata?.line_start, metadata?.lineStart),
+        lineEnd: optionalNumber(metadata?.line_end, metadata?.lineEnd),
+        sourceStart: optionalNumber(metadata?.source_start, metadata?.sourceStart),
+        sourceEnd: optionalNumber(metadata?.source_end, metadata?.sourceEnd),
+      },
+    });
+  }
+  return selectedQuoteFromText(content, {
+    source,
+    annotationId,
+    annotationComment,
+  });
+}
+
+function selectedFileFromContextItem(
+  item: AgentContextItem,
+  metadata: Record<string, unknown> | null,
+  index: number,
+): SelectedFile | null {
+  const path = trimmedString(item.path) || trimmedString(metadata?.path);
+  if (!path) {
+    return null;
+  }
+  const annotationId = trimmedString(metadata?.annotation_id) || trimmedString(item.metadata?.annotationId);
+  const annotationComment =
+    trimmedString(metadata?.annotation_comment) || trimmedString(item.metadata?.annotationComment);
+  return {
+    id: trimmedString(item.id) || `file:${index}:${path}`,
+    path,
+    name: trimmedString(item.name) || trimmedString(metadata?.name) || trimmedString(item.label) || fileName(path),
+    type: selectedFileType(trimmedString(item.fileType) || trimmedString(metadata?.fileType)),
+    source: selectedFileSource(trimmedString(metadata?.source)),
+    annotationId: annotationId || null,
+    annotationComment: annotationComment || null,
+  };
+}
+
+function imageAttachmentsFromMessagePayload(payload: Record<string, unknown>): SelectedImageAttachment[] {
+  const raw = payload.attachments;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+    const attachment = item as AgentFileAttachment;
+    const type = trimmedString(attachment.type);
+    const mimeType = trimmedString(attachment.mime_type) || trimmedString(attachment.mimeType);
+    if (type !== "image" && !mimeType.startsWith("image/")) {
+      return [];
+    }
+    const selected = selectedImageAttachmentFromAgent(attachment);
+    return selected ? [selected] : [];
+  });
+}
+
+function workspaceSkillSource(value: string): WorkspaceSkillSummary["source"] {
+  return value === "system" ? "system" : "workspace";
+}
+
+function selectedFileType(value: string): SelectedFile["type"] {
+  return value === "directory" ? "directory" : "file";
+}
+
+function selectedFileSource(value: string): SelectedFile["source"] {
+  return value === "dropped" || value === "pasted" || value === "picker" ? value : "workspace";
+}
+
+function optionalNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function fileName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
 function errorMessage(reason: unknown): string {
   if (reason instanceof Error && reason.message) {
     return reason.message;
@@ -964,6 +1159,10 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function trimmedString(value: unknown): string {
+  return stringValue(value).trim();
 }
 
 function numberValue(value: unknown): number | null {
