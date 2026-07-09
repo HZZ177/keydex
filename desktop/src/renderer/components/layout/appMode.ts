@@ -70,23 +70,50 @@ export function newPromptConversationPath(params: { sessionType?: string; worksp
 export function modeSwitchTargetsForPath(
   pathname: string,
   lastWorkbenchWorkspaceId?: string | null,
+  lastModePaths: Record<string, string | undefined> = {},
 ): Record<AppMode, string> {
   const mode = appModeFromPath(pathname);
   const workbenchRoute = parseWorkbenchPath(pathname);
+  const rememberedAgentPath = isAgentPrimaryPath(lastModePaths.agent) ? lastModePaths.agent : null;
+  const rememberedWorkbenchPath = isWorkbenchPath(lastModePaths.workbench ?? "") ? lastModePaths.workbench : null;
+  const rememberedProjectPath = isProjectPath(lastModePaths.project ?? "") ? lastModePaths.project : null;
+  const agentTarget = rememberedAgentPath ?? (workbenchRoute?.sessionId ? conversationPath(workbenchRoute.sessionId) : HOME_PATH);
+  const workbenchTarget = rememberedWorkbenchPath
+    ? rememberedWorkbenchPath
+    : lastWorkbenchWorkspaceId
+      ? workbenchPath(lastWorkbenchWorkspaceId)
+      : WORKBENCH_PATH;
   return {
-    agent: mode === "agent" ? pathname : workbenchRoute?.sessionId ? conversationPath(workbenchRoute.sessionId) : HOME_PATH,
-    workbench:
-      mode === "workbench"
-        ? pathname
-        : lastWorkbenchWorkspaceId
-          ? workbenchPath(lastWorkbenchWorkspaceId)
-          : WORKBENCH_PATH,
-    project: mode === "project" ? pathname : PROJECT_PATH,
+    agent: mode === "agent" ? pathname : agentTarget,
+    workbench: mode === "workbench" ? pathname : workbenchTarget,
+    project: mode === "project" ? pathname : (rememberedProjectPath ?? PROJECT_PATH),
   };
+}
+
+export function rememberableModePath(mode: AppMode, pathname: string, search = ""): string | null {
+  const fullPath = `${pathname}${search}`;
+  if (mode === "agent") {
+    return isAgentPrimaryPath(pathname) ? fullPath : null;
+  }
+  if (mode === "workbench") {
+    return isWorkbenchPath(pathname) ? fullPath : null;
+  }
+  if (mode === "project") {
+    return isProjectPath(pathname) ? fullPath : null;
+  }
+  return null;
 }
 
 function stripQuery(pathname: string): string {
   return pathname.split("?")[0] ?? pathname;
+}
+
+function isAgentPrimaryPath(pathname: string | undefined): pathname is string {
+  if (!pathname) {
+    return false;
+  }
+  const path = stripQuery(pathname);
+  return path === HOME_PATH || path.startsWith("/conversation/");
 }
 
 function decodeSegment(segment: string | undefined): string | undefined {

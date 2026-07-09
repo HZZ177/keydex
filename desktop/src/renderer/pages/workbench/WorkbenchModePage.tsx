@@ -19,6 +19,7 @@ import {
   type FilePreviewRevealRequest,
   type MarkdownOutlineItem,
   type MarkdownOutlineRevealRequest,
+  type WorkspaceFileBrowserState,
   type WorkspaceSelection,
 } from "@/renderer/components/workspace";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
@@ -84,6 +85,14 @@ interface WorkbenchPreviewTabsState {
   tabs: WorkbenchMainPreviewTabState[];
 }
 
+interface WorkbenchModeUiState {
+  previewBrowserWidth: number;
+  previewTabs: WorkbenchPreviewTabsState;
+  activeMainPreviewOutline: MarkdownOutlineItem[];
+  activeMainPreviewOutlineReady: boolean;
+  workspaceBrowserState: WorkspaceFileBrowserState | null;
+}
+
 interface WorkbenchPreviewTabMenuState {
   tabId: string;
   position: CSSProperties;
@@ -113,6 +122,7 @@ const EMPTY_WORKBENCH_PREVIEW_TABS: WorkbenchPreviewTabsState = {
   activeTabId: null,
   tabs: [],
 };
+const workbenchModeUiStateCacheByRuntime = new WeakMap<RuntimeBridge, Map<string, WorkbenchModeUiState>>();
 
 export function WorkbenchModePage({
   runtime,
@@ -139,12 +149,20 @@ export function WorkbenchModePage({
   const backendReady = runtimeConnection?.ready ?? true;
   const previewContext = useOptionalPreview();
   const layout = useLayoutState();
+  const workbenchUiScopeKey = workbenchModeUiScopeKey({ workspaceId, selectedSessionId, externalPreviewPath });
+  const workbenchUiStateCache = workbenchModeUiStateCacheForRuntime(runtime);
+  const initialWorkbenchUiStateRef = useRef<WorkbenchModeUiState | null | undefined>(undefined);
+  if (initialWorkbenchUiStateRef.current === undefined) {
+    initialWorkbenchUiStateRef.current = workbenchUiStateCache.get(workbenchUiScopeKey) ?? null;
+  }
+  const initialWorkbenchUiState = initialWorkbenchUiStateRef.current;
+  const workbenchUiStateScopeKeyRef = useRef(workbenchUiScopeKey);
   const workspaceShellRef = useRef<HTMLElement | null>(null);
   const canvasContentRef = useRef<HTMLDivElement | null>(null);
   const previewBrowserRootWidthRef = useRef(0);
   const handledFilePanelRequestIdRef = useRef(previewContext?.filePanelRequest?.requestId ?? 0);
   const handledPreviewEntryStampRef = useRef(previewContext?.activeEntry ? previewEntryStamp(previewContext.activeEntry) : "");
-  const mainPreviewRequestSeqRef = useRef(0);
+  const mainPreviewRequestSeqRef = useRef(maxWorkbenchPreviewRequestId(initialWorkbenchUiState?.previewTabs));
   const [creatingSession, setCreatingSession] = useState(false);
   const [btwSession, setBtwSession] = useState<AgentSession | null>(null);
   const [btwLoadedHistoryTurnCount, setBtwLoadedHistoryTurnCount] = useState<number | null>(null);
@@ -153,13 +171,22 @@ export function WorkbenchModePage({
     phase: "idle",
     reservedWidth: 0,
   });
-  const [previewBrowserWidth, setPreviewBrowserWidth] = useState(DEFAULT_WORKBENCH_BROWSER_WIDTH);
+  const [previewBrowserWidth, setPreviewBrowserWidth] = useState(
+    initialWorkbenchUiState?.previewBrowserWidth ?? DEFAULT_WORKBENCH_BROWSER_WIDTH,
+  );
   const [workbenchPreviewTabs, setWorkbenchPreviewTabs] =
-    useState<WorkbenchPreviewTabsState>(EMPTY_WORKBENCH_PREVIEW_TABS);
-  const [activeMainPreviewOutline, setActiveMainPreviewOutline] = useState<MarkdownOutlineItem[]>([]);
-  const [activeMainPreviewOutlineReady, setActiveMainPreviewOutlineReady] = useState(false);
+    useState<WorkbenchPreviewTabsState>(initialWorkbenchUiState?.previewTabs ?? EMPTY_WORKBENCH_PREVIEW_TABS);
+  const [activeMainPreviewOutline, setActiveMainPreviewOutline] = useState<MarkdownOutlineItem[]>(
+    initialWorkbenchUiState?.activeMainPreviewOutline ?? [],
+  );
+  const [activeMainPreviewOutlineReady, setActiveMainPreviewOutlineReady] = useState(
+    initialWorkbenchUiState?.activeMainPreviewOutlineReady ?? false,
+  );
   const [mainPreviewOutlineRevealRequest, setMainPreviewOutlineRevealRequest] =
     useState<MarkdownOutlineRevealRequest | null>(null);
+  const [workspaceBrowserState, setWorkspaceBrowserState] = useState<WorkspaceFileBrowserState | null>(
+    initialWorkbenchUiState?.workspaceBrowserState ?? null,
+  );
   const activeWorkbenchPreviewTab = useMemo(
     () => workbenchPreviewTabs.tabs.find((tab) => tab.id === workbenchPreviewTabs.activeTabId) ?? null,
     [workbenchPreviewTabs.activeTabId, workbenchPreviewTabs.tabs],
@@ -534,17 +561,49 @@ export function WorkbenchModePage({
     }
     handledFilePanelRequestIdRef.current = previewContext?.filePanelRequest?.requestId ?? 0;
     handledPreviewEntryStampRef.current = previewContext?.activeEntry ? previewEntryStamp(previewContext.activeEntry) : "";
-    setWorkbenchPreviewTabs(EMPTY_WORKBENCH_PREVIEW_TABS);
+    const restoredState = workbenchUiStateCache.get(workbenchUiScopeKey) ?? null;
+    workbenchUiStateScopeKeyRef.current = workbenchUiScopeKey;
+    const restoredPreviewBrowserWidth = restoredState?.previewBrowserWidth ?? DEFAULT_WORKBENCH_BROWSER_WIDTH;
+    setPreviewBrowserWidth(restoredPreviewBrowserWidth);
+    applyWorkbenchPreviewBrowserWidth(restoredPreviewBrowserWidth);
+    mainPreviewRequestSeqRef.current = maxWorkbenchPreviewRequestId(restoredState?.previewTabs);
+    setWorkbenchPreviewTabs(restoredState?.previewTabs ?? EMPTY_WORKBENCH_PREVIEW_TABS);
+    setWorkspaceBrowserState(restoredState?.workspaceBrowserState ?? null);
     setBtwSession(null);
     setBtwLoadedHistoryTurnCount(null);
-    resetMainPreviewOutline();
+    setActiveMainPreviewOutline(restoredState?.activeMainPreviewOutline ?? []);
+    setActiveMainPreviewOutlineReady(restoredState?.activeMainPreviewOutlineReady ?? false);
+    setMainPreviewOutlineRevealRequest(null);
   }, [
+    applyWorkbenchPreviewBrowserWidth,
     externalPreviewPath,
     previewContext?.activeEntry,
     previewContext?.filePanelRequest?.requestId,
-    resetMainPreviewOutline,
     selectedSessionId,
+    workbenchUiStateCache,
+    workbenchUiScopeKey,
     workspaceId,
+  ]);
+
+  useEffect(() => {
+    if (workbenchUiStateScopeKeyRef.current !== workbenchUiScopeKey) {
+      return;
+    }
+    workbenchUiStateCache.set(workbenchUiScopeKey, {
+      previewBrowserWidth,
+      previewTabs: sanitizeWorkbenchPreviewTabs(workbenchPreviewTabs),
+      activeMainPreviewOutline,
+      activeMainPreviewOutlineReady,
+      workspaceBrowserState,
+    });
+  }, [
+    activeMainPreviewOutline,
+    activeMainPreviewOutlineReady,
+    previewBrowserWidth,
+    workbenchPreviewTabs,
+    workbenchUiStateCache,
+    workbenchUiScopeKey,
+    workspaceBrowserState,
   ]);
 
   useEffect(() => {
@@ -765,10 +824,12 @@ export function WorkbenchModePage({
                     previewPlacement="external"
                     previewOutline={activeMainPreviewOutline}
                     previewOutlineReady={activeMainPreviewOutlineReady}
+                    initialState={workspaceBrowserState}
                     onPreviewPathChange={openWorkspaceBrowserFilePreview}
                     onPreviewOutlineReveal={revealMainPreviewMarkdownOutlineItem}
                     onQuoteSelection={activeAssistantController.quoteSelection}
                     onStartChatFromAnnotation={activeAssistantController.startChatFromAnnotation}
+                    onStateChange={setWorkspaceBrowserState}
                   />
                 ) : (
                   <ExternalPreviewPendingPane
@@ -839,6 +900,52 @@ export function WorkbenchModePage({
 
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
+}
+
+function workbenchModeUiStateCacheForRuntime(runtime: RuntimeBridge): Map<string, WorkbenchModeUiState> {
+  const current = workbenchModeUiStateCacheByRuntime.get(runtime);
+  if (current) {
+    return current;
+  }
+  const next = new Map<string, WorkbenchModeUiState>();
+  workbenchModeUiStateCacheByRuntime.set(runtime, next);
+  return next;
+}
+
+function workbenchModeUiScopeKey({
+  workspaceId,
+  selectedSessionId,
+  externalPreviewPath,
+}: {
+  workspaceId?: string;
+  selectedSessionId?: string;
+  externalPreviewPath?: string;
+}) {
+  if (workspaceId) {
+    return `workspace:${workspaceId}:session:${selectedSessionId ?? ""}`;
+  }
+  if (externalPreviewPath) {
+    return `external:${hashText(externalPreviewPath)}`;
+  }
+  return "picker";
+}
+
+function sanitizeWorkbenchPreviewTabs(state: WorkbenchPreviewTabsState): WorkbenchPreviewTabsState {
+  if (!state.tabs.length) {
+    return EMPTY_WORKBENCH_PREVIEW_TABS;
+  }
+  return {
+    activeTabId: state.activeTabId,
+    tabs: state.tabs.map((tab) => ({
+      ...tab,
+      renderContext: null,
+      sourceEntryId: null,
+    })),
+  };
+}
+
+function maxWorkbenchPreviewRequestId(state?: WorkbenchPreviewTabsState | null): number {
+  return state?.tabs.reduce((maxRequestId, tab) => Math.max(maxRequestId, tab.requestId), 0) ?? 0;
 }
 
 function clampNumber(value: number, min: number, max: number): number {

@@ -104,6 +104,11 @@ const RIGHT_SIDEBAR_TAB_MENU_WIDTH = 148;
 const RIGHT_SIDEBAR_TAB_MENU_HEIGHT = 136;
 const RIGHT_SIDEBAR_TAB_MENU_EDGE = 8;
 
+interface LayoutUiState {
+  rightSidebarMode: "split" | "maximized";
+  rightSidebarPanelStateByScope: Record<string, RightSidebarScopePanelState>;
+}
+
 interface RightSidebarFilePanelState {
   id: string;
   filePreviewPath: string | null;
@@ -167,6 +172,7 @@ const EMPTY_RIGHT_SIDEBAR_SCOPE_STATE: RightSidebarScopePanelState = {
   initialPanelIds: [],
   nextPanelSeq: 0,
 };
+const layoutUiStateCacheByRuntime = new WeakMap<RuntimeBridge, Map<string, LayoutUiState>>();
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => unknown;
@@ -192,6 +198,16 @@ function clampRightSidebarRatioForLayout(ratio: number, maxRatio: number) {
 
 function initialShellWidth() {
   return typeof window === "undefined" ? 0 : Math.round(window.innerWidth);
+}
+
+function layoutUiStateCacheForRuntime(runtime: RuntimeBridge): Map<string, LayoutUiState> {
+  const current = layoutUiStateCacheByRuntime.get(runtime);
+  if (current) {
+    return current;
+  }
+  const next = new Map<string, LayoutUiState>();
+  layoutUiStateCacheByRuntime.set(runtime, next);
+  return next;
 }
 
 function measureShellWidth(shell: HTMLElement | null) {
@@ -267,10 +283,20 @@ export function Layout({
   const appModeNavigationTimerRef = useRef<number | null>(null);
   const shellWidthRef = useRef(initialShellWidth());
   const shellMeasureFrameRef = useRef<number | null>(null);
-  const [rightSidebarMode, setRightSidebarMode] = useState<"split" | "maximized">("split");
+  const layoutUiStateCache = layoutUiStateCacheForRuntime(runtime);
+  const initialLayoutUiStateRef = useRef<LayoutUiState | null | undefined>(undefined);
+  if (initialLayoutUiStateRef.current === undefined) {
+    initialLayoutUiStateRef.current = layoutUiStateCache.get("main") ?? null;
+  }
+  const initialLayoutUiState = initialLayoutUiStateRef.current;
+  const [rightSidebarMode, setRightSidebarMode] = useState<"split" | "maximized">(
+    initialLayoutUiState?.rightSidebarMode ?? "split",
+  );
   const [sidebarResizeActive, setSidebarResizeActive] = useState(false);
   const [rightSidebarResizeActive, setRightSidebarResizeActive] = useState(false);
-  const [rightSidebarPanelStateByScope, setRightSidebarPanelStateByScope] = useState<Record<string, RightSidebarScopePanelState>>({});
+  const [rightSidebarPanelStateByScope, setRightSidebarPanelStateByScope] = useState<
+    Record<string, RightSidebarScopePanelState>
+  >(initialLayoutUiState?.rightSidebarPanelStateByScope ?? {});
   const [productShowcasePhase, setProductShowcasePhase] = useState<ProductShowcaseOverlayPhase | null>(null);
   const { state, actions } = useLayoutState();
   const runtimeConnection = useOptionalRuntimeConnection();
@@ -408,6 +434,13 @@ export function Layout({
   useLayoutEffect(() => {
     applyRightSidebarGeometry();
   }, [activeSidebarWidth, applyRightSidebarGeometry, guardContentMinWidth, state.rightSidebarRatio]);
+
+  useEffect(() => {
+    layoutUiStateCache.set("main", {
+      rightSidebarMode,
+      rightSidebarPanelStateByScope,
+    });
+  }, [layoutUiStateCache, rightSidebarMode, rightSidebarPanelStateByScope]);
 
   useEffect(() => {
     const activeScopeKey = previewContext?.activeScopeKey ?? null;

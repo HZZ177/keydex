@@ -10,6 +10,7 @@ export interface LayoutState {
   previewWidth: number;
   workbenchAssistantDrawerWidth: number;
   lastWorkbenchWorkspaceId: string | null;
+  lastModePaths: Record<string, string | undefined>;
   isMobileLike: boolean;
 }
 
@@ -32,6 +33,7 @@ export type LayoutAction =
   | { type: "set-preview-width"; width: number }
   | { type: "set-workbench-assistant-drawer-width"; width: number }
   | { type: "set-last-workbench-workspace-id"; workspaceId: string | null }
+  | { type: "set-last-mode-path"; mode: string; path: string | null }
   | { type: "set-mobile-like"; value: boolean };
 
 export const LAYOUT_PREFERENCES_KEY = "keydex.layout.preferences";
@@ -60,6 +62,7 @@ export const defaultLayoutState: LayoutState = {
   previewWidth: 460,
   workbenchAssistantDrawerWidth: DEFAULT_WORKBENCH_ASSISTANT_DRAWER_WIDTH,
   lastWorkbenchWorkspaceId: null,
+  lastModePaths: {},
   isMobileLike: false,
 };
 
@@ -72,6 +75,7 @@ export interface LayoutPreferences {
   previewWidth?: number;
   workbenchAssistantDrawerWidth?: number;
   lastWorkbenchWorkspaceId?: string | null;
+  lastModePaths?: Record<string, string | undefined>;
 }
 
 export function clampSidebarWidth(width: number) {
@@ -178,6 +182,18 @@ export function layoutReducer(state: LayoutState, action: LayoutAction): LayoutS
         return state;
       }
       return { ...state, lastWorkbenchWorkspaceId: action.workspaceId };
+    case "set-last-mode-path": {
+      if (state.lastModePaths[action.mode] === (action.path ?? undefined)) {
+        return state;
+      }
+      const lastModePaths = { ...state.lastModePaths };
+      if (action.path) {
+        lastModePaths[action.mode] = action.path;
+      } else {
+        delete lastModePaths[action.mode];
+      }
+      return { ...state, lastModePaths };
+    }
     case "set-mobile-like":
       if (state.isMobileLike === action.value) {
         return state;
@@ -210,7 +226,22 @@ export function mergeLayoutPreferences(state: LayoutState, preferences: LayoutPr
       preferences.lastWorkbenchWorkspaceId === undefined
         ? state.lastWorkbenchWorkspaceId
         : preferences.lastWorkbenchWorkspaceId,
+    lastModePaths:
+      preferences.lastModePaths === undefined ? state.lastModePaths : { ...preferences.lastModePaths },
   };
+}
+
+function normalizeModePaths(value: unknown): Record<string, string | undefined> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const result: Record<string, string | undefined> = {};
+  for (const [mode, path] of Object.entries(value)) {
+    if (typeof path === "string") {
+      result[mode] = path;
+    }
+  }
+  return result;
 }
 
 export function readLayoutPreferences(storage: Pick<Storage, "getItem">): LayoutPreferences {
@@ -237,6 +268,11 @@ export function readLayoutPreferences(storage: Pick<Storage, "getItem">): Layout
           : parsed.lastWorkbenchWorkspaceId === null
             ? null
             : undefined,
+      lastModePaths:
+        normalizeModePaths(parsed.lastModePaths) ??
+        (typeof (parsed as { lastWorkbenchPath?: unknown }).lastWorkbenchPath === "string"
+          ? { workbench: (parsed as { lastWorkbenchPath: string }).lastWorkbenchPath }
+          : undefined),
     };
   } catch {
     return {};
@@ -255,6 +291,7 @@ export function writeLayoutPreferences(
     | "previewWidth"
     | "workbenchAssistantDrawerWidth"
     | "lastWorkbenchWorkspaceId"
+    | "lastModePaths"
   >,
 ) {
   storage.setItem(
@@ -268,6 +305,7 @@ export function writeLayoutPreferences(
       previewWidth: clampPanelWidth(state.previewWidth),
       workbenchAssistantDrawerWidth: clampWorkbenchAssistantDrawerWidth(state.workbenchAssistantDrawerWidth),
       lastWorkbenchWorkspaceId: state.lastWorkbenchWorkspaceId,
+      lastModePaths: state.lastModePaths,
     }),
   );
 }

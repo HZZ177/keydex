@@ -38,12 +38,25 @@ export interface WorkspacePanelProps {
   selectedPath?: string | null;
   revealSelectedPathRequestId?: number;
   bottomSafeArea?: string;
+  initialState?: WorkspacePanelState | null;
   onSelectFile?: (path: string) => void;
+  onStateChange?: (state: WorkspacePanelState) => void;
 }
 
 type EntryMap = Record<string, WorkspaceEntry[]>;
 type ErrorMap = Record<string, string>;
 type KeyboardTreeEntry = Pick<WorkspaceEntry, "path" | "type">;
+
+export interface WorkspacePanelState {
+  entriesByPath: Record<string, WorkspaceEntry[]>;
+  expandedPaths: string[];
+  bulkExpandedSubtreePaths: string[];
+  errorsByPath: Record<string, string>;
+  workspaceRoot: string;
+  selectedPath: string | null;
+  filterQuery: string;
+  keyboardActivePath: string | null;
+}
 const TREE_GROUP_TRANSITION_MS = 180;
 const ENTRY_NAME_TOOLTIP_DELAY_MS = 500;
 const SUBTREE_EXPAND_OPTIONS = {
@@ -62,22 +75,33 @@ export function WorkspacePanel({
   selectedPath: controlledSelectedPath,
   revealSelectedPathRequestId = 0,
   bottomSafeArea,
+  initialState = null,
   onSelectFile,
+  onStateChange,
 }: WorkspacePanelProps) {
+  const initialStateRef = useRef(initialState);
   const panelRef = useRef<HTMLElement | null>(null);
   const treeRef = useRef<HTMLDivElement | null>(null);
   const filterInputRef = useRef<HTMLInputElement | null>(null);
   const handledRevealSelectedPathRequestIdRef = useRef(0);
-  const [entriesByPath, setEntriesByPath] = useState<EntryMap>({});
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([""]));
-  const [bulkExpandedSubtreePaths, setBulkExpandedSubtreePaths] = useState<Set<string>>(() => new Set());
+  const [entriesByPath, setEntriesByPath] = useState<EntryMap>(() => initialState?.entriesByPath ?? {});
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => new Set(initialState?.expandedPaths ?? [""]),
+  );
+  const [bulkExpandedSubtreePaths, setBulkExpandedSubtreePaths] = useState<Set<string>>(
+    () => new Set(initialState?.bulkExpandedSubtreePaths ?? []),
+  );
   const [subtreeBusyPaths, setSubtreeBusyPaths] = useState<Set<string>>(() => new Set());
-  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(() => new Set());
-  const [errorsByPath, setErrorsByPath] = useState<ErrorMap>({});
-  const [workspaceRoot, setWorkspaceRoot] = useState("");
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [filterQuery, setFilterQuery] = useState("");
-  const [keyboardActivePath, setKeyboardActivePath] = useState<string | null>(null);
+  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(
+    () => new Set(initialState?.entriesByPath[""] ? [] : [""]),
+  );
+  const [errorsByPath, setErrorsByPath] = useState<ErrorMap>(() => initialState?.errorsByPath ?? {});
+  const [workspaceRoot, setWorkspaceRoot] = useState(initialState?.workspaceRoot ?? "");
+  const [selectedPath, setSelectedPath] = useState<string | null>(initialState?.selectedPath ?? null);
+  const [filterQuery, setFilterQuery] = useState(initialState?.filterQuery ?? "");
+  const [keyboardActivePath, setKeyboardActivePath] = useState<string | null>(
+    initialState?.keyboardActivePath ?? null,
+  );
   const [locateRequest, setLocateRequest] = useState<{ id: number; path: string } | null>(null);
   const onSelectFileRef = useRef(onSelectFile);
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
@@ -94,18 +118,40 @@ export function WorkspacePanel({
 
   useEffect(() => {
     let active = true;
-    setEntriesByPath({});
-    setErrorsByPath({});
-    setExpandedPaths(new Set([""]));
-    setBulkExpandedSubtreePaths(new Set());
+    const restoredState = initialStateRef.current;
+    const restoredRootEntries = restoredState?.entriesByPath[""];
+    setEntriesByPath(restoredState?.entriesByPath ?? {});
+    setErrorsByPath(restoredState?.errorsByPath ?? {});
+    setExpandedPaths(new Set(restoredState?.expandedPaths ?? [""]));
+    setBulkExpandedSubtreePaths(new Set(restoredState?.bulkExpandedSubtreePaths ?? []));
     setSubtreeBusyPaths(new Set());
-    setWorkspaceRoot("");
-    setSelectedPath(null);
-    setFilterQuery("");
-    setLoadingPaths(new Set([""]));
+    setWorkspaceRoot(restoredState?.workspaceRoot ?? "");
+    setSelectedPath(restoredState?.selectedPath ?? null);
+    setFilterQuery(restoredState?.filterQuery ?? "");
+    setKeyboardActivePath(restoredState?.keyboardActivePath ?? null);
+    setLoadingPaths(new Set(restoredRootEntries ? [] : [""]));
     if (!scope) {
       setErrorsByPath({ "": "工作区未绑定" });
       setLoadingPaths(new Set());
+      return () => {
+        active = false;
+      };
+    }
+    if (restoredRootEntries) {
+      void runtime.workspace
+        .listDirectory(scope, "")
+        .then((response) => {
+          if (!active) {
+            return;
+          }
+          setWorkspaceRoot(response.root);
+          setEntriesByPath((entries) => ({ ...entries, "": sortEntries(response.entries) }));
+        })
+        .catch((reason) => {
+          if (active) {
+            setErrorsByPath((errors) => ({ ...errors, "": errorMessage(reason) }));
+          }
+        });
       return () => {
         active = false;
       };
@@ -133,6 +179,29 @@ export function WorkspacePanel({
       active = false;
     };
   }, [runtime, scope]);
+
+  useEffect(() => {
+    onStateChange?.({
+      entriesByPath,
+      expandedPaths: Array.from(expandedPaths),
+      bulkExpandedSubtreePaths: Array.from(bulkExpandedSubtreePaths),
+      errorsByPath,
+      workspaceRoot,
+      selectedPath,
+      filterQuery,
+      keyboardActivePath,
+    });
+  }, [
+    bulkExpandedSubtreePaths,
+    entriesByPath,
+    errorsByPath,
+    expandedPaths,
+    filterQuery,
+    keyboardActivePath,
+    onStateChange,
+    selectedPath,
+    workspaceRoot,
+  ]);
 
   const rootEntries = entriesByPath[""] ?? [];
   const normalizedFilter = filterQuery.trim().toLowerCase();

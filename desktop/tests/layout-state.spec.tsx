@@ -38,6 +38,11 @@ describe("layout store", () => {
     state = layoutReducer(state, { type: "set-preview-width", width: 9999 });
     state = layoutReducer(state, { type: "set-workbench-assistant-drawer-width", width: 9999 });
     state = layoutReducer(state, { type: "set-last-workbench-workspace-id", workspaceId: "workspace-a" });
+    state = layoutReducer(state, {
+      type: "set-last-mode-path",
+      mode: "workbench",
+      path: "/workbench/workspace-a/session/session-a",
+    });
 
     expect(state.sidebarCollapsed).toBe(true);
     expect(state.rightSidebarOpen).toBe(true);
@@ -50,6 +55,7 @@ describe("layout store", () => {
     expect(state.previewWidth).toBe(MAX_PANEL_WIDTH);
     expect(state.workbenchAssistantDrawerWidth).toBe(MAX_WORKBENCH_ASSISTANT_DRAWER_WIDTH);
     expect(state.lastWorkbenchWorkspaceId).toBe("workspace-a");
+    expect(state.lastModePaths.workbench).toBe("/workbench/workspace-a/session/session-a");
   });
 
   it("reads and writes local layout preferences", () => {
@@ -70,6 +76,11 @@ describe("layout store", () => {
       previewWidth: 480,
       workbenchAssistantDrawerWidth: 380,
       lastWorkbenchWorkspaceId: "workspace-a",
+      lastModePaths: {
+        agent: "/conversation/session-a",
+        workbench: "/workbench/workspace-a/session/session-a",
+        project: "/project",
+      },
     });
 
     expect(store.has(LAYOUT_PREFERENCES_KEY)).toBe(true);
@@ -82,6 +93,11 @@ describe("layout store", () => {
       previewWidth: 480,
       workbenchAssistantDrawerWidth: 380,
       lastWorkbenchWorkspaceId: "workspace-a",
+      lastModePaths: {
+        agent: "/conversation/session-a",
+        workbench: "/workbench/workspace-a/session/session-a",
+        project: "/project",
+      },
     });
     expect(clampPanelWidth(Number.NaN)).toBe(MIN_PANEL_WIDTH);
     expect(clampRightSidebarRatio(9)).toBe(MAX_RIGHT_SIDEBAR_RATIO);
@@ -97,6 +113,7 @@ describe("layout store", () => {
     expect(legacyState.sidebarWidth).toBe(260);
     expect(legacyState.workbenchAssistantDrawerWidth).toBe(DEFAULT_WORKBENCH_ASSISTANT_DRAWER_WIDTH);
     expect(legacyState.lastWorkbenchWorkspaceId).toBeNull();
+    expect(legacyState.lastModePaths).toEqual({});
 
     const store = new Map<string, string>([
       [
@@ -104,6 +121,11 @@ describe("layout store", () => {
         JSON.stringify({
           workbenchAssistantDrawerWidth: 120,
           lastWorkbenchWorkspaceId: 42,
+          lastWorkbenchPath: 42,
+          lastModePaths: {
+            agent: "/conversation/session-a",
+            workbench: 42,
+          },
         }),
       ],
     ]);
@@ -120,11 +142,30 @@ describe("layout store", () => {
       previewWidth: undefined,
       workbenchAssistantDrawerWidth: 120,
       lastWorkbenchWorkspaceId: undefined,
+      lastModePaths: {
+        agent: "/conversation/session-a",
+      },
     });
 
     const merged = mergeLayoutPreferences(defaultLayoutState, readLayoutPreferences(storage));
     expect(merged.workbenchAssistantDrawerWidth).toBe(MIN_WORKBENCH_ASSISTANT_DRAWER_WIDTH);
     expect(merged.lastWorkbenchWorkspaceId).toBeNull();
+    expect(merged.lastModePaths).toEqual({
+      agent: "/conversation/session-a",
+    });
+  });
+
+  it("migrates the legacy workbench path preference into mode paths", () => {
+    const storage = {
+      getItem: () =>
+        JSON.stringify({
+          lastWorkbenchPath: "/workbench/workspace-a/session/session-a",
+        }),
+    };
+
+    expect(readLayoutPreferences(storage).lastModePaths).toEqual({
+      workbench: "/workbench/workspace-a/session/session-a",
+    });
   });
 
 });
@@ -144,6 +185,7 @@ describe("LayoutStateProvider", () => {
       result.current.actions.setWorkspaceWidth(500);
       result.current.actions.setWorkbenchAssistantDrawerWidth(510);
       result.current.actions.setLastWorkbenchWorkspaceId("workspace-b");
+      result.current.actions.setLastModePath("workbench", "/workbench/workspace-b/session/session-b");
     });
 
     expect(result.current.state.rightSidebarOpen).toBe(true);
@@ -155,5 +197,6 @@ describe("LayoutStateProvider", () => {
     expect(result.current.state.workspaceWidth).toBe(500);
     expect(result.current.state.workbenchAssistantDrawerWidth).toBe(510);
     expect(result.current.state.lastWorkbenchWorkspaceId).toBe("workspace-b");
+    expect(result.current.state.lastModePaths.workbench).toBe("/workbench/workspace-b/session/session-b");
   });
 });

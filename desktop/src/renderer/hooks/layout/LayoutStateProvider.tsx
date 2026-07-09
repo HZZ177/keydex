@@ -27,6 +27,7 @@ export interface LayoutStateActions {
   setPreviewWidth(width: number): void;
   setWorkbenchAssistantDrawerWidth(width: number): void;
   setLastWorkbenchWorkspaceId(workspaceId: string | null): void;
+  setLastModePath(mode: string, path: string | null): void;
   setMobileLike(value: boolean): void;
 }
 
@@ -59,6 +60,7 @@ export function LayoutStateProvider({ children }: PropsWithChildren) {
     state.previewWidth,
     state.workbenchAssistantDrawerWidth,
     state.lastWorkbenchWorkspaceId,
+    state.lastModePaths,
   ]);
 
   const actions = useMemo<LayoutStateActions>(
@@ -110,6 +112,9 @@ export function LayoutStateProvider({ children }: PropsWithChildren) {
       },
       setLastWorkbenchWorkspaceId(workspaceId) {
         dispatch({ type: "set-last-workbench-workspace-id", workspaceId });
+      },
+      setLastModePath(mode, path) {
+        dispatch({ type: "set-last-mode-path", mode, path });
       },
       setMobileLike(value) {
         dispatch({ type: "set-mobile-like", value });

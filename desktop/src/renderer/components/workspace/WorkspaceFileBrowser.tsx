@@ -22,7 +22,7 @@ import {
   type MarkdownOutlineItem,
   type MarkdownOutlineRevealRequest,
 } from "./FilePreview";
-import { WorkspacePanel } from "./WorkspacePanel";
+import { WorkspacePanel, type WorkspacePanelState } from "./WorkspacePanel";
 import styles from "./WorkspaceFileBrowser.module.css";
 
 export interface WorkspaceFileBrowserProps {
@@ -38,10 +38,12 @@ export interface WorkspaceFileBrowserProps {
   previewOutline?: MarkdownOutlineItem[];
   previewOutlineReady?: boolean;
   bottomSafeArea?: string;
+  initialState?: WorkspaceFileBrowserState | null;
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
   onStartChatFromAnnotation?: (request: PreviewAnnotationChatRequest | PreviewAnnotationChatRequest[]) => void;
   onPreviewPathChange?: (path: string | null) => void;
   onPreviewOutlineReveal?: (item: MarkdownOutlineItem) => void;
+  onStateChange?: (state: WorkspaceFileBrowserState) => void;
 }
 
 const DEFAULT_TREE_WIDTH = 260;
@@ -51,6 +53,16 @@ const MIN_PREVIEW_WIDTH = 280;
 const FILE_PREVIEW_CLOSE_MS = 180;
 
 type BrowserNavigationMode = "files" | "outline";
+
+export interface WorkspaceFileBrowserState {
+  selectedPath: string | null;
+  mountedPreviewPath: string | null;
+  previewOpen: boolean;
+  treeCollapsed: boolean;
+  treeWidth: number;
+  navigationMode: BrowserNavigationMode;
+  workspacePanelState: WorkspacePanelState | null;
+}
 
 interface ResizeState {
   pointerId: number;
@@ -73,22 +85,31 @@ export function WorkspaceFileBrowser({
   previewOutline = [],
   previewOutlineReady = false,
   bottomSafeArea,
+  initialState = null,
   onQuoteSelection,
   onStartChatFromAnnotation,
   onPreviewPathChange,
   onPreviewOutlineReveal,
+  onStateChange,
 }: WorkspaceFileBrowserProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<ResizeState | null>(null);
   const previewUnmountTimerRef = useRef<number | null>(null);
   const previewOpenFrameRef = useRef<number | null>(null);
   const handledPreviewRequestIdRef = useRef(0);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [mountedPreviewPath, setMountedPreviewPath] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [treeCollapsed, setTreeCollapsed] = useState(false);
-  const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_WIDTH);
-  const [navigationMode, setNavigationMode] = useState<BrowserNavigationMode>(initialNavigationMode);
+  const [selectedPath, setSelectedPath] = useState<string | null>(initialState?.selectedPath ?? null);
+  const [mountedPreviewPath, setMountedPreviewPath] = useState<string | null>(
+    initialState?.mountedPreviewPath ?? null,
+  );
+  const [previewOpen, setPreviewOpen] = useState(initialState?.previewOpen ?? false);
+  const [treeCollapsed, setTreeCollapsed] = useState(initialState?.treeCollapsed ?? false);
+  const [treeWidth, setTreeWidth] = useState(initialState?.treeWidth ?? DEFAULT_TREE_WIDTH);
+  const [navigationMode, setNavigationMode] = useState<BrowserNavigationMode>(
+    initialState?.navigationMode ?? initialNavigationMode,
+  );
+  const [workspacePanelState, setWorkspacePanelState] = useState<WorkspacePanelState | null>(
+    initialState?.workspacePanelState ?? null,
+  );
   const [markdownOutline, setMarkdownOutline] = useState<MarkdownOutlineItem[]>([]);
   const [markdownOutlineReady, setMarkdownOutlineReady] = useState(false);
   const [outlineRevealRequest, setOutlineRevealRequest] = useState<MarkdownOutlineRevealRequest | null>(null);
@@ -125,6 +146,27 @@ export function WorkspaceFileBrowser({
   const outlineVisible = outlineAvailable && navigationMode === "outline";
   const currentPathLabel = formatBrowserPath(previewPlacement === "external" ? previewPath : mountedPreviewPath);
   const toggleTreeCollapsed = useCallback(() => setTreeCollapsed((collapsed) => !collapsed), []);
+
+  useEffect(() => {
+    onStateChange?.({
+      selectedPath,
+      mountedPreviewPath,
+      previewOpen,
+      treeCollapsed,
+      treeWidth,
+      navigationMode,
+      workspacePanelState,
+    });
+  }, [
+    mountedPreviewPath,
+    navigationMode,
+    onStateChange,
+    previewOpen,
+    selectedPath,
+    treeCollapsed,
+    treeWidth,
+    workspacePanelState,
+  ]);
 
   const clearPreviewUnmountTimer = useCallback(() => {
     if (previewUnmountTimerRef.current === null) {
@@ -391,7 +433,9 @@ export function WorkspaceFileBrowser({
               revealSelectedPathRequestId={previewRequestId}
               selectedPath={selectedPath}
               bottomSafeArea={bottomSafeArea}
+              initialState={workspacePanelState}
               onSelectFile={openPreview}
+              onStateChange={setWorkspacePanelState}
             />
           </div>
           {outlineAvailable ? (

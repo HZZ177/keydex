@@ -22,6 +22,7 @@ import {
   modeSwitchTargetsForPath,
   parseWorkbenchPath,
   PROJECT_PATH,
+  rememberableModePath,
   workbenchFilePreviewPath,
   workbenchPath,
   WORKBENCH_PATH,
@@ -220,9 +221,21 @@ function RoutedLayout({
   const layout = useLayoutState();
   const appMode = appModeFromPath(location.pathname);
   const modeSwitchTargets = useMemo(
-    () => modeSwitchTargetsForPath(location.pathname, layout.state.lastWorkbenchWorkspaceId),
-    [layout.state.lastWorkbenchWorkspaceId, location.pathname],
+    () =>
+      modeSwitchTargetsForPath(
+        location.pathname,
+        layout.state.lastWorkbenchWorkspaceId,
+        layout.state.lastModePaths,
+      ),
+    [layout.state.lastModePaths, layout.state.lastWorkbenchWorkspaceId, location.pathname],
   );
+
+  useEffect(() => {
+    const rememberedPath = rememberableModePath(appMode, location.pathname, location.search);
+    if (rememberedPath) {
+      layout.actions.setLastModePath(appMode, rememberedPath);
+    }
+  }, [appMode, layout.actions, location.pathname, location.search]);
 
   const handleNavigate = (path: string) => {
     if (path.startsWith("/settings")) {

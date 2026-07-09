@@ -11,13 +11,14 @@ import {
   modeSwitchTargetsForPath,
   parseWorkbenchPath,
   PROJECT_PATH,
+  rememberableModePath,
   workbenchFilePreviewPath,
   workbenchPath,
 } from "@/renderer/components/layout/appMode";
 import { AppRouter } from "@/renderer/components/layout/Router";
 import { emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
-import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider";
+import { AgentSessionProvider, useAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectionProvider";
@@ -106,17 +107,49 @@ describe("AppRouter", () => {
       workbench: "/workbench/workspace%20A",
       project: PROJECT_PATH,
     });
+    expect(
+      modeSwitchTargetsForPath(
+        "/conversation/session%201",
+        "workspace A",
+        {
+          workbench: "/workbench/workspace%20A/session/session%201",
+        },
+      ),
+    ).toEqual({
+      agent: "/conversation/session%201",
+      workbench: "/workbench/workspace%20A/session/session%201",
+      project: PROJECT_PATH,
+    });
     expect(modeSwitchTargetsForPath("/workbench/workspace%20A/session/session%201", "workspace B")).toEqual({
       agent: "/conversation/session%201",
       workbench: "/workbench/workspace%20A/session/session%201",
       project: PROJECT_PATH,
     });
-    expect(modeSwitchTargetsForPath(PROJECT_PATH, "workspace A")).toEqual({
-      agent: "/guid",
+    expect(
+      modeSwitchTargetsForPath("/workbench/workspace%20A/session/session%201", "workspace B", {
+        agent: "/conversation/thread-2",
+      }).agent,
+    ).toBe("/conversation/thread-2");
+    expect(modeSwitchTargetsForPath(PROJECT_PATH, "workspace A", { agent: "/conversation/thread-2" })).toEqual({
+      agent: "/conversation/thread-2",
       workbench: "/workbench/workspace%20A",
       project: PROJECT_PATH,
     });
+    expect(
+      modeSwitchTargetsForPath("/conversation/thread-2", "workspace A", {
+        project: "/project",
+      }),
+    ).toEqual({
+      agent: "/conversation/thread-2",
+      workbench: "/workbench/workspace%20A",
+      project: "/project",
+    });
     expect(modeSwitchTargetsForPath("/guid", null).workbench).toBe("/workbench");
+    expect(rememberableModePath("agent", "/conversation/thread-2")).toBe("/conversation/thread-2");
+    expect(rememberableModePath("agent", "/settings/general")).toBeNull();
+    expect(rememberableModePath("workbench", "/workbench/workspace%20A", "?file=D%3A%2FREADME.md")).toBe(
+      "/workbench/workspace%20A?file=D%3A%2FREADME.md",
+    );
   });
 
   it("redirects root to the guide page", async () => {
@@ -1153,6 +1186,112 @@ describe("AppRouter", () => {
     expect(screen.getByRole("button", { name: "展开工作台输入框" })).not.toBeNull();
   });
 
+  it("restores the workbench session and file preview state after an app mode round trip", async () => {
+    renderRouter(["/workbench/workspace%20A/session/session%201"], {
+      extra: <WorkbenchFileOpenProbe />,
+    });
+
+    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    fireEvent.click(screen.getByTestId("open-workbench-file-readme"));
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByRole("tab", { name: "README.md" }).getAttribute("aria-selected")).toBe("true");
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(within(screen.getByTestId("app-mode-switch")).getAllByRole("button")[0]);
+      await act(async () => {
+        vi.advanceTimersByTime(180);
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("workbench-mode-page")).toBeNull();
+    });
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(within(screen.getByTestId("app-mode-switch")).getAllByRole("button")[1]);
+      await act(async () => {
+        vi.advanceTimersByTime(180);
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const workbenchPage = await screen.findByTestId("workbench-mode-page", undefined, { timeout: 10000 });
+    expect(workbenchPage.getAttribute("data-workspace-id")).toBe("workspace A");
+    expect(workbenchPage.getAttribute("data-selected-session-id")).toBe("session 1");
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByRole("tab", { name: "README.md" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("1");
+    const selectedTreeButton = screen
+      .getByTestId("workspace-file-browser-tree")
+      .querySelector<HTMLElement>("button[data-entry-path='README.md']");
+    expect(selectedTreeButton?.getAttribute("data-selected")).toBe("true");
+  });
+
+  it(
+    "restores the agent right sidebar panel state after an app mode round trip",
+    async () => {
+      renderRouter(["/conversation/thread-1"], {
+        extra: <AgentRightSidebarFileOpenProbe />,
+      });
+
+      expect(await screen.findByRole("heading", { name: /thread-1/ }, { timeout: 10000 })).not.toBeNull();
+      fireEvent.click(screen.getByTestId("open-agent-file-panel-readme"));
+
+      const browser = await screen.findByTestId("workspace-file-browser", undefined, { timeout: 10000 });
+      expect(browser).not.toBeNull();
+      await waitFor(() => {
+        expect(screen.getByTestId("app-shell").dataset.rightSidebar).toBe("open");
+      });
+      const selectedBeforeSwitch = screen
+        .getByTestId("workspace-file-browser-tree")
+        .querySelector<HTMLElement>("button[data-entry-path='README.md']");
+      expect(selectedBeforeSwitch?.getAttribute("data-selected")).toBe("true");
+
+      vi.useFakeTimers();
+      try {
+        fireEvent.click(within(screen.getByTestId("app-mode-switch")).getAllByRole("button")[1]);
+        await act(async () => {
+          vi.advanceTimersByTime(180);
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(await screen.findByTestId("workbench-mode-page", undefined, { timeout: 10000 })).not.toBeNull();
+      expect(screen.queryByTestId("workspace-file-browser-preview")).toBeNull();
+
+      vi.useFakeTimers();
+      try {
+        fireEvent.click(within(screen.getByTestId("app-mode-switch")).getAllByRole("button")[0]);
+        await act(async () => {
+          vi.advanceTimersByTime(180);
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(await screen.findByRole("heading", { name: /thread-1/ }, { timeout: 10000 })).not.toBeNull();
+      await waitFor(() => {
+        expect(screen.getByTestId("app-shell").dataset.rightSidebar).toBe("open");
+      });
+      expect(await screen.findByTestId("workspace-file-browser", undefined, { timeout: 10000 })).not.toBeNull();
+      const selectedAfterSwitch = screen
+        .getByTestId("workspace-file-browser-tree")
+        .querySelector<HTMLElement>("button[data-entry-path='README.md']");
+      expect(selectedAfterSwitch?.getAttribute("data-selected")).toBe("true");
+    },
+    10000,
+  );
+
   it("switches app modes without local skeleton placeholders", async () => {
     renderRouter(["/conversation/thread-1"]);
 
@@ -1521,6 +1660,27 @@ function WorkbenchFileOpenProbe() {
         测试打开工作台预览
       </button>
     </>
+  );
+}
+
+function AgentRightSidebarFileOpenProbe() {
+  const preview = usePreview();
+  const { runtime } = useAgentSessionRuntime();
+  return (
+    <button
+      type="button"
+      data-testid="open-agent-file-panel-readme"
+      onClick={() =>
+        preview.openFilePanel("README.md", {
+          runtime,
+          sessionId: "thread-1",
+          workspaceAvailable: true,
+          workspaceLabel: "repo",
+        })
+      }
+    >
+      Open agent file panel
+    </button>
   );
 }
 
