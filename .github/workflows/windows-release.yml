@@ -30,11 +30,8 @@ concurrency:
 jobs:
   build:
     name: Build Windows installer
-    runs-on: [self-hosted, windows, x64, keydex-windows-release]
+    runs-on: windows-latest
     timeout-minutes: 120
-    defaults:
-      run:
-        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
 
     steps:
       - name: Check out repository
