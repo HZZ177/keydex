@@ -1,6 +1,6 @@
 import * as SliderPrimitive from "@radix-ui/react-slider";
-import { type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { type CSSProperties, type PointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Maximize2 } from "lucide-react";
 import { motion } from "motion/react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
@@ -60,14 +60,6 @@ type ActionBadgePhase = {
   kind: ActionKind;
   stage: Exclude<ActionBadgeStage, "idle">;
 };
-type ChoiceDetailPreview = {
-  left: number;
-  maxHeight: number;
-  option: ChoiceOption;
-  placement: "bottom" | "top";
-  state: "closing" | "open";
-  top: number;
-};
 type ChoiceCarouselDragState = {
   lastTime: number;
   lastX: number;
@@ -81,12 +73,6 @@ type ChoiceCarouselDragState = {
 };
 
 const ACTION_BADGE_DONE_MS = 420;
-const DETAIL_POPOVER_CLOSE_GRACE_MS = 260;
-const DETAIL_POPOVER_GAP = 10;
-const DETAIL_POPOVER_HOVER_DELAY_MS = 500;
-const DETAIL_POPOVER_MAX_HEIGHT = 240;
-const DETAIL_POPOVER_OUT_MS = 160;
-const DETAIL_POPOVER_WIDTH = 360;
 const CHOICE_CAROUSEL_SLIDER_THRESHOLD = 10;
 const OPTION_CARD_DESCRIPTION_LIMIT = 96;
 const CHOICE_CARD_LAYOUT_TRANSITION: A2InteractiveMotionTransition = {
@@ -182,7 +168,7 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
   const model = useStableChoiceModel(rawModel, parsed);
   const [selectedValues, setSelectedValues] = useState<string[]>(() => initialSelection(model));
   const [carouselOptionValue, setCarouselOptionValue] = useState<string | null>(null);
-  const [detailPreview, setDetailPreview] = useState<ChoiceDetailPreview | null>(null);
+  const [expandedOptionValue, setExpandedOptionValue] = useState<string | null>(null);
   const [correctionMode, setCorrectionMode] = useState(false);
   const [note, setNote] = useState("");
   const [localSubmitting, setLocalSubmitting] = useState<"submit" | "cancel" | null>(null);
@@ -196,9 +182,6 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
   const optionTrackRef = useRef<HTMLDivElement | null>(null);
   const carouselTrackXRef = useRef(0);
   const carouselAnimationFrameRef = useRef<number | null>(null);
-  const detailHideTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
-  const detailHoverTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
-  const detailRemoveTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const carouselDragRef = useRef<ChoiceCarouselDragState | null>(null);
   const suppressCarouselClickRef = useRef(false);
   const actionable =
@@ -242,9 +225,6 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
       if (carouselAnimationFrameRef.current !== null) {
         globalThis.cancelAnimationFrame(carouselAnimationFrameRef.current);
       }
-      clearDetailTimer(detailHoverTimerRef);
-      clearDetailTimer(detailHideTimerRef);
-      clearDetailTimer(detailRemoveTimerRef);
     };
   }, []);
 
@@ -258,10 +238,7 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
     setLocalSubmitted(false);
     setSubmitAttempted(false);
     setCarouselOptionValue(null);
-    setDetailPreview(null);
-    clearDetailTimer(detailHoverTimerRef);
-    clearDetailTimer(detailHideTimerRef);
-    clearDetailTimer(detailRemoveTimerRef);
+    setExpandedOptionValue(null);
     setError(null);
   }, [parsed.interactionId, model.status]);
 
@@ -273,11 +250,11 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
   }, [carouselOptionValue, model.options]);
 
   useEffect(() => {
-    if (!detailPreview || model.options.some((option) => option.value === detailPreview.option.value)) {
+    if (!expandedOptionValue || model.options.some((option) => option.value === expandedOptionValue)) {
       return;
     }
-    setDetailPreview(null);
-  }, [detailPreview, model.options]);
+    setExpandedOptionValue(null);
+  }, [expandedOptionValue, model.options]);
 
   useEffect(() => {
     if (!choiceStreaming || !latestStreamingOptionValue) {
@@ -439,52 +416,25 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
     });
   };
 
-  const scheduleDetailPreview = (option: ChoiceOption, target: HTMLElement) => {
+  const syncOptionDetailFocus = (option: ChoiceOption, target?: HTMLElement | null) => {
+    setCarouselOptionValue(option.value);
+    const optionElement = target?.closest<HTMLElement>("[data-option-value]");
+    globalThis.requestAnimationFrame(() => {
+      focusCarouselOption(option.value, optionElement, false);
+    });
+  };
+
+  const expandOptionDetail = (option: ChoiceOption, target?: HTMLElement | null) => {
     if (!choiceOptionExpandable(option)) {
       return;
     }
-    clearDetailTimer(detailHoverTimerRef);
-    clearDetailTimer(detailHideTimerRef);
-    clearDetailTimer(detailRemoveTimerRef);
-    detailHoverTimerRef.current = globalThis.setTimeout(() => {
-      detailHoverTimerRef.current = null;
-      if (!mountedRef.current || !target.isConnected) {
-        return;
-      }
-      setDetailPreview({
-        option,
-        state: "open",
-        ...choiceDetailPopoverPosition(target),
-      });
-    }, DETAIL_POPOVER_HOVER_DELAY_MS);
+    setExpandedOptionValue(option.value);
+    syncOptionDetailFocus(option, target);
   };
 
-  const scheduleDetailPreviewClose = () => {
-    clearDetailTimer(detailHoverTimerRef);
-    clearDetailTimer(detailHideTimerRef);
-    clearDetailTimer(detailRemoveTimerRef);
-    detailHideTimerRef.current = globalThis.setTimeout(() => {
-      detailHideTimerRef.current = null;
-      if (mountedRef.current) {
-        setDetailPreview((current) => current ? { ...current, state: "closing" } : null);
-        detailRemoveTimerRef.current = globalThis.setTimeout(() => {
-          detailRemoveTimerRef.current = null;
-          if (mountedRef.current) {
-            setDetailPreview(null);
-          }
-        }, DETAIL_POPOVER_OUT_MS);
-      }
-    }, DETAIL_POPOVER_CLOSE_GRACE_MS);
-  };
-
-  const keepDetailPreviewOpen = () => {
-    clearDetailTimer(detailHideTimerRef);
-    clearDetailTimer(detailRemoveTimerRef);
-    setDetailPreview((current) => current ? { ...current, state: "open" } : null);
-  };
-
-  const handleOptionContentEnter = (option: ChoiceOption, event: ReactMouseEvent<HTMLElement>) => {
-    scheduleDetailPreview(option, event.currentTarget);
+  const collapseOptionDetail = (option: ChoiceOption, target?: HTMLElement | null) => {
+    setExpandedOptionValue((current) => current === option.value ? null : current);
+    syncOptionDetailFocus(option, target);
   };
 
   const submit = async () => {
@@ -629,12 +579,16 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
                       const interactive = actionable && !localSubmitting && !option.disabled;
                       const coverflowOffset = centeredOptionIndex >= 0 ? index - centeredOptionIndex : index;
                       const coverflowPosition = choiceCoverflowPosition(coverflowOffset);
+                      const detailExpandable = choiceOptionExpandable(option);
+                      const detailExpanded = expandedOptionValue === option.value;
                       return (
                         <A2InteractiveMotionItem
                           as="div"
                           className={styles.option}
                           data-option-value={option.value}
                           data-coverflow-position={coverflowPosition}
+                          data-detail-expanded={detailExpanded ? "true" : "false"}
+                          data-detail-expandable={detailExpandable ? "true" : "false"}
                           data-selected={selected ? "true" : "false"}
                           data-disabled={!actionable || option.disabled ? "true" : "false"}
                           data-recommended={option.recommended ? "true" : "false"}
@@ -674,8 +628,6 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
                             <span
                               className={styles.optionText}
                               data-a2ui-choice-content="true"
-                              onMouseEnter={(event) => handleOptionContentEnter(option, event)}
-                              onMouseLeave={scheduleDetailPreviewClose}
                             >
                               <span className={styles.optionHeader}>
                                 <span className={styles.optionLabel}>{option.label}</span>
@@ -683,9 +635,52 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
                                 {option.badge ? <span className={styles.optionBadge}>{option.badge}</span> : null}
                               </span>
                               {option.description ? (
-                                <span className={styles.optionDescription}>
-                                  {optionSummary(option.description)}
-                                </span>
+                                detailExpandable && !detailExpanded ? (
+                                  <button
+                                    className={styles.optionDescriptionShell}
+                                    type="button"
+                                    aria-label={`展开 ${option.label} 完整内容`}
+                                    data-detail-expanded="false"
+                                    data-detail-expandable="true"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      expandOptionDetail(option, event.currentTarget);
+                                    }}
+                                  >
+                                    <span className={styles.optionDescription} data-detail-expanded="false">
+                                      {optionSummary(option.description)}
+                                    </span>
+                                    <span className={styles.optionDetailReveal} aria-hidden="true">
+                                      <Maximize2 size={15} strokeWidth={2.1} />
+                                    </span>
+                                  </button>
+                                ) : (
+                                  <span
+                                    className={styles.optionDescriptionShell}
+                                    data-detail-expanded={detailExpanded ? "true" : "false"}
+                                    data-detail-expandable={detailExpandable ? "true" : "false"}
+                                  >
+                                    <span className={styles.optionDescription} data-detail-expanded={detailExpanded ? "true" : "false"}>
+                                      {detailExpanded ? option.description : optionSummary(option.description)}
+                                    </span>
+                                  </span>
+                                )
+                              ) : null}
+                              {detailExpandable && detailExpanded ? (
+                                <button
+                                  className={styles.optionDetailToggle}
+                                  type="button"
+                                  aria-expanded={detailExpanded}
+                                  aria-label={`收起 ${option.label} 完整内容`}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    collapseOptionDetail(option, event.currentTarget);
+                                  }}
+                                >
+                                  收起
+                                </button>
                               ) : null}
                             </span>
                           </span>
@@ -812,30 +807,6 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
           <ChoiceResult live={motionLive} model={model} />
         )}
       </A2MotionPresence>
-      {detailPreview && typeof document !== "undefined"
-        ? createPortal(
-          <div
-            className={styles.optionDetailPopover}
-            data-placement={detailPreview.placement}
-            data-state={detailPreview.state}
-            data-testid="a2ui-choice-detail"
-            style={{
-              left: detailPreview.left,
-              maxHeight: detailPreview.maxHeight,
-              top: detailPreview.top,
-            }}
-            onMouseEnter={keepDetailPreviewOpen}
-            onMouseLeave={scheduleDetailPreviewClose}
-          >
-            <div className={styles.optionDetailHeader}>
-              <span>{detailPreview.option.label}</span>
-              {detailPreview.option.badge ? <span>{detailPreview.option.badge}</span> : null}
-            </div>
-            <p>{detailPreview.option.description}</p>
-          </div>,
-          document.body,
-        )
-        : null}
       {error ? <div className={styles.error}>{error}</div> : null}
     </A2InteractiveMotionRoot>
   );
@@ -1271,6 +1242,7 @@ function ReadonlyChoiceOptions({ model, selectedValues }: { model: ChoiceModel; 
 
 function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: ChoiceModel; selectedValues: Set<string> }) {
   const [carouselOptionValue, setCarouselOptionValue] = useState<string | null>(null);
+  const [expandedOptionValue, setExpandedOptionValue] = useState<string | null>(null);
   const optionsRef = useRef<HTMLDivElement | null>(null);
   const optionTrackRef = useRef<HTMLDivElement | null>(null);
   const carouselTrackXRef = useRef(0);
@@ -1293,17 +1265,48 @@ function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: Choice
     setCarouselOptionValue(null);
   }, [carouselOptionValue, model.options]);
 
+  useEffect(() => {
+    if (!expandedOptionValue || model.options.some((option) => option.value === expandedOptionValue)) {
+      return;
+    }
+    setExpandedOptionValue(null);
+  }, [expandedOptionValue, model.options]);
+
   if (!model.options.length) {
     return null;
   }
   const hasSelection = selectedValues.size > 0;
   const centerIndex = centerValue ? model.options.findIndex((item) => item.value === centerValue) : -1;
+  const alignReadonlyOptionDetail = (option: ChoiceOption) => {
+    setCarouselOptionValue(option.value);
+    globalThis.requestAnimationFrame(() => {
+      if (optionsRef.current) {
+        alignCarouselOption(optionsRef.current, optionTrackRef.current, option.value, true, carouselTrackXRef);
+      }
+    });
+  };
+
+  const expandReadonlyOptionDetail = (option: ChoiceOption) => {
+    if (!choiceOptionExpandable(option)) {
+      return;
+    }
+    setExpandedOptionValue(option.value);
+    alignReadonlyOptionDetail(option);
+  };
+
+  const collapseReadonlyOptionDetail = (option: ChoiceOption) => {
+    setExpandedOptionValue((current) => current === option.value ? null : current);
+    alignReadonlyOptionDetail(option);
+  };
 
   const handleReadonlyPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button > 0 || !optionTrackRef.current) {
       return;
     }
     const target = event.target instanceof HTMLElement ? event.target : null;
+    if (target?.closest("button, input, textarea, select, a")) {
+      return;
+    }
     const optionElement = target?.closest<HTMLElement>("[data-option-value]") ?? null;
     carouselDragRef.current = {
       lastTime: performance.now(),
@@ -1413,11 +1416,15 @@ function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: Choice
             const selected = selectedValues.has(option.value);
             const dimmed = hasSelection && !selected;
             const coverflowOffset = centerIndex >= 0 ? index - centerIndex : index;
+            const detailExpandable = choiceOptionExpandable(option);
+            const detailExpanded = expandedOptionValue === option.value;
             return (
               <div
                 className={styles.option}
                 data-option-value={option.value}
                 data-coverflow-position={choiceCoverflowPosition(coverflowOffset)}
+                data-detail-expanded={detailExpanded ? "true" : "false"}
+                data-detail-expandable={detailExpandable ? "true" : "false"}
                 data-dimmed={dimmed ? "true" : "false"}
                 data-readonly="true"
                 data-selected={selected ? "true" : "false"}
@@ -1444,7 +1451,54 @@ function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: Choice
                       {option.recommended ? <span className={styles.recommendedBadge}>推荐</span> : null}
                       {option.badge ? <span className={styles.optionBadge}>{option.badge}</span> : null}
                     </span>
-                    {option.description ? <span className={styles.optionDescription}>{optionSummary(option.description)}</span> : null}
+                    {option.description ? (
+                      detailExpandable && !detailExpanded ? (
+                        <button
+                          className={styles.optionDescriptionShell}
+                          type="button"
+                          aria-label={`展开 ${option.label} 完整内容`}
+                          data-detail-expanded="false"
+                          data-detail-expandable="true"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            expandReadonlyOptionDetail(option);
+                          }}
+                        >
+                          <span className={styles.optionDescription} data-detail-expanded="false">
+                            {optionSummary(option.description)}
+                          </span>
+                          <span className={styles.optionDetailReveal} aria-hidden="true">
+                            <Maximize2 size={15} strokeWidth={2.1} />
+                          </span>
+                        </button>
+                      ) : (
+                        <span
+                          className={styles.optionDescriptionShell}
+                          data-detail-expanded={detailExpanded ? "true" : "false"}
+                          data-detail-expandable={detailExpandable ? "true" : "false"}
+                        >
+                          <span className={styles.optionDescription} data-detail-expanded={detailExpanded ? "true" : "false"}>
+                            {detailExpanded ? option.description : optionSummary(option.description)}
+                          </span>
+                        </span>
+                      )
+                    ) : null}
+                    {detailExpandable && detailExpanded ? (
+                      <button
+                        className={styles.optionDetailToggle}
+                        type="button"
+                        aria-expanded={detailExpanded}
+                        aria-label={`收起 ${option.label} 完整内容`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          collapseReadonlyOptionDetail(option);
+                        }}
+                      >
+                        收起
+                      </button>
+                    ) : null}
                   </span>
                 </span>
                 <span className={styles.optionStateButton} data-a2ui-choice-morph="true" aria-hidden="true">
@@ -1774,45 +1828,6 @@ function choiceInitialCenterValue(options: ChoiceOption[]): string | null {
 
 function choiceOptionExpandable(option: ChoiceOption): boolean {
   return optionSummary(option.description) !== option.description.replace(/\s+/g, " ").trim();
-}
-
-function choiceDetailPopoverPosition(target: HTMLElement): Pick<ChoiceDetailPreview, "left" | "maxHeight" | "placement" | "top"> {
-  const rect = target.getBoundingClientRect();
-  const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
-  const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
-  const width = Math.min(DETAIL_POPOVER_WIDTH, Math.max(0, viewportWidth - 32));
-  const viewportMargin = 16;
-  const left = clampNumber(
-    rect.left + rect.width / 2 - width / 2,
-    viewportMargin,
-    Math.max(viewportMargin, viewportWidth - width - viewportMargin),
-  );
-  const availableBelow = Math.max(0, viewportHeight - rect.bottom - DETAIL_POPOVER_GAP - viewportMargin);
-  const availableAbove = Math.max(0, rect.top - DETAIL_POPOVER_GAP - viewportMargin);
-  const desiredHeight = Math.min(DETAIL_POPOVER_MAX_HEIGHT, Math.max(120, viewportHeight - viewportMargin * 2));
-  const shouldOpenUp = availableBelow < desiredHeight && availableAbove > availableBelow;
-  if (shouldOpenUp) {
-    return {
-      left,
-      maxHeight: Math.max(120, Math.min(DETAIL_POPOVER_MAX_HEIGHT, availableAbove)),
-      placement: "top",
-      top: Math.max(viewportMargin, rect.top - DETAIL_POPOVER_GAP),
-    };
-  }
-  return {
-    left,
-    maxHeight: Math.max(120, Math.min(DETAIL_POPOVER_MAX_HEIGHT, availableBelow || desiredHeight)),
-    placement: "bottom",
-    top: Math.min(viewportHeight - viewportMargin, rect.bottom + DETAIL_POPOVER_GAP),
-  };
-}
-
-function clearDetailTimer(timerRef: { current: ReturnType<typeof globalThis.setTimeout> | null }) {
-  if (timerRef.current === null) {
-    return;
-  }
-  globalThis.clearTimeout(timerRef.current);
-  timerRef.current = null;
 }
 
 function clampNumber(value: number, min: number, max: number): number {

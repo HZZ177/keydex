@@ -159,135 +159,100 @@ describe("A2ChoiceBlock", () => {
     });
   });
 
-  it("shows long card content in a delayed hover popover without changing selection", async () => {
-    vi.useFakeTimers();
-    try {
-      const longDescription = "这是一个很长的选项说明，用来解释完整背景、适用条件、执行步骤、风险边界和后续动作，应该在悬浮窗完整展示，而不是占据页面布局。它还会继续补充上下文、约束、预期收益、失败处理和用户需要提前确认的信息。";
-      render(
-        <A2UIBlock
-          message={choiceMessage({
-            payload: {
-              options: Array.from({ length: 10 }, (_, index) => ({
-                label: `选项 ${index + 1}`,
-                value: `option_${index + 1}`,
-                description: longDescription,
-              })),
-            },
-          })}
-          onSubmit={vi.fn()}
-          onCancel={vi.fn()}
-        />,
-      );
+  it("expands long card content inside the gallery card without changing selection", async () => {
+    const longDescription = "这是一个很长的选项说明，用来解释完整背景、适用条件、执行步骤、风险边界和后续动作，应该在卡片内部完整展示，而不是通过悬浮窗占据页面。它还会继续补充上下文、约束、预期收益、失败处理和用户需要提前确认的信息。";
+    render(
+      <A2UIBlock
+        message={choiceMessage({
+          payload: {
+            options: Array.from({ length: 10 }, (_, index) => ({
+              label: `选项 ${index + 1}`,
+              value: `option_${index + 1}`,
+              description: longDescription,
+            })),
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
-      const options = screen.getByRole("radiogroup", { name: "选项" });
-      expect(options.getAttribute("data-choice-density")).toBe("dense");
-      expect(options.getAttribute("data-a2ui-choice-layout")).toBe("coverflow");
-      expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
+    const options = screen.getByRole("radiogroup", { name: "选项" });
+    expect(options.getAttribute("data-choice-density")).toBe("dense");
+    expect(options.getAttribute("data-a2ui-choice-layout")).toBe("coverflow");
+    expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
 
-      const option = options.querySelector<HTMLInputElement>('input[value="option_1"]')?.closest<HTMLElement>("[data-option-value]");
-      const content = option?.querySelector<HTMLElement>("[data-a2ui-choice-content]");
-      expect(option?.textContent).not.toContain(longDescription);
-      expect(content).not.toBeNull();
+    const option = options.querySelector<HTMLInputElement>('input[value="option_1"]')?.closest<HTMLElement>("[data-option-value]");
+    expect(option).not.toBeNull();
+    expect(option?.getAttribute("data-detail-expanded")).toBe("false");
+    expect(option?.textContent).not.toContain(longDescription);
 
-      fireEvent.pointerDown(option as HTMLElement, { button: 0, clientX: 120, pointerId: 1 });
-      fireEvent.pointerMove(options, { clientX: 180, pointerId: 1 });
-      fireEvent.pointerUp(options, { clientX: 180, pointerId: 1 });
+    fireEvent.click(within(option as HTMLElement).getByRole("button", { name: "展开 选项 1 完整内容" }));
 
-      await act(async () => {
-        vi.advanceTimersByTime(260);
-      });
-      expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
+    await waitFor(() => {
+      expect(option?.getAttribute("data-detail-expanded")).toBe("true");
+    });
+    expect(option?.textContent).toContain(longDescription);
+    expect(option?.getAttribute("data-selected")).toBe("false");
+    expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
 
-      fireEvent.mouseEnter(content as HTMLElement);
-      await act(async () => {
-        vi.advanceTimersByTime(499);
-      });
-      expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
+    fireEvent.click(within(option as HTMLElement).getByRole("button", { name: "收起 选项 1 完整内容" }));
 
-      await act(async () => {
-        vi.advanceTimersByTime(1);
-      });
-      const popover = screen.getByTestId("a2ui-choice-detail");
-      expect(popover.textContent).toContain(longDescription);
-      expect(popover.getAttribute("data-state")).toBe("open");
-      expect(popover.getAttribute("data-placement")).toBe("bottom");
-      expect(option?.getAttribute("data-selected")).toBe("false");
+    await waitFor(() => {
+      expect(option?.getAttribute("data-detail-expanded")).toBe("false");
+    });
+    expect(option?.textContent).not.toContain(longDescription);
 
-      fireEvent.mouseLeave(content as HTMLElement);
-      await act(async () => {
-        vi.advanceTimersByTime(120);
-      });
-      fireEvent.mouseEnter(popover);
-      await act(async () => {
-        vi.advanceTimersByTime(300);
-      });
-      expect(screen.getByTestId("a2ui-choice-detail").textContent).toContain(longDescription);
+    fireEvent.click(within(option as HTMLElement).getByRole("button", { name: "展开 选项 1 完整内容" }));
 
-      fireEvent.mouseLeave(popover);
-      await act(async () => {
-        vi.advanceTimersByTime(260);
-      });
-      expect(screen.getByTestId("a2ui-choice-detail").getAttribute("data-state")).toBe("closing");
-
-      await act(async () => {
-        vi.advanceTimersByTime(160);
-      });
-      expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
+    await waitFor(() => {
+      expect(option?.getAttribute("data-detail-expanded")).toBe("true");
+    });
+    expect(option?.textContent).toContain(longDescription);
   });
 
-  it("opens the detail popover upward when there is not enough bottom space", async () => {
-    vi.useFakeTimers();
-    const clientHeightSpy = vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(360);
-    const clientWidthSpy = vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(900);
-    try {
-      const longDescription = "这个选项包含很多完整说明，需要在详情悬浮窗展示。当前位置靠近底部时，悬浮窗应该向上弹出，而不是挤到页面底部之外。这里继续补充上下文、适用条件、风险说明、预期结果和用户需要确认的信息，确保卡片正文会被截断。";
-      render(
-        <A2UIBlock
-          message={choiceMessage({
-            payload: {
-              options: [{ label: "靠近底部", value: "bottom_edge", description: longDescription }],
-            },
-          })}
-          onSubmit={vi.fn()}
-          onCancel={vi.fn()}
-        />,
-      );
+  it("expands long historical gallery cards in place instead of opening a detail popover", async () => {
+    const longDescription = "历史选项包含很多完整说明，需要在卡片内部展开展示。这里补充上下文、适用条件、风险说明、预期结果和用户需要确认的信息，确保卡片正文默认会被截断，展开后可以在卡片里滚动查看完整内容。还会继续描述执行顺序、依赖前提、异常兜底、交付物、回溯线索和后续协作方式。";
+    render(
+      <A2UIBlock
+        message={choiceMessage({
+          payload: {
+            options: [
+              { label: "历史长选项", value: "history_long", description: longDescription },
+              { label: "历史短选项", value: "history_short", description: "短说明" },
+            ],
+          },
+          interaction: {
+            interaction_id: "int-choice-1",
+            status: "submitted",
+            can_submit: false,
+            submit_result: { selected_values: ["history_short"] },
+            resume_status: "succeeded",
+          },
+        })}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
-      const option = screen
-        .getByRole("radiogroup", { name: "选项" })
-        .querySelector<HTMLElement>('[data-option-value="bottom_edge"]');
-      expect(option).not.toBeNull();
-      const content = (option as HTMLElement).querySelector<HTMLElement>("[data-a2ui-choice-content]");
-      expect(content).not.toBeNull();
-      const rectSpy = vi.spyOn(content as HTMLElement, "getBoundingClientRect").mockReturnValue({
-        bottom: 220,
-        height: 40,
-        left: 320,
-        right: 500,
-        top: 180,
-        width: 180,
-        x: 320,
-        y: 180,
-        toJSON: () => ({}),
-      } as DOMRect);
+    const result = within(screen.getByTestId("a2ui-choice-result"));
+    const option = result.getByText("历史长选项").closest<HTMLElement>("[data-option-value]");
+    expect(option).not.toBeNull();
+    expect(option?.getAttribute("data-detail-expanded")).toBe("false");
+    expect(option?.textContent).not.toContain(longDescription);
 
-      fireEvent.mouseEnter(content as HTMLElement);
-      await act(async () => {
-        vi.advanceTimersByTime(500);
-      });
+    const gallery = screen.getByTestId("a2ui-choice-result").querySelector<HTMLElement>('[data-a2ui-choice-layout="coverflow"]');
+    const expandButton = within(option as HTMLElement).getByRole("button", { name: "展开 历史长选项 完整内容" });
+    fireEvent.pointerDown(expandButton, { button: 0, clientX: 120, pointerId: 1 });
+    expect(gallery?.dataset.dragging).toBeUndefined();
 
-      const popover = screen.getByTestId("a2ui-choice-detail");
-      expect(popover.getAttribute("data-placement")).toBe("top");
-      expect(popover.style.maxHeight).toBe("154px");
-      rectSpy.mockRestore();
-    } finally {
-      clientHeightSpy.mockRestore();
-      clientWidthSpy.mockRestore();
-      vi.useRealTimers();
-    }
+    fireEvent.click(expandButton);
+
+    await waitFor(() => {
+      expect(option?.getAttribute("data-detail-expanded")).toBe("true");
+    });
+    expect(option?.textContent).toContain(longDescription);
+    expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
   });
 
   it("hides the top slider for choice galleries with ten or fewer options", () => {
