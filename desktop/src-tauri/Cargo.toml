@@ -13,6 +13,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Enables OS proxy discovery for tauri-plugin-updater via Cargo feature unification.
+reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
 tauri = { version = "2", features = ["devtools", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
