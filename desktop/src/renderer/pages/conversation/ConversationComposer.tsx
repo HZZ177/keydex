@@ -65,6 +65,7 @@ export interface ConversationComposerProps {
   autoFocusKey?: string;
   modelSelectorPlacement?: "top" | "bottom";
   contextWindowUsage?: ContextWindowUsageStatus | null;
+  contextCompressionEnabled?: boolean;
 }
 
 export function ConversationComposer({
@@ -111,6 +112,7 @@ export function ConversationComposer({
   autoFocusKey,
   modelSelectorPlacement = "top",
   contextWindowUsage = null,
+  contextCompressionEnabled = true,
 }: ConversationComposerProps) {
   const effectivePlaceholder = runtimeState === "waiting_input" ? "请先完成页面交互" : placeholder;
 
@@ -131,7 +133,7 @@ export function ConversationComposer({
       leftAccessory={leftAccessory}
       rightControls={
         <>
-          <ContextWindowIndicator usage={contextWindowUsage} />
+          <ContextWindowIndicator usage={contextWindowUsage} contextCompressionEnabled={contextCompressionEnabled} />
           <RuntimeModelSelector
             model={modelSelection.selectedModel}
             modelOptions={modelSelection.modelOptions}
@@ -188,16 +190,33 @@ export function conversationComposerStatusText(_state: ConversationRuntimeState,
   return "";
 }
 
-function ContextWindowIndicator({ usage }: { usage: ContextWindowUsageStatus | null }) {
-  const thresholdProgress = usage ? clampNonNegative(usage.thresholdUsageFraction) : 0;
+function ContextWindowIndicator({
+  usage,
+  contextCompressionEnabled,
+}: {
+  usage: ContextWindowUsageStatus | null;
+  contextCompressionEnabled: boolean;
+}) {
+  const disabled = !contextCompressionEnabled;
+  const thresholdProgress = disabled ? 0 : usage ? clampNonNegative(usage.thresholdUsageFraction) : 0;
   const ringProgressBasis = thresholdProgress;
   const ringProgress = clamp01(ringProgressBasis);
   const [animatedRingProgress, setAnimatedRingProgress] = useState(0);
   const radius = 6;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference * (1 - clamp01(animatedRingProgress));
-  const level = usage ? (ringProgressBasis > 1 ? "danger" : ringProgressBasis > 0.9 ? "warning" : "normal") : "idle";
-  const ariaLabel = usage
+  const level = disabled
+    ? "idle"
+    : usage
+      ? ringProgressBasis > 1
+        ? "danger"
+        : ringProgressBasis > 0.9
+          ? "warning"
+          : "normal"
+      : "idle";
+  const ariaLabel = disabled
+    ? "上下文压缩功能已关闭"
+    : usage
     ? `当前已使用上下文 ${formatTokens(usage.tokenCount)} tokens，上下文压缩进度 ${formatPercent(thresholdProgress)}`
     : "上下文窗口占用等待下一次模型调用";
 
@@ -234,7 +253,9 @@ function ContextWindowIndicator({ usage }: { usage: ContextWindowUsageStatus | n
       </svg>
       <span className={styles.contextWindowTooltip} role="tooltip">
         <span className={styles.contextWindowTooltipTitle}>上下文窗口</span>
-        {usage ? (
+        {disabled ? (
+          <span className={styles.contextWindowTooltipMeta}>上下文压缩功能已关闭</span>
+        ) : usage ? (
           <>
             <span className={styles.contextWindowTooltipSummary}>
               当前已使用 {formatTokens(usage.tokenCount)} tokens

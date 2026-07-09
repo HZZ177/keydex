@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
+import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
 import { parseUnifiedDiffDisplayLines, type UnifiedDiffDisplayLine } from "@/renderer/utils/unifiedDiff";
 
@@ -25,15 +26,19 @@ export interface FileReviewPanelProps {
 export function FileReviewCard({ file, compact = true, titlePrefix = "" }: FileReviewCardProps) {
   const lines = useMemo(() => previewLinesForFile(file), [file]);
   const copySource = file.diff || file.content || "";
-  const [copied, setCopied] = useState(false);
+  const { copyState, showCopyFeedback } = useCopyFeedback();
+  const copied = copyState === "copied";
 
   const handleCopy = async () => {
     if (!copySource) {
       return;
     }
-    await navigator.clipboard?.writeText(copySource);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1200);
+    try {
+      await navigator.clipboard?.writeText(copySource);
+      showCopyFeedback("copied");
+    } catch {
+      showCopyFeedback("failed");
+    }
   };
 
   return (

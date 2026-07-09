@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildMarkdownAnnotationIndex,
@@ -18,6 +18,10 @@ const mermaidMock = vi.hoisted(() => ({
 vi.mock("mermaid", () => ({
   default: mermaidMock,
 }));
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("MarkdownDocumentView", () => {
   it("renders basic markdown blocks with stable block metadata", () => {
@@ -166,7 +170,7 @@ describe("MarkdownDocumentView", () => {
     expect(checkboxes).toHaveLength(2);
     expect((checkboxes[0] as HTMLInputElement).checked).toBe(true);
     expect((checkboxes[1] as HTMLInputElement).checked).toBe(false);
-    expect(screen.getByText("deleted").tagName.toLowerCase()).toBe("del");
+    expect(screen.getByText("deleted").closest("del")).not.toBeNull();
     expect(screen.getByText("inlineCode").tagName.toLowerCase()).toBe("code");
     expect(screen.getByRole("link", { name: "docs" }).getAttribute("href")).toBe("https://example.com/docs");
     expect(screen.getByRole("link", { name: "https://example.com/autolink" }).getAttribute("href")).toBe(
@@ -176,6 +180,7 @@ describe("MarkdownDocumentView", () => {
   });
 
   it("renders code blocks with language labels, copy action, highlighting, and large-code fallback", async () => {
+    vi.useFakeTimers();
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", {
       clipboard: { writeText },
@@ -202,13 +207,17 @@ describe("MarkdownDocumentView", () => {
     expect(within(codeFrames[0] as HTMLElement).getByText("42").getAttribute("data-code-token-kind")).toBe("number");
     expect((codeFrames[1] as HTMLElement).getAttribute("data-markdown-code-highlighted")).toBe("false");
 
-    fireEvent.click(within(codeFrames[0] as HTMLElement).getByRole("button", { name: "复制代码" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("const value = 42;\nreturn value;"));
-    await waitFor(() =>
-      expect(
-        within(codeFrames[0] as HTMLElement).getByRole("button", { name: "复制代码" }).getAttribute("data-copy-state"),
-      ).toBe("copied"),
-    );
+    const copyButton = within(codeFrames[0] as HTMLElement).getByRole("button", { name: "复制代码" });
+    await act(async () => {
+      fireEvent.click(copyButton);
+    });
+    expect(writeText).toHaveBeenCalledWith("const value = 42;\nreturn value;");
+    expect(copyButton.getAttribute("data-copy-state")).toBe("copied");
+
+    act(() => {
+      vi.advanceTimersByTime(1400);
+    });
+    expect(copyButton.getAttribute("data-copy-state")).toBe("idle");
   });
 
   it("renders mermaid fences lazily with a local success state", async () => {

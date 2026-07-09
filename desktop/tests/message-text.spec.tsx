@@ -889,15 +889,24 @@ describe("MessageText", () => {
   });
 
   it("copies code blocks and keeps running messages quiet", async () => {
+    vi.useFakeTimers();
     const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
     render(<MessageText message={message("assistant", "```ts\nconst a = 1;\n```", "running")} />);
 
     expect(screen.queryByRole("button", { name: "复制消息" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "复制代码" }));
-
-    await waitFor(() => {
-      expect(clipboard).toHaveBeenCalledWith(expect.stringContaining("const a = 1;"));
+    const copyButton = screen.getByRole("button", { name: "复制代码" });
+    await act(async () => {
+      fireEvent.click(copyButton);
     });
+
+    expect(clipboard).toHaveBeenCalledWith(expect.stringContaining("const a = 1;"));
+    expect(copyButton.querySelector(".lucide-check")).not.toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(1400);
+    });
+    expect(copyButton.querySelector(".lucide-copy")).not.toBeNull();
+    expect(copyButton.querySelector(".lucide-check")).toBeNull();
   });
 
   it("filters assistant think tags before markdown rendering", () => {

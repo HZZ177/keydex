@@ -14,8 +14,9 @@ def test_extension_settings_api_returns_defaults_from_app_hard_default(tmp_path)
     body = response.json()
     assert body["auto_title"]["enabled"] is False
     assert body["auto_title"]["max_title_length"] == 20
-    assert body["context_compression"]["enabled"] is False
-    assert body["context_compression"]["context_window_tokens"] == 128000
+    assert body["context_compression"]["enabled"] is True
+    assert body["context_compression"]["context_window_tokens"] == 256000
+    assert body["context_compression"]["trigger_fraction"] == 0.8
     assert "tool_call_limit" not in body
     assert body["duplicate_tool_call_guard"]["enabled"] is True
     assert body["duplicate_tool_call_guard"]["max_repeats"] == 3
@@ -47,10 +48,17 @@ def test_extension_settings_api_saves_and_reads_full_config(tmp_path) -> None:
         put_response = client.put("/api/settings/extensions", json=payload)
         get_response = client.get("/api/settings/extensions")
 
+    expected = {
+        **payload,
+        "a2ui": {
+            "enabled": False,
+            "debug_info_enabled": False,
+        },
+    }
     assert put_response.status_code == 200
-    assert put_response.json() == payload
+    assert put_response.json() == expected
     assert get_response.status_code == 200
-    assert get_response.json() == payload
+    assert get_response.json() == expected
 
 
 def test_extension_settings_api_loads_legacy_config_without_a2ui(tmp_path) -> None:
@@ -76,7 +84,7 @@ def test_extension_settings_api_loads_legacy_config_without_a2ui(tmp_path) -> No
         response = client.get("/api/settings/extensions")
 
     assert response.status_code == 200
-    assert response.json()["a2ui"] == {"enabled": True}
+    assert response.json()["a2ui"] == {"enabled": True, "debug_info_enabled": False}
 
 
 def test_extension_settings_api_rejects_removed_tool_limit_field(tmp_path) -> None:

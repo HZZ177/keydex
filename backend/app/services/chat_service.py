@@ -48,7 +48,13 @@ from backend.app.mcp.tools import (
     mcp_capability_discovery_tools_from_snapshot,
     mcp_local_tools_from_snapshot,
 )
-from backend.app.model import ModelSelectionError, ResolvedModelSelection, resolve_model_selection
+from backend.app.model import (
+    ModelSelectionError,
+    ResolvedModelSelection,
+    is_stream_chunk_timeout_error,
+    resolve_model_selection,
+    stream_chunk_timeout_details,
+)
 from backend.app.services.chat_types import ChatCancellationToken, ChatRequest, ChatTurnResult
 from backend.app.services.message_event_service import MessageEventService
 from backend.app.services.thread_task_prompt import build_task_initial_prompt
@@ -430,6 +436,12 @@ def _chat_turn_error(exc: Exception) -> tuple[str, str, dict[str, Any]]:
             "llm_read_timeout",
             "模型响应超时，未收到后续响应数据",
             _exception_details(exc),
+        )
+    if is_stream_chunk_timeout_error(exc):
+        return (
+            "llm_stream_chunk_timeout",
+            "模型响应超时，未收到后续响应数据",
+            _exception_details(exc, **stream_chunk_timeout_details(exc)),
         )
     if isinstance(exc, httpx.ConnectTimeout):
         return (

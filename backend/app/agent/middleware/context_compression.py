@@ -41,8 +41,8 @@ INJECTED_MESSAGE_MARKER = "_injected"
 class ContextCompressionMiddleware(AgentMiddleware):
     """Unified blocking context compression middleware."""
 
-    DEFAULT_CONTEXT_WINDOW = 128000
-    DEFAULT_TRIGGER_FRACTION = 0.75
+    DEFAULT_CONTEXT_WINDOW = 256000
+    DEFAULT_TRIGGER_FRACTION = 0.8
 
     def __init__(
         self,

@@ -7,6 +7,7 @@ import openai
 import pytest
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
+from langchain_openai.chat_models._client_utils import StreamChunkTimeoutError
 
 import backend.app.agent.factory as factory_module
 from backend.app.agent.factory import AgentFactory
@@ -15,6 +16,12 @@ from backend.app.events import DomainEvent, EventDispatcher
 from backend.app.model import ModelSettings
 from backend.app.model.e2e_transport import E2E_MODEL_ID, create_e2e_model_transport
 from backend.app.storage import StorageRepositories, init_database
+
+
+def test_retry_classifier_accepts_stream_chunk_timeout() -> None:
+    error = StreamChunkTimeoutError(120.0, model_name="slow-model", chunks_received=0)
+
+    assert factory_module._should_retry_llm_error(error) is True
 
 
 @pytest.mark.asyncio

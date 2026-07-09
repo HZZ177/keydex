@@ -13,6 +13,10 @@ from backend.app.model.provider_client import (
     OpenAICompatibleProviderClient,
     parse_model_list,
 )
+from backend.app.model.streaming_errors import (
+    is_stream_chunk_timeout_error,
+    stream_chunk_timeout_details,
+)
 
 __all__ = [
     "ModelConfigError",
@@ -23,7 +27,9 @@ __all__ = [
     "OpenAICompatibleProviderClient",
     "ResolvedModelSelection",
     "ToolSpec",
+    "is_stream_chunk_timeout_error",
     "parse_model_list",
     "resolve_model_default",
     "resolve_model_selection",
+    "stream_chunk_timeout_details",
 ]

@@ -12,6 +12,7 @@ import httpx
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_openai.chat_models._client_utils import StreamChunkTimeoutError
 
 from backend.app.agent import AgentRunner
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
@@ -56,6 +57,19 @@ def test_chat_turn_error_classifies_httpx_read_timeout() -> None:
     assert code == "llm_read_timeout"
     assert message == "模型响应超时，未收到后续响应数据"
     assert details["exception_type"] == "httpx.ReadTimeout"
+
+
+def test_chat_turn_error_classifies_stream_chunk_timeout() -> None:
+    code, message, details = _chat_turn_error(
+        StreamChunkTimeoutError(120.0, model_name="slow-model", chunks_received=0)
+    )
+
+    assert code == "llm_stream_chunk_timeout"
+    assert message == "模型响应超时，未收到后续响应数据"
+    assert details["exception_type"].endswith(".StreamChunkTimeoutError")
+    assert details["timeout_seconds"] == 120.0
+    assert details["chunks_received"] == 0
+    assert details["model"] == "slow-model"
 
 
 def test_chat_turn_error_keeps_empty_runtime_error_generic() -> None:
@@ -643,7 +657,9 @@ async def test_chat_service_large_mcp_toolset_keeps_discovery_and_server_summary
     direct_mcp_tools = [name for name in created_tools if name.startswith("mcp__")]
     assert direct_mcp_tools == []
     assert MCP_CAPABILITY_DISCOVERY_TOOL_NAME in created_tools
-    discovery_description = factory.created_tool_descriptions[-1][MCP_CAPABILITY_DISCOVERY_TOOL_NAME]
+    discovery_description = factory.created_tool_descriptions[-1][
+        MCP_CAPABILITY_DISCOVERY_TOOL_NAME
+    ]
     assert "Chat MCP" in discovery_description
     assert "59 个工具" in discovery_description
     snapshots = repositories.mcp_runtime_snapshots.list_by_session(session.id)

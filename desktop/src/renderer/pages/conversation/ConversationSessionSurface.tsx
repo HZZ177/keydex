@@ -89,6 +89,7 @@ export function ConversationSessionSurface({
   const [allowPersistentTrust, setAllowPersistentTrust] = useState(true);
   const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>("workspace_trusted");
   const [a2uiDebugInfoEnabled, setA2UIDebugInfoEnabled] = useState(false);
+  const [contextCompressionEnabled, setContextCompressionEnabled] = useState(true);
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [goalCreating, setGoalCreating] = useState(false);
@@ -326,6 +327,7 @@ export function ConversationSessionSurface({
   useEffect(() => {
     if (!backendReady) {
       setA2UIDebugInfoEnabled(false);
+      setContextCompressionEnabled(true);
       return;
     }
     let active = true;
@@ -334,11 +336,13 @@ export function ConversationSessionSurface({
       .then((settings) => {
         if (active) {
           setA2UIDebugInfoEnabled(Boolean(settings.a2ui.debug_info_enabled));
+          setContextCompressionEnabled(Boolean(settings.context_compression.enabled));
         }
       })
       .catch(() => {
         if (active) {
           setA2UIDebugInfoEnabled(false);
+          setContextCompressionEnabled(true);
         }
       });
     return () => {
@@ -704,6 +708,7 @@ export function ConversationSessionSurface({
         externalQuoteRequest={sidecarExternalQuoteRequest ?? quoteChipRequest}
         onExternalQuoteRequestHandled={handleExternalQuoteRequestHandled}
         contextWindowUsage={panelModel.contextWindowUsage}
+        contextCompressionEnabled={contextCompressionEnabled}
         modelSelectorPlacement={isSidecar ? "bottom" : "top"}
         autoFocusKey={isSidecar ? `sidecar:${threadId}` : undefined}
         leftAccessory={goalModeAccessory}

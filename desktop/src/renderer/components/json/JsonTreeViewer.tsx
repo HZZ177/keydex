@@ -2,6 +2,8 @@ import JsonView, { type ShouldExpandNodeInitially } from "@uiw/react-json-view";
 import { ChevronDown, ChevronUp, Copy, Search, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
+import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
+
 import styles from "./JsonTreeViewer.module.css";
 
 export interface JsonTreeViewerProps {
@@ -26,7 +28,7 @@ export function JsonTreeViewer({ source, size = "inline" }: JsonTreeViewerProps)
   const [query, setQuery] = useState("");
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const [collapseMode, setCollapseMode] = useState<CollapseMode>("default");
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
   const viewportRef = useRef<HTMLDivElement>(null);
   const normalizedQuery = query.trim().toLowerCase();
   const matches = useMemo(
@@ -39,6 +41,10 @@ export function JsonTreeViewer({ source, size = "inline" }: JsonTreeViewerProps)
   useEffect(() => {
     setActiveMatchIndex(0);
   }, [normalizedQuery]);
+
+  useEffect(() => {
+    resetCopyFeedback();
+  }, [resetCopyFeedback, source]);
 
   useEffect(() => {
     if (activeMatchIndex >= matches.length) {
@@ -75,9 +81,9 @@ export function JsonTreeViewer({ source, size = "inline" }: JsonTreeViewerProps)
   const copyJson = async () => {
     try {
       await navigator.clipboard.writeText(parsed.ok ? stringifyJson(parsed.value) : source);
-      setCopyState("copied");
+      showCopyFeedback("copied");
     } catch {
-      setCopyState("failed");
+      showCopyFeedback("failed");
     }
   };
 

@@ -14,6 +14,7 @@ import mermaid from "mermaid";
 import katex from "katex";
 
 import { copyText } from "@/renderer/pages/conversation/messages/markdown";
+import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 import { getMermaidConfig } from "@/renderer/utils/mermaidConfig";
 import { parseFileLinkTarget, parseMarkdownFileLinkExpression } from "@/renderer/utils/fileLinks";
 import styles from "../FilePreview.module.css";
@@ -286,7 +287,7 @@ function markdownListMarkerText(block: MarkdownBlock, index: number): string {
 }
 
 function CodeRenderer({ annotationRanges, block, blockAttributes, findMatches }: MarkdownBlockRendererProps) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
   const language = block.metadata.language;
   const code = block.textContent;
   const codeSourceStart = markdownCodeContentSourceStart(block);
@@ -298,15 +299,15 @@ function CodeRenderer({ annotationRanges, block, blockAttributes, findMatches }:
   );
 
   useEffect(() => {
-    setCopyState("idle");
-  }, [code]);
+    resetCopyFeedback();
+  }, [code, resetCopyFeedback]);
 
   const handleCopy = async () => {
     try {
       await copyText(code);
-      setCopyState("copied");
+      showCopyFeedback("copied");
     } catch {
-      setCopyState("failed");
+      showCopyFeedback("failed");
     }
   };
 

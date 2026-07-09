@@ -1,6 +1,7 @@
 import { Check, ChevronDown, Clipboard, LoaderCircle, Square, SquareTerminal, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { useTargetedCopyFeedback, type CopyFeedbackStatus } from "@/renderer/hooks/useCopyFeedback";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
 import { formatErrorText, readableErrorText } from "./errorText";
@@ -20,7 +21,7 @@ export interface CommandExecutionBlockProps {
 }
 
 type CopyTarget = "input" | "output";
-type CopyStatus = "idle" | "copied" | "failed";
+type CopyStatus = CopyFeedbackStatus;
 
 export function CommandExecutionBlock({
   message,
@@ -29,7 +30,7 @@ export function CommandExecutionBlock({
 }: CommandExecutionBlockProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [terminatingCommandId, setTerminatingCommandId] = useState<string | null>(null);
-  const [copyState, setCopyState] = useState<{ target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null>(null);
+  const { getCopyStatus, showCopyFeedback } = useTargetedCopyFeedback<CopyTarget>();
   const details = useLazyToolDetails(message, onLoadDetails);
   const command = useMemo(() => parseCommandPayload(details.message), [details.message]);
   const running = isRunningCommand(command, details.message.status);
@@ -62,9 +63,9 @@ export function CommandExecutionBlock({
   const handleCopy = async (target: CopyTarget, text: string) => {
     try {
       await copyText(text);
-      setCopyState({ target, status: "copied" });
+      showCopyFeedback(target, "copied");
     } catch {
-      setCopyState({ target, status: "failed" });
+      showCopyFeedback(target, "failed");
     }
   };
 
@@ -80,8 +81,8 @@ export function CommandExecutionBlock({
     }
   };
 
-  const inputCopyStatus = copyStatus(copyState, "input");
-  const outputCopyStatus = copyStatus(copyState, "output");
+  const inputCopyStatus = getCopyStatus("input");
+  const outputCopyStatus = getCopyStatus("output");
 
   return (
     <article
@@ -230,13 +231,6 @@ export function CommandExecutionBlock({
       ) : null}
     </article>
   );
-}
-
-function copyStatus(
-  state: { target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null,
-  target: CopyTarget,
-): CopyStatus {
-  return state?.target === target ? state.status : "idle";
 }
 
 function copyAriaLabel(label: "入参" | "输出", status: CopyStatus): string {

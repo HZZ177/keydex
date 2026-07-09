@@ -82,6 +82,7 @@ import { MarkdownImage } from "@/renderer/pages/conversation/messages/MarkdownIm
 import { SelectionToolbar } from "@/renderer/pages/conversation/messages/SelectionToolbar";
 import { copyText } from "@/renderer/pages/conversation/messages/markdown";
 import { useTextSelection, type SelectionPosition } from "@/renderer/pages/conversation/messages/useTextSelection";
+import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 import {
   APP_FIND_SHORTCUT_EVENT,
   isFindShortcutEvent,
@@ -203,7 +204,7 @@ export function FilePreview({
   const previewBusy = previewLoading || fileOpenSettling || markdownPreparing;
   const [viewMode, setViewMode] = useState<"preview" | "source">("preview");
   const [splitMode, setSplitMode] = useState(false);
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
   const [theme, setTheme] = useState<"light" | "dark">(() => getTheme());
   const previewContext = useOptionalPreview();
   const previewEntries = previewContext?.entries ?? [];
@@ -442,7 +443,7 @@ export function FilePreview({
     let active = true;
     setError(null);
     setMedia(null);
-    setCopyState("idle");
+    resetCopyFeedback();
     setViewMode(defaultViewMode(request));
     setSplitMode(false);
 
@@ -512,7 +513,7 @@ export function FilePreview({
     return () => {
       active = false;
     };
-  }, [fileLoadScope, kind, runtime, request]);
+  }, [fileLoadScope, kind, resetCopyFeedback, runtime, request]);
 
   useEffect(() => {
     if (!usesFileOpenDelay) {
@@ -1622,9 +1623,9 @@ export function FilePreview({
   const handleCopy = async () => {
     try {
       await copyText(previewContent);
-      setCopyState("copied");
+      showCopyFeedback("copied");
     } catch {
-      setCopyState("failed");
+      showCopyFeedback("failed");
     }
   };
   const previewStyle = bottomSafeArea
@@ -5029,10 +5030,13 @@ function NativeMermaidPreview({
   const [state, setState] = useState<MermaidPreviewState>({ status: "loading" });
   const [scale, setScale] = useState(1);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
-  const [mermaidCopyState, setMermaidCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const {
+    copyState: mermaidCopyState,
+    showCopyFeedback: showMermaidCopyFeedback,
+    resetCopyFeedback: resetMermaidCopyFeedback,
+  } = useCopyFeedback();
   const viewportRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<MermaidDragState | null>(null);
-  const mermaidCopyTimerRef = useRef<number | null>(null);
   const autoFitRef = useRef(true);
   const centerFrameRef = useRef<number | null>(null);
   const autoFitFrameRef = useRef<number | null>(null);
@@ -5047,15 +5051,8 @@ function NativeMermaidPreview({
   }, []);
 
   useEffect(() => {
-    setMermaidCopyState("idle");
-  }, [code]);
-
-  useEffect(() => () => {
-    if (mermaidCopyTimerRef.current !== null) {
-      window.clearTimeout(mermaidCopyTimerRef.current);
-      mermaidCopyTimerRef.current = null;
-    }
-  }, []);
+    resetMermaidCopyFeedback();
+  }, [code, resetMermaidCopyFeedback]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5200,21 +5197,13 @@ function NativeMermaidPreview({
   };
 
   const copyMermaidSource = useCallback(async () => {
-    if (mermaidCopyTimerRef.current !== null) {
-      window.clearTimeout(mermaidCopyTimerRef.current);
-      mermaidCopyTimerRef.current = null;
-    }
     try {
       await copyText(code);
-      setMermaidCopyState("copied");
+      showMermaidCopyFeedback("copied");
     } catch {
-      setMermaidCopyState("failed");
+      showMermaidCopyFeedback("failed");
     }
-    mermaidCopyTimerRef.current = window.setTimeout(() => {
-      setMermaidCopyState("idle");
-      mermaidCopyTimerRef.current = null;
-    }, 1400);
-  }, [code]);
+  }, [code, showMermaidCopyFeedback]);
 
   useLayoutEffect(() => {
     if (!autoFitRef.current) {

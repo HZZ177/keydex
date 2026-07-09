@@ -24,7 +24,7 @@ patch 是结构化文本补丁，整体 envelope：
 *** End Patch
 
 支持的文件操作：
-- *** Update File: <path>：修改已有文件；下一行可选 `*** Move to: <new-path>` 用于移动/重命名。
+- *** Update File: <path>：修改已有文件；下一行可选 `*** Move to: <path>` 用于移动/重命名。
 - *** Delete File: <path>：删除已有文件；后面不写正文。
 
 不支持 `*** Add File`；新增文件必须使用 `create_file`。
@@ -47,7 +47,7 @@ PATCH_PARAMETER_DESCRIPTION = """结构化文本补丁。整体必须是 `*** Be
 已有文件操作、`*** End Patch`。
 文件操作层只支持 `*** Update File: <path>` 和 `*** Delete File: <path>`；
 `*** Add File` 无效，新增文件必须使用 `create_file`。
-`*** Move to: <new-path>` 只能紧跟在 `*** Update File: <path>` 后面。
+`*** Move to: <path>` 只能紧跟在 `*** Update File: <path>` 后面。
 Update File 正文只写 `@@` hunk：上下文行以一个空格开头，新增行以 `+` 开头，
 删除行以 `-` 开头；空白上下文行可以是空行或单独一个空格，新增空白行写 `+`，
 删除空白行写 `-`。不要粘贴完整重写后的文件内容，不要写 `---`/`+++` 文件头。
@@ -57,6 +57,16 @@ PATCH_EXPECTED_HEADERS = [
     "*** Update File: <path>",
     "*** Delete File: <path>",
 ]
+
+BEGIN_PATCH_MARKER = "*** Begin Patch"
+END_PATCH_MARKER = "*** End Patch"
+ADD_FILE_MARKER = "*** Add File: "
+DELETE_FILE_MARKER = "*** Delete File: "
+UPDATE_FILE_MARKER = "*** Update File: "
+MOVE_TO_MARKER = "*** Move to: "
+EOF_MARKER = "*** End of File"
+
+HEREDOC_OPENERS = {"<<EOF", "<<'EOF'", '<<"EOF"'}
 
 
 @dataclass(frozen=True)
@@ -134,26 +144,26 @@ async def apply_patch_tool(
 
 
 def _parse_patch(patch: str) -> list[PatchOperation]:
-    lines = patch.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    while lines and lines[-1] == "":
-        lines.pop()
-    if not lines or lines[0] != "*** Begin Patch":
+    lines = _prepare_patch_lines(patch)
+    if not lines or not _is_patch_boundary_marker(lines[0], BEGIN_PATCH_MARKER):
         raise ToolExecutionError("patch 必须以 *** Begin Patch 开始", code="invalid_patch")
-    if len(lines) < 2 or lines[-1] != "*** End Patch":
+    if len(lines) < 2 or not _is_patch_boundary_marker(lines[-1], END_PATCH_MARKER):
         raise ToolExecutionError("patch 必须以 *** End Patch 结束", code="invalid_patch")
 
     operations: list[PatchOperation] = []
     index = 1
     while index < len(lines) - 1:
-        header = lines[index]
-        if header.startswith("*** Update File: "):
+        header = _operation_layer_marker(lines[index])
+        if header.startswith(UPDATE_FILE_MARKER):
             index = _collect_update_operation(lines, index, operations)
-        elif header.startswith("*** Delete File: "):
-            path = header.removeprefix("*** Delete File: ").strip()
+        elif header.startswith(DELETE_FILE_MARKER):
+            path = header.removeprefix(DELETE_FILE_MARKER).strip()
             if not path:
                 raise ToolExecutionError("Delete File 缺少路径", code="invalid_patch")
             operations.append(PatchOperation(kind="delete", path=path))
             index += 1
+        elif header.startswith(ADD_FILE_MARKER):
+            _raise_unsupported_add_file(lines[index], index + 1)
         else:
             _raise_unrecognized_patch_line(header, index + 1)
 
@@ -162,18 +172,50 @@ def _parse_patch(patch: str) -> list[PatchOperation]:
     return operations
 
 
+def _prepare_patch_lines(patch: str) -> list[str]:
+    normalized = patch.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
+        return []
+    lines = normalized.split("\n")
+    heredoc_lines = _extract_lenient_heredoc_lines(lines)
+    if heredoc_lines is not None:
+        lines = heredoc_lines
+    while lines and lines[-1].strip() == "":
+        lines.pop()
+    return lines
+
+
+def _extract_lenient_heredoc_lines(lines: list[str]) -> list[str] | None:
+    if len(lines) >= 4 and lines[0] in HEREDOC_OPENERS and lines[-1].endswith("EOF"):
+        return lines[1:-1]
+    return None
+
+
+def _is_patch_boundary_marker(line: str, marker: str) -> bool:
+    # Only envelope markers are whitespace-tolerant; hunk body prefixes are semantic.
+    return line.strip() == marker
+
+
+def _operation_layer_marker(line: str) -> str:
+    return line.strip()
+
+
+def _update_layer_marker(line: str) -> str:
+    return line.rstrip()
+
+
 def _collect_update_operation(
     lines: list[str],
     index: int,
     operations: list[PatchOperation],
 ) -> int:
-    path = lines[index].removeprefix("*** Update File: ").strip()
+    path = _operation_layer_marker(lines[index]).removeprefix(UPDATE_FILE_MARKER).strip()
     if not path:
         raise ToolExecutionError("Update File 缺少路径", code="invalid_patch")
     index += 1
     move_to: str | None = None
-    if index < len(lines) - 1 and lines[index].startswith("*** Move to: "):
-        move_to = lines[index].removeprefix("*** Move to: ").strip()
+    if index < len(lines) - 1 and _operation_layer_marker(lines[index]).startswith(MOVE_TO_MARKER):
+        move_to = _operation_layer_marker(lines[index]).removeprefix(MOVE_TO_MARKER).strip()
         if not move_to:
             raise ToolExecutionError("Move to 缺少路径", code="invalid_patch")
         index += 1
@@ -198,17 +240,36 @@ def _collect_update_operation(
 
 
 def _is_file_operation_header(line: str) -> bool:
-    return line.startswith("*** Update File: ") or line.startswith("*** Delete File: ")
+    marker = _update_layer_marker(line)
+    return (
+        marker.startswith(UPDATE_FILE_MARKER)
+        or marker.startswith(DELETE_FILE_MARKER)
+        or marker.startswith(ADD_FILE_MARKER)
+    )
+
+
+def _raise_unsupported_add_file(line: str, line_number: int) -> None:
+    raise ToolExecutionError(
+        "edit_file 不支持 *** Add File",
+        code="invalid_patch",
+        details={
+            "line": line,
+            "line_number": line_number,
+            "expected_headers": PATCH_EXPECTED_HEADERS,
+            "hint": "新增文件请使用 create_file；edit_file 只用于修改、删除或移动已有文件。",
+        },
+    )
 
 
 def _raise_unrecognized_patch_line(line: str, line_number: int) -> None:
     hint = "文件操作头必须写成 `*** Update File: <path>` 或 `*** Delete File: <path>`。"
-    if line.startswith("*** ") and ":" not in line:
+    marker = line.strip()
+    if marker.startswith("*** ") and ":" not in marker:
         hint = (
             "看起来你写成了 `*** <path>`。这不是有效的 edit_file 文件操作头；"
             "如果要修改已有文件，请改成 `*** Update File: <path>`。"
         )
-    elif line.startswith("--- ") or line.startswith("+++ ") or line.startswith("@@ -"):
+    elif marker.startswith("--- ") or marker.startswith("+++ ") or marker.startswith("@@ -"):
         hint = (
             "当前工具不接受普通 unified diff 文件头。请先写 `*** Update File: <path>`，"
             "然后在其后放置以空格、+、- 或 @@ 开头的变更行。"
@@ -354,6 +415,9 @@ def _apply_update_hunks(original: str, lines: list[str], *, path: str, start_lin
         old_lines, new_lines, added, removed = _hunk_lines(hunk)
         if added == 0 and removed == 0:
             continue
+        if not old_lines:
+            current[len(current) : len(current)] = new_lines
+            continue
         search_start = _search_start_for_hunk(current, hunk, cursor)
         if hunk.end_of_file and old_lines:
             search_start = max(search_start, len(current) - len(old_lines))
@@ -366,8 +430,6 @@ def _apply_update_hunks(original: str, lines: list[str], *, path: str, start_lin
             )
         current[position : position + len(old_lines)] = new_lines
         cursor = position + len(new_lines)
-        if hunk.end_of_file:
-            trailing_newline = False
     if not current:
         return ""
     return "\n".join(current) + ("\n" if trailing_newline else "")
@@ -382,17 +444,22 @@ def _parse_hunks(lines: list[str], *, start_line: int = 1) -> list[PatchHunk]:
     current_hunk_line_number = start_line
     for offset, line in enumerate(lines):
         line_number = start_line + offset
-        if line == "*** End of File":
+        marker = _update_layer_marker(line)
+        if end_of_file and marker == "":
+            continue
+        if end_of_file and marker != "@@" and not marker.startswith("@@ "):
+            _raise_invalid_line_after_end_of_file(line, line_number)
+        if marker == EOF_MARKER:
             if not body:
                 _raise_empty_update_hunk_before_end_of_file(line_number)
             end_of_file = True
             continue
-        if line == "@@" or line.startswith("@@ "):
+        if marker == "@@" or marker.startswith("@@ "):
             if saw_hunk_header and not body:
                 _raise_empty_update_hunk(current_hunk_line_number)
             if saw_hunk_header or body:
                 hunks.append(PatchHunk(header=header, lines=body, end_of_file=end_of_file))
-            header = line[2:].strip()
+            header = marker[2:].strip()
             body = []
             end_of_file = False
             saw_hunk_header = True
@@ -417,6 +484,19 @@ def _normalize_hunk_body_line(line: str) -> str | None:
     if line == "":
         return " "
     return None
+
+
+def _raise_invalid_line_after_end_of_file(line: str, line_number: int) -> None:
+    raise ToolExecutionError(
+        "Update hunk 在 *** End of File 后只能开始新的 @@ 块或结束 patch",
+        code="invalid_patch",
+        details={
+            "line": line,
+            "line_number": line_number,
+            "expected_prefixes": ["@@", END_PATCH_MARKER],
+            "hint": "*** End of File 表示当前 hunk 已锚定文件末尾；后续非空内容必须从新的 @@ 块开始。",
+        },
+    )
 
 
 def _raise_empty_update_hunk_before_end_of_file(line_number: int) -> None:

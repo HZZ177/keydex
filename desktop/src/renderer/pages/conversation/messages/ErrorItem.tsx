@@ -1,6 +1,7 @@
 import { Check, ChevronDown, CircleAlert, Copy } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { TurnError } from "@/types/protocol";
 
@@ -13,7 +14,7 @@ export interface ErrorItemProps {
 
 export function ErrorItem({ message }: ErrorItemProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const { copyState, showCopyFeedback } = useCopyFeedback();
   const error = useMemo(() => parseError(message), [message]);
   const detailsText = stringify(error.details);
   const hasDetails = detailsText !== "{}";
@@ -21,9 +22,9 @@ export function ErrorItem({ message }: ErrorItemProps) {
   const handleCopy = async () => {
     try {
       await copyText(stringify(error));
-      setCopyState("copied");
+      showCopyFeedback("copied");
     } catch {
-      setCopyState("failed");
+      showCopyFeedback("failed");
     }
   };
 

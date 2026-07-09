@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 
 import type { RuntimeBridge } from "@/runtime";
 import { AppDialog, DialogButton } from "@/renderer/components/dialog";
+import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 import type {
   McpAuthType,
   McpConnectionTestResponse,
@@ -120,7 +121,11 @@ export function McpServerFormDialog({
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthError, setOauthError] = useState("");
   const [oauthAuthUrl, setOauthAuthUrl] = useState("");
-  const [oauthCopyState, setOauthCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const {
+    copyState: oauthCopyState,
+    showCopyFeedback: showOAuthCopyFeedback,
+    resetCopyFeedback: resetOAuthCopyFeedback,
+  } = useCopyFeedback();
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
   const [showAdvancedAuth, setShowAdvancedAuth] = useState(false);
   const [showSseTransport, setShowSseTransport] = useState(false);
@@ -316,7 +321,7 @@ export function McpServerFormDialog({
     setOauthLoading(true);
     setOauthError("");
     setOauthAuthUrl("");
-    setOauthCopyState("idle");
+    resetOAuthCopyFeedback();
     try {
       const started = await runtime.mcp.startOAuth(effectiveServerId);
       setOauthAuthUrl(started.auth_url);
@@ -348,14 +353,14 @@ export function McpServerFormDialog({
 
   async function copyOAuthUrl() {
     if (!oauthAuthUrl || !navigator.clipboard?.writeText) {
-      setOauthCopyState("failed");
+      showOAuthCopyFeedback("failed");
       return;
     }
     try {
       await navigator.clipboard.writeText(oauthAuthUrl);
-      setOauthCopyState("copied");
+      showOAuthCopyFeedback("copied");
     } catch {
-      setOauthCopyState("failed");
+      showOAuthCopyFeedback("failed");
     }
   }
 

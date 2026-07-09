@@ -226,6 +226,7 @@ export function WorkbenchAssistantSurface({
   const [unreadAssistantMessageKey, setUnreadAssistantMessageKey] = useState<string | null>(null);
   const [allowPersistentTrust, setAllowPersistentTrust] = useState(true);
   const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>("workspace_trusted");
+  const [contextCompressionEnabled, setContextCompressionEnabled] = useState(true);
   const [expandedBottomGap, setExpandedBottomGap] = useState(160);
   const [uncontrolledDrawerWidthPreview, setUncontrolledDrawerWidthPreview] = useState<number | null>(null);
   const [overlayTurnNavigationRequest, setOverlayTurnNavigationRequest] =
@@ -406,6 +407,29 @@ export function WorkbenchAssistantSurface({
           ? "composer"
             : surfaceMode;
   const composerFocusSeq = assistantState.focusSeq;
+
+  useEffect(() => {
+    if (!backendReady) {
+      setContextCompressionEnabled(true);
+      return;
+    }
+    let active = true;
+    void runtime.settings
+      .getExtensionSettings()
+      .then((settings) => {
+        if (active) {
+          setContextCompressionEnabled(Boolean(settings.context_compression.enabled));
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setContextCompressionEnabled(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [backendReady, runtime]);
 
   useEffect(() => {
     if (!backendReady) {
@@ -1464,6 +1488,7 @@ export function WorkbenchAssistantSurface({
       fileChipRequest={composerFileChipRequest}
       quoteChipRequest={composerQuoteChipRequest}
       contextWindowUsage={displayPanelModel.contextWindowUsage}
+      contextCompressionEnabled={contextCompressionEnabled}
       allowBypassConversationSlashCommand={!secondaryPageActive && Boolean(onOpenBtwConversation)}
       allowGoalSlashCommand={!secondaryPageActive}
       allowContextCompressionSlashCommand={!secondaryPageActive && Boolean(panelSessionId)}
@@ -2737,6 +2762,7 @@ function WorkbenchComposer({
   fileChipRequest,
   quoteChipRequest,
   contextWindowUsage,
+  contextCompressionEnabled,
   allowBypassConversationSlashCommand,
   allowGoalSlashCommand,
   allowContextCompressionSlashCommand,
@@ -2780,6 +2806,7 @@ function WorkbenchComposer({
   fileChipRequest: AgentSessionController["fileChipRequest"];
   quoteChipRequest: AgentSessionController["quoteChipRequest"];
   contextWindowUsage: ContextWindowUsageStatus | null;
+  contextCompressionEnabled: boolean;
   allowBypassConversationSlashCommand?: boolean;
   allowGoalSlashCommand?: boolean;
   allowContextCompressionSlashCommand?: boolean;
@@ -2847,6 +2874,7 @@ function WorkbenchComposer({
       inputLabel="工作台助手输入"
       modelSelectorPlacement="top"
       contextWindowUsage={contextWindowUsage}
+      contextCompressionEnabled={contextCompressionEnabled}
       externalFileRequest={fileChipRequest}
       externalQuoteRequest={quoteChipRequest}
       onSelectedFilesChange={onSelectedFilesChange}

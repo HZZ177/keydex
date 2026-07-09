@@ -17,14 +17,14 @@ def _repositories(tmp_path) -> StorageRepositories:
     return StorageRepositories(init_database(tmp_path / "app.db"))
 
 
-def test_agent_runtime_settings_defaults_do_not_enable_new_side_tasks() -> None:
+def test_agent_runtime_settings_defaults_enable_context_compression() -> None:
     settings = default_agent_runtime_settings()
 
     assert settings.auto_title.enabled is False
     assert settings.auto_title.max_title_length == 20
-    assert settings.context_compression.enabled is False
-    assert settings.context_compression.context_window_tokens == 128000
-    assert settings.context_compression.trigger_fraction == 0.75
+    assert settings.context_compression.enabled is True
+    assert settings.context_compression.context_window_tokens == 256000
+    assert settings.context_compression.trigger_fraction == 0.8
     assert settings.duplicate_tool_call_guard.enabled is True
     assert settings.duplicate_tool_call_guard.max_repeats == 3
 
@@ -126,4 +126,8 @@ def test_load_agent_runtime_settings_drops_removed_tool_limit_config(tmp_path) -
 
     settings = load_agent_runtime_settings(repositories)
 
-    assert settings == default_agent_runtime_settings()
+    assert settings.auto_title == default_agent_runtime_settings().auto_title
+    assert settings.duplicate_tool_call_guard == default_agent_runtime_settings().duplicate_tool_call_guard
+    assert settings.context_compression.enabled is False
+    assert settings.context_compression.context_window_tokens == 128000
+    assert settings.context_compression.trigger_fraction == 0.75

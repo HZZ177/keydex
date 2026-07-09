@@ -2,6 +2,7 @@ import { Check, Copy, FolderOpen, GitBranch, MoreHorizontal, SendHorizontal } fr
 import { type PropsWithChildren, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
+import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 
 import styles from "./ChatLayout.module.css";
 
@@ -28,7 +29,8 @@ export function ChatLayout({
 }: ChatLayoutProps) {
   const layoutRef = useRef<HTMLElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [titleCopied, setTitleCopied] = useState(false);
+  const { copyState: titleCopyState, showCopyFeedback: showTitleCopyFeedback } = useCopyFeedback();
+  const titleCopied = titleCopyState === "copied";
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -58,10 +60,9 @@ export function ChatLayout({
   const copyTitle = async () => {
     try {
       await navigator.clipboard?.writeText(title);
-      setTitleCopied(true);
-      window.setTimeout(() => setTitleCopied(false), 1200);
+      showTitleCopyFeedback("copied");
     } catch {
-      setTitleCopied(false);
+      showTitleCopyFeedback("failed");
     }
   };
 

@@ -1628,9 +1628,9 @@ function defaultExtensionSettings() {
       max_repeats: 3,
     },
     context_compression: {
-      enabled: false,
-      context_window_tokens: 128000,
-      trigger_fraction: 0.75,
+      enabled: true,
+      context_window_tokens: 256000,
+      trigger_fraction: 0.8,
     },
     a2ui: {
       enabled: true,

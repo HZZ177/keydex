@@ -747,7 +747,7 @@ function contextWindowUsageFromSnapshot(
     return null;
   }
   const thresholdFraction =
-    positiveNumber(data.threshold_fraction) ?? positiveNumber(data.trigger_fraction) ?? 0.75;
+    positiveNumber(data.threshold_fraction) ?? positiveNumber(data.trigger_fraction) ?? 0.8;
   const thresholdTokenCount =
     positiveNumber(data.threshold_token_count) ?? Math.max(1, Math.round(contextWindow * thresholdFraction));
   const thresholdUsageFraction =

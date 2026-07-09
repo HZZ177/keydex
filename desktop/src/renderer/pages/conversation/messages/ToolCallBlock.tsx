@@ -14,6 +14,7 @@ import { useMemo, useState } from "react";
 
 import { FileReviewCard } from "@/renderer/components/review/FileReviewDiff";
 import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
+import { useTargetedCopyFeedback, type CopyFeedbackStatus } from "@/renderer/hooks/useCopyFeedback";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import {
   fileReviewChangesFromMessage,
@@ -40,12 +41,12 @@ export interface ToolCallBlockProps {
 }
 
 type CopyTarget = "input" | "output";
-type CopyStatus = "idle" | "copied" | "failed";
+type CopyStatus = CopyFeedbackStatus;
 
 export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCallBlockProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedReviewPath, setExpandedReviewPath] = useState<string | null>(null);
-  const [copyState, setCopyState] = useState<{ target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null>(null);
+  const { getCopyStatus, showCopyFeedback } = useTargetedCopyFeedback<CopyTarget>();
   const details = useLazyToolDetails(message, onLoadDetails);
   const tool = useMemo(() => parseToolPayload(details.message), [details.message]);
   const running = details.message.status === "pending" || details.message.status === "running";
@@ -69,13 +70,13 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
   const handleCopy = async (target: CopyTarget, text: string) => {
     try {
       await copyText(text);
-      setCopyState({ target, status: "copied" });
+      showCopyFeedback(target, "copied");
     } catch {
-      setCopyState({ target, status: "failed" });
+      showCopyFeedback(target, "failed");
     }
   };
-  const inputCopyStatus = copyStatus(copyState, "input");
-  const outputCopyStatus = copyStatus(copyState, "output");
+  const inputCopyStatus = getCopyStatus("input");
+  const outputCopyStatus = getCopyStatus("output");
 
   return (
     <article
@@ -452,13 +453,6 @@ function fileReviewHeading(tool: ParsedToolPayload): string {
     return "已删除的文件";
   }
   return "已编辑的文件";
-}
-
-function copyStatus(
-  state: { target: CopyTarget; status: Exclude<CopyStatus, "idle"> } | null,
-  target: CopyTarget,
-): CopyStatus {
-  return state?.target === target ? state.status : "idle";
 }
 
 function copyAriaLabel(label: "入参" | "输出", status: CopyStatus): string {

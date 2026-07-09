@@ -28,7 +28,7 @@ from backend.app.core.request_context import (
     get_user_message,
 )
 from backend.app.events import DomainEventType
-from backend.app.model import ModelSettings
+from backend.app.model import ModelSettings, is_stream_chunk_timeout_error
 
 _llm_gateway_trace_registry: dict[str, str] = {}
 _REASONING_PAYLOAD_KEYS = (
@@ -792,6 +792,8 @@ def _should_retry_llm_error(error: BaseException) -> bool:
     for exc in _exception_chain(error):
         if isinstance(exc, (asyncio.CancelledError, GeneratorExit)):
             return False
+        if is_stream_chunk_timeout_error(exc):
+            return True
         if isinstance(exc, (openai.APITimeoutError, openai.APIConnectionError)):
             return True
         if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError)):

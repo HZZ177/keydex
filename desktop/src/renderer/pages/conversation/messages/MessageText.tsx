@@ -29,6 +29,7 @@ import {
 } from "@/renderer/components/workspace/markdownPreviewEngine";
 import { ImagePreviewDialog } from "@/renderer/components/workspace/ImagePreviewSurface";
 import { useOptionalPreview, type PreviewFileRevealTarget, type PreviewRenderContext } from "@/renderer/providers/PreviewProvider";
+import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { isAbsoluteFilePath } from "@/renderer/utils/fileLinks";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
@@ -50,8 +51,6 @@ import { previewRenderContextFromWorkspaceScope } from "./previewRenderContext";
 import { useTextSelection } from "./useTextSelection";
 import { useTypingAnimation } from "./useTypingAnimation";
 import styles from "./MessageText.module.css";
-
-const MESSAGE_ACTION_COPY_FEEDBACK_MS = 1400;
 
 const messageMarkdownModelCache = new MarkdownDocumentModelCache(96);
 const MESSAGE_MARKDOWN_SCROLL_PARENT_SELECTOR = "[data-message-list-scroll='true']";
@@ -861,38 +860,11 @@ export function MessageActionFooter({
   onForkFromMessage?: (message: ConversationMessage) => void;
   onReverseFromMessage?: (message: ConversationMessage) => void;
 }) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  const copyFeedbackTimerRef = useRef<number | null>(null);
+  const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
   const time = formatMessageTime(message.updatedAt || message.createdAt);
   const hasPersistedEvent = typeof message.payload.messageEventId === "string" && message.status !== "running";
   const canFork = hasPersistedEvent && message.kind === "assistant";
   const canReverse = hasPersistedEvent && message.kind === "user";
-
-  const clearCopyFeedbackTimer = useCallback(() => {
-    if (copyFeedbackTimerRef.current !== null) {
-      window.clearTimeout(copyFeedbackTimerRef.current);
-      copyFeedbackTimerRef.current = null;
-    }
-  }, []);
-
-  const resetCopyFeedback = useCallback(() => {
-    clearCopyFeedbackTimer();
-    setCopyState("idle");
-  }, [clearCopyFeedbackTimer]);
-
-  const showCopyFeedback = useCallback(
-    (state: "copied" | "failed") => {
-      clearCopyFeedbackTimer();
-      setCopyState(state);
-      copyFeedbackTimerRef.current = window.setTimeout(() => {
-        setCopyState("idle");
-        copyFeedbackTimerRef.current = null;
-      }, MESSAGE_ACTION_COPY_FEEDBACK_MS);
-    },
-    [clearCopyFeedbackTimer],
-  );
-
-  useEffect(() => clearCopyFeedbackTimer, [clearCopyFeedbackTimer]);
 
   const handleCopy = async () => {
     try {
@@ -1100,14 +1072,13 @@ function FloatingQuotePreview({
   showCopyAction = true,
   children,
 }: FloatingQuotePreviewProps) {
-  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  const { copyState, showCopyFeedback } = useCopyFeedback();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<FloatingQuotePosition | null>(null);
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const chipRef = useRef<HTMLElement | null>(null);
   const cardRef = useRef<HTMLSpanElement>(null);
   const closeTimerRef = useRef<number | null>(null);
-  const copyTimerRef = useRef<number | null>(null);
 
   const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current !== null) {
@@ -1195,23 +1166,17 @@ function FloatingQuotePreview({
   useEffect(
     () => () => {
       clearCloseTimer();
-      if (copyTimerRef.current !== null) {
-        window.clearTimeout(copyTimerRef.current);
-      }
     },
     [clearCloseTimer],
   );
 
   const handleCopy = async () => {
-    await copyText(copyValue || quoteText);
-    setCopyState("copied");
-    if (copyTimerRef.current !== null) {
-      window.clearTimeout(copyTimerRef.current);
+    try {
+      await copyText(copyValue || quoteText);
+      showCopyFeedback("copied");
+    } catch {
+      showCopyFeedback("failed");
     }
-    copyTimerRef.current = window.setTimeout(() => {
-      setCopyState("idle");
-      copyTimerRef.current = null;
-    }, 1200);
   };
 
   const cardStyle = {

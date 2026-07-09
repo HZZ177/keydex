@@ -27,7 +27,7 @@ describe("ExtensionSettingsPage", () => {
     expect(screen.getByLabelText("期望标题最大长度")).toHaveProperty("value", "48");
     expect(screen.getByText("模型上下文窗口")).not.toBeNull();
     expect(screen.getByText("A2UI 交互组件")).not.toBeNull();
-    expect(screen.getByText(/确认、选择、表单、图表/)).not.toBeNull();
+    expect(screen.getByText(/图表、选择、表单/)).not.toBeNull();
     expect(screen.getByRole("switch", { name: "启用 A2UI" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("switch", { name: "显示 A2UI 调试入口" }).getAttribute("aria-checked")).toBe("false");
     expect(screen.queryByText(/schema/i)).toBeNull();
@@ -37,7 +37,7 @@ describe("ExtensionSettingsPage", () => {
     expect(screen.queryByText("紧急压缩 90%")).toBeNull();
     expect(screen.queryByLabelText("紧急阈值")).toBeNull();
     expect(screen.queryByLabelText("保留轮数")).toBeNull();
-    expect(screen.getByText("约 96,000 token 时自动压缩上下文")).not.toBeNull();
+    expect(screen.getByText("约 204,800 token 时自动压缩上下文")).not.toBeNull();
     expect(screen.queryByText("快速模型未配置，标题生成不可用")).toBeNull();
     expect(screen.getAllByRole("button", { name: "保存" })).toHaveLength(1);
   });
@@ -52,7 +52,6 @@ describe("ExtensionSettingsPage", () => {
     fireEvent.click(screen.getByRole("switch", { name: "启用标题生成" }));
     fireEvent.change(screen.getByLabelText("期望标题最大长度"), { target: { value: "50" } });
     fireEvent.change(screen.getByLabelText("连续重复阈值"), { target: { value: "5" } });
-    fireEvent.click(screen.getByRole("switch", { name: "启用上下文压缩" }));
     fireEvent.change(screen.getByLabelText("模型上下文窗口"), { target: { value: "64000" } });
     const triggerSlider = screen.getByRole("slider", { name: "触发阈值" });
     fireEvent.keyDown(triggerSlider, { key: "PageDown" });
@@ -76,7 +75,7 @@ describe("ExtensionSettingsPage", () => {
         context_compression: {
           enabled: true,
           context_window_tokens: 64000,
-          trigger_fraction: 0.6,
+          trigger_fraction: 0.65,
         },
         a2ui: {
           enabled: true,
@@ -102,10 +101,9 @@ describe("ExtensionSettingsPage", () => {
     expect(screen.getByRole("switch", { name: "启用 A2UI" }).getAttribute("aria-checked")).toBe("false");
     expect(screen.getByRole("switch", { name: "显示 A2UI 调试入口" }).getAttribute("aria-checked")).toBe("false");
     expect(screen.getByText(/关闭后只影响后续新对话能力/)).not.toBeNull();
-    expect(screen.getByText("确认")).not.toBeNull();
+    expect(screen.getByText("图表")).not.toBeNull();
     expect(screen.getByText("选择")).not.toBeNull();
     expect(screen.getByText("表单")).not.toBeNull();
-    expect(screen.getByText("图表")).not.toBeNull();
     expect(screen.queryByLabelText(/schema/i)).toBeNull();
     expect(screen.queryByLabelText(/render_key/i)).toBeNull();
 
@@ -172,7 +170,6 @@ describe("ExtensionSettingsPage", () => {
     );
 
     await screen.findByText("上下文压缩");
-    fireEvent.click(screen.getByRole("switch", { name: "启用上下文压缩" }));
 
     expect(screen.getByRole("alert").textContent).toContain("默认对话模型未配置，上下文压缩不可用");
     expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true);
@@ -299,9 +296,9 @@ function defaultExtensionSettings(): AgentRuntimeSettings {
       max_repeats: 3,
     },
     context_compression: {
-      enabled: false,
-      context_window_tokens: 128000,
-      trigger_fraction: 0.75,
+      enabled: true,
+      context_window_tokens: 256000,
+      trigger_fraction: 0.8,
     },
     a2ui: {
       enabled: true,

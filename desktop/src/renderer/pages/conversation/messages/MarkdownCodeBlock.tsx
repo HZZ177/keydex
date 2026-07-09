@@ -44,6 +44,7 @@ import {
   type SvgDimensions,
 } from "@/renderer/utils/mermaidSvg";
 import { getMermaidConfig } from "@/renderer/utils/mermaidConfig";
+import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 
 import { LineChangeTicker } from "./LineChangeTicker";
 import { copyText, normalizeMarkdownContent } from "./markdown";
@@ -153,7 +154,7 @@ export interface MarkdownCodeBlockProps {
 
 export function MarkdownCodeBlock({ children, defaultViewMode, streaming = false }: MarkdownCodeBlockProps) {
   const [expanded, setExpanded] = useState(false);
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
   const [viewModeOverride, setViewModeOverride] = useState<"source" | "preview" | null>(null);
   const [pendingViewMode, setPendingViewMode] = useState<"source" | "preview" | null>(null);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
@@ -224,8 +225,9 @@ export function MarkdownCodeBlock({ children, defaultViewMode, streaming = false
     setPendingViewMode(null);
     setFullscreenOpen(false);
     clearSourceAnimation(sourceAnimationRef, sourceViewportRef.current);
+    resetCopyFeedback();
     setExpanded(false);
-  }, [language, preferredViewMode, text]);
+  }, [language, preferredViewMode, resetCopyFeedback, text]);
 
   useEffect(
     () => () => {
@@ -238,9 +240,9 @@ export function MarkdownCodeBlock({ children, defaultViewMode, streaming = false
   const handleCopy = async () => {
     try {
       await copyText(text);
-      setCopyState("copied");
+      showCopyFeedback("copied");
     } catch {
-      setCopyState("failed");
+      showCopyFeedback("failed");
     }
   };
 

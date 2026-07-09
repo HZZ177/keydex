@@ -1,7 +1,8 @@
 import { Check, Copy, X } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo } from "react";
 import { createPortal } from "react-dom";
 
+import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { A2UIDebugRawEvent } from "@/types/protocol";
 
@@ -15,11 +16,9 @@ export interface A2UIDebugPanelProps {
   onClose: () => void;
 }
 
-type CopyState = "idle" | "copied" | "failed";
-
 export function A2UIDebugPanel({ message, parsed, onClose }: A2UIDebugPanelProps) {
   const titleId = useId();
-  const [copyState, setCopyState] = useState<CopyState>("idle");
+  const { copyState, showCopyFeedback } = useCopyFeedback();
   const rawEvents = parsed.debug?.rawEvents ?? [];
   const streamBuffer = useMemo(() => buildStreamBuffer(parsed), [parsed]);
   const eventTimeline = useMemo(() => buildRawEventTimeline(rawEvents), [rawEvents]);
@@ -43,9 +42,9 @@ export function A2UIDebugPanel({ message, parsed, onClose }: A2UIDebugPanelProps
   const copyJson = async () => {
     try {
       await copyText(json);
-      setCopyState("copied");
+      showCopyFeedback("copied");
     } catch {
-      setCopyState("failed");
+      showCopyFeedback("failed");
     }
   };
 

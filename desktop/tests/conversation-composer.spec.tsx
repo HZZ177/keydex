@@ -260,6 +260,48 @@ describe("ConversationComposer", () => {
     expect(tooltip.querySelector('[data-progress-kind="blocking"]')).toBeNull();
   });
 
+  it("shows the disabled context compression tooltip when the setting is off", () => {
+    render(
+      <ConversationComposer
+        value=""
+        runtimeState="idle"
+        canSend={false}
+        canStop={false}
+        connectionReady
+        modelSelection={modelSelection()}
+        workspaceSkills={[]}
+        selectedSkill={null}
+        externalFileRequest={null}
+        externalQuoteRequest={null}
+        contextCompressionEnabled={false}
+        contextWindowUsage={{
+          sessionId: "ses-1",
+          activeSessionId: "ses-1",
+          tokenCount: 400,
+          contextWindow: 1000,
+          windowFraction: 0.4,
+          thresholdFraction: 0.8,
+          thresholdTokenCount: 800,
+          thresholdUsageFraction: 0.5,
+          remainingToThresholdTokens: 400,
+          callPhase: "after",
+          callStatus: "completed",
+          tokenSource: "usage_metadata",
+          updatedAtMs: 1000,
+        }}
+        onChange={vi.fn()}
+        onSkillChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    const indicator = screen.getByTestId("context-window-indicator");
+    expect(indicator.getAttribute("aria-label")).toBe("上下文压缩功能已关闭");
+    expect(screen.getByRole("tooltip").textContent).toContain("上下文压缩功能已关闭");
+    expect(Number.parseFloat(contextWindowProgressCircle().style.strokeDashoffset)).toBeCloseTo(2 * Math.PI * 6);
+  });
+
   it("does not render Workbench dock controls unless the surface supplies them", () => {
     render(
       <ConversationComposer

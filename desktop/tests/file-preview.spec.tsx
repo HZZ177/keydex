@@ -39,6 +39,7 @@ class FakeResizeObserver {
 afterEach(() => {
   restoreElementMetrics?.();
   restoreElementMetrics = null;
+  vi.useRealTimers();
 });
 
 describe("FilePreview", () => {
@@ -1720,6 +1721,37 @@ describe("FilePreview", () => {
     });
     expect(await screen.findByText("已复制")).not.toBeNull();
   });
+
+  it("resets preview copy feedback after the shared delay", async () => {
+    vi.useFakeTimers();
+    const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
+
+    render(
+      <FilePreview
+        request={{ type: "content", title: "notes.txt", content: "copy me", contentType: "text" }}
+      />,
+    );
+
+    const copyButton = screen.getByRole("button", { name: "复制预览内容" });
+    await act(async () => {
+      fireEvent.click(copyButton);
+    });
+
+    expect(clipboard).toHaveBeenCalledWith("copy me");
+    expect(copyButton.querySelector(".lucide-check")).not.toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(1399);
+    });
+    expect(copyButton.querySelector(".lucide-check")).not.toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(copyButton.querySelector(".lucide-copy")).not.toBeNull();
+    expect(copyButton.querySelector(".lucide-check")).toBeNull();
+  });
+
   it("creates edits and deletes file-level annotations", async () => {
     const annotation = fileAnnotation({
       id: "ann-file",

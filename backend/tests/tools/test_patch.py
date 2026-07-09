@@ -135,6 +135,149 @@ async def test_apply_patch_accepts_bare_empty_context_lines_for_compatibility(tm
     assert target.read_text(encoding="utf-8") == "alpha\nnew\n\nomega\n"
 
 
+async def test_apply_patch_accepts_whitespace_padded_patch_boundary_markers(tmp_path) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("alpha\nold\nomega\n", encoding="utf-8")
+
+    result = await _run(
+        (
+            "  *** Begin Patch\n"
+            "*** Update File: src/app.py\n"
+            "@@\n"
+            " alpha\n"
+            "-old\n"
+            "+new\n"
+            " omega\n"
+            " *** End Patch  \n"
+            "   "
+        ),
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert result.result["changes"][0]["added_lines"] == 1
+    assert result.result["changes"][0]["deleted_lines"] == 1
+    assert target.read_text(encoding="utf-8") == "alpha\nnew\nomega\n"
+
+
+async def test_apply_patch_accepts_lenient_heredoc_wrappers(tmp_path) -> None:
+    for index, opener in enumerate(("<<EOF", "<<'EOF'", '<<"EOF"')):
+        target = tmp_path / f"heredoc-{index}.txt"
+        target.write_text("alpha\nold\nomega\n", encoding="utf-8")
+
+        result = await _run(
+            (
+                f"{opener}\n"
+                "*** Begin Patch\n"
+                f"*** Update File: {target.name}\n"
+                "@@\n"
+                " alpha\n"
+                "-old\n"
+                "+new\n"
+                " omega\n"
+                "*** End Patch\n"
+                "EOF\n"
+            ),
+            tmp_path,
+        )
+
+        assert result.ok is True
+        assert target.read_text(encoding="utf-8") == "alpha\nnew\nomega\n"
+
+
+async def test_apply_patch_accepts_whitespace_padded_file_operation_markers(tmp_path) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("alpha\nold\nomega\n", encoding="utf-8")
+
+    result = await _run(
+        (
+            "*** Begin Patch\n"
+            "   *** Update File: src/app.py   \n"
+            "*** Move to: src/main.py   \n"
+            "@@   \n"
+            " alpha\n"
+            "-old\n"
+            "+new\n"
+            " omega\n"
+            "*** End Patch"
+        ),
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert not target.exists()
+    assert (tmp_path / "src" / "main.py").read_text(encoding="utf-8") == "alpha\nnew\nomega\n"
+
+
+async def test_apply_patch_accepts_update_without_initial_hunk_header(tmp_path) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("import foo\n", encoding="utf-8")
+
+    result = await _run(
+        """*** Begin Patch
+*** Update File: src/app.py
+ import foo
++import bar
+*** End Patch""",
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert target.read_text(encoding="utf-8") == "import foo\nimport bar\n"
+
+
+async def test_apply_patch_ignores_blank_lines_after_end_of_file_marker(tmp_path) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("alpha\nomega\n", encoding="utf-8")
+
+    result = await _run(
+        (
+            "*** Begin Patch\n"
+            "*** Update File: src/app.py\n"
+            "@@\n"
+            " omega\n"
+            "+tail\n"
+            "*** End of File   \n"
+            "\n"
+            "*** End Patch"
+        ),
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert target.read_text(encoding="utf-8") == "alpha\nomega\ntail\n"
+
+
+async def test_apply_patch_inserts_pure_addition_chunks_at_end_like_codex(tmp_path) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("line1\nline2\nline3\n", encoding="utf-8")
+
+    result = await _run(
+        """*** Begin Patch
+*** Update File: src/app.py
+@@
++after-context
++second-line
+@@
+ line1
+-line2
+-line3
++line2-replacement
+*** End Patch""",
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert target.read_text(encoding="utf-8") == (
+        "line1\nline2-replacement\nafter-context\nsecond-line\n"
+    )
+
+
 async def test_apply_patch_rejects_unprefixed_non_empty_update_lines(tmp_path) -> None:
     target = tmp_path / "src" / "app.py"
     target.parent.mkdir()
@@ -177,11 +320,14 @@ async def test_apply_patch_rejects_structural_marker_inside_update_body(tmp_path
 
     assert result.ok is False
     assert result.error["code"] == "invalid_patch"
-    assert result.error["message"] == "Update File 正文中不能嵌入 *** Add File 文件操作头"
+    assert result.error["message"] == "edit_file 不支持 *** Add File"
     assert result.error["details"]["line"] == "*** Add File: src/new.py"
     assert result.error["details"]["line_number"] == 5
     assert "create_file" in result.error["details"]["hint"]
-    assert result.error["details"]["expected_prefixes"] == [" ", "+", "-", "@@", "*** End of File"]
+    assert result.error["details"]["expected_headers"] == [
+        "*** Update File: <path>",
+        "*** Delete File: <path>",
+    ]
     assert target.read_text(encoding="utf-8") == "alpha\n"
 
 
