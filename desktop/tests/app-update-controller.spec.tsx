@@ -1,8 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 
-import { AppUpdateController } from "@/renderer/providers/AppUpdateController";
+import {
+  AppUpdateController,
+  useAppUpdate,
+} from "@/renderer/providers/AppUpdateController";
 import {
   canUseAppUpdater,
   checkForAppUpdate,
@@ -86,7 +90,57 @@ describe("AppUpdateController", () => {
 
     expect(screen.queryByRole("dialog", { name: "发现新版本" })).toBeNull();
   });
+
+  it("keeps download progress when the page using the updater unmounts", async () => {
+    const user = userEvent.setup();
+    checkForAppUpdateMock.mockResolvedValue(createPendingUpdate());
+    downloadAndInstallAppUpdateMock.mockImplementation(
+      (_pendingUpdate: PendingAppUpdate, onProgress?: (progress: AppUpdateProgress) => void) =>
+        new Promise<void>(() => {
+          onProgress?.({ downloadedBytes: 256, totalBytes: 1024, finished: false });
+        }),
+    );
+
+    render(
+      <AppUpdateController>
+        <UpdatePageHarness />
+      </AppUpdateController>,
+    );
+
+    expect(await screen.findByRole("dialog", { name: "发现新版本" })).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+
+    await user.click(screen.getByRole("button", { name: "页面下载更新" }));
+    await user.click(screen.getByRole("button", { name: "切换页面" }));
+
+    expect(screen.queryByRole("button", { name: "页面下载更新" })).toBeNull();
+    expect(await screen.findByText(/正在下载更新 25%/)).not.toBeNull();
+    expect((screen.getByRole("button", { name: "下载中" }) as HTMLButtonElement).disabled).toBe(true);
+  });
 });
+
+function UpdatePageHarness() {
+  const [mounted, setMounted] = useState(true);
+
+  return (
+    <>
+      {mounted ? <UpdatePageActions /> : null}
+      <button type="button" onClick={() => setMounted(false)}>
+        切换页面
+      </button>
+    </>
+  );
+}
+
+function UpdatePageActions() {
+  const appUpdate = useAppUpdate();
+
+  return (
+    <button type="button" onClick={() => void appUpdate.installUpdate()}>
+      页面下载更新
+    </button>
+  );
+}
 
 function createPendingUpdate(): PendingAppUpdate {
   return {

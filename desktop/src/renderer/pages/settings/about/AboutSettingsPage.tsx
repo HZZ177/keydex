@@ -2,14 +2,14 @@ import { Download, Info, RefreshCw, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  canUseAppUpdater,
-  checkForAppUpdate,
-  downloadAndInstallAppUpdate,
   getCurrentAppVersion,
   type AppUpdateProgress,
   type PendingAppUpdate,
 } from "@/runtime";
-import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import {
+  useAppUpdate,
+  type AppUpdateStatus,
+} from "@/renderer/providers/AppUpdateController";
 import {
   appUpdateProgressPercent,
   appUpdateProgressText,
@@ -17,22 +17,10 @@ import {
 
 import styles from "./AboutSettingsPage.module.css";
 
-type UpdateStatus = "idle" | "checking" | "current" | "available" | "downloading" | "installed" | "error";
-
-const EMPTY_PROGRESS: AppUpdateProgress = {
-  downloadedBytes: 0,
-  totalBytes: null,
-  finished: false,
-};
-
 export function AboutSettingsPage() {
   const [currentVersion, setCurrentVersion] = useState("...");
-  const [status, setStatus] = useState<UpdateStatus>("idle");
-  const [pendingUpdate, setPendingUpdate] = useState<PendingAppUpdate | null>(null);
-  const [progress, setProgress] = useState<AppUpdateProgress>(EMPTY_PROGRESS);
-  const notifications = useNotifications();
-  const updaterAvailable = canUseAppUpdater();
-  const busy = status === "checking" || status === "downloading";
+  const appUpdate = useAppUpdate();
+  const { busy, pendingUpdate, progress, status, updaterAvailable } = appUpdate;
 
   useEffect(() => {
     let active = true;
@@ -50,47 +38,6 @@ export function AboutSettingsPage() {
     () => updateStatusText(status, pendingUpdate, progress, updaterAvailable),
     [pendingUpdate, progress, status, updaterAvailable],
   );
-
-  const checkUpdate = async () => {
-    if (busy) {
-      return;
-    }
-    setStatus("checking");
-    setPendingUpdate(null);
-    setProgress(EMPTY_PROGRESS);
-    try {
-      const update = await checkForAppUpdate();
-      if (!update) {
-        setStatus("current");
-        notifications.success("已是最新版本");
-        return;
-      }
-      setPendingUpdate(update);
-      setStatus("available");
-      notifications.info(`发现新版本 ${update.version}`);
-    } catch (reason) {
-      const message = errorMessage(reason);
-      setStatus("error");
-      notifications.error(`更新检查失败：${message}`);
-    }
-  };
-
-  const installUpdate = async () => {
-    if (!pendingUpdate || busy) {
-      return;
-    }
-    setStatus("downloading");
-    setProgress(EMPTY_PROGRESS);
-    notifications.info("开始下载更新");
-    try {
-      await downloadAndInstallAppUpdate(pendingUpdate, setProgress);
-      setStatus("installed");
-    } catch (reason) {
-      const message = errorMessage(reason);
-      setStatus("error");
-      notifications.error(`更新安装失败：${message}`);
-    }
-  };
 
   return (
     <main className={styles.page} data-settings-page data-testid="about-settings-page">
@@ -126,16 +73,21 @@ export function AboutSettingsPage() {
               <button
                 data-settings-secondary
                 disabled={busy || !updaterAvailable}
-                onClick={checkUpdate}
+                onClick={() => void appUpdate.checkUpdate({ notify: true, openDialogOnAvailable: false })}
                 type="button"
               >
                 <RefreshCw size={15} />
                 <span>{status === "checking" ? "检查中" : "检查更新"}</span>
               </button>
               {pendingUpdate ? (
-                <button data-settings-primary disabled={busy} onClick={installUpdate} type="button">
+                <button
+                  data-settings-primary
+                  disabled={busy}
+                  onClick={() => void appUpdate.installUpdate({ notify: true })}
+                  type="button"
+                >
                   {status === "downloading" ? <RotateCcw size={15} /> : <Download size={15} />}
-                  <span>{status === "downloading" ? "下载中" : "下载更新并重启"}</span>
+                  <span>{downloadButtonText(status)}</span>
                 </button>
               ) : null}
             </div>
@@ -169,7 +121,7 @@ export function AboutSettingsPage() {
 }
 
 function updateStatusText(
-  status: UpdateStatus,
+  status: AppUpdateStatus,
   update: PendingAppUpdate | null,
   progress: AppUpdateProgress,
   updaterAvailable: boolean,
@@ -198,12 +150,15 @@ function updateStatusText(
   return "尚未检查更新";
 }
 
-function errorMessage(reason: unknown): string {
-  if (reason instanceof Error && reason.message) {
-    return reason.message;
+function downloadButtonText(status: AppUpdateStatus): string {
+  if (status === "downloading") {
+    return "下载中";
   }
-  if (typeof reason === "string" && reason) {
-    return reason;
+  if (status === "installed") {
+    return "正在重启";
   }
-  return "操作失败";
+  if (status === "error") {
+    return "重试下载并重启";
+  }
+  return "下载更新并重启";
 }

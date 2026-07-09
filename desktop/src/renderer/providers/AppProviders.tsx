@@ -28,19 +28,20 @@ export function AppProviders({
   return (
     <ThemeProvider>
       <NotificationProvider>
-        <AppUpdateController />
-        <AppContextMenuProvider>
-          <RuntimeConnectionProvider runtime={runtime} {...runtimeConnection}>
-            <WindowClosePreferenceController runtime={runtime} />
-            <FontProvider>
-              <AgentSessionProvider runtime={runtime}>
-                <PreviewProvider>
-                  <HashRouter>{children}</HashRouter>
-                </PreviewProvider>
-              </AgentSessionProvider>
-            </FontProvider>
-          </RuntimeConnectionProvider>
-        </AppContextMenuProvider>
+        <AppUpdateController>
+          <AppContextMenuProvider>
+            <RuntimeConnectionProvider runtime={runtime} {...runtimeConnection}>
+              <WindowClosePreferenceController runtime={runtime} />
+              <FontProvider>
+                <AgentSessionProvider runtime={runtime}>
+                  <PreviewProvider>
+                    <HashRouter>{children}</HashRouter>
+                  </PreviewProvider>
+                </AgentSessionProvider>
+              </FontProvider>
+            </RuntimeConnectionProvider>
+          </AppContextMenuProvider>
+        </AppUpdateController>
       </NotificationProvider>
     </ThemeProvider>
   );
