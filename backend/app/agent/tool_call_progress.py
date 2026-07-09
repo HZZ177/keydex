@@ -163,19 +163,41 @@ class ToolCallChunkPipeline:
 
 
 class ApplyPatchProgressCollector:
-    tool_names = frozenset({"edit_file", "apply_patch"})
+    tool_names = frozenset({"apply_patch"})
 
     def collect(self, state: ToolCallChunkState) -> dict[str, Any] | None:
         patch = string_value(state.args.get("patch"))
         if not patch:
             return None
-        files = mark_file_changes_as_operation(
-            parse_apply_patch_file_changes(patch),
-            operation="update",
-        )
+        files = parse_apply_patch_file_changes(patch)
         if not files:
             return None
         return progress_payload(state=state, files=files, phase="streaming")
+
+
+class EditFileProgressCollector:
+    tool_names = frozenset({"edit_file"})
+
+    def collect(self, state: ToolCallChunkState) -> dict[str, Any] | None:
+        patch = string_value(state.args.get("patch"))
+        if patch:
+            files = parse_apply_patch_file_changes(patch)
+            if files:
+                return progress_payload(state=state, files=files, phase="streaming")
+            return None
+        path = string_value(state.args.get("path"))
+        if not path:
+            return None
+        old_string = string_value(state.args.get("old_string"))
+        new_string = string_value(state.args.get("new_string"))
+        file_change = normalize_file_change(
+            path=path,
+            operation="update",
+            added_lines=count_text_lines(new_string),
+            deleted_lines=count_text_lines(old_string),
+            diff=build_text_diff(path=path, before=old_string, after=new_string),
+        )
+        return progress_payload(state=state, files=[file_change], phase="streaming")
 
 
 class WriteFileProgressCollector:
@@ -201,10 +223,54 @@ class WriteFileProgressCollector:
         return progress_payload(state=state, files=[file_change], phase="streaming")
 
 
+class DeleteFileProgressCollector:
+    tool_names = frozenset({"delete_file"})
+
+    def collect(self, state: ToolCallChunkState) -> dict[str, Any] | None:
+        path = string_value(state.args.get("path"))
+        if not path:
+            return None
+        file_change = normalize_file_change(
+            path=path,
+            operation="delete",
+            added_lines=0,
+            deleted_lines=0,
+            diff=diff_header(path, "delete")[0] + "\n" + diff_header(path, "delete")[1],
+        )
+        return progress_payload(state=state, files=[file_change], phase="streaming")
+
+
+class MoveFileProgressCollector:
+    tool_names = frozenset({"move_file"})
+
+    def collect(self, state: ToolCallChunkState) -> dict[str, Any] | None:
+        path = string_value(state.args.get("path"))
+        new_path = string_value(state.args.get("new_path"))
+        if not path:
+            return None
+        target = new_path or path
+        file_change = finalize_file_change(
+            {
+                "path": target,
+                "operation": "move",
+                "change_type": "move",
+                "old_path": path,
+                "new_path": target,
+                "added_lines": 0,
+                "deleted_lines": 0,
+                "diff": f"--- a/{path}\n+++ b/{target}",
+            }
+        )
+        return progress_payload(state=state, files=[file_change], phase="streaming")
+
+
 def default_collectors() -> list[ToolProgressCollector]:
     return [
         ApplyPatchProgressCollector(),
+        EditFileProgressCollector(),
         WriteFileProgressCollector(),
+        DeleteFileProgressCollector(),
+        MoveFileProgressCollector(),
     ]
 
 
@@ -284,7 +350,7 @@ def parse_partial_json_object(value: str) -> dict[str, Any]:
         return parsed
 
     result: dict[str, Any] = {}
-    for key in ("patch", "path", "content", "mode"):
+    for key in ("patch", "path", "content", "mode", "old_string", "new_string", "new_path"):
         extracted = extract_partial_json_string_field(value, key)
         if extracted is not None:
             result[key] = extracted
@@ -344,6 +410,12 @@ def parse_apply_patch_file_changes(patch: str) -> list[dict[str, Any]]:
             current_move_to = ""
             ensure_file_change(stats, current_path, current_operation)
             continue
+        if line.startswith("*** Add File: "):
+            current_path = line.removeprefix("*** Add File: ").strip()
+            current_operation = "add"
+            current_move_to = ""
+            ensure_file_change(stats, current_path, current_operation)
+            continue
         if line.startswith("*** Move to: ") and current_path:
             current_move_to = line.removeprefix("*** Move to: ").strip()
             current_operation = "move"
@@ -398,6 +470,8 @@ def parse_apply_patch_file_changes(patch: str) -> list[dict[str, Any]]:
 
 
 def diff_header(path: str, operation: str) -> list[str]:
+    if operation == "add":
+        return ["--- /dev/null", f"+++ b/{path}"]
     if operation == "delete":
         return [f"--- a/{path}", "+++ /dev/null"]
     return [f"--- a/{path}", f"+++ b/{path}"]
@@ -437,8 +511,10 @@ def ensure_file_change(
             "deleted_lines": 0,
         },
     )
-    if operation and file_change.get("operation") != "delete":
+    if operation:
         file_change["operation"] = operation
+    if operation == "add":
+        file_change["change_type"] = "create"
     return file_change
 
 
@@ -481,14 +557,6 @@ def finalize_file_change(change: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def mark_file_changes_as_operation(
-    changes: list[dict[str, Any]],
-    *,
-    operation: str,
-) -> list[dict[str, Any]]:
-    return [finalize_file_change({**change, "operation": operation}) for change in changes]
-
-
 def progress_payload(
     *,
     state: ToolCallChunkState,
@@ -527,7 +595,7 @@ def tool_state_match_score(state: ToolCallChunkState, params: dict[str, Any]) ->
         return 1000
 
     score = 0
-    for key in ("patch", "content"):
+    for key in ("patch", "content", "old_string", "new_string", "new_path"):
         if (
             key in state.args
             and key in params
@@ -563,7 +631,7 @@ def jsonable_equal(left: Any, right: Any) -> bool:
 def patch_paths(patch: str) -> set[str]:
     paths: set[str] = set()
     for line in patch.splitlines():
-        match = re.match(r"^\*\*\* (?:(?:Update|Delete) File|Move to):\s+(.+)$", line.strip())
+        match = re.match(r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to):\s+(.+)$", line.strip())
         if match:
             paths.add(match.group(1).strip())
     return paths

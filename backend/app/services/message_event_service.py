@@ -950,11 +950,15 @@ class MessageEventService:
             for key in (
                 "path",
                 "operation",
+                "change_type",
                 "added_lines",
                 "deleted_lines",
                 "removed_lines",
                 "additions",
                 "deletions",
+                "old_path",
+                "new_path",
+                "diff",
                 "applied",
                 "rejected",
             ):

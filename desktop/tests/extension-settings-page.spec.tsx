@@ -63,6 +63,7 @@ describe("ExtensionSettingsPage", () => {
     await waitFor(() => {
       expect(saveExtensionSettings).toHaveBeenCalledTimes(1);
       expect(saveExtensionSettings).toHaveBeenCalledWith({
+        file_edit_tool_style: "claude_code",
         auto_title: {
           enabled: true,
           only_when_default_title: true,
@@ -274,6 +275,7 @@ function mergeSettings(
   patch: Partial<AgentRuntimeSettings>,
 ): AgentRuntimeSettings {
   return {
+    file_edit_tool_style: patch.file_edit_tool_style ?? base.file_edit_tool_style,
     auto_title: { ...base.auto_title, ...patch.auto_title },
     duplicate_tool_call_guard: {
       ...base.duplicate_tool_call_guard,
@@ -286,6 +288,7 @@ function mergeSettings(
 
 function defaultExtensionSettings(): AgentRuntimeSettings {
   return {
+    file_edit_tool_style: "claude_code",
     auto_title: {
       enabled: false,
       only_when_default_title: true,

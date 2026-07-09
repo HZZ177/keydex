@@ -6,6 +6,7 @@ import { ConfigSettingsPage } from "@/renderer/pages/settings/config/ConfigSetti
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import type {
   CommandApprovalAuditRecord,
+  AgentRuntimeSettings,
   CommandSettings,
   CommandShell,
   SettingsResponse,
@@ -22,6 +23,7 @@ describe("ConfigSettingsPage", () => {
     expect(await screen.findByText("批准策略")).not.toBeNull();
     expect(screen.getByRole("button", { name: "批准策略：按请求" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "文件访问权限：工作区内信任" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "文件编辑工具风格：Claude Code 风格（推荐）" })).not.toBeNull();
     expect(screen.getAllByRole("radio").map((radio) => radio.getAttribute("aria-label"))).toEqual([
       "Git Bash",
       "PowerShell",
@@ -214,6 +216,30 @@ describe("ConfigSettingsPage", () => {
     });
   });
 
+  it("saves file edit tool style from policy selection", async () => {
+    const runtime = fakeRuntime();
+
+    renderConfigSettingsPage(runtime);
+
+    await screen.findAllByText("pnpm test");
+    fireEvent.click(screen.getByRole("button", { name: "文件编辑工具风格：Claude Code 风格（推荐）" }));
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+    expect(screen.getByRole("option", { name: /Claude Code 风格/ })).not.toBeNull();
+    expect(screen.getByRole("option", { name: /Codex 风格/ })).not.toBeNull();
+    fireEvent.click(screen.getByRole("option", { name: /Codex 风格/ }));
+
+    await waitFor(() => {
+      expect(runtime.settings.saveExtensionSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          file_edit_tool_style: "codex",
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("notification-viewport").textContent).toContain("文件编辑工具风格已保存");
+    });
+  });
+
   it("updates and deletes trusted command rules", async () => {
     const runtime = fakeRuntime();
 
@@ -317,6 +343,8 @@ function fakeRuntime(options: Partial<RuntimeBridge["settings"]> = {}): RuntimeB
   return {
     settings: {
       getSettings: vi.fn().mockResolvedValue(settingsResponse(command)),
+      getExtensionSettings: vi.fn().mockResolvedValue(agentRuntimeSettings()),
+      saveExtensionSettings: vi.fn((next: AgentRuntimeSettings) => Promise.resolve(next)),
       saveCommandSettings: vi.fn((next: CommandSettings) => Promise.resolve(settingsResponse(next))),
       listTrustedCommandRules: vi.fn().mockResolvedValue([rule]),
       updateTrustedCommandRule: vi.fn().mockResolvedValue({ ...rule, enabled: false }),
@@ -344,6 +372,31 @@ function fakeRuntime(options: Partial<RuntimeBridge["settings"]> = {}): RuntimeB
       ...options,
     },
   } as unknown as RuntimeBridge;
+}
+
+function agentRuntimeSettings(overrides: Partial<AgentRuntimeSettings> = {}): AgentRuntimeSettings {
+  return {
+    file_edit_tool_style: "claude_code",
+    auto_title: {
+      enabled: false,
+      only_when_default_title: true,
+      max_title_length: 20,
+    },
+    duplicate_tool_call_guard: {
+      enabled: true,
+      max_repeats: 3,
+    },
+    context_compression: {
+      enabled: true,
+      context_window_tokens: 256000,
+      trigger_fraction: 0.8,
+    },
+    a2ui: {
+      enabled: true,
+      debug_info_enabled: false,
+    },
+    ...overrides,
+  };
 }
 
 function commandSettings(overrides: Partial<CommandSettings> = {}): CommandSettings {

@@ -19,10 +19,12 @@ import {
   type AgentActionEnvelope,
   type AgentChatMessage,
   type AgentCompletedPayload,
+  type AgentRuntimeSettings,
   type AgentSession,
   type AgentThreadTaskStatusData,
   type AgentToolEventData,
   type AgentTurnStartedData,
+  type FileEditToolStyle,
   type McpErrorPayload,
   type McpAuditRecord,
   type McpImportPreviewResponse,
@@ -95,6 +97,35 @@ describe("agent protocol types", () => {
     expect(AGENT_INBOUND_ACTIONS).toContain("a2ui_submit");
     expect(AGENT_INBOUND_ACTIONS).toContain("a2ui_cancel");
     expect(AGENT_INBOUND_ACTIONS).toContain("cancel");
+  });
+
+  it("constructs runtime settings with file edit tool style", () => {
+    const claude = "claude_code" satisfies FileEditToolStyle;
+    const codex = "codex" satisfies FileEditToolStyle;
+    const settings = {
+      file_edit_tool_style: claude,
+      auto_title: {
+        enabled: false,
+        only_when_default_title: true,
+        max_title_length: 20,
+      },
+      duplicate_tool_call_guard: {
+        enabled: true,
+        max_repeats: 3,
+      },
+      context_compression: {
+        enabled: true,
+        context_window_tokens: 256000,
+        trigger_fraction: 0.8,
+      },
+      a2ui: {
+        enabled: true,
+        debug_info_enabled: false,
+      },
+    } satisfies AgentRuntimeSettings;
+
+    expect(settings.file_edit_tool_style).toBe("claude_code");
+    expect(codex).toBe("codex");
   });
 
   it("constructs MCP protocol shapes", () => {

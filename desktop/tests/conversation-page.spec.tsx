@@ -3212,6 +3212,7 @@ function fakeRuntime({
 
 function defaultExtensionSettings() {
   return {
+    file_edit_tool_style: "claude_code",
     auto_title: {
       enabled: false,
       only_when_default_title: true,

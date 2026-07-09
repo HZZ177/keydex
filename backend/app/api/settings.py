@@ -382,6 +382,7 @@ async def put_extension_settings(
         f"{saved.duplicate_tool_call_guard.enabled}:"
         f"{saved.duplicate_tool_call_guard.max_repeats} | "
         f"context_compression={saved.context_compression.enabled} | "
+        f"file_edit_tool_style={saved.file_edit_tool_style} | "
         f"a2ui={saved.a2ui.enabled} | "
         f"a2ui_debug_info={saved.a2ui.debug_info_enabled}"
     )

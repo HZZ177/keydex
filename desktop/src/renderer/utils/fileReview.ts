@@ -45,7 +45,7 @@ export function fileReviewChangesFromMessage(message: ConversationMessage, fallb
 }
 
 export function isFileMutationToolName(name: string): boolean {
-  return ["write_file", "apply_patch", "edit_file", "create_file", "delete_file"].includes(name);
+  return ["write_file", "apply_patch", "edit_file", "create_file", "delete_file", "move_file"].includes(name);
 }
 
 export function toolNameFromMessage(message: ConversationMessage): string {
@@ -65,8 +65,8 @@ export function operationFromToolName(toolName: string): FileReviewOperation {
   if (toolName === "delete_file") {
     return "delete";
   }
-  if (toolName === "apply_patch" || toolName === "edit_file") {
-    return "update";
+  if (toolName === "move_file") {
+    return "move";
   }
   return "unknown";
 }
@@ -147,7 +147,7 @@ function fileReviewChangeFromRecord(
       countDiff(diff, "-"),
     diff,
     content: stringValue(record.new_content) || stringValue(record.newContent) || stringValue(record.content),
-    operation,
+    operation: operationFromMovePaths(record, operation),
     oldPath: nullableString(record.old_path ?? record.oldPath),
     newPath: nullableString(record.new_path ?? record.newPath),
     source,
@@ -220,11 +220,26 @@ function toolArgsFromMessage(message: ConversationMessage): Record<string, unkno
 
 function toolTarget(args: Record<string, unknown> | null, payload: Record<string, unknown>): string {
   return (
+    stringValue(args?.new_path) ||
+    stringValue(args?.newPath) ||
     stringValue(args?.path) ||
     stringValue(args?.file) ||
     patchFileTarget(stringValue(args?.patch) || stringValue(args?.diff) || stringValue(args?.content) || stringValue(payload.patch)) ||
     stringValue(payload.path)
   );
+}
+
+function operationFromMovePaths(
+  record: Record<string, unknown>,
+  fallback: FileReviewOperation,
+): FileReviewOperation {
+  if (fallback !== "unknown") {
+    return fallback;
+  }
+  if (record.old_path || record.oldPath || record.new_path || record.newPath) {
+    return "move";
+  }
+  return fallback;
 }
 
 function patchFileTarget(patch: string): string {

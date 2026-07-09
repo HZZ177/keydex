@@ -26,13 +26,13 @@ test("command configuration page saves settings and manages trusted rules", asyn
   await installWebSocketMock(page);
   await mockBackend(page, backend);
 
-  await page.goto(`${APP_BASE}/#/settings/policy-config`);
+  await page.goto(`${APP_BASE}/#/settings/policy-config`, { waitUntil: "commit" });
 
   await expect(page.getByTestId("config-settings-page")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("heading", { name: "批准策略" })).toBeVisible();
   await expect(page.getByRole("button", { name: "批准策略：按请求" })).toBeVisible();
   await expect(page.getByRole("radio", { name: "CMD" })).toBeVisible();
-  await expect(page.getByLabel("命令 executable 路径")).toHaveValue("C:/Windows/System32/cmd.exe");
+  await expect(page.getByText("C:/Windows/System32/cmd.exe").first()).toBeVisible();
   await expect(page.getByText("未信任命令执行前需要确认，可在审批时保存信任规则。")).toBeVisible();
   await expect(page.getByText("pnpm test").first()).toBeVisible();
   await expect(page.getByText("已允许")).toBeVisible();
@@ -44,10 +44,8 @@ test("command configuration page saves settings and manages trusted rules", asyn
   await page.getByRole("button", { name: "上一页审批记录" }).click();
   await expect(page.getByText("pnpm test").first()).toBeVisible();
 
-  await page.getByRole("button", { name: "检测" }).click();
-  await expect(page.getByText("CMD · C:/Windows/System32/cmd.exe").first()).toBeVisible();
-  await page.getByRole("button", { name: "保存" }).click();
-  await expect(page.getByText("命令执行环境已保存")).toBeVisible();
+  await page.getByRole("radio", { name: "CMD" }).click();
+  await expect(page.getByText("命令执行环境已更新")).toBeVisible();
   expect(backend.lastCommandSettings).toMatchObject({
     selected_shell: "cmd",
     shell_path: "C:/Windows/System32/cmd.exe",
@@ -67,12 +65,32 @@ test("command configuration page saves settings and manages trusted rules", asyn
   await saveEvidence(page, "e2e-001-config");
 });
 
+test("command configuration page saves file edit tool style", async ({ page }) => {
+  const backend = createMockBackend();
+  await installWebSocketMock(page);
+  await mockBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/settings/policy-config`, { waitUntil: "commit" });
+
+  await expect(page.getByTestId("config-settings-page")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "文件编辑工具风格：Claude Code 风格（推荐）" })).toBeVisible();
+  await page.getByRole("button", { name: "文件编辑工具风格：Claude Code 风格（推荐）" }).click();
+  await page.getByRole("option", { name: /Codex 风格/ }).click();
+
+  await expect(page.getByText("文件编辑工具风格已保存")).toBeVisible();
+  expect(backend.lastExtensionSettings).toMatchObject({ file_edit_tool_style: "codex" });
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "文件编辑工具风格：Codex 风格" })).toBeVisible();
+  await saveEvidence(page, "e2e-004-file-edit-style");
+});
+
 test("approval card submits allow once, exact trust, prefix trust and reject decisions", async ({ page }) => {
   const backend = createMockBackend();
   await installWebSocketMock(page);
   await mockBackend(page, backend);
 
-  await page.goto(`${APP_BASE}/#/conversation/session-approval`);
+  await page.goto(`${APP_BASE}/#/conversation/session-approval`, { waitUntil: "commit" });
   await expect(sessionRow(page)).toBeVisible();
   await waitForConversationReady(page);
 
@@ -103,7 +121,7 @@ test("approval card submits allow once, exact trust, prefix trust and reject dec
   });
 
   await dispatchApproval(page, approval("approval-reject"));
-  await submitApprovalChoice(page, "否，请告知 agent 如何调整", "请改成只读命令");
+  await submitApprovalChoice(page, "否，请告知智能体如何调整", "请改成只读命令");
   await expect(page.getByLabel("继续输入")).toBeVisible();
   expect(backend.decisions.at(-1)).toMatchObject({
     approvalId: "approval-reject",
@@ -118,7 +136,7 @@ test("command configuration page previews and saves unconditional trust policy",
   await installWebSocketMock(page);
   await mockBackend(page, backend);
 
-  await page.goto(`${APP_BASE}/#/settings/policy-config`);
+  await page.goto(`${APP_BASE}/#/settings/policy-config`, { waitUntil: "commit" });
   await expect(page.getByTestId("config-settings-page")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "批准策略：按请求" }).click();
   await expect(page.getByRole("option", { name: /无条件信任/ })).toBeVisible();
@@ -148,7 +166,7 @@ async function waitForConversationReady(page: Page) {
 async function submitApprovalChoice(page: Page, choice: string, rejectMessage?: string) {
   await page.getByRole("radio", { name: choice, exact: true }).click();
   if (rejectMessage !== undefined) {
-    await page.getByPlaceholder("告诉 agent 如何调整").fill(rejectMessage);
+    await page.getByPlaceholder("告诉智能体如何调整").fill(rejectMessage);
   }
   await page.getByRole("button", { name: "提交" }).click();
 }
@@ -156,6 +174,8 @@ async function submitApprovalChoice(page: Page, choice: string, rejectMessage?: 
 interface MockBackendState {
   commandSettings: Record<string, unknown>;
   lastCommandSettings: Record<string, unknown> | null;
+  extensionSettings: Record<string, unknown>;
+  lastExtensionSettings: Record<string, unknown> | null;
   rules: Array<Record<string, unknown>>;
   decisions: Array<{ approvalId: string; body: Record<string, unknown> }>;
 }
@@ -163,10 +183,20 @@ interface MockBackendState {
 function createMockBackend(): MockBackendState {
   return {
     commandSettings: {
+      command_enabled: true,
       selected_shell: "cmd",
       shell_path: "C:/Windows/System32/cmd.exe",
       shell_label: "CMD",
       shell_edition: null,
+      shell_version: null,
+      shells: {
+        cmd: {
+          shell_path: "C:/Windows/System32/cmd.exe",
+          shell_label: "CMD",
+          shell_edition: null,
+          shell_version: null,
+        },
+      },
       require_approval_for_untrusted: true,
       allow_persistent_trust: true,
       file_access_mode: "workspace_trusted",
@@ -178,6 +208,8 @@ function createMockBackend(): MockBackendState {
       progress_interval_ms: 500,
     },
     lastCommandSettings: null,
+    extensionSettings: defaultExtensionSettings(),
+    lastExtensionSettings: null,
     rules: [trustedRule()],
     decisions: [],
   };
@@ -205,6 +237,10 @@ async function mockBackend(page: Page, state: MockBackendState) {
       return fulfillJson(route, modelDefaultsResponse());
     }
 
+    if (url.pathname === "/api/settings/extensions" && method === "GET") {
+      return fulfillJson(route, state.extensionSettings);
+    }
+
     if (url.pathname === "/api/model-providers" && method === "GET") {
       return fulfillJson(route, modelProvidersResponse());
     }
@@ -216,6 +252,13 @@ async function mockBackend(page: Page, state: MockBackendState) {
         state.lastCommandSettings = state.commandSettings;
       }
       return fulfillJson(route, settingsResponse(state.commandSettings));
+    }
+
+    if (url.pathname === "/api/settings/extensions" && method === "PUT") {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      state.extensionSettings = { ...state.extensionSettings, ...body };
+      state.lastExtensionSettings = state.extensionSettings;
+      return fulfillJson(route, state.extensionSettings);
     }
 
     if (url.pathname === "/api/settings/command/runtime/discover" && method === "POST") {
@@ -301,6 +344,10 @@ async function mockBackend(page: Page, state: MockBackendState) {
         event_total: 0,
         turn_indexes: [],
       });
+    }
+
+    if (url.pathname === "/api/sessions/session-approval/tasks" && method === "GET") {
+      return fulfillJson(route, { list: [] });
     }
 
     return fulfillJson(route, {});
@@ -389,6 +436,30 @@ function settingsResponse(command: Record<string, unknown>) {
     general: { close_window_behavior: null },
     appearance: { font_family: "system" },
     command,
+  };
+}
+
+function defaultExtensionSettings() {
+  return {
+    file_edit_tool_style: "claude_code",
+    auto_title: {
+      enabled: false,
+      only_when_default_title: true,
+      max_title_length: 20,
+    },
+    duplicate_tool_call_guard: {
+      enabled: true,
+      max_repeats: 3,
+    },
+    context_compression: {
+      enabled: true,
+      context_window_tokens: 256000,
+      trigger_fraction: 0.8,
+    },
+    a2ui: {
+      enabled: true,
+      debug_info_enabled: false,
+    },
   };
 }
 

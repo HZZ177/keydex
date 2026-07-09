@@ -11,6 +11,7 @@ from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.factory import AgentFactory
 from backend.app.agent.middleware.duplicate_tool_call_guard import DuplicateToolCallGuardMiddleware
 from backend.app.agent.runtime_settings import AgentRuntimeSettings
+from backend.app.tools.factory import create_default_tool_registry
 from backend.app.model import ModelSettings
 from backend.app.storage import init_database
 from backend.app.tools import FunctionTool, ToolExecutionContext, ToolRegistry
@@ -24,6 +25,7 @@ class RecordingAgentFactory(AgentFactory):
         self.created_tool_counts: list[int] = []
         self.created_tool_names: list[list[str]] = []
         self.created_middleware: list[tuple[Any, ...]] = []
+        self.created_system_prompts: list[str] = []
 
     def get_or_create_llm(
         self,
@@ -52,6 +54,7 @@ class RecordingAgentFactory(AgentFactory):
         self.created_tool_counts.append(len(tools))
         self.created_tool_names.append([str(getattr(tool, "name", "")) for tool in tools])
         self.created_middleware.append(middleware)
+        self.created_system_prompts.append(str(getattr(system_prompt, "content", system_prompt) or ""))
         return super().create_agent(
             model=model,
             tools=tools,
@@ -339,3 +342,51 @@ def test_agent_runner_keeps_write_file_tools_visible_in_read_only_mode(tmp_path)
 
     assert runner.tool_registry.names() == ["create_file", "read_file"]
     assert factory.created_tool_counts == [2]
+
+
+def test_agent_runner_exposes_claude_file_tools_by_default(tmp_path) -> None:
+    runner, factory = _runner(tmp_path, registry=create_default_tool_registry())
+
+    runner.create_agent(
+        model="qwen-coder",
+        system_prompt=None,
+        tool_context=ToolExecutionContext(
+            session_id="ses_1",
+            user_id="user_1",
+            workspace_root=tmp_path,
+            turn_index=1,
+            trace_id="trace_1",
+        ),
+    )
+
+    names = set(factory.created_tool_names[-1])
+    assert {"create_file", "edit_file", "delete_file", "move_file"}.issubset(names)
+    assert "apply_patch" not in names
+    assert "Claude Code 风格" in factory.created_system_prompts[-1]
+    assert "Codex 风格" not in factory.created_system_prompts[-1]
+
+
+def test_agent_runner_exposes_codex_apply_patch_when_configured(tmp_path) -> None:
+    runner, factory = _runner(
+        tmp_path,
+        registry=create_default_tool_registry(),
+        runtime_settings_provider=lambda: AgentRuntimeSettings(file_edit_tool_style="codex"),
+    )
+
+    runner.create_agent(
+        model="qwen-coder",
+        system_prompt=None,
+        tool_context=ToolExecutionContext(
+            session_id="ses_1",
+            user_id="user_1",
+            workspace_root=tmp_path,
+            turn_index=1,
+            trace_id="trace_1",
+        ),
+    )
+
+    names = set(factory.created_tool_names[-1])
+    assert "apply_patch" in names
+    assert {"create_file", "edit_file", "delete_file", "move_file"}.isdisjoint(names)
+    assert "Codex 风格" in factory.created_system_prompts[-1]
+    assert "Claude Code 风格" not in factory.created_system_prompts[-1]

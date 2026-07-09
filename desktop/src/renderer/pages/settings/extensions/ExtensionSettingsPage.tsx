@@ -20,6 +20,7 @@ export interface ExtensionSettingsPageProps {
 }
 
 type ExtensionDrafts = {
+  fileEditToolStyle: AgentRuntimeSettings["file_edit_tool_style"];
   autoTitle: AutoTitleRuntimeSettings;
   duplicateGuard: DuplicateToolCallGuardRuntimeSettings;
   compression: ContextCompressionRuntimeSettings;
@@ -607,6 +608,7 @@ function DependencyWarning({
 
 function draftsFromSettings(settings: AgentRuntimeSettings): ExtensionDrafts {
   return {
+    fileEditToolStyle: settings.file_edit_tool_style,
     autoTitle: { ...settings.auto_title, only_when_default_title: true },
     duplicateGuard: settings.duplicate_tool_call_guard,
     compression: settings.context_compression,
@@ -616,6 +618,7 @@ function draftsFromSettings(settings: AgentRuntimeSettings): ExtensionDrafts {
 
 function settingsFromDrafts(drafts: ExtensionDrafts): AgentRuntimeSettings {
   return {
+    file_edit_tool_style: drafts.fileEditToolStyle,
     auto_title: { ...drafts.autoTitle, only_when_default_title: true },
     duplicate_tool_call_guard: drafts.duplicateGuard,
     context_compression: drafts.compression,

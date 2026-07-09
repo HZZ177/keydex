@@ -739,7 +739,10 @@ export interface A2UIRuntimeSettings {
   debug_info_enabled: boolean;
 }
 
+export type FileEditToolStyle = "claude_code" | "codex";
+
 export interface AgentRuntimeSettings {
+  file_edit_tool_style: FileEditToolStyle;
   auto_title: AutoTitleRuntimeSettings;
   duplicate_tool_call_guard: DuplicateToolCallGuardRuntimeSettings;
   context_compression: ContextCompressionRuntimeSettings;

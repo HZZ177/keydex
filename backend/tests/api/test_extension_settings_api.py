@@ -20,6 +20,7 @@ def test_extension_settings_api_returns_defaults_from_app_hard_default(tmp_path)
     assert "tool_call_limit" not in body
     assert body["duplicate_tool_call_guard"]["enabled"] is True
     assert body["duplicate_tool_call_guard"]["max_repeats"] == 3
+    assert body["file_edit_tool_style"] == "claude_code"
     assert body["a2ui"]["enabled"] is True
 
 
@@ -43,6 +44,7 @@ def test_extension_settings_api_saves_and_reads_full_config(tmp_path) -> None:
         "a2ui": {
             "enabled": False,
         },
+        "file_edit_tool_style": "codex",
     }
     with TestClient(app) as client:
         put_response = client.put("/api/settings/extensions", json=payload)
@@ -54,6 +56,7 @@ def test_extension_settings_api_saves_and_reads_full_config(tmp_path) -> None:
             "enabled": False,
             "debug_info_enabled": False,
         },
+        "file_edit_tool_style": "codex",
     }
     assert put_response.status_code == 200
     assert put_response.json() == expected
@@ -85,6 +88,7 @@ def test_extension_settings_api_loads_legacy_config_without_a2ui(tmp_path) -> No
 
     assert response.status_code == 200
     assert response.json()["a2ui"] == {"enabled": True, "debug_info_enabled": False}
+    assert response.json()["file_edit_tool_style"] == "claude_code"
 
 
 def test_extension_settings_api_rejects_removed_tool_limit_field(tmp_path) -> None:

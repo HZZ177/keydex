@@ -10,6 +10,8 @@ import type {
   CommandShell,
   CommandShellConfig,
   FileAccessMode,
+  AgentRuntimeSettings,
+  FileEditToolStyle,
   TrustedCommandRule,
 } from "@/types/protocol";
 import { SettingsSelect } from "@/renderer/pages/settings/components";
@@ -36,6 +38,28 @@ const DEFAULT_COMMAND_SETTINGS: CommandSettings = {
   tail_max_chars: 12000,
   output_file_max_bytes: 8 * 1024 * 1024,
   progress_interval_ms: 500,
+};
+
+const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
+  file_edit_tool_style: "claude_code",
+  auto_title: {
+    enabled: false,
+    only_when_default_title: true,
+    max_title_length: 20,
+  },
+  duplicate_tool_call_guard: {
+    enabled: true,
+    max_repeats: 3,
+  },
+  context_compression: {
+    enabled: true,
+    context_window_tokens: 256000,
+    trigger_fraction: 0.8,
+  },
+  a2ui: {
+    enabled: true,
+    debug_info_enabled: false,
+  },
 };
 
 type ApprovalPolicy = "on_request" | "never_ask";
@@ -110,9 +134,30 @@ const FILE_ACCESS_POLICIES: Array<{
   },
 ];
 
+const FILE_EDIT_TOOL_STYLES: Array<{
+  value: FileEditToolStyle;
+  label: string;
+  preview: string;
+  description: string;
+}> = [
+  {
+    value: "claude_code",
+    label: "Claude Code 风格（推荐）",
+    preview: "使用 create_file、edit_file、delete_file、move_file 四个简单文件工具。",
+    description: "适合多供应商模型。编辑用 old_string/new_string 精确替换，删除和移动也会被文件变更 UI 追踪。",
+  },
+  {
+    value: "codex",
+    label: "Codex 风格",
+    preview: "使用单个 apply_patch 工具处理新增、修改、删除和移动。",
+    description: "适合熟悉 Codex apply_patch 语法的模型；新增文件使用 *** Add File，不再暴露 create_file。",
+  },
+];
+
 export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
   const notifications = useNotifications();
   const [command, setCommand] = useState<CommandSettings>(DEFAULT_COMMAND_SETTINGS);
+  const [runtimeSettings, setRuntimeSettings] = useState<AgentRuntimeSettings>(DEFAULT_AGENT_RUNTIME_SETTINGS);
   const [rules, setRules] = useState<TrustedCommandRule[]>([]);
   const [rulesPage, setRulesPage] = useState(1);
   const [history, setHistory] = useState<ApprovalHistoryPage>(() => emptyApprovalHistoryPage());
@@ -124,6 +169,7 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
   const [manualError, setManualError] = useState("");
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [savingFileAccess, setSavingFileAccess] = useState(false);
+  const [savingFileEditStyle, setSavingFileEditStyle] = useState(false);
   const [error, setError] = useState("");
   const [runtimeProbes, setRuntimeProbes] = useState<RuntimeProbeMap>({});
 
@@ -131,12 +177,14 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
     setLoading(true);
     setError("");
     try {
-      const [settings, trustedRules, approvalHistory] = await Promise.all([
+      const [settings, extensionSettings, trustedRules, approvalHistory] = await Promise.all([
         runtime.settings.getSettings(),
+        runtime.settings.getExtensionSettings(),
         runtime.settings.listTrustedCommandRules(),
         runtime.settings.listCommandApprovalHistory({ page: historyPage, pageSize: APPROVAL_HISTORY_PAGE_SIZE }),
       ]);
       setCommand(settings.command);
+      setRuntimeSettings(extensionSettings);
       setRules(trustedRules);
       setHistory(approvalHistory);
     } catch (reason) {
@@ -158,6 +206,12 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
   const currentFileAccessOption = useMemo(
     () => FILE_ACCESS_POLICIES.find((policy) => policy.value === command.file_access_mode) ?? FILE_ACCESS_POLICIES[2],
     [command.file_access_mode],
+  );
+  const currentFileEditToolStyleOption = useMemo(
+    () =>
+      FILE_EDIT_TOOL_STYLES.find((style) => style.value === runtimeSettings.file_edit_tool_style) ??
+      FILE_EDIT_TOOL_STYLES[0],
+    [runtimeSettings.file_edit_tool_style],
   );
   const currentShellOption = useMemo(
     () => COMMAND_SHELLS.find((shell) => shell.value === command.selected_shell) ?? COMMAND_SHELLS[0],
@@ -333,6 +387,25 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
       setError(errorMessage(reason));
     } finally {
       setSavingFileAccess(false);
+    }
+  };
+
+  const updateFileEditToolStyle = async (style: FileEditToolStyle) => {
+    if (style === runtimeSettings.file_edit_tool_style || savingFileEditStyle) {
+      return;
+    }
+    const nextSettings = { ...runtimeSettings, file_edit_tool_style: style };
+    setRuntimeSettings(nextSettings);
+    setSavingFileEditStyle(true);
+    setError("");
+    try {
+      const response = await runtime.settings.saveExtensionSettings(nextSettings);
+      setRuntimeSettings(response);
+      notifications.success("文件编辑工具风格已保存");
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setSavingFileEditStyle(false);
     }
   };
 
@@ -534,6 +607,24 @@ export function ConfigSettingsPage({ runtime }: { runtime: RuntimeBridge }) {
                 value: policy.value,
               }))}
               value={command.file_access_mode}
+            />
+          </div>
+          <div className={styles.policyBlock} data-settings-row>
+            <div className={styles.policyText} data-settings-row-text>
+              <h3>文件编辑工具风格</h3>
+              <p>{savingFileEditStyle ? "正在保存工具风格" : currentFileEditToolStyleOption.preview}</p>
+              <p className={styles.policyHint}>{currentFileEditToolStyleOption.description}</p>
+            </div>
+            <SettingsSelect
+              ariaLabel="文件编辑工具风格"
+              disabled={loading || savingFileEditStyle}
+              onChange={(style) => void updateFileEditToolStyle(style)}
+              options={FILE_EDIT_TOOL_STYLES.map((style) => ({
+                description: style.preview,
+                label: style.label,
+                value: style.value,
+              }))}
+              value={runtimeSettings.file_edit_tool_style}
             />
           </div>
         </div>

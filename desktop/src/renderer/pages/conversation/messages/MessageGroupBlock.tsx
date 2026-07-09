@@ -116,6 +116,7 @@ type GroupIconKind =
   | "edit"
   | "create"
   | "delete"
+  | "move"
   | "mcp"
   | "other";
 
@@ -162,6 +163,8 @@ function groupIcon(kind: GroupIconKind) {
       return <FilePenLine size={16} />;
     case "delete":
       return <FileX2 size={16} />;
+    case "move":
+      return <FilePenLine size={16} />;
     case "mcp":
       return <Wrench size={16} />;
     case "other":
@@ -262,6 +265,9 @@ function toolIconKindFromMessage(message: ConversationMessage): GroupIconKind {
   if (toolName === "delete_file") {
     return "delete";
   }
+  if (toolName === "move_file") {
+    return "move";
+  }
   return "other";
 }
 
@@ -284,6 +290,8 @@ function iconKindForFileOperation(operation: FileChangeOperation): GroupIconKind
       return "create";
     case "delete":
       return "delete";
+    case "move":
+      return "move";
     case "append":
     case "update":
     case "write":
@@ -369,6 +377,7 @@ function toolActivityLabel(
     ...countNumberPhrases("mcpTools", stats.mcpTools),
     ...countSetPhrases("createdFiles", stats.createdFiles),
     ...countSetPhrases("editedFiles", stats.editedFiles),
+    ...countSetPhrases("movedFiles", stats.movedFiles),
     ...countSetPhrases("deletedFiles", stats.deletedFiles),
     ...countNumberPhrases("otherTools", stats.otherTools),
   ];
@@ -390,6 +399,7 @@ function fileChangeLabel(messages: ConversationMessage[], state: GroupSummary["s
   const parts = [
     ...countSetPhrases("createdFiles", files.createdFiles),
     ...countSetPhrases("editedFiles", files.editedFiles),
+    ...countSetPhrases("movedFiles", files.movedFiles),
     ...countSetPhrases("deletedFiles", files.deletedFiles),
   ];
   if (parts.length) {
@@ -408,10 +418,11 @@ type ToolSummaryKind =
   | "mcpTools"
   | "createdFiles"
   | "editedFiles"
+  | "movedFiles"
   | "deletedFiles"
   | "otherTools";
 
-type FileChangeOperation = "add" | "update" | "delete" | "append" | "write" | "unknown";
+type FileChangeOperation = "add" | "update" | "delete" | "append" | "write" | "move" | "unknown";
 
 interface FileChangeSummary {
   path: string;
@@ -468,6 +479,7 @@ function countPhrase(kind: ToolSummaryKind, count: number, state: CountState): s
       return `${verb} ${count} 个 MCP 工具`;
     case "createdFiles":
     case "editedFiles":
+    case "movedFiles":
     case "deletedFiles":
       return `${verb} ${count} 个文件`;
     case "otherTools":
@@ -497,6 +509,8 @@ function verbForKind(kind: ToolSummaryKind, state: CountState): string {
       return failed ? "创建失败" : running ? "正在创建" : "创建了";
     case "editedFiles":
       return failed ? "编辑失败" : running ? "正在编辑" : "编辑了";
+    case "movedFiles":
+      return failed ? "移动失败" : running ? "正在移动" : "移动了";
     case "deletedFiles":
       return failed ? "删除失败" : running ? "正在删除" : "删除了";
     case "otherTools":
@@ -518,6 +532,7 @@ function createToolStats() {
     mcpTools: createStateNumberBuckets(),
     createdFiles: createStateSetBuckets(),
     editedFiles: createStateSetBuckets(),
+    movedFiles: createStateSetBuckets(),
     deletedFiles: createStateSetBuckets(),
     otherTools: createStateNumberBuckets(),
   };
@@ -527,6 +542,7 @@ function createFileChangeStats() {
   return {
     createdFiles: createStateSetBuckets(),
     editedFiles: createStateSetBuckets(),
+    movedFiles: createStateSetBuckets(),
     deletedFiles: createStateSetBuckets(),
   };
 }
@@ -598,7 +614,14 @@ function toolArgsFromMessage(message: ConversationMessage): Record<string, unkno
 }
 
 function toolTarget(args: Record<string, unknown> | null, index: number): string {
-  return stringValue(args?.path) || stringValue(args?.file) || stringValue(args?.query) || `item-${index}`;
+  return (
+    stringValue(args?.new_path) ||
+    stringValue(args?.newPath) ||
+    stringValue(args?.path) ||
+    stringValue(args?.file) ||
+    stringValue(args?.query) ||
+    `item-${index}`
+  );
 }
 
 function fileChangesFromMessage(
@@ -648,12 +671,14 @@ function fileChangesFromPayload(
   return [...changes.values()];
 }
 
-function fileSummaryKindForOperation(operation: FileChangeOperation): "createdFiles" | "editedFiles" | "deletedFiles" {
+function fileSummaryKindForOperation(operation: FileChangeOperation): "createdFiles" | "editedFiles" | "movedFiles" | "deletedFiles" {
   switch (operation) {
     case "add":
       return "createdFiles";
     case "delete":
       return "deletedFiles";
+    case "move":
+      return "movedFiles";
     case "append":
     case "update":
     case "write":
@@ -669,8 +694,8 @@ function operationFromToolName(toolName: string): FileChangeOperation {
   if (toolName === "delete_file") {
     return "delete";
   }
-  if (["apply_patch", "edit_file"].includes(toolName)) {
-    return "update";
+  if (toolName === "move_file") {
+    return "move";
   }
   return "unknown";
 }
@@ -695,6 +720,9 @@ function operationFromRecord(
   if (record.created === true || record.is_new === true || record.isNew === true) {
     return "add";
   }
+  if (record.old_path || record.oldPath || record.new_path || record.newPath) {
+    return "move";
+  }
   return fallbackOperation;
 }
 
@@ -711,6 +739,9 @@ function normalizeOperation(value: unknown): FileChangeOperation {
   }
   if (["append", "append_file"].includes(normalized)) {
     return "append";
+  }
+  if (["move", "moved", "rename", "renamed"].includes(normalized)) {
+    return "move";
   }
   if (["write", "write_file", "overwrite"].includes(normalized)) {
     return "add";
@@ -734,7 +765,7 @@ function isSearchTool(toolName: string): boolean {
 }
 
 function isEditTool(toolName: string): boolean {
-  return ["write_file", "apply_patch", "edit_file", "create_file", "delete_file"].includes(toolName);
+  return ["write_file", "apply_patch", "edit_file", "create_file", "delete_file", "move_file"].includes(toolName);
 }
 
 function stringValue(value: unknown): string {

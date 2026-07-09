@@ -130,10 +130,20 @@ export async function mockWorkbenchBackend(page: Page, backend: MockBackendState
           api_key_preview: "sk-***",
         },
         command: {
+          command_enabled: true,
           selected_shell: "cmd",
           shell_path: "C:/Windows/System32/cmd.exe",
           shell_label: "CMD",
           shell_edition: null,
+          shell_version: null,
+          shells: {
+            cmd: {
+              shell_path: "C:/Windows/System32/cmd.exe",
+              shell_label: "CMD",
+              shell_edition: null,
+              shell_version: null,
+            },
+          },
           require_approval_for_untrusted: true,
           allow_persistent_trust: true,
           file_access_mode: "workspace_trusted",
@@ -143,6 +153,30 @@ export async function mockWorkbenchBackend(page: Page, backend: MockBackendState
           tail_max_chars: 12000,
           output_file_max_bytes: 8388608,
           progress_interval_ms: 500,
+        },
+      });
+    }
+
+    if (requestPath === "/api/settings/extensions") {
+      return fulfillJson(route, {
+        file_edit_tool_style: "claude_code",
+        auto_title: {
+          enabled: false,
+          only_when_default_title: true,
+          max_title_length: 20,
+        },
+        duplicate_tool_call_guard: {
+          enabled: true,
+          max_repeats: 3,
+        },
+        context_compression: {
+          enabled: true,
+          context_window_tokens: 256000,
+          trigger_fraction: 0.8,
+        },
+        a2ui: {
+          enabled: true,
+          debug_info_enabled: false,
         },
       });
     }

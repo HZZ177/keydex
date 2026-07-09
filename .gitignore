@@ -308,3 +308,5 @@ docs/superpowers/prototype
 /.ktaicoding/des/assets/
 /.agent
 /.codex
+/actions-runner/
+/bin/

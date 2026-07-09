@@ -452,6 +452,9 @@ function fileReviewHeading(tool: ParsedToolPayload): string {
   if (tool.name === "delete_file") {
     return "已删除的文件";
   }
+  if (tool.name === "move_file" || tool.fileChanges.some((file) => file.operation === "move")) {
+    return "已移动的文件";
+  }
   return "已编辑的文件";
 }
 
@@ -501,11 +504,11 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
   const resultStatus = stringValue(result?.status);
   const mcp = mcpMetadataFromMessage(message, name, result);
   const target = toolTarget(args, message.payload, summary);
+  const fileChanges = isFileMutationTool(name) ? fileReviewChangesFromMessage(message, target) : [];
   const actionLabel = mcp
     ? mcpToolActionLabel(mcp.rawToolName || name, message.status, resultStatus)
-    : toolActionLabel(name, message.status, resultStatus);
+    : toolActionLabel(name, message.status, resultStatus, fileChanges);
   const outputText = resultText(result, message.payload);
-  const fileChanges = isFileMutationTool(name) ? fileReviewChangesFromMessage(message, target) : [];
   const fileChange = fileChanges.length === 1 ? fileChanges[0] : null;
   const rawErrorText = errorText(result, message.payload, outputText);
   return {
@@ -799,8 +802,9 @@ function toolActionLabel(
   name: string,
   status: ConversationMessage["status"],
   resultStatus: string | null,
+  fileChanges: ToolFileChange[] = [],
 ): string {
-  const action = toolAction(name);
+  const action = toolActionForFileChanges(name, fileChanges) ?? toolAction(name);
   if (!action) {
     return name || "未知工具";
   }
@@ -815,6 +819,27 @@ function toolActionLabel(
           ? action.cancelled
           : action.done;
   return prefix;
+}
+
+function toolActionForFileChanges(name: string, fileChanges: ToolFileChange[]): ToolAction | null {
+  if (!["apply_patch", "edit_file"].includes(name) || fileChanges.length === 0) {
+    return null;
+  }
+  const operations = new Set(fileChanges.map((change) => change.operation));
+  if (operations.size !== 1) {
+    return null;
+  }
+  const [operation] = [...operations];
+  if (operation === "add") {
+    return toolAction("create_file");
+  }
+  if (operation === "delete") {
+    return toolAction("delete_file");
+  }
+  if (operation === "move") {
+    return toolAction("move_file");
+  }
+  return null;
 }
 
 function toolAction(name: string): ToolAction | null {
@@ -890,6 +915,15 @@ function toolAction(name: string): ToolAction | null {
       cancelled: "已取消删除文件",
     };
   }
+  if (name === "move_file") {
+    return {
+      done: "已移动文件",
+      running: "正在移动文件",
+      pending: "等待移动文件",
+      failed: "移动文件失败",
+      cancelled: "已取消移动文件",
+    };
+  }
   return null;
 }
 
@@ -915,6 +949,9 @@ function toolIcon(name: string, failed: boolean) {
   if (name === "delete_file") {
     return <FileX2 size={16} />;
   }
+  if (name === "move_file") {
+    return <FilePenLine size={16} />;
+  }
   return <Wrench size={16} />;
 }
 
@@ -932,6 +969,8 @@ function toolTarget(
   summary: Record<string, unknown>,
 ): string {
   return (
+    stringValue(args.new_path) ||
+    stringValue(args.newPath) ||
     stringValue(args.path) ||
     stringValue(args.file) ||
     patchFileTarget(stringValue(args.patch) || stringValue(args.diff) || stringValue(args.content) || stringValue(payload.patch)) ||

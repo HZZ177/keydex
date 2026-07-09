@@ -365,6 +365,34 @@ describe("ToolCallBlock", () => {
     expect(onPreviewFile.mock.calls[0][0].message.id).toBe("tool-1");
   });
 
+  it("uses create wording for apply_patch add-file changes", () => {
+    render(
+      <ToolCallBlock
+        message={toolMessage(
+          "completed",
+          {
+            status: "success",
+            model_content: "created",
+            files: [
+              {
+                path: "docs/new.md",
+                operation: "add",
+                added_lines: 2,
+                deleted_lines: 0,
+              },
+            ],
+          },
+          "apply_patch",
+          { patch: "*** Begin Patch\n*** Add File: docs/new.md\n+hello\n*** End Patch" },
+        )}
+      />,
+    );
+
+    expect(screen.getByText("已创建文件")).not.toBeNull();
+    expect(screen.queryByText("已编辑文件")).toBeNull();
+    expect(screen.getByText("docs/new.md")).not.toBeNull();
+  });
+
   it("renders file mutation tool details as a diff review panel", async () => {
     const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
     const diff = "--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1 @@\n-old\n+new";
@@ -404,6 +432,63 @@ describe("ToolCallBlock", () => {
       expect(clipboard).toHaveBeenLastCalledWith(diff);
     });
     expect(screen.getByRole("button", { name: "已复制 diff" }).querySelector(".lucide-check")).not.toBeNull();
+  });
+
+  it("renders move file mutation tools with move wording", () => {
+    render(
+      <ToolCallBlock
+        message={toolMessage(
+          "completed",
+          {
+            status: "success",
+            model_content: "moved",
+            files: [
+              {
+                path: "docs/new.md",
+                operation: "move",
+                old_path: "docs/old.md",
+                new_path: "docs/new.md",
+                diff: "--- a/docs/old.md\n+++ b/docs/new.md",
+              },
+            ],
+          },
+          "move_file",
+          { path: "docs/old.md", new_path: "docs/new.md" },
+        )}
+      />,
+    );
+
+    expect(screen.getByText("已移动文件")).not.toBeNull();
+    expect(screen.getByText("docs/new.md")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
+    expect(screen.getByLabelText("已移动的文件")).not.toBeNull();
+  });
+
+  it("keeps legacy edit_file patch events as file mutation tools", () => {
+    render(
+      <ToolCallBlock
+        message={toolMessage(
+          "running",
+          {
+            status: "running",
+            files: [
+              {
+                path: "docs/legacy.md",
+                operation: "update",
+                added_lines: 1,
+                deleted_lines: 0,
+              },
+            ],
+          },
+          "edit_file",
+          { patch: "*** Begin Patch\n*** Update File: docs/legacy.md\n@@\n+new\n*** End Patch" },
+        )}
+      />,
+    );
+
+    expect(screen.getByText("正在编辑文件")).not.toBeNull();
+    expect(screen.getByText("docs/legacy.md")).not.toBeNull();
+    expect(screen.getByTestId("line-change-ticker").textContent).toContain("+1");
   });
 
   it("passes file mutation preview clicks through MessageList", () => {

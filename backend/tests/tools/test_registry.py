@@ -173,11 +173,14 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
     registry = create_default_tool_registry()
 
     assert registry.names() == [
+        "apply_patch",
         "create_file",
+        "delete_file",
         "edit_file",
         "get_thread_task",
         "grep_files",
         "list_dir",
+        "move_file",
         "read_file",
         "search_files",
         "search_text",
@@ -188,11 +191,14 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
     assert "带行号的 numbered_content" in specs["read_file"].description
     assert "创建新的 UTF-8 文本文件" in specs["create_file"].description
     assert "目标文件已存在时会失败" in specs["create_file"].description
+    assert "创建、修改、删除或移动 UTF-8 文本文件" in specs["apply_patch"].description
     assert "有界目录树" in specs["list_dir"].description
     assert "不搜索文件内容" in specs["search_files"].description
     assert "发现候选文件" in specs["grep_files"].description
-    assert "修改、删除或移动已有 UTF-8 文本文件" in specs["edit_file"].description
-    assert "*** Move to: <path>" in specs["edit_file"].description
+    assert "old_string" in specs["edit_file"].parameters["properties"]
+    assert "删除文件访问权限允许范围内已有 UTF-8 文本文件" in specs["delete_file"].description
+    assert "移动或重命名文件访问权限允许范围内已有 UTF-8 文本文件" in specs["move_file"].description
+    assert "*** Move to: <path>" in specs["apply_patch"].description
     assert "run_command" not in specs
     assert "最多只能有一个步骤处于 in_progress" in specs["update_plan"].description
     assert specs["update_thread_task"].parameters["properties"]["status"]["enum"] == [

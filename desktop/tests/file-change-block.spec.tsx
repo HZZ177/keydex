@@ -196,11 +196,18 @@ describe("FileChangeBlock", () => {
     expect(screen.queryByText("已创建")).toBeNull();
   });
 
-  it("uses the tool name instead of concrete add operation for edit tools", () => {
+  it("uses concrete add operation for apply_patch file creation", () => {
     render(<FileChangeBlock message={singleFileChangeMessage("running", "add", false, "", "apply_patch")} />);
 
-    expect(screen.getByText("正在编辑")).not.toBeNull();
-    expect(screen.queryByText("正在创建")).toBeNull();
+    expect(screen.getByText("正在创建")).not.toBeNull();
+    expect(screen.queryByText("正在编辑")).toBeNull();
+  });
+
+  it("renders move operations with move wording", () => {
+    render(<FileChangeBlock message={singleFileChangeMessage("completed", "move", false, "", "move_file")} />);
+
+    expect(screen.getByText("已移动")).not.toBeNull();
+    expect(screen.queryByText("已编辑")).toBeNull();
   });
 
   it("renders write-file diffs directly in the expanded single-file preview", () => {

@@ -74,6 +74,30 @@ def test_apply_patch_file_change_parser_tracks_move_to() -> None:
     ]
 
 
+def test_apply_patch_file_change_parser_tracks_add_file() -> None:
+    files = parse_apply_patch_file_changes(
+        """*** Begin Patch
+*** Add File: docs/new.md
++one
++two
+*** End Patch"""
+    )
+
+    assert files == [
+        {
+            "path": "docs/new.md",
+            "operation": "add",
+            "change_type": "create",
+            "added_lines": 2,
+            "deleted_lines": 0,
+            "removed_lines": 0,
+            "additions": 2,
+            "deletions": 0,
+            "diff": "--- /dev/null\n+++ b/docs/new.md\n+one\n+two",
+        }
+    ]
+
+
 def test_pipeline_emits_progress_for_streamed_apply_patch_chunks() -> None:
     pipeline = ToolCallChunkPipeline()
     first = AIMessageChunk(
@@ -359,3 +383,72 @@ def test_pipeline_marks_write_file_progress_as_create_for_new_targets() -> None:
     assert file_change["added_lines"] == 1
     assert file_change["deleted_lines"] == 0
     assert file_change["diff"] == "--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+hello"
+
+
+def test_pipeline_distinguishes_legacy_patch_edit_file_from_claude_edit_file() -> None:
+    pipeline = ToolCallChunkPipeline()
+
+    legacy = pipeline.process_chunk(
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {
+                    "id": "call_legacy",
+                    "index": 0,
+                    "name": "edit_file",
+                    "args": '{"patch":"*** Begin Patch\\n*** Update File: a.txt\\n@@\\n-old\\n+new\\n*** End Patch"}',
+                }
+            ],
+        ),
+        model_run_id="model_run",
+    )
+    claude = pipeline.process_chunk(
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {
+                    "id": "call_claude",
+                    "index": 1,
+                    "name": "edit_file",
+                    "args": '{"path":"b.txt","old_string":"old\\n","new_string":"new\\nnext\\n"}',
+                }
+            ],
+        ),
+        model_run_id="model_run",
+    )
+
+    assert legacy[0]["files"][0]["path"] == "a.txt"
+    assert legacy[0]["files"][0]["added_lines"] == 1
+    assert claude[0]["files"][0]["path"] == "b.txt"
+    assert claude[0]["files"][0]["added_lines"] == 2
+    assert claude[0]["files"][0]["deleted_lines"] == 1
+
+
+def test_pipeline_emits_progress_for_delete_and_move_file() -> None:
+    pipeline = ToolCallChunkPipeline()
+    progress = pipeline.process_chunk(
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {
+                    "id": "call_delete",
+                    "index": 0,
+                    "name": "delete_file",
+                    "args": '{"path":"old.txt"}',
+                },
+                {
+                    "id": "call_move",
+                    "index": 1,
+                    "name": "move_file",
+                    "args": '{"path":"old.txt","new_path":"new.txt"}',
+                },
+            ],
+        ),
+        model_run_id="model_run",
+    )
+
+    assert progress[0]["files"][0]["operation"] == "delete"
+    assert progress[0]["files"][0]["path"] == "old.txt"
+    assert progress[1]["files"][0]["operation"] == "move"
+    assert progress[1]["files"][0]["old_path"] == "old.txt"
+    assert progress[1]["files"][0]["new_path"] == "new.txt"

@@ -16,6 +16,7 @@ from backend.app.tools.file_access import (
     relative_tool_path,
     resolve_file_access_path,
 )
+from backend.app.tools.file_snapshots import record_file_snapshot
 from backend.app.tools.registry import ToolRegistry
 
 MAX_READ_BYTES = 512 * 1024
@@ -44,7 +45,7 @@ READ_FILE_DESCRIPTION = (
 
 CREATE_FILE_DESCRIPTION = (
     "在文件访问权限允许范围内创建新的 UTF-8 文本文件，并返回文件变更 diff。"
-    "目标文件已存在时会失败；修改、删除或移动已有文件请使用 edit_file。"
+    "目标文件已存在时会失败；修改已有文件请使用 edit_file，删除或移动已有文件请使用 delete_file/move_file。"
 )
 
 LIST_DIR_DESCRIPTION = (
@@ -245,11 +246,18 @@ async def read_file_tool(
     )
 
     relative = _relative(path, context)
+    full_read = mode == "window" and start_line == 1 and next_start_line is None
+    record_file_snapshot(
+        path,
+        context=context,
+        content=content,
+        full_read=full_read,
+    )
     logger.info(
         "[FilesystemTool] 读取文件 | "
         f"path={relative} | size={size} | mode={mode} | start_line={start_line} | "
         f"max_lines={max_lines} | returned_lines={returned_lines} | "
-        f"truncated={next_start_line is not None}"
+        f"truncated={next_start_line is not None} | full_read_snapshot={full_read}"
     )
     return {
         "path": relative,
@@ -295,6 +303,12 @@ async def write_file_tool(
     change = _write_file_change(
         path=relative,
         new_content=new_content,
+    )
+    record_file_snapshot(
+        path,
+        context=context,
+        content=new_content,
+        full_read=True,
     )
     logger.info(
         "[FilesystemTool] 写入文件 | "

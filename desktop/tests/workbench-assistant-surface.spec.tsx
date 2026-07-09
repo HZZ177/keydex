@@ -1094,6 +1094,45 @@ describe("WorkbenchAssistantSurface", () => {
     });
   });
 
+  it("reuses the shared line change ticker for running move_file tools", async () => {
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={fakeController({
+            runtimeState: "running" as ConversationRuntimeState,
+            agentMessages: [
+              agentMessage({
+                id: "file-tool-running",
+                role: "tool",
+                content: "",
+                toolName: "move_file",
+                fileChanges: [
+                  {
+                    path: "docs/new.md",
+                    old_path: "docs/old.md",
+                    new_path: "docs/new.md",
+                    operation: "move",
+                  },
+                ],
+                status: "running",
+              }),
+            ],
+          })}
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    const trigger = screen.getByTestId("workbench-message-carrier");
+    expect(trigger.textContent).toContain("正在移动文件");
+    expect(within(trigger).getByTestId("line-change-ticker")).not.toBeNull();
+    await act(async () => {
+      await Promise.resolve();
+    });
+  });
+
   it("collapses the bottom composer after a successful send", async () => {
     const onSend = vi.fn(() => Promise.resolve(true));
     render(
@@ -2485,6 +2524,7 @@ function fakeRuntime({
         }),
       getExtensionSettings: () =>
         Promise.resolve({
+          file_edit_tool_style: "claude_code",
           auto_title: {
             enabled: false,
             only_when_default_title: true,

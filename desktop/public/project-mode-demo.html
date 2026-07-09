@@ -1,0 +1,2893 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keydex 项目模式 Demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f7f5;
+        --surface: #ffffff;
+        --surface-soft: #fbfbfa;
+        --surface-muted: #f1f1ef;
+        --border: #deded9;
+        --border-soft: #ecece8;
+        --text: #1f2328;
+        --text-2: #5d6470;
+        --text-3: #8a9099;
+        --shadow: 0 18px 55px rgba(22, 24, 29, 0.08);
+        --green: #15a46e;
+        --green-soft: #e8f7ef;
+        --blue: #3778d8;
+        --blue-soft: #eaf2ff;
+        --amber: #d78316;
+        --amber-soft: #fff3dd;
+        --red: #d94d45;
+        --red-soft: #ffedeb;
+        --purple: #7c63d6;
+        --purple-soft: #f0edff;
+        --radius: 8px;
+        --font: "Inter", "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      button,
+      input,
+      textarea,
+      select {
+        font: inherit;
+      }
+
+      button {
+        border: 0;
+      }
+
+      .app {
+        display: grid;
+        grid-template-columns: 228px minmax(0, 1fr);
+        width: 100%;
+        height: 100vh;
+        min-width: 1120px;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(247, 247, 245, 0.92)),
+          radial-gradient(circle at 64% 12%, rgba(55, 120, 216, 0.05), transparent 26%);
+      }
+
+      .rail {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        padding: 18px 14px 14px;
+        border-right: 1px solid var(--border);
+        background: rgba(250, 250, 248, 0.82);
+      }
+
+      .rail-top {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        height: 34px;
+        padding: 0 6px;
+        margin-bottom: 18px;
+      }
+
+      .logo {
+        display: grid;
+        width: 22px;
+        height: 22px;
+        place-items: center;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--amber);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .rail-title {
+        min-width: 0;
+      }
+
+      .rail-title strong {
+        display: block;
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .rail-title span {
+        display: block;
+        color: var(--text-3);
+        font-size: 11px;
+      }
+
+      .rail-section {
+        margin-bottom: 22px;
+      }
+
+      .rail-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 24px;
+        padding: 0 6px;
+        color: var(--text-2);
+        font-size: 12px;
+        font-weight: 620;
+      }
+
+      .mini-button {
+        display: inline-grid;
+        width: 22px;
+        height: 22px;
+        place-items: center;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text-3);
+        cursor: pointer;
+      }
+
+      .mini-button:hover {
+        border-color: var(--border);
+        background: var(--surface);
+        color: var(--text);
+      }
+
+      .project-switch {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        width: 100%;
+        height: 38px;
+        padding: 0 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text);
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(30, 34, 40, 0.04);
+      }
+
+      .project-switch span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .nav-list,
+      .recent-list,
+      .project-list {
+        display: grid;
+        gap: 3px;
+        margin: 7px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .nav-item,
+      .recent-item,
+      .project-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        width: 100%;
+        min-width: 0;
+        min-height: 34px;
+        padding: 7px 9px;
+        border-radius: 8px;
+        color: var(--text-2);
+        text-align: left;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .nav-item:hover,
+      .recent-item:hover,
+      .project-item:hover {
+        background: rgba(255, 255, 255, 0.75);
+        color: var(--text);
+      }
+
+      .nav-item.active,
+      .project-item.active,
+      .recent-item.active {
+        background: #ededeb;
+        color: var(--text);
+      }
+
+      .glyph {
+        display: grid;
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        background: var(--surface);
+        color: var(--text-2);
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .nav-label,
+      .recent-title,
+      .project-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .recent-status {
+        margin-left: auto;
+        color: var(--text-3);
+        font-size: 11px;
+      }
+
+      .rail-footer {
+        margin-top: auto;
+        padding-top: 14px;
+        border-top: 1px solid var(--border-soft);
+      }
+
+      .user-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 7px;
+      }
+
+      .avatar {
+        display: grid;
+        width: 24px;
+        height: 24px;
+        flex: 0 0 auto;
+        place-items: center;
+        border-radius: 999px;
+        background: #626b78;
+        color: white;
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .avatar.green {
+        background: #39bca4;
+      }
+
+      .avatar.gray {
+        background: #79818d;
+      }
+
+      .main {
+        display: grid;
+        grid-template-rows: 56px minmax(0, 1fr);
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .context-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.78);
+        backdrop-filter: blur(18px);
+      }
+
+      .context-chip,
+      .status-chip,
+      .permission-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        max-width: 240px;
+        height: 32px;
+        padding: 0 11px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text);
+        white-space: nowrap;
+      }
+
+      button.context-chip,
+      button.status-chip,
+      button.permission-chip {
+        cursor: pointer;
+      }
+
+      button.context-chip:hover,
+      button.status-chip:hover,
+      button.permission-chip:hover {
+        background: var(--surface-muted);
+      }
+
+      .context-chip span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .dot {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--green);
+      }
+
+      .spacer {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .more {
+        width: 32px;
+        height: 32px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-2);
+        cursor: pointer;
+      }
+
+      .more:hover {
+        border-color: var(--border);
+        background: var(--surface);
+      }
+
+      .page-shell {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .page {
+        display: none;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .page.active {
+        display: block;
+      }
+
+      .scroll {
+        height: 100%;
+        overflow: auto;
+      }
+
+      .dashboard-layout,
+      .detail-layout,
+      .agent-layout,
+      .run-layout {
+        display: grid;
+        gap: 16px;
+        min-height: 100%;
+        padding: 18px;
+      }
+
+      .dashboard-layout {
+        grid-template-columns: minmax(0, 1fr) 300px;
+      }
+
+      .detail-layout,
+      .run-layout {
+        grid-template-columns: minmax(0, 1fr) 338px;
+      }
+
+      .agent-layout {
+        grid-template-columns: minmax(0, 1fr) 420px;
+      }
+
+      .stack {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        min-width: 0;
+      }
+
+      .panel {
+        min-width: 0;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.82);
+        box-shadow: 0 1px 1px rgba(20, 22, 26, 0.03);
+      }
+
+      .panel.pad {
+        padding: 16px;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 46px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      .panel-title {
+        min-width: 0;
+      }
+
+      .panel-title h2,
+      .panel-title h3 {
+        margin: 0;
+        color: var(--text);
+        font-size: 15px;
+        font-weight: 680;
+      }
+
+      .panel-title p {
+        margin: 2px 0 0;
+        color: var(--text-3);
+        font-size: 12px;
+      }
+
+      .hero {
+        padding: 18px 20px 4px;
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: 22px;
+        line-height: 1.25;
+        font-weight: 720;
+      }
+
+      .hero p {
+        margin: 6px 0 0;
+        color: var(--text-2);
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        padding: 14px 20px 4px;
+      }
+
+      .stat {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 34px;
+        gap: 10px;
+        min-width: 0;
+        padding: 13px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+
+      .stat strong {
+        display: block;
+        margin-top: 3px;
+        font-size: 24px;
+        line-height: 1;
+      }
+
+      .stat span {
+        color: var(--text-3);
+        font-size: 12px;
+      }
+
+      .stat small {
+        display: block;
+        margin-top: 8px;
+        color: var(--text-2);
+      }
+
+      .stat-icon {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border-radius: 8px;
+        font-weight: 750;
+      }
+
+      .stat-icon.green {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .stat-icon.blue {
+        background: var(--blue-soft);
+        color: var(--blue);
+      }
+
+      .stat-icon.amber {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .stat-icon.purple {
+        background: var(--purple-soft);
+        color: var(--purple);
+      }
+
+      .tabbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .tab {
+        position: relative;
+        height: 34px;
+        padding: 0 2px;
+        background: transparent;
+        color: var(--text-2);
+        cursor: pointer;
+      }
+
+      .tab.active {
+        color: var(--text);
+        font-weight: 650;
+      }
+
+      .tab.active::after {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        height: 2px;
+        border-radius: 999px;
+        background: var(--text);
+        content: "";
+      }
+
+      .ghost-button,
+      .primary-button,
+      .soft-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-width: 0;
+        height: 34px;
+        padding: 0 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .ghost-button {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text);
+      }
+
+      .ghost-button:hover {
+        background: var(--surface-muted);
+      }
+
+      .primary-button {
+        background: #24262b;
+        color: white;
+      }
+
+      .primary-button:hover {
+        background: #101216;
+      }
+
+      .soft-button {
+        border: 1px solid var(--border-soft);
+        background: var(--surface-soft);
+        color: var(--text-2);
+      }
+
+      .soft-button:hover {
+        color: var(--text);
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+
+      .table th {
+        height: 38px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--border-soft);
+        color: var(--text-3);
+        font-size: 12px;
+        font-weight: 620;
+        text-align: left;
+      }
+
+      .table td {
+        height: 44px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--border-soft);
+        color: var(--text-2);
+        vertical-align: middle;
+      }
+
+      .table tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .table tr.clickable {
+        cursor: pointer;
+      }
+
+      .table tr.clickable:hover td {
+        background: rgba(246, 246, 244, 0.9);
+      }
+
+      .table tr.selected td {
+        background: #f2f2ef;
+      }
+
+      .table tr.is-hidden {
+        display: none;
+      }
+
+      .title-cell {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+        color: var(--text);
+      }
+
+      .title-cell span:last-child {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .type {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 34px;
+        height: 22px;
+        padding: 0 7px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .type.req {
+        background: var(--purple-soft);
+        color: var(--purple);
+      }
+
+      .type.task {
+        background: var(--blue-soft);
+        color: var(--blue);
+      }
+
+      .type.bug {
+        background: var(--red-soft);
+        color: var(--red);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 22px;
+        padding: 0 7px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 620;
+        white-space: nowrap;
+      }
+
+      .badge.green {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .badge.blue {
+        background: var(--blue-soft);
+        color: var(--blue);
+      }
+
+      .badge.amber {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .badge.red {
+        background: var(--red-soft);
+        color: var(--red);
+      }
+
+      .badge.gray {
+        background: #f0f0ee;
+        color: var(--text-2);
+      }
+
+      .progress {
+        position: relative;
+        height: 8px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #e6e6e2;
+      }
+
+      .progress span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--green);
+      }
+
+      .split-cards {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 14px;
+      }
+
+      .iteration-card,
+      .doc-list {
+        min-width: 0;
+      }
+
+      .iteration-body,
+      .doc-body {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+      }
+
+      .metric-row,
+      .doc-row,
+      .kv-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .doc-row {
+        min-height: 34px;
+        justify-content: flex-start;
+      }
+
+      .doc-row strong,
+      .metric-row strong {
+        overflow: hidden;
+        color: var(--text);
+        font-weight: 620;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .doc-row span,
+      .metric-row span,
+      .kv-row span {
+        color: var(--text-3);
+        white-space: nowrap;
+      }
+
+      .agent-dock {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+      }
+
+      .agent-card {
+        padding: 14px;
+      }
+
+      .agent-title {
+        margin: 0 0 4px;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .agent-desc {
+        margin: 0 0 14px;
+        color: var(--text-2);
+      }
+
+      .action-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .action {
+        display: grid;
+        grid-template-columns: 32px minmax(0, 1fr);
+        gap: 10px;
+        width: 100%;
+        padding: 11px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .action:hover {
+        background: var(--surface-soft);
+      }
+
+      .action-mark {
+        display: grid;
+        width: 32px;
+        height: 32px;
+        place-items: center;
+        border-radius: 8px;
+        font-weight: 750;
+      }
+
+      .action h4 {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 680;
+      }
+
+      .action p {
+        margin: 2px 0 0;
+        color: var(--text-3);
+        font-size: 12px;
+      }
+
+      .detail-head {
+        padding: 20px 22px 14px;
+      }
+
+      .crumbs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-3);
+        font-size: 12px;
+      }
+
+      .detail-title {
+        margin: 14px 0 12px;
+        font-size: 26px;
+        line-height: 1.22;
+        font-weight: 730;
+      }
+
+      .meta-strip {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        color: var(--text-2);
+      }
+
+      .content-section {
+        padding: 4px 22px 20px;
+      }
+
+      .content-section h3 {
+        margin: 20px 0 8px;
+        font-size: 15px;
+      }
+
+      .content-section p,
+      .content-section li {
+        color: #303640;
+      }
+
+      .content-section ul {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+
+      .relation-tabs {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 0 22px;
+        border-top: 1px solid var(--border-soft);
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      .relation-body {
+        padding: 12px 22px 18px;
+      }
+
+      .side-panel {
+        position: sticky;
+        top: 18px;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+      }
+
+      .context-list {
+        display: grid;
+        gap: 9px;
+        padding: 14px;
+      }
+
+      .context-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .context-item .glyph {
+        margin-top: 1px;
+      }
+
+      .context-item strong {
+        display: block;
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      .context-item span {
+        display: block;
+        overflow: hidden;
+        color: var(--text-3);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .composer {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) 34px;
+        gap: 8px;
+        align-items: center;
+        width: min(720px, calc(100% - 44px));
+        min-height: 58px;
+        margin: 10px auto 0;
+        padding: 8px;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: var(--shadow);
+      }
+
+      .composer input {
+        width: 100%;
+        height: 38px;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--text);
+      }
+
+      .round {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border-radius: 999px;
+        background: var(--surface-muted);
+        color: var(--text-2);
+      }
+
+      .round.dark {
+        background: #7d838b;
+        color: white;
+      }
+
+      .chat {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        min-height: calc(100vh - 92px);
+      }
+
+      .chat-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 24px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      .chat-header h1 {
+        margin: 0;
+        font-size: 18px;
+      }
+
+      .chat-header p {
+        margin: 3px 0 0;
+        color: var(--text-3);
+      }
+
+      .messages {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        padding: 22px 34px;
+        overflow: auto;
+      }
+
+      .msg {
+        max-width: 650px;
+        padding: 14px 16px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        color: #2d333b;
+      }
+
+      .msg.user {
+        justify-self: end;
+        background: #f4f4f2;
+      }
+
+      .msg-meta {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 7px;
+        color: var(--text-3);
+        font-size: 12px;
+      }
+
+      .msg ul {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+
+      .draft {
+        height: calc(100vh - 92px);
+        overflow: auto;
+      }
+
+      .draft-form {
+        display: grid;
+        gap: 0;
+        padding: 14px;
+      }
+
+      .form-row {
+        display: grid;
+        grid-template-columns: 106px minmax(0, 1fr);
+        min-height: 42px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      .form-row:last-child {
+        border-bottom: 0;
+      }
+
+      .form-row label {
+        display: flex;
+        align-items: center;
+        color: var(--text-3);
+        font-weight: 620;
+      }
+
+      .form-row div {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        color: var(--text);
+      }
+
+      .form-row .long-text {
+        display: block;
+        padding: 10px 0;
+        white-space: pre-line;
+      }
+
+      .activity-preview {
+        margin: 14px;
+        padding: 12px;
+        border: 1px solid #cfe1ff;
+        border-radius: 8px;
+        background: #f5f9ff;
+        color: #315177;
+      }
+
+      .draft-actions {
+        display: flex;
+        gap: 10px;
+        padding: 14px;
+        border-top: 1px solid var(--border-soft);
+      }
+
+      .draft-actions button {
+        flex: 1;
+      }
+
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 8px;
+        padding: 18px 0 6px;
+      }
+
+      .step {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+        color: var(--text-3);
+        cursor: pointer;
+      }
+
+      .step::after {
+        height: 1px;
+        background: var(--border);
+        content: "";
+      }
+
+      .step:last-child::after {
+        display: none;
+      }
+
+      .step-index {
+        display: grid;
+        width: 24px;
+        height: 24px;
+        place-items: center;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--text-3);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .step.done .step-index {
+        border-color: var(--green);
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .step.active .step-index {
+        border-color: var(--blue);
+        background: var(--blue);
+        color: white;
+      }
+
+      .step span:last-child {
+        overflow: hidden;
+        color: var(--text-2);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .run-head {
+        padding: 18px 20px;
+      }
+
+      .run-head h1 {
+        margin: 8px 0 0;
+        font-size: 22px;
+      }
+
+      .run-section {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+      }
+
+      .run-row {
+        display: grid;
+        grid-template-columns: 26px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        min-height: 32px;
+      }
+
+      .check,
+      .pending,
+      .running {
+        display: grid;
+        width: 18px;
+        height: 18px;
+        place-items: center;
+        border-radius: 999px;
+        font-size: 11px;
+      }
+
+      .check {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .pending {
+        border: 1px solid var(--border);
+        color: var(--text-3);
+      }
+
+      .running {
+        background: var(--blue-soft);
+        color: var(--blue);
+      }
+
+      .log-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .log-item {
+        display: grid;
+        grid-template-columns: 46px 18px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+      }
+
+      .log-time {
+        color: var(--text-3);
+        font-size: 12px;
+      }
+
+      .file-row {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) 60px;
+        gap: 10px;
+        align-items: center;
+        min-height: 34px;
+        padding: 0 10px;
+        border: 1px solid var(--border-soft);
+        border-radius: 7px;
+        background: var(--surface);
+      }
+
+      .file-row code {
+        overflow: hidden;
+        color: #374151;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .file-row span:last-child {
+        color: var(--text-3);
+        text-align: right;
+      }
+
+      .toast {
+        position: fixed;
+        right: 22px;
+        bottom: 22px;
+        z-index: 20;
+        display: none;
+        max-width: 360px;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.94);
+        color: var(--text);
+        box-shadow: var(--shadow);
+      }
+
+      .toast.show {
+        display: block;
+      }
+
+      .dropdown {
+        position: fixed;
+        z-index: 40;
+        display: none;
+        min-width: 220px;
+        max-width: 330px;
+        padding: 6px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.97);
+        box-shadow: var(--shadow);
+      }
+
+      .dropdown.show {
+        display: block;
+      }
+
+      .dropdown-title {
+        padding: 6px 8px 5px;
+        color: var(--text-3);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      .dropdown-option {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        width: 100%;
+        min-height: 36px;
+        padding: 8px;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text);
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .dropdown-option:hover,
+      .dropdown-option.active {
+        background: var(--surface-muted);
+      }
+
+      .dropdown-option strong {
+        display: block;
+        overflow: hidden;
+        font-weight: 640;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .dropdown-option span {
+        display: block;
+        margin-top: 2px;
+        overflow: hidden;
+        color: var(--text-3);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .dropdown-check {
+        color: var(--green);
+        font-weight: 800;
+      }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 28px;
+        background: rgba(31, 35, 40, 0.2);
+        backdrop-filter: blur(6px);
+      }
+
+      .modal-backdrop.show {
+        display: flex;
+      }
+
+      .modal {
+        width: min(680px, 100%);
+        max-height: calc(100vh - 80px);
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .modal-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      .modal-head h2 {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      .modal-body {
+        display: grid;
+        gap: 12px;
+        padding: 16px 18px 18px;
+      }
+
+      .drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 60;
+        display: none;
+        width: min(460px, 92vw);
+        border-left: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.98);
+        box-shadow: -18px 0 55px rgba(22, 24, 29, 0.1);
+      }
+
+      .drawer.show {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+
+      .drawer-body {
+        overflow: auto;
+        padding: 16px;
+      }
+
+      .empty-state {
+        display: grid;
+        place-items: center;
+        min-height: 160px;
+        color: var(--text-3);
+        text-align: center;
+      }
+
+      .filter-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 34px;
+        padding: 4px 8px;
+        border-radius: 8px;
+        color: var(--text-2);
+        cursor: pointer;
+      }
+
+      .filter-row:hover {
+        background: var(--surface-muted);
+        color: var(--text);
+      }
+
+      .filter-row input {
+        accent-color: var(--text);
+      }
+
+      .run-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding-top: 12px;
+      }
+
+      .more-files {
+        display: none;
+      }
+
+      .more-files.show {
+        display: grid;
+        gap: 10px;
+      }
+
+      .command-hint {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 34px;
+        padding: 8px 10px;
+        border: 1px solid var(--border-soft);
+        border-radius: 8px;
+        background: var(--surface-soft);
+      }
+
+      .command-hint kbd {
+        min-width: 24px;
+        padding: 2px 6px;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        background: var(--surface);
+        color: var(--text-2);
+        font-family: var(--font);
+        font-size: 11px;
+        text-align: center;
+      }
+
+      @media (max-width: 1280px) {
+        .app {
+          grid-template-columns: 206px minmax(0, 1fr);
+          min-width: 1040px;
+        }
+
+        .dashboard-layout,
+        .detail-layout,
+        .agent-layout,
+        .run-layout {
+          gap: 12px;
+          padding: 14px;
+        }
+
+        .dashboard-layout {
+          grid-template-columns: minmax(0, 1fr) 280px;
+        }
+
+        .detail-layout,
+        .run-layout {
+          grid-template-columns: minmax(0, 1fr) 310px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="rail">
+        <div class="rail-top">
+          <div class="logo">K</div>
+          <div class="rail-title">
+            <strong>项目模式</strong>
+            <span>个人项目工作台</span>
+          </div>
+        </div>
+
+        <section class="rail-section">
+          <div class="rail-heading">
+            <span>项目</span>
+            <button class="mini-button" type="button" aria-label="搜索项目">⌕</button>
+          </div>
+          <button class="project-switch" id="projectSwitch" type="button">
+            <span id="railProjectName">kt-pm-platform</span>
+            <span>⌄</span>
+          </button>
+          <ul class="project-list">
+            <li><button class="project-item active" type="button"><span class="glyph">P</span><span class="project-name">kt-pm-platform</span></button></li>
+            <li><button class="project-item" type="button"><span class="glyph">P</span><span class="project-name">keydex</span></button></li>
+            <li><button class="project-item" type="button"><span class="glyph">P</span><span class="project-name">kt-agent-framework</span></button></li>
+          </ul>
+        </section>
+
+        <section class="rail-section">
+          <div class="rail-heading"><span>工作区</span></div>
+          <ul class="nav-list">
+            <li><button class="nav-item active" data-view="dashboard" type="button"><span class="glyph">W</span><span class="nav-label">我的工作台</span></button></li>
+            <li><button class="nav-item" data-view="detail" type="button"><span class="glyph">R</span><span class="nav-label">需求详情</span></button></li>
+            <li><button class="nav-item" data-view="agent" type="button"><span class="glyph">A</span><span class="nav-label">项目 Agent</span></button></li>
+            <li><button class="nav-item" data-view="run" type="button"><span class="glyph">L</span><span class="nav-label">长程任务</span></button></li>
+          </ul>
+        </section>
+
+        <section class="rail-section">
+          <div class="rail-heading"><span>最近任务</span><button class="mini-button" type="button">+</button></div>
+          <ul class="recent-list">
+            <li><button class="recent-item active" data-view="run" type="button"><span class="glyph">#</span><span class="recent-title">开发需求 #3566</span><span class="recent-status">进行中</span></button></li>
+            <li><button class="recent-item" data-view="agent" type="button"><span class="glyph">B</span><span class="recent-title">提交 Bug 草稿</span><span class="recent-status">待创建</span></button></li>
+            <li><button class="recent-item" data-view="detail" type="button"><span class="glyph">D</span><span class="recent-title">查看 DES-20260623</span><span class="recent-status">已同步</span></button></li>
+          </ul>
+        </section>
+
+        <div class="rail-footer">
+          <button class="nav-item" type="button"><span class="glyph">S</span><span class="nav-label">设置</span></button>
+          <div class="user-row">
+            <span class="avatar">严</span>
+            <div class="rail-title">
+              <strong>严光远</strong>
+              <span>开发权限</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="context-bar">
+          <button class="context-chip" id="topProjectChip" type="button"><span class="glyph">P</span><span id="topProjectName">kt-pm-platform</span></button>
+          <button class="context-chip" id="iterationChip" type="button"><span class="glyph">I</span><span id="topIterationName">Sprint07_0.7.x</span></button>
+          <button class="status-chip" id="cloudStatusChip" type="button"><span class="dot"></span><span id="cloudStatusText">云端已连接</span></button>
+          <button class="status-chip" id="workspaceChip" type="button"><span class="glyph">F</span><span>本地工作区已绑定</span></button>
+          <div class="spacer"></div>
+          <button class="permission-chip" id="permissionChip" type="button"><span class="glyph">U</span><span id="permissionName">严光远 / 开发权限</span></button>
+          <button class="more" id="moreMenuButton" type="button">⋯</button>
+        </header>
+
+        <div class="page-shell">
+          <section class="page active" data-page="dashboard">
+            <div class="scroll">
+              <div class="dashboard-layout">
+                <div class="stack">
+                  <section class="panel">
+                    <div class="hero">
+                      <h1>我的项目工作台</h1>
+                      <p>聚焦当前项目中和我相关的需求、任务、Bug、文档和待确认事项。</p>
+                    </div>
+                    <div class="stats">
+                      <div class="stat">
+                        <div>
+                          <span>我负责的事项</span>
+                          <strong>12</strong>
+                          <small>需求 6 · Bug 4 · 任务 2</small>
+                        </div>
+                        <div class="stat-icon purple">R</div>
+                      </div>
+                      <div class="stat">
+                        <div>
+                          <span>待我确认</span>
+                          <strong>3</strong>
+                          <small>Agent 产出待确认</small>
+                        </div>
+                        <div class="stat-icon blue">C</div>
+                      </div>
+                      <div class="stat">
+                        <div>
+                          <span>进行中</span>
+                          <strong>5</strong>
+                          <small>我的事项正在推进</small>
+                        </div>
+                        <div class="stat-icon green">T</div>
+                      </div>
+                      <div class="stat">
+                        <div>
+                          <span>最近文档</span>
+                          <strong>8</strong>
+                          <small>最近 7 天更新</small>
+                        </div>
+                        <div class="stat-icon amber">D</div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header">
+                      <div class="panel-title">
+                        <h2>我的事项</h2>
+                      </div>
+                      <div class="tabbar">
+                        <button class="tab active" data-issue-scope="owned" type="button">我负责</button>
+                        <button class="tab" data-issue-scope="joined" type="button">我参与</button>
+                        <button class="tab" data-issue-scope="confirm" type="button">待我确认</button>
+                        <button class="ghost-button" id="issueFilterButton" type="button">筛选</button>
+                      </div>
+                    </div>
+                    <table class="table">
+                      <thead>
+                        <tr>
+                          <th style="width: 70px">类型</th>
+                          <th>标题</th>
+                          <th style="width: 88px">状态</th>
+                          <th style="width: 78px">优先级</th>
+                          <th style="width: 92px">负责人</th>
+                          <th style="width: 126px">迭代</th>
+                          <th style="width: 86px">关联文档</th>
+                          <th style="width: 92px">最近活动</th>
+                        </tr>
+                      </thead>
+                      <tbody id="issueTableBody">
+                        <tr class="clickable" data-view="detail" data-issue-type="req" data-issue-state="running" data-issue-priority="p0">
+                          <td><span class="type req">需求</span></td>
+                          <td><div class="title-cell"><span>#3566</span><span>Agent全链路运行时异常告警与告警配置管理</span></div></td>
+                          <td><span class="badge amber">进行中</span></td>
+                          <td><span class="badge red">P0 紧急</span></td>
+                          <td><span class="avatar green">何</span></td>
+                          <td>Sprint07_0.7.x</td>
+                          <td>4</td>
+                          <td>1 小时前</td>
+                        </tr>
+                        <tr data-issue-type="req" data-issue-state="running" data-issue-priority="p0">
+                          <td><span class="type req">需求</span></td>
+                          <td><div class="title-cell"><span>#3565</span><span>自进化优化：报告状态优化、日报推送控制</span></div></td>
+                          <td><span class="badge blue">开发中</span></td>
+                          <td><span class="badge red">P0 紧急</span></td>
+                          <td><span class="avatar gray">胡</span></td>
+                          <td>Sprint07_0.7.x</td>
+                          <td>3</td>
+                          <td>2 小时前</td>
+                        </tr>
+                        <tr data-issue-type="task" data-issue-state="running" data-issue-priority="p1">
+                          <td><span class="type task">任务</span></td>
+                          <td><div class="title-cell"><span>#3571</span><span>告警功能链路实现</span></div></td>
+                          <td><span class="badge blue">开发中</span></td>
+                          <td><span class="badge blue">中</span></td>
+                          <td><span class="avatar green">何</span></td>
+                          <td>Sprint07_0.7.x</td>
+                          <td>2</td>
+                          <td>3 小时前</td>
+                        </tr>
+                        <tr data-issue-type="task" data-issue-state="running" data-issue-priority="p1">
+                          <td><span class="type task">任务</span></td>
+                          <td><div class="title-cell"><span>#3570</span><span>agent运行时异常事件接入告警体系</span></div></td>
+                          <td><span class="badge blue">开发中</span></td>
+                          <td><span class="badge blue">中</span></td>
+                          <td><span class="avatar green">何</span></td>
+                          <td>Sprint07_0.7.x</td>
+                          <td>2</td>
+                          <td>3 小时前</td>
+                        </tr>
+                        <tr data-issue-type="bug" data-issue-state="todo" data-issue-priority="p1">
+                          <td><span class="type bug">Bug</span></td>
+                          <td><div class="title-cell"><span>#3582</span><span>observer 调用失败未告警</span></div></td>
+                          <td><span class="badge amber">待修复</span></td>
+                          <td><span class="badge blue">中</span></td>
+                          <td><span class="avatar gray">胡</span></td>
+                          <td>Sprint07_0.7.x</td>
+                          <td>1</td>
+                          <td>昨天 16:10</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </section>
+
+                  <div class="split-cards">
+                    <section class="panel iteration-card">
+                      <div class="panel-header">
+                        <div class="panel-title"><h3>当前迭代</h3></div>
+                        <button class="soft-button" data-view="detail" type="button">进入迭代</button>
+                      </div>
+                      <div class="iteration-body">
+                        <div class="metric-row"><strong>Sprint07_0.7.x</strong><span class="badge amber">进行中</span></div>
+                        <div class="metric-row"><span>2026/06/10 - 2026/07/06</span><span>剩余 15 天</span></div>
+                        <div class="progress"><span style="width: 58%"></span></div>
+                        <div class="stats" style="grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 6px 0 0; gap: 8px">
+                          <div class="stat" style="display: block; padding: 10px"><span>需求</span><strong style="font-size: 18px">18</strong></div>
+                          <div class="stat" style="display: block; padding: 10px"><span>任务</span><strong style="font-size: 18px">32</strong></div>
+                          <div class="stat" style="display: block; padding: 10px"><span>Bug</span><strong style="font-size: 18px">9</strong></div>
+                          <div class="stat" style="display: block; padding: 10px"><span>总计</span><strong style="font-size: 18px">59</strong></div>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section class="panel doc-list">
+                      <div class="panel-header">
+                        <div class="panel-title"><h3>最近文档</h3></div>
+                        <button class="soft-button" data-view="detail" type="button">进入文档库</button>
+                      </div>
+                      <div class="doc-body">
+                        <div class="doc-row"><span class="glyph">D</span><strong>DES-20260623-001-平台治理与IM登录基础</strong><span>v1.2</span></div>
+                        <div class="doc-row"><span class="glyph">R</span><strong>REQ-20260622-001-平台治理与IM登录基础</strong><span>v1.5</span></div>
+                        <div class="doc-row"><span class="glyph">E</span><strong>测试实施指南（E2E）</strong><span>v1.0</span></div>
+                        <div class="doc-row"><span class="glyph">A</span><strong>告警配置模块设计说明</strong><span>v0.9</span></div>
+                      </div>
+                    </section>
+                  </div>
+                </div>
+
+                <aside class="agent-dock">
+                  <section class="panel agent-card">
+                    <h2 class="agent-title">项目 Agent</h2>
+                    <p class="agent-desc">基于当前项目、迭代、事项和文档，为你完成云端事项创建、资料整理与任务启动。</p>
+                    <div class="action-list">
+                      <button class="action" data-view="agent" type="button">
+                        <span class="action-mark" style="background: var(--green-soft); color: var(--green)">R</span>
+                        <span><h4>聊需求并创建需求</h4><p>和我讨论需求想法，生成需求草稿</p></span>
+                      </button>
+                      <button class="action" data-view="agent" type="button">
+                        <span class="action-mark" style="background: var(--red-soft); color: var(--red)">B</span>
+                        <span><h4>描述问题并创建 Bug</h4><p>收集现象、复现步骤和影响范围</p></span>
+                      </button>
+                      <button class="action" data-view="detail" type="button">
+                        <span class="action-mark" style="background: var(--purple-soft); color: var(--purple)">D</span>
+                        <span><h4>查关联文档</h4><p>查看当前事项关联的需求和设计资料</p></span>
+                      </button>
+                      <button class="action" data-view="run" type="button">
+                        <span class="action-mark" style="background: var(--amber-soft); color: var(--amber)">L</span>
+                        <span><h4>开始处理选中事项</h4><p>启动带上下文的长程任务</p></span>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>最近对话</h3></div><button class="mini-button" type="button">+</button></div>
+                    <div class="context-list">
+                      <div class="kv-row"><strong>聊需求：异常告警优化</strong><span>刚刚</span></div>
+                      <div class="kv-row"><strong>提 Bug：文档关联空白</strong><span>15 分钟前</span></div>
+                      <div class="kv-row"><strong>查文档：告警配置设计</strong><span>1 小时前</span></div>
+                    </div>
+                  </section>
+                </aside>
+              </div>
+            </div>
+          </section>
+
+          <section class="page" data-page="detail">
+            <div class="scroll">
+              <div class="detail-layout">
+                <div class="stack">
+                  <section class="panel">
+                    <div class="detail-head">
+                      <div class="crumbs"><span>需求</span><span>/</span><span>#3566</span><span>/</span><span>当前迭代 Sprint07_0.7.x</span></div>
+                      <h1 class="detail-title">Agent全链路运行时异常告警与告警配置管理</h1>
+                      <div class="meta-strip">
+                        <span class="avatar green">何</span><span>何守一 · 负责人</span>
+                        <span class="badge amber">进行中</span>
+                        <span class="badge red">P0 紧急</span>
+                        <span class="badge gray">Sprint07_0.7.x</span>
+                      </div>
+                    </div>
+                    <div class="content-section">
+                      <h3>背景</h3>
+                      <p>目前 Agent 在运行过程中出现异常时，缺少统一的告警上报、通知与配置管理能力，导致异常无法及时被发现和处理，影响系统稳定性和用户体验。</p>
+                      <h3>验收标准</h3>
+                      <ul>
+                        <li>对话链路异常实时捕获并生成告警，覆盖模型欠费、限流、API 错误、MCP 工具下线、沙盒失败等场景。</li>
+                        <li>告警支持 P0/P1/P2 分级，支持重复去重、恢复闭环。</li>
+                        <li>支持企业微信、邮件、飞书、Webhook 等多渠道通知配置。</li>
+                        <li>支持告警规则配置与路由策略维护。</li>
+                        <li>提供告警历史查询与详情查看。</li>
+                      </ul>
+                      <h3>范围</h3>
+                      <p>包含对话链路、异步任务链路与核心后端服务，不包含第三方平台自身故障修复。</p>
+                    </div>
+                    <div class="relation-tabs">
+                      <button class="tab active" data-relation="docs" type="button">关联文档 3</button>
+                      <button class="tab" data-relation="children" type="button">子任务 4</button>
+                      <button class="tab" data-relation="bugs" type="button">关联 Bug 2</button>
+                      <button class="tab" data-relation="activity" type="button">活动日志 12</button>
+                      <button class="tab" data-relation="comments" type="button">评论 5</button>
+                    </div>
+                    <div class="relation-body" id="relationContent">
+                      <table class="table">
+                        <thead>
+                          <tr>
+                            <th>名称</th>
+                            <th style="width: 90px">版本</th>
+                            <th style="width: 130px">更新时间</th>
+                            <th style="width: 120px">关联类型</th>
+                            <th style="width: 120px">创建人</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td><div class="title-cell"><span class="glyph">D</span><span>DES-20260623-001-平台治理与IM登录基础</span></div></td>
+                            <td>v1.2</td>
+                            <td>2026/06/25</td>
+                            <td>设计文档</td>
+                            <td>胡思铜</td>
+                          </tr>
+                          <tr>
+                            <td><div class="title-cell"><span class="glyph">R</span><span>REQ-20260622-001-平台治理与IM登录基础</span></div></td>
+                            <td>v1.5</td>
+                            <td>2026/06/22</td>
+                            <td>需求文档</td>
+                            <td>严光远</td>
+                          </tr>
+                          <tr>
+                            <td><div class="title-cell"><span class="glyph">A</span><span>接口规范-告警模块</span></div></td>
+                            <td>v1.3</td>
+                            <td>2026/06/16</td>
+                            <td>接口规范</td>
+                            <td>张胜</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                  <div class="composer">
+                    <button class="round" type="button">+</button>
+                    <input aria-label="针对当前需求提问" placeholder="针对当前需求提问，或让 Agent 帮你做点什么..." />
+                    <button class="round dark" type="button">↑</button>
+                  </div>
+                </div>
+
+                <aside class="side-panel">
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>Agent 动作</h3></div></div>
+                    <div class="action-list" style="padding: 12px">
+                      <button class="action" data-view="agent" type="button"><span class="action-mark" style="background: var(--blue-soft); color: var(--blue)">Q</span><span><h4>澄清需求</h4><p>与 Agent 讨论，完善验收标准</p></span></button>
+                      <button class="action" data-demo-action="design" type="button"><span class="action-mark" style="background: var(--green-soft); color: var(--green)">D</span><span><h4>生成/更新技术设计</h4><p>基于当前需求生成设计文档</p></span></button>
+                      <button class="action" data-demo-action="plan" type="button"><span class="action-mark" style="background: var(--purple-soft); color: var(--purple)">P</span><span><h4>生成开发计划</h4><p>生成 Plan + CSV 任务拆解</p></span></button>
+                      <button class="action" data-view="run" type="button"><span class="action-mark" style="background: var(--amber-soft); color: var(--amber)">L</span><span><h4>开始开发长程任务</h4><p>启动基于 CLI/Agent 的长程任务</p></span></button>
+                      <button class="action" data-demo-action="sync" type="button"><span class="action-mark" style="background: var(--red-soft); color: var(--red)">S</span><span><h4>更新云端状态</h4><p>更新需求状态、进度和优先级</p></span></button>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>本地上下文</h3></div></div>
+                    <div class="context-list">
+                      <div class="context-item"><span class="glyph">F</span><div><strong>本地工作区</strong><span>D:/Pycharm Projects/kt-pm-platform</span></div></div>
+                      <div class="context-item"><span class="glyph">A</span><div><strong>资产包</strong><span>.ktaicoding 已加载 · 23 项</span></div></div>
+                      <div class="context-item"><span class="glyph">D</span><div><strong>已加载文档</strong><span>6 个文档加入当前上下文</span></div></div>
+                      <div class="context-item"><span class="glyph">C</span><div><strong>云端来源</strong><span>source_type=keydex</span></div></div>
+                    </div>
+                  </section>
+                </aside>
+              </div>
+            </div>
+          </section>
+
+          <section class="page" data-page="agent">
+            <div class="agent-layout">
+              <section class="panel chat">
+                <div class="chat-header">
+                  <div>
+                    <h1>项目 Agent</h1>
+                    <p>基于当前项目资料与你协作，帮助创建或完善云端事项和文档。</p>
+                  </div>
+                  <button class="ghost-button" type="button">清空对话</button>
+                </div>
+                <div class="messages">
+                  <div class="msg user">
+                    <div class="msg-meta"><span>你</span><span>10:21</span></div>
+                    我发现事项详情页关联文档偶现空白，帮我提一个 Bug
+                  </div>
+                  <div class="msg">
+                    <div class="msg-meta"><span>项目 Agent</span><span>10:21</span></div>
+                    收到，我来帮你整理成规范的 Bug。为了更准确地创建，我需要确认几件事：
+                    <ul>
+                      <li>具体在什么页面发生？</li>
+                      <li>如何复现？请提供操作步骤。</li>
+                      <li>预期结果和实际结果分别是什么？</li>
+                      <li>影响范围或出现频率如何？</li>
+                    </ul>
+                  </div>
+                  <div class="msg user">
+                    <div class="msg-meta"><span>你</span><span>10:23</span></div>
+                    复现步骤：打开某个历史事项详情页，切换到“关联文档”区域，偶现显示为空白。预期应该展示已关联文档，实际区域为空白无报错。出现频率大约 20%，有截图。
+                  </div>
+                  <div class="msg">
+                    <div class="msg-meta"><span>项目 Agent</span><span>10:24</span></div>
+                    信息已收集完整，我整理了一份 Bug 草稿供你确认。确认无误后我会以你的身份创建到云端，并关联当前迭代、需求和文档。
+                  </div>
+                </div>
+                <div class="composer" style="margin-bottom: 16px">
+                  <button class="round" type="button">+</button>
+                  <input aria-label="项目 Agent 输入框" placeholder="告诉我你想做什么..." />
+                  <button class="round dark" type="button">↑</button>
+                </div>
+              </section>
+
+              <aside class="panel draft">
+                <div class="panel-header">
+                  <div class="panel-title">
+                    <h2>创建 Bug 草稿</h2>
+                    <p>确认后写入云端事项</p>
+                  </div>
+                  <span class="badge green" id="draftStatus">可创建</span>
+                </div>
+                <div class="draft-form">
+                  <div class="form-row"><label>项目</label><div>kt-pm-platform</div></div>
+                  <div class="form-row"><label>类型</label><div><span class="type bug">Bug</span></div></div>
+                  <div class="form-row"><label>标题</label><div>事项详情页关联文档偶现空白</div></div>
+                  <div class="form-row"><label>所属迭代</label><div>Sprint07_0.7.x</div></div>
+                  <div class="form-row"><label>处理人</label><div><span class="avatar green">严</span><span style="margin-left: 8px">严光远</span></div></div>
+                  <div class="form-row"><label>优先级</label><div><span class="badge red">紧急</span></div></div>
+                  <div class="form-row">
+                    <label>正文</label>
+                    <div class="long-text">复现步骤：
+1. 打开某个历史事项详情页
+2. 切换到“关联文档”区域
+3. 偶现显示为空白
+
+预期结果：应列表展示已关联文档
+实际结果：区域为空白，无报错提示
+
+影响范围：约 20% 的旧数据会出现</div>
+                  </div>
+                  <div class="form-row"><label>关联需求</label><div>REQ-20260622-001 平台治理与IM登录基础</div></div>
+                  <div class="form-row"><label>关联文档</label><div>DES-20260623-001 平台治理与IM登录基础 v1.2</div></div>
+                  <div class="form-row"><label>标签</label><div><span class="badge gray">文档关联</span><span class="badge gray" style="margin-left: 6px">前端</span><span class="badge gray" style="margin-left: 6px">偶现</span></div></div>
+                </div>
+                <div class="activity-preview">
+                  将写入活动日志：由 严光远 通过 keydex 创建 Bug，source_type=keydex，source_detail=desktop-v1.0.0
+                </div>
+                <div class="draft-actions">
+                  <button class="primary-button" id="createBug" type="button">创建到云端</button>
+                  <button class="ghost-button" type="button">继续补充</button>
+                  <button class="soft-button" data-view="dashboard" type="button">取消</button>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="page" data-page="run">
+            <div class="scroll">
+              <div class="run-layout">
+                <div class="stack">
+                  <section class="panel">
+                    <div class="run-head">
+                      <div class="crumbs"><button class="mini-button" data-view="detail" type="button">←</button><span>kt-pm-platform</span><span>/</span><span>需求 #3566</span></div>
+                      <h1>长程任务：开发需求 #3566</h1>
+                      <div class="steps">
+                        <div class="step done" data-run-step="1"><span class="step-index">1</span><span>准备上下文</span></div>
+                        <div class="step active" data-run-step="2"><span class="step-index">2</span><span>执行中</span></div>
+                        <div class="step" data-run-step="3"><span class="step-index">3</span><span>验证</span></div>
+                        <div class="step" data-run-step="4"><span class="step-index">4</span><span>收口</span></div>
+                        <div class="step" data-run-step="5"><span class="step-index">5</span><span>同步</span></div>
+                      </div>
+                      <div class="run-controls">
+                        <button class="ghost-button" id="advanceRun" type="button">推进到下一阶段</button>
+                        <button class="ghost-button" id="syncCloud" type="button">模拟云端同步</button>
+                        <button class="soft-button" data-demo-action="run-summary" type="button">查看本次产出</button>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="run-section">
+                      <div class="run-row">
+                        <span class="step-index">1</span>
+                        <strong>任务目标</strong>
+                        <span>实现 Agent 全链路运行时异常告警与告警配置管理，支持多渠道通知与配置。</span>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>执行计划</h3></div></div>
+                    <div class="run-section">
+                      <div class="run-row"><span class="check">✓</span><span>分析现有告警链路与配置模块</span><span class="badge green">完成</span></div>
+                      <div class="run-row"><span class="check">✓</span><span>设计并实现告警配置管理</span><span class="badge green">完成</span></div>
+                      <div class="run-row"><span class="running">›</span><span>接入多渠道通知并完善权限校验</span><span class="badge blue">进行中</span></div>
+                      <div class="run-row"><span class="pending">4</span><span>自测与回归验证</span><span class="badge gray">待执行</span></div>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>Agent 执行记录</h3></div></div>
+                    <div class="run-section">
+                      <div class="log-list">
+                        <div class="log-item"><span class="log-time">13:42</span><span class="check">✓</span><span>已读取需求与关联文档，梳理现有告警链路和配置模块结构。</span></div>
+                        <div class="log-item"><span class="log-time">13:44</span><span class="check">✓</span><span>正在设计配置数据结构与接口契约。</span></div>
+                        <div class="log-item"><span class="log-time">13:47</span><span class="check">✓</span><span>已新增告警配置管理接口与页面入口。</span></div>
+                        <div class="log-item"><span class="log-time">13:50</span><span class="running">›</span><span>正在接入企业微信通知渠道并完善权限校验。</span></div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>文件变更</h3></div><button class="soft-button" id="toggleFiles" type="button">显示全部 6</button></div>
+                    <div class="run-section">
+                      <div class="file-row"><span class="glyph">M</span><code>backend/src/modules/alert/alert-config.service.ts</code><span>+128 -16</span></div>
+                      <div class="file-row"><span class="glyph">M</span><code>backend/src/modules/alert/alert-config.controller.ts</code><span>+86 -4</span></div>
+                      <div class="file-row"><span class="glyph">A</span><code>frontend/src/pages/alert/AlertConfigPage.tsx</code><span>+342 -0</span></div>
+                      <div class="more-files" id="moreFiles">
+                        <div class="file-row"><span class="glyph">M</span><code>backend/src/modules/alert/alert-channel.service.ts</code><span>+64 -8</span></div>
+                        <div class="file-row"><span class="glyph">A</span><code>backend/src/modules/alert/dto/alert-config.dto.ts</code><span>+96 -0</span></div>
+                        <div class="file-row"><span class="glyph">M</span><code>frontend/src/services/alert.ts</code><span>+52 -3</span></div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>验证结果</h3></div></div>
+                    <div class="run-section">
+                      <div class="run-row"><span class="check">✓</span><span>TypeScript 类型检查</span><span>18s</span></div>
+                      <div class="run-row"><span class="check">✓</span><span>后端单元测试（alert 模块）</span><span>22s</span></div>
+                      <div class="run-row"><span class="check">✓</span><span>后端集成测试</span><span>31s</span></div>
+                      <div class="run-row"><span class="running">›</span><span>前端类型检查 + 构建检查</span><span class="badge blue">进行中</span></div>
+                    </div>
+                  </section>
+
+                  <div class="composer">
+                    <button class="round" type="button">+</button>
+                    <input aria-label="长程任务输入框" placeholder="向 Agent 发送消息，输入 @ 快速添加上下文或命令" />
+                    <button class="round dark" type="button">↑</button>
+                  </div>
+                </div>
+
+                <aside class="side-panel">
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>项目上下文</h3></div></div>
+                    <div class="context-list">
+                      <div class="kv-row"><strong>云端需求</strong><span class="badge green">已完成设计</span></div>
+                      <div class="context-item"><span class="glyph">R</span><div><strong>Agent全链路运行时异常告警与告警配置管理</strong><span>负责人 严光远 · 优先级 紧急 · 进行中</span></div></div>
+                      <button class="soft-button" data-view="detail" type="button">在云端查看</button>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>当前迭代</h3></div></div>
+                    <div class="context-list">
+                      <div class="kv-row"><strong>Sprint07_0.7.x</strong><span class="badge amber">进行中</span></div>
+                      <div class="kv-row"><span>开始</span><strong>2026/06/10</strong></div>
+                      <div class="kv-row"><span>结束</span><strong>2026/07/06</strong></div>
+                      <div class="progress"><span style="width: 68%"></span></div>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>关联文档</h3></div></div>
+                    <div class="context-list">
+                      <div class="context-item"><span class="glyph">D</span><div><strong>DES-20260623-001</strong><span>平台治理与IM登录基础 v1.2</span></div></div>
+                      <div class="context-item"><span class="glyph">R</span><div><strong>REQ-20260622-001</strong><span>平台治理与IM登录基础 v1.5</span></div></div>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>本地工作区</h3></div></div>
+                    <div class="context-list">
+                      <div class="kv-row"><span>路径</span><strong>D:/Pycharm Projects/kt-pm-platform</strong></div>
+                      <div class="kv-row"><span>分支</span><strong>feature/alert-config</strong></div>
+                      <div class="kv-row"><span>工作区干净</span><span class="badge green">已检查</span></div>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>资产包</h3></div></div>
+                    <div class="context-list">
+                      <div class="kv-row"><span>项目宪法</span><strong>v2.1</strong></div>
+                      <div class="kv-row"><span>模块经验</span><strong>v1.3</strong></div>
+                      <div class="kv-row"><span>告警模块资产</span><strong>v1.0</strong></div>
+                      <button class="soft-button" data-demo-action="assets" type="button">管理资产包</button>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="panel-header"><div class="panel-title"><h3>云端同步</h3></div></div>
+                    <div class="context-list">
+                      <div class="kv-row"><span>上次同步</span><strong>13:51:48</strong></div>
+                      <div class="kv-row"><span>状态</span><span class="badge green">同步正常</span></div>
+                      <div class="kv-row"><span>写回策略</span><strong>完成后自动回写，需确认</strong></div>
+                    </div>
+                  </section>
+                </aside>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div class="dropdown" id="dropdown" role="menu" aria-hidden="true"></div>
+
+    <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal-head">
+          <h2 id="modalTitle">详情</h2>
+          <button class="mini-button" id="modalClose" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+      </div>
+    </div>
+
+    <aside class="drawer" id="drawer" aria-hidden="true">
+      <div class="modal-head">
+        <h2 id="drawerTitle">详情</h2>
+        <button class="mini-button" id="drawerClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="drawer-body" id="drawerBody"></div>
+    </aside>
+
+    <div class="toast" id="toast">已创建云端 Bug #3594，并写入活动日志。</div>
+
+    <script>
+      (() => {
+        const $ = (selector, root = document) => root.querySelector(selector);
+        const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+        const state = {
+          view: "dashboard",
+          project: "kt-pm-platform",
+          iteration: "Sprint07_0.7.x",
+          permission: "开发权限",
+          issueScope: "owned",
+          relation: "docs",
+          runStep: 2,
+          filters: {
+            req: true,
+            task: true,
+            bug: true,
+          },
+          bugCreated: false,
+          cloudConnected: true,
+          filesExpanded: false,
+        };
+
+        const projects = [
+          { value: "kt-pm-platform", label: "kt-pm-platform", desc: "云端 PM 平台 · 59 个事项" },
+          { value: "keydex", label: "keydex", desc: "本地 Agent 客户端 · 21 个事项" },
+          { value: "kt-agent-framework", label: "kt-agent-framework", desc: "Agent 运行框架 · 34 个事项" },
+        ];
+
+        const iterations = [
+          { value: "Sprint07_0.7.x", label: "Sprint07_0.7.x", desc: "进行中 · 2026/06/10 - 2026/07/06" },
+          { value: "Sprint08_0.8.x", label: "Sprint08_0.8.x", desc: "待规划 · 未指定时间" },
+          { value: "需求池", label: "需求池", desc: "未排期事项与候选需求" },
+        ];
+
+        const permissions = [
+          { value: "开发权限", label: "严光远 / 开发权限", desc: "可查看事项、启动任务、回写状态" },
+          { value: "测试权限", label: "严光远 / 测试权限", desc: "可创建 Bug、补充验证结果" },
+          { value: "产品权限", label: "严光远 / 产品权限", desc: "可创建需求、维护需求说明" },
+        ];
+
+        const relationContent = {
+          docs: {
+            columns: ["名称", "版本", "更新时间", "关联类型", "创建人"],
+            rows: [
+              ["D", "DES-20260623-001-平台治理与IM登录基础", "v1.2", "2026/06/25", "设计文档", "胡思铜"],
+              ["R", "REQ-20260622-001-平台治理与IM登录基础", "v1.5", "2026/06/22", "需求文档", "严光远"],
+              ["A", "接口规范-告警模块", "v1.3", "2026/06/16", "接口规范", "张胜"],
+            ],
+          },
+          children: {
+            columns: ["ID", "标题", "状态", "负责人", "最近活动"],
+            rows: [
+              ["T", "#3570", "agent运行时异常事件接入告警体系", "已完成", "何守一", "3 小时前"],
+              ["T", "#3571", "告警功能链路实现", "已完成", "何守一", "3 小时前"],
+              ["T", "#3578", "【测试】agent运行时异常告警指标验证", "进行中", "张胜", "2 小时前"],
+              ["T", "#3582", "【测试】异常告警配置与通知渠道管理", "进行中", "张胜", "1 小时前"],
+            ],
+          },
+          bugs: {
+            columns: ["ID", "标题", "状态", "优先级", "处理人"],
+            rows: [
+              ["B", "#3716", "【通知渠道】按业务线过滤无效", "已关闭", "低", "马凯"],
+              ["B", "#3935", "【告警】observer 调用失败未告警", "待修复", "中", "何守一"],
+            ],
+          },
+          activity: {
+            timeline: [
+              ["13:10", "何守一 更新了需求描述"],
+              ["12:58", "张胜 关联了文档 DES-20260623-001"],
+              ["12:30", "系统 将状态从 设计中 更新为 进行中"],
+              ["11:48", "Keydex 加载本地资产包并生成任务上下文"],
+            ],
+          },
+          comments: {
+            comments: [
+              ["严光远", "需要把告警配置的权限边界写清楚，尤其是跨项目配置不可见。"],
+              ["何守一", "实现时优先覆盖 runtime 和 MCP 两条链路，第三方渠道失败作为 P1。"],
+              ["张胜", "E2E 会覆盖告警创建、通知配置、去重恢复三条流程。"],
+            ],
+          },
+        };
+
+        const pages = $$(".page");
+        const navItems = $$(".nav-item[data-view]");
+        const dropdown = $("#dropdown");
+        const toast = $("#toast");
+        const modalBackdrop = $("#modalBackdrop");
+        const modalTitle = $("#modalTitle");
+        const modalBody = $("#modalBody");
+        const drawer = $("#drawer");
+        const drawerTitle = $("#drawerTitle");
+        const drawerBody = $("#drawerBody");
+        const draftStatus = $("#draftStatus");
+        const createBug = $("#createBug");
+
+        function escapeHtml(value) {
+          return String(value)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
+        }
+
+        function showToast(message) {
+          if (!toast) {
+            return;
+          }
+          toast.textContent = message;
+          toast.classList.add("show");
+          window.clearTimeout(showToast.timer);
+          showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2600);
+        }
+
+        function closeDropdown() {
+          if (!dropdown) {
+            return;
+          }
+          dropdown.classList.remove("show");
+          dropdown.setAttribute("aria-hidden", "true");
+          dropdown.innerHTML = "";
+        }
+
+        function positionDropdown(anchor) {
+          if (!dropdown) {
+            return;
+          }
+          const rect = anchor.getBoundingClientRect();
+          const width = dropdown.offsetWidth || 240;
+          const height = dropdown.offsetHeight || 120;
+          const left = Math.max(10, Math.min(rect.left, window.innerWidth - width - 10));
+          const topBelow = rect.bottom + 6;
+          const top = topBelow + height > window.innerHeight - 10 ? Math.max(10, rect.top - height - 6) : topBelow;
+          dropdown.style.left = `${left}px`;
+          dropdown.style.top = `${top}px`;
+        }
+
+        function openDropdown(anchor, title, options, onSelect) {
+          if (!dropdown) {
+            return;
+          }
+          dropdown.innerHTML = `
+            <div class="dropdown-title">${escapeHtml(title)}</div>
+            ${options
+              .map(
+                (option) => `
+                  <button class="dropdown-option ${option.active ? "active" : ""}" type="button" data-value="${escapeHtml(option.value)}">
+                    <span>
+                      <strong>${escapeHtml(option.label)}</strong>
+                      <span>${escapeHtml(option.desc || "")}</span>
+                    </span>
+                    <span class="dropdown-check">${option.active ? "✓" : ""}</span>
+                  </button>
+                `,
+              )
+              .join("")}
+          `;
+          dropdown.classList.add("show");
+          dropdown.setAttribute("aria-hidden", "false");
+          positionDropdown(anchor);
+          $$(".dropdown-option", dropdown).forEach((button) => {
+            button.addEventListener("click", () => {
+              onSelect(button.dataset.value || "");
+              closeDropdown();
+            });
+          });
+        }
+
+        function openFilterDropdown(anchor) {
+          if (!dropdown) {
+            return;
+          }
+          dropdown.innerHTML = `
+            <div class="dropdown-title">筛选事项类型</div>
+            <label class="filter-row"><input type="checkbox" data-filter="req" ${state.filters.req ? "checked" : ""} /> 需求</label>
+            <label class="filter-row"><input type="checkbox" data-filter="task" ${state.filters.task ? "checked" : ""} /> 任务</label>
+            <label class="filter-row"><input type="checkbox" data-filter="bug" ${state.filters.bug ? "checked" : ""} /> Bug</label>
+            <button class="dropdown-option" type="button" data-filter-reset="true"><span><strong>恢复默认</strong><span>显示全部事项类型</span></span><span></span></button>
+          `;
+          dropdown.classList.add("show");
+          dropdown.setAttribute("aria-hidden", "false");
+          positionDropdown(anchor);
+          $$("input[data-filter]", dropdown).forEach((input) => {
+            input.addEventListener("change", () => {
+              state.filters[input.dataset.filter] = input.checked;
+              applyIssueFilters();
+            });
+          });
+          $("[data-filter-reset]", dropdown)?.addEventListener("click", () => {
+            state.filters = { req: true, task: true, bug: true };
+            closeDropdown();
+            applyIssueFilters();
+            showToast("已恢复事项筛选");
+          });
+        }
+
+        function showPage(view, options = {}) {
+          state.view = view;
+          pages.forEach((page) => {
+            const active = page.dataset.page === view;
+            page.classList.toggle("active", active);
+            if (active) {
+              const scroll = $(".scroll", page);
+              if (scroll && !options.keepScroll) {
+                scroll.scrollTop = 0;
+              }
+            }
+          });
+          navItems.forEach((item) => {
+            item.classList.toggle("active", item.dataset.view === view);
+          });
+          $$(".recent-item[data-view]").forEach((item) => {
+            item.classList.toggle("active", item.dataset.view === view);
+          });
+          if (!options.skipHash) {
+            history.replaceState(null, "", `#${view}`);
+          }
+          closeDropdown();
+        }
+
+        function setProject(value) {
+          const option = projects.find((item) => item.value === value) || projects[0];
+          state.project = option.value;
+          $("#railProjectName").textContent = option.label;
+          $("#topProjectName").textContent = option.label;
+          $$(".project-item").forEach((item) => {
+            item.classList.toggle("active", item.textContent.trim().includes(option.label));
+          });
+          showToast(`已切换项目：${option.label}`);
+        }
+
+        function setIteration(value) {
+          const option = iterations.find((item) => item.value === value) || iterations[0];
+          state.iteration = option.value;
+          $("#topIterationName").textContent = option.label;
+          showToast(`已切换迭代：${option.label}`);
+        }
+
+        function setPermission(value) {
+          const option = permissions.find((item) => item.value === value) || permissions[0];
+          state.permission = option.value;
+          $("#permissionName").textContent = option.label;
+          showToast(`已切换身份视角：${option.value}`);
+        }
+
+        function setCloudConnected(connected) {
+          state.cloudConnected = connected;
+          $("#cloudStatusText").textContent = connected ? "云端已连接" : "云端离线模式";
+          $(".dot", $("#cloudStatusChip")).style.background = connected ? "var(--green)" : "var(--amber)";
+        }
+
+        function applyIssueFilters() {
+          const rows = $$("tbody#issueTableBody tr");
+          let visible = 0;
+          rows.forEach((row, index) => {
+            const typeVisible = Boolean(state.filters[row.dataset.issueType]);
+            const scopeVisible =
+              state.issueScope === "owned" ||
+              (state.issueScope === "joined" && index !== 4) ||
+              (state.issueScope === "confirm" && (row.dataset.issuePriority === "p0" || row.dataset.issueType === "bug"));
+            const show = typeVisible && scopeVisible;
+            row.classList.toggle("is-hidden", !show);
+            if (show) {
+              visible += 1;
+            }
+          });
+          const tableBody = $("#issueTableBody");
+          const existing = $("#issueEmptyRow");
+          existing?.remove();
+          if (visible === 0 && tableBody) {
+            tableBody.insertAdjacentHTML(
+              "beforeend",
+              `<tr id="issueEmptyRow"><td colspan="8"><div class="empty-state">当前筛选条件下没有事项</div></td></tr>`,
+            );
+          }
+        }
+
+        function renderRelation(relation) {
+          state.relation = relation;
+          $$(".relation-tabs .tab").forEach((tab) => {
+            tab.classList.toggle("active", tab.dataset.relation === relation);
+          });
+          const target = $("#relationContent");
+          if (!target) {
+            return;
+          }
+          const data = relationContent[relation];
+          if (!data) {
+            return;
+          }
+          if (data.rows) {
+            target.innerHTML = `
+              <table class="table">
+                <thead>
+                  <tr>
+                    ${data.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${data.rows
+                    .map(
+                      (row) => `
+                        <tr class="clickable" data-demo-action="open-relation">
+                          <td><div class="title-cell"><span class="glyph">${escapeHtml(row[0])}</span><span>${escapeHtml(row[1])}</span></div></td>
+                          ${row
+                            .slice(2)
+                            .map((cell) => `<td>${escapeHtml(cell)}</td>`)
+                            .join("")}
+                        </tr>
+                      `,
+                    )
+                    .join("")}
+                </tbody>
+              </table>
+            `;
+            return;
+          }
+          if (data.timeline) {
+            target.innerHTML = `
+              <div class="context-list">
+                ${data.timeline
+                  .map(
+                    ([time, text]) => `
+                      <div class="log-item">
+                        <span class="log-time">${escapeHtml(time)}</span>
+                        <span class="check">✓</span>
+                        <span>${escapeHtml(text)}</span>
+                      </div>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            `;
+            return;
+          }
+          target.innerHTML = `
+            <div class="context-list">
+              ${data.comments
+                .map(
+                  ([name, text]) => `
+                    <div class="msg" style="max-width: none">
+                      <div class="msg-meta"><span>${escapeHtml(name)}</span><span>评论</span></div>
+                      ${escapeHtml(text)}
+                    </div>
+                  `,
+                )
+                .join("")}
+            </div>
+          `;
+        }
+
+        function openModal(title, body) {
+          modalTitle.textContent = title;
+          modalBody.innerHTML = body;
+          modalBackdrop.classList.add("show");
+          modalBackdrop.setAttribute("aria-hidden", "false");
+          closeDropdown();
+        }
+
+        function closeModal() {
+          modalBackdrop.classList.remove("show");
+          modalBackdrop.setAttribute("aria-hidden", "true");
+        }
+
+        function openDrawer(title, body) {
+          drawerTitle.textContent = title;
+          drawerBody.innerHTML = body;
+          drawer.classList.add("show");
+          drawer.setAttribute("aria-hidden", "false");
+          closeDropdown();
+        }
+
+        function closeDrawer() {
+          drawer.classList.remove("show");
+          drawer.setAttribute("aria-hidden", "true");
+        }
+
+        function modalForAction(action) {
+          const templates = {
+            design: {
+              title: "生成/更新技术设计",
+              body: `
+                <div class="command-hint"><span>输入需求上下文、关联文档、资产包约束后生成 DES 草稿</span><kbd>/design</kbd></div>
+                <div class="form-row"><label>输入</label><div>需求 #3566、REQ 文档、项目宪法、模块经验资产</div></div>
+                <div class="form-row"><label>输出</label><div>DES-20260709-001-告警配置管理.md</div></div>
+                <div class="form-row"><label>云端动作</label><div>创建文档草稿，关联当前需求，写入活动日志</div></div>
+                <button class="primary-button" data-modal-toast="已创建技术设计草稿 DES-20260709-001" type="button">确认生成草稿</button>
+              `,
+            },
+            plan: {
+              title: "生成开发计划",
+              body: `
+                <div class="command-hint"><span>将设计文档转成 Plan + Issues CSV</span><kbd>/dev-plan</kbd></div>
+                <table class="table">
+                  <thead><tr><th>Issue</th><th>交付物</th><th>状态</th></tr></thead>
+                  <tbody>
+                    <tr><td>ISSUE-01</td><td>告警配置模型与 API</td><td><span class="badge gray">待执行</span></td></tr>
+                    <tr><td>ISSUE-02</td><td>多渠道通知适配</td><td><span class="badge gray">待执行</span></td></tr>
+                    <tr><td>ISSUE-03</td><td>页面与权限校验</td><td><span class="badge gray">待执行</span></td></tr>
+                  </tbody>
+                </table>
+                <button class="primary-button" data-view="run" type="button">用该计划启动长程任务</button>
+              `,
+            },
+            sync: {
+              title: "更新云端状态",
+              body: `
+                <div class="form-row"><label>状态</label><div><span class="badge amber">进行中</span> → <span class="badge blue">待验证</span></div></div>
+                <div class="form-row"><label>进度</label><div>58% → 72%</div></div>
+                <div class="form-row"><label>来源</label><div>source_type=keydex, source_detail=desktop-demo</div></div>
+                <button class="primary-button" data-modal-toast="已模拟回写云端状态和活动日志" type="button">确认回写</button>
+              `,
+            },
+            "run-summary": {
+              title: "本次长程任务产出",
+              body: `
+                <div class="context-list">
+                  <div class="context-item"><span class="glyph">S</span><div><strong>summary.md</strong><span>任务目标、关键实现、剩余风险</span></div></div>
+                  <div class="context-item"><span class="glyph">V</span><div><strong>verification.json</strong><span>类型检查、单测、集成测试结果</span></div></div>
+                  <div class="context-item"><span class="glyph">C</span><div><strong>changed-files.json</strong><span>文件变更清单与摘要</span></div></div>
+                  <div class="context-item"><span class="glyph">K</span><div><strong>候选知识沉淀</strong><span>告警模块接入经验、测试资产候选</span></div></div>
+                </div>
+              `,
+            },
+            assets: {
+              title: "已加载资产包",
+              body: `
+                <div class="context-list">
+                  <div class="context-item"><span class="glyph">C</span><div><strong>项目宪法 v2.1</strong><span>.ktaicoding/CONSTITUTION.md</span></div></div>
+                  <div class="context-item"><span class="glyph">M</span><div><strong>告警模块经验 v1.0</strong><span>模块边界、历史问题、接口约束</span></div></div>
+                  <div class="context-item"><span class="glyph">T</span><div><strong>测试资产 v1.3</strong><span>E2E 流程、断言模板、回归清单</span></div></div>
+                  <div class="context-item"><span class="glyph">H</span><div><strong>Hook 输出契约</strong><span>summary、verification、changed-files、candidate-memory</span></div></div>
+                </div>
+              `,
+            },
+          };
+          const template = templates[action];
+          if (!template) {
+            return;
+          }
+          if (action === "run-summary" || action === "assets") {
+            openDrawer(template.title, template.body);
+            return;
+          }
+          openModal(template.title, template.body);
+        }
+
+        function renderRunStep() {
+          $$(".step[data-run-step]").forEach((step) => {
+            const value = Number(step.dataset.runStep);
+            step.classList.toggle("done", value < state.runStep);
+            step.classList.toggle("active", value === state.runStep);
+          });
+          if (state.runStep >= 5) {
+            setCloudConnected(true);
+            $("#cloudStatusText").textContent = "云端同步完成";
+          }
+        }
+
+        function appendRunLog(text) {
+          const list = $(".log-list");
+          if (!list) {
+            return;
+          }
+          const now = new Date();
+          const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+          list.insertAdjacentHTML(
+            "beforeend",
+            `<div class="log-item"><span class="log-time">${time}</span><span class="running">›</span><span>${escapeHtml(text)}</span></div>`,
+          );
+        }
+
+        function createBugInCloud() {
+          if (state.bugCreated) {
+            showToast("Bug #3594 已存在，已定位到云端草稿");
+            return;
+          }
+          state.bugCreated = true;
+          draftStatus.textContent = "已创建 #3594";
+          draftStatus.className = "badge green";
+          createBug.textContent = "已创建到云端";
+          $("#issueTableBody")?.insertAdjacentHTML(
+            "beforeend",
+            `
+              <tr class="clickable selected" data-view="detail" data-issue-type="bug" data-issue-state="todo" data-issue-priority="p0">
+                <td><span class="type bug">Bug</span></td>
+                <td><div class="title-cell"><span>#3594</span><span>事项详情页关联文档偶现空白</span></div></td>
+                <td><span class="badge amber">待修复</span></td>
+                <td><span class="badge red">紧急</span></td>
+                <td><span class="avatar green">严</span></td>
+                <td>${escapeHtml(state.iteration)}</td>
+                <td>2</td>
+                <td>刚刚</td>
+              </tr>
+            `,
+          );
+          applyIssueFilters();
+          showToast("已创建云端 Bug #3594，并写入活动日志");
+        }
+
+        $("#projectSwitch")?.addEventListener("click", (event) => {
+          openDropdown(
+            event.currentTarget,
+            "切换项目",
+            projects.map((item) => ({ ...item, active: item.value === state.project })),
+            setProject,
+          );
+        });
+        $("#topProjectChip")?.addEventListener("click", (event) => $("#projectSwitch")?.click());
+        $("#iterationChip")?.addEventListener("click", (event) => {
+          openDropdown(
+            event.currentTarget,
+            "切换迭代",
+            iterations.map((item) => ({ ...item, active: item.value === state.iteration })),
+            setIteration,
+          );
+        });
+        $("#permissionChip")?.addEventListener("click", (event) => {
+          openDropdown(
+            event.currentTarget,
+            "切换身份视角",
+            permissions.map((item) => ({ ...item, active: item.value === state.permission })),
+            setPermission,
+          );
+        });
+        $("#cloudStatusChip")?.addEventListener("click", (event) => {
+          openDropdown(
+            event.currentTarget,
+            "云端连接",
+            [
+              { value: "sync", label: "立即同步", desc: "拉取最新项目、事项和文档状态", active: false },
+              {
+                value: "toggle",
+                label: state.cloudConnected ? "切换为离线模式" : "重新连接云端",
+                desc: state.cloudConnected ? "只查看本地缓存数据" : "恢复云端读写能力",
+                active: false,
+              },
+            ],
+            (value) => {
+              if (value === "toggle") {
+                setCloudConnected(!state.cloudConnected);
+                showToast(state.cloudConnected ? "已重新连接云端" : "已进入离线浏览模式");
+                return;
+              }
+              showToast("已同步云端项目数据");
+            },
+          );
+        });
+        $("#workspaceChip")?.addEventListener("click", () => {
+          openDrawer(
+            "本地工作区",
+            `
+              <div class="context-list">
+                <div class="kv-row"><span>路径</span><strong>D:/Pycharm Projects/kt-pm-platform</strong></div>
+                <div class="kv-row"><span>当前分支</span><strong>feature/alert-config</strong></div>
+                <div class="kv-row"><span>工作区状态</span><span class="badge green">已检查</span></div>
+                <div class="kv-row"><span>绑定项目</span><strong>${escapeHtml(state.project)}</strong></div>
+                <button class="ghost-button" data-demo-toast="已重新扫描本地工作区" type="button">重新扫描</button>
+              </div>
+            `,
+          );
+        });
+        $("#moreMenuButton")?.addEventListener("click", (event) => {
+          openDropdown(
+            event.currentTarget,
+            "更多",
+            [
+              { value: "refresh", label: "刷新当前项目", desc: "重新拉取云端事项与文档", active: false },
+              { value: "command", label: "打开快速命令", desc: "Ctrl K", active: false },
+              { value: "settings", label: "项目模式设置", desc: "连接、权限、本地工作区", active: false },
+            ],
+            (value) => {
+              if (value === "command") {
+                openModal("快速命令", commandPaletteHtml());
+                return;
+              }
+              showToast(value === "settings" ? "打开项目模式设置面板" : "已刷新当前项目数据");
+            },
+          );
+        });
+        $("#issueFilterButton")?.addEventListener("click", (event) => openFilterDropdown(event.currentTarget));
+
+        document.addEventListener("click", (event) => {
+          const rawTarget = event.target;
+          const target = rawTarget instanceof Element ? rawTarget : rawTarget?.parentElement;
+          if (!target) {
+            return;
+          }
+          if (dropdown?.classList.contains("show") && !dropdown.contains(target) && !target.closest("#projectSwitch, #topProjectChip, #iterationChip, #permissionChip, #cloudStatusChip, #moreMenuButton, #issueFilterButton")) {
+            closeDropdown();
+          }
+          const viewButton = target.closest("[data-view]");
+          if (viewButton) {
+            const view = viewButton.dataset.view;
+            if (view) {
+              showPage(view);
+              closeModal();
+              if (viewButton.closest("tr")) {
+                $$("#issueTableBody tr").forEach((row) => row.classList.remove("selected"));
+                viewButton.closest("tr").classList.add("selected");
+              }
+            }
+          }
+          const scopeButton = target.closest("[data-issue-scope]");
+          if (scopeButton) {
+            state.issueScope = scopeButton.dataset.issueScope;
+            $$("[data-issue-scope]").forEach((button) => button.classList.toggle("active", button === scopeButton));
+            applyIssueFilters();
+          }
+          const relationButton = target.closest("[data-relation]");
+          if (relationButton) {
+            renderRelation(relationButton.dataset.relation);
+          }
+          const actionButton = target.closest("[data-demo-action]");
+          if (actionButton) {
+            const action = actionButton.dataset.demoAction;
+            if (action === "open-relation") {
+              openDrawer(
+                "关联对象详情",
+                `
+                  <div class="context-list">
+                    <div class="context-item"><span class="glyph">L</span><div><strong>${escapeHtml(actionButton.textContent.trim())}</strong><span>这是一个演示详情面板，真实版本会打开云端对象详情。</span></div></div>
+                    <button class="ghost-button" data-demo-toast="已复制关联对象链接" type="button">复制链接</button>
+                  </div>
+                `,
+              );
+              return;
+            }
+            modalForAction(action);
+          }
+          const modalToastButton = target.closest("[data-modal-toast]");
+          if (modalToastButton) {
+            showToast(modalToastButton.dataset.modalToast);
+            closeModal();
+          }
+          const drawerToastButton = target.closest("[data-demo-toast]");
+          if (drawerToastButton) {
+            showToast(drawerToastButton.dataset.demoToast);
+          }
+        });
+
+        createBug?.addEventListener("click", createBugInCloud);
+
+        $$(".draft-actions .ghost-button").forEach((button) => {
+          if (button.textContent.includes("继续补充")) {
+            button.addEventListener("click", () => {
+              $(".messages")?.insertAdjacentHTML(
+                "beforeend",
+                `<div class="msg"><div class="msg-meta"><span>项目 Agent</span><span>10:26</span></div>可以继续补充截图、环境、浏览器版本或日志。我会同步更新右侧 Bug 草稿。</div>`,
+              );
+              showToast("已进入补充信息模式");
+            });
+          }
+        });
+
+        $("#advanceRun")?.addEventListener("click", () => {
+          if (state.runStep < 5) {
+            state.runStep += 1;
+            renderRunStep();
+            appendRunLog(`任务阶段推进到：${["", "准备上下文", "执行中", "验证", "收口", "同步"][state.runStep]}`);
+            showToast("长程任务阶段已推进");
+            return;
+          }
+          showToast("当前长程任务已进入同步阶段");
+        });
+
+        $("#syncCloud")?.addEventListener("click", () => {
+          setCloudConnected(true);
+          $("#cloudStatusText").textContent = "云端同步完成";
+          appendRunLog("已模拟同步云端需求状态、活动日志和候选知识沉淀。");
+          showToast("已模拟云端同步");
+        });
+
+        $("#toggleFiles")?.addEventListener("click", () => {
+          state.filesExpanded = !state.filesExpanded;
+          $("#moreFiles")?.classList.toggle("show", state.filesExpanded);
+          $("#toggleFiles").textContent = state.filesExpanded ? "收起变更" : "显示全部 6";
+        });
+
+        $$(".step[data-run-step]").forEach((step) => {
+          step.addEventListener("click", () => {
+            state.runStep = Number(step.dataset.runStep);
+            renderRunStep();
+            showToast(`已切换到长程任务阶段：${step.textContent.trim()}`);
+          });
+        });
+
+        $$(".composer input").forEach((input) => {
+          input.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" || !input.value.trim()) {
+              return;
+            }
+            const text = input.value.trim();
+            input.value = "";
+            if (input.closest("[data-page='run']")) {
+              appendRunLog(`用户追加指令：${text}`);
+              showToast("已追加到长程任务上下文");
+              return;
+            }
+            if (input.closest("[data-page='detail']")) {
+              showPage("agent");
+              $(".messages")?.insertAdjacentHTML(
+                "beforeend",
+                `<div class="msg user"><div class="msg-meta"><span>你</span><span>刚刚</span></div>${escapeHtml(text)}</div>`,
+              );
+              showToast("已带着当前需求上下文进入项目 Agent");
+              return;
+            }
+            $(".messages")?.insertAdjacentHTML(
+              "beforeend",
+              `<div class="msg user"><div class="msg-meta"><span>你</span><span>刚刚</span></div>${escapeHtml(text)}</div>`,
+            );
+          });
+        });
+
+        $("#modalClose")?.addEventListener("click", closeModal);
+        $("#drawerClose")?.addEventListener("click", closeDrawer);
+        modalBackdrop?.addEventListener("click", (event) => {
+          if (event.target === modalBackdrop) {
+            closeModal();
+          }
+        });
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            closeDropdown();
+            closeModal();
+            closeDrawer();
+          }
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+            event.preventDefault();
+            openModal("快速命令", commandPaletteHtml());
+          }
+        });
+
+        function commandPaletteHtml() {
+          return `
+            <div class="command-hint"><span>创建需求草稿</span><kbd>R</kbd></div>
+            <div class="command-hint"><span>创建 Bug 草稿</span><kbd>B</kbd></div>
+            <div class="command-hint"><span>查看当前事项详情</span><kbd>D</kbd></div>
+            <div class="command-hint"><span>启动长程任务</span><kbd>L</kbd></div>
+            <div class="command-hint"><span>同步云端状态</span><kbd>S</kbd></div>
+          `;
+        }
+
+        renderRelation("docs");
+        applyIssueFilters();
+        const initialHash = window.location.hash.replace("#", "");
+        if (initialHash && $(`.page[data-page="${initialHash}"]`)) {
+          showPage(initialHash, { skipHash: true });
+        }
+      })();
+    </script>
+  </body>
+</html>

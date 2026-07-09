@@ -18,23 +18,24 @@ def _registry() -> ToolRegistry:
 
 
 async def _run(patch: str, tmp_path):
-    return await _registry().require("edit_file").run({"patch": patch}, _context(tmp_path))
+    return await _registry().require("apply_patch").run({"patch": patch}, _context(tmp_path))
 
 
-def test_edit_file_tool_contract_documents_required_headers() -> None:
-    tool = _registry().require("edit_file")
+def test_apply_patch_tool_contract_documents_required_headers() -> None:
+    tool = _registry().require("apply_patch")
 
     assert "*** Begin Patch" in tool.description
+    assert "*** Add File: <path>" in tool.description
     assert "*** Update File: <path>" in tool.description
     assert "*** Delete File: <path>" in tool.description
-    assert "不支持 `*** Add File`" in tool.description
     assert "不要粘贴完整重写后的文件内容" in tool.description
+    assert "*** Add File: <path>" in tool.parameters["properties"]["patch"]["description"]
     assert "*** Update File: <path>" in tool.parameters["properties"]["patch"]["description"]
     assert "空白上下文行" in tool.parameters["properties"]["patch"]["description"]
-    assert "`*** Add File` 无效" in tool.parameters["properties"]["patch"]["description"]
+    assert "目标文件已存在时会失败" in tool.parameters["properties"]["patch"]["description"]
 
 
-async def test_apply_patch_rejects_add_file_to_keep_creation_separate(tmp_path) -> None:
+async def test_apply_patch_adds_file(tmp_path) -> None:
     result = await _run(
         """*** Begin Patch
 *** Add File: docs/note.txt
@@ -44,10 +45,51 @@ async def test_apply_patch_rejects_add_file_to_keep_creation_separate(tmp_path) 
         tmp_path,
     )
 
+    assert result.ok is True
+    change = result.result["changes"][0]
+    assert change["operation"] == "add"
+    assert change["change_type"] == "create"
+    assert change["created"] is True
+    assert change["added_lines"] == 2
+    assert (tmp_path / "docs" / "note.txt").read_text(encoding="utf-8") == "第一行\n第二行\n"
+
+
+async def test_apply_patch_rejects_add_file_when_target_exists(tmp_path) -> None:
+    target = tmp_path / "docs" / "note.txt"
+    target.parent.mkdir()
+    target.write_text("old\n", encoding="utf-8")
+
+    result = await _run(
+        """*** Begin Patch
+*** Add File: docs/note.txt
++new
+*** End Patch""",
+        tmp_path,
+    )
+
     assert result.ok is False
-    assert result.error["code"] == "invalid_patch"
-    assert result.error["details"]["line"] == "*** Add File: docs/note.txt"
-    assert not (tmp_path / "docs" / "note.txt").exists()
+    assert result.error["code"] == "patch_target_exists"
+    assert target.read_text(encoding="utf-8") == "old\n"
+
+
+async def test_apply_patch_preflight_rejects_later_failure_without_creating_added_file(
+    tmp_path,
+) -> None:
+    result = await _run(
+        """*** Begin Patch
+*** Add File: added.txt
++new
+*** Update File: missing.txt
+@@
+-old
++new
+*** End Patch""",
+        tmp_path,
+    )
+
+    assert result.ok is False
+    assert result.error["code"] == "file_not_found"
+    assert not (tmp_path / "added.txt").exists()
 
 
 async def test_apply_patch_updates_file_with_matching_context(tmp_path) -> None:
@@ -303,7 +345,7 @@ alpha
     assert target.read_text(encoding="utf-8") == "alpha\nold\n"
 
 
-async def test_apply_patch_rejects_structural_marker_inside_update_body(tmp_path) -> None:
+async def test_apply_patch_rejects_add_file_without_content(tmp_path) -> None:
     target = tmp_path / "src" / "app.py"
     target.parent.mkdir()
     target.write_text("alpha\n", encoding="utf-8")
@@ -320,14 +362,10 @@ async def test_apply_patch_rejects_structural_marker_inside_update_body(tmp_path
 
     assert result.ok is False
     assert result.error["code"] == "invalid_patch"
-    assert result.error["message"] == "edit_file 不支持 *** Add File"
+    assert result.error["message"] == "Add File 缺少内容行"
     assert result.error["details"]["line"] == "*** Add File: src/new.py"
     assert result.error["details"]["line_number"] == 5
-    assert "create_file" in result.error["details"]["hint"]
-    assert result.error["details"]["expected_headers"] == [
-        "*** Update File: <path>",
-        "*** Delete File: <path>",
-    ]
+    assert "以 + 开头" in result.error["details"]["hint"]
     assert target.read_text(encoding="utf-8") == "alpha\n"
 
 
@@ -392,7 +430,7 @@ async def test_apply_patch_deletes_file_with_removed_line_count(tmp_path) -> Non
 
     assert result.ok is True
     change = result.result["changes"][0]
-    assert change["operation"] == "update"
+    assert change["operation"] == "delete"
     assert change["change_type"] == "delete"
     assert change["path"] == "docs/old.txt"
     assert change["added_lines"] == 0
@@ -431,7 +469,7 @@ async def test_apply_patch_moves_file_and_updates_content(tmp_path) -> None:
 
     assert result.ok is True
     change = result.result["changes"][0]
-    assert change["operation"] == "update"
+    assert change["operation"] == "move"
     assert change["change_type"] == "move"
     assert change["old_path"] == "docs/old.md"
     assert change["new_path"] == "docs/new.md"
@@ -478,6 +516,7 @@ async def test_apply_patch_error_explains_shorthand_file_header(tmp_path) -> Non
     assert result.error["code"] == "invalid_patch"
     assert result.error["details"]["line"] == "*** docs/project-structure.md"
     assert result.error["details"]["expected_headers"] == [
+        "*** Add File: <path>",
         "*** Update File: <path>",
         "*** Delete File: <path>",
     ]

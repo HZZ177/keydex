@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,9 +40,13 @@ class A2UIRuntimeSettings(BaseModel):
     debug_info_enabled: bool = False
 
 
+FileEditToolStyle = Literal["claude_code", "codex"]
+
+
 class AgentRuntimeSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    file_edit_tool_style: FileEditToolStyle = "claude_code"
     auto_title: AutoTitleRuntimeSettings = Field(default_factory=AutoTitleRuntimeSettings)
     duplicate_tool_call_guard: DuplicateToolCallGuardRuntimeSettings = Field(
         default_factory=DuplicateToolCallGuardRuntimeSettings

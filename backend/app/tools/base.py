@@ -110,9 +110,22 @@ def _summarize_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
             "path": safe_args.get("path"),
             "content_chars": len(content) if isinstance(content, str) else 0,
         }
-    if tool_name in {"edit_file", "apply_patch"}:
+    if tool_name == "apply_patch" or (tool_name == "edit_file" and "patch" in args):
         patch = args.get("patch")
         return {"patch_chars": len(patch) if isinstance(patch, str) else 0}
+    if tool_name == "edit_file":
+        old_string = args.get("old_string")
+        new_string = args.get("new_string")
+        return {
+            "path": safe_args.get("path"),
+            "old_string_chars": len(old_string) if isinstance(old_string, str) else 0,
+            "new_string_chars": len(new_string) if isinstance(new_string, str) else 0,
+            "replace_all": safe_args.get("replace_all"),
+        }
+    if tool_name == "delete_file":
+        return {"path": safe_args.get("path")}
+    if tool_name == "move_file":
+        return {"path": safe_args.get("path"), "new_path": safe_args.get("new_path")}
     if tool_name in {"run_git_bash", "run_cmd", "run_powershell"}:
         command = args.get("command")
         summary: dict[str, Any] = {

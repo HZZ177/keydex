@@ -11,14 +11,14 @@ from backend.app.a2ui.registry import build_builtin_a2ui_registry
 from backend.app.a2ui.runtime import A2UIRuntime
 from backend.app.a2ui.tools import a2ui_registry_to_langchain_tools
 from backend.app.agent.factory import AgentFactory, agent_factory
-from backend.app.agent.langchain_tools import registry_to_langchain_tools, tools_to_langchain_tools
+from backend.app.agent.langchain_tools import tools_to_langchain_tools
 from backend.app.agent.middleware.builder import build_default_middleware
 from backend.app.agent.runtime_settings import (
     AgentRuntimeSettings,
     default_agent_runtime_settings,
 )
 from backend.app.agent.state import KeydexAgentState
-from backend.app.agent.system_prompt import DEFAULT_SYSTEM_PROMPT
+from backend.app.agent.system_prompt import DEFAULT_SYSTEM_PROMPT, build_file_edit_prompt_section
 from backend.app.command_approval import load_command_settings
 from backend.app.core.logger import logger
 from backend.app.keydex.skills import SkillCatalog, build_skill_index
@@ -27,6 +27,7 @@ from backend.app.tools import LocalTool, ToolExecutionContext, ToolRegistry
 from backend.app.tools.command_runtime.descriptions import command_system_prompt_section
 from backend.app.tools.command_runtime.models import CommandRuntime
 from backend.app.tools.command_runtime.tools import create_command_tools
+from backend.app.tools.factory import visible_tools_for_file_edit_style
 from backend.app.tools.skill import load_skill
 
 ModelHttpTransportProvider = Callable[
@@ -99,8 +100,12 @@ class AgentRunner:
         a2ui_registry = None
         tools = []
         if enable_tools:
-            tools = registry_to_langchain_tools(
+            visible_local_tools = visible_tools_for_file_edit_style(
                 self.tool_registry,
+                runtime_settings.file_edit_tool_style,
+            )
+            tools = tools_to_langchain_tools(
+                visible_local_tools,
                 context_factory=lambda: tool_context,
             )
             if repositories is not None:
@@ -110,8 +115,8 @@ class AgentRunner:
                 for tool in create_command_tools(command_settings):
                     command_registry.register(tool)
                 tools.extend(
-                    registry_to_langchain_tools(
-                        command_registry,
+                    tools_to_langchain_tools(
+                        command_registry.list(),
                         context_factory=lambda: tool_context,
                     )
                 )
@@ -153,6 +158,11 @@ class AgentRunner:
             system_prompt if system_prompt is not None else self.default_system_prompt
         )
         prompt = resolved_system_prompt.strip() if resolved_system_prompt else ""
+        if enable_tools:
+            file_edit_prompt = build_file_edit_prompt_section(
+                runtime_settings.file_edit_tool_style
+            )
+            prompt = f"{prompt}\n\n{file_edit_prompt}" if prompt else file_edit_prompt
         skill_index = self._skill_index_from_context(tool_context)
         if skill_index:
             prompt = f"{prompt}\n\n{skill_index}" if prompt else skill_index
@@ -170,7 +180,9 @@ class AgentRunner:
         logger.info(
             f"[AgentRunner] 组装 agent | model={model} | tools={len(tools)} | "
             f"tools_enabled={enable_tools} | prompt_len={len(prompt)} | "
-            f"skill_index_len={len(skill_index)} | workspace_root={tool_context.workspace_root}"
+            f"skill_index_len={len(skill_index)} | "
+            f"file_edit_tool_style={runtime_settings.file_edit_tool_style} | "
+            f"workspace_root={tool_context.workspace_root}"
         )
         return self.factory.create_agent(
             model=llm,

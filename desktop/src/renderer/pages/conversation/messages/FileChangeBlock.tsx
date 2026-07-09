@@ -233,7 +233,7 @@ interface FileChangeFile {
   operation: FileChangeOperation;
 }
 
-type FileChangeOperation = "add" | "update" | "delete" | "append" | "write" | "unknown";
+type FileChangeOperation = "add" | "update" | "delete" | "append" | "write" | "move" | "unknown";
 
 function FileDiffPreview({ file }: { file: FileChangeFile }) {
   return <FileReviewCard file={file} />;
@@ -474,6 +474,8 @@ function inlineOperationVerb(operation: FileChangeOperation): string {
       return "创建";
     case "delete":
       return "删除";
+    case "move":
+      return "移动";
     case "append":
     case "update":
     case "write":
@@ -488,6 +490,8 @@ function inlinePastVerb(operation: FileChangeOperation): string {
       return "已创建";
     case "delete":
       return "已删除";
+    case "move":
+      return "已移动";
     case "append":
     case "update":
     case "write":
@@ -502,6 +506,8 @@ function operationVerb(operation: FileChangeOperation): string {
       return "创建文件";
     case "delete":
       return "删除文件";
+    case "move":
+      return "移动文件";
     case "append":
     case "update":
     case "write":
@@ -516,6 +522,8 @@ function pastVerb(operation: FileChangeOperation): string {
       return "创建了";
     case "delete":
       return "删除了";
+    case "move":
+      return "移动了";
     case "append":
     case "update":
     case "write":
@@ -549,6 +557,9 @@ function operationFromRecord(
   if (record.created === true || record.is_new === true || record.isNew === true) {
     return "add";
   }
+  if (record.old_path || record.oldPath || record.new_path || record.newPath) {
+    return "move";
+  }
   return fallbackOperation;
 }
 
@@ -572,8 +583,8 @@ function operationFromToolName(toolName: string): FileChangeOperation {
   if (toolName === "delete_file") {
     return "delete";
   }
-  if (["apply_patch", "edit_file"].includes(toolName)) {
-    return "update";
+  if (toolName === "move_file") {
+    return "move";
   }
   return "unknown";
 }
@@ -591,6 +602,9 @@ function normalizeOperation(value: unknown): FileChangeOperation {
   }
   if (["append", "append_file"].includes(normalized)) {
     return "append";
+  }
+  if (["move", "moved", "rename", "renamed"].includes(normalized)) {
+    return "move";
   }
   if (["write", "write_file", "overwrite"].includes(normalized)) {
     return "add";
@@ -611,6 +625,8 @@ function changeIcon(operation: FileChangeOperation, failed: boolean) {
       return <FilePenLine size={16} />;
     case "delete":
       return <FileX2 size={16} />;
+    case "move":
+      return <FilePenLine size={16} />;
     case "append":
     case "update":
       return <FilePenLine size={16} />;

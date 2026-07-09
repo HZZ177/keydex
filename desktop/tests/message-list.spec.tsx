@@ -1608,7 +1608,7 @@ describe("MessageList", () => {
     expect(screen.getByTestId("message-group-block").querySelector("[data-icon-kind]")?.getAttribute("data-icon-kind")).toBe("create");
   });
 
-  it("uses the tool name over payload operation when grouping file changes", () => {
+  it("uses concrete add operation when grouping apply_patch file creations", () => {
     render(
       <MessageList
         messages={[
@@ -1618,9 +1618,24 @@ describe("MessageList", () => {
       />,
     );
 
-    expect(screen.getByText("编辑了 2 个文件")).not.toBeNull();
-    expect(screen.queryByText("创建了 2 个文件")).toBeNull();
-    expect(screen.getByTestId("message-group-block").querySelector("[data-icon-kind]")?.getAttribute("data-icon-kind")).toBe("edit");
+    expect(screen.getByText("创建了 2 个文件")).not.toBeNull();
+    expect(screen.queryByText("编辑了 2 个文件")).toBeNull();
+    expect(screen.getByTestId("message-group-block").querySelector("[data-icon-kind]")?.getAttribute("data-icon-kind")).toBe("create");
+  });
+
+  it("groups moved file changes with move wording", () => {
+    render(
+      <MessageList
+        messages={[
+          fileChangeMessage("file-move-1", "src/new.ts", "move", "move_file"),
+          fileChangeMessage("file-move-2", "src/other.ts", "move", "move_file"),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("移动了 2 个文件")).not.toBeNull();
+    expect(screen.queryByText("编辑了 2 个文件")).toBeNull();
+    expect(screen.getByTestId("message-group-block").querySelector("[data-icon-kind]")?.getAttribute("data-icon-kind")).toBe("move");
   });
 
   it("separates failed and successful file-change counts", () => {

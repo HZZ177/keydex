@@ -2620,7 +2620,7 @@ function isRunningAgentMessage(message: AgentChatMessage): boolean {
 }
 
 function isEditToolName(toolName: string): boolean {
-  return ["write_file", "apply_patch", "edit_file", "create_file", "delete_file"].includes(toolName);
+  return ["write_file", "apply_patch", "edit_file", "create_file", "delete_file", "move_file"].includes(toolName);
 }
 
 function editToolActivityLabel(toolName: string): string {
@@ -2632,6 +2632,9 @@ function editToolActivityLabel(toolName: string): string {
   }
   if (toolName === "delete_file") {
     return "正在删除文件";
+  }
+  if (toolName === "move_file") {
+    return "正在移动文件";
   }
   return "正在编辑文件";
 }

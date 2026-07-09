@@ -8,6 +8,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 
 from backend.app.tools import LocalTool, ToolExecutionContext, ToolRegistry
+from backend.app.tools.file_snapshots import ensure_file_snapshot_store
 
 
 def _json_result(value: Any) -> str:
@@ -46,6 +47,7 @@ def _context_for_tool(
     context: ToolExecutionContext,
     config: RunnableConfig | None,
 ) -> ToolExecutionContext:
+    ensure_file_snapshot_store(context)
     metadata = dict(context.metadata)
     metadata["tool_name"] = tool.name
     if config:

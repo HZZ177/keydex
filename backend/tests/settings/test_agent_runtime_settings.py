@@ -27,6 +27,7 @@ def test_agent_runtime_settings_defaults_enable_context_compression() -> None:
     assert settings.context_compression.trigger_fraction == 0.8
     assert settings.duplicate_tool_call_guard.enabled is True
     assert settings.duplicate_tool_call_guard.max_repeats == 3
+    assert settings.file_edit_tool_style == "claude_code"
 
 
 def test_load_agent_runtime_settings_returns_hard_defaults_when_missing(tmp_path) -> None:
@@ -47,6 +48,7 @@ def test_save_and_load_agent_runtime_settings_round_trip(tmp_path) -> None:
             "context_window_tokens": 64000,
             "trigger_fraction": 0.6,
         },
+        file_edit_tool_style="codex",
     )
 
     saved = save_agent_runtime_settings(repositories, settings)
@@ -56,6 +58,7 @@ def test_save_and_load_agent_runtime_settings_round_trip(tmp_path) -> None:
     assert loaded.auto_title.max_title_length == 50
     assert loaded.duplicate_tool_call_guard.max_repeats == 4
     assert loaded.context_compression.context_window_tokens == 64000
+    assert loaded.file_edit_tool_style == "codex"
 
 
 def test_agent_runtime_settings_reject_invalid_boundaries() -> None:
@@ -70,6 +73,9 @@ def test_agent_runtime_settings_reject_invalid_boundaries() -> None:
 
     with pytest.raises(ValidationError):
         AgentRuntimeSettings(auto_title={"enabled": True, "max_title_length": 51})
+
+    with pytest.raises(ValidationError):
+        AgentRuntimeSettings(file_edit_tool_style="unknown")
 
 
 def test_agent_runtime_settings_reject_unknown_and_coerced_values() -> None:
