@@ -564,7 +564,12 @@ describe("A2ChoiceBlock", () => {
       expect(stack.getAttribute("data-expanded")).toBe("false");
       expect(result.getByRole("button", { name: "展开选项通知栈" }).getAttribute("aria-expanded")).toBe("false");
       expect(result.queryByText("历史第一条完整内容")).toBeNull();
-      expect(result.queryByText("已选")).toBeNull();
+      expect(result.getByText("已选")).not.toBeNull();
+      const collapsedHistoryAItem = stack.querySelector<HTMLElement>("[data-option-value='history_notice_a']");
+      const collapsedHistoryBItem = stack.querySelector<HTMLElement>("[data-option-value='history_notice_b']");
+      expect(collapsedHistoryAItem?.getAttribute("data-stack-front")).toBe("false");
+      expect(collapsedHistoryBItem?.getAttribute("data-stack-front")).toBe("true");
+      expect(collapsedHistoryBItem?.querySelector("[data-a2ui-notification-action-slot='true']")).not.toBeNull();
 
       fireEvent.click(result.getByRole("button", { name: "展开选项通知栈" }));
 
@@ -572,6 +577,12 @@ describe("A2ChoiceBlock", () => {
       expect(result.getByRole("button", { name: "收起选项通知栈" }).getAttribute("aria-expanded")).toBe("true");
       expect(result.getByText("历史第一条完整内容")).not.toBeNull();
       expect(result.getByText("已选")).not.toBeNull();
+      expect(
+        Boolean(
+          result.getByText("历史通知 A").compareDocumentPosition(result.getByText("历史通知 B")) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        ),
+      ).toBe(true);
 
       const historyAItem = stack.querySelector<HTMLElement>("[data-option-value='history_notice_a']");
       const historyACard = historyAItem?.querySelector<HTMLElement>("[data-a2ui-notification-card='true']");

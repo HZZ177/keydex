@@ -245,6 +245,13 @@
   --a2ui-choice-coverflow-scale: 0.92;
   --a2ui-choice-coverflow-opacity: 0.72;
   --a2ui-choice-coverflow-shift-x: 0px;
+  --a2ui-choice-coverflow-shadow-opacity: 0.18;
+  --a2ui-choice-coverflow-shadow-rotate: 0deg;
+  --a2ui-choice-coverflow-shadow-scale-x: 0.78;
+  --a2ui-choice-coverflow-shadow-scale-y: 0.86;
+  --a2ui-choice-coverflow-shadow-skew-x: 0deg;
+  --a2ui-choice-coverflow-shadow-x: 0px;
+  --a2ui-choice-coverflow-shadow-y: 15px;
   position: relative;
   display: block;
   flex: 0 0 184px;
@@ -297,6 +304,11 @@
   --a2ui-choice-coverflow-scale: 1;
   --a2ui-choice-coverflow-opacity: 1;
   --a2ui-choice-coverflow-shift-x: 0px;
+  --a2ui-choice-coverflow-shadow-opacity: 0.22;
+  --a2ui-choice-coverflow-shadow-scale-x: 0.88;
+  --a2ui-choice-coverflow-shadow-scale-y: 1;
+  --a2ui-choice-coverflow-shadow-x: 10px;
+  --a2ui-choice-coverflow-shadow-y: 18px;
   z-index: 3;
 }
 
@@ -305,6 +317,13 @@
   --a2ui-choice-coverflow-scale: 0.9;
   --a2ui-choice-coverflow-opacity: 0.78;
   --a2ui-choice-coverflow-shift-x: -8px;
+  --a2ui-choice-coverflow-shadow-opacity: 0.16;
+  --a2ui-choice-coverflow-shadow-rotate: 2deg;
+  --a2ui-choice-coverflow-shadow-scale-x: 0.66;
+  --a2ui-choice-coverflow-shadow-scale-y: 0.84;
+  --a2ui-choice-coverflow-shadow-skew-x: -12deg;
+  --a2ui-choice-coverflow-shadow-x: 4px;
+  --a2ui-choice-coverflow-shadow-y: 14px;
   z-index: 2;
 }
 
@@ -313,6 +332,13 @@
   --a2ui-choice-coverflow-scale: 0.9;
   --a2ui-choice-coverflow-opacity: 0.78;
   --a2ui-choice-coverflow-shift-x: 8px;
+  --a2ui-choice-coverflow-shadow-opacity: 0.16;
+  --a2ui-choice-coverflow-shadow-rotate: -2deg;
+  --a2ui-choice-coverflow-shadow-scale-x: 0.66;
+  --a2ui-choice-coverflow-shadow-scale-y: 0.84;
+  --a2ui-choice-coverflow-shadow-skew-x: 12deg;
+  --a2ui-choice-coverflow-shadow-x: 16px;
+  --a2ui-choice-coverflow-shadow-y: 14px;
   z-index: 2;
 }
 
@@ -321,6 +347,13 @@
   --a2ui-choice-coverflow-scale: 0.82;
   --a2ui-choice-coverflow-opacity: 0.56;
   --a2ui-choice-coverflow-shift-x: 42px;
+  --a2ui-choice-coverflow-shadow-opacity: 0.1;
+  --a2ui-choice-coverflow-shadow-rotate: 4deg;
+  --a2ui-choice-coverflow-shadow-scale-x: 0.48;
+  --a2ui-choice-coverflow-shadow-scale-y: 0.72;
+  --a2ui-choice-coverflow-shadow-skew-x: -18deg;
+  --a2ui-choice-coverflow-shadow-x: 44px;
+  --a2ui-choice-coverflow-shadow-y: 10px;
   z-index: 1;
 }
 
@@ -329,6 +362,13 @@
   --a2ui-choice-coverflow-scale: 0.82;
   --a2ui-choice-coverflow-opacity: 0.56;
   --a2ui-choice-coverflow-shift-x: -42px;
+  --a2ui-choice-coverflow-shadow-opacity: 0.1;
+  --a2ui-choice-coverflow-shadow-rotate: -4deg;
+  --a2ui-choice-coverflow-shadow-scale-x: 0.48;
+  --a2ui-choice-coverflow-shadow-scale-y: 0.72;
+  --a2ui-choice-coverflow-shadow-skew-x: 18deg;
+  --a2ui-choice-coverflow-shadow-x: -20px;
+  --a2ui-choice-coverflow-shadow-y: 10px;
   z-index: 1;
 }
 
@@ -337,11 +377,40 @@
 }
 
 .option::after {
-  content: none;
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  z-index: 0;
+  width: 112%;
+  height: 44px;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse at 52% 56%, color-mix(in srgb, var(--color-text-primary) 20%, transparent) 0%, color-mix(in srgb, var(--color-text-primary) 11%, transparent) 40%, transparent 72%),
+    radial-gradient(ellipse at 40% 50%, color-mix(in srgb, var(--color-text-primary) 10%, transparent) 0%, transparent 64%);
+  filter: blur(8px);
+  opacity: var(--a2ui-choice-coverflow-shadow-opacity);
+  pointer-events: none;
+  transform:
+    translate3d(
+      calc(-50% + var(--a2ui-choice-coverflow-shift-x) + var(--a2ui-choice-coverflow-shadow-x)),
+      var(--a2ui-choice-coverflow-shadow-y),
+      0
+    )
+    rotate(var(--a2ui-choice-coverflow-shadow-rotate))
+    skewX(var(--a2ui-choice-coverflow-shadow-skew-x))
+    scaleX(var(--a2ui-choice-coverflow-shadow-scale-x))
+    scaleY(var(--a2ui-choice-coverflow-shadow-scale-y));
+  transform-origin: center;
+  transition:
+    opacity 260ms var(--motion-ease-out),
+    transform 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    width 340ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .optionFace {
   position: relative;
+  z-index: 1;
   left: 50%;
   display: grid;
   width: 100%;
@@ -354,8 +423,10 @@
     linear-gradient(180deg, color-mix(in srgb, var(--color-bg-elevated) 96%, transparent), color-mix(in srgb, var(--surface-muted) 34%, var(--color-bg-elevated))),
     var(--color-bg-elevated);
   box-shadow:
-    0 1px 2px color-mix(in srgb, var(--color-text-primary) 5%, transparent),
-    0 7px 14px color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 88%, transparent),
+    0 1px 1px color-mix(in srgb, var(--color-text-primary) 6%, transparent),
+    0 9px 18px -14px color-mix(in srgb, var(--color-text-primary) 30%, transparent),
+    0 22px 38px -30px color-mix(in srgb, var(--color-text-primary) 18%, transparent);
   overflow: hidden;
   padding: 16px;
   opacity: var(--a2ui-choice-coverflow-opacity);
@@ -374,6 +445,12 @@
 
 .option[data-detail-expanded="true"] .optionFace {
   width: 150%;
+}
+
+.option[data-detail-expanded="true"]::after {
+  width: 142%;
+  --a2ui-choice-coverflow-shadow-opacity: 0.2;
+  --a2ui-choice-coverflow-shadow-scale-x: 0.96;
 }
 
 .optionFace::before {
@@ -404,8 +481,10 @@
 .option:hover .optionFace {
   border-color: color-mix(in srgb, var(--color-text-primary) 18%, var(--color-border-default));
   box-shadow:
-    0 1px 2px color-mix(in srgb, var(--color-text-primary) 7%, transparent),
-    0 9px 16px color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 92%, transparent),
+    0 1px 1px color-mix(in srgb, var(--color-text-primary) 7%, transparent),
+    0 11px 22px -15px color-mix(in srgb, var(--color-text-primary) 34%, transparent),
+    0 26px 42px -32px color-mix(in srgb, var(--color-text-primary) 20%, transparent);
 }
 
 .option:hover .optionFace::before {
@@ -586,8 +665,10 @@
 .option[data-readonly="true"]:hover .optionFace {
   border-color: color-mix(in srgb, var(--color-border-subtle) 78%, transparent);
   box-shadow:
-    0 1px 2px color-mix(in srgb, var(--color-text-primary) 5%, transparent),
-    0 7px 14px color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 88%, transparent),
+    0 1px 1px color-mix(in srgb, var(--color-text-primary) 6%, transparent),
+    0 9px 18px -14px color-mix(in srgb, var(--color-text-primary) 30%, transparent),
+    0 22px 38px -30px color-mix(in srgb, var(--color-text-primary) 18%, transparent);
 }
 
 .option[data-readonly="true"]:hover .optionFace::before {
@@ -995,7 +1076,7 @@
   pointer-events: none;
 }
 
-.notificationStack[data-expanded="false"] .notificationItem:first-child {
+.notificationStack[data-expanded="false"] .notificationItem[data-stack-front="true"] {
   pointer-events: auto;
 }
 
@@ -1069,6 +1150,10 @@
 
 .notificationCard:focus-visible {
   outline: none;
+}
+
+.notificationStack[data-expanded="false"] .notificationItem[data-readonly="true"][data-selected="true"] .notificationCard {
+  grid-template-columns: auto 30px minmax(0, 1fr);
 }
 
 .notificationIndex {

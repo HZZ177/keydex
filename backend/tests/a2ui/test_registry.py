@@ -93,6 +93,9 @@ def test_interactive_tool_descriptions_encourage_suitable_a2ui_usage() -> None:
     assert "presentation_mode" in registry.require("choice").tool_description
     assert "gallery" in registry.require("choice").tool_description
     assert "notification_stack" in registry.require("choice").tool_description
+    assert "功能接近" in registry.require("choice").tool_description
+    assert "尽量交替使用" in registry.require("choice").tool_description
+    assert "严格场景分工" in registry.require("choice").tool_description
     assert "以上都不对" in registry.require("choice").tool_description
     assert "缺少多个关键参数" in registry.require("form").tool_description
     assert "优先调用" in registry.require("form").tool_description
@@ -105,6 +108,7 @@ def test_interactive_schemas_include_mature_inline_ui_metadata() -> None:
     choice_option_properties = choice_properties["options"]["items"]["properties"]
     assert "default_values" in choice_properties
     assert choice_properties["presentation_mode"]["enum"] == ["gallery", "notification_stack"]
+    assert "尽量交替使用" in choice_properties["presentation_mode"]["description"]
     assert {"badge", "recommended", "disabled"}.issubset(choice_option_properties)
     assert "卡片主标题" in choice_option_properties["label"]["description"]
     assert "卡片主体说明" in choice_option_properties["description"]["description"]

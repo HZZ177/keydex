@@ -98,6 +98,7 @@ const IOS_NOTIFICATION_TRANSITION = {
   mass: 0.9,
 } as const;
 type IosNotificationVariantCustom = {
+  closedIndex: number;
   count: number;
   expandedBefore: number;
   index: number;
@@ -148,16 +149,16 @@ const IOS_NOTIFICATION_ITEM_VARIANTS = {
     zIndex: count - index,
     transition: IOS_NOTIFICATION_TRANSITION,
   }),
-  closed: ({ count, index }: IosNotificationVariantCustom) => {
-    const hidden = index >= IOS_NOTIFICATION_VISIBLE_STACK;
-    const depth = Math.min(index, IOS_NOTIFICATION_VISIBLE_STACK - 1);
+  closed: ({ closedIndex, count }: IosNotificationVariantCustom) => {
+    const hidden = closedIndex >= IOS_NOTIFICATION_VISIBLE_STACK;
+    const depth = Math.min(closedIndex, IOS_NOTIFICATION_VISIBLE_STACK - 1);
     return {
       filter: "none",
       height: IOS_NOTIFICATION_CARD_HEIGHT,
       opacity: hidden ? 0 : Math.max(0.46, 1 - depth * 0.16),
       scale: hidden ? 0.9 : 1 - depth * 0.035,
       y: hidden ? 0 : depth * IOS_NOTIFICATION_REVEAL,
-      zIndex: count - index,
+      zIndex: count - closedIndex,
       transition: IOS_NOTIFICATION_TRANSITION,
     };
   },
@@ -981,6 +982,10 @@ function ChoiceNotificationStack({
     return null;
   }
 
+  const closedIndexByValue = readOnly && selectedValues.size > 0
+    ? selectedFirstNotificationIndexMap(model.options, selectedValues)
+    : null;
+
   const closeStack = () => {
     setStackExpanded(false);
     setExpandedMessageValues(new Set());
@@ -1053,10 +1058,11 @@ function ChoiceNotificationStack({
           const expandedBefore = model.options
             .slice(0, index)
             .reduce((count, previous) => count + (expandedMessageValues.has(previous.value) ? 1 : 0), 0);
+          const closedIndex = closedIndexByValue?.get(option.value) ?? index;
           return (
             <motion.div
               className={styles.notificationItem}
-              custom={{ count: model.options.length, expandedBefore, index, messageExpanded }}
+              custom={{ closedIndex, count: model.options.length, expandedBefore, index, messageExpanded }}
               data-disabled={!readOnly && (!actionable || option.disabled) ? "true" : "false"}
               data-message-expandable={messageExpandable ? "true" : "false"}
               data-message-expanded={messageExpanded ? "true" : "false"}
@@ -1064,6 +1070,7 @@ function ChoiceNotificationStack({
               data-readonly={readOnly ? "true" : "false"}
               data-recommended={option.recommended ? "true" : "false"}
               data-selected={selected ? "true" : "false"}
+              data-stack-front={closedIndex === 0 ? "true" : "false"}
               key={option.value}
               variants={IOS_NOTIFICATION_ITEM_VARIANTS}
             >
@@ -1082,7 +1089,7 @@ function ChoiceNotificationStack({
                 onClick={() => toggleMessage(option.value)}
               >
                 <A2MotionPresence preserveExit>
-                  {stackExpanded ? (
+                  {stackExpanded || (readOnly && selected) ? (
                     readOnly ? (
                       <span
                         aria-hidden={!selected}
@@ -1554,6 +1561,14 @@ function choiceOptionUnitKey(option: ChoiceOption, index: number): string {
 
 function choicePresentationMode(value: unknown): ChoicePresentationMode {
   return scalarText(value).toLowerCase() === "notification_stack" ? "notification_stack" : "gallery";
+}
+
+function selectedFirstNotificationIndexMap(options: ChoiceOption[], selectedValues: Set<string>): Map<string, number> {
+  const ordered = [
+    ...options.filter((option) => selectedValues.has(option.value)),
+    ...options.filter((option) => !selectedValues.has(option.value)),
+  ];
+  return new Map(ordered.map((option, index) => [option.value, index]));
 }
 
 function iosNotificationOpenHeight(count: number, expandedCount = 0): number {

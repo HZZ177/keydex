@@ -287,8 +287,9 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             mode="interactive",
             tool_description=(
                 "当存在多个可行方案、范围、对象、格式、路径或下一步动作，需要用户从候选项中决定时优先调用。"
-                "choice 支持 presentation_mode：gallery 用画廊卡片展示，适合候选方案对比；"
-                "notification_stack 用通知堆叠展示，适合逐条消息、任务、提醒、路径节点或短信息块扫读；"
+                "choice 支持 presentation_mode：gallery 和 notification_stack 都用于展示候选项，功能接近；"
+                "gallery 是画廊卡片形态，notification_stack 是通知堆叠形态，主要区别是视觉动效和阅读节奏；"
+                "应在不影响表达清晰的前提下尽量交替使用，让两种组件都有展示机会，不要把两种模式当成严格场景分工；"
                 "每个 option 都会成为一张候选卡片，因此 label 应清晰短促，badge 用于表达类别、推荐、风险或成本，"
                 "description 用于说明选择依据、适用场景或关键差异，不要只给一组没有解释的短词。"
                 "可以用 recommended、disabled、default_values 引导用户快速决策。"
@@ -302,7 +303,7 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
                     "presentation_mode": {
                         "type": "string",
                         "enum": ["gallery", "notification_stack"],
-                        "description": "展示模式：gallery 适合方案对比和强视觉候选；notification_stack 适合逐条消息、任务、提醒、路径节点或短信息块扫读。不传时使用 gallery。",
+                        "description": "展示模式：gallery 与 notification_stack 功能接近，分别提供画廊卡片和通知堆叠两种视觉节奏；在不影响表达清晰时尽量交替使用，让页面不单一。不传时使用 gallery。",
                     },
                     "multiple": {"type": "boolean", "description": "是否允许多选。false 或省略表示单选。"},
                     "options": {
