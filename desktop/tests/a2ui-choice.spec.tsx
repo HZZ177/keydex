@@ -20,6 +20,40 @@ function clickChoiceButton(label: string) {
   fireEvent.click(screen.getByRole("button", { name: `选择 ${label}` }));
 }
 
+function mockNotificationDescriptionOverflow(overflowFragments: string[]): () => void {
+  const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+  const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      if (this.getAttribute("data-a2ui-notification-description") !== "true") {
+        return 0;
+      }
+      return overflowFragments.some((fragment) => this.textContent?.includes(fragment)) ? 64 : 18;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.getAttribute("data-a2ui-notification-description") === "true" ? 18 : 0;
+    },
+  });
+
+  return () => {
+    if (originalScrollHeight) {
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+    }
+    if (originalClientHeight) {
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+    }
+  };
+}
+
 describe("A2ChoiceBlock", () => {
   it("submits a single selected value", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
@@ -347,6 +381,87 @@ describe("A2ChoiceBlock", () => {
     expect((screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("locks parent message auto-follow before interactive A2UI layout changes", () => {
+    render(
+      <div data-testid="message-list-scroll">
+        <A2UIBlock message={choiceMessage()} onSubmit={vi.fn()} onCancel={vi.fn()} />
+      </div>,
+    );
+
+    const scroller = screen.getByTestId("message-list-scroll");
+    expect(scroller.hasAttribute("data-expansion-scroll-lock")).toBe(false);
+
+    fireEvent.pointerDown(screen.getByTestId("a2ui-choice"));
+
+    expect(scroller.getAttribute("data-expansion-scroll-lock")).toBe("true");
+  });
+
+  it("renders notification stack choices as expanded live notifications and keeps submit payload unchanged", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const restoreOverflowMock = mockNotificationDescriptionOverflow(["第一条通知的完整说明"]);
+    try {
+      render(
+        <A2UIBlock
+          message={choiceMessage({
+            payload: {
+              presentation_mode: "notification_stack",
+              options: [
+                { label: "通知 A", value: "notice_a", description: "第一条通知的完整说明", badge: "任务" },
+                { label: "通知 B", value: "notice_b", description: "短说明", badge: "提醒" },
+              ],
+            },
+          })}
+          onSubmit={onSubmit}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      const stack = screen.getByTestId("a2ui-choice-notification-stack");
+      expect(stack.getAttribute("data-a2ui-choice-layout")).toBe("notification_stack");
+      expect(stack.getAttribute("data-expanded")).toBe("true");
+      expect(screen.getByRole("button", { name: "收起选项通知栈" }).getAttribute("aria-expanded")).toBe("true");
+      expect(screen.getByText("第一条通知的完整说明")).not.toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: "收起选项通知栈" }));
+
+      expect(stack.getAttribute("data-expanded")).toBe("false");
+      expect(screen.getByRole("button", { name: "展开选项通知栈" }).getAttribute("aria-expanded")).toBe("false");
+
+      fireEvent.click(screen.getByRole("button", { name: "展开选项通知栈" }));
+
+      const noticeAItem = stack.querySelector<HTMLElement>("[data-option-value='notice_a']");
+      const noticeACard = noticeAItem?.querySelector<HTMLElement>("[data-a2ui-notification-card='true']");
+      await waitFor(() => {
+        expect(noticeAItem?.getAttribute("data-message-expandable")).toBe("true");
+      });
+      expect(noticeAItem?.getAttribute("data-message-expanded")).toBe("false");
+      fireEvent.click(noticeACard as HTMLElement);
+      expect(stack.getAttribute("data-expanded")).toBe("true");
+      expect(noticeAItem?.getAttribute("data-message-expanded")).toBe("true");
+
+      const noticeBItem = stack.querySelector<HTMLElement>("[data-option-value='notice_b']");
+      const noticeBCard = noticeBItem?.querySelector<HTMLElement>("[data-a2ui-notification-card='true']");
+      expect(noticeBItem?.getAttribute("data-message-expandable")).toBe("false");
+      fireEvent.click(noticeBCard as HTMLElement);
+      expect(noticeBItem?.getAttribute("data-message-expanded")).toBe("false");
+
+      const noticeBButton = screen.getByRole("button", { name: "选择 通知 B" });
+      const noticeBLabel = screen.getByText("通知 B");
+      expect(Boolean(noticeBButton.compareDocumentPosition(noticeBLabel) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+
+      fireEvent.click(noticeBButton);
+      fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith("int-choice-1", {
+          selected_values: ["notice_b"],
+        }, "ses-1");
+      });
+    } finally {
+      restoreOverflowMock();
+    }
+  });
+
   it("does not center a card when only its selection button is clicked", async () => {
     render(<A2UIBlock message={choiceMessage()} onSubmit={vi.fn()} onCancel={vi.fn()} />);
 
@@ -450,6 +565,74 @@ describe("A2ChoiceBlock", () => {
     expect(result.queryByText("已提交选择")).toBeNull();
     expect(result.queryByText(/恢复状态/)).toBeNull();
     expect(screen.queryByRole("button", { name: "提交选择" })).toBeNull();
+  });
+
+  it("renders historical notification choices collapsed until the user opens them", async () => {
+    const restoreOverflowMock = mockNotificationDescriptionOverflow(["历史第一条完整内容"]);
+    try {
+      render(
+        <A2UIBlock
+          message={choiceMessage({
+            payload: {
+              presentation_mode: "notification_stack",
+              options: [
+                { label: "历史通知 A", value: "history_notice_a", description: "历史第一条完整内容" },
+                { label: "历史通知 B", value: "history_notice_b", description: "短历史" },
+              ],
+            },
+            interaction: {
+              interaction_id: "int-choice-1",
+              status: "submitted",
+              can_submit: false,
+              submit_result: { selected_values: ["history_notice_b"] },
+              resume_status: "succeeded",
+            },
+          })}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      const result = within(screen.getByTestId("a2ui-choice-result"));
+      const stack = screen.getByTestId("a2ui-choice-notification-stack");
+      expect(stack.getAttribute("data-a2ui-choice-layout")).toBe("notification_stack");
+      expect(stack.getAttribute("data-expanded")).toBe("false");
+      expect(result.getByRole("button", { name: "展开选项通知栈" }).getAttribute("aria-expanded")).toBe("false");
+      expect(result.queryByText("历史第一条完整内容")).toBeNull();
+      expect(result.queryByText("已选")).toBeNull();
+
+      fireEvent.click(result.getByRole("button", { name: "展开选项通知栈" }));
+
+      expect(stack.getAttribute("data-expanded")).toBe("true");
+      expect(result.getByRole("button", { name: "收起选项通知栈" }).getAttribute("aria-expanded")).toBe("true");
+      expect(result.getByText("历史第一条完整内容")).not.toBeNull();
+      expect(result.getByText("已选")).not.toBeNull();
+
+      const historyAItem = stack.querySelector<HTMLElement>("[data-option-value='history_notice_a']");
+      const historyACard = historyAItem?.querySelector<HTMLElement>("[data-a2ui-notification-card='true']");
+      await waitFor(() => {
+        expect(historyAItem?.getAttribute("data-message-expandable")).toBe("true");
+      });
+      expect(historyAItem?.getAttribute("data-message-expanded")).toBe("false");
+      fireEvent.click(historyACard as HTMLElement);
+      expect(stack.getAttribute("data-expanded")).toBe("true");
+      expect(historyAItem?.getAttribute("data-message-expanded")).toBe("true");
+
+      const historyBItem = stack.querySelector<HTMLElement>("[data-option-value='history_notice_b']");
+      const historyBCard = historyBItem?.querySelector<HTMLElement>("[data-a2ui-notification-card='true']");
+      expect(historyBItem?.querySelector("[data-a2ui-notification-action-slot='true']")).not.toBeNull();
+      expect(historyBItem?.getAttribute("data-message-expandable")).toBe("false");
+      fireEvent.click(historyBCard as HTMLElement);
+      expect(historyBItem?.getAttribute("data-message-expanded")).toBe("false");
+
+      fireEvent.click(result.getByRole("button", { name: "收起选项通知栈" }));
+      expect(stack.getAttribute("data-expanded")).toBe("false");
+
+      fireEvent.click(result.getByRole("button", { name: "展开选项通知栈" }));
+      expect(historyAItem?.getAttribute("data-message-expanded")).toBe("false");
+    } finally {
+      restoreOverflowMock();
+    }
   });
 
   it("hides the top slider for historical choice galleries with ten or fewer options", () => {

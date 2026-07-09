@@ -683,6 +683,365 @@
   -webkit-line-clamp: 5;
 }
 
+.notificationStack {
+  position: relative;
+  display: flex;
+  width: min(420px, 100%);
+  min-width: 0;
+  flex-direction: column;
+  justify-self: center;
+  perspective: 1000px;
+}
+
+.notificationStackHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  overflow: hidden;
+  transform-origin: bottom center;
+  pointer-events: none;
+}
+
+.notificationStackTitle {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 720;
+  line-height: 1;
+  padding-left: 8px;
+}
+
+.notificationStackClose {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-primary) 9%, transparent);
+  color: color-mix(in srgb, var(--color-text-primary) 74%, var(--color-text-secondary));
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1;
+  padding: 0 12px;
+  pointer-events: auto;
+  user-select: none;
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    color 160ms var(--motion-ease-out);
+}
+
+.notificationStackClose:hover,
+.notificationStackClose:focus-visible {
+  background: color-mix(in srgb, var(--color-text-primary) 14%, transparent);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.notificationStackBody {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
+  contain: layout style;
+  transform-style: preserve-3d;
+}
+
+.notificationItem {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  min-width: 0;
+  height: var(--a2ui-ios-notification-card-height);
+  contain: layout style;
+  transform-origin: top center;
+  will-change: transform, opacity, height;
+}
+
+.notificationStack[data-expanded="false"] .notificationItem {
+  pointer-events: none;
+}
+
+.notificationStack[data-expanded="false"] .notificationItem:first-child {
+  pointer-events: auto;
+}
+
+.notificationCard {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 58%, transparent);
+  border-radius: 16px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-bg-elevated) 99%, transparent),
+      color-mix(in srgb, var(--surface-muted) 22%, var(--color-bg-elevated))
+    ),
+    var(--color-bg-elevated);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 88%, transparent),
+    0 1px 1px color-mix(in srgb, var(--color-text-primary) 6%, transparent),
+    0 9px 18px -14px color-mix(in srgb, var(--color-text-primary) 30%, transparent),
+    0 22px 38px -30px color-mix(in srgb, var(--color-text-primary) 18%, transparent);
+  color: inherit;
+  cursor: pointer;
+  backface-visibility: hidden;
+  overflow: hidden;
+  padding: 11px 12px 11px 13px;
+  text-align: left;
+  transform: translateZ(0);
+  will-change: transform;
+  transition:
+    border-color 160ms var(--motion-ease-out),
+    box-shadow 160ms var(--motion-ease-out);
+}
+
+.notificationStack[data-expanded="true"] .notificationItem[data-message-expandable="false"] .notificationCard {
+  cursor: default;
+}
+
+.notificationStack[data-expanded="true"] .notificationCard {
+  grid-template-columns: auto 30px minmax(0, 1fr);
+}
+
+.notificationItem[data-message-expanded="true"] .notificationCard {
+  align-items: start;
+}
+
+.notificationCard::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 14% 0%, color-mix(in srgb, var(--color-text-inverse) 30%, transparent), transparent 34%);
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.notificationItem[data-message-expandable="true"] .notificationCard:hover,
+.notificationCard:focus-visible {
+  border-color: color-mix(in srgb, var(--color-text-primary) 18%, var(--color-border-default));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 92%, transparent),
+    0 1px 1px color-mix(in srgb, var(--color-text-primary) 7%, transparent),
+    0 11px 22px -15px color-mix(in srgb, var(--color-text-primary) 34%, transparent),
+    0 26px 42px -32px color-mix(in srgb, var(--color-text-primary) 20%, transparent);
+}
+
+.notificationCard:focus-visible {
+  outline: none;
+}
+
+.notificationIndex {
+  position: relative;
+  z-index: 1;
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-muted) 58%, transparent);
+  color: color-mix(in srgb, var(--color-text-primary) 54%, var(--color-text-tertiary));
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1;
+}
+
+.notificationContent {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.notificationItem[data-message-expanded="true"] .notificationContent {
+  align-self: stretch;
+  overflow: hidden;
+  padding-top: 3px;
+}
+
+.notificationHeader {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.notificationLabel {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 720;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.notificationDescription {
+  display: block;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.notificationItem[data-message-expanded="true"] .notificationDescription {
+  display: block;
+  max-height: 150px;
+  overflow: auto;
+  padding-right: 5px;
+  -webkit-line-clamp: unset;
+}
+
+.notificationItem[data-message-expanded="true"] .notificationDescription::-webkit-scrollbar {
+  width: 6px;
+}
+
+.notificationItem[data-message-expanded="true"] .notificationDescription::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-tertiary) 34%, transparent);
+}
+
+.notificationActionSlot {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  min-width: 55px;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.notificationActionSlot[data-readonly-slot="true"] {
+  min-width: 44px;
+}
+
+.notificationSelectButton {
+  --a2ui-choice-state-gap: 6px;
+  --a2ui-choice-state-label-opacity: 1;
+  --a2ui-choice-state-label-width: 26px;
+  --a2ui-choice-state-label-x: 0px;
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  min-width: 67px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--a2ui-choice-state-gap);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 68%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 90%, transparent);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--color-text-primary) 7%, transparent),
+    0 4px 8px color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+  color: color-mix(in srgb, var(--color-text-secondary) 78%, var(--color-text-primary));
+  cursor: pointer;
+  font: inherit;
+  padding: 0 9px;
+  transition:
+    background-color 180ms var(--motion-ease-out),
+    border-color 180ms var(--motion-ease-out),
+    box-shadow 180ms var(--motion-ease-out),
+    color 180ms var(--motion-ease-out),
+    opacity 180ms var(--motion-ease-out),
+    transform 180ms var(--motion-ease-out);
+}
+
+.notificationSelectButton:hover:not(:disabled),
+.notificationSelectButton:focus-visible {
+  border-color: color-mix(in srgb, var(--color-text-primary) 22%, var(--color-border-default));
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.notificationSelectButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.notificationItem[data-selected="true"] .notificationSelectButton {
+  border-color: color-mix(in srgb, var(--color-success-6) 28%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-success-6) 8%, var(--color-bg-elevated));
+  color: color-mix(in srgb, var(--color-success-6) 48%, var(--color-text-primary));
+}
+
+.notificationItem[data-selected="true"] .optionStateDot:first-child {
+  width: 7px;
+  height: 2.2px;
+  opacity: 1;
+  border-radius: 999px;
+  transform: translate(-50%, -50%) translate(-4.8px, 1.4px) rotate(45deg);
+  transform-origin: center;
+}
+
+.notificationItem[data-selected="true"] .optionStateDot:nth-child(2) {
+  width: 13px;
+  height: 2.2px;
+  opacity: 1;
+  border-radius: 999px;
+  transform: translate(-50%, -50%) translate(1px, -1.1px) rotate(-45deg);
+  transform-origin: center;
+}
+
+.notificationItem[data-selected="true"] .optionStateDot:nth-child(3),
+.notificationItem[data-selected="true"] .optionStateDot:nth-child(4) {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.4);
+}
+
+.notificationReadonlyBadge {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-success-6) 24%, var(--color-border-default));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-success-6) 7%, transparent);
+  color: color-mix(in srgb, var(--color-success-6) 52%, var(--color-text-primary));
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 1;
+  padding: 0 9px;
+}
+
+.notificationItem[data-disabled="true"] .notificationCard {
+  opacity: 0.68;
+}
+
+.notificationStackHitArea {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+  font: inherit;
+  overflow: hidden;
+  padding: 0;
+}
+
+.notificationStackHitArea:hover,
+.notificationStackHitArea:focus-visible {
+  outline: none;
+}
+
 .optionDetailPopover {
   --a2ui-choice-popover-enter-y: 14px;
   --a2ui-choice-popover-y: 8px;
@@ -1172,6 +1531,25 @@
     padding: 15px 16px;
   }
 
+  .notificationStack {
+    width: 100%;
+  }
+
+  .notificationCard {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 10px;
+    padding: 11px;
+  }
+
+  .notificationStack[data-expanded="true"] .notificationCard {
+    grid-template-columns: auto 28px minmax(0, 1fr);
+  }
+
+  .notificationSelectButton,
+  .notificationReadonlyBadge {
+    justify-self: center;
+  }
+
   .help,
   .error {
     text-align: center;
@@ -1192,6 +1570,16 @@
   .options::before,
   .options::after,
   .optionDetailPopover,
+  .notificationStackHeader,
+  .notificationStackClose,
+  .notificationStackBody,
+  .notificationCard,
+  .notificationActionSlot,
+  .notificationDescription,
+  .notificationSelectButton,
+  .notificationItem,
+  .notificationReadonlyBadge,
+  .notificationStackHitArea,
   .optionStateButton,
   .optionStateDot,
   .optionStateLabel,

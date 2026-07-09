@@ -1,5 +1,5 @@
 import * as SliderPrimitive from "@radix-ui/react-slider";
-import { type MouseEvent as ReactMouseEvent, type PointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "motion/react";
 
@@ -37,9 +37,12 @@ interface ChoiceOption {
   recommended: boolean;
 }
 
+type ChoicePresentationMode = "gallery" | "notification_stack";
+
 interface ChoiceModel {
   title: string;
   description: string;
+  presentationMode: ChoicePresentationMode;
   multiple: boolean;
   minSelected: number;
   maxSelected: number | null;
@@ -94,6 +97,83 @@ const CHOICE_CARD_LAYOUT_TRANSITION: A2InteractiveMotionTransition = {
   opacity: {
     duration: 0.18,
     ease: [0.22, 1, 0.36, 1],
+  },
+};
+const IOS_NOTIFICATION_CARD_HEIGHT = 74;
+const IOS_NOTIFICATION_EXPANDED_CARD_HEIGHT = 220;
+const IOS_NOTIFICATION_GAP = 8;
+const IOS_NOTIFICATION_REVEAL = 7;
+const IOS_NOTIFICATION_VISIBLE_STACK = 4;
+const IOS_NOTIFICATION_EASE = [0.22, 1, 0.36, 1] as const;
+const IOS_NOTIFICATION_TRANSITION = {
+  type: "spring",
+  stiffness: 360,
+  damping: 34,
+  mass: 0.9,
+} as const;
+type IosNotificationVariantCustom = {
+  count: number;
+  expandedBefore: number;
+  index: number;
+  messageExpanded: boolean;
+};
+type IosNotificationBodyVariantCustom = {
+  count: number;
+  expandedCount: number;
+};
+const IOS_NOTIFICATION_HEADER_VARIANTS = {
+  open: {
+    height: 28,
+    marginBottom: 8,
+    opacity: 1,
+    scale: 1,
+    y: 0,
+    transition: IOS_NOTIFICATION_TRANSITION,
+  },
+  closed: {
+    height: 0,
+    marginBottom: 0,
+    opacity: 0,
+    scale: 0.96,
+    y: 8,
+    transition: {
+      duration: 0.16,
+      ease: IOS_NOTIFICATION_EASE,
+    },
+  },
+};
+const IOS_NOTIFICATION_BODY_VARIANTS = {
+  open: ({ count, expandedCount }: IosNotificationBodyVariantCustom) => ({
+    height: iosNotificationOpenHeight(count, expandedCount),
+    transition: IOS_NOTIFICATION_TRANSITION,
+  }),
+  closed: ({ count }: IosNotificationBodyVariantCustom) => ({
+    height: iosNotificationClosedHeight(count),
+    transition: IOS_NOTIFICATION_TRANSITION,
+  }),
+};
+const IOS_NOTIFICATION_ITEM_VARIANTS = {
+  open: ({ count, expandedBefore, index, messageExpanded }: IosNotificationVariantCustom) => ({
+    filter: "none",
+    height: iosNotificationItemHeight(messageExpanded),
+    opacity: 1,
+    scale: 1,
+    y: iosNotificationOpenY(index, expandedBefore),
+    zIndex: count - index,
+    transition: IOS_NOTIFICATION_TRANSITION,
+  }),
+  closed: ({ count, index }: IosNotificationVariantCustom) => {
+    const hidden = index >= IOS_NOTIFICATION_VISIBLE_STACK;
+    const depth = Math.min(index, IOS_NOTIFICATION_VISIBLE_STACK - 1);
+    return {
+      filter: "none",
+      height: IOS_NOTIFICATION_CARD_HEIGHT,
+      opacity: hidden ? 0 : Math.max(0.46, 1 - depth * 0.16),
+      scale: hidden ? 0.9 : 1 - depth * 0.035,
+      y: hidden ? 0 : depth * IOS_NOTIFICATION_REVEAL,
+      zIndex: count - index,
+      transition: IOS_NOTIFICATION_TRANSITION,
+    };
   },
 };
 
@@ -154,6 +234,7 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
   const centeredOptionIndex = centeredOptionValue
     ? model.options.findIndex((option) => option.value === centeredOptionValue)
     : -1;
+  const selectedValueSet = useMemo(() => new Set(selectedValues), [selectedValues]);
 
   useEffect(() => {
     return () => {
@@ -506,127 +587,138 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
             motionKind="choice-stage"
             variant="scene"
           >
-            <div className={styles.timelineShell}>
-              <ChoiceCarouselSlider
-                ariaLabel="快速定位选项"
-                count={model.options.length}
-                currentIndex={centeredOptionIndex}
-                disabled={choiceStreaming}
-                onChange={(index) => {
-                  const option = model.options[index];
-                  if (option) {
-                    focusCarouselOption(option.value);
-                  }
-                }}
+            {model.presentationMode === "notification_stack" ? (
+              <ChoiceNotificationStack
+                actionable={actionable}
+                disabled={Boolean(localSubmitting)}
+                live={motionLive}
+                model={model}
+                onToggle={toggle}
+                selectedValues={selectedValueSet}
               />
-              <div
-                ref={optionsRef}
-                className={styles.options}
-                data-a2ui-choice-layout="coverflow"
-                data-choice-density={cardDensity}
-                role={model.multiple ? "group" : "radiogroup"}
-                aria-label="选项"
-                onPointerCancel={finishCarouselPointerDrag}
-                onPointerDown={handleCarouselPointerDown}
-                onPointerMove={handleCarouselPointerMove}
-                onPointerUp={finishCarouselPointerDrag}
-              >
-                <div ref={optionTrackRef} className={styles.optionTrack} data-a2ui-choice-track="true">
-                  {model.options.map((option, index) => {
-                    const unitKey = choiceOptionUnitKey(option, index);
-                    const selected = selectedValues.includes(option.value);
-                    const interactive = actionable && !localSubmitting && !option.disabled;
-                    const coverflowOffset = centeredOptionIndex >= 0 ? index - centeredOptionIndex : index;
-                    const coverflowPosition = choiceCoverflowPosition(coverflowOffset);
-                    return (
-                      <A2InteractiveMotionItem
-                        as="div"
-                        className={styles.option}
-                        data-option-value={option.value}
-                        data-coverflow-position={coverflowPosition}
-                        data-selected={selected ? "true" : "false"}
-                        data-disabled={!actionable || option.disabled ? "true" : "false"}
-                        data-recommended={option.recommended ? "true" : "false"}
-                        interactive={interactive}
-                        key={option.value}
-                        live={motionLive}
-                        motionLayout
-                        motionTransition={CHOICE_CARD_LAYOUT_TRANSITION}
-                        motionKey={unitKey}
-                        motionKind="choice-option"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          if (suppressCarouselClickRef.current) {
-                            event.stopPropagation();
-                            return;
-                          }
-                          focusCarouselOption(option.value, event.currentTarget);
-                        }}
-                        order={index + 1}
-                        selected={selected}
-                        variant="option"
-                      >
-                        <span className={styles.optionFace} data-a2ui-choice-card="true">
-                          <span className={styles.optionCorner} aria-hidden="true">
-                            {String(index + 1).padStart(2, "0")}
-                          </span>
-                          <input
-                            type={model.multiple ? "checkbox" : "radio"}
-                            aria-hidden="true"
-                            name={`${message.id}:choice`}
-                            value={option.value}
-                            checked={selected}
-                            disabled={!actionable || option.disabled || Boolean(localSubmitting)}
-                            readOnly
-                            tabIndex={-1}
-                          />
-                          <span
-                            className={styles.optionText}
-                            data-a2ui-choice-content="true"
-                            onMouseEnter={(event) => handleOptionContentEnter(option, event)}
-                            onMouseLeave={scheduleDetailPreviewClose}
-                          >
-                            <span className={styles.optionHeader}>
-                              <span className={styles.optionLabel}>{option.label}</span>
-                              {option.recommended ? <span className={styles.recommendedBadge}>推荐</span> : null}
-                              {option.badge ? <span className={styles.optionBadge}>{option.badge}</span> : null}
-                            </span>
-                            {option.description ? (
-                              <span className={styles.optionDescription}>
-                                {optionSummary(option.description)}
-                              </span>
-                            ) : null}
-                          </span>
-                        </span>
-                        <button
-                          aria-label={selected ? `取消选择 ${option.label}` : `选择 ${option.label}`}
-                          className={styles.optionStateButton}
-                          data-a2ui-choice-action="true"
-                          data-a2ui-choice-morph="true"
-                          disabled={!interactive}
-                          type="button"
+            ) : (
+              <div className={styles.timelineShell}>
+                <ChoiceCarouselSlider
+                  ariaLabel="快速定位选项"
+                  count={model.options.length}
+                  currentIndex={centeredOptionIndex}
+                  disabled={choiceStreaming}
+                  onChange={(index) => {
+                    const option = model.options[index];
+                    if (option) {
+                      focusCarouselOption(option.value);
+                    }
+                  }}
+                />
+                <div
+                  ref={optionsRef}
+                  className={styles.options}
+                  data-a2ui-choice-layout="coverflow"
+                  data-choice-density={cardDensity}
+                  role={model.multiple ? "group" : "radiogroup"}
+                  aria-label="选项"
+                  onPointerCancel={finishCarouselPointerDrag}
+                  onPointerDown={handleCarouselPointerDown}
+                  onPointerMove={handleCarouselPointerMove}
+                  onPointerUp={finishCarouselPointerDrag}
+                >
+                  <div ref={optionTrackRef} className={styles.optionTrack} data-a2ui-choice-track="true">
+                    {model.options.map((option, index) => {
+                      const unitKey = choiceOptionUnitKey(option, index);
+                      const selected = selectedValues.includes(option.value);
+                      const interactive = actionable && !localSubmitting && !option.disabled;
+                      const coverflowOffset = centeredOptionIndex >= 0 ? index - centeredOptionIndex : index;
+                      const coverflowPosition = choiceCoverflowPosition(coverflowOffset);
+                      return (
+                        <A2InteractiveMotionItem
+                          as="div"
+                          className={styles.option}
+                          data-option-value={option.value}
+                          data-coverflow-position={coverflowPosition}
+                          data-selected={selected ? "true" : "false"}
+                          data-disabled={!actionable || option.disabled ? "true" : "false"}
+                          data-recommended={option.recommended ? "true" : "false"}
+                          interactive={interactive}
+                          key={option.value}
+                          live={motionLive}
+                          motionLayout
+                          motionTransition={CHOICE_CARD_LAYOUT_TRANSITION}
+                          motionKey={unitKey}
+                          motionKind="choice-option"
                           onClick={(event) => {
                             event.preventDefault();
-                            event.stopPropagation();
-                            const optionElement = event.currentTarget.closest<HTMLElement>("[data-option-value]");
-                            focusCarouselOption(option.value, optionElement, false);
-                            toggle(option.value);
+                            if (suppressCarouselClickRef.current) {
+                              event.stopPropagation();
+                              return;
+                            }
+                            focusCarouselOption(option.value, event.currentTarget);
                           }}
+                          order={index + 1}
+                          selected={selected}
+                          variant="option"
                         >
-                          <span className={styles.optionStateIcon} aria-hidden="true">
-                            <span className={styles.optionStateDot} />
-                            <span className={styles.optionStateDot} />
-                            <span className={styles.optionStateDot} />
-                            <span className={styles.optionStateDot} />
+                          <span className={styles.optionFace} data-a2ui-choice-card="true">
+                            <span className={styles.optionCorner} aria-hidden="true">
+                              {String(index + 1).padStart(2, "0")}
+                            </span>
+                            <input
+                              type={model.multiple ? "checkbox" : "radio"}
+                              aria-hidden="true"
+                              name={`${message.id}:choice`}
+                              value={option.value}
+                              checked={selected}
+                              disabled={!actionable || option.disabled || Boolean(localSubmitting)}
+                              readOnly
+                              tabIndex={-1}
+                            />
+                            <span
+                              className={styles.optionText}
+                              data-a2ui-choice-content="true"
+                              onMouseEnter={(event) => handleOptionContentEnter(option, event)}
+                              onMouseLeave={scheduleDetailPreviewClose}
+                            >
+                              <span className={styles.optionHeader}>
+                                <span className={styles.optionLabel}>{option.label}</span>
+                                {option.recommended ? <span className={styles.recommendedBadge}>推荐</span> : null}
+                                {option.badge ? <span className={styles.optionBadge}>{option.badge}</span> : null}
+                              </span>
+                              {option.description ? (
+                                <span className={styles.optionDescription}>
+                                  {optionSummary(option.description)}
+                                </span>
+                              ) : null}
+                            </span>
                           </span>
-                          <span className={styles.optionStateLabel}>{selected ? "已选" : "选择"}</span>
-                        </button>
-                      </A2InteractiveMotionItem>
-                    );
-                  })}
+                          <button
+                            aria-label={selected ? `取消选择 ${option.label}` : `选择 ${option.label}`}
+                            className={styles.optionStateButton}
+                            data-a2ui-choice-action="true"
+                            data-a2ui-choice-morph="true"
+                            disabled={!interactive}
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              const optionElement = event.currentTarget.closest<HTMLElement>("[data-option-value]");
+                              focusCarouselOption(option.value, optionElement, false);
+                              toggle(option.value);
+                            }}
+                          >
+                            <span className={styles.optionStateIcon} aria-hidden="true">
+                              <span className={styles.optionStateDot} />
+                              <span className={styles.optionStateDot} />
+                              <span className={styles.optionStateDot} />
+                              <span className={styles.optionStateDot} />
+                            </span>
+                            <span className={styles.optionStateLabel}>{selected ? "已选" : "选择"}</span>
+                          </button>
+                        </A2InteractiveMotionItem>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
             {!model.options.length && !choiceStreaming ? (
               <A2InteractiveMotionItem
                 className={styles.previewEmpty}
@@ -839,6 +931,273 @@ function AnimateNumber({ value }: { value: number }) {
   );
 }
 
+function ChoiceNotificationStack({
+  actionable = false,
+  disabled = false,
+  live,
+  model,
+  onToggle,
+  readOnly = false,
+  selectedValues,
+}: {
+  actionable?: boolean;
+  disabled?: boolean;
+  live: boolean;
+  model: ChoiceModel;
+  onToggle?: (value: string) => void;
+  readOnly?: boolean;
+  selectedValues: Set<string>;
+}) {
+  const defaultExpanded = !readOnly && (model.status === "waiting_input" || isStreamingPreviewStatus(model.status));
+  const [stackExpanded, setStackExpanded] = useState(defaultExpanded);
+  const [expandedMessageValues, setExpandedMessageValues] = useState<Set<string>>(() => new Set());
+  const [expandableMessageValues, setExpandableMessageValues] = useState<Set<string>>(() => new Set());
+  const descriptionRefs = useRef<Map<string, HTMLSpanElement>>(new Map());
+  const expandedMessageValuesRef = useRef(expandedMessageValues);
+  const stackState = stackExpanded ? "open" : "closed";
+  const optionValueSignature = useMemo(() => model.options.map((option) => option.value).join("\u0000"), [model.options]);
+  const optionContentSignature = useMemo(
+    () => model.options.map((option) => `${option.value}\u0001${option.label}\u0001${option.description}`).join("\u0000"),
+    [model.options],
+  );
+
+  useEffect(() => {
+    setStackExpanded(defaultExpanded);
+    setExpandedMessageValues(new Set());
+    setExpandableMessageValues(new Set());
+  }, [defaultExpanded]);
+
+  useEffect(() => {
+    expandedMessageValuesRef.current = expandedMessageValues;
+  }, [expandedMessageValues]);
+
+  useEffect(() => {
+    const availableValues = new Set(model.options.map((option) => option.value));
+    setExpandedMessageValues((current) => {
+      const next = new Set([...current].filter((value) => availableValues.has(value)));
+      return next.size === current.size ? current : next;
+    });
+    setExpandableMessageValues((current) => {
+      const next = new Set([...current].filter((value) => availableValues.has(value)));
+      return setsEqual(current, next) ? current : next;
+    });
+  }, [optionValueSignature, model.options]);
+
+  useLayoutEffect(() => {
+    if (!stackExpanded) {
+      setExpandableMessageValues(new Set());
+      return;
+    }
+    const currentlyExpanded = expandedMessageValuesRef.current;
+    const next = new Set<string>();
+    for (const option of model.options) {
+      const descriptionElement = descriptionRefs.current.get(option.value);
+      if (!descriptionElement) {
+        continue;
+      }
+      if (currentlyExpanded.has(option.value) || elementHasOverflow(descriptionElement)) {
+        next.add(option.value);
+      }
+    }
+    setExpandableMessageValues((current) => (setsEqual(current, next) ? current : next));
+    setExpandedMessageValues((current) => {
+      const filtered = new Set([...current].filter((value) => next.has(value)));
+      return setsEqual(current, filtered) ? current : filtered;
+    });
+  }, [optionContentSignature, stackExpanded, model.options]);
+
+  if (!model.options.length) {
+    return null;
+  }
+
+  const closeStack = () => {
+    setStackExpanded(false);
+    setExpandedMessageValues(new Set());
+  };
+
+  const openStack = () => {
+    setStackExpanded(true);
+  };
+
+  const toggleMessage = (value: string) => {
+    if (!stackExpanded) {
+      openStack();
+      return;
+    }
+    if (!expandableMessageValues.has(value)) {
+      return;
+    }
+    setExpandedMessageValues((current) => {
+      const next = new Set(current);
+      if (next.has(value)) {
+        next.delete(value);
+      } else {
+        next.add(value);
+      }
+      return next;
+    });
+  };
+
+  return (
+    <motion.div
+      animate={stackState}
+      className={styles.notificationStack}
+      data-a2ui-choice-layout="notification_stack"
+      data-expanded={stackExpanded ? "true" : "false"}
+      data-readonly={readOnly ? "true" : "false"}
+      data-testid="a2ui-choice-notification-stack"
+      initial={live ? "closed" : false}
+      style={{
+        "--a2ui-ios-notification-card-height": `${IOS_NOTIFICATION_CARD_HEIGHT}px`,
+      } as CSSProperties}
+    >
+      <motion.div
+        aria-hidden={!stackExpanded}
+        className={styles.notificationStackHeader}
+        variants={IOS_NOTIFICATION_HEADER_VARIANTS}
+      >
+        <span className={styles.notificationStackTitle}>{model.multiple ? "多选项" : "单选项"}</span>
+        <button
+          aria-expanded={stackExpanded}
+          aria-label={stackExpanded ? "收起选项通知栈" : "展开选项通知栈"}
+          className={styles.notificationStackClose}
+          type="button"
+          onClick={closeStack}
+        >
+          收起
+        </button>
+      </motion.div>
+      <motion.div
+        className={styles.notificationStackBody}
+        role={model.multiple ? "group" : "radiogroup"}
+        aria-label={readOnly ? "历史选项" : "选项"}
+        custom={{ count: model.options.length, expandedCount: expandedMessageValues.size }}
+        variants={IOS_NOTIFICATION_BODY_VARIANTS}
+      >
+        {model.options.map((option, index) => {
+          const selected = selectedValues.has(option.value);
+          const interactive = actionable && !disabled && !option.disabled;
+          const messageExpanded = expandedMessageValues.has(option.value);
+          const messageExpandable = expandableMessageValues.has(option.value);
+          const expandedBefore = model.options
+            .slice(0, index)
+            .reduce((count, previous) => count + (expandedMessageValues.has(previous.value) ? 1 : 0), 0);
+          return (
+            <motion.div
+              className={styles.notificationItem}
+              custom={{ count: model.options.length, expandedBefore, index, messageExpanded }}
+              data-disabled={!readOnly && (!actionable || option.disabled) ? "true" : "false"}
+              data-message-expandable={messageExpandable ? "true" : "false"}
+              data-message-expanded={messageExpanded ? "true" : "false"}
+              data-option-value={option.value}
+              data-readonly={readOnly ? "true" : "false"}
+              data-recommended={option.recommended ? "true" : "false"}
+              data-selected={selected ? "true" : "false"}
+              key={option.value}
+              variants={IOS_NOTIFICATION_ITEM_VARIANTS}
+            >
+              <div
+                aria-expanded={stackExpanded ? messageExpanded : false}
+                className={styles.notificationCard}
+                data-a2ui-notification-card="true"
+                role={messageExpandable ? "button" : undefined}
+                tabIndex={messageExpandable ? 0 : -1}
+                onKeyDown={(event) => {
+                  if (messageExpandable && (event.key === "Enter" || event.key === " ")) {
+                    event.preventDefault();
+                    toggleMessage(option.value);
+                  }
+                }}
+                onClick={() => toggleMessage(option.value)}
+              >
+                <A2MotionPresence preserveExit>
+                  {stackExpanded ? (
+                    readOnly ? (
+                      <span
+                        aria-hidden={!selected}
+                        className={styles.notificationActionSlot}
+                        data-a2ui-notification-action-slot="true"
+                        data-readonly-slot="true"
+                      >
+                        {selected ? <span className={styles.notificationReadonlyBadge}>已选</span> : null}
+                      </span>
+                    ) : (
+                      <motion.span
+                        animate={{ opacity: 1, scale: 1, x: 0 }}
+                        className={styles.notificationActionSlot}
+                        data-a2ui-notification-action-slot="true"
+                        exit={{ opacity: 0, scale: 0.92, x: -8 }}
+                        initial={{ opacity: 0, scale: 0.92, x: -8 }}
+                        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                      >
+                        <button
+                          aria-label={selected ? `取消选择 ${option.label}` : `选择 ${option.label}`}
+                          className={styles.notificationSelectButton}
+                          data-a2ui-choice-morph="true"
+                          disabled={!interactive}
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggle?.(option.value);
+                          }}
+                        >
+                          <span className={styles.optionStateIcon} aria-hidden="true">
+                            <span className={styles.optionStateDot} />
+                            <span className={styles.optionStateDot} />
+                            <span className={styles.optionStateDot} />
+                            <span className={styles.optionStateDot} />
+                          </span>
+                          <span className={styles.optionStateLabel}>{selected ? "已选" : "选择"}</span>
+                        </button>
+                      </motion.span>
+                    )
+                  ) : null}
+                </A2MotionPresence>
+                <span className={styles.notificationIndex} aria-hidden="true">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <span className={styles.notificationContent}>
+                  <span className={styles.notificationHeader}>
+                    <span className={styles.notificationLabel}>{option.label}</span>
+                    {option.recommended ? <span className={styles.recommendedBadge}>推荐</span> : null}
+                    {option.badge ? <span className={styles.optionBadge}>{option.badge}</span> : null}
+                  </span>
+                  {stackExpanded && option.description ? (
+                    <span
+                      className={styles.notificationDescription}
+                      data-a2ui-notification-description="true"
+                      ref={(node) => {
+                        if (node) {
+                          descriptionRefs.current.set(option.value, node);
+                        } else {
+                          descriptionRefs.current.delete(option.value);
+                        }
+                      }}
+                    >
+                      {option.description}
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+            </motion.div>
+          );
+        })}
+      </motion.div>
+      {!stackExpanded ? (
+        <button
+          aria-expanded={false}
+          aria-label="展开选项通知栈"
+          className={styles.notificationStackHitArea}
+          type="button"
+          onClick={openStack}
+        >
+          展开选项通知栈
+        </button>
+      ) : null}
+    </motion.div>
+  );
+}
+
 function ChoiceResult({ live, model }: { live: boolean; model: ChoiceModel }) {
   const selectedValues = new Set(model.selectedValues);
   const resultStatus = model.status === "submitted" ? "submitted" : model.status === "cancelled" ? "cancelled" : "pending";
@@ -896,6 +1255,21 @@ function ChoiceOutcomeLine({ model, selectedCount }: { model: ChoiceModel; selec
 }
 
 function ReadonlyChoiceOptions({ model, selectedValues }: { model: ChoiceModel; selectedValues: Set<string> }) {
+  if (model.presentationMode === "notification_stack") {
+    return (
+      <ChoiceNotificationStack
+        live={false}
+        model={model}
+        readOnly
+        selectedValues={selectedValues}
+      />
+    );
+  }
+
+  return <ReadonlyChoiceGalleryOptions model={model} selectedValues={selectedValues} />;
+}
+
+function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: ChoiceModel; selectedValues: Set<string> }) {
   const [carouselOptionValue, setCarouselOptionValue] = useState<string | null>(null);
   const optionsRef = useRef<HTMLDivElement | null>(null);
   const optionTrackRef = useRef<HTMLDivElement | null>(null);
@@ -1107,6 +1481,7 @@ function choiceModel(parsed: ParsedA2UIMessage): ChoiceModel {
   return {
     title: scalarText(payload.title) || "请选择",
     description: scalarText(payload.description) || scalarText(payload.desc) || scalarText(payload.message),
+    presentationMode: choicePresentationMode(payload.presentation_mode),
     multiple: booleanValue(payload.multiple) || scalarText(payload.selection_type) === "multiple",
     minSelected: numberValue(payload.min_selected) ?? 1,
     maxSelected: numberValue(payload.max_selected),
@@ -1121,6 +1496,55 @@ function choiceModel(parsed: ParsedA2UIMessage): ChoiceModel {
 
 function choiceOptionUnitKey(option: ChoiceOption, index: number): string {
   return `choice:option:${option.value || index}`;
+}
+
+function choicePresentationMode(value: unknown): ChoicePresentationMode {
+  return scalarText(value).toLowerCase() === "notification_stack" ? "notification_stack" : "gallery";
+}
+
+function iosNotificationOpenHeight(count: number, expandedCount = 0): number {
+  if (count <= 0) {
+    return 0;
+  }
+  return (
+    count * IOS_NOTIFICATION_CARD_HEIGHT +
+    expandedCount * (IOS_NOTIFICATION_EXPANDED_CARD_HEIGHT - IOS_NOTIFICATION_CARD_HEIGHT) +
+    Math.max(0, count - 1) * IOS_NOTIFICATION_GAP
+  );
+}
+
+function iosNotificationClosedHeight(count: number): number {
+  if (count <= 0) {
+    return 0;
+  }
+  return IOS_NOTIFICATION_CARD_HEIGHT + Math.max(0, Math.min(count, IOS_NOTIFICATION_VISIBLE_STACK) - 1) * IOS_NOTIFICATION_REVEAL;
+}
+
+function iosNotificationItemHeight(messageExpanded: boolean): number {
+  return messageExpanded ? IOS_NOTIFICATION_EXPANDED_CARD_HEIGHT : IOS_NOTIFICATION_CARD_HEIGHT;
+}
+
+function iosNotificationOpenY(index: number, expandedBefore: number): number {
+  return (
+    index * (IOS_NOTIFICATION_CARD_HEIGHT + IOS_NOTIFICATION_GAP) +
+    expandedBefore * (IOS_NOTIFICATION_EXPANDED_CARD_HEIGHT - IOS_NOTIFICATION_CARD_HEIGHT)
+  );
+}
+
+function elementHasOverflow(element: HTMLElement): boolean {
+  return element.scrollHeight > element.clientHeight + 1 || element.scrollWidth > element.clientWidth + 1;
+}
+
+function setsEqual(first: Set<string>, second: Set<string>): boolean {
+  if (first.size !== second.size) {
+    return false;
+  }
+  for (const value of first) {
+    if (!second.has(value)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function initialSelection(model: ChoiceModel): string[] {

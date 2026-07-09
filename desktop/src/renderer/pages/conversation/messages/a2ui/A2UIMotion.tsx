@@ -3,6 +3,7 @@ import {
   type ElementType,
   type HTMLAttributes,
   type ReactNode,
+  useCallback,
   useRef,
 } from "react";
 import {
@@ -13,6 +14,7 @@ import {
 } from "motion/react";
 
 import revealStyles from "./A2UIReveal.module.css";
+import { useExpansionScrollAnchor } from "../useExpansionScrollAnchor";
 
 interface A2UIMotionRootProps extends HTMLAttributes<HTMLElement> {
   as?: ElementType;
@@ -71,6 +73,7 @@ interface A2InteractiveMotionItemProps extends HTMLAttributes<HTMLElement> {
 }
 
 const MOTION_KEY_ATTRIBUTE = "data-a2ui-motion-key";
+const A2UI_INTERACTIVE_SCROLL_LOCK_MS = 720;
 const A2UI_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const A2UI_MOTION_EASE_SHARP = [0.16, 1, 0.3, 1] as const;
 
@@ -331,8 +334,26 @@ export function A2InteractiveMotionRoot({
   live = false,
   motionScope,
   motionState = "active",
+  onKeyDownCapture,
+  onPointerDownCapture,
   ...props
 }: A2InteractiveMotionRootProps) {
+  const rootRef = useRef<HTMLElement | null>(null);
+  const captureExpansionAnchor = useExpansionScrollAnchor(A2UI_INTERACTIVE_SCROLL_LOCK_MS);
+  const captureInteractiveScrollAnchor = useCallback(() => {
+    captureExpansionAnchor(rootRef.current);
+  }, [captureExpansionAnchor]);
+  const handlePointerDownCapture: NonNullable<ComponentProps<typeof motion.section>["onPointerDownCapture"]> = (event) => {
+    captureInteractiveScrollAnchor();
+    onPointerDownCapture?.(event);
+  };
+  const handleKeyDownCapture: NonNullable<ComponentProps<typeof motion.section>["onKeyDownCapture"]> = (event) => {
+    if ((event.key === "Enter" || event.key === " ") && !isEditableEventTarget(event.target)) {
+      captureInteractiveScrollAnchor();
+    }
+    onKeyDownCapture?.(event);
+  };
+
   return (
     <MotionConfig
       reducedMotion="user"
@@ -344,6 +365,7 @@ export function A2InteractiveMotionRoot({
       <LayoutGroup id={motionScope}>
         <motion.section
           {...props}
+          ref={rootRef}
           className={joinClassNames(revealStyles.motionRoot, className)}
           data-a2ui-interactive-motion="true"
           data-a2ui-motion-live={live ? "true" : "false"}
@@ -353,6 +375,8 @@ export function A2InteractiveMotionRoot({
           animate="visible"
           variants={sceneVariants}
           layout="position"
+          onKeyDownCapture={handleKeyDownCapture}
+          onPointerDownCapture={handlePointerDownCapture}
         >
           {children}
         </motion.section>
@@ -601,4 +625,15 @@ function variantsFor(variant: InteractiveMotionVariant) {
     return resultVariants;
   }
   return itemVariants;
+}
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (target.isContentEditable) {
+    return true;
+  }
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select";
 }

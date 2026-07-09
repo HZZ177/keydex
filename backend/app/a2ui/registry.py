@@ -287,7 +287,8 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
             mode="interactive",
             tool_description=(
                 "当存在多个可行方案、范围、对象、格式、路径或下一步动作，需要用户从候选项中决定时优先调用。"
-                "choice 会以画廊卡片形式展示单选或多选候选项，适合每个候选项都有名称、标签和简短说明的场景；"
+                "choice 支持 presentation_mode：gallery 用画廊卡片展示，适合候选方案对比；"
+                "notification_stack 用通知堆叠展示，适合逐条消息、任务、提醒、路径节点或短信息块扫读；"
                 "每个 option 都会成为一张候选卡片，因此 label 应清晰短促，badge 用于表达类别、推荐、风险或成本，"
                 "description 用于说明选择依据、适用场景或关键差异，不要只给一组没有解释的短词。"
                 "可以用 recommended、disabled、default_values 引导用户快速决策。"
@@ -298,6 +299,11 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
                 properties={
                     "title": {"type": "string", "minLength": 1, "description": "选择卡片标题。"},
                     "description": {"type": "string", "description": "选择背景、判断依据或选择说明。"},
+                    "presentation_mode": {
+                        "type": "string",
+                        "enum": ["gallery", "notification_stack"],
+                        "description": "展示模式：gallery 适合方案对比和强视觉候选；notification_stack 适合逐条消息、任务、提醒、路径节点或短信息块扫读。不传时使用 gallery。",
+                    },
                     "multiple": {"type": "boolean", "description": "是否允许多选。false 或省略表示单选。"},
                     "options": {
                         "type": "array",
