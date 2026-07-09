@@ -63,10 +63,15 @@
   padding: 12px 14px;
 }
 
-.sectionHeader {
+.sectionHeader.sectionHeader[data-settings-row-text] {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settingTextBlock {
+  display: grid;
   min-width: 0;
 }
 
@@ -74,6 +79,7 @@
   display: inline-grid;
   width: 26px;
   height: 26px;
+  flex: 0 0 auto;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 52%, transparent);
   border-radius: var(--radius-pill);
@@ -87,8 +93,8 @@
   letter-spacing: 0;
 }
 
-.sectionHeader p {
-  margin: 5px 0 0;
+.sectionHeader.sectionHeader[data-settings-row-text] p {
+  margin: 4px 0 0;
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.45;

@@ -146,7 +146,7 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
               <span className={styles.settingIcon} aria-hidden="true">
                 <Power size={17} />
               </span>
-              <div>
+              <div className={styles.settingTextBlock}>
                 <h3>关闭窗口后行为</h3>
                 <p>{closeBehaviorSummary(general.close_window_behavior)}</p>
               </div>
@@ -174,59 +174,59 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
         <h2 className={styles.groupTitle} data-settings-group-title id="display-settings-title">应用显示</h2>
         <div className={styles.settingsPanel} data-settings-panel>
           <div className={styles.settingRow} data-settings-row>
-          <header className={styles.sectionHeader} data-settings-row-text>
-            <span className={styles.settingIcon} aria-hidden="true">
-              <Type size={17} />
-            </span>
-            <div>
-              <h3>UI 字体</h3>
-              <p>{fontStatusText(font.family, font.status)}</p>
-            </div>
-          </header>
+            <header className={styles.sectionHeader} data-settings-row-text>
+              <span className={styles.settingIcon} aria-hidden="true">
+                <Type size={17} />
+              </span>
+              <div className={styles.settingTextBlock}>
+                <h3>UI 字体</h3>
+                <p>{fontStatusText(font.family, font.status)}</p>
+              </div>
+            </header>
 
-          <div className={styles.optionGrid} role="radiogroup" aria-label="系统字体">
-            {fontOptions.map((option) => {
-              const Icon = option.icon;
-              const selected = font.family === option.id;
-              const isFontAssetOption = option.id !== "system";
-              const cached = Boolean(font.cachedFamilies[option.id]);
-              const isOptionDownloading = isFontAssetOption && font.downloadingFamily === option.id && downloading;
-              const optionDescription = fontOptionDescription({
-                id: option.id,
-                selected,
-                downloading: isOptionDownloading,
-                cached,
-                progress: font.progress,
-              });
-              return (
-                <button
-                  aria-checked={selected}
-                  className={styles.option}
-                  data-selected={selected ? "true" : "false"}
-                  disabled={downloading}
-                  key={option.id}
-                  onClick={() => chooseFont(option.id)}
-                  role="radio"
-                  type="button"
-                >
-                  <span className={styles.optionIcon}>
-                    <Icon size={16} />
-                  </span>
-                  <span className={styles.optionText}>
-                    <span className={styles.optionTitle}>{option.label}</span>
-                    <span className={styles.optionDescription}>{optionDescription}</span>
-                  </span>
-                  <span className={styles.optionState} aria-hidden="true">
-                    {selected ? (
-                      <Check size={15} />
-                    ) : isFontAssetOption && !cached ? (
-                      <Download size={15} />
-                    ) : null}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+            <div className={styles.optionGrid} role="radiogroup" aria-label="系统字体">
+              {fontOptions.map((option) => {
+                const Icon = option.icon;
+                const selected = font.family === option.id;
+                const isFontAssetOption = option.id !== "system";
+                const cached = Boolean(font.cachedFamilies[option.id]);
+                const isOptionDownloading = isFontAssetOption && font.downloadingFamily === option.id && downloading;
+                const optionDescription = fontOptionDescription({
+                  id: option.id,
+                  selected,
+                  downloading: isOptionDownloading,
+                  cached,
+                  progress: font.progress,
+                });
+                return (
+                  <button
+                    aria-checked={selected}
+                    className={styles.option}
+                    data-selected={selected ? "true" : "false"}
+                    disabled={downloading}
+                    key={option.id}
+                    onClick={() => chooseFont(option.id)}
+                    role="radio"
+                    type="button"
+                  >
+                    <span className={styles.optionIcon}>
+                      <Icon size={16} />
+                    </span>
+                    <span className={styles.optionText}>
+                      <span className={styles.optionTitle}>{option.label}</span>
+                      <span className={styles.optionDescription}>{optionDescription}</span>
+                    </span>
+                    <span className={styles.optionState} aria-hidden="true">
+                      {selected ? (
+                        <Check size={15} />
+                      ) : isFontAssetOption && !cached ? (
+                        <Download size={15} />
+                      ) : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {showProgress ? (
