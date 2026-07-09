@@ -14,25 +14,27 @@ from backend.app.tools.base import FunctionTool, ToolExecutionContext, ToolExecu
 from backend.app.tools.file_access import relative_tool_path, resolve_file_access_path
 from backend.app.tools.file_snapshots import (
     ensure_file_snapshot_store,
+    read_current_file_content,
     record_file_snapshot,
-    require_current_file_content,
 )
 from backend.app.tools.registry import ToolRegistry
 
 EDIT_FILE_DESCRIPTION = (
     "精确替换文件访问权限允许范围内已有 UTF-8 文本文件的一段内容。"
-    "调用前必须先用 read_file 完整读取目标文件；old_string 必须与当前文件内容完全一致且默认只允许匹配一次。"
+    "old_string 非空时必须与当前文件内容完全一致且默认只允许匹配一次；建议先用 read_file 确认上下文，但不是硬性要求。"
+    "old_string 为空时仅用于创建不存在的文件，或写入已有空文件/纯空白文件；目标非空会失败。"
+    "如果此前读取过该文件且文件随后发生变化，会拒绝覆盖当前内容。"
     "replace_all=true 时会替换所有匹配；new_string 为空表示删除该片段。"
 )
 
 DELETE_FILE_DESCRIPTION = (
     "删除文件访问权限允许范围内已有 UTF-8 文本文件，并返回删除 diff。"
-    "调用前必须先用 read_file 完整读取目标文件；目录不会被递归删除。"
+    "无需先读取文件；目录不会被递归删除。"
 )
 
 MOVE_FILE_DESCRIPTION = (
     "移动或重命名文件访问权限允许范围内已有 UTF-8 文本文件，并返回文件变更摘要。"
-    "调用前必须先用 read_file 完整读取源文件；目标已存在时会失败。"
+    "无需先读取文件；目标已存在时会失败。"
 )
 
 
@@ -50,7 +52,7 @@ def create_edit_operation_tools() -> list[FunctionTool]:
                     },
                     "old_string": {
                         "type": "string",
-                        "description": "要替换的原文，必须逐字匹配当前文件内容且不能是空字符串。",
+                        "description": "要替换的原文；非空时必须逐字匹配当前文件内容。为空时仅用于创建不存在文件或写入空文件/纯空白文件。",
                     },
                     "new_string": {
                         "type": "string",
@@ -128,20 +130,16 @@ async def edit_file_tool(
             "old_string 和 new_string 必须是字符串",
             code="invalid_tool_args",
         )
-    if old_string == "":
-        raise ToolExecutionError(
-            "old_string 不能为空",
-            code="empty_old_string",
-            details={"path": _relative(path, context), "hint": "创建新文件请使用 create_file。"},
-        )
     if old_string == new_string:
         raise ToolExecutionError(
             "old_string 和 new_string 完全相同，拒绝无效编辑",
             code="no_op_edit",
             details={"path": _relative(path, context)},
         )
+    if old_string == "":
+        return _edit_empty_old_string(path=path, new_string=new_string, context=context)
 
-    before = require_current_file_content(path, context=context)
+    before = read_current_file_content(path, context=context)
     match_count = before.count(old_string)
     if match_count == 0:
         raise ToolExecutionError(
@@ -182,12 +180,79 @@ async def edit_file_tool(
     return {"path": relative, "changed": True, "match_count": match_count, **change, "files": [change]}
 
 
+def _edit_empty_old_string(
+    *,
+    path: Path,
+    new_string: str,
+    context: ToolExecutionContext,
+) -> dict[str, Any]:
+    relative = _relative(path, context)
+    if path.exists() and not path.is_file():
+        raise ToolExecutionError("路径不是文件", code="path_not_file", details={"path": relative})
+
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(new_string, encoding="utf-8", newline="")
+        record_file_snapshot(path, context=context, content=new_string, full_read=True)
+        change = _file_change(
+            path=relative,
+            before="",
+            after=new_string,
+            operation="add",
+            change_type="create",
+        )
+        logger.info(
+            "[EditOpsTool] 通过空 old_string 创建文件完成 | "
+            f"path={relative} | added={change['added_lines']}"
+        )
+        return {
+            "path": relative,
+            "created": True,
+            "changed": True,
+            "match_count": 0,
+            **change,
+            "files": [change],
+        }
+
+    before = read_current_file_content(path, context=context)
+    if before.strip() != "":
+        raise ToolExecutionError(
+            "old_string 为空时不能覆盖已有非空文件",
+            code="file_exists",
+            details={
+                "path": relative,
+                "hint": "请提供能逐字匹配当前文件内容的非空 old_string，或确认删除后再重新创建。",
+            },
+        )
+
+    path.write_text(new_string, encoding="utf-8", newline="")
+    record_file_snapshot(path, context=context, content=new_string, full_read=True)
+    change = _file_change(
+        path=relative,
+        before=before,
+        after=new_string,
+        operation="update",
+        change_type="update",
+    )
+    logger.info(
+        "[EditOpsTool] 通过空 old_string 写入空文件完成 | "
+        f"path={relative} | added={change['added_lines']} | deleted={change['deleted_lines']}"
+    )
+    return {
+        "path": relative,
+        "changed": True,
+        "match_count": 0,
+        **change,
+        "files": [change],
+    }
+
+
 async def delete_file_tool(
     args: dict[str, Any],
     context: ToolExecutionContext,
 ) -> dict[str, Any]:
     path = _resolve(args.get("path"), context)
-    before = require_current_file_content(path, context=context)
+    before = read_current_file_content(path, context=context)
     relative = _relative(path, context)
     path.unlink()
     ensure_file_snapshot_store(context).discard(path)
@@ -218,7 +283,7 @@ async def move_file_tool(
             code="no_op_move",
             details={"path": _relative(source, context)},
         )
-    before = require_current_file_content(source, context=context)
+    before = read_current_file_content(source, context=context)
     if destination.exists():
         raise ToolExecutionError(
             "移动目标已存在",
@@ -269,6 +334,9 @@ def _file_change(
     change_type: str,
 ) -> dict[str, Any]:
     added, deleted = _change_counts(before, after)
+    diff_operation = (
+        "delete" if operation == "delete" else "add" if operation == "add" else "update"
+    )
     return finalize_file_change(
         {
             "path": path,
@@ -280,7 +348,7 @@ def _file_change(
                 path=path,
                 before=before,
                 after=after,
-                operation="delete" if operation == "delete" else "update",
+                operation=diff_operation,
             ),
         }
     )

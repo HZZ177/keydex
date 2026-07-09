@@ -85,7 +85,7 @@ def record_file_snapshot(
     )
 
 
-def require_current_file_content(
+def read_current_file_content(
     path: Path,
     *,
     context: ToolExecutionContext,
@@ -93,34 +93,19 @@ def require_current_file_content(
     store = ensure_file_snapshot_store(context)
     snapshot = store.get(path)
     relative = relative_tool_path(path, context)
-    if snapshot is None or not snapshot.full_read:
-        raise ToolExecutionError(
-            "修改文件前必须先完整读取该文件",
-            code="file_not_read",
-            details={
-                "path": relative,
-                "hint": "请先用 read_file 完整读取目标文件，再执行文件编辑、删除或移动。",
-            },
-        )
     if not path.exists():
         raise ToolExecutionError("文件不存在", code="file_not_found", details={"path": relative})
     if not path.is_file():
         raise ToolExecutionError("路径不是文件", code="path_not_file", details={"path": relative})
     try:
-        content = path.read_text(encoding=snapshot.encoding)
+        content = path.read_text(encoding=snapshot.encoding if snapshot is not None else "utf-8")
     except UnicodeDecodeError as exc:
         raise ToolExecutionError(
             "文件不是 UTF-8 文本",
             code="file_not_text",
             details={"path": relative},
         ) from exc
-    stat = path.stat()
-    stale = (
-        stat.st_mtime_ns != snapshot.mtime_ns
-        or stat.st_size != snapshot.size
-        or _digest(content) != snapshot.digest
-    )
-    if stale:
+    if snapshot is not None and _snapshot_is_stale(path, content, snapshot):
         raise ToolExecutionError(
             "文件已在读取后发生变化，拒绝覆盖当前内容",
             code="file_modified_since_read",
@@ -130,6 +115,15 @@ def require_current_file_content(
             },
         )
     return content
+
+
+def _snapshot_is_stale(path: Path, content: str, snapshot: FileReadSnapshot) -> bool:
+    stat = path.stat()
+    return (
+        stat.st_mtime_ns != snapshot.mtime_ns
+        or stat.st_size != snapshot.size
+        or _digest(content) != snapshot.digest
+    )
 
 
 def _snapshot_key(path: Path) -> str:

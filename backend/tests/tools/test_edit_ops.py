@@ -54,7 +54,7 @@ async def test_edit_file_replaces_single_match_after_read(tmp_path) -> None:
     assert target.read_text(encoding="utf-8") == "alpha\nnew\nomega\n"
 
 
-async def test_edit_file_requires_prior_full_read(tmp_path) -> None:
+async def test_edit_file_allows_direct_edit_without_prior_read(tmp_path) -> None:
     target = tmp_path / "note.txt"
     target.write_text("old\n", encoding="utf-8")
     registry = _registry()
@@ -64,9 +64,9 @@ async def test_edit_file_requires_prior_full_read(tmp_path) -> None:
         _context(tmp_path),
     )
 
-    assert result.ok is False
-    assert result.error["code"] == "file_not_read"
-    assert target.read_text(encoding="utf-8") == "old\n"
+    assert result.ok is True
+    assert result.result["operation"] == "update"
+    assert target.read_text(encoding="utf-8") == "new\n"
 
 
 async def test_edit_file_rejects_stale_snapshot_until_reread(tmp_path) -> None:
@@ -122,7 +122,7 @@ async def test_edit_file_multiple_matches_require_replace_all(tmp_path) -> None:
     assert target.read_text(encoding="utf-8") == "done\ndone\n"
 
 
-async def test_edit_file_rejects_noop_and_empty_old_string(tmp_path) -> None:
+async def test_edit_file_rejects_noop(tmp_path) -> None:
     target = tmp_path / "note.txt"
     target.write_text("old\n", encoding="utf-8")
     registry = _registry()
@@ -133,15 +133,83 @@ async def test_edit_file_rejects_noop_and_empty_old_string(tmp_path) -> None:
         {"path": "note.txt", "old_string": "old", "new_string": "old"},
         context,
     )
-    empty = await registry.require("edit_file").run(
-        {"path": "note.txt", "old_string": "", "new_string": "new"},
-        context,
+    empty_noop = await registry.require("edit_file").run(
+        {"path": "empty.txt", "old_string": "", "new_string": ""},
+        _context(tmp_path),
     )
 
     assert noop.ok is False
     assert noop.error["code"] == "no_op_edit"
-    assert empty.ok is False
-    assert empty.error["code"] == "empty_old_string"
+    assert empty_noop.ok is False
+    assert empty_noop.error["code"] == "no_op_edit"
+
+
+async def test_edit_file_empty_old_string_creates_missing_file(tmp_path) -> None:
+    registry = _registry()
+    context = _context(tmp_path)
+
+    result = await registry.require("edit_file").run(
+        {"path": "dir/new.txt", "old_string": "", "new_string": "created\n"},
+        context,
+    )
+    edited = await registry.require("edit_file").run(
+        {"path": "dir/new.txt", "old_string": "created", "new_string": "updated"},
+        context,
+    )
+
+    assert result.ok is True
+    assert result.result["created"] is True
+    assert result.result["change_type"] == "create"
+    assert result.result["added_lines"] == 1
+    assert "--- /dev/null" in result.result["diff"]
+    assert edited.ok is True
+    assert (tmp_path / "dir" / "new.txt").read_text(encoding="utf-8") == "updated\n"
+
+
+async def test_edit_file_empty_old_string_writes_empty_existing_file(tmp_path) -> None:
+    target = tmp_path / "empty.txt"
+    target.write_text("", encoding="utf-8")
+    registry = _registry()
+    context = _context(tmp_path)
+
+    result = await registry.require("edit_file").run(
+        {"path": "empty.txt", "old_string": "", "new_string": "filled\n"},
+        context,
+    )
+
+    assert result.ok is True
+    assert result.result["operation"] == "update"
+    assert result.result["added_lines"] == 1
+    assert target.read_text(encoding="utf-8") == "filled\n"
+
+
+async def test_edit_file_empty_old_string_writes_whitespace_only_existing_file(tmp_path) -> None:
+    target = tmp_path / "blank.txt"
+    target.write_text("  \n\t\n", encoding="utf-8")
+    registry = _registry()
+
+    result = await registry.require("edit_file").run(
+        {"path": "blank.txt", "old_string": "", "new_string": "filled\n"},
+        _context(tmp_path),
+    )
+
+    assert result.ok is True
+    assert target.read_text(encoding="utf-8") == "filled\n"
+
+
+async def test_edit_file_empty_old_string_rejects_non_empty_existing_file(tmp_path) -> None:
+    target = tmp_path / "note.txt"
+    target.write_text("old\n", encoding="utf-8")
+    registry = _registry()
+
+    result = await registry.require("edit_file").run(
+        {"path": "note.txt", "old_string": "", "new_string": "new\n"},
+        _context(tmp_path),
+    )
+
+    assert result.ok is False
+    assert result.error["code"] == "file_exists"
+    assert target.read_text(encoding="utf-8") == "old\n"
 
 
 async def test_edit_file_empty_new_string_deletes_fragment(tmp_path) -> None:
@@ -179,18 +247,14 @@ async def test_create_file_updates_snapshot_for_followup_edit(tmp_path) -> None:
     assert (tmp_path / "note.txt").read_text(encoding="utf-8") == "new\n"
 
 
-async def test_delete_file_requires_read_and_returns_delete_diff(tmp_path) -> None:
+async def test_delete_file_allows_direct_delete_and_returns_delete_diff(tmp_path) -> None:
     target = tmp_path / "old.txt"
     target.write_text("one\ntwo\n", encoding="utf-8")
     registry = _registry()
     context = _context(tmp_path)
-    unread = await registry.require("delete_file").run({"path": "old.txt"}, context)
-    await _read(registry, context, "old.txt")
 
     deleted = await registry.require("delete_file").run({"path": "old.txt"}, context)
 
-    assert unread.ok is False
-    assert unread.error["code"] == "file_not_read"
     assert deleted.ok is True
     assert deleted.result["operation"] == "delete"
     assert deleted.result["deleted_lines"] == 2
@@ -198,12 +262,11 @@ async def test_delete_file_requires_read_and_returns_delete_diff(tmp_path) -> No
     assert not target.exists()
 
 
-async def test_move_file_requires_read_and_updates_snapshot_for_new_path(tmp_path) -> None:
+async def test_move_file_allows_direct_move_and_updates_snapshot_for_new_path(tmp_path) -> None:
     source = tmp_path / "old.txt"
     source.write_text("old\n", encoding="utf-8")
     registry = _registry()
     context = _context(tmp_path)
-    await _read(registry, context, "old.txt")
 
     moved = await registry.require("move_file").run(
         {"path": "old.txt", "new_path": "dir/new.txt"},
