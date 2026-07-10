@@ -237,6 +237,43 @@ def consume_a2ui_stream_context(
     return value
 
 
+def discard_a2ui_stream_context(
+    render_key: str,
+    *,
+    tool_call_id: str | None = None,
+    run_id: str | None = None,
+) -> int:
+    normalized_key = str(render_key or "").strip()
+    normalized_tool_call_id = str(tool_call_id or "").strip()
+    normalized_run_id = str(run_id or "").strip()
+    if not normalized_key or (not normalized_tool_call_id and not normalized_run_id):
+        return 0
+    current = {
+        key: list(items or [])
+        for key, items in (a2ui_stream_context_var.get() or {}).items()
+    }
+    queue = current.get(normalized_key) or []
+    remaining: list[dict[str, Any]] = []
+    removed = 0
+    for item in queue:
+        item_tool_call_id = str((item or {}).get("tool_call_id") or "").strip()
+        item_run_id = str((item or {}).get("run_id") or "").strip()
+        matches = (
+            bool(normalized_tool_call_id and item_tool_call_id == normalized_tool_call_id)
+            or bool(normalized_run_id and item_run_id == normalized_run_id)
+        )
+        if matches:
+            removed += 1
+        else:
+            remaining.append(item)
+    if remaining:
+        current[normalized_key] = remaining
+    else:
+        current.pop(normalized_key, None)
+    a2ui_stream_context_var.set(current)
+    return removed
+
+
 def clear_a2ui_stream_context() -> None:
     a2ui_stream_context_var.set({})
 

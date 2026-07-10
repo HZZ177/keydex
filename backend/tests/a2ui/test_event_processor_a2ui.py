@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -632,6 +633,123 @@ async def test_event_processor_marks_a2ui_stream_failed_on_error_tool_message() 
     assert a2ui_events[2].payload["stream"]["status"] == "failed"
     assert a2ui_events[2].payload["stream"]["finish_reason"] == "tool_error"
     assert a2ui_events[2].payload["stream"]["error"] == error_text
+
+
+@pytest.mark.asyncio
+async def test_event_processor_marks_three_consecutive_a2ui_retries_failed() -> None:
+    emitted: list[DomainEvent] = []
+
+    async def capture(event: DomainEvent) -> None:
+        emitted.append(event)
+
+    events: list[dict[str, Any]] = []
+    for attempt in range(1, 4):
+        call_id = f"call_chart_{attempt}"
+        model_run_id = f"model_chart_{attempt}"
+        tool_run_id = f"tool_chart_{attempt}"
+        payload = {
+            "title": f"Invalid chart {attempt}",
+            "charts": [{"type": "trend"}],
+        }
+        error_message = ToolMessage(
+            content=(
+                "Tool `chart` failed. Error type: A2UISchemaValidationError. "
+                f"Error: attempt {attempt} is invalid."
+            ),
+            tool_call_id=call_id,
+            name="chart",
+            status="error",
+        )
+        wrapped_output: Any
+        if attempt == 1:
+            wrapped_output = error_message
+        elif attempt == 2:
+            wrapped_output = [error_message]
+        else:
+            wrapped_output = {"messages": [error_message]}
+        events.extend(
+            [
+                {
+                    "event": "on_chat_model_stream",
+                    "run_id": model_run_id,
+                    "data": {
+                        "chunk": AIMessageChunk(
+                            content="",
+                            tool_call_chunks=[
+                                {
+                                    "id": call_id,
+                                    "index": 0,
+                                    "name": "chart",
+                                    "args": json.dumps(payload),
+                                }
+                            ],
+                        )
+                    },
+                },
+                {
+                    "event": "on_chat_model_end",
+                    "run_id": model_run_id,
+                    "data": {
+                        "output": AIMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "name": "chart",
+                                    "args": payload,
+                                    "id": call_id,
+                                }
+                            ],
+                        )
+                    },
+                },
+                {
+                    "event": "on_tool_start",
+                    "run_id": tool_run_id,
+                    "name": "chart",
+                    "data": {"input": payload},
+                },
+                {
+                    "event": "on_tool_end",
+                    "run_id": tool_run_id,
+                    "name": "" if attempt > 1 else "chart",
+                    "data": {"output": wrapped_output},
+                },
+            ]
+        )
+
+    await process_agent_events(
+        _event_stream(events),
+        dispatcher=EventDispatcher([capture]),
+        cancellation=NeverCancelled(),
+        session_id="session-1",
+        trace_id="trace-1",
+        user_id="local-user",
+        active_session_id="session-1",
+        turn_index=1,
+    )
+
+    a2ui_events = [event for event in emitted if event.event_type.startswith("a2ui.stream.")]
+    failed_events = [
+        event
+        for event in a2ui_events
+        if event.payload.get("stream", {}).get("status") == "failed"
+    ]
+    assert len(a2ui_events) == 9
+    assert len(failed_events) == 3
+    assert [event.payload["stream_id"] for event in failed_events] == [
+        "trace-1:a2ui:call_chart_1",
+        "trace-1:a2ui:call_chart_2",
+        "trace-1:a2ui:call_chart_3",
+    ]
+    assert [event.payload["tool_call_id"] for event in failed_events] == [
+        "call_chart_1",
+        "call_chart_2",
+        "call_chart_3",
+    ]
+    assert all(
+        event.payload["stream"]["finish_reason"] == "tool_error"
+        for event in failed_events
+    )
 
 
 @pytest.mark.asyncio

@@ -251,8 +251,9 @@ async def process_agent_events(
             if event_type == "on_tool_end":
                 started_at = tool_start_times.pop(run_id, time.perf_counter())
                 duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
-                if a2ui_stream_bridge.registry.is_a2ui_tool(name):
-                    output = data.get("output")
+                output = data.get("output")
+                resolved_tool_name = name or _tool_name_from_output(output)
+                if a2ui_stream_bridge.registry.is_a2ui_tool(resolved_tool_name):
                     if _tool_output_is_error(output):
                         tool_call_id = (
                             tool_chunk_pipeline.tool_call_id_for_run(run_id)
@@ -261,7 +262,7 @@ async def process_agent_events(
                         error_text = _stringify_tool_output(output)
                         logger.warning(
                             f"[AgentEvents] A2UI 工具返回错误 | session_id={session_id} | "
-                            f"turn_index={turn_index} | trace_id={trace_id} | tool={name} | "
+                            f"turn_index={turn_index} | trace_id={trace_id} | tool={resolved_tool_name} | "
                             f"run_id={run_id} | duration_ms={duration_ms} | error={error_text}"
                         )
                         await _fail_a2ui_stream_for_tool_error(
@@ -937,19 +938,36 @@ def _tool_call_id_from_output(output: Any) -> str:
     return ""
 
 
+def _tool_name_from_output(output: Any) -> str:
+    output = _public_tool_output(output)
+    if isinstance(output, ToolMessage):
+        return str(getattr(output, "name", "") or "")
+    return ""
+
+
 def _public_tool_output(output: Any) -> Any:
-    if not isinstance(output, Command):
+    return _tool_message_from_output(output) or output
+
+
+def _tool_message_from_output(output: Any, *, depth: int = 0) -> ToolMessage | None:
+    if depth > 4:
+        return None
+    if isinstance(output, ToolMessage):
         return output
-    update = getattr(output, "update", None)
-    if not isinstance(update, dict):
-        return output
-    messages = update.get("messages")
-    if not isinstance(messages, list):
-        return output
-    for message in messages:
-        if isinstance(message, ToolMessage):
-            return message
-    return output
+    if isinstance(output, Command):
+        return _tool_message_from_output(getattr(output, "update", None), depth=depth + 1)
+    if isinstance(output, dict):
+        for key in ("messages", "output", "result"):
+            if key not in output:
+                continue
+            if message := _tool_message_from_output(output.get(key), depth=depth + 1):
+                return message
+        return None
+    if isinstance(output, (list, tuple)):
+        for item in output:
+            if message := _tool_message_from_output(item, depth=depth + 1):
+                return message
+    return None
 
 
 def _parse_structured_tool_content(content: Any) -> Any:

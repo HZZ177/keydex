@@ -9,7 +9,11 @@ from backend.app.a2ui.stream_bridge import (
     strip_a2ui_stream_marker,
 )
 from backend.app.agent.tool_call_progress import ToolCallChunkPipeline, default_collectors
-from backend.app.core.request_context import clear_a2ui_stream_context, consume_a2ui_stream_context
+from backend.app.core.request_context import (
+    clear_a2ui_stream_context,
+    consume_a2ui_stream_context,
+    register_a2ui_stream_context,
+)
 from backend.app.events.event_types import DomainEventType
 
 
@@ -194,6 +198,13 @@ def test_a2ui_stream_bridge_tool_error_replaces_finished_stream() -> None:
 
     model_end_payloads = bridge.finish_for_model_end()
     tool_start_payload = bridge.finish_for_tool_call("call_chart", run_id="tool_chart")
+    unrelated_context = {
+        "stream_id": "trace-1:a2ui:call_chart_other",
+        "tool_call_id": "call_chart_other",
+        "render_key": "chart",
+        "run_id": "tool_chart_other",
+    }
+    register_a2ui_stream_context("chart", unrelated_context)
     failed = bridge.fail_for_tool_call(
         "call_chart",
         run_id="tool_chart",
@@ -210,6 +221,8 @@ def test_a2ui_stream_bridge_tool_error_replaces_finished_stream() -> None:
     assert payload["stream"]["finish_reason"] == "tool_error"
     assert payload["stream"]["error"] == "$.charts[0].series[0].items[6].value: expected number"
     assert repeated_failed is None
+    assert consume_a2ui_stream_context("chart", tool_call_id="call_chart_other") == unrelated_context
+    assert consume_a2ui_stream_context("chart", tool_call_id="call_chart") is None
 
 
 def test_a2ui_stream_bridge_keeps_stream_id_stable_when_tool_call_id_arrives_late() -> None:

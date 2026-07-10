@@ -360,6 +360,49 @@ async def test_a2ui_runtime_rejects_invalid_payload(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a2ui_runtime_consumes_stream_context_before_schema_validation(tmp_path) -> None:
+    clear_a2ui_stream_context()
+    repositories = _repositories(tmp_path)
+    dispatcher = RecordingDispatcher()
+    registry = build_builtin_a2ui_registry()
+    runtime = A2UIRuntime(repositories=repositories, dispatcher=dispatcher, registry=registry)
+    register_a2ui_stream_context(
+        "chart",
+        {
+            "stream_id": "trace-1:a2ui:tool-call-invalid",
+            "tool_call_id": "tool-call-invalid",
+            "render_key": "chart",
+            "run_id": "tool-run-invalid",
+        },
+    )
+
+    with pytest.raises(A2UISchemaValidationError, match=r"series\[0\]\.name"):
+        await runtime.handle_tool_call(
+            registry.require("chart"),
+            {
+                "title": "Invalid trend",
+                "charts": [
+                    {
+                        "type": "trend",
+                        "series": [
+                            {
+                                "items": [
+                                    {"name": "T1", "value": 1},
+                                ]
+                            }
+                        ],
+                    }
+                ],
+            },
+            _context(tmp_path),
+            {"tool_call_id": "tool-call-invalid", "run_id": "tool-run-invalid"},
+        )
+
+    assert consume_a2ui_stream_context("chart", tool_call_id="tool-call-invalid") is None
+    assert dispatcher.events == []
+
+
+@pytest.mark.asyncio
 async def test_a2ui_runtime_rejects_legacy_chart_payload(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     dispatcher = RecordingDispatcher()

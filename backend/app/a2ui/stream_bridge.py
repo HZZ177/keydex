@@ -7,7 +7,10 @@ from backend.app.a2ui.event_payloads import build_a2ui_stream_payload
 from backend.app.a2ui.registry import A2UIRegistry, build_builtin_a2ui_registry
 from backend.app.a2ui.runtime import resolve_a2ui_stream_id
 from backend.app.agent.tool_call_progress import ToolCallChunkState, ToolProgressCollector
-from backend.app.core.request_context import register_a2ui_stream_context
+from backend.app.core.request_context import (
+    discard_a2ui_stream_context,
+    register_a2ui_stream_context,
+)
 from backend.app.events.event_types import DomainEventType
 
 A2UI_STREAM_EVENT_TYPE_KEY = "_a2ui_event_type"
@@ -259,6 +262,11 @@ class A2UIStreamCollector:
                 error=error,
             ),
             DomainEventType.A2UI_STREAM_FINISHED,
+        )
+        discard_a2ui_stream_context(
+            state.name,
+            tool_call_id=_payload_tool_call_id(state),
+            run_id=state.bound_run_id,
         )
         self._clear_state(key=key, state=state)
         return payload

@@ -65,16 +65,8 @@ class A2UIRuntime:
         context: ToolExecutionContext,
         config: RunnableConfig | None,
     ) -> str:
-        payload = validate_payload(args, definition.input_schema)
         tool_call_id = _tool_call_id_from_config(config) or str(context.metadata.get("tool_call_id") or "")
         run_id = _run_id_from_config(config) or str(context.metadata.get("run_id") or "").strip()
-        if definition.mode == "interactive":
-            resume_payload = consume_a2ui_resume_payload(
-                definition.render_key,
-                tool_call_id=tool_call_id,
-            )
-            if resume_payload is not None:
-                return _json_result(resume_payload)
         stream_context = consume_a2ui_stream_context(
             definition.render_key,
             tool_call_id=tool_call_id,
@@ -82,6 +74,14 @@ class A2UIRuntime:
         )
         if not tool_call_id and stream_context:
             tool_call_id = str(stream_context.get("tool_call_id") or "").strip()
+        payload = validate_payload(args, definition.input_schema)
+        if definition.mode == "interactive":
+            resume_payload = consume_a2ui_resume_payload(
+                definition.render_key,
+                tool_call_id=tool_call_id,
+            )
+            if resume_payload is not None:
+                return _json_result(resume_payload)
         if not tool_call_id:
             tool_call_id = new_id()
         stream_id = str((stream_context or {}).get("stream_id") or "").strip()
