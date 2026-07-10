@@ -199,6 +199,12 @@
   justify-content: flex-end;
 }
 
+.steerDeliveryBadgeRow {
+  display: flex;
+  max-width: var(--message-user-bubble-max-width, min(568px, calc(100% - 36px)));
+  justify-content: flex-end;
+}
+
 .goalContextItemWrapper {
   position: relative;
   display: inline-flex;

@@ -85,6 +85,43 @@ def test_message_event_service_aggregates_user_stream_tool_and_completed(tmp_pat
     assert isinstance(messages[2]["timestamp"], int)
 
 
+def test_message_event_service_preserves_pending_input_delivery_metadata(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_steer",
+        "user_message",
+        {
+            "content": "行进中补充",
+            "pending_input_id": "pending-steer",
+            "delivery_mode": "steer",
+        },
+    )
+    _append(
+        repositories,
+        "evt_queue",
+        "user_message",
+        {
+            "content": "排队发送",
+            "pending_input_id": "pending-queue",
+            "delivery_mode": "queue",
+        },
+        turn=2,
+    )
+    _append(repositories, "evt_regular", "user_message", {"content": "普通消息"}, turn=3)
+
+    messages = service.get_display_messages("ses_history")
+
+    assert messages[0]["pendingInputId"] == "pending-steer"
+    assert messages[0]["deliveryMode"] == "steer"
+    assert messages[1]["pendingInputId"] == "pending-queue"
+    assert messages[1]["deliveryMode"] == "queue"
+    assert "pendingInputId" not in messages[2]
+    assert "deliveryMode" not in messages[2]
+
+
 def test_message_event_service_splits_thread_task_continuation_turns(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)

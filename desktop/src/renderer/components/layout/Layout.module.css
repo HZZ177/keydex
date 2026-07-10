@@ -172,6 +172,7 @@
   overflow-x: hidden;
   overflow-y: auto;
   background: var(--surface-bg);
+  box-shadow: -8px 0 14px -16px rgb(15 23 42 / 26%);
   scrollbar-gutter: stable;
 }
 

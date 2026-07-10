@@ -1754,6 +1754,8 @@ export interface AgentChatMessage {
   content_type?: "a2ui" | string;
   timestamp: number;
   contextItems?: AgentContextItem[];
+  pendingInputId?: string;
+  deliveryMode?: PendingInputMode;
   reasoningKind?: AgentReasoningKind;
   attachments?: AgentFileAttachment[];
   ghostStats?: AgentGhostStats;

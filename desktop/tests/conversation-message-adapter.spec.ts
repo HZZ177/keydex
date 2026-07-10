@@ -10,7 +10,13 @@ import type { AgentChatMessage } from "@/types/protocol";
 
 describe("conversation message adapter", () => {
   it("maps user and assistant messages without changing ids or content", () => {
-    const user = agentMessage({ id: "u1", role: "user", content: "hello" });
+    const user = agentMessage({
+      id: "u1",
+      role: "user",
+      content: "hello",
+      pendingInputId: "pending-steer",
+      deliveryMode: "steer",
+    });
     const assistant = agentMessage({ id: "a1", role: "assistant", content: "world", streaming: true });
 
     expect(agentMessageToConversationMessage(user, 0)).toMatchObject({
@@ -19,7 +25,13 @@ describe("conversation message adapter", () => {
       itemId: "u1",
       kind: "user",
       content: "hello",
-      payload: { _sortSeq: 1 },
+      payload: {
+        _sortSeq: 1,
+        pendingInputId: "pending-steer",
+        pending_input_id: "pending-steer",
+        deliveryMode: "steer",
+        delivery_mode: "steer",
+      },
     });
     expect(agentMessageToConversationMessage(assistant, 1)).toMatchObject({
       id: "agent:a1",

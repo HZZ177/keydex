@@ -159,6 +159,33 @@ def test_build_default_middleware_honors_auto_title_config(tmp_path) -> None:
     assert any(isinstance(item, AutoTitleMiddleware) for item in enabled)
 
 
+def test_context_compression_keeps_complete_running_steer_batch_in_current_tail() -> None:
+    old_user = HumanMessage(content="原始任务")
+    steer_frame = SystemMessage(
+        content="行进中引导系统框架",
+        additional_kwargs={INJECTED_MESSAGE_MARKER: True},
+    )
+    injected_reference = HumanMessage(
+        content="引用上下文",
+        additional_kwargs={INJECTED_MESSAGE_MARKER: True},
+    )
+    first_steer = HumanMessage(
+        content="第一条引导",
+        additional_kwargs={INJECTED_MESSAGE_MARKER: True},
+    )
+    second_steer = HumanMessage(
+        content="第二条引导",
+        additional_kwargs={INJECTED_MESSAGE_MARKER: True},
+    )
+
+    source, current_tail = ContextCompressionMiddleware._split_messages_for_blocking_compression(
+        [old_user, steer_frame, injected_reference, first_steer, second_steer]
+    )
+
+    assert source == [old_user]
+    assert current_tail == [steer_frame, injected_reference, first_steer, second_steer]
+
+
 @pytest.mark.asyncio
 async def test_context_compression_before_model_runs_blocking_compression(tmp_path) -> None:
     repositories = _repositories(tmp_path)

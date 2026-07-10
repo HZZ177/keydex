@@ -198,6 +198,44 @@ describe("MessageText", () => {
     expect(card?.getAttribute("data-floating-placement")).toBe("bottom");
   });
 
+  it("renders the delivered steer badge only for identified in-turn guidance", () => {
+    const steered = message("user", "调整实现方向", "completed", {
+      pendingInputId: "pending-steer",
+      deliveryMode: "steer",
+    });
+    const view = render(<MessageText message={steered} />);
+
+    const article = screen.getByTestId("message-text");
+    const bubble = screen.getByTestId("message-bubble");
+    const badge = screen.getByTestId("steer-delivery-badge");
+    const badgeRow = screen.getByLabelText("消息投递状态");
+    const actions = screen.getByRole("button", { name: "复制消息" }).closest("footer");
+    expect(badge.textContent).toBe("已引导当前对话");
+    expect(badge.querySelector("svg")).not.toBeNull();
+    expect([...article.children].indexOf(bubble)).toBeLessThan([...article.children].indexOf(badgeRow));
+    expect([...article.children].indexOf(badgeRow)).toBeLessThan(
+      [...article.children].indexOf(actions as Element),
+    );
+
+    view.rerender(
+      <MessageText
+        message={message("user", "排队发送", "completed", {
+          pendingInputId: "pending-queue",
+          deliveryMode: "queue",
+        })}
+      />,
+    );
+    expect(screen.queryByTestId("steer-delivery-badge")).toBeNull();
+
+    view.rerender(<MessageText message={message("user", "普通消息", "completed")} />);
+    expect(screen.queryByTestId("steer-delivery-badge")).toBeNull();
+
+    view.rerender(
+      <MessageText message={message("user", "缺少待发送身份", "completed", { deliveryMode: "steer" })} />,
+    );
+    expect(screen.queryByTestId("steer-delivery-badge")).toBeNull();
+  });
+
   it("does not render an empty user bubble for context-only restored messages", () => {
     render(
       <MessageText

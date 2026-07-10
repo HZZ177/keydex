@@ -117,6 +117,12 @@ class MessageEventService:
                     "messageEventId": event.id,
                     "turnIndex": event.turn_index,
                 }
+                pending_input_id = str(data.get("pending_input_id") or "").strip()
+                delivery_mode = str(data.get("delivery_mode") or "").strip()
+                if pending_input_id:
+                    message["pendingInputId"] = pending_input_id
+                if delivery_mode in {"steer", "queue"}:
+                    message["deliveryMode"] = delivery_mode
                 context_items = self._merge_context_items(
                     self._context_items_from_user_message(data),
                     pending_context_items,

@@ -1,5 +1,5 @@
 import { ArrowUpDown, CornerDownLeft, PencilLine, ShieldCheck } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type {
   CommandApprovalDecisionPayload,
@@ -34,6 +34,7 @@ interface ApprovalChoiceOption {
   title: string;
 }
 
+const DEFAULT_APPROVAL_CHOICE: ApprovalChoice = "approve_once";
 const REJECT_TEXTAREA_MIN_HEIGHT = 22;
 const REJECT_TEXTAREA_MAX_HEIGHT = 108;
 const GENERIC_COMMAND_APPROVAL_DESCRIPTIONS = new Set([
@@ -49,7 +50,7 @@ export function ComposerApprovalCard({
   error = null,
   onSubmit,
 }: ComposerApprovalCardProps) {
-  const [selectedChoice, setSelectedChoice] = useState<ApprovalChoice>("approve_once");
+  const [selectedChoice, setSelectedChoice] = useState<ApprovalChoice>(DEFAULT_APPROVAL_CHOICE);
   const [rejectMessage, setRejectMessage] = useState("");
   const [commandExpanded, setCommandExpanded] = useState(false);
   const [commandRenderExpanded, setCommandRenderExpanded] = useState(false);
@@ -157,7 +158,7 @@ export function ComposerApprovalCard({
         focusRejectTextarea(rejectTextareaRef.current);
         return;
       }
-      cardRef.current?.querySelector<HTMLElement>(`[data-approval-choice="${nextChoiceId}"]`)?.focus();
+      focusApprovalChoice(cardRef.current, nextChoiceId);
     });
   }, [choices, selectedChoice, submitting]);
   const commandLines = command.split(/\r?\n/);
@@ -195,6 +196,12 @@ export function ComposerApprovalCard({
       resizeRejectTextarea(rejectTextareaRef.current);
     }
   }, [rejectMessage, selectedChoice]);
+
+  useLayoutEffect(() => {
+    setSelectedChoice(DEFAULT_APPROVAL_CHOICE);
+    setRejectMessage("");
+    focusApprovalChoice(cardRef.current, DEFAULT_APPROVAL_CHOICE);
+  }, [approval.id]);
 
   useEffect(() => {
     clearCommandAnimationTimers();
@@ -423,6 +430,10 @@ function focusRejectTextarea(textarea: HTMLTextAreaElement | null) {
   textarea.focus();
   const cursorPosition = textarea.value.length;
   textarea.setSelectionRange(cursorPosition, cursorPosition);
+}
+
+function focusApprovalChoice(card: HTMLElement | null, choiceId: ApprovalChoice) {
+  card?.querySelector<HTMLElement>(`[data-approval-choice="${choiceId}"]`)?.focus();
 }
 
 function resizeRejectTextarea(textarea: HTMLTextAreaElement | null) {

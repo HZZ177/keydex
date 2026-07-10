@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from langchain_core.messages import HumanMessage, RemoveMessage
+from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from backend.app.agent.middleware.pending_inputs import PendingUserInputInjectionMiddleware
@@ -81,15 +81,33 @@ async def test_pending_input_middleware_injects_all_steers_before_model(tmp_path
     assert isinstance(messages[0], RemoveMessage)
     assert messages[0].id == REMOVE_ALL_MESSAGES
     assert messages[1].content == "原始问题"
-    assert [message.content for message in messages[2:]] == [
+    steer_frame = messages[2]
+    assert isinstance(steer_frame, SystemMessage)
+    assert steer_frame.additional_kwargs == {
+        "_injected": True,
+        "keydex_delivery_mode": "steer",
+        "keydex_running_steer_instruction": True,
+        "keydex_pending_input_ids": [first.id, second.id],
+    }
+    assert "高优先级引导" in str(steer_frame.content)
+    assert "继续推进当前任务" in str(steer_frame.content)
+    assert "以较晚的引导为准" in str(steer_frame.content)
+    assert "停止、取消、暂停、切换目标或从头开始" in str(steer_frame.content)
+    assert [message.content for message in messages[3:]] == [
         "[引用片段]\nalpha.py:1",
         "补充第一条约束",
         "补充第二条约束",
     ]
     assert [
         message.additional_kwargs["keydex_pending_input_id"]
-        for message in messages[2:]
+        for message in messages[3:]
     ] == [first.id, first.id, second.id]
+    assert all(message.additional_kwargs["_injected"] is True for message in messages[3:])
+    assert sum(
+        isinstance(message, SystemMessage)
+        and message.additional_kwargs.get("keydex_running_steer_instruction") is True
+        for message in messages
+    ) == 1
 
     assert [event.event_type for event in events] == [
         DomainEventType.MESSAGE_USER_CREATED.value,
@@ -169,6 +187,14 @@ async def test_pending_input_middleware_keeps_images_and_skill_activation(tmp_pa
         reset_request_context(token)
 
     assert result is not None
+    steer_frames = [
+        message
+        for message in result["messages"]
+        if isinstance(message, SystemMessage)
+        and message.additional_kwargs.get("keydex_running_steer_instruction") is True
+    ]
+    assert len(steer_frames) == 1
+    assert steer_frames[0].additional_kwargs["keydex_pending_input_ids"] == [record.id]
     user_message = result["messages"][-1]
     assert user_message.content[0] == {"type": "text", "text": "结合图片继续"}
     assert user_message.content[1]["type"] == "image_url"

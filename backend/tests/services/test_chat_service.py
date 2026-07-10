@@ -11,8 +11,15 @@ from typing import Any
 import httpx
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_openai.chat_models._client_utils import StreamChunkTimeoutError
+from pydantic import Field
 
 from backend.app.agent import AgentRunner
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
@@ -49,6 +56,20 @@ class RecordingChatAdapter:
 class ToolFriendlyFakeModel(FakeMessagesListChatModel):
     def bind_tools(self, tools: list[Any], *, tool_choice: Any = None, **kwargs: Any) -> Any:
         return self
+
+
+class RecordingToolFriendlyFakeModel(ToolFriendlyFakeModel):
+    recorded_messages: list[list[Any]] = Field(default_factory=list)
+
+    def _generate(
+        self,
+        messages: list[Any],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        self.recorded_messages.append(list(messages))
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
 
 def test_chat_turn_error_classifies_httpx_read_timeout() -> None:
@@ -1252,7 +1273,7 @@ async def test_chat_service_forces_skill_from_second_batched_steer_after_tool(
         body="Batched steer skill instructions.",
     )
     registry = ToolRegistry()
-    model = ToolFriendlyFakeModel(
+    model = RecordingToolFriendlyFakeModel(
         responses=[
             AIMessage(
                 content="",
@@ -1341,6 +1362,34 @@ async def test_chat_service_forces_skill_from_second_batched_steer_after_tool(
         if item["action"] == "tool_start"
     ]
     assert tool_names == ["seed_pending_steers", "load_skill"]
+    assert len(model.recorded_messages) == 2
+    follow_up_messages = model.recorded_messages[-1]
+    steer_frames = [
+        message
+        for message in follow_up_messages
+        if isinstance(message, SystemMessage)
+        and message.additional_kwargs.get("keydex_running_steer_instruction") is True
+    ]
+    assert len(steer_frames) == 1
+    steer_frame = steer_frames[0]
+    assert "高优先级引导" in str(steer_frame.content)
+    assert steer_frame.additional_kwargs["keydex_pending_input_ids"] == [
+        repositories.pending_inputs.get_by_client_input_id(
+            session.id,
+            "steer-plain",
+        ).id,
+        repositories.pending_inputs.get_by_client_input_id(
+            session.id,
+            "steer-skill",
+        ).id,
+    ]
+    frame_index = follow_up_messages.index(steer_frame)
+    steer_user_messages = [
+        message
+        for message in follow_up_messages[frame_index + 1 :]
+        if isinstance(message, HumanMessage) and message.content in {"你好", "看看"}
+    ]
+    assert [message.content for message in steer_user_messages] == ["你好", "看看"]
     history = service.message_event_service.get_display_messages(session.id)
     skill_messages = [
         message
@@ -1348,6 +1397,11 @@ async def test_chat_service_forces_skill_from_second_batched_steer_after_tool(
         if message.get("role") == "tool" and message.get("toolName") == "load_skill"
     ]
     assert len(skill_messages) == 1
+    assert not any(
+        message.get("role") == "system"
+        and "高优先级引导" in str(message.get("content") or "")
+        for message in history
+    )
 
 
 @pytest.mark.asyncio

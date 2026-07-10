@@ -1,4 +1,4 @@
-import { Check, ChevronDown, CircleAlert, Copy, GitBranchPlus, Target, Undo2 } from "lucide-react";
+import { Check, ChevronDown, CircleAlert, Copy, CornerDownLeft, GitBranchPlus, Target, Undo2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -119,6 +119,7 @@ export function MessageText({
     () => (isUser ? null : ghostFooterFromPayload(message.payload)),
     [isUser, message.payload],
   );
+  const deliveredAsSteer = isUser && isDeliveredSteerMessage(message.payload);
   const turnError = useMemo(
     () => (message.kind === "assistant" && message.status === "failed" ? turnErrorFromPayload(message.payload) : null),
     [message.kind, message.payload, message.status],
@@ -340,6 +341,7 @@ export function MessageText({
         </div>
       ) : null}
       {isUser && goalContextItems.length ? <MessageGoalContextItems items={goalContextItems} /> : null}
+      {deliveredAsSteer ? <MessageSteerDeliveryBadge /> : null}
       <MessageGhostFooter footer={ghostFooter} />
 
       {!visuallyStreaming && showActionRow ? (
@@ -621,6 +623,19 @@ function MessageGoalContextItems({ items }: { items: AgentContextItem[] }) {
           <span className={styles.goalContextTitle}>{goalContextTitle(item)}</span>
         </FloatingQuotePreview>
       ))}
+    </div>
+  );
+}
+
+function MessageSteerDeliveryBadge() {
+  return (
+    <div className={styles.steerDeliveryBadgeRow} aria-label="消息投递状态">
+      <span className={styles.goalContextItemWrapper}>
+        <span className={styles.goalContextItem} data-testid="steer-delivery-badge">
+          <CornerDownLeft size={12} aria-hidden="true" />
+          <span>已引导当前对话</span>
+        </span>
+      </span>
     </div>
   );
 }
@@ -961,6 +976,12 @@ function contextItemsFromPayload(payload: Record<string, unknown>): AgentContext
       },
     ];
   });
+}
+
+function isDeliveredSteerMessage(payload: Record<string, unknown>): boolean {
+  const pendingInputId = String(payload.pendingInputId ?? payload.pending_input_id ?? "").trim();
+  const deliveryMode = String(payload.deliveryMode ?? payload.delivery_mode ?? "").trim();
+  return Boolean(pendingInputId) && deliveryMode === "steer";
 }
 
 function isGoalContextItem(item: AgentContextItem): boolean {

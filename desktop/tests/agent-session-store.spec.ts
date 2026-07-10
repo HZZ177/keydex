@@ -1035,6 +1035,7 @@ describe("agentSessionStore reducer", () => {
       data: {
         session_id: "ses-1",
         pending_input_id: "pending-1",
+        delivery_mode: "steer",
         content: "暂停的引导",
         contextItems: [{ type: "file", label: "alpha.py", content: "alpha.py" }],
         attachments: [{ id: "att-1", attachment_id: "att-1", type: "image", name: "a.png" }],
@@ -1050,8 +1051,31 @@ describe("agentSessionStore reducer", () => {
         content: "暂停的引导",
         contextItems: [{ label: "alpha.py" }],
         attachments: [{ id: "att-1" }],
+        pendingInputId: "pending-1",
+        deliveryMode: "steer",
         traceId: "trace-steer",
         turnIndex: 2,
+      },
+    ]);
+
+    const hydrated = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        {
+          role: "user",
+          content: "暂停的引导",
+          pendingInputId: "pending-1",
+          deliveryMode: "steer",
+        },
+      ]),
+    });
+    expect(selectAgentMessages(hydrated, "ses-1")).toMatchObject([
+      {
+        role: "user",
+        pendingInputId: "pending-1",
+        deliveryMode: "steer",
+        hydratedFromHistory: true,
       },
     ]);
 

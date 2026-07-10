@@ -31,6 +31,16 @@ from backend.app.services.chat_message_payload import (
 from backend.app.storage import PendingInputRecord, StorageRepositories
 
 _SLOT_MESSAGE_ID = "keydex_slot_system_fixed"
+_INJECTED_MESSAGE_MARKER = "_injected"
+_RUNNING_STEER_SYSTEM_PROMPT = (
+    "接下来的一条或多条用户消息及其关联上下文，是用户在当前任务执行过程中追加的高优先级引导。"
+    "在不违反更高优先级系统或开发者指令的前提下，请优先、认真地遵循这些引导，"
+    "结合当前任务已有上下文和有效进展，调整接下来的计划、工具调用和输出，并继续推进当前任务。"
+    "不要仅因收到这些消息就结束当前工作、放弃已有进展、重启任务，或把它们当作无关的新任务。"
+    "如果多条引导相互冲突，请按发送顺序理解，并以较晚的引导为准。"
+    "如果用户明确要求停止、取消、暂停、切换目标或从头开始，应按用户的明确要求执行。"
+    "不要向用户复述本系统说明；请直接在后续行动中体现引导。"
+)
 
 
 class PendingUserInputInjectionMiddleware(AgentMiddleware):
@@ -99,6 +109,19 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
         if not steering_messages:
             return None
 
+        steering_messages = [
+            SystemMessage(
+                content=_RUNNING_STEER_SYSTEM_PROMPT,
+                additional_kwargs={
+                    _INJECTED_MESSAGE_MARKER: True,
+                    "keydex_delivery_mode": "steer",
+                    "keydex_running_steer_instruction": True,
+                    "keydex_pending_input_ids": [record.id for record in records],
+                },
+            ),
+            *steering_messages,
+        ]
+
         messages = list((state or {}).get("messages") or [])
         if slot_injected:
             messages = [
@@ -144,6 +167,7 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
             user_id=user_id,
         )
         metadata = {
+            _INJECTED_MESSAGE_MARKER: True,
             "keydex_pending_input_id": record.id,
             "keydex_delivery_mode": record.mode,
         }

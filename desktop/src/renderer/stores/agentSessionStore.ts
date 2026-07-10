@@ -2273,6 +2273,7 @@ function handleUserMessage(
     return state;
   }
   const pendingInputId = stringValue(data.pending_input_id);
+  const deliveryMode = stringValue(data.delivery_mode);
   const messageId = pendingInputId
     ? `pending-user:${pendingInputId}`
     : stringValue(data.message_event_id) || stringValue(data.event_id) || nextMessageId(state, "user", sessionId);
@@ -2296,6 +2297,8 @@ function handleUserMessage(
       (item): item is AgentContextItem => Boolean(item && typeof item === "object"),
     ),
     attachments: pendingInputAttachments(data.attachments),
+    ...(pendingInputId ? { pendingInputId } : {}),
+    ...(pendingInputId && isPendingInputMode(deliveryMode) ? { deliveryMode } : {}),
     timestamp: timestampFromData(data),
     turnIndex: numberValue(data.turn_index),
     ...(stringValue(data.trace_id) ? { traceId: stringValue(data.trace_id) } : {}),

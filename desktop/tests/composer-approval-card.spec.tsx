@@ -5,6 +5,19 @@ import { ComposerApprovalCard } from "@/renderer/pages/conversation/ComposerAppr
 import type { CommandApprovalRequest } from "@/types/protocol";
 
 describe("ComposerApprovalCard", () => {
+  it("focuses the default approval choice so Enter submits without clicking the card", () => {
+    const onSubmit = vi.fn();
+
+    render(<ComposerApprovalCard approval={approval()} allowPersistentTrust onSubmit={onSubmit} />);
+
+    const approveOnce = screen.getAllByRole("radio")[0];
+    expect(document.activeElement).toBe(approveOnce);
+
+    fireEvent.keyDown(approveOnce, { key: "Enter" });
+
+    expect(onSubmit).toHaveBeenCalledWith({ decision: "approved", trust_scope: "once" });
+  });
+
   it("selects once, exact trust, prefix trust and reject decisions before submitting", async () => {
     const onSubmit = vi.fn();
 
