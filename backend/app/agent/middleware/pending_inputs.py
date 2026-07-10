@@ -13,6 +13,7 @@ from langchain_core.messages import (
 )
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
+from backend.app.agent.state import build_pending_tool_call_preset_update
 from backend.app.agent.tool_call_preset import ToolCallPreset, ToolCallPresetItem
 from backend.app.core.logger import logger
 from backend.app.core.request_context import (
@@ -20,7 +21,6 @@ from backend.app.core.request_context import (
     get_session_id,
     get_trace_id,
     get_turn_index,
-    set_tool_call_preset,
 )
 from backend.app.events import EventDispatcher
 from backend.app.events.event_types import DomainEventType
@@ -96,19 +96,6 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
                 turn_index=turn_index,
             )
 
-        if skill_names:
-            set_tool_call_preset(
-                ToolCallPreset(
-                    type="force",
-                    producer="skill_activation",
-                    calls=[
-                        ToolCallPresetItem(name="load_skill", args={"skill_name": skill_name})
-                        for skill_name in skill_names
-                    ],
-                    metadata={"source": "pending_user_input"},
-                )
-            )
-
         if not steering_messages:
             return None
 
@@ -124,13 +111,25 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
             f"session_id={session_id} | turn_index={turn_index} | "
             f"inputs={len(records)} | messages={len(steering_messages)}"
         )
-        return {
+        update: dict[str, Any] = {
             "messages": [
                 RemoveMessage(id=REMOVE_ALL_MESSAGES),
                 *messages,
                 *steering_messages,
             ],
         }
+        if skill_names:
+            preset = ToolCallPreset(
+                type="force",
+                producer="skill_activation",
+                calls=[
+                    ToolCallPresetItem(name="load_skill", args={"skill_name": skill_name})
+                    for skill_name in skill_names
+                ],
+                metadata={"source": "pending_user_input"},
+            )
+            update.update(build_pending_tool_call_preset_update(preset.to_dict()))
+        return update
 
     def _messages_for_record(
         self,

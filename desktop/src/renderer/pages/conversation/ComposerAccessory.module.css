@@ -326,7 +326,6 @@
   color: var(--color-text-secondary);
   line-height: var(--ui-line-height-tight);
   transition: background-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
-  will-change: transform;
 }
 
 .pendingInputRow:hover {
@@ -337,13 +336,26 @@
   background: color-mix(in srgb, var(--surface-muted) 42%, transparent);
 }
 
-.pendingInputRow[data-drag-placeholder="true"] {
+.pendingInputRowPlaceholder {
   background: color-mix(in srgb, var(--surface-muted) 68%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-border-strong) 56%, transparent);
 }
 
-.pendingInputRow[data-drag-placeholder="true"] > * {
-  visibility: hidden;
+.pendingInputFloatingRow {
+  position: fixed;
+  z-index: 205;
+  box-sizing: border-box;
+  background: var(--color-bg-elevated);
+  box-shadow:
+    0 8px 20px rgb(0 0 0 / 14%),
+    inset 0 0 0 1px color-mix(in srgb, var(--color-border-strong) 66%, transparent);
+  cursor: grabbing;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.pendingInputFloatingRow .pendingInputDragHandle {
+  cursor: grabbing;
 }
 
 .pendingInputDragHandle {

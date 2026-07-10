@@ -2,11 +2,35 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ConversationComposerAccessory } from "@/renderer/pages/conversation/ComposerAccessory";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { AgentPendingInput, ThreadTask, ThreadTaskRun } from "@/types/protocol";
+
+const NativePointerEvent = globalThis.PointerEvent;
+
+beforeAll(() => {
+  class TestPointerEvent extends MouseEvent {
+    readonly pointerId: number;
+
+    constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 1;
+    }
+  }
+  Object.defineProperty(globalThis, "PointerEvent", {
+    configurable: true,
+    value: TestPointerEvent,
+  });
+});
+
+afterAll(() => {
+  Object.defineProperty(globalThis, "PointerEvent", {
+    configurable: true,
+    value: NativePointerEvent,
+  });
+});
 
 describe("ConversationComposerAccessory thread task", () => {
   it("caps goal-related composer capsules to two thirds of the input width", () => {
@@ -23,6 +47,110 @@ describe("ConversationComposerAccessory thread task", () => {
       /\.composerAccessoryItem\[data-selected-item="thread-task"\]\s*{[^}]*max-width:\s*66\.666%/s,
     );
     expect(goalModeCss).toMatch(/\.goalModeAccessory\s*{[^}]*max-width:\s*66\.666%/s);
+  });
+
+  it("keeps an empty slot while the real row follows the pointer", async () => {
+    const composerAccessoryCss = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/conversation/ComposerAccessory.module.css"),
+      "utf8",
+    );
+    const rowRule = composerAccessoryCss.match(/\.pendingInputRow\s*{([^}]*)}/s)?.[1] ?? "";
+    const floatingRule = composerAccessoryCss.match(
+      /\.pendingInputFloatingRow\s*{([^}]*)}/s,
+    )?.[1] ?? "";
+
+    expect(rowRule).not.toMatch(/will-change|transform|filter/);
+    expect(floatingRule).toMatch(/position:\s*fixed/);
+    expect(floatingRule).toMatch(/will-change:\s*transform/);
+    expect(floatingRule).not.toMatch(/scale|filter|opacity|visibility/);
+
+    const onReorder = vi.fn();
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        pendingInputs={[
+          pendingInput("pending-visible-1", { message: "拖动中仍然显示我", mode: "queue", status: "queued" }),
+          pendingInput("pending-visible-2", { message: "目标消息", mode: "queue", status: "queued" }),
+        ]}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onPendingInputReorder={onReorder}
+      />,
+    );
+
+    const pill = screen.getByTestId("pending-inputs-pill");
+    const handle = within(pill).getByRole("button", { name: "拖动调整顺序：拖动中仍然显示我" });
+    for (const row of pill.querySelectorAll<HTMLElement>("[data-pending-input-id]")) {
+      Object.defineProperty(row, "getBoundingClientRect", {
+        configurable: true,
+        value: () => {
+          const index = row.parentElement ? [...row.parentElement.children].indexOf(row) : 0;
+          const top = index * 26;
+          return { top, bottom: top + 24, height: 24, left: 20, right: 420, width: 400 } as DOMRect;
+        },
+      });
+    }
+
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 10, clientY: 12 });
+    fireEvent.pointerMove(window, { buttons: 1, pointerId: 10, clientY: 38 });
+
+    const placeholder = pill.querySelector('[data-pending-input-id="pending-visible-1"]');
+    const floatingRow = document.querySelector('[data-floating-pending-input-id="pending-visible-1"]');
+    expect(placeholder?.getAttribute("data-pending-input-placeholder")).toBe("true");
+    expect(placeholder?.textContent).toBe("");
+    expect(floatingRow?.textContent).toContain("拖动中仍然显示我");
+    expect((floatingRow as HTMLElement | null)?.style.transform).toBe("translate3d(0, 26px, 0)");
+    expect(onReorder).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(window, { button: 0, pointerId: 10, clientY: 38 });
+    await waitFor(() => expect(onReorder).toHaveBeenCalledWith(["pending-visible-2", "pending-visible-1"]));
+    expect(document.querySelector('[data-floating-pending-input-id="pending-visible-1"]')).toBeNull();
+    expect(pill.querySelector("[data-pending-input-placeholder]")).toBeNull();
+  });
+
+  it("reorders as soon as the floating row center crosses the target midpoint", () => {
+    const onReorder = vi.fn();
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        pendingInputs={[
+          pendingInput("pending-threshold-1", { message: "阈值一", mode: "queue", status: "queued" }),
+          pendingInput("pending-threshold-2", { message: "阈值二", mode: "queue", status: "queued" }),
+          pendingInput("pending-threshold-3", { message: "阈值三", mode: "queue", status: "queued" }),
+        ]}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onPendingInputReorder={onReorder}
+      />,
+    );
+
+    const pill = screen.getByTestId("pending-inputs-pill");
+    const handle = within(pill).getByRole("button", { name: "拖动调整顺序：阈值一" });
+    for (const row of pill.querySelectorAll<HTMLElement>("[data-pending-input-id]")) {
+      Object.defineProperty(row, "getBoundingClientRect", {
+        configurable: true,
+        value: () => {
+          const index = row.parentElement ? [...row.parentElement.children].indexOf(row) : 0;
+          const top = index * 26;
+          return { top, bottom: top + 24, height: 24, left: 20, right: 420, width: 400 } as DOMRect;
+        },
+      });
+    }
+
+    const previewIds = () => [...pill.querySelectorAll("[data-pending-input-id]")]
+      .map((row) => row.getAttribute("data-pending-input-id"));
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 12, clientY: 12 });
+    fireEvent.pointerMove(window, { buttons: 1, pointerId: 12, clientY: 37 });
+    expect(previewIds()).toEqual(["pending-threshold-1", "pending-threshold-2", "pending-threshold-3"]);
+
+    fireEvent.pointerMove(window, { buttons: 1, pointerId: 12, clientY: 39 });
+    expect(previewIds()).toEqual(["pending-threshold-2", "pending-threshold-1", "pending-threshold-3"]);
+    expect(onReorder).not.toHaveBeenCalled();
+
+    fireEvent.pointerCancel(window, { pointerId: 12 });
+    expect(previewIds()).toEqual(["pending-threshold-1", "pending-threshold-2", "pending-threshold-3"]);
   });
 
   it("selects the active thread task before plan summaries", () => {
@@ -442,22 +570,26 @@ describe("ConversationComposerAccessory thread task", () => {
         value: () => {
           const index = row.parentElement ? [...row.parentElement.children].indexOf(row) : 0;
           const top = index * 26;
-          return { top, bottom: top + 24, height: 24 } as DOMRect;
+          return { top, bottom: top + 24, height: 24, left: 20, right: 420, width: 400 } as DOMRect;
         },
       });
     }
 
-    fireEvent.dragStart(firstHandle);
-    fireEvent.dragOver(secondRow as Element, { clientY: 1_000 });
+    fireEvent.pointerDown(firstHandle, { button: 0, pointerId: 1, clientY: 26 });
+    fireEvent.pointerMove(window, { buttons: 1, pointerId: 1, clientY: 1_000 });
 
     expect(onReorder).not.toHaveBeenCalled();
     expect(animate).toHaveBeenCalled();
     expect(
       [...pill.querySelectorAll("[data-pending-input-id]")].map((row) => row.getAttribute("data-pending-input-id")),
     ).toEqual(["pending-running", "pending-2", "pending-1"]);
-    expect(pill.querySelector('[data-pending-input-id="pending-1"]')?.getAttribute("data-drag-placeholder")).toBe("true");
+    expect(pill.querySelector('[data-pending-input-id="pending-1"]')?.getAttribute("data-pending-input-placeholder"))
+      .toBe("true");
+    expect(pill.querySelector('[data-pending-input-id="pending-1"]')?.textContent).toBe("");
+    expect(document.querySelector('[data-floating-pending-input-id="pending-1"]')?.textContent)
+      .toContain("第一条等待消息");
 
-    fireEvent.drop(secondRow as Element, { clientY: 1 });
+    fireEvent.pointerUp(window, { button: 0, pointerId: 1, clientY: 1_000 });
 
     await waitFor(() => {
       expect(onReorder).toHaveBeenLastCalledWith(["pending-2", "pending-1"]);
@@ -473,6 +605,79 @@ describe("ConversationComposerAccessory thread task", () => {
     await waitFor(() => {
       expect(onReorder).toHaveBeenLastCalledWith(["pending-1", "pending-2"]);
     });
+  });
+
+  it("releases finished FLIP transforms after physical-pixel-aligned animation", async () => {
+    const originalDevicePixelRatio = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 1.25 });
+    try {
+      const onReorder = vi.fn();
+      render(
+        <ConversationComposerAccessory
+          messages={[]}
+          pendingInputs={[
+            pendingInput("pending-pixel-1", { message: "像素一", mode: "queue", status: "queued" }),
+            pendingInput("pending-pixel-2", { message: "像素二", mode: "queue", status: "queued" }),
+          ]}
+          showScrollToBottom={false}
+          onFilePreview={vi.fn()}
+          onScrollToBottom={vi.fn()}
+          onPendingInputReorder={onReorder}
+        />,
+      );
+
+      type TestAnimation = Animation & { cancel: ReturnType<typeof vi.fn> };
+      const animations: TestAnimation[] = [];
+      const animate = vi.fn((_: Keyframe[] | PropertyIndexedKeyframes, __: number | KeyframeAnimationOptions) => {
+        const animation = { cancel: vi.fn(), onfinish: null } as unknown as TestAnimation;
+        animations.push(animation);
+        return animation;
+      });
+      const pill = screen.getByTestId("pending-inputs-pill");
+      const handle = within(pill).getByRole("button", { name: "拖动调整顺序：像素一" });
+      for (const row of pill.querySelectorAll<HTMLElement>("[data-pending-input-id]")) {
+        Object.defineProperty(row, "animate", { configurable: true, value: animate });
+        Object.defineProperty(row, "getBoundingClientRect", {
+          configurable: true,
+          value: () => {
+            const index = row.parentElement ? [...row.parentElement.children].indexOf(row) : 0;
+            const top = index * 25.7;
+            return { top, bottom: top + 24, height: 24, left: 20, right: 420, width: 400 } as DOMRect;
+          },
+        });
+      }
+
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 11, clientY: 12 });
+      fireEvent.pointerMove(window, { buttons: 1, pointerId: 11, clientY: 1_000 });
+
+      expect(animate).toHaveBeenCalledTimes(2);
+      const initialTransforms = animate.mock.calls.map(([keyframes]) =>
+        (keyframes as Keyframe[])[0]?.transform,
+      );
+      expect(new Set(initialTransforms)).toEqual(
+        new Set(["translateY(-25.6px)", "translateY(25.6px)"]),
+      );
+      for (const [, options] of animate.mock.calls) {
+        expect(options).toMatchObject({ fill: "none" });
+      }
+
+      const finishedAnimations = [...animations];
+      for (const animation of finishedAnimations) {
+        expect(animation.onfinish).toEqual(expect.any(Function));
+        animation.onfinish?.call(animation, new Event("finish") as AnimationPlaybackEvent);
+        expect(animation.cancel).toHaveBeenCalledTimes(1);
+      }
+
+      fireEvent.pointerUp(window, { button: 0, pointerId: 11, clientY: 1_000 });
+      await waitFor(() => expect(onReorder).toHaveBeenCalledWith(["pending-pixel-2", "pending-pixel-1"]));
+      for (const animation of finishedAnimations) {
+        expect(animation.cancel).toHaveBeenCalledTimes(1);
+      }
+    } finally {
+      if (originalDevicePixelRatio) {
+        Object.defineProperty(window, "devicePixelRatio", originalDevicePixelRatio);
+      }
+    }
   });
 
   it("restores the original order when a live drag preview is cancelled", () => {
@@ -493,19 +698,29 @@ describe("ConversationComposerAccessory thread task", () => {
 
     const pill = screen.getByTestId("pending-inputs-pill");
     const firstHandle = within(pill).getByRole("button", { name: "拖动调整顺序：第一条" });
-    const secondRow = pill.querySelector('[data-pending-input-id="pending-2"]');
-    fireEvent.dragStart(firstHandle);
-    fireEvent.dragOver(secondRow as Element, { clientY: 1 });
+    for (const row of pill.querySelectorAll<HTMLElement>("[data-pending-input-id]")) {
+      Object.defineProperty(row, "getBoundingClientRect", {
+        configurable: true,
+        value: () => {
+          const index = row.parentElement ? [...row.parentElement.children].indexOf(row) : 0;
+          const top = index * 26;
+          return { top, bottom: top + 24, height: 24, left: 20, right: 420, width: 400 } as DOMRect;
+        },
+      });
+    }
+    fireEvent.pointerDown(firstHandle, { button: 0, pointerId: 2, clientY: 12 });
+    fireEvent.pointerMove(window, { buttons: 1, pointerId: 2, clientY: 1_000 });
     expect(
       [...pill.querySelectorAll("[data-pending-input-id]")].map((row) => row.getAttribute("data-pending-input-id")),
     ).toEqual(["pending-2", "pending-1"]);
 
-    fireEvent.dragEnd(firstHandle);
+    fireEvent.pointerCancel(window, { pointerId: 2 });
 
     expect(
       [...pill.querySelectorAll("[data-pending-input-id]")].map((row) => row.getAttribute("data-pending-input-id")),
     ).toEqual(["pending-1", "pending-2"]);
-    expect(pill.querySelector("[data-drag-placeholder=\"true\"]")).toBeNull();
+    expect(document.querySelector("[data-floating-pending-input-id]")).toBeNull();
+    expect(pill.querySelector("[data-pending-input-placeholder]")).toBeNull();
     expect(onReorder).not.toHaveBeenCalled();
   });
 

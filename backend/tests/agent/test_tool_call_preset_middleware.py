@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from langchain.agents.middleware.types import ModelRequest
+from langchain.agents.middleware.types import ExtendedModelResponse, ModelRequest
 from langchain_core.messages import AIMessage
 
 from backend.app.agent.tool_call_preset import ToolCallPreset, ToolCallPresetItem
@@ -18,8 +18,12 @@ from backend.app.core.request_context import (
 )
 
 
-def _request(*, tools: list[object] | None = None) -> ModelRequest:
-    return ModelRequest(model=object(), messages=[], tools=tools or [])
+def _request(
+    *,
+    tools: list[object] | None = None,
+    state: dict[str, object] | None = None,
+) -> ModelRequest:
+    return ModelRequest(model=object(), messages=[], tools=tools or [], state=state or {})
 
 
 def _force_preset(tool_name: str = "load_skill") -> ToolCallPreset:
@@ -73,6 +77,38 @@ async def test_no_preset_calls_model_handler() -> None:
 
     assert isinstance(result, AIMessage)
     assert result.content == "normal"
+
+
+@pytest.mark.asyncio
+async def test_state_preset_returns_tool_call_and_atomic_reset_command() -> None:
+    middleware = ToolCallPresetMiddleware()
+    handler_called = False
+
+    async def handler(request: ModelRequest) -> AIMessage:
+        nonlocal handler_called
+        handler_called = True
+        return AIMessage(content="normal")
+
+    result = await middleware.awrap_model_call(
+        _request(
+            tools=[SimpleNamespace(name="load_skill")],
+            state={"pending_tool_call_preset": _force_preset().to_dict()},
+        ),
+        handler,
+    )
+
+    assert isinstance(result, ExtendedModelResponse)
+    assert result.model_response.result[0].tool_calls == [
+        {
+            "id": "preset_force_load_skill_0",
+            "name": "load_skill",
+            "args": {"skill_name": "dev-plan"},
+            "type": "tool_call",
+        }
+    ]
+    assert result.command is not None
+    assert result.command.update == {"pending_tool_call_preset": None}
+    assert handler_called is False
 
 
 @pytest.mark.asyncio

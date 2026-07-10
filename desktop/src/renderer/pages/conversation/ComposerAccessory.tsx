@@ -17,8 +17,9 @@ import {
   Trash2,
 } from "lucide-react";
 import {
-  type DragEvent,
+  Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
   useLayoutEffect,
@@ -26,6 +27,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import type { RuntimeBridge } from "@/runtime";
 import { useRuntimeTypingMetrics } from "@/renderer/hooks/useRuntimeTypingSpeed";
@@ -346,6 +348,15 @@ function PendingInputsPill({
   );
 }
 
+type PendingInputDragVisual = {
+  height: number;
+  left: number;
+  offsetY: number;
+  startPointerY: number;
+  top: number;
+  width: number;
+};
+
 function PendingInputSection({
   mode,
   inputs,
@@ -365,10 +376,14 @@ function PendingInputSection({
 }) {
   const [draggedInputId, setDraggedInputId] = useState<string | null>(null);
   const [dragPreviewIds, setDragPreviewIds] = useState<string[] | null>(null);
+  const [dragVisual, setDragVisual] = useState<PendingInputDragVisual | null>(null);
   const draggedInputIdRef = useRef<string | null>(null);
+  const dragPointerIdRef = useRef<number | null>(null);
   const dragInitialIdsRef = useRef<string[] | null>(null);
   const dragPreviewIdsRef = useRef<string[] | null>(null);
+  const clearPointerListenersRef = useRef<() => void>(() => undefined);
   const rowElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const rowTargetRectsRef = useRef(new Map<string, { height: number; top: number }>());
   const rowPositionsBeforeUpdateRef = useRef<Map<string, number> | null>(null);
   const rowAnimationsRef = useRef(new Map<string, Animation>());
   const reorderableIds = inputs
@@ -392,6 +407,13 @@ function PendingInputSection({
   };
 
   useLayoutEffect(() => {
+    const currentRects = new Map(
+      [...rowElementsRef.current.entries()].map(([id, element]) => {
+        const rect = element.getBoundingClientRect();
+        return [id, { height: rect.height, top: rect.top }] as const;
+      }),
+    );
+    rowTargetRectsRef.current = currentRects;
     const previousPositions = rowPositionsBeforeUpdateRef.current;
     if (!previousPositions) {
       return;
@@ -409,25 +431,35 @@ function PendingInputSection({
     }
     for (const [id, element] of rowElementsRef.current) {
       const previousTop = previousPositions.get(id);
-      if (previousTop === undefined) {
+      const currentRect = currentRects.get(id);
+      if (previousTop === undefined || !currentRect) {
         continue;
       }
-      const deltaY = previousTop - element.getBoundingClientRect().top;
-      if (Math.abs(deltaY) < 1 || typeof element.animate !== "function") {
+      const rawDeltaY = previousTop - currentRect.top;
+      if (Math.abs(rawDeltaY) < 1 || typeof element.animate !== "function") {
         continue;
       }
+      const deltaY = snapToDevicePixel(rawDeltaY);
       const animation = element.animate(
         [
           { transform: `translateY(${deltaY}px)` },
           { transform: "translateY(0)" },
         ],
-        { duration: 170, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+        { duration: 170, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", fill: "none" },
       );
       rowAnimationsRef.current.set(id, animation);
+      animation.onfinish = () => {
+        if (rowAnimationsRef.current.get(id) !== animation) {
+          return;
+        }
+        rowAnimationsRef.current.delete(id);
+        animation.cancel();
+      };
     }
   }, [displayedInputs]);
 
   useEffect(() => () => {
+    clearPointerListenersRef.current();
     for (const animation of rowAnimationsRef.current.values()) {
       animation.cancel();
     }
@@ -437,11 +469,15 @@ function PendingInputSection({
     if (dragPreviewIdsRef.current) {
       captureRowPositions();
     }
+    clearPointerListenersRef.current();
+    clearPointerListenersRef.current = () => undefined;
     draggedInputIdRef.current = null;
+    dragPointerIdRef.current = null;
     dragInitialIdsRef.current = null;
     dragPreviewIdsRef.current = null;
     setDraggedInputId(null);
     setDragPreviewIds(null);
+    setDragVisual(null);
   };
 
   const commitOrder = (nextIds: string[]) => {
@@ -454,34 +490,30 @@ function PendingInputSection({
     void onReorder(nextIds).catch(() => undefined);
   };
 
-  const handleDragStart = (event: DragEvent<HTMLButtonElement>, inputId: string) => {
-    captureRowPositions();
-    draggedInputIdRef.current = inputId;
-    dragInitialIdsRef.current = reorderableIds;
-    dragPreviewIdsRef.current = reorderableIds;
-    setDraggedInputId(inputId);
-    setDragPreviewIds(reorderableIds);
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("text/plain", inputId);
-    }
-  };
-
-  const handleDragOver = (event: DragEvent<HTMLDivElement>, targetId: string) => {
+  const updateDragPreview = (dragCenterY: number) => {
     const sourceId = draggedInputIdRef.current;
     if (!sourceId || !canReorder) {
       return;
     }
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = "move";
-    }
-    if (sourceId === targetId) {
+    const currentIds = dragPreviewIdsRef.current ?? dragInitialIdsRef.current ?? reorderableIds;
+    const candidates = currentIds.filter((id) => id !== sourceId);
+    if (!candidates.length) {
       return;
     }
-    const rect = event.currentTarget.getBoundingClientRect();
-    const position: PendingInputDropPosition = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
-    const currentIds = dragPreviewIdsRef.current ?? dragInitialIdsRef.current ?? reorderableIds;
+    let targetId = candidates[candidates.length - 1];
+    let position: PendingInputDropPosition = "after";
+    for (const candidateId of candidates) {
+      const element = rowElementsRef.current.get(candidateId);
+      if (!element) {
+        continue;
+      }
+      const rect = rowTargetRectsRef.current.get(candidateId) ?? element.getBoundingClientRect();
+      if (dragCenterY < rect.top + rect.height / 2) {
+        targetId = candidateId;
+        position = "before";
+        break;
+      }
+    }
     const nextIds = reorderPendingInputIds(currentIds, sourceId, targetId, position);
     if (arraysEqual(currentIds, nextIds)) {
       return;
@@ -491,14 +523,77 @@ function PendingInputSection({
     setDragPreviewIds(nextIds);
   };
 
-  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+  const handlePointerUp = (event: PointerEvent) => {
+    if (dragPointerIdRef.current !== event.pointerId) {
+      return;
+    }
     event.preventDefault();
-    const sourceId = draggedInputIdRef.current || event.dataTransfer?.getData("text/plain") || "";
+    const sourceId = draggedInputIdRef.current;
     if (!sourceId || !canReorder) {
       resetDragState();
       return;
     }
     commitOrder(dragPreviewIdsRef.current ?? dragInitialIdsRef.current ?? reorderableIds);
+  };
+
+  const handlePointerCancel = (event: PointerEvent) => {
+    if (dragPointerIdRef.current !== event.pointerId) {
+      return;
+    }
+    resetDragState();
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>, inputId: string) => {
+    if (event.button !== 0 || !canReorder) {
+      return;
+    }
+    const sourceElement = rowElementsRef.current.get(inputId);
+    if (!sourceElement) {
+      return;
+    }
+    event.preventDefault();
+    const sourceRect = sourceElement.getBoundingClientRect();
+    const initialDragVisual: PendingInputDragVisual = {
+      height: sourceRect.height,
+      left: sourceRect.left,
+      offsetY: 0,
+      startPointerY: event.clientY,
+      top: sourceRect.top,
+      width: sourceRect.width,
+    };
+    captureRowPositions();
+    draggedInputIdRef.current = inputId;
+    dragPointerIdRef.current = event.pointerId;
+    dragInitialIdsRef.current = reorderableIds;
+    dragPreviewIdsRef.current = reorderableIds;
+    setDraggedInputId(inputId);
+    setDragPreviewIds(reorderableIds);
+    setDragVisual(initialDragVisual);
+
+    const pointerId = event.pointerId;
+    const handleWindowPointerMove = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) {
+        return;
+      }
+      pointerEvent.preventDefault();
+      const offsetY = snapToDevicePixel(pointerEvent.clientY - initialDragVisual.startPointerY);
+      setDragVisual((current) => current ? { ...current, offsetY } : current);
+      updateDragPreview(initialDragVisual.top + offsetY + initialDragVisual.height / 2);
+    };
+    const handleWindowPointerUp = (pointerEvent: PointerEvent) => {
+      handlePointerUp(pointerEvent);
+    };
+    const handleWindowPointerCancel = (pointerEvent: PointerEvent) => {
+      handlePointerCancel(pointerEvent);
+    };
+    window.addEventListener("pointermove", handleWindowPointerMove, { passive: false });
+    window.addEventListener("pointerup", handleWindowPointerUp);
+    window.addEventListener("pointercancel", handleWindowPointerCancel);
+    clearPointerListenersRef.current = () => {
+      window.removeEventListener("pointermove", handleWindowPointerMove);
+      window.removeEventListener("pointerup", handleWindowPointerUp);
+      window.removeEventListener("pointercancel", handleWindowPointerCancel);
+    };
   };
 
   const handleReorderKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, inputId: string) => {
@@ -545,36 +640,18 @@ function PendingInputSection({
         const reorderable = canReorder && isPendingInputReorderable(input);
         const paused = isPendingInputPaused(input);
         const contentMeta = pendingInputContentMeta(input);
-        return (
-          <div
-            className={styles.pendingInputRow}
-            key={id}
-            data-mode={input.mode}
-            data-status={input.status}
-            data-pending-input-id={id}
-            data-dragging={draggedInputId === id ? "true" : "false"}
-            data-drag-placeholder={draggedInputId === id ? "true" : "false"}
-            data-paused={paused ? "true" : "false"}
-            ref={(element) => {
-              if (element) {
-                rowElementsRef.current.set(id, element);
-              } else {
-                rowElementsRef.current.delete(id);
-              }
-            }}
-            onDragOver={(event) => handleDragOver(event, id)}
-            onDrop={handleDrop}
-          >
+        const activeDragVisual = draggedInputId === id ? dragVisual : null;
+        const rowContents = (
+          <>
             <button
               className={styles.pendingInputDragHandle}
               type="button"
               aria-label={`拖动调整顺序：${input.message}`}
               aria-grabbed={draggedInputId === id}
               data-tooltip-label="拖动排序"
-              draggable={reorderable}
+              draggable={false}
               disabled={!reorderable}
-              onDragStart={(event) => handleDragStart(event, id)}
-              onDragEnd={resetDragState}
+              onPointerDown={(event) => handlePointerDown(event, id)}
               onKeyDown={(event) => handleReorderKeyDown(event, id)}
             >
               <GripVertical size={13} />
@@ -637,7 +714,66 @@ function PendingInputSection({
                 <Trash2 size={13} />
               </button>
             </span>
-          </div>
+          </>
+        );
+        return (
+          <Fragment key={id}>
+            {activeDragVisual ? (
+              <div
+                className={`${styles.pendingInputRow} ${styles.pendingInputRowPlaceholder}`}
+                data-mode={input.mode}
+                data-status={input.status}
+                data-pending-input-id={id}
+                data-pending-input-placeholder="true"
+                aria-hidden="true"
+                ref={(element) => {
+                  if (element) {
+                    rowElementsRef.current.set(id, element);
+                  } else if (rowElementsRef.current.get(id)?.dataset.pendingInputPlaceholder === "true") {
+                    rowElementsRef.current.delete(id);
+                  }
+                }}
+              />
+            ) : (
+              <div
+                className={styles.pendingInputRow}
+                data-mode={input.mode}
+                data-status={input.status}
+                data-pending-input-id={id}
+                data-paused={paused ? "true" : "false"}
+                ref={(element) => {
+                  if (element) {
+                    rowElementsRef.current.set(id, element);
+                  } else if (rowElementsRef.current.get(id)?.dataset.pendingInputPlaceholder !== "true") {
+                    rowElementsRef.current.delete(id);
+                  }
+                }}
+              >
+                {rowContents}
+              </div>
+            )}
+            {activeDragVisual && typeof document !== "undefined" ? createPortal(
+              <div
+                className={`${styles.pendingInputRow} ${styles.pendingInputFloatingRow}`}
+                data-mode={input.mode}
+                data-status={input.status}
+                data-floating-pending-input-id={id}
+                data-dragging="true"
+                data-paused={paused ? "true" : "false"}
+                aria-hidden="true"
+                style={{
+                  height: activeDragVisual.height,
+                  left: activeDragVisual.left,
+                  top: activeDragVisual.top,
+                  transform: `translate3d(0, ${activeDragVisual.offsetY}px, 0)`,
+                  width: activeDragVisual.width,
+                }}
+              >
+                {rowContents}
+              </div>,
+              document.body,
+            ) : null}
+          </Fragment>
         );
       })}
       </div>
@@ -646,6 +782,13 @@ function PendingInputSection({
 }
 
 type PendingInputDropPosition = "before" | "after";
+
+function snapToDevicePixel(value: number): number {
+  const devicePixelRatio = typeof window !== "undefined" && window.devicePixelRatio > 0
+    ? window.devicePixelRatio
+    : 1;
+  return Math.round(value * devicePixelRatio) / devicePixelRatio;
+}
 
 function pendingInputId(input: AgentPendingInput): string {
   return input.pending_input_id || input.id;

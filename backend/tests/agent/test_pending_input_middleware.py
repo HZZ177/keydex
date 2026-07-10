@@ -5,11 +5,7 @@ from langchain_core.messages import HumanMessage, RemoveMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from backend.app.agent.middleware.pending_inputs import PendingUserInputInjectionMiddleware
-from backend.app.core.request_context import (
-    get_tool_call_preset,
-    reset_request_context,
-    set_request_context,
-)
+from backend.app.core.request_context import reset_request_context, set_request_context
 from backend.app.events import DomainEvent, DomainEventType, EventDispatcher
 from backend.app.services.chat_types import (
     PENDING_INPUT_MODE_STEER,
@@ -169,7 +165,6 @@ async def test_pending_input_middleware_keeps_images_and_skill_activation(tmp_pa
             dispatcher=EventDispatcher([collect]),
         )
         result = await middleware.abefore_model({"messages": []}, runtime=None)
-        preset = get_tool_call_preset()
     finally:
         reset_request_context(token)
 
@@ -178,9 +173,12 @@ async def test_pending_input_middleware_keeps_images_and_skill_activation(tmp_pa
     assert user_message.content[0] == {"type": "text", "text": "结合图片继续"}
     assert user_message.content[1]["type"] == "image_url"
     assert user_message.content[1]["image_url"]["url"].startswith("data:image/png;base64,")
-    assert preset is not None
-    assert preset.calls[0].name == "load_skill"
-    assert preset.calls[0].args == {"skill_name": "review-skill"}
+    assert result["pending_tool_call_preset"] == {
+        "type": "force",
+        "producer": "skill_activation",
+        "calls": [{"name": "load_skill", "args": {"skill_name": "review-skill"}}],
+        "metadata": {"source": "pending_user_input"},
+    }
     user_event = next(
         event for event in events if event.event_type == DomainEventType.MESSAGE_USER_CREATED.value
     )

@@ -1241,6 +1241,116 @@ async def test_chat_service_runs_skill_activation_chain_with_message_injection(
 
 
 @pytest.mark.asyncio
+async def test_chat_service_forces_skill_from_second_batched_steer_after_tool(
+    tmp_path,
+) -> None:
+    project = tmp_path / "project"
+    _write_workspace_skill(
+        project,
+        name="test-skill",
+        description="A batched steer skill.",
+        body="Batched steer skill instructions.",
+    )
+    registry = ToolRegistry()
+    model = ToolFriendlyFakeModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "seed_pending_steers",
+                        "args": {},
+                        "id": "call_seed_pending_steers",
+                    }
+                ],
+            ),
+            AIMessage(content="已处理批量引导中的 Skill"),
+        ]
+    )
+    service, repositories, _checkpointer, _factory = _service(tmp_path, model, registry)
+    workspace = repositories.workspaces.create(workspace_id="ws_batched", root_path=project)
+    session = repositories.sessions.create(
+        session_id="ses_batched_steers",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    def seed_pending_steers(
+        _args: dict[str, Any],
+        _context: ToolExecutionContext,
+    ) -> dict[str, Any]:
+        repositories.pending_inputs.create_or_get(
+            session_id=session.id,
+            message="你好",
+            mode="steer",
+            client_input_id="steer-plain",
+        )
+        repositories.pending_inputs.create_or_get(
+            session_id=session.id,
+            message="看看",
+            mode="steer",
+            client_input_id="steer-skill",
+            runtime_params={
+                "skill_activation": {
+                    "skill_name": "test-skill",
+                    "source": "workspace",
+                    "origin": "slash",
+                },
+                "message_context_items": [
+                    {
+                        "id": "skill:test-skill",
+                        "type": "skill",
+                        "label": "/test-skill",
+                        "content": "A batched steer skill.",
+                        "source": "workspace",
+                        "skill_name": "test-skill",
+                    }
+                ],
+            },
+        )
+        return {"seeded": 2}
+
+    registry.register(
+        FunctionTool(
+            name="seed_pending_steers",
+            description="Seed two persisted steer inputs for the next model request.",
+            parameters={"type": "object", "properties": {}},
+            handler=seed_pending_steers,
+        )
+    )
+    chat_adapter = RecordingChatAdapter()
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="先执行工具",
+            provider_id="provider-1",
+            model="qwen-coder",
+        ),
+        chat_adapter=chat_adapter,
+    )
+
+    assert result.status == "completed"
+    tool_names = [
+        item["data"]["tool"]
+        for item in chat_adapter.sent
+        if item["action"] == "tool_start"
+    ]
+    assert tool_names == ["seed_pending_steers", "load_skill"]
+    history = service.message_event_service.get_display_messages(session.id)
+    skill_messages = [
+        message
+        for message in history
+        if message.get("role") == "tool" and message.get("toolName") == "load_skill"
+    ]
+    assert len(skill_messages) == 1
+
+
+@pytest.mark.asyncio
 async def test_chat_service_disables_project_tools_for_chat_session(tmp_path) -> None:
     registry = ToolRegistry()
     registry.register(

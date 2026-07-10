@@ -6,8 +6,10 @@ from langgraph.graph.message import add_messages
 
 from backend.app.agent.state import (
     PENDING_SKILL_ACTIVATIONS_RESET_MARKER,
+    PENDING_TOOL_CALL_PRESET_STATE_KEY,
     KeydexAgentState,
     build_pending_skill_activations_reset_update,
+    build_pending_tool_call_preset_update,
     merge_pending_skill_activations,
 )
 
@@ -47,10 +49,22 @@ def test_pending_skill_activations_reset_update_shape() -> None:
     }
 
 
+def test_pending_tool_call_preset_update_and_reset_shape() -> None:
+    preset = {"type": "force", "calls": [{"name": "load_skill", "args": {}}]}
+
+    assert build_pending_tool_call_preset_update(preset) == {
+        PENDING_TOOL_CALL_PRESET_STATE_KEY: preset,
+    }
+    assert build_pending_tool_call_preset_update(None) == {
+        PENDING_TOOL_CALL_PRESET_STATE_KEY: None,
+    }
+
+
 def test_keydex_agent_state_keeps_messages_reducer() -> None:
     hints = get_type_hints(KeydexAgentState, include_extras=True)
 
     assert "messages" in hints
+    assert PENDING_TOOL_CALL_PRESET_STATE_KEY in hints
     assert "pending_skill_activations" in hints
     assert add_messages in get_args(hints["messages"])
     assert merge_pending_skill_activations in get_args(hints["pending_skill_activations"])

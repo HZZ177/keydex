@@ -15,6 +15,7 @@ from backend.app.agent.middleware.duplicate_tool_call_guard import (
 from backend.app.agent.middleware.invalid_tool_call_recovery import (
     InvalidToolCallRecoveryMiddleware,
 )
+from backend.app.agent.middleware.pending_inputs import PendingUserInputInjectionMiddleware
 from backend.app.agent.middleware.tool_error_handling import ToolErrorHandlingMiddleware
 from backend.app.agent.runtime_settings import AgentRuntimeSettings
 from backend.app.agent.skill_activation_middleware import SkillActivationInjectionMiddleware
@@ -244,6 +245,7 @@ def test_default_middleware_includes_context_compression_when_enabled(tmp_path) 
         PatchToolCallsMiddleware,
         ToolCallPresetMiddleware,
         SkillActivationInjectionMiddleware,
+        PendingUserInputInjectionMiddleware,
         ContextCompressionMiddleware,
         ToolErrorHandlingMiddleware,
         DuplicateToolCallGuardMiddleware,
