@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SendBox } from "@/renderer/components/chat/SendBox";
-import { shouldSubmitFromKeyboard } from "@/renderer/components/chat/SendBox/keyboard";
+import { isReverseSubmitFromKeyboard, shouldSubmitFromKeyboard } from "@/renderer/components/chat/SendBox/keyboard";
 
 describe("SendBox keyboard and IME", () => {
   it("detects send keyboard intent without treating Shift+Enter or composition as submit", () => {
@@ -10,6 +10,9 @@ describe("SendBox keyboard and IME", () => {
     expect(shouldSubmitFromKeyboard({ key: "Enter", shiftKey: true }, false)).toBe(false);
     expect(shouldSubmitFromKeyboard({ key: "Enter" }, true)).toBe(false);
     expect(shouldSubmitFromKeyboard({ key: "Enter", nativeEvent: { isComposing: true } }, false)).toBe(false);
+    expect(isReverseSubmitFromKeyboard({ key: "Enter", ctrlKey: true })).toBe(true);
+    expect(isReverseSubmitFromKeyboard({ key: "Enter", metaKey: true })).toBe(true);
+    expect(isReverseSubmitFromKeyboard({ key: "Enter" })).toBe(false);
   });
 
   it("submits on Enter and preserves Shift+Enter", () => {
@@ -53,15 +56,27 @@ describe("SendBox keyboard and IME", () => {
     }
   });
 
-  it("keeps keyboard submit disabled while the runtime is busy", () => {
+  it("keeps keyboard submit enabled while the runtime is running", () => {
     const onSend = vi.fn();
     render(<KeyboardSendBox runtimeState="running" onSend={onSend} />);
 
     const input = screen.getByLabelText("继续输入");
     expect(input.getAttribute("aria-disabled")).toBe("false");
     expect(input.getAttribute("contenteditable")).toBe("true");
-    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(false);
-    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0][3]).toEqual({ reverseDeliveryMode: false });
+  });
+
+  it("submits Ctrl+Enter as the reverse pending-input delivery behavior", () => {
+    const onSend = vi.fn();
+    render(<KeyboardSendBox runtimeState="running" onSend={onSend} />);
+
+    const input = screen.getByLabelText("继续输入");
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0][3]).toEqual({ reverseDeliveryMode: true });
   });
 
   it("does not submit while Chinese IME composition is active", () => {
@@ -92,7 +107,7 @@ function KeyboardSendBox({
     <SendBox
       value={value}
       runtimeState={runtimeState}
-      canSend={runtimeState === "idle" && value.trim().length > 0}
+      canSend={runtimeState !== "cancelling" && value.trim().length > 0}
       canStop={runtimeState === "running"}
       onChange={vi.fn()}
       onSend={onSend}

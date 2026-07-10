@@ -21,6 +21,14 @@ class DomainEventType(StrEnum):
     MESSAGE_SYSTEM_CREATED = "message.system.created"
     MESSAGE_AI_CREATED = "message.ai.created"
     MESSAGES_INJECTED = "messages.injected"
+    PENDING_INPUT_SUBMITTED = "pending_input.submitted"
+    PENDING_INPUT_UPDATED = "pending_input.updated"
+    PENDING_INPUT_CANCELLED = "pending_input.cancelled"
+    PENDING_INPUT_DELIVERED = "pending_input.delivered"
+    PENDING_INPUT_CONVERTED = "pending_input.converted"
+    PENDING_INPUT_PAUSED = "pending_input.paused"
+    PENDING_INPUT_RESUMED = "pending_input.resumed"
+    PENDING_INPUT_FAILED = "pending_input.failed"
 
     LLM_STREAM = "llm.stream"
     LLM_STARTED = "llm.started"
@@ -83,6 +91,14 @@ CORE_EVENT_TYPES = frozenset(
         DomainEventType.MESSAGE_USER_CREATED,
         DomainEventType.MESSAGE_SYSTEM_CREATED,
         DomainEventType.MESSAGE_AI_CREATED,
+        DomainEventType.PENDING_INPUT_SUBMITTED,
+        DomainEventType.PENDING_INPUT_UPDATED,
+        DomainEventType.PENDING_INPUT_CANCELLED,
+        DomainEventType.PENDING_INPUT_DELIVERED,
+        DomainEventType.PENDING_INPUT_CONVERTED,
+        DomainEventType.PENDING_INPUT_PAUSED,
+        DomainEventType.PENDING_INPUT_RESUMED,
+        DomainEventType.PENDING_INPUT_FAILED,
         DomainEventType.LLM_STREAM,
         DomainEventType.LLM_STARTED,
         DomainEventType.LLM_FINISHED,

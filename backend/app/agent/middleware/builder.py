@@ -14,6 +14,7 @@ from backend.app.agent.middleware.duplicate_tool_call_guard import (
 from backend.app.agent.middleware.invalid_tool_call_recovery import (
     InvalidToolCallRecoveryMiddleware,
 )
+from backend.app.agent.middleware.pending_inputs import PendingUserInputInjectionMiddleware
 from backend.app.agent.middleware.tool_error_handling import ToolErrorHandlingMiddleware
 from backend.app.agent.runtime_settings import (
     AgentRuntimeSettings,
@@ -42,6 +43,15 @@ def build_default_middleware(
         ToolCallPresetMiddleware(),
         SkillActivationInjectionMiddleware(),
     ]
+    if repositories is None:
+        logger.warning("[AgentMiddleware] 缺少 repositories，跳过运行中用户输入注入中间件")
+    else:
+        middlewares.append(
+            PendingUserInputInjectionMiddleware(
+                repositories=repositories,
+                dispatcher=dispatcher,
+            )
+        )
     if settings.context_compression.enabled:
         if repositories is None or dispatcher is None or checkpointer is None:
             logger.warning("[AgentMiddleware] 上下文压缩已启用但缺少运行时依赖，跳过装配")

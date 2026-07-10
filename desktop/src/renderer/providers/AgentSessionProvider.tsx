@@ -15,7 +15,10 @@ import {
   runtimeBridge,
   type ChatChannel,
   type ChatPayload,
+  type ReorderPendingInputsPayload,
+  type ResumePendingInputsPayload,
   type RuntimeBridge,
+  type UpdatePendingInputPayload,
   type WsConnectionStatus,
 } from "@/runtime";
 import type { A2UICancelActionPayload, A2UISubmitActionPayload, AgentActionEnvelope } from "@/types/protocol";
@@ -39,6 +42,10 @@ export interface AgentSessionRuntimeContextValue {
   bindSession: (sessionId: string) => void;
   subscribeEvent: (listener: (event: AgentActionEnvelope) => void) => () => void;
   chat: (payload: ChatPayload) => void;
+  updatePendingInput: (payload: UpdatePendingInputPayload) => void;
+  reorderPendingInputs: (payload: ReorderPendingInputsPayload) => void;
+  cancelPendingInput: (sessionId: string, pendingInputId: string, reason?: string | null) => void;
+  resumePendingInputs: (payload: ResumePendingInputsPayload) => void;
   submitA2UI: (payload: A2UISubmitActionPayload) => void;
   cancelA2UI: (payload: A2UICancelActionPayload) => void;
   cancel: (sessionId?: string) => void;
@@ -161,6 +168,50 @@ export function AgentSessionProvider({
     channel.cancel(sessionId);
   }, []);
 
+  const updatePendingInput = useCallback((payload: UpdatePendingInputPayload) => {
+    const channel = channelRef.current;
+    if (!channel || channel.getStatus() !== "open") {
+      throw new Error("对话连接尚未就绪");
+    }
+    if (!channel.updatePendingInput) {
+      throw new Error("待发送消息通道未启用");
+    }
+    channel.updatePendingInput(payload);
+  }, []);
+
+  const reorderPendingInputs = useCallback((payload: ReorderPendingInputsPayload) => {
+    const channel = channelRef.current;
+    if (!channel || channel.getStatus() !== "open") {
+      throw new Error("对话连接尚未就绪");
+    }
+    if (!channel.reorderPendingInputs) {
+      throw new Error("待发送消息排序通道未启用");
+    }
+    channel.reorderPendingInputs(payload);
+  }, []);
+
+  const cancelPendingInput = useCallback((sessionId: string, pendingInputId: string, reason?: string | null) => {
+    const channel = channelRef.current;
+    if (!channel || channel.getStatus() !== "open") {
+      throw new Error("对话连接尚未就绪");
+    }
+    if (!channel.cancelPendingInput) {
+      throw new Error("待发送消息通道未启用");
+    }
+    channel.cancelPendingInput(sessionId, pendingInputId, reason);
+  }, []);
+
+  const resumePendingInputs = useCallback((payload: ResumePendingInputsPayload) => {
+    const channel = channelRef.current;
+    if (!channel || channel.getStatus() !== "open") {
+      throw new Error("对话连接尚未就绪");
+    }
+    if (!channel.resumePendingInputs) {
+      throw new Error("待发送消息恢复通道未启用");
+    }
+    channel.resumePendingInputs(payload);
+  }, []);
+
   const submitA2UI = useCallback((payload: A2UISubmitActionPayload) => {
     const channel = channelRef.current;
     if (!channel || channel.getStatus() !== "open") {
@@ -215,6 +266,10 @@ export function AgentSessionProvider({
       bindSession,
       subscribeEvent,
       chat,
+      updatePendingInput,
+      reorderPendingInputs,
+      cancelPendingInput,
+      resumePendingInputs,
       submitA2UI,
       cancelA2UI,
       cancel,
@@ -222,7 +277,7 @@ export function AgentSessionProvider({
       resolveMcpElicitation,
       ping,
     }),
-    [bindSession, cancel, cancelA2UI, chat, ping, resolveMcpElicitation, runtime, runtimeDetail, state, submitA2UI, subscribeEvent, terminateCommand, wsStatus],
+    [bindSession, cancel, cancelA2UI, cancelPendingInput, chat, ping, reorderPendingInputs, resolveMcpElicitation, resumePendingInputs, runtime, runtimeDetail, state, submitA2UI, subscribeEvent, terminateCommand, updatePendingInput, wsStatus],
   );
 
   return (

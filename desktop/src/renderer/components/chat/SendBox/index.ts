@@ -5,6 +5,7 @@ export type {
   SendBoxExternalQuoteRequest,
   SendBoxProps,
 } from "./SendBox";
+export type { SendBoxSubmitOptions } from "./useCompositionInput";
 export { composeMessageWithSelectedFiles } from "./fileSelection";
 export type { SelectedFile } from "./fileSelection";
 export { agentAttachmentFromSelected, selectedImageAttachmentFromAgent } from "./imageAttachments";

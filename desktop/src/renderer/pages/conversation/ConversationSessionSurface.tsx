@@ -23,6 +23,7 @@ import type {
   AgentActionEnvelope,
   AgentSession,
   AgentSessionFork,
+  PendingInputMode,
 } from "@/types/protocol";
 import type { FileAccessMode } from "@/types/protocol";
 import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
@@ -88,6 +89,7 @@ export function ConversationSessionSurface({
   const isSidecar = mode === "sidecar";
   const [allowPersistentTrust, setAllowPersistentTrust] = useState(true);
   const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>("workspace_trusted");
+  const [conversationSendDefaultMode, setConversationSendDefaultMode] = useState<PendingInputMode>("steer");
   const [a2uiDebugInfoEnabled, setA2UIDebugInfoEnabled] = useState(false);
   const [contextCompressionEnabled, setContextCompressionEnabled] = useState(true);
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
@@ -131,6 +133,7 @@ export function ConversationSessionSurface({
     onOpenModelSettings,
     onAfterSend: () => scrollToBottomAfterSendRef.current?.(),
     syncThreadTasks: !isSidecar,
+    conversationSendDefaultMode,
   });
   const draft = controller.draft;
   const setDraft = controller.setDraft;
@@ -312,12 +315,14 @@ export function ConversationSessionSurface({
         if (active) {
           setAllowPersistentTrust(settings.command.allow_persistent_trust);
           setFileAccessMode(settings.command.file_access_mode);
+          setConversationSendDefaultMode(settings.general.conversation_send_default_mode ?? "steer");
         }
       })
       .catch(() => {
         if (active) {
           setAllowPersistentTrust(true);
           setFileAccessMode("workspace_trusted");
+          setConversationSendDefaultMode("steer");
         }
       });
     return () => {
@@ -352,8 +357,12 @@ export function ConversationSessionSurface({
   }, [backendReady, runtime]);
 
   const send = useCallback(
-    (files: SelectedFile[] = [], quotes: SelectedQuote[] = [], attachments: SelectedImageAttachment[] = []) =>
-      controller.send(files, quotes, attachments, modelSelection.selectedModel),
+    (
+      files: SelectedFile[] = [],
+      quotes: SelectedQuote[] = [],
+      attachments: SelectedImageAttachment[] = [],
+      options?: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode },
+    ) => controller.send(files, quotes, attachments, modelSelection.selectedModel, options),
     [controller, modelSelection.selectedModel],
   );
 
@@ -553,11 +562,16 @@ export function ConversationSessionSurface({
   }, [controller, draft, modelSelection.selectedModel, notifications, runtime, selectedSkill, setSelectedSkill, threadId]);
 
   const sendFromComposer = useCallback(
-    (files: SelectedFile[] = [], quotes: SelectedQuote[] = [], attachments: SelectedImageAttachment[] = []) => {
+    (
+      files: SelectedFile[] = [],
+      quotes: SelectedQuote[] = [],
+      attachments: SelectedImageAttachment[] = [],
+      options?: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode },
+    ) => {
       if (goalComposerOpen) {
         return createGoalTask(files, quotes, attachments);
       }
-      return send(files, quotes, attachments);
+      return send(files, quotes, attachments, options);
     },
     [createGoalTask, goalComposerOpen, send],
   );

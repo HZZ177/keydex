@@ -88,6 +88,14 @@ class DelayedSSEStream(httpx.AsyncByteStream):
 
 def _chat_chunks(payload: dict[str, Any]) -> list[str]:
     user_message = _last_user_message(payload)
+    if "PendingInputEcho" in user_message:
+        return _content_chunks(
+            payload,
+            f"PendingInputEcho received: {user_message}",
+            usage={"prompt_tokens": 12, "completion_tokens": 10},
+        )
+    if "PendingInputToolGate" in user_message:
+        return _pending_input_tool_gate_chunks(payload)
     if "MCP Deferred" in user_message:
         return _mcp_deferred_chunks(payload, user_message)
     if "MCP Runtime" in user_message:
@@ -591,6 +599,46 @@ def _tool_sequence_chunks(payload: dict[str, Any]) -> list[str]:
                             ),
                         },
                     },
+                ]
+            },
+            finish_reason="tool_calls",
+        ),
+        _sse_done(),
+    ]
+
+
+def _pending_input_tool_gate_chunks(payload: dict[str, Any]) -> list[str]:
+    if _has_tool_message(payload):
+        return _content_chunks(
+            payload,
+            "PendingInputToolGate completed without injected steer.",
+            usage={"prompt_tokens": 16, "completion_tokens": 10},
+        )
+    return [
+        _chat_sse(
+            payload,
+            delta={"reasoning_content": "PendingInputToolGate 正在打开下一次模型请求窗口。"},
+        ),
+        _chat_sse(
+            payload,
+            delta={
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call_e2e_pending_input_gate",
+                        "type": "function",
+                        "function": {
+                            "name": "run_cmd",
+                            "arguments": json.dumps(
+                                {
+                                    "command": "ping -n 5 127.0.0.1 > nul",
+                                    "cwd": ".",
+                                    "timeout_seconds": 8,
+                                },
+                                separators=(",", ":"),
+                            ),
+                        },
+                    }
                 ]
             },
             finish_reason="tool_calls",

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SendBox, selectedQuoteFromText, type SelectedFile, type SelectedQuote } from "@/renderer/components/chat/SendBox";
+import "@/renderer/components/chat/AtFileMenu/AtFileMenu";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import type { RuntimeBridge } from "@/runtime";
 
@@ -236,6 +237,26 @@ describe("SendBox", () => {
     expect(await screen.findByTestId("at-file-menu")).not.toBeNull();
     expect(screen.getByText(/无文件访问权限/)).not.toBeNull();
     expect(searchWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("keeps the at-file menu available while the runtime accepts pending input", async () => {
+    const searchWorkspace = vi.fn().mockResolvedValue([]);
+    render(
+      <SendBox
+        value="@"
+        runtimeState="running"
+        canSend
+        canStop
+        fileAccessMode="workspace_trusted"
+        onSearchWorkspace={searchWorkspace}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId("at-file-menu")).not.toBeNull();
+    await waitFor(() => expect(searchWorkspace).toHaveBeenCalled());
   });
 
   it("copies file input files before clearing and rejects picker files without source paths", async () => {
@@ -970,7 +991,7 @@ describe("SendBox", () => {
     expect(await screen.findByText("引用片段")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
-    expect(onSend).toHaveBeenCalledWith([], [quote], []);
+    expect(onSend).toHaveBeenCalledWith([], [quote], [], {});
   });
 
   it("hides the quote card when the pointer leaves a top context chip", () => {

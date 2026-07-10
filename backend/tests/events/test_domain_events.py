@@ -67,10 +67,22 @@ def test_event_enums_cover_core_contract_and_include_a2ui() -> None:
         DomainEventType.A2UI_RESUME_STARTED,
         DomainEventType.A2UI_RESUME_SUCCEEDED,
         DomainEventType.A2UI_RESUME_FAILED,
+        DomainEventType.PENDING_INPUT_SUBMITTED,
+        DomainEventType.PENDING_INPUT_UPDATED,
+        DomainEventType.PENDING_INPUT_CANCELLED,
+        DomainEventType.PENDING_INPUT_DELIVERED,
+        DomainEventType.PENDING_INPUT_CONVERTED,
+        DomainEventType.PENDING_INPUT_PAUSED,
+        DomainEventType.PENDING_INPUT_RESUMED,
+        DomainEventType.PENDING_INPUT_FAILED,
     }
 
     assert required_domain_events.issubset(CORE_EVENT_TYPES)
     assert ensure_known_event_type("a2ui.created") is DomainEventType.A2UI_CREATED
+    assert (
+        ensure_known_event_type("pending_input.submitted")
+        is DomainEventType.PENDING_INPUT_SUBMITTED
+    )
 
 
 def test_external_action_enums_match_source_contract() -> None:
@@ -86,17 +98,31 @@ def test_external_action_enums_match_source_contract() -> None:
     assert ChatAction.A2UI_CREATED.value == "a2ui_created"
     assert ChatAction.WAITING_INPUT.value == "waiting_input"
     assert ChatAction.A2UI_SUBMIT_ACK.value == "a2ui_submit_ack"
+    assert ChatAction.PENDING_INPUT_SUBMITTED.value == "pending_input_submitted"
+    assert ChatAction.PENDING_INPUTS_REORDERED.value == "pending_inputs_reordered"
+    assert ChatAction.PENDING_INPUT_DELIVERED.value == "pending_input_delivered"
+    assert ChatAction.PENDING_INPUT_PAUSED.value == "pending_input_paused"
+    assert ChatAction.PENDING_INPUT_RESUMED.value == "pending_input_resumed"
     assert ReplayAction.STREAM_BATCH.value == "stream_batch"
     assert ReplayAction.MEMORY_RECALLED.value == "memory_recalled"
     assert ReplayAction.TASK_DELETED.value == "task_deleted"
     assert ReplayAction.MIDDLEWARE_PROGRESS.value == "middleware_progress"
     assert ReplayAction.A2UI_CREATED.value == "a2ui_created"
     assert ReplayAction.WAITING_INPUT.value == "waiting_input"
+    assert ReplayAction.PENDING_INPUT_UPDATED.value == "pending_input_updated"
+    assert ReplayAction.PENDING_INPUTS_REORDERED.value == "pending_inputs_reordered"
+    assert ReplayAction.PENDING_INPUT_FAILED.value == "pending_input_failed"
+    assert ReplayAction.PENDING_INPUT_PAUSED.value == "pending_input_paused"
+    assert ReplayAction.PENDING_INPUT_RESUMED.value == "pending_input_resumed"
     assert CompletedEventItemAction.REASONING_MESSAGE.value == "reasoning_message"
     assert ChatInboundAction.CREATE_SESSION.value == "create_session"
     assert ChatInboundAction.SCHEDULED_CHAT.value == "scheduled_chat"
     assert ChatInboundAction.A2UI_SUBMIT.value == "a2ui_submit"
     assert ChatInboundAction.A2UI_CANCEL.value == "a2ui_cancel"
+    assert ChatInboundAction.PENDING_INPUT_UPDATE.value == "pending_input_update"
+    assert ChatInboundAction.PENDING_INPUT_REORDER.value == "pending_input_reorder"
+    assert ChatInboundAction.PENDING_INPUT_CANCEL.value == "pending_input_cancel"
+    assert ChatInboundAction.PENDING_INPUT_RESUME.value == "pending_input_resume"
 
 
 def test_unknown_event_type_is_rejected_explicitly() -> None:

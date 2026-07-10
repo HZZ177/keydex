@@ -24,6 +24,7 @@ import type {
   ThreadTaskRunsResponse,
   ThreadTaskType,
   ThreadTaskUserStatus,
+  PendingInputMode,
 } from "@/types/protocol";
 
 import type { HttpClient } from "./httpClient";
@@ -119,6 +120,8 @@ export interface ChatPayload {
   runtimeParams?: Record<string, unknown> | null;
   contextItems?: AgentContextItem[];
   attachments?: AgentFileAttachment[];
+  delivery_mode?: PendingInputMode;
+  client_input_id?: string | null;
   files?: unknown[];
   [key: string]: unknown;
 }
@@ -137,6 +140,10 @@ export interface ChatChannel {
   bindSession(sessionId: string): void;
   unbindSession(sessionId?: string): void;
   chat(payload: ChatPayload): void;
+  updatePendingInput?(payload: UpdatePendingInputPayload): void;
+  reorderPendingInputs?(payload: ReorderPendingInputsPayload): void;
+  cancelPendingInput?(sessionId: string, pendingInputId: string, reason?: string | null): void;
+  resumePendingInputs?(payload: ResumePendingInputsPayload): void;
   submitA2UI(payload: A2UISubmitActionPayload): void;
   cancelA2UI(payload: A2UICancelActionPayload): void;
   approvalDecision(approvalId: string, decision: CommandApprovalDecisionPayload): void;
@@ -153,6 +160,28 @@ export interface ConversationRuntimeOptions {
   reconnectDelayMs?: number;
   maxReconnectAttempts?: number;
   wsClientFactory?: (options: WsClientOptions) => RuntimeWsClient;
+}
+
+export interface UpdatePendingInputPayload {
+  session_id: string;
+  pending_input_id: string;
+  message?: string;
+  mode?: PendingInputMode;
+  provider_id?: string;
+  model?: string;
+  runtime_params?: Record<string, unknown> | null;
+  attachments?: AgentFileAttachment[];
+}
+
+export interface ReorderPendingInputsPayload {
+  session_id: string;
+  pending_input_ids: string[];
+}
+
+export interface ResumePendingInputsPayload {
+  session_id: string;
+  pending_input_id?: string;
+  mode?: PendingInputMode;
 }
 
 export interface ConversationRuntime {
@@ -306,6 +335,18 @@ export function createConversationRuntime(
         bindSession: (sessionId) => client.bindSession(sessionId),
         unbindSession: (sessionId) => client.unbindSession(sessionId),
         chat: (payload) => client.chat(payload),
+        updatePendingInput: (payload) =>
+          client.sendAction("pending_input_update", { ...payload }),
+        reorderPendingInputs: (payload) =>
+          client.sendAction("pending_input_reorder", { ...payload }),
+        cancelPendingInput: (sessionId, pendingInputId, reason = "user") =>
+          client.sendAction("pending_input_cancel", {
+            session_id: sessionId,
+            pending_input_id: pendingInputId,
+            reason,
+          }),
+        resumePendingInputs: (payload) =>
+          client.sendAction("pending_input_resume", { ...payload }),
         submitA2UI: (payload) => client.submitA2UI(payload),
         cancelA2UI: (payload) => client.cancelA2UI(payload),
         approvalDecision: (approvalId, decision) =>

@@ -3,12 +3,16 @@ import type {
   AgentChatMessage,
   AgentChatMessagePayload,
   AgentCompletedPayload,
+  AgentContextItem,
   A2UIDebugBlockState,
   A2UIDebugRawEvent,
   AgentErrorData,
   CommandApprovalRequest,
   AgentGhostStats,
   AgentHistoryResponse,
+  AgentPendingInput,
+  AgentPendingInputEventData,
+  AgentPendingInputsReorderedEventData,
   AgentMiddlewareProgressData,
   AgentReasoningData,
   AgentReasoningKind,
@@ -68,6 +72,7 @@ export interface AgentSessionViewState {
   hasUnread: boolean;
   pendingApproval: CommandApprovalRequest | null;
   pendingElicitation: McpElicitationRequest | null;
+  pendingInputs: AgentPendingInput[];
   threadTasks: ThreadTask[];
   activeTask: ThreadTask | null;
   runningTaskRun: ThreadTaskRun | null;
@@ -183,11 +188,29 @@ export function reduceAgentWsEvent(
     case "system_message":
       next = handleSystemMessage(state, event.data);
       break;
+    case "user_message":
+      next = handleUserMessage(state, event.data);
+      break;
     case "reasoning":
       next = handleReasoning(state, event.data as unknown as AgentReasoningData);
       break;
     case "middleware_progress":
       next = handleMiddlewareProgress(state, event.data as unknown as AgentMiddlewareProgressData);
+      break;
+    case "pending_input_submitted":
+    case "pending_input_updated":
+    case "pending_input_converted":
+    case "pending_input_paused":
+    case "pending_input_resumed":
+      next = handlePendingInputUpsert(state, event.data as unknown as AgentPendingInputEventData);
+      break;
+    case "pending_inputs_reordered":
+      next = handlePendingInputsReordered(state, event.data as unknown as AgentPendingInputsReorderedEventData);
+      break;
+    case "pending_input_cancelled":
+    case "pending_input_delivered":
+    case "pending_input_failed":
+      next = handlePendingInputTerminal(state, event.data as unknown as AgentPendingInputEventData);
       break;
     case "tool_start":
       next = handleToolStart(state, event.data as unknown as AgentToolEventData);
@@ -308,6 +331,13 @@ export function selectAgentThreadTasks(
   sessionId = state.selectedSessionId ?? "",
 ): ThreadTask[] {
   return selectAgentSessionState(state, sessionId)?.threadTasks ?? [];
+}
+
+export function selectAgentPendingInputs(
+  state: AgentConversationState,
+  sessionId = state.selectedSessionId ?? "",
+): AgentPendingInput[] {
+  return selectAgentSessionState(state, sessionId)?.pendingInputs ?? [];
 }
 
 export function selectAgentActiveThreadTask(
@@ -486,6 +516,7 @@ function loadHistory(
   view.historyHasMoreOlder = Boolean(history.has_more_older && history.next_cursor);
   view.hasUnread = false;
   view.stale = false;
+  view.pendingInputs = normalizePendingInputs(history.pending_inputs ?? previousView?.pendingInputs ?? []);
   applyHydratedRuntimeState(view, previousView);
   return next;
 }
@@ -510,6 +541,7 @@ function prependHistory(
   view.historyLoading = false;
   view.hydrated = true;
   view.stale = false;
+  view.pendingInputs = previousView?.pendingInputs?.map(clonePendingInput) ?? view.pendingInputs;
   applyHydratedRuntimeState(view, previousView);
   return next;
 }
@@ -2215,6 +2247,10 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
     return next;
   }
   const view = ensureSessionState(next, sessionId);
+  const pendingInputs = pendingInputsFromUnknown(data.pending_inputs);
+  if (pendingInputs.length || Array.isArray(data.pending_inputs)) {
+    view.pendingInputs = normalizePendingInputs(pendingInputs);
+  }
   const status = stringValue(data.status);
   if (isAgentSessionStatus(status)) {
     view.status = status;
@@ -2226,6 +2262,222 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
     view.isStreaming = false;
   }
   return next;
+}
+
+function handleUserMessage(
+  state: AgentConversationState,
+  data: Record<string, unknown>,
+): AgentConversationState {
+  const sessionId = sessionIdFromData(data) || state.selectedSessionId || "";
+  if (!sessionId) {
+    return state;
+  }
+  const pendingInputId = stringValue(data.pending_input_id);
+  const messageId = pendingInputId
+    ? `pending-user:${pendingInputId}`
+    : stringValue(data.message_event_id) || stringValue(data.event_id) || nextMessageId(state, "user", sessionId);
+  const currentView = state.sessionStateById[sessionId];
+  if (currentView?.messages.some((message) => message.id === messageId)) {
+    return state;
+  }
+  const rawContextItems = Array.isArray(data.contextItems)
+    ? data.contextItems
+    : Array.isArray(data.context_items)
+      ? data.context_items
+      : [];
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  view.messages.push({
+    id: messageId,
+    sessionId,
+    role: "user",
+    content: stringValue(data.content) || stringValue(data.message),
+    contextItems: rawContextItems.filter(
+      (item): item is AgentContextItem => Boolean(item && typeof item === "object"),
+    ),
+    attachments: pendingInputAttachments(data.attachments),
+    timestamp: timestampFromData(data),
+    turnIndex: numberValue(data.turn_index),
+    ...(stringValue(data.trace_id) ? { traceId: stringValue(data.trace_id) } : {}),
+  });
+  return next;
+}
+
+function handlePendingInputUpsert(
+  state: AgentConversationState,
+  data: AgentPendingInputEventData,
+): AgentConversationState {
+  const pendingInput = pendingInputFromData(data);
+  if (!pendingInput) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, pendingInput.session_id);
+  upsertPendingInput(view, pendingInput);
+  return next;
+}
+
+function handlePendingInputTerminal(
+  state: AgentConversationState,
+  data: AgentPendingInputEventData,
+): AgentConversationState {
+  const pendingInput = pendingInputFromData(data);
+  if (!pendingInput) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, pendingInput.session_id);
+  view.pendingInputs = view.pendingInputs.filter((item) => pendingInputId(item) !== pendingInputId(pendingInput));
+  return next;
+}
+
+function handlePendingInputsReordered(
+  state: AgentConversationState,
+  data: AgentPendingInputsReorderedEventData,
+): AgentConversationState {
+  const sessionId = stringValue(data.session_id);
+  if (!sessionId || !Array.isArray(data.pending_inputs)) {
+    return state;
+  }
+  const next = cloneState(state);
+  ensureSessionState(next, sessionId).pendingInputs = normalizePendingInputs(
+    pendingInputsFromUnknown(data.pending_inputs),
+  );
+  return next;
+}
+
+function upsertPendingInput(view: AgentSessionViewState, input: AgentPendingInput): void {
+  if (!isActivePendingInputStatus(input.status)) {
+    view.pendingInputs = view.pendingInputs.filter((item) => pendingInputId(item) !== pendingInputId(input));
+    return;
+  }
+  const normalized = clonePendingInput(input);
+  const targetId = pendingInputId(normalized);
+  const existingIndex = view.pendingInputs.findIndex((item) => pendingInputId(item) === targetId);
+  if (existingIndex >= 0) {
+    view.pendingInputs = view.pendingInputs.map((item, index) => (index === existingIndex ? normalized : item));
+  } else {
+    view.pendingInputs = [...view.pendingInputs, normalized];
+  }
+  view.pendingInputs = normalizePendingInputs(view.pendingInputs);
+}
+
+function pendingInputFromData(data: AgentPendingInputEventData | Record<string, unknown>): AgentPendingInput | null {
+  const nested = asRecord((data as AgentPendingInputEventData).pending_input);
+  const raw = nested ?? (data as Record<string, unknown>);
+  const id = stringValue(raw.id) || stringValue(raw.pending_input_id);
+  const sessionId = stringValue(raw.session_id);
+  const mode = stringValue(raw.mode);
+  const status = stringValue(raw.status);
+  if (!id || !sessionId || !isPendingInputMode(mode) || !isPendingInputStatus(status)) {
+    return null;
+  }
+  return {
+    id,
+    pending_input_id: stringValue(raw.pending_input_id) || id,
+    session_id: sessionId,
+    client_input_id: nullableString(raw.client_input_id),
+    mode,
+    status,
+    message: stringValue(raw.message),
+    provider_id: nullableString(raw.provider_id),
+    model: nullableString(raw.model),
+    user_id: nullableString(raw.user_id),
+    scene_id: nullableString(raw.scene_id),
+    runtime_params: asRecord(raw.runtime_params) ?? {},
+    attachments: pendingInputAttachments(raw.attachments),
+    target_turn_index: numberValue(raw.target_turn_index),
+    target_trace_id: nullableString(raw.target_trace_id),
+    promoted_turn_index: numberValue(raw.promoted_turn_index),
+    promoted_trace_id: nullableString(raw.promoted_trace_id),
+    queue_position: numberValue(raw.queue_position),
+    error_code: nullableString(raw.error_code),
+    error_message: nullableString(raw.error_message),
+    created_at: nullableString(raw.created_at) ?? undefined,
+    updated_at: nullableString(raw.updated_at) ?? undefined,
+    delivered_at: nullableString(raw.delivered_at),
+    cancelled_at: nullableString(raw.cancelled_at),
+    paused_at: nullableString(raw.paused_at),
+    pause_reason: nullableString(raw.pause_reason),
+    paused: Boolean(raw.paused) || nullableString(raw.paused_at) !== null,
+  };
+}
+
+function pendingInputsFromUnknown(value: unknown): AgentPendingInput[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => (item && typeof item === "object" ? pendingInputFromData(item as Record<string, unknown>) : null))
+    .filter(isDefined);
+}
+
+function normalizePendingInputs(inputs: AgentPendingInput[]): AgentPendingInput[] {
+  const merged = new Map<string, AgentPendingInput>();
+  for (const input of inputs) {
+    if (!isActivePendingInputStatus(input.status)) {
+      merged.delete(pendingInputId(input));
+      continue;
+    }
+    merged.set(pendingInputId(input), clonePendingInput(input));
+  }
+  return [...merged.values()].sort(comparePendingInputs);
+}
+
+function comparePendingInputs(left: AgentPendingInput, right: AgentPendingInput): number {
+  const leftPosition = Number(left.queue_position ?? 0);
+  const rightPosition = Number(right.queue_position ?? 0);
+  if (leftPosition !== rightPosition) {
+    return leftPosition - rightPosition;
+  }
+  const leftCreated = Date.parse(left.created_at ?? "");
+  const rightCreated = Date.parse(right.created_at ?? "");
+  if (Number.isFinite(leftCreated) && Number.isFinite(rightCreated) && leftCreated !== rightCreated) {
+    return leftCreated - rightCreated;
+  }
+  return pendingInputId(left).localeCompare(pendingInputId(right));
+}
+
+function pendingInputAttachments(value: unknown): AgentPendingInput["attachments"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is NonNullable<AgentPendingInput["attachments"]>[number] =>
+    Boolean(item && typeof item === "object"),
+  );
+}
+
+function pendingInputId(input: AgentPendingInput): string {
+  return input.pending_input_id || input.id;
+}
+
+function clonePendingInput(input: AgentPendingInput): AgentPendingInput {
+  return {
+    ...input,
+    runtime_params: { ...(input.runtime_params ?? {}) },
+    attachments: input.attachments ? input.attachments.map((item) => ({ ...item })) : [],
+  };
+}
+
+function isPendingInputMode(value: string): value is AgentPendingInput["mode"] {
+  return value === "steer" || value === "queue";
+}
+
+function isPendingInputStatus(value: string): value is AgentPendingInput["status"] {
+  return (
+    value === "pending_steer" ||
+    value === "queued" ||
+    value === "starting" ||
+    value === "running" ||
+    value === "delivered" ||
+    value === "cancelled" ||
+    value === "failed" ||
+    value === "converted"
+  );
+}
+
+function isActivePendingInputStatus(value: AgentPendingInput["status"]): boolean {
+  return value === "pending_steer" || value === "queued" || value === "starting" || value === "running";
 }
 
 function handleToolProgress(state: AgentConversationState, data: AgentToolProgressData): AgentConversationState {
@@ -2474,6 +2726,7 @@ function ensureSessionState(
       ...meta,
       runtimeState,
       messages: existing.messages.map(cloneMessage),
+      pendingInputs: existing.pendingInputs.map(clonePendingInput),
       threadTasks: existing.threadTasks.map(cloneThreadTask),
       activeTask: existing.activeTask ? cloneThreadTask(existing.activeTask) : null,
       runningTaskRun: existing.runningTaskRun ? cloneThreadTaskRun(existing.runningTaskRun) : null,
@@ -2499,6 +2752,7 @@ function ensureSessionState(
     hasUnread: meta.hasUnread ?? false,
     pendingApproval: meta.pendingApproval ?? null,
     pendingElicitation: meta.pendingElicitation ?? null,
+    pendingInputs: meta.pendingInputs?.map(clonePendingInput) ?? [],
     threadTasks: meta.threadTasks?.map(cloneThreadTask) ?? [],
     activeTask: meta.activeTask ? cloneThreadTask(meta.activeTask) : null,
     runningTaskRun: meta.runningTaskRun ? cloneThreadTaskRun(meta.runningTaskRun) : null,
@@ -3757,6 +4011,23 @@ function sessionIdFromData(data: Record<string, unknown>): string {
 
 function eventIdentity(event: AgentActionEnvelope): string {
   const data = event.data;
+  if (event.action.startsWith("pending_input_")) {
+    const pendingInputId = stringValue(data.pending_input_id) || stringValue(data.id);
+    if (!pendingInputId) {
+      return "";
+    }
+    const sessionId = sessionIdFromData(data);
+    const revision = [
+      stringValue(data.status),
+      stringValue(data.mode),
+      stringValue(data.updated_at),
+      stringValue(data.delivered_at),
+      stringValue(data.cancelled_at),
+      stringValue(data.paused_at),
+      stringValue(data.pause_reason),
+    ].filter(Boolean).join(":");
+    return [event.action, sessionId, pendingInputId, revision].filter(Boolean).join(":");
+  }
   const raw =
     stringValue(data.event_id) ||
     stringValue(data.message_event_id) ||

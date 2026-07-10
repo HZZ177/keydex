@@ -8,6 +8,7 @@ import {
   type AgentChatMessage,
   type AgentChatMessagePayload,
   type AgentHistoryResponse,
+  type AgentPendingInput,
   type AgentSession,
   type CommandApprovalRequest,
   type ThreadTask,
@@ -19,6 +20,7 @@ import {
   reduceAgentWsEvent,
   selectAgentActiveThreadTask,
   selectAgentMessages,
+  selectAgentPendingInputs,
   selectAgentRuntimeState,
   selectAgentSessionState,
   selectAgentSessions,
@@ -42,6 +44,7 @@ describe("agentSessionStore reducer", () => {
       "a2ui_cancel_ack",
       "a2ui_resume",
       "a2ui_waiting_input",
+      "user_message",
       "system_message",
       "completed",
       "cancelled",
@@ -66,6 +69,15 @@ describe("agentSessionStore reducer", () => {
       "thread_task_status",
       "reasoning",
       "middleware_progress",
+      "pending_input_submitted",
+      "pending_input_updated",
+      "pending_inputs_reordered",
+      "pending_input_cancelled",
+      "pending_input_delivered",
+      "pending_input_converted",
+      "pending_input_paused",
+      "pending_input_resumed",
+      "pending_input_failed",
       "workspaceSkillsChanged",
       "approval_requested",
       "approval_resolved",
@@ -914,6 +926,213 @@ describe("agentSessionStore reducer", () => {
         status: "approved",
         content: "已允许执行命令: pnpm test",
       },
+    ]);
+  });
+
+  it("hydrates pending inputs from history and status snapshots", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: {
+        ...history([]),
+        pending_inputs: [pendingInput("pending-1", { message: "历史里的待发送", mode: "queue", status: "queued" })],
+      },
+    });
+
+    expect(selectAgentPendingInputs(state, "ses-1")).toMatchObject([
+      { id: "pending-1", message: "历史里的待发送", mode: "queue", status: "queued" },
+    ]);
+
+    state = reduceAgentWsEvent(state, {
+      action: "status",
+      data: {
+        session_id: "ses-1",
+        status: "running",
+        pending_inputs: [
+          pendingInput("pending-2", {
+            message: "状态快照里的引导",
+            mode: "steer",
+            status: "pending_steer",
+            updated_at: "2026-07-09T22:00:10Z",
+          }),
+        ],
+      },
+    });
+
+    expect(selectAgentPendingInputs(state, "ses-1")).toMatchObject([
+      { id: "pending-2", message: "状态快照里的引导", mode: "steer", status: "pending_steer" },
+    ]);
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
+  });
+
+  it("upserts pending input events and removes terminal entries without adding messages", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "pending_input_submitted",
+      data: {
+        session_id: "ses-1",
+        pending_input: pendingInput("pending-1", {
+          message: "先排队",
+          mode: "queue",
+          status: "queued",
+        }),
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "pending_input_updated",
+      data: {
+        session_id: "ses-1",
+        pending_input: pendingInput("pending-1", {
+          message: "改成运行中引导",
+          mode: "steer",
+          status: "pending_steer",
+          updated_at: "2026-07-09T22:00:10Z",
+        }),
+      },
+    });
+
+    expect(selectAgentPendingInputs(state, "ses-1")).toMatchObject([
+      { id: "pending-1", message: "改成运行中引导", mode: "steer", status: "pending_steer" },
+    ]);
+    expect(selectAgentMessages(state, "ses-1")).toEqual([]);
+
+    state = reduceAgentWsEvent(state, {
+      action: "pending_input_delivered",
+      data: {
+        session_id: "ses-1",
+        pending_input: pendingInput("pending-1", {
+          message: "改成运行中引导",
+          mode: "steer",
+          status: "delivered",
+          delivered_at: "2026-07-09T22:00:11Z",
+        }),
+      },
+    });
+
+    expect(selectAgentPendingInputs(state, "ses-1")).toEqual([]);
+  });
+
+  it("keeps paused pending inputs and projects delivered steer as a user bubble", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "pending_input_paused",
+      data: {
+        session_id: "ses-1",
+        pending_input: pendingInput("pending-1", {
+          message: "暂停的引导",
+          paused_at: "2026-07-10T01:00:00Z",
+          pause_reason: "user_stopped",
+          paused: true,
+        }),
+      },
+    });
+    expect(selectAgentPendingInputs(state, "ses-1")).toMatchObject([
+      { id: "pending-1", paused: true, pause_reason: "user_stopped" },
+    ]);
+
+    state = reduceAgentWsEvent(state, {
+      action: "user_message",
+      data: {
+        session_id: "ses-1",
+        pending_input_id: "pending-1",
+        content: "暂停的引导",
+        contextItems: [{ type: "file", label: "alpha.py", content: "alpha.py" }],
+        attachments: [{ id: "att-1", attachment_id: "att-1", type: "image", name: "a.png" }],
+        trace_id: "trace-steer",
+        turn_index: 2,
+        messageTimeMs: 1_800_000_000_000,
+      },
+    });
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        id: "pending-user:pending-1",
+        role: "user",
+        content: "暂停的引导",
+        contextItems: [{ label: "alpha.py" }],
+        attachments: [{ id: "att-1" }],
+        traceId: "trace-steer",
+        turnIndex: 2,
+      },
+    ]);
+
+    state = reduceAgentWsEvent(state, {
+      action: "pending_input_resumed",
+      data: {
+        session_id: "ses-1",
+        pending_input: pendingInput("pending-1", {
+          message: "暂停的引导",
+          paused_at: null,
+          pause_reason: null,
+          paused: false,
+          updated_at: "2026-07-10T01:00:01Z",
+        }),
+      },
+    });
+    expect(selectAgentPendingInputs(state, "ses-1")[0].paused).toBe(false);
+  });
+
+  it("does not dedupe repeated pending input updates for the same id", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "pending_input_submitted",
+      data: {
+        session_id: "ses-1",
+        pending_input: pendingInput("pending-1", { message: "第一版" }),
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "pending_input_updated",
+      data: {
+        session_id: "ses-1",
+        pending_input: pendingInput("pending-1", {
+          message: "第二版",
+          updated_at: "2026-07-09T22:00:10Z",
+        }),
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "pending_input_updated",
+      data: {
+        session_id: "ses-1",
+        pending_input: pendingInput("pending-1", {
+          message: "第三版",
+          updated_at: "2026-07-09T22:00:11Z",
+        }),
+      },
+    });
+
+    expect(selectAgentPendingInputs(state, "ses-1")).toMatchObject([
+      { id: "pending-1", message: "第三版" },
+    ]);
+  });
+
+  it("replaces pending input order atomically from a reorder event", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: {
+        ...history([]),
+        pending_inputs: [
+          pendingInput("pending-1", { message: "第一条", queue_position: 1 }),
+          pendingInput("pending-2", { message: "第二条", queue_position: 2 }),
+        ],
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "pending_inputs_reordered",
+      data: {
+        session_id: "ses-1",
+        pending_inputs: [
+          pendingInput("pending-2", { message: "第二条", queue_position: 1 }),
+          pendingInput("pending-1", { message: "第一条", queue_position: 2 }),
+        ],
+      },
+    });
+
+    expect(selectAgentPendingInputs(state, "ses-1").map((item) => item.id)).toEqual([
+      "pending-2",
+      "pending-1",
     ]);
   });
 
@@ -3430,6 +3649,36 @@ function threadTaskRun(id: string, patch: Partial<ThreadTaskRun> = {}): ThreadTa
     created_at: "2026-07-03T00:00:00Z",
     updated_at: "2026-07-03T00:00:00Z",
     is_running: true,
+    ...patch,
+  };
+}
+
+function pendingInput(id: string, patch: Partial<AgentPendingInput> = {}): AgentPendingInput {
+  return {
+    id,
+    pending_input_id: id,
+    session_id: "ses-1",
+    client_input_id: `client-${id}`,
+    mode: "steer",
+    status: "pending_steer",
+    message: "待发送消息",
+    provider_id: "provider-1",
+    model: "qwen-coder",
+    user_id: "local-user",
+    scene_id: "desktop-agent",
+    runtime_params: {},
+    attachments: [],
+    target_turn_index: null,
+    target_trace_id: null,
+    promoted_turn_index: null,
+    promoted_trace_id: null,
+    queue_position: 1,
+    error_code: null,
+    error_message: null,
+    created_at: "2026-07-09T22:00:00Z",
+    updated_at: "2026-07-09T22:00:00Z",
+    delivered_at: null,
+    cancelled_at: null,
     ...patch,
   };
 }

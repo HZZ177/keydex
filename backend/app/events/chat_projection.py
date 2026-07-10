@@ -15,6 +15,7 @@ class ChatProjectionAdapter(Protocol):
 class ChatProjection:
     EVENT_TYPE_TO_ACTION = {
         DomainEventType.LLM_STREAM: ChatAction.STREAM,
+        DomainEventType.MESSAGE_USER_CREATED: ChatAction.USER_MESSAGE,
         DomainEventType.MESSAGE_SYSTEM_CREATED: ChatAction.SYSTEM_MESSAGE,
         DomainEventType.LLM_TOOL_STARTED: ChatAction.TOOL_START,
         DomainEventType.LLM_TOOL_PROGRESS: ChatAction.TOOL_PROGRESS,
@@ -50,6 +51,14 @@ class ChatProjection:
         DomainEventType.REASONING_FINISHED: ChatAction.REASONING,
         DomainEventType.SESSION_TITLE_UPDATED: ChatAction.SESSION_TITLE_UPDATED,
         DomainEventType.MIDDLEWARE_PROGRESS: ChatAction.MIDDLEWARE_PROGRESS,
+        DomainEventType.PENDING_INPUT_SUBMITTED: ChatAction.PENDING_INPUT_SUBMITTED,
+        DomainEventType.PENDING_INPUT_UPDATED: ChatAction.PENDING_INPUT_UPDATED,
+        DomainEventType.PENDING_INPUT_CANCELLED: ChatAction.PENDING_INPUT_CANCELLED,
+        DomainEventType.PENDING_INPUT_DELIVERED: ChatAction.PENDING_INPUT_DELIVERED,
+        DomainEventType.PENDING_INPUT_CONVERTED: ChatAction.PENDING_INPUT_CONVERTED,
+        DomainEventType.PENDING_INPUT_PAUSED: ChatAction.PENDING_INPUT_PAUSED,
+        DomainEventType.PENDING_INPUT_RESUMED: ChatAction.PENDING_INPUT_RESUMED,
+        DomainEventType.PENDING_INPUT_FAILED: ChatAction.PENDING_INPUT_FAILED,
     }
     _REASONING_EVENT_TYPES = {
         DomainEventType.REASONING_STREAM,
@@ -61,6 +70,12 @@ class ChatProjection:
 
     async def handle(self, event: DomainEvent) -> None:
         event_type = DomainEventType(event.event_type)
+        if (
+            event_type == DomainEventType.MESSAGE_USER_CREATED
+            and event.source not in {"pending_input_middleware", "pending_input_promotion"}
+        ):
+            # Regular sends are already projected optimistically by the desktop.
+            return
         action = self.EVENT_TYPE_TO_ACTION.get(event_type)
         if action is None:
             return

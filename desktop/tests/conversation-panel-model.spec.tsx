@@ -98,6 +98,69 @@ describe("useConversationPanelModel", () => {
     expect(runtime.workspace.search).not.toHaveBeenCalled();
   });
 
+  it("cancels a pending row before restoring its complete structured composer draft", async () => {
+    const runtime = fakeRuntime();
+    const cancelPendingInput = vi.fn().mockResolvedValue(undefined);
+    const restoreComposerDraft = vi.fn();
+    const dispatch = vi.fn();
+    const controller = fakeController({
+      cancelPendingInput,
+      restoreComposerDraft,
+      dispatch,
+    });
+    const { result } = renderHook(
+      () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller }),
+      { wrapper: Providers },
+    );
+
+    await act(async () => {
+      await result.current.editPendingInput({
+        id: "pending-structured",
+        pending_input_id: "pending-structured",
+        session_id: "ses-1",
+        mode: "queue",
+        status: "queued",
+        message: "继续检查",
+        runtime_params: {
+          message_context_items: [
+            { type: "file", id: "file-1", label: "alpha.py", path: "src/alpha.py", content: "src/alpha.py" },
+            { type: "quote", label: "引用", content: "selected code", metadata: { source: "selection" } },
+            { type: "skill", label: "/review", skill_name: "review", content: "Review changes" },
+          ],
+        },
+        attachments: [
+          {
+            id: "att-1",
+            attachment_id: "att-1",
+            type: "image",
+            name: "review.png",
+            path: "D:/tmp/review.png",
+            source: "upload",
+            mime_type: "image/png",
+            size: 128,
+          },
+        ],
+      });
+    });
+
+    expect(cancelPendingInput).toHaveBeenCalledWith("pending-structured");
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "event/receive",
+        event: expect.objectContaining({ action: "pending_input_cancelled" }),
+      }),
+    );
+    expect(restoreComposerDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        value: "继续检查",
+        files: [expect.objectContaining({ path: "src/alpha.py" })],
+        quotes: [expect.objectContaining({ text: "selected code" })],
+        selectedSkill: expect.objectContaining({ name: "review" }),
+        attachments: [expect.objectContaining({ attachment_id: "att-1", name: "review.png" })],
+      }),
+    );
+  });
+
   it("caches successful tool detail patches by session and ref", async () => {
     const runtime = fakeRuntime();
     const controller = fakeController();

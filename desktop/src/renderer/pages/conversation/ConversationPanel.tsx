@@ -180,6 +180,7 @@ export function ConversationPanelComposerAccessory({
   return (
     <ConversationComposerAccessory
       messages={model.messages}
+      pendingInputs={model.pendingInputs}
       activeTask={model.activeTask}
       runningTaskRun={model.taskRunState?.runningTaskRun ?? null}
       mcpRuntime={
@@ -193,6 +194,11 @@ export function ConversationPanelComposerAccessory({
       }
       onUpdateTask={model.updateThreadTask}
       onDeleteTask={model.deleteThreadTask}
+      onPendingInputModeChange={model.updatePendingInputMode}
+      onPendingInputReorder={model.reorderPendingInputs}
+      onPendingInputCancel={model.cancelPendingInput}
+      onPendingInputResume={model.resumePendingInputs}
+      onPendingInputEdit={model.editPendingInput}
       onOpenMcpSettings={onOpenMcpSettings}
       showScrollToBottom={model.showScrollToBottom}
       showScrollButton={showScrollButton}

@@ -42,6 +42,7 @@ class AppearanceSettings(BaseModel):
 
 class GeneralSettings(BaseModel):
     close_window_behavior: Literal["exit", "minimize_to_tray"] | None = None
+    conversation_send_default_mode: Literal["steer", "queue"] = "steer"
 
 
 class SettingsResponse(BaseModel):
@@ -311,7 +312,8 @@ async def put_settings(
         )
         logger.info(
             "[SettingsAPI] 更新常规设置 | "
-            f"close_window_behavior={request.general.close_window_behavior}"
+            f"close_window_behavior={request.general.close_window_behavior} | "
+            f"conversation_send_default_mode={request.general.conversation_send_default_mode}"
         )
     if request.command is not None:
         validated_command = _validated_command_settings(request.command)

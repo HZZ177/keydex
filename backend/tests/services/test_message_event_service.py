@@ -601,6 +601,139 @@ def test_message_event_service_restores_message_injection_as_user_context_items(
     assert messages[1]["content"] == "好的"
 
 
+def test_message_event_service_deduplicates_context_items_across_event_sources(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+    explicit_file = {
+        "id": "file:readme",
+        "type": "file",
+        "label": "README.md",
+        "content": "工作区文件：README.md",
+        "source": "workspace",
+        "path": "README.md",
+        "name": "README.md",
+        "fileType": "file",
+        "metadata": {"id": "file:readme", "kind": "file", "path": "README.md"},
+    }
+    explicit_skill = {
+        "id": "skill:test-skill",
+        "type": "skill",
+        "label": "/test-skill",
+        "content": "Test skill",
+        "source": "workspace",
+        "skill_name": "test-skill",
+        "metadata": {"id": "skill:test-skill", "kind": "skill"},
+    }
+
+    _append(
+        repositories,
+        "evt_injected_file",
+        "user_message",
+        {
+            "content": "用户通过 @ 引用了工作区文件：README.md",
+            "source": "message_injection",
+            "injectionSource": "follow",
+            "injectionRole": "HumanMessage",
+            "metadata": {
+                "id": "file:readme",
+                "kind": "file",
+                "label": "README.md",
+                "path": "README.md",
+            },
+        },
+    )
+    _append(
+        repositories,
+        "evt_context_file",
+        "system_message",
+        {
+            "id": "file:readme",
+            "source": "message_context_item",
+            "context_type": "file",
+            "label": "README.md",
+            "path": "README.md",
+            "metadata": {"id": "file:readme", "kind": "file"},
+        },
+    )
+    _append(
+        repositories,
+        "evt_skill",
+        "system_message",
+        {
+            "source": "skill_activation",
+            "skill_name": "test-skill",
+            "label": "/test-skill",
+            "metadata": {"id": "skill:test-skill", "kind": "skill"},
+        },
+    )
+    _append(
+        repositories,
+        "evt_context_skill",
+        "system_message",
+        {
+            "id": "skill:test-skill",
+            "source": "message_context_item",
+            "context_type": "skill",
+            "label": "/test-skill",
+            "skill_name": "test-skill",
+            "metadata": {"id": "skill:test-skill", "kind": "skill"},
+        },
+    )
+    _append(
+        repositories,
+        "evt_user",
+        "user_message",
+        {
+            "content": "检查上下文",
+            "contextItems": [explicit_skill, explicit_file],
+            "context_items": [explicit_skill, explicit_file],
+        },
+    )
+
+    messages = service.get_display_messages("ses_history")
+
+    assert len(messages) == 1
+    assert messages[0]["content"] == "检查上下文"
+    assert [item["id"] for item in messages[0]["contextItems"]] == [
+        "skill:test-skill",
+        "file:readme",
+    ]
+    assert messages[0]["contextItems"][1]["content"] == "工作区文件：README.md"
+
+
+def test_message_event_service_restores_context_items_from_user_message_payload(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+    context_item = {
+        "id": "attachment:report",
+        "type": "attachment",
+        "label": "report.pdf",
+        "content": "附件：report.pdf",
+        "source": "upload",
+        "metadata": {
+            "id": "attachment:report",
+            "kind": "attachment",
+            "mimeType": "application/pdf",
+        },
+    }
+
+    _append(
+        repositories,
+        "evt_user_with_context",
+        "user_message",
+        {
+            "content": "总结附件",
+            "context_items": [context_item],
+        },
+    )
+
+    messages = service.get_display_messages("ses_history")
+
+    assert len(messages) == 1
+    assert messages[0]["content"] == "总结附件"
+    assert messages[0]["contextItems"] == [context_item]
+
+
 def test_message_event_service_pairs_subagent_tools(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)

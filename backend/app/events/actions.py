@@ -4,6 +4,7 @@ from enum import StrEnum
 
 
 class ChatAction(StrEnum):
+    USER_MESSAGE = "user_message"
     SESSION_CREATED = "session_created"
     BIND_OK = "bind_ok"
     UNBIND_OK = "unbind_ok"
@@ -41,6 +42,15 @@ class ChatAction(StrEnum):
     THREAD_TASK_STATUS = "thread_task_status"
     REASONING = "reasoning"
     MIDDLEWARE_PROGRESS = "middleware_progress"
+    PENDING_INPUT_SUBMITTED = "pending_input_submitted"
+    PENDING_INPUT_UPDATED = "pending_input_updated"
+    PENDING_INPUTS_REORDERED = "pending_inputs_reordered"
+    PENDING_INPUT_CANCELLED = "pending_input_cancelled"
+    PENDING_INPUT_DELIVERED = "pending_input_delivered"
+    PENDING_INPUT_CONVERTED = "pending_input_converted"
+    PENDING_INPUT_PAUSED = "pending_input_paused"
+    PENDING_INPUT_RESUMED = "pending_input_resumed"
+    PENDING_INPUT_FAILED = "pending_input_failed"
 
 
 class ReplayAction(StrEnum):
@@ -70,6 +80,15 @@ class ReplayAction(StrEnum):
     THREAD_TASK_STATUS = "thread_task_status"
     REASONING = "reasoning"
     MIDDLEWARE_PROGRESS = "middleware_progress"
+    PENDING_INPUT_SUBMITTED = "pending_input_submitted"
+    PENDING_INPUT_UPDATED = "pending_input_updated"
+    PENDING_INPUTS_REORDERED = "pending_inputs_reordered"
+    PENDING_INPUT_CANCELLED = "pending_input_cancelled"
+    PENDING_INPUT_DELIVERED = "pending_input_delivered"
+    PENDING_INPUT_CONVERTED = "pending_input_converted"
+    PENDING_INPUT_PAUSED = "pending_input_paused"
+    PENDING_INPUT_RESUMED = "pending_input_resumed"
+    PENDING_INPUT_FAILED = "pending_input_failed"
 
 
 class CompletedEventItemAction(StrEnum):
@@ -91,5 +110,9 @@ class ChatInboundAction(StrEnum):
     A2UI_SUBMIT = "a2ui_submit"
     A2UI_CANCEL = "a2ui_cancel"
     APPROVAL_DECISION = "approval_decision"
+    PENDING_INPUT_UPDATE = "pending_input_update"
+    PENDING_INPUT_REORDER = "pending_input_reorder"
+    PENDING_INPUT_CANCEL = "pending_input_cancel"
+    PENDING_INPUT_RESUME = "pending_input_resume"
     PING = "ping"
     GET_STATUS = "get_status"

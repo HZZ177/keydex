@@ -123,6 +123,51 @@ async def test_persistence_projection_persists_thread_task_replay_actions(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_persistence_projection_persists_pending_input_replay_actions(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    projection = PersistenceProjection(
+        repository=repositories.message_events,
+        session_id="ses_persist",
+        turn_index=1,
+    )
+
+    for event_type in (
+        DomainEventType.PENDING_INPUT_SUBMITTED,
+        DomainEventType.PENDING_INPUT_UPDATED,
+        DomainEventType.PENDING_INPUT_CANCELLED,
+        DomainEventType.PENDING_INPUT_DELIVERED,
+        DomainEventType.PENDING_INPUT_CONVERTED,
+        DomainEventType.PENDING_INPUT_PAUSED,
+        DomainEventType.PENDING_INPUT_RESUMED,
+        DomainEventType.PENDING_INPUT_FAILED,
+    ):
+        await projection.handle(
+            _event(
+                event_type,
+                {
+                    "pending_input_id": "pending-1",
+                    "pending_input": {"id": "pending-1", "message": "待发送"},
+                },
+            )
+        )
+    await projection.flush()
+
+    events = repositories.message_events.list_by_session("ses_persist")
+    assert [event.action for event in events] == [
+        "pending_input_submitted",
+        "pending_input_updated",
+        "pending_input_cancelled",
+        "pending_input_delivered",
+        "pending_input_converted",
+        "pending_input_paused",
+        "pending_input_resumed",
+        "pending_input_failed",
+    ]
+    assert events[0].data["_canonical"]["event_type"] == "pending_input.submitted"
+    assert events[-1].data["pending_input_id"] == "pending-1"
+
+
+@pytest.mark.asyncio
 async def test_persistence_projection_persists_turn_started_for_history_markers(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     projection = PersistenceProjection(

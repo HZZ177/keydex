@@ -27,6 +27,7 @@ import {
   createInitialAgentConversationState,
   selectAgentActiveThreadTask,
   selectAgentMessages,
+  selectAgentPendingInputs,
   selectAgentRuntimeState,
   selectAgentSessionState,
   selectAgentThreadTaskRuns,
@@ -40,10 +41,12 @@ import type {
   AgentActionEnvelope,
   AgentContextItem,
   AgentErrorData,
+  AgentPendingInput,
   AgentSession,
   CommandApprovalRequest,
   CommandApprovalDecisionPayload,
   McpElicitationResolvePayload,
+  PendingInputMode,
 } from "@/types/protocol";
 
 export type AgentSessionControllerNoticeLevel = "error" | "warning";
@@ -89,6 +92,7 @@ export interface UseAgentSessionControllerOptions {
   onOpenModelSettings?: () => void;
   onAfterSend?: () => void;
   syncThreadTasks?: boolean;
+  conversationSendDefaultMode?: PendingInputMode;
   ensureSession?: (request: AgentSessionControllerEnsureSessionRequest) => Promise<AgentSessionControllerEnsureSessionResult>;
 }
 
@@ -101,6 +105,7 @@ export interface AgentSessionController {
   activeTask: ReturnType<typeof selectAgentActiveThreadTask>;
   taskRunState: ReturnType<typeof selectAgentThreadTaskRuns>;
   agentMessages: ReturnType<typeof selectAgentMessages>;
+  pendingInputs: AgentPendingInput[];
   runtimeState: ConversationRuntimeState;
   pendingApproval: CommandApprovalRequest | null;
   draft: string;
@@ -134,6 +139,8 @@ export interface AgentSessionController {
       attachments?: ChatPayload["attachments"];
       skipOptimistic?: boolean;
       allowWhileBusy?: boolean;
+      deliveryMode?: PendingInputMode;
+      reverseDeliveryMode?: boolean;
       targetSessionId?: string | null;
     },
   ) => Promise<boolean>;
@@ -142,7 +149,13 @@ export interface AgentSessionController {
     quotes?: SelectedQuote[],
     attachments?: SelectedImageAttachment[],
     model?: RuntimeSelectedModel | null,
+    options?: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode },
   ) => Promise<boolean>;
+  updatePendingInputMode: (pendingInputId: string, mode: PendingInputMode) => Promise<void>;
+  reorderPendingInputs: (pendingInputIds: string[]) => Promise<void>;
+  cancelPendingInput: (pendingInputId: string) => Promise<void>;
+  resumePendingInputs: (target: { pendingInputId?: string; mode?: PendingInputMode }) => Promise<void>;
+  editPendingInput: (pendingInput: AgentPendingInput) => Promise<void>;
   stop: () => void;
   terminateCommand: (commandId: string) => Promise<void>;
   submitA2UI: (
@@ -181,6 +194,7 @@ export function useAgentSessionController({
   onOpenModelSettings,
   onAfterSend,
   syncThreadTasks = true,
+  conversationSendDefaultMode = "steer",
   ensureSession,
 }: UseAgentSessionControllerOptions): AgentSessionController {
   const optionalAgentRuntime = useOptionalAgentSessionRuntime();
@@ -216,11 +230,12 @@ export function useAgentSessionController({
   const taskRunState = sessionId ? selectAgentThreadTaskRuns(state, sessionId) : { runningTaskRun: null, recentTaskRun: null };
   const pendingApproval = sessionViewState?.pendingApproval ?? null;
   const agentMessages = sessionId ? selectAgentMessages(state, sessionId) : [];
+  const pendingInputs = sessionId ? selectAgentPendingInputs(state, sessionId) : [];
   const runtimeState = toConversationRuntimeState(
     requestState ?? (sessionId ? selectAgentRuntimeState(state, sessionId) : "idle"),
   );
   const connectionReady = wsStatus === "open";
-  const canSend = draft.trim().length > 0 && !isBusy(runtimeState) && connectionReady && Boolean(sessionId || ensureSession);
+  const canSend = draft.trim().length > 0 && runtimeState !== "cancelling" && connectionReady && Boolean(sessionId || ensureSession);
   const canStop = runtimeState === "running" && connectionReady && Boolean(sessionId);
 
   const syncThreadTasksForSession = useCallback(async () => {
@@ -627,6 +642,8 @@ export function useAgentSessionController({
         attachments?: ChatPayload["attachments"];
         skipOptimistic?: boolean;
         allowWhileBusy?: boolean;
+        deliveryMode?: PendingInputMode;
+        reverseDeliveryMode?: boolean;
         targetSessionId?: string | null;
       } = {},
     ) => {
@@ -635,7 +652,12 @@ export function useAgentSessionController({
       const trimmedModel = model?.model.trim() ?? "";
       const contextItems = options.contextItems ?? [];
       const attachments = options.attachments ?? [];
-      if ((!trimmedText && !contextItems.length && !attachments.length) || (!options.allowWhileBusy && isBusy(runtimeState))) {
+      const busy = isBusy(runtimeState);
+      if (
+        (!trimmedText && !contextItems.length && !attachments.length) ||
+        runtimeState === "cancelling" ||
+        (!options.allowWhileBusy && busy)
+      ) {
         return false;
       }
       if (!providerId || !trimmedModel) {
@@ -669,7 +691,13 @@ export function useAgentSessionController({
 
       setRuntimeDetail(null);
       try {
-        if (!options.skipOptimistic) {
+        const submittingWhileBusy = busy;
+        const deliveryMode = options.deliveryMode ?? (
+          options.reverseDeliveryMode
+            ? reversePendingInputMode(conversationSendDefaultMode)
+            : conversationSendDefaultMode
+        );
+        if (!options.skipOptimistic && !submittingWhileBusy) {
           dispatch({
             type: "message/addUser",
             sessionId: targetSessionId,
@@ -678,14 +706,22 @@ export function useAgentSessionController({
             attachments,
           });
         }
-        dispatch({ type: "runtime/setState", sessionId: targetSessionId, runtimeState: "running" });
+        if (!submittingWhileBusy) {
+          dispatch({ type: "runtime/setState", sessionId: targetSessionId, runtimeState: "running" });
+        }
+        const runtimeParams = {
+          ...(options.runtimeParams ?? {}),
+          ...(contextItems.length ? { message_context_items: contextItems } : {}),
+        };
         const payload: ChatPayload = {
           session_id: targetSessionId,
           message: trimmedText,
           provider_id: providerId,
           model: trimmedModel,
+          delivery_mode: deliveryMode,
+          client_input_id: createClientInputId(),
           ...(attachments.length ? { attachments } : {}),
-          ...(options.runtimeParams ? { runtime_params: options.runtimeParams } : {}),
+          ...(Object.keys(runtimeParams).length ? { runtime_params: runtimeParams } : {}),
         };
         if (sharedRuntimeContext) {
           sharedRuntimeContext.chat(payload);
@@ -720,6 +756,7 @@ export function useAgentSessionController({
       sessionId,
       setRuntimeDetail,
       sharedRuntimeContext,
+      conversationSendDefaultMode,
       wsStatus,
     ],
   );
@@ -730,6 +767,7 @@ export function useAgentSessionController({
       quotes: SelectedQuote[] = [],
       imageAttachments: SelectedImageAttachment[] = [],
       model: RuntimeSelectedModel | null = null,
+      options: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode } = {},
     ) => {
       const prepared = prepareComposerMessage(draft, files, { quotes, selectedSkill });
       const attachments = imageAttachments.map(agentAttachmentFromSelected);
@@ -741,6 +779,9 @@ export function useAgentSessionController({
         contextItems: prepared.contextItems,
         runtimeParams: prepared.runtimeParams,
         attachments,
+        allowWhileBusy: true,
+        deliveryMode: options.deliveryMode,
+        reverseDeliveryMode: options.reverseDeliveryMode,
       });
       if (sent) {
         setSelectedSkill(null);
@@ -749,6 +790,104 @@ export function useAgentSessionController({
     },
     [draft, selectedSkill, sendText],
   );
+
+  const updatePendingInputMode = useCallback(
+    async (pendingInputId: string, mode: PendingInputMode) => {
+      const targetSessionId = sessionId.trim();
+      if (!targetSessionId || wsStatus !== "open") {
+        return;
+      }
+      if (sharedRuntimeContext) {
+        sharedRuntimeContext.updatePendingInput?.({
+          session_id: targetSessionId,
+          pending_input_id: pendingInputId,
+          mode,
+        });
+        return;
+      }
+      const channel = channelRef.current;
+      if (!channel?.updatePendingInput) {
+        return;
+      }
+      channel.updatePendingInput({
+        session_id: targetSessionId,
+        pending_input_id: pendingInputId,
+        mode,
+      });
+    },
+    [sessionId, sharedRuntimeContext, wsStatus],
+  );
+
+  const reorderPendingInputs = useCallback(
+    async (pendingInputIds: string[]) => {
+      const targetSessionId = sessionId.trim();
+      if (!targetSessionId || wsStatus !== "open" || pendingInputIds.length < 2) {
+        return;
+      }
+      const payload = {
+        session_id: targetSessionId,
+        pending_input_ids: pendingInputIds,
+      };
+      if (sharedRuntimeContext) {
+        sharedRuntimeContext.reorderPendingInputs(payload);
+        return;
+      }
+      const channel = channelRef.current;
+      if (!channel?.reorderPendingInputs) {
+        return;
+      }
+      channel.reorderPendingInputs(payload);
+    },
+    [sessionId, sharedRuntimeContext, wsStatus],
+  );
+
+  const cancelPendingInput = useCallback(
+    async (pendingInputId: string) => {
+      const targetSessionId = sessionId.trim();
+      if (!targetSessionId || wsStatus !== "open") {
+        return;
+      }
+      if (sharedRuntimeContext) {
+        sharedRuntimeContext.cancelPendingInput?.(targetSessionId, pendingInputId, "user");
+        return;
+      }
+      const channel = channelRef.current;
+      if (!channel?.cancelPendingInput) {
+        return;
+      }
+      channel.cancelPendingInput(targetSessionId, pendingInputId, "user");
+    },
+    [sessionId, sharedRuntimeContext, wsStatus],
+  );
+
+  const resumePendingInputs = useCallback(
+    async ({ pendingInputId, mode }: { pendingInputId?: string; mode?: PendingInputMode }) => {
+      const targetSessionId = sessionId.trim();
+      if (!targetSessionId || wsStatus !== "open") {
+        return;
+      }
+      const payload = {
+        session_id: targetSessionId,
+        ...(pendingInputId ? { pending_input_id: pendingInputId } : {}),
+        ...(mode ? { mode } : {}),
+      };
+      if (sharedRuntimeContext) {
+        sharedRuntimeContext.resumePendingInputs(payload);
+        return;
+      }
+      const channel = channelRef.current;
+      channel?.resumePendingInputs?.(payload);
+    },
+    [sessionId, sharedRuntimeContext, wsStatus],
+  );
+
+  const editPendingInput = useCallback(async (pendingInput: AgentPendingInput) => {
+    setDraft(pendingInput.message ?? "");
+    const pendingInputId = pendingInput.pending_input_id || pendingInput.id;
+    if (pendingInputId) {
+      await cancelPendingInput(pendingInputId);
+    }
+  }, [cancelPendingInput]);
 
   const stop = useCallback(() => {
     if (!sessionId || !canStop) {
@@ -968,6 +1107,7 @@ export function useAgentSessionController({
       activeTask,
       taskRunState,
       agentMessages,
+      pendingInputs,
       runtimeState,
       pendingApproval,
       draft,
@@ -993,6 +1133,11 @@ export function useAgentSessionController({
       loadOlderHistory,
       sendText,
       send,
+      updatePendingInputMode,
+      reorderPendingInputs,
+      cancelPendingInput,
+      resumePendingInputs,
+      editPendingInput,
       stop,
       terminateCommand,
       submitA2UI,
@@ -1009,21 +1154,26 @@ export function useAgentSessionController({
       canSend,
       canStop,
       cancelA2UI,
+      cancelPendingInput,
+      resumePendingInputs,
       connectionReady,
       dispatch,
       draft,
+      editPendingInput,
       fileChipRequest,
       composerContextRequest,
       loadOlderHistory,
       loading,
       loadingOlderHistory,
       pendingApproval,
+      pendingInputs,
       quoteChipRequest,
       quoteSelection,
       reloadHistory,
       runtimeDetail,
       runtimeState,
       resolveMcpElicitation,
+      reorderPendingInputs,
       restoreComposerDraft,
       selectedSkill,
       send,
@@ -1037,6 +1187,7 @@ export function useAgentSessionController({
       submitA2UI,
       submitApproval,
       terminateCommand,
+      updatePendingInputMode,
       usingSharedRuntime,
       wsStatus,
     ],
@@ -1072,6 +1223,17 @@ function isBusy(state: ConversationRuntimeState): boolean {
     || state === "waiting_approval"
     || state === "waiting_input"
     || state === "cancelling";
+}
+
+function reversePendingInputMode(mode: PendingInputMode): PendingInputMode {
+  return mode === "steer" ? "queue" : "steer";
+}
+
+function createClientInputId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `client-input:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
 }
 
 function sessionTitleFromPreparedMessage(text: string, contextItems: AgentContextItem[]): string {

@@ -6,6 +6,9 @@ import {
   Circle,
   CircleCheck,
   CircleX,
+  CornerDownLeft,
+  GripVertical,
+  ListEnd,
   LoaderCircle,
   Pause,
   Pencil,
@@ -13,13 +16,22 @@ import {
   Target,
   Trash2,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type { RuntimeBridge } from "@/runtime";
 import { useRuntimeTypingMetrics } from "@/renderer/hooks/useRuntimeTypingSpeed";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
-import type { ThreadTask, ThreadTaskRun } from "@/types/protocol";
+import type { AgentPendingInput, PendingInputMode, ThreadTask, ThreadTaskRun } from "@/types/protocol";
 
 import { McpRuntimePill } from "./McpRuntimePanel";
 import { type FileChangePreview } from "./messages";
@@ -50,10 +62,16 @@ interface ComposerAccessoryStatusItem {
 export function ConversationComposerAccessory({
   messages,
   activeTask = null,
+  pendingInputs = [],
   runningTaskRun = null,
   mcpRuntime = null,
   onUpdateTask,
   onDeleteTask,
+  onPendingInputModeChange,
+  onPendingInputReorder,
+  onPendingInputCancel,
+  onPendingInputResume,
+  onPendingInputEdit,
   onOpenMcpSettings,
   showScrollToBottom,
   showScrollButton = true,
@@ -61,6 +79,7 @@ export function ConversationComposerAccessory({
   onScrollToBottom,
 }: {
   messages: ConversationMessage[];
+  pendingInputs?: AgentPendingInput[];
   activeTask?: ThreadTask | null;
   runningTaskRun?: ThreadTaskRun | null;
   mcpRuntime?: {
@@ -70,6 +89,11 @@ export function ConversationComposerAccessory({
   } | null;
   onUpdateTask?: (taskId: string, payload: ThreadTaskUpdatePayload) => Promise<unknown> | unknown;
   onDeleteTask?: (taskId: string) => Promise<unknown> | unknown;
+  onPendingInputModeChange?: (pendingInputId: string, mode: PendingInputMode) => Promise<unknown> | unknown;
+  onPendingInputReorder?: (pendingInputIds: string[]) => Promise<unknown> | unknown;
+  onPendingInputCancel?: (pendingInputId: string) => Promise<unknown> | unknown;
+  onPendingInputResume?: (target: { pendingInputId?: string; mode?: PendingInputMode }) => Promise<unknown> | unknown;
+  onPendingInputEdit?: (pendingInput: AgentPendingInput) => Promise<unknown> | unknown;
   onOpenMcpSettings?: () => void;
   showScrollToBottom: boolean;
   showScrollButton?: boolean;
@@ -85,6 +109,23 @@ export function ConversationComposerAccessory({
   );
   const accessoryItems = useMemo<ComposerAccessoryStatusItem[]>(
     () => [
+      {
+        id: "pending-inputs",
+        active: pendingInputs.length > 0,
+        description: pendingInputs.length > 0 ? `${pendingInputs.length} 条待处理输入` : "暂无待处理输入",
+        label: "待发送",
+        priority: 220,
+        node: pendingInputs.length ? (
+          <PendingInputsPill
+            inputs={pendingInputs}
+            onModeChange={onPendingInputModeChange}
+            onReorder={onPendingInputReorder}
+            onCancel={onPendingInputCancel}
+            onResume={onPendingInputResume}
+            onEdit={onPendingInputEdit}
+          />
+        ) : null,
+      },
       {
         id: "thread-task",
         active: Boolean(activeTask),
@@ -150,7 +191,13 @@ export function ConversationComposerAccessory({
       onDeleteTask,
       onFilePreview,
       onOpenMcpSettings,
+      onPendingInputCancel,
+      onPendingInputResume,
+      onPendingInputEdit,
+      onPendingInputModeChange,
+      onPendingInputReorder,
       onUpdateTask,
+      pendingInputs,
       planSummary,
       runtimeTypingMetrics.backlog,
       runtimeTypingMetrics.speed,
@@ -220,6 +267,460 @@ export function ConversationComposerAccessory({
       ) : null}
     </div>
   );
+}
+
+function PendingInputsPill({
+  inputs,
+  onModeChange,
+  onReorder,
+  onCancel,
+  onResume,
+  onEdit,
+}: {
+  inputs: AgentPendingInput[];
+  onModeChange?: (pendingInputId: string, mode: PendingInputMode) => Promise<unknown> | unknown;
+  onReorder?: (pendingInputIds: string[]) => Promise<unknown> | unknown;
+  onCancel?: (pendingInputId: string) => Promise<unknown> | unknown;
+  onResume?: (target: { pendingInputId?: string; mode?: PendingInputMode }) => Promise<unknown> | unknown;
+  onEdit?: (pendingInput: AgentPendingInput) => Promise<unknown> | unknown;
+}) {
+  const [orderedInputs, setOrderedInputs] = useState(inputs);
+
+  useEffect(() => {
+    setOrderedInputs(inputs);
+  }, [inputs]);
+
+  const steerInputs = orderedInputs.filter((input) => input.mode === "steer");
+  const queueInputs = orderedInputs.filter((input) => input.mode === "queue");
+  const hasPausedInputs = orderedInputs.some(isPendingInputPaused);
+
+  const commitSectionOrder = (mode: PendingInputMode, nextIds: string[]) => {
+    if (!onReorder) {
+      return Promise.resolve();
+    }
+    const currentIds = orderedInputs
+      .filter((input) => input.mode === mode && isPendingInputReorderable(input))
+      .map(pendingInputId);
+    if (arraysEqual(currentIds, nextIds)) {
+      return Promise.resolve();
+    }
+    const previousInputs = orderedInputs;
+    setOrderedInputs(applyPendingInputSectionOrder(orderedInputs, mode, nextIds));
+    return Promise.resolve(onReorder(nextIds)).catch((reason) => {
+      setOrderedInputs(previousInputs);
+      throw reason;
+    });
+  };
+
+  return (
+    <div className={styles.pendingInputsPill} aria-label="待发送消息" data-testid="pending-inputs-pill">
+      {hasPausedInputs ? (
+        <div className={styles.pendingInputsPausedNotice} role="status">
+          <Pause size={13} aria-hidden="true" />
+          <span>等待发送时的轮次已被您主动停止，请选择如何处理以下待发送消息。</span>
+        </div>
+      ) : null}
+      {steerInputs.length ? (
+        <PendingInputSection
+          mode="steer"
+          inputs={steerInputs}
+          onModeChange={onModeChange}
+          onReorder={(ids) => commitSectionOrder("steer", ids)}
+          onCancel={onCancel}
+          onResume={onResume}
+          onEdit={onEdit}
+        />
+      ) : null}
+      {queueInputs.length ? (
+        <PendingInputSection
+          mode="queue"
+          inputs={queueInputs}
+          onModeChange={onModeChange}
+          onReorder={(ids) => commitSectionOrder("queue", ids)}
+          onCancel={onCancel}
+          onResume={onResume}
+          onEdit={onEdit}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function PendingInputSection({
+  mode,
+  inputs,
+  onModeChange,
+  onReorder,
+  onCancel,
+  onResume,
+  onEdit,
+}: {
+  mode: PendingInputMode;
+  inputs: AgentPendingInput[];
+  onModeChange?: (pendingInputId: string, mode: PendingInputMode) => Promise<unknown> | unknown;
+  onReorder: (pendingInputIds: string[]) => Promise<unknown>;
+  onCancel?: (pendingInputId: string) => Promise<unknown> | unknown;
+  onResume?: (target: { pendingInputId?: string; mode?: PendingInputMode }) => Promise<unknown> | unknown;
+  onEdit?: (pendingInput: AgentPendingInput) => Promise<unknown> | unknown;
+}) {
+  const [draggedInputId, setDraggedInputId] = useState<string | null>(null);
+  const [dragPreviewIds, setDragPreviewIds] = useState<string[] | null>(null);
+  const draggedInputIdRef = useRef<string | null>(null);
+  const dragInitialIdsRef = useRef<string[] | null>(null);
+  const dragPreviewIdsRef = useRef<string[] | null>(null);
+  const rowElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const rowPositionsBeforeUpdateRef = useRef<Map<string, number> | null>(null);
+  const rowAnimationsRef = useRef(new Map<string, Animation>());
+  const reorderableIds = inputs
+    .filter((input) => isPendingInputReorderable(input))
+    .map((input) => pendingInputId(input));
+  const displayedInputs = useMemo(
+    () => dragPreviewIds ? applyPendingInputSectionOrder(inputs, mode, dragPreviewIds) : inputs,
+    [dragPreviewIds, inputs, mode],
+  );
+  const canReorder = reorderableIds.length > 1;
+  const pausedInputs = inputs.filter(isPendingInputPaused);
+  const sectionTitle = mode === "steer" ? "引导当前轮次" : "等待队列";
+  const sectionDescription = mode === "steer"
+    ? "以下消息将在下一次模型请求前一次性发送给 Agent。"
+    : "以下消息会在当前轮次结束后按顺序逐条发送。";
+
+  const captureRowPositions = () => {
+    rowPositionsBeforeUpdateRef.current = new Map(
+      [...rowElementsRef.current.entries()].map(([id, element]) => [id, element.getBoundingClientRect().top]),
+    );
+  };
+
+  useLayoutEffect(() => {
+    const previousPositions = rowPositionsBeforeUpdateRef.current;
+    if (!previousPositions) {
+      return;
+    }
+    rowPositionsBeforeUpdateRef.current = null;
+    for (const animation of rowAnimationsRef.current.values()) {
+      animation.cancel();
+    }
+    rowAnimationsRef.current.clear();
+    const reduceMotion = typeof window !== "undefined"
+      && typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      return;
+    }
+    for (const [id, element] of rowElementsRef.current) {
+      const previousTop = previousPositions.get(id);
+      if (previousTop === undefined) {
+        continue;
+      }
+      const deltaY = previousTop - element.getBoundingClientRect().top;
+      if (Math.abs(deltaY) < 1 || typeof element.animate !== "function") {
+        continue;
+      }
+      const animation = element.animate(
+        [
+          { transform: `translateY(${deltaY}px)` },
+          { transform: "translateY(0)" },
+        ],
+        { duration: 170, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+      );
+      rowAnimationsRef.current.set(id, animation);
+    }
+  }, [displayedInputs]);
+
+  useEffect(() => () => {
+    for (const animation of rowAnimationsRef.current.values()) {
+      animation.cancel();
+    }
+  }, []);
+
+  const resetDragState = () => {
+    if (dragPreviewIdsRef.current) {
+      captureRowPositions();
+    }
+    draggedInputIdRef.current = null;
+    dragInitialIdsRef.current = null;
+    dragPreviewIdsRef.current = null;
+    setDraggedInputId(null);
+    setDragPreviewIds(null);
+  };
+
+  const commitOrder = (nextIds: string[]) => {
+    const initialIds = dragInitialIdsRef.current ?? reorderableIds;
+    if (arraysEqual(nextIds, initialIds)) {
+      resetDragState();
+      return;
+    }
+    resetDragState();
+    void onReorder(nextIds).catch(() => undefined);
+  };
+
+  const handleDragStart = (event: DragEvent<HTMLButtonElement>, inputId: string) => {
+    captureRowPositions();
+    draggedInputIdRef.current = inputId;
+    dragInitialIdsRef.current = reorderableIds;
+    dragPreviewIdsRef.current = reorderableIds;
+    setDraggedInputId(inputId);
+    setDragPreviewIds(reorderableIds);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", inputId);
+    }
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>, targetId: string) => {
+    const sourceId = draggedInputIdRef.current;
+    if (!sourceId || !canReorder) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "move";
+    }
+    if (sourceId === targetId) {
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position: PendingInputDropPosition = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+    const currentIds = dragPreviewIdsRef.current ?? dragInitialIdsRef.current ?? reorderableIds;
+    const nextIds = reorderPendingInputIds(currentIds, sourceId, targetId, position);
+    if (arraysEqual(currentIds, nextIds)) {
+      return;
+    }
+    captureRowPositions();
+    dragPreviewIdsRef.current = nextIds;
+    setDragPreviewIds(nextIds);
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const sourceId = draggedInputIdRef.current || event.dataTransfer?.getData("text/plain") || "";
+    if (!sourceId || !canReorder) {
+      resetDragState();
+      return;
+    }
+    commitOrder(dragPreviewIdsRef.current ?? dragInitialIdsRef.current ?? reorderableIds);
+  };
+
+  const handleReorderKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, inputId: string) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+      return;
+    }
+    event.preventDefault();
+    const sourceIndex = reorderableIds.indexOf(inputId);
+    const targetIndex = sourceIndex + (event.key === "ArrowUp" ? -1 : 1);
+    if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= reorderableIds.length) {
+      return;
+    }
+    const nextIds = [...reorderableIds];
+    [nextIds[sourceIndex], nextIds[targetIndex]] = [nextIds[targetIndex], nextIds[sourceIndex]];
+    commitOrder(nextIds);
+  };
+
+  return (
+    <section className={styles.pendingInputSection} data-mode={mode} aria-label={sectionTitle}>
+      <header className={styles.pendingInputSectionHeader}>
+        <span className={styles.pendingInputSectionCopy}>
+          <strong>{sectionTitle}</strong>
+          <span>{sectionDescription}</span>
+        </span>
+        {pausedInputs.length ? (
+          <button
+            className={styles.pendingInputResumeAll}
+            type="button"
+            aria-label={`恢复全部${sectionTitle}消息`}
+            data-tooltip-label={`恢复全部${sectionTitle}消息`}
+            disabled={!onResume}
+            onClick={() => void onResume?.({ mode })}
+          >
+            <Play size={13} aria-hidden="true" />
+          </button>
+        ) : null}
+      </header>
+      <div className={styles.pendingInputSectionRows} data-drag-active={draggedInputId ? "true" : "false"}>
+      {displayedInputs.map((input) => {
+        const id = pendingInputId(input);
+        const nextMode: PendingInputMode = input.mode === "steer" ? "queue" : "steer";
+        const ModeIcon = nextMode === "steer" ? CornerDownLeft : ListEnd;
+        const nextModeLabel = nextMode === "steer" ? "改为引导" : "改为队列";
+        const reorderable = canReorder && isPendingInputReorderable(input);
+        const paused = isPendingInputPaused(input);
+        const contentMeta = pendingInputContentMeta(input);
+        return (
+          <div
+            className={styles.pendingInputRow}
+            key={id}
+            data-mode={input.mode}
+            data-status={input.status}
+            data-pending-input-id={id}
+            data-dragging={draggedInputId === id ? "true" : "false"}
+            data-drag-placeholder={draggedInputId === id ? "true" : "false"}
+            data-paused={paused ? "true" : "false"}
+            ref={(element) => {
+              if (element) {
+                rowElementsRef.current.set(id, element);
+              } else {
+                rowElementsRef.current.delete(id);
+              }
+            }}
+            onDragOver={(event) => handleDragOver(event, id)}
+            onDrop={handleDrop}
+          >
+            <button
+              className={styles.pendingInputDragHandle}
+              type="button"
+              aria-label={`拖动调整顺序：${input.message}`}
+              aria-grabbed={draggedInputId === id}
+              data-tooltip-label="拖动排序"
+              draggable={reorderable}
+              disabled={!reorderable}
+              onDragStart={(event) => handleDragStart(event, id)}
+              onDragEnd={resetDragState}
+              onKeyDown={(event) => handleReorderKeyDown(event, id)}
+            >
+              <GripVertical size={13} />
+            </button>
+            <span className={styles.pendingInputMeta} aria-hidden="true">
+              {paused ? <Pause size={11} /> : null}
+              <span className={styles.pendingInputStatus}>{pendingInputStatusLabel(input)}</span>
+            </span>
+            <span className={styles.pendingInputContent}>
+              <span className={styles.pendingInputText}>{input.message || "仅包含上下文"}</span>
+              {contentMeta ? <span className={styles.pendingInputContentMeta}>{contentMeta}</span> : null}
+            </span>
+            <span className={styles.pendingInputActions}>
+              {paused ? (
+                <button
+                  className={styles.pendingInputAction}
+                  type="button"
+                  aria-label={`恢复待发送消息：${input.message}`}
+                  data-tooltip-label="恢复这条消息"
+                  disabled={!onResume}
+                  onClick={() => void onResume?.({ pendingInputId: id })}
+                >
+                  <Play size={13} />
+                </button>
+              ) : null}
+              <button
+                className={styles.pendingInputAction}
+                type="button"
+                aria-label={`${nextModeLabel}：${input.message}`}
+                data-tooltip-label={nextModeLabel}
+                disabled={!onModeChange || (input.status !== "pending_steer" && input.status !== "queued")}
+                onClick={() => {
+                  void onModeChange?.(id, nextMode);
+                }}
+              >
+                <ModeIcon size={13} />
+              </button>
+              <button
+                className={styles.pendingInputAction}
+                type="button"
+                aria-label={`编辑待发送消息：${input.message}`}
+                data-tooltip-label="编辑"
+                disabled={!onEdit}
+                onClick={() => {
+                  void onEdit?.(input);
+                }}
+              >
+                <Pencil size={13} />
+              </button>
+              <button
+                className={styles.pendingInputAction}
+                type="button"
+                aria-label={`删除待发送消息：${input.message}`}
+                data-tooltip-label="删除"
+                disabled={!onCancel}
+                onClick={() => {
+                  void onCancel?.(id);
+                }}
+              >
+                <Trash2 size={13} />
+              </button>
+            </span>
+          </div>
+        );
+      })}
+      </div>
+    </section>
+  );
+}
+
+type PendingInputDropPosition = "before" | "after";
+
+function pendingInputId(input: AgentPendingInput): string {
+  return input.pending_input_id || input.id;
+}
+
+function isPendingInputReorderable(input: AgentPendingInput): boolean {
+  return input.status === "pending_steer" || input.status === "queued";
+}
+
+function reorderPendingInputIds(
+  ids: string[],
+  sourceId: string,
+  targetId: string,
+  position: PendingInputDropPosition,
+): string[] {
+  const next = ids.filter((id) => id !== sourceId);
+  const targetIndex = next.indexOf(targetId);
+  if (targetIndex < 0 || !ids.includes(sourceId)) {
+    return ids;
+  }
+  next.splice(targetIndex + (position === "after" ? 1 : 0), 0, sourceId);
+  return next;
+}
+
+function applyPendingInputSectionOrder(
+  inputs: AgentPendingInput[],
+  mode: PendingInputMode,
+  ids: string[],
+): AgentPendingInput[] {
+  const byId = new Map(inputs.map((input) => [pendingInputId(input), input]));
+  let nextIndex = 0;
+  return inputs.map((input) => {
+    if (input.mode !== mode || !isPendingInputReorderable(input)) {
+      return input;
+    }
+    const next = byId.get(ids[nextIndex]);
+    nextIndex += 1;
+    return next ?? input;
+  });
+}
+
+function isPendingInputPaused(input: AgentPendingInput): boolean {
+  return Boolean(input.paused_at || input.paused);
+}
+
+function pendingInputContentMeta(input: AgentPendingInput): string {
+  const attachmentCount = input.attachments?.length ?? 0;
+  const runtimeParams = input.runtime_params ?? {};
+  const rawContextItems = runtimeParams.message_context_items ?? runtimeParams.messageContextItems;
+  const contextCount = Array.isArray(rawContextItems) ? rawContextItems.length : 0;
+  return [
+    attachmentCount ? `${attachmentCount} 个附件` : "",
+    contextCount ? `${contextCount} 个上下文` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function pendingInputStatusLabel(input: AgentPendingInput): string {
+  if (isPendingInputPaused(input)) {
+    return "已暂停";
+  }
+  const { status } = input;
+  if (status === "pending_steer") {
+    return "等待注入";
+  }
+  if (status === "queued") {
+    return "等待发送";
+  }
+  if (status === "starting" || status === "running") {
+    return "发送中";
+  }
+  return "已处理";
 }
 
 function activeTurnContainsMcpTool(messages: ConversationMessage[]): boolean {

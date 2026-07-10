@@ -98,6 +98,44 @@ async def test_chat_projection_maps_thread_task_events_to_task_actions() -> None
 
 
 @pytest.mark.asyncio
+async def test_chat_projection_maps_pending_input_events_to_pending_actions() -> None:
+    adapter = RecordingChatAdapter()
+    projection = ChatProjection(adapter)
+
+    for event_type in (
+        DomainEventType.PENDING_INPUT_SUBMITTED,
+        DomainEventType.PENDING_INPUT_UPDATED,
+        DomainEventType.PENDING_INPUT_CANCELLED,
+        DomainEventType.PENDING_INPUT_DELIVERED,
+        DomainEventType.PENDING_INPUT_CONVERTED,
+        DomainEventType.PENDING_INPUT_PAUSED,
+        DomainEventType.PENDING_INPUT_RESUMED,
+        DomainEventType.PENDING_INPUT_FAILED,
+    ):
+        await projection.handle(
+            _event(
+                event_type,
+                {
+                    "pending_input_id": "pending-1",
+                    "pending_input": {"id": "pending-1", "message": "待发送"},
+                },
+            )
+        )
+
+    assert [item["action"] for item in adapter.sent] == [
+        "pending_input_submitted",
+        "pending_input_updated",
+        "pending_input_cancelled",
+        "pending_input_delivered",
+        "pending_input_converted",
+        "pending_input_paused",
+        "pending_input_resumed",
+        "pending_input_failed",
+    ]
+    assert all(item["data"]["pending_input_id"] == "pending-1" for item in adapter.sent)
+
+
+@pytest.mark.asyncio
 async def test_chat_projection_maps_turn_started_to_realtime_turn_marker() -> None:
     adapter = RecordingChatAdapter()
     projection = ChatProjection(adapter)
@@ -355,3 +393,36 @@ async def test_chat_projection_ignores_unmapped_domain_events() -> None:
     await projection.handle(_event(DomainEventType.MESSAGE_USER_CREATED, {"content": "hi"}))
 
     assert adapter.sent == []
+
+
+@pytest.mark.asyncio
+async def test_chat_projection_sends_only_pending_user_message_events() -> None:
+    adapter = RecordingChatAdapter()
+    projection = ChatProjection(adapter)
+    pending_event = _event(DomainEventType.MESSAGE_USER_CREATED, {"content": "运行中引导"})
+    pending_event = DomainEvent(
+        event_type=pending_event.event_type,
+        source="pending_input_middleware",
+        payload=pending_event.payload,
+        trace_id=pending_event.trace_id,
+        original_session_id=pending_event.original_session_id,
+        active_session_id=pending_event.active_session_id,
+        turn_index=pending_event.turn_index,
+    )
+
+    await projection.handle(pending_event)
+    promoted_event = DomainEvent(
+        event_type=pending_event.event_type,
+        source="pending_input_promotion",
+        payload={"content": "排队消息", "pending_input_id": "pending-queue"},
+        trace_id=pending_event.trace_id,
+        original_session_id=pending_event.original_session_id,
+        active_session_id=pending_event.active_session_id,
+        turn_index=2,
+    )
+    await projection.handle(promoted_event)
+
+    assert adapter.sent[0]["action"] == "user_message"
+    assert adapter.sent[0]["data"]["content"] == "运行中引导"
+    assert adapter.sent[1]["action"] == "user_message"
+    assert adapter.sent[1]["data"]["pending_input_id"] == "pending-queue"

@@ -64,7 +64,7 @@ import {
   type QuoteSelectionAction,
   type SelectedQuote,
 } from "./quoteSelection";
-import { useCompositionInput } from "./useCompositionInput";
+import { useCompositionInput, type SendBoxSubmitOptions } from "./useCompositionInput";
 
 const LazyAtFileMenu = lazy(() =>
   import("@/renderer/components/chat/AtFileMenu/AtFileMenu").then((module) => ({
@@ -117,6 +117,7 @@ export interface SendBoxProps {
     files: SelectedFile[],
     quotes: SelectedQuote[],
     attachments: SelectedImageAttachment[],
+    options?: SendBoxSubmitOptions,
   ) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
   runtime?: RuntimeBridge;
@@ -242,7 +243,7 @@ export function SendBox({
   const notifications = useNotifications();
   const editorValue = value;
   const busy = isBusy(runtimeState);
-  const inputDisabled = disabled || (busy && runtimeState !== "running");
+  const inputDisabled = disabled || (busy && !canTypeWhileBusy(runtimeState));
   const canUseFileContext = allowFileSelection && fileAccessMode !== "no_file_access";
   const filePickerAllowsGlobalPaths = fileAccessMode === "full_access";
   const fileAccessHint = fileAccessMessage(fileAccessMode);
@@ -363,12 +364,12 @@ export function SendBox({
     [rememberPreviewUrl],
   );
   const canSubmit =
-    !busy &&
+    runtimeState !== "cancelling" &&
     !attachmentLoading &&
     (canSend || fileSelection.files.length > 0 || quoteSelection.quotes.length > 0 || imageAttachments.length > 0);
   const showSendLoading = sendLoading && !busy;
-  const requestSend = useCallback(() => {
-    const result = onSend(fileSelection.files, quoteSelection.quotes, imageAttachments);
+  const requestSend = useCallback((options: SendBoxSubmitOptions = {}) => {
+    const result = onSend(fileSelection.files, quoteSelection.quotes, imageAttachments, options);
     void Promise.resolve(result).then((sent) => {
       if (sent !== false) {
         dispatchFileSelection({ type: "clear" });
@@ -416,7 +417,7 @@ export function SendBox({
     ],
     [slashCommands, slashSkills],
   );
-  const slashOpen = slashQuery !== null && dismissedSlashValue !== editorValue && !busy;
+  const slashOpen = slashQuery !== null && dismissedSlashValue !== editorValue && !inputDisabled;
   const slashItemCount = slashMode === "skills" ? slashSkills.length : slashRootItems.length;
   const visibleSlashActiveIndex = Math.min(slashActiveIndex, Math.max(slashItemCount - 1, 0));
   const atQuery = getAtQuery(editorValue);
@@ -426,7 +427,7 @@ export function SendBox({
     Boolean(onSearchWorkspace || onListWorkspaceDirectory) &&
     atQuery !== null &&
     dismissedAtValue !== editorValue &&
-    !busy &&
+    !inputDisabled &&
     !slashOpen;
   const atDirectoryPath =
     atOpen && canUseFileContext && onListWorkspaceDirectory && (atBrowsePath !== null || !atQuery)
@@ -1137,7 +1138,7 @@ export function SendBox({
       onDrop={handleDrop}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!busy && canSubmit) {
+        if (canSubmit) {
           requestSend();
         }
       }}
@@ -2116,4 +2117,8 @@ function errorMessage(reason: unknown): string {
     return (reason as { message: string }).message;
   }
   return "工作区搜索失败";
+}
+
+function canTypeWhileBusy(state: ConversationRuntimeState): boolean {
+  return state === "running" || state === "waiting_approval" || state === "waiting_input";
 }

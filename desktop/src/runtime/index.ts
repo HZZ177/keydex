@@ -71,6 +71,9 @@ export type {
   ListSessionsOptions,
   LoadHistoryOptions,
   LoadToolDetailsOptions,
+  ReorderPendingInputsPayload,
+  ResumePendingInputsPayload,
+  UpdatePendingInputPayload,
   UpdateSessionPayload,
 } from "./conversation";
 export type {

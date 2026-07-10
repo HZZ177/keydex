@@ -104,10 +104,9 @@ describe("style foundation", () => {
     expect(chatLayout).toMatch(/\.composerDock::before\s*{[^}]*right:\s*var\(--conversation-scrollbar-gutter-width\)/s);
     expect(chatLayout).toMatch(/\.composerDock::before\s*{[^}]*linear-gradient/s);
     expect(chatLayout).toMatch(/--composer-fade-height:\s*44px/);
-    expect(chatLayout).toMatch(/\.composerAccessory\s*{[^}]*position:\s*absolute/s);
-    expect(chatLayout).toMatch(
-      /\.composerAccessory\s*{[^}]*bottom:\s*calc\(100% \+ var\(--composer-accessory-gap\)\)/s,
-    );
+    expect(chatLayout).toMatch(/\.composerDock\s*{[^}]*grid-template-rows:\s*auto auto/s);
+    expect(chatLayout).toMatch(/\.composerAccessory\s*{[^}]*position:\s*relative/s);
+    expect(chatLayout).not.toMatch(/\.composerAccessory\s*{[^}]*bottom:\s*calc\(100%/s);
     expect(chatLayout).not.toMatch(/\.composerDock\s*{[^}]*position:\s*fixed/s);
     expect(chatLayout).not.toContain("--conversation-composer-reserved-height");
     expect(messageList).toMatch(/\.root\s*{[^}]*height:\s*100%/s);

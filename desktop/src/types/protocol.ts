@@ -756,9 +756,21 @@ export interface AppearanceSettings {
 }
 
 export type CloseWindowBehavior = "exit" | "minimize_to_tray";
+export type ConversationSendDefaultMode = "steer" | "queue";
+export type PendingInputMode = ConversationSendDefaultMode;
+export type PendingInputStatus =
+  | "pending_steer"
+  | "queued"
+  | "starting"
+  | "running"
+  | "delivered"
+  | "cancelled"
+  | "failed"
+  | "converted";
 
 export interface GeneralSettings {
   close_window_behavior: CloseWindowBehavior | null;
+  conversation_send_default_mode?: ConversationSendDefaultMode;
 }
 
 export type FileAccessMode = "no_file_access" | "workspace_read_only" | "workspace_trusted" | "full_access";
@@ -997,6 +1009,7 @@ export interface UsageRequestDetail {
 }
 
 export const AGENT_CHAT_ACTIONS = [
+  "user_message",
   "session_created",
   "bind_ok",
   "unbind_ok",
@@ -1035,6 +1048,15 @@ export const AGENT_CHAT_ACTIONS = [
   "thread_task_status",
   "reasoning",
   "middleware_progress",
+  "pending_input_submitted",
+  "pending_input_updated",
+  "pending_inputs_reordered",
+  "pending_input_cancelled",
+  "pending_input_delivered",
+  "pending_input_converted",
+  "pending_input_paused",
+  "pending_input_resumed",
+  "pending_input_failed",
   "workspaceSkillsChanged",
   "command_terminated",
   "mcp_server_status_changed",
@@ -1074,6 +1096,15 @@ export const AGENT_REPLAY_ACTIONS = [
   "thread_task_status",
   "reasoning",
   "middleware_progress",
+  "pending_input_submitted",
+  "pending_input_updated",
+  "pending_inputs_reordered",
+  "pending_input_cancelled",
+  "pending_input_delivered",
+  "pending_input_converted",
+  "pending_input_paused",
+  "pending_input_resumed",
+  "pending_input_failed",
   "mcp_server_status_changed",
   "mcp_runtime_snapshot_created",
   "mcp_tool_policy_changed",
@@ -1105,6 +1136,10 @@ export const AGENT_INBOUND_ACTIONS = [
   "close_session",
   "cancel",
   "approval_decision",
+  "pending_input_update",
+  "pending_input_reorder",
+  "pending_input_cancel",
+  "pending_input_resume",
   "ping",
   "get_status",
   "terminate_command",
@@ -1314,10 +1349,51 @@ export interface AgentHistoryResponse {
   page_size: number;
   session: AgentSession;
   event_total: number;
+  pending_inputs?: AgentPendingInput[];
   turn_indexes: number[];
   next_cursor?: string | null;
   prev_cursor?: string | null;
   has_more_older?: boolean;
+}
+
+export interface AgentPendingInput {
+  id: string;
+  pending_input_id?: string;
+  session_id: string;
+  client_input_id?: string | null;
+  mode: PendingInputMode;
+  status: PendingInputStatus;
+  message: string;
+  provider_id?: string | null;
+  model?: string | null;
+  user_id?: string | null;
+  scene_id?: string | null;
+  runtime_params?: Record<string, unknown>;
+  attachments?: AgentFileAttachment[];
+  target_turn_index?: number | null;
+  target_trace_id?: string | null;
+  promoted_turn_index?: number | null;
+  promoted_trace_id?: string | null;
+  queue_position?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  delivered_at?: string | null;
+  cancelled_at?: string | null;
+  paused_at?: string | null;
+  pause_reason?: string | null;
+  paused?: boolean;
+}
+
+export interface AgentPendingInputEventData extends AgentPendingInput {
+  pending_input?: AgentPendingInput;
+  duplicate?: boolean;
+}
+
+export interface AgentPendingInputsReorderedEventData {
+  session_id: string;
+  pending_inputs: AgentPendingInput[];
 }
 
 export interface AgentToolDetailRef {

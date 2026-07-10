@@ -530,6 +530,57 @@ create index if not exists idx_message_events_session_seq on message_events(sess
 create unique index if not exists idx_message_events_session_seq_unique
   on message_events(session_id, seq);
 
+create table if not exists session_pending_inputs (
+  id text primary key,
+  session_id text not null,
+  client_input_id text,
+  mode text not null check (mode in ('steer', 'queue')),
+  status text not null check (status in (
+    'pending_steer',
+    'queued',
+    'starting',
+    'running',
+    'delivered',
+    'cancelled',
+    'failed',
+    'converted'
+  )),
+  message text not null,
+  provider_id text not null default '',
+  model text not null default '',
+  user_id text,
+  scene_id text,
+  runtime_params_json text not null default '{}',
+  attachments_json text not null default '[]',
+  target_turn_index integer,
+  target_trace_id text,
+  promoted_turn_index integer,
+  promoted_trace_id text,
+  queue_position integer not null default 0,
+  lock_owner text,
+  lock_expires_at text,
+  error_code text,
+  error_message text,
+  created_at text not null,
+  updated_at text not null,
+  delivered_at text,
+  cancelled_at text,
+  paused_at text,
+  pause_reason text,
+  is_deleted integer not null default 0,
+  foreign key(session_id) references sessions(id) on delete cascade
+);
+
+create unique index if not exists idx_pending_inputs_client_id
+  on session_pending_inputs(session_id, client_input_id)
+  where client_input_id is not null and client_input_id != '' and is_deleted = 0;
+create index if not exists idx_pending_inputs_session_status_created
+  on session_pending_inputs(session_id, status, created_at, id)
+  where is_deleted = 0;
+create index if not exists idx_pending_inputs_session_active
+  on session_pending_inputs(session_id, updated_at desc)
+  where is_deleted = 0 and status in ('pending_steer', 'queued', 'starting', 'running');
+
 create table if not exists a2ui_interactions (
   id text primary key,
   session_id text not null,
@@ -993,6 +1044,8 @@ class Database:
                 "priority_available",
                 "integer not null default 0",
             )
+            self._ensure_column(conn, "session_pending_inputs", "paused_at", "text")
+            self._ensure_column(conn, "session_pending_inputs", "pause_reason", "text")
             conn.executescript(SCHEMA_UPGRADE_SQL)
             self._remove_mcp_prompt_schema(conn)
             self._remove_mcp_risk_schema(conn)

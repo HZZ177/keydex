@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.api.dependencies import get_repositories
-from backend.app.services.agent_runtime import AgentRuntimeInitializationError
 from backend.app.core.config import AppSettings, get_settings
 from backend.app.core.logger import logger
+from backend.app.services.agent_runtime import AgentRuntimeInitializationError
 from backend.app.services.manual_context_compression_service import (
     ManualContextCompressionResult,
     ManualContextCompressionService,
@@ -110,6 +110,7 @@ class SessionHistoryResponse(BaseModel):
     page_size: int
     session: dict[str, Any]
     event_total: int
+    pending_inputs: list[dict[str, Any]] = Field(default_factory=list)
     turn_indexes: list[int] = Field(default_factory=list)
     next_cursor: str | None = None
     prev_cursor: str | None = None
@@ -455,6 +456,11 @@ def _history_response(
         result = _service(repositories).get_history(request)
     except SessionNotFoundError as exc:
         raise _not_found(exc) from exc
+    if hasattr(repositories, "pending_inputs"):
+        result["pending_inputs"] = [
+            record.to_dict()
+            for record in repositories.pending_inputs.list_active_by_session(request.session_id)
+        ]
     logger.debug(
         "[SessionsAPI] 查询会话历史 | "
         f"session_id={request.session_id} | turn_index={request.turn_index} | "

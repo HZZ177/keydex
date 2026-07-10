@@ -40,17 +40,32 @@ describe("SendBox skill capsule", () => {
       />,
     );
 
-    const input = screen.getByLabelText("继续输入");
-    fireEvent.keyDown(input, { key: "ArrowDown" });
-    fireEvent.keyDown(input, { key: "ArrowDown" });
-    fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.mouseDown(screen.getByRole("option", { name: /^Skill/u }));
+    fireEvent.mouseDown(screen.getByRole("option", { name: /dev-plan/u }));
 
     expect(screen.getByText("dev-plan")).not.toBeNull();
     expect(screen.getByLabelText("删除 Skill /dev-plan")).not.toBeNull();
     expect(onSkillChange).toHaveBeenCalledWith(skills[0]);
     expect(onChange).toHaveBeenCalledWith("");
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps the slash menu available while the runtime accepts pending input", () => {
+    render(
+      <SendBox
+        value="/"
+        runtimeState="running"
+        canSend
+        canStop
+        workspaceSkills={skills}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("slash-command-menu")).not.toBeNull();
+    expect(screen.getByRole("option", { name: /dev-plan/u })).not.toBeNull();
   });
 
   it("replaces the selected skill when another skill command is selected", () => {

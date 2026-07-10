@@ -69,6 +69,15 @@ describe("agent protocol types", () => {
     expect(AGENT_CHAT_ACTIONS).toContain("task_run_finished");
     expect(AGENT_CHAT_ACTIONS).toContain("turn_started");
     expect(AGENT_CHAT_ACTIONS).toContain("thread_task_status");
+    expect(AGENT_CHAT_ACTIONS).toContain("pending_input_submitted");
+    expect(AGENT_CHAT_ACTIONS).toContain("pending_input_updated");
+    expect(AGENT_CHAT_ACTIONS).toContain("pending_inputs_reordered");
+    expect(AGENT_CHAT_ACTIONS).toContain("pending_input_cancelled");
+    expect(AGENT_CHAT_ACTIONS).toContain("pending_input_delivered");
+    expect(AGENT_CHAT_ACTIONS).toContain("pending_input_converted");
+    expect(AGENT_CHAT_ACTIONS).toContain("pending_input_paused");
+    expect(AGENT_CHAT_ACTIONS).toContain("pending_input_resumed");
+    expect(AGENT_CHAT_ACTIONS).toContain("pending_input_failed");
     expect(AGENT_CHAT_ACTIONS).toContain("mcp_server_status_changed");
     expect(AGENT_CHAT_ACTIONS).toContain("mcp_runtime_snapshot_created");
     expect(AGENT_CHAT_ACTIONS).toContain("mcp_tool_policy_changed");
@@ -83,6 +92,15 @@ describe("agent protocol types", () => {
     expect(AGENT_REPLAY_ACTIONS).toContain("task_run_finished");
     expect(AGENT_REPLAY_ACTIONS).toContain("turn_started");
     expect(AGENT_REPLAY_ACTIONS).toContain("thread_task_status");
+    expect(AGENT_REPLAY_ACTIONS).toContain("pending_input_submitted");
+    expect(AGENT_REPLAY_ACTIONS).toContain("pending_input_updated");
+    expect(AGENT_REPLAY_ACTIONS).toContain("pending_inputs_reordered");
+    expect(AGENT_REPLAY_ACTIONS).toContain("pending_input_cancelled");
+    expect(AGENT_REPLAY_ACTIONS).toContain("pending_input_delivered");
+    expect(AGENT_REPLAY_ACTIONS).toContain("pending_input_converted");
+    expect(AGENT_REPLAY_ACTIONS).toContain("pending_input_paused");
+    expect(AGENT_REPLAY_ACTIONS).toContain("pending_input_resumed");
+    expect(AGENT_REPLAY_ACTIONS).toContain("pending_input_failed");
     expect(AGENT_REPLAY_ACTIONS).toContain("mcp_runtime_snapshot_created");
     expect(AGENT_REPLAY_ACTIONS).toContain("mcp_oauth_required");
     expect(AGENT_COMPLETED_EVENT_ITEM_ACTIONS).toEqual([
@@ -96,6 +114,10 @@ describe("agent protocol types", () => {
     expect(AGENT_INBOUND_ACTIONS).toContain("bind_session");
     expect(AGENT_INBOUND_ACTIONS).toContain("a2ui_submit");
     expect(AGENT_INBOUND_ACTIONS).toContain("a2ui_cancel");
+    expect(AGENT_INBOUND_ACTIONS).toContain("pending_input_update");
+    expect(AGENT_INBOUND_ACTIONS).toContain("pending_input_reorder");
+    expect(AGENT_INBOUND_ACTIONS).toContain("pending_input_cancel");
+    expect(AGENT_INBOUND_ACTIONS).toContain("pending_input_resume");
     expect(AGENT_INBOUND_ACTIONS).toContain("cancel");
   });
 

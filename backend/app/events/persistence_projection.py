@@ -49,6 +49,14 @@ class PersistenceProjection:
         DomainEventType.THREAD_TASK_STATUS_UPDATED: ReplayAction.THREAD_TASK_STATUS,
         DomainEventType.REASONING_FINISHED: ReplayAction.REASONING,
         DomainEventType.MIDDLEWARE_PROGRESS: ReplayAction.MIDDLEWARE_PROGRESS,
+        DomainEventType.PENDING_INPUT_SUBMITTED: ReplayAction.PENDING_INPUT_SUBMITTED,
+        DomainEventType.PENDING_INPUT_UPDATED: ReplayAction.PENDING_INPUT_UPDATED,
+        DomainEventType.PENDING_INPUT_CANCELLED: ReplayAction.PENDING_INPUT_CANCELLED,
+        DomainEventType.PENDING_INPUT_DELIVERED: ReplayAction.PENDING_INPUT_DELIVERED,
+        DomainEventType.PENDING_INPUT_CONVERTED: ReplayAction.PENDING_INPUT_CONVERTED,
+        DomainEventType.PENDING_INPUT_PAUSED: ReplayAction.PENDING_INPUT_PAUSED,
+        DomainEventType.PENDING_INPUT_RESUMED: ReplayAction.PENDING_INPUT_RESUMED,
+        DomainEventType.PENDING_INPUT_FAILED: ReplayAction.PENDING_INPUT_FAILED,
     }
 
     def __init__(

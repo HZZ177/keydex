@@ -29,14 +29,18 @@ from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.request_context import trace_id_var
 from backend.app.events import ChatProjection, EventDispatcher, PersistenceProjection
-from backend.app.model import ModelSelectionError, resolve_model_selection
 from backend.app.mcp.elicitation import McpElicitationError
+from backend.app.model import ModelSelectionError, resolve_model_selection
+from backend.app.services.chat_service import PRACTICAL_NO_RECURSION_LIMIT
 from backend.app.services.chat_stream_manager import (
     ChatStreamAlreadyRunningError,
     ChatStreamMissingSessionError,
 )
-from backend.app.services.chat_types import ChatRequest
-from backend.app.services.chat_service import PRACTICAL_NO_RECURSION_LIMIT
+from backend.app.services.chat_types import (
+    PENDING_INPUT_MODE_STEER,
+    PENDING_INPUT_MODES,
+    ChatRequest,
+)
 from backend.app.services.session_service import (
     SessionNotFoundError,
     SessionService,
@@ -211,12 +215,11 @@ async def chat_websocket(websocket: WebSocket) -> None:
                                 ],
                             },
                         )
-                        continue
                     bound_session_id = session_id
                     bound_session_ids.add(session_id)
                     await stream_manager.subscribe(session_id, adapter)
                     await _register_keydex_watcher(keydex_watcher, session)
-                    await stream_manager.start_chat(
+                    await stream_manager.submit_input(
                         ChatRequest(
                             session_id=session_id,
                             message=str(payload.get("message") or payload.get("content") or ""),
@@ -227,8 +230,149 @@ async def chat_websocket(websocket: WebSocket) -> None:
                             system_prompt=payload.get("system_prompt"),
                             runtime_params=_runtime_params(payload),
                             attachments=_attachments(payload),
+                            delivery_mode=_delivery_mode(payload),
+                            client_input_id=_client_input_id(payload),
                         )
                     )
+                    continue
+
+                if action == "pending_input_update":
+                    session_id = str(payload.get("session_id") or bound_session_id or "").strip()
+                    pending_input_id = str(
+                        payload.get("pending_input_id") or payload.get("id") or ""
+                    ).strip()
+                    if not session_id:
+                        await send_error("missing_session", "session_id 必填")
+                        continue
+                    if not pending_input_id:
+                        await send_error("missing_pending_input", "pending_input_id 必填")
+                        continue
+                    updated = await stream_manager.update_pending_input(
+                        session_id=session_id,
+                        pending_input_id=pending_input_id,
+                        message=(
+                            str(payload.get("message"))
+                            if payload.get("message") is not None
+                            else None
+                        ),
+                        mode=(
+                            _delivery_mode(payload)
+                            if (
+                                payload.get("mode") is not None
+                                or payload.get("delivery_mode") is not None
+                                or payload.get("deliveryMode") is not None
+                            )
+                            else None
+                        ),
+                        runtime_params=_runtime_params(payload),
+                        attachments=_attachments(payload),
+                        provider_id=(
+                            str(payload.get("provider_id"))
+                            if payload.get("provider_id") is not None
+                            else None
+                        ),
+                        model=(
+                            str(payload.get("model"))
+                            if payload.get("model") is not None
+                            else None
+                        ),
+                    )
+                    if updated is None:
+                        await send_error(
+                            "pending_input_not_editable",
+                            "待发送消息不存在或已被交付，无法编辑",
+                            {"session_id": session_id, "pending_input_id": pending_input_id},
+                        )
+                    continue
+
+                if action == "pending_input_reorder":
+                    session_id = str(payload.get("session_id") or bound_session_id or "").strip()
+                    pending_input_ids = payload.get("pending_input_ids")
+                    if not session_id:
+                        await send_error("missing_session", "session_id 必填")
+                        continue
+                    if not isinstance(pending_input_ids, list) or len(pending_input_ids) < 2:
+                        await send_error(
+                            "invalid_pending_input_order",
+                            "pending_input_ids 至少需要包含两条待发送消息",
+                        )
+                        continue
+                    cleaned_pending_input_ids = [
+                        str(item or "").strip() for item in pending_input_ids
+                    ]
+                    if any(not item for item in cleaned_pending_input_ids):
+                        await send_error(
+                            "invalid_pending_input_order",
+                            "pending_input_ids 不能包含空值",
+                        )
+                        continue
+                    try:
+                        reordered = await stream_manager.reorder_pending_inputs(
+                            session_id=session_id,
+                            pending_input_ids=cleaned_pending_input_ids,
+                        )
+                    except ValueError as exc:
+                        await send_error("invalid_pending_input_order", str(exc))
+                        continue
+                    if reordered is None:
+                        await send_error(
+                            "pending_input_not_reorderable",
+                            "待发送消息已变化，无法调整顺序",
+                            {"session_id": session_id},
+                        )
+                    continue
+
+                if action == "pending_input_cancel":
+                    session_id = str(payload.get("session_id") or bound_session_id or "").strip()
+                    pending_input_id = str(
+                        payload.get("pending_input_id") or payload.get("id") or ""
+                    ).strip()
+                    if not session_id:
+                        await send_error("missing_session", "session_id 必填")
+                        continue
+                    if not pending_input_id:
+                        await send_error("missing_pending_input", "pending_input_id 必填")
+                        continue
+                    cancelled = await stream_manager.cancel_pending_input(
+                        session_id=session_id,
+                        pending_input_id=pending_input_id,
+                        reason=str(payload.get("reason") or "user"),
+                    )
+                    if cancelled is None:
+                        await send_error(
+                            "pending_input_not_cancellable",
+                            "待发送消息不存在或已被交付，无法删除",
+                            {"session_id": session_id, "pending_input_id": pending_input_id},
+                        )
+                    continue
+
+                if action == "pending_input_resume":
+                    session_id = str(payload.get("session_id") or bound_session_id or "").strip()
+                    pending_input_id = str(
+                        payload.get("pending_input_id") or payload.get("id") or ""
+                    ).strip() or None
+                    raw_mode = payload.get("mode")
+                    mode = _delivery_mode(payload) if raw_mode is not None else None
+                    if not session_id:
+                        await send_error("missing_session", "session_id 必填")
+                        continue
+                    if pending_input_id is None and mode is None:
+                        await send_error(
+                            "missing_pending_input_resume_target",
+                            "pending_input_id 或 mode 至少提供一个",
+                        )
+                        continue
+                    resumed = await stream_manager.resume_pending_inputs(
+                        session_id=session_id,
+                        pending_input_id=pending_input_id,
+                        mode=mode,
+                    )
+                    if resumed is None:
+                        await send_error(
+                            "pending_input_not_resumable",
+                            "待发送消息不存在、未暂停或已被交付，无法恢复",
+                            {"session_id": session_id, "pending_input_id": pending_input_id},
+                        )
                     continue
 
                 if action == "a2ui_submit":
@@ -601,6 +745,24 @@ def _runtime_params(payload: dict[str, Any]) -> dict[str, Any] | None:
     if value is None:
         value = payload.get("runtimeParams")
     return value if isinstance(value, dict) else None
+
+
+def _delivery_mode(payload: dict[str, Any]) -> str:
+    value = payload.get("delivery_mode")
+    if value is None:
+        value = payload.get("deliveryMode")
+    if value is None:
+        value = payload.get("mode")
+    cleaned = str(value or "").strip() or PENDING_INPUT_MODE_STEER
+    return cleaned if cleaned in PENDING_INPUT_MODES else PENDING_INPUT_MODE_STEER
+
+
+def _client_input_id(payload: dict[str, Any]) -> str | None:
+    value = payload.get("client_input_id")
+    if value is None:
+        value = payload.get("clientInputId")
+    cleaned = str(value or "").strip()
+    return cleaned or None
 
 
 def _attachments(payload: dict[str, Any]) -> list[dict[str, Any]] | None:

@@ -3,12 +3,20 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
+from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.events import ChatProjectionAdapter
-from backend.app.services.chat_types import ChatCancellationToken, ChatRequest
+from backend.app.events.actions import ChatAction
+from backend.app.services.chat_types import (
+    PENDING_INPUT_MODE_QUEUE,
+    PENDING_INPUT_MODE_STEER,
+    PENDING_INPUT_MODES,
+    ChatCancellationToken,
+    ChatRequest,
+)
 from backend.app.tools.command_runtime import command_process_manager
 
 
@@ -122,17 +130,264 @@ class ChatStreamManager:
         logger.info(f"[ChatStreamManager] 后台对话已启动 | session_id={session_id}")
         return session_id
 
+    async def submit_input(self, request: ChatRequest) -> dict[str, Any]:
+        session_id = (request.session_id or "").strip()
+        if not session_id:
+            raise ChatStreamMissingSessionError("后台流式对话必须指定 session_id")
+        delivery_mode = self._normalize_delivery_mode(request.delivery_mode)
+        request = replace(request, session_id=session_id, delivery_mode=delivery_mode)
+
+        repositories = getattr(self._chat_service, "repositories", None)
+        if repositories is None or not hasattr(repositories, "pending_inputs"):
+            await self.start_chat(request)
+            return {
+                "session_id": session_id,
+                "status": "started",
+                "delivery_mode": "direct",
+            }
+
+        running = await self._is_running(session_id)
+        waiting_input = self._is_waiting_input(session_id)
+        has_queue = repositories.pending_inputs.has_active_queue(session_id)
+        if running or waiting_input or has_queue:
+            mode = self._pending_mode_for_submit(
+                delivery_mode,
+                running=running,
+                waiting_input=waiting_input,
+                has_queue=has_queue,
+            )
+            record, created = repositories.pending_inputs.create_or_get(
+                session_id=session_id,
+                message=request.message,
+                mode=mode,
+                client_input_id=request.client_input_id,
+                user_id=request.user_id,
+                scene_id=request.scene_id,
+                provider_id=request.provider_id,
+                model=request.model,
+                runtime_params=request.runtime_params,
+                attachments=request.attachments,
+            )
+            if created:
+                await self._emit_pending_input_event(
+                    session_id,
+                    ChatAction.PENDING_INPUT_SUBMITTED.value,
+                    record,
+                )
+            else:
+                await self.broadcast(
+                    session_id=session_id,
+                    action=ChatAction.PENDING_INPUT_SUBMITTED.value,
+                    data=self._pending_input_payload(record, duplicate=True),
+                )
+            if not running and not waiting_input:
+                await self._drain_next_pending_input(session_id)
+            return {
+                "session_id": session_id,
+                "status": "pending",
+                "pending_input": record.to_dict(),
+                "duplicate": not created,
+            }
+
+        try:
+            await self.start_chat(request)
+        except ChatStreamAlreadyRunningError:
+            record, created = repositories.pending_inputs.create_or_get(
+                session_id=session_id,
+                message=request.message,
+                mode=self._pending_mode_for_submit(
+                    delivery_mode,
+                    running=True,
+                    waiting_input=False,
+                    has_queue=False,
+                ),
+                client_input_id=request.client_input_id,
+                user_id=request.user_id,
+                scene_id=request.scene_id,
+                provider_id=request.provider_id,
+                model=request.model,
+                runtime_params=request.runtime_params,
+                attachments=request.attachments,
+            )
+            if created:
+                await self._emit_pending_input_event(
+                    session_id,
+                    ChatAction.PENDING_INPUT_SUBMITTED.value,
+                    record,
+                )
+            return {
+                "session_id": session_id,
+                "status": "pending",
+                "pending_input": record.to_dict(),
+                "duplicate": not created,
+            }
+        return {
+            "session_id": session_id,
+            "status": "started",
+            "delivery_mode": "direct",
+        }
+
+    async def update_pending_input(
+        self,
+        *,
+        session_id: str,
+        pending_input_id: str,
+        message: str | None = None,
+        mode: str | None = None,
+        runtime_params: dict[str, Any] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        provider_id: str | None = None,
+        model: str | None = None,
+    ) -> dict[str, Any] | None:
+        repositories = getattr(self._chat_service, "repositories", None)
+        if repositories is None or not hasattr(repositories, "pending_inputs"):
+            return None
+        record = repositories.pending_inputs.update_pending(
+            pending_input_id,
+            message=message,
+            mode=mode,
+            runtime_params=runtime_params,
+            attachments=attachments,
+            provider_id=provider_id,
+            model=model,
+        )
+        if record is None or record.session_id != session_id:
+            return None
+        await self._emit_pending_input_event(
+            session_id,
+            ChatAction.PENDING_INPUT_UPDATED.value,
+            record,
+        )
+        return record.to_dict()
+
+    async def reorder_pending_inputs(
+        self,
+        *,
+        session_id: str,
+        pending_input_ids: list[str],
+    ) -> list[dict[str, Any]] | None:
+        repositories = getattr(self._chat_service, "repositories", None)
+        if repositories is None or not hasattr(repositories, "pending_inputs"):
+            return None
+        records = repositories.pending_inputs.reorder_pending(
+            session_id,
+            pending_input_ids,
+        )
+        if records is None:
+            return None
+        payload = {
+            "session_id": session_id,
+            "pending_inputs": [record.to_dict() for record in records],
+        }
+        if hasattr(repositories, "message_events"):
+            try:
+                repositories.message_events.append(
+                    event_id=new_id(),
+                    session_id=session_id,
+                    turn_index=0,
+                    action="pending_inputs_reordered",
+                    data=payload,
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    "[ChatStreamManager] pending inputs 重排事件持久化失败 | "
+                    f"session_id={session_id} | error={exc}"
+                )
+        await self.broadcast(
+            session_id=session_id,
+            action="pending_inputs_reordered",
+            data=payload,
+        )
+        return payload["pending_inputs"]
+
+    async def cancel_pending_input(
+        self,
+        *,
+        session_id: str,
+        pending_input_id: str,
+        reason: str | None = None,
+    ) -> dict[str, Any] | None:
+        repositories = getattr(self._chat_service, "repositories", None)
+        if repositories is None or not hasattr(repositories, "pending_inputs"):
+            return None
+        record = repositories.pending_inputs.cancel(pending_input_id, reason=reason)
+        if record is None or record.session_id != session_id:
+            return None
+        await self._emit_pending_input_event(
+            session_id,
+            ChatAction.PENDING_INPUT_CANCELLED.value,
+            record,
+        )
+        return record.to_dict()
+
+    async def resume_pending_inputs(
+        self,
+        *,
+        session_id: str,
+        pending_input_id: str | None = None,
+        mode: str | None = None,
+    ) -> list[dict[str, Any]] | None:
+        repositories = getattr(self._chat_service, "repositories", None)
+        if repositories is None or not hasattr(repositories, "pending_inputs"):
+            return None
+        cleaned_id = str(pending_input_id or "").strip() or None
+        cleaned_mode = self._normalize_delivery_mode(mode) if mode is not None else None
+        if cleaned_id:
+            current = repositories.pending_inputs.get(cleaned_id)
+            if current is None or current.session_id != session_id:
+                return None
+            cleaned_mode = current.mode
+        if cleaned_mode is None:
+            return None
+
+        running = await self._is_running(session_id)
+        if cleaned_mode == PENDING_INPUT_MODE_STEER and not running:
+            resumed = repositories.pending_inputs.resume_steers_as_new_turn(
+                session_id,
+                pending_input_id=cleaned_id,
+            )
+        else:
+            resumed = repositories.pending_inputs.resume_paused(
+                session_id,
+                pending_input_id=cleaned_id,
+                mode=cleaned_mode,
+            )
+        if not resumed:
+            return None
+        for record in resumed:
+            await self._emit_pending_input_event(
+                session_id,
+                ChatAction.PENDING_INPUT_RESUMED.value,
+                record,
+            )
+        if not running:
+            await self._drain_next_pending_input(session_id)
+        return [record.to_dict() for record in resumed]
+
     async def cancel(self, session_id: str | None = None) -> bool:
         cleaned = (session_id or "").strip()
         if not cleaned:
             return False
+        paused_records: list[Any] = []
         async with self._lock:
             run = self._runs.get(cleaned)
             if run is None or run.task.done():
                 return False
+            repositories = getattr(self._chat_service, "repositories", None)
+            if repositories is not None and hasattr(repositories, "pending_inputs"):
+                paused_records = repositories.pending_inputs.pause_active_for_session(
+                    cleaned,
+                    reason="user_stopped",
+                )
             killed = command_process_manager.terminate_session(cleaned, reason="turn_cancelled")
             run.cancellation.cancel()
             run.task.cancel()
+        for record in paused_records:
+            await self._emit_pending_input_event(
+                cleaned,
+                ChatAction.PENDING_INPUT_PAUSED.value,
+                record,
+            )
         logger.info(
             "[ChatStreamManager] 已请求强制取消后台对话 | "
             f"session_id={cleaned} | killed_commands={killed}"
@@ -225,6 +480,16 @@ class ChatStreamManager:
                     "status": approval.status,
                 }
                 for approval in pending
+            ],
+            "pending_inputs": [
+                record.to_dict()
+                for record in (
+                    repositories.pending_inputs.list_active_by_session(cleaned)
+                    if cleaned
+                    and repositories is not None
+                    and hasattr(repositories, "pending_inputs")
+                    else []
+                )
             ],
         }
 
@@ -343,6 +608,10 @@ class ChatStreamManager:
             )
             return
 
+        await self._convert_pending_steers(session_id)
+        if await self._drain_next_pending_input(session_id):
+            return
+
         if runtime is None:
             return
         continue_if_idle = getattr(runtime, "continue_if_idle", None)
@@ -369,3 +638,156 @@ class ChatStreamManager:
         if error is not None and type(error).__name__ == "CancelledError":
             return True
         return str(getattr(result, "status", "") or "") == "cancelled"
+
+    async def _is_running(self, session_id: str) -> bool:
+        async with self._lock:
+            run = self._runs.get(session_id)
+            return bool(run is not None and not run.task.done())
+
+    def _is_waiting_input(self, session_id: str) -> bool:
+        repositories = getattr(self._chat_service, "repositories", None)
+        if repositories is None:
+            return False
+        session = (
+            repositories.sessions.get(session_id)
+            if hasattr(repositories, "sessions")
+            else None
+        )
+        if getattr(session, "status", "") == "waiting_input":
+            return True
+        waiting = (
+            repositories.a2ui_interactions.get_waiting_by_session(session_id)
+            if hasattr(repositories, "a2ui_interactions")
+            else []
+        )
+        return bool(waiting)
+
+    async def _convert_pending_steers(self, session_id: str) -> None:
+        repositories = getattr(self._chat_service, "repositories", None)
+        if repositories is None or not hasattr(repositories, "pending_inputs"):
+            return
+        converted = repositories.pending_inputs.convert_pending_steers_to_queue(session_id)
+        for record in converted:
+            await self._emit_pending_input_event(
+                session_id,
+                ChatAction.PENDING_INPUT_CONVERTED.value,
+                record,
+            )
+
+    async def _drain_next_pending_input(self, session_id: str) -> bool:
+        repositories = getattr(self._chat_service, "repositories", None)
+        if repositories is None or not hasattr(repositories, "pending_inputs"):
+            return False
+        if await self._is_running(session_id) or self._is_waiting_input(session_id):
+            return False
+        record = repositories.pending_inputs.claim_next_queued(
+            session_id,
+            lock_owner=f"stream:{id(self)}",
+        )
+        if record is None:
+            return False
+        request = self._request_from_pending_input(record)
+        try:
+            await self.start_chat(request)
+        except ChatStreamAlreadyRunningError:
+            repositories.pending_inputs.release_to_queue(record.id)
+            return True
+        except Exception as exc:
+            failed = repositories.pending_inputs.mark_failed(
+                record.id,
+                error_code="pending_input_start_failed",
+                error_message=str(exc),
+            )
+            if failed is not None:
+                await self._emit_pending_input_event(
+                    session_id,
+                    ChatAction.PENDING_INPUT_FAILED.value,
+                    failed,
+                )
+            logger.opt(exception=True).warning(
+                "[ChatStreamManager] 队列 pending input 启动失败 | "
+                f"session_id={session_id} | pending_input_id={record.id} | error={exc}"
+            )
+            return False
+
+        delivered = repositories.pending_inputs.mark_delivered(record.id)
+        if delivered is not None:
+            await self._emit_pending_input_event(
+                session_id,
+                ChatAction.PENDING_INPUT_DELIVERED.value,
+                delivered,
+            )
+        return True
+
+    @staticmethod
+    def _request_from_pending_input(record: Any) -> ChatRequest:
+        return ChatRequest(
+            session_id=record.session_id,
+            message=record.message,
+            user_id=record.user_id,
+            scene_id=record.scene_id,
+            provider_id=record.provider_id,
+            model=record.model,
+            runtime_params=dict(record.runtime_params or {}),
+            attachments=list(record.attachments or []),
+            delivery_mode=PENDING_INPUT_MODE_QUEUE,
+            client_input_id=record.client_input_id,
+            pending_input_id=record.id,
+        )
+
+    @staticmethod
+    def _normalize_delivery_mode(mode: str | None) -> str:
+        cleaned = str(mode or "").strip() or PENDING_INPUT_MODE_STEER
+        return cleaned if cleaned in PENDING_INPUT_MODES else PENDING_INPUT_MODE_STEER
+
+    @staticmethod
+    def _pending_mode_for_submit(
+        delivery_mode: str,
+        *,
+        running: bool,
+        waiting_input: bool,
+        has_queue: bool,
+    ) -> str:
+        if delivery_mode == PENDING_INPUT_MODE_QUEUE or waiting_input:
+            return PENDING_INPUT_MODE_QUEUE
+        if running:
+            return PENDING_INPUT_MODE_STEER
+        return PENDING_INPUT_MODE_QUEUE if has_queue else PENDING_INPUT_MODE_STEER
+
+    async def _emit_pending_input_event(
+        self,
+        session_id: str,
+        action: str,
+        record: Any,
+    ) -> None:
+        payload = self._pending_input_payload(record)
+        repositories = getattr(self._chat_service, "repositories", None)
+        if repositories is not None and hasattr(repositories, "message_events"):
+            try:
+                repositories.message_events.append(
+                    event_id=new_id(),
+                    session_id=session_id,
+                    turn_index=(
+                        record.promoted_turn_index
+                        or record.target_turn_index
+                        or 0
+                    ),
+                    action=action,
+                    data=payload,
+                    trace_record_id=record.promoted_trace_id or record.target_trace_id,
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    "[ChatStreamManager] pending input 事件持久化失败 | "
+                    f"session_id={session_id} | action={action} | "
+                    f"pending_input_id={record.id} | error={exc}"
+                )
+        await self.broadcast(session_id=session_id, action=action, data=payload)
+
+    @staticmethod
+    def _pending_input_payload(record: Any, *, duplicate: bool = False) -> dict[str, Any]:
+        payload = record.to_dict()
+        payload["pending_input"] = record.to_dict()
+        if duplicate:
+            payload["duplicate"] = True
+        return payload

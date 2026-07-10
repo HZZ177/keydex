@@ -39,7 +39,7 @@ import type { PreviewRequest } from "@/renderer/providers/previewTypes";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { isAbsoluteFilePath } from "@/renderer/utils/fileLinks";
-import type { AgentSession, Workspace } from "@/types/protocol";
+import type { AgentSession, PendingInputMode, Workspace } from "@/types/protocol";
 
 import {
   resolveWorkbenchAssistantDockInlineWidth,
@@ -145,6 +145,7 @@ export function WorkbenchModePage({
   onOpenMcpSettings,
 }: WorkbenchModePageProps) {
   const notifications = useNotifications();
+  const [conversationSendDefaultMode, setConversationSendDefaultMode] = useState<PendingInputMode>("steer");
   const runtimeConnection = useOptionalRuntimeConnection();
   const backendReady = runtimeConnection?.ready ?? true;
   const previewContext = useOptionalPreview();
@@ -330,6 +331,7 @@ export function WorkbenchModePage({
     sessionId: selectedSessionId ?? "",
     enabled: backendReady,
     ensureSession: ensureWorkbenchSession,
+    conversationSendDefaultMode,
   });
   const btwController = useAgentSessionController({
     runtime,
@@ -338,7 +340,31 @@ export function WorkbenchModePage({
     historyPageSize: 2,
     loadFullHistory: false,
     syncThreadTasks: false,
+    conversationSendDefaultMode,
   });
+
+  useEffect(() => {
+    if (!backendReady) {
+      setConversationSendDefaultMode("steer");
+      return;
+    }
+    let active = true;
+    void runtime.settings
+      .getSettings()
+      .then((settings) => {
+        if (active) {
+          setConversationSendDefaultMode(settings.general.conversation_send_default_mode ?? "steer");
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setConversationSendDefaultMode("steer");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [backendReady, runtime]);
   const btwActive = Boolean(btwSession?.id);
   const activeAssistantController = btwActive ? btwController : assistantController;
   const workbenchPreviewRenderContext = useMemo<PreviewRenderContext | null>(() => {

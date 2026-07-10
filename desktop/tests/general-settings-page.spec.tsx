@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge } from "@/runtime";
@@ -172,10 +172,39 @@ describe("GeneralSettingsPage", () => {
     await waitFor(() =>
       expect(runtime.settings.saveGeneralSettings).toHaveBeenCalledWith({
         close_window_behavior: "minimize_to_tray",
+        conversation_send_default_mode: "steer",
       }),
     );
     expect(localStorage.getItem(CLOSE_WINDOW_BEHAVIOR_STORAGE_KEY)).toBe("minimize_to_tray");
     expect(screen.getByRole("button", { name: /最小化到托盘/ })).not.toBeNull();
+  });
+
+  it("saves the default conversation send behavior from the general page", async () => {
+    const runtime = fakeRuntime({
+      close_window_behavior: null,
+      conversation_send_default_mode: "steer",
+    });
+
+    renderPage(runtime);
+
+    const trigger = await screen.findByRole("button", { name: /对话中发送消息默认行为/ });
+    expect(trigger.textContent).toContain("引导当前回复");
+    expect(screen.getByText("回复中发送时默认引导当前回复，Ctrl+Enter 临时加入等待队列")).not.toBeNull();
+
+    fireEvent.click(trigger);
+    const queueOption = screen
+      .getAllByRole("option")
+      .find((option) => within(option).queryByText("加入等待队列"));
+    expect(queueOption).not.toBeUndefined();
+    fireEvent.click(queueOption as HTMLElement);
+
+    await waitFor(() =>
+      expect(runtime.settings.saveGeneralSettings).toHaveBeenCalledWith({
+        close_window_behavior: null,
+        conversation_send_default_mode: "queue",
+      }),
+    );
+    expect(screen.getByRole("button", { name: /加入等待队列/ })).not.toBeNull();
   });
 });
 

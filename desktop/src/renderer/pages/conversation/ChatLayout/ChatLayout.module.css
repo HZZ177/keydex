@@ -200,8 +200,10 @@
   grid-column: 1;
   grid-row: 3;
   display: grid;
+  grid-template-rows: auto auto;
   min-width: 0;
   justify-items: center;
+  row-gap: var(--composer-accessory-gap);
   padding: 0 var(--conversation-edge-padding) 18px;
   background: var(--shell-bg);
 }
@@ -229,10 +231,12 @@
   z-index: 1;
 }
 
+.composerDock > [data-sendbox-root="true"] {
+  z-index: 2;
+}
+
 .composerAccessory {
-  position: absolute;
-  bottom: calc(100% + var(--composer-accessory-gap));
-  left: 50%;
+  position: relative;
   display: flex;
   width: min(var(--composer-width, 880px), calc(100% - var(--conversation-edge-padding) - var(--conversation-edge-padding)));
   min-width: 0;
@@ -241,7 +245,6 @@
   gap: 8px;
   margin: 0;
   pointer-events: auto;
-  transform: translateX(-50%);
 }
 
 .composerAccessory > * {

@@ -117,9 +117,13 @@ class MessageEventService:
                     "messageEventId": event.id,
                     "turnIndex": event.turn_index,
                 }
-                if pending_context_items:
-                    message["contextItems"] = pending_context_items
-                    pending_context_items = []
+                context_items = self._merge_context_items(
+                    self._context_items_from_user_message(data),
+                    pending_context_items,
+                )
+                if context_items:
+                    message["contextItems"] = context_items
+                pending_context_items = []
                 messages.append(message)
                 continue
 
@@ -646,6 +650,50 @@ class MessageEventService:
             "timestamp": MessageEventService._event_timestamp_ms(event),
             "metadata": dict(metadata),
         }
+
+    @staticmethod
+    def _context_items_from_user_message(data: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_items = data.get("contextItems")
+        if not isinstance(raw_items, list):
+            raw_items = data.get("context_items")
+        if not isinstance(raw_items, list):
+            return []
+        return [dict(item) for item in raw_items if isinstance(item, dict)]
+
+    @staticmethod
+    def _merge_context_items(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        seen: set[tuple[str, ...]] = set()
+        for group in groups:
+            for item in group:
+                identity = MessageEventService._context_item_identity(item)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                merged.append(item)
+        return merged
+
+    @staticmethod
+    def _context_item_identity(item: dict[str, Any]) -> tuple[str, ...]:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        item_id = str(item.get("id") or metadata.get("id") or "").strip()
+        if item_id:
+            return ("id", item_id)
+        return (
+            "shape",
+            str(item.get("type") or metadata.get("kind") or "").strip(),
+            str(
+                item.get("skill_name")
+                or item.get("skillName")
+                or metadata.get("skill_name")
+                or metadata.get("skillName")
+                or ""
+            ).strip(),
+            str(item.get("path") or metadata.get("path") or "").strip(),
+            str(item.get("label") or metadata.get("label") or "").strip(),
+            str(item.get("content") or "").strip(),
+            str(item.get("source") or metadata.get("source") or "").strip(),
+        )
 
     @staticmethod
     def _is_hidden_internal_system_message(data: dict[str, Any]) -> bool:
@@ -1597,7 +1645,12 @@ def _context_compression_notice_id_from_data(data: dict[str, Any]) -> str:
     notice_id = str(data.get("notice_id") or "").strip()
     if notice_id:
         return notice_id
-    notice_key = data.get("trace_id") or data.get("session_id") or data.get("active_session_id") or ""
+    notice_key = (
+        data.get("trace_id")
+        or data.get("session_id")
+        or data.get("active_session_id")
+        or ""
+    )
     return f"context-compression:{notice_key}"
 
 

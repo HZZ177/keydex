@@ -114,6 +114,175 @@ describe("useAgentSessionController thread tasks", () => {
       expect(listThreadTasks).toHaveBeenCalledWith("ses-1");
     });
   });
+
+  it("sends running-session text as a pending input payload without an optimistic user message", async () => {
+    const { runtime, emit, channel } = fakeRuntime();
+    const { result } = renderHook(() =>
+      useAgentSessionController({
+        runtime,
+        sessionId: "ses-1",
+        conversationSendDefaultMode: "steer",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.session?.id).toBe("ses-1");
+    });
+    act(() => {
+      emit({ action: "status", data: { session_id: "ses-1", status: "running" } });
+    });
+    await waitFor(() => {
+      expect(result.current.runtimeState).toBe("running");
+    });
+
+    let sent = false;
+    await act(async () => {
+      sent = await result.current.sendText("运行中补充", selectedModel(), {
+        allowWhileBusy: true,
+        contextItems: [
+          { id: "file-alpha", type: "file", label: "alpha.py", content: "alpha.py", path: "alpha.py" },
+        ],
+        runtimeParams: { message_injection: [{ type: "follow", role: "HumanMessage", content: "alpha.py" }] },
+      });
+    });
+
+    expect(sent).toBe(true);
+    expect(channel.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session_id: "ses-1",
+        message: "运行中补充",
+        provider_id: "provider-1",
+        model: "qwen-coder",
+        delivery_mode: "steer",
+        client_input_id: expect.any(String),
+        runtime_params: {
+          message_injection: [{ type: "follow", role: "HumanMessage", content: "alpha.py" }],
+          message_context_items: [
+            { id: "file-alpha", type: "file", label: "alpha.py", content: "alpha.py", path: "alpha.py" },
+          ],
+        },
+      }),
+    );
+    expect(result.current.agentMessages).toEqual([]);
+  });
+
+  it("uses Ctrl+Enter reverse mode against the configured default send behavior", async () => {
+    const { runtime, emit, channel } = fakeRuntime();
+    const { result } = renderHook(() =>
+      useAgentSessionController({
+        runtime,
+        sessionId: "ses-1",
+        conversationSendDefaultMode: "queue",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.session?.id).toBe("ses-1");
+    });
+    act(() => {
+      emit({ action: "status", data: { session_id: "ses-1", status: "running" } });
+    });
+    await waitFor(() => {
+      expect(result.current.runtimeState).toBe("running");
+    });
+
+    await act(async () => {
+      await result.current.sendText("默认排队", selectedModel(), {
+        allowWhileBusy: true,
+      });
+      await result.current.sendText("反向引导", selectedModel(), {
+        allowWhileBusy: true,
+        reverseDeliveryMode: true,
+      });
+    });
+
+    expect(channel.chat).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ message: "默认排队", delivery_mode: "queue" }),
+    );
+    expect(channel.chat).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ message: "反向引导", delivery_mode: "steer" }),
+    );
+  });
+
+  it("fills the composer draft and cancels the original pending input when editing", async () => {
+    const { channel, runtime } = fakeRuntime();
+    const { result } = renderHook(() =>
+      useAgentSessionController({
+        runtime,
+        sessionId: "ses-1",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.session?.id).toBe("ses-1");
+    });
+
+    await act(async () => {
+      await result.current.editPendingInput({
+        id: "pending-1",
+        pending_input_id: "pending-1",
+        session_id: "ses-1",
+        mode: "queue",
+        status: "queued",
+        message: "回填这条待发送消息",
+      });
+    });
+
+    expect(result.current.draft).toBe("回填这条待发送消息");
+    expect(channel.cancelPendingInput).toHaveBeenCalledWith("ses-1", "pending-1", "user");
+  });
+
+  it("sends the complete pending input order when reordering", async () => {
+    const { channel, runtime } = fakeRuntime();
+    const { result } = renderHook(() =>
+      useAgentSessionController({
+        runtime,
+        sessionId: "ses-1",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.session?.id).toBe("ses-1");
+    });
+
+    await act(async () => {
+      await result.current.reorderPendingInputs(["pending-2", "pending-1"]);
+    });
+
+    expect(channel.reorderPendingInputs).toHaveBeenCalledWith({
+      session_id: "ses-1",
+      pending_input_ids: ["pending-2", "pending-1"],
+    });
+  });
+
+  it("resumes one pending input or a complete mode group", async () => {
+    const { channel, runtime } = fakeRuntime();
+    const { result } = renderHook(() =>
+      useAgentSessionController({
+        runtime,
+        sessionId: "ses-1",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.session?.id).toBe("ses-1");
+    });
+    await act(async () => {
+      await result.current.resumePendingInputs({ pendingInputId: "pending-1" });
+      await result.current.resumePendingInputs({ mode: "queue" });
+    });
+
+    expect(channel.resumePendingInputs).toHaveBeenNthCalledWith(1, {
+      session_id: "ses-1",
+      pending_input_id: "pending-1",
+    });
+    expect(channel.resumePendingInputs).toHaveBeenNthCalledWith(2, {
+      session_id: "ses-1",
+      mode: "queue",
+    });
+  });
 });
 
 function fakeRuntime({
@@ -132,12 +301,16 @@ function fakeRuntime({
     bindSession: vi.fn(),
     unbindSession: vi.fn(),
     chat: vi.fn(),
+    resumePendingInputs: vi.fn(),
     submitA2UI: vi.fn(),
     cancelA2UI: vi.fn(),
     approvalDecision: vi.fn(),
     cancel: vi.fn(),
     terminateCommand: vi.fn(),
     requestStatus: vi.fn(),
+    updatePendingInput: vi.fn(),
+    reorderPendingInputs: vi.fn(),
+    cancelPendingInput: vi.fn(),
     ping: vi.fn(),
   };
   const runtime = {
@@ -154,10 +327,18 @@ function fakeRuntime({
     },
   } as unknown as RuntimeBridge;
   return {
+    channel,
     runtime,
     emit(event: AgentActionEnvelope) {
       handler?.(event);
     },
+  };
+}
+
+function selectedModel() {
+  return {
+    providerId: "provider-1",
+    model: "qwen-coder",
   };
 }
 

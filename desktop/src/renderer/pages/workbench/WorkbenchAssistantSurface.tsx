@@ -91,6 +91,7 @@ import type {
   AgentSession,
   CommandApprovalRequest,
   FileAccessMode,
+  PendingInputMode,
   Workspace,
 } from "@/types/protocol";
 
@@ -1156,10 +1157,11 @@ export function WorkbenchAssistantSurface({
       files: SelectedFile[] = [],
       quotes: SelectedQuote[] = [],
       attachments: SelectedImageAttachment[] = [],
+      options?: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode },
     ) => {
       const result = goalComposerOpen
         ? createGoalTask(files, quotes, attachments)
-        : controller.send(files, quotes, attachments, selectedModel);
+        : controller.send(files, quotes, attachments, selectedModel, options);
       void Promise.resolve(result).then((sent) => {
         if (sent === false || surfaceMode !== "composer") {
           return;
@@ -2825,6 +2827,7 @@ function WorkbenchComposer({
     files?: SelectedFile[],
     quotes?: SelectedQuote[],
     attachments?: SelectedImageAttachment[],
+    options?: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode },
   ) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
   onEscape?: () => void;

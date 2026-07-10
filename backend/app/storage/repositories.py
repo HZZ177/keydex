@@ -11,6 +11,20 @@ from typing import Any
 from backend.app.core.ids import new_id
 from backend.app.core.time import to_iso_z, utc_now
 from backend.app.security import WorkspacePathError, normalize_workspace_root_for_storage
+from backend.app.services.chat_types import (
+    PENDING_INPUT_ACTIVE_STATUSES,
+    PENDING_INPUT_EDITABLE_STATUSES,
+    PENDING_INPUT_MODE_QUEUE,
+    PENDING_INPUT_MODE_STEER,
+    PENDING_INPUT_MODES,
+    PENDING_INPUT_STATUS_CANCELLED,
+    PENDING_INPUT_STATUS_DELIVERED,
+    PENDING_INPUT_STATUS_FAILED,
+    PENDING_INPUT_STATUS_PENDING_STEER,
+    PENDING_INPUT_STATUS_QUEUED,
+    PENDING_INPUT_STATUS_STARTING,
+    PENDING_INPUT_STATUSES,
+)
 from backend.app.storage.db import Database
 
 
@@ -375,6 +389,72 @@ class MessageEventRecord:
     updated_at: str
     trace_record_id: str | None = None
     is_deleted: bool = False
+
+
+@dataclass(frozen=True)
+class PendingInputRecord:
+    id: str
+    session_id: str
+    client_input_id: str | None
+    mode: str
+    status: str
+    message: str
+    provider_id: str
+    model: str
+    user_id: str | None
+    scene_id: str | None
+    runtime_params: dict[str, Any]
+    attachments: list[dict[str, Any]]
+    target_turn_index: int | None
+    target_trace_id: str | None
+    promoted_turn_index: int | None
+    promoted_trace_id: str | None
+    queue_position: int
+    lock_owner: str | None
+    lock_expires_at: str | None
+    error_code: str | None
+    error_message: str | None
+    created_at: str
+    updated_at: str
+    delivered_at: str | None = None
+    cancelled_at: str | None = None
+    paused_at: str | None = None
+    pause_reason: str | None = None
+    is_deleted: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "pending_input_id": self.id,
+            "session_id": self.session_id,
+            "client_input_id": self.client_input_id,
+            "mode": self.mode,
+            "status": self.status,
+            "message": self.message,
+            "provider_id": self.provider_id,
+            "model": self.model,
+            "user_id": self.user_id,
+            "scene_id": self.scene_id,
+            "runtime_params": self.runtime_params,
+            "attachments": self.attachments,
+            "target_turn_index": self.target_turn_index,
+            "target_trace_id": self.target_trace_id,
+            "promoted_turn_index": self.promoted_turn_index,
+            "promoted_trace_id": self.promoted_trace_id,
+            "queue_position": self.queue_position,
+            "lock_owner": self.lock_owner,
+            "lock_expires_at": self.lock_expires_at,
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "delivered_at": self.delivered_at,
+            "cancelled_at": self.cancelled_at,
+            "paused_at": self.paused_at,
+            "pause_reason": self.pause_reason,
+            "paused": self.paused_at is not None,
+            "is_deleted": self.is_deleted,
+        }
 
 
 @dataclass(frozen=True)
@@ -4470,7 +4550,11 @@ class A2UIInteractionsRepository:
     ) -> A2UIInteractionRecord:
         self._validate_status(status)
         now = to_iso_z(utc_now())
-        request_column = "submit_request_id" if status == A2UI_STATUS_SUBMITTED else "cancel_request_id"
+        request_column = (
+            "submit_request_id"
+            if status == A2UI_STATUS_SUBMITTED
+            else "cancel_request_id"
+        )
         with self.db.transaction(immediate=True) as conn:
             row = conn.execute(
                 "select * from a2ui_interactions where id = ? and is_deleted = 0",
@@ -4640,6 +4724,811 @@ class A2UIInteractionsRepository:
             cancelled_at=row["cancelled_at"],
             resume_started_at=row["resume_started_at"],
             resume_finished_at=row["resume_finished_at"],
+            is_deleted=bool(row["is_deleted"]),
+        )
+
+
+class PendingInputsRepository:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def create_or_get(
+        self,
+        *,
+        session_id: str,
+        message: str,
+        mode: str,
+        client_input_id: str | None = None,
+        user_id: str | None = None,
+        scene_id: str | None = None,
+        provider_id: str = "",
+        model: str = "",
+        runtime_params: dict[str, Any] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        target_turn_index: int | None = None,
+        target_trace_id: str | None = None,
+    ) -> tuple[PendingInputRecord, bool]:
+        cleaned_session_id = session_id.strip()
+        if not cleaned_session_id:
+            raise ValueError("session_id 不能为空")
+        cleaned_message = str(message or "").strip()
+        if not cleaned_message and not attachments and not runtime_params:
+            raise ValueError("pending input message 不能为空")
+        cleaned_mode = self._validate_mode(mode)
+        cleaned_client_input_id = str(client_input_id or "").strip() or None
+        if cleaned_client_input_id:
+            existing = self.get_by_client_input_id(
+                cleaned_session_id,
+                cleaned_client_input_id,
+            )
+            if existing is not None:
+                return existing, False
+
+        record_id = new_id()
+        now = to_iso_z(utc_now())
+        status = (
+            PENDING_INPUT_STATUS_PENDING_STEER
+            if cleaned_mode == PENDING_INPUT_MODE_STEER
+            else PENDING_INPUT_STATUS_QUEUED
+        )
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                queue_position = self._next_queue_position(conn, cleaned_session_id)
+                conn.execute(
+                    """
+                    insert into session_pending_inputs (
+                      id, session_id, client_input_id, mode, status, message,
+                      provider_id, model, user_id, scene_id, runtime_params_json,
+                      attachments_json, target_turn_index, target_trace_id,
+                      queue_position, created_at, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record_id,
+                        cleaned_session_id,
+                        cleaned_client_input_id,
+                        cleaned_mode,
+                        status,
+                        cleaned_message,
+                        str(provider_id or ""),
+                        str(model or ""),
+                        user_id,
+                        scene_id,
+                        _json_dumps(runtime_params or {}),
+                        _json_dumps(attachments or []),
+                        target_turn_index,
+                        target_trace_id,
+                        queue_position,
+                        now,
+                        now,
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            if cleaned_client_input_id:
+                existing = self.get_by_client_input_id(
+                    cleaned_session_id,
+                    cleaned_client_input_id,
+                )
+                if existing is not None:
+                    return existing, False
+            raise
+        record = self.get(record_id)
+        if record is None:
+            raise RuntimeError(f"创建 pending input 后无法读取: {record_id}")
+        return record, True
+
+    def get(
+        self,
+        pending_input_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> PendingInputRecord | None:
+        query = "select * from session_pending_inputs where id = ?"
+        params: list[Any] = [pending_input_id]
+        if not include_deleted:
+            query += " and is_deleted = 0"
+        with self.db.connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        return self._from_row(row) if row else None
+
+    def get_by_client_input_id(
+        self,
+        session_id: str,
+        client_input_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> PendingInputRecord | None:
+        query = "select * from session_pending_inputs where session_id = ? and client_input_id = ?"
+        params: list[Any] = [session_id, client_input_id]
+        if not include_deleted:
+            query += " and is_deleted = 0"
+        query += " order by created_at desc, id desc limit 1"
+        with self.db.connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        return self._from_row(row) if row else None
+
+    def list_active_by_session(
+        self,
+        session_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[PendingInputRecord]:
+        placeholders = ", ".join("?" for _ in PENDING_INPUT_ACTIVE_STATUSES)
+        params: list[Any] = [
+            session_id,
+            *sorted(PENDING_INPUT_ACTIVE_STATUSES),
+            max(1, min(limit, 500)),
+        ]
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                select * from session_pending_inputs
+                where session_id = ?
+                  and is_deleted = 0
+                  and status in ({placeholders})
+                order by queue_position asc, created_at asc, id asc
+                limit ?
+                """,
+                params,
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def has_active_queue(self, session_id: str) -> bool:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """
+                select 1 from session_pending_inputs
+                where session_id = ?
+                  and is_deleted = 0
+                  and status in ('queued', 'starting', 'running')
+                  and paused_at is null
+                limit 1
+                """,
+                (session_id,),
+            ).fetchone()
+        return row is not None
+
+    def claim_next_queued(
+        self,
+        session_id: str,
+        *,
+        lock_owner: str,
+        lock_seconds: int = 60,
+    ) -> PendingInputRecord | None:
+        self.recover_expired_claims(session_id=session_id)
+        lock_expires_at = to_iso_z(utc_now() + timedelta(seconds=max(1, lock_seconds)))
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                """
+                select * from session_pending_inputs
+                where session_id = ?
+                  and is_deleted = 0
+                  and status = 'queued'
+                  and paused_at is null
+                order by queue_position asc, created_at asc, id asc
+                limit 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                """
+                update session_pending_inputs
+                set status = ?, lock_owner = ?, lock_expires_at = ?, updated_at = ?
+                where id = ? and status = 'queued' and is_deleted = 0
+                """,
+                (
+                    PENDING_INPUT_STATUS_STARTING,
+                    lock_owner,
+                    lock_expires_at,
+                    now,
+                    row["id"],
+                ),
+            )
+        return self.get(str(row["id"]))
+
+    def recover_expired_claims(self, *, session_id: str | None = None) -> list[PendingInputRecord]:
+        now = to_iso_z(utc_now())
+        filters = [
+            "is_deleted = 0",
+            "status in ('starting', 'running')",
+            "lock_expires_at is not null",
+            "lock_expires_at <= ?",
+        ]
+        params: list[Any] = [now]
+        if session_id is not None:
+            filters.append("session_id = ?")
+            params.append(session_id)
+        with self.db.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                f"""
+                select id from session_pending_inputs
+                where {" and ".join(filters)}
+                order by queue_position asc, created_at asc, id asc
+                """,
+                params,
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if not ids:
+                return []
+            placeholders = ", ".join("?" for _ in ids)
+            conn.execute(
+                f"""
+                update session_pending_inputs
+                set status = ?,
+                    mode = ?,
+                    lock_owner = null,
+                    lock_expires_at = null,
+                    updated_at = ?
+                where id in ({placeholders})
+                  and is_deleted = 0
+                """,
+                (
+                    PENDING_INPUT_STATUS_QUEUED,
+                    PENDING_INPUT_MODE_QUEUE,
+                    now,
+                    *ids,
+                ),
+            )
+        return [record for record in (self.get(row_id) for row_id in ids) if record is not None]
+
+    def claim_pending_steers(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        trace_id: str,
+        lock_owner: str,
+        limit: int = 20,
+    ) -> list[PendingInputRecord]:
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                """
+                select * from session_pending_inputs
+                where session_id = ?
+                  and is_deleted = 0
+                  and status = 'pending_steer'
+                  and paused_at is null
+                  and (
+                    target_turn_index is null
+                    or target_turn_index = ?
+                  )
+                order by queue_position asc, created_at asc, id asc
+                limit ?
+                """,
+                (session_id, int(turn_index), max(1, min(limit, 100))),
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if not ids:
+                return []
+            placeholders = ", ".join("?" for _ in ids)
+            conn.execute(
+                f"""
+                update session_pending_inputs
+                set status = ?,
+                    target_turn_index = ?,
+                    target_trace_id = ?,
+                    delivered_at = ?,
+                    lock_owner = ?,
+                    lock_expires_at = null,
+                    updated_at = ?
+                where id in ({placeholders})
+                  and status = 'pending_steer'
+                  and is_deleted = 0
+                """,
+                (
+                    PENDING_INPUT_STATUS_DELIVERED,
+                    int(turn_index),
+                    trace_id,
+                    now,
+                    lock_owner,
+                    now,
+                    *ids,
+                ),
+            )
+        return [record for record in (self.get(row_id) for row_id in ids) if record is not None]
+
+    def convert_pending_steers_to_queue(self, session_id: str) -> list[PendingInputRecord]:
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                """
+                select id from session_pending_inputs
+                where session_id = ?
+                  and is_deleted = 0
+                  and status = 'pending_steer'
+                  and paused_at is null
+                order by queue_position asc, created_at asc, id asc
+                """,
+                (session_id,),
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if not ids:
+                return []
+            placeholders = ", ".join("?" for _ in ids)
+            conn.execute(
+                f"""
+                update session_pending_inputs
+                set mode = ?,
+                    status = ?,
+                    lock_owner = null,
+                    lock_expires_at = null,
+                    updated_at = ?
+                where id in ({placeholders})
+                  and status = 'pending_steer'
+                  and paused_at is null
+                  and is_deleted = 0
+                """,
+                (
+                    PENDING_INPUT_MODE_QUEUE,
+                    PENDING_INPUT_STATUS_QUEUED,
+                    now,
+                    *ids,
+                ),
+            )
+        return [record for record in (self.get(row_id) for row_id in ids) if record is not None]
+
+    def mark_delivered(
+        self,
+        pending_input_id: str,
+        *,
+        promoted_turn_index: int | None = None,
+        promoted_trace_id: str | None = None,
+    ) -> PendingInputRecord | None:
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            conn.execute(
+                """
+                update session_pending_inputs
+                set status = ?,
+                    promoted_turn_index = coalesce(?, promoted_turn_index),
+                    promoted_trace_id = coalesce(?, promoted_trace_id),
+                    delivered_at = coalesce(delivered_at, ?),
+                    lock_owner = null,
+                    lock_expires_at = null,
+                    paused_at = null,
+                    pause_reason = null,
+                    updated_at = ?
+                where id = ?
+                  and is_deleted = 0
+                  and status in ('queued', 'starting', 'running')
+                """,
+                (
+                    PENDING_INPUT_STATUS_DELIVERED,
+                    promoted_turn_index,
+                    promoted_trace_id,
+                    now,
+                    now,
+                    pending_input_id,
+                ),
+            )
+        return self.get(pending_input_id)
+
+    def mark_failed(
+        self,
+        pending_input_id: str,
+        *,
+        error_code: str,
+        error_message: str,
+    ) -> PendingInputRecord | None:
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            conn.execute(
+                """
+                update session_pending_inputs
+                set status = ?,
+                    error_code = ?,
+                    error_message = ?,
+                    lock_owner = null,
+                    lock_expires_at = null,
+                    updated_at = ?
+                where id = ? and is_deleted = 0
+                """,
+                (
+                    PENDING_INPUT_STATUS_FAILED,
+                    error_code,
+                    error_message,
+                    now,
+                    pending_input_id,
+                ),
+            )
+        return self.get(pending_input_id)
+
+    def release_to_queue(self, pending_input_id: str) -> PendingInputRecord | None:
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            conn.execute(
+                """
+                update session_pending_inputs
+                set status = ?,
+                    mode = ?,
+                    lock_owner = null,
+                    lock_expires_at = null,
+                    updated_at = ?
+                where id = ?
+                  and is_deleted = 0
+                  and status in ('starting', 'running')
+                """,
+                (
+                    PENDING_INPUT_STATUS_QUEUED,
+                    PENDING_INPUT_MODE_QUEUE,
+                    now,
+                    pending_input_id,
+                ),
+            )
+        return self.get(pending_input_id)
+
+    def reorder_pending(
+        self,
+        session_id: str,
+        pending_input_ids: list[str],
+    ) -> list[PendingInputRecord] | None:
+        cleaned_session_id = str(session_id or "").strip()
+        cleaned_ids = [str(item or "").strip() for item in pending_input_ids]
+        if not cleaned_session_id or not cleaned_ids or any(not item for item in cleaned_ids):
+            raise ValueError("session_id 和 pending_input_ids 不能为空")
+        if len(set(cleaned_ids)) != len(cleaned_ids):
+            raise ValueError("pending_input_ids 不能包含重复项")
+
+        placeholders = ", ".join("?" for _ in cleaned_ids)
+        editable_statuses = sorted(PENDING_INPUT_EDITABLE_STATUSES)
+        editable_placeholders = ", ".join("?" for _ in editable_statuses)
+        active_statuses = sorted(PENDING_INPUT_ACTIVE_STATUSES)
+        active_placeholders = ", ".join("?" for _ in active_statuses)
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                f"""
+                select id, queue_position
+                from session_pending_inputs
+                where session_id = ?
+                  and id in ({placeholders})
+                  and is_deleted = 0
+                  and status in ({editable_placeholders})
+                """,
+                (cleaned_session_id, *cleaned_ids, *editable_statuses),
+            ).fetchall()
+            if len(rows) != len(cleaned_ids):
+                return None
+
+            positions = sorted(int(row["queue_position"] or 0) for row in rows)
+            for pending_input_id, queue_position in zip(cleaned_ids, positions, strict=True):
+                conn.execute(
+                    """
+                    update session_pending_inputs
+                    set queue_position = ?, updated_at = ?
+                    where id = ?
+                      and session_id = ?
+                      and is_deleted = 0
+                      and status in ('pending_steer', 'queued')
+                    """,
+                    (queue_position, now, pending_input_id, cleaned_session_id),
+                )
+
+            reordered_rows = conn.execute(
+                f"""
+                select * from session_pending_inputs
+                where session_id = ?
+                  and is_deleted = 0
+                  and status in ({active_placeholders})
+                order by queue_position asc, created_at asc, id asc
+                """,
+                (cleaned_session_id, *active_statuses),
+            ).fetchall()
+        return [self._from_row(row) for row in reordered_rows]
+
+    def update_pending(
+        self,
+        pending_input_id: str,
+        *,
+        message: str | None = None,
+        mode: str | None = None,
+        runtime_params: dict[str, Any] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        provider_id: str | None = None,
+        model: str | None = None,
+    ) -> PendingInputRecord | None:
+        assignments: list[str] = []
+        params: list[Any] = []
+        if message is not None:
+            cleaned = message.strip()
+            if not cleaned and not attachments:
+                raise ValueError("pending input message 不能为空")
+            assignments.append("message = ?")
+            params.append(cleaned)
+        if mode is not None:
+            cleaned_mode = self._validate_mode(mode)
+            assignments.append("mode = ?")
+            params.append(cleaned_mode)
+            assignments.append("status = ?")
+            params.append(
+                PENDING_INPUT_STATUS_PENDING_STEER
+                if cleaned_mode == PENDING_INPUT_MODE_STEER
+                else PENDING_INPUT_STATUS_QUEUED
+            )
+        if runtime_params is not None:
+            assignments.append("runtime_params_json = ?")
+            params.append(_json_dumps(runtime_params))
+        if attachments is not None:
+            assignments.append("attachments_json = ?")
+            params.append(_json_dumps(attachments))
+        if provider_id is not None:
+            assignments.append("provider_id = ?")
+            params.append(provider_id)
+        if model is not None:
+            assignments.append("model = ?")
+            params.append(model)
+        if not assignments:
+            return self.get(pending_input_id)
+        assignments.append("updated_at = ?")
+        params.append(to_iso_z(utc_now()))
+        params.append(pending_input_id)
+        params.extend(sorted(PENDING_INPUT_EDITABLE_STATUSES))
+        placeholders = ", ".join("?" for _ in PENDING_INPUT_EDITABLE_STATUSES)
+        with self.db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                f"""
+                update session_pending_inputs
+                set {', '.join(assignments)}
+                where id = ?
+                  and is_deleted = 0
+                  and status in ({placeholders})
+                """,
+                params,
+            )
+            if cursor.rowcount <= 0:
+                return None
+        return self.get(pending_input_id)
+
+    def cancel(
+        self,
+        pending_input_id: str,
+        *,
+        reason: str | None = None,
+    ) -> PendingInputRecord | None:
+        now = to_iso_z(utc_now())
+        placeholders = ", ".join("?" for _ in PENDING_INPUT_EDITABLE_STATUSES)
+        params: list[Any] = [
+            PENDING_INPUT_STATUS_CANCELLED,
+            reason,
+            now,
+            now,
+            pending_input_id,
+            *sorted(PENDING_INPUT_EDITABLE_STATUSES),
+        ]
+        with self.db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                f"""
+                update session_pending_inputs
+                set status = ?,
+                    error_message = ?,
+                    cancelled_at = ?,
+                    lock_owner = null,
+                    lock_expires_at = null,
+                    updated_at = ?
+                where id = ?
+                  and is_deleted = 0
+                  and status in ({placeholders})
+                """,
+                params,
+            )
+            if cursor.rowcount <= 0:
+                return None
+        return self.get(pending_input_id)
+
+    def pause_active_for_session(
+        self,
+        session_id: str,
+        *,
+        reason: str = "user_stopped",
+    ) -> list[PendingInputRecord]:
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                """
+                select id from session_pending_inputs
+                where session_id = ?
+                  and is_deleted = 0
+                  and status in ('pending_steer', 'queued')
+                  and paused_at is null
+                order by queue_position asc, created_at asc, id asc
+                """,
+                (session_id,),
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if not ids:
+                return []
+            placeholders = ", ".join("?" for _ in ids)
+            conn.execute(
+                f"""
+                update session_pending_inputs
+                set paused_at = ?, pause_reason = ?, updated_at = ?
+                where id in ({placeholders})
+                  and is_deleted = 0
+                  and status in ('pending_steer', 'queued')
+                """,
+                (now, str(reason or "user_stopped"), now, *ids),
+            )
+        return [record for record in (self.get(row_id) for row_id in ids) if record is not None]
+
+    def resume_paused(
+        self,
+        session_id: str,
+        *,
+        pending_input_id: str | None = None,
+        mode: str | None = None,
+    ) -> list[PendingInputRecord]:
+        cleaned_id = str(pending_input_id or "").strip()
+        cleaned_mode = self._validate_mode(mode) if mode is not None else None
+        filters = [
+            "session_id = ?",
+            "is_deleted = 0",
+            "status in ('pending_steer', 'queued')",
+            "paused_at is not null",
+        ]
+        params: list[Any] = [session_id]
+        if cleaned_id:
+            filters.append("id = ?")
+            params.append(cleaned_id)
+        if cleaned_mode:
+            filters.append("mode = ?")
+            params.append(cleaned_mode)
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                f"""
+                select id from session_pending_inputs
+                where {' and '.join(filters)}
+                order by queue_position asc, created_at asc, id asc
+                """,
+                params,
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if not ids:
+                return []
+            placeholders = ", ".join("?" for _ in ids)
+            conn.execute(
+                f"""
+                update session_pending_inputs
+                set paused_at = null, pause_reason = null, updated_at = ?
+                where id in ({placeholders})
+                  and is_deleted = 0
+                  and status in ('pending_steer', 'queued')
+                """,
+                (now, *ids),
+            )
+        return [record for record in (self.get(row_id) for row_id in ids) if record is not None]
+
+    def resume_steers_as_new_turn(
+        self,
+        session_id: str,
+        *,
+        pending_input_id: str | None = None,
+    ) -> list[PendingInputRecord]:
+        """Resume paused steer inputs while idle by promoting one to start a new turn.
+
+        The remaining steers stay as steer inputs and are claimed together before the
+        first model request of the promoted turn.
+        """
+        cleaned_id = str(pending_input_id or "").strip()
+        filters = [
+            "session_id = ?",
+            "is_deleted = 0",
+            "status = 'pending_steer'",
+            "mode = 'steer'",
+            "paused_at is not null",
+        ]
+        params: list[Any] = [session_id]
+        if cleaned_id:
+            filters.append("id = ?")
+            params.append(cleaned_id)
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                f"""
+                select id from session_pending_inputs
+                where {' and '.join(filters)}
+                order by queue_position asc, created_at asc, id asc
+                """,
+                params,
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if not ids:
+                return []
+            placeholders = ", ".join("?" for _ in ids)
+            conn.execute(
+                f"""
+                update session_pending_inputs
+                set paused_at = null, pause_reason = null, updated_at = ?
+                where id in ({placeholders})
+                  and is_deleted = 0
+                  and status = 'pending_steer'
+                """,
+                (now, *ids),
+            )
+            conn.execute(
+                """
+                update session_pending_inputs
+                set mode = ?, status = ?, updated_at = ?
+                where id = ?
+                  and is_deleted = 0
+                  and status = 'pending_steer'
+                """,
+                (PENDING_INPUT_MODE_QUEUE, PENDING_INPUT_STATUS_QUEUED, now, ids[0]),
+            )
+        return [record for record in (self.get(row_id) for row_id in ids) if record is not None]
+
+    @staticmethod
+    def _validate_mode(mode: str) -> str:
+        cleaned = str(mode or "").strip() or PENDING_INPUT_MODE_STEER
+        if cleaned not in PENDING_INPUT_MODES:
+            raise ValueError(f"不支持的 pending input mode: {cleaned}")
+        return cleaned
+
+    @staticmethod
+    def _validate_status(status: str) -> str:
+        cleaned = str(status or "").strip()
+        if cleaned not in PENDING_INPUT_STATUSES:
+            raise ValueError(f"不支持的 pending input status: {cleaned}")
+        return cleaned
+
+    @staticmethod
+    def _next_queue_position(conn: sqlite3.Connection, session_id: str) -> int:
+        row = conn.execute(
+            """
+            select coalesce(max(queue_position), 0) as max_position
+            from session_pending_inputs
+            where session_id = ? and is_deleted = 0
+            """,
+            (session_id,),
+        ).fetchone()
+        return int(row["max_position"] if row else 0) + 1
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> PendingInputRecord:
+        runtime_params = _json_loads(row["runtime_params_json"], {})
+        attachments = _json_loads(row["attachments_json"], [])
+        if not isinstance(runtime_params, dict):
+            runtime_params = {}
+        if not isinstance(attachments, list):
+            attachments = []
+        return PendingInputRecord(
+            id=row["id"],
+            session_id=row["session_id"],
+            client_input_id=row["client_input_id"],
+            mode=row["mode"],
+            status=row["status"],
+            message=row["message"],
+            provider_id=row["provider_id"] or "",
+            model=row["model"] or "",
+            user_id=row["user_id"],
+            scene_id=row["scene_id"],
+            runtime_params=runtime_params,
+            attachments=[item for item in attachments if isinstance(item, dict)],
+            target_turn_index=(
+                int(row["target_turn_index"]) if row["target_turn_index"] is not None else None
+            ),
+            target_trace_id=row["target_trace_id"],
+            promoted_turn_index=(
+                int(row["promoted_turn_index"])
+                if row["promoted_turn_index"] is not None
+                else None
+            ),
+            promoted_trace_id=row["promoted_trace_id"],
+            queue_position=int(row["queue_position"] or 0),
+            lock_owner=row["lock_owner"],
+            lock_expires_at=row["lock_expires_at"],
+            error_code=row["error_code"],
+            error_message=row["error_message"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            delivered_at=row["delivered_at"],
+            cancelled_at=row["cancelled_at"],
+            paused_at=row["paused_at"],
+            pause_reason=row["pause_reason"],
             is_deleted=bool(row["is_deleted"]),
         )
 
@@ -6759,6 +7648,7 @@ class StorageRepositories:
         self.workspace_file_annotations = WorkspaceFileAnnotationsRepository(db)
         self.a2ui_interactions = A2UIInteractionsRepository(db)
         self.message_events = MessageEventsRepository(db)
+        self.pending_inputs = PendingInputsRepository(db)
         self.thread_tasks = ThreadTasksRepository(db)
         self.thread_task_runs = ThreadTaskRunsRepository(db)
         self.compression_staging = CompressionStagingRepository(db)

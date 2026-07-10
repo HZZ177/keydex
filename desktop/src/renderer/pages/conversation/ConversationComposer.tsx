@@ -5,6 +5,7 @@ import {
   type SendBoxExternalContextRequest,
   type SendBoxExternalFileRequest,
   type SendBoxExternalQuoteRequest,
+  type SendBoxSubmitOptions,
   type SelectedFile,
   type SelectedImageAttachment,
   type SelectedQuote,
@@ -47,6 +48,7 @@ export interface ConversationComposerProps {
     files?: SelectedFile[],
     quotes?: SelectedQuote[],
     attachments?: SelectedImageAttachment[],
+    options?: SendBoxSubmitOptions,
   ) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
   onEscape?: () => void;
@@ -119,8 +121,6 @@ export function ConversationComposer({
   contextWindowUsage = null,
   contextCompressionEnabled = true,
 }: ConversationComposerProps) {
-  const effectivePlaceholder = runtimeState === "waiting_input" ? "请先完成页面交互" : placeholder;
-
   return (
     <SendBox
       value={value}
@@ -130,7 +130,7 @@ export function ConversationComposer({
       statusText={conversationComposerStatusText(runtimeState, connectionReady)}
       variant="keydex"
       className={className}
-      placeholder={effectivePlaceholder}
+      placeholder={placeholder}
       ariaLabel={ariaLabel}
       inputLabel={inputLabel}
       autoFocusKey={autoFocusKey}

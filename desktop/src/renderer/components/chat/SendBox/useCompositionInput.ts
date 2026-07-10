@@ -1,10 +1,14 @@
 import { type CompositionEvent, type KeyboardEvent, useCallback, useState } from "react";
 
-import { shouldSubmitFromKeyboard } from "./keyboard";
+import { isReverseSubmitFromKeyboard, shouldSubmitFromKeyboard } from "./keyboard";
+
+export interface SendBoxSubmitOptions {
+  reverseDeliveryMode?: boolean;
+}
 
 export interface UseCompositionInputOptions {
   disabled?: boolean;
-  onSubmit: () => void;
+  onSubmit: (options?: SendBoxSubmitOptions) => void;
 }
 
 export function useCompositionInput({ disabled = false, onSubmit }: UseCompositionInputOptions) {
@@ -27,7 +31,7 @@ export function useCompositionInput({ disabled = false, onSubmit }: UseCompositi
       if (disabled) {
         return;
       }
-      onSubmit();
+      onSubmit({ reverseDeliveryMode: isReverseSubmitFromKeyboard(event) });
     },
     [disabled, isComposing, onSubmit],
   );

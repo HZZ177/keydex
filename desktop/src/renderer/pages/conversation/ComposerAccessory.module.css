@@ -26,8 +26,22 @@
   max-width: min(520px, calc(100% - 38px));
 }
 
+.composerAccessoryItem[data-selected-item="pending-inputs"] {
+  width: min(720px, calc(100% - 38px));
+  max-width: calc(100% - 38px);
+}
+
 .accessoryShell[data-selected-item="mcp-runtime"] {
   width: 100%;
+}
+
+.accessoryShell[data-selected-item="pending-inputs"] {
+  width: 100%;
+  height: auto;
+  min-height: 30px;
+  align-items: stretch;
+  border-radius: 16px;
+  padding: 4px 6px;
 }
 
 .accessoryShell {
@@ -51,6 +65,7 @@
   height: 22px;
   flex: 0 0 auto;
   align-items: center;
+  align-self: center;
 }
 
 .accessorySwitchButton {
@@ -192,6 +207,240 @@
   pointer-events: auto;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pendingInputsPill {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-height: min(330px, 42vh);
+  gap: 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 2px;
+  scrollbar-gutter: stable;
+}
+
+.pendingInputsPausedNotice {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
+  color: color-mix(in srgb, var(--color-text-secondary) 88%, var(--color-danger));
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 4px 5px 7px;
+}
+
+.pendingInputsPausedNotice svg {
+  margin-top: 1px;
+}
+
+.pendingInputSection {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.pendingInputSection + .pendingInputSection {
+  border-top: 1px solid color-mix(in srgb, var(--color-border-strong) 72%, transparent);
+  margin-top: 2px;
+  padding-top: 8px;
+}
+
+.pendingInputSectionHeader {
+  display: grid;
+  min-width: 0;
+  min-height: 30px;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 7px;
+  padding: 1px 4px 3px 6px;
+}
+
+.pendingInputSectionCopy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.pendingInputSectionCopy strong {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1.35;
+}
+
+.pendingInputSectionCopy > span {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pendingInputResumeAll {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.pendingInputResumeAll:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 80%, transparent);
+  color: var(--color-text-primary);
+}
+
+.pendingInputResumeAll:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.pendingInputSectionRows {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.pendingInputSectionRows[data-drag-active="true"] {
+  cursor: grabbing;
+}
+
+.pendingInputRow {
+  display: grid;
+  min-width: 0;
+  min-height: 24px;
+  grid-template-columns: 18px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  border-radius: 12px;
+  color: var(--color-text-secondary);
+  line-height: var(--ui-line-height-tight);
+  transition: background-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+  will-change: transform;
+}
+
+.pendingInputRow:hover {
+  background: color-mix(in srgb, var(--surface-hover) 52%, transparent);
+}
+
+.pendingInputRow[data-paused="true"] {
+  background: color-mix(in srgb, var(--surface-muted) 42%, transparent);
+}
+
+.pendingInputRow[data-drag-placeholder="true"] {
+  background: color-mix(in srgb, var(--surface-muted) 68%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-border-strong) 56%, transparent);
+}
+
+.pendingInputRow[data-drag-placeholder="true"] > * {
+  visibility: hidden;
+}
+
+.pendingInputDragHandle {
+  display: inline-grid;
+  width: 18px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+  padding: 0;
+  touch-action: none;
+}
+
+.pendingInputDragHandle:hover:not(:disabled),
+.pendingInputDragHandle:focus-visible {
+  background: color-mix(in srgb, var(--surface-hover) 80%, transparent);
+  color: var(--color-text-secondary);
+}
+
+.pendingInputDragHandle:active:not(:disabled) {
+  cursor: grabbing;
+}
+
+.pendingInputDragHandle:disabled {
+  cursor: default;
+  opacity: 0.28;
+}
+
+.pendingInputMeta {
+  display: inline-flex;
+  min-width: 66px;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pendingInputStatus {
+  color: var(--color-text-tertiary);
+}
+
+.pendingInputContent {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
+}
+
+.pendingInputText {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pendingInputContentMeta {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.pendingInputActions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.pendingInputAction {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.pendingInputAction:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 80%, transparent);
+  color: var(--color-text-secondary);
+}
+
+.pendingInputAction:disabled {
+  cursor: default;
+  opacity: 0.42;
 }
 
 .threadTaskPillWrap {

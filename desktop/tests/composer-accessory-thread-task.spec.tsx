@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ConversationComposerAccessory } from "@/renderer/pages/conversation/ComposerAccessory";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
-import type { ThreadTask, ThreadTaskRun } from "@/types/protocol";
+import type { AgentPendingInput, ThreadTask, ThreadTaskRun } from "@/types/protocol";
 
 describe("ConversationComposerAccessory thread task", () => {
   it("caps goal-related composer capsules to two thirds of the input width", () => {
@@ -341,6 +341,209 @@ describe("ConversationComposerAccessory thread task", () => {
     expect(within(panel).queryByRole("button", { name: "暂停目标" })).toBeNull();
     expect(within(panel).queryByRole("button", { name: "删除目标" })).toBeNull();
   });
+
+  it("renders pending input rows and exposes mode, edit and delete actions on the capsule", () => {
+    const onModeChange = vi.fn();
+    const onEdit = vi.fn();
+    const onCancel = vi.fn();
+    const first = pendingInput("pending-1", {
+      message: "补充运行中约束",
+      mode: "steer",
+      status: "pending_steer",
+    });
+    const second = pendingInput("pending-2", {
+      message: "下一轮再处理",
+      mode: "queue",
+      status: "queued",
+    });
+
+    const view = render(
+      <ConversationComposerAccessory
+        messages={[planMessage()]}
+        activeTask={threadTask({ objective: "低优先级目标" })}
+        pendingInputs={[first, second]}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onPendingInputModeChange={onModeChange}
+        onPendingInputEdit={onEdit}
+        onPendingInputCancel={onCancel}
+      />,
+    );
+
+    expect(view.container.querySelector("[data-selected-item]")?.getAttribute("data-selected-item")).toBe(
+      "pending-inputs",
+    );
+    const pill = screen.getByTestId("pending-inputs-pill");
+    expect(within(pill).getByText("补充运行中约束")).not.toBeNull();
+    expect(within(pill).getByText("下一轮再处理")).not.toBeNull();
+    expect(within(pill).getByText("引导当前轮次")).not.toBeNull();
+    expect(within(pill).getByText("等待队列")).not.toBeNull();
+    expect(within(pill).getByText("以下消息将在下一次模型请求前一次性发送给 Agent。")).not.toBeNull();
+    expect(within(pill).getByText("以下消息会在当前轮次结束后按顺序逐条发送。")).not.toBeNull();
+
+    fireEvent.click(within(pill).getByRole("button", { name: "改为队列：补充运行中约束" }));
+    expect(onModeChange).toHaveBeenCalledWith("pending-1", "queue");
+
+    fireEvent.click(within(pill).getByRole("button", { name: "改为引导：下一轮再处理" }));
+    expect(onModeChange).toHaveBeenCalledWith("pending-2", "steer");
+
+    fireEvent.click(within(pill).getByRole("button", { name: "编辑待发送消息：下一轮再处理" }));
+    expect(onEdit).toHaveBeenCalledWith(second);
+
+    fireEvent.click(within(pill).getByRole("button", { name: "删除待发送消息：下一轮再处理" }));
+    expect(onCancel).toHaveBeenCalledWith("pending-2");
+  });
+
+  it("reorders waiting rows by drag and keyboard without moving a running row", async () => {
+    const onReorder = vi.fn();
+    const running = pendingInput("pending-running", {
+      message: "正在发送",
+      mode: "queue",
+      status: "running",
+      queue_position: 1,
+    });
+    const first = pendingInput("pending-1", {
+      message: "第一条等待消息",
+      mode: "queue",
+      status: "queued",
+      queue_position: 2,
+    });
+    const second = pendingInput("pending-2", {
+      message: "第二条等待消息",
+      mode: "queue",
+      status: "queued",
+      queue_position: 3,
+    });
+
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        pendingInputs={[running, first, second]}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onPendingInputReorder={onReorder}
+      />,
+    );
+
+    const pill = screen.getByTestId("pending-inputs-pill");
+    expect(
+      (within(pill).getByRole("button", { name: "拖动调整顺序：正在发送" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    const firstHandle = within(pill).getByRole("button", { name: "拖动调整顺序：第一条等待消息" });
+    const secondRow = pill.querySelector('[data-pending-input-id="pending-2"]');
+    expect(secondRow).not.toBeNull();
+    const animate = vi.fn(() => ({ cancel: vi.fn() }) as unknown as Animation);
+    for (const row of pill.querySelectorAll<HTMLElement>("[data-pending-input-id]")) {
+      Object.defineProperty(row, "animate", { configurable: true, value: animate });
+      Object.defineProperty(row, "getBoundingClientRect", {
+        configurable: true,
+        value: () => {
+          const index = row.parentElement ? [...row.parentElement.children].indexOf(row) : 0;
+          const top = index * 26;
+          return { top, bottom: top + 24, height: 24 } as DOMRect;
+        },
+      });
+    }
+
+    fireEvent.dragStart(firstHandle);
+    fireEvent.dragOver(secondRow as Element, { clientY: 1_000 });
+
+    expect(onReorder).not.toHaveBeenCalled();
+    expect(animate).toHaveBeenCalled();
+    expect(
+      [...pill.querySelectorAll("[data-pending-input-id]")].map((row) => row.getAttribute("data-pending-input-id")),
+    ).toEqual(["pending-running", "pending-2", "pending-1"]);
+    expect(pill.querySelector('[data-pending-input-id="pending-1"]')?.getAttribute("data-drag-placeholder")).toBe("true");
+
+    fireEvent.drop(secondRow as Element, { clientY: 1 });
+
+    await waitFor(() => {
+      expect(onReorder).toHaveBeenLastCalledWith(["pending-2", "pending-1"]);
+    });
+    expect(
+      [...pill.querySelectorAll("[data-pending-input-id]")].map((row) => row.getAttribute("data-pending-input-id")),
+    ).toEqual(["pending-running", "pending-2", "pending-1"]);
+
+    fireEvent.keyDown(
+      within(pill).getByRole("button", { name: "拖动调整顺序：第二条等待消息" }),
+      { key: "ArrowDown" },
+    );
+    await waitFor(() => {
+      expect(onReorder).toHaveBeenLastCalledWith(["pending-1", "pending-2"]);
+    });
+  });
+
+  it("restores the original order when a live drag preview is cancelled", () => {
+    const onReorder = vi.fn();
+    const first = pendingInput("pending-1", { message: "第一条", mode: "queue", status: "queued", queue_position: 1 });
+    const second = pendingInput("pending-2", { message: "第二条", mode: "queue", status: "queued", queue_position: 2 });
+
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        pendingInputs={[first, second]}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onPendingInputReorder={onReorder}
+      />,
+    );
+
+    const pill = screen.getByTestId("pending-inputs-pill");
+    const firstHandle = within(pill).getByRole("button", { name: "拖动调整顺序：第一条" });
+    const secondRow = pill.querySelector('[data-pending-input-id="pending-2"]');
+    fireEvent.dragStart(firstHandle);
+    fireEvent.dragOver(secondRow as Element, { clientY: 1 });
+    expect(
+      [...pill.querySelectorAll("[data-pending-input-id]")].map((row) => row.getAttribute("data-pending-input-id")),
+    ).toEqual(["pending-2", "pending-1"]);
+
+    fireEvent.dragEnd(firstHandle);
+
+    expect(
+      [...pill.querySelectorAll("[data-pending-input-id]")].map((row) => row.getAttribute("data-pending-input-id")),
+    ).toEqual(["pending-1", "pending-2"]);
+    expect(pill.querySelector("[data-drag-placeholder=\"true\"]")).toBeNull();
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it("shows stopped guidance and resumes one row or a complete category", () => {
+    const onResume = vi.fn();
+    render(
+      <ConversationComposerAccessory
+        messages={[]}
+        pendingInputs={[
+          pendingInput("pending-steer", {
+            message: "暂停引导",
+            paused_at: "2026-07-10T01:00:00Z",
+            pause_reason: "user_stopped",
+            paused: true,
+          }),
+          pendingInput("pending-queue", {
+            message: "暂停队列",
+            mode: "queue",
+            status: "queued",
+            paused_at: "2026-07-10T01:00:00Z",
+            pause_reason: "user_stopped",
+            paused: true,
+          }),
+        ]}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+        onPendingInputResume={onResume}
+      />,
+    );
+
+    const pill = screen.getByTestId("pending-inputs-pill");
+    expect(within(pill).getByText("等待发送时的轮次已被您主动停止，请选择如何处理以下待发送消息。")).not.toBeNull();
+    fireEvent.click(within(pill).getByRole("button", { name: "恢复待发送消息：暂停引导" }));
+    expect(onResume).toHaveBeenCalledWith({ pendingInputId: "pending-steer" });
+    fireEvent.click(within(pill).getByRole("button", { name: "恢复全部等待队列消息" }));
+    expect(onResume).toHaveBeenCalledWith({ mode: "queue" });
+  });
 });
 
 function planMessage(): ConversationMessage {
@@ -404,6 +607,39 @@ function threadTaskRun(patch: Partial<ThreadTaskRun> = {}): ThreadTaskRun {
     created_at: "2026-07-03T00:00:00Z",
     updated_at: "2026-07-03T00:00:00Z",
     is_running: true,
+    ...patch,
+  };
+}
+
+function pendingInput(id: string, patch: Partial<AgentPendingInput> = {}): AgentPendingInput {
+  return {
+    id,
+    pending_input_id: id,
+    session_id: "ses-1",
+    client_input_id: `client-${id}`,
+    mode: "steer",
+    status: "pending_steer",
+    message: "待发送消息",
+    provider_id: "provider-1",
+    model: "qwen-coder",
+    user_id: "local-user",
+    scene_id: "desktop-agent",
+    runtime_params: {},
+    attachments: [],
+    target_turn_index: null,
+    target_trace_id: null,
+    promoted_turn_index: null,
+    promoted_trace_id: null,
+    queue_position: 1,
+    error_code: null,
+    error_message: null,
+    created_at: "2026-07-09T22:00:00Z",
+    updated_at: "2026-07-09T22:00:00Z",
+    delivered_at: null,
+    cancelled_at: null,
+    paused_at: null,
+    pause_reason: null,
+    paused: false,
     ...patch,
   };
 }

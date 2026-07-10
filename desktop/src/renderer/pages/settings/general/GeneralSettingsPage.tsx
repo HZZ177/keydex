@@ -1,10 +1,10 @@
-import { Check, Download, Laptop, Power, Type } from "lucide-react";
+import { Check, Download, Laptop, MessagesSquare, Power, Type } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { useFontPreference, type AppFontFamily, type FontDownloadProgress } from "@/renderer/providers/FontProvider";
-import type { CloseWindowBehavior, GeneralSettings } from "@/types/protocol";
+import type { CloseWindowBehavior, ConversationSendDefaultMode, GeneralSettings } from "@/types/protocol";
 import { SettingsSelect } from "@/renderer/pages/settings/components";
 import { closeWindowBehaviorStore } from "@/runtime/closeWindowBehaviorStore";
 import { isCloseWindowBehavior } from "@/runtime/windowLifecycle";
@@ -51,8 +51,22 @@ const closeBehaviorOptions: Array<{ value: CloseWindowBehavior; label: string; d
   },
 ];
 
+const sendDefaultModeOptions: Array<{ value: ConversationSendDefaultMode; label: string; description: string }> = [
+  {
+    value: "steer",
+    label: "引导当前回复",
+    description: "Agent 回复中发送会作为运行中引导；Ctrl+Enter 加入等待队列",
+  },
+  {
+    value: "queue",
+    label: "加入等待队列",
+    description: "Agent 回复中发送会排队等待；Ctrl+Enter 改为引导当前回复",
+  },
+];
+
 const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   close_window_behavior: null,
+  conversation_send_default_mode: "steer",
 };
 
 export interface GeneralSettingsPageProps {
@@ -78,7 +92,7 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
         if (!active) {
           return;
         }
-        const nextGeneral = settings.general ?? DEFAULT_GENERAL_SETTINGS;
+        const nextGeneral = { ...DEFAULT_GENERAL_SETTINGS, ...(settings.general ?? {}) };
         setGeneral(nextGeneral);
         syncCloseBehaviorSnapshot(nextGeneral.close_window_behavior);
       })
@@ -102,14 +116,39 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
       return;
     }
     const previousGeneral = general;
-    const nextGeneral = { close_window_behavior: behavior };
+    const nextGeneral = { ...general, close_window_behavior: behavior };
     setGeneral(nextGeneral);
     setGeneralSaving(true);
     setGeneralError(null);
     void runtime.settings
       .saveGeneralSettings(nextGeneral)
       .then((settings) => {
-        const savedGeneral = settings.general ?? nextGeneral;
+        const savedGeneral = { ...DEFAULT_GENERAL_SETTINGS, ...(settings.general ?? nextGeneral) };
+        setGeneral(savedGeneral);
+        syncCloseBehaviorSnapshot(savedGeneral.close_window_behavior);
+      })
+      .catch((reason) => {
+        setGeneral(previousGeneral);
+        setGeneralError(errorMessage(reason));
+      })
+      .finally(() => {
+        setGeneralSaving(false);
+      });
+  };
+
+  const chooseSendDefaultMode = (mode: ConversationSendDefaultMode) => {
+    if (generalSaving || general.conversation_send_default_mode === mode) {
+      return;
+    }
+    const previousGeneral = general;
+    const nextGeneral = { ...general, conversation_send_default_mode: mode };
+    setGeneral(nextGeneral);
+    setGeneralSaving(true);
+    setGeneralError(null);
+    void runtime.settings
+      .saveGeneralSettings(nextGeneral)
+      .then((settings) => {
+        const savedGeneral = { ...DEFAULT_GENERAL_SETTINGS, ...(settings.general ?? nextGeneral) };
         setGeneral(savedGeneral);
         syncCloseBehaviorSnapshot(savedGeneral.close_window_behavior);
       })
@@ -159,6 +198,27 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
               options={closeBehaviorOptions}
               placeholder="选择默认策略"
               value={general.close_window_behavior}
+            />
+          </div>
+
+          <div className={styles.settingRow} data-settings-row>
+            <header className={styles.sectionHeader} data-settings-row-text>
+              <span className={styles.settingIcon} aria-hidden="true">
+                <MessagesSquare size={17} />
+              </span>
+              <div className={styles.settingTextBlock}>
+                <h3>对话中发送消息</h3>
+                <p>{sendDefaultModeSummary(general.conversation_send_default_mode ?? "steer")}</p>
+              </div>
+            </header>
+
+            <SettingsSelect
+              ariaLabel="对话中发送消息默认行为"
+              disabled={generalLoading || generalSaving}
+              onChange={chooseSendDefaultMode}
+              options={sendDefaultModeOptions}
+              placeholder="选择默认行为"
+              value={general.conversation_send_default_mode ?? "steer"}
             />
           </div>
 
@@ -327,6 +387,13 @@ function closeBehaviorSummary(behavior: CloseWindowBehavior | null): string {
     return "关闭窗口时最小化到系统托盘";
   }
   return "首次关闭窗口时会询问默认策略";
+}
+
+function sendDefaultModeSummary(mode: ConversationSendDefaultMode): string {
+  if (mode === "queue") {
+    return "回复中发送时默认加入等待队列，Ctrl+Enter 临时引导当前回复";
+  }
+  return "回复中发送时默认引导当前回复，Ctrl+Enter 临时加入等待队列";
 }
 
 function errorMessage(reason: unknown): string {

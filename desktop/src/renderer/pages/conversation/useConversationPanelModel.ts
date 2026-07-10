@@ -36,6 +36,7 @@ import type {
   AgentActionEnvelope,
   AgentErrorData,
   AgentMiddlewareProgressData,
+  AgentPendingInput,
   AgentContextItem,
   AgentFileAttachment,
   AgentSession,
@@ -607,6 +608,30 @@ export function useConversationPanelModel({
     [controller, notifications, runtime, sessionId],
   );
 
+  const editPendingInput = useCallback(
+    async (pendingInput: AgentPendingInput) => {
+      const pendingInputId = pendingInput.pending_input_id || pendingInput.id;
+      try {
+        await controller.cancelPendingInput(pendingInputId);
+        controller.dispatch({
+          type: "event/receive",
+          event: {
+            action: "pending_input_cancelled",
+            data: {
+              ...pendingInput,
+              pending_input_id: pendingInputId,
+              status: "cancelled",
+            },
+          },
+        });
+        controller.restoreComposerDraft(composerDraftFromPendingInput(pendingInput));
+      } catch (reason) {
+        notifications.error(errorMessage(reason));
+      }
+    },
+    [controller, notifications],
+  );
+
   return {
     sessionId,
     messages,
@@ -616,6 +641,12 @@ export function useConversationPanelModel({
     activeTask: controller.activeTask,
     taskRunState: controller.taskRunState,
     pendingApproval: controller.pendingApproval,
+    pendingInputs: controller.pendingInputs,
+    updatePendingInputMode: controller.updatePendingInputMode,
+    reorderPendingInputs: controller.reorderPendingInputs,
+    cancelPendingInput: controller.cancelPendingInput,
+    resumePendingInputs: controller.resumePendingInputs,
+    editPendingInput,
     runtimeState: controller.runtimeState,
     runtimeDetail: controller.runtimeDetail,
     loading: controller.loading,
@@ -839,6 +870,19 @@ function composerDraftFromMessage(message: ConversationMessage): AgentSessionCon
     value: message.content,
     ...contextDraft,
     attachments: imageAttachmentsFromMessagePayload(message.payload),
+  };
+}
+
+function composerDraftFromPendingInput(input: AgentPendingInput): AgentSessionControllerComposerDraft {
+  const runtimeParams = input.runtime_params ?? {};
+  const rawContextItems = runtimeParams.message_context_items ?? runtimeParams.messageContextItems;
+  const contextItems = Array.isArray(rawContextItems)
+    ? rawContextItems.filter((item): item is AgentContextItem => Boolean(item && typeof item === "object"))
+    : [];
+  return {
+    value: input.message,
+    ...composerDraftContextFromItems(contextItems),
+    attachments: imageAttachmentsFromMessagePayload({ attachments: input.attachments ?? [] }),
   };
 }
 

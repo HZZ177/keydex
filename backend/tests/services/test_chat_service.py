@@ -460,7 +460,26 @@ async def test_chat_service_injects_follow_messages_and_restores_context_items(t
                             "preview": "关键片段",
                         },
                     },
-                ]
+                ],
+                "message_context_items": [
+                    {
+                        "id": "file:readme",
+                        "type": "file",
+                        "label": "README.md",
+                        "content": "工作区文件：README.md",
+                        "source": "workspace",
+                        "path": "README.md",
+                        "metadata": {"id": "file:readme", "kind": "file"},
+                    },
+                    {
+                        "id": "quote:1",
+                        "type": "quote",
+                        "label": "引用片段",
+                        "content": "关键片段",
+                        "source": "composer",
+                        "metadata": {"id": "quote:1", "kind": "quote"},
+                    },
+                ],
             },
         )
     )
@@ -469,6 +488,7 @@ async def test_chat_service_injects_follow_messages_and_restores_context_items(t
     visible_history = [message for message in history if message["role"] != "turn"]
     assert [message["role"] for message in visible_history] == ["user", "assistant"]
     assert visible_history[0]["content"] == "总结一下"
+    assert len(visible_history[0]["contextItems"]) == 2
     assert visible_history[0]["contextItems"][0]["type"] == "file"
     assert visible_history[0]["contextItems"][0]["path"] == "README.md"
     assert visible_history[0]["contextItems"][1]["type"] == "quote"
@@ -1145,6 +1165,27 @@ async def test_chat_service_runs_skill_activation_chain_with_message_injection(
                         },
                     }
                 ],
+                "message_context_items": [
+                    {
+                        "id": "file:des",
+                        "type": "file",
+                        "label": "DES.md",
+                        "content": "工作区文件：DES.md",
+                        "source": "workspace",
+                        "path": "DES.md",
+                        "metadata": {"id": "file:des", "kind": "file"},
+                    },
+                    {
+                        "id": "skill:dev-plan",
+                        "type": "skill",
+                        "label": "/dev-plan",
+                        "content": "Build a structured development plan.",
+                        "source": "workspace",
+                        "skill_name": "dev-plan",
+                        "description": "Build a structured development plan.",
+                        "metadata": {"id": "skill:dev-plan", "kind": "skill"},
+                    },
+                ],
             },
         ),
         chat_adapter=chat_adapter,
@@ -1152,17 +1193,21 @@ async def test_chat_service_runs_skill_activation_chain_with_message_injection(
 
     assert result.status == "completed"
     assert factory.requested_models == ["qwen-coder"]
-    assert factory.created_tool_names == [["load_skill"]]
+    assert len(factory.created_tool_names) == 1
+    assert "load_skill" in factory.created_tool_names[0]
     assert "<keydex_skills>" in factory.system_prompts[0]
     assert 'load_skill(skill_name="dev-plan")' in factory.system_prompts[0]
     assert "Use the project planning workflow." not in factory.system_prompts[0]
 
     visible_events = [item for item in chat_adapter.sent if item["action"] != "turn_started"]
     actions = [item["action"] for item in visible_events]
-    assert actions == ["system_message", "tool_start", "tool_end", "stream", "completed"]
+    assert actions[-1] == "completed"
+    assert actions.index("tool_start") < actions.index("tool_end") < actions.index("completed")
     assert visible_events[0]["data"]["content"] == "Build a structured development plan."
-    assert visible_events[1]["data"]["tool"] == "load_skill"
-    tool_result = json.loads(visible_events[2]["data"]["result"])
+    tool_start_event = next(item for item in visible_events if item["action"] == "tool_start")
+    tool_end_event = next(item for item in visible_events if item["action"] == "tool_end")
+    assert tool_start_event["data"]["tool"] == "load_skill"
+    tool_result = json.loads(tool_end_event["data"]["result"])
     assert tool_result["skill_name"] == "dev-plan"
     assert tool_result["found"] is True
     assert tool_result["loaded"] is True
@@ -1181,6 +1226,7 @@ async def test_chat_service_runs_skill_activation_chain_with_message_injection(
     visible_history = [message for message in history if message["role"] != "turn"]
     assert [message["role"] for message in visible_history] == ["user", "tool", "assistant"]
     assert visible_history[0]["content"] == "拆成开发 issues"
+    assert len(visible_history[0]["contextItems"]) == 2
     assert visible_history[0]["contextItems"][0]["type"] == "file"
     assert visible_history[0]["contextItems"][0]["path"] == "DES.md"
     assert visible_history[0]["contextItems"][1]["type"] == "skill"
