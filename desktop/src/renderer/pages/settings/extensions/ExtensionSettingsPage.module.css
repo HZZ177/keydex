@@ -441,9 +441,13 @@
 .a2uiSummary {
   display: flex;
   flex-wrap: wrap;
+  align-content: center;
+  align-items: center;
   gap: 8px;
+  min-height: 48px;
+  box-sizing: border-box;
   border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
-  padding: 0 14px 14px;
+  padding: 10px 14px;
 }
 
 .a2uiSummary span {
