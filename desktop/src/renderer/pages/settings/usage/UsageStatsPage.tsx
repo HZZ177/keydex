@@ -30,6 +30,10 @@ import type {
   UsageTrendPoint,
 } from "@/types/protocol";
 
+import {
+  UsageDateTimeRangePicker,
+  type UsageDateTimeRangeValue,
+} from "./UsageDateTimeRangePicker";
 import styles from "./UsageStatsPage.module.css";
 
 type RangePreset = "today" | "7d" | "30d" | "custom";
@@ -106,8 +110,7 @@ export interface UsageConversationTurnTarget {
 export function UsageStatsPage({ runtime = runtimeBridge, onNavigateToConversationTurn }: UsageStatsPageProps) {
   const [rangePreset, setRangePreset] = useState<RangePreset>("7d");
   const initialCustomRange = useMemo(() => computeRange("7d"), []);
-  const [customStart, setCustomStart] = useState(toDateTimeLocal(initialCustomRange.startTime));
-  const [customEnd, setCustomEnd] = useState(toDateTimeLocal(initialCustomRange.endTime));
+  const [customRange, setCustomRange] = useState<UsageDateTimeRangeValue>(initialCustomRange);
   const [selectedModel, setSelectedModel] = useState("");
   const [trendBucket, setTrendBucket] = useState<UsageBucket>("hour");
   const [heatBucket, setHeatBucket] = useState<TokenHeatBucket>("day");
@@ -129,14 +132,8 @@ export function UsageStatsPage({ runtime = runtimeBridge, onNavigateToConversati
   const heatRange = useMemo(() => computeHeatWallRange(), [heatRefreshNonce, refreshNonce]);
 
   const range = useMemo(
-    () =>
-      rangePreset === "custom"
-        ? {
-            startTime: fromDateTimeLocal(customStart),
-            endTime: fromDateTimeLocal(customEnd),
-          }
-        : computeRange(rangePreset),
-    [customEnd, customStart, rangePreset],
+    () => (rangePreset === "custom" ? customRange : computeRange(rangePreset)),
+    [customRange, rangePreset],
   );
   const query = useMemo(
     () => ({
@@ -265,6 +262,12 @@ export function UsageStatsPage({ runtime = runtimeBridge, onNavigateToConversati
     setPage(1);
   }
 
+  function applyCustomRange(next: UsageDateTimeRangeValue) {
+    setCustomRange(next);
+    setRangePreset("custom");
+    setPage(1);
+  }
+
   function changeTrendBucket(next: UsageBucket) {
     setTrendBucket(next);
   }
@@ -345,7 +348,7 @@ export function UsageStatsPage({ runtime = runtimeBridge, onNavigateToConversati
           <ModelFilter models={modelOptions} value={selectedModel} onChange={changeModel} />
           <section className={styles.rangeBar} aria-label="时间范围">
             <CalendarDays size={16} />
-            {(["today", "7d", "30d", "custom"] as RangePreset[]).map((item) => (
+            {(["today", "7d", "30d"] as RangePreset[]).map((item) => (
               <button
                 data-active={rangePreset === item ? "true" : "false"}
                 key={item}
@@ -355,29 +358,11 @@ export function UsageStatsPage({ runtime = runtimeBridge, onNavigateToConversati
                 {rangeLabel(item)}
               </button>
             ))}
-            {rangePreset === "custom" ? (
-              <div className={styles.customRange}>
-                <input
-                  aria-label="开始时间"
-                  onChange={(event) => {
-                    setCustomStart(event.target.value);
-                    setPage(1);
-                  }}
-                  type="datetime-local"
-                  value={customStart}
-                />
-                <span>至</span>
-                <input
-                  aria-label="结束时间"
-                  onChange={(event) => {
-                    setCustomEnd(event.target.value);
-                    setPage(1);
-                  }}
-                  type="datetime-local"
-                  value={customEnd}
-                />
-              </div>
-            ) : null}
+            <UsageDateTimeRangePicker
+              active={rangePreset === "custom"}
+              onApply={applyCustomRange}
+              value={customRange}
+            />
           </section>
           <button
             className={styles.iconButton}
@@ -1559,28 +1544,6 @@ function rangeLabel(preset: RangePreset) {
     return "自定义";
   }
   return "近 7 天";
-}
-
-function fromDateTimeLocal(value: string) {
-  if (!value) {
-    return undefined;
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
-}
-
-function toDateTimeLocal(value: string | undefined) {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-  const pad = (input: number) => String(input).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(
-    date.getMinutes(),
-  )}`;
 }
 
 function toUsageBucketDate(value: string, bucket: UsageBucket, timezoneOffsetMinutes: number) {

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { agentMessageToConversationMessage } from "@/renderer/pages/conversation/conversationMessageAdapter";
-import { MessageList } from "@/renderer/pages/conversation/messages";
+import { A2UIBlock, MessageList } from "@/renderer/pages/conversation/messages";
 import {
   buildA2UICancelPayload,
   buildA2UISubmitPayload,
@@ -68,6 +68,63 @@ describe("MessageList A2UI callback contract", () => {
     });
   });
 
+  it("switches to virtual mode for one data-heavy chart", () => {
+    withBrowserListEnvironment(() => {
+      const message = conversationStreamingA2UIMessage("agent:a2ui-large-chart", "created");
+      const debug = message.payload.a2uiDebug as A2UIDebugBlockState;
+      const payload = {
+        title: "200 点趋势",
+        charts: [
+          {
+            type: "trend",
+            series: [
+              {
+                name: "访问量",
+                items: Array.from({ length: 200 }, (_, index) => ({ name: `点 ${index + 1}`, value: index + 1 })),
+              },
+            ],
+          },
+        ],
+      };
+      debug.payload = payload;
+      debug.parsedArgs = payload;
+
+      render(<MessageList messages={[message]} />);
+
+      const root = screen.getByTestId("message-list");
+      expect(root.getAttribute("data-list-mode")).toBe("virtual");
+      expect(Number(root.getAttribute("data-a2ui-weight"))).toBeGreaterThan(12);
+    });
+  });
+
+  it("keeps one list implementation from live chart start through created completion", () => {
+    withBrowserListEnvironment(() => {
+      const { rerender } = render(
+        <MessageList messages={[conversationChartPressureMessage("streaming", 2)]} />,
+      );
+      const root = screen.getByTestId("message-list");
+      const initialScroller = screen.getByTestId("message-list-scroll");
+      initialScroller.setAttribute("data-e2e-node", "stable-list");
+
+      expect(root.getAttribute("data-list-mode")).toBe("virtual");
+      expect(root.getAttribute("data-a2ui-live-count")).toBe("1");
+
+      rerender(<MessageList messages={[conversationChartPressureMessage("streaming", 0, false)]} />);
+      expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("virtual");
+      expect(screen.getByTestId("message-list-scroll")).toBe(initialScroller);
+
+      rerender(<MessageList messages={[conversationChartPressureMessage("streaming", 200)]} />);
+      expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("virtual");
+      expect(screen.getByTestId("message-list-scroll")).toBe(initialScroller);
+
+      rerender(<MessageList messages={[conversationChartPressureMessage("created", 200)]} />);
+      expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("virtual");
+      expect(screen.getByTestId("message-list").getAttribute("data-a2ui-live-count")).toBe("0");
+      expect(screen.getByTestId("message-list-scroll")).toBe(initialScroller);
+      expect(screen.getByTestId("message-list-scroll").getAttribute("data-e2e-node")).toBe("stable-list");
+    });
+  });
+
   it("passes resize suspension into A2UI message rendering", () => {
     render(<MessageList messages={[conversationStreamingA2UIMessage("agent:a2ui-chart", "created")]} a2uiRenderSuspended />);
 
@@ -88,6 +145,25 @@ describe("MessageList A2UI callback contract", () => {
     );
 
     expect(screen.getByRole("button", { name: "查看 A2UI 调试信息" })).not.toBeNull();
+  });
+
+  it("contains an A2UI render failure without unmounting sibling conversation content", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      render(
+        <>
+          <A2UIBlock message={conversationA2UIMessage()}>
+            <ThrowingA2UIContent />
+          </A2UIBlock>
+          <div data-testid="conversation-sibling">still visible</div>
+        </>,
+      );
+
+      expect(screen.getByTestId("a2ui-block").getAttribute("data-status")).toBe("failed");
+      expect(screen.getByTestId("conversation-sibling").textContent).toBe("still visible");
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("renders same render-key A2UI cards with independent statuses", () => {
@@ -213,6 +289,10 @@ describe("MessageList A2UI callback contract", () => {
     });
   });
 });
+
+function ThrowingA2UIContent(): never {
+  throw new Error("intentional A2UI render failure");
+}
 
 function conversationA2UITurn(index: number): ConversationMessage[] {
   const streamId = `stream-${index}`;
@@ -341,6 +421,51 @@ function conversationStreamingA2UIMessage(
     },
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
+  };
+}
+
+function conversationChartPressureMessage(
+  status: "streaming" | "created",
+  pointCount: number,
+  parseValid = true,
+): ConversationMessage {
+  const message = conversationStreamingA2UIMessage("agent:a2ui-pressure-chart", status);
+  const debug = message.payload.a2uiDebug as A2UIDebugBlockState;
+  const payload = {
+    title: "Pressure chart",
+    charts: [
+      {
+        type: "trend",
+        title: "Requests",
+        series: [
+          {
+            name: "Requests",
+            items: Array.from({ length: pointCount }, (_, index) => ({
+              name: `T${index + 1}`,
+              value: index + 1,
+            })),
+          },
+        ],
+      },
+    ],
+  };
+  const argsBuffer = parseValid ? JSON.stringify(payload) : '{"title":';
+  return {
+    ...message,
+    payload: {
+      ...message.payload,
+      a2uiDebug: {
+        ...debug,
+        argsBuffer,
+        argsTextLength: argsBuffer.length,
+        chunkCount: Math.max(1, pointCount),
+        jsonParseStatus: parseValid ? "partial" : "invalid",
+        parsedArgs: parseValid ? payload : undefined,
+        payload: status === "created" ? payload : undefined,
+        updatedAt: debug.updatedAt + pointCount + (status === "created" ? 1_000 : 0),
+      },
+    },
+    updatedAt: status === "created" ? "2026-07-08T00:00:01.000Z" : "2026-07-08T00:00:00.000Z",
   };
 }
 

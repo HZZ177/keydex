@@ -7,6 +7,7 @@ import type {
   A2UIDebugBlockState,
   A2UIDebugRawEvent,
   AgentErrorData,
+  AgentFirstTokenData,
   CommandApprovalRequest,
   AgentGhostStats,
   AgentHistoryResponse,
@@ -77,6 +78,7 @@ export interface AgentSessionViewState {
   activeTask: ThreadTask | null;
   runningTaskRun: ThreadTaskRun | null;
   recentTaskRun: ThreadTaskRun | null;
+  firstTokenAtMs: number | null;
   stale: boolean;
 }
 
@@ -167,6 +169,9 @@ export function reduceAgentWsEvent(
       break;
     case "stream":
       next = handleStream(state, event.data as unknown as AgentStreamActionData);
+      break;
+    case "llm_first_token":
+      next = handleFirstToken(state, event.data as unknown as AgentFirstTokenData);
       break;
     case "a2ui_stream_start":
     case "a2ui_stream_chunk":
@@ -1023,6 +1028,7 @@ function handleTurnStarted(state: AgentConversationState, data: AgentTurnStarted
   }
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
+  view.firstTokenAtMs = null;
   const traceId = nullableString(data.trace_id);
   const threadTask = asRecord(data.thread_task);
   const runtimeParams = asRecord(data.runtime_params);
@@ -1162,7 +1168,7 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
       message.content += content;
       applyTurnFields(message, turnIndex, traceId);
     } else {
-      closeTopLevelTextStreams(view);
+      closeTopLevelTextStreams(view, eventTimestamp);
       view.messages.push({
         id: nextMessageId(next, "assistant", sessionId),
         sessionId,
@@ -1175,6 +1181,22 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
         status: "streaming",
       });
     }
+  }
+  view.isStreaming = true;
+  markTurnInProgress(view);
+  return next;
+}
+
+function handleFirstToken(state: AgentConversationState, data: AgentFirstTokenData): AgentConversationState {
+  const sessionId = data.session_id || state.selectedSessionId || "";
+  const firstTokenAtMs = nonNegativeNumber(data.first_token_at_ms);
+  if (!sessionId || firstTokenAtMs === null) {
+    return state;
+  }
+  const next = cloneState(state);
+  const view = ensureSessionState(next, sessionId);
+  if (view.firstTokenAtMs === null || firstTokenAtMs < view.firstTokenAtMs) {
+    view.firstTokenAtMs = Math.trunc(firstTokenAtMs);
   }
   view.isStreaming = true;
   markTurnInProgress(view);
@@ -1194,7 +1216,7 @@ function handleA2UIEvent(
   const view = ensureSessionState(next, sessionId);
   const eventTimestamp = timestampFromData(data);
   if (action === "a2ui_stream_start") {
-    closeTopLevelTextStreams(view);
+    closeTopLevelTextStreams(view, eventTimestamp);
   }
   const pendingInteractions = Array.isArray(data.pending_interactions) ? data.pending_interactions : [];
   let result = action === "a2ui_waiting_input" && pendingInteractions.length > 0
@@ -1699,10 +1721,11 @@ function handleReasoning(
 
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
+  const eventTimestamp = timestampFromData(data);
   const turnIndex = numberValue(data.turn_index);
   const traceId = stringValue(data.trace_id);
   if (data.done) {
-    closeReasoningStream(view, kind);
+    closeReasoningStream(view, kind, eventTimestamp, nonNegativeNumber(data.duration_ms));
     view.isStreaming = hasStreamingMessage(view);
     markTurnInProgress(view);
     return next;
@@ -1717,14 +1740,14 @@ function handleReasoning(
     last.content += content;
     applyTurnFields(last, turnIndex, traceId);
   } else {
-    closeTopLevelTextStreams(view);
+    closeTopLevelTextStreams(view, eventTimestamp);
     view.messages.push({
       id: nextMessageId(next, "reasoning", sessionId),
       sessionId,
       role: "reasoning",
       content,
       reasoningKind: kind,
-      timestamp: timestampFromData(data),
+      timestamp: eventTimestamp,
       turnIndex,
       ...(traceId ? { traceId } : {}),
       streaming: true,
@@ -1769,7 +1792,7 @@ function handleToolStart(state: AgentConversationState, data: AgentToolEventData
     }
     subagent.streaming = true;
   } else {
-    closeTopLevelTextStreams(view);
+    closeTopLevelTextStreams(view, timestampFromData(data));
     const existing =
       view.messages.find((message) => message.role === "tool" && message.runId === data.run_id) ??
       findMatchingProgressTool(view, data, toolName);
@@ -1932,6 +1955,7 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
   const finalContent = stringValue(payload.final_content);
   const payloadTurnIndex = numberValue(payload.turn_index);
   const payloadTraceId = stringValue(payload.trace_id);
+  const completedAt = timestampFromData(payload);
   const target = findCompletedAssistantTarget(view, payloadTurnIndex, payloadTraceId);
 
   let completedTarget = target;
@@ -1966,8 +1990,19 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
   if (completedTarget && threadTask) {
     applyThreadTaskMetadata(completedTarget, threadTask);
   }
+  completeTurnDuration(
+    view,
+    completedAt,
+    payloadTurnIndex,
+    payloadTraceId,
+    nonNegativeNumber(payload.first_token_at_ms) ?? view.firstTokenAtMs,
+    completedTarget,
+  );
 
   for (const message of view.messages) {
+    if (message.role === "reasoning" && message.streaming) {
+      completeReasoningDuration(message, completedAt);
+    }
     message.streaming = false;
     if (message.status === "streaming") {
       message.status = message.role === "reasoning" ? "completed" : undefined;
@@ -1981,6 +2016,7 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
   view.stale = false;
   view.pendingApproval = null;
   view.pendingElicitation = null;
+  view.firstTokenAtMs = null;
   view.runtimeState = payload.status === "failed" ? "failed" : "idle";
   return next;
 }
@@ -2013,7 +2049,20 @@ function handleCancelled(state: AgentConversationState, data: Record<string, unk
   }
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
+  const completedAt = timestampFromData(data);
+  const traceId = stringValue(data.trace_id);
+  const turnIndex = numberValue(data.turn_index);
+  completeTurnDuration(
+    view,
+    completedAt,
+    turnIndex,
+    traceId,
+    nonNegativeNumber(data.first_token_at_ms) ?? view.firstTokenAtMs,
+  );
   for (const message of view.messages) {
+    if (message.role === "reasoning" && message.streaming) {
+      completeReasoningDuration(message, completedAt);
+    }
     if (message.streaming) {
       message.streaming = false;
     }
@@ -2038,8 +2087,6 @@ function handleCancelled(state: AgentConversationState, data: Record<string, unk
     }
   }
   const last = view.messages.at(-1);
-  const traceId = stringValue(data.trace_id);
-  const turnIndex = numberValue(data.turn_index);
   const threadTask = threadTaskContextFromPayload(data);
   if (last?.role === "assistant" && last.cancelled && last.status === "cancelled") {
     if (traceId && !last.traceId) {
@@ -2068,6 +2115,7 @@ function handleCancelled(state: AgentConversationState, data: Record<string, unk
   view.isCancelling = false;
   view.pendingApproval = null;
   view.pendingElicitation = null;
+  view.firstTokenAtMs = null;
   view.runtimeState = "idle";
   return next;
 }
@@ -2107,6 +2155,7 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
   }
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
+  const completedAt = timestampFromData(data);
   const error = turnErrorFromData(data);
   const traceId = stringValue(data.trace_id);
   const turnIndex = numberValue(data.turn_index);
@@ -2114,6 +2163,13 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
   const activeTurnFailed = view.isStreaming || view.runtimeState === "running" || hasStreamingMessage(view);
   const attachedToAssistant =
     activeTurnFailed && attachTurnErrorToLatestAssistant(view, error, traceId, threadTask, turnIndex);
+  completeTurnDuration(
+    view,
+    completedAt,
+    turnIndex,
+    traceId,
+    nonNegativeNumber(data.first_token_at_ms) ?? view.firstTokenAtMs,
+  );
   if (!attachedToAssistant) {
     const metadata = threadTask ? threadTaskMetadata(threadTask, { turnError: error }) : { turnError: error };
     view.messages.push({
@@ -2129,6 +2185,12 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
     });
   }
   for (const message of view.messages) {
+    if (message.role === "reasoning" && message.streaming) {
+      completeReasoningDuration(message, completedAt);
+      if (message.status === "streaming") {
+        message.status = "failed";
+      }
+    }
     message.streaming = false;
     if (message.role === "subagent") {
       closeSubagentTextStreams(message);
@@ -2138,6 +2200,7 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
   view.isCancelling = false;
   view.pendingApproval = null;
   view.pendingElicitation = null;
+  view.firstTokenAtMs = null;
   view.runtimeState = "failed";
   return next;
 }
@@ -2760,6 +2823,7 @@ function ensureSessionState(
     activeTask: meta.activeTask ? cloneThreadTask(meta.activeTask) : null,
     runningTaskRun: meta.runningTaskRun ? cloneThreadTaskRun(meta.runningTaskRun) : null,
     recentTaskRun: meta.recentTaskRun ? cloneThreadTaskRun(meta.recentTaskRun) : null,
+    firstTokenAtMs: meta.firstTokenAtMs ?? null,
     stale: meta.stale ?? false,
   };
   state.sessionStateById[sessionId] = created;
@@ -3275,11 +3339,17 @@ function closeSubagentTextStreams(message: AgentChatMessage) {
   }
 }
 
-function closeReasoningStream(view: AgentSessionViewState, kind: AgentReasoningKind) {
+function closeReasoningStream(
+  view: AgentSessionViewState,
+  kind: AgentReasoningKind,
+  completedAt: number,
+  durationMs: number | null = null,
+) {
   const message = [...view.messages]
     .reverse()
     .find((item) => item.role === "reasoning" && item.reasoningKind === kind && item.streaming);
   if (message) {
+    completeReasoningDuration(message, completedAt, durationMs);
     message.streaming = false;
     if (message.status === "streaming") {
       message.status = undefined;
@@ -3287,15 +3357,82 @@ function closeReasoningStream(view: AgentSessionViewState, kind: AgentReasoningK
   }
 }
 
-function closeTopLevelTextStreams(view: AgentSessionViewState) {
+function closeTopLevelTextStreams(view: AgentSessionViewState, completedAt = Date.now()) {
   for (const message of view.messages) {
     if ((message.role === "assistant" || message.role === "reasoning") && message.streaming) {
+      if (message.role === "reasoning") {
+        completeReasoningDuration(message, completedAt);
+      }
       message.streaming = false;
       if (message.status === "streaming") {
         message.status = undefined;
       }
     }
   }
+}
+
+function completeReasoningDuration(
+  message: AgentChatMessage,
+  completedAt: number,
+  explicitDurationMs: number | null = null,
+) {
+  const elapsed = explicitDurationMs ?? completedAt - message.timestamp;
+  if (Number.isFinite(elapsed) && elapsed >= 0) {
+    message.reasoningDurationMs = Math.trunc(elapsed);
+  }
+}
+
+function completeTurnDuration(
+  view: AgentSessionViewState,
+  completedAt: number,
+  turnIndex: number | null,
+  traceId: string,
+  firstTokenAtMs: number | null,
+  preferredTarget?: AgentChatMessage,
+) {
+  const boundaryIndex = view.messages.findLastIndex((message) => {
+    if (message.role !== "user" && message.role !== "turn") {
+      return false;
+    }
+    return isSameBusinessTurn(message, turnIndex);
+  });
+  const shouldFilterByTrace = turnIndex === null && boundaryIndex < 0 && Boolean(traceId);
+  const turnOutputMessages = view.messages
+    .slice(boundaryIndex + 1)
+    .filter((message) => {
+      if (!isTurnOutputMessage(message) || message.cancelled || message.status === "cancelled") {
+        return false;
+      }
+      if (!isSameBusinessTurn(message, turnIndex)) {
+        return false;
+      }
+      return !shouldFilterByTrace || !message.traceId || message.traceId === traceId;
+    });
+  const assistantMessages = turnOutputMessages.filter(
+    (message) => message.role === "assistant" && normalizeMessageContent(message.content).trim(),
+  );
+  const firstOutput = turnOutputMessages[0];
+  const target =
+    (preferredTarget && assistantMessages.includes(preferredTarget) ? preferredTarget : undefined) ??
+    assistantMessages.at(-1);
+  if (!firstOutput || !target || nonNegativeNumber(target.turnDurationMs) !== null) {
+    return;
+  }
+  const elapsed = completedAt - (firstTokenAtMs ?? firstOutput.timestamp);
+  if (Number.isFinite(elapsed) && elapsed >= 0) {
+    target.turnDurationMs = Math.trunc(elapsed);
+  }
+}
+
+function isTurnOutputMessage(message: AgentChatMessage): boolean {
+  if (message.role === "assistant" || message.role === "reasoning") {
+    return Boolean(normalizeMessageContent(message.content).trim());
+  }
+  return (
+    message.role === "tool" ||
+    message.role === "subagent" ||
+    message.role === "a2ui"
+  );
 }
 
 function latestStreamingMessage(
@@ -4312,6 +4449,10 @@ function scalarStringValue(value: unknown): string {
 
 function numberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function nonNegativeNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function timestampFromData(data: object): number {

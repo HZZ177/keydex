@@ -118,6 +118,7 @@ describe("A2ChartBlock", () => {
     expect(surfaces[2].getAttribute("data-a2ui-chart-data-count")).toBe("2");
     expect(surfaces[1].getAttribute("data-a2ui-chart-interactions")).toBe("tooltip,axisPointer,legendToggle");
     expect(surfaces[1].getAttribute("data-a2ui-chart-tooltip")).toBe("axis");
+    expect(surfaces.every((surface) => surface.getAttribute("data-a2ui-chart-renderer") === "svg")).toBe(true);
     expect(echartsMock.setOption.mock.calls.every(([option]) => (option as Record<string, unknown>).animation === false)).toBe(true);
     expect(container.querySelector("svg")).not.toBeNull();
   });
@@ -1091,6 +1092,51 @@ describe("A2ChartBlock", () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  it("keeps the streaming chart caption monotonic when partial metadata regresses", () => {
+    const chartPayload = (summary: string, title: string) => ({
+      title: "Caption stability",
+      summary,
+      charts: [
+        {
+          type: "trend",
+          title,
+          series: [
+            {
+              name: "Requests",
+              items: [
+                { name: "T1", value: 10 },
+                { name: "T2", value: 20 },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const fullCaption = "Complete streaming chart summary";
+    const { rerender } = render(
+      <A2ChartBlock parsed={parsedChart(chartPayload(fullCaption, "Request trend"), "waiting_created")} />,
+    );
+
+    expect(screen.getByText(fullCaption)).not.toBeNull();
+
+    rerender(
+      <A2ChartBlock parsed={parsedChart(chartPayload("Short", "Trend"), "waiting_created")} />,
+    );
+    expect(screen.getByText(fullCaption)).not.toBeNull();
+    expect(screen.queryByText("Short")).toBeNull();
+
+    rerender(
+      <A2ChartBlock parsed={parsedChart(chartPayload("", "Trend"), "waiting_created")} />,
+    );
+    expect(screen.getByText(fullCaption)).not.toBeNull();
+
+    rerender(
+      <A2ChartBlock parsed={parsedChart(chartPayload("Final summary", "Trend"), "created")} />,
+    );
+    expect(screen.getByText("Final summary")).not.toBeNull();
+    expect(screen.queryByText(fullCaption)).toBeNull();
   });
 
   it("does not flash back to skeleton when a stable stream receives new chart items", () => {

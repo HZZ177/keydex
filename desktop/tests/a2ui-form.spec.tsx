@@ -34,6 +34,13 @@ describe("A2FormBlock", () => {
     expect(screen.getByText("已完成 1/5 · 必填 1/3")).not.toBeNull();
   });
 
+  it("owns exactly one semantic player instead of mounting the generic chart player", () => {
+    render(<A2UIBlock message={formMessage()} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+
+    expect(screen.getByTestId("a2ui-block").hasAttribute("data-a2ui-player-enabled")).toBe(false);
+    expect(screen.getByTestId("a2ui-form").hasAttribute("data-a2ui-player-enabled")).toBe(true);
+  });
+
   it("submits normalized form values", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(<A2UIBlock message={formMessage()} onSubmit={onSubmit} onCancel={vi.fn()} />);
@@ -399,6 +406,58 @@ describe("A2FormBlock", () => {
       expect(screen.getByLabelText(/预算/)).not.toBeNull();
       expect(screen.queryByText("正在生成字段")).toBeNull();
       expect(screen.queryByText("暂无字段")).toBeNull();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("drains missing final form fields without replacing already streamed fields", () => {
+    vi.useFakeTimers();
+    try {
+      const message = formMessage({
+        payload: {
+          fields: [
+            { name: "title", label: "标题", type: "text", required: true },
+            { name: "budget", label: "预算", type: "number" },
+            { name: "owner", label: "负责人", type: "text" },
+          ],
+        },
+      });
+      const { rerender } = render(
+        <A2UIBlock
+          message={withStreamingPlaceholderDebug(message, {
+            parsedArgs: {
+              title: "请补充执行参数",
+              description: "用于生成活动执行计划",
+              fields: [{ name: "title", label: "标题", type: "text", required: true }],
+            },
+          })}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByLabelText(/标题/)).not.toBeNull();
+      expect(screen.queryByLabelText(/预算/)).toBeNull();
+
+      rerender(<A2UIBlock message={withStreamedDebug(message)} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+
+      expect(screen.getByLabelText(/标题/)).not.toBeNull();
+      expect(screen.queryByLabelText(/预算/)).toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(900);
+      });
+
+      expect(screen.getByLabelText(/预算/)).not.toBeNull();
+      expect(screen.queryByLabelText(/负责人/)).toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(900);
+      });
+
+      expect(screen.getByLabelText(/负责人/)).not.toBeNull();
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();

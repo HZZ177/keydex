@@ -9,6 +9,7 @@ class ChatAction(StrEnum):
     BIND_OK = "bind_ok"
     UNBIND_OK = "unbind_ok"
     STREAM = "stream"
+    LLM_FIRST_TOKEN = "llm_first_token"
     SYSTEM_MESSAGE = "system_message"
     COMPLETED = "completed"
     CANCELLED = "cancelled"

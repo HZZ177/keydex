@@ -291,16 +291,18 @@ class MessageEventService:
                 continue
 
             if action == ReplayAction.REASONING.value:
-                messages.append(
-                    {
-                        "role": "reasoning",
-                        "content": str(data.get("text", data.get("content", "")) or ""),
-                        "reasoningKind": data.get("kind", "reasoning"),
-                        "timestamp": self._event_timestamp_ms(event),
-                        "messageEventId": event.id,
-                        "turnIndex": event.turn_index,
-                    }
-                )
+                message = {
+                    "role": "reasoning",
+                    "content": str(data.get("text", data.get("content", "")) or ""),
+                    "reasoningKind": data.get("kind", "reasoning"),
+                    "timestamp": self._event_timestamp_ms(event),
+                    "messageEventId": event.id,
+                    "turnIndex": event.turn_index,
+                }
+                duration_ms = _non_negative_duration_ms(data.get("duration_ms"))
+                if duration_ms is not None:
+                    message["reasoningDurationMs"] = duration_ms
+                messages.append(message)
                 continue
 
             if action == ReplayAction.MIDDLEWARE_PROGRESS.value:
@@ -344,14 +346,32 @@ class MessageEventService:
                 continue
 
             if action == ReplayAction.COMPLETED.value:
+                self._apply_turn_duration_to_latest_assistant(
+                    messages,
+                    terminal_timestamp=self._event_timestamp_ms(event),
+                    turn_index=event.turn_index,
+                    data=data,
+                )
                 self._apply_ghost_footer_to_latest_assistant(messages, data)
                 continue
 
             if action == ReplayAction.CANCELLED.value:
+                self._apply_turn_duration_to_latest_assistant(
+                    messages,
+                    terminal_timestamp=self._event_timestamp_ms(event),
+                    turn_index=event.turn_index,
+                    data=data,
+                )
                 self._append_cancelled_marker(messages, data, self._event_timestamp_ms(event))
                 continue
 
             if action == ReplayAction.ERROR.value:
+                self._apply_turn_duration_to_latest_assistant(
+                    messages,
+                    terminal_timestamp=self._event_timestamp_ms(event),
+                    turn_index=event.turn_index,
+                    data=data,
+                )
                 messages.append(
                     {
                         "role": "error",
@@ -404,13 +424,15 @@ class MessageEventService:
                     MessageEventService._apply_tool_payload_to_message(target, data)
                 continue
             if action == CompletedEventItemAction.REASONING_MESSAGE.value:
-                messages.append(
-                    {
-                        "role": "reasoning",
-                        "content": str(data.get("text", data.get("content", "")) or ""),
-                        "reasoningKind": data.get("kind", "reasoning"),
-                    }
-                )
+                message = {
+                    "role": "reasoning",
+                    "content": str(data.get("text", data.get("content", "")) or ""),
+                    "reasoningKind": data.get("kind", "reasoning"),
+                }
+                duration_ms = _non_negative_duration_ms(data.get("duration_ms"))
+                if duration_ms is not None:
+                    message["reasoningDurationMs"] = duration_ms
+                messages.append(message)
 
         MessageEventService._apply_ghost_footer_to_latest_assistant(messages, ghost_footer)
         return messages
@@ -1486,6 +1508,60 @@ class MessageEventService:
             return
 
     @staticmethod
+    def _apply_turn_duration_to_latest_assistant(
+        messages: list[dict[str, Any]],
+        *,
+        terminal_timestamp: int,
+        turn_index: int | None,
+        data: dict[str, Any],
+    ) -> None:
+        boundary_index = -1
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if message.get("role") not in {"user", "turn"}:
+                continue
+            message_turn_index = message.get("turnIndex")
+            if turn_index is None or message_turn_index in {None, turn_index}:
+                boundary_index = index
+                break
+
+        turn_output_messages: list[dict[str, Any]] = []
+        for message in messages[boundary_index + 1 :]:
+            if (
+                not _is_turn_output_message(message)
+                or message.get("cancelled")
+                or message.get("status") == "cancelled"
+            ):
+                continue
+            message_turn_index = message.get("turnIndex")
+            if turn_index is not None and message_turn_index not in {None, turn_index}:
+                continue
+            turn_output_messages.append(message)
+
+        assistant_messages = [
+            message
+            for message in turn_output_messages
+            if message.get("role") == "assistant"
+            and str(message.get("content") or "").strip()
+        ]
+        if not turn_output_messages or not assistant_messages:
+            return
+        target = assistant_messages[-1]
+        if _non_negative_duration_ms(target.get("turnDurationMs")) is not None:
+            return
+        explicit_duration = _non_negative_duration_ms(
+            data.get("turnDurationMs", data.get("turn_duration_ms"))
+        )
+        if explicit_duration is None:
+            started_at = _non_negative_duration_ms(data.get("first_token_at_ms"))
+            if started_at is None:
+                started_at = _non_negative_duration_ms(turn_output_messages[0].get("timestamp"))
+            if started_at is None or terminal_timestamp < started_at:
+                return
+            explicit_duration = terminal_timestamp - started_at
+        target["turnDurationMs"] = explicit_duration
+
+    @staticmethod
     def _apply_thread_task_metadata(
         message: dict[str, Any],
         data: dict[str, Any],
@@ -1530,6 +1606,19 @@ class MessageEventService:
         if isinstance(value, int | float) and value > 1_000_000_000_000:
             return int(value)
         return None
+
+
+def _non_negative_duration_ms(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return None
+    return int(value)
+
+
+def _is_turn_output_message(message: dict[str, Any]) -> bool:
+    role = message.get("role")
+    if role in {"assistant", "reasoning"}:
+        return bool(str(message.get("content") or "").strip())
+    return role in {"tool", "subagent", "a2ui"}
 
 
 def _role_from_replay_action(action: str) -> str:

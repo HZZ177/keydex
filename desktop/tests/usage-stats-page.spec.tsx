@@ -161,6 +161,54 @@ describe("UsageStatsPage", () => {
     });
   });
 
+  it("uses the styled custom range picker and reloads only after applying", async () => {
+    const runtime = fakeRuntime();
+
+    render(<UsageStatsPage runtime={runtime} />);
+
+    await screen.findByText("24");
+    expect(document.querySelector('input[type="datetime-local"]')).toBeNull();
+    const summaryCalls = runtime.usage.getSummary.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "自定义时间范围" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "自定义时间范围" });
+    expect(dialog.querySelector('[role="grid"]')).not.toBeNull();
+    expect(screen.getByText("开始时间")).not.toBeNull();
+    expect(screen.getByText("结束时间")).not.toBeNull();
+    const livePreviewTrigger = document.querySelector<HTMLButtonElement>('button[data-open="true"]');
+    expect(livePreviewTrigger).not.toBeNull();
+    if (!livePreviewTrigger) {
+      throw new Error("缺少自定义时间范围预览触发器");
+    }
+    const previewBeforeEdit = livePreviewTrigger.textContent;
+    const endHourSegment = screen.getByRole("spinbutton", { name: "小时, 结束时间" });
+    fireEvent.focus(endHourSegment);
+    fireEvent.keyDown(endHourSegment, { key: "ArrowUp" });
+
+    await waitFor(() => {
+      expect(livePreviewTrigger.textContent).not.toBe(previewBeforeEdit);
+    });
+    expect(runtime.usage.getSummary).toHaveBeenCalledTimes(summaryCalls);
+
+    fireEvent.click(screen.getByText("取消"));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "自定义时间范围" })).toBeNull();
+    });
+    expect(runtime.usage.getSummary).toHaveBeenCalledTimes(summaryCalls);
+
+    fireEvent.click(screen.getByRole("button", { name: "自定义时间范围" }));
+    fireEvent.click(await screen.findByText("应用"));
+
+    await waitFor(() => {
+      expect(runtime.usage.getSummary.mock.calls.length).toBeGreaterThan(summaryCalls);
+    });
+    expect(screen.getByRole("button", { name: /自定义时间范围，当前/ }).getAttribute("data-active")).toBe(
+      "true",
+    );
+  });
+
   it("refreshes the annual heat wall from the compact header action only", async () => {
     const runtime = fakeRuntime({
       heatTrend: {

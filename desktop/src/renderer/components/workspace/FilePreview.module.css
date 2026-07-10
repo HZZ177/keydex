@@ -1598,9 +1598,11 @@
   display: grid;
   grid-template-columns: 18px minmax(22px, 1fr);
   column-gap: 4px;
-  align-items: center;
+  align-self: stretch;
+  align-items: start;
   justify-items: end;
   min-height: 24px;
+  box-sizing: border-box;
   padding-top: 2px;
   color: color-mix(in srgb, var(--color-text-tertiary) 74%, transparent);
   font-family: var(--font-mono);
@@ -1609,14 +1611,38 @@
   user-select: none;
 }
 
+.markdownPreviewLineNumbers {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
+  min-height: 18px;
+  align-self: stretch;
+}
+
 .markdownPreviewLineNumber {
+  display: flex;
   min-width: 22px;
+  min-height: 18px;
+  align-items: center;
+  justify-content: flex-end;
+  border-radius: 3px;
+  padding: 0 2px;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
+.markdownPreviewLineNumber[data-active="true"] {
+  background: rgb(250 204 21 / 28%);
+  color: var(--color-text-primary);
+  box-shadow: inset 0 0 0 1px rgb(234 179 8 / 22%);
+  font-weight: 600;
+}
+
 .markdownPreviewFoldButton,
 .markdownPreviewFoldPlaceholder {
+  grid-column: 1;
+  grid-row: 1;
   width: 18px;
   height: 18px;
 }

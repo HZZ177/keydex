@@ -367,6 +367,17 @@ describe("A2UI protocol utilities", () => {
         args_text_length: 15,
       },
     });
+    cache.apply("a2ui_stream_finish", {
+      render_key: "chart",
+      stream_id: "trace-1:a2ui:call_bad",
+      tool_call_id: "call_bad",
+      stream: {
+        status: "finish",
+        args_text: "{\"title\":\"閿欒鍥捐〃\"",
+        args_text_length: 15,
+        finish_reason: "tool_args_completed",
+      },
+    });
     const failed = cache.apply("a2ui_stream_finish", {
       render_key: "chart",
       stream_id: "trace-1:a2ui:call_bad",
@@ -501,6 +512,95 @@ describe("A2UI protocol utilities", () => {
     expect(snapshot).toHaveLength(1);
     expect(snapshot[0]?.id).toBe("msg-a2ui");
     expect(snapshot[0]?.a2uiDebug?.rawEvents).toHaveLength(1);
+  });
+
+  it("preserves unrelated A2UI message identities when another stream advances", () => {
+    const cache = new A2UIStreamCache();
+    const first = cache.apply("a2ui_stream_start", {
+      render_key: "chart",
+      stream_id: "chart-stream-a",
+      tool_call_id: "chart-tool-a",
+      stream: { status: "start", chunk_index: 0, args_text_length: 0 },
+    }, { idFactory: () => "chart-message-a", now: 1000 });
+    const firstMessage = first.messages[0];
+
+    const second = cache.apply("a2ui_stream_start", {
+      render_key: "form",
+      stream_id: "form-stream-b",
+      tool_call_id: "form-tool-b",
+      stream: { status: "start", chunk_index: 0, args_text_length: 0 },
+    }, { idFactory: () => "form-message-b", now: 1001 });
+
+    expect(second.messages).toHaveLength(2);
+    expect(second.messages[0]).toBe(firstMessage);
+  });
+
+  it("coalesces tiny chart chunks without losing final payload or raw debug events", () => {
+    const streamId = "chart-performance-stream";
+    const payload = {
+      title: "大数据趋势",
+      charts: [
+        {
+          type: "trend",
+          series: [
+            {
+              name: "访问量",
+              items: Array.from({ length: 200 }, (_, index) => ({
+                name: `点 ${index + 1}`,
+                value: index + 1,
+              })),
+            },
+          ],
+        },
+      ],
+    };
+    const argsText = JSON.stringify(payload);
+    let messages = mergeA2UIEventIntoMessages([], "a2ui_stream_start", {
+      render_key: "chart",
+      stream_id: streamId,
+      tool_call_id: "chart-performance-tool",
+      stream: { status: "start", chunk_index: 0, args_text_length: 0 },
+    }, { idFactory: () => "chart-performance-message", now: 1 }).messages;
+    let offset = 0;
+    let chunkIndex = 0;
+    let publishedFrames = 0;
+    while (offset < argsText.length) {
+      const delta = argsText.slice(offset, offset + 4);
+      offset += delta.length;
+      chunkIndex += 1;
+      const result = mergeA2UIEventIntoMessages(messages, "a2ui_stream_chunk", {
+        render_key: "chart",
+        stream_id: streamId,
+        tool_call_id: "chart-performance-tool",
+        stream: {
+          status: "chunk",
+          chunk_index: chunkIndex,
+          args_delta: delta,
+          args_text_length: offset,
+        },
+      }, { eventId: `chart-performance-event-${chunkIndex}`, now: chunkIndex + 1 });
+      messages = result.messages;
+      if (result.message) {
+        publishedFrames += 1;
+      }
+    }
+
+    const finished = mergeA2UIEventIntoMessages(messages, "a2ui_stream_finish", {
+      render_key: "chart",
+      stream_id: streamId,
+      tool_call_id: "chart-performance-tool",
+      stream: {
+        status: "finish",
+        args_text: argsText,
+        args_text_length: argsText.length,
+        finish_reason: "tool_args_completed",
+      },
+    }, { now: chunkIndex + 2 });
+
+    expect(publishedFrames).toBeLessThan(chunkIndex / 6);
+    expect(finished.message?.a2uiDebug?.chunkCount).toBe(chunkIndex);
+    expect(finished.message?.a2uiDebug?.rawEvents).toHaveLength(chunkIndex + 2);
+    expect(finished.message?.a2uiDebug?.parsedArgs).toEqual(payload);
   });
 
   it("does not let non-terminal interaction snapshots overwrite submitted or cancelled state", () => {

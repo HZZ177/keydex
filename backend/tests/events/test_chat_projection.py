@@ -43,6 +43,22 @@ async def test_chat_projection_maps_llm_stream_to_stream_action() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_projection_maps_first_token_signal_without_waiting_for_content() -> None:
+    adapter = RecordingChatAdapter()
+    projection = ChatProjection(adapter)
+
+    await projection.handle(
+        _event(
+            DomainEventType.LLM_FIRST_TOKEN_RECEIVED,
+            {"first_token_at_ms": 1_782_905_000_000},
+        )
+    )
+
+    assert adapter.sent[0]["action"] == "llm_first_token"
+    assert adapter.sent[0]["data"]["first_token_at_ms"] == 1_782_905_000_000
+
+
+@pytest.mark.asyncio
 async def test_chat_projection_maps_thread_task_events_to_task_actions() -> None:
     adapter = RecordingChatAdapter()
     projection = ChatProjection(adapter)
@@ -368,6 +384,9 @@ async def test_chat_projection_filters_reasoning_payload_for_chat_channel() -> N
                 "text": "thinking",
                 "done": False,
                 "cancel_main": False,
+                "start_time": 100,
+                "end_time": 2500,
+                "duration_ms": 2400,
                 "internal_only": "hidden",
             },
         )
@@ -381,6 +400,9 @@ async def test_chat_projection_filters_reasoning_payload_for_chat_channel() -> N
     assert adapter.sent[0]["data"]["trace_id"] == "trace_1"
     assert adapter.sent[0]["data"]["text"] == "thinking"
     assert adapter.sent[0]["data"]["cancel_main"] is False
+    assert adapter.sent[0]["data"]["start_time"] == 100
+    assert adapter.sent[0]["data"]["end_time"] == 2500
+    assert adapter.sent[0]["data"]["duration_ms"] == 2400
     assert isinstance(adapter.sent[0]["data"]["timestamp_ms"], int)
     assert "internal_only" not in adapter.sent[0]["data"]
 

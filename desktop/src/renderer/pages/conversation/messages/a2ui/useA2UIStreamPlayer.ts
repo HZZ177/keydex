@@ -6,8 +6,10 @@ type A2UIStreamPlayerPhase = "idle" | "previewing" | "waiting_created" | "create
 
 interface PlayerRuntime {
   displayPayload: Record<string, unknown>;
+  displaySourceSignature: string;
   finalPayload: Record<string, unknown> | null;
   firstChunkTime: number | null;
+  inputRevision: string;
   key: string;
   latestPayload: Record<string, unknown>;
   phase: A2UIStreamPlayerPhase;
@@ -67,9 +69,15 @@ export function resetA2UIStreamPlayerPlaybackForTests(): void {
   settledPlaybackKeys.clear();
 }
 
-export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage, scopeKey = ""): A2UIStreamPlayerState {
+export function useA2UIStreamPlayer(
+  parsed: ParsedA2UIMessage,
+  scopeKey = "",
+): A2UIStreamPlayerState {
   const playerKey = useMemo(() => buildA2UIStreamPlayerKey(parsed, scopeKey), [parsed, scopeKey]);
   const sourceSignature = useMemo(() => safeJsonStringify(parsed.payload), [parsed.payload]);
+  const inputRevision = buildA2UIStreamInputRevision(parsed, playerKey, sourceSignature);
+  const inputFrameRef = useRef({ inputRevision, parsed, playerKey, sourceSignature });
+  inputFrameRef.current = { inputRevision, parsed, playerKey, sourceSignature };
   const [initialState] = useState(() => createInitialPlayerState(playerKey, parsed, sourceSignature));
   const [snapshot, setSnapshot] = useState(() => initialState.snapshot);
   const runtimeRef = useRef<PlayerRuntime>(initialState.runtime);
@@ -101,6 +109,7 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage, scopeKey = ""): A
   const updateDisplayPayload = useCallback(() => {
     const runtime = runtimeRef.current;
     runtime.displayPayload = slicePayloadByRenderedCount(runtime.latestPayload, runtime.renderedElementCount);
+    runtime.displaySourceSignature = runtime.sourceSignature;
   }, []);
 
   const scheduleFinalize = useCallback((enabled: boolean) => {
@@ -133,20 +142,29 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage, scopeKey = ""): A
     }
     const total = getTotalElementCount(runtime.latestPayload);
     if (total <= 0) {
-      runtime.displayPayload = runtime.latestPayload;
       if (runtime.finalPayload) {
         scheduleFinalize(enabled);
+      } else if (runtime.displaySourceSignature !== runtime.sourceSignature) {
+        runtime.timer = window.setTimeout(() => {
+          runtime.timer = null;
+          updateDisplayPayload();
+          commit(enabled);
+          scheduleNext(enabled);
+        }, MIN_INTERVAL_MS);
       }
-      commit(enabled);
       return;
     }
     if (runtime.renderedElementCount >= total) {
       if (runtime.finalPayload) {
         scheduleFinalize(enabled);
-      } else {
-        runtime.displayPayload = runtime.latestPayload;
+      } else if (runtime.displaySourceSignature !== runtime.sourceSignature) {
+        runtime.timer = window.setTimeout(() => {
+          runtime.timer = null;
+          updateDisplayPayload();
+          commit(enabled);
+          scheduleNext(enabled);
+        }, MIN_INTERVAL_MS);
       }
-      commit(enabled);
       return;
     }
 
@@ -174,28 +192,35 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage, scopeKey = ""): A
   }, [commit, scheduleFinalize, updateDisplayPayload]);
 
   useEffect(() => {
-    const status = normalizeStatus(parsed.status);
-    const liveStreamFrame = isLiveStreamFrame(parsed);
-    const replayableCreatedFrame = isReplayableStreamBackedCreatedFrame(parsed, playerKey);
+    const frame = inputFrameRef.current;
+    const currentParsed = frame.parsed;
+    const status = normalizeStatus(currentParsed.status);
     let runtime = runtimeRef.current;
 
-    if (runtime.key !== playerKey) {
+    if (runtime.key !== frame.playerKey) {
       cancelScheduled();
-      runtime = createRuntime(playerKey, parsed.payload, sourceSignature);
+      runtime = createRuntime(frame.playerKey, currentParsed.payload, frame.sourceSignature);
       runtimeRef.current = runtime;
     }
+    if (runtime.inputRevision === frame.inputRevision) {
+      return;
+    }
+    runtime.inputRevision = frame.inputRevision;
+
+    const liveStreamFrame = isLiveStreamFrame(currentParsed);
+    const replayableCreatedFrame = isReplayableStreamBackedCreatedFrame(currentParsed, frame.playerKey);
     if (liveStreamFrame || replayableCreatedFrame) {
       runtime.streamPlaybackStarted = true;
     }
     const streamPlaybackStarted = runtime.streamPlaybackStarted;
     const rememberedTotal = getTotalElementCount(runtime.latestPayload);
-    const incomingTotal = getTotalElementCount(parsed.payload);
-    const shouldPlay = shouldUseStreamPlayer(parsed, streamPlaybackStarted, Math.max(rememberedTotal, incomingTotal));
+    const incomingTotal = getTotalElementCount(currentParsed.payload);
+    const shouldPlay = shouldUseStreamPlayer(currentParsed, streamPlaybackStarted, Math.max(rememberedTotal, incomingTotal));
     if (
-      parsed.mode === "render" &&
+      currentParsed.mode === "render" &&
       runtime.phase === "created" &&
       runtime.finalPayload &&
-      runtime.sourceSignature === sourceSignature &&
+      runtime.sourceSignature === frame.sourceSignature &&
       status !== "failed" &&
       status !== "missing"
     ) {
@@ -204,31 +229,32 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage, scopeKey = ""): A
 
     if (!shouldPlay) {
       cancelScheduled();
-      runtime.latestPayload = parsed.payload;
-      runtime.finalPayload = parsed.payload;
-      runtime.displayPayload = parsed.payload;
-      runtime.renderedElementCount = getTotalElementCount(parsed.payload);
+      runtime.latestPayload = currentParsed.payload;
+      runtime.finalPayload = currentParsed.payload;
+      runtime.displayPayload = currentParsed.payload;
+      runtime.displaySourceSignature = frame.sourceSignature;
+      runtime.renderedElementCount = getTotalElementCount(currentParsed.payload);
       runtime.phase = status === "failed" || status === "missing" ? "failed" : "created";
-      runtime.sourceSignature = sourceSignature;
+      runtime.sourceSignature = frame.sourceSignature;
       commit(false);
       return;
     }
 
-    const sameSource = runtime.sourceSignature === sourceSignature;
-    const isFinalPayload = Boolean(parsed.a2ui) || (!STREAMING_STATUSES.has(status) && streamPlaybackStarted);
+    const sameSource = runtime.sourceSignature === frame.sourceSignature;
+    const isFinalPayload = Boolean(currentParsed.a2ui) || (!STREAMING_STATUSES.has(status) && streamPlaybackStarted);
     const shouldKeepRenderedPayload =
       isFinalPayload &&
-      !parsed.a2ui &&
+      !currentParsed.a2ui &&
       rememberedTotal > 0 &&
       incomingTotal === 0;
     if (!sameSource) {
       runtime.latestPayload = shouldKeepRenderedPayload
         ? runtime.latestPayload
         : isFinalPayload
-        ? parsed.payload
-        : mergeStreamingPayload(runtime.latestPayload, parsed.payload);
+        ? currentParsed.payload
+        : mergeStreamingPayload(runtime.latestPayload, currentParsed.payload);
       if (!shouldKeepRenderedPayload) {
-        runtime.sourceSignature = sourceSignature;
+        runtime.sourceSignature = frame.sourceSignature;
       }
     }
 
@@ -237,29 +263,29 @@ export function useA2UIStreamPlayer(parsed: ParsedA2UIMessage, scopeKey = ""): A
     }
 
     if (isFinalPayload) {
-      const finalPayload = shouldKeepRenderedPayload ? runtime.latestPayload : parsed.payload;
+      const finalPayload = shouldKeepRenderedPayload ? runtime.latestPayload : currentParsed.payload;
       runtime.finalPayload = finalPayload;
       runtime.latestPayload = finalPayload;
-      runtime.phase = runtime.renderedElementCount >= getTotalElementCount(finalPayload) ? "created" : "waiting_created";
+      if (runtime.renderedElementCount >= getTotalElementCount(finalPayload)) {
+        finalizeRuntimePayload(runtime);
+      } else {
+        runtime.phase = "waiting_created";
+      }
     } else {
       runtime.phase = "previewing";
     }
 
     if (runtime.finalPayload && runtime.renderedElementCount >= getTotalElementCount(runtime.latestPayload)) {
       scheduleFinalize(true);
-    } else {
-      updateDisplayPayload();
     }
     commit(true);
     scheduleNext(true);
   }, [
     cancelScheduled,
     commit,
-    parsed,
-    playerKey,
+    inputRevision,
     scheduleFinalize,
     scheduleNext,
-    sourceSignature,
     updateDisplayPayload,
   ]);
 
@@ -282,8 +308,10 @@ function isSameSnapshot(current: A2UIStreamPlayerState, next: A2UIStreamPlayerSt
 function createRuntime(key: string, payload: Record<string, unknown>, sourceSignature: string): PlayerRuntime {
   return {
     displayPayload: payload,
+    displaySourceSignature: sourceSignature,
     finalPayload: null,
     firstChunkTime: null,
+    inputRevision: "",
     key,
     latestPayload: payload,
     phase: "idle",
@@ -323,6 +351,7 @@ function createInitialPlayerState(
   runtime.phase = isFinalPayload ? "waiting_created" : "previewing";
   runtime.renderedElementCount = initialRenderedElementCount(parsed.payload);
   runtime.displayPayload = slicePayloadByRenderedCount(parsed.payload, runtime.renderedElementCount);
+  runtime.displaySourceSignature = sourceSignature;
 
   return {
     runtime,
@@ -337,8 +366,9 @@ function createSnapshot(
   enabled: boolean,
   totalElementCount = getPayloadElementCount(payload),
 ): A2UIStreamPlayerState {
-  const visibleElementCount = getPayloadElementCount(payload);
-  const rendered = enabled ? Math.min(visibleElementCount, totalElementCount) : totalElementCount;
+  const rendered = enabled
+    ? Math.min(Math.max(0, renderedElementCount), totalElementCount)
+    : totalElementCount;
   const running = enabled && (phase === "previewing" || phase === "waiting_created") && rendered < totalElementCount;
   const backlog = enabled ? Math.max(0, totalElementCount - rendered) : 0;
   return {
@@ -377,6 +407,29 @@ export function buildA2UIStreamPlayerKey(parsed: ParsedA2UIMessage, scopeKey = "
     traceTurnIdentity(parsed) ||
     "a2ui";
   return [streamIdentity, parsed.renderKey].filter(Boolean).join(":");
+}
+
+export function buildA2UIStreamInputRevision(
+  parsed: ParsedA2UIMessage,
+  playerKey = buildA2UIStreamPlayerKey(parsed),
+  sourceSignature = safeJsonStringify(parsed.payload),
+): string {
+  const rawEvents = parsed.debug?.rawEvents ?? [];
+  const lastEvent = rawEvents.at(-1);
+  return [
+    playerKey,
+    sourceSignature,
+    normalizeStatus(parsed.status),
+    parsed.a2ui ? "final" : "preview",
+    parsed.historyHydrated ? "history" : "live",
+    positiveInteger(parsed.debug?.chunkCount),
+    positiveInteger(parsed.debug?.argsTextLength),
+    rawEvents.length,
+    stringIdentity(lastEvent?.id),
+    stringIdentity(lastEvent?.action),
+    stringIdentity(lastEvent?.timestamp),
+    stringIdentity(parsed.debug?.updatedAt),
+  ].join("|");
 }
 
 function traceTurnIdentity(parsed: ParsedA2UIMessage): string {
@@ -531,15 +584,10 @@ function finalizeRuntimePayload(runtime: PlayerRuntime): void {
     return;
   }
   runtime.renderedElementCount = getTotalElementCount(runtime.latestPayload);
-  if (!arePayloadsEquivalent(runtime.displayPayload, runtime.finalPayload)) {
-    runtime.displayPayload = runtime.finalPayload;
-  }
+  runtime.displayPayload = runtime.finalPayload;
+  runtime.displaySourceSignature = runtime.sourceSignature;
   runtime.phase = "created";
   settledPlaybackKeys.add(runtime.key);
-}
-
-function arePayloadsEquivalent(current: Record<string, unknown>, next: Record<string, unknown>): boolean {
-  return current === next || safeJsonStringify(current) === safeJsonStringify(next);
 }
 
 function getPayloadElementCount(payload: Record<string, unknown>): number {

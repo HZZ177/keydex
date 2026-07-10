@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { FollowOutput, VirtuosoHandle } from "react-virtuoso";
 
+import { isUpwardWheelIntent, wheelWillScrollElement, type WheelIntentEvent } from "./scrollIntent";
 import { EXPANSION_SCROLL_LOCK_ATTR } from "./useExpansionScrollAnchor";
 
 const AT_BOTTOM_THRESHOLD_PX = 100;
@@ -33,6 +34,7 @@ export function useVirtuosoAutoScroll(
   const atBottomRef = useRef(true);
   const userPinnedRef = useRef(false);
   const userInputActiveRef = useRef(false);
+  const upwardWheelPendingRef = useRef(false);
   const scrollbarDragActiveRef = useRef(false);
   const scrollAnimationFrameRef = useRef<number | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -45,10 +47,27 @@ export function useVirtuosoAutoScroll(
     }
   }, []);
 
+  const handleWheelIntent = useCallback(
+    (event: WheelIntentEvent, scrollElement: HTMLElement) => {
+      if (!wheelWillScrollElement(event, scrollElement)) {
+        return;
+      }
+      cancelScrollAnimation();
+      userInputActiveRef.current = true;
+      if (isUpwardWheelIntent(event)) {
+        upwardWheelPendingRef.current = true;
+        userPinnedRef.current = true;
+        atBottomRef.current = false;
+        setUserPinnedScroll(true);
+      }
+    },
+    [cancelScrollAnimation],
+  );
+
   const updateBottomState = useCallback(() => {
     const scroller = scrollerRef.current;
     if (!scroller) {
-      setShowScrollToBottom(false);
+      setShowScrollToBottom((current) => current ? false : current);
       return true;
     }
 
@@ -56,24 +75,20 @@ export function useVirtuosoAutoScroll(
     const atBottom = bottomGap <= FOLLOW_BOTTOM_THRESHOLD_PX;
     atBottomRef.current = atBottom;
 
-    if (atBottom) {
-      userPinnedRef.current = false;
-      userInputActiveRef.current = false;
-      scrollbarDragActiveRef.current = false;
-    } else if (userInputActiveRef.current) {
-      userPinnedRef.current = true;
-    }
-
-    setUserPinnedScroll(userPinnedRef.current);
-    setShowScrollToBottom(bottomGap > AT_BOTTOM_THRESHOLD_PX);
+    setUserPinnedScroll((current) => current === userPinnedRef.current ? current : userPinnedRef.current);
+    const nextShowScrollToBottom = bottomGap > AT_BOTTOM_THRESHOLD_PX;
+    setShowScrollToBottom((current) => current === nextShowScrollToBottom ? current : nextShowScrollToBottom);
     return atBottom;
   }, []);
 
   const setScrollerRef = useCallback(
     (ref: HTMLElement | Window | null) => {
       const element = ref instanceof HTMLElement ? ref : null;
+      if (scrollerRef.current === element) {
+        return;
+      }
       scrollerRef.current = element;
-      setScroller(element);
+      setScroller((current) => current === element ? current : element);
       updateBottomState();
     },
     [updateBottomState],
@@ -88,10 +103,11 @@ export function useVirtuosoAutoScroll(
       cancelScrollAnimation();
       userPinnedRef.current = false;
       userInputActiveRef.current = false;
+      upwardWheelPendingRef.current = false;
       scrollbarDragActiveRef.current = false;
       atBottomRef.current = true;
-      setUserPinnedScroll(false);
-      setShowScrollToBottom(false);
+      setUserPinnedScroll((current) => current ? false : current);
+      setShowScrollToBottom((current) => current ? false : current);
 
       const scrollBehavior = toVirtuosoScrollBehavior(behavior);
       const scroller = scrollerRef.current;
@@ -120,13 +136,8 @@ export function useVirtuosoAutoScroll(
 
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
     atBottomRef.current = atBottom;
-    if (atBottom) {
-      userPinnedRef.current = false;
-      userInputActiveRef.current = false;
-      scrollbarDragActiveRef.current = false;
-    }
-    setUserPinnedScroll(userPinnedRef.current);
-    setShowScrollToBottom(!atBottom);
+    setUserPinnedScroll((current) => current === userPinnedRef.current ? current : userPinnedRef.current);
+    setShowScrollToBottom((current) => current === !atBottom ? current : !atBottom);
   }, []);
 
   const handleTotalListHeightChanged = useCallback(() => {
@@ -165,9 +176,27 @@ export function useVirtuosoAutoScroll(
     }
 
     const handleScroll = () => {
-      updateBottomState();
+      const atBottom = updateBottomState();
+      if (atBottom) {
+        if (!upwardWheelPendingRef.current) {
+          userPinnedRef.current = false;
+          userInputActiveRef.current = false;
+          scrollbarDragActiveRef.current = false;
+          setUserPinnedScroll((current) => current ? false : current);
+        }
+        return;
+      }
+      upwardWheelPendingRef.current = false;
+      if (userInputActiveRef.current) {
+        userPinnedRef.current = true;
+        userInputActiveRef.current = false;
+        setUserPinnedScroll((current) => current ? current : true);
+      }
     };
-    const handleUserInput = (event: Event) => {
+    const handleWheel = (event: WheelEvent) => {
+      handleWheelIntent(event, scroller);
+    };
+    const handlePointerDown = (event: Event) => {
       cancelScrollAnimation();
       userInputActiveRef.current = true;
       if (isScrollbarPointerStart(event, scroller)) {
@@ -179,30 +208,31 @@ export function useVirtuosoAutoScroll(
     };
 
     scroller.addEventListener("scroll", handleScroll, { passive: true });
-    scroller.addEventListener("wheel", handleUserInput, { passive: true });
-    scroller.addEventListener("pointerdown", handleUserInput);
+    scroller.addEventListener("wheel", handleWheel, { passive: true });
+    scroller.addEventListener("pointerdown", handlePointerDown);
     window.addEventListener("pointerup", clearScrollbarDrag);
     window.addEventListener("pointercancel", clearScrollbarDrag);
     window.addEventListener("blur", clearScrollbarDrag);
     return () => {
       scroller.removeEventListener("scroll", handleScroll);
-      scroller.removeEventListener("wheel", handleUserInput);
-      scroller.removeEventListener("pointerdown", handleUserInput);
+      scroller.removeEventListener("wheel", handleWheel);
+      scroller.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("pointerup", clearScrollbarDrag);
       window.removeEventListener("pointercancel", clearScrollbarDrag);
       window.removeEventListener("blur", clearScrollbarDrag);
     };
-  }, [cancelScrollAnimation, scroller, updateBottomState]);
+  }, [cancelScrollAnimation, handleWheelIntent, scroller, updateBottomState]);
 
   useEffect(() => {
     if (itemCount === 0) {
       cancelScrollAnimation();
-      setShowScrollToBottom(false);
+      setShowScrollToBottom((current) => current ? false : current);
       atBottomRef.current = true;
       userPinnedRef.current = false;
       userInputActiveRef.current = false;
+      upwardWheelPendingRef.current = false;
       scrollbarDragActiveRef.current = false;
-      setUserPinnedScroll(false);
+      setUserPinnedScroll((current) => current ? false : current);
       return;
     }
 

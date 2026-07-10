@@ -31,6 +31,7 @@ class DomainEventType(StrEnum):
     PENDING_INPUT_FAILED = "pending_input.failed"
 
     LLM_STREAM = "llm.stream"
+    LLM_FIRST_TOKEN_RECEIVED = "llm.first_token.received"
     LLM_STARTED = "llm.started"
     LLM_FINISHED = "llm.finished"
     LLM_FAILED = "llm.failed"
@@ -100,6 +101,7 @@ CORE_EVENT_TYPES = frozenset(
         DomainEventType.PENDING_INPUT_RESUMED,
         DomainEventType.PENDING_INPUT_FAILED,
         DomainEventType.LLM_STREAM,
+        DomainEventType.LLM_FIRST_TOKEN_RECEIVED,
         DomainEventType.LLM_STARTED,
         DomainEventType.LLM_FINISHED,
         DomainEventType.LLM_FAILED,

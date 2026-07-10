@@ -7,7 +7,7 @@ import {
   Rows3,
   XCircle,
 } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { Component, type ErrorInfo, type ReactNode, memo, useMemo, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type {
@@ -26,7 +26,11 @@ import { A2UIDebugPanel } from "./A2UIDebugPanel";
 import { A2FormBlock } from "./A2FormBlock";
 import { resolveA2UIRenderState, type A2UIRenderState } from "./A2UIState";
 import { A2UIInlineError } from "./A2UIStateLine";
-import { type A2UIStreamPlayerState, useA2UIStreamPlayer } from "./useA2UIStreamPlayer";
+import {
+  type A2UIStreamPlayerRootProps,
+  type A2UIStreamPlayerState,
+  useA2UIStreamPlayer,
+} from "./useA2UIStreamPlayer";
 
 export const A2UI_DEBUG_INFO_DEFAULT_VISIBLE = false;
 
@@ -67,17 +71,86 @@ export interface ParsedA2UIMessage {
   historyHydrated: boolean;
 }
 
-export function A2UIBlock(props: A2UIBlockProps) {
+export const A2UIBlock = memo(function A2UIBlock(props: A2UIBlockProps) {
   if (props.renderSuspended) {
     const parsed = parseA2UIMessage(props.message);
     return <A2UIResizePlaceholder parsed={parsed} />;
   }
-  return <A2UIBlockContent {...props} />;
+  return (
+    <A2UIBlockErrorBoundary resetKey={a2uiErrorBoundaryResetKey(props.message)}>
+      <A2UIBlockContent {...props} />
+    </A2UIBlockErrorBoundary>
+  );
+});
+
+class A2UIBlockErrorBoundary extends Component<
+  { children: ReactNode; resetKey: string },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error("[A2UI] component render failed", error, errorInfo);
+  }
+
+  componentDidUpdate(previousProps: Readonly<{ children: ReactNode; resetKey: string }>): void {
+    if (this.state.failed && previousProps.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false });
+    }
+  }
+
+  render(): ReactNode {
+    if (this.state.failed) {
+      return (
+        <article className={styles.block} data-testid="a2ui-block" data-status="failed">
+          <A2UIInlineError message="A2UI 渲染失败" />
+        </article>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function A2UIBlockContent({ message, onSubmit, onCancel, debugInfoEnabled, children }: A2UIBlockProps) {
-  const [debugOpen, setDebugOpen] = useState(false);
   const rawParsed = useMemo(() => parseA2UIMessage(message), [message]);
+  if (rawParsed.renderKey === "chart") {
+    return (
+      <A2UIChartRuntimeContent
+        message={message}
+        parsed={rawParsed}
+        debugInfoEnabled={debugInfoEnabled}
+        onSubmit={onSubmit}
+        onCancel={onCancel}
+      >
+        {children}
+      </A2UIChartRuntimeContent>
+    );
+  }
+  return (
+    <A2UIResolvedContent
+      message={message}
+      parsed={rawParsed}
+      debugInfoEnabled={debugInfoEnabled}
+      onSubmit={onSubmit}
+      onCancel={onCancel}
+    >
+      {children}
+    </A2UIResolvedContent>
+  );
+}
+
+function A2UIChartRuntimeContent({
+  message,
+  parsed: rawParsed,
+  onSubmit,
+  onCancel,
+  debugInfoEnabled,
+  children,
+}: A2UIBlockProps & { parsed: ParsedA2UIMessage }) {
   const streamPlayer = useA2UIStreamPlayer(rawParsed, message.id);
   const parsed = useMemo(
     () => ({
@@ -87,6 +160,33 @@ function A2UIBlockContent({ message, onSubmit, onCancel, debugInfoEnabled, child
     }),
     [rawParsed, streamPlayer],
   );
+  return (
+    <A2UIResolvedContent
+      message={message}
+      parsed={parsed}
+      streamPlayerRootProps={streamPlayer.rootProps}
+      debugInfoEnabled={debugInfoEnabled}
+      onSubmit={onSubmit}
+      onCancel={onCancel}
+    >
+      {children}
+    </A2UIResolvedContent>
+  );
+}
+
+function A2UIResolvedContent({
+  message,
+  parsed,
+  streamPlayerRootProps,
+  onSubmit,
+  onCancel,
+  debugInfoEnabled,
+  children,
+}: A2UIBlockProps & {
+  parsed: ParsedA2UIMessage;
+  streamPlayerRootProps?: A2UIStreamPlayerRootProps;
+}) {
+  const [debugOpen, setDebugOpen] = useState(false);
   const title = a2uiTitle(parsed);
   const description = a2uiDescription(parsed);
   const facts = a2uiFacts(parsed);
@@ -98,7 +198,7 @@ function A2UIBlockContent({ message, onSubmit, onCancel, debugInfoEnabled, child
 
   return (
     <article
-      {...streamPlayer.rootProps}
+      {...streamPlayerRootProps}
       className={styles.block}
       data-testid="a2ui-block"
       data-render-key={parsed.renderKey}
@@ -273,6 +373,23 @@ export function parseA2UIMessage(message: ConversationMessage): ParsedA2UIMessag
     parseError,
     historyHydrated,
   };
+}
+
+function a2uiErrorBoundaryResetKey(message: ConversationMessage): string {
+  const debug = asRecord(message.payload.a2uiDebug);
+  const a2ui = asRecord(message.payload.a2ui);
+  const rawEvents = Array.isArray(debug?.rawEvents) ? debug.rawEvents : [];
+  return [
+    message.id,
+    message.status ?? "",
+    message.updatedAt,
+    stringValue(debug?.status),
+    scalarText(debug?.updatedAt),
+    scalarText(debug?.chunkCount),
+    rawEvents.length,
+    stringValue(a2ui?.stream_id),
+    stringValue(asRecord(a2ui?.interaction)?.status),
+  ].join("|");
 }
 
 function a2uiTitle(parsed: ParsedA2UIMessage): string {

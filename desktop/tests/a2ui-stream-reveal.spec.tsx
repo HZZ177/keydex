@@ -188,6 +188,53 @@ describe("useA2UIStreamReveal", () => {
     }
   });
 
+  it("converges when every render recreates an equivalent chart frame", () => {
+    vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
+    try {
+      render(<UnstablePlayerProbe itemCount={6} />);
+
+      expect(Number(screen.getByTestId("a2ui-unstable-player-probe").getAttribute("data-visible-items"))).toBe(1);
+
+      act(() => {
+        vi.advanceTimersByTime(3_200);
+      });
+
+      expect(Number(screen.getByTestId("a2ui-unstable-player-probe").getAttribute("data-visible-items"))).toBe(6);
+    } finally {
+      restoreRaf();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("marks a final frame settled when preview playback already reached the full payload", () => {
+    vi.useFakeTimers();
+    const restoreRaf = installTimerBackedRaf();
+    try {
+      const snapshots: Array<{ rendered: number; total: number; visibleItems: number }> = [];
+      const finalFrame = streamBackedCreatedChartMessage(4);
+      const view = render(<PlayerProbe parsed={streamingPartialChartMessage(4)} snapshots={snapshots} />);
+
+      act(() => {
+        vi.advanceTimersByTime(3_200);
+      });
+      expect(visiblePlayerItems()).toBe(4);
+
+      view.rerender(<PlayerProbe parsed={finalFrame} snapshots={snapshots} />);
+      expect(screen.getByTestId("a2ui-player-probe").getAttribute("data-phase")).toBe("created");
+      view.unmount();
+
+      render(<PlayerProbe parsed={finalFrame} snapshots={snapshots} />);
+      expect(screen.getByTestId("a2ui-player-probe").getAttribute("data-enabled")).toBe("false");
+      expect(visiblePlayerItems()).toBe(4);
+    } finally {
+      restoreRaf();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("batches very large chart payloads so stream playback does not accumulate hundreds of ticks", () => {
     vi.useFakeTimers();
     const restoreRaf = installTimerBackedRaf();
@@ -265,8 +312,20 @@ function PlayerProbe({
   return (
     <div
       data-testid="a2ui-player-probe"
+      data-enabled={player.enabled ? "true" : "false"}
+      data-phase={player.phase}
       data-rendered={player.renderedElementCount}
       data-total={player.totalElementCount}
+      data-visible-items={firstSeriesVisibleItems(player.payload)}
+    />
+  );
+}
+
+function UnstablePlayerProbe({ itemCount }: { itemCount: number }) {
+  const player = useA2UIStreamPlayer(streamingPartialChartMessage(itemCount));
+  return (
+    <div
+      data-testid="a2ui-unstable-player-probe"
       data-visible-items={firstSeriesVisibleItems(player.payload)}
     />
   );

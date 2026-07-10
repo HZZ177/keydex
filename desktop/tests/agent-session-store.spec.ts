@@ -35,6 +35,7 @@ describe("agentSessionStore reducer", () => {
       "bind_ok",
       "unbind_ok",
       "stream",
+      "llm_first_token",
       "a2ui_stream_start",
       "a2ui_stream_chunk",
       "a2ui_stream_finish",
@@ -2560,6 +2561,138 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
   });
 
+  it.each(["completed", "failed"] as const)(
+    "freezes turn duration from the first assistant chunk when the turn is %s",
+    (status) => {
+      const startedAt = 1_782_905_000_000;
+      let state = createInitialAgentConversationState();
+      state = reduceAgentWsEvent(state, {
+        action: "stream",
+        data: {
+          session_id: "ses-1",
+          content: "先给一段结论",
+          turn_index: 3,
+          timestamp_ms: startedAt,
+        },
+      });
+      state = reduceAgentWsEvent(state, {
+        action: "reasoning",
+        data: {
+          session_id: "ses-1",
+          kind: "reasoning",
+          content: "继续处理",
+          turn_index: 3,
+          timestamp_ms: startedAt + 1_000,
+        },
+      });
+      state = reduceAgentWsEvent(state, {
+        action: "stream",
+        data: {
+          session_id: "ses-1",
+          content: "最终结果",
+          turn_index: 3,
+          timestamp_ms: startedAt + 2_000,
+        },
+      });
+      state = reduceAgentWsEvent(state, {
+        action: "completed",
+        data: {
+          session_id: "ses-1",
+          status,
+          turn_index: 3,
+          timestamp_ms: startedAt + 5_000,
+        },
+      });
+
+      const assistants = selectAgentMessages(state, "ses-1").filter((message) => message.role === "assistant");
+      expect(assistants).toHaveLength(2);
+      expect(assistants[0]?.turnDurationMs).toBeUndefined();
+      expect(assistants[1]?.turnDurationMs).toBe(5_000);
+    },
+  );
+
+  it("freezes turn duration when the active turn errors", () => {
+    const startedAt = 1_782_905_000_000;
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "stream",
+      data: { session_id: "ses-1", content: "处理中", timestamp_ms: startedAt },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "error",
+      data: {
+        session_id: "ses-1",
+        message: "模型请求失败",
+        timestamp_ms: startedAt + 1_500,
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      role: "assistant",
+      status: "failed",
+      turnDurationMs: 1_500,
+    });
+  });
+
+  it("freezes turn duration when the active turn is cancelled", () => {
+    const startedAt = 1_782_905_000_000;
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "stream",
+      data: { session_id: "ses-1", content: "处理中", timestamp_ms: startedAt },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "cancelled",
+      data: { session_id: "ses-1", timestamp_ms: startedAt + 2_500 },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      role: "assistant",
+      turnDurationMs: 2_500,
+    });
+    expect(selectAgentMessages(state, "ses-1").at(-1)).toMatchObject({
+      role: "assistant",
+      status: "cancelled",
+      cancelled: true,
+    });
+  });
+
+  it("counts a leading tool call before the first assistant text", () => {
+    const startedAt = 1_782_905_000_000;
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "llm_first_token",
+      data: {
+        session_id: "ses-1",
+        first_token_at_ms: startedAt,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "tool_start",
+      data: {
+        session_id: "ses-1",
+        run_id: "run-1",
+        tool_name: "read_file",
+        params: { path: "README.md" },
+        timestamp_ms: startedAt + 1_000,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "stream",
+      data: { session_id: "ses-1", content: "读取完成", timestamp_ms: startedAt + 2_000 },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "completed",
+      data: { session_id: "ses-1", status: "completed", timestamp_ms: startedAt + 5_000 },
+    });
+
+    expect(selectAgentMessages(state, "ses-1").at(-1)).toMatchObject({
+      role: "assistant",
+      turnDurationMs: 5_000,
+    });
+    expect(selectAgentSessionState(state, "ses-1")?.firstTokenAtMs).toBeNull();
+  });
+
   it("appends realtime system messages", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, {
@@ -2627,6 +2760,96 @@ describe("agentSessionStore reducer", () => {
     });
 
     expect(selectAgentMessages(state, "ses-1")).toEqual([]);
+  });
+
+  it("freezes the reasoning duration from realtime timing data", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "reasoning",
+      data: {
+        session_id: "ses-1",
+        kind: "reasoning",
+        content: "正在分析",
+        timestamp_ms: 1_782_905_000_000,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "reasoning",
+      data: {
+        session_id: "ses-1",
+        kind: "reasoning",
+        done: true,
+        timestamp_ms: 1_782_905_002_400,
+        duration_ms: 2400,
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      role: "reasoning",
+      streaming: false,
+      reasoningDurationMs: 2400,
+    });
+  });
+
+  it("keeps the duration frozen when assistant output has already closed the reasoning panel", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "reasoning",
+      data: {
+        session_id: "ses-1",
+        kind: "reasoning",
+        content: "正在分析",
+        timestamp_ms: 1_782_905_000_000,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "stream",
+      data: { session_id: "ses-1", content: "结论", timestamp_ms: 1_782_905_001_000 },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "reasoning",
+      data: {
+        session_id: "ses-1",
+        kind: "reasoning",
+        done: true,
+        timestamp_ms: 1_782_905_002_400,
+        duration_ms: 2400,
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      role: "reasoning",
+      streaming: false,
+      reasoningDurationMs: 1000,
+    });
+  });
+
+  it("freezes a running reasoning panel when the turn fails", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "reasoning",
+      data: {
+        session_id: "ses-1",
+        kind: "reasoning",
+        content: "正在分析",
+        timestamp_ms: 1_782_905_000_000,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "error",
+      data: {
+        session_id: "ses-1",
+        message: "模型请求失败",
+        timestamp_ms: 1_782_905_001_500,
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      role: "reasoning",
+      streaming: false,
+      status: "failed",
+      reasoningDurationMs: 1500,
+    });
   });
 
   it("appends context compression notices when compression completes", () => {

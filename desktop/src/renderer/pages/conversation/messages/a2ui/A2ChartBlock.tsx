@@ -72,6 +72,12 @@ interface ChartPanelSpec {
   chart: ChartSpec | null;
 }
 
+interface StableChartPresentation {
+  panelCount: number;
+  panelTitles: string[];
+  summary: string;
+}
+
 interface SelectedChartItem {
   dataIndex: number;
   seriesIndex: number;
@@ -87,26 +93,33 @@ const ECHARTS_STRUCTURE_HEIGHT = 360;
 const ECHARTS_STREAM_COMMIT_INTERVAL_MS = 200;
 const ECHARTS_STREAM_ANIMATION_DURATION_MS = 170;
 const ECHARTS_STREAM_MAX_PENDING_OPTIONS = 2;
+let canvasRendererAvailable: boolean | null = null;
 export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
   const isStreaming = isStreamingStatus(parsed.status) || Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
   const animateChartUpdates = Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
   const animateInitialCharts = animateChartUpdates;
   const payload = parsed.payload;
   const normalizedPanels = useMemo(() => normalizeChartPanels(payload, isStreaming, parsed), [isStreaming, parsed, payload]);
-  const panels = useStableChartPanels(normalizedPanels, isStreaming, chartPanelStabilityKey(parsed));
-  const summary = summaryText(payload.summary);
+  const stabilityKey = chartPanelStabilityKey(parsed);
+  const panels = useStableChartPanels(normalizedPanels, isStreaming, stabilityKey);
+  const presentation = useStableChartPresentation(summaryText(payload.summary), panels, isStreaming, stabilityKey);
+  const summary = presentation.summary;
   const skeletonType = chartSkeletonType(parsed);
 
   return (
     <A2UIMotionRoot as="section" className={styles.chart} data-testid="a2ui-chart" {...parsed.streamPlayer?.rootProps}>
-      {summary && panels.length > 1 ? (
+      {summary && presentation.panelCount > 1 ? (
         <A2UIMotionItem as="p" className={styles.summary} motionKey="chart:summary" motionKind="chart-summary">
           {summary}
         </A2UIMotionItem>
       ) : null}
       {panels.length ? (
         panels.map((panel, index) => {
-          const caption = chartPanelCaption(panel.title, summary, panels.length);
+          const caption = chartPanelCaption(
+            presentation.panelTitles[index] || panel.title,
+            summary,
+            presentation.panelCount,
+          );
           return (
             <A2UIMotionItem
               as="div"
@@ -191,7 +204,7 @@ function EChartsChart({
     }
     const instance = echarts.init(container, undefined, {
       height,
-      renderer: "svg",
+      renderer: chartRenderer(chart.type),
       width: ECHARTS_FALLBACK_WIDTH,
     });
     chartRef.current = instance;
@@ -312,6 +325,7 @@ function EChartsChart({
       data-a2ui-chart-labels={chart.showLabels}
       data-a2ui-chart-mode={chart.type === "column" ? chart.mode : ""}
       data-a2ui-chart-paced-commit={animateUpdates ? "true" : "false"}
+      data-a2ui-chart-renderer={chartRenderer(chart.type)}
       data-a2ui-chart-stream-adapter="setOption-diff"
       data-a2ui-chart-tooltip={isAxisInteractionChart(chart.type) ? "axis" : "item"}
       data-a2ui-chart-unit={chart.unit}
@@ -507,6 +521,29 @@ function chartHeight(chart: ChartSpec): number {
     return ECHARTS_STRUCTURE_HEIGHT;
   }
   return ECHARTS_DEFAULT_HEIGHT;
+}
+
+function chartRenderer(type: ChartType): "canvas" | "svg" {
+  return (type === "trend" || type === "column") && supportsCanvasRenderer() ? "canvas" : "svg";
+}
+
+function supportsCanvasRenderer(): boolean {
+  if (canvasRendererAvailable !== null) {
+    return canvasRendererAvailable;
+  }
+  if (typeof document === "undefined") {
+    canvasRendererAvailable = false;
+    return false;
+  }
+  const context = document.createElement("canvas").getContext("2d");
+  canvasRendererAvailable = Boolean(
+    context &&
+    typeof context.clearRect === "function" &&
+    typeof context.save === "function" &&
+    typeof context.restore === "function" &&
+    typeof context.measureText === "function",
+  );
+  return canvasRendererAvailable;
 }
 
 function chartOptionSignature(chart: ChartSpec): string {
@@ -1646,6 +1683,65 @@ function defaultCategories(series: ChartSeries[]): string[] {
 
 function summaryText(value: unknown): string {
   return scalarText(value);
+}
+
+function useStableChartPresentation(
+  summary: string,
+  panels: ChartPanelSpec[],
+  isStreaming: boolean,
+  stabilityKey: string,
+): StableChartPresentation {
+  const cacheRef = useRef<{
+    key: string;
+    panelCount: number;
+    panelTitles: Map<number, string>;
+    summary: string;
+  }>({
+    key: stabilityKey,
+    panelCount: 0,
+    panelTitles: new Map(),
+    summary: "",
+  });
+
+  if (cacheRef.current.key !== stabilityKey) {
+    cacheRef.current = {
+      key: stabilityKey,
+      panelCount: 0,
+      panelTitles: new Map(),
+      summary: "",
+    };
+  }
+
+  if (!isStreaming) {
+    return {
+      panelCount: panels.length,
+      panelTitles: panels.map((panel) => panel.title),
+      summary,
+    };
+  }
+
+  const cache = cacheRef.current;
+  cache.panelCount = Math.max(cache.panelCount, panels.length);
+  cache.summary = stableStreamingText(cache.summary, summary);
+  panels.forEach((panel, index) => {
+    cache.panelTitles.set(index, stableStreamingText(cache.panelTitles.get(index) ?? "", panel.title));
+  });
+
+  return {
+    panelCount: cache.panelCount,
+    panelTitles: panels.map((panel, index) => cache.panelTitles.get(index) || panel.title),
+    summary: cache.summary,
+  };
+}
+
+function stableStreamingText(previous: string, incoming: string): string {
+  if (!incoming) {
+    return previous;
+  }
+  if (!previous || incoming.length >= previous.length) {
+    return incoming;
+  }
+  return previous;
 }
 
 function useStableChartPanels(

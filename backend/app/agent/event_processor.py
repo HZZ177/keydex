@@ -56,6 +56,8 @@ async def process_agent_events(
     result = AgentEventResult()
     tool_start_times: dict[str, float] = {}
     reasoning_parts_by_run_id: dict[str, list[str]] = {}
+    reasoning_started_at_by_run_id: dict[str, int] = {}
+    first_token_received_at_ms: int | None = None
     a2ui_stream_bridge = A2UIStreamBridge(trace_id=trace_id)
     tool_chunk_pipeline = ToolCallChunkPipeline(
         collectors=[*default_collectors(), *a2ui_stream_bridge.collectors]
@@ -88,6 +90,23 @@ async def process_agent_events(
 
             if event_type == "on_chat_model_stream":
                 chunk = data.get("chunk")
+                if first_token_received_at_ms is None and _has_llm_output_token(chunk):
+                    first_token_received_at_ms = int(time.time() * 1000)
+                    await dispatcher.emit_event(
+                        event_type=DomainEventType.LLM_FIRST_TOKEN_RECEIVED.value,
+                        source="langchain_event_handler",
+                        payload={
+                            "session_id": session_id,
+                            "trace_id": trace_id,
+                            "first_token_at_ms": first_token_received_at_ms,
+                        },
+                        trace_id=trace_id,
+                        user_id=user_id,
+                        original_session_id=session_id,
+                        active_session_id=active_session_id,
+                        run_id=run_id,
+                        turn_index=turn_index,
+                    )
                 if _message_text(chunk):
                     stream_chunk_count += 1
                 if _reasoning_text(chunk):
@@ -104,6 +123,7 @@ async def process_agent_events(
                     turn_index=turn_index,
                     result=result,
                     reasoning_parts_by_run_id=reasoning_parts_by_run_id,
+                    reasoning_started_at_by_run_id=reasoning_started_at_by_run_id,
                 )
                 continue
 
@@ -166,6 +186,7 @@ async def process_agent_events(
                     dispatcher=dispatcher,
                     run_id=run_id,
                     reasoning_parts_by_run_id=reasoning_parts_by_run_id,
+                    reasoning_started_at_by_run_id=reasoning_started_at_by_run_id,
                     session_id=session_id,
                     trace_id=trace_id,
                     user_id=user_id,
@@ -231,6 +252,30 @@ async def process_agent_events(
                 started_at = tool_start_times.pop(run_id, time.perf_counter())
                 duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
                 if a2ui_stream_bridge.registry.is_a2ui_tool(name):
+                    output = data.get("output")
+                    if _tool_output_is_error(output):
+                        tool_call_id = (
+                            tool_chunk_pipeline.tool_call_id_for_run(run_id)
+                            or _tool_call_id_from_output(output)
+                        )
+                        error_text = _stringify_tool_output(output)
+                        logger.warning(
+                            f"[AgentEvents] A2UI 工具返回错误 | session_id={session_id} | "
+                            f"turn_index={turn_index} | trace_id={trace_id} | tool={name} | "
+                            f"run_id={run_id} | duration_ms={duration_ms} | error={error_text}"
+                        )
+                        await _fail_a2ui_stream_for_tool_error(
+                            bridge=a2ui_stream_bridge,
+                            dispatcher=dispatcher,
+                            tool_call_id=tool_call_id,
+                            run_id=run_id,
+                            error=error_text,
+                            session_id=session_id,
+                            trace_id=trace_id,
+                            user_id=user_id,
+                            active_session_id=active_session_id,
+                            turn_index=turn_index,
+                        )
                     continue
                 output = data.get("output")
                 is_error = _tool_output_is_error(output)
@@ -416,6 +461,7 @@ async def _handle_chat_model_stream(
     turn_index: int,
     result: AgentEventResult,
     reasoning_parts_by_run_id: dict[str, list[str]],
+    reasoning_started_at_by_run_id: dict[str, int],
 ) -> int:
     chunk = data.get("chunk")
     text = _message_text(chunk)
@@ -456,6 +502,7 @@ async def _handle_chat_model_stream(
         emitted_tool_progress += 1
 
     if reasoning_text:
+        reasoning_started_at_by_run_id.setdefault(run_id, int(time.time() * 1000))
         reasoning_parts_by_run_id.setdefault(run_id, []).append(reasoning_text)
         await dispatcher.emit_event(
             event_type=DomainEventType.REASONING_STREAM.value,
@@ -647,6 +694,7 @@ async def _flush_reasoning(
     dispatcher: EventDispatcher,
     run_id: str,
     reasoning_parts_by_run_id: dict[str, list[str]],
+    reasoning_started_at_by_run_id: dict[str, int],
     session_id: str,
     trace_id: str,
     user_id: str,
@@ -657,6 +705,8 @@ async def _flush_reasoning(
     if not parts:
         return
     text = "".join(parts)
+    end_time = int(time.time() * 1000)
+    start_time = reasoning_started_at_by_run_id.pop(run_id, end_time)
     await dispatcher.emit_event(
         event_type=DomainEventType.REASONING_FINISHED.value,
         source="langchain_event_handler",
@@ -666,7 +716,9 @@ async def _flush_reasoning(
             "done": True,
             "session_id": session_id,
             "trace_id": trace_id,
-            "end_time": int(time.time() * 1000),
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration_ms": max(0, end_time - start_time),
         },
         trace_id=trace_id,
         user_id=user_id,
@@ -690,6 +742,37 @@ def _message_text(message: Any) -> str:
                 parts.append(str(item.get("text") or ""))
         return "".join(parts)
     return ""
+
+
+def _has_llm_output_token(message: Any) -> bool:
+    if message is None:
+        return False
+    if _message_text(message) or _reasoning_text(message):
+        return True
+    if _message_invalid_tool_calls(message):
+        return True
+    tool_call_chunks = getattr(message, "tool_call_chunks", None) or getattr(
+        message, "tool_calls", None
+    )
+    if tool_call_chunks is None and isinstance(message, dict):
+        tool_call_chunks = message.get("tool_call_chunks") or message.get("tool_calls")
+    if tool_call_chunks is None:
+        additional_kwargs = getattr(message, "additional_kwargs", None)
+        if isinstance(additional_kwargs, dict):
+            tool_call_chunks = additional_kwargs.get(
+                "tool_call_chunks"
+            ) or additional_kwargs.get("tool_calls")
+            function_call = additional_kwargs.get("function_call")
+            if isinstance(function_call, dict) and function_call:
+                return True
+    if isinstance(tool_call_chunks, list) and tool_call_chunks:
+        return True
+    content = getattr(message, "content", None)
+    if isinstance(content, list):
+        return any(
+            item is not None and item != "" for item in content if not isinstance(item, dict)
+        ) or any(bool(item) for item in content if isinstance(item, dict))
+    return False
 
 
 def _message_invalid_tool_calls(message: Any) -> list[Any]:

@@ -10,6 +10,7 @@ import type {
   A2UISubmitHandler,
   ParsedA2UIMessage,
 } from "./A2UIBlock";
+import { choiceSemanticAdapter } from "./adapters/choiceSemanticAdapter";
 import styles from "./A2ChoiceBlock.module.css";
 import type { A2UIRenderState } from "./A2UIState";
 import { A2UIStateLine } from "./A2UIStateLine";
@@ -20,6 +21,7 @@ import {
   A2MotionPresence,
   type A2InteractiveMotionTransition,
 } from "./A2UIMotion";
+import { useA2UISemanticStream } from "./runtime/useA2UISemanticStream";
 
 export interface A2ChoiceBlockProps {
   message: ConversationMessage;
@@ -166,8 +168,18 @@ const IOS_NOTIFICATION_ITEM_VARIANTS = {
 };
 
 export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceBlockProps) {
-  const rawModel = useMemo(() => choiceModel(parsed), [parsed]);
-  const model = useStableChoiceModel(rawModel, parsed);
+  const semanticStream = useA2UISemanticStream(parsed, choiceSemanticAdapter, {
+    scopeKey: message.id,
+    maxUnitsPerTick: 3,
+  });
+  const semanticParsed = useMemo(
+    () => ({
+      ...parsed,
+      payload: semanticStream.payload,
+    }),
+    [parsed, semanticStream.payload],
+  );
+  const model = useMemo(() => choiceModel(semanticParsed), [semanticParsed]);
   const [selectedValues, setSelectedValues] = useState<string[]>(() => initialSelection(model));
   const [carouselOptionValue, setCarouselOptionValue] = useState<string | null>(null);
   const [expandedOptionValue, setExpandedOptionValue] = useState<string | null>(null);
@@ -195,8 +207,8 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
   const canSubmit = actionable && Boolean(onSubmit) && !localSubmitting && !validation;
   const canCancel = actionable && Boolean(onCancel) && !localSubmitting;
   const showInputPreview = model.status === "waiting_input" || isStreamingPreviewStatus(model.status);
-  const choiceStreaming = isChoiceStreaming(model.status, parsed.streamPlayer, parsed.historyHydrated);
-  const motionLive = shouldUseInteractiveChoiceMotion(parsed, model.status);
+  const choiceStreaming = semanticStream.running || (isStreamingPreviewStatus(model.status) && !parsed.historyHydrated);
+  const motionLive = shouldUseInteractiveChoiceMotion(parsed, model.status, semanticStream.enabled);
   const motionState = choiceMotionState({
     error,
     localSubmitted,
@@ -242,7 +254,17 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
     setCarouselOptionValue(null);
     setExpandedOptionValue(null);
     setError(null);
-  }, [parsed.interactionId, model.status]);
+  }, [message.id, parsed.interactionId]);
+
+  useEffect(() => {
+    if (correctionMode || selectedValues.length > 0 || localSubmitting || localSubmitted) {
+      return;
+    }
+    const nextInitialSelection = initialSelection(model);
+    if (nextInitialSelection.length) {
+      setSelectedValues(nextInitialSelection);
+    }
+  }, [correctionMode, localSubmitted, localSubmitting, model, selectedValues.length]);
 
   useEffect(() => {
     if (!carouselOptionValue || model.options.some((option) => option.value === carouselOptionValue)) {
@@ -539,7 +561,7 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
       live={motionLive}
       motionScope={interactiveChoiceMotionScope(message.id, parsed)}
       motionState={motionState}
-      {...parsed.streamPlayer?.rootProps}
+      {...semanticStream.rootProps}
     >
       <A2InteractiveMotionItem
         className={styles.intro}
@@ -1883,28 +1905,6 @@ function optionSummary(description: string): string {
   return `${normalized.slice(0, OPTION_CARD_DESCRIPTION_LIMIT - 3)}...`;
 }
 
-function useStableChoiceModel(model: ChoiceModel, parsed: ParsedA2UIMessage): ChoiceModel {
-  const previousRef = useRef<ChoiceModel | null>(null);
-  const previewing =
-    isStreamingPreviewStatus(model.status) ||
-    Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
-  const previous = previousRef.current;
-
-  if (!previewing || !previous || model.options.length >= previous.options.length) {
-    if (model.options.length > 0 || !previewing) {
-      previousRef.current = model;
-    }
-    return model;
-  }
-
-  return {
-    ...previous,
-    renderState: model.renderState,
-    selectedValues: model.selectedValues,
-    status: model.status,
-  };
-}
-
 function actionBadgeStage(phase: ActionBadgePhase | null, kind: ActionKind): ActionBadgeStage {
   return phase?.kind === kind ? phase.stage : "idle";
 }
@@ -1996,25 +1996,11 @@ function isStreamingPreviewStatus(status: string): boolean {
   return status === "started" || status === "streaming" || status === "finished";
 }
 
-function isChoiceStreaming(
-  status: string,
-  streamPlayer: ParsedA2UIMessage["streamPlayer"],
-  historyHydrated: boolean,
-): boolean {
-  if (historyHydrated) {
-    return false;
-  }
-  if (isStreamingPreviewStatus(status)) {
-    return true;
-  }
-  return Boolean(streamPlayer?.enabled && streamPlayer.phase !== "created" && streamPlayer.phase !== "failed");
-}
-
-function shouldUseInteractiveChoiceMotion(parsed: ParsedA2UIMessage, status: string): boolean {
+function shouldUseInteractiveChoiceMotion(parsed: ParsedA2UIMessage, status: string, semanticStreamEnabled: boolean): boolean {
   if (parsed.historyHydrated) {
     return false;
   }
-  return Boolean(parsed.streamPlayer?.enabled) ||
+  return semanticStreamEnabled ||
     status === "waiting_input" ||
     status === "submitted" ||
     status === "cancelled" ||

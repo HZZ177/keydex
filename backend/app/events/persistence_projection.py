@@ -74,6 +74,7 @@ class PersistenceProjection:
         self._subagent_stream_buffers: dict[str, dict[str, Any]] = {}
         self._reasoning_buffers: dict[str, dict[str, Any]] = {}
         self._flushed_reasoning_text: dict[str, str] = {}
+        self._reasoning_started_at_ms: dict[str, int] = {}
 
     async def handle(self, event: DomainEvent) -> None:
         if not self._session_id:
@@ -85,7 +86,7 @@ class PersistenceProjection:
             self._collect_reasoning(event)
             return
         if event_type == DomainEventType.LLM_STREAM:
-            await self._flush_reasoning_buffers()
+            await self._flush_reasoning_buffers(completed_at_ms=event.timestamp_ms)
             self._collect_stream(event)
             return
         if event_type == DomainEventType.REASONING_FINISHED:
@@ -96,12 +97,12 @@ class PersistenceProjection:
         if action is None:
             return
 
-        await self.flush()
+        await self.flush(reasoning_completed_at_ms=event.timestamp_ms)
         await self._save(action.value, self._build_replay_payload(event, action.value), event)
 
-    async def flush(self) -> None:
+    async def flush(self, *, reasoning_completed_at_ms: int | None = None) -> None:
         await self._flush_stream_buffers()
-        await self._flush_reasoning_buffers()
+        await self._flush_reasoning_buffers(completed_at_ms=reasoning_completed_at_ms)
 
     async def _flush_stream_buffers(self) -> None:
         if self._stream_buffer:
@@ -149,24 +150,43 @@ class PersistenceProjection:
             )
         self._subagent_stream_buffers.clear()
 
-    async def _flush_reasoning_buffers(self) -> None:
+    async def _flush_reasoning_buffers(self, *, completed_at_ms: int | None = None) -> None:
         for key in list(self._reasoning_buffers):
-            await self._flush_reasoning_buffer(key)
+            await self._flush_reasoning_buffer(key, completed_at_ms=completed_at_ms)
 
-    async def _flush_reasoning_buffer(self, key: str) -> None:
+    async def _flush_reasoning_buffer(
+        self,
+        key: str,
+        *,
+        completed_at_ms: int | None = None,
+    ) -> None:
         buffer_item = self._reasoning_buffers.pop(key, None)
         if not buffer_item:
             return
         content = str(buffer_item.get("content") or "")
         if not content:
+            self._reasoning_started_at_ms.pop(key, None)
             return
         meta = dict(buffer_item.get("meta") or {})
         event = buffer_item.get("event")
+        start_time_ms = self._reasoning_started_at_ms.pop(key, None)
+        end_time_ms = _non_negative_int(completed_at_ms)
+        if end_time_ms is None:
+            end_time_ms = _non_negative_int(getattr(event, "timestamp_ms", None))
+        duration_ms = _non_negative_int(meta.get("duration_ms"))
+        if duration_ms is None and start_time_ms is not None and end_time_ms is not None:
+            duration_ms = max(0, end_time_ms - start_time_ms)
         payload = {
             "kind": meta.get("kind", "reasoning"),
             "text": content,
             "done": bool(meta.get("done", False)),
         }
+        if start_time_ms is not None:
+            payload["start_time"] = start_time_ms
+        if end_time_ms is not None:
+            payload["end_time"] = end_time_ms
+        if duration_ms is not None:
+            payload["duration_ms"] = duration_ms
         if "cancel_main" in meta:
             payload["cancel_main"] = meta.get("cancel_main")
         if trace_id := meta.get("trace_id"):
@@ -215,6 +235,12 @@ class PersistenceProjection:
         if not content:
             return
         key = self._reasoning_key(event, payload)
+        start_time_ms = _non_negative_int(payload.get("start_time"))
+        if start_time_ms is None:
+            start_time_ms = _non_negative_int(payload.get("messageTimeMs"))
+        if start_time_ms is None:
+            start_time_ms = event.timestamp_ms
+        self._reasoning_started_at_ms.setdefault(key, start_time_ms)
         buffer_item = self._reasoning_buffers.setdefault(
             key,
             {
@@ -222,6 +248,7 @@ class PersistenceProjection:
                 "meta": {
                     "kind": payload.get("kind", "reasoning"),
                     "messageTimeMs": payload.get("messageTimeMs") or event.timestamp_ms,
+                    "start_time": start_time_ms,
                     "trace_id": payload.get("trace_id") or event.trace_id,
                 },
                 "event": event,
@@ -232,6 +259,7 @@ class PersistenceProjection:
         meta.update(
             {
                 "kind": payload.get("kind", meta.get("kind", "reasoning")),
+                "duration_ms": payload.get("duration_ms", meta.get("duration_ms")),
                 "trace_id": payload.get("trace_id") or meta.get("trace_id") or event.trace_id,
             }
         )
@@ -245,6 +273,9 @@ class PersistenceProjection:
         payload = dict(event.payload or {})
         final_text = str(payload.get("text", payload.get("content", "")) or "")
         key = self._reasoning_key(event, payload)
+        completed_at_ms = _non_negative_int(payload.get("end_time"))
+        if completed_at_ms is None:
+            completed_at_ms = event.timestamp_ms
         already_flushed = self._flushed_reasoning_text.get(key, "")
         buffer_item = self._reasoning_buffers.get(key)
         if buffer_item is not None:
@@ -260,6 +291,7 @@ class PersistenceProjection:
                 {
                     "kind": payload.get("kind", meta.get("kind", "reasoning")),
                     "done": True,
+                    "duration_ms": payload.get("duration_ms", meta.get("duration_ms")),
                     "trace_id": payload.get("trace_id") or meta.get("trace_id") or event.trace_id,
                 }
             )
@@ -269,24 +301,39 @@ class PersistenceProjection:
                 meta["messageTimeMs"] = payload.get("messageTimeMs")
             buffer_item["meta"] = meta
             buffer_item["event"] = event
-            await self._flush_reasoning_buffer(key)
+            await self._flush_reasoning_buffer(key, completed_at_ms=completed_at_ms)
             return
 
         if not final_text:
+            self._reasoning_started_at_ms.pop(key, None)
             return
         if already_flushed:
             if final_text == already_flushed:
+                self._reasoning_started_at_ms.pop(key, None)
                 return
             if final_text.startswith(already_flushed):
                 final_text = final_text[len(already_flushed) :]
         if not final_text:
+            self._reasoning_started_at_ms.pop(key, None)
             return
+        start_time_ms = _non_negative_int(payload.get("start_time"))
+        if start_time_ms is None:
+            start_time_ms = self._reasoning_started_at_ms.pop(key, None)
+        duration_ms = _non_negative_int(payload.get("duration_ms"))
+        if duration_ms is None and start_time_ms is not None:
+            duration_ms = max(0, completed_at_ms - start_time_ms)
+        timing_payload = dict(payload)
+        if start_time_ms is not None:
+            timing_payload["start_time"] = start_time_ms
+        timing_payload["end_time"] = completed_at_ms
+        if duration_ms is not None:
+            timing_payload["duration_ms"] = duration_ms
         await self._save(
             ReplayAction.REASONING.value,
             self._wrap_payload(
                 ReplayAction.REASONING.value,
                 {
-                    **payload,
+                    **timing_payload,
                     "text": final_text,
                     "done": True,
                 },
@@ -295,8 +342,8 @@ class PersistenceProjection:
                 run_id=event.run_id,
                 timestamp_ms=event.timestamp_ms,
                 message_time_ms=(
-                    payload.get("messageTimeMs")
-                    or payload.get("end_time")
+                    timing_payload.get("messageTimeMs")
+                    or timing_payload.get("start_time")
                     or event.timestamp_ms
                 ),
             ),
@@ -382,3 +429,9 @@ class PersistenceProjection:
             f"turn_index={self._turn_index} | action={action} | event_id={record.id} | "
             f"seq={getattr(record, 'seq', '-')}"
         )
+
+
+def _non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return None
+    return int(value)

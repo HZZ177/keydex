@@ -23,6 +23,11 @@ class TurnCompletedAggregator:
         self._stream_buffer_parts: list[str] = []
         self._stream_meta: dict[str, Any] = {}
         self._reasoning_routed = False
+        self._first_token_at_ms: int | None = None
+
+    @property
+    def first_token_at_ms(self) -> int | None:
+        return self._first_token_at_ms
 
     async def handle(self, event: DomainEvent) -> None:
         payload = dict(event.payload or {})
@@ -33,6 +38,13 @@ class TurnCompletedAggregator:
         self.flush_stream_buffer()
 
     def collect_domain_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        if event_type == DomainEventType.LLM_FIRST_TOKEN_RECEIVED.value:
+            first_token_at_ms = payload.get("first_token_at_ms") or payload.get("timestamp_ms")
+            if isinstance(first_token_at_ms, int | float) and not isinstance(first_token_at_ms, bool):
+                resolved = int(first_token_at_ms)
+                if self._first_token_at_ms is None or resolved < self._first_token_at_ms:
+                    self._first_token_at_ms = resolved
+            return
         if event_type == DomainEventType.LLM_STREAM.value:
             self._collect_stream(payload)
             return
@@ -63,6 +75,9 @@ class TurnCompletedAggregator:
             }
             if "cancel_main" in payload:
                 data["cancel_main"] = payload.get("cancel_main")
+            for timing_key in ("start_time", "end_time", "duration_ms"):
+                if payload.get(timing_key) is not None:
+                    data[timing_key] = payload[timing_key]
             self.event_log.append(
                 {"action": CompletedEventItemAction.REASONING_MESSAGE.value, "data": data}
             )
@@ -220,6 +235,8 @@ class TurnCompletedAggregator:
         }
         if scene_version_seq is not None:
             payload["scene_version_seq"] = scene_version_seq
+        if self._first_token_at_ms is not None:
+            payload["first_token_at_ms"] = self._first_token_at_ms
         logger.debug(
             "[TurnCompletedAggregator] 构建终局 payload | "
             f"session_id={session_id} | trace_id={trace_id} | status={status} | "

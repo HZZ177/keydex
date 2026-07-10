@@ -72,6 +72,7 @@ export function ConversationPanel({
         loading={model.loading}
         isProcessing={model.runtimeState === "running"}
         runtimeState={model.runtimeState}
+        turnFirstTokenAtMs={model.sessionViewState?.firstTokenAtMs}
         runtimeDetail={model.runtimeDetail}
         workspaceRuntime={workspaceRuntime}
         workspaceScope={model.messageWorkspaceScope}

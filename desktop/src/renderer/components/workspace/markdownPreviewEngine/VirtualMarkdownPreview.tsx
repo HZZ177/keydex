@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -59,6 +60,13 @@ interface VirtualMarkdownPreviewItem {
   sectionEndLine: number | null;
 }
 
+interface PendingMarkdownPreviewAnnotationReveal {
+  align: "start" | "center" | "end";
+  annotationId: string;
+  blockId: string;
+  line: number;
+}
+
 type MarkdownPreviewFoldKind = "block" | "section";
 const MARKDOWN_PREVIEW_FOLD_MOTION_MS = 180;
 
@@ -95,10 +103,13 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
     ref,
   ) {
     const virtuosoRef = useRef<VirtuosoHandle>(null);
+    const rootElementRef = useRef<HTMLDivElement | null>(null);
     const foldMotionTimerRef = useRef<number | null>(null);
     const [collapsedBlockIds, setCollapsedBlockIds] = useState<ReadonlySet<string>>(() => new Set());
     const [foldMotionBlockIds, setFoldMotionBlockIds] = useState<ReadonlySet<string>>(() => new Set());
     const [pendingRevealBlockId, setPendingRevealBlockId] = useState<string | null>(null);
+    const [pendingAnnotationReveal, setPendingAnnotationReveal] =
+      useState<PendingMarkdownPreviewAnnotationReveal | null>(null);
     const [mountedRange, setMountedRange] = useState<ListRange | null>(null);
     const blockIndexById = useMemo(
       () => new Map(model.blocks.map((block) => [block.id, block.index])),
@@ -108,13 +119,20 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
       () => buildHeadingSectionEndIndexByBlockId(model.blocks),
       [model.blocks],
     );
-    const firstAnnotationBlockId = useMemo(
-      () =>
-        new Map(
-          annotationIndex
-            .filter((item) => item.ranges.length > 0)
-            .map((item) => [item.annotation.id, item.ranges[0].blockId]),
-        ),
+    const annotationRevealTargetById = useMemo(
+      () => new Map(
+        annotationIndex.flatMap((item) => {
+          const firstRange = item.ranges[0];
+          if (!firstRange || !item.anchor) {
+            return [];
+          }
+          return [[item.annotation.id, {
+            blockId: firstRange.blockId,
+            lineEnd: item.anchor.lineEnd,
+            lineStart: item.anchor.lineStart,
+          }] as const];
+        }),
+      ),
       [annotationIndex],
     );
     const findMatchBlockId = useMemo(
@@ -134,20 +152,23 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
         return findMatchBlockId.get(activeFindMatchId) ?? null;
       }
       if (activeAnnotationId) {
-        return firstAnnotationBlockId.get(activeAnnotationId) ?? null;
+        return annotationRevealTargetById.get(activeAnnotationId)?.blockId ?? null;
       }
       if (flashAnnotationId) {
-        return firstAnnotationBlockId.get(flashAnnotationId) ?? null;
+        return annotationRevealTargetById.get(flashAnnotationId)?.blockId ?? null;
       }
       return null;
     }, [
       activeAnnotationId,
       activeBlockId,
       activeFindMatchId,
+      annotationRevealTargetById,
       findMatchBlockId,
-      firstAnnotationBlockId,
       flashAnnotationId,
     ]);
+    const activeAnnotationLineRange = activeAnnotationId
+      ? annotationRevealTargetById.get(activeAnnotationId) ?? null
+      : null;
 
     useEffect(() => {
       if (!activeTargetBlockId) {
@@ -258,6 +279,10 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
     const usesExternalScrollParent = Boolean(customScrollParent);
     const rootClassNames = rootClassName ? `keydex-markdown ${rootClassName}` : "keydex-markdown";
     const rootStyles = usesExternalScrollParent ? rootStyle : { height: "100%", ...rootStyle };
+    const setRootElement = useCallback((element: HTMLDivElement | null) => {
+      rootElementRef.current = element;
+      assignReactRef(rootRef, element);
+    }, [rootRef]);
 
     useEffect(() => {
       onMountedBlockIdsChange?.(mountedBlockIds);
@@ -268,6 +293,22 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
         setPendingRevealBlockId(null);
       }
     }, [mountedBlockIds, pendingRevealBlockId]);
+
+    useLayoutEffect(() => {
+      if (!pendingAnnotationReveal || !mountedBlockIds.includes(pendingAnnotationReveal.blockId)) {
+        return;
+      }
+      const target = findPendingAnnotationRevealElement(rootElementRef.current, pendingAnnotationReveal);
+      if (!target) {
+        return;
+      }
+      target.scrollIntoView?.({
+        behavior: "smooth",
+        block: pendingAnnotationReveal.align,
+        inline: "nearest",
+      });
+      setPendingAnnotationReveal((current) => current === pendingAnnotationReveal ? null : current);
+    }, [mountedBlockIds, pendingAnnotationReveal, renderedBlocks]);
 
     useEffect(() => () => {
       if (foldMotionTimerRef.current !== null) {
@@ -337,9 +378,18 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
     }, [blockIndexById, scrollToIndex]);
 
     const scrollToAnnotation = useCallback((annotationId: string, align: "start" | "center" | "end" = "start") => {
-      const blockId = firstAnnotationBlockId.get(annotationId);
-      return blockId ? scrollToBlock(blockId, align) : false;
-    }, [firstAnnotationBlockId, scrollToBlock]);
+      const target = annotationRevealTargetById.get(annotationId);
+      if (!target || !scrollToBlock(target.blockId, align)) {
+        return false;
+      }
+      setPendingAnnotationReveal({
+        align,
+        annotationId,
+        blockId: target.blockId,
+        line: target.lineStart,
+      });
+      return true;
+    }, [annotationRevealTargetById, scrollToBlock]);
 
     const scrollToFindMatch = useCallback((matchId: string, align: "start" | "center" | "end" = "start") => {
       const blockId = findMatchBlockId.get(matchId);
@@ -354,7 +404,7 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
 
     return (
       <div
-        ref={rootRef}
+        ref={setRootElement}
         className={rootClassNames}
         data-markdown-active-find-match-id={activeFindMatchId ?? undefined}
         data-markdown-block-count={model.blocks.length}
@@ -377,6 +427,8 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
           itemContent={(_index, item) => (
             showSourceGutter ? (
               <MarkdownPreviewBlockFrame
+                activeLineEnd={activeAnnotationLineRange?.lineEnd ?? null}
+                activeLineStart={activeAnnotationLineRange?.lineStart ?? null}
                 block={item.block}
                 collapsed={item.collapsed}
                 exiting={item.exiting}
@@ -426,6 +478,8 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
 );
 
 function MarkdownPreviewBlockFrame({
+  activeLineEnd,
+  activeLineStart,
   block,
   children,
   collapsed,
@@ -435,6 +489,8 @@ function MarkdownPreviewBlockFrame({
   onToggleFold,
   sectionEndLine,
 }: {
+  activeLineEnd: number | null;
+  activeLineStart: number | null;
   block: MarkdownBlock;
   children: ReactNode;
   collapsed: boolean;
@@ -452,6 +508,7 @@ function MarkdownPreviewBlockFrame({
   const sectionCollapsedLineCount = sectionEndLine && foldKind === "section"
     ? Math.max(1, sectionEndLine - block.lineEnd)
     : 0;
+  const sourceLines = markdownPreviewSourceLines(block, collapsed);
 
   return (
     <div
@@ -461,6 +518,7 @@ function MarkdownPreviewBlockFrame({
       data-fold-kind={foldKind ?? undefined}
       data-fold-motion={foldMotion ? "true" : undefined}
       data-markdown-preview-block-frame="true"
+      data-markdown-preview-block-id={block.id}
       data-markdown-preview-line-start={block.lineStart}
     >
       <div className={styles.markdownPreviewGutter}>
@@ -482,8 +540,25 @@ function MarkdownPreviewBlockFrame({
         ) : (
           <span className={styles.markdownPreviewFoldPlaceholder} />
         )}
-        <span className={styles.markdownPreviewLineNumber} data-markdown-preview-line-number="true">
-          {block.lineStart}
+        <span
+          className={styles.markdownPreviewLineNumbers}
+          style={{ gridTemplateRows: `repeat(${sourceLines.length}, minmax(18px, 1fr))` }}
+        >
+          {sourceLines.map((line) => {
+            const active = activeLineStart !== null && activeLineEnd !== null &&
+              line >= activeLineStart && line <= activeLineEnd;
+            return (
+              <span
+                className={styles.markdownPreviewLineNumber}
+                data-active={active ? "true" : undefined}
+                data-markdown-preview-line-number="true"
+                data-markdown-preview-source-line={line}
+                key={line}
+              >
+                {line}
+              </span>
+            );
+          })}
         </span>
       </div>
       <div className={styles.markdownPreviewBlockContent}>
@@ -582,6 +657,44 @@ function markdownPreviewMotionBlockIdsForToggle(
 
 function markdownPreviewBlockLineSpan(block: MarkdownBlock): number {
   return Math.max(1, block.lineEnd - block.lineStart + 1);
+}
+
+function markdownPreviewSourceLines(block: MarkdownBlock, collapsed: boolean): number[] {
+  const lineEnd = collapsed ? block.lineStart : block.lineEnd;
+  return Array.from({ length: Math.max(1, lineEnd - block.lineStart + 1) }, (_, index) => block.lineStart + index);
+}
+
+function findPendingAnnotationRevealElement(
+  root: HTMLElement | null,
+  reveal: PendingMarkdownPreviewAnnotationReveal,
+): HTMLElement | null {
+  if (!root) {
+    return null;
+  }
+  const marker = Array.from(root.querySelectorAll<HTMLElement>("[data-preview-annotation-id]"))
+    .find((element) => element.dataset.previewAnnotationId === reveal.annotationId);
+  if (marker) {
+    return marker;
+  }
+  const blockFrame = Array.from(root.querySelectorAll<HTMLElement>("[data-markdown-preview-block-id]"))
+    .find((element) => element.dataset.markdownPreviewBlockId === reveal.blockId);
+  const lineNumber = Array.from(blockFrame?.querySelectorAll<HTMLElement>("[data-markdown-preview-source-line]") ?? [])
+    .find((element) => Number(element.dataset.markdownPreviewSourceLine) === reveal.line);
+  if (lineNumber) {
+    return lineNumber;
+  }
+  return Array.from(root.querySelectorAll<HTMLElement>("[data-markdown-block-id]"))
+    .find((element) => element.dataset.markdownBlockId === reveal.blockId) ?? null;
+}
+
+function assignReactRef<T>(ref: Ref<T> | undefined, value: T | null): void {
+  if (typeof ref === "function") {
+    ref(value);
+    return;
+  }
+  if (ref) {
+    (ref as { current: T | null }).current = value;
+  }
 }
 
 function expandCollapsedBlockIdsForBlock(

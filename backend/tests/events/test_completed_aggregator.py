@@ -21,6 +21,13 @@ def _event(event_type: DomainEventType, payload: dict, timestamp_ms: int = 100) 
 async def test_completed_aggregator_builds_basic_completed_payload() -> None:
     aggregator = TurnCompletedAggregator()
 
+    await aggregator.handle(
+        _event(
+            DomainEventType.LLM_FIRST_TOKEN_RECEIVED,
+            {"first_token_at_ms": 90},
+            timestamp_ms=90,
+        )
+    )
     await aggregator.handle(_event(DomainEventType.LLM_STREAM, {"content": "你"}))
     await aggregator.handle(_event(DomainEventType.LLM_STREAM, {"content": "好"}))
 
@@ -36,6 +43,7 @@ async def test_completed_aggregator_builds_basic_completed_payload() -> None:
     assert payload["final_content"] == "你好"
     assert payload["latest_llm_token_usage"] == {"input_tokens": 1, "output_tokens": 2}
     assert payload["trace_query_context"]["trace_id"] == "trace_1"
+    assert payload["first_token_at_ms"] == 90
     assert payload["events"] == [
         {
             "action": "ai_message",
@@ -78,7 +86,15 @@ async def test_completed_aggregator_records_reasoning_message() -> None:
     await aggregator.handle(
         _event(
             DomainEventType.REASONING_FINISHED,
-            {"kind": "initial_response", "text": "正在分析", "cancel_main": False},
+            {
+                "kind": "initial_response",
+                "text": "正在分析",
+                "cancel_main": False,
+                "start_time": 100,
+                "end_time": 2500,
+                "duration_ms": 2400,
+            },
+            timestamp_ms=2500,
         )
     )
 
@@ -92,8 +108,11 @@ async def test_completed_aggregator_records_reasoning_message() -> None:
                 "kind": "initial_response",
                 "text": "正在分析",
                 "done": True,
-                "messageTimeMs": 100,
+                "messageTimeMs": 2500,
                 "cancel_main": False,
+                "start_time": 100,
+                "end_time": 2500,
+                "duration_ms": 2400,
             },
         }
     ]
@@ -102,6 +121,13 @@ async def test_completed_aggregator_records_reasoning_message() -> None:
 @pytest.mark.asyncio
 async def test_completed_aggregator_builds_failed_payload_without_fake_tokens() -> None:
     aggregator = TurnCompletedAggregator()
+    await aggregator.handle(
+        _event(
+            DomainEventType.LLM_FIRST_TOKEN_RECEIVED,
+            {"first_token_at_ms": 90},
+            timestamp_ms=90,
+        )
+    )
     await aggregator.handle(_event(DomainEventType.LLM_STREAM, {"content": "半截"}))
 
     payload = aggregator.build_failed_data(
@@ -115,11 +141,19 @@ async def test_completed_aggregator_builds_failed_payload_without_fake_tokens() 
     assert payload["final_content"] == "半截"
     assert payload["chain_token_usage"] == {}
     assert payload["latest_llm_token_usage"] == {}
+    assert payload["first_token_at_ms"] == 90
 
 
 @pytest.mark.asyncio
 async def test_completed_aggregator_builds_cancelled_payload() -> None:
     aggregator = TurnCompletedAggregator()
+    await aggregator.handle(
+        _event(
+            DomainEventType.LLM_FIRST_TOKEN_RECEIVED,
+            {"first_token_at_ms": 90},
+            timestamp_ms=90,
+        )
+    )
     await aggregator.handle(_event(DomainEventType.LLM_STREAM, {"content": "已输出"}))
 
     payload = aggregator.build_cancelled_data(
@@ -131,3 +165,4 @@ async def test_completed_aggregator_builds_cancelled_payload() -> None:
     assert payload["status"] == "cancelled"
     assert payload["reason"] == "user"
     assert payload["final_content"] == "已输出"
+    assert payload["first_token_at_ms"] == 90

@@ -357,25 +357,6 @@
   );
 }
 
-.customRange {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding-right: 5px;
-}
-
-.customRange input {
-  height: 28px;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 50%, transparent);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: 11px;
-  outline: 0;
-  padding: 0 9px;
-}
-
 .error,
 .detailError {
   display: flex;
@@ -1212,19 +1193,9 @@
   }
 
   .rangeBar {
+    width: 100%;
     border-radius: var(--radius-md);
     flex-wrap: wrap;
-  }
-
-  .customRange {
-    width: 100%;
-    flex-wrap: wrap;
-    padding: 0 6px 5px;
-  }
-
-  .customRange input {
-    min-width: 0;
-    flex: 1 1 180px;
   }
 
   .metrics {

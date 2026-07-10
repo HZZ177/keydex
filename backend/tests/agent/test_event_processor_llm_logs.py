@@ -424,6 +424,63 @@ async def test_process_agent_events_emits_tool_progress_from_model_chunks() -> N
 
 
 @pytest.mark.asyncio
+async def test_process_agent_events_emits_first_token_from_raw_generic_tool_chunk() -> None:
+    emitted: list[DomainEvent] = []
+
+    async def capture(event: DomainEvent) -> None:
+        emitted.append(event)
+
+    await process_agent_events(
+        _event_stream(
+            [
+                {
+                    "event": "on_chat_model_stream",
+                    "run_id": "model_run",
+                    "data": {"chunk": AIMessageChunk(content="")},
+                },
+                {
+                    "event": "on_chat_model_stream",
+                    "run_id": "model_run",
+                    "data": {
+                        "chunk": AIMessageChunk(
+                            content="",
+                            tool_call_chunks=[
+                                {
+                                    "id": "call_read",
+                                    "index": 0,
+                                    "name": "read_file",
+                                    "args": '{"path":"README.md"}',
+                                }
+                            ],
+                        )
+                    },
+                },
+            ]
+        ),
+        dispatcher=EventDispatcher([capture]),
+        cancellation=NeverCancelled(),
+        session_id="ses_agent",
+        trace_id="trace_agent",
+        user_id="local-user",
+        active_session_id="ses_agent",
+        turn_index=1,
+    )
+
+    first_token_events = [
+        event
+        for event in emitted
+        if event.event_type == DomainEventType.LLM_FIRST_TOKEN_RECEIVED.value
+    ]
+    assert len(first_token_events) == 1
+    assert first_token_events[0].payload["first_token_at_ms"] > 0
+    assert emitted[0] is first_token_events[0]
+    assert first_token_events[0].payload["first_token_at_ms"] <= first_token_events[0].timestamp_ms
+    assert not any(
+        event.event_type == DomainEventType.LLM_TOOL_PROGRESS.value for event in emitted
+    )
+
+
+@pytest.mark.asyncio
 async def test_process_agent_events_emits_tool_progress_for_streamed_apply_patch_move() -> None:
     emitted: list[DomainEvent] = []
 

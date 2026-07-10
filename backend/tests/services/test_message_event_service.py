@@ -85,6 +85,88 @@ def test_message_event_service_aggregates_user_stream_tool_and_completed(tmp_pat
     assert isinstance(messages[2]["timestamp"], int)
 
 
+def test_message_event_service_restores_turn_duration_for_all_terminal_outcomes(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+    started_at = 1_782_905_000_000
+
+    terminal_cases = [
+        (1, "completed", {"status": "completed"}, 1_000),
+        (2, "completed", {"status": "failed"}, 1_200),
+        (3, "cancelled", {}, 2_500),
+        (4, "error", {"message": "模型请求失败"}, 1_500),
+    ]
+    for turn, terminal_action, terminal_data, duration_ms in terminal_cases:
+        turn_started_at = started_at + turn * 10_000
+        _append(
+            repositories,
+            f"evt_stream_{turn}",
+            "stream_batch",
+            {"content": f"第 {turn} 轮", "messageTimeMs": turn_started_at},
+            turn=turn,
+        )
+        _append(
+            repositories,
+            f"evt_terminal_{turn}",
+            terminal_action,
+            {**terminal_data, "messageTimeMs": turn_started_at + duration_ms},
+            turn=turn,
+        )
+
+    messages = service.get_display_messages("ses_history")
+    completed_assistants = [
+        message
+        for message in messages
+        if message.get("role") == "assistant" and str(message.get("content") or "").strip()
+    ]
+
+    assert [message["turnDurationMs"] for message in completed_assistants] == [
+        1_000,
+        1_200,
+        2_500,
+        1_500,
+    ]
+
+
+def test_message_event_service_counts_tool_start_before_first_assistant_text(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+    started_at = 1_782_905_000_000
+
+    _append(
+        repositories,
+        "evt_tool_start",
+        "tool_start",
+        {
+            "tool": "read_file",
+            "run_id": "run-1",
+            "params": {"path": "README.md"},
+            "messageTimeMs": started_at + 1_000,
+        },
+    )
+    _append(
+        repositories,
+        "evt_stream",
+        "stream_batch",
+        {"content": "读取完成", "messageTimeMs": started_at + 2_000},
+    )
+    _append(
+        repositories,
+        "evt_completed",
+        "completed",
+        {
+            "status": "completed",
+            "first_token_at_ms": started_at,
+            "messageTimeMs": started_at + 5_000,
+        },
+    )
+
+    messages = service.get_display_messages("ses_history")
+    assistant = next(message for message in messages if message.get("role") == "assistant")
+
+    assert assistant["turnDurationMs"] == 5_000
+
+
 def test_message_event_service_preserves_pending_input_delivery_metadata(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)

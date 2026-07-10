@@ -6,9 +6,10 @@ import {
   useState,
   type RefObject,
   type UIEvent,
-  type WheelEvent,
+  type WheelEvent as ReactWheelEvent,
 } from "react";
 
+import { isUpwardWheelIntent, wheelWillScrollElement, type WheelIntentEvent } from "./scrollIntent";
 import { EXPANSION_SCROLL_LOCK_ATTR } from "./useExpansionScrollAnchor";
 
 const PROGRAMMATIC_SCROLL_GUARD_MS = 150;
@@ -27,7 +28,7 @@ export interface UseAutoScrollResult {
   showScrollToBottom: boolean;
   userPinnedScroll: boolean;
   handleScroll: (event: UIEvent<HTMLDivElement>) => void;
-  handleWheel: (event: WheelEvent<HTMLDivElement>) => void;
+  handleWheel: (event: ReactWheelEvent<HTMLDivElement>) => void;
   handlePointerDown: () => void;
   cancelScrollAnimation: () => void;
   scrollToBottom: (behavior?: ScrollBehavior) => void;
@@ -42,6 +43,7 @@ export function useAutoScroll({ deps, itemCount = 0, autoFollow = true }: UseAut
   const scrollElementRef = useRef<HTMLElement | null>(null);
   const userPinnedRef = useRef(false);
   const userInputActiveRef = useRef(false);
+  const upwardWheelPendingRef = useRef(false);
   const scrollbarDragActiveRef = useRef(false);
   const lastScrollTopRef = useRef(0);
   const lastProgrammaticScrollAtRef = useRef(0);
@@ -60,6 +62,22 @@ export function useAutoScroll({ deps, itemCount = 0, autoFollow = true }: UseAut
     }
   }, []);
 
+  const handleWheelIntent = useCallback(
+    (event: WheelIntentEvent, scrollElement: HTMLElement) => {
+      if (!wheelWillScrollElement(event, scrollElement)) {
+        return;
+      }
+      cancelScrollAnimation();
+      userInputActiveRef.current = true;
+      if (isUpwardWheelIntent(event)) {
+        upwardWheelPendingRef.current = true;
+        userPinnedRef.current = true;
+        setUserPinnedScroll(true);
+      }
+    },
+    [cancelScrollAnimation],
+  );
+
   const resolveScrollElement = useCallback(() => {
     const container = containerRef.current;
     if (!container) {
@@ -77,12 +95,6 @@ export function useAutoScroll({ deps, itemCount = 0, autoFollow = true }: UseAut
     const bottomGap = getBottomGap(scrollElement);
     const atFollowBottom = bottomGap <= FOLLOW_BOTTOM_THRESHOLD_PX;
 
-    if (atFollowBottom) {
-      userPinnedRef.current = false;
-      userInputActiveRef.current = false;
-      scrollbarDragActiveRef.current = false;
-    }
-
     setUserPinnedScroll(userPinnedRef.current);
     setShowScrollToBottom(bottomGap > AT_BOTTOM_THRESHOLD_PX);
     return atFollowBottom;
@@ -99,6 +111,7 @@ export function useAutoScroll({ deps, itemCount = 0, autoFollow = true }: UseAut
       markProgrammaticScroll();
       userPinnedRef.current = false;
       userInputActiveRef.current = false;
+      upwardWheelPendingRef.current = false;
       scrollbarDragActiveRef.current = false;
       setUserPinnedScroll(false);
       setShowScrollToBottom(false);
@@ -177,20 +190,23 @@ export function useAutoScroll({ deps, itemCount = 0, autoFollow = true }: UseAut
       const atFollowBottom = bottomGap <= FOLLOW_BOTTOM_THRESHOLD_PX;
       const programmaticGuardElapsed =
         Date.now() - lastProgrammaticScrollAtRef.current >= PROGRAMMATIC_SCROLL_GUARD_MS;
+      const userMovedUp = delta < -2;
 
       if (
         !atFollowBottom &&
-        Math.abs(delta) > 2 &&
         userInputActiveRef.current &&
-        programmaticGuardElapsed
+        (userMovedUp || (Math.abs(delta) > 2 && programmaticGuardElapsed))
       ) {
         userPinnedRef.current = true;
       }
 
       if (atFollowBottom) {
-        userPinnedRef.current = false;
-        userInputActiveRef.current = false;
+        if (!upwardWheelPendingRef.current) {
+          userPinnedRef.current = false;
+          userInputActiveRef.current = false;
+        }
       } else if (Math.abs(delta) > 2) {
+        upwardWheelPendingRef.current = false;
         userInputActiveRef.current = false;
       }
 
@@ -207,12 +223,15 @@ export function useAutoScroll({ deps, itemCount = 0, autoFollow = true }: UseAut
     [handleTargetScroll],
   );
 
-  const handleWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
-    if (Math.abs(event.deltaY) > 0 || Math.abs(event.deltaX) > 0) {
-      cancelScrollAnimation();
-      userInputActiveRef.current = true;
-    }
-  }, [cancelScrollAnimation]);
+  const handleWheel = useCallback(
+    (event: ReactWheelEvent<HTMLDivElement>) => {
+      const scrollElement = getScrollElement();
+      if (scrollElement) {
+        handleWheelIntent(event, scrollElement);
+      }
+    },
+    [getScrollElement, handleWheelIntent],
+  );
 
   const handlePointerDown = useCallback(() => {
     cancelScrollAnimation();
@@ -260,7 +279,10 @@ export function useAutoScroll({ deps, itemCount = 0, autoFollow = true }: UseAut
     }
 
     const onScroll = () => handleTargetScroll(scrollElement);
-    const onUserInput = (event: Event) => {
+    const onWheel = (event: WheelEvent) => {
+      handleWheelIntent(event, scrollElement);
+    };
+    const onPointerDown = (event: Event) => {
       cancelScrollAnimation();
       userInputActiveRef.current = true;
       if (isScrollbarPointerStart(event, scrollElement)) {
@@ -271,21 +293,21 @@ export function useAutoScroll({ deps, itemCount = 0, autoFollow = true }: UseAut
       scrollbarDragActiveRef.current = false;
     };
     scrollElement.addEventListener("scroll", onScroll, { passive: true });
-    scrollElement.addEventListener("wheel", onUserInput, { passive: true });
-    scrollElement.addEventListener("pointerdown", onUserInput);
+    scrollElement.addEventListener("wheel", onWheel, { passive: true });
+    scrollElement.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointerup", clearScrollbarDrag);
     window.addEventListener("pointercancel", clearScrollbarDrag);
     window.addEventListener("blur", clearScrollbarDrag);
     updateBottomState(scrollElement);
     return () => {
       scrollElement.removeEventListener("scroll", onScroll);
-      scrollElement.removeEventListener("wheel", onUserInput);
-      scrollElement.removeEventListener("pointerdown", onUserInput);
+      scrollElement.removeEventListener("wheel", onWheel);
+      scrollElement.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointerup", clearScrollbarDrag);
       window.removeEventListener("pointercancel", clearScrollbarDrag);
       window.removeEventListener("blur", clearScrollbarDrag);
     };
-  }, [cancelScrollAnimation, handleTargetScroll, resolveScrollElement, updateBottomState]);
+  }, [cancelScrollAnimation, handleTargetScroll, handleWheelIntent, resolveScrollElement, updateBottomState]);
 
   useEffect(() => {
     const scrollElement = getScrollElement();

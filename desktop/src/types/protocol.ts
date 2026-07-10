@@ -1014,6 +1014,7 @@ export const AGENT_CHAT_ACTIONS = [
   "bind_ok",
   "unbind_ok",
   "stream",
+  "llm_first_token",
   "a2ui_stream_start",
   "a2ui_stream_chunk",
   "a2ui_stream_finish",
@@ -1757,6 +1758,8 @@ export interface AgentChatMessage {
   pendingInputId?: string;
   deliveryMode?: PendingInputMode;
   reasoningKind?: AgentReasoningKind;
+  reasoningDurationMs?: number;
+  turnDurationMs?: number;
   attachments?: AgentFileAttachment[];
   ghostStats?: AgentGhostStats;
   traceId?: string;
@@ -1811,6 +1814,13 @@ export interface AgentStreamActionData {
   subagent_id?: string | null;
   trace_id?: string;
   trace_record_id?: string;
+  turn_index?: number | null;
+}
+
+export interface AgentFirstTokenData {
+  session_id: string;
+  first_token_at_ms: number;
+  trace_id?: string;
   turn_index?: number | null;
 }
 
@@ -1887,6 +1897,10 @@ export interface AgentReasoningData {
   content?: string;
   text?: string;
   done?: boolean;
+  duration_ms?: number;
+  start_time?: number;
+  end_time?: number;
+  timestamp_ms?: number;
   trace_id?: string;
   turn_index?: number | null;
   cancel_main?: boolean;
@@ -1944,6 +1958,8 @@ export interface AgentCompletedPayload {
   trace_record_id?: string;
   turn_index?: number | null;
   status: "completed" | "cancelled" | "failed";
+  timestamp_ms?: number;
+  first_token_at_ms?: number;
   events: AgentCompletedEventItem[];
   chain_token_usage?: AgentTokenUsage;
   latest_llm_token_usage?: AgentTokenUsage;
@@ -1964,6 +1980,8 @@ export interface AgentCompletedPayload {
 
 export interface AgentErrorData {
   session_id?: string;
+  timestamp_ms?: number;
+  first_token_at_ms?: number;
   code?: string | number;
   message?: string;
   error?: string;

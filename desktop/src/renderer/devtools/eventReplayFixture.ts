@@ -10,7 +10,11 @@ export function createEventReplayFixture(): RuntimeEvent[] {
     itemCompleted(4, item("item-user", "user_message", "completed", { input: [{ type: "text", text: "请分析项目并修改代码" }] })),
     itemStarted(5, item("item-thinking", "reasoning", "running", { text: "" })),
     itemDelta(6, "item-thinking", "reasoning", { text: "正在检查代码结构。" }),
-    itemCompleted(7, item("item-thinking", "reasoning", "completed", { text: "正在检查代码结构。" }), { text: "正在检查代码结构。" }),
+    itemCompleted(
+      7,
+      item("item-thinking", "reasoning", "completed", { text: "正在检查代码结构。", duration_ms: 2400 }),
+      { text: "正在检查代码结构。", duration_ms: 2400 },
+    ),
     itemStarted(8, item("item-assistant", "assistant_message", "running", { text: "" })),
     itemDelta(9, "item-assistant", "assistant_message", { text: "我会先定位入口，然后补充测试。" }),
     itemCompleted(

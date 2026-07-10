@@ -7,6 +7,9 @@ export function agentMessageToConversationMessage(message: AgentChatMessage, ind
   const status = conversationStatusFromAgent(message);
   const payload = payloadFromAgentMessage(message);
   const createdAt = isoFromTimestamp(message.timestamp, index);
+  const reasoningDurationMs = nonNegativeNumber(message.reasoningDurationMs);
+  const updatedAt =
+    reasoningDurationMs === null ? createdAt : isoFromTimestamp(message.timestamp + reasoningDurationMs, index);
   const content = normalizeMessageContent(message.content);
   return {
     id: `agent:${message.id}`,
@@ -18,7 +21,7 @@ export function agentMessageToConversationMessage(message: AgentChatMessage, ind
     content,
     payload: { ...payload, _sortSeq: index + 1 },
     createdAt,
-    updatedAt: createdAt,
+    updatedAt,
   };
 }
 
@@ -139,6 +142,10 @@ export function payloadFromAgentMessage(message: AgentChatMessage): Record<strin
     turn_index: message.turnIndex,
     reasoningKind: message.reasoningKind,
     reasoning_kind: message.reasoningKind,
+    durationMs: message.reasoningDurationMs,
+    duration_ms: message.reasoningDurationMs,
+    turnDurationMs: message.turnDurationMs,
+    turn_duration_ms: message.turnDurationMs,
     ghostStats: message.ghostStats,
     traceId: message.traceId,
     traceQueryContext: message.traceQueryContext,
@@ -308,6 +315,10 @@ function scalarStringValue(value: unknown): string {
     return String(value);
   }
   return "";
+}
+
+function nonNegativeNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function turnErrorFromMessage(message: AgentChatMessage): TurnError | null {

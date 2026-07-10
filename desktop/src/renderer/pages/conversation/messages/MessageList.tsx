@@ -21,8 +21,7 @@ import {
 
 import type { RuntimeBridge, WorkspaceScope } from "@/runtime";
 import { LoadingSkeleton } from "@/renderer/components/loading";
-import type { ConversationMessage } from "@/renderer/stores/conversationStore";
-import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
+import type { ConversationMessage, ConversationRuntimeState } from "@/renderer/stores/conversationStore";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import type { AgentSessionFork } from "@/types/protocol";
 
@@ -37,7 +36,7 @@ import { MessageGroupBlock } from "./MessageGroupBlock";
 import { McpElicitationPrompt, type McpElicitationResolveHandler } from "./McpElicitationPrompt";
 import { AgentLoadingIcon } from "./MessageAgentStatus";
 import { MessageThinking } from "./MessageThinking";
-import { MessageActionFooter, MessageText, StreamingCursor } from "./MessageText";
+import { MessageActionFooter, MessageText, ProcessingDuration, StreamingCursor } from "./MessageText";
 import { SkillActivationBlock } from "./SkillActivationBlock";
 import { ThreadTaskStatusBlock } from "./ThreadTaskStatusBlock";
 import { ToolCallBlock } from "./ToolCallBlock";
@@ -69,6 +68,7 @@ export interface MessageListProps {
   emptyText?: string;
   emptyTestId?: string;
   runtimeState?: ConversationRuntimeState;
+  turnFirstTokenAtMs?: number | null;
   runtimeDetail?: string | null;
   renderMessage?: (message: ConversationMessage) => ReactNode;
   workspaceRuntime?: RuntimeBridge;
@@ -122,6 +122,8 @@ export function MessageList({
   messages,
   loading = false,
   isProcessing = false,
+  runtimeState,
+  turnFirstTokenAtMs = null,
   variant = "full",
   performanceProfile = "default",
   turnNavigatorMode,
@@ -194,16 +196,19 @@ export function MessageList({
   const turnNavigationItems = useMemo(() => buildTurnNavigationItems(displayTurns), [displayTurns]);
   const effectiveTurnNavigatorMode = turnNavigatorMode ?? (variant === "full" ? "auto" : "hidden");
   const showTurnNavigator = effectiveTurnNavigatorMode === "auto" && turnNavigationItems.length >= 2;
+  const turnRuntimeActive = isProcessing || isActiveTurnRuntimeState(runtimeState);
   const assistantTurnFooters = useMemo(
-    () => collectAssistantTurnFooters(displayTurns, isProcessing),
-    [displayTurns, isProcessing],
+    () => collectAssistantTurnFooters(displayTurns, turnRuntimeActive, turnFirstTokenAtMs),
+    [displayTurns, turnFirstTokenAtMs, turnRuntimeActive],
   );
   const turnEndStreamingCursor = useMemo(
     () => collectTurnEndStreamingCursor(displayTurns, isProcessing),
     [displayTurns, isProcessing],
   );
   const a2uiRenderPressure = useMemo(() => calculateA2UIRenderPressure(displayBlocks), [displayBlocks]);
-  const useStaticList = shouldUseStaticMessageList(displayBlocks.length, performanceProfile, a2uiRenderPressure);
+  const requestedStaticList = shouldUseStaticMessageList(displayBlocks.length, performanceProfile, a2uiRenderPressure);
+  const listModeIdentity = messageListModeIdentity(visibleMessages, performanceProfile, variant);
+  const useStaticList = useStableMessageListMode(requestedStaticList, listModeIdentity);
   const [visibleTurnIndexes, setVisibleTurnIndexes] = useState<Set<number>>(() => new Set([0]));
   const listMode = useStaticList ? "static" : "virtual";
   const externalTurnNavigationIndex = useMemo(
@@ -371,7 +376,7 @@ export function MessageList({
       virtualScrollerRef.current = element;
       autoScroll.setScrollerRef(ref);
     },
-    [autoScroll],
+    [autoScroll.setScrollerRef],
   );
 
   const handleVirtualStartReached = useCallback(() => {
@@ -762,6 +767,7 @@ export function MessageList({
       className={styles.root}
       data-list-mode={listMode}
       data-a2ui-count={a2uiRenderPressure.count}
+      data-a2ui-live-count={a2uiRenderPressure.liveCount}
       data-a2ui-render-suspended={a2uiRenderSuspended ? "true" : "false"}
       data-a2ui-weight={a2uiRenderPressure.weight}
       data-message-list-variant={variant}
@@ -1101,6 +1107,7 @@ function renderMessageTurn({
         item,
         renderMessage,
         footerMessage: assistantTurnFooters.footerByItemId.get(item.id),
+        processingStartedAt: assistantTurnFooters.processingStartByItemId.get(item.id),
         showTurnEndStreamingCursor: turnEndStreamingCursor.cursorAfterItemIds.has(item.id),
         suppressStreamingCursorMessageIds: turnEndStreamingCursor.suppressedMessageIds,
         workspaceRuntime,
@@ -1157,6 +1164,7 @@ function renderMessageItem({
   item,
   renderMessage,
   footerMessage,
+  processingStartedAt,
   showTurnEndStreamingCursor,
   suppressStreamingCursorMessageIds,
   workspaceRuntime,
@@ -1180,6 +1188,7 @@ function renderMessageItem({
   item: ProcessedMessageItem;
   renderMessage?: (message: ConversationMessage) => ReactNode;
   footerMessage?: ConversationMessage;
+  processingStartedAt?: string;
   showTurnEndStreamingCursor: boolean;
   suppressStreamingCursorMessageIds: Set<string>;
   workspaceRuntime?: RuntimeBridge;
@@ -1223,16 +1232,19 @@ function renderMessageItem({
         onReverseFromMessage={onReverseFromMessage}
       />
     );
-    return withTurnEndStreamingCursor(
-      withTurnActionFooter(
-        renderedMessage,
-        footerMessage,
-        onForkFromMessage,
-        onReverseFromMessage,
-        onNavigateToForkSource,
-        showForkSourceMarkers,
+    return withTurnProcessingDuration(
+      withTurnEndStreamingCursor(
+        withTurnActionFooter(
+          renderedMessage,
+          footerMessage,
+          onForkFromMessage,
+          onReverseFromMessage,
+          onNavigateToForkSource,
+          showForkSourceMarkers,
+        ),
+        showTurnEndStreamingCursor,
       ),
-      showTurnEndStreamingCursor,
+      processingStartedAt,
     );
   }
 
@@ -1263,16 +1275,19 @@ function renderMessageItem({
       ))}
     </MessageGroupBlock>
   );
-  return withTurnEndStreamingCursor(
-    withTurnActionFooter(
-      renderedGroup,
-      footerMessage,
-      onForkFromMessage,
-      onReverseFromMessage,
-      onNavigateToForkSource,
-      showForkSourceMarkers,
+  return withTurnProcessingDuration(
+    withTurnEndStreamingCursor(
+      withTurnActionFooter(
+        renderedGroup,
+        footerMessage,
+        onForkFromMessage,
+        onReverseFromMessage,
+        onNavigateToForkSource,
+        showForkSourceMarkers,
+      ),
+      showTurnEndStreamingCursor,
     ),
-    showTurnEndStreamingCursor,
+    processingStartedAt,
   );
 }
 
@@ -1370,6 +1385,20 @@ function withTurnEndStreamingCursor(content: ReactNode, showCursor: boolean) {
       {content}
       <div className={styles.turnEndStreamingCursor}>
         <StreamingCursor />
+      </div>
+    </>
+  );
+}
+
+function withTurnProcessingDuration(content: ReactNode, startedAt?: string) {
+  if (!startedAt) {
+    return content;
+  }
+  return (
+    <>
+      {content}
+      <div className={styles.turnProcessingRow}>
+        <ProcessingDuration startedAt={startedAt} live />
       </div>
     </>
   );
@@ -1586,11 +1615,13 @@ function itemKind(item: ProcessedMessageItem): ConversationMessage["kind"] | str
 
 interface A2UIRenderPressure {
   count: number;
+  liveCount: number;
   weight: number;
 }
 
 function calculateA2UIRenderPressure(blocks: TimelineBlock[]): A2UIRenderPressure {
   let count = 0;
+  let liveCount = 0;
   let weight = 0;
   for (const block of blocks) {
     const messages =
@@ -1602,16 +1633,31 @@ function calculateA2UIRenderPressure(blocks: TimelineBlock[]): A2UIRenderPressur
         continue;
       }
       count += 1;
+      if (isLiveA2UIStreamMessage(message)) {
+        liveCount += 1;
+      }
       weight += a2uiMessageRenderWeight(message);
     }
   }
-  return { count, weight };
+  return { count, liveCount, weight };
+}
+
+function isLiveA2UIStreamMessage(message: ConversationMessage): boolean {
+  const a2ui = recordValue(message.payload.a2ui);
+  if (a2ui) {
+    return false;
+  }
+  const debug = recordValue(message.payload.a2uiDebug);
+  const status = stringRecordValue(debug?.status).toLowerCase();
+  return status === "started" || status === "streaming" || status === "finished";
 }
 
 function a2uiMessageRenderWeight(message: ConversationMessage): number {
   const renderKey = a2uiMessageRenderKey(message);
   if (renderKey === "chart") {
-    return Math.max(3, a2uiChartCount(message) * 2);
+    const chartCount = a2uiChartCount(message);
+    const dataUnits = a2uiChartDataUnitCount(message);
+    return Math.max(3, chartCount * 2 + Math.ceil(dataUnits / 16));
   }
   if (renderKey === "choice" || renderKey === "form") {
     return 2;
@@ -1632,21 +1678,61 @@ function a2uiMessageRenderKey(message: ConversationMessage): string {
 }
 
 function a2uiChartCount(message: ConversationMessage): number {
+  const payload = a2uiChartPayload(message);
+  const charts = payload?.charts;
+  return Array.isArray(charts) && charts.length ? charts.length : 1;
+}
+
+function a2uiChartDataUnitCount(message: ConversationMessage): number {
+  const charts = a2uiChartPayload(message)?.charts;
+  if (!Array.isArray(charts)) {
+    return 0;
+  }
+  return charts.reduce((total, chart) => total + chartDataUnitCount(recordValue(chart)), 0);
+}
+
+function a2uiChartPayload(message: ConversationMessage): Record<string, unknown> | null {
   const a2ui = recordValue(message.payload.a2ui);
   const debug = recordValue(message.payload.a2uiDebug);
-  const payload =
+  return (
     recordValue(a2ui?.payload) ??
     recordValue(debug?.payload) ??
     recordValue(debug?.parsedArgs) ??
-    recordValue(message.payload.payload);
-  const charts = payload?.charts;
-  return Array.isArray(charts) && charts.length ? charts.length : 1;
+    recordValue(message.payload.payload)
+  );
+}
+
+function chartDataUnitCount(chart: Record<string, unknown> | null): number {
+  if (!chart) {
+    return 0;
+  }
+  const series = Array.isArray(chart.series) ? chart.series : [];
+  const seriesUnits = series.reduce((total, item) => {
+    const record = recordValue(item);
+    return total + Math.max(
+      arrayLength(record?.items),
+      arrayLength(record?.data),
+      arrayLength(record?.values),
+    );
+  }, 0);
+  const structuralUnits = arrayLength(chart.nodes) + arrayLength(chart.links);
+  const directUnits = Math.max(
+    arrayLength(chart.items),
+    arrayLength(chart.points),
+    arrayLength(chart.data),
+    arrayLength(chart.values),
+  );
+  return Math.max(seriesUnits, directUnits, structuralUnits);
+}
+
+function arrayLength(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
 }
 
 function shouldUseStaticMessageList(
   itemCount: number,
   performanceProfile: MessageListPerformanceProfile,
-  a2uiRenderPressure: A2UIRenderPressure = { count: 0, weight: 0 },
+  a2uiRenderPressure: A2UIRenderPressure = { count: 0, liveCount: 0, weight: 0 },
 ): boolean {
   const userAgent =
     typeof navigator === "undefined" || typeof navigator.userAgent !== "string"
@@ -1654,6 +1740,9 @@ function shouldUseStaticMessageList(
       : navigator.userAgent.toLowerCase();
   if (typeof ResizeObserver === "undefined" || userAgent.includes("jsdom")) {
     return true;
+  }
+  if (a2uiRenderPressure.liveCount > 0) {
+    return false;
   }
   const staticItemLimit =
     performanceProfile === "interactivePanel"
@@ -1667,6 +1756,38 @@ function shouldUseStaticMessageList(
     return false;
   }
   return itemCount <= staticItemLimit;
+}
+
+function useStableMessageListMode(requestedStaticList: boolean, identity: string): boolean {
+  const modeRef = useRef({
+    identity,
+    virtual: !requestedStaticList,
+  });
+  if (modeRef.current.identity !== identity) {
+    modeRef.current = {
+      identity,
+      virtual: !requestedStaticList,
+    };
+  } else if (!requestedStaticList) {
+    modeRef.current.virtual = true;
+  }
+  return !modeRef.current.virtual;
+}
+
+function messageListModeIdentity(
+  messages: ConversationMessage[],
+  performanceProfile: MessageListPerformanceProfile,
+  variant: MessageListVariant,
+): string {
+  const sessionIdentity = messages
+    .map((message) => (
+      stringRecordValue(message.threadId) ||
+      stringRecordValue(message.payload.sessionId) ||
+      stringRecordValue(message.payload.session_id)
+    ))
+    .find(Boolean);
+  const messageIdentity = sessionIdentity || messages[0]?.id || "empty";
+  return `${variant}:${performanceProfile}:${messageIdentity}`;
 }
 
 function isNativeScrollbarPointerStart(
@@ -1794,6 +1915,7 @@ type TimelineBlock =
 
 interface AssistantTurnFooters {
   footerByItemId: Map<string, ConversationMessage>;
+  processingStartByItemId: Map<string, string>;
 }
 
 interface TurnEndStreamingCursor {
@@ -2187,27 +2309,58 @@ function normalizePreviewText(content: unknown): string {
 
 function collectAssistantTurnFooters(
   turns: MessageTurn[],
-  isProcessing: boolean,
+  turnRuntimeActive: boolean,
+  turnFirstTokenAtMs: number | null,
 ): AssistantTurnFooters {
   const footerByItemId = new Map<string, ConversationMessage>();
+  const processingStartByItemId = new Map<string, string>();
 
-  for (const turn of turns) {
+  turns.forEach((turn, turnIndex) => {
     const turnMessages = turn.items.flatMap(messagesFromProcessedItem);
-    if (isProcessing && turnMessages.some((message) => isStreamingStatus(message.status))) {
-      continue;
-    }
-    const assistantMessage = [...turnMessages].reverse().find((message) => message.kind === "assistant");
-    if (!assistantMessage) {
-      continue;
-    }
     const lastItemId = lastFooterAnchorItemId(turn.items);
     if (!lastItemId) {
-      continue;
+      return;
+    }
+    const assistantMessages = turnMessages.filter(
+      (message) => message.kind === "assistant" && normalizeMessageContent(message.content).trim(),
+    );
+    if (turnRuntimeActive && turnIndex === turns.length - 1) {
+      const firstOutput = turnMessages.find(isTurnProcessingOutput);
+      const strictStartedAt = timestampIso(turnFirstTokenAtMs);
+      const startedAt = strictStartedAt ?? firstOutput?.createdAt;
+      if (startedAt) {
+        processingStartByItemId.set(lastItemId, startedAt);
+      }
+      return;
+    }
+    const assistantMessage = assistantMessages.at(-1);
+    if (!assistantMessage) {
+      return;
     }
     footerByItemId.set(lastItemId, assistantMessage);
-  }
+  });
 
-  return { footerByItemId };
+  return { footerByItemId, processingStartByItemId };
+}
+
+function isTurnProcessingOutput(message: ConversationMessage): boolean {
+  if (message.kind === "assistant" || message.kind === "thinking") {
+    return Boolean(normalizeMessageContent(message.content).trim());
+  }
+  return (
+    message.kind === "tool" ||
+    message.kind === "command" ||
+    message.kind === "file_change" ||
+    message.kind === "skill" ||
+    message.kind === "a2ui"
+  );
+}
+
+function timestampIso(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return new Date(value).toISOString();
 }
 
 function collectTurnEndStreamingCursor(
@@ -2322,6 +2475,16 @@ function createPendingAssistantMessage(messages: ConversationMessage[]): Convers
 
 function isStreamingStatus(status: ConversationMessage["status"]): boolean {
   return status === "pending" || status === "running";
+}
+
+function isActiveTurnRuntimeState(runtimeState: ConversationRuntimeState | undefined): boolean {
+  return (
+    runtimeState === "starting" ||
+    runtimeState === "running" ||
+    runtimeState === "waiting_approval" ||
+    runtimeState === "waiting_input" ||
+    runtimeState === "cancelling"
+  );
 }
 
 function prefersReducedMotion(): boolean {

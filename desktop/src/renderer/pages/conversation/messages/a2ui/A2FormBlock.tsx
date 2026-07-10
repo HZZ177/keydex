@@ -18,6 +18,7 @@ import type {
   A2UISubmitHandler,
   ParsedA2UIMessage,
 } from "./A2UIBlock";
+import { formSemanticAdapter } from "./adapters/formSemanticAdapter";
 import styles from "./A2FormBlock.module.css";
 import type { A2UIRenderState } from "./A2UIState";
 import { A2UIStateLine } from "./A2UIStateLine";
@@ -29,6 +30,7 @@ import {
   A2InteractiveMotionRoot,
   A2MotionPresence,
 } from "./A2UIMotion";
+import { useA2UISemanticStream } from "./runtime/useA2UISemanticStream";
 
 export interface A2FormBlockProps {
   message: ConversationMessage;
@@ -71,6 +73,7 @@ interface FormModel {
 }
 
 type FormValues = Record<string, unknown>;
+type FormInitialValue = { name: string; value: unknown };
 type ActionKind = "submit" | "cancel";
 type ActionBadgeStage = "idle" | "loading" | "done";
 type ActionBadgePhase = {
@@ -88,8 +91,18 @@ const ACTION_BADGE_DONE_MS = 420;
 const ACTION_BADGE_LOADING_MS = 120;
 
 export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlockProps) {
-  const rawModel = useMemo(() => formModel(parsed), [parsed]);
-  const model = useStableFormModel(rawModel, parsed, message.id);
+  const semanticStream = useA2UISemanticStream(parsed, formSemanticAdapter, {
+    scopeKey: message.id,
+    maxUnitsPerTick: 2,
+  });
+  const semanticParsed = useMemo(
+    () => ({
+      ...parsed,
+      payload: semanticStream.payload,
+    }),
+    [parsed, semanticStream.payload],
+  );
+  const model = useMemo(() => formModel(semanticParsed), [semanticParsed]);
   const [values, setValues] = useState<FormValues>(() => initialValues(model));
   const [note, setNote] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -108,9 +121,11 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
   const canSubmit = actionable && Boolean(onSubmit) && !localSubmitting && (!correctionMode || Boolean(note.trim()));
   const canCancel = actionable && Boolean(onCancel) && !localSubmitting;
   const showInputPreview = model.status === "waiting_input" || isStreamingPreviewStatus(model.status);
-  const formStreaming = isStreamingPreviewStatus(model.status) && !parsed.historyHydrated;
-  const motionLive = shouldUseInteractiveFormMotion(parsed, model.status);
+  const formStreaming = semanticStream.running || (isStreamingPreviewStatus(model.status) && !parsed.historyHydrated);
+  const motionLive = shouldUseInteractiveFormMotion(parsed, model.status, semanticStream.enabled);
   const fieldInputsDisabled = correctionMode || Boolean(localSubmitting);
+  const fieldInitialValueSignature = formInitialValueSignature(model);
+  const fieldInitialValues = useMemo(() => formInitialValues(model), [fieldInitialValueSignature]);
   const completion = formCompletion(model.fields, values);
   const motionState = formMotionState({
     error,
@@ -142,7 +157,14 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
     setLocalSubmitted(false);
     setCorrectionMode(false);
     setError(null);
-  }, [parsed.interactionId, model.status]);
+  }, [message.id, parsed.interactionId]);
+
+  useEffect(() => {
+    if (correctionMode || model.status === "submitted") {
+      return;
+    }
+    setValues((current) => mergeMissingInitialValues(fieldInitialValues, current));
+  }, [correctionMode, fieldInitialValues, model.status]);
 
   const updateValue = (field: FormField, value: unknown) => {
     setValues((current) => ({ ...current, [field.name]: value }));
@@ -284,7 +306,7 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
       live={motionLive}
       motionScope={interactiveFormMotionScope(message.id, parsed)}
       motionState={motionState}
-      {...parsed.streamPlayer?.rootProps}
+      {...semanticStream.rootProps}
     >
       {!showInputPreview ? (
         <A2InteractiveMotionItem
@@ -1053,34 +1075,6 @@ function formModel(parsed: ParsedA2UIMessage): FormModel {
   };
 }
 
-function useStableFormModel(model: FormModel, parsed: ParsedA2UIMessage, messageId: string): FormModel {
-  const previousRef = useRef<{ key: string; model: FormModel } | null>(null);
-  const key = formStreamStabilityKey(parsed, messageId);
-  const previewing =
-    isStreamingPreviewStatus(model.status) ||
-    Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
-  const previous = previousRef.current;
-
-  if (!previewing) {
-    previousRef.current = { key, model };
-    return model;
-  }
-
-  if (previous?.key === key && previous.model.fields.length > model.fields.length) {
-    return {
-      ...model,
-      fields: previous.model.fields,
-    };
-  }
-
-  previousRef.current = { key, model };
-  return model;
-}
-
-function formStreamStabilityKey(parsed: ParsedA2UIMessage, messageId: string): string {
-  return [messageId, parsed.renderKey || "form"].filter(Boolean).join(":");
-}
-
 function formFieldUnitKey(field: FormField): string {
   return `form:field:${field.name}`;
 }
@@ -1152,19 +1146,53 @@ function initialValues(model: FormModel): FormValues {
   }
   const values: FormValues = {};
   for (const field of model.fields) {
-    if (field.defaultValue !== undefined) {
-      values[field.name] = normalizeDefaultFieldValue(field);
-      continue;
-    }
-    if (field.type === "boolean") {
-      values[field.name] = false;
-    } else if (field.type === "multiselect") {
-      values[field.name] = [];
-    } else {
-      values[field.name] = "";
-    }
+    values[field.name] = initialFieldValue(field);
   }
   return values;
+}
+
+function formInitialValues(model: FormModel): FormInitialValue[] {
+  return model.fields.map((field) => ({
+    name: field.name,
+    value: initialFieldValue(field),
+  }));
+}
+
+function formInitialValueSignature(model: FormModel): string {
+  return model.fields
+    .map((field) => [
+      field.name,
+      field.type,
+      stableJsonStringify(field.defaultValue),
+      field.options.map((option) => `${option.value}:${option.disabled ? "1" : "0"}`).join(","),
+    ].join(":"))
+    .join("\u0000");
+}
+
+function mergeMissingInitialValues(initialValues: FormInitialValue[], current: FormValues): FormValues {
+  let changed = false;
+  const next = { ...current };
+  for (const entry of initialValues) {
+    if (Object.prototype.hasOwnProperty.call(next, entry.name)) {
+      continue;
+    }
+    next[entry.name] = entry.value;
+    changed = true;
+  }
+  return changed ? next : current;
+}
+
+function initialFieldValue(field: FormField): unknown {
+  if (field.defaultValue !== undefined) {
+    return normalizeDefaultFieldValue(field);
+  }
+  if (field.type === "boolean") {
+    return false;
+  }
+  if (field.type === "multiselect") {
+    return [];
+  }
+  return "";
 }
 
 function emptyFormValues(fields: FormField[]): FormValues {
@@ -1283,6 +1311,14 @@ function optionLabel(field: FormField, value: string): string {
   return field.options.find((option) => option.value === value)?.label ?? value;
 }
 
+function stableJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function normalizeStatus(value: unknown): string {
   const status = scalarText(value).toLowerCase();
   if (status === "waiting_user_input") {
@@ -1298,11 +1334,11 @@ function isStreamingPreviewStatus(status: string): boolean {
   return status === "started" || status === "streaming" || status === "finished";
 }
 
-function shouldUseInteractiveFormMotion(parsed: ParsedA2UIMessage, status: string): boolean {
+function shouldUseInteractiveFormMotion(parsed: ParsedA2UIMessage, status: string, semanticStreamEnabled: boolean): boolean {
   if (parsed.historyHydrated) {
     return false;
   }
-  return Boolean(parsed.streamPlayer?.enabled) ||
+  return semanticStreamEnabled ||
     status === "waiting_input" ||
     status === "submitted" ||
     status === "cancelled" ||

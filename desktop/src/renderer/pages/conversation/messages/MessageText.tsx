@@ -864,6 +864,58 @@ function numericMetadataValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+export function ProcessingDuration({
+  durationMs,
+  startedAt,
+  live = false,
+}: {
+  durationMs?: number | null;
+  startedAt?: string;
+  live?: boolean;
+}) {
+  const frozenDurationMs = nonNegativeDuration(durationMs);
+  const startedAtMs = timestampMs(startedAt);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!live || frozenDurationMs !== null || startedAtMs === null) {
+      return undefined;
+    }
+    setNowMs(Date.now());
+    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [frozenDurationMs, live, startedAtMs]);
+
+  const elapsedMs =
+    frozenDurationMs ?? (live && startedAtMs !== null ? Math.max(0, nowMs - startedAtMs) : null);
+  if (elapsedMs === null) {
+    return null;
+  }
+  return (
+    <span
+      className={styles.processingDuration}
+      data-live={live ? "true" : "false"}
+      data-testid="turn-processing-time"
+    >
+      已处理 {formatProcessingDuration(elapsedMs)}
+    </span>
+  );
+}
+
+export function formatProcessingDuration(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h${padDurationUnit(minutes)}m${padDurationUnit(seconds)}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m${padDurationUnit(seconds)}s`;
+  }
+  return `${seconds}s`;
+}
+
 export function MessageActionFooter({
   message,
   placement = "inline",
@@ -877,6 +929,7 @@ export function MessageActionFooter({
 }) {
   const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
   const time = formatMessageTime(message.updatedAt || message.createdAt);
+  const turnDurationMs = turnDurationFromPayload(message.payload);
   const hasPersistedEvent = typeof message.payload.messageEventId === "string" && message.status !== "running";
   const canFork = hasPersistedEvent && message.kind === "assistant";
   const canReverse = hasPersistedEvent && message.kind === "user";
@@ -890,14 +943,8 @@ export function MessageActionFooter({
     }
   };
 
-  return (
-    <footer
-      className={styles.actions}
-      data-copy-state={copyState}
-      data-message-kind={message.kind}
-      data-placement={placement}
-      onPointerLeave={resetCopyFeedback}
-    >
+  const footerDetails = (
+    <>
       <button
         className={styles.actionButton}
         type="button"
@@ -933,8 +980,49 @@ export function MessageActionFooter({
         </button>
       ) : null}
       {time ? <time dateTime={message.updatedAt || message.createdAt}>{time}</time> : null}
+    </>
+  );
+
+  return (
+    <footer
+      className={styles.actions}
+      data-copy-state={copyState}
+      data-message-kind={message.kind}
+      data-placement={placement}
+      onPointerLeave={resetCopyFeedback}
+    >
+      {placement === "turn" ? (
+        <>
+          <ProcessingDuration durationMs={turnDurationMs} />
+          <span className={styles.turnFooterDetails} data-turn-footer-details="true">
+            {footerDetails}
+          </span>
+        </>
+      ) : (
+        footerDetails
+      )}
     </footer>
   );
+}
+
+function turnDurationFromPayload(payload: Record<string, unknown>): number | null {
+  return nonNegativeDuration(payload.turnDurationMs ?? payload.turn_duration_ms);
+}
+
+function nonNegativeDuration(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function timestampMs(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function padDurationUnit(value: number): string {
+  return value.toString().padStart(2, "0");
 }
 
 function contextItemsFromPayload(payload: Record<string, unknown>): AgentContextItem[] {

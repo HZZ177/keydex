@@ -1648,6 +1648,61 @@ describe("FilePreview", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Markdown 片段" })).not.toBeNull();
   });
 
+  it("reuses an open file preview and only updates its line reveal", async () => {
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const content = "# Guide\n\nFirst target\n\nSecond target";
+    const readFile = vi.fn().mockResolvedValue({
+      path: "guide.md",
+      content,
+      encoding: "utf-8",
+    });
+    const runtime = fakeRuntime({ readFile });
+
+    try {
+      render(
+        <PreviewProvider>
+          <ReusedFilePreviewHarness runtime={runtime} />
+        </PreviewProvider>,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Open line 3" }));
+
+      const previewRoot = await screen.findByTestId("reused-file-preview");
+      await waitFor(() => {
+        expect(document.querySelector('[data-transient-reveal="true"]')?.textContent).toBe("First target");
+      });
+      const firstOpenedAt = Number(screen.getByTestId("reused-preview-opened-at").textContent);
+      expect(readFile).toHaveBeenCalledTimes(1);
+
+      scrollIntoView.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Open line 5" }));
+
+      await waitFor(() => {
+        expect(document.querySelector('[data-transient-reveal="true"]')?.textContent).toBe("Second target");
+      });
+      const secondOpenedAt = Number(screen.getByTestId("reused-preview-opened-at").textContent);
+      expect(secondOpenedAt).toBeGreaterThan(firstOpenedAt);
+      expect(screen.getByTestId("reused-file-preview")).toBe(previewRoot);
+      expect(readFile).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "center",
+        inline: "nearest",
+      });
+    } finally {
+      if (scrollDescriptor) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", scrollDescriptor);
+      } else {
+        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
+      }
+    }
+  });
+
   it("keeps preview requests scoped to the active host session", () => {
     render(
       <PreviewProvider>
@@ -3300,6 +3355,36 @@ function PreviewTabsHarness() {
         打开 Markdown
       </button>
       {preview.request ? <FilePreview request={preview.request} /> : null}
+    </>
+  );
+}
+
+function ReusedFilePreviewHarness({ runtime }: { runtime: RuntimeBridge }) {
+  const preview = usePreview();
+  const entry = preview.activeEntry;
+  const openLine = (line: number) => {
+    preview.openPreview(
+      { type: "file", path: "guide.md" },
+      { runtime, sessionId: "ses-1" },
+      { lineEnd: line, lineStart: line },
+    );
+  };
+
+  return (
+    <>
+      <button onClick={() => openLine(3)} type="button">Open line 3</button>
+      <button onClick={() => openLine(5)} type="button">Open line 5</button>
+      <output data-testid="reused-preview-opened-at">{entry?.openedAt ?? ""}</output>
+      {entry ? (
+        <div data-testid="reused-file-preview">
+          <FilePreview
+            request={entry.request}
+            runtime={runtime}
+            sessionId="ses-1"
+            sourceRevealRequest={entry.revealTarget ? { requestId: entry.openedAt, ...entry.revealTarget } : null}
+          />
+        </div>
+      ) : null}
     </>
   );
 }

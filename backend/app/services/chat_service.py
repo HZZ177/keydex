@@ -1256,6 +1256,8 @@ class ChatService:
                     "code": error_code,
                     "details": error_details,
                 }
+                if aggregator.first_token_at_ms is not None:
+                    failed_payload["first_token_at_ms"] = aggregator.first_token_at_ms
                 if thread_task_context:
                     failed_payload["thread_task"] = thread_task_context
                 await dispatcher.emit_event(

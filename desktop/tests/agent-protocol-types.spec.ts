@@ -48,6 +48,7 @@ describe("agent protocol types", () => {
   it("exposes action constants aligned with the backend event contract", () => {
     expect(AGENT_CHAT_ACTIONS).toContain("session_created");
     expect(AGENT_CHAT_ACTIONS).toContain("stream");
+    expect(AGENT_CHAT_ACTIONS).toContain("llm_first_token");
     expect(AGENT_CHAT_ACTIONS).toContain("a2ui_stream_start");
     expect(AGENT_CHAT_ACTIONS).toContain("a2ui_stream_chunk");
     expect(AGENT_CHAT_ACTIONS).toContain("a2ui_stream_finish");

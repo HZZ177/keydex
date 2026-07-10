@@ -161,7 +161,7 @@ export function PreviewProvider({ children }: PropsWithChildren) {
     revealTarget: PreviewFileRevealTarget | null = null,
   ) => {
     setState((current) => {
-      return openPreviewInStore(current, request, renderContext, "append", revealTarget);
+      return openPreviewInStore(current, request, renderContext, revealTarget);
     });
   }, []);
 
@@ -229,7 +229,7 @@ export function PreviewProvider({ children }: PropsWithChildren) {
         };
       }
 
-      return openPreviewInStore(current, normalizedRequest, context, "preserve-order", revealTarget);
+      return openPreviewInStore(current, normalizedRequest, context, revealTarget);
     });
   }, []);
 
@@ -399,13 +399,10 @@ export function PreviewProvider({ children }: PropsWithChildren) {
   return <PreviewContext.Provider value={value}>{children}</PreviewContext.Provider>;
 }
 
-type PreviewEntryPlacement = "append" | "preserve-order";
-
 function openPreviewInStore(
   current: PreviewStoreState,
   request: PreviewRequest | string,
   renderContext: PreviewRenderContext | null | undefined,
-  placement: PreviewEntryPlacement,
   revealTarget: PreviewFileRevealTarget | null = null,
 ): PreviewStoreState {
   const normalizedRequest = normalizePreviewRequest(request);
@@ -414,15 +411,21 @@ function openPreviewInStore(
   const entry = createPreviewEntry(normalizedRequest, context, scopeKey, revealTarget);
   const existingEntry = current.entries.find((item) => item.id === entry.id);
 
-  if (existingEntry && placement === "preserve-order") {
+  if (existingEntry) {
+    const reusedEntry: PreviewEntry = {
+      ...entry,
+      openedAt: Math.max(entry.openedAt, existingEntry.openedAt + 1),
+      request: existingEntry.request,
+    };
     return {
       ...current,
-      entries: current.entries.map((item) => (item.id === entry.id ? entry : item)),
+      hostContext: context ?? current.hostContext,
+      entries: current.entries.map((item) => (item.id === entry.id ? reusedEntry : item)),
       scopes: {
         ...current.scopes,
         [scopeKey]: {
           open: true,
-          activeEntryId: entry.id,
+          activeEntryId: reusedEntry.id,
         },
       },
     };

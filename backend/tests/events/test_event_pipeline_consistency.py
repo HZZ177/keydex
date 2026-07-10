@@ -548,3 +548,4 @@ async def test_persistence_keeps_reasoning_stream_between_assistant_batches(tmp_
         "继续回答。",
     ]
     assert messages[1]["timestamp"] == base_time + 2
+    assert messages[1]["reasoningDurationMs"] == 1

@@ -1,14 +1,37 @@
-import type { A2UIDebugBlockState, A2UIObject, AgentChatMessage } from "@/types/protocol";
+import type {
+  A2UIDebugBlockState,
+  A2UIDebugRawEvent,
+  A2UIObject,
+  AgentChatMessage,
+} from "@/types/protocol";
 
 import {
   applyA2UIEventToDebug,
   buildA2UIDebugKey,
   createA2UIDebugState,
   extractA2UIEventSnapshot,
+  mergeA2UIDebugSnapshot,
   normalizeA2UIAction,
+  parseA2UIArgsBuffer,
   type A2UIEventSnapshot,
   type A2UIEventAction,
 } from "./protocol";
+
+interface A2UIStreamIngressRuntime {
+  argsBuffer: string;
+  argsTextLength: number;
+  chunkCount: number;
+  lastPublishedAt: number;
+  lastPublishedLength: number;
+  latestChunk: string;
+  rawEvents: A2UIDebugRawEvent[];
+  seenEventKeys: Set<string>;
+}
+
+const A2UI_STREAM_PUBLISH_INTERVAL_MS = 50;
+const A2UI_STREAM_PUBLISH_MIN_CHARS = 48;
+const A2UI_STREAM_RUNTIME_LIMIT = 512;
+const a2uiStreamIngressRuntimes = new Map<string, A2UIStreamIngressRuntime>();
 
 export interface A2UIMessageMergeResult {
   action: A2UIEventAction | null;
@@ -39,6 +62,9 @@ export class A2UIStreamCache {
   }
 
   reset(): void {
+    for (const message of this.messages) {
+      releaseA2UIStreamIngressRuntime(message.sessionId, message.a2uiDebug?.id);
+    }
     this.messages = [];
   }
 }
@@ -60,7 +86,34 @@ export function mergeA2UIEventIntoMessages(
   const directIndex = messages.findIndex((message) => isA2UIMessageMatch(message, key, snapshot));
   const upgradeIndex = directIndex >= 0 ? -1 : findUpgradeableWeakA2UIMessageIndex(messages, snapshot);
   const existingIndex = directIndex >= 0 ? directIndex : upgradeIndex;
-  const nextMessages = messages.map(cloneMessage);
+  const existingMessage = existingIndex >= 0 ? messages[existingIndex] : null;
+  const previousDebugId = existingMessage?.a2uiDebug?.id || key;
+  const runtimeKey = a2uiStreamIngressRuntimeKey(options.sessionId, previousDebugId);
+  if (normalized === "a2ui_stream_start") {
+    a2uiStreamIngressRuntimes.delete(runtimeKey);
+  }
+  let ingressRuntime: A2UIStreamIngressRuntime | null = null;
+  if (normalized === "a2ui_stream_chunk") {
+    ingressRuntime = getOrCreateA2UIStreamIngressRuntime(runtimeKey, existingMessage?.a2uiDebug, now);
+    const accepted = ingestA2UIStreamChunk(
+      ingressRuntime,
+      normalized,
+      snapshot,
+      data,
+      options.eventId,
+      now,
+    );
+    if (!accepted || !shouldPublishA2UIStreamIngress(ingressRuntime, now)) {
+      return {
+        action: normalized,
+        created: false,
+        debug: null,
+        message: null,
+        messages,
+      };
+    }
+  }
+  const nextMessages = [...messages];
   const index = existingIndex >= 0 ? existingIndex : nextMessages.length;
   const created = existingIndex < 0;
   const message = created
@@ -71,7 +124,7 @@ export function mergeA2UIEventIntoMessages(
         sessionId: options.sessionId ?? "",
         snapshot,
       })
-    : nextMessages[index];
+    : cloneMessage(messages[index]);
   const hadWeakIdentity = !hasStrongA2UIMessageIdentity(message);
 
   if (!message.a2uiDebug) {
@@ -79,7 +132,16 @@ export function mergeA2UIEventIntoMessages(
   } else {
     message.a2uiDebug = cloneDebug(message.a2uiDebug);
   }
-  if (!created && isDuplicateA2UIEvent(message.a2uiDebug, normalized, snapshot)) {
+  const pendingIngress = ingressRuntime ?? a2uiStreamIngressRuntimes.get(runtimeKey) ?? null;
+  if (pendingIngress && normalized !== "a2ui_stream_chunk" && normalized !== "a2ui_stream_start") {
+    applyA2UIIngressBufferSnapshot(pendingIngress, snapshot);
+    hydrateA2UIDebugFromIngress(message.a2uiDebug, pendingIngress, false);
+  }
+  if (
+    normalized !== "a2ui_stream_chunk" &&
+    !created &&
+    isDuplicateA2UIEvent(message.a2uiDebug, normalized, snapshot)
+  ) {
     return {
       action: normalized,
       created: false,
@@ -89,10 +151,16 @@ export function mergeA2UIEventIntoMessages(
     };
   }
 
-  applyA2UIEventToDebug(message.a2uiDebug, normalized, data, {
-    eventId: options.eventId,
-    now,
-  });
+  if (normalized === "a2ui_stream_chunk" && ingressRuntime) {
+    mergeA2UIDebugSnapshot(message.a2uiDebug, snapshot, now);
+    hydrateA2UIDebugFromIngress(message.a2uiDebug, ingressRuntime, false);
+    markA2UIStreamIngressPublished(ingressRuntime, now);
+  } else {
+    applyA2UIEventToDebug(message.a2uiDebug, normalized, data, {
+      eventId: options.eventId,
+      now,
+    });
+  }
   if (hadWeakIdentity && hasStrongA2UISnapshotIdentity(snapshot)) {
     message.a2uiDebug.id = key;
   }
@@ -100,6 +168,20 @@ export function mergeA2UIEventIntoMessages(
   message.timestamp = now;
   if (isA2UIObject(message.a2uiDebug.a2ui)) {
     message.a2ui = message.a2uiDebug.a2ui;
+  }
+  if (normalized === "a2ui_stream_start") {
+    setA2UIStreamIngressRuntime(
+      a2uiStreamIngressRuntimeKey(options.sessionId, message.a2uiDebug.id),
+      createA2UIStreamIngressRuntime(message.a2uiDebug, now),
+    );
+  } else if (normalized === "a2ui_stream_chunk" && ingressRuntime) {
+    const nextRuntimeKey = a2uiStreamIngressRuntimeKey(options.sessionId, message.a2uiDebug.id);
+    if (nextRuntimeKey !== runtimeKey) {
+      a2uiStreamIngressRuntimes.delete(runtimeKey);
+    }
+    setA2UIStreamIngressRuntime(nextRuntimeKey, ingressRuntime);
+  } else if (normalized === "a2ui_stream_finish" || normalized === "a2ui_created") {
+    a2uiStreamIngressRuntimes.delete(runtimeKey);
   }
 
   if (created) {
@@ -309,16 +391,160 @@ function cloneMessage(message: AgentChatMessage): AgentChatMessage {
 function cloneDebug(debug: A2UIDebugBlockState): A2UIDebugBlockState {
   return {
     ...debug,
-    rawEvents: debug.rawEvents.map((event) => ({
-      ...event,
-      data: { ...event.data },
-    })),
+    rawEvents: [...debug.rawEvents],
     a2ui: isA2UIObject(debug.a2ui) ? { ...debug.a2ui } : debug.a2ui,
     createdFrame: debug.createdFrame ? { ...debug.createdFrame } : undefined,
     inputSchema: debug.inputSchema ? { ...debug.inputSchema } : undefined,
     interaction: debug.interaction ? { ...debug.interaction } : undefined,
     submitSchema: debug.submitSchema ? { ...debug.submitSchema } : undefined,
   };
+}
+
+function a2uiStreamIngressRuntimeKey(sessionId: string | undefined, debugId: string): string {
+  return `${sessionId ?? ""}|${debugId}`;
+}
+
+function getOrCreateA2UIStreamIngressRuntime(
+  runtimeKey: string,
+  debug: A2UIDebugBlockState | undefined,
+  now: number,
+): A2UIStreamIngressRuntime {
+  const existing = a2uiStreamIngressRuntimes.get(runtimeKey);
+  if (existing) {
+    return existing;
+  }
+  const created = createA2UIStreamIngressRuntime(debug, now);
+  setA2UIStreamIngressRuntime(runtimeKey, created);
+  return created;
+}
+
+function createA2UIStreamIngressRuntime(
+  debug: A2UIDebugBlockState | undefined,
+  now: number,
+): A2UIStreamIngressRuntime {
+  const rawEvents = debug?.rawEvents ? [...debug.rawEvents] : [];
+  return {
+    argsBuffer: debug?.argsBuffer ?? "",
+    argsTextLength: debug?.argsTextLength ?? debug?.argsBuffer.length ?? 0,
+    chunkCount: debug?.chunkCount ?? 0,
+    lastPublishedAt: debug?.updatedAt ?? now,
+    lastPublishedLength: debug?.argsBuffer.length ?? 0,
+    latestChunk: debug?.latestChunk ?? "",
+    rawEvents,
+    seenEventKeys: new Set(
+      rawEvents
+        .map((event) => {
+          const eventAction = normalizeA2UIAction(event.action);
+          return eventAction
+            ? buildA2UIEventSemanticKey(eventAction, extractA2UIEventSnapshot(event.data))
+            : "";
+        })
+        .filter(Boolean),
+    ),
+  };
+}
+
+function setA2UIStreamIngressRuntime(runtimeKey: string, runtime: A2UIStreamIngressRuntime): void {
+  a2uiStreamIngressRuntimes.delete(runtimeKey);
+  a2uiStreamIngressRuntimes.set(runtimeKey, runtime);
+  while (a2uiStreamIngressRuntimes.size > A2UI_STREAM_RUNTIME_LIMIT) {
+    const oldestKey = a2uiStreamIngressRuntimes.keys().next().value as string | undefined;
+    if (!oldestKey) {
+      return;
+    }
+    a2uiStreamIngressRuntimes.delete(oldestKey);
+  }
+}
+
+function releaseA2UIStreamIngressRuntime(sessionId: string | undefined, debugId: string | undefined): void {
+  if (!debugId) {
+    return;
+  }
+  a2uiStreamIngressRuntimes.delete(a2uiStreamIngressRuntimeKey(sessionId, debugId));
+}
+
+function ingestA2UIStreamChunk(
+  runtime: A2UIStreamIngressRuntime,
+  action: A2UIEventAction,
+  snapshot: A2UIEventSnapshot,
+  data: unknown,
+  eventId: string | undefined,
+  now: number,
+): boolean {
+  const semanticKey = buildA2UIEventSemanticKey(action, snapshot) || eventId || "";
+  if (semanticKey && runtime.seenEventKeys.has(semanticKey)) {
+    return false;
+  }
+  if (semanticKey) {
+    runtime.seenEventKeys.add(semanticKey);
+  }
+  const eventData = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  runtime.rawEvents.push({
+    id: eventId || `a2ui-event:${now}:${runtime.rawEvents.length + 1}`,
+    action,
+    timestamp: now,
+    data: eventData,
+  });
+  const previousBuffer = runtime.argsBuffer;
+  applyA2UIIngressBufferSnapshot(runtime, snapshot);
+  runtime.latestChunk = snapshot.argsDelta ?? (
+    runtime.argsBuffer.length > previousBuffer.length
+      ? runtime.argsBuffer.slice(previousBuffer.length)
+      : ""
+  );
+  runtime.chunkCount += 1;
+  return true;
+}
+
+function applyA2UIIngressBufferSnapshot(
+  runtime: A2UIStreamIngressRuntime,
+  snapshot: A2UIEventSnapshot,
+): void {
+  if (snapshot.argsText !== undefined) {
+    if (snapshot.argsText.length >= runtime.argsBuffer.length) {
+      runtime.argsBuffer = snapshot.argsText;
+    }
+  } else if (snapshot.argsDelta !== undefined) {
+    runtime.argsBuffer += snapshot.argsDelta;
+  }
+  runtime.argsTextLength = Math.max(
+    runtime.argsTextLength,
+    snapshot.argsTextLength ?? runtime.argsBuffer.length,
+  );
+}
+
+function shouldPublishA2UIStreamIngress(runtime: A2UIStreamIngressRuntime, now: number): boolean {
+  if (runtime.chunkCount <= 1) {
+    return true;
+  }
+  return (
+    runtime.argsBuffer.length - runtime.lastPublishedLength >= A2UI_STREAM_PUBLISH_MIN_CHARS ||
+    Math.max(0, now - runtime.lastPublishedAt) >= A2UI_STREAM_PUBLISH_INTERVAL_MS
+  );
+}
+
+function markA2UIStreamIngressPublished(runtime: A2UIStreamIngressRuntime, now: number): void {
+  runtime.lastPublishedAt = now;
+  runtime.lastPublishedLength = runtime.argsBuffer.length;
+}
+
+function hydrateA2UIDebugFromIngress(
+  debug: A2UIDebugBlockState,
+  runtime: A2UIStreamIngressRuntime,
+  final: boolean,
+): void {
+  const parsed = parseA2UIArgsBuffer(runtime.argsBuffer, final);
+  debug.status = final ? "finished" : "streaming";
+  debug.argsBuffer = runtime.argsBuffer;
+  debug.argsTextLength = runtime.argsTextLength;
+  debug.chunkCount = runtime.chunkCount;
+  debug.latestChunk = runtime.latestChunk;
+  debug.jsonParseStatus = parsed.jsonParseStatus;
+  debug.parsedArgs = parsed.parsedArgs;
+  debug.parseError = parsed.parseError;
+  debug.rawEvents = [...runtime.rawEvents];
 }
 
 function isA2UIObject(value: unknown): value is A2UIObject {

@@ -1168,6 +1168,98 @@ describe("MessageList", () => {
     expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(1);
   });
 
+  it("shows a live turn duration below the active assistant turn", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-10T08:01:05.000Z"));
+    const runningAssistant = {
+      ...at(message("m2", "assistant", "正在处理"), "2026-07-10T08:00:00.000Z"),
+      status: "running" as const,
+    };
+    const { unmount } = render(
+      <MessageList
+        messages={[message("m1", "user", "开始"), runningAssistant]}
+        isProcessing
+      />,
+    );
+
+    try {
+      const duration = screen.getByTestId("turn-processing-time");
+      expect(duration.textContent).toBe("已处理 1m05s");
+      expect(duration.getAttribute("data-live")).toBe("true");
+      expect(duration.closest('[role="listitem"]')?.textContent).toContain("正在处理");
+
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(duration.textContent).toBe("已处理 1m06s");
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts the live turn duration when the first agent output is a tool call", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-10T08:00:12.000Z"));
+    const runningTool = {
+      ...at(toolMessage("t1", "read_file", { path: "README.md" }), "2026-07-10T08:00:05.000Z"),
+      status: "running" as const,
+    };
+    const { unmount } = render(
+      <MessageList
+        messages={[message("m1", "user", "读取文件"), runningTool]}
+        isProcessing
+        turnFirstTokenAtMs={new Date("2026-07-10T08:00:00.000Z").getTime()}
+      />,
+    );
+
+    try {
+      expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 12s");
+      expect(screen.getByTestId("turn-processing-time").closest('[role="listitem"]')?.textContent).toContain(
+        "读取文件",
+      );
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the frozen turn duration first and separates the hover-only footer details", () => {
+    const assistant = {
+      ...message("m2", "assistant", "处理完成"),
+      payload: { turnDurationMs: 3_723_000 },
+    };
+    render(<MessageList messages={[message("m1", "user", "开始"), assistant]} />);
+
+    const duration = screen.getByTestId("turn-processing-time");
+    const footer = duration.closest('footer[data-placement="turn"]');
+    const footerDetails = footer?.querySelector('[data-turn-footer-details="true"]');
+    expect(duration.textContent).toBe("已处理 1h02m03s");
+    expect(duration.getAttribute("data-live")).toBe("false");
+    expect(footer).not.toBeNull();
+    expect(footer?.firstElementChild).toBe(duration);
+    expect(footerDetails).not.toBeNull();
+    expect(footerDetails?.contains(duration)).toBe(false);
+    expect(within(footerDetails as HTMLElement).getByRole("button", { name: "复制消息" })).not.toBeNull();
+    expect(footerDetails?.querySelector("time")).not.toBeNull();
+  });
+
+  it("keeps the duration live until a waiting turn reaches a terminal state", () => {
+    const startedAt = new Date(Date.now() - 5_000).toISOString();
+    render(
+      <MessageList
+        messages={[
+          message("m1", "user", "开始"),
+          at(message("m2", "assistant", "请确认后继续"), startedAt),
+        ]}
+        runtimeState="waiting_approval"
+      />,
+    );
+
+    expect(screen.getByTestId("turn-processing-time").getAttribute("data-live")).toBe("true");
+    expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(1);
+  });
+
   it("hides all assistant copy rows in the active turn until completion", () => {
     render(
       <MessageList
@@ -1729,6 +1821,27 @@ describe("MessageList", () => {
     });
   });
 
+  it("lets upward wheel intent interrupt static auto-follow before the scroll event", async () => {
+    const running = { ...message("m1", "assistant", "正在输出"), status: "running" as const };
+    const { rerender } = render(<MessageList messages={[running]} isProcessing />);
+    const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+    mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
+
+    fireEvent.wheel(scroller, { deltaY: -120 });
+    mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 800 });
+    rerender(
+      <MessageList
+        messages={[{ ...running, content: "正在输出更多内容" }]}
+        isProcessing
+      />,
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 40));
+    });
+    expect(scroller.scrollTop).toBe(800);
+  });
+
   it("uses the outer scroll container when the message list itself is not scrollable", async () => {
     const first = message("m1", "assistant", "第一段");
     render(
@@ -1834,6 +1947,52 @@ describe("MessageList", () => {
     });
 
     expect(scroller.scrollTop).toBe(800);
+  });
+
+  it("lets upward wheel intent interrupt virtualized auto-follow before the scroll event", () => {
+    const { result } = renderHook(() => useVirtuosoAutoScroll(3));
+    const scroller = document.createElement("div");
+    mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
+
+    act(() => {
+      result.current.setScrollerRef(scroller);
+    });
+    act(() => {
+      scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+    });
+    mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 800 });
+
+    act(() => {
+      result.current.handleTotalListHeightChanged();
+    });
+
+    expect(result.current.userPinnedScroll).toBe(true);
+    expect(scroller.scrollTop).toBe(800);
+  });
+
+  it("keeps outer auto-follow active while a nested scroll area consumes the wheel", () => {
+    const { result } = renderHook(() => useVirtuosoAutoScroll(3));
+    const scroller = document.createElement("div");
+    const nestedScroller = document.createElement("div");
+    nestedScroller.style.overflowY = "auto";
+    scroller.append(nestedScroller);
+    mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
+    mockScrollMetrics(nestedScroller, { scrollHeight: 500, clientHeight: 100, scrollTop: 200 });
+
+    act(() => {
+      result.current.setScrollerRef(scroller);
+    });
+    act(() => {
+      nestedScroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+    });
+    mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 800 });
+
+    act(() => {
+      result.current.handleTotalListHeightChanged();
+    });
+
+    expect(result.current.userPinnedScroll).toBe(false);
+    expect(scroller.scrollTop).toBe(1000);
   });
 
   it("keeps virtualized auto-follow after ordinary content pointer down", () => {

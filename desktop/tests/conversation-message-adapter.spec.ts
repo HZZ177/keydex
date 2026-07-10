@@ -108,6 +108,42 @@ describe("conversation message adapter", () => {
     });
   });
 
+  it("preserves completed reasoning duration for rendering and history recovery", () => {
+    const message = agentMessage({
+      role: "reasoning",
+      content: "分析完成",
+      timestamp: 1_700_000_000_000,
+      reasoningDurationMs: 2400,
+    });
+
+    expect(agentMessageToConversationMessage(message, 0)).toMatchObject({
+      kind: "thinking",
+      createdAt: "2023-11-14T22:13:20.000Z",
+      updatedAt: "2023-11-14T22:13:22.400Z",
+      payload: {
+        durationMs: 2400,
+        duration_ms: 2400,
+      },
+    });
+  });
+
+  it("preserves completed turn duration for the assistant footer", () => {
+    const message = agentMessage({
+      role: "assistant",
+      content: "处理完成",
+      timestamp: 1_700_000_000_000,
+      turnDurationMs: 3_723_000,
+    });
+
+    expect(agentMessageToConversationMessage(message, 0)).toMatchObject({
+      kind: "assistant",
+      payload: {
+        turnDurationMs: 3_723_000,
+        turn_duration_ms: 3_723_000,
+      },
+    });
+  });
+
   it("preserves cancelled command tool payloads for replay", () => {
     const payload = payloadFromAgentMessage(
       agentMessage({

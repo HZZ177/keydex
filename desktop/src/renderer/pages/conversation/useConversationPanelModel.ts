@@ -37,6 +37,7 @@ import type {
   AgentErrorData,
   AgentMiddlewareProgressData,
   AgentPendingInput,
+  AgentChatMessage,
   AgentContextItem,
   AgentFileAttachment,
   AgentSession,
@@ -107,6 +108,7 @@ export function useConversationPanelModel({
   const toolDetailCacheRef = useRef(
     new Map<string, Promise<Partial<ConversationMessage>> | Partial<ConversationMessage>>(),
   );
+  const a2uiMessageCacheRef = useRef(new Map<string, A2UIConversationMessageCacheEntry>());
   const {
     openFilePanel,
     openPreview: openPreviewRequest,
@@ -121,10 +123,7 @@ export function useConversationPanelModel({
 
   const session = controller.session;
   const messages = useMemo(
-    () =>
-      controller.agentMessages
-        .filter((message) => message.role !== "approval" && shouldDisplayAgentTranscriptMessage(message))
-        .map(agentMessageToConversationMessage),
+    () => adaptConversationMessages(controller.agentMessages, a2uiMessageCacheRef.current),
     [controller.agentMessages],
   );
   const messageWorkspaceScope = useMemo(() => ({ sessionId }), [sessionId]);
@@ -1104,6 +1103,75 @@ function reviewFilesFromPreview(file: FileChangePreview): FileReviewChange[] {
       ? normalizeFileReviewChange({ ...change, diff: file.diff })
       : change,
   );
+}
+
+interface A2UIConversationMessageCacheEntry {
+  a2ui: AgentChatMessage["a2ui"];
+  debug: AgentChatMessage["a2uiDebug"];
+  index: number;
+  message: ConversationMessage;
+  revision: string;
+}
+
+function adaptConversationMessages(
+  agentMessages: AgentChatMessage[],
+  a2uiCache: Map<string, A2UIConversationMessageCacheEntry>,
+): ConversationMessage[] {
+  const activeA2UIIds = new Set<string>();
+  const result = agentMessages
+    .filter((message) => message.role !== "approval" && shouldDisplayAgentTranscriptMessage(message))
+    .map((message, index) => {
+      if (!isA2UIAgentMessage(message)) {
+        return agentMessageToConversationMessage(message, index);
+      }
+      activeA2UIIds.add(message.id);
+      const revision = a2uiAgentMessageRevision(message);
+      const cached = a2uiCache.get(message.id);
+      if (
+        cached &&
+        cached.a2ui === message.a2ui &&
+        cached.debug === message.a2uiDebug &&
+        cached.index === index &&
+        cached.revision === revision
+      ) {
+        return cached.message;
+      }
+      const converted = agentMessageToConversationMessage(message, index);
+      a2uiCache.set(message.id, {
+        a2ui: message.a2ui,
+        debug: message.a2uiDebug,
+        index,
+        message: converted,
+        revision,
+      });
+      return converted;
+    });
+  for (const messageId of a2uiCache.keys()) {
+    if (!activeA2UIIds.has(messageId)) {
+      a2uiCache.delete(messageId);
+    }
+  }
+  return result;
+}
+
+function isA2UIAgentMessage(message: AgentChatMessage): boolean {
+  return message.role === "a2ui" || message.contentType === "a2ui" || message.content_type === "a2ui";
+}
+
+function a2uiAgentMessageRevision(message: AgentChatMessage): string {
+  return [
+    message.id,
+    message.sessionId,
+    message.role,
+    message.status ?? "",
+    message.streaming ? "streaming" : "settled",
+    message.timestamp,
+    message.contentType ?? "",
+    message.content_type ?? "",
+    message.hydratedFromHistory ? "history" : "live",
+    message.turnIndex ?? "",
+    message.runId ?? "",
+  ].join("|");
 }
 
 function previewMessagesFromFileChangePreview(file: FileChangePreview): ConversationMessage[] {

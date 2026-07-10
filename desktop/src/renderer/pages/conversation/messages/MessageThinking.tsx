@@ -1,5 +1,5 @@
-import { ChevronDown, LoaderCircle, Sparkles, TriangleAlert } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, Sparkles, TriangleAlert } from "lucide-react";
+import { type UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
@@ -18,9 +18,12 @@ export function MessageThinking({ message }: MessageThinkingProps) {
   const defaultExpanded = running;
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [touched, setTouched] = useState(false);
-  const duration = useMemo(() => formatDuration(message), [message]);
+  const durationMs = useThinkingDuration(message, running);
+  const duration = durationMs === null ? "" : `思考了 ${formatDuration(durationMs)}`;
   const title = useMemo(() => titleFromMessage(message, running, failed), [failed, message, running]);
   const content = useMemo(() => normalizeMessageContent(message.content), [message.content]);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const followLatestRef = useRef(true);
   const contentMotion = useDeferredUnmount<HTMLDivElement>(expanded, 180, 220);
 
   useEffect(() => {
@@ -29,9 +32,29 @@ export function MessageThinking({ message }: MessageThinkingProps) {
     }
   }, [defaultExpanded, touched]);
 
+  useLayoutEffect(() => {
+    const viewport = contentRef.current;
+    if (!running || !expanded || !viewport || !followLatestRef.current) {
+      return;
+    }
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [content, expanded, running]);
+
+  const handleContentScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    const viewport = event.currentTarget;
+    const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    followLatestRef.current = distanceToBottom <= 24;
+  }, []);
+
   const toggle = () => {
     setTouched(true);
-    setExpanded((value) => !value);
+    setExpanded((value) => {
+      const next = !value;
+      if (next && running) {
+        followLatestRef.current = true;
+      }
+      return next;
+    });
   };
 
   if (!content.trim() && !running) {
@@ -42,7 +65,7 @@ export function MessageThinking({ message }: MessageThinkingProps) {
     <article className={styles.thinking} data-status={status} data-testid="message-thinking">
       <button className={styles.summary} type="button" aria-expanded={expanded} onClick={toggle}>
         <span className={styles.statusIcon} aria-hidden="true">
-          {running ? <LoaderCircle size={15} /> : failed ? <TriangleAlert size={15} /> : <Sparkles size={15} />}
+          {failed ? <TriangleAlert size={15} /> : <Sparkles size={15} />}
         </span>
         <span className={styles.title}>{title}</span>
         {duration ? <span className={styles.duration}>{duration}</span> : null}
@@ -58,7 +81,9 @@ export function MessageThinking({ message }: MessageThinkingProps) {
           aria-hidden={!expanded}
           data-testid="message-thinking-content"
         >
-          <div className={styles.content}>{content || "等待模型返回思考内容"}</div>
+          <div className={styles.content} ref={contentRef} onScroll={handleContentScroll}>
+            {content || "等待模型返回思考内容"}
+          </div>
         </div>
       ) : null}
     </article>
@@ -105,17 +130,34 @@ function stringPayload(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function formatDuration(message: ConversationMessage): string {
-  const durationMs = durationFromPayload(message.payload);
-  if (durationMs !== null) {
-    return `${formatSeconds(durationMs)} 秒`;
+function useThinkingDuration(message: ConversationMessage, running: boolean): number | null {
+  const persistedDurationMs = durationFromPayload(message.payload);
+  const startMs = timestampMs(message.createdAt);
+  const endMs = timestampMs(message.updatedAt);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!running || persistedDurationMs !== null || startMs === null) {
+      return undefined;
+    }
+    setNowMs(Date.now());
+    const interval = window.setInterval(() => setNowMs(Date.now()), 100);
+    return () => window.clearInterval(interval);
+  }, [message.id, persistedDurationMs, running, startMs]);
+
+  if (persistedDurationMs !== null) {
+    return persistedDurationMs;
   }
-  const start = new Date(message.createdAt).getTime();
-  const end = new Date(message.updatedAt).getTime();
-  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
-    return "";
+  if (startMs === null) {
+    return null;
   }
-  return `${formatSeconds(end - start)} 秒`;
+  if (running) {
+    return Math.max(0, nowMs - startMs);
+  }
+  if (endMs === null || endMs <= startMs) {
+    return null;
+  }
+  return endMs - startMs;
 }
 
 function durationFromPayload(payload: Record<string, unknown>): number | null {
@@ -123,7 +165,15 @@ function durationFromPayload(payload: Record<string, unknown>): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function formatSeconds(ms: number): string {
+function timestampMs(value: string): number | null {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function formatDuration(ms: number): string {
+  if (ms <= 1000) {
+    return `${Math.round(ms)} 毫秒`;
+  }
   const seconds = ms / 1000;
-  return seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1);
+  return `${seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1)} 秒`;
 }

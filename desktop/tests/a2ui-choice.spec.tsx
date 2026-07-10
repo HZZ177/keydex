@@ -809,6 +809,69 @@ describe("A2ChoiceBlock", () => {
     expect(screen.getByText("正在生成选项中，请稍后...")).not.toBeNull();
   });
 
+  it("drains missing final choice options without replacing already streamed cards", () => {
+    vi.useFakeTimers();
+    try {
+      const finalMessage = withStreamedDebug(
+        choiceMessage({
+          payload: {
+            options: [
+              { label: "方案 A", value: "a", description: "先出现的选项" },
+              { label: "方案 B", value: "b", description: "最终补齐的选项" },
+              { label: "方案 C", value: "c", description: "最终补齐的选项" },
+            ],
+          },
+        }),
+      );
+      const { rerender } = render(
+        <A2UIBlock
+          message={choiceStreamMessage({
+            payload: {
+              title: "请选择",
+              options: [{ label: "方案 A", value: "a", description: "先出现的选项" }],
+            },
+          })}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText(/方案 A/)).not.toBeNull();
+      expect(screen.queryByText(/方案 B/)).toBeNull();
+
+      rerender(
+        <A2UIBlock
+          message={{
+            ...finalMessage,
+            id: "agent:a2ui-choice-streaming",
+            itemId: "a2ui-choice-streaming",
+          }}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText(/方案 A/)).not.toBeNull();
+      expect(screen.queryByText(/方案 B/)).toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(900);
+      });
+
+      expect(screen.getByText(/方案 B/)).not.toBeNull();
+      expect(screen.queryByText(/方案 C/)).toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(900);
+      });
+
+      expect(screen.getByText(/方案 C/)).not.toBeNull();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the latest streamed choice card centered while options grow", async () => {
     const { rerender } = render(
       <A2UIBlock

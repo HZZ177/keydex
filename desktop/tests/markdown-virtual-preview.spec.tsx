@@ -20,32 +20,37 @@ vi.mock("react-virtuoso", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
     Virtuoso: React.forwardRef(function VirtuosoMock(props: {
-    data: unknown[];
-    itemContent: (index: number, item: unknown) => unknown;
-    rangeChanged?: (range: { startIndex: number; endIndex: number }) => void;
-  }, ref) {
-    const endIndex = Math.min(7, props.data.length - 1);
-    const rangeChanged = props.rangeChanged;
-    React.useImperativeHandle(ref, () => ({
-      scrollToIndex: virtuosoMock.scrollToIndex,
-    }));
-    React.useEffect(() => {
-      if (endIndex >= 0) {
-        rangeChanged?.({ startIndex: 0, endIndex });
-      }
-    }, [endIndex, rangeChanged]);
-    return React.createElement(
-      "div",
-      { "data-testid": "virtuoso-mock" },
-      props.data.slice(0, endIndex + 1).map((item, index) =>
-        React.createElement(
-          "div",
-          { "data-testid": "virtuoso-item", key: index },
-          props.itemContent(index, item) as import("react").ReactNode,
+      data: unknown[];
+      itemContent: (index: number, item: unknown) => unknown;
+      rangeChanged?: (range: { startIndex: number; endIndex: number }) => void;
+    }, ref) {
+      const [requestedStartIndex, setRequestedStartIndex] = React.useState(0);
+      const startIndex = Math.min(requestedStartIndex, Math.max(0, props.data.length - 1));
+      const endIndex = Math.min(startIndex + 7, props.data.length - 1);
+      const rangeChanged = props.rangeChanged;
+      React.useImperativeHandle(ref, () => ({
+        scrollToIndex: (options: { index: number }) => {
+          virtuosoMock.scrollToIndex(options);
+          setRequestedStartIndex(Math.max(0, Math.min(options.index, props.data.length - 1)));
+        },
+      }), [props.data.length]);
+      React.useEffect(() => {
+        if (endIndex >= 0) {
+          rangeChanged?.({ startIndex, endIndex });
+        }
+      }, [endIndex, rangeChanged, startIndex]);
+      return React.createElement(
+        "div",
+        { "data-testid": "virtuoso-mock" },
+        props.data.slice(startIndex, endIndex + 1).map((item, index) =>
+          React.createElement(
+            "div",
+            { "data-testid": "virtuoso-item", key: startIndex + index },
+            props.itemContent(startIndex + index, item) as import("react").ReactNode,
+          ),
         ),
-      ),
-    );
-  }),
+      );
+    }),
   };
 });
 
@@ -72,7 +77,18 @@ describe("VirtualMarkdownPreview", () => {
   });
 
   it("renders source line gutter only when enabled", () => {
-    const model = buildMarkdownDocumentModel(["# Title", "", "Paragraph text", "", "- item"].join("\n"));
+    const model = buildMarkdownDocumentModel([
+      "# Title",
+      "",
+      "Paragraph text",
+      "",
+      "- first item",
+      "- second item",
+      "",
+      "| Name | Value |",
+      "| --- | --- |",
+      "| Alpha | 1 |",
+    ].join("\n"));
 
     const { rerender } = render(<VirtualMarkdownPreview model={model} />);
 
@@ -84,6 +100,11 @@ describe("VirtualMarkdownPreview", () => {
       "1",
       "3",
       "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "10",
     ]);
     expect(screen.getByRole("button", { name: "折叠第 1 行章节" })).not.toBeNull();
   });
@@ -181,6 +202,124 @@ describe("VirtualMarkdownPreview", () => {
     expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({ align: "center", index: 20 });
     expect(ref.current?.scrollToAnnotation("ann-invalid")).toBe(false);
     expect(ref.current?.scrollToAnnotation("missing")).toBe(false);
+  });
+
+  it("mounts a deep multiline block before precisely revealing its target line", async () => {
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const prefix = Array.from({ length: 10 }, (_, index) => `Paragraph ${index + 1}`).join("\n\n");
+    const source = [
+      prefix,
+      "",
+      "| Name | Value |",
+      "| --- | --- |",
+      "| Deep row | 42 |",
+    ].join("\n");
+    const rowStart = source.indexOf("| Deep row");
+    const rowEnd = source.length;
+    const targetLine = source.slice(0, rowStart).split("\n").length;
+    const model = buildMarkdownDocumentModel(source);
+    const targetBlock = model.blocks.find((block) => block.type === "table");
+    const annotationIndex = buildMarkdownAnnotationIndex(model, [{
+      anchor_json: createSourceRangeAnchor(source, rowStart, rowEnd, "source"),
+      anchor_type: "selection",
+      id: "ann-deep-table-row",
+    }]);
+    const ref = createRef<VirtualMarkdownPreviewHandle>();
+
+    try {
+      expect(targetBlock?.index).toBeGreaterThan(7);
+      render(
+        <VirtualMarkdownPreview
+          activeAnnotationId="ann-deep-table-row"
+          annotationIndex={annotationIndex}
+          model={model}
+          ref={ref}
+          showSourceGutter
+        />,
+      );
+
+      act(() => {
+        expect(ref.current?.scrollToAnnotation("ann-deep-table-row", "center")).toBe(true);
+      });
+
+      await waitFor(() => {
+        const marker = document.querySelector<HTMLElement>(
+          '[data-preview-annotation-id="ann-deep-table-row"]',
+        );
+        expect(marker).not.toBeNull();
+        expect(scrollIntoView.mock.contexts).toContain(marker);
+      });
+      const lineNumber = document.querySelector<HTMLElement>(
+        `[data-markdown-preview-source-line="${targetLine}"]`,
+      );
+      expect(lineNumber?.dataset.active).toBe("true");
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "center",
+        inline: "nearest",
+      });
+    } finally {
+      if (scrollDescriptor) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", scrollDescriptor);
+      } else {
+        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
+      }
+    }
+  });
+
+  it("highlights and reveals source-only lines through the gutter", async () => {
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const source = [
+      "| Name | Value |",
+      "| --- | --- |",
+      "| Alpha | 1 |",
+    ].join("\n");
+    const dividerStart = source.indexOf("| ---");
+    const dividerEnd = source.indexOf("\n", dividerStart);
+    const model = buildMarkdownDocumentModel(source);
+    const annotationIndex = buildMarkdownAnnotationIndex(model, [{
+      anchor_json: createSourceRangeAnchor(source, dividerStart, dividerEnd, "source"),
+      anchor_type: "selection",
+      id: "ann-table-divider",
+    }]);
+    const ref = createRef<VirtualMarkdownPreviewHandle>();
+
+    try {
+      render(
+        <VirtualMarkdownPreview
+          activeAnnotationId="ann-table-divider"
+          annotationIndex={annotationIndex}
+          model={model}
+          ref={ref}
+          showSourceGutter
+        />,
+      );
+
+      act(() => {
+        expect(ref.current?.scrollToAnnotation("ann-table-divider", "center")).toBe(true);
+      });
+
+      const lineNumber = document.querySelector<HTMLElement>('[data-markdown-preview-source-line="2"]');
+      expect(document.querySelector('[data-preview-annotation-id="ann-table-divider"]')).toBeNull();
+      expect(lineNumber?.dataset.active).toBe("true");
+      await waitFor(() => expect(scrollIntoView.mock.contexts).toContain(lineNumber));
+    } finally {
+      if (scrollDescriptor) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", scrollDescriptor);
+      } else {
+        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
+      }
+    }
   });
 
   it("scrolls to find matches by match id", () => {

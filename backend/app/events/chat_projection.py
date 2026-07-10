@@ -15,6 +15,7 @@ class ChatProjectionAdapter(Protocol):
 class ChatProjection:
     EVENT_TYPE_TO_ACTION = {
         DomainEventType.LLM_STREAM: ChatAction.STREAM,
+        DomainEventType.LLM_FIRST_TOKEN_RECEIVED: ChatAction.LLM_FIRST_TOKEN,
         DomainEventType.MESSAGE_USER_CREATED: ChatAction.USER_MESSAGE,
         DomainEventType.MESSAGE_SYSTEM_CREATED: ChatAction.SYSTEM_MESSAGE,
         DomainEventType.LLM_TOOL_STARTED: ChatAction.TOOL_START,
@@ -117,6 +118,9 @@ class ChatProjection:
             chat_data["text"] = payload["text"]
         if "cancel_main" in payload:
             chat_data["cancel_main"] = payload["cancel_main"]
+        for timing_key in ("start_time", "end_time", "duration_ms"):
+            if payload.get(timing_key) is not None:
+                chat_data[timing_key] = payload[timing_key]
         sent = await self.adapter.send(session_id=session_id, action=action.value, data=chat_data)
         logger.debug(
             f"[ChatProjection] 推送 reasoning 事件 | session_id={session_id} | "

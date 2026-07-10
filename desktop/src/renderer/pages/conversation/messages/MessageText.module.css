@@ -594,6 +594,34 @@
   display: none;
 }
 
+.processingDuration {
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.turnFooterDetails {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: inherit;
+  font: inherit;
+  opacity: 1;
+  transition: opacity 160ms ease;
+}
+
+.actions[data-placement="turn"] .turnFooterDetails {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.actions[data-placement="turn"]:focus-within .turnFooterDetails,
+.actions[data-placement="turn"][data-copy-state="copied"] .turnFooterDetails,
+.actions[data-placement="turn"][data-copy-state="failed"] .turnFooterDetails {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .streamingCursor {
   display: inline-flex;
   min-width: 20px;

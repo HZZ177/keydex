@@ -1112,10 +1112,6 @@ export function FilePreview({
         element.scrollIntoView?.(FILE_PREVIEW_TRANSIENT_REVEAL_SCROLL_OPTIONS);
         located = true;
       } else if (kind === "markdown" && markdownPreviewRef.current?.scrollToAnnotation(transientRevealAnnotation.id, "center")) {
-        window.requestAnimationFrame(() => {
-          findPreviewAnnotationElement(bodyRef.current, transientRevealAnnotation.id)
-            ?.scrollIntoView?.(FILE_PREVIEW_TRANSIENT_REVEAL_SCROLL_OPTIONS);
-        });
         located = true;
       }
     }
