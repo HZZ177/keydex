@@ -714,9 +714,7 @@ describe("SendBox", () => {
 
   it("renders batched external quote requests as separate context chips", () => {
     const firstQuote = selectedQuoteFromText("first selected text", {
-      source: "annotation",
-      annotationId: "ann-first",
-      annotationComment: "First note",
+      source: "selection",
       file: {
         path: "README.md",
         name: "README.md",
@@ -725,9 +723,7 @@ describe("SendBox", () => {
       },
     });
     const secondQuote = selectedQuoteFromText("second selected text", {
-      source: "annotation",
-      annotationId: "ann-second",
-      annotationComment: "Second note",
+      source: "selection",
       file: {
         path: "README.md",
         name: "README.md",
@@ -756,72 +752,11 @@ describe("SendBox", () => {
     expect(screen.getByText("README.md · L2")).not.toBeNull();
   });
 
-  it("removes only the clicked same-label annotation quote chip after a controlled batched request", async () => {
-    const firstQuote = selectedQuoteFromText("same selected text", {
-      source: "annotation",
-      annotationId: "ann-quote-1",
-      annotationComment: "First note",
-      file: {
-        path: "README.md",
-        name: "README.md",
-        lineStart: 3,
-        lineEnd: 3,
-      },
-    });
-    const secondQuote = selectedQuoteFromText("same selected text", {
-      source: "annotation",
-      annotationId: "ann-quote-2",
-      annotationComment: "Second note",
-      file: {
-        path: "README.md",
-        name: "README.md",
-        lineStart: 3,
-        lineEnd: 3,
-      },
-    });
-    if (!firstQuote || !secondQuote) {
-      throw new Error("quotes not created");
-    }
-    const quotes: SelectedQuote[] = [firstQuote, secondQuote];
-
-    function ControlledBatchedQuotes() {
-      const [selectedQuotes, setSelectedQuotes] = useState<SelectedQuote[]>([]);
-      return (
-        <SendBox
-          value=""
-          runtimeState="idle"
-          canSend={false}
-          canStop={false}
-          selectedQuotes={selectedQuotes}
-          externalQuoteRequest={{ requestId: 1, quotes }}
-          onSelectedQuotesChange={setSelectedQuotes}
-          onChange={vi.fn()}
-          onSend={vi.fn()}
-          onStop={vi.fn()}
-        />
-      );
-    }
-
-    render(<ControlledBatchedQuotes />);
-
-    await waitFor(() => {
-      expect(screen.getAllByText("README.md · L3")).toHaveLength(2);
-    });
-    fireEvent.click(screen.getAllByRole("button", { name: "删除README.md · L3 same selected text" })[1]);
-    await waitFor(() => {
-      expect(screen.getAllByText("README.md · L3")).toHaveLength(1);
-    });
-    fireEvent.click(screen.getAllByRole("button", { name: "删除README.md · L3 same selected text" })[0]);
-    await waitFor(() => {
-      expect(screen.queryByText("README.md · L3")).toBeNull();
-    });
-  });
-
   it("keeps quote hover cards inside a narrowed composer", () => {
     const quote = selectedQuoteFromText(
       "README.md 引用片段在窄输入框里需要自动换行并保持可见",
       {
-        source: "annotation",
+        source: "selection",
         file: {
           path: "README.md",
           name: "README.md",
@@ -872,7 +807,9 @@ describe("SendBox", () => {
 
       const card = document.querySelector<HTMLElement>("[data-sendbox-context-hover-card='true']");
       expect(card).not.toBeNull();
-      expect(card?.style.left).toBe("-4px");
+      expect(screen.getByLabelText("已添加上下文").closest("[data-sendbox-root='true']")?.contains(card)).toBe(true);
+      expect(card?.style.left).toBe("12px");
+      expect(card?.style.top).toBe("10px");
       expect(card?.style.maxWidth).toBe("196px");
       expect(card?.style.getPropertyValue("--sendbox-hover-card-translate-x")).toBe("0px");
       expect(card?.style.getPropertyValue("--sendbox-hover-card-arrow-left")).toBe("80px");
@@ -925,48 +862,6 @@ describe("SendBox", () => {
       sourceStart: 120,
       sourceEnd: 168,
     });
-  });
-
-  it("shows annotation comments inside source quote chip details", async () => {
-    const quote = selectedQuoteFromText("引用文件里的片段", {
-      source: "annotation",
-      annotationComment: "Explain this paragraph",
-      file: {
-        path: "docs/guide.md",
-        name: "guide.md",
-        lineStart: 12,
-        lineEnd: 12,
-      },
-    });
-    if (!quote) {
-      throw new Error("quote not created");
-    }
-    render(
-      <SendBox
-        value=""
-        runtimeState="idle"
-        canSend={false}
-        canStop={false}
-        externalQuoteRequest={{ requestId: 1, quote }}
-        onChange={vi.fn()}
-        onSend={vi.fn()}
-        onStop={vi.fn()}
-      />,
-    );
-
-    const chip = await screen.findByText("guide.md · L12");
-
-    vi.useFakeTimers();
-    try {
-      fireEvent.mouseOver(chip);
-      act(() => {
-        vi.advanceTimersByTime(200);
-      });
-
-      expect(screen.getByText(/批注：Explain this paragraph/)).not.toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("submits explicit quote context without hidden composer text", async () => {
@@ -1111,8 +1006,7 @@ describe("SendBox", () => {
               name: "README.md",
               type: "file",
               source: "workspace",
-              annotationId: "ann-file-1",
-              annotationComment: "First file note",
+              annotationReference: { annotationId: "ann-file-1", workspaceId: "ws-1", path: "README.md" },
             },
             {
               id: "annotation:ann-file-2",
@@ -1120,8 +1014,7 @@ describe("SendBox", () => {
               name: "README.md",
               type: "file",
               source: "workspace",
-              annotationId: "ann-file-2",
-              annotationComment: "Second file note",
+              annotationReference: { annotationId: "ann-file-2", workspaceId: "ws-1", path: "README.md" },
             },
           ],
         }}
@@ -1142,8 +1035,7 @@ describe("SendBox", () => {
         name: "README.md",
         type: "file",
         source: "workspace",
-        annotationId: "ann-file-1",
-        annotationComment: "First file note",
+        annotationReference: { annotationId: "ann-file-1", workspaceId: "ws-1", path: "README.md" },
       },
       {
         id: "annotation:ann-file-2",
@@ -1151,8 +1043,7 @@ describe("SendBox", () => {
         name: "README.md",
         type: "file",
         source: "workspace",
-        annotationId: "ann-file-2",
-        annotationComment: "Second file note",
+        annotationReference: { annotationId: "ann-file-2", workspaceId: "ws-1", path: "README.md" },
       },
     ];
 
@@ -1198,8 +1089,7 @@ describe("SendBox", () => {
           name: "README.md",
           type: "file" as const,
           source: "workspace" as const,
-          annotationId: "ann-file-1",
-          annotationComment: "First file note",
+          annotationReference: { annotationId: "ann-file-1", workspaceId: "ws-1", path: "README.md" },
         },
         {
           id: "annotation:ann-file-2",
@@ -1207,8 +1097,7 @@ describe("SendBox", () => {
           name: "README.md",
           type: "file" as const,
           source: "workspace" as const,
-          annotationId: "ann-file-2",
-          annotationComment: "Second file note",
+          annotationReference: { annotationId: "ann-file-2", workspaceId: "ws-1", path: "README.md" },
         },
       ]);
       return (
@@ -1244,8 +1133,7 @@ describe("SendBox", () => {
           name: "README.md",
           type: "file" as const,
           source: "workspace" as const,
-          annotationId: "ann-file-1",
-          annotationComment: "First file note",
+          annotationReference: { annotationId: "ann-file-1", workspaceId: "ws-1", path: "README.md" },
         },
         {
           id: "annotation:ann-file-2",
@@ -1253,8 +1141,7 @@ describe("SendBox", () => {
           name: "README.md",
           type: "file" as const,
           source: "workspace" as const,
-          annotationId: "ann-file-2",
-          annotationComment: "Second file note",
+          annotationReference: { annotationId: "ann-file-2", workspaceId: "ws-1", path: "README.md" },
         },
       ]);
       return (

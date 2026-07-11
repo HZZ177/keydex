@@ -18,6 +18,7 @@ def test_builtin_registry_contains_only_supported_render_keys() -> None:
     assert registry.require("chart").mode == "render"
     assert registry.require("choice").mode == "interactive"
     assert registry.require("form").mode == "interactive"
+    assert registry.require("table").mode == "interactive"
 
 
 def test_builtin_definitions_have_object_schemas_and_descriptions() -> None:
@@ -101,6 +102,9 @@ def test_interactive_tool_descriptions_encourage_suitable_a2ui_usage() -> None:
     assert "优先调用" in registry.require("form").tool_description
     assert "信息装配台" in registry.require("form").tool_description
     assert "独立字段槽" in registry.require("form").tool_description
+    assert "批量审阅" in registry.require("table").tool_description
+    assert "稳定且唯一" in registry.require("table").tool_description
+    assert "只读 Markdown 表格" in registry.require("table").tool_description
 
 
 def test_interactive_schemas_include_mature_inline_ui_metadata() -> None:
@@ -122,6 +126,19 @@ def test_interactive_schemas_include_mature_inline_ui_metadata() -> None:
     assert {"badge", "disabled"}.issubset(form_option_properties)
     assert form_submit_properties["result_type"]["enum"] == ["values", "correction"]
     assert "correction_note" in form_submit_properties
+
+    table = registry.require("table")
+    table_properties = table.input_schema["properties"]
+    table_column_properties = table_properties["columns"]["items"]["properties"]
+    table_submit_properties = table.submit_schema["properties"]
+    assert table.input_schema["required"] == ["title", "columns", "rows"]
+    assert table_column_properties["type"]["enum"] == ["text", "number", "boolean", "select", "date"]
+    assert {"allow_add_rows", "allow_delete_rows"}.issubset(table_properties)
+    assert "allow_rename_columns" not in table_properties
+    assert "editable" not in table_column_properties
+    assert "sortable" not in table_column_properties
+    assert table_submit_properties["result_type"]["enum"] == ["table", "correction"]
+    assert {"columns", "rows", "changes", "correction_note"}.issubset(table_submit_properties)
 
 
 def test_registry_rejects_render_key_conflicts_with_existing_tools() -> None:

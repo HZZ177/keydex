@@ -62,6 +62,20 @@ describe("ConversationPanel", () => {
     expect(screen.getByTestId("message-list").getAttribute("data-performance-profile")).toBe("interactivePanel");
   });
 
+  it("does not show the assistant streaming cursor while A2UI is waiting for input", () => {
+    render(
+      <ConversationPanel
+        model={panelModel({
+          runtimeState: "waiting_input",
+          messages: [message("user-waiting", "user", "请补充页面信息")],
+        })}
+        workspaceRuntime={fakeRuntime()}
+      />,
+    );
+
+    expect(screen.queryByTestId("streaming-cursor")).toBeNull();
+  });
+
   it("resets the cached message list to the bottom when switching sessions", () => {
     const scrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
     const clientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");

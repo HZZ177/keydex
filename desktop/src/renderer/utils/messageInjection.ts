@@ -2,6 +2,7 @@ import type { WorkspaceSkillSummary } from "@/runtime";
 import type { SelectedFile } from "@/renderer/components/chat/SendBox/fileSelection";
 import { selectedQuotePreview, type SelectedQuote } from "@/renderer/components/chat/SendBox/quoteSelection";
 import type { AgentContextItem } from "@/types/protocol";
+import type { AssembledAnnotationContext } from "@/renderer/features/annotations/chat/AnnotationContextAssembler";
 
 export interface RuntimeMessageInjectionItem {
   type: "follow" | "slot";
@@ -29,6 +30,7 @@ export interface PreparedComposerMessage {
 }
 
 export interface PrepareComposerMessageOptions {
+  annotationContexts?: readonly AssembledAnnotationContext[];
   quotes?: SelectedQuote[];
   selectedSkill?: WorkspaceSkillSummary | null;
 }
@@ -40,10 +42,11 @@ export function prepareComposerMessage(
 ): PreparedComposerMessage {
   const message = value.trim();
   const quoteItems = quoteContextItems(options.quotes ?? []);
-  const fileItems = files.map(fileContextItem);
+  const fileItems = files.filter((file) => !file.annotationReference).map(fileContextItem);
+  const annotationItems = (options.annotationContexts ?? []).map(annotationContextItem);
   const skillItems = options.selectedSkill ? [skillContextItem(options.selectedSkill)] : [];
-  const contextItems = [...skillItems, ...quoteItems, ...fileItems];
-  const injectableContextItems = [...quoteItems, ...fileItems];
+  const contextItems = [...skillItems, ...quoteItems, ...fileItems, ...annotationItems];
+  const injectableContextItems = [...quoteItems, ...fileItems, ...annotationItems];
   const messageInjection = injectableContextItems.map(contextItemToFollowInjection);
   const runtimeParams: RuntimeParamsWithInjection = {};
   if (messageInjection.length) {
@@ -60,6 +63,31 @@ export function prepareComposerMessage(
     message,
     contextItems,
     runtimeParams: Object.keys(runtimeParams).length ? runtimeParams : undefined,
+  };
+}
+
+function annotationContextItem(context: AssembledAnnotationContext): AgentContextItem {
+  return {
+    id: `annotation:${context.workspaceId}:${context.annotationId}`,
+    type: "annotation",
+    label: context.kind === "text" ? "文字批注" : "全文批注",
+    content: context.kind === "text" ? context.exact : context.content,
+    description: context.body,
+    role: "HumanMessage",
+    source: "follow",
+    path: context.path,
+    name: fileName(context.path),
+    fileType: "file",
+    metadata: {
+      annotation_id: context.annotationId,
+      annotation_kind: context.kind,
+      annotation_body: context.body,
+      document_revision: context.documentRevision,
+      text_revision: context.textRevision,
+      source_ranges: context.kind === "text" ? context.sourceRanges : [],
+      workspace_id: context.workspaceId,
+      path: context.path,
+    },
   };
 }
 
@@ -97,10 +125,8 @@ function quoteContextItems(quotes: SelectedQuote[]): AgentContextItem[] {
     }
     const id = quote.id || `quote:${index}:${hashText(content)}`;
     const preview = quote.preview || selectedQuotePreview(content);
-    const annotationId = normalizedOptionalText(quote.annotationId);
-    const annotationComment = normalizedOptionalText(quote.annotationComment);
     if (quote.file) {
-      const description = sourceQuoteDescription(quote, annotationComment);
+      const description = sourceQuoteDescription(quote);
       return [
         {
           id,
@@ -126,8 +152,6 @@ function quoteContextItems(quotes: SelectedQuote[]): AgentContextItem[] {
             line_end: quote.file.lineEnd ?? null,
             source_start: quote.file.sourceStart ?? null,
             source_end: quote.file.sourceEnd ?? null,
-            annotation_id: annotationId,
-            annotation_comment: annotationComment,
             description,
           },
         },
@@ -147,8 +171,6 @@ function quoteContextItems(quotes: SelectedQuote[]): AgentContextItem[] {
           label: "引用片段",
           preview,
           source: quote.source,
-          annotation_id: annotationId,
-          annotation_comment: annotationComment,
         },
       },
     ];
@@ -157,9 +179,7 @@ function quoteContextItems(quotes: SelectedQuote[]): AgentContextItem[] {
 
 function fileContextItem(file: SelectedFile, index: number): AgentContextItem {
   const id = `file:${index}:${hashText(file.path)}`;
-  const annotationId = normalizedOptionalText(file.annotationId);
-  const annotationComment = normalizedOptionalText(file.annotationComment);
-  const description = [file.path, annotationComment ? `批注：${annotationComment}` : ""].filter(Boolean).join("\n\n");
+  const description = file.path;
   const kindLabel = selectedFileKindLabel(file);
   return {
     id,
@@ -180,8 +200,6 @@ function fileContextItem(file: SelectedFile, index: number): AgentContextItem {
       name: file.name,
       fileType: file.type,
       source: file.source,
-      annotation_id: annotationId,
-      annotation_comment: annotationComment,
       description,
     },
   };
@@ -205,20 +223,20 @@ function contextItemToFollowInjection(item: AgentContextItem): RuntimeMessageInj
 }
 
 function injectionContent(item: AgentContextItem): string {
+  if (item.type === "annotation") {
+    const kind = item.metadata?.annotation_kind === "document" ? "全文批注" : "文字批注";
+    return `用户引用了当前文档中的${kind}。\n文件：${item.path || item.label}\n批注：${item.description || ""}\n当前内容：\n${item.content}\n文档版本：${normalizedOptionalText(item.metadata?.document_revision)}\n请只依据这次发送时解析出的当前内容处理该批注。`;
+  }
   if (item.type === "file") {
     const target = contextFileKindLabel(item);
-    const annotationComment = normalizedOptionalText(item.metadata?.annotation_comment);
-    const annotationBlock = annotationComment ? `\n批注内容：\n${annotationComment}` : "";
-    return `用户通过 @ 引用了${target}：${item.path || item.label}${annotationBlock}\n请在需要时使用可用工具读取或查看该路径，不要把路径当作用户普通文本。`;
+    return `用户通过 @ 引用了${target}：${item.path || item.label}\n请在需要时使用可用工具读取或查看该路径，不要把路径当作用户普通文本。`;
   }
   if (item.type === "source_quote") {
     const lineRange = metadataLineRange(item.metadata);
     const sourceRange = metadataSourceRange(item.metadata);
-    const annotationComment = normalizedOptionalText(item.metadata?.annotation_comment);
     const lineLocation = lineRange ? `行位置：${lineRange}\n` : "";
     const sourceLocation = sourceRange ? `源码范围：${sourceRange}\n` : "";
-    const annotationBlock = annotationComment ? `批注内容：\n${annotationComment}\n\n` : "";
-    return `用户引用了工作区文件中的一个自洽片段。\n文件：${item.path || item.label}\n${lineLocation}${sourceLocation}引用内容：\n${item.content}\n\n${annotationBlock}请把这条消息视为一个完整的文件来源片段，不要和其他文件或其他引用片段混淆。如需更多上下文，请使用文件工具读取该文件。`;
+    return `用户引用了工作区文件中的一个自洽片段。\n文件：${item.path || item.label}\n${lineLocation}${sourceLocation}引用内容：\n${item.content}\n\n请把这条消息视为一个完整的文件来源片段，不要和其他文件或其他引用片段混淆。如需更多上下文，请使用文件工具读取该文件。`;
   }
   if (item.type === "quote") {
     return `用户添加了以下引用片段作为上下文：\n${item.content}`;
@@ -248,10 +266,10 @@ function sourceQuoteLabel(quote: SelectedQuote): string {
   return lineRange ? `${name} · ${lineRange}` : `${name} · 引用`;
 }
 
-function sourceQuoteDescription(quote: SelectedQuote, annotationComment: string): string {
+function sourceQuoteDescription(quote: SelectedQuote): string {
   const lineRange = sourceQuoteLineRange(quote.file?.lineStart, quote.file?.lineEnd);
   const location = quote.file?.path ? `${quote.file.path}${lineRange ? ` · ${lineRange}` : ""}` : "";
-  return [location, quote.text, annotationComment ? `批注：${annotationComment}` : ""]
+  return [location, quote.text]
     .filter(Boolean)
     .join("\n\n");
 }

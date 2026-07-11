@@ -1563,7 +1563,83 @@ describe("agentSessionStore reducer", () => {
         interactionId: "int-1",
       },
     });
-    expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      status: "waiting_input",
+      runtimeState: "waiting_input",
+      isStreaming: false,
+    });
+  });
+
+  it("keeps waiting_input after the interrupt cleanup finishes the same A2UI stream", () => {
+    const streamId = "a2ui:form:tool-waiting";
+    const interaction = {
+      interaction_id: "int-waiting",
+      status: "waiting_user_input" as const,
+      can_submit: true,
+    };
+    const a2ui = a2uiObject({
+      render_key: "form",
+      mode: "interactive",
+      stream_id: streamId,
+      tool_call_id: "tool-waiting",
+      interaction,
+    });
+    let state = createInitialAgentConversationState();
+
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_created",
+      data: {
+        session_id: "ses-waiting",
+        trace_id: "trace-waiting",
+        turn_index: 1,
+        stream_id: streamId,
+        interaction_id: interaction.interaction_id,
+        a2ui,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "waiting_input",
+      data: {
+        session_id: "ses-waiting",
+        trace_id: "trace-waiting",
+        turn_index: 1,
+        stream_id: streamId,
+        interaction_id: interaction.interaction_id,
+        a2ui,
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "a2ui_stream_finish",
+      data: {
+        session_id: "ses-waiting",
+        trace_id: "trace-waiting",
+        turn_index: 1,
+        render_key: "form",
+        stream_id: streamId,
+        tool_call_id: "tool-waiting",
+        stream: {
+          status: "finish",
+          args_text_length: 0,
+          finish_reason: "a2ui_waiting_input",
+        },
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "completed",
+      data: {
+        session_id: "ses-waiting",
+        trace_id: "trace-waiting",
+        turn_index: 1,
+        status: "completed",
+        final_content: "",
+      },
+    });
+
+    expect(selectAgentSessionState(state, "ses-waiting")).toMatchObject({
+      status: "waiting_input",
+      runtimeState: "waiting_input",
+      isStreaming: false,
+    });
   });
 
   it("merges A2UI stream preview only when every event keeps the same stream id", () => {

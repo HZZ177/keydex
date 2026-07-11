@@ -1,12 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { A2UIBlock } from "@/renderer/pages/conversation/messages";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { A2UIDebugBlockState, A2UIInteractionState, A2UIObject } from "@/types/protocol";
 
-const CORRECTION_BUTTON = "以上都不对！我来告诉keydex应该怎么做";
-const CORRECTION_LABEL = "我来告诉keydex应该怎么做";
+const CORRECTION_BUTTON = "以上选项都不对！我来告诉 Keydex 应该怎么做";
+const CORRECTION_LABEL = "我来告诉 Keydex 应该怎么做";
+const CORRECTION_RETURN_BUTTON = "返回选择选项";
 
 function optionElement(label: RegExp | string): HTMLElement {
   const option = screen.getByText(label).closest<HTMLElement>("[data-option-value]");
@@ -85,6 +87,7 @@ describe("A2ChoiceBlock", () => {
     fireEvent.click(screen.getByRole("button", { name: CORRECTION_BUTTON }));
 
     expect(option.getAttribute("data-selected")).toBe("false");
+    expect(screen.getByRole("button", { name: CORRECTION_RETURN_BUTTON })).not.toBeNull();
     expect(screen.queryByText("请输入说明")).toBeNull();
     expect((screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement).disabled).toBe(true);
 
@@ -486,7 +489,11 @@ describe("A2ChoiceBlock", () => {
     vi.useFakeTimers();
     try {
       const onSubmit = vi.fn(() => new Promise<void>(() => undefined));
-      render(<A2UIBlock message={choiceMessage()} onSubmit={onSubmit} onCancel={vi.fn()} />);
+      render(
+        <StrictMode>
+          <A2UIBlock message={choiceMessage()} onSubmit={onSubmit} onCancel={vi.fn()} />
+        </StrictMode>,
+      );
 
       clickChoiceButton("方案 A");
       fireEvent.click(screen.getByRole("button", { name: "提交选择" }));

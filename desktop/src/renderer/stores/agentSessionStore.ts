@@ -1175,10 +1175,7 @@ function handleA2UIEvent(
   }
   if (!result.message || !result.debug) {
     if (action === "a2ui_waiting_input") {
-      view.runtimeState = "waiting_input";
-      view.isStreaming = false;
-      view.isCancelling = false;
-      updateSessionStatus(next, sessionId, "waiting_input");
+      applyWaitingInputRuntimeState(next, view, sessionId);
       return next;
     }
     return state;
@@ -1186,16 +1183,21 @@ function handleA2UIEvent(
   view.messages = result.messages;
   result.message.sessionId = sessionId;
   applyTurnFields(result.message, numberValue(data.turn_index), stringValue(data.trace_id));
+  const activeStreamFrame = action === "a2ui_stream_start" || action === "a2ui_stream_chunk";
+  const shouldPreserveWaitingInput =
+    !activeStreamFrame &&
+    hasWaitingA2UIInput(view.messages) &&
+    (action === "a2ui_created" || view.runtimeState === "waiting_input");
+  if (shouldPreserveWaitingInput) {
+    applyWaitingInputRuntimeState(next, view, sessionId);
+    return next;
+  }
   if (action === "a2ui_stream_start" || action === "a2ui_stream_chunk") {
     view.isStreaming = true;
     markTurnInProgress(view);
     updateSessionStatus(next, sessionId, "running");
   } else if (action === "waiting_input" || action === "a2ui_waiting_input") {
-    closeAllMessageStreams(view);
-    view.runtimeState = "waiting_input";
-    view.isStreaming = false;
-    view.isCancelling = false;
-    updateSessionStatus(next, sessionId, "waiting_input");
+    applyWaitingInputRuntimeState(next, view, sessionId);
   } else if (action === "a2ui_submit_ack" || action === "a2ui_cancel_ack") {
     applyA2UIAckRuntimeState(next, view, sessionId, getA2UIAckResumeStatus(data));
   } else if (action === "a2ui_resume") {
@@ -1946,7 +1948,11 @@ function handleCompleted(state: AgentConversationState, payload: AgentCompletedP
   view.pendingApproval = null;
   view.pendingElicitation = null;
   view.firstTokenAtMs = null;
-  view.runtimeState = payload.status === "failed" ? "failed" : "idle";
+  if (payload.status !== "failed" && hasWaitingA2UIInput(view.messages)) {
+    applyWaitingInputRuntimeState(next, view, sessionId);
+  } else {
+    view.runtimeState = payload.status === "failed" ? "failed" : "idle";
+  }
   return next;
 }
 
@@ -2254,6 +2260,18 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
     view.isStreaming = false;
   }
   return next;
+}
+
+function applyWaitingInputRuntimeState(
+  state: AgentConversationState,
+  view: AgentSessionViewState,
+  sessionId: string,
+): void {
+  closeAllMessageStreams(view);
+  view.runtimeState = "waiting_input";
+  view.isStreaming = false;
+  view.isCancelling = false;
+  updateSessionStatus(state, sessionId, "waiting_input");
 }
 
 function handleUserMessage(

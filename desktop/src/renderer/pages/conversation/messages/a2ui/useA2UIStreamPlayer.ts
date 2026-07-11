@@ -404,9 +404,9 @@ function createSnapshot(
 
 export function buildA2UIStreamPlayerKey(parsed: ParsedA2UIMessage, scopeKey = ""): string {
   const streamIdentity =
+    stringIdentity(scopeKey) ||
     stringIdentity(parsed.a2ui?.stream_id) ||
     stringIdentity(parsed.debug?.streamId) ||
-    stringIdentity(scopeKey) ||
     "a2ui-missing-stream-id";
   return [streamIdentity, parsed.renderKey].filter(Boolean).join(":");
 }

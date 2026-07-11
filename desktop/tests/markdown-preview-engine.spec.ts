@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  buildMarkdownAnnotationIndex,
   buildMarkdownDocumentModel,
   buildMarkdownFindIndex,
   createMarkdownLineMap,
@@ -10,16 +9,10 @@ import {
   markdownLineColumnAtOffset,
   markdownRangeForLineSpan,
   markdownPreviewContentHash,
-  markdownSelectionAnchorFromDomRange,
   parseMarkdownTokens,
-  sourceRangeForAnnotation,
   sourceRangeForFindMatch,
   sourceRangeForOutlineItem,
 } from "@/renderer/components/workspace/markdownPreviewEngine";
-import {
-  createSourceRangeAnchor,
-  sourceLineColumnAtOffset,
-} from "@/renderer/components/workspace/filePreviewAnnotations";
 import {
   createLargeMarkdownPreviewFixture,
   E2E_MARKDOWN_PREVIEW_ENGINE_PREFIX,
@@ -85,12 +78,8 @@ describe("markdown preview engine", () => {
     const lfTarget = markdownPreviewLineEndingsLfFixture.indexOf("three");
     const crlfTarget = markdownPreviewLineEndingsCrLfFixture.indexOf("three");
 
-    expect(markdownLineColumnAtOffset(markdownPreviewLineEndingsLfFixture, lfTarget)).toEqual(
-      sourceLineColumnAtOffset(markdownPreviewLineEndingsLfFixture, lfTarget),
-    );
-    expect(markdownLineColumnAtOffset(markdownPreviewLineEndingsCrLfFixture, crlfTarget)).toEqual(
-      sourceLineColumnAtOffset(markdownPreviewLineEndingsCrLfFixture, crlfTarget),
-    );
+    expect(markdownLineColumnAtOffset(markdownPreviewLineEndingsLfFixture, lfTarget).line).toBe(5);
+    expect(markdownLineColumnAtOffset(markdownPreviewLineEndingsCrLfFixture, crlfTarget).line).toBe(5);
 
     const lfModel = buildMarkdownDocumentModel(markdownPreviewLineEndingsLfFixture);
     const crlfModel = buildMarkdownDocumentModel(markdownPreviewLineEndingsCrLfFixture);
@@ -150,40 +139,6 @@ describe("markdown preview engine", () => {
     });
   });
 
-  it("maps valid, cross-block, stale, and unsupported annotations into block-local ranges", () => {
-    const source = ["# Notes", "", "alpha target", "", "beta target", ""].join("\n");
-    const model = buildMarkdownDocumentModel(source);
-    const alphaStart = source.indexOf("alpha");
-    const betaEnd = source.indexOf("target", source.indexOf("beta")) + "target".length;
-    const validAnchor = createSourceRangeAnchor(source, alphaStart, alphaStart + "alpha".length, "preview");
-    const crossBlockAnchor = createSourceRangeAnchor(source, alphaStart, betaEnd, "preview", "alpha target beta target");
-    const staleAnchor = { ...validAnchor, contentHash: "stale" };
-
-    const index = buildMarkdownAnnotationIndex(model, [
-      { anchor_json: validAnchor, anchor_type: "selection", id: "ann-valid" },
-      { anchor_json: crossBlockAnchor, anchor_type: "selection", id: "ann-cross" },
-      { anchor_json: staleAnchor, anchor_type: "selection", id: "ann-stale" },
-      { anchor_json: null, anchor_type: "file", id: "ann-file" },
-    ]);
-
-    expect(index.find((item) => item.annotation.id === "ann-valid")).toMatchObject({
-      status: "valid",
-      ranges: [{ blockIndex: 1, blockLocalStart: 0, blockLocalEnd: 5 }],
-    });
-    expect(index.find((item) => item.annotation.id === "ann-cross")?.ranges.map((range) => range.blockIndex)).toEqual([
-      1,
-      2,
-    ]);
-    expect(index.find((item) => item.annotation.id === "ann-stale")).toMatchObject({
-      reason: "content-hash-mismatch",
-      status: "content-hash-mismatch",
-    });
-    expect(index.find((item) => item.annotation.id === "ann-file")).toMatchObject({
-      reason: "unsupported",
-      status: "unsupported",
-    });
-  });
-
   it("builds literal case-insensitive preview find matches with source ranges", () => {
     const source = ["# Find", "", "Alpha target.", "", "中文 Target，alpha target!", ""].join("\n");
     const model = buildMarkdownDocumentModel(source);
@@ -200,38 +155,6 @@ describe("markdown preview engine", () => {
       matchText: "target",
     });
     expect(index.matches[1].snippet).toContain("中文 Target");
-  });
-
-  it("maps outline annotation and find active states to source ranges for split sync", () => {
-    const source = ["# Guide", "", "alpha target", "", "## Setup", "", "beta target", ""].join("\n");
-    const model = buildMarkdownDocumentModel(source);
-    const alphaStart = source.indexOf("alpha");
-    const annotationIndex = buildMarkdownAnnotationIndex(model, [
-      {
-        anchor_json: createSourceRangeAnchor(source, alphaStart, alphaStart + "alpha".length, "preview"),
-        anchor_type: "selection",
-        id: "ann-alpha",
-      },
-    ]);
-    const findIndex = buildMarkdownFindIndex(model, "beta");
-    const setup = model.outline.find((item) => item.title === "Setup");
-
-    expect(sourceRangeForOutlineItem(model, setup?.id ?? "")).toMatchObject({
-      lineStart: 5,
-      sourceStart: source.indexOf("## Setup"),
-    });
-    expect(sourceRangeForAnnotation(annotationIndex, "ann-alpha")).toMatchObject({
-      lineStart: 3,
-      sourceStart: alphaStart,
-      sourceEnd: alphaStart + "alpha".length,
-    });
-    expect(sourceRangeForFindMatch(findIndex, findIndex.matches[0].id)).toMatchObject({
-      lineStart: 7,
-      sourceStart: source.indexOf("beta"),
-      sourceEnd: source.indexOf("beta") + "beta".length,
-    });
-    expect(sourceRangeForAnnotation(annotationIndex, "missing")).toBeNull();
-    expect(sourceRangeForFindMatch(findIndex, "missing")).toBeNull();
   });
 
   it("maps DOM selections in visible source segments back to markdown source ranges", () => {
@@ -308,37 +231,6 @@ describe("markdown preview engine", () => {
     boundary.remove();
   });
 
-  it("creates annotation anchors from visible DOM selections and rejects mismatched source text", () => {
-    const source = "alpha beta";
-    const boundary = document.createElement("div");
-    const segment = sourceSegment("alpha beta", 0, source.length);
-    boundary.append(segment);
-    document.body.appendChild(boundary);
-
-    const range = document.createRange();
-    range.setStart(segment.firstChild as Text, "alpha ".length);
-    range.setEnd(segment.firstChild as Text, "alpha beta".length);
-    const result = markdownSelectionAnchorFromDomRange(source, range, boundary);
-    expect(result.reason).toBeNull();
-    expect(result.anchor).toMatchObject({
-      kind: "source-range",
-      selectedText: "beta",
-      sourceStart: source.indexOf("beta"),
-      sourceText: "beta",
-      version: 2,
-    });
-
-    segment.textContent = "rendered beta";
-    const mismatchRange = document.createRange();
-    mismatchRange.setStart(segment.firstChild as Text, "rendered ".length);
-    mismatchRange.setEnd(segment.firstChild as Text, "rendered beta".length);
-    expect(markdownSelectionAnchorFromDomRange(source, mismatchRange, boundary)).toMatchObject({
-      anchor: null,
-      reason: "source-text-mismatch",
-    });
-
-    boundary.remove();
-  });
 });
 
 function sourceSegment(text: string, sourceStart: number, sourceEnd: number): HTMLSpanElement {

@@ -22,6 +22,8 @@ export { A2UIDebugPanel } from "./A2UIDebugPanel";
 export type { A2UIDebugPanelProps } from "./A2UIDebugPanel";
 export { A2FormBlock } from "./A2FormBlock";
 export type { A2FormBlockProps } from "./A2FormBlock";
+export { A2TableBlock } from "./A2TableBlock";
+export type { A2TableBlockProps } from "./A2TableBlock";
 export * from "./A2UIState";
 export { A2UIInlineError, A2UIStateLine } from "./A2UIStateLine";
 export type { A2UIStateLineProps, A2UIStateTone } from "./A2UIStateLine";

@@ -26,6 +26,9 @@ def test_a2ui_prompt_lists_builtin_tools_and_resume_semantics() -> None:
     assert "尽量交替使用" in prompt
     assert "不要把两种模式当成严格场景分工" in prompt
     assert "推荐项、默认值和字段帮助" in prompt
+    assert "`table` 用于让用户批量审阅和修改结构化记录" in prompt
+    assert "columns.key 与 rows.id 必须稳定唯一" in prompt
+    assert "只读小表格继续使用 Markdown" in prompt
     assert "`confirm`" not in prompt
     assert "模拟权限审批" in prompt
     assert "configure" not in prompt.lower()

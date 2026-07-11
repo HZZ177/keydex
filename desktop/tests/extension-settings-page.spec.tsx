@@ -27,7 +27,7 @@ describe("ExtensionSettingsPage", () => {
     expect(screen.getByLabelText("期望标题最大长度")).toHaveProperty("value", "48");
     expect(screen.getByText("模型上下文窗口")).not.toBeNull();
     expect(screen.getByText("A2UI 交互组件")).not.toBeNull();
-    expect(screen.getByText(/图表、选择、表单/)).not.toBeNull();
+    expect(screen.getByText(/图表、选择、表单、可编辑表格/)).not.toBeNull();
     expect(screen.getByRole("switch", { name: "启用 A2UI" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("switch", { name: "显示 A2UI 调试入口" }).getAttribute("aria-checked")).toBe("false");
     expect(screen.queryByText(/schema/i)).toBeNull();

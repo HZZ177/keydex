@@ -130,7 +130,7 @@ export function ConversationComposer({
       statusText={conversationComposerStatusText(runtimeState, connectionReady)}
       variant="keydex"
       className={className}
-      placeholder={placeholder}
+      placeholder={conversationComposerPlaceholder(runtimeState, placeholder)}
       ariaLabel={ariaLabel}
       inputLabel={inputLabel}
       autoFocusKey={autoFocusKey}
@@ -195,6 +195,13 @@ export function isConversationBusy(state: ConversationRuntimeState): boolean {
 
 export function conversationComposerStatusText(_state: ConversationRuntimeState, _connectionReady: boolean): string {
   return "";
+}
+
+export function conversationComposerPlaceholder(
+  state: ConversationRuntimeState,
+  placeholder?: string,
+): string | undefined {
+  return state === "waiting_input" ? "请先完成页面交互" : placeholder;
 }
 
 function ContextWindowIndicator({

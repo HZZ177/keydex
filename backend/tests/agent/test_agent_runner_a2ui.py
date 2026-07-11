@@ -53,9 +53,9 @@ def test_agent_runner_injects_builtin_a2ui_tools_and_prompt_when_enabled(tmp_pat
     )
 
     created_names = set(factory.created_tool_names[-1])
-    assert {"chart", "confirm", "choice", "form"}.issubset(created_names)
+    assert {"chart", "choice", "form", "table"}.issubset(created_names)
     assert "A2UI 交互式界面工具" in factory.system_prompts[-1]
-    assert "`confirm`" in factory.system_prompts[-1]
+    assert "`table`" in factory.system_prompts[-1]
 
 
 def test_agent_runner_skips_a2ui_tools_and_prompt_when_disabled(tmp_path) -> None:
@@ -74,7 +74,7 @@ def test_agent_runner_skips_a2ui_tools_and_prompt_when_disabled(tmp_path) -> Non
     )
 
     created_names = set(factory.created_tool_names[-1])
-    assert {"chart", "confirm", "choice", "form"}.isdisjoint(created_names)
+    assert {"chart", "choice", "form", "table"}.isdisjoint(created_names)
     assert "A2UI 交互式界面工具" not in factory.system_prompts[-1]
 
 

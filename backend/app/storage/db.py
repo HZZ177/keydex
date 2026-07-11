@@ -485,31 +485,27 @@ create index if not exists idx_attachments_user_id
 create index if not exists idx_attachments_path
   on attachments(path);
 
-create table if not exists workspace_file_annotations (
+drop table if exists workspace_file_annotations;
+
+create table if not exists workspace_annotations (
   id text primary key,
-  scope_type text not null,
-  scope_id text not null,
-  workspace_id text,
-  path text not null,
-  anchor_type text not null,
-  comment text not null,
-  selected_text text,
-  line_start integer,
-  line_end integer,
-  column_start integer,
-  column_end integer,
-  content_hash text,
-  anchor_json text,
+  workspace_id text not null,
+  document_path text not null,
+  target_type text not null check (target_type in ('document', 'text')),
+  selector_json text,
+  body text not null,
   created_at text not null,
   updated_at text not null,
-  is_deleted integer not null default 0,
-  foreign key(workspace_id) references workspaces(id) on delete set null
+  check (
+    (target_type = 'document' and selector_json is null)
+    or
+    (target_type = 'text' and selector_json is not null)
+  ),
+  foreign key(workspace_id) references workspaces(id) on delete cascade
 );
 
-create index if not exists idx_workspace_file_annotations_scope_path
-  on workspace_file_annotations(scope_type, scope_id, path, is_deleted, updated_at desc);
-create index if not exists idx_workspace_file_annotations_workspace_path
-  on workspace_file_annotations(workspace_id, path, is_deleted);
+create index if not exists idx_workspace_annotations_document
+  on workspace_annotations(workspace_id, document_path, created_at, id);
 
 create table if not exists message_events (
   id text primary key,
@@ -992,7 +988,6 @@ class Database:
             self._ensure_column(conn, "llm_request_logs", "gateway_thread_id", "text")
             self._ensure_column(conn, "llm_request_logs", "gateway_trace_id", "text")
             self._ensure_column(conn, "llm_request_logs", "time_to_first_token", "integer")
-            self._ensure_column(conn, "workspace_file_annotations", "anchor_json", "text")
             self._ensure_column(conn, "trace_record", "input_checkpoint_id", "text")
             self._ensure_column(conn, "trace_record", "input_checkpoint_ns", "text")
             self._ensure_column(

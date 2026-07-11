@@ -22,6 +22,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { motion } from "motion/react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, SetStateAction } from "react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -43,6 +44,7 @@ import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { useTheme } from "@/renderer/providers/ThemeProvider";
 import { latestCompleteForkSource } from "@/renderer/pages/conversation/conversationForkSource";
+import { prefersReducedMotion } from "@/renderer/utils/motionPreference";
 import type { AgentSession } from "@/types/protocol";
 
 import styles from "./Sider.module.css";
@@ -1174,6 +1176,8 @@ function SiderSection({
   const actionTriggerRef = useRef<HTMLDivElement | null>(null);
   const actionMenuCloseTimerRef = useRef<number | null>(null);
   const sectionItemsId = useId();
+  const sessionLayoutScopeId = useId();
+  const reduceSessionMotion = prefersReducedMotion();
   const previousActivePathRef = useRef(activePath);
   const canToggleSection = (kind === "workspace" || kind === "pinned") && !disableSectionToggle;
   const sectionToggleLabel = kind === "pinned" ? "置顶区域" : `项目 ${title}`;
@@ -1400,9 +1404,12 @@ function SiderSection({
       );
     };
     return (
-      <div
+      <motion.div
         className={styles.historyRow}
         key={item.id}
+        layout={reduceSessionMotion ? false : "position"}
+        layoutId={reduceSessionMotion ? undefined : `${sessionLayoutScopeId}-${item.id}`}
+        transition={{ layout: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } }}
         data-app-context-menu={canOpenActionMenu ? "local" : undefined}
         data-active={active ? "true" : "false"}
         data-can-actions={canOpenActionMenu ? "true" : "false"}
@@ -1565,7 +1572,7 @@ function SiderSection({
             ) : null}
           </div>
         ) : null}
-      </div>
+      </motion.div>
     );
   };
 

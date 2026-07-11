@@ -328,7 +328,7 @@ describe("ConversationComposer", () => {
 
   it("renders external file and quote chips through the shared SendBox", async () => {
     const quote = selectedQuoteFromText("引用片段内容", {
-      source: "annotation",
+      source: "selection",
       file: {
         path: "docs/guide.md",
         name: "guide.md",

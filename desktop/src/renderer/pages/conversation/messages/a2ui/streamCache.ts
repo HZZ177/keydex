@@ -188,7 +188,7 @@ export function mergeA2UIEventIntoMessages(
   } else {
     nextMessages[index] = message;
   }
-  if (isDiscardedA2UIStreamFinish(normalized, snapshot)) {
+  if (shouldDiscardA2UIStreamFinish(normalized, snapshot, message)) {
     return {
       action: normalized,
       created,
@@ -300,14 +300,18 @@ function isRetryableA2UIFailure(debug: A2UIDebugBlockState): boolean {
   return debug.status === "failed" && debug.finishReason === "tool_error";
 }
 
-function isDiscardedA2UIStreamFinish(
+function shouldDiscardA2UIStreamFinish(
   action: A2UIEventAction,
   snapshot: A2UIEventSnapshot,
+  message: AgentChatMessage,
 ): boolean {
   if (action !== "a2ui_stream_finish") {
     return false;
   }
   const reason = snapshot.finishReason || "";
+  if (reason === "a2ui_waiting_input" && isA2UIObject(message.a2uiDebug?.a2ui)) {
+    return false;
+  }
   return reason === "invalid_tool_call" || reason === "turn_cancelled" || reason === "a2ui_waiting_input";
 }
 

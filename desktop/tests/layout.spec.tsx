@@ -897,10 +897,6 @@ const filePanelRuntime = {
     readFile: (_scope: unknown, path: string) => Promise.resolve({ path, content: "# README", encoding: "utf-8" }),
     readMedia: () => Promise.reject(new Error("not implemented")),
     search: () => Promise.resolve([]),
-    listAnnotations: () => Promise.resolve([]),
-    createAnnotation: () => Promise.reject(new Error("not implemented")),
-    updateAnnotation: () => Promise.reject(new Error("not implemented")),
-    deleteAnnotation: () => Promise.resolve(),
   },
 } as unknown as RuntimeBridge;
 

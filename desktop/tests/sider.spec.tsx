@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, ListSessionsOptions, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import { Sider } from "@/renderer/components/layout/Sider";
-import { emitSessionCreated } from "@/renderer/events/sessionEvents";
+import { emitSessionCreated, emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider";
 import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectionProvider";
@@ -345,6 +345,29 @@ describe("Sider", () => {
     expect(screen.getByRole("button", { name: "新会话" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "已有会话" })).not.toBeNull();
     expect(screen.queryByTestId("sidebar-session-skeleton")).toBeNull();
+    expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves only the updated session to the top without reloading session history", async () => {
+    const runtime = fakeRuntime([
+      thread({ id: "thread-newer", title: "较新的会话", updated_at: "2026-06-17T10:30:00Z" }),
+      thread({ id: "thread-older", title: "继续历史会话", updated_at: "2026-06-17T10:20:00Z" }),
+    ]);
+
+    renderSider(<Sider runtime={runtime} />);
+
+    const newerButton = await screen.findByRole("button", { name: "较新的会话" });
+    const olderButton = screen.getByRole("button", { name: "继续历史会话" });
+    const olderRow = olderButton.parentElement;
+    expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      emitSessionUpdated({ id: "thread-older", updated_at: "2026-06-17T11:00:00Z" });
+    });
+
+    const movedButton = screen.getByRole("button", { name: "继续历史会话" });
+    expect(movedButton.parentElement).toBe(olderRow);
+    expect(Boolean(movedButton.compareDocumentPosition(newerButton) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
   });
 
@@ -965,11 +988,54 @@ describe("Sider", () => {
     await screen.findByText("交互会话");
 
     act(() => {
+      const a2ui = {
+        interaction_id: "interaction-live-waiting",
+        mode: "interactive",
+        payload: {
+          title: "请补充信息",
+          fields: [{ key: "name", label: "名称", type: "text" }],
+        },
+        render_key: "form",
+        status: "waiting_input",
+        stream_id: "stream-live-waiting",
+        tool_call_id: "tool-live-waiting",
+        interaction: {
+          interaction_id: "interaction-live-waiting",
+          status: "waiting_user_input",
+          can_submit: true,
+        },
+      };
       emit({
-        action: "status",
+        action: "a2ui_created",
         data: {
-          status: "idle",
-          waiting_input_sessions: [{ session_id: "thread-b" }],
+          session_id: "thread-b",
+          render_key: "form",
+          stream_id: "stream-live-waiting",
+          interaction_id: "interaction-live-waiting",
+          a2ui,
+        },
+      });
+      emit({
+        action: "waiting_input",
+        data: {
+          session_id: "thread-b",
+          stream_id: "stream-live-waiting",
+          interaction_id: "interaction-live-waiting",
+          a2ui,
+        },
+      });
+      emit({
+        action: "a2ui_stream_finish",
+        data: {
+          session_id: "thread-b",
+          render_key: "form",
+          stream_id: "stream-live-waiting",
+          tool_call_id: "tool-live-waiting",
+          stream: {
+            status: "finish",
+            args_text_length: 0,
+            finish_reason: "a2ui_waiting_input",
+          },
         },
       });
     });

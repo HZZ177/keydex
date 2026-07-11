@@ -2,12 +2,10 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  buildMarkdownAnnotationIndex,
   buildMarkdownDocumentModel,
   buildMarkdownFindIndex,
   MarkdownDocumentView,
 } from "@/renderer/components/workspace/markdownPreviewEngine";
-import { createSourceRangeAnchor } from "@/renderer/components/workspace/filePreviewAnnotations";
 
 const mermaidMock = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -88,46 +86,6 @@ describe("MarkdownDocumentView", () => {
     expect(within(table).getByRole("cell", { name: "Table Cell Unique Target" })).not.toBeNull();
     expect(screen.getByText("<script>window.__unsafe = true</script>")).not.toBeNull();
     expect((window as Window & { __unsafe?: boolean }).__unsafe).toBeUndefined();
-  });
-
-  it("keeps table cells source-mapped for find and annotations", () => {
-    const source = [
-      "| Name | Value |",
-      "| --- | --- |",
-      "| Table Cell Unique Target | 42 |",
-      "| Other | Target Tail |",
-    ].join("\n");
-    const model = buildMarkdownDocumentModel(source);
-    const annotationStart = source.indexOf("Table Cell Unique Target");
-    const annotationIndex = buildMarkdownAnnotationIndex(model, [
-      {
-        anchor_json: createSourceRangeAnchor(
-          source,
-          annotationStart,
-          annotationStart + "Table Cell Unique Target".length,
-          "preview",
-        ),
-        anchor_type: "selection",
-        id: "ann-table-cell",
-      },
-    ]);
-    const findIndex = buildMarkdownFindIndex(model, "Target");
-
-    const { rerender } = render(<MarkdownDocumentView annotationIndex={annotationIndex} model={model} />);
-
-    const annotationMark = document.querySelector("[data-preview-annotation-id='ann-table-cell']") as HTMLElement;
-    expect(annotationMark).not.toBeNull();
-    expect(annotationMark.textContent).toBe("Table Cell Unique Target");
-    expect(annotationMark.closest("[data-markdown-table-scroll='true']")).not.toBeNull();
-    expect(annotationMark.getAttribute("data-preview-source-start")).toBe(String(annotationStart));
-
-    rerender(<MarkdownDocumentView activeFindMatchId={findIndex.matches[1].id} findIndex={findIndex} model={model} />);
-
-    const findMarks = Array.from(document.querySelectorAll("[data-file-preview-find-match='true']"));
-    expect(findMarks.map((mark) => mark.textContent)).toEqual(["Target", "Target"]);
-    expect(findMarks.every((mark) => mark.className.includes("findMark"))).toBe(true);
-    expect(findMarks[1].getAttribute("data-active")).toBe("true");
-    expect(findMarks.every((mark) => mark.closest("td"))).toBe(true);
   });
 
   it("renders markdown images lazily and math with KaTeX output", () => {
@@ -257,65 +215,6 @@ describe("MarkdownDocumentView", () => {
     expect(screen.getByText(/broken -->/)).not.toBeNull();
     expect(mermaidMock.render).not.toHaveBeenCalled();
     expect(document.querySelector("[data-markdown-mermaid-block='true']")?.getAttribute("data-state")).toBe("error");
-  });
-
-  it("renders annotation markers with active and flash state without DOM mutation", () => {
-    const source = ["# Notes", "", "alpha target", "", "beta target", ""].join("\n");
-    const model = buildMarkdownDocumentModel(source);
-    const alphaStart = source.indexOf("alpha");
-    const alphaTargetStart = source.indexOf("target", alphaStart);
-    const betaEnd = source.indexOf("target", source.indexOf("beta")) + "target".length;
-    const annotationIndex = buildMarkdownAnnotationIndex(model, [
-      {
-        anchor_json: createSourceRangeAnchor(source, alphaStart, alphaStart + "alpha".length, "preview"),
-        anchor_type: "selection",
-        id: "ann-active",
-      },
-      {
-        anchor_json: createSourceRangeAnchor(source, alphaTargetStart, betaEnd, "preview", "target beta target"),
-        anchor_type: "selection",
-        id: "ann-cross",
-      },
-    ]);
-
-    render(
-      <MarkdownDocumentView
-        activeAnnotationId="ann-active"
-        annotationIndex={annotationIndex}
-        flashAnnotationId="ann-cross"
-        model={model}
-      />,
-    );
-
-    const active = document.querySelector("[data-preview-annotation-id='ann-active']") as HTMLElement;
-    expect(active.textContent).toBe("alpha");
-    expect(active.getAttribute("data-active")).toBe("true");
-    expect(active.getAttribute("data-flash")).toBe("false");
-    expect(active.getAttribute("data-preview-source-start")).toBe(String(alphaStart));
-
-    const crossMarkers = document.querySelectorAll("[data-preview-annotation-id='ann-cross']");
-    expect(crossMarkers).toHaveLength(2);
-    expect(Array.from(crossMarkers).every((marker) => marker.getAttribute("data-flash") === "true")).toBe(true);
-  });
-
-  it("updates annotation markers when the annotation index changes after mutations", () => {
-    const source = ["# Notes", "", "alpha target", ""].join("\n");
-    const model = buildMarkdownDocumentModel(source);
-    const alphaStart = source.indexOf("alpha");
-    const annotation = {
-      anchor_json: createSourceRangeAnchor(source, alphaStart, alphaStart + "alpha".length, "preview"),
-      anchor_type: "selection",
-      id: "ann-created",
-    };
-
-    const { rerender } = render(<MarkdownDocumentView annotationIndex={[]} model={model} />);
-    expect(document.querySelector("[data-preview-annotation-id='ann-created']")).toBeNull();
-
-    rerender(<MarkdownDocumentView annotationIndex={buildMarkdownAnnotationIndex(model, [annotation])} model={model} />);
-    expect(document.querySelector("[data-preview-annotation-id='ann-created']")?.textContent).toBe("alpha");
-
-    rerender(<MarkdownDocumentView annotationIndex={[]} model={model} />);
-    expect(document.querySelector("[data-preview-annotation-id='ann-created']")).toBeNull();
   });
 
   it("renders preview find marks with active state from the find index", () => {

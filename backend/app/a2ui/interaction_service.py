@@ -17,6 +17,7 @@ from backend.app.a2ui.schemas import (
     A2UISubmitRequest,
     interaction_state_from_record,
     validate_submit_result,
+    validate_table_submit_result,
 )
 from backend.app.events.dispatcher import EventDispatcher
 from backend.app.events.event_types import DomainEventType
@@ -95,6 +96,8 @@ class A2UIInteractionService:
                 parsed.submit_result,
                 current.submit_schema_snapshot,
             )
+            if current.render_key == "table":
+                submit_result = validate_table_submit_result(current.payload, submit_result)
         except A2UISchemaValidationError as exc:
             raise A2UIInteractionServiceError(
                 "schema_validation_failed",
@@ -324,6 +327,8 @@ def _build_submit_resume_payload(
         agent_instruction = _choice_agent_instruction(interaction.payload, submit_result)
         if agent_instruction:
             payload["agent_instruction"] = agent_instruction
+    if interaction.render_key == "table":
+        payload["agent_instruction"] = _table_agent_instruction(submit_result)
     return payload
 
 
@@ -350,6 +355,25 @@ def _choice_agent_instruction(
     labels = _choice_labels_for_values(choice_payload or {}, selected_values)
     selected_text = "、".join(labels or selected_values)
     return f"用户已选择：{selected_text}。请按用户选择继续。"
+
+
+def _table_agent_instruction(submit_result: dict[str, Any]) -> str:
+    if _scalar_text(submit_result.get("result_type")).lower() == "correction":
+        correction_note = _scalar_text(submit_result.get("correction_note"))
+        return (
+            "用户否决了当前表格，并补充意见："
+            f"{correction_note}。请根据该意见重新组织结构化内容，不要继续使用原表格修改结果。"
+        )
+    changes = submit_result.get("changes") if isinstance(submit_result.get("changes"), dict) else {}
+    cell_count = len(changes.get("cells") or []) if isinstance(changes, dict) else 0
+    label_count = len(changes.get("column_labels") or []) if isinstance(changes, dict) else 0
+    added_count = len(changes.get("added_row_ids") or []) if isinstance(changes, dict) else 0
+    deleted_count = len(changes.get("deleted_row_ids") or []) if isinstance(changes, dict) else 0
+    return (
+        "用户已确认并提交表格："
+        f"修改 {cell_count} 个单元格、{label_count} 个列名，新增 {added_count} 行、删除 {deleted_count} 行。"
+        "请以提交结果中的 columns 和 rows 作为后续执行依据。"
+    )
 
 
 def _choice_labels_for_values(

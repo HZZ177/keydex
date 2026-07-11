@@ -808,8 +808,7 @@ function renderAnnotatedInlineMarkdown(
         className={styles.previewAnnotationMark}
         data-active={range.active ? "true" : "false"}
         data-flash={range.flash ? "true" : "false"}
-        data-transient-reveal={range.annotationId.startsWith("__file-preview-reveal:") ? "true" : undefined}
-        data-preview-annotation-id={range.annotationId}
+        data-annotation-id={range.annotationId}
         data-preview-source-end={range.sourceEnd}
         data-preview-source-start={range.sourceStart}
         key={`annotation-${range.annotationId}-${range.sourceStart}-${range.sourceEnd}`}

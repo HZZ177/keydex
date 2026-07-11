@@ -179,10 +179,6 @@ function fakeRuntime({
       listDirectory: vi.fn().mockResolvedValue({ root: "D:/repo", entries: [] }),
       readFile: vi.fn(),
       readMedia: vi.fn(),
-      listAnnotations: vi.fn().mockResolvedValue([]),
-      createAnnotation: vi.fn(),
-      updateAnnotation: vi.fn(),
-      deleteAnnotation: vi.fn(),
       search: vi.fn().mockResolvedValue([]),
     },
     desktopPicker: {

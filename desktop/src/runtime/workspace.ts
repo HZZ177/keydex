@@ -37,6 +37,7 @@ export interface WorkspaceFileResponse {
   path: string;
   content: string;
   encoding: string;
+  revision: string;
 }
 
 export interface WorkspaceMediaResponse {
@@ -86,71 +87,6 @@ export interface WorkspaceSkillListOptions {
   signal?: AbortSignal;
 }
 
-export type WorkspaceFileAnnotationAnchorType = "file" | "selection";
-
-export interface WorkspaceFileAnnotationAnchorV2 {
-  version: 2;
-  kind: "source-range";
-  sourceStart: number;
-  sourceEnd: number;
-  selectedText: string;
-  sourceText: string;
-  contentHash: string;
-  lineStart: number;
-  lineEnd: number;
-  columnStart: number;
-  columnEnd: number;
-  createdInView: "preview" | "source";
-}
-
-export interface WorkspaceFileAnnotation {
-  id: string;
-  scope_type: "session" | "workspace";
-  scope_id: string;
-  workspace_id?: string | null;
-  path: string;
-  anchor_type: WorkspaceFileAnnotationAnchorType;
-  comment: string;
-  selected_text?: string | null;
-  line_start?: number | null;
-  line_end?: number | null;
-  column_start?: number | null;
-  column_end?: number | null;
-  content_hash?: string | null;
-  anchor_json?: WorkspaceFileAnnotationAnchorV2 | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WorkspaceFileAnnotationInput {
-  path: string;
-  anchor_type: WorkspaceFileAnnotationAnchorType;
-  comment: string;
-  selected_text?: string | null;
-  line_start?: number | null;
-  line_end?: number | null;
-  column_start?: number | null;
-  column_end?: number | null;
-  content_hash?: string | null;
-  anchor_json?: WorkspaceFileAnnotationAnchorV2 | null;
-}
-
-export interface WorkspaceFileAnnotationUpdate {
-  anchor_type?: WorkspaceFileAnnotationAnchorType;
-  comment?: string;
-  selected_text?: string | null;
-  line_start?: number | null;
-  line_end?: number | null;
-  column_start?: number | null;
-  column_end?: number | null;
-  content_hash?: string | null;
-  anchor_json?: WorkspaceFileAnnotationAnchorV2 | null;
-}
-
-export interface WorkspaceAnnotationListOptions {
-  signal?: AbortSignal;
-}
-
 export type WorkspaceScope =
   | { workspaceId: string; sessionId?: never }
   | { sessionId: string; workspaceId?: never };
@@ -168,21 +104,6 @@ export interface WorkspaceRuntime {
   readMedia(scope: WorkspaceScope, path: string): Promise<WorkspaceMediaResponse>;
   search(scope: WorkspaceScope, query: string, options?: WorkspaceSearchOptions): Promise<WorkspaceSearchResult[]>;
   listSkills(scope: WorkspaceScope, options?: WorkspaceSkillListOptions): Promise<WorkspaceSkillsResponse>;
-  listAnnotations(
-    scope: WorkspaceScope,
-    path: string,
-    options?: WorkspaceAnnotationListOptions,
-  ): Promise<WorkspaceFileAnnotation[]>;
-  createAnnotation(
-    scope: WorkspaceScope,
-    payload: WorkspaceFileAnnotationInput,
-  ): Promise<WorkspaceFileAnnotation>;
-  updateAnnotation(
-    scope: WorkspaceScope,
-    annotationId: string,
-    payload: WorkspaceFileAnnotationUpdate,
-  ): Promise<WorkspaceFileAnnotation>;
-  deleteAnnotation(scope: WorkspaceScope, annotationId: string): Promise<void>;
 }
 
 export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
@@ -218,36 +139,6 @@ export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
       return http.request<WorkspaceSkillsResponse>(
         `${workspaceBasePath(scope)}/skills${workspaceSkillsQuery(options)}`,
         { signal: options.signal },
-      );
-    },
-    listAnnotations(scope, path, options = {}) {
-      return http.request<WorkspaceFileAnnotation[]>(
-        `${workspaceBasePath(scope)}/annotations?path=${encodeURIComponent(path)}`,
-        { signal: options.signal },
-      );
-    },
-    createAnnotation(scope, payload) {
-      return http.request<WorkspaceFileAnnotation>(
-        `${workspaceBasePath(scope)}/annotations`,
-        {
-          method: "POST",
-          body: payload,
-        },
-      );
-    },
-    updateAnnotation(scope, annotationId, payload) {
-      return http.request<WorkspaceFileAnnotation>(
-        `${workspaceBasePath(scope)}/annotations/${encodeURIComponent(annotationId)}`,
-        {
-          method: "PATCH",
-          body: payload,
-        },
-      );
-    },
-    deleteAnnotation(scope, annotationId) {
-      return http.request<void>(
-        `${workspaceBasePath(scope)}/annotations/${encodeURIComponent(annotationId)}`,
-        { method: "DELETE" },
       );
     },
   };

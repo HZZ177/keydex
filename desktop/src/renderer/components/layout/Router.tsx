@@ -300,8 +300,9 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   useEffect(() => {
     if (externalPreviewIntentPath) {
       setExternalPreviewPath(externalPreviewIntentPath);
+      layout.actions.setSidebarCollapsed(true);
     }
-  }, [externalPreviewIntentPath]);
+  }, [externalPreviewIntentPath, layout.actions]);
 
   useEffect(() => {
     if (!backendReady) {

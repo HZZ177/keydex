@@ -18,6 +18,7 @@ import type {
   A2UISubmitHandler,
   ParsedA2UIMessage,
 } from "./A2UIBlock";
+import { A2CorrectionToggle } from "./A2CorrectionToggle";
 import { formSemanticAdapter } from "./adapters/formSemanticAdapter";
 import styles from "./A2FormBlock.module.css";
 import type { A2UIRenderState } from "./A2UIState";
@@ -142,6 +143,7 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
     actionPhase?.kind ?? localSubmitting ?? (localSubmitted ? "submitted" : hasAnyFormValue(values) || correctionMode ? "dirty" : "idle");
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
@@ -388,17 +390,15 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
                 motionKind="form-correction"
                 variant="field"
               >
-                <button
-                  aria-expanded={correctionMode}
-                  aria-controls={`${message.id}:a2ui-form-correction`}
-                  className={styles.correctionToggle}
-                  data-selected={correctionMode ? "true" : "false"}
+                <A2CorrectionToggle
+                  controlsId={`${message.id}:a2ui-form-correction`}
                   disabled={!actionable || Boolean(localSubmitting)}
-                  type="button"
-                  onClick={toggleCorrectionMode}
-                >
-                  以上信息不对！我来告诉 Keydex 应该怎么做
-                </button>
+                  expanded={correctionMode}
+                  idleDescription="我来告诉 Keydex 应该怎么做"
+                  idleTitle="以上信息不对"
+                  returnLabel="返回填写表单"
+                  onToggle={toggleCorrectionMode}
+                />
                 {correctionMode ? (
                   <textarea
                     aria-label="我来告诉 Keydex 应该怎么做"

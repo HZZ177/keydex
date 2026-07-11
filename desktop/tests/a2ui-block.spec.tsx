@@ -144,7 +144,7 @@ describe("A2UIBlock", () => {
     expect(screen.queryByTestId("a2ui-stream-preview")).toBeNull();
   });
 
-  it("uses the streamed chart type for an empty chart skeleton", () => {
+  it("uses the streamed chart type for the ECharts placeholder", () => {
     render(
       <A2UIBlock
         message={a2uiMessage({
@@ -169,9 +169,10 @@ describe("A2UIBlock", () => {
       />,
     );
 
-    const skeleton = screen.getByTestId("a2ui-chart-skeleton");
-    expect(skeleton.getAttribute("data-chart-skeleton-type")).toBe("pie");
-    expect(skeleton.getAttribute("aria-label")).toBe("饼图生成中");
+    const placeholder = screen.getByTestId("a2ui-echarts-surface");
+    expect(placeholder.getAttribute("data-a2ui-chart-placeholder")).toBe("true");
+    expect(placeholder.getAttribute("data-chart-type")).toBe("pie");
+    expect(placeholder.getAttribute("aria-label")).toBe("饼图生成中");
   });
 
   it("replaces a failed streaming chart with a lightweight error line", () => {

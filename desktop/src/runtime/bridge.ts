@@ -8,6 +8,7 @@ import { createWorkspaceRuntime, type WorkspaceRuntime } from "./workspace";
 import { createWorkspacesRuntime, type WorkspacesRuntime } from "./workspaces";
 import { createDesktopPickerRuntime, type DesktopPickerRuntime } from "./desktopPicker";
 import { createAttachmentsRuntime, type AttachmentsRuntime } from "./attachments";
+import { createAnnotationsRuntime, type AnnotationsRuntime } from "./annotations";
 import { createMcpRuntime, type McpRuntime } from "./mcp";
 
 export interface RuntimeBridgeOptions extends HttpClientOptions, ConversationRuntimeOptions {
@@ -25,6 +26,7 @@ export interface RuntimeBridge {
   workspaces: WorkspacesRuntime;
   desktopPicker: DesktopPickerRuntime;
   attachments: AttachmentsRuntime;
+  annotations: AnnotationsRuntime;
   mcp: McpRuntime;
   getBaseUrl(): string;
   setBaseUrl(baseUrl: string): void;
@@ -46,6 +48,7 @@ export function createRuntimeBridge(options: RuntimeBridgeOptions = {}): Runtime
     workspaces: createWorkspacesRuntime(http),
     desktopPicker: createDesktopPickerRuntime(),
     attachments: createAttachmentsRuntime(http),
+    annotations: createAnnotationsRuntime(http),
     mcp: createMcpRuntime(http),
     getBaseUrl() {
       return http.getBaseUrl();

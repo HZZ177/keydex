@@ -1641,63 +1641,6 @@ describe("ConversationPage", () => {
     expect(screen.getByLabelText("发送")).not.toBeNull();
   });
 
-  it("adds annotation chat requests as source quote context without filling the composer", async () => {
-    const projectSession = agentSession({
-      session_type: "workspace",
-      workspace_id: "ws-1",
-      workspace: workspace("ws-1", "keydex", "D:/repo/keydex"),
-      cwd: "D:/repo/keydex",
-    });
-    const { runtime, channel } = fakeRuntime({ session: projectSession });
-
-    renderConversation(
-      <>
-        <ConversationPage threadId="ses-1" runtime={runtime} />
-        <AnnotationChatHarness />
-      </>,
-    );
-
-    const input = await readyComposer();
-    fireEvent.click(await screen.findByRole("button", { name: "触发批注会话" }));
-
-    expect(await screen.findByText("main.ts · L3-L4")).not.toBeNull();
-    expect(document.querySelector("[data-quote-index='0']")).not.toBeNull();
-    expect(input.textContent?.trim()).toBe("");
-    expect(input.textContent).not.toContain("文件：");
-    expect(input.textContent).not.toContain("引用位置：");
-    expect(input.textContent).not.toContain("Check this branch");
-    expect(channel.chat).not.toHaveBeenCalled();
-
-    await waitSendEnabled();
-    fireEvent.click(screen.getByLabelText("发送"));
-
-    const chatMock = channel.chat as unknown as ReturnType<typeof vi.fn>;
-    const payload = chatMock.mock.calls.at(-1)?.[0] as {
-      message?: string;
-      runtime_params?: { message_injection?: Array<{ role?: string; content?: string; metadata?: Record<string, unknown> }> };
-    };
-    expect(payload.message).toBe("");
-    expect(payload.runtime_params?.message_injection).toHaveLength(1);
-    expect(payload.runtime_params?.message_injection?.[0]).toMatchObject({
-      type: "follow",
-      role: "HumanMessage",
-      metadata: {
-        kind: "source_quote",
-        path: "src/main.ts",
-        line_start: 3,
-        line_end: 4,
-        source_start: 42,
-        source_end: 66,
-        annotation_comment: "Check this branch",
-      },
-    });
-    expect(payload.runtime_params?.message_injection?.[0]?.content).toContain("src/main.ts");
-    expect(payload.runtime_params?.message_injection?.[0]?.content).toContain("L3-L4");
-    expect(payload.runtime_params?.message_injection?.[0]?.content).toContain("42-66");
-    expect(payload.runtime_params?.message_injection?.[0]?.content).toContain("if (enabled)");
-    expect(payload.runtime_params?.message_injection?.[0]?.content).toContain("批注内容：\nCheck this branch");
-  });
-
   it("sends the composer text through the bound chat channel", async () => {
     const { runtime, channel } = fakeRuntime();
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
@@ -2957,28 +2900,6 @@ function conversationInLayout(ui: ReactElement, runtime?: RuntimeBridge) {
         </PreviewProvider>
       </LayoutStateProvider>
     </ThemeProvider>
-  );
-}
-
-function AnnotationChatHarness() {
-  const preview = usePreview();
-  return (
-    <button
-      type="button"
-      onClick={() =>
-        preview.hostContext?.onStartChatFromAnnotation?.({
-          path: "src/main.ts",
-          selectedText: "if (enabled) {\n  run();\n}",
-          lineStart: 3,
-          lineEnd: 4,
-          sourceStart: 42,
-          sourceEnd: 66,
-          comment: "Check this branch",
-        })
-      }
-    >
-      触发批注会话
-    </button>
   );
 }
 

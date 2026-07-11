@@ -578,7 +578,7 @@ function richWorkbenchHistory(sessionId: string): AgentMessagePayload[] {
           label: "README.md · L3",
           path: "README.md",
           content: "Source quote context preview",
-          metadata: { line_start: 3, line_end: 3, annotation_comment: "Selected E2E note" },
+          metadata: { line_start: 3, line_end: 3 },
         },
         {
           id: "ctx-skill",

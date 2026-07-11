@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -21,6 +22,7 @@ _INTEGER_TEXT_PATTERN = re.compile(r"^[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)$")
 _NUMBER_TEXT_PATTERN = re.compile(
     r"^[+-]?(?:(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"
 )
+_TABLE_COLUMN_TYPES = frozenset({"text", "number", "boolean", "select", "date"})
 
 
 class A2UIInteractionState(BaseModel):
@@ -156,6 +158,288 @@ def validate_payload(
     if not isinstance(payload, dict):
         raise A2UISchemaValidationError("payload must be an object")
     return _validate_schema_value(dict(payload), input_schema, path="$")
+
+
+def validate_table_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    columns = _validate_table_columns(normalized.get("columns"), path="$.columns")
+    normalized["columns"] = columns
+    normalized["rows"] = _validate_table_rows(
+        normalized.get("rows"),
+        columns=columns,
+        path="$.rows",
+    )
+    return normalized
+
+
+def validate_table_submit_result(
+    original_payload: dict[str, Any],
+    submit_result: dict[str, Any],
+) -> dict[str, Any]:
+    result_type = str(submit_result.get("result_type") or "").strip()
+    if result_type == "correction":
+        correction_note = str(submit_result.get("correction_note") or "").strip()
+        if not correction_note:
+            raise A2UISchemaValidationError("$.correction_note: correction note is required")
+        return {
+            "result_type": "correction",
+            "columns": [],
+            "rows": [],
+            "changes": _empty_table_changes(),
+            "correction_note": correction_note,
+        }
+    if result_type != "table":
+        raise A2UISchemaValidationError("$.result_type: value is not in enum")
+
+    original = validate_table_payload(original_payload)
+    original_columns = original["columns"]
+    submitted_columns = _validate_submitted_table_columns(
+        submit_result.get("columns"),
+        original_columns=original_columns,
+    )
+    submitted_rows = _validate_table_rows(
+        submit_result.get("rows"),
+        columns=original_columns,
+        path="$.rows",
+    )
+    _validate_table_row_mutation_permissions(
+        original_rows=original["rows"],
+        submitted_rows=submitted_rows,
+        allow_add_rows=original.get("allow_add_rows") is True,
+        allow_delete_rows=original.get("allow_delete_rows") is True,
+    )
+    return {
+        "result_type": "table",
+        "columns": submitted_columns,
+        "rows": submitted_rows,
+        "changes": _build_table_changes(
+            original_columns=original_columns,
+            submitted_columns=submitted_columns,
+            original_rows=original["rows"],
+            submitted_rows=submitted_rows,
+        ),
+    }
+
+
+def _validate_table_columns(value: Any, *, path: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not value:
+        raise A2UISchemaValidationError(f"{path}: array has too few items")
+    columns: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise A2UISchemaValidationError(f"{path}[{index}]: expected object")
+        column = dict(item)
+        key = str(column.get("key") or "").strip()
+        label = str(column.get("label") or "").strip()
+        column_type = str(column.get("type") or "").strip().lower()
+        if not key:
+            raise A2UISchemaValidationError(f"{path}[{index}].key: string is too short")
+        if key in seen_keys:
+            raise A2UISchemaValidationError(f"{path}[{index}].key: duplicate column key")
+        if not label:
+            raise A2UISchemaValidationError(f"{path}[{index}].label: string is too short")
+        if column_type not in _TABLE_COLUMN_TYPES:
+            raise A2UISchemaValidationError(f"{path}[{index}].type: value is not in enum")
+        options = column.get("options")
+        if column_type == "select":
+            if not isinstance(options, list) or not options:
+                raise A2UISchemaValidationError(f"{path}[{index}].options: select column requires options")
+            option_values: set[str] = set()
+            normalized_options: list[dict[str, Any]] = []
+            for option_index, option in enumerate(options):
+                if not isinstance(option, dict):
+                    raise A2UISchemaValidationError(
+                        f"{path}[{index}].options[{option_index}]: expected object"
+                    )
+                option_value = str(option.get("value") or "").strip()
+                option_label = str(option.get("label") or "").strip()
+                if not option_value or not option_label:
+                    raise A2UISchemaValidationError(
+                        f"{path}[{index}].options[{option_index}]: label and value are required"
+                    )
+                if option_value in option_values:
+                    raise A2UISchemaValidationError(
+                        f"{path}[{index}].options[{option_index}].value: duplicate option value"
+                    )
+                option_values.add(option_value)
+                normalized_options.append({**option, "value": option_value, "label": option_label})
+            column["options"] = normalized_options
+        elif options is not None:
+            column.pop("options", None)
+        column.update({"key": key, "label": label, "type": column_type})
+        columns.append(column)
+        seen_keys.add(key)
+    return columns
+
+
+def _validate_table_rows(
+    value: Any,
+    *,
+    columns: list[dict[str, Any]],
+    path: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise A2UISchemaValidationError(f"{path}: expected array")
+    column_by_key = {str(column["key"]): column for column in columns}
+    rows: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise A2UISchemaValidationError(f"{path}[{index}]: expected object")
+        row_id = str(item.get("id") or "").strip()
+        if not row_id:
+            raise A2UISchemaValidationError(f"{path}[{index}].id: string is too short")
+        if row_id in seen_ids:
+            raise A2UISchemaValidationError(f"{path}[{index}].id: duplicate row id")
+        raw_values = item.get("values")
+        if not isinstance(raw_values, dict):
+            raise A2UISchemaValidationError(f"{path}[{index}].values: expected object")
+        unknown_keys = sorted(set(raw_values) - set(column_by_key))
+        if unknown_keys:
+            raise A2UISchemaValidationError(
+                f"{path}[{index}].values.{unknown_keys[0]}: unknown column key"
+            )
+        normalized_values: dict[str, Any] = {}
+        for column_key, column in column_by_key.items():
+            cell_path = f"{path}[{index}].values.{column_key}"
+            if column_key not in raw_values:
+                if column.get("required") is True:
+                    raise A2UISchemaValidationError(f"{cell_path}: required value is missing")
+                normalized_values[column_key] = None
+                continue
+            normalized_values[column_key] = _normalize_table_cell_value(
+                raw_values[column_key],
+                column=column,
+                path=cell_path,
+            )
+        rows.append({"id": row_id, "values": normalized_values})
+        seen_ids.add(row_id)
+    return rows
+
+
+def _normalize_table_cell_value(value: Any, *, column: dict[str, Any], path: str) -> Any:
+    required = column.get("required") is True
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if required:
+            raise A2UISchemaValidationError(f"{path}: required value is missing")
+        return None
+    column_type = str(column["type"])
+    if column_type == "number":
+        normalized = _coerce_json_type(value, "number")
+        if not _matches_json_type(normalized, "number"):
+            raise A2UISchemaValidationError(f"{path}: expected number")
+        return normalized
+    if column_type == "boolean":
+        if not isinstance(value, bool):
+            raise A2UISchemaValidationError(f"{path}: expected boolean")
+        return value
+    if not isinstance(value, str):
+        raise A2UISchemaValidationError(f"{path}: expected string")
+    normalized_text = value.strip()
+    if column_type == "select":
+        allowed_values = {
+            str(option.get("value") or "")
+            for option in column.get("options") or []
+            if isinstance(option, dict) and option.get("disabled") is not True
+        }
+        if normalized_text not in allowed_values:
+            raise A2UISchemaValidationError(f"{path}: value is not in select options")
+    if column_type == "date":
+        try:
+            date.fromisoformat(normalized_text)
+        except ValueError as exc:
+            raise A2UISchemaValidationError(f"{path}: expected ISO date") from exc
+    return normalized_text
+
+
+def _validate_submitted_table_columns(
+    value: Any,
+    *,
+    original_columns: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        raise A2UISchemaValidationError("$.columns: expected array")
+    original_keys = [str(column["key"]) for column in original_columns]
+    submitted: list[dict[str, str]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise A2UISchemaValidationError(f"$.columns[{index}]: expected object")
+        key = str(item.get("key") or "").strip()
+        label = str(item.get("label") or "").strip()
+        if not key or not label:
+            raise A2UISchemaValidationError(f"$.columns[{index}]: key and label are required")
+        submitted.append({"key": key, "label": label})
+    if [column["key"] for column in submitted] != original_keys:
+        raise A2UISchemaValidationError("$.columns: stable column keys or order changed")
+    return submitted
+
+
+def _validate_table_row_mutation_permissions(
+    *,
+    original_rows: list[dict[str, Any]],
+    submitted_rows: list[dict[str, Any]],
+    allow_add_rows: bool,
+    allow_delete_rows: bool,
+) -> None:
+    original_ids = {str(row["id"]) for row in original_rows}
+    submitted_ids = {str(row["id"]) for row in submitted_rows}
+    if not allow_add_rows and submitted_ids - original_ids:
+        raise A2UISchemaValidationError("$.rows: adding rows is not allowed")
+    if not allow_delete_rows and original_ids - submitted_ids:
+        raise A2UISchemaValidationError("$.rows: deleting rows is not allowed")
+
+
+def _build_table_changes(
+    *,
+    original_columns: list[dict[str, Any]],
+    submitted_columns: list[dict[str, str]],
+    original_rows: list[dict[str, Any]],
+    submitted_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    original_by_id = {str(row["id"]): row for row in original_rows}
+    submitted_by_id = {str(row["id"]): row for row in submitted_rows}
+    shared_ids = [str(row["id"]) for row in original_rows if str(row["id"]) in submitted_by_id]
+    cells: list[dict[str, Any]] = []
+    for row_id in shared_ids:
+        old_values = original_by_id[row_id]["values"]
+        new_values = submitted_by_id[row_id]["values"]
+        for column in original_columns:
+            column_key = str(column["key"])
+            if old_values.get(column_key) == new_values.get(column_key):
+                continue
+            cells.append(
+                {
+                    "row_id": row_id,
+                    "column_key": column_key,
+                    "old_value": old_values.get(column_key),
+                    "new_value": new_values.get(column_key),
+                }
+            )
+    column_labels = [
+        {
+            "column_key": str(original["key"]),
+            "old_label": str(original["label"]),
+            "new_label": submitted["label"],
+        }
+        for original, submitted in zip(original_columns, submitted_columns, strict=True)
+        if str(original["label"]) != submitted["label"]
+    ]
+    return {
+        "cells": cells,
+        "column_labels": column_labels,
+        "added_row_ids": [str(row["id"]) for row in submitted_rows if str(row["id"]) not in original_by_id],
+        "deleted_row_ids": [str(row["id"]) for row in original_rows if str(row["id"]) not in submitted_by_id],
+    }
+
+
+def _empty_table_changes() -> dict[str, list[Any]]:
+    return {
+        "cells": [],
+        "column_labels": [],
+        "added_row_ids": [],
+        "deleted_row_ids": [],
+    }
 
 
 def _validate_schema_value(value: Any, schema: dict[str, Any], *, path: str) -> Any:

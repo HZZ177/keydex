@@ -963,17 +963,11 @@ function selectedQuoteFromContextItem(
   if (!content) {
     return null;
   }
-  const annotationId = trimmedString(metadata?.annotation_id) || trimmedString(item.metadata?.annotationId);
-  const annotationComment =
-    trimmedString(metadata?.annotation_comment) || trimmedString(item.metadata?.annotationComment);
-  const source: SelectedQuote["source"] =
-    annotationId || trimmedString(metadata?.source) === "annotation" ? "annotation" : "selection";
+  const source: SelectedQuote["source"] = "selection";
   const path = trimmedString(item.path) || trimmedString(metadata?.path);
   if (type === "source_quote" && path) {
     return selectedQuoteFromText(content, {
       source,
-      annotationId,
-      annotationComment,
       file: {
         path,
         name: trimmedString(item.name) || trimmedString(metadata?.name) || fileName(path),
@@ -986,8 +980,6 @@ function selectedQuoteFromContextItem(
   }
   return selectedQuoteFromText(content, {
     source,
-    annotationId,
-    annotationComment,
   });
 }
 
@@ -1000,17 +992,12 @@ function selectedFileFromContextItem(
   if (!path) {
     return null;
   }
-  const annotationId = trimmedString(metadata?.annotation_id) || trimmedString(item.metadata?.annotationId);
-  const annotationComment =
-    trimmedString(metadata?.annotation_comment) || trimmedString(item.metadata?.annotationComment);
   return {
     id: trimmedString(item.id) || `file:${index}:${path}`,
     path,
     name: trimmedString(item.name) || trimmedString(metadata?.name) || trimmedString(item.label) || fileName(path),
     type: selectedFileType(trimmedString(item.fileType) || trimmedString(metadata?.fileType)),
     source: selectedFileSource(trimmedString(metadata?.source)),
-    annotationId: annotationId || null,
-    annotationComment: annotationComment || null,
   };
 }
 

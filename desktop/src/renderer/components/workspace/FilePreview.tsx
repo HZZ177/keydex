@@ -11,11 +11,7 @@ import {
   Search,
   MessageSquarePlus,
   MessageSquareText,
-  Pencil,
   RotateCcw,
-  Send,
-  Target,
-  Trash2,
   X,
   ZoomIn,
   ZoomOut,
@@ -60,9 +56,9 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ComponentProps,
   type HTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   type ReactNode,
@@ -72,8 +68,6 @@ import { createPortal } from "react-dom";
 
 import type {
   RuntimeBridge,
-  WorkspaceFileAnnotation,
-  WorkspaceFileAnnotationAnchorV2,
   WorkspaceMediaResponse,
   WorkspaceScope,
 } from "@/runtime";
@@ -88,10 +82,7 @@ import {
   isFindShortcutEvent,
   type AppFindShortcutDetail,
 } from "@/renderer/events/findShortcut";
-import {
-  subscribeStartWorkspaceFileAnnotation,
-  type StartWorkspaceFileAnnotationDetail,
-} from "@/renderer/events/workspaceFileContext";
+import { subscribeStartWorkspaceFileAnnotation } from "@/renderer/events/workspaceFileContext";
 import {
   useOptionalPreview,
   type PreviewAnnotationChatRequest,
@@ -111,9 +102,9 @@ import {
 import { getMermaidConfig } from "@/renderer/utils/mermaidConfig";
 import { parseUnifiedDiffDisplayLines } from "@/renderer/utils/unifiedDiff";
 
-import { createSourceRangeAnchor, validateSourceRangeAnchor } from "./filePreviewAnnotations";
 import {
   buildMarkdownAnnotationIndex,
+  buildResolvedMarkdownAnnotationIndex,
   buildMarkdownFindIndex,
   defaultMarkdownBlockRenderers,
   markdownDocumentModelCache,
@@ -122,10 +113,32 @@ import {
   type MarkdownDocumentModel,
   type VirtualMarkdownPreviewHandle,
 } from "./markdownPreviewEngine";
+import { AnnotationRail } from "@/renderer/features/annotations/ui/AnnotationRail";
+import { AnnotationStatusSection } from "@/renderer/features/annotations/ui/AnnotationStatusSection";
+import { DocumentAnnotationSection } from "@/renderer/features/annotations/ui/DocumentAnnotationSection";
+import { AnnotationRetargetCard } from "@/renderer/features/annotations/ui/AnnotationRetargetCard";
+import { AnnotationConnectorLayer } from "@/renderer/features/annotations/ui/AnnotationConnectorLayer";
+import {
+  restartAnnotationNavigationFlash,
+  smoothScrollElementTo,
+} from "@/renderer/features/annotations/navigation/AnnotationNavigationEffects";
+import {
+  connectorGeometry,
+  connectorPreferredEdgeY,
+  spreadConnectorEdgePorts,
+} from "@/renderer/features/annotations/layout/ConnectorGeometry";
+import { DRAFT_ANNOTATION_ID, useUnifiedAnnotationSession, RETARGET_ANNOTATION_ID, type UnifiedAnnotationSession } from "@/renderer/features/annotations/state/useUnifiedAnnotationSession";
+import type { SourceAnnotationAdapter } from "@/renderer/features/annotations/adapters/SourceAnnotationAdapter";
+import type { MarkdownAnnotationBinding } from "@/renderer/features/annotations/adapters/MarkdownAnnotationAdapter";
 import { ImagePreviewSurface } from "./ImagePreviewSurface";
 import styles from "./FilePreview.module.css";
 
 export type FilePreviewRequest = PreviewRequest;
+
+const EMPTY_ANNOTATION_FLOATING_ITEMS = Object.freeze([]);
+const ANNOTATION_RAIL_CARD_INSET = 32;
+const ANNOTATION_CONNECTOR_FAN_OUT = 8;
+const ANNOTATION_BOTTOM_ACTIONS_RESERVED = 68;
 
 export interface MarkdownOutlineItem {
   id: string;
@@ -143,11 +156,6 @@ export interface MarkdownOutlineRevealRequest {
 export interface FilePreviewRevealRequest extends PreviewFileRevealTarget {
   requestId: number;
 }
-
-type AnnotationWorkspaceRuntime = Pick<
-  RuntimeBridge["workspace"],
-  "listAnnotations" | "createAnnotation" | "updateAnnotation" | "deleteAnnotation"
->;
 
 export interface FilePreviewProps {
   workspaceId?: string;
@@ -183,7 +191,10 @@ export function FilePreview({
   bottomSafeArea,
 }: FilePreviewProps) {
   const previewRootRef = useRef<HTMLElement | null>(null);
+  const annotationLayoutRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [documentViewport, setDocumentViewport] = useState<HTMLDivElement | null>(null);
+  const [annotationActionsHost, setAnnotationActionsHost] = useState<HTMLDivElement | null>(null);
   const markdownPreviewRef = useRef<VirtualMarkdownPreviewHandle | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const panelChrome = chrome === "panel";
@@ -191,6 +202,7 @@ export function FilePreview({
   const kind = useMemo(() => detectPreviewKind(request), [request]);
   const immediateContent = useMemo(() => immediatePreviewContent(request), [request]);
   const [content, setContent] = useState(() => immediatePreviewContent(request) ?? "");
+  const [documentRevision, setDocumentRevision] = useState<string | null>(null);
   const [media, setMedia] = useState<WorkspaceMediaResponse | null>(null);
   const [loading, setLoading] = useState(isPathPreviewRequest(request));
   const [fileOpenSettling, setFileOpenSettling] = useState(usesFileOpenDelay);
@@ -212,32 +224,13 @@ export function FilePreview({
   const showPreviewTabs = previewEntries.length > 1;
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const fileLoadScope = request.type === "file" ? scope : null;
-  const annotationScope = useMemo(() => annotationWorkspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const annotationPath = request.type === "file" || request.type === "local-file" ? request.path : null;
   const revealPath = isPathPreviewRequest(request)
     ? request.path
     : request.type === "content"
       ? request.sourcePath ?? null
       : null;
-  const annotationRuntime = useMemo(() => annotationWorkspaceRuntime(runtime), [runtime]);
   const quoteSelectionAvailable = Boolean(onQuoteSelection && annotationPath);
-  const annotationAvailable = Boolean(
-    annotationPath &&
-      annotationScope &&
-      annotationRuntime,
-  );
-  const [annotations, setAnnotations] = useState<WorkspaceFileAnnotation[]>([]);
-  const [annotationsLoading, setAnnotationsLoading] = useState(false);
-  const [annotationError, setAnnotationError] = useState<string | null>(null);
-  const [annotationReloadId, setAnnotationReloadId] = useState(0);
-  const [fileAnnotationDraft, setFileAnnotationDraft] = useState("");
-  const [fileAnnotationComposerOpen, setFileAnnotationComposerOpen] = useState(false);
-  const [fileAnnotationComposerFocusRequestId, setFileAnnotationComposerFocusRequestId] = useState(0);
-  const [selectionDraft, setSelectionDraft] = useState<SelectionAnnotationDraft | null>(null);
-  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
-  const [editingComment, setEditingComment] = useState("");
-  const [annotationMutationError, setAnnotationMutationError] = useState<string | null>(null);
-  const [annotationMutatingId, setAnnotationMutatingId] = useState<string | null>(null);
   const sourceSelectionRef = useRef<SourceSelection | null>(null);
   const updateSourceSelection = useCallback((nextSelection: SourceSelection | null) => {
     if (!sourceSelectionsEqual(sourceSelectionRef.current, nextSelection)) {
@@ -245,8 +238,6 @@ export function FilePreview({
     }
   }, []);
   const [lineRevealRequest, setLineRevealRequest] = useState<SourceLineRevealRequest | null>(null);
-  const [previewRevealRequest, setPreviewRevealRequest] = useState<PreviewAnnotationRevealRequest | null>(null);
-  const [transientRevealAnnotation, setTransientRevealAnnotation] = useState<WorkspaceFileAnnotation | null>(null);
   const [sourceEditorView, setSourceEditorView] = useState<EditorView | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
@@ -255,37 +246,9 @@ export function FilePreview({
   const [findMatchIndex, setFindMatchIndex] = useState(-1);
   const [activeMarkdownFindMatchId, setActiveMarkdownFindMatchId] = useState<string | null>(null);
   const [sourceFindState, setSourceFindState] = useState<CodeMirrorFindState | null>(null);
-  const [annotationPanelOpen, setAnnotationPanelOpen] = useState(false);
-  const [annotationPanelClosing, setAnnotationPanelClosing] = useState(false);
-  const [activeAnnotationPopover, setActiveAnnotationPopover] = useState<AnnotationPopoverState | null>(null);
-  const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(null);
-  const [flashAnnotationId, setFlashAnnotationId] = useState<string | null>(null);
-  const [selectionDraftPopover, setSelectionDraftPopover] = useState<AnnotationDraftPopoverState | null>(null);
   const [selectionMappingError, setSelectionMappingError] = useState<string | null>(null);
-  const [locateError, setLocateError] = useState<string | null>(null);
-  const annotationPanelOpenRef = useRef(annotationPanelOpen);
-  const annotationPanelClosingRef = useRef(annotationPanelClosing);
-  const annotationPanelCloseTimerRef = useRef<number | null>(null);
-  const annotationFlashTimerRef = useRef<number | null>(null);
-  const annotationPopoverFrameRef = useRef<number | null>(null);
-  const transientRevealAnnotationRef = useRef<WorkspaceFileAnnotation | null>(null);
   const handledSourceRevealRequestIdRef = useRef(0);
   const lastFindScrollLineRef = useRef<FilePreviewFindScrollLine | null>(null);
-
-  const clearTransientReveal = useCallback(() => {
-    const annotationId = transientRevealAnnotationRef.current?.id ?? null;
-    transientRevealAnnotationRef.current = null;
-    setTransientRevealAnnotation(null);
-    if (!annotationId) {
-      return;
-    }
-    setFocusedAnnotationId((current) => (current === annotationId ? null : current));
-    setFlashAnnotationId((current) => (current === annotationId ? null : current));
-  }, []);
-
-  useEffect(() => {
-    transientRevealAnnotationRef.current = transientRevealAnnotation;
-  }, [transientRevealAnnotation]);
 
   useEffect(() => {
     const themeObserver = new MutationObserver(() => setTheme(getTheme()));
@@ -293,156 +256,12 @@ export function FilePreview({
     return () => themeObserver.disconnect();
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (annotationPanelCloseTimerRef.current !== null) {
-        window.clearTimeout(annotationPanelCloseTimerRef.current);
-      }
-      if (annotationFlashTimerRef.current !== null) {
-        window.clearTimeout(annotationFlashTimerRef.current);
-      }
-      if (annotationPopoverFrameRef.current !== null) {
-        window.cancelAnimationFrame(annotationPopoverFrameRef.current);
-      }
-    };
-  }, []);
-
-  const hasAnchoredAnnotationPopover = Boolean(activeAnnotationPopover || selectionDraftPopover);
-  useEffect(() => {
-    annotationPanelOpenRef.current = annotationPanelOpen;
-    annotationPanelClosingRef.current = annotationPanelClosing;
-  }, [annotationPanelClosing, annotationPanelOpen]);
-
-  useEffect(() => {
-    if (!hasAnchoredAnnotationPopover) {
-      return;
-    }
-    const updatePopoverPositions = () => {
-      if (annotationPopoverFrameRef.current !== null) {
-        return;
-      }
-      annotationPopoverFrameRef.current = window.requestAnimationFrame(() => {
-        annotationPopoverFrameRef.current = null;
-        setActiveAnnotationPopover((current) => (current ? repositionPopoverState(current) : current));
-        setSelectionDraftPopover((current) => (current ? repositionPopoverState(current) : current));
-      });
-    };
-    window.addEventListener("scroll", updatePopoverPositions, true);
-    window.addEventListener("resize", updatePopoverPositions);
-    return () => {
-      window.removeEventListener("scroll", updatePopoverPositions, true);
-      window.removeEventListener("resize", updatePopoverPositions);
-      if (annotationPopoverFrameRef.current !== null) {
-        window.cancelAnimationFrame(annotationPopoverFrameRef.current);
-        annotationPopoverFrameRef.current = null;
-      }
-    };
-  }, [hasAnchoredAnnotationPopover]);
-
-  useEffect(() => {
-    if (!hasAnchoredAnnotationPopover) {
-      return;
-    }
-    const closeOnOutsidePointerDown = (event: PointerEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (target?.closest(FILE_PREVIEW_ANNOTATION_POPOVER_SELECTOR)) {
-        return;
-      }
-      setActiveAnnotationPopover(null);
-      setSelectionDraft(null);
-      setSelectionDraftPopover(null);
-      setFocusedAnnotationId(null);
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointerDown, true);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePointerDown, true);
-  }, [hasAnchoredAnnotationPopover]);
-
-  const openAnnotationPanel = useCallback(() => {
-    if (annotationPanelCloseTimerRef.current !== null) {
-      window.clearTimeout(annotationPanelCloseTimerRef.current);
-      annotationPanelCloseTimerRef.current = null;
-    }
-    setActiveAnnotationPopover(null);
-    setSelectionDraft(null);
-    setSelectionDraftPopover(null);
-    setAnnotationPanelClosing(false);
-    annotationPanelOpenRef.current = true;
-    annotationPanelClosingRef.current = false;
-    setAnnotationPanelOpen(true);
-  }, []);
-
-  const closeAnnotationPanel = useCallback(() => {
-    if (!annotationPanelOpenRef.current || annotationPanelClosingRef.current) {
-      return;
-    }
-    annotationPanelClosingRef.current = true;
-    setAnnotationPanelClosing(true);
-    annotationPanelCloseTimerRef.current = window.setTimeout(() => {
-      annotationPanelCloseTimerRef.current = null;
-      annotationPanelOpenRef.current = false;
-      annotationPanelClosingRef.current = false;
-      setAnnotationPanelOpen(false);
-      setAnnotationPanelClosing(false);
-      setFileAnnotationComposerOpen(false);
-    }, ANNOTATION_PANEL_EXIT_MS);
-  }, []);
-
-  const toggleAnnotationPanel = useCallback(() => {
-    if (annotationPanelOpenRef.current && !annotationPanelClosingRef.current) {
-      closeAnnotationPanel();
-      return;
-    }
-    openAnnotationPanel();
-  }, [closeAnnotationPanel, openAnnotationPanel]);
-
-  const openFileAnnotationComposer = useCallback(() => {
-    if (!annotationPath) {
-      return;
-    }
-    setActiveAnnotationPopover(null);
-    setSelectionDraft(null);
-    setSelectionDraftPopover(null);
-    setEditingAnnotationId(null);
-    setEditingComment("");
-    setAnnotationMutationError(null);
-    setSelectionMappingError(null);
-    setLocateError(null);
-    openAnnotationPanel();
-    setFileAnnotationComposerOpen(true);
-    setFileAnnotationComposerFocusRequestId((requestId) => requestId + 1);
-  }, [annotationPath, openAnnotationPanel]);
-
-  useEffect(() => {
-    if (!annotationPanelOpen || annotationPanelClosing) {
-      return;
-    }
-    const closePanelOnOutsidePointerDown = (event: PointerEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (!target || target.closest(FILE_PREVIEW_SELECTION_EXCLUDE_SELECTOR)) {
-        return;
-      }
-      closeAnnotationPanel();
-    };
-    document.addEventListener("pointerdown", closePanelOnOutsidePointerDown, true);
-    return () => document.removeEventListener("pointerdown", closePanelOnOutsidePointerDown, true);
-  }, [annotationPanelClosing, annotationPanelOpen, closeAnnotationPanel]);
-
-  useEffect(() => {
-    if (!annotationPath) {
-      return;
-    }
-    return subscribeStartWorkspaceFileAnnotation((detail) => {
-      if (!isWorkspaceFileAnnotationRequestForPreview(detail, annotationPath, workspaceId, sessionId)) {
-        return;
-      }
-      openFileAnnotationComposer();
-    });
-  }, [annotationPath, openFileAnnotationComposer, sessionId, workspaceId]);
 
   useEffect(() => {
     let active = true;
     setError(null);
     setMedia(null);
+    setDocumentRevision(null);
     resetCopyFeedback();
     setViewMode(defaultViewMode(request));
     setSplitMode(false);
@@ -495,6 +314,7 @@ export function FilePreview({
           : runtime.workspace.readFile(fileLoadScope as WorkspaceScope, request.path).then((response) => {
               if (active) {
                 setContent(response.content);
+                setDocumentRevision(response.revision);
               }
             });
 
@@ -527,70 +347,12 @@ export function FilePreview({
     return () => window.clearTimeout(timer);
   }, [request, usesFileOpenDelay]);
 
-  useEffect(() => {
-    sourceSelectionRef.current = null;
-    setSelectionDraft(null);
-    setEditingAnnotationId(null);
-    setEditingComment("");
-    setActiveAnnotationPopover(null);
-    setSelectionDraftPopover(null);
-    setAnnotationMutationError(null);
-    if (annotationPanelCloseTimerRef.current !== null) {
-      window.clearTimeout(annotationPanelCloseTimerRef.current);
-      annotationPanelCloseTimerRef.current = null;
-    }
-    annotationPanelOpenRef.current = false;
-    annotationPanelClosingRef.current = false;
-    setAnnotationPanelOpen(false);
-    setAnnotationPanelClosing(false);
-    setFileAnnotationComposerOpen(false);
-  }, [annotationPath]);
-
-  useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-    setAnnotations([]);
-    setAnnotationError(null);
-
-    if (!annotationAvailable || !annotationPath || !annotationScope || !annotationRuntime) {
-      setAnnotationsLoading(false);
-      return () => {
-        active = false;
-        controller.abort();
-      };
-    }
-
-    setAnnotationsLoading(true);
-    void annotationRuntime
-      .listAnnotations(annotationScope, annotationPath, { signal: controller.signal })
-      .then((records) => {
-        if (active) {
-          setAnnotations(records);
-        }
-      })
-      .catch((reason) => {
-        if (active && !isAbortError(reason)) {
-          setAnnotationError(errorMessage(reason));
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setAnnotationsLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [annotationAvailable, annotationPath, annotationReloadId, annotationRuntime, annotationScope]);
-
   const title = previewTitle(request);
   const canPreview = kind === "markdown" || kind === "html" || kind === "mermaid";
   const canRenderPreview = canPreview || kind === "diff";
   const canSplit = kind === "markdown" || kind === "html";
   const sourceLabel = previewSourceLabel(request);
-  const formattedSource = useMemo(() => formatSource(renderedPreviewContent, kind), [kind, renderedPreviewContent]);
+  const formattedSource = renderedPreviewContent;
   useEffect(() => {
     if (kind !== "markdown" || previewLoading || fileOpenSettling || error) {
       setMarkdownModel(null);
@@ -675,458 +437,187 @@ export function FilePreview({
     onMarkdownOutlineChange(error ? [] : markdownOutline);
   }, [error, kind, markdownOutline, onMarkdownOutlineChange, previewBusy]);
 
-  const selectionAnnotations = useMemo(
-    () => {
-      const persistedAnnotations = annotations.filter(
-        (annotation) =>
-          annotation.anchor_type === "selection" && Boolean((annotation.selected_text || "").trim()),
-      );
-      return transientRevealAnnotation
-        ? [...persistedAnnotations, transientRevealAnnotation]
-        : persistedAnnotations;
-    },
-    [annotations, transientRevealAnnotation],
-  );
-  const activeAnnotation = useMemo(
-    () => annotations.find((annotation) => annotation.id === activeAnnotationPopover?.annotationId) ?? null,
-    [activeAnnotationPopover?.annotationId, annotations],
-  );
-  const activeAnnotationId = activeAnnotationPopover?.annotationId ?? focusedAnnotationId;
-  const markdownAnnotationIndex = useMemo(
-    () => (markdownModel ? buildMarkdownAnnotationIndex(markdownModel, selectionAnnotations) : []),
-    [markdownModel, selectionAnnotations],
-  );
+  const annotationMode = kind === "markdown" ? (splitMode ? "split" : viewMode) : "source";
+  const annotationSession = useUnifiedAnnotationSession({
+    documentRevision,
+    kind,
+    markdownModel,
+    mode: annotationMode,
+    path: annotationPath,
+    runtime: runtime?.annotations ?? null,
+    source: formattedSource,
+    workspaceId: workspaceId ?? null,
+  });
+  const annotationAvailable = annotationSession.available;
+  const annotationPanelOpen = annotationSession.state.panelOpen;
+  const activeAnnotationId = annotationSession.state.activeAnnotationId;
+  const flashAnnotationId = annotationSession.state.flashAnnotationId;
+  const closeAnnotationPanel = useCallback(() => annotationSession.store.getState().closePanel(), [annotationSession.store]);
+  const toggleAnnotationPanel = useCallback(() => annotationSession.store.getState().togglePanel(), [annotationSession.store]);
+  const markdownAnnotationIndex = useMemo(() => {
+    if (!markdownModel) return [];
+    const persistent = buildResolvedMarkdownAnnotationIndex(markdownModel, annotationSession.state.resolutions.resolved);
+    const interaction = annotationSession.state.interaction;
+    const range = interaction.type === "drafting"
+      ? interaction.range
+      : interaction.type === "retargeting" ? interaction.range : null;
+    if (!range || !annotationSession.model) return persistent;
+    const interactionId = interaction.type === "drafting" ? DRAFT_ANNOTATION_ID : RETARGET_ANNOTATION_ID;
+    return [
+      ...persistent,
+      ...buildMarkdownAnnotationIndex(markdownModel, [{
+        annotation: { id: interactionId },
+        sourceRanges: annotationSession.model.toSourceRanges(range),
+      }]),
+    ];
+  }, [annotationSession.model, annotationSession.state.interaction, annotationSession.state.resolutions.resolved, markdownModel]);
 
-  const activateAnnotation = useCallback(
-    (annotation: WorkspaceFileAnnotation, position: AnnotationClientPosition) => {
-      if (isTransientRevealAnnotationId(annotation.id)) {
-        return;
-      }
-      closeAnnotationPanel();
-      setSelectionDraft(null);
-      setSelectionDraftPopover(null);
-      setAnnotationMutationError(null);
-      setFocusedAnnotationId(annotation.id);
-      setActiveAnnotationPopover({
-        annotationId: annotation.id,
-        ...createPopoverState(
-          {
-            x: position.clientX,
-            y: position.clientY,
-            width: position.width ?? 0,
-            height: position.height ?? 0,
-          },
-          position.anchorElement ?? bodyRef.current,
-          bodyRef.current,
-        ),
-      });
-    },
-    [closeAnnotationPanel],
-  );
-
-  const currentContentHash = useMemo(
-    () => (annotationPath && kind !== "image" && renderedPreviewContent ? hashText(renderedPreviewContent) : null),
-    [annotationPath, kind, renderedPreviewContent],
-  );
-
-  const createFileAnnotation = useCallback(async () => {
-    const comment = fileAnnotationDraft.trim();
-    if (!annotationAvailable || !annotationPath || !annotationScope || !annotationRuntime || !comment) {
+  useEffect(() => {
+    const request = annotationSession.railRevealRequest;
+    if (!request || !annotationPanelOpen || !documentViewport) {
       return;
     }
-    setAnnotationMutationError(null);
-    setAnnotationMutatingId("create-file");
-    try {
-      const created = await annotationRuntime.createAnnotation(annotationScope, {
-        path: annotationPath,
-        anchor_type: "file",
-        comment,
-        content_hash: currentContentHash,
-      });
-      setAnnotations((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-      setFileAnnotationDraft("");
-    } catch (reason) {
-      setAnnotationMutationError(errorMessage(reason));
-    } finally {
-      setAnnotationMutatingId(null);
-    }
-  }, [annotationAvailable, annotationPath, annotationRuntime, annotationScope, currentContentHash, fileAnnotationDraft]);
+    const controller = new AbortController();
+    const frame = window.requestAnimationFrame(() => {
+      const card = Array.from(
+        annotationLayoutRef.current?.querySelectorAll<HTMLElement>("[data-annotation-card-id]") ?? [],
+      ).find((element) => element.dataset.annotationCardId === request.annotationId);
+      if (!card) {
+        return;
+      }
+      void centerElementInScrollViewport(documentViewport, card, controller.signal)
+        .then(() => restartAnnotationNavigationFlash(card))
+        .catch(() => undefined);
+    });
+    return () => {
+      controller.abort();
+      window.cancelAnimationFrame(frame);
+    };
+  }, [annotationPanelOpen, annotationSession.railRevealRequest, documentViewport]);
+
+  useEffect(() => {
+    if (!annotationPath) return;
+    return subscribeStartWorkspaceFileAnnotation((detail) => {
+      if (detail.path !== annotationPath || detail.workspaceId !== workspaceId) return;
+      annotationSession.store.getState().openPanel();
+    });
+  }, [annotationPath, annotationSession.store, workspaceId]);
 
   const startSelectionAnnotation = useCallback(
     (selectionSnapshot: FilePreviewSelectionSnapshot) => {
-      const text = selectionSnapshot.selectedText.trim();
-      if (!text) {
+      if (!selectionSnapshot.selectedText.trim()) return;
+      const interaction = annotationSession.store.getState().interaction;
+      const range = selectionSnapshot.selectionRange;
+      const sourceSurface = range?.commonAncestorContainer.parentElement?.closest("[aria-label='源码内容']");
+      const selection = sourceSurface || viewMode === "source"
+        ? annotationSession.sourceAdapter.selection()
+        : null;
+      const applied = interaction.type === "retargeting"
+        ? selection
+          ? annotationSession.setRetargetSelection(selection)
+          : annotationSession.setRetargetFromMarkdownRange(range, bodyRef.current)
+        : selection
+          ? annotationSession.beginDraft(selection)
+          : annotationSession.beginDraftFromMarkdownRange(range, bodyRef.current);
+      if (!applied) {
+        setSelectionMappingError("当前选区无法投影到文档文字模型。");
         return;
       }
-      const anchor = selectionAnchorFromCurrentSelection(
-        formattedSource,
-        kind === "markdown" ? "preview" : "source",
-        text,
-        sourceSelectionRef.current,
-        selectionSnapshot.selectionRange,
-        bodyRef.current,
-      );
-      if (!anchor) {
-        setSelectionMappingError("当前选区无法映射到文件源码，不能添加批注。");
-        return;
-      }
-      const selectionPosition = selectionSnapshot.selectionPosition;
-      setSelectionDraft({
-        anchor,
-        selectedText: text,
-        comment: "",
-        lineStart: anchor.lineStart,
-        lineEnd: anchor.lineEnd,
-        columnStart: anchor.columnStart,
-        columnEnd: anchor.columnEnd,
-      });
-      setSelectionDraftPopover({
-        ...createPopoverState(
-          {
-            x: selectionPosition?.x ?? window.innerWidth / 2,
-            y: selectionPosition?.y ?? 120,
-            width: selectionPosition?.width ?? 0,
-            height: selectionPosition?.height ?? 0,
-          },
-          currentSelectionElement(bodyRef.current),
-          bodyRef.current,
-        ),
-      });
-      setActiveAnnotationPopover(null);
-      closeAnnotationPanel();
-      setAnnotationMutationError(null);
       setSelectionMappingError(null);
+      window.getSelection()?.removeAllRanges();
     },
-    [closeAnnotationPanel, formattedSource, kind],
+    [annotationSession, viewMode],
   );
 
   const quotePreviewSelection = useCallback(
     (selectionSnapshot: FilePreviewSelectionSnapshot) => {
       const text = selectionSnapshot.selectedText.trim();
-      if (!text || !annotationPath) {
-        return;
-      }
-      const anchor = selectionAnchorFromCurrentSelection(
-        formattedSource,
-        kind === "markdown" ? "preview" : "source",
-        text,
-        sourceSelectionRef.current,
-        selectionSnapshot.selectionRange,
-        bodyRef.current,
-      );
+      const model = annotationSession.model;
+      if (!text || !annotationPath) return;
+      const sourceSelection = annotationSession.sourceAdapter.selection();
+      const previewRange = selectionSnapshot.selectionRange && bodyRef.current
+        ? previewSourceRangeFromSelection(selectionSnapshot.selectionRange, bodyRef.current)
+        : null;
+      const logical = model && sourceSelection
+        ? model.projectSelection(sourceSelection)?.logicalRange ?? null
+        : model && kind === "markdown" && previewRange
+          ? model.projectSelection({
+              coordinateSpace: "source",
+              range: { start: previewRange.sourceStart, end: previewRange.sourceEnd },
+            })?.logicalRange ?? null
+          : null;
+      const sourceRange = logical && model
+        ? model.toSourceRanges(logical)[0] ?? null
+        : previewRange
+          ? { start: previewRange.sourceStart, end: previewRange.sourceEnd }
+          : sourceSelection?.coordinateSpace === "source"
+            ? sourceSelection.range
+            : null;
+      const lineRange = sourceRange ? sourceLineNumbers(formattedSource, sourceRange.start, sourceRange.end) : null;
       onQuoteSelection?.({
         path: annotationPath,
         selectedText: text,
-        lineStart: anchor?.lineStart ?? null,
-        lineEnd: anchor?.lineEnd ?? null,
-        sourceStart: anchor?.sourceStart ?? null,
-        sourceEnd: anchor?.sourceEnd ?? null,
+        lineStart: lineRange?.lineStart ?? null,
+        lineEnd: lineRange?.lineEnd ?? null,
+        sourceStart: sourceRange?.start ?? null,
+        sourceEnd: sourceRange?.end ?? null,
       });
     },
-    [annotationPath, formattedSource, kind, onQuoteSelection],
-  );
-
-  const createSelectionAnnotation = useCallback(async () => {
-    const comment = selectionDraft?.comment.trim() ?? "";
-    if (!annotationAvailable || !annotationPath || !annotationScope || !annotationRuntime || !selectionDraft || !comment) {
-      return;
-    }
-    setAnnotationMutationError(null);
-    setAnnotationMutatingId("create-selection");
-    try {
-      const created = await annotationRuntime.createAnnotation(annotationScope, {
-        path: annotationPath,
-        anchor_type: "selection",
-        comment,
-        selected_text: selectionDraft.selectedText,
-        line_start: selectionDraft.lineStart,
-        line_end: selectionDraft.lineEnd,
-        column_start: selectionDraft.columnStart,
-        column_end: selectionDraft.columnEnd,
-        content_hash: selectionDraft.anchor.contentHash,
-        anchor_json: selectionDraft.anchor,
-      });
-      setAnnotations((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-      setSelectionDraft(null);
-      setSelectionDraftPopover(null);
-      setSelectionMappingError(null);
-    } catch (reason) {
-      setAnnotationMutationError(errorMessage(reason));
-    } finally {
-      setAnnotationMutatingId(null);
-    }
-  }, [annotationAvailable, annotationPath, annotationRuntime, annotationScope, selectionDraft]);
-
-  const beginEditAnnotation = useCallback(
-    (annotation: WorkspaceFileAnnotation) => {
-      const element = findAnnotationElement(bodyRef.current, annotation.id);
-      if (element) {
-        const rect = element.getBoundingClientRect();
-        activateAnnotation(annotation, {
-          clientX: rect.left + rect.width / 2,
-          clientY: rect.top,
-          width: rect.width,
-          height: rect.height,
-          anchorElement: element,
-        });
-        return;
-      }
-      setEditingAnnotationId(annotation.id);
-      setEditingComment(annotation.comment);
-      setAnnotationMutationError(null);
-    },
-    [activateAnnotation],
+    [annotationPath, annotationSession.model, annotationSession.sourceAdapter, formattedSource, kind, onQuoteSelection],
   );
 
   const saveAnnotationComment = useCallback(
-    async (annotation: WorkspaceFileAnnotation, value: string) => {
-      const comment = value.trim();
-      if (!annotationAvailable || !annotationScope || !annotationRuntime || !comment) {
-        return false;
-      }
-      setAnnotationMutationError(null);
-      setAnnotationMutatingId(`edit:${annotation.id}`);
-      try {
-        const updated = await annotationRuntime.updateAnnotation(annotationScope, annotation.id, { comment });
-        setAnnotations((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-        return true;
-      } catch (reason) {
-        setAnnotationMutationError(errorMessage(reason));
-        return false;
-      } finally {
-        setAnnotationMutatingId(null);
-      }
-    },
-    [annotationAvailable, annotationRuntime, annotationScope],
+    async (annotationId: string, body: string) =>
+      Boolean(await annotationSession.actions?.updateBody(annotationId, body)),
+    [annotationSession.actions],
   );
-
-  const saveAnnotationEdit = useCallback(
-    async (annotation: WorkspaceFileAnnotation) => {
-      const saved = await saveAnnotationComment(annotation, editingComment);
-      if (saved) {
-        setEditingAnnotationId(null);
-        setEditingComment("");
-      }
-    },
-    [editingComment, saveAnnotationComment],
-  );
-
   const deleteAnnotation = useCallback(
-    async (annotation: WorkspaceFileAnnotation) => {
-      if (!annotationAvailable || !annotationScope || !annotationRuntime) {
-        return;
-      }
-      setAnnotationMutationError(null);
-      setAnnotationMutatingId(`delete:${annotation.id}`);
-      try {
-        await annotationRuntime.deleteAnnotation(annotationScope, annotation.id);
-        setAnnotations((current) => current.filter((item) => item.id !== annotation.id));
-        setActiveAnnotationPopover((current) =>
-          current?.annotationId === annotation.id ? null : current,
-        );
-        setFocusedAnnotationId((current) => (current === annotation.id ? null : current));
-      } catch (reason) {
-        setAnnotationMutationError(errorMessage(reason));
-      } finally {
-        setAnnotationMutatingId(null);
-      }
-    },
-    [annotationAvailable, annotationRuntime, annotationScope],
+    async (annotationId: string) => Boolean(await annotationSession.actions?.delete(annotationId)),
+    [annotationSession.actions],
   );
-
-  const startChatFromAnnotation = useCallback(
-    (annotation: WorkspaceFileAnnotation) => {
-      onStartChatFromAnnotation?.(annotationChatRequest(annotation));
-      setActiveAnnotationPopover((current) =>
-        current?.annotationId === annotation.id ? null : current,
-      );
+  const startChatFromResolution = useCallback(
+    (item: { record: { id: string; document_path: string; workspace_id: string } }) => {
+      onStartChatFromAnnotation?.({
+        annotationId: item.record.id,
+        path: item.record.document_path,
+        workspaceId: item.record.workspace_id,
+      });
     },
     [onStartChatFromAnnotation],
   );
-
-  const startChatFromAllAnnotations = useCallback(
-    (items: WorkspaceFileAnnotation[]) => {
-      const requests = items
-        .map(annotationChatRequest)
-        .filter((request) => request.path.trim() && request.comment.trim());
-      if (!requests.length) {
-        return;
-      }
-      onStartChatFromAnnotation?.(requests);
-      setActiveAnnotationPopover(null);
-    },
-    [onStartChatFromAnnotation],
-  );
-
-  const flashAnnotation = useCallback((annotationId: string) => {
-    if (annotationFlashTimerRef.current !== null) {
-      window.clearTimeout(annotationFlashTimerRef.current);
-    }
-    setFlashAnnotationId(null);
-    window.requestAnimationFrame(() => {
-      setFlashAnnotationId(annotationId);
-      annotationFlashTimerRef.current = window.setTimeout(() => {
-        annotationFlashTimerRef.current = null;
-        setFlashAnnotationId((current) => (current === annotationId ? null : current));
-      }, ANNOTATION_FLASH_MS);
-    });
-  }, []);
-
-  const revealAnnotationLine = useCallback(
-    (
-      annotation: WorkspaceFileAnnotation,
-      { flash = true, block = "start" }: { flash?: boolean; block?: ScrollLogicalPosition } = {},
-    ) => {
-      const range = annotationSourceRange(formattedSource, annotation);
-      if (!range) {
-        return false;
-      }
-      setLineRevealRequest((current) => ({
-        requestId: (current?.requestId ?? 0) + 1,
-        position: range.from,
-        block,
+  const startChatFromResolutions = useCallback(
+    (items: readonly { record: { id: string; document_path: string; workspace_id: string } }[]) => {
+      const references = items.map((item) => ({
+        annotationId: item.record.id,
+        path: item.record.document_path,
+        workspaceId: item.record.workspace_id,
       }));
-      setFocusedAnnotationId(annotation.id);
-      if (flash) {
-        flashAnnotation(annotation.id);
-      }
-      return true;
+      if (references.length) onStartChatFromAnnotation?.(references);
     },
-    [flashAnnotation, formattedSource],
-  );
-
-  const scrollAnnotationElementIntoView = useCallback(
-    (annotation: WorkspaceFileAnnotation, element: HTMLElement, { flash = true }: { flash?: boolean } = {}) => {
-      element.scrollIntoView?.(FILE_PREVIEW_REVEAL_SCROLL_OPTIONS);
-      setFocusedAnnotationId(annotation.id);
-      if (flash) {
-        flashAnnotation(annotation.id);
-      }
-    },
-    [flashAnnotation],
-  );
-
-  const revealAnnotation = useCallback(
-    (annotation: WorkspaceFileAnnotation) => {
-      if (!annotation.selected_text) {
-        return;
-      }
-      setFocusedAnnotationId(annotation.id);
-      const existingElement = !splitMode ? findAnnotationElement(bodyRef.current, annotation.id) : null;
-      if (existingElement) {
-        scrollAnnotationElementIntoView(annotation, existingElement, { flash: false });
-        setLocateError(null);
-        return;
-      }
-      let located = false;
-      if (viewMode === "preview" || splitMode) {
-        const previewElement = findPreviewAnnotationElement(bodyRef.current, annotation.id);
-        if (previewElement) {
-          scrollAnnotationElementIntoView(annotation, previewElement, { flash: false });
-          located = true;
-        } else if (kind === "markdown" && markdownPreviewRef.current?.scrollToAnnotation(annotation.id, "center")) {
-          setFocusedAnnotationId(annotation.id);
-          located = true;
-        }
-      }
-      if (viewMode === "source" || splitMode) {
-        located = revealAnnotationLine(annotation, { flash: false }) || located;
-      }
-      if (located) {
-        flashAnnotation(annotation.id);
-        setLocateError(null);
-        return;
-      }
-      setLocateError("当前视图无法定位该批注片段。");
-    },
-    [flashAnnotation, kind, revealAnnotationLine, scrollAnnotationElementIntoView, splitMode, viewMode],
+    [onStartChatFromAnnotation],
   );
 
   useEffect(() => {
-    if (!previewRevealRequest) {
-      return;
-    }
-    const annotation = annotations.find((item) => item.id === previewRevealRequest.annotationId);
-    if (!annotation) {
-      return;
-    }
-    const element = findAnnotationElement(bodyRef.current, annotation.id);
-    if (element) {
-      scrollAnnotationElementIntoView(annotation, element);
-      return;
-    }
-    if (kind === "markdown" && markdownPreviewRef.current?.scrollToAnnotation(annotation.id, "center")) {
-      setFocusedAnnotationId(annotation.id);
-      flashAnnotation(annotation.id);
-      return;
-    }
-    revealAnnotationLine(annotation);
-  }, [annotations, flashAnnotation, kind, previewRevealRequest, revealAnnotationLine, scrollAnnotationElementIntoView]);
-
-  useEffect(() => {
-    clearTransientReveal();
     handledSourceRevealRequestIdRef.current = 0;
-  }, [annotationPath, clearTransientReveal]);
+  }, [annotationPath]);
 
   useEffect(() => {
-    if (!sourceRevealRequest || !revealPath || previewBusy || error) {
-      return;
-    }
-    if (handledSourceRevealRequestIdRef.current === sourceRevealRequest.requestId) {
-      return;
-    }
-    const annotation = transientRevealAnnotationFromRequest(
-      formattedSource,
-      revealPath,
-      sourceRevealRequest,
-      annotationScope,
-    );
+    if (!sourceRevealRequest || !revealPath || previewBusy || error) return;
+    if (handledSourceRevealRequestIdRef.current === sourceRevealRequest.requestId) return;
     handledSourceRevealRequestIdRef.current = sourceRevealRequest.requestId;
-    if (!annotation) {
-      clearTransientReveal();
-      return;
+    const position = sourceRevealRequest.sourceStart
+      ?? (sourceRevealRequest.lineStart ? sourcePositionForLine(formattedSource, sourceRevealRequest.lineStart) : null);
+    if (position === null) return;
+    setLineRevealRequest((current) => ({
+      requestId: (current?.requestId ?? 0) + 1,
+      position,
+      block: "center",
+    }));
+    if (kind === "markdown" && markdownModel && (viewMode === "preview" || splitMode)) {
+      const block = markdownModel.blocks.find((candidate) => position >= candidate.sourceStart && position <= candidate.sourceEnd);
+      if (block) void markdownPreviewRef.current?.revealBlock(block.id, { align: "center" });
     }
-    setLocateError(null);
-    setTransientRevealAnnotation(annotation);
-    setFocusedAnnotationId(annotation.id);
-    flashAnnotation(annotation.id);
-  }, [
-    clearTransientReveal,
-    error,
-    flashAnnotation,
-    formattedSource,
-    annotationScope,
-    previewBusy,
-    revealPath,
-    sourceRevealRequest,
-  ]);
-
-  useLayoutEffect(() => {
-    if (!transientRevealAnnotation) {
-      return;
-    }
-    let located = false;
-    if (viewMode !== "source" || splitMode) {
-      const element = findPreviewAnnotationElement(bodyRef.current, transientRevealAnnotation.id);
-      if (element) {
-        element.scrollIntoView?.(FILE_PREVIEW_TRANSIENT_REVEAL_SCROLL_OPTIONS);
-        located = true;
-      } else if (kind === "markdown" && markdownPreviewRef.current?.scrollToAnnotation(transientRevealAnnotation.id, "center")) {
-        located = true;
-      }
-    }
-    if (viewMode === "source" || splitMode) {
-      located = revealAnnotationLine(transientRevealAnnotation, { flash: false, block: "center" }) || located;
-    }
-    if (located) {
-      setLocateError(null);
-    }
-  }, [kind, renderedPreviewContent, revealAnnotationLine, splitMode, transientRevealAnnotation, viewMode]);
-
-  useLayoutEffect(() => {
-    updatePreviewAnnotationMarkState(bodyRef.current, activeAnnotationId, flashAnnotationId);
-  }, [activeAnnotationId, flashAnnotationId, renderedPreviewContent, selectionAnnotations, splitMode, viewMode]);
-
+  }, [error, formattedSource, kind, markdownModel, previewBusy, revealPath, sourceRevealRequest, splitMode, viewMode]);
   useEffect(() => {
     if (!outlineRevealRequest || kind !== "markdown") {
       return;
@@ -1139,7 +630,8 @@ export function FilePreview({
           heading.dataset.markdownOutlineId = outlineItem.id;
           heading.scrollIntoView?.(FILE_PREVIEW_REVEAL_SCROLL_OPTIONS);
         } else {
-          markdownPreviewRef.current?.scrollToBlock(outlineItem.blockId, "start");
+          void markdownPreviewRef.current?.revealBlock(outlineItem.blockId, { align: "start" })
+            .catch(() => undefined);
         }
       } else {
         const heading = findMarkdownOutlineHeading(bodyRef.current, outlineRevealRequest.id);
@@ -1226,10 +718,7 @@ export function FilePreview({
 
   const handlePreviewPointerDownCapture = useCallback(() => {
     activateFindRoot();
-    if (transientRevealAnnotationRef.current) {
-      clearTransientReveal();
-    }
-  }, [activateFindRoot, clearTransientReveal]);
+  }, [activateFindRoot]);
 
   useEffect(() => {
     const handleSelectAllShortcut = (event: KeyboardEvent) => {
@@ -1378,13 +867,28 @@ export function FilePreview({
           : undefined,
       });
       if (activeCodeMirrorMatch && shouldRecenterActiveMatch) {
-        smoothScrollCodeMirrorPositionIntoView(sourceEditorView, activeCodeMirrorMatch.from, "center");
+        smoothScrollCodeMirrorPositionIntoView(
+          sourceEditorView,
+          activeCodeMirrorMatch.from,
+          "center",
+          documentViewport,
+        );
       }
     }
     if (shouldRecenterActiveMatch) {
       scrollFindMatchIntoView(activeMatch, markdownPreviewRef.current);
     }
-  }, [findMatchIndex, findMode, findOpen, findQuery, kind, markdownFindMatches, renderedPreviewContent, sourceEditorView]);
+  }, [
+    documentViewport,
+    findMatchIndex,
+    findMode,
+    findOpen,
+    findQuery,
+    kind,
+    markdownFindMatches,
+    renderedPreviewContent,
+    sourceEditorView,
+  ]);
 
   useEffect(() => () => clearDomFindHighlights(bodyRef.current, { includeControlledMarks: true }), []);
 
@@ -1394,41 +898,13 @@ export function FilePreview({
       kind={kind}
       language={sourceLanguage(request, kind)}
       theme={theme}
-      annotations={selectionAnnotations}
-      activeAnnotationId={activeAnnotationId}
-      flashAnnotationId={flashAnnotationId}
+      annotationAdapter={annotationSession.sourceAdapter}
       revealLineRequest={lineRevealRequest}
-      onAnnotationActivate={activateAnnotation}
       onEditorViewChange={setSourceEditorView}
       sourceFindState={sourceFindState}
       onSelectionChange={updateSourceSelection}
+      scrollElement={documentViewport}
     />
-  );
-
-  const handleMarkdownPreviewClick = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
-      const target = event.target instanceof Element ? event.target : null;
-      const marker = target?.closest<HTMLElement>("[data-preview-annotation-id]");
-      const annotationId = marker?.dataset.previewAnnotationId;
-      if (!annotationId || isTransientRevealAnnotationId(annotationId)) {
-        return;
-      }
-      const annotation = annotations.find((item) => item.id === annotationId);
-      if (!annotation) {
-        return;
-      }
-      const rect = marker.getBoundingClientRect();
-      event.preventDefault();
-      event.stopPropagation();
-      activateAnnotation(annotation, {
-        clientX: rect.left + rect.width / 2,
-        clientY: rect.top,
-        width: rect.width,
-        height: rect.height,
-        anchorElement: marker,
-      });
-    },
-    [activateAnnotation, annotations],
   );
 
   const renderPreviewPane = () => {
@@ -1439,7 +915,7 @@ export function FilePreview({
     if (kind === "markdown") {
       if (!markdownModel || markdownModel.blocks.length === 0) {
         return (
-          <PreviewScrollPane className={styles.markdownPane} data-file-preview-selectable-content="preview">
+          <PreviewScrollPane className={styles.markdownPane} data-file-preview-selectable-content="preview" scrollElement={documentViewport}>
             <div className="keydex-markdown">
               <p>{markdownContent}</p>
             </div>
@@ -1450,23 +926,26 @@ export function FilePreview({
         <PreviewScrollPane
           className={styles.markdownPane}
           data-file-preview-selectable-content="preview"
-          onClick={handleMarkdownPreviewClick}
+          scrollElement={documentViewport}
         >
-          {(scrollElement) => (
-            <VirtualMarkdownPreview
-              ref={markdownPreviewRef}
+          {(scrollElement) => scrollElement ? (
+            <UnifiedMarkdownPreview
+              bind={annotationSession.bindMarkdown}
+              onActivate={(annotationId) => annotationSession.markdownAdapter.activateMarker(annotationId)}
+              onMountedBlockIdsChange={annotationSession.notifyMarkdownLayoutChange}
+              previewRef={markdownPreviewRef}
               activeAnnotationId={activeAnnotationId}
               activeFindMatchId={activeMarkdownFindMatchId}
               annotationIndex={markdownAnnotationIndex}
-              customScrollParent={scrollElement}
               findIndex={markdownFindIndex}
               flashAnnotationId={flashAnnotationId}
               model={markdownModel}
               registry={markdownRendererRegistry}
               renderImage={renderMarkdownImage}
+              scrollElement={scrollElement}
               showSourceGutter
             />
-          )}
+          ) : null}
         </PreviewScrollPane>
       );
     }
@@ -1474,7 +953,7 @@ export function FilePreview({
     if (kind === "html") {
       const htmlDocument = renderedPreviewContent || "<p>文件为空</p>";
       return (
-        <PreviewScrollPane className={styles.htmlPane} data-file-preview-selectable-content="preview">
+        <PreviewScrollPane className={styles.htmlPane} data-file-preview-selectable-content="preview" scrollElement={documentViewport}>
           <iframe
             key={hashText(htmlDocument)}
             className={styles.htmlFrame}
@@ -1583,14 +1062,14 @@ export function FilePreview({
           className={styles.annotationToggle}
           type="button"
           data-file-preview-selection-excluded="true"
-          aria-label={`文件批注 ${annotations.length}`}
-          aria-pressed={annotationPanelOpen && !annotationPanelClosing}
+          aria-label={`文件批注 ${annotationSession.state.records.length}`}
+          aria-pressed={annotationPanelOpen}
           title="文件批注"
           onClick={toggleAnnotationPanel}
         >
           <MessageSquareText size={13} />
           <span>批注</span>
-          <span className={styles.annotationToggleCount}>{annotations.length}</span>
+          <span className={styles.annotationToggleCount}>{annotationSession.state.records.length}</span>
         </button>
       ) : null}
       <button
@@ -1634,6 +1113,7 @@ export function FilePreview({
       data-chrome={chrome}
       data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
       data-file-preview-root="true"
+      data-document-revision={documentRevision ?? undefined}
       aria-label="文件预览"
       style={previewStyle}
       ref={previewRootRef}
@@ -1689,130 +1169,394 @@ export function FilePreview({
       {previewBusy ? <FilePreviewLoading label="正在读取文件" /> : null}
       {error ? <div className={styles.error} role="alert">{error}</div> : null}
       {!previewBusy && !error ? (
-        <div
-          className={styles.body}
-          data-chrome={chrome}
-          data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
-          data-workspace-document-context={isPathPreviewRequest(request) ? "true" : undefined}
-          data-workspace-document-name={isPathPreviewRequest(request) ? fileName(request.path) : undefined}
-          data-workspace-document-path={isPathPreviewRequest(request) ? request.path : undefined}
-          data-workspace-id={workspaceId}
-          data-workspace-session-id={sessionId}
+        <div className={styles.documentViewportShell}>
+          <div
+            ref={setDocumentViewport}
+            className={styles.body}
+            data-annotation-rail-open={annotationPanelOpen ? "true" : "false"}
+            data-chrome={chrome}
+            data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
+            data-custom-scrollbar="true"
+            data-document-scroll-viewport="true"
+            data-workspace-document-context={isPathPreviewRequest(request) ? "true" : undefined}
+            data-workspace-document-name={isPathPreviewRequest(request) ? fileName(request.path) : undefined}
+            data-workspace-document-path={isPathPreviewRequest(request) ? request.path : undefined}
+            data-workspace-id={workspaceId}
+            data-workspace-session-id={sessionId}
           aria-label="预览内容"
-          ref={bodyRef}
         >
-          {renderBodyContent()}
-          {findOpen ? (
-            <FilePreviewFindBar
-              inputRef={findInputRef}
-              query={findQuery}
-              matchCount={findMatchCount}
-              matchIndex={findMatchIndex}
-              focusRequestId={findFocusRequestId}
-              onClose={closeFind}
-              onQueryChange={updateFindQuery}
-              onStep={stepFindMatch}
-            />
-          ) : null}
-          {quoteSelectionAvailable || annotationAvailable ? (
-            <FilePreviewSelectionLayer
-              bodyRef={bodyRef}
-              enabled={kind !== "image" && !previewBusy && !error}
-              quoteSelectionAvailable={quoteSelectionAvailable}
-              annotationAvailable={annotationAvailable}
-              onQuote={quotePreviewSelection}
-              onAnnotate={startSelectionAnnotation}
-            />
-          ) : null}
-          {selectionMappingError ? (
-            <div
-              className={styles.selectionAnnotationError}
-              role="alert"
-              data-file-preview-selection-excluded="true"
-            >
-              {selectionMappingError}
+          <div
+            ref={annotationLayoutRef}
+            className={styles.documentCanvas}
+            data-annotation-rail-open={annotationPanelOpen ? "true" : "false"}
+          >
+            <div className={styles.documentColumn} ref={bodyRef}>
+              {renderBodyContent()}
+              {findOpen ? (
+                <FilePreviewFindBar
+                  inputRef={findInputRef}
+                  query={findQuery}
+                  matchCount={findMatchCount}
+                  matchIndex={findMatchIndex}
+                  focusRequestId={findFocusRequestId}
+                  onClose={closeFind}
+                  onQueryChange={updateFindQuery}
+                  onStep={stepFindMatch}
+                />
+              ) : null}
+              {quoteSelectionAvailable || annotationAvailable ? (
+                <FilePreviewSelectionLayer
+                  bodyRef={bodyRef}
+                  enabled={kind !== "image" && !previewBusy && !error}
+                  quoteSelectionAvailable={quoteSelectionAvailable}
+                  annotationAvailable={annotationAvailable}
+                  onQuote={quotePreviewSelection}
+                  onAnnotate={startSelectionAnnotation}
+                />
+              ) : null}
+              {selectionMappingError ? (
+                <div
+                  className={styles.selectionAnnotationError}
+                  role="alert"
+                  data-file-preview-selection-excluded="true"
+                >
+                  {selectionMappingError}
+                </div>
+              ) : null}
+              {annotationSession.state.error || annotationSession.state.navigation.error ? (
+                <div
+                  className={styles.selectionAnnotationError}
+                  role="alert"
+                  data-file-preview-selection-excluded="true"
+                >
+                  {annotationSession.state.error || annotationSession.state.navigation.error}
+                </div>
+              ) : null}
             </div>
-          ) : null}
-          {locateError ? (
-            <div
-              className={styles.selectionAnnotationError}
-              role="alert"
-              data-file-preview-selection-excluded="true"
+            <UnifiedAnnotationConnectors layoutRef={annotationLayoutRef} open={annotationPanelOpen} session={annotationSession} />
+              <aside
+              aria-label="批注栏"
+              className={styles.annotationRail}
+              data-annotation-rail="true"
+              hidden={!annotationPanelOpen}
+              style={{
+                "--annotation-bottom-actions-reserved": `${ANNOTATION_BOTTOM_ACTIONS_RESERVED}px`,
+                "--annotation-card-inline-inset": `${ANNOTATION_RAIL_CARD_INSET}px`,
+              } as CSSProperties}
             >
-              {locateError}
-            </div>
-          ) : null}
-          {activeAnnotation && activeAnnotationPopover ? (
-            <AnnotationPopover
-              annotation={activeAnnotation}
-              canStartChat={Boolean(onStartChatFromAnnotation)}
-              mutatingId={annotationMutatingId}
-              position={activeAnnotationPopover}
-              onClose={() => {
-                setActiveAnnotationPopover(null);
-                setFocusedAnnotationId(null);
-              }}
-              onDelete={deleteAnnotation}
-              onSave={saveAnnotationComment}
-              onStartChat={startChatFromAnnotation}
+              {annotationPath && annotationPanelOpen ? (
+                <UnifiedAnnotationRailContent
+                  actionsHost={annotationActionsHost}
+                  canStartChat={Boolean(onStartChatFromAnnotation)}
+                  onClose={closeAnnotationPanel}
+                  onDelete={deleteAnnotation}
+                  onSave={saveAnnotationComment}
+                  onStartChat={startChatFromResolution}
+                  onStartChatMany={startChatFromResolutions}
+                  session={annotationSession}
+                />
+              ) : null}
+            </aside>
+          </div>
+          </div>
+          {annotationPanelOpen ? (
+            <div
+              aria-label="批注操作"
+              className={styles.annotationBottomActionsHost}
+              data-annotation-bottom-actions="true"
+              ref={setAnnotationActionsHost}
             />
           ) : null}
-          {selectionDraft && selectionDraftPopover ? (
-            <AnnotationDraftPopover
-              draft={selectionDraft}
-              error={annotationMutationError}
-              mutating={annotationMutatingId === "create-selection"}
-              position={selectionDraftPopover}
-              onCancel={() => {
-                setSelectionDraft(null);
-                setSelectionDraftPopover(null);
-                setAnnotationMutationError(null);
-                setSelectionMappingError(null);
-              }}
-              onChange={setSelectionDraft}
-              onCreate={createSelectionAnnotation}
-            />
-          ) : null}
-          {annotationPath && (annotationPanelOpen || annotationPanelClosing) ? (
-            <AnnotationPanel
-              closing={annotationPanelClosing}
-              annotations={annotations}
-              loading={annotationsLoading}
-              error={annotationError}
-              unavailable={!annotationAvailable}
-              fileDraft={fileAnnotationDraft}
-              fileComposerOpen={fileAnnotationComposerOpen}
-              fileComposerFocusRequestId={fileAnnotationComposerFocusRequestId}
-              editingAnnotationId={editingAnnotationId}
-              editingComment={editingComment}
-              mutationError={annotationMutationError}
-              mutatingId={annotationMutatingId}
-              currentContentHash={currentContentHash}
-              activeAnnotationId={activeAnnotationId}
-              canStartChat={Boolean(onStartChatFromAnnotation)}
-              onFileDraftChange={setFileAnnotationDraft}
-              onFileComposerOpenChange={setFileAnnotationComposerOpen}
-              onCreateFileAnnotation={createFileAnnotation}
-              onBeginEdit={beginEditAnnotation}
-              onEditingCommentChange={setEditingComment}
-              onSaveEdit={saveAnnotationEdit}
-              onCancelEdit={() => {
-                setEditingAnnotationId(null);
-                setEditingComment("");
-              }}
-              onDelete={deleteAnnotation}
-              onStartChat={startChatFromAnnotation}
-              onStartAllChats={startChatFromAllAnnotations}
-              onReveal={revealAnnotation}
-              onRetry={() => setAnnotationReloadId((current) => current + 1)}
-              onClose={closeAnnotationPanel}
-            />
-          ) : null}
+          <FilePreviewScrollRail
+            observeSelector={`.${styles.documentCanvas}`}
+            railTestId="preview-scroll-rail"
+            scrollElement={documentViewport}
+            surface="preview"
+            thumbTestId="preview-scroll-thumb"
+          />
         </div>
       ) : null}
       {copyState === "failed" && !panelChrome ? <span className={styles.copyError}>复制失败</span> : null}
       {copyState === "copied" && !panelChrome ? <span className={styles.copyHint}>已复制</span> : null}
     </section>
+  );
+}
+
+function UnifiedAnnotationRailContent({
+  actionsHost,
+  canStartChat,
+  onClose,
+  onDelete,
+  onSave,
+  onStartChat,
+  onStartChatMany,
+  session,
+}: {
+  actionsHost: HTMLElement | null;
+  canStartChat: boolean;
+  onClose(): void;
+  onDelete(annotationId: string): Promise<boolean>;
+  onSave(annotationId: string, body: string): Promise<boolean>;
+  onStartChat(item: any): void;
+  onStartChatMany(items: readonly any[]): void;
+  session: UnifiedAnnotationSession;
+}) {
+  const [documentDraft, setDocumentDraft] = useState("");
+  const [documentComposerOpen, setDocumentComposerOpen] = useState(false);
+  const [documentSectionCollapsed, setDocumentSectionCollapsed] = useState(false);
+  const state = session.state;
+  const interaction = state.interaction;
+  const retargetRecord = interaction.type === "retargeting"
+    ? state.records.find((record) => record.id === interaction.annotationId) ?? null
+    : null;
+  const unresolved = [...state.resolutions.ambiguous, ...state.resolutions.changed]
+    .filter((item) => item.record.id !== retargetRecord?.id);
+  const geometryHeight = session.connectorGeometry?.documentHeight ?? 0;
+  const documentHeight = Math.max(geometryHeight, 600);
+  const documentSectionReserved = state.resolutions.document.length === 0
+    ? 0
+    : documentSectionCollapsed
+      ? 44
+      : state.resolutions.document.length * 132;
+  const reservedTop = 64 + documentSectionReserved + (documentComposerOpen ? 112 : 0);
+  const pending = Boolean(state.pendingMutation);
+  const createDocument = async () => {
+    const body = documentDraft.trim();
+    if (!body || !session.actions) return;
+    const created = await session.actions.createDocument(body);
+    if (created) {
+      setDocumentDraft("");
+      setDocumentComposerOpen(false);
+    }
+  };
+  const top = (
+    <>
+      <DocumentAnnotationSection
+        collapsed={documentSectionCollapsed}
+        items={state.resolutions.document}
+        onCollapsedChange={setDocumentSectionCollapsed}
+        onDelete={onDelete}
+        onSave={onSave}
+        onStartChat={canStartChat ? onStartChat : undefined}
+      />
+      {documentComposerOpen ? (
+        <div className={styles.documentAnnotationComposer}>
+          <textarea aria-label="全文批注内容" autoFocus disabled={pending} onChange={(event) => setDocumentDraft(event.target.value)} value={documentDraft} />
+          <div>
+            <button onClick={() => { setDocumentDraft(""); setDocumentComposerOpen(false); }} type="button">取消</button>
+            <button disabled={pending || !documentDraft.trim()} onClick={() => void createDocument()} type="button">保存全文批注</button>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+  const retargetCard = retargetRecord && interaction.type === "retargeting" ? (
+    <AnnotationRetargetCard
+      annotation={retargetRecord}
+      error={state.error}
+      range={interaction.range}
+      selector={interaction.selector}
+      onCancel={() => session.store.getState().cancelInteraction()}
+      onConfirm={session.submitRetarget}
+    />
+  ) : null;
+  const footer = (
+    <>
+      <AnnotationStatusSection
+        items={unresolved}
+        onDelete={onDelete}
+        onRetarget={(annotationId) => session.store.getState().beginRetarget(annotationId)}
+      />
+      {retargetCard && session.retargetAnchorY === null ? retargetCard : null}
+    </>
+  );
+  const chatItems = [...state.resolutions.document, ...state.resolutions.resolved];
+  const bottomActions = actionsHost ? createPortal(
+    <>
+      <button
+        aria-label="全部引入对话"
+        disabled={!canStartChat || chatItems.length === 0}
+        onClick={() => onStartChatMany(chatItems)}
+        type="button"
+      >
+        <MessageSquareText size={15} />
+        <span>全部引入对话</span>
+      </button>
+      <button
+        aria-label="新增文档批注"
+        aria-pressed={documentComposerOpen}
+        onClick={() => setDocumentComposerOpen((open) => !open)}
+        type="button"
+      >
+        <MessageSquarePlus size={15} />
+        <span>新增文档批注</span>
+      </button>
+    </>,
+    actionsHost,
+  ) : null;
+  return (
+    <>
+      <AnnotationRail
+      activeAnnotationId={state.activeAnnotationId}
+      bottomPadding={ANNOTATION_BOTTOM_ACTIONS_RESERVED}
+      documentHeight={documentHeight}
+      draft={interaction.type === "drafting" && session.draftAnchorY !== null ? {
+        anchorY: session.draftAnchorY,
+        body: interaction.body,
+        error: state.error,
+        onBodyChange: (body) => session.store.getState().updateInteractionBody(body),
+        onCancel: () => session.store.getState().cancelInteraction(),
+        onSubmit: () => void session.submitDraft(),
+        pending,
+        revision: session.model?.revision.textRevision ?? "",
+      } : null}
+      footer={footer}
+      floatingItems={retargetCard && session.retargetAnchorY !== null ? [{
+        anchorY: session.retargetAnchorY,
+        content: retargetCard,
+        estimatedHeight: 168,
+        id: RETARGET_ANNOTATION_ID,
+      }] : EMPTY_ANNOTATION_FLOATING_ITEMS}
+      items={session.railItems}
+      hoveredAnnotationId={state.hoveredAnnotationId}
+      onClose={onClose}
+      onDelete={onDelete}
+      onLayout={session.setLanePlacements}
+      onHoverChange={(annotationId) => session.store.getState().hover(annotationId)}
+      onNavigate={session.navigate}
+      onSave={onSave}
+      onStartChat={canStartChat ? onStartChat : undefined}
+      reservedTop={reservedTop}
+      top={top}
+      totalCount={state.records.length}
+      />
+      {bottomActions}
+    </>
+  );
+}
+
+function UnifiedAnnotationConnectors({
+  layoutRef,
+  open,
+  session,
+}: {
+  layoutRef: RefObject<HTMLDivElement | null>;
+  open: boolean;
+  session: UnifiedAnnotationSession;
+}) {
+  const [size, setSize] = useState({ documentWidth: 0, height: 0, width: 0 });
+  useLayoutEffect(() => {
+    if (!open) {
+      return;
+    }
+    const layout = layoutRef.current;
+    if (!layout) return;
+    const documentColumn = layout.querySelector<HTMLElement>(`.${styles.documentColumn}`);
+    const update = () => {
+      const next = {
+        documentWidth: documentColumn?.clientWidth ?? 0,
+        height: layout.scrollHeight,
+        width: layout.clientWidth,
+      };
+      setSize((current) => current.documentWidth === next.documentWidth
+        && current.height === next.height
+        && current.width === next.width
+        ? current
+        : next);
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(update);
+    observer.observe(layout);
+    if (documentColumn) {
+      observer.observe(documentColumn);
+    }
+    const railContent = layout.querySelector<HTMLElement>("[data-annotation-rail-content='true']");
+    if (railContent) {
+      observer.observe(railContent);
+    }
+    return () => observer.disconnect();
+  }, [layoutRef, open]);
+  const snapshot = session.connectorGeometry;
+  const placementById = new Map(session.lanePlacements.map((placement) => [placement.id, placement]));
+  const routes = snapshot ? Object.entries(snapshot.markers).flatMap(([annotationId, fragments]) => {
+    const placement = placementById.get(annotationId);
+    if (!placement || fragments.length === 0) return [];
+    return [{
+      annotationId,
+      fragments,
+      placement,
+      preferredY: connectorPreferredEdgeY(fragments),
+    }];
+  }) : [];
+  const edgePorts = spreadConnectorEdgePorts(routes.map((route) => ({
+    id: route.annotationId,
+    preferredY: route.preferredY,
+    targetY: route.placement.connectorY,
+  })));
+  const items = routes.flatMap(({ annotationId, fragments, placement }) => {
+    const geometry = connectorGeometry({
+      cardX: size.documentWidth + ANNOTATION_RAIL_CARD_INSET,
+      cardY: placement.connectorY,
+      documentEdgeX: size.documentWidth,
+      edgeY: edgePorts[annotationId],
+      fanOutX: size.documentWidth + ANNOTATION_CONNECTOR_FAN_OUT,
+      fragments,
+      open,
+      resolved: true,
+    });
+    return geometry ? [{ annotationId, geometry }] : [];
+  });
+  return (
+    <AnnotationConnectorLayer
+      activeAnnotationId={session.state.activeAnnotationId}
+      documentHeight={Math.max(size.height, snapshot?.documentHeight ?? 0)}
+      hoveredAnnotationId={session.state.hoveredAnnotationId}
+      items={items}
+      open={open}
+      width={size.width}
+    />
+  );
+}
+
+function UnifiedMarkdownPreview({
+  bind,
+  onActivate,
+  previewRef,
+  scrollElement,
+  ...props
+}: Omit<ComponentProps<typeof VirtualMarkdownPreview>, "customScrollParent" | "ref" | "rootRef"> & {
+  bind(binding: MarkdownAnnotationBinding | null): () => void;
+  onActivate(annotationId: string): void;
+  previewRef: RefObject<VirtualMarkdownPreviewHandle | null>;
+  scrollElement: HTMLElement;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    return bind({
+      blocks: props.model.blocks,
+      root,
+      scrollElement,
+      revealBlock: (blockKey, signal) => previewRef.current?.revealBlock(blockKey, {
+        align: "center",
+        behavior: "smooth",
+        signal,
+      })
+        ?? Promise.reject(new Error("Markdown preview is not ready")),
+    });
+  }, [bind, previewRef, props.model.blocks, scrollElement]);
+  return (
+    <div onClick={(event) => {
+      const marker = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-annotation-id]") : null;
+      if (marker?.dataset.annotationId) {
+        event.preventDefault();
+        onActivate(marker.dataset.annotationId);
+      }
+    }}>
+      <VirtualMarkdownPreview {...props} customScrollParent={scrollElement} ref={previewRef} rootRef={rootRef} />
+    </div>
   );
 }
 
@@ -2004,8 +1748,6 @@ interface FilePreviewFindScrollLine {
   surface: "source" | "markdown" | "split";
 }
 
-const HIGHLIGHT_MAX_CHARS = 120_000;
-const HIGHLIGHT_MAX_LINES = 2_000;
 const FILE_PREVIEW_OPEN_SETTLE_MS = 260;
 const MARKDOWN_MODEL_DEFER_CHARS = 48_000;
 const MARKDOWN_MODEL_DEFER_MS = 260;
@@ -2016,7 +1758,6 @@ const ANNOTATION_FLASH_MS = ANNOTATION_FLASH_ITERATIONS * ANNOTATION_FLASH_INTER
 const ANNOTATION_POPOVER_ESTIMATED_HEIGHT = 190;
 const ANNOTATION_POPOVER_GAP = 10;
 const FILE_PREVIEW_SELECTION_EXCLUDE_SELECTOR = "[data-file-preview-selection-excluded='true']";
-const FILE_PREVIEW_ANNOTATION_POPOVER_SELECTOR = "[data-file-preview-annotation-popover='true']";
 const FILE_PREVIEW_FIND_MARK_SELECTOR = "[data-file-preview-find-match='true']";
 const FILE_PREVIEW_DOM_FIND_MARK_SELECTOR = "[data-file-preview-dom-find-match='true']";
 const FILE_PREVIEW_FIND_SELECTION_EXCLUDE_SELECTOR = [
@@ -2035,13 +1776,6 @@ const FILE_PREVIEW_FIND_SCROLL_OPTIONS: ScrollIntoViewOptions = {
   inline: "nearest",
   behavior: "smooth",
 };
-const FILE_PREVIEW_TRANSIENT_REVEAL_SCROLL_OPTIONS: ScrollIntoViewOptions = {
-  block: "center",
-  inline: "nearest",
-  behavior: "smooth",
-};
-const TRANSIENT_REVEAL_ANNOTATION_ID_PREFIX = "__file-preview-reveal:";
-
 let activeFilePreviewRoot: HTMLElement | null = null;
 
 function isSelectAllShortcut(event: KeyboardEvent): boolean {
@@ -2143,16 +1877,6 @@ function scheduleMarkdownModelBuild(
   };
 }
 
-interface SelectionAnnotationDraft {
-  anchor: WorkspaceFileAnnotationAnchorV2;
-  selectedText: string;
-  comment: string;
-  lineStart: number | null;
-  lineEnd: number | null;
-  columnStart: number | null;
-  columnEnd: number | null;
-}
-
 interface SourceSelection {
   selectedText: string;
   sourceStart: number;
@@ -2191,683 +1915,6 @@ interface CodeMirrorFindState {
   query: string;
   activeFrom: number | null;
   activeTo: number | null;
-}
-
-interface PreviewAnnotationRevealRequest {
-  requestId: number;
-  annotationId: string;
-}
-
-interface AnnotationPopoverState {
-  annotationId: string;
-  anchor: AnnotationPopoverAnchor;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-interface AnnotationDraftPopoverState {
-  anchor: AnnotationPopoverAnchor;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-interface AnnotationClientPosition {
-  clientX: number;
-  clientY: number;
-  width?: number;
-  height?: number;
-  anchorElement?: HTMLElement | null;
-}
-
-interface AnnotationPopoverAnchor {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  anchorElement: HTMLElement | null;
-  scrollElement: HTMLElement | null;
-  scrollLeft: number;
-  scrollTop: number;
-  windowScrollX: number;
-  windowScrollY: number;
-}
-
-interface AnnotationPanelProps {
-  closing: boolean;
-  annotations: WorkspaceFileAnnotation[];
-  loading: boolean;
-  error: string | null;
-  unavailable: boolean;
-  fileDraft: string;
-  fileComposerOpen: boolean;
-  fileComposerFocusRequestId: number;
-  editingAnnotationId: string | null;
-  editingComment: string;
-  mutationError: string | null;
-  mutatingId: string | null;
-  currentContentHash: string | null;
-  activeAnnotationId: string | null;
-  canStartChat: boolean;
-  onFileDraftChange: (value: string) => void;
-  onFileComposerOpenChange: (open: boolean) => void;
-  onCreateFileAnnotation: () => void;
-  onBeginEdit: (annotation: WorkspaceFileAnnotation) => void;
-  onEditingCommentChange: (value: string) => void;
-  onSaveEdit: (annotation: WorkspaceFileAnnotation) => void;
-  onCancelEdit: () => void;
-  onDelete: (annotation: WorkspaceFileAnnotation) => void;
-  onStartChat: (annotation: WorkspaceFileAnnotation) => void;
-  onStartAllChats: (annotations: WorkspaceFileAnnotation[]) => void;
-  onReveal: (annotation: WorkspaceFileAnnotation) => void;
-  onRetry: () => void;
-  onClose: () => void;
-}
-
-function AnnotationPopover({
-  annotation,
-  canStartChat,
-  mutatingId,
-  position,
-  onClose,
-  onDelete,
-  onSave,
-  onStartChat,
-}: {
-  annotation: WorkspaceFileAnnotation;
-  canStartChat: boolean;
-  mutatingId: string | null;
-  position: AnnotationPopoverState;
-  onClose: () => void;
-  onDelete: (annotation: WorkspaceFileAnnotation) => void;
-  onSave: (annotation: WorkspaceFileAnnotation, value: string) => Promise<boolean>;
-  onStartChat: (annotation: WorkspaceFileAnnotation) => void;
-}) {
-  const [comment, setComment] = useState(annotation.comment);
-  useEffect(() => {
-    setComment(annotation.comment);
-  }, [annotation.comment, annotation.id]);
-  const saving = mutatingId === `edit:${annotation.id}`;
-  const deleting = mutatingId === `delete:${annotation.id}`;
-  const changed = comment.trim() !== annotation.comment.trim();
-  const placement = popoverPlacement(position);
-  const style = popoverStyle(position, placement);
-  const canSave = Boolean(comment.trim()) && changed && !saving;
-  const saveCurrentComment = async () => {
-    if (!canSave) {
-      return;
-    }
-    const saved = await onSave(annotation, comment);
-    if (saved) {
-      onClose();
-    }
-  };
-
-  return createPortal(
-    <aside
-      className={styles.annotationPopover}
-      data-file-preview-annotation-popover="true"
-      data-file-preview-selection-excluded="true"
-      data-placement={placement}
-      style={style}
-      aria-label="选区批注"
-    >
-      <header className={styles.annotationPopoverHeader}>
-        <span className={styles.annotationBadge}>{formatAnnotationBadge(annotation)}</span>
-        <button type="button" title="关闭" aria-label="关闭选区批注浮窗" onClick={onClose}>
-          <X size={12} />
-        </button>
-      </header>
-      {annotation.selected_text ? (
-        <blockquote className={styles.annotationPopoverQuote}>{annotation.selected_text}</blockquote>
-      ) : null}
-      <textarea
-        className={styles.annotationPopoverTextarea}
-        value={comment}
-        rows={3}
-        aria-label="编辑批注"
-        onChange={(event) => setComment(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (!shouldConfirmAnnotationTextarea(event)) {
-            return;
-          }
-          event.preventDefault();
-          void saveCurrentComment();
-        }}
-      />
-      <div className={styles.annotationPopoverActions} data-layout="annotation">
-        <div className={styles.annotationPopoverActionGroup}>
-          <button
-            type="button"
-            aria-label="删除批注"
-            disabled={deleting}
-            onClick={() => {
-              onDelete(annotation);
-              onClose();
-            }}
-          >
-            <Trash2 className={styles.annotationPopoverDeleteIcon} size={12} />
-            <span>删除</span>
-          </button>
-        </div>
-        <div className={styles.annotationPopoverActionGroup}>
-          <button
-            type="button"
-            disabled={!canSave}
-            aria-label="保存批注"
-            onClick={() => void saveCurrentComment()}
-          >
-            <Check size={12} />
-            <span>{saving ? "保存中" : "保存"}</span>
-          </button>
-          <button
-            type="button"
-            disabled={!canStartChat}
-            aria-label="基于此批注发起对话"
-            onClick={() => {
-              onStartChat(annotation);
-              onClose();
-            }}
-          >
-            <Send size={12} />
-            <span>对话</span>
-          </button>
-          <button type="button" aria-label="关闭批注浮窗" onClick={onClose}>
-            <X size={12} />
-            <span>关闭</span>
-          </button>
-        </div>
-      </div>
-    </aside>,
-    document.body,
-  );
-}
-
-function AnnotationDraftPopover({
-  draft,
-  error,
-  mutating,
-  position,
-  onCancel,
-  onChange,
-  onCreate,
-}: {
-  draft: SelectionAnnotationDraft;
-  error: string | null;
-  mutating: boolean;
-  position: AnnotationDraftPopoverState;
-  onCancel: () => void;
-  onChange: (draft: SelectionAnnotationDraft) => void;
-  onCreate: () => void;
-}) {
-  const placement = popoverPlacement(position);
-  const style = popoverStyle(position, placement);
-  const canCreate = Boolean(draft.comment.trim()) && !mutating;
-  const createCurrentComment = () => {
-    if (!canCreate) {
-      return;
-    }
-    onCreate();
-  };
-
-  return createPortal(
-    <aside
-      className={styles.annotationPopover}
-      data-file-preview-annotation-popover="true"
-      data-file-preview-selection-excluded="true"
-      data-placement={placement}
-      style={style}
-      aria-label="新增选区批注"
-    >
-      <header className={styles.annotationPopoverHeader}>
-        <span className={styles.annotationBadge}>{formatAnnotationBadge(draft)}</span>
-        <button type="button" aria-label="取消选区批注" onClick={onCancel}>
-          <X size={12} />
-        </button>
-      </header>
-      <blockquote className={styles.annotationPopoverQuote}>{draft.selectedText}</blockquote>
-      <textarea
-        className={styles.annotationPopoverTextarea}
-        value={draft.comment}
-        rows={3}
-        placeholder="添加选区批注"
-        aria-label="添加选区批注"
-        autoFocus
-        onChange={(event) => onChange({ ...draft, comment: event.currentTarget.value })}
-        onKeyDown={(event) => {
-          if (!shouldConfirmAnnotationTextarea(event)) {
-            return;
-          }
-          event.preventDefault();
-          createCurrentComment();
-        }}
-      />
-      {error ? <p className={styles.annotationPopoverError}>{error}</p> : null}
-      <div className={styles.annotationPopoverActions}>
-        <button type="button" disabled={!canCreate} onClick={createCurrentComment}>
-          <MessageSquarePlus size={12} />
-          <span>{mutating ? "保存中" : "保存批注"}</span>
-        </button>
-        <button type="button" data-variant="ghost" onClick={onCancel}>
-          取消
-        </button>
-      </div>
-    </aside>,
-    document.body,
-  );
-}
-
-type AnnotationPopoverPlacement = "top" | "bottom";
-
-function shouldConfirmAnnotationTextarea(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
-  if (event.key !== "Enter" || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) {
-    return false;
-  }
-  const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent & { isComposing?: boolean; keyCode?: number };
-  return !nativeEvent.isComposing && nativeEvent.keyCode !== 229;
-}
-
-function annotationChatRequest(annotation: WorkspaceFileAnnotation): PreviewAnnotationChatRequest {
-  return {
-    path: annotation.path,
-    comment: annotation.comment,
-    annotationId: annotation.id,
-    selectedText: annotation.selected_text,
-    lineStart: annotation.line_start,
-    lineEnd: annotation.line_end,
-    sourceStart: annotation.anchor_json?.sourceStart ?? null,
-    sourceEnd: annotation.anchor_json?.sourceEnd ?? null,
-  };
-}
-
-function createPopoverState(
-  position: Pick<AnnotationPopoverState, "x" | "y" | "width" | "height">,
-  anchorElement: HTMLElement | null,
-  boundary: HTMLElement | null,
-): Pick<AnnotationPopoverState, "anchor" | "x" | "y" | "width" | "height"> {
-  const scrollElement = nearestScrollableAncestor(anchorElement, boundary);
-  return {
-    ...position,
-    anchor: {
-      ...position,
-      anchorElement,
-      scrollElement,
-      scrollLeft: scrollElement?.scrollLeft ?? 0,
-      scrollTop: scrollElement?.scrollTop ?? 0,
-      windowScrollX: window.scrollX,
-      windowScrollY: window.scrollY,
-    },
-  };
-}
-
-function repositionPopoverState<T extends Pick<AnnotationPopoverState, "anchor" | "x" | "y" | "width" | "height">>(
-  state: T,
-): T {
-  const next = resolvePopoverPosition(state.anchor);
-  if (
-    Math.abs(next.x - state.x) < 0.5 &&
-    Math.abs(next.y - state.y) < 0.5 &&
-    next.width === state.width &&
-    next.height === state.height
-  ) {
-    return state;
-  }
-  return { ...state, ...next };
-}
-
-function resolvePopoverPosition(anchor: AnnotationPopoverAnchor): Pick<AnnotationPopoverState, "x" | "y" | "width" | "height"> {
-  if (anchor.anchorElement?.isConnected) {
-    const rect = anchor.anchorElement.getBoundingClientRect();
-    return {
-      x: rect.left + rect.width / 2,
-      y: rect.top,
-      width: rect.width,
-      height: rect.height,
-    };
-  }
-  const scrollDeltaX = anchor.scrollElement ? anchor.scrollLeft - anchor.scrollElement.scrollLeft : 0;
-  const scrollDeltaY = anchor.scrollElement ? anchor.scrollTop - anchor.scrollElement.scrollTop : 0;
-  return {
-    x: anchor.x + scrollDeltaX + anchor.windowScrollX - window.scrollX,
-    y: anchor.y + scrollDeltaY + anchor.windowScrollY - window.scrollY,
-    width: anchor.width,
-    height: anchor.height,
-  };
-}
-
-function currentSelectionElement(boundary: HTMLElement | null): HTMLElement | null {
-  const selection = window.getSelection();
-  if (!boundary || !selection || selection.rangeCount === 0) {
-    return boundary;
-  }
-  const node = selection.getRangeAt(0).commonAncestorContainer;
-  const element = node instanceof HTMLElement ? node : node.parentElement;
-  return element && boundary.contains(element) ? element : boundary;
-}
-
-function nearestScrollableAncestor(element: HTMLElement | null, boundary: HTMLElement | null): HTMLElement | null {
-  let current: HTMLElement | null = element;
-  while (current) {
-    if (isScrollableElement(current)) {
-      return current;
-    }
-    if (current === boundary) {
-      return null;
-    }
-    current = current.parentElement;
-  }
-  return null;
-}
-
-function isScrollableElement(element: HTMLElement): boolean {
-  const style = window.getComputedStyle(element);
-  const overflow = `${style.overflow} ${style.overflowX} ${style.overflowY}`;
-  return /(auto|scroll|overlay)/.test(overflow) && (
-    element.scrollHeight > element.clientHeight ||
-    element.scrollWidth > element.clientWidth
-  );
-}
-
-function popoverPlacement(position: Pick<AnnotationPopoverState, "y">): AnnotationPopoverPlacement {
-  return position.y > ANNOTATION_POPOVER_ESTIMATED_HEIGHT + ANNOTATION_POPOVER_GAP ? "top" : "bottom";
-}
-
-function popoverStyle(
-  position: Pick<AnnotationPopoverState, "x" | "y" | "height">,
-  placement: AnnotationPopoverPlacement,
-): CSSProperties {
-  const top =
-    placement === "bottom"
-      ? position.y + Math.max(0, position.height) + ANNOTATION_POPOVER_GAP
-      : position.y - ANNOTATION_POPOVER_GAP;
-  return {
-    left: `clamp(168px, ${position.x}px, calc(100vw - 168px))`,
-    top: `${Math.max(ANNOTATION_POPOVER_GAP, top)}px`,
-  };
-}
-
-function AnnotationPanel({
-  closing,
-  annotations,
-  loading,
-  error,
-  unavailable,
-  fileDraft,
-  fileComposerOpen,
-  fileComposerFocusRequestId,
-  editingAnnotationId,
-  editingComment,
-  mutationError,
-  mutatingId,
-  currentContentHash,
-  activeAnnotationId,
-  canStartChat,
-  onFileDraftChange,
-  onFileComposerOpenChange,
-  onCreateFileAnnotation,
-  onBeginEdit,
-  onEditingCommentChange,
-  onSaveEdit,
-  onCancelEdit,
-  onDelete,
-  onStartChat,
-  onStartAllChats,
-  onReveal,
-  onRetry,
-  onClose,
-}: AnnotationPanelProps) {
-  const creatingFile = mutatingId === "create-file";
-  const fileDraftInputRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useLayoutEffect(() => {
-    if (!fileComposerOpen) {
-      return;
-    }
-    fileDraftInputRef.current?.focus();
-  }, [fileComposerFocusRequestId, fileComposerOpen]);
-
-  return (
-    <aside
-      className={styles.annotationPanel}
-      data-file-preview-selection-excluded="true"
-      data-state={closing ? "closing" : "open"}
-      aria-label="文件批注"
-    >
-      <header className={styles.annotationHeader}>
-        <span className={styles.annotationTitle}>
-          <MessageSquareText size={14} />
-          <span>批注</span>
-        </span>
-        <div className={styles.annotationHeaderActions}>
-          <span className={styles.annotationCount}>{annotations.length}</span>
-          <button type="button" className={styles.annotationClose} aria-label="关闭批注面板" onClick={onClose}>
-            <X size={13} />
-          </button>
-        </div>
-      </header>
-
-      {unavailable ? <p className={styles.annotationMuted}>当前预览缺少工作区上下文，无法保存批注。</p> : null}
-
-      {loading ? <p className={styles.annotationMuted}>正在加载批注</p> : null}
-      {error ? (
-        <div className={styles.annotationError} role="alert">
-          <span>{error}</span>
-          <button type="button" onClick={onRetry}>
-            重试
-          </button>
-        </div>
-      ) : null}
-      {mutationError ? <div className={styles.annotationError}>{mutationError}</div> : null}
-
-      {!loading && !error && annotations.length === 0 ? (
-        <p className={styles.annotationEmpty}>暂无批注</p>
-      ) : null}
-
-      <div className={styles.annotationList}>
-        {annotations.map((annotation) => {
-          const editing = editingAnnotationId === annotation.id;
-          const stale = isAnnotationStale(annotation, currentContentHash);
-          const statusLabel = annotationAnchorStatusLabel(annotation, currentContentHash);
-          return (
-            <article
-              className={styles.annotationItem}
-              key={annotation.id}
-              data-active={activeAnnotationId === annotation.id ? "true" : "false"}
-              data-anchor-type={annotation.anchor_type}
-              data-stale={stale ? "true" : "false"}
-            >
-              <div className={styles.annotationItemHeader}>
-                {annotation.line_start ? (
-                  <button
-                    className={styles.annotationBadgeButton}
-                    type="button"
-                    title="定位到源码行"
-                    onClick={() => onReveal(annotation)}
-                  >
-                    {formatAnnotationBadge(annotation)}
-                  </button>
-                ) : (
-                  <span className={styles.annotationBadge}>{formatAnnotationBadge(annotation)}</span>
-                )}
-                {statusLabel ? <span className={styles.annotationStale}>{statusLabel}</span> : null}
-              </div>
-
-              {annotation.selected_text ? (
-                <blockquote className={styles.annotationQuote}>{annotation.selected_text}</blockquote>
-              ) : null}
-
-              {editing ? (
-                <div className={styles.annotationEdit}>
-                  <textarea
-                    value={editingComment}
-                    rows={3}
-                    aria-label="编辑批注"
-                    onChange={(event) => onEditingCommentChange(event.currentTarget.value)}
-                  />
-                  <div className={styles.annotationComposerActions}>
-                    <button
-                      type="button"
-                      disabled={!editingComment.trim() || mutatingId === `edit:${annotation.id}`}
-                      onClick={() => onSaveEdit(annotation)}
-                    >
-                      保存
-                    </button>
-                    <button type="button" data-variant="ghost" onClick={onCancelEdit}>
-                      取消
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p className={styles.annotationComment}>{annotation.comment}</p>
-              )}
-
-              <div className={styles.annotationActions}>
-                {annotation.selected_text ? (
-                  <button
-                    type="button"
-                    title="定位批注片段"
-                    aria-label="定位批注片段"
-                    onClick={() => onReveal(annotation)}
-                  >
-                    <Target size={13} />
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  disabled={!canStartChat}
-                  title="发起对话"
-                  aria-label="基于此批注发起对话"
-                  onClick={() => {
-                    onStartChat(annotation);
-                    onClose();
-                  }}
-                >
-                  <Send size={13} />
-                </button>
-                <button
-                  type="button"
-                  title="编辑批注"
-                  aria-label="编辑批注"
-                  onClick={() => onBeginEdit(annotation)}
-                >
-                  <Pencil size={13} />
-                </button>
-                <button
-                  type="button"
-                  title="删除批注"
-                  aria-label="删除批注"
-                  disabled={mutatingId === `delete:${annotation.id}`}
-                  onClick={() => onDelete(annotation)}
-                >
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-
-      {!unavailable ? (
-        <div className={styles.annotationFooter}>
-          {annotations.length ? (
-            <button
-              type="button"
-              className={styles.annotationBulkChatButton}
-              disabled={!canStartChat}
-              onClick={() => {
-                onStartAllChats(annotations);
-                onClose();
-              }}
-            >
-              <Send size={13} />
-              <span>全部添加到对话</span>
-            </button>
-          ) : null}
-
-          {!fileComposerOpen ? (
-            <button type="button" className={styles.annotationAddButton} onClick={() => onFileComposerOpenChange(true)}>
-              <MessageSquarePlus size={13} />
-              <span>添加文件批注</span>
-            </button>
-          ) : null}
-
-          {fileComposerOpen ? (
-            <div className={styles.annotationComposer}>
-              <textarea
-                ref={fileDraftInputRef}
-                value={fileDraft}
-                rows={2}
-                placeholder="添加文件级批注"
-                aria-label="添加文件级批注"
-                onChange={(event) => onFileDraftChange(event.currentTarget.value)}
-              />
-              <div className={styles.annotationComposerActions}>
-                <button
-                  type="button"
-                  disabled={!fileDraft.trim() || creatingFile}
-                  onClick={() => {
-                    onCreateFileAnnotation();
-                    onFileComposerOpenChange(false);
-                  }}
-                >
-                  <MessageSquarePlus size={13} />
-                  <span>{creatingFile ? "保存中" : "添加文件批注"}</span>
-                </button>
-                <button type="button" data-variant="ghost" onClick={() => onFileComposerOpenChange(false)}>
-                  取消
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </aside>
-  );
-}
-
-function selectionAnchorFromCurrentSelection(
-  source: string,
-  createdInView: WorkspaceFileAnnotationAnchorV2["createdInView"],
-  selectedText: string,
-  sourceSelection: SourceSelection | null,
-  selectionRange: Range | null,
-  boundary: HTMLElement | null,
-): WorkspaceFileAnnotationAnchorV2 | null {
-  const sourceRange = matchingSourceSelection(sourceSelection, selectedText, selectionRange, boundary);
-  if (sourceRange) {
-    return createSourceRangeAnchor(source, sourceRange.sourceStart, sourceRange.sourceEnd, "source", selectedText);
-  }
-  if (!selectionRange || !boundary || !boundary.contains(selectionRange.commonAncestorContainer)) {
-    return null;
-  }
-  const previewRange = previewSourceRangeFromSelection(selectionRange, boundary);
-  return previewRange
-    ? createSourceRangeAnchor(source, previewRange.sourceStart, previewRange.sourceEnd, createdInView, selectedText)
-    : null;
-}
-
-function matchingSourceSelection(
-  sourceSelection: SourceSelection | null,
-  selectedText: string,
-  selectionRange: Range | null,
-  boundary: HTMLElement | null,
-): SourceSelection | null {
-  if (!sourceSelection || !selectionRange || !boundary) {
-    return null;
-  }
-  const startElement = selectionRange.startContainer instanceof Element
-    ? selectionRange.startContainer
-    : selectionRange.startContainer.parentElement;
-  const sourceViewer = startElement?.closest("[data-testid='file-source-viewer']");
-  if (!sourceViewer || !boundary.contains(sourceViewer)) {
-    return null;
-  }
-  return normalizeSelectionText(sourceSelection.selectedText) === normalizeSelectionText(selectedText)
-    ? sourceSelection
-    : null;
 }
 
 function previewSourceRangeFromSelection(
@@ -2961,65 +2008,6 @@ function normalizeSelectionText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-function formatAnnotationBadge(
-  annotation: Pick<WorkspaceFileAnnotation, "anchor_type" | "line_start" | "line_end"> | SelectionAnnotationDraft,
-): string {
-  if ("anchor_type" in annotation && annotation.anchor_type === "file") {
-    return "文件";
-  }
-  if ("lineStart" in annotation && annotation.lineStart && annotation.lineEnd) {
-    return annotation.lineStart === annotation.lineEnd
-      ? `L${annotation.lineStart}`
-      : `L${annotation.lineStart}-L${annotation.lineEnd}`;
-  }
-  if ("line_start" in annotation && annotation.line_start && annotation.line_end) {
-    return annotation.line_start === annotation.line_end
-      ? `L${annotation.line_start}`
-      : `L${annotation.line_start}-L${annotation.line_end}`;
-  }
-  return "选区";
-}
-
-function isAnnotationStale(annotation: WorkspaceFileAnnotation, currentContentHash: string | null): boolean {
-  return Boolean(annotation.content_hash && currentContentHash && annotation.content_hash !== currentContentHash);
-}
-
-function annotationAnchorStatusLabel(
-  annotation: WorkspaceFileAnnotation,
-  currentContentHash: string | null,
-): string | null {
-  if (annotation.anchor_type !== "selection") {
-    return null;
-  }
-  if (!annotation.anchor_json) {
-    return "无法定位";
-  }
-  if (isAnnotationStale(annotation, currentContentHash)) {
-    return "内容可能已变化";
-  }
-  return null;
-}
-
-function findAnnotationElement(container: HTMLElement | null, annotationId: string): HTMLElement | null {
-  if (!container) {
-    return null;
-  }
-  const elements = container.querySelectorAll<HTMLElement>("[data-preview-annotation-id], [data-file-annotation-id]");
-  return Array.from(elements).find(
-    (element) =>
-      element.dataset.previewAnnotationId === annotationId ||
-      element.dataset.fileAnnotationId === annotationId,
-  ) ?? null;
-}
-
-function findPreviewAnnotationElement(container: HTMLElement | null, annotationId: string): HTMLElement | null {
-  if (!container) {
-    return null;
-  }
-  const elements = container.querySelectorAll<HTMLElement>("[data-preview-annotation-id]");
-  return Array.from(elements).find((element) => element.dataset.previewAnnotationId === annotationId) ?? null;
-}
-
 function findMarkdownOutlineHeading(container: HTMLElement | null, headingId: string): HTMLElement | null {
   if (!container) {
     return null;
@@ -3033,25 +2021,6 @@ function findMarkdownOutlineBlockHeading(container: HTMLElement | null, blockId:
     return null;
   }
   return container.querySelector<HTMLElement>(`[data-markdown-outline-block-id='${cssString(blockId)}']`);
-}
-
-function updatePreviewAnnotationMarkState(
-  container: HTMLElement | null,
-  activeAnnotationId: string | null,
-  flashAnnotationId: string | null,
-): void {
-  if (!container) {
-    return;
-  }
-  container.querySelectorAll<HTMLElement>("[data-preview-annotation-id]").forEach((element) => {
-    const annotationId = element.dataset.previewAnnotationId ?? null;
-    element.dataset.active = annotationId && annotationId === activeAnnotationId ? "true" : "false";
-    element.dataset.flash = annotationId && annotationId === flashAnnotationId ? "true" : "false";
-  });
-}
-
-function isAbortError(reason: unknown): boolean {
-  return reason instanceof DOMException && reason.name === "AbortError";
 }
 
 function sourcePositionForLine(source: string, line: number): number {
@@ -3069,86 +2038,6 @@ function sourcePositionForLine(source: string, line: number): number {
     }
   }
   return source.length;
-}
-
-function transientRevealAnnotationFromRequest(
-  source: string,
-  path: string,
-  request: FilePreviewRevealRequest,
-  scope: WorkspaceScope | null,
-): WorkspaceFileAnnotation | null {
-  const range = sourceRangeFromRevealRequest(source, request);
-  if (!range) {
-    return null;
-  }
-  const selectedText =
-    typeof request.selectedText === "string" && request.selectedText.trim()
-      ? request.selectedText.trim()
-      : source.slice(range.from, range.to).trim();
-  if (!selectedText) {
-    return null;
-  }
-  try {
-    const anchor = createSourceRangeAnchor(source, range.from, range.to, "source", selectedText);
-    const workspaceId = scope && "workspaceId" in scope ? scope.workspaceId ?? "" : "";
-    const sessionId = scope && "sessionId" in scope ? scope.sessionId ?? "" : "";
-    return {
-      id: `${TRANSIENT_REVEAL_ANNOTATION_ID_PREFIX}${request.requestId}`,
-      scope_type: workspaceId ? "workspace" : "session",
-      scope_id: workspaceId || sessionId,
-      workspace_id: workspaceId || null,
-      path,
-      anchor_type: "selection",
-      comment: "跳转定位",
-      selected_text: selectedText,
-      line_start: anchor.lineStart,
-      line_end: anchor.lineEnd,
-      column_start: anchor.columnStart,
-      column_end: anchor.columnEnd,
-      content_hash: anchor.contentHash,
-      anchor_json: anchor,
-      created_at: "",
-      updated_at: "",
-    };
-  } catch {
-    return null;
-  }
-}
-
-function sourceRangeFromRevealRequest(
-  source: string,
-  request: PreviewFileRevealTarget,
-): Pick<AnnotationTextRange, "from" | "to"> | null {
-  const lineRange =
-    positiveInteger(request.lineStart) && positiveInteger(request.lineEnd)
-      ? sourceRangeForLines(source, request.lineStart, request.lineEnd)
-      : null;
-  if (lineRange) {
-    return lineRange;
-  }
-  if (nonNegativeInteger(request.sourceStart) && positiveInteger(request.sourceEnd)) {
-    return normalizeOffsetRange(source, request.sourceStart, request.sourceEnd);
-  }
-  return null;
-}
-
-function sourceRangeForLines(
-  source: string,
-  lineStart: number,
-  lineEnd: number,
-): Pick<AnnotationTextRange, "from" | "to"> | null {
-  const fromLine = Math.min(lineStart, lineEnd);
-  const toLine = Math.max(lineStart, lineEnd);
-  const from = sourcePositionForLine(source, fromLine);
-  let to = sourcePositionForLine(source, toLine + 1);
-  while (to > from && (source.charCodeAt(to - 1) === 10 || source.charCodeAt(to - 1) === 13)) {
-    to -= 1;
-  }
-  return normalizeOffsetRange(source, from, to);
-}
-
-function isTransientRevealAnnotationId(annotationId: string | null | undefined): boolean {
-  return Boolean(annotationId?.startsWith(TRANSIENT_REVEAL_ANNOTATION_ID_PREFIX));
 }
 
 function filePreviewFindContainers(
@@ -3823,32 +2712,30 @@ function scrollMarkdownFindMatchIntoView(
   matchId: string,
   markdownPreview: VirtualMarkdownPreviewHandle | null,
 ): void {
-  if (scrollMarkdownFindMarkerIntoView(matchId)) {
-    return;
-  }
-  if (!markdownPreview?.scrollToFindMatch(matchId, "center")) {
-    return;
-  }
-  window.requestAnimationFrame(() => scrollMarkdownFindMarkerIntoView(matchId));
-  window.setTimeout(() => scrollMarkdownFindMarkerIntoView(matchId), 80);
+  void markdownPreview?.revealFindMatch(matchId, { align: "center" }).catch(() => undefined);
 }
 
-function scrollMarkdownFindMarkerIntoView(matchId: string): boolean {
-  const marker = document.querySelector<HTMLElement>(`[data-find-match-id='${cssString(matchId)}']`);
-  marker?.scrollIntoView?.(FILE_PREVIEW_FIND_SCROLL_OPTIONS);
-  return Boolean(marker);
+function sourceLineNumbers(source: string, start: number, end: number): { lineStart: number; lineEnd: number } {
+  const boundedStart = Math.max(0, Math.min(start, source.length));
+  const boundedEnd = Math.max(boundedStart, Math.min(end, source.length));
+  let lineStart = 1;
+  let lineEnd = 1;
+  for (let index = 0; index < boundedEnd; index += 1) {
+    if (source.charCodeAt(index) === 10) {
+      if (index < boundedStart) lineStart += 1;
+      lineEnd += 1;
+    }
+  }
+  return { lineStart, lineEnd: Math.max(lineStart, lineEnd) };
 }
 
 const SourceViewer = memo(function SourceViewer({
   content,
-  kind,
   language,
   theme,
-  annotations = [],
-  activeAnnotationId = null,
-  flashAnnotationId = null,
+  annotationAdapter,
   revealLineRequest,
-  onAnnotationActivate,
+  scrollElement,
   onEditorViewChange,
   sourceFindState,
   onSelectionChange,
@@ -3857,65 +2744,29 @@ const SourceViewer = memo(function SourceViewer({
   kind: PreviewKind;
   language: string;
   theme: "light" | "dark";
-  annotations?: WorkspaceFileAnnotation[];
-  activeAnnotationId?: string | null;
-  flashAnnotationId?: string | null;
+  annotationAdapter: SourceAnnotationAdapter;
   revealLineRequest?: SourceLineRevealRequest | null;
-  onAnnotationActivate?: (annotation: WorkspaceFileAnnotation, position: AnnotationClientPosition) => void;
+  scrollElement: HTMLElement | null;
   onEditorViewChange?: (view: EditorView | null) => void;
   sourceFindState?: CodeMirrorFindState | null;
   onSelectionChange?: (selection: SourceSelection | null) => void;
 }) {
   const source = content || "文件为空";
-  const lineCount = useMemo(() => countLines(source), [source]);
-  const canHighlight =
-    kind === "code" ||
-    kind === "markdown" ||
-    kind === "html" ||
-    kind === "json" ||
-    kind === "mermaid" ||
-    kind === "diff";
-  const shouldHighlight =
-    canHighlight && source.length <= HIGHLIGHT_MAX_CHARS && lineCount <= HIGHLIGHT_MAX_LINES;
-  const highlightSignature = useMemo(
-    () => `${kind}\0${language}\0${source.length}\0${hashText(source)}`,
-    [kind, language, source],
+  return (
+    <div className={styles.sourceViewer} data-renderer="codemirror" data-testid="file-source-viewer">
+      <CodeMirrorSourceView
+        annotationAdapter={annotationAdapter}
+        language={language}
+        source={source}
+        theme={theme}
+        revealLineRequest={revealLineRequest}
+        scrollElement={scrollElement}
+        onEditorViewChange={onEditorViewChange}
+        sourceFindState={sourceFindState}
+        onSelectionChange={onSelectionChange}
+      />
+    </div>
   );
-  const [failedCodeMirrorSignature, setFailedCodeMirrorSignature] = useState<string | null>(null);
-  const codeMirrorFailed = failedCodeMirrorSignature === highlightSignature;
-
-  useEffect(() => {
-    if (!shouldHighlight || codeMirrorFailed) {
-      onSelectionChange?.(null);
-    }
-  }, [codeMirrorFailed, onSelectionChange, shouldHighlight]);
-
-  const handleCodeMirrorCreateError = useCallback(() => {
-    setFailedCodeMirrorSignature(highlightSignature);
-  }, [highlightSignature]);
-
-  if (shouldHighlight && !codeMirrorFailed) {
-    return (
-      <div className={styles.sourceViewer} data-renderer="codemirror" data-testid="file-source-viewer">
-        <CodeMirrorSourceView
-          language={language}
-          source={source}
-          theme={theme}
-          annotations={annotations}
-          activeAnnotationId={activeAnnotationId}
-          flashAnnotationId={flashAnnotationId}
-          revealLineRequest={revealLineRequest}
-          onAnnotationActivate={onAnnotationActivate}
-          onEditorViewChange={onEditorViewChange}
-          sourceFindState={sourceFindState}
-          onSelectionChange={onSelectionChange}
-          onCreateError={handleCodeMirrorCreateError}
-        />
-      </div>
-    );
-  }
-
-  return <PlainSourceView source={source} lineCount={lineCount} />;
 });
 
 function PlainSourceView({ source, lineCount }: { source: string; lineCount: number }) {
@@ -3932,27 +2783,23 @@ function PlainSourceView({ source, lineCount }: { source: string; lineCount: num
 }
 
 function CodeMirrorSourceView({
+  annotationAdapter,
   language,
   source,
   theme,
-  annotations,
-  activeAnnotationId,
-  flashAnnotationId,
   revealLineRequest,
-  onAnnotationActivate,
+  scrollElement,
   onEditorViewChange,
   sourceFindState,
   onSelectionChange,
   onCreateError,
 }: {
+  annotationAdapter: SourceAnnotationAdapter;
   language: string;
   source: string;
   theme: "light" | "dark";
-  annotations: WorkspaceFileAnnotation[];
-  activeAnnotationId: string | null;
-  flashAnnotationId: string | null;
   revealLineRequest?: SourceLineRevealRequest | null;
-  onAnnotationActivate?: (annotation: WorkspaceFileAnnotation, position: AnnotationClientPosition) => void;
+  scrollElement: HTMLElement | null;
   onEditorViewChange?: (view: EditorView | null) => void;
   sourceFindState?: CodeMirrorFindState | null;
   onSelectionChange?: (selection: SourceSelection | null) => void;
@@ -3963,24 +2810,18 @@ function CodeMirrorSourceView({
   const onSelectionChangeRef = useRef(onSelectionChange);
   const themeCompartmentRef = useRef<Compartment | null>(null);
   const languageCompartmentRef = useRef<Compartment | null>(null);
-  const annotationCompartmentRef = useRef<Compartment | null>(null);
   const findCompartmentRef = useRef<Compartment | null>(null);
-  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
   if (themeCompartmentRef.current === null) {
     themeCompartmentRef.current = new Compartment();
   }
   if (languageCompartmentRef.current === null) {
     languageCompartmentRef.current = new Compartment();
   }
-  if (annotationCompartmentRef.current === null) {
-    annotationCompartmentRef.current = new Compartment();
-  }
   if (findCompartmentRef.current === null) {
     findCompartmentRef.current = new Compartment();
   }
   const themeCompartment = themeCompartmentRef.current;
   const languageCompartment = languageCompartmentRef.current;
-  const annotationCompartment = annotationCompartmentRef.current;
   const findCompartment = findCompartmentRef.current;
 
   useEffect(() => {
@@ -4035,17 +2876,9 @@ function CodeMirrorSourceView({
           extensions: [
             ...codeMirrorBaseExtensions(),
             selectionExtension,
+            annotationAdapter.extension,
             themeCompartment.of(codeMirrorTheme(theme)),
             languageCompartment.of(codeMirrorLanguage(language) ?? []),
-            annotationCompartment.of(
-              codeMirrorAnnotationExtension(
-                source,
-                annotations,
-                activeAnnotationId,
-                flashAnnotationId,
-                onAnnotationActivate,
-              ),
-            ),
             findCompartment.of(codeMirrorFindExtension(source, sourceFindState ?? null)),
           ],
         }),
@@ -4058,19 +2891,19 @@ function CodeMirrorSourceView({
       return;
     }
     viewRef.current = view;
-    setScrollElement(view.scrollDOM);
+    const detachAnnotationAdapter = annotationAdapter.attach(view, scrollElement ?? view.scrollDOM);
     onEditorViewChange?.(view);
 
     return () => {
       if (viewRef.current === view) {
         viewRef.current = null;
       }
-      setScrollElement(null);
       onEditorViewChange?.(null);
       onSelectionChangeRef.current?.(null);
+      detachAnnotationAdapter();
       view.destroy();
     };
-  }, []);
+  }, [annotationAdapter, scrollElement]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -4100,14 +2933,6 @@ function CodeMirrorSourceView({
 
   useEffect(() => {
     viewRef.current?.dispatch({
-      effects: annotationCompartment.reconfigure(
-        codeMirrorAnnotationExtension(source, annotations, activeAnnotationId, flashAnnotationId, onAnnotationActivate),
-      ),
-    });
-  }, [activeAnnotationId, annotationCompartment, annotations, flashAnnotationId, onAnnotationActivate, source]);
-
-  useEffect(() => {
-    viewRef.current?.dispatch({
       effects: findCompartment.reconfigure(codeMirrorFindExtension(source, sourceFindState ?? null)),
     });
   }, [findCompartment, source, sourceFindState]);
@@ -4118,19 +2943,12 @@ function CodeMirrorSourceView({
       return;
     }
     const position = Math.max(0, Math.min(revealLineRequest.position, view.state.doc.length));
-    smoothScrollCodeMirrorPositionIntoView(view, position, revealLineRequest.block ?? "start");
-  }, [revealLineRequest]);
+    smoothScrollCodeMirrorPositionIntoView(view, position, revealLineRequest.block ?? "start", scrollElement);
+  }, [revealLineRequest, scrollElement]);
 
   return (
     <div className={styles.codeMirrorShell}>
       <div ref={hostRef} className={styles.codeMirrorHost} />
-      <FilePreviewScrollRail
-        scrollElement={scrollElement}
-        observeSelector=".cm-content"
-        railTestId="source-scroll-rail"
-        surface="source"
-        thumbTestId="source-scroll-thumb"
-      />
     </div>
   );
 }
@@ -4138,17 +2956,14 @@ function CodeMirrorSourceView({
 function PreviewScrollPane({
   children,
   className,
+  scrollElement,
   ...props
 }: PreviewScrollPaneProps) {
-  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
-  const setScrollRef = useCallback((element: HTMLDivElement | null) => {
-    setScrollElement(element);
-  }, []);
   const resolvedChildren = typeof children === "function" ? (scrollElement ? children(scrollElement) : null) : children;
 
   return (
     <div className={styles.previewScrollShell}>
-      <div ref={setScrollRef} className={className} data-custom-scrollbar="true" {...props}>
+      <div className={className} {...props}>
         {resolvedChildren}
         <div
           className={styles.previewScrollBottomSafeArea}
@@ -4156,12 +2971,6 @@ function PreviewScrollPane({
           aria-hidden="true"
         />
       </div>
-      <FilePreviewScrollRail
-        scrollElement={scrollElement}
-        railTestId="preview-scroll-rail"
-        surface="preview"
-        thumbTestId="preview-scroll-thumb"
-      />
     </div>
   );
 }
@@ -4169,6 +2978,7 @@ function PreviewScrollPane({
 interface PreviewScrollPaneProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
   className: string;
   children: ReactNode | ((scrollElement: HTMLElement | null) => ReactNode);
+  scrollElement?: HTMLElement | null;
 }
 
 const FILE_PREVIEW_SCROLL_MIN_THUMB_SIZE = 36;
@@ -4253,9 +3063,9 @@ function FilePreviewScrollRail({
   const updateMetrics = useCallback(() => {
     const next = readMetrics();
     setMetrics((current) => (
-      current.visible === next.visible &&
-      Math.abs(current.thumbTop - next.thumbTop) < 0.5 &&
-      Math.abs(current.thumbHeight - next.thumbHeight) < 0.5
+      current.visible === next.visible
+      && Math.abs(current.thumbTop - next.thumbTop) < 0.5
+      && Math.abs(current.thumbHeight - next.thumbHeight) < 0.5
         ? current
         : next
     ));
@@ -4357,8 +3167,7 @@ function FilePreviewScrollRail({
       ? event.clientY - thumb.getBoundingClientRect().top
       : currentMetrics.thumbHeight / 2;
     pointerOffsetY = clampNumber(pointerOffsetY, 0, currentMetrics.thumbHeight);
-    const startedOnThumb = Boolean(thumb);
-    if (!startedOnThumb) {
+    if (!thumb) {
       scrollToThumbTop(event.clientY - trackRect.top - pointerOffsetY, currentMetrics);
       updateMetrics();
     }
@@ -4490,80 +3299,52 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max));
 }
 
+function centerElementInScrollViewport(
+  scrollElement: HTMLElement,
+  element: HTMLElement,
+  signal: AbortSignal,
+): Promise<void> {
+  const viewportRect = scrollElement.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const elementCenter = scrollElement.scrollTop + elementRect.top - viewportRect.top + elementRect.height / 2;
+  const maxScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+  const top = clampNumber(elementCenter - scrollElement.clientHeight / 2, 0, maxScrollTop);
+  return smoothScrollElementTo(scrollElement, top, signal);
+}
+
 function smoothScrollCodeMirrorPositionIntoView(
   view: EditorView,
   position: number,
   block: ScrollLogicalPosition = "start",
+  scrollElement: HTMLElement | null = view.scrollDOM,
 ): void {
+  const targetScrollElement = scrollElement ?? view.scrollDOM;
   view.requestMeasure({
     read() {
       const line = view.lineBlockAt(position);
+      if (targetScrollElement !== view.scrollDOM) {
+        const viewportRect = targetScrollElement.getBoundingClientRect();
+        const contentRect = view.contentDOM.getBoundingClientRect();
+        return {
+          height: line.height,
+          top: targetScrollElement.scrollTop + contentRect.top - viewportRect.top + line.top,
+        };
+      }
       return {
         height: line.height,
         top: Math.max(0, line.top),
       };
     },
     write(line) {
-      const centeredTop = line.top - Math.max(0, (view.scrollDOM.clientHeight - line.height) / 2);
+      const centeredTop = line.top - Math.max(0, (targetScrollElement.clientHeight - line.height) / 2);
       const top = block === "center" ? Math.max(0, centeredTop) : line.top;
-      if (typeof view.scrollDOM.scrollTo === "function") {
-        view.scrollDOM.scrollTo({ top, behavior: "smooth" });
+      if (typeof targetScrollElement.scrollTo === "function") {
+        targetScrollElement.scrollTo({ top, behavior: "smooth" });
         return;
       }
-      view.scrollDOM.scrollTop = top;
+      targetScrollElement.scrollTop = top;
     },
   });
-}
-
-function codeMirrorAnnotationExtension(
-  source: string,
-  annotations: WorkspaceFileAnnotation[],
-  activeAnnotationId: string | null,
-  flashAnnotationId: string | null,
-  onAnnotationActivate?: (annotation: WorkspaceFileAnnotation, position: AnnotationClientPosition) => void,
-): Extension {
-  const decorationRanges = annotationDecorationRanges(source, annotations).map(({ annotation, from, to }) =>
-    Decoration.mark({
-      class: "cm-fileAnnotationMark",
-      attributes: {
-        "data-file-annotation-id": annotation.id,
-        "data-active": activeAnnotationId === annotation.id ? "true" : "false",
-        "data-flash": flashAnnotationId === annotation.id ? "true" : "false",
-        "data-transient-reveal": isTransientRevealAnnotationId(annotation.id) ? "true" : "false",
-        title: annotation.comment,
-      },
-    }).range(from, to),
-  );
-  const decorations: DecorationSet = Decoration.set(decorationRanges, true);
-
-  return [
-    EditorView.decorations.of(decorations),
-    EditorView.domEventHandlers({
-      click(event) {
-        const target = event.target instanceof Element ? event.target : null;
-        const marker = target?.closest<HTMLElement>("[data-file-annotation-id]");
-        const annotationId = marker?.dataset.fileAnnotationId;
-        if (!annotationId) {
-          return false;
-        }
-        const annotation = annotations.find((item) => item.id === annotationId);
-        if (!annotation) {
-          return false;
-        }
-        const rect = marker.getBoundingClientRect();
-        event.preventDefault();
-        event.stopPropagation();
-        onAnnotationActivate?.(annotation, {
-          clientX: rect.left + rect.width / 2,
-          clientY: rect.top,
-          width: rect.width,
-          height: rect.height,
-          anchorElement: marker,
-        });
-        return true;
-      },
-    }),
-  ];
 }
 
 function codeMirrorFindExtension(source: string, findState: CodeMirrorFindState | null): Extension {
@@ -4614,49 +3395,6 @@ function sameCodeMirrorFindState(
     (left?.activeFrom ?? null) === (right?.activeFrom ?? null) &&
     (left?.activeTo ?? null) === (right?.activeTo ?? null)
   );
-}
-
-function annotationDecorationRanges(source: string, annotations: WorkspaceFileAnnotation[]): AnnotationTextRange[] {
-  return annotations
-    .map((annotation) => {
-      const range = annotationSourceRange(source, annotation);
-      return range ? { annotation, ...range } : null;
-    })
-    .filter((range): range is AnnotationTextRange => Boolean(range));
-}
-
-interface AnnotationTextRange {
-  annotation: WorkspaceFileAnnotation;
-  from: number;
-  to: number;
-}
-
-function annotationSourceRange(
-  source: string,
-  annotation: WorkspaceFileAnnotation,
-): Pick<AnnotationTextRange, "from" | "to"> | null {
-  const validation = validateSourceRangeAnchor(source, annotation.anchor_json);
-  return validation.valid && validation.anchor
-    ? { from: validation.anchor.sourceStart, to: validation.anchor.sourceEnd }
-    : null;
-}
-
-function normalizeOffsetRange(
-  source: string,
-  from: number,
-  to: number,
-): Pick<AnnotationTextRange, "from" | "to"> | null {
-  const start = Math.max(0, Math.min(from, source.length));
-  const end = Math.max(start, Math.min(to, source.length));
-  return end > start ? { from: start, to: end } : null;
-}
-
-function positiveInteger(value: number | null | undefined): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
-}
-
-function nonNegativeInteger(value: number | null | undefined): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 function codeMirrorBaseExtensions(): Extension[] {
@@ -4853,33 +3591,17 @@ function codeMirrorTheme(theme: "light" | "dark"): Extension {
         boxShadow: "0 0 0 4px rgb(250 204 21 / 30%), inset 0 -2px 0 rgb(250 204 21 / 95%)",
         fontWeight: "700",
       },
-      ".cm-fileAnnotationMark": {
-        borderBottom: "1px solid color-mix(in srgb, var(--color-warning) 70%, transparent)",
-        backgroundColor: "color-mix(in srgb, var(--color-warning) 18%, transparent)",
+      ".cm-annotation-mark": {
+        borderBottom: "1px solid color-mix(in srgb, var(--annotation-accent) 70%, transparent)",
+        backgroundColor: "color-mix(in srgb, var(--annotation-accent) 18%, transparent)",
         borderRadius: "3px",
         cursor: "pointer",
         transition:
           "background-color var(--motion-fast) var(--motion-ease-standard), box-shadow var(--motion-fast) var(--motion-ease-standard)",
       },
-      ".cm-fileAnnotationMark:hover, .cm-fileAnnotationMark[data-active='true']": {
-        backgroundColor: "color-mix(in srgb, var(--color-warning) 30%, transparent)",
-        boxShadow: "0 0 0 1px color-mix(in srgb, var(--color-warning) 46%, transparent)",
-      },
-      ".cm-fileAnnotationMark[data-flash='true']": {
-        animation: "annotationMarkFlash 700ms var(--motion-ease-out) 1 both",
-        backgroundColor: "color-mix(in srgb, var(--color-warning) 52%, transparent)",
-        boxShadow: "0 0 0 3px color-mix(in srgb, var(--color-warning) 22%, transparent)",
-      },
-      ".cm-fileAnnotationMark[data-transient-reveal='true']": {
-        backgroundColor: "rgb(250 204 21 / 42%)",
-        borderBottom: "1px solid rgb(234 179 8 / 72%)",
-        boxShadow: "0 0 0 1px rgb(234 179 8 / 28%)",
-        cursor: "default",
-      },
-      ".cm-fileAnnotationMark[data-transient-reveal='true'][data-active='true']": {
-        backgroundColor: "rgb(250 204 21 / 66%)",
-        boxShadow:
-          "0 0 0 2px color-mix(in srgb, var(--color-text-primary) 44%, transparent), 0 0 0 5px rgb(250 204 21 / 26%), inset 0 -2px 0 rgb(234 179 8 / 88%)",
+      ".cm-annotation-mark:hover, .cm-annotation-mark[data-hovered='true']": {
+        backgroundColor: "color-mix(in srgb, var(--annotation-accent) 44%, transparent)",
+        boxShadow: "inset 0 -2px 0 color-mix(in srgb, var(--annotation-accent) 90%, transparent), 0 0 0 1px color-mix(in srgb, var(--annotation-accent) 62%, transparent)",
       },
       ".cm-foldPlaceholder": {
         display: "inline-flex",
@@ -5440,7 +4162,7 @@ function clampMermaidScale(value: number): number {
 }
 
 function scrollMarkdownPreviewFromEmbeddedMermaid(viewport: HTMLElement, event: WheelEvent): void {
-  const scrollParent = viewport.closest<HTMLElement>("[data-custom-scrollbar='true']");
+  const scrollParent = viewport.closest<HTMLElement>("[data-document-scroll-viewport='true']");
   if (!scrollParent) {
     return;
   }
@@ -5546,59 +4268,6 @@ function workspaceScope({
   return null;
 }
 
-function annotationWorkspaceScope({
-  workspaceId,
-  sessionId,
-}: {
-  workspaceId?: string;
-  sessionId?: string;
-}): WorkspaceScope | null {
-  if (workspaceId) {
-    return { workspaceId };
-  }
-  if (sessionId) {
-    return { sessionId };
-  }
-  return null;
-}
-
-function isWorkspaceFileAnnotationRequestForPreview(
-  detail: StartWorkspaceFileAnnotationDetail,
-  annotationPath: string,
-  workspaceId?: string,
-  sessionId?: string,
-): boolean {
-  return (
-    detail.path === annotationPath &&
-    workspaceContextValueMatches(detail.workspaceId, workspaceId) &&
-    workspaceContextValueMatches(detail.sessionId, sessionId)
-  );
-}
-
-function workspaceContextValueMatches(
-  requestValue: string | null | undefined,
-  previewValue: string | null | undefined,
-): boolean {
-  const normalizedRequestValue = requestValue?.trim() || null;
-  if (!normalizedRequestValue) {
-    return true;
-  }
-  return normalizedRequestValue === (previewValue?.trim() || null);
-}
-
-function annotationWorkspaceRuntime(runtime: RuntimeBridge | undefined): AnnotationWorkspaceRuntime | null {
-  const workspace = runtime?.workspace as Partial<RuntimeBridge["workspace"]> | undefined;
-  if (
-    typeof workspace?.listAnnotations !== "function" ||
-    typeof workspace.createAnnotation !== "function" ||
-    typeof workspace.updateAnnotation !== "function" ||
-    typeof workspace.deleteAnnotation !== "function"
-  ) {
-    return null;
-  }
-  return workspace as AnnotationWorkspaceRuntime;
-}
-
 function DiffPreview({ diff }: { diff: string }) {
   const lines = parseUnifiedDiffDisplayLines(diff);
   return (
@@ -5702,20 +4371,6 @@ function contentKindToPreviewKind(kind: PreviewContentKind): PreviewKind {
     return "mermaid";
   }
   return kind;
-}
-
-function formatSource(content: string, kind: PreviewKind): string {
-  if (!content) {
-    return "文件为空";
-  }
-  if (kind !== "json") {
-    return content;
-  }
-  try {
-    return JSON.stringify(JSON.parse(content), null, 2);
-  } catch {
-    return content;
-  }
 }
 
 function sourceLanguage(request: FilePreviewRequest, kind: PreviewKind): string {

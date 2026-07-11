@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, RuntimeBridge, WsConnectionStatus } from "@/runtime";
+import { subscribeSessionUpdated, type AgentSessionUpdate } from "@/renderer/events/sessionEvents";
 import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
 import type {
   AgentActionEnvelope,
@@ -117,6 +118,8 @@ describe("useAgentSessionController thread tasks", () => {
 
   it("sends running-session text as a pending input payload without an optimistic user message", async () => {
     const { runtime, emit, channel } = fakeRuntime();
+    const sessionUpdates: AgentSessionUpdate[] = [];
+    const unsubscribe = subscribeSessionUpdated((update) => sessionUpdates.push(update));
     const { result } = renderHook(() =>
       useAgentSessionController({
         runtime,
@@ -163,7 +166,14 @@ describe("useAgentSessionController thread tasks", () => {
         },
       }),
     );
+    expect(sessionUpdates).toEqual([
+      {
+        id: "ses-1",
+        updated_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      },
+    ]);
     expect(result.current.agentMessages).toEqual([]);
+    unsubscribe();
   });
 
   it("uses Ctrl+Enter reverse mode against the configured default send behavior", async () => {

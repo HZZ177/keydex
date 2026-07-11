@@ -18,6 +18,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { runtimeBridge, type RuntimeBridge, type WorkspaceSearchResult, type WorkspaceSkillSummary } from "@/runtime";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
@@ -1610,16 +1611,12 @@ function selectedFileFromQuote(quote: SelectedQuote): SelectedFile | null {
   if (!quote.file?.path) {
     return null;
   }
-  const annotationComment = quote.annotationComment?.trim();
-  const annotationId = quote.annotationId?.trim();
   return {
     path: quote.file.path,
     name: quote.file.name || fileName(quote.file.path),
     type: "file",
     source: "workspace",
     selectedText: quote.text,
-    ...(annotationId ? { annotationId } : {}),
-    ...(annotationComment ? { annotationComment } : {}),
     lineStart: quote.file.lineStart ?? null,
     lineEnd: quote.file.lineEnd ?? null,
     sourceStart: quote.file.sourceStart ?? null,
@@ -1711,16 +1708,19 @@ function FileContextChip({
 function quoteHoverDescription(quote: SelectedQuote): string {
   const lineLabel = quote.file ? quoteLineLabel(quote.file.lineStart, quote.file.lineEnd) : null;
   const location = quote.file?.path ? `${quote.file.path}${lineLabel ? ` · ${lineLabel}` : ""}` : "";
-  return [location, quote.text || quote.preview, annotationCommentDescription(quote.annotationComment)]
+  return [location, quote.text || quote.preview]
     .filter(Boolean)
     .join("\n\n");
 }
 
 function fileHoverDescription(file: SelectedFile): string {
-  return [file.path, annotationCommentDescription(file.annotationComment)].filter(Boolean).join("\n\n");
+  return file.annotationReference ? `批注引用\n${file.path}` : file.path;
 }
 
 function selectedFileKindLabel(file: SelectedFile): string {
+  if (file.annotationReference) {
+    return "文档批注";
+  }
   if (file.source === "workspace") {
     return file.type === "directory" ? "工作区目录" : "工作区文件";
   }
@@ -1731,11 +1731,6 @@ function selectedFileKindLabel(file: SelectedFile): string {
     return "拖拽文件";
   }
   return file.type === "directory" ? "本地目录" : "本地文件";
-}
-
-function annotationCommentDescription(comment?: string | null): string {
-  const value = comment?.trim();
-  return value ? `批注：${value}` : "";
 }
 
 function ComposerContextHover({
@@ -1816,21 +1811,24 @@ function ComposerContextHover({
       onMouseLeave={scheduleClose}
     >
       {children}
-      {open ? (
-        <span
-          ref={hoverPlacement.cardRef}
-          className={styles.contextHoverCard}
-          data-sendbox-context-hover-card="true"
-          data-context-type={hoverAnchor}
-          style={hoverPlacement.style}
-          onMouseEnter={clearHideTimer}
-          onMouseLeave={scheduleClose}
-        >
-          <span className={styles.contextHoverTitle}>{title}</span>
-          {description ? <span className={styles.contextHoverDescription}>{description}</span> : null}
-          {meta ? <span className={styles.contextHoverMeta}>{meta}</span> : null}
-        </span>
-      ) : null}
+      {open && hoverPlacement.portalRoot
+        ? createPortal(
+            <span
+              ref={hoverPlacement.cardRef}
+              className={styles.contextHoverCard}
+              data-sendbox-context-hover-card="true"
+              data-context-type={hoverAnchor}
+              style={hoverPlacement.style}
+              onMouseEnter={clearHideTimer}
+              onMouseLeave={scheduleClose}
+            >
+              <span className={styles.contextHoverTitle}>{title}</span>
+              {description ? <span className={styles.contextHoverDescription}>{description}</span> : null}
+              {meta ? <span className={styles.contextHoverMeta}>{meta}</span> : null}
+            </span>,
+            hoverPlacement.portalRoot,
+          )
+        : null}
     </span>
   );
 }
@@ -1838,6 +1836,7 @@ function ComposerContextHover({
 interface HoverCardPlacement {
   wrapperRef: (node: HTMLSpanElement | null) => void;
   cardRef: (node: HTMLSpanElement | null) => void;
+  portalRoot: HTMLElement | null;
   style: CSSProperties | undefined;
 }
 
@@ -1862,7 +1861,8 @@ function useHoverCardPlacement(open: boolean, preferredMaxWidth: number): HoverC
     }
 
     const wrapperRect = wrapper.getBoundingClientRect();
-    const rootRect = wrapper.closest<HTMLElement>("[data-sendbox-root='true']")?.getBoundingClientRect();
+    const root = wrapper.closest<HTMLElement>("[data-sendbox-root='true']");
+    const rootRect = root?.getBoundingClientRect();
     const boundaryLeft = Math.max(HOVER_CARD_EDGE_GAP, (rootRect?.left ?? 0) + HOVER_CARD_EDGE_GAP);
     const boundaryRight = Math.min(
       window.innerWidth - HOVER_CARD_EDGE_GAP,
@@ -1880,7 +1880,8 @@ function useHoverCardPlacement(open: boolean, preferredMaxWidth: number): HoverC
     );
 
     setStyle({
-      left: `${leftInViewport - wrapperRect.left}px`,
+      left: `${leftInViewport - (rootRect?.left ?? 0)}px`,
+      top: `${wrapperRect.top - (rootRect?.top ?? 0) - 8}px`,
       maxWidth: `${maxWidth}px`,
       "--sendbox-hover-card-arrow-left": `${arrowLeft}px`,
       "--sendbox-hover-card-translate-x": "0px",
@@ -1901,7 +1902,12 @@ function useHoverCardPlacement(open: boolean, preferredMaxWidth: number): HoverC
     };
   }, [open, updatePlacement]);
 
-  return { wrapperRef: setWrapperRef, cardRef: setCardRef, style };
+  return {
+    wrapperRef: setWrapperRef,
+    cardRef: setCardRef,
+    portalRoot: wrapperRef.current?.closest<HTMLElement>("[data-sendbox-root='true']") ?? null,
+    style,
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -2120,5 +2126,5 @@ function errorMessage(reason: unknown): string {
 }
 
 function canTypeWhileBusy(state: ConversationRuntimeState): boolean {
-  return state === "running" || state === "waiting_approval" || state === "waiting_input";
+  return state === "running" || state === "waiting_approval";
 }

@@ -15,6 +15,7 @@ if __package__ in {None, ""}:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.app.annotations.api import router as annotations_router
 from backend.app.api.approvals import router as approvals_router
 from backend.app.api.attachments import router as attachments_router
 from backend.app.api.health import router as health_router
@@ -219,6 +220,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         f"duration_ms={int((time.perf_counter() - create_started) * 1000)}"
     )
     app.include_router(health_router)
+    app.include_router(annotations_router)
     app.include_router(approvals_router)
     app.include_router(attachments_router)
     app.include_router(local_preview_router)

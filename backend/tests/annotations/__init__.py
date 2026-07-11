@@ -1,0 +1,1 @@
+"""Annotations domain tests."""

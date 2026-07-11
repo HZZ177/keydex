@@ -38,14 +38,9 @@ export interface PreviewFileRevealTarget {
 }
 
 export interface PreviewAnnotationChatRequest {
+  annotationId: string;
   path: string;
-  comment: string;
-  annotationId?: string | null;
-  selectedText?: string | null;
-  lineStart?: number | null;
-  lineEnd?: number | null;
-  sourceStart?: number | null;
-  sourceEnd?: number | null;
+  workspaceId: string;
 }
 
 export interface PreviewEntry {

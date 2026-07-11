@@ -18,6 +18,7 @@ export { createWorkspaceRuntime } from "./workspace";
 export { createWorkspacesRuntime } from "./workspaces";
 export { createDesktopPickerRuntime } from "./desktopPicker";
 export { createAttachmentsRuntime } from "./attachments";
+export { createAnnotationsRuntime } from "./annotations";
 export { createMcpRuntime } from "./mcp";
 export {
   canUseAppUpdater,
@@ -78,13 +79,7 @@ export type {
 } from "./conversation";
 export type {
   KeydexDiagnostic,
-  WorkspaceAnnotationListOptions,
   WorkspaceEntry,
-  WorkspaceFileAnnotation,
-  WorkspaceFileAnnotationAnchorV2,
-  WorkspaceFileAnnotationAnchorType,
-  WorkspaceFileAnnotationInput,
-  WorkspaceFileAnnotationUpdate,
   WorkspaceFileResponse,
   WorkspaceMediaResponse,
   WorkspaceRuntime,
@@ -116,6 +111,21 @@ export type {
   UploadImageOptions,
   UploadLocalFileOptions,
 } from "./attachments";
+export type {
+  AnnotationBodyUpdate,
+  AnnotationCreateInput,
+  AnnotationListOptions,
+  AnnotationRecord,
+  AnnotationRetargetInput,
+  AnnotationTarget,
+  AnnotationsRuntime,
+  DocumentAnnotationTarget,
+  TextAnnotationTarget,
+  TextContext,
+  TextPosition,
+  TextQuote,
+  TextSelector,
+} from "./annotations";
 export type {
   DesktopPickerRuntime,
   DesktopPickerRuntimeOptions,

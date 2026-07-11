@@ -527,9 +527,9 @@ function buildSemanticStreamKey(
   scopeKey = "",
 ): string {
   const identity =
+    stringIdentity(scopeKey) ||
     stringIdentity(parsed.a2ui?.stream_id) ||
     stringIdentity(parsed.debug?.streamId) ||
-    stringIdentity(scopeKey) ||
     "a2ui-missing-stream-id";
   return [identity, adapter.renderKey].filter(Boolean).join(":");
 }

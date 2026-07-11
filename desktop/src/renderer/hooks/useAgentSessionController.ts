@@ -20,7 +20,7 @@ import {
 import { subscribeAddWorkspaceFileToChat } from "@/renderer/events/workspaceFileContext";
 import { buildA2UICancelPayload, buildA2UISubmitPayload } from "@/renderer/pages/conversation/messages/a2ui";
 import type { RuntimeSelectedModel } from "@/renderer/components/model";
-import { emitSessionEventsFromRuntimeEvent } from "@/renderer/events/sessionEvents";
+import { emitSessionEventsFromRuntimeEvent, emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import {
   agentConversationReducer,
@@ -37,6 +37,8 @@ import {
 } from "@/renderer/stores/agentSessionStore";
 import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
 import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
+import { assembleAnnotationContexts, type AssembledAnnotationContext } from "@/renderer/features/annotations/chat/AnnotationContextAssembler";
+import { annotationDocumentRegistry } from "@/renderer/features/annotations/chat/AnnotationDocumentRegistry";
 import type {
   AgentActionEnvelope,
   AgentContextItem,
@@ -70,14 +72,9 @@ export interface AgentSessionControllerQuoteSelectionRequest {
 }
 
 export interface AgentSessionControllerAnnotationRequest {
+  annotationId: string;
   path: string;
-  comment: string;
-  annotationId?: string | null;
-  selectedText?: string | null;
-  lineStart?: number | null;
-  lineEnd?: number | null;
-  sourceStart?: number | null;
-  sourceEnd?: number | null;
+  workspaceId: string;
 }
 
 export interface UseAgentSessionControllerOptions {
@@ -521,53 +518,20 @@ export function useAgentSessionController({
     requestOrRequests: AgentSessionControllerAnnotationRequest | AgentSessionControllerAnnotationRequest[],
   ) => {
     const requests = Array.isArray(requestOrRequests) ? requestOrRequests : [requestOrRequests];
-    const files: SelectedFile[] = [];
-    const quotes: SelectedQuote[] = [];
-
-    requests.forEach((request) => {
+    const files: SelectedFile[] = requests.flatMap((request) => {
       const path = request.path.trim();
-      const comment = request.comment.trim();
-      if (!path || !comment) {
-        return;
-      }
-      const annotationId = request.annotationId?.trim() ?? "";
-      const selectedText = request.selectedText?.trim() ?? "";
-      const quote = selectedText
-        ? selectedQuoteFromText(selectedText, {
-            source: "annotation",
-            annotationId,
-            annotationComment: comment,
-            file: {
-              path,
-              name: fileName(path),
-              lineStart: request.lineStart ?? null,
-              lineEnd: request.lineEnd ?? null,
-              sourceStart: request.sourceStart ?? null,
-              sourceEnd: request.sourceEnd ?? null,
-            },
-          })
-        : null;
-      if (quote) {
-        quotes.push(quote);
-        return;
-      }
-      files.push({
-        id: annotationId ? `annotation:${annotationId}` : null,
+      const annotationId = request.annotationId.trim();
+      const workspaceId = request.workspaceId.trim();
+      if (!path || !annotationId || !workspaceId) return [];
+      return [{
+        id: `annotation:${workspaceId}:${annotationId}`,
         path,
         name: fileName(path),
         type: "file",
         source: "workspace",
-        annotationId: annotationId || null,
-        annotationComment: comment,
-      });
+        annotationReference: { annotationId, path, workspaceId },
+      }];
     });
-
-    if (quotes.length) {
-      setQuoteChipRequest((current) => ({
-        requestId: (current?.requestId ?? 0) + 1,
-        quotes,
-      }));
-    }
     if (files.length) {
       setFileChipRequest((current) => ({
         requestId: (current?.requestId ?? 0) + 1,
@@ -732,6 +696,7 @@ export function useAgentSessionController({
           }
           channel.chat(payload);
         }
+        emitSessionUpdated({ id: targetSessionId, updated_at: new Date().toISOString() });
         onAfterSend?.();
         if (options.clearDraft) {
           setDraft("");
@@ -769,7 +734,16 @@ export function useAgentSessionController({
       model: RuntimeSelectedModel | null = null,
       options: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode } = {},
     ) => {
-      const prepared = prepareComposerMessage(draft, files, { quotes, selectedSkill });
+      let annotationContexts: readonly AssembledAnnotationContext[];
+      try {
+        annotationContexts = assembleSelectedAnnotationContexts(files);
+      } catch (reason) {
+        const message = errorMessage(reason);
+        setRuntimeDetail(message);
+        onNotice?.(message, "error");
+        return false;
+      }
+      const prepared = prepareComposerMessage(draft, files, { annotationContexts, quotes, selectedSkill });
       const attachments = imageAttachments.map(agentAttachmentFromSelected);
       if (!prepared.message && !prepared.contextItems.length && !attachments.length) {
         return false;
@@ -788,7 +762,7 @@ export function useAgentSessionController({
       }
       return sent;
     },
-    [draft, selectedSkill, sendText],
+    [draft, onNotice, selectedSkill, sendText, setRuntimeDetail],
   );
 
   const updatePendingInputMode = useCallback(
@@ -1239,6 +1213,19 @@ function createClientInputId(): string {
 function sessionTitleFromPreparedMessage(text: string, contextItems: AgentContextItem[]): string {
   const title = text.trim() || contextItems[0]?.label || "工作台对话";
   return title.slice(0, 32);
+}
+
+export function assembleSelectedAnnotationContexts(files: readonly SelectedFile[]): readonly AssembledAnnotationContext[] {
+  const contexts = files.flatMap((file) => {
+    const reference = file.annotationReference;
+    if (!reference) return [];
+    const document = annotationDocumentRegistry.get(reference.workspaceId, reference.path);
+    if (!document) {
+      throw new Error(`批注文档当前未打开或尚未解析：${reference.path}`);
+    }
+    return assembleAnnotationContexts([reference], document);
+  });
+  return Object.freeze(contexts);
 }
 
 function fileName(path: string): string {

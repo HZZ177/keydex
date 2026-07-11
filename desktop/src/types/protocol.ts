@@ -1460,7 +1460,7 @@ export interface AgentTraceQueryContext {
   end_time?: string;
 }
 
-export type A2UIRenderKey = "chart" | "choice" | "form" | (string & {});
+export type A2UIRenderKey = "chart" | "choice" | "form" | "table" | (string & {});
 export type A2UIMode = "render" | "interactive";
 export type A2UIInteractionStatus =
   | "waiting_user_input"

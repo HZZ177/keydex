@@ -119,6 +119,100 @@ async def test_choice_correction_submit_builds_agent_instruction(tmp_path) -> No
 
 
 @pytest.mark.asyncio
+async def test_table_submit_recomputes_diff_and_builds_agent_instruction(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = A2UIInteractionService(repositories=repositories, dispatcher=RecordingDispatcher())
+    registry = build_builtin_a2ui_registry()
+    payload = {
+        "title": "计划审阅",
+        "allow_add_rows": True,
+        "allow_delete_rows": True,
+        "columns": [
+            {"key": "task", "label": "任务", "type": "text", "required": True},
+            {"key": "effort", "label": "工作量", "type": "number"},
+        ],
+        "rows": [
+            {"id": "row-1", "values": {"task": "需求分析", "effort": 2}},
+            {"id": "row-2", "values": {"task": "开发", "effort": 5}},
+        ],
+    }
+    _create_interaction(
+        repositories,
+        interaction_id="table-1",
+        render_key="table",
+        payload=payload,
+        input_schema=registry.require("table").input_schema,
+        submit_schema_snapshot=registry.require("table").submit_schema,
+    )
+
+    result = await service.submit(
+        {
+            "interaction_id": "table-1",
+            "request_id": "submit-table-1",
+            "submit_result": {
+                "result_type": "table",
+                "columns": [
+                    {"key": "task", "label": "工作项"},
+                    {"key": "effort", "label": "工作量"},
+                ],
+                "rows": [
+                    {"id": "row-1", "values": {"task": "需求澄清", "effort": 2}},
+                    {"id": "row-3", "values": {"task": "测试", "effort": 3}},
+                ],
+                "changes": {"cells": [], "column_labels": [], "added_row_ids": [], "deleted_row_ids": []},
+            },
+        }
+    )
+
+    submit_result = result.resume_payload["submit_result"]
+    assert submit_result["changes"]["added_row_ids"] == ["row-3"]
+    assert submit_result["changes"]["deleted_row_ids"] == ["row-2"]
+    assert submit_result["changes"]["cells"][0]["new_value"] == "需求澄清"
+    assert result.resume_payload["agent_instruction"] == (
+        "用户已确认并提交表格：修改 1 个单元格、1 个列名，新增 1 行、删除 1 行。"
+        "请以提交结果中的 columns 和 rows 作为后续执行依据。"
+    )
+
+
+@pytest.mark.asyncio
+async def test_table_correction_submit_rejects_table_and_forwards_note(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = A2UIInteractionService(repositories=repositories, dispatcher=RecordingDispatcher())
+    registry = build_builtin_a2ui_registry()
+    _create_interaction(
+        repositories,
+        interaction_id="table-1",
+        render_key="table",
+        payload={
+            "title": "计划审阅",
+            "columns": [{"key": "task", "label": "任务", "type": "text"}],
+            "rows": [{"id": "row-1", "values": {"task": "需求分析"}}],
+        },
+        input_schema=registry.require("table").input_schema,
+        submit_schema_snapshot=registry.require("table").submit_schema,
+    )
+
+    result = await service.submit(
+        {
+            "interaction_id": "table-1",
+            "request_id": "submit-table-1",
+            "submit_result": {
+                "result_type": "correction",
+                "columns": [],
+                "rows": [],
+                "changes": {"cells": [], "column_labels": [], "added_row_ids": [], "deleted_row_ids": []},
+                "correction_note": "不要按任务拆分，请按负责人整理",
+            },
+        }
+    )
+
+    assert result.resume_payload["agent_instruction"] == (
+        "用户否决了当前表格，并补充意见：不要按任务拆分，请按负责人整理。"
+        "请根据该意见重新组织结构化内容，不要继续使用原表格修改结果。"
+    )
+
+
+@pytest.mark.asyncio
 async def test_submit_replay_is_idempotent_without_duplicate_event(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     dispatcher = RecordingDispatcher()

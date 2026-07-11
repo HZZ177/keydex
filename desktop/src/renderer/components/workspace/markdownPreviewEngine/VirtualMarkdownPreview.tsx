@@ -14,6 +14,7 @@ import {
 } from "react";
 import { ChevronRight } from "lucide-react";
 import { Virtuoso, type ListRange, type VirtuosoHandle } from "react-virtuoso";
+import { smoothScrollElementTo } from "@/renderer/features/annotations/navigation/AnnotationNavigationEffects";
 
 import {
   MarkdownBlockView,
@@ -26,10 +27,16 @@ import type { MarkdownBlock, MarkdownDocumentModel } from "./types";
 import styles from "../FilePreview.module.css";
 
 export interface VirtualMarkdownPreviewHandle {
-  scrollToAnnotation: (annotationId: string, align?: "start" | "center" | "end") => boolean;
-  scrollToBlock: (blockId: string, align?: "start" | "center" | "end") => boolean;
-  scrollToFindMatch: (matchId: string, align?: "start" | "center" | "end") => boolean;
-  scrollToIndex: (index: number, align?: "start" | "center" | "end") => boolean;
+  revealAnnotation: (annotationId: string, options?: VirtualMarkdownRevealOptions) => Promise<void>;
+  revealBlock: (blockId: string, options?: VirtualMarkdownRevealOptions) => Promise<void>;
+  revealFindMatch: (matchId: string, options?: VirtualMarkdownRevealOptions) => Promise<void>;
+  revealIndex: (index: number, options?: VirtualMarkdownRevealOptions) => Promise<void>;
+}
+
+export interface VirtualMarkdownRevealOptions {
+  align?: "start" | "center" | "end";
+  behavior?: ScrollBehavior;
+  signal?: AbortSignal;
 }
 
 export interface VirtualMarkdownPreviewProps {
@@ -60,11 +67,21 @@ interface VirtualMarkdownPreviewItem {
   sectionEndLine: number | null;
 }
 
-interface PendingMarkdownPreviewAnnotationReveal {
+interface PendingMarkdownPreviewReveal {
   align: "start" | "center" | "end";
-  annotationId: string;
+  behavior: ScrollBehavior;
   blockId: string;
-  line: number;
+  id: number;
+  onAbort: () => void;
+  reject: (reason: unknown) => void;
+  resolve: () => void;
+  settleTimer: number | null;
+  settling: boolean;
+  signal: AbortSignal;
+  target:
+    | { type: "annotation"; annotationId: string; line: number }
+    | { type: "block" }
+    | { type: "find"; matchId: string };
 }
 
 type MarkdownPreviewFoldKind = "block" | "section";
@@ -107,9 +124,9 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
     const foldMotionTimerRef = useRef<number | null>(null);
     const [collapsedBlockIds, setCollapsedBlockIds] = useState<ReadonlySet<string>>(() => new Set());
     const [foldMotionBlockIds, setFoldMotionBlockIds] = useState<ReadonlySet<string>>(() => new Set());
-    const [pendingRevealBlockId, setPendingRevealBlockId] = useState<string | null>(null);
-    const [pendingAnnotationReveal, setPendingAnnotationReveal] =
-      useState<PendingMarkdownPreviewAnnotationReveal | null>(null);
+    const pendingRevealRef = useRef<PendingMarkdownPreviewReveal | null>(null);
+    const revealSequenceRef = useRef(0);
+    const [pendingReveal, setPendingReveal] = useState<{ blockId: string; id: number } | null>(null);
     const [mountedRange, setMountedRange] = useState<ListRange | null>(null);
     const blockIndexById = useMemo(
       () => new Map(model.blocks.map((block) => [block.id, block.index])),
@@ -197,7 +214,7 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
           const current = state.get(range.blockId) ?? "";
           state.set(
             range.blockId,
-            `${current}|${item.annotation.id}:${item.annotation.updated_at}:${item.annotation.id === activeAnnotationId ? "active" : "idle"}:${item.annotation.id === flashAnnotationId ? "flash" : "idle"}`,
+            `${current}|${item.annotation.id}:${item.annotation.updated_at}:${range.blockLocalStart}-${range.blockLocalEnd}:${item.annotation.id === activeAnnotationId ? "active" : "idle"}:${item.annotation.id === flashAnnotationId ? "flash" : "idle"}`,
           );
         });
       });
@@ -278,7 +295,11 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
     }, [mountedRange, renderedBlocks]);
     const usesExternalScrollParent = Boolean(customScrollParent);
     const rootClassNames = rootClassName ? `keydex-markdown ${rootClassName}` : "keydex-markdown";
-    const rootStyles = usesExternalScrollParent ? rootStyle : { height: "100%", ...rootStyle };
+    const rootStyles = {
+      ...(usesExternalScrollParent ? {} : { height: "100%" }),
+      "--markdown-preview-source-gutter-width": `${calculateMarkdownPreviewGutterWidth(model.lineMap.lineCount)}px`,
+      ...rootStyle,
+    } as CSSProperties;
     const setRootElement = useCallback((element: HTMLDivElement | null) => {
       rootElementRef.current = element;
       assignReactRef(rootRef, element);
@@ -288,33 +309,51 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
       onMountedBlockIdsChange?.(mountedBlockIds);
     }, [mountedBlockIds, onMountedBlockIdsChange]);
 
-    useEffect(() => {
-      if (pendingRevealBlockId && mountedBlockIds.includes(pendingRevealBlockId)) {
-        setPendingRevealBlockId(null);
-      }
-    }, [mountedBlockIds, pendingRevealBlockId]);
-
     useLayoutEffect(() => {
-      if (!pendingAnnotationReveal || !mountedBlockIds.includes(pendingAnnotationReveal.blockId)) {
+      const request = pendingRevealRef.current;
+      if (!request || pendingReveal?.id !== request.id || !mountedBlockIds.includes(request.blockId)) {
         return;
       }
-      const target = findPendingAnnotationRevealElement(rootElementRef.current, pendingAnnotationReveal);
+      const target = findPendingRevealElement(rootElementRef.current, request);
       if (!target) {
         return;
       }
+      if (request.settling) {
+        return;
+      }
+      request.settling = true;
+      if (request.behavior === "smooth" && customScrollParent) {
+        const top = centeredScrollTop(customScrollParent, target, request.align);
+        void smoothScrollElementTo(customScrollParent, top, request.signal)
+          .then(() => completePendingReveal(pendingRevealRef, setPendingReveal, request))
+          .catch(() => undefined);
+        return;
+      }
       target.scrollIntoView?.({
-        behavior: "smooth",
-        block: pendingAnnotationReveal.align,
+        behavior: request.behavior,
+        block: request.align,
         inline: "nearest",
       });
-      setPendingAnnotationReveal((current) => current === pendingAnnotationReveal ? null : current);
-    }, [mountedBlockIds, pendingAnnotationReveal, renderedBlocks]);
+      if (request.behavior !== "smooth") {
+        completePendingReveal(pendingRevealRef, setPendingReveal, request);
+        return;
+      }
+      request.settleTimer = window.setTimeout(
+        () => completePendingReveal(pendingRevealRef, setPendingReveal, request),
+        300,
+      );
+    }, [customScrollParent, mountedBlockIds, pendingReveal, renderedBlocks]);
 
     useEffect(() => () => {
       if (foldMotionTimerRef.current !== null) {
         window.clearTimeout(foldMotionTimerRef.current);
       }
+      cancelPendingReveal(pendingRevealRef, abortError("Markdown preview unmounted"));
     }, []);
+
+    useEffect(() => () => {
+      cancelPendingReveal(pendingRevealRef, abortError("Markdown document changed"));
+    }, [model]);
 
     const toggleCollapsedBlock = useCallback((blockId: string) => {
       if (foldMotionTimerRef.current !== null) {
@@ -340,9 +379,14 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
       });
     }, [headingSectionEndIndexByBlockId, model.blocks]);
 
-    const scrollToIndex = useCallback((index: number, align: "start" | "center" | "end" = "start") => {
+    const revealIndex = useCallback((index: number, options: VirtualMarkdownRevealOptions = {}) => {
       if (!Number.isInteger(index) || index < 0 || index >= model.blocks.length) {
-        return false;
+        return Promise.reject(new Error(`Markdown block index is unavailable: ${index}`));
+      }
+      const align = options.align ?? "start";
+      const signal = options.signal ?? new AbortController().signal;
+      if (signal.aborted) {
+        return Promise.reject(abortError("Markdown reveal aborted"));
       }
       const block = model.blocks[index];
       const nextCollapsedBlockIds = expandCollapsedBlockIdsForBlock(
@@ -362,44 +406,96 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
         showSourceGutter,
       );
       if (visibleIndex < 0) {
-        return false;
+        return Promise.reject(new Error(`Markdown block is not visible: ${block.id}`));
       }
-      setPendingRevealBlockId(block.id);
-      const scroll = () => virtuosoRef.current?.scrollToIndex({ align, index: visibleIndex });
-      scroll();
-      window.requestAnimationFrame(scroll);
-      window.setTimeout(scroll, 60);
-      return true;
+      return beginPendingReveal({
+        align,
+        behavior: options.behavior ?? "auto",
+        blockId: block.id,
+        pendingRevealRef,
+        revealSequenceRef,
+        setPendingReveal,
+        signal,
+        target: { type: "block" },
+        visibleIndex,
+        virtuoso: virtuosoRef.current,
+      });
     }, [collapsedBlockIds, headingSectionEndIndexByBlockId, model.blocks, showSourceGutter]);
 
-    const scrollToBlock = useCallback((blockId: string, align: "start" | "center" | "end" = "start") => {
+    const revealBlock = useCallback((blockId: string, options: VirtualMarkdownRevealOptions = {}) => {
       const index = blockIndexById.get(blockId);
-      return typeof index === "number" ? scrollToIndex(index, align) : false;
-    }, [blockIndexById, scrollToIndex]);
+      return typeof index === "number"
+        ? revealIndex(index, options)
+        : Promise.reject(new Error(`Markdown block is unavailable: ${blockId}`));
+    }, [blockIndexById, revealIndex]);
 
-    const scrollToAnnotation = useCallback((annotationId: string, align: "start" | "center" | "end" = "start") => {
+    const revealAnnotation = useCallback((annotationId: string, options: VirtualMarkdownRevealOptions = {}) => {
       const target = annotationRevealTargetById.get(annotationId);
-      if (!target || !scrollToBlock(target.blockId, align)) {
-        return false;
+      if (!target) {
+        return Promise.reject(new Error(`Markdown annotation is unavailable: ${annotationId}`));
       }
-      setPendingAnnotationReveal({
-        align,
-        annotationId,
+      return revealTarget({
         blockId: target.blockId,
-        line: target.lineStart,
+        options,
+        target: { type: "annotation", annotationId, line: target.lineStart },
       });
-      return true;
-    }, [annotationRevealTargetById, scrollToBlock]);
+    }, [annotationRevealTargetById, collapsedBlockIds, headingSectionEndIndexByBlockId, model.blocks, showSourceGutter]);
 
-    const scrollToFindMatch = useCallback((matchId: string, align: "start" | "center" | "end" = "start") => {
+    const revealFindMatch = useCallback((matchId: string, options: VirtualMarkdownRevealOptions = {}) => {
       const blockId = findMatchBlockId.get(matchId);
-      return blockId ? scrollToBlock(blockId, align) : false;
-    }, [findMatchBlockId, scrollToBlock]);
+      return blockId
+        ? revealTarget({ blockId, options, target: { type: "find", matchId } })
+        : Promise.reject(new Error(`Markdown find match is unavailable: ${matchId}`));
+    }, [collapsedBlockIds, findMatchBlockId, headingSectionEndIndexByBlockId, model.blocks, showSourceGutter]);
+
+    const revealTarget = useCallback(({ blockId, options, target }: {
+      blockId: string;
+      options: VirtualMarkdownRevealOptions;
+      target: PendingMarkdownPreviewReveal["target"];
+    }) => {
+      const index = blockIndexById.get(blockId);
+      if (typeof index !== "number") {
+        return Promise.reject(new Error(`Markdown block is unavailable: ${blockId}`));
+      }
+      const align = options.align ?? "start";
+      const signal = options.signal ?? new AbortController().signal;
+      const nextCollapsedBlockIds = expandCollapsedBlockIdsForBlock(
+        model.blocks,
+        headingSectionEndIndexByBlockId,
+        collapsedBlockIds,
+        blockId,
+      );
+      if (nextCollapsedBlockIds !== collapsedBlockIds) {
+        setCollapsedBlockIds(nextCollapsedBlockIds);
+      }
+      const visibleIndex = visibleMarkdownPreviewIndexForBlock(
+        model.blocks,
+        headingSectionEndIndexByBlockId,
+        nextCollapsedBlockIds,
+        blockId,
+        showSourceGutter,
+      );
+      if (visibleIndex < 0) {
+        return Promise.reject(new Error(`Markdown block is not visible: ${blockId}`));
+      }
+      return beginPendingReveal({
+        align,
+        behavior: options.behavior ?? "auto",
+        blockId,
+        pendingRevealRef,
+        revealSequenceRef,
+        setPendingReveal,
+        signal,
+        target,
+        visibleIndex,
+        virtuoso: virtuosoRef.current,
+      });
+    }, [blockIndexById, collapsedBlockIds, headingSectionEndIndexByBlockId, model.blocks, showSourceGutter]);
 
     useImperativeHandle(
       ref,
-      () => ({ scrollToAnnotation, scrollToBlock, scrollToFindMatch, scrollToIndex }),
-      [scrollToAnnotation, scrollToBlock, scrollToFindMatch, scrollToIndex],
+      () => ({ revealAnnotation, revealBlock, revealFindMatch, revealIndex }),
+      [revealAnnotation, revealBlock, revealFindMatch, revealIndex],
     );
 
     return (
@@ -412,7 +508,7 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
         data-markdown-model-ready="true"
         data-markdown-mounted-block-count={mountedBlockIds.length}
         data-markdown-mounted-heavy-block-count={mountedHeavyBlockCount}
-        data-markdown-pending-reveal-block-id={pendingRevealBlockId ?? undefined}
+        data-markdown-pending-reveal-block-id={pendingReveal?.blockId ?? undefined}
         data-markdown-scroll-parent={usesExternalScrollParent ? "external" : "self"}
         data-markdown-virtual-preview="true"
         style={rootStyles}
@@ -441,7 +537,7 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
                   <MarkdownPreviewCollapsedBlock block={item.block} />
                 ) : (
                   <MarkdownBlockView
-                    active={item.block.id === activeBlockId || item.block.id === pendingRevealBlockId}
+                    active={item.block.id === activeBlockId || item.block.id === pendingReveal?.blockId}
                     activeAnnotationId={activeAnnotationId}
                     activeFindMatchId={activeFindMatchId}
                     annotationIndex={annotationIndex}
@@ -455,7 +551,7 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
               </MarkdownPreviewBlockFrame>
             ) : (
               <MarkdownBlockView
-                active={item.block.id === activeBlockId || item.block.id === pendingRevealBlockId}
+                active={item.block.id === activeBlockId || item.block.id === pendingReveal?.blockId}
                 activeAnnotationId={activeAnnotationId}
                 activeFindMatchId={activeFindMatchId}
                 annotationIndex={annotationIndex}
@@ -476,6 +572,12 @@ export const VirtualMarkdownPreview = forwardRef<VirtualMarkdownPreviewHandle, V
     );
   },
 );
+
+export function calculateMarkdownPreviewGutterWidth(lineCount: number): number {
+  const normalizedLineCount = Number.isFinite(lineCount) ? Math.max(1, Math.floor(lineCount)) : 1;
+  const lineNumberDigits = String(normalizedLineCount).length;
+  return Math.max(50, 26 + lineNumberDigits * 7);
+}
 
 function MarkdownPreviewBlockFrame({
   activeLineEnd,
@@ -664,27 +766,155 @@ function markdownPreviewSourceLines(block: MarkdownBlock, collapsed: boolean): n
   return Array.from({ length: Math.max(1, lineEnd - block.lineStart + 1) }, (_, index) => block.lineStart + index);
 }
 
-function findPendingAnnotationRevealElement(
+function findPendingRevealElement(
   root: HTMLElement | null,
-  reveal: PendingMarkdownPreviewAnnotationReveal,
+  reveal: PendingMarkdownPreviewReveal,
 ): HTMLElement | null {
   if (!root) {
     return null;
   }
-  const marker = Array.from(root.querySelectorAll<HTMLElement>("[data-preview-annotation-id]"))
-    .find((element) => element.dataset.previewAnnotationId === reveal.annotationId);
-  if (marker) {
-    return marker;
+  if (reveal.target.type === "annotation") {
+    const annotationTarget = reveal.target;
+    const marker = Array.from(root.querySelectorAll<HTMLElement>("[data-annotation-id]"))
+      .find((element) => element.dataset.annotationId === annotationTarget.annotationId);
+    if (marker) {
+      return marker;
+    }
+  }
+  if (reveal.target.type === "find") {
+    const findTarget = reveal.target;
+    const match = Array.from(root.querySelectorAll<HTMLElement>("[data-find-match-id]"))
+      .find((element) => element.dataset.findMatchId === findTarget.matchId);
+    if (match) {
+      return match;
+    }
   }
   const blockFrame = Array.from(root.querySelectorAll<HTMLElement>("[data-markdown-preview-block-id]"))
     .find((element) => element.dataset.markdownPreviewBlockId === reveal.blockId);
-  const lineNumber = Array.from(blockFrame?.querySelectorAll<HTMLElement>("[data-markdown-preview-source-line]") ?? [])
-    .find((element) => Number(element.dataset.markdownPreviewSourceLine) === reveal.line);
-  if (lineNumber) {
-    return lineNumber;
+  if (reveal.target.type === "annotation") {
+    const annotationTarget = reveal.target;
+    const lineNumber = Array.from(blockFrame?.querySelectorAll<HTMLElement>("[data-markdown-preview-source-line]") ?? [])
+      .find((element) => Number(element.dataset.markdownPreviewSourceLine) === annotationTarget.line);
+    if (lineNumber) {
+      return lineNumber;
+    }
   }
   return Array.from(root.querySelectorAll<HTMLElement>("[data-markdown-block-id]"))
     .find((element) => element.dataset.markdownBlockId === reveal.blockId) ?? null;
+}
+
+function beginPendingReveal({
+  align,
+  behavior,
+  blockId,
+  pendingRevealRef,
+  revealSequenceRef,
+  setPendingReveal,
+  signal,
+  target,
+  visibleIndex,
+  virtuoso,
+}: {
+  align: "start" | "center" | "end";
+  behavior: ScrollBehavior;
+  blockId: string;
+  pendingRevealRef: { current: PendingMarkdownPreviewReveal | null };
+  revealSequenceRef: { current: number };
+  setPendingReveal: (value: { blockId: string; id: number } | null) => void;
+  signal: AbortSignal;
+  target: PendingMarkdownPreviewReveal["target"];
+  visibleIndex: number;
+  virtuoso: VirtuosoHandle | null;
+}): Promise<void> {
+  if (signal.aborted) {
+    return Promise.reject(abortError("Markdown reveal aborted"));
+  }
+  if (!virtuoso) {
+    return Promise.reject(new Error("Markdown virtual list is not ready"));
+  }
+  cancelPendingReveal(pendingRevealRef, abortError("Markdown reveal superseded"));
+  const id = ++revealSequenceRef.current;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      const current = pendingRevealRef.current;
+      if (current?.id !== id) {
+        return;
+      }
+      pendingRevealRef.current = null;
+      setPendingReveal(null);
+      reject(abortError("Markdown reveal aborted"));
+    };
+    const request: PendingMarkdownPreviewReveal = {
+      align,
+      behavior,
+      blockId,
+      id,
+      onAbort,
+      reject,
+      resolve,
+      settleTimer: null,
+      settling: false,
+      signal,
+      target,
+    };
+    pendingRevealRef.current = request;
+    signal.addEventListener("abort", onAbort, { once: true });
+    setPendingReveal({ blockId, id });
+    virtuoso.scrollToIndex(behavior === "smooth"
+      ? { align, behavior, index: visibleIndex }
+      : { align, index: visibleIndex });
+  });
+}
+
+function completePendingReveal(
+  pendingRevealRef: { current: PendingMarkdownPreviewReveal | null },
+  setPendingReveal: (value: { blockId: string; id: number } | null) => void,
+  request: PendingMarkdownPreviewReveal,
+): void {
+  if (pendingRevealRef.current?.id !== request.id) {
+    return;
+  }
+  pendingRevealRef.current = null;
+  if (request.settleTimer !== null) {
+    window.clearTimeout(request.settleTimer);
+  }
+  request.signal.removeEventListener("abort", request.onAbort);
+  setPendingReveal(null);
+  request.resolve();
+}
+
+function cancelPendingReveal(
+  pendingRevealRef: { current: PendingMarkdownPreviewReveal | null },
+  reason: unknown,
+): void {
+  const request = pendingRevealRef.current;
+  if (!request) {
+    return;
+  }
+  pendingRevealRef.current = null;
+  if (request.settleTimer !== null) {
+    window.clearTimeout(request.settleTimer);
+  }
+  request.signal.removeEventListener("abort", request.onAbort);
+  request.reject(reason);
+}
+
+function abortError(message: string): DOMException {
+  return new DOMException(message, "AbortError");
+}
+
+function centeredScrollTop(
+  scrollElement: HTMLElement,
+  target: HTMLElement,
+  align: "start" | "center" | "end",
+): number {
+  const viewportRect = scrollElement.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const targetTop = scrollElement.scrollTop + targetRect.top - viewportRect.top;
+  const alignedTop = align === "center"
+    ? targetTop - (scrollElement.clientHeight - targetRect.height) / 2
+    : align === "end" ? targetTop - scrollElement.clientHeight + targetRect.height : targetTop;
+  return Math.max(0, Math.min(alignedTop, Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight)));
 }
 
 function assignReactRef<T>(ref: Ref<T> | undefined, value: T | null): void {

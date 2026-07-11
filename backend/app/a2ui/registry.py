@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 A2UIMode = Literal["render", "interactive"]
-BUILTIN_A2UI_RENDER_KEYS = frozenset({"chart", "choice", "form"})
+BUILTIN_A2UI_RENDER_KEYS = frozenset({"chart", "choice", "form", "table"})
 _RENDER_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
@@ -181,6 +181,109 @@ def _chart_link_schema() -> dict[str, Any]:
             "color": {"type": "string", "description": "流向线条可选自定义颜色。"},
         },
         required=["source", "target", "value"],
+    )
+
+
+def _table_value_schema(description: str) -> dict[str, Any]:
+    return {
+        "type": ["string", "number", "boolean", "null"],
+        "description": description,
+    }
+
+
+def _table_column_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "key": {
+                "type": "string",
+                "minLength": 1,
+                "description": "列的稳定键，用于行 values 和提交差异定位；创建后不可由用户修改。",
+            },
+            "label": {
+                "type": "string",
+                "minLength": 1,
+                "description": "展示给用户的列名；允许改列名时用户只修改该显示文本。",
+            },
+            "type": {
+                "type": "string",
+                "enum": ["text", "number", "boolean", "select", "date"],
+                "description": "列值类型：文本、数字、布尔、单选或日期。",
+            },
+            "required": {"type": "boolean", "description": "该列是否要求每一行都填写有效值。"},
+            "width": {
+                "type": "integer",
+                "minimum": 80,
+                "maximum": 480,
+                "description": "建议列宽，单位像素；只在内容宽度差异明显时传入。",
+            },
+            "options": {
+                "type": "array",
+                "items": _option_schema(),
+                "description": "select 列的候选项；其他类型不要传。",
+            },
+        },
+        required=["key", "label", "type"],
+    )
+
+
+def _table_row_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "行的稳定唯一标识，用于流式追加、编辑差异和删除定位。",
+            },
+            "values": {
+                "type": "object",
+                "description": "行数据对象，键必须对应 columns.key，值应符合对应列类型。",
+                "additionalProperties": True,
+            },
+        },
+        required=["id", "values"],
+    )
+
+
+def _table_change_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "cells": {
+                "type": "array",
+                "description": "发生变化的单元格列表。",
+                "items": _object_schema(
+                    properties={
+                        "row_id": {"type": "string", "minLength": 1, "description": "变化所在行的稳定标识。"},
+                        "column_key": {"type": "string", "minLength": 1, "description": "变化所在列的稳定键。"},
+                        "old_value": _table_value_schema("修改前的值。"),
+                        "new_value": _table_value_schema("修改后的值。"),
+                    },
+                    required=["row_id", "column_key", "old_value", "new_value"],
+                ),
+            },
+            "column_labels": {
+                "type": "array",
+                "description": "发生变化的列显示名列表。",
+                "items": _object_schema(
+                    properties={
+                        "column_key": {"type": "string", "minLength": 1, "description": "列的稳定键。"},
+                        "old_label": {"type": "string", "minLength": 1, "description": "原列名。"},
+                        "new_label": {"type": "string", "minLength": 1, "description": "新列名。"},
+                    },
+                    required=["column_key", "old_label", "new_label"],
+                ),
+            },
+            "added_row_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "description": "用户新增的行标识列表。",
+            },
+            "deleted_row_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "description": "用户删除的原始行标识列表。",
+            },
+        },
+        required=["cells", "column_labels", "added_row_ids", "deleted_row_ids"],
     )
 
 
@@ -414,6 +517,73 @@ def _builtin_definitions() -> tuple[A2UIToolDefinition, ...]:
                     "note": {"type": "string", "description": "用户填写的备注，可选。"},
                 },
                 required=["values"],
+                additional_properties=False,
+            ),
+        ),
+        A2UIToolDefinition(
+            render_key="table",
+            mode="interactive",
+            tool_description=(
+                "当需要把一组结构化记录交给用户批量审阅、排序、修改列名或单元格，并在确认后继续执行时优先调用；"
+                "table 是可编辑数据表格，不是只读 Markdown 表格，也不是图表的附属 dataView；"
+                "columns 必须先于 rows 输出，每列使用不可变 key 和可编辑显示 label，每行必须提供稳定且唯一的 id，values 的键必须对应 columns.key；"
+                "适合计划清单、测试用例、配置矩阵、数据清洗、资源分配和结构化草稿确认；纯只读的小表格继续使用 Markdown；"
+                "列类型支持 text、number、boolean、select、date，select 必须提供 options；所有数据列都可编辑、可排序，所有显示列名都可修改；"
+                "只有用户确实需要增删记录时才开启 allow_add_rows 或 allow_delete_rows；用户只能修改显示列名，稳定 key 始终不可修改；"
+                "该工具会等待用户提交、取消，或选择“以上表格不对”并提交修正意见后继续执行；用户排序只改变查看顺序，不改变提交数据的业务顺序。"
+            ),
+            input_schema=_object_schema(
+                properties={
+                    "title": {"type": "string", "minLength": 1, "description": "表格标题。"},
+                    "description": {"type": "string", "description": "表格用途、审阅目标或修改说明。"},
+                    "columns": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": _table_column_schema(),
+                        "description": "有序列定义；必须在 rows 之前生成，并保证 key 唯一且稳定。",
+                    },
+                    "rows": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": _table_row_schema(),
+                        "description": "有序数据行；每行 id 必须唯一，values 使用 columns.key 作为键。",
+                    },
+                    "allow_add_rows": {"type": "boolean", "description": "是否允许用户新增行；默认不允许。"},
+                    "allow_delete_rows": {"type": "boolean", "description": "是否允许用户删除行；默认不允许。"},
+                    "submit_label": {"type": "string", "description": "提交按钮文案，可选。"},
+                },
+                required=["title", "columns", "rows"],
+            ),
+            submit_schema=_object_schema(
+                properties={
+                    "result_type": {
+                        "type": "string",
+                        "enum": ["table", "correction"],
+                        "description": "提交类型：table 表示提交编辑后的表格，correction 表示否决表格并提交修正意见。",
+                    },
+                    "columns": {
+                        "type": "array",
+                        "items": _object_schema(
+                            properties={
+                                "key": {"type": "string", "minLength": 1, "description": "列的稳定键。"},
+                                "label": {"type": "string", "minLength": 1, "description": "用户确认或修改后的显示列名。"},
+                            },
+                            required=["key", "label"],
+                        ),
+                        "description": "最终列显示信息；顺序与原始列定义一致。",
+                    },
+                    "rows": {
+                        "type": "array",
+                        "items": _table_row_schema(),
+                        "description": "用户确认或编辑后的最终数据快照；排序不改变该数组的业务顺序。",
+                    },
+                    "changes": _table_change_schema(),
+                    "correction_note": {
+                        "type": "string",
+                        "description": "当 result_type=correction 时，用户输入的修正意见。",
+                    },
+                },
+                required=["result_type", "columns", "rows", "changes"],
                 additional_properties=False,
             ),
         ),

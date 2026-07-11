@@ -8,9 +8,12 @@ export interface SelectedFile {
   name: string;
   type: "file" | "directory";
   source: SelectedFileSource;
-  annotationId?: string | null;
+  annotationReference?: {
+    annotationId: string;
+    path: string;
+    workspaceId: string;
+  } | null;
   selectedText?: string | null;
-  annotationComment?: string | null;
   lineStart?: number | null;
   lineEnd?: number | null;
   sourceStart?: number | null;
@@ -78,9 +81,9 @@ export function selectedFileKey(file: SelectedFile): string {
   if (id) {
     return id;
   }
-  const annotationId = normalizedOptionalText(file.annotationId);
-  if (annotationId) {
-    return `annotation:${annotationId}`;
+  const reference = file.annotationReference;
+  if (reference?.annotationId) {
+    return `annotation:${reference.workspaceId}:${reference.annotationId}`;
   }
   return `path:${path}`;
 }

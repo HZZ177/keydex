@@ -72,6 +72,39 @@ describe("style foundation", () => {
     expect(workbench).toMatch(/\.previewTabStrip::-webkit-scrollbar\s*{[^}]*display:\s*none/s);
   });
 
+  it("keeps all composer context capsules in a three-column, three-row scroll viewport", () => {
+    const sendBox = readSource("renderer/components/chat/SendBox/SendBox.module.css");
+    const workbenchAssistant = readSource("renderer/pages/workbench/WorkbenchAssistantSurface.module.css");
+
+    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*display:\s*grid/s);
+    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
+    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*grid-auto-rows:\s*var\(--sendbox-context-chip-height\)/s);
+    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*--sendbox-context-chip-viewport-max-height:\s*100px/s);
+    expect(sendBox).toMatch(
+      /\.fileChips\s*{[^}]*max-height:\s*var\(--sendbox-context-chip-viewport-max-height\)/s,
+    );
+    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*overflow-y:\s*auto/s);
+    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*scrollbar-gutter:\s*stable/s);
+    expect(sendBox).toMatch(
+      /\.quoteChipWrapper,\s*\.fileChipWrapper,\s*\.skillChipWrapper\s*{[^}]*width:\s*100%/s,
+    );
+    expect(sendBox).toMatch(
+      /\.root\[data-variant="keydex"\]\s+\.input\s*{[^}]*flex:\s*0 0 auto/s,
+    );
+    expect(workbenchAssistant).toMatch(/--sendbox-keydex-input-min-height:\s*44px/);
+    expect(workbenchAssistant).toMatch(/--sendbox-keydex-input-max-height:\s*188px/);
+    expect(workbenchAssistant).toMatch(/--workbench-assistant-input-open-max-height:\s*348px/);
+    expect(workbenchAssistant).toMatch(
+      /\.composerFrame\[data-compose-open="true"\]\s*{[^}]*minmax\([^)]*--workbench-assistant-input-open-height[^)]*\),\s*auto\s*\)/s,
+    );
+    expect(workbenchAssistant).toMatch(
+      /\.inputSurface\[data-compose-open="true"\]\s*{[^}]*height:\s*auto[^}]*max-height:\s*var\(--workbench-assistant-input-open-max-height\)/s,
+    );
+    expect(workbenchAssistant).toMatch(
+      /\.composerFrame\[data-compose-open="true"\]\s+\.composerShell,\s*\.composerFrame\[data-compose-open="true"\]\s+\.composer\s*{[^}]*height:\s*auto/s,
+    );
+  });
+
   it("keeps conversation vertical scrolling inside the message document area", () => {
     const layout = readSource("renderer/components/layout/Layout.module.css");
     const sider = readSource("renderer/components/layout/Sider/Sider.module.css");

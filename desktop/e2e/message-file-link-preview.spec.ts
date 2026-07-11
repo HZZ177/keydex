@@ -84,7 +84,7 @@ test("assistant markdown file link opens an outside-workspace file as a single p
   await expect(page.getByText("This markdown file is outside the workspace.")).toBeVisible();
   await expect(page.getByTestId("workspace-file-browser-tree")).toHaveCount(0);
   await expect(page.getByTestId("file-source-viewer")).toHaveCount(0);
-  await expect(page.locator("[data-transient-reveal='true']")).toContainText("Reveal target line");
+  await expect(page.getByText("Reveal target line")).toBeInViewport();
   expect(localReadRequests).toEqual([LOCAL_PREVIEW_PATH]);
   expect(backend.workspaceReadRequests.some((request) => request.path === LOCAL_PREVIEW_PATH)).toBe(false);
 });

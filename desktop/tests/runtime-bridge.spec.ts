@@ -132,36 +132,20 @@ describe("RuntimeBridge", () => {
     );
   });
 
-  it("routes workspace annotation CRUD calls to scoped backend endpoints", async () => {
-    const anchor = {
-      version: 2,
-      kind: "source-range",
-      sourceStart: 10,
-      sourceEnd: 22,
-      selectedText: "if (enabled)",
-      sourceText: "if (enabled)",
-      contentHash: "hash-1",
-      lineStart: 3,
-      lineEnd: 4,
-      columnStart: 1,
-      columnEnd: 14,
-      createdInView: "source",
-    } as const;
+  it("routes the workspace-only annotations contract through its dedicated runtime", async () => {
+    const selector = {
+      position: { start: 10, end: 22 },
+      quote: { exact: "if (enabled)", prefix: "", suffix: " {" },
+      context: { containerType: "code", headingPath: [] },
+      textRevision: "logical:1",
+      documentRevision: "sha256:current",
+    };
     const annotation = {
       id: "ann 1",
-      scope_type: "session",
-      scope_id: "ses 1",
       workspace_id: "ws-1",
-      path: "src/main.ts",
-      anchor_type: "selection",
-      comment: "Check this branch",
-      selected_text: "if (enabled)",
-      line_start: 3,
-      line_end: 4,
-      column_start: 1,
-      column_end: 14,
-      content_hash: "hash-1",
-      anchor_json: anchor,
+      document_path: "src/main.ts",
+      target: { type: "text", selector },
+      body: "Check this branch",
       created_at: "2026-06-24T00:00:00Z",
       updated_at: "2026-06-24T00:00:00Z",
     };
@@ -169,74 +153,88 @@ describe("RuntimeBridge", () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
       const url = requestUrl(input);
       if (
-        url.endsWith("/api/sessions/ses%201/workspace/annotations?path=src%2Fmain.ts") &&
+        url.endsWith("/api/workspaces/ws%201/annotations?path=src%2Fmain.ts") &&
         init.method === "GET"
       ) {
         return Promise.resolve(jsonResponse(200, [annotation]));
       }
-      if (url.endsWith("/api/sessions/ses%201/workspace/annotations") && init.method === "POST") {
+      if (url.endsWith("/api/workspaces/ws%201/annotations") && init.method === "POST") {
         return Promise.resolve(jsonResponse(200, annotation));
       }
       if (url.endsWith("/api/workspaces/ws%201/annotations/ann%201") && init.method === "PATCH") {
-        return Promise.resolve(jsonResponse(200, { ...annotation, scope_type: "workspace", scope_id: "ws 1" }));
+        return Promise.resolve(jsonResponse(200, { ...annotation, body: "Updated comment" }));
       }
-      if (url.endsWith("/api/sessions/ses%201/workspace/annotations/ann%201") && init.method === "DELETE") {
+      if (url.endsWith("/api/workspaces/ws%201/annotations/ann%201/target") && init.method === "PUT") {
+        return Promise.resolve(jsonResponse(200, annotation));
+      }
+      if (url.endsWith("/api/workspaces/ws%201/annotations/ann%201") && init.method === "DELETE") {
         return Promise.resolve(jsonResponse(204, undefined));
+      }
+      if (url.endsWith("/api/workspaces/stale/annotations") && init.method === "POST") {
+        return Promise.resolve(jsonResponse(409, {
+          detail: {
+            code: "annotation_document_changed",
+            message: "The annotation document changed",
+            details: { current_revision: "sha256:current" },
+          },
+        }));
       }
       return jsonResponse(404, { detail: "not found" });
     });
     const runtime = createRuntimeBridge({ baseUrl: "http://127.0.0.1:8765", fetcher });
 
-    await expect(runtime.workspace.listAnnotations({ sessionId: "ses 1" }, "src/main.ts", { signal })).resolves.toEqual([
+    await expect(runtime.annotations.list("ws 1", "src/main.ts", { signal })).resolves.toEqual([
       annotation,
     ]);
     await expect(
-      runtime.workspace.createAnnotation(
-        { sessionId: "ses 1" },
+      runtime.annotations.create(
+        "ws 1",
         {
           path: "src/main.ts",
-          anchor_type: "selection",
-          comment: "Check this branch",
-          selected_text: "if (enabled)",
-          line_start: 3,
-          line_end: 4,
-          column_start: 1,
-          column_end: 14,
-          content_hash: "hash-1",
-          anchor_json: anchor,
+          body: "Check this branch",
+          target: { type: "text", selector },
         },
       ),
     ).resolves.toEqual(annotation);
     await expect(
-      runtime.workspace.updateAnnotation(
-        { workspaceId: "ws 1" },
+      runtime.annotations.updateBody(
+        "ws 1",
         "ann 1",
-        { comment: "Updated comment", anchor_json: anchor },
+        { body: "Updated comment" },
       ),
-    ).resolves.toMatchObject({ anchor_json: anchor, comment: "Check this branch", scope_type: "workspace" });
-    await expect(runtime.workspace.deleteAnnotation({ sessionId: "ses 1" }, "ann 1")).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ body: "Updated comment" });
+    await expect(
+      runtime.annotations.replaceTarget("ws 1", "ann 1", {
+        target: { type: "text", selector },
+      }),
+    ).resolves.toEqual(annotation);
+    await expect(runtime.annotations.delete("ws 1", "ann 1")).resolves.toBeUndefined();
+    await expect(
+      runtime.annotations.create("stale", {
+        path: "src/main.ts",
+        body: "Stale note",
+        target: { type: "text", selector },
+      }),
+    ).rejects.toMatchObject({
+      code: "annotation_document_changed",
+      status: 409,
+      details: { current_revision: "sha256:current" },
+    });
 
     expect(fetcher).toHaveBeenNthCalledWith(
       1,
-      "http://127.0.0.1:8765/api/sessions/ses%201/workspace/annotations?path=src%2Fmain.ts",
+      "http://127.0.0.1:8765/api/workspaces/ws%201/annotations?path=src%2Fmain.ts",
       expect.objectContaining({ method: "GET", signal }),
     );
     expect(fetcher).toHaveBeenNthCalledWith(
       2,
-      "http://127.0.0.1:8765/api/sessions/ses%201/workspace/annotations",
+      "http://127.0.0.1:8765/api/workspaces/ws%201/annotations",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
           path: "src/main.ts",
-          anchor_type: "selection",
-          comment: "Check this branch",
-          selected_text: "if (enabled)",
-          line_start: 3,
-          line_end: 4,
-          column_start: 1,
-          column_end: 14,
-          content_hash: "hash-1",
-          anchor_json: anchor,
+          body: "Check this branch",
+          target: { type: "text", selector },
         }),
       }),
     );
@@ -245,13 +243,26 @@ describe("RuntimeBridge", () => {
       "http://127.0.0.1:8765/api/workspaces/ws%201/annotations/ann%201",
       expect.objectContaining({
         method: "PATCH",
-        body: JSON.stringify({ comment: "Updated comment", anchor_json: anchor }),
+        body: JSON.stringify({ body: "Updated comment" }),
       }),
     );
     expect(fetcher).toHaveBeenNthCalledWith(
       4,
-      "http://127.0.0.1:8765/api/sessions/ses%201/workspace/annotations/ann%201",
+      "http://127.0.0.1:8765/api/workspaces/ws%201/annotations/ann%201/target",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ target: { type: "text", selector } }),
+      }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      5,
+      "http://127.0.0.1:8765/api/workspaces/ws%201/annotations/ann%201",
       expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      6,
+      "http://127.0.0.1:8765/api/workspaces/stale/annotations",
+      expect.objectContaining({ method: "POST" }),
     );
   });
 

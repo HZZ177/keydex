@@ -1,0 +1,32 @@
+.layer {
+  position: absolute;
+  z-index: 4;
+  inset: 0 auto auto 0;
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.path {
+  fill: none;
+  stroke: var(--annotation-accent);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.72;
+  transition:
+    opacity var(--motion-fast) var(--motion-ease-standard),
+    stroke-width var(--motion-fast) var(--motion-ease-standard);
+}
+
+.path[data-hovered="true"] {
+  stroke-width: 2.2;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .path {
+    transition: none;
+  }
+}

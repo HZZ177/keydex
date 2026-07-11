@@ -42,8 +42,7 @@ describe("SendBox file selection", () => {
       name: "README.md",
       type: "file" as const,
       source: "workspace" as const,
-      annotationId: "ann-1",
-      annotationComment: "First note",
+      annotationReference: { annotationId: "ann-1", workspaceId: "ws-1", path: "README.md" },
     };
     const second = {
       id: "annotation:ann-2",
@@ -51,8 +50,7 @@ describe("SendBox file selection", () => {
       name: "README.md",
       type: "file" as const,
       source: "workspace" as const,
-      annotationId: "ann-2",
-      annotationComment: "Second note",
+      annotationReference: { annotationId: "ann-2", workspaceId: "ws-1", path: "README.md" },
     };
     const state = fileSelectionReducer(initialFileSelectionState, {
       type: "addMany",

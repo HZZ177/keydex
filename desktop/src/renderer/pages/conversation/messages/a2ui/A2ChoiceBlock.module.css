@@ -1431,43 +1431,6 @@
   content: none;
 }
 
-.correctionToggle {
-  border: 0;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 660;
-  letter-spacing: 0;
-  line-height: 1.45;
-  padding: 0;
-  text-align: center;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--color-border-default) 76%, transparent);
-  text-underline-offset: 4px;
-  transition:
-    color 180ms var(--motion-ease-out),
-    opacity 180ms var(--motion-ease-out),
-    text-decoration-color 180ms var(--motion-ease-out);
-}
-
-.correctionToggle:hover:not(:disabled),
-.correctionToggle:focus-visible,
-.correctionToggle[data-selected="true"] {
-  color: var(--color-text-primary);
-  text-decoration-color: color-mix(in srgb, var(--color-text-primary) 42%, transparent);
-}
-
-.correctionToggle:focus-visible {
-  outline: none;
-}
-
-.correctionToggle:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
 .correctionLabel {
   color: var(--color-text-tertiary);
   font-size: 11px;

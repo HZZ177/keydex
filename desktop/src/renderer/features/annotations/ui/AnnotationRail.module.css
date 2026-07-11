@@ -1,0 +1,369 @@
+.rail {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+}
+
+.header {
+  position: sticky;
+  z-index: 3;
+  top: 0;
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+}
+
+.header > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header span {
+  color: var(--color-text-3);
+  font-size: 12px;
+}
+
+.header button,
+.cardActions button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-text-3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.header button:hover,
+.cardActions button:hover {
+  color: var(--color-text-primary);
+  background: var(--surface-hover);
+}
+
+.lane {
+  position: absolute;
+  inset: 0;
+}
+
+.topSection {
+  position: absolute;
+  z-index: 2;
+  top: 48px;
+  right: 0;
+  left: 0;
+}
+
+.placement {
+  position: absolute;
+  right: 10px;
+  left: var(--annotation-card-inline-inset, 32px);
+}
+
+.card {
+  display: grid;
+  gap: 8px;
+  padding: 10px 10px 10px 12px;
+  border: 0;
+  border-left: 3px solid var(--annotation-accent);
+  border-radius: 0 8px 8px 0;
+  background: var(--color-bg-elevated);
+  box-shadow: none;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-standard),
+    border-left-width var(--motion-fast) var(--motion-ease-standard);
+}
+
+.card[data-hovered="true"] {
+  border-left-width: 5px;
+  background: color-mix(in srgb, var(--annotation-accent) 20%, var(--color-bg-elevated));
+}
+
+.card[data-annotation-navigation-flash="true"] {
+  animation: annotationCardNavigationFlash 720ms var(--motion-ease-out) 1;
+}
+
+@keyframes annotationCardNavigationFlash {
+  0%,
+  100% {
+    border-left-width: 3px;
+    background: var(--color-bg-elevated);
+    box-shadow: none;
+  }
+
+  38% {
+    border-left-width: 5px;
+    background: color-mix(in srgb, var(--annotation-accent) 34%, var(--color-bg-elevated));
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--annotation-accent) 18%, transparent);
+  }
+}
+
+.draftCard {
+  cursor: default;
+}
+
+.draftCard .cardMeta strong {
+  color: var(--color-text-primary);
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--color-text-2);
+  outline-offset: 2px;
+}
+
+.cardMeta,
+.cardActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--color-text-3);
+  font-size: 11px;
+}
+
+.cardActions {
+  justify-content: flex-end;
+}
+
+.cardBody {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.editor {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  padding: 7px 8px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-base);
+  font: inherit;
+}
+
+.cardError {
+  color: var(--color-danger, #b42318);
+  font-size: 12px;
+}
+
+.footer {
+  position: absolute;
+  right: 0;
+  bottom: var(--annotation-bottom-actions-reserved, 0px);
+  left: 0;
+}
+
+.annotationSection {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 8px;
+  padding: 10px 10px 10px var(--annotation-card-inline-inset, 32px);
+  background: var(--color-bg-elevated);
+}
+
+.annotationSection h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  color: var(--color-text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.annotationSection h3 span {
+  color: var(--color-text-3);
+  font-weight: 400;
+}
+
+.annotationSection[data-annotation-section="document"] {
+  margin: 10px 10px 0 var(--annotation-card-inline-inset, 32px);
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  padding: 0;
+}
+
+.documentSectionHeader {
+  min-height: 38px;
+  border-bottom: 1px solid transparent;
+  padding: 0;
+  transition: border-color var(--motion-fast) var(--motion-ease-standard);
+}
+
+.annotationSection[data-annotation-section="document"][data-collapsed="false"] .documentSectionHeader {
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.documentSectionToggle {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: 0;
+  color: var(--color-text-2);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.documentSectionToggle:hover {
+  color: var(--color-text-primary);
+  background: var(--surface-hover);
+}
+
+.documentSectionToggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-text-3) 42%, transparent);
+  outline-offset: 1px;
+}
+
+.documentSectionTitle {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+}
+
+.documentSectionToggle .documentSectionTitle,
+.documentSectionToggle .documentSectionTitle span {
+  overflow: hidden;
+  color: inherit;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.documentSectionToggle .documentSectionCount {
+  flex: 0 0 auto;
+  color: var(--color-text-3);
+  font-weight: 400;
+}
+
+.documentSectionChevron {
+  flex: 0 0 auto;
+  transition: transform var(--motion-fast) var(--motion-ease-standard);
+}
+
+.documentSectionChevron[data-expanded="true"] {
+  transform: rotate(90deg);
+}
+
+.documentSectionBody {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
+.documentSectionCollapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows 180ms var(--motion-ease-standard),
+    opacity 140ms var(--motion-ease-standard);
+}
+
+.documentSectionCollapse[data-collapsed="true"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.documentSectionViewport {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .documentSectionHeader,
+  .documentSectionChevron,
+  .documentSectionCollapse {
+    transition: none;
+  }
+}
+
+.statusCard {
+  cursor: default;
+  background: var(--color-bg-base);
+}
+
+.statusHint {
+  margin: 0;
+  color: var(--color-text-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.retargetCard {
+  cursor: default;
+}
+
+.retargetSelection {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 6px;
+  color: var(--color-text-2);
+  background: var(--color-bg-base);
+  font-size: 12px;
+}
+
+.retargetSelection q {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.retargetSelection small {
+  color: var(--color-text-3);
+}
+
+.selectionToolbar {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  padding: 4px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 2px 8px rgb(15 23 42 / 10%);
+}
+
+.selectionToolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--color-text-primary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.selectionToolbar button:hover {
+  background: var(--surface-hover);
+}

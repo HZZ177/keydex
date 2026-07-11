@@ -32,7 +32,7 @@ export function resolveA2UIRenderState(input: A2UIRenderStateInput): A2UIRenderS
   const isWaitingInput = normalizedStatus === "waiting_input";
   const isSubmitted = normalizedStatus === "submitted";
   const isCancelled = normalizedStatus === "cancelled";
-  const isFailed = normalizedStatus === "failed" || normalizedStatus === "missing" || resumeStatus === "failed";
+  const isFailed = normalizedStatus === "failed" || normalizedStatus === "missing";
   const isInteractive = input.mode === "interactive";
   const isReadonly = isInteractive && (isSubmitted || isCancelled || input.historyHydrated);
 

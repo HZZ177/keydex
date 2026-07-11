@@ -3,13 +3,12 @@ import { createRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  buildMarkdownAnnotationIndex,
   buildMarkdownDocumentModel,
   buildMarkdownFindIndex,
   VirtualMarkdownPreview,
   type VirtualMarkdownPreviewHandle,
 } from "@/renderer/components/workspace/markdownPreviewEngine";
-import { createSourceRangeAnchor } from "@/renderer/components/workspace/filePreviewAnnotations";
+import { calculateMarkdownPreviewGutterWidth } from "@/renderer/components/workspace/markdownPreviewEngine/VirtualMarkdownPreview";
 import { createLargeMarkdownPreviewFixture } from "./fixtures/markdownPreviewEngine";
 
 const virtuosoMock = vi.hoisted(() => ({
@@ -57,6 +56,12 @@ vi.mock("react-virtuoso", async () => {
 describe("VirtualMarkdownPreview", () => {
   beforeEach(() => {
     virtuosoMock.scrollToIndex.mockClear();
+  });
+
+  it("grows the source gutter with the document line-number digit count", () => {
+    expect(calculateMarkdownPreviewGutterWidth(999)).toBe(50);
+    expect(calculateMarkdownPreviewGutterWidth(1000)).toBe(54);
+    expect(calculateMarkdownPreviewGutterWidth(10_000)).toBe(61);
   });
 
   it("renders only mounted markdown blocks and exposes mounted metrics", async () => {
@@ -152,177 +157,31 @@ describe("VirtualMarkdownPreview", () => {
     expect(screen.getByText("line one")).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "折叠第 1 行章节" }));
+    let revealFolded!: Promise<void>;
     act(() => {
-      expect(ref.current?.scrollToBlock(model.blocks[2].id, "center")).toBe(true);
+      revealFolded = ref.current?.revealBlock(model.blocks[2].id, { align: "center" }) ?? Promise.resolve();
     });
+    await act(async () => revealFolded);
     expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({ align: "center", index: 2 });
   });
 
-  it("provides scrollToBlock and marks the pending reveal target", () => {
+  it("provides one Promise block reveal transaction", async () => {
     const model = buildMarkdownDocumentModel(createLargeMarkdownPreviewFixture(24));
     const ref = createRef<VirtualMarkdownPreviewHandle>();
     render(<VirtualMarkdownPreview model={model} ref={ref} />);
     const target = model.blocks[20];
 
-    let scrolled = false;
+    let revealBlock!: Promise<void>;
     act(() => {
-      scrolled = ref.current?.scrollToBlock(target.id, "center") ?? false;
+      revealBlock = ref.current?.revealBlock(target.id, { align: "center" }) ?? Promise.resolve();
     });
-    expect(scrolled).toBe(true);
+    await act(async () => revealBlock);
     expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({ align: "center", index: 20 });
-    expect(ref.current?.scrollToBlock("missing-block")).toBe(false);
-    expect(ref.current?.scrollToIndex(-1)).toBe(false);
+    await expect(ref.current?.revealBlock("missing-block")).rejects.toThrow("unavailable");
+    await expect(ref.current?.revealIndex(-1)).rejects.toThrow("unavailable");
   });
 
-  it("scrolls to valid annotations and refuses invalid anchors", () => {
-    const source = createLargeMarkdownPreviewFixture(24);
-    const model = buildMarkdownDocumentModel(source);
-    const targetBlock = model.blocks[20];
-    const targetStart = targetBlock.sourceStart;
-    const annotationIndex = buildMarkdownAnnotationIndex(model, [
-      {
-        anchor_json: createSourceRangeAnchor(source, targetStart, targetStart + 8, "preview"),
-        anchor_type: "selection",
-        id: "ann-deep",
-      },
-      {
-        anchor_json: { version: 2, kind: "source-range", sourceStart: -1, sourceEnd: -2 },
-        anchor_type: "selection",
-        id: "ann-invalid",
-      },
-    ]);
-    const ref = createRef<VirtualMarkdownPreviewHandle>();
-    render(<VirtualMarkdownPreview annotationIndex={annotationIndex} model={model} ref={ref} />);
-
-    let scrolled = false;
-    act(() => {
-      scrolled = ref.current?.scrollToAnnotation("ann-deep", "center") ?? false;
-    });
-    expect(scrolled).toBe(true);
-    expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({ align: "center", index: 20 });
-    expect(ref.current?.scrollToAnnotation("ann-invalid")).toBe(false);
-    expect(ref.current?.scrollToAnnotation("missing")).toBe(false);
-  });
-
-  it("mounts a deep multiline block before precisely revealing its target line", async () => {
-    const scrollDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
-    const scrollIntoView = vi.fn();
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: scrollIntoView,
-    });
-    const prefix = Array.from({ length: 10 }, (_, index) => `Paragraph ${index + 1}`).join("\n\n");
-    const source = [
-      prefix,
-      "",
-      "| Name | Value |",
-      "| --- | --- |",
-      "| Deep row | 42 |",
-    ].join("\n");
-    const rowStart = source.indexOf("| Deep row");
-    const rowEnd = source.length;
-    const targetLine = source.slice(0, rowStart).split("\n").length;
-    const model = buildMarkdownDocumentModel(source);
-    const targetBlock = model.blocks.find((block) => block.type === "table");
-    const annotationIndex = buildMarkdownAnnotationIndex(model, [{
-      anchor_json: createSourceRangeAnchor(source, rowStart, rowEnd, "source"),
-      anchor_type: "selection",
-      id: "ann-deep-table-row",
-    }]);
-    const ref = createRef<VirtualMarkdownPreviewHandle>();
-
-    try {
-      expect(targetBlock?.index).toBeGreaterThan(7);
-      render(
-        <VirtualMarkdownPreview
-          activeAnnotationId="ann-deep-table-row"
-          annotationIndex={annotationIndex}
-          model={model}
-          ref={ref}
-          showSourceGutter
-        />,
-      );
-
-      act(() => {
-        expect(ref.current?.scrollToAnnotation("ann-deep-table-row", "center")).toBe(true);
-      });
-
-      await waitFor(() => {
-        const marker = document.querySelector<HTMLElement>(
-          '[data-preview-annotation-id="ann-deep-table-row"]',
-        );
-        expect(marker).not.toBeNull();
-        expect(scrollIntoView.mock.contexts).toContain(marker);
-      });
-      const lineNumber = document.querySelector<HTMLElement>(
-        `[data-markdown-preview-source-line="${targetLine}"]`,
-      );
-      expect(lineNumber?.dataset.active).toBe("true");
-      expect(scrollIntoView).toHaveBeenCalledWith({
-        behavior: "smooth",
-        block: "center",
-        inline: "nearest",
-      });
-    } finally {
-      if (scrollDescriptor) {
-        Object.defineProperty(Element.prototype, "scrollIntoView", scrollDescriptor);
-      } else {
-        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
-      }
-    }
-  });
-
-  it("highlights and reveals source-only lines through the gutter", async () => {
-    const scrollDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
-    const scrollIntoView = vi.fn();
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: scrollIntoView,
-    });
-    const source = [
-      "| Name | Value |",
-      "| --- | --- |",
-      "| Alpha | 1 |",
-    ].join("\n");
-    const dividerStart = source.indexOf("| ---");
-    const dividerEnd = source.indexOf("\n", dividerStart);
-    const model = buildMarkdownDocumentModel(source);
-    const annotationIndex = buildMarkdownAnnotationIndex(model, [{
-      anchor_json: createSourceRangeAnchor(source, dividerStart, dividerEnd, "source"),
-      anchor_type: "selection",
-      id: "ann-table-divider",
-    }]);
-    const ref = createRef<VirtualMarkdownPreviewHandle>();
-
-    try {
-      render(
-        <VirtualMarkdownPreview
-          activeAnnotationId="ann-table-divider"
-          annotationIndex={annotationIndex}
-          model={model}
-          ref={ref}
-          showSourceGutter
-        />,
-      );
-
-      act(() => {
-        expect(ref.current?.scrollToAnnotation("ann-table-divider", "center")).toBe(true);
-      });
-
-      const lineNumber = document.querySelector<HTMLElement>('[data-markdown-preview-source-line="2"]');
-      expect(document.querySelector('[data-preview-annotation-id="ann-table-divider"]')).toBeNull();
-      expect(lineNumber?.dataset.active).toBe("true");
-      await waitFor(() => expect(scrollIntoView.mock.contexts).toContain(lineNumber));
-    } finally {
-      if (scrollDescriptor) {
-        Object.defineProperty(Element.prototype, "scrollIntoView", scrollDescriptor);
-      } else {
-        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
-      }
-    }
-  });
-
-  it("scrolls to find matches by match id", () => {
+  it("reveals find matches by match id", async () => {
     const source = createLargeMarkdownPreviewFixture(24);
     const model = buildMarkdownDocumentModel(source);
     const findIndex = buildMarkdownFindIndex(model, "tail-search-target");
@@ -331,12 +190,33 @@ describe("VirtualMarkdownPreview", () => {
     const ref = createRef<VirtualMarkdownPreviewHandle>();
     render(<VirtualMarkdownPreview findIndex={findIndex} model={model} ref={ref} />);
 
-    let scrolled = false;
+    let revealFind!: Promise<void>;
     act(() => {
-      scrolled = ref.current?.scrollToFindMatch(target?.id ?? "", "center") ?? false;
+      revealFind = ref.current?.revealFindMatch(target?.id ?? "", { align: "center" }) ?? Promise.resolve();
     });
-    expect(scrolled).toBe(true);
+    await act(async () => revealFind);
     expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({ align: "center", index: target?.blockIndex });
-    expect(ref.current?.scrollToFindMatch("missing")).toBe(false);
+    await expect(ref.current?.revealFindMatch("missing")).rejects.toThrow("unavailable");
+  });
+
+  it("cancels obsolete and explicitly aborted reveal requests", async () => {
+    const model = buildMarkdownDocumentModel(createLargeMarkdownPreviewFixture(24));
+    const ref = createRef<VirtualMarkdownPreviewHandle>();
+    render(<VirtualMarkdownPreview model={model} ref={ref} />);
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+
+    act(() => {
+      first = ref.current?.revealBlock(model.blocks[20].id) ?? Promise.resolve();
+      second = ref.current?.revealBlock(model.blocks[2].id) ?? Promise.resolve();
+    });
+
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
+    await act(async () => second);
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(ref.current?.revealBlock(model.blocks[3].id, { signal: controller.signal }))
+      .rejects.toMatchObject({ name: "AbortError" });
   });
 });

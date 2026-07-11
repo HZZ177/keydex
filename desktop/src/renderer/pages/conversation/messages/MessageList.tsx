@@ -1662,6 +1662,10 @@ function a2uiMessageRenderWeight(message: ConversationMessage): number {
   if (renderKey === "choice" || renderKey === "form") {
     return 2;
   }
+  if (renderKey === "table") {
+    const payload = a2uiChartPayload(message);
+    return Math.max(3, 2 + Math.ceil(arrayLength(payload?.rows) / 40) + Math.ceil(arrayLength(payload?.columns) / 8));
+  }
   return 1;
 }
 

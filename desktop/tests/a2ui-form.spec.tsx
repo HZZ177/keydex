@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { A2UIBlock } from "@/renderer/pages/conversation/messages";
@@ -78,11 +79,12 @@ describe("A2FormBlock", () => {
 
     expect((screen.getByLabelText(/标题/) as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText(/标题/) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "返回填写表单" })).not.toBeNull();
     const submitButton = screen.getByRole("button", { name: "提交参数" }) as HTMLButtonElement;
     expect(submitButton.disabled).toBe(true);
     expect(screen.queryByText("请填写该字段")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "以上信息不对！我来告诉 Keydex 应该怎么做" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回填写表单" }));
 
     expect((screen.getByLabelText(/标题/) as HTMLInputElement).disabled).toBe(false);
     expect((screen.getByLabelText(/标题/) as HTMLInputElement).value).toBe("");
@@ -176,11 +178,13 @@ describe("A2FormBlock", () => {
     try {
       const onSubmit = vi.fn(() => new Promise<void>(() => undefined));
       render(
-        <A2UIBlock
-          message={formMessage({ payload: { fields: [] } })}
-          onSubmit={onSubmit}
-          onCancel={vi.fn()}
-        />,
+        <StrictMode>
+          <A2UIBlock
+            message={formMessage({ payload: { fields: [] } })}
+            onSubmit={onSubmit}
+            onCancel={vi.fn()}
+          />
+        </StrictMode>,
       );
 
       fireEvent.click(screen.getByRole("button", { name: "提交参数" }));

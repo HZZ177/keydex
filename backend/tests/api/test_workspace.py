@@ -1,3 +1,5 @@
+import hashlib
+
 from fastapi.testclient import TestClient
 
 from backend.app.core.config import AppSettings
@@ -40,6 +42,7 @@ def test_workspace_bound_tree_read_and_search(tmp_path) -> None:
     readme_path = root / "README.md"
     main_path.write_text("print('ok')\n", encoding="utf-8")
     readme_path.write_text("# Hello\n", encoding="utf-8")
+    readme_bytes = readme_path.read_bytes()
 
     with _client(tmp_path) as client:
         workspace = _create_workspace(client, root)
@@ -65,8 +68,9 @@ def test_workspace_bound_tree_read_and_search(tmp_path) -> None:
     assert read_response.status_code == 200
     assert read_response.json() == {
         "path": "README.md",
-        "content": "# Hello\n",
+        "content": readme_bytes.decode("utf-8"),
         "encoding": "utf-8",
+        "revision": "sha256:" + hashlib.sha256(readme_bytes).hexdigest(),
     }
     assert search_response.status_code == 200
     assert search_response.json()[0] == {
@@ -82,6 +86,35 @@ def test_workspace_bound_tree_read_and_search(tmp_path) -> None:
     ]
     assert "size" not in default_search_response.json()[0]
     assert default_search_response.json()[1]["size"] == readme_path.stat().st_size
+
+
+def test_workspace_read_revision_tracks_exact_raw_bytes(tmp_path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    document = root / "note.md"
+    document.write_bytes(b"")
+
+    with _client(tmp_path) as client:
+        workspace = _create_workspace(client, root)
+        endpoint = f"/api/workspaces/{workspace['id']}/read"
+        empty_response = client.get(endpoint, params={"path": "note.md"})
+
+        unicode_content = "你好，annotation 👋\n".encode()
+        document.write_bytes(unicode_content)
+        unicode_response = client.get(endpoint, params={"path": "note.md"})
+        stable_response = client.get(endpoint, params={"path": "note.md"})
+
+    assert empty_response.status_code == 200
+    assert empty_response.json()["revision"] == (
+        f"sha256:{hashlib.sha256(b'').hexdigest()}"
+    )
+    assert unicode_response.status_code == 200
+    assert unicode_response.json()["content"] == "你好，annotation 👋\n"
+    assert unicode_response.json()["revision"] == (
+        f"sha256:{hashlib.sha256(unicode_content).hexdigest()}"
+    )
+    assert stable_response.json()["revision"] == unicode_response.json()["revision"]
+    assert unicode_response.json()["revision"] != empty_response.json()["revision"]
 
 
 def test_workspace_subtree_returns_entries_map(tmp_path) -> None:
@@ -367,6 +400,9 @@ def test_session_bound_workspace_tree_read_and_search(tmp_path) -> None:
     assert tree_response.json()["entries"][0]["path"] == "note.md"
     assert read_response.status_code == 200
     assert read_response.json()["content"] == "session bound"
+    assert read_response.json()["revision"] == (
+        f"sha256:{hashlib.sha256(b'session bound').hexdigest()}"
+    )
     assert search_response.status_code == 200
     assert search_response.json()[0]["path"] == "note.md"
 

@@ -32,7 +32,7 @@
   --workbench-assistant-accessory-height: 30px;
   --workbench-assistant-message-trigger-height: 34px;
   --workbench-assistant-input-open-height: 102px;
-  --workbench-assistant-input-open-max-height: 172px;
+  --workbench-assistant-input-open-max-height: 348px;
   --workbench-assistant-input-closed-height: 34px;
   --workbench-assistant-bottom-left: 50%;
   --workbench-assistant-expanded-bottom-gap: 160px;
@@ -445,7 +445,7 @@
     column-gap var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease);
 }
 
-.chrome[data-shell-mode="composer"] .composerFrame {
+.composerFrame[data-compose-open="true"] {
   grid-template-rows:
     var(--workbench-assistant-title-height)
     var(--workbench-assistant-accessory-height)
@@ -687,7 +687,7 @@
     background var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease);
 }
 
-.chrome[data-shell-mode="composer"] .inputSurface {
+.inputSurface[data-compose-open="true"] {
   height: auto;
   min-height: var(--workbench-assistant-input-open-height);
   max-height: var(--workbench-assistant-input-open-max-height);
@@ -1338,8 +1338,8 @@
   --composer-bg: transparent;
   --composer-border: transparent;
   --sendbox-keydex-min-height: var(--workbench-assistant-input-open-height);
-  --sendbox-keydex-input-min-height: 28px;
-  --sendbox-keydex-input-max-height: 96px;
+  --sendbox-keydex-input-min-height: 44px;
+  --sendbox-keydex-input-max-height: 188px;
   --sendbox-keydex-input-font-size: 13px;
   --sendbox-keydex-input-line-height: 1.42;
   --sendbox-keydex-padding: 8px 12px 4px;
@@ -1359,8 +1359,8 @@
   --sendbox-keydex-toolbar-padding-bottom: 6px;
 }
 
-.chrome[data-shell-mode="composer"] .composerShell,
-.chrome[data-shell-mode="composer"] .composer {
+.composerFrame[data-compose-open="true"] .composerShell,
+.composerFrame[data-compose-open="true"] .composer {
   height: auto;
 }
 

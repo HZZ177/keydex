@@ -13,7 +13,12 @@ from backend.app.a2ui.event_payloads import (
     build_waiting_input_payload,
 )
 from backend.app.a2ui.registry import A2UIRegistry, A2UIToolDefinition, build_builtin_a2ui_registry
-from backend.app.a2ui.schemas import A2UIObject, a2ui_object_from_record, validate_payload
+from backend.app.a2ui.schemas import (
+    A2UIObject,
+    a2ui_object_from_record,
+    validate_payload,
+    validate_table_payload,
+)
 from backend.app.core.request_context import (
     consume_a2ui_resume_payload,
     consume_a2ui_stream_context,
@@ -75,6 +80,8 @@ class A2UIRuntime:
         if not tool_call_id and stream_context:
             tool_call_id = str(stream_context.get("tool_call_id") or "").strip()
         payload = validate_payload(args, definition.input_schema)
+        if definition.render_key == "table":
+            payload = validate_table_payload(payload)
         if definition.mode == "interactive":
             resume_payload = consume_a2ui_resume_payload(
                 definition.render_key,

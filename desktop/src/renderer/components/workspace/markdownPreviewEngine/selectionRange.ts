@@ -1,15 +1,15 @@
-import type { WorkspaceFileAnnotationAnchorV2 } from "@/runtime";
-
-import { createSourceRangeAnchor } from "../filePreviewAnnotations";
 import { markdownLineColumnAtOffset } from "./sourceMap";
 import type { MarkdownSourceRange } from "./types";
+import type { MarkdownTextModel } from "@/renderer/features/annotations/document/MarkdownTextModel";
+import type { LogicalRange } from "@/renderer/features/annotations/document/DocumentTextModel";
 
 export type MarkdownSelectionSourceRangeFailureReason =
   | "empty-selection"
   | "empty-source-range"
   | "missing-source-segment"
   | "outside-boundary"
-  | "source-text-mismatch";
+  | "source-text-mismatch"
+  | "unmapped-source-range";
 
 export interface MarkdownSelectionSourceRange extends MarkdownSourceRange {
   selectedText: string;
@@ -21,9 +21,8 @@ export interface MarkdownSelectionSourceRangeResult {
   reason: MarkdownSelectionSourceRangeFailureReason | null;
 }
 
-export interface MarkdownSelectionAnchorResult {
-  anchor: WorkspaceFileAnnotationAnchorV2 | null;
-  range: MarkdownSelectionSourceRange | null;
+export interface MarkdownSelectionLogicalRangeResult {
+  range: LogicalRange | null;
   reason: MarkdownSelectionSourceRangeFailureReason | null;
 }
 
@@ -103,30 +102,22 @@ export function markdownSourceRangeFromDomRange(
   };
 }
 
-export function markdownSelectionAnchorFromDomRange(
-  source: string,
+export function markdownLogicalRangeFromDomRange(
+  model: MarkdownTextModel,
   selectionRange: Range,
   boundary: HTMLElement,
-  createdInView: WorkspaceFileAnnotationAnchorV2["createdInView"] = "preview",
-): MarkdownSelectionAnchorResult {
-  const result = markdownSourceRangeFromDomRange(source, selectionRange, boundary);
-  if (!result.range) {
-    return { anchor: null, range: null, reason: result.reason };
+): MarkdownSelectionLogicalRangeResult {
+  const sourceResult = markdownSourceRangeFromDomRange(model.rawSource, selectionRange, boundary);
+  if (!sourceResult.range) {
+    return { range: null, reason: sourceResult.reason };
   }
-  if (normalizeSelectionText(result.range.selectedText) !== normalizeSelectionText(result.range.sourceText)) {
-    return { anchor: null, range: result.range, reason: "source-text-mismatch" };
-  }
-  return {
-    anchor: createSourceRangeAnchor(
-      source,
-      result.range.sourceStart,
-      result.range.sourceEnd,
-      createdInView,
-      result.range.selectedText,
-    ),
-    range: result.range,
-    reason: null,
-  };
+  const range = model.toLogicalRange({
+    start: sourceResult.range.sourceStart,
+    end: sourceResult.range.sourceEnd,
+  });
+  return range
+    ? { range, reason: null }
+    : { range: null, reason: "unmapped-source-range" };
 }
 
 function markdownSourceSegmentForNode(node: Node, boundary: HTMLElement): HTMLElement | null {
@@ -151,6 +142,17 @@ function dataInteger(value: string | undefined): number | null {
 }
 
 function textOffsetWithinElement(element: HTMLElement, container: Node, offset: number): number {
+  if (container === element) {
+    let total = 0;
+    let child: ChildNode | null = element.firstChild;
+    let childIndex = 0;
+    while (child && childIndex < offset) {
+      total += child.textContent?.length ?? 0;
+      child = child.nextSibling;
+      childIndex += 1;
+    }
+    return total;
+  }
   let total = 0;
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
@@ -161,19 +163,5 @@ function textOffsetWithinElement(element: HTMLElement, container: Node, offset: 
     }
     total += length;
   }
-  if (container === element) {
-    let child: ChildNode | null = element.firstChild;
-    let childIndex = 0;
-    while (child && childIndex < offset) {
-      total += child.textContent?.length ?? 0;
-      child = child.nextSibling;
-      childIndex += 1;
-    }
-    return total;
-  }
   return total;
-}
-
-function normalizeSelectionText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
 }

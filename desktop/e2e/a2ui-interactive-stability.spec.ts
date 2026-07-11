@@ -81,6 +81,128 @@ test("interactive A2UI form and choice restore as independent page components", 
   await expect(page.getByTestId("a2ui-block")).toHaveCount(2);
 });
 
+test("interactive table edits cells and column labels before submitting a stable snapshot", async ({ page }) => {
+  const interactionId = "interaction-table-submit";
+  await openA2UIHistoryPage(page, a2uiHistoryMessage({
+    id: "a2ui-table-submit-history",
+    renderKey: "table",
+    interactionId,
+    title: "项目计划审阅",
+    payload: tablePayload(),
+  }));
+
+  const table = page.getByTestId("a2ui-table");
+  await expect(table.getByRole("heading", { name: "项目计划审阅" })).toBeVisible({ timeout: 10_000 });
+  const taskCell = table.getByRole("gridcell").filter({ hasText: "需求分析" }).first();
+  await taskCell.click();
+  const cellEditor = page.getByRole("textbox", { name: "编辑任务" });
+  await expect(cellEditor).toBeFocused();
+  await cellEditor.fill("需求澄清");
+  await cellEditor.press("Enter");
+  await expect(table.getByRole("gridcell").filter({ hasText: "需求澄清" }).first()).toBeVisible();
+
+  await table.getByRole("button", { name: "修改列名：任务" }).click();
+  const headerEditor = page.getByRole("textbox", { name: "修改列名：任务" });
+  await headerEditor.fill("工作项");
+  await headerEditor.press("Enter");
+  await expect(table.getByText("工作项", { exact: true })).toBeVisible();
+
+  await table.getByRole("button", { name: "提交修改" }).click();
+  const frame = await waitForSentA2UIAction(page, "a2ui_submit", interactionId);
+  const submitResult = sentActionPayload(frame).submit_result as Record<string, unknown>;
+  expect(submitResult.result_type).toBe("table");
+  expect(submitResult.columns).toEqual([
+    { key: "task", label: "工作项" },
+    { key: "owner", label: "负责人" },
+    { key: "done", label: "已完成" },
+  ]);
+  expect(submitResult.rows).toEqual([
+    { id: "row-1", values: { task: "需求澄清", owner: "Alice", done: false } },
+    { id: "row-2", values: { task: "开发实现", owner: "Bob", done: true } },
+  ]);
+});
+
+test("interactive table animates row movement while sorting", async ({ page }) => {
+  await openA2UIHistoryPage(page, a2uiHistoryMessage({
+    id: "a2ui-table-sort-animation-history",
+    renderKey: "table",
+    interactionId: "interaction-table-sort-animation",
+    title: "项目计划审阅",
+    payload: tablePayload(),
+  }));
+
+  const table = page.getByTestId("a2ui-table");
+  await expect(table.getByRole("heading", { name: "项目计划审阅" })).toBeVisible({ timeout: 10_000 });
+  const animatedRows = table.locator(".ag-row-animation").first();
+  await expect(animatedRows).toBeAttached();
+
+  const firstRow = table.locator('.ag-row[row-id="row-1"]');
+  await expect(firstRow).toBeVisible();
+  const transition = await firstRow.evaluate((element) => getComputedStyle(element).transition);
+  expect(transition).toContain("transform 0.4s");
+
+  await table.getByRole("button", { name: "按任务排序" }).click();
+  await expect(table.locator('.ag-row[row-id="row-2"]')).toHaveAttribute("row-index", "0");
+  await expect(firstRow).toHaveAttribute("row-index", "1");
+});
+
+test("interactive table correction rejects grid edits and requires an additional instruction", async ({ page }) => {
+  const interactionId = "interaction-table-correction";
+  await openA2UIHistoryPage(page, a2uiHistoryMessage({
+    id: "a2ui-table-correction-history",
+    renderKey: "table",
+    interactionId,
+    title: "资源分配审阅",
+    payload: tablePayload({ title: "资源分配审阅" }),
+  }));
+
+  const table = page.getByTestId("a2ui-table");
+  await expect(table.getByRole("heading", { name: "资源分配审阅" })).toBeVisible({ timeout: 10_000 });
+  await table.getByRole("button", { name: "以上表格不对！我来告诉 Keydex 应该怎么做" }).click();
+  await expect(table).toHaveAttribute("data-correction-mode", "true");
+  await expect(table.getByRole("button", { name: "新增一行" })).toBeDisabled();
+  await expect(table.getByRole("button", { name: "提交修改" })).toBeDisabled();
+  await expect(table.getByRole("button", { name: "返回编辑表格" })).toBeVisible();
+
+  await table.getByRole("button", { name: "返回编辑表格" }).click();
+  await expect(table).toHaveAttribute("data-correction-mode", "false");
+  await expect(table.getByRole("button", { name: "新增一行" })).toBeEnabled();
+
+  await table.getByRole("button", { name: "以上表格不对！我来告诉 Keydex 应该怎么做" }).click();
+
+  await table.getByRole("textbox", { name: "我来告诉 Keydex 应该怎么做" }).fill("请按负责人分组并补充截止日期");
+  await expect(table.getByRole("button", { name: "提交修改" })).toBeEnabled();
+  await table.getByRole("button", { name: "提交修改" }).click();
+
+  const frame = await waitForSentA2UIAction(page, "a2ui_submit", interactionId);
+  const submitResult = sentActionPayload(frame).submit_result as Record<string, unknown>;
+  expect(submitResult).toEqual({
+    result_type: "correction",
+    columns: [],
+    rows: [],
+    changes: { cells: [], column_labels: [], added_row_ids: [], deleted_row_ids: [] },
+    correction_note: "请按负责人分组并补充截止日期",
+  });
+});
+
+test("interactive table can be cancelled without waiting for another interaction", async ({ page }) => {
+  const interactionId = "interaction-table-cancel";
+  await openA2UIHistoryPage(page, a2uiHistoryMessage({
+    id: "a2ui-table-cancel-history",
+    renderKey: "table",
+    interactionId,
+    title: "取消表格审阅",
+    payload: tablePayload({ title: "取消表格审阅" }),
+  }));
+
+  const table = page.getByTestId("a2ui-table");
+  await expect(table.getByRole("heading", { name: "取消表格审阅" })).toBeVisible({ timeout: 10_000 });
+  await table.getByRole("button", { name: "取消" }).click();
+
+  const frame = await waitForSentA2UIAction(page, "a2ui_cancel", interactionId);
+  expect(sentActionPayload(frame).cancel_reason).toBe("用户取消");
+});
+
 test("interleaved live A2UI streams stay mounted during unrelated transcript churn", async ({ page }) => {
   const backend = createWorkbenchBackend({
     historyBySession: {
@@ -418,6 +540,80 @@ async function dispatchAgentEventsBurst(page: Page, events: unknown[]): Promise<
   }, events);
 }
 
+async function openA2UIHistoryPage(page: Page, message: Record<string, unknown>): Promise<void> {
+  const backend = createWorkbenchBackend({
+    historyBySession: {
+      [RICH_SESSION]: [
+        {
+          id: `${String(message.id)}-user`,
+          sessionId: RICH_SESSION,
+          role: "user",
+          content: "请审阅这份表格",
+          timestamp: 1_782_518_400_000,
+        },
+        message,
+      ],
+    },
+  });
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+  await page.route(`${API_BASE}/api/health`, fulfillOk);
+  await page.route(`${API_BASE}/api/sessions/${RICH_SESSION}/tasks`, (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "Access-Control-Allow-Origin": "*" },
+      body: JSON.stringify({ list: [] }),
+    }),
+  );
+  await page.goto(`${APP_BASE}/#/conversation/${RICH_SESSION}`, { waitUntil: "domcontentloaded" });
+}
+
+async function waitForSentA2UIAction(page: Page, action: string, interactionId: string): Promise<Record<string, unknown>> {
+  const handle = await page.waitForFunction(
+    ({ expectedAction, expectedInteractionId }) => {
+      const frames = (window as Window & { __wsSentMessages?: Array<Record<string, unknown>> }).__wsSentMessages ?? [];
+      return frames.findLast((frame) => {
+        if (frame.action !== expectedAction) {
+          return false;
+        }
+        const data = frame.data && typeof frame.data === "object"
+          ? frame.data as Record<string, unknown>
+          : frame;
+        return data.interaction_id === expectedInteractionId;
+      }) ?? null;
+    },
+    { expectedAction: action, expectedInteractionId: interactionId },
+  );
+  return handle.jsonValue() as Promise<Record<string, unknown>>;
+}
+
+function sentActionPayload(frame: Record<string, unknown>): Record<string, unknown> {
+  return frame.data && typeof frame.data === "object"
+    ? frame.data as Record<string, unknown>
+    : frame;
+}
+
+function tablePayload(patch: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    title: "项目计划审阅",
+    description: "检查并调整计划后提交。",
+    submit_label: "提交修改",
+    allow_add_rows: true,
+    allow_delete_rows: true,
+    columns: [
+      { key: "task", label: "任务", type: "text", required: true },
+      { key: "owner", label: "负责人", type: "text", required: true },
+      { key: "done", label: "已完成", type: "boolean" },
+    ],
+    rows: [
+      { id: "row-1", values: { task: "需求分析", owner: "Alice", done: false } },
+      { id: "row-2", values: { task: "开发实现", owner: "Bob", done: true } },
+    ],
+    ...patch,
+  };
+}
+
 function a2uiHistoryMessage({
   id,
   interactionId,
@@ -428,7 +624,7 @@ function a2uiHistoryMessage({
   id: string;
   interactionId: string;
   payload: Record<string, unknown>;
-  renderKey: "form" | "choice";
+  renderKey: "form" | "choice" | "table";
   title: string;
 }) {
   const interaction = {
@@ -497,7 +693,7 @@ function fulfillOk(route: Route) {
   });
 }
 
-type A2UIE2ERenderKey = "chart" | "form" | "choice";
+type A2UIE2ERenderKey = "chart" | "form" | "choice" | "table";
 
 function a2uiStreamStart(renderKey: A2UIE2ERenderKey, streamId: string, toolCallId: string) {
   return {
@@ -603,7 +799,7 @@ function a2uiStreamFinish(
 }
 
 function a2uiCreated(
-  renderKey: "form" | "choice",
+  renderKey: "form" | "choice" | "table",
   streamId: string,
   toolCallId: string,
   interactionId: string,

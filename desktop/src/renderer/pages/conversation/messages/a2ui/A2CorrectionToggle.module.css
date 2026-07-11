@@ -1,0 +1,117 @@
+.toggle {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 88%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 94%, var(--surface-muted));
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  margin: 0 auto;
+  padding: 5px 10px 5px 11px;
+  text-align: left;
+  transition:
+    background-color 160ms var(--motion-ease-out),
+    border-color 160ms var(--motion-ease-out),
+    color 160ms var(--motion-ease-out),
+    transform 160ms var(--motion-ease-out);
+}
+
+.toggle:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-border-strong) 82%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 86%, var(--surface-muted));
+  color: var(--color-text-primary);
+}
+
+.toggle[data-expanded="true"] {
+  border-color: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 90%, var(--surface-muted));
+  color: var(--color-text-primary);
+}
+
+.toggle:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-text-primary) 18%, transparent);
+  outline-offset: 2px;
+}
+
+.toggle:disabled {
+  cursor: default;
+  opacity: 0.46;
+}
+
+.leadingIcon,
+.chevron {
+  flex: 0 0 auto;
+}
+
+.leadingIcon {
+  opacity: 0.76;
+}
+
+.chevron {
+  opacity: 0.56;
+  transition:
+    opacity 160ms var(--motion-ease-out),
+    transform 160ms var(--motion-ease-out);
+}
+
+.toggle:hover:not(:disabled) .chevron {
+  opacity: 0.92;
+  transform: translateY(1px);
+}
+
+.toggle[data-expanded="true"]:hover:not(:disabled) .chevron {
+  transform: translateY(-1px);
+}
+
+.copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.copy strong,
+.returnLabel {
+  color: inherit;
+  font: inherit;
+  font-weight: 620;
+}
+
+.copy small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 450;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .toggle {
+    padding-inline: 9px;
+  }
+
+  .copy small {
+    white-space: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle,
+  .chevron {
+    transition: none;
+  }
+}

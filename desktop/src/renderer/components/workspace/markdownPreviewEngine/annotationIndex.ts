@@ -1,17 +1,8 @@
-import type { WorkspaceFileAnnotationAnchorV2 } from "@/runtime";
-
-import {
-  type AnnotationAnchorInvalidReason,
-  validateSourceRangeAnchor,
-} from "../filePreviewAnnotations";
 import type { MarkdownBlock, MarkdownDocumentModel } from "./types";
+import type { ResolvedTextAnnotation } from "@/renderer/features/annotations/domain/resolutions";
 
 export interface MarkdownAnnotationLike {
-  anchor_json?: unknown;
-  anchor_type?: string | null;
-  content_hash?: string | null;
   id: string;
-  selected_text?: string | null;
   updated_at?: string | null;
 }
 
@@ -25,58 +16,53 @@ export interface MarkdownAnnotationBlockRange {
 }
 
 export interface MarkdownAnnotationIndexItem<TAnnotation extends MarkdownAnnotationLike = MarkdownAnnotationLike> {
-  anchor: WorkspaceFileAnnotationAnchorV2 | null;
+  anchor: { lineEnd: number; lineStart: number } | null;
   annotation: TAnnotation;
   ranges: MarkdownAnnotationBlockRange[];
-  reason: AnnotationAnchorInvalidReason | null;
-  status: "valid" | AnnotationAnchorInvalidReason;
+}
+
+export interface MarkdownAnnotationProjection<TAnnotation extends MarkdownAnnotationLike = MarkdownAnnotationLike> {
+  annotation: TAnnotation;
+  sourceRanges: readonly { end: number; start: number }[];
 }
 
 export function buildMarkdownAnnotationIndex<TAnnotation extends MarkdownAnnotationLike>(
   model: MarkdownDocumentModel,
-  annotations: TAnnotation[],
+  projections: readonly MarkdownAnnotationProjection<TAnnotation>[],
 ): MarkdownAnnotationIndexItem<TAnnotation>[] {
-  return annotations.map((annotation) => {
-    if (annotation.anchor_type && annotation.anchor_type !== "selection") {
-      return {
-        anchor: null,
-        annotation,
-        ranges: [],
-        reason: "unsupported",
-        status: "unsupported",
-      };
-    }
-    const validation = validateSourceRangeAnchor(model.source, annotation.anchor_json);
-    if (!validation.valid || !validation.anchor) {
-      return {
-        anchor: validation.anchor,
-        annotation,
-        ranges: [],
-        reason: validation.reason,
-        status: validation.reason ?? "unsupported",
-      };
-    }
+  return projections.map(({ annotation, sourceRanges }) => {
+    const ranges = sourceRanges.flatMap((sourceRange) =>
+      affectedBlocksForSourceRange(model.blocks, sourceRange.start, sourceRange.end));
+    const firstBlock = ranges.length ? model.blocks[ranges[0].blockIndex] : null;
+    const lastBlock = ranges.length ? model.blocks[ranges.at(-1)!.blockIndex] : null;
     return {
-      anchor: validation.anchor,
+      anchor: firstBlock && lastBlock ? { lineStart: firstBlock.lineStart, lineEnd: lastBlock.lineEnd } : null,
       annotation,
-      ranges: affectedBlocksForAnchor(model.blocks, validation.anchor),
-      reason: null,
-      status: "valid",
+      ranges,
     };
   });
 }
 
-function affectedBlocksForAnchor(
+export function buildResolvedMarkdownAnnotationIndex(
+  model: MarkdownDocumentModel,
+  annotations: readonly ResolvedTextAnnotation[],
+): MarkdownAnnotationIndexItem[] {
+  return buildMarkdownAnnotationIndex(model, annotations.map((resolution) => ({
+    annotation: resolution.record,
+    sourceRanges: resolution.projection.sourceRanges,
+  })));
+}
+
+function affectedBlocksForSourceRange(
   blocks: MarkdownBlock[],
-  anchor: WorkspaceFileAnnotationAnchorV2,
+  rangeStart: number,
+  rangeEnd: number,
 ): MarkdownAnnotationBlockRange[] {
   const ranges: MarkdownAnnotationBlockRange[] = [];
   for (const block of blocks) {
-    const sourceStart = Math.max(block.sourceStart, anchor.sourceStart);
-    const sourceEnd = Math.min(block.sourceEnd, anchor.sourceEnd);
-    if (sourceEnd <= sourceStart) {
-      continue;
-    }
+    const sourceStart = Math.max(block.sourceStart, rangeStart);
+    const sourceEnd = Math.min(block.sourceEnd, rangeEnd);
+    if (sourceEnd <= sourceStart) continue;
     ranges.push({
       blockId: block.id,
       blockIndex: block.index,

@@ -10,6 +10,8 @@ from backend.app.a2ui.schemas import (
     A2UISchemaValidationError,
     validate_payload,
     validate_submit_result,
+    validate_table_payload,
+    validate_table_submit_result,
 )
 
 
@@ -221,6 +223,148 @@ def test_validate_payload_accepts_builtin_interactive_enhancement_fields() -> No
 
     assert choice["options"][0]["recommended"] is True
     assert form["fields"][0]["min"] == 100
+
+
+def test_validate_table_payload_normalizes_rows_and_numeric_values() -> None:
+    payload = validate_table_payload(
+        {
+            "title": "计划审阅",
+            "columns": [
+                {"key": "task", "label": "任务", "type": "text", "required": True},
+                {"key": "effort", "label": "工作量", "type": "number"},
+                {
+                    "key": "priority",
+                    "label": "优先级",
+                    "type": "select",
+                    "options": [
+                        {"label": "高", "value": "high"},
+                        {"label": "低", "value": "low"},
+                    ],
+                },
+            ],
+            "rows": [
+                {
+                    "id": "task-1",
+                    "values": {"task": "需求分析", "effort": "1,200", "priority": "high"},
+                }
+            ],
+        }
+    )
+
+    assert payload["rows"] == [
+        {
+            "id": "task-1",
+            "values": {"task": "需求分析", "effort": 1200, "priority": "high"},
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("patch", "error"),
+    [
+        ({"columns": [{"key": "task", "label": "重复", "type": "text"}]}, "duplicate column key"),
+        ({"rows": [{"id": "row-1", "values": {"unknown": "x"}}]}, "unknown column key"),
+        ({"rows": [{"id": "row-1", "values": {"task": ""}}]}, "required value"),
+    ],
+)
+def test_validate_table_payload_rejects_unstable_or_invalid_contract(
+    patch: dict[str, object],
+    error: str,
+) -> None:
+    payload: dict[str, object] = {
+        "title": "计划审阅",
+        "columns": [{"key": "task", "label": "任务", "type": "text", "required": True}],
+        "rows": [{"id": "row-1", "values": {"task": "需求分析"}}],
+    }
+    for key, value in patch.items():
+        if key == "columns":
+            payload["columns"] = [*payload["columns"], *value]  # type: ignore[arg-type]
+        else:
+            payload[key] = value
+
+    with pytest.raises(A2UISchemaValidationError, match=error):
+        validate_table_payload(payload)
+
+
+def test_validate_table_submit_result_recomputes_diff_from_final_snapshot() -> None:
+    original = {
+        "title": "计划审阅",
+        "allow_add_rows": True,
+        "allow_delete_rows": True,
+        "columns": [
+            {"key": "task", "label": "任务", "type": "text", "required": True},
+            {"key": "effort", "label": "工作量", "type": "number"},
+        ],
+        "rows": [
+            {"id": "row-1", "values": {"task": "需求分析", "effort": 2}},
+            {"id": "row-2", "values": {"task": "开发", "effort": 5}},
+        ],
+    }
+
+    result = validate_table_submit_result(
+        original,
+        {
+            "result_type": "table",
+            "columns": [
+                {"key": "task", "label": "工作项"},
+                {"key": "effort", "label": "工作量"},
+            ],
+            "rows": [
+                {"id": "row-1", "values": {"task": "需求澄清", "effort": 2}},
+                {"id": "row-3", "values": {"task": "测试", "effort": "3"}},
+            ],
+            "changes": {"cells": [], "column_labels": [], "added_row_ids": [], "deleted_row_ids": []},
+        },
+    )
+
+    assert result["rows"][1]["values"]["effort"] == 3
+    assert result["changes"] == {
+        "cells": [
+            {
+                "row_id": "row-1",
+                "column_key": "task",
+                "old_value": "需求分析",
+                "new_value": "需求澄清",
+            }
+        ],
+        "column_labels": [
+            {"column_key": "task", "old_label": "任务", "new_label": "工作项"}
+        ],
+        "added_row_ids": ["row-3"],
+        "deleted_row_ids": ["row-2"],
+    }
+
+
+def test_validate_table_submit_result_requires_correction_note_and_canonicalizes_payload() -> None:
+    original = {
+        "title": "计划审阅",
+        "columns": [{"key": "task", "label": "任务", "type": "text"}],
+        "rows": [{"id": "row-1", "values": {"task": "需求分析"}}],
+    }
+
+    with pytest.raises(A2UISchemaValidationError, match="correction note"):
+        validate_table_submit_result(
+            original,
+            {
+                "result_type": "correction",
+                "columns": [],
+                "rows": [],
+                "changes": {"cells": [], "column_labels": [], "added_row_ids": [], "deleted_row_ids": []},
+            },
+        )
+
+    result = validate_table_submit_result(
+        original,
+        {
+            "result_type": "correction",
+            "columns": [],
+            "rows": [],
+            "changes": {"cells": [], "column_labels": [], "added_row_ids": [], "deleted_row_ids": []},
+            "correction_note": "列不对，请按负责人分组",
+        },
+    )
+    assert result["correction_note"] == "列不对，请按负责人分组"
+    assert result["rows"] == []
 
 
 @pytest.mark.parametrize("value", ["12万", "1,2", "", "NaN", "Infinity"])

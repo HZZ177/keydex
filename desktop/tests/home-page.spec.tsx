@@ -292,7 +292,6 @@ describe("HomePage", () => {
     expect(await screen.findByText("Alpha selected text")).not.toBeNull();
     const selection = await showSelectionToolbar(body, "Alpha selected text");
     expect(await screen.findByRole("button", { name: "添加选中文本到对话" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "为选中文本添加批注" })).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "添加选中文本到对话" }));
 
@@ -1025,10 +1024,6 @@ function fakeRuntime({
         return Promise.resolve({ path, content, encoding: "utf-8" });
       }),
       readMedia: vi.fn(),
-      listAnnotations: vi.fn().mockResolvedValue([]),
-      createAnnotation: vi.fn(),
-      updateAnnotation: vi.fn(),
-      deleteAnnotation: vi.fn(),
       search: workspaceSearch,
     },
     desktopPicker: {

@@ -259,41 +259,6 @@ test("workbench drawer composer keeps toolbar inset with context chips", async (
   expect(layoutInsets.capsuleBottomInset).toBeLessThanOrEqual(10);
 });
 
-test("workbench file annotation can inject assistant context without switching mode", async ({ page }) => {
-  const backend = createWorkbenchBackend();
-  await installWebSocketMock(page);
-  await mockWorkbenchBackend(page, backend);
-
-  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
-  await page.getByRole("button", { name: "选择文件 README.md" }).click();
-  await expect(page.getByRole("heading", { name: "E2E Workbench File" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "工作台模式" })).toHaveAttribute("aria-pressed", "true");
-  await saveEvidence(page, "e2e-014");
-
-  await page.getByRole("button", { name: /文件批注/ }).click();
-  const panel = page.getByRole("complementary", { name: "文件批注" });
-  await expect(panel).toContainText("Selected E2E note");
-
-  await panel.getByRole("button", { name: "基于此批注发起对话" }).click();
-  await expect(page.getByLabel("工作台助手输入")).toHaveText("");
-  await expect(page.locator("[data-quote-index='0'][data-source-quote='true']")).toContainText("README.md · L3");
-  await expect(page.getByRole("button", { name: "工作台模式" })).toHaveAttribute("aria-pressed", "true");
-  expect(await chatFrameCount(page)).toBe(0);
-  await page.getByLabel("发送").click();
-  const chatFrame = await lastChatFrame(page);
-  const injection = (chatFrame?.data?.runtime_params as {
-    message_injection?: Array<{ content?: string; metadata?: Record<string, unknown> }>;
-  } | undefined)?.message_injection?.[0];
-  expect(chatFrame?.data?.message).toBe("");
-  expect(injection?.metadata).toMatchObject({
-    kind: "source_quote",
-    path: "README.md",
-    annotation_comment: "Selected E2E note",
-  });
-  expect(injection?.content).toContain("批注内容：\nSelected E2E note");
-  await saveEvidence(page, "e2e-015");
-});
-
 test("workbench expanded layer, drawer and approval stay above the workspace", async ({ page }) => {
   const backend = createWorkbenchBackend();
   await installWebSocketMock(page);
@@ -659,7 +624,7 @@ async function mockWorkbenchBackend(page: Page, backend: MockBackendState) {
     if (path === "/api/workspaces" && method === "GET") {
       return fulfillJson(route, { list: [workspace(WORKSPACE_A, "keydex"), workspace(WORKSPACE_B, "other")], total: 2 });
     }
-    if (path.startsWith("/api/workspaces/") && method === "GET" && !path.includes("/tree") && !path.includes("/read") && !path.includes("/search") && !path.includes("/annotations") && !path.includes("/skills")) {
+    if (path.startsWith("/api/workspaces/") && method === "GET" && !path.includes("/tree") && !path.includes("/read") && !path.includes("/search") && !path.includes("/skills")) {
       return fulfillJson(route, { workspace: workspace(decodeURIComponent(path.split("/").at(-1) ?? ""), "keydex") });
     }
     if (path === "/api/sessions" && method === "GET") {
@@ -750,28 +715,6 @@ async function mockWorkbenchBackend(page: Page, backend: MockBackendState) {
           skills: backend.skills,
           diagnostics: [],
         });
-      }
-      if (suffix === "/annotations") {
-        return fulfillJson(route, [
-          {
-            id: "ann-workbench-1",
-            scope_type: "workspace",
-            scope_id: workspaceId,
-            workspace_id: workspaceId,
-            path: "README.md",
-            anchor_type: "selection",
-            comment: "Selected E2E note",
-            selected_text: "This file is rendered inside Workbench.",
-            line_start: 3,
-            line_end: 3,
-            column_start: 1,
-            column_end: 40,
-            content_hash: null,
-            anchor_json: null,
-            created_at: "2026-06-25T00:00:00Z",
-            updated_at: "2026-06-25T00:00:00Z",
-          },
-        ]);
       }
     }
     const approvalMatch = path.match(/^\/api\/approvals\/([^/]+)\/decision$/);

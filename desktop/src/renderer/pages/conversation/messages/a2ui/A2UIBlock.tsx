@@ -5,6 +5,7 @@ import {
   Loader2,
   MousePointerClick,
   Rows3,
+  Table2,
   XCircle,
 } from "lucide-react";
 import { Component, type ErrorInfo, type ReactNode, memo, useMemo, useState } from "react";
@@ -24,6 +25,7 @@ import { A2ChoiceBlock } from "./A2ChoiceBlock";
 import { A2UIDebugInfoButton } from "./A2UIDebugInfoButton";
 import { A2UIDebugPanel } from "./A2UIDebugPanel";
 import { A2FormBlock } from "./A2FormBlock";
+import { A2TableBlock } from "./A2TableBlock";
 import { resolveA2UIRenderState, type A2UIRenderState } from "./A2UIState";
 import { A2UIInlineError } from "./A2UIStateLine";
 import {
@@ -343,6 +345,12 @@ function renderBuiltInContent(
     }
     return <A2FormBlock message={message} parsed={parsed} onSubmit={onSubmit} onCancel={onCancel} />;
   }
+  if (parsed.renderKey === "table") {
+    if (parsed.renderState.isFailed) {
+      return <A2UIFailedAttemptLine renderKey={parsed.renderKey} />;
+    }
+    return <A2TableBlock message={message} parsed={parsed} onSubmit={onSubmit} onCancel={onCancel} />;
+  }
   if (parsed.renderState.isFailed) {
     return <A2UIFailedAttemptLine renderKey={parsed.renderKey} />;
   }
@@ -362,6 +370,8 @@ function failedAttemptSubject(renderKey: string): string {
       return "选项";
     case "form":
       return "表单";
+    case "table":
+      return "表格";
     default:
       return "内容";
   }
@@ -371,10 +381,11 @@ export function parseA2UIMessage(message: ConversationMessage): ParsedA2UIMessag
   const a2ui = asA2UIObject(message.payload.a2ui) ?? asA2UIObject(asRecord(message.payload.a2uiDebug)?.a2ui);
   const debug = asA2UIDebug(message.payload.a2uiDebug);
   const finalPayload = asRecord(a2ui?.payload) ?? asRecord(debug?.payload) ?? {};
-  const interaction =
-    asInteraction(a2ui?.interaction) ??
-    asInteraction(debug?.interaction) ??
-    asInteraction(message.payload.interaction);
+  const interaction = resolveA2UIInteraction(
+    asInteraction(debug?.interaction),
+    asInteraction(message.payload.interaction),
+    asInteraction(a2ui?.interaction),
+  );
   const renderKey =
     a2ui?.render_key ??
     stringValue(debug?.renderKey) ??
@@ -412,6 +423,19 @@ export function parseA2UIMessage(message: ConversationMessage): ParsedA2UIMessag
     parseError,
     historyHydrated,
   };
+}
+
+function resolveA2UIInteraction(
+  ...candidates: Array<Partial<A2UIInteractionState> | null>
+): Partial<A2UIInteractionState> | null {
+  return candidates.find((candidate) => isTerminalInteraction(candidate?.status))
+    ?? candidates.find((candidate) => Boolean(candidate))
+    ?? null;
+}
+
+function isTerminalInteraction(status: unknown): boolean {
+  const normalized = stringValue(status).toLowerCase();
+  return normalized === "submitted" || normalized === "cancelled" || normalized === "failed";
 }
 
 function a2uiErrorBoundaryResetKey(message: ConversationMessage): string {
@@ -582,6 +606,8 @@ function renderKeyIcon(renderKey: string, tone: string) {
       return <MousePointerClick size={15} />;
     case "form":
       return <Rows3 size={15} />;
+    case "table":
+      return <Table2 size={15} />;
     default:
       return tone === "default" ? <XCircle size={15} /> : <Loader2 size={15} />;
   }
@@ -595,6 +621,8 @@ function renderKeyLabel(renderKey: string): string {
       return "选择";
     case "form":
       return "表单";
+    case "table":
+      return "表格";
     case "unknown":
       return "A2UI";
     default:

@@ -19,7 +19,7 @@ def test_a2ui_registry_to_langchain_tools_uses_render_key_names_and_metadata(tmp
     )
 
     by_name = {tool.name: tool for tool in tools}
-    assert set(by_name) == {"chart", "choice", "form"}
+    assert set(by_name) == {"chart", "choice", "form", "table"}
     assert by_name["chart"].metadata == {
         "a2ui": {"render_key": "chart", "mode": "render", "stream_enabled": True}
     }

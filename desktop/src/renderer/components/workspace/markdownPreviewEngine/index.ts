@@ -5,9 +5,11 @@ export {
 } from "./parser";
 export {
   buildMarkdownAnnotationIndex,
+  buildResolvedMarkdownAnnotationIndex,
   type MarkdownAnnotationBlockRange,
   type MarkdownAnnotationIndexItem,
   type MarkdownAnnotationLike,
+  type MarkdownAnnotationProjection,
 } from "./annotationIndex";
 export {
   buildMarkdownFindIndex,
@@ -42,9 +44,9 @@ export {
   type VirtualMarkdownPreviewProps,
 } from "./VirtualMarkdownPreview";
 export {
-  markdownSelectionAnchorFromDomRange,
+  markdownLogicalRangeFromDomRange,
   markdownSourceRangeFromDomRange,
-  type MarkdownSelectionAnchorResult,
+  type MarkdownSelectionLogicalRangeResult,
   type MarkdownSelectionSourceRange,
   type MarkdownSelectionSourceRangeFailureReason,
   type MarkdownSelectionSourceRangeResult,

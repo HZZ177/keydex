@@ -1574,7 +1574,7 @@ describe("WorkbenchAssistantSurface", () => {
 
   it("resets temporary shell state on session switch without replaying old context requests", async () => {
     const quote = selectedQuoteFromText("旧会话引用", {
-      source: "annotation",
+      source: "selection",
       file: {
         path: "docs/old.md",
         name: "old.md",
@@ -1819,7 +1819,7 @@ describe("WorkbenchAssistantSurface", () => {
 
   it("keeps file, quote, skill and model context across composer, drawer and undock modes", async () => {
     const quote = selectedQuoteFromText("引用文件里的片段", {
-      source: "annotation",
+      source: "selection",
       file: {
         path: "docs/guide.md",
         name: "guide.md",
@@ -1887,7 +1887,7 @@ describe("WorkbenchAssistantSurface", () => {
 
   it("opens workbench composer context chips through the shared preview panel", async () => {
     const quote = selectedQuoteFromText("引用文件里的片段", {
-      source: "annotation",
+      source: "selection",
       file: {
         path: "docs/guide.md",
         name: "guide.md",
@@ -2190,8 +2190,7 @@ function WorkbenchQuoteInjectionHarness() {
   const runtime = useMemo(() => fakeRuntime(), []);
   const controller = fakeController({ quoteChipRequest });
   const quote = selectedQuoteFromText("Target text", {
-    source: "annotation",
-    annotationComment: "Explain this paragraph",
+    source: "selection",
     file: {
       path: "docs/guide.md",
       name: "guide.md",

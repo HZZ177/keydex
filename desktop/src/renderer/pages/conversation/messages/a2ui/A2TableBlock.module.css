@@ -1,0 +1,606 @@
+.table {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 12px;
+  color: var(--color-text-primary);
+}
+
+.heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.headingCopy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.heading h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: 0;
+  line-height: 1.45;
+}
+
+.heading p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.statusPill {
+  display: inline-flex;
+  min-height: 25px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 84%, var(--surface-muted));
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.statusPill > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-success-6) 88%, var(--color-text-primary));
+}
+
+.surface {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  border-radius: 10px;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 8px 24px -24px color-mix(in srgb, var(--color-text-primary) 58%, transparent);
+}
+
+.toolbar {
+  display: flex;
+  min-width: 0;
+  min-height: 37px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  box-sizing: border-box;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 93%, var(--surface-muted));
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  padding: 0 10px 0 12px;
+}
+
+.toolbar button {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 78%, transparent);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 0 8px;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.toolbar button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, var(--surface-muted));
+  color: var(--color-text-primary);
+}
+
+.toolbar button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-text-primary) 28%, transparent);
+  outline-offset: 2px;
+}
+
+.toolbar button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.gridShell {
+  position: relative;
+  min-width: 0;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  contain: layout paint style;
+  transition: opacity 180ms ease, filter 180ms ease;
+  --ag-background-color: var(--color-bg-elevated);
+  --ag-foreground-color: var(--color-text-primary);
+  --ag-secondary-foreground-color: var(--color-text-secondary);
+  --ag-header-background-color: color-mix(in srgb, var(--color-bg-elevated) 92%, var(--surface-muted));
+  --ag-header-foreground-color: var(--color-text-secondary);
+  --ag-border-color: color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
+  --ag-row-border-color: color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
+  --ag-odd-row-background-color: color-mix(in srgb, var(--color-bg-elevated) 97%, var(--surface-muted));
+  --ag-row-hover-color: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  --ag-selected-row-background-color: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+  --ag-input-focus-border-color: var(--color-border-strong);
+  --ag-range-selection-border-color: var(--color-border-strong);
+  --ag-font-family: var(--font-sans);
+  --ag-font-size: 12px;
+  --ag-cell-horizontal-padding: 12px;
+  --ag-wrapper-border-radius: 0;
+}
+
+.surface[data-disabled="true"] .gridShell {
+  opacity: 0.5;
+  filter: saturate(0.62);
+}
+
+.gridShell :global(.ag-root-wrapper) {
+  border: 0;
+  border-radius: 0;
+}
+
+.gridShell :global(.ag-header) {
+  border-bottom-color: color-mix(in srgb, var(--color-border-default) 74%, transparent);
+}
+
+.gridShell :global(.ag-header-cell),
+.gridShell :global(.ag-cell) {
+  letter-spacing: 0;
+}
+
+.gridShell :global(.ag-header-cell) {
+  font-weight: 620;
+}
+
+.gridShell :global(.ag-cell) {
+  display: flex;
+  align-items: center;
+  line-height: 1.45;
+}
+
+.gridShell :global(.ag-cell-focus) {
+  border-color: color-mix(in srgb, var(--color-text-primary) 46%, transparent) !important;
+}
+
+.gridShell :global(.ag-cell-inline-editing) {
+  z-index: 2;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, var(--surface-muted));
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--color-text-primary) 76%, transparent),
+    0 0 0 2px var(--color-bg-elevated);
+}
+
+.gridShell :global(.ag-input-field-input) {
+  color: var(--color-text-primary);
+}
+
+.inputEditor {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  caret-color: var(--color-text-primary);
+  font: inherit;
+  font-weight: 560;
+  padding: 0 11px;
+}
+
+.editableCell {
+  cursor: text;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.editableCell:hover,
+.editableCell:focus-within {
+  background: color-mix(in srgb, var(--color-text-primary) 4%, var(--color-bg-elevated));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-border-strong) 62%, transparent);
+}
+
+.cellValue {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cellText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cellEditHint {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  opacity: 0.18;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 140ms ease;
+}
+
+.editableCell:hover .cellEditHint,
+.editableCell:focus-within .cellEditHint {
+  opacity: 0.76;
+  transform: translateX(-1px);
+}
+
+.requiredHint {
+  color: color-mix(in srgb, var(--color-danger) 66%, var(--color-text-tertiary));
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.gridBlocker {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  cursor: default;
+}
+
+.generating {
+  display: grid;
+  min-height: 152px;
+  place-items: center;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.headerRoot {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+}
+
+.headerSort {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.headerSort:disabled {
+  cursor: default;
+}
+
+.headerSort > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerRename {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  padding: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+:global(.ag-header-cell:hover) .headerRename,
+:global(.ag-header-cell:focus-within) .headerRename {
+  opacity: 1;
+}
+
+.headerRename:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+  color: var(--color-text-primary);
+}
+
+.headerRename:focus-visible {
+  opacity: 1;
+  outline: 2px solid color-mix(in srgb, var(--color-text-primary) 24%, transparent);
+  outline-offset: 1px;
+}
+
+.headerInput {
+  width: 100%;
+  min-width: 0;
+  height: 25px;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 5px;
+  outline: 0;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  padding: 0 7px;
+}
+
+.invalidCell {
+  background: color-mix(in srgb, var(--color-danger) 6%, var(--color-bg-elevated));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-danger) 54%, transparent);
+}
+
+.actionCell {
+  justify-content: center;
+  padding: 0 !important;
+}
+
+.deleteButton {
+  display: inline-grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.deleteButton:hover {
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  color: var(--color-danger);
+}
+
+.deleteButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
+  outline-offset: 1px;
+}
+
+.selectEditor {
+  display: grid;
+  min-width: 170px;
+  max-height: 240px;
+  overflow: auto;
+  gap: 2px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 88%, transparent);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 12px 28px -16px color-mix(in srgb, var(--color-text-primary) 50%, transparent);
+  padding: 5px;
+}
+
+.selectEditorOption {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 0 9px;
+  text-align: left;
+}
+
+.selectEditorOption:hover,
+.selectEditorOption[data-selected="true"] {
+  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+  color: var(--color-text-primary);
+}
+
+.emptyOverlay {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.footerComposer {
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 9px;
+}
+
+.correctionPanel {
+  display: grid;
+  width: min(620px, 100%);
+  min-width: 0;
+  gap: 8px;
+}
+
+.correctionPanel textarea {
+  width: 100%;
+  min-height: 78px;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 92%, transparent);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.correctionPanel textarea:focus {
+  border-color: var(--color-border-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+}
+
+.correctionPanel textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.footerMeta {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.actionButton {
+  display: inline-flex;
+  min-width: 76px;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 88%, transparent);
+  border-radius: 999px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 620;
+  padding: 0 14px;
+}
+
+.submitButton {
+  border-color: color-mix(in srgb, var(--color-text-primary) 88%, transparent);
+  background: var(--color-text-primary);
+  color: var(--color-bg-elevated);
+}
+
+.actionButton:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.buttonSignal {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.58;
+}
+
+.actionButton[data-badge-state="loading"] .buttonSignal {
+  border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  background: transparent;
+  animation: table-button-spin 780ms linear infinite;
+}
+
+.actionButton[data-badge-state="done"] .buttonSignal {
+  opacity: 1;
+}
+
+.buttonLabel {
+  position: relative;
+  display: grid;
+  min-width: 0;
+}
+
+.buttonLabel > span {
+  grid-area: 1 / 1;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 160ms ease, transform 180ms ease;
+  white-space: nowrap;
+}
+
+.buttonLabel > span[data-active="true"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.outcome {
+  display: grid;
+  gap: 8px;
+}
+
+.outcome p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+@keyframes table-button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 620px) {
+  .heading {
+    display: grid;
+    gap: 8px;
+  }
+
+  .statusPill {
+    justify-self: start;
+  }
+
+  .toolbar {
+    padding-left: 9px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gridShell,
+  .toolbar button,
+  .editableCell,
+  .cellEditHint,
+  .headerRename,
+  .deleteButton,
+  .correctionPanel textarea,
+  .buttonLabel > span {
+    transition: none;
+  }
+
+  .actionButton[data-badge-state="loading"] .buttonSignal {
+    animation: none;
+  }
+}

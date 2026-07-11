@@ -1,7 +1,9 @@
 .preview {
   --file-preview-content-bottom-safe-area: 0px;
+  --annotation-accent: #d87575;
   display: grid;
   min-height: 0;
+  overflow-x: auto;
   gap: 10px;
   color: var(--color-text-primary);
 }
@@ -296,15 +298,173 @@
   min-height: 0;
 }
 
+.documentViewportShell {
+  --file-preview-scroll-rail-block-inset: 4px;
+  --file-preview-scroll-rail-inline-inset: 6px;
+  --file-preview-scroll-rail-width: 16px;
+  --file-preview-scroll-button-size: 16px;
+  --file-preview-scroll-thumb-inset: 2px;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.preview[data-chrome="panel"] .documentViewportShell {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .body {
   position: relative;
   min-height: 180px;
   max-height: calc(100vh - 230px);
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
   background: var(--color-bg-elevated);
   animation: previewBodyEnter var(--motion-panel) var(--motion-ease-out) both;
+  scrollbar-gutter: stable;
+}
+
+.body[data-custom-scrollbar="true"] {
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+  scroll-padding-bottom: var(--file-preview-content-bottom-safe-area);
+}
+
+.body[data-custom-scrollbar="true"]::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.documentCanvas {
+  position: relative;
+  display: grid;
+  box-sizing: border-box;
+  min-width: 100%;
+  min-height: 100%;
+  grid-template-columns: minmax(0, 1fr) 0;
+  align-items: stretch;
+  padding-right: 24px;
+  transition: grid-template-columns var(--motion-panel) var(--motion-ease-standard);
+}
+
+.documentCanvas[data-annotation-rail-open="true"] {
+  grid-template-columns: minmax(0, 1fr) 320px;
+  min-width: 600px;
+}
+
+.documentColumn {
+  position: relative;
+  min-width: 0;
+  min-height: 100%;
+  overflow: visible;
+}
+
+.annotationRail {
+  position: relative;
+  z-index: 3;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 100%;
+  height: 100%;
+  overflow: visible;
+  border-left: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+}
+
+.annotationRail[hidden] {
+  display: block;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.annotationBottomActionsHost {
+  position: absolute;
+  z-index: 8;
+  right: calc(var(--file-preview-scroll-rail-inline-inset) + var(--file-preview-scroll-rail-width) + 2px);
+  bottom: 0;
+  display: grid;
+  box-sizing: border-box;
+  width: 320px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-bg-elevated) 96%, transparent);
+  box-shadow: 0 -8px 18px rgb(15 23 42 / 6%);
+}
+
+.annotationBottomActionsHost button {
+  display: inline-flex;
+  min-width: 0;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 7px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-base);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease-standard),
+    background-color var(--motion-fast) var(--motion-ease-standard),
+    color var(--motion-fast) var(--motion-ease-standard);
+}
+
+.annotationBottomActionsHost button:hover:not(:disabled),
+.annotationBottomActionsHost button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--annotation-accent) 45%, var(--color-border-subtle));
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--annotation-accent) 10%, var(--color-bg-base));
+}
+
+.annotationBottomActionsHost button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--annotation-accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.annotationBottomActionsHost button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.documentAnnotationComposer {
+  display: grid;
+  gap: 7px;
+  padding: 10px 10px 10px var(--annotation-card-inline-inset, 32px);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+}
+
+.documentAnnotationComposer textarea {
+  min-height: 64px;
+  resize: vertical;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  padding: 7px 8px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-base);
+  font: inherit;
+}
+
+.documentAnnotationComposer > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.documentAnnotationComposer button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 5px;
+  padding: 0 8px;
+  color: var(--color-text-primary);
+  background: var(--surface-muted);
 }
 
 .body[data-chrome="panel"] {
@@ -315,6 +475,20 @@
   border-radius: 0;
   background: var(--color-bg-elevated);
   animation: none;
+}
+
+.body[data-chrome="panel"] .documentCanvas {
+  min-height: 100%;
+}
+
+.body[data-chrome="panel"] .documentColumn > .previewScrollShell,
+.body[data-chrome="panel"] .documentColumn > .content,
+.body[data-chrome="panel"] .documentColumn > .diff,
+.body[data-chrome="panel"] .documentColumn > .sourceViewer,
+.body[data-chrome="panel"] .documentColumn > .splitPane {
+  height: auto;
+  min-height: 100%;
+  max-height: none;
 }
 
 .selectionAnnotationError {
@@ -423,202 +597,10 @@
   font-weight: 700;
 }
 
-.annotationPanel {
-  position: absolute;
-  z-index: 4;
-  top: 10px;
-  right: 10px;
-  bottom: 10px;
-  display: flex;
-  width: min(340px, 78%);
-  flex-direction: column;
-  gap: 8px;
-  overflow: hidden;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-bg-elevated) 96%, var(--surface-muted));
-  box-shadow: 0 18px 44px rgb(15 23 42 / 18%);
-  padding: 10px;
-  transform-origin: top right;
-  animation: annotationPanelIn 180ms var(--motion-ease-out) both;
-}
-
-.annotationPanel[data-state="closing"] {
-  pointer-events: none;
-  animation: annotationPanelOut 160ms var(--motion-ease-standard) both;
-}
-
-.preview[data-chrome="panel"] .annotationPanel {
-  top: 8px;
-  right: 8px;
-  bottom: 8px;
-  width: min(328px, 78%);
-}
-
-.annotationPopover {
-  position: fixed;
-  z-index: 70;
-  display: grid;
-  width: min(336px, calc(100vw - 24px));
-  gap: 7px;
-  border: 1px solid color-mix(in srgb, var(--color-warning) 34%, var(--color-border-subtle));
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-bg-elevated) 98%, white);
-  box-shadow:
-    0 18px 44px rgb(15 23 42 / 16%),
-    0 2px 8px rgb(15 23 42 / 8%);
-  padding: 9px;
-  transform: translate(-50%, -100%);
-  animation: annotationPopoverIn 150ms var(--motion-ease-out) both;
-}
-
-.annotationPopover[data-placement="bottom"] {
-  transform: translate(-50%, 0);
-  animation-name: annotationPopoverInFromBottom;
-}
-
-.annotationPopover::after {
-  position: absolute;
-  bottom: -5px;
-  left: 50%;
-  width: 9px;
-  height: 9px;
-  border-right: 1px solid color-mix(in srgb, var(--color-warning) 34%, var(--color-border-subtle));
-  border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 34%, var(--color-border-subtle));
-  background: inherit;
-  content: "";
-  transform: translateX(-50%) rotate(45deg);
-}
-
-.annotationPopover[data-placement="bottom"]::after {
-  top: -5px;
-  bottom: auto;
-  border-top: 1px solid color-mix(in srgb, var(--color-warning) 34%, var(--color-border-subtle));
-  border-left: 1px solid color-mix(in srgb, var(--color-warning) 34%, var(--color-border-subtle));
-  border-right: 0;
-  border-bottom: 0;
-}
-
-.annotationPopoverHeader,
-.annotationPopoverActions {
-  display: flex;
-  align-items: center;
-}
-
-.annotationPopoverHeader {
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.annotationPopoverHeader button {
-  display: inline-grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--color-text-tertiary);
-}
-
-.annotationPopoverHeader button:hover {
-  background: var(--surface-hover);
-  color: var(--color-text-primary);
-}
-
-.annotationPopoverQuote {
-  overflow: hidden;
-  max-height: 58px;
-  margin: 0;
-  border-left: 2px solid color-mix(in srgb, var(--color-warning) 54%, var(--color-border-default));
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  line-height: 1.45;
-  padding-left: 7px;
-}
-
-.annotationPopoverComment {
-  margin: 0;
-  color: var(--color-text-primary);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.annotationPopoverTextarea {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 66px;
-  resize: vertical;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-muted);
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.45;
-  padding: 8px;
-}
-
-.annotationPopoverTextarea:focus {
-  border-color: var(--color-border-default);
-  background: var(--color-bg-elevated);
-  outline: none;
-}
-
-.annotationPopoverError {
-  margin: 0;
-  color: var(--color-danger-6);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.annotationPopoverActions {
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.annotationPopoverActions[data-layout="annotation"] {
-  justify-content: space-between;
-}
-
-.annotationPopoverActionGroup {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.annotationPopoverActions button {
-  display: inline-flex;
-  height: 24px;
-  align-items: center;
-  gap: 4px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: var(--surface-muted);
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: 11px;
-  padding: 0 7px;
-}
-
-.annotationPopoverActions button:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--color-text-primary);
-}
-
-.annotationPopoverActions button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.annotationPopoverDeleteIcon {
-  color: var(--color-danger);
-}
-
 .previewAnnotationMark {
   border-radius: 3px;
-  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
-  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--color-warning) 68%, transparent);
+  background: color-mix(in srgb, var(--annotation-accent) 20%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--annotation-accent) 68%, transparent);
   cursor: pointer;
   transition:
     background var(--motion-fast) var(--motion-ease-standard),
@@ -626,504 +608,30 @@
 }
 
 .previewAnnotationMark:hover,
-.previewAnnotationMark[data-active="true"] {
-  background: color-mix(in srgb, var(--color-warning) 32%, transparent);
+.previewAnnotationMark[data-hovered="true"] {
+  background: color-mix(in srgb, var(--annotation-accent) 46%, transparent);
   box-shadow:
-    inset 0 -1px 0 color-mix(in srgb, var(--color-warning) 76%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--color-warning) 42%, transparent);
+    inset 0 -2px 0 color-mix(in srgb, var(--annotation-accent) 92%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--annotation-accent) 62%, transparent);
 }
 
-.previewAnnotationMark[data-flash="true"] {
-  animation: annotationMarkFlash 700ms var(--motion-ease-out) 1 both;
+.previewAnnotationMark[data-annotation-navigation-flash="true"],
+:global(.cm-annotation-mark[data-annotation-navigation-flash="true"]) {
+  animation: annotationNavigationTargetFlash 720ms var(--motion-ease-out) 1;
 }
 
-.previewAnnotationMark[data-transient-reveal="true"] {
-  background: rgb(250 204 21 / 42%);
-  box-shadow:
-    inset 0 -1px 0 rgb(234 179 8 / 72%),
-    0 0 0 1px rgb(234 179 8 / 28%);
-  cursor: default;
-}
-
-.previewAnnotationMark[data-transient-reveal="true"][data-active="true"] {
-  background: rgb(250 204 21 / 66%);
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--color-text-primary) 44%, transparent),
-    0 0 0 5px rgb(250 204 21 / 26%),
-    inset 0 -2px 0 rgb(234 179 8 / 88%);
-}
-
-.annotationHeader,
-.annotationTitle,
-.annotationHeaderActions,
-.annotationComposerActions,
-.annotationItemHeader,
-.annotationActions,
-.annotationSelectionMeta,
-.annotationAddButton,
-.annotationBulkChatButton,
-.annotationClose {
-  display: flex;
-  align-items: center;
-}
-
-.annotationHeader {
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.annotationTitle {
-  min-width: 0;
-  gap: 6px;
-  color: var(--color-text-primary);
-  font-size: 12px;
-  font-weight: 650;
-  line-height: var(--ui-line-height-tight);
-}
-
-.annotationTitle svg {
-  color: var(--color-text-tertiary);
-}
-
-.annotationHeaderActions {
-  flex: 0 0 auto;
-  gap: 6px;
-}
-
-.annotationCount {
-  display: inline-grid;
-  min-width: 22px;
-  height: 20px;
-  place-items: center;
-  border-radius: var(--radius-pill);
-  background: var(--surface-muted);
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: var(--ui-line-height-tight);
-}
-
-.annotationClose {
-  width: 24px;
-  height: 24px;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--color-text-tertiary);
-}
-
-.annotationClose:hover {
-  background: var(--surface-hover);
-  color: var(--color-text-primary);
-}
-
-.annotationFooter {
-  display: grid;
-  flex: 0 0 auto;
-  gap: 6px;
-  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
-  background: color-mix(in srgb, var(--color-bg-elevated) 88%, var(--surface-muted));
-  padding-top: 7px;
-}
-
-.annotationAddButton,
-.annotationBulkChatButton {
-  flex: 0 0 auto;
-  height: 30px;
-  justify-content: center;
-  gap: 6px;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 70%, transparent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-bg-elevated) 84%, var(--surface-muted));
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: 11px;
-  line-height: var(--ui-line-height-tight);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 72%, transparent);
-  transition:
-    border-color var(--motion-fast) var(--motion-ease-standard),
-    background var(--motion-fast) var(--motion-ease-standard),
-    color var(--motion-fast) var(--motion-ease-standard),
-    box-shadow var(--motion-fast) var(--motion-ease-standard);
-}
-
-.annotationBulkChatButton {
-  border-color: color-mix(in srgb, var(--color-border-default) 86%, var(--color-text-tertiary));
-  background: color-mix(in srgb, var(--surface-muted) 68%, var(--color-bg-elevated));
-  color: var(--color-text-primary);
-  font-weight: 600;
-}
-
-.annotationAddButton {
-  background: color-mix(in srgb, var(--color-bg-elevated) 94%, var(--surface-muted));
-  color: var(--color-text-secondary);
-}
-
-.annotationAddButton:hover,
-.annotationBulkChatButton:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--color-border-default) 92%, var(--color-text-tertiary));
-  background: color-mix(in srgb, var(--surface-hover) 78%, var(--color-bg-elevated));
-  color: var(--color-text-primary);
-  box-shadow:
-    0 1px 4px rgb(15 23 42 / 7%),
-    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
-}
-
-.annotationBulkChatButton:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--color-border-default) 80%, var(--color-text-secondary));
-}
-
-.annotationBulkChatButton:disabled {
-  cursor: default;
-  opacity: 0.48;
-}
-
-.annotationComposer,
-.annotationSelectionDraft,
-.annotationEdit {
-  display: grid;
-  gap: 7px;
-}
-
-.annotationComposer,
-.annotationSelectionDraft {
-  flex: 0 0 auto;
-}
-
-.annotationComposer textarea,
-.annotationSelectionDraft textarea,
-.annotationEdit textarea {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 54px;
-  resize: vertical;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-muted);
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.45;
-  padding: 8px;
-}
-
-.annotationComposer textarea:focus,
-.annotationSelectionDraft textarea:focus,
-.annotationEdit textarea:focus {
-  border-color: var(--color-border-default);
-  outline: none;
-}
-
-.annotationComposerActions {
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.annotationComposerActions button,
-.annotationError button,
-.annotationActions button,
-.annotationBadgeButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: var(--surface-muted);
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: 11px;
-}
-
-.annotationComposerActions button {
-  height: 26px;
-  gap: 5px;
-  padding: 0 8px;
-}
-
-.annotationComposerActions button[data-variant="ghost"] {
-  background: transparent;
-}
-
-.annotationComposerActions button:hover:not(:disabled),
-.annotationError button:hover,
-.annotationActions button:hover:not(:disabled),
-.annotationBadgeButton:hover {
-  background: var(--surface-hover);
-  color: var(--color-text-primary);
-}
-
-.annotationComposerActions button:disabled,
-.annotationActions button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.annotationSelectionDraft {
-  gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--color-warning) 24%, var(--color-border-subtle));
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-elevated);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-warning) 68%, transparent);
-  padding: 8px 8px 8px 10px;
-}
-
-.annotationSelectionMeta {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-}
-
-.annotationBadge,
-.annotationBadgeButton,
-.annotationStale {
-  flex: 0 0 auto;
-  height: 20px;
-  border-radius: var(--radius-pill);
-  font-size: 10px;
-  line-height: var(--ui-line-height-tight);
-  padding: 0 7px;
-}
-
-.annotationBadge,
-.annotationBadgeButton {
-  display: inline-flex;
-  align-items: center;
-  background: var(--surface-muted);
-  color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-}
-
-.annotationBadgeButton {
-  cursor: pointer;
-}
-
-.annotationSnippet {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.annotationMuted,
-.annotationEmpty,
-.annotationError {
-  margin: 0;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.annotationError {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--color-danger-6);
-}
-
-.annotationError button {
-  height: 24px;
-  padding: 0 7px;
-}
-
-.annotationList {
-  display: block;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
-}
-
-.annotationItem {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 3px 8px;
-  align-items: center;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 62%, transparent);
-  background: transparent;
-  padding: 7px 7px 7px 10px;
-}
-
-.annotationItem[data-stale="true"] {
-  background: color-mix(in srgb, var(--color-warning-6) 7%, transparent);
-}
-
-.annotationItem[data-active="true"] {
-  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-warning) 72%, var(--color-border-default));
-}
-
-.annotationItem[data-anchor-type="file"] {
-  gap: 0 8px;
-  padding-block: 5px;
-}
-
-.annotationItemHeader {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  flex-direction: column;
-  min-width: 0;
-  align-items: flex-start;
-  align-self: center;
-  justify-content: center;
-  gap: 4px;
-}
-
-.annotationItem[data-anchor-type="file"] .annotationItemHeader {
-  grid-row: 1;
-  flex-direction: row;
-  align-items: center;
-}
-
-.annotationStale {
-  display: inline-flex;
-  align-items: center;
-  background: color-mix(in srgb, var(--color-warning-6) 14%, transparent);
-  color: var(--color-text-tertiary);
-}
-
-.annotationQuote {
-  grid-column: 2;
-  grid-row: 2;
-  overflow: hidden;
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.annotationComment {
-  grid-column: 2;
-  grid-row: 1;
-  display: -webkit-box;
-  overflow: hidden;
-  margin: 0;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  color: var(--color-text-primary);
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: normal;
-}
-
-.annotationItem[data-anchor-type="file"] .annotationComment {
-  display: block;
-  grid-row: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.annotationEdit {
-  grid-column: 2 / 4;
-  grid-row: 1 / span 2;
-}
-
-.annotationItem[data-anchor-type="file"] .annotationEdit {
-  grid-row: 1;
-}
-
-.annotationActions {
-  grid-column: 3;
-  grid-row: 1 / span 2;
-  align-self: center;
-  justify-content: flex-end;
-  gap: 4px;
-  opacity: 0.56;
-  transition: opacity var(--motion-fast) var(--motion-ease-standard);
-}
-
-.annotationItem[data-anchor-type="file"] .annotationActions {
-  grid-row: 1;
-}
-
-.annotationItem:hover .annotationActions,
-.annotationItem:focus-within .annotationActions {
-  opacity: 1;
-}
-
-.annotationActions button {
-  width: 26px;
-  height: 24px;
-  padding: 0;
-}
-
-@keyframes annotationPopoverIn {
-  from {
-    opacity: 0;
-    transform: translate(-50%, calc(-100% + 5px)) scale(0.98);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate(-50%, -100%) scale(1);
-  }
-}
-
-@keyframes annotationPopoverInFromBottom {
-  from {
-    opacity: 0;
-    transform: translate(-50%, 5px) scale(0.98);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0) scale(1);
-  }
-}
-
-@keyframes annotationMarkFlash {
+@keyframes annotationNavigationTargetFlash {
   0%,
   100% {
-    background: color-mix(in srgb, var(--color-warning) 32%, transparent);
+    background: color-mix(in srgb, var(--annotation-accent) 20%, transparent);
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--annotation-accent) 68%, transparent);
+  }
+
+  38% {
+    background: color-mix(in srgb, var(--annotation-accent) 62%, transparent);
     box-shadow:
-      inset 0 -1px 0 color-mix(in srgb, var(--color-warning) 76%, transparent),
-      0 0 0 1px color-mix(in srgb, var(--color-warning) 42%, transparent);
-  }
-
-  32% {
-    background: color-mix(in srgb, var(--color-warning) 52%, transparent);
-    box-shadow:
-      inset 0 -1px 0 color-mix(in srgb, var(--color-warning) 86%, transparent),
-      0 0 0 3px color-mix(in srgb, var(--color-warning) 22%, transparent);
-  }
-
-  64% {
-    background: color-mix(in srgb, var(--color-warning) 24%, transparent);
-    box-shadow:
-      inset 0 -1px 0 color-mix(in srgb, var(--color-warning) 62%, transparent),
-      0 0 0 1px color-mix(in srgb, var(--color-warning) 20%, transparent);
-  }
-}
-
-@keyframes annotationPanelIn {
-  from {
-    opacity: 0;
-    transform: translateX(10px) scale(0.985);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
-}
-
-@keyframes annotationPanelOut {
-  from {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
-
-  to {
-    opacity: 0;
-    transform: translateX(10px) scale(0.985);
+      inset 0 -2px 0 color-mix(in srgb, var(--annotation-accent) 96%, transparent),
+      0 0 0 4px color-mix(in srgb, var(--annotation-accent) 24%, transparent);
   }
 }
 
@@ -1142,8 +650,8 @@
 .content,
 .diff {
   min-height: 180px;
-  max-height: calc(100vh - 230px);
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   margin: 0;
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
@@ -1160,8 +668,8 @@
 
 .body[data-chrome="panel"] .content,
 .body[data-chrome="panel"] .diff {
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: 100%;
   max-height: none;
   border-radius: 0;
 }
@@ -1169,9 +677,9 @@
 .sourceViewer {
   display: grid;
   min-height: 180px;
-  max-height: calc(100vh - 230px);
+  max-height: none;
   grid-template-columns: auto minmax(0, 1fr);
-  overflow: auto;
+  overflow: visible;
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
@@ -1181,7 +689,7 @@
 
 .sourceViewer[data-renderer="codemirror"] {
   display: block;
-  overflow: hidden;
+  overflow: visible;
   padding-left: 0;
   scrollbar-gutter: auto;
   scrollbar-width: none;
@@ -1189,8 +697,8 @@
 }
 
 .body[data-chrome="panel"] .sourceViewer {
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: 100%;
   max-height: none;
   background: var(--color-bg-elevated);
 }
@@ -1205,24 +713,30 @@
 
 .codeMirrorShell,
 .previewScrollShell {
-  --file-preview-scroll-rail-block-inset: 4px;
-  --file-preview-scroll-rail-inline-inset: 6px;
-  --file-preview-scroll-rail-width: 16px;
-  --file-preview-scroll-button-size: 16px;
-  --file-preview-scroll-thumb-inset: 2px;
   position: relative;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .codeMirrorShell {
-  height: 100%;
+  height: auto;
   min-height: inherit;
 }
 
 .codeMirrorHost {
-  height: 100%;
+  height: auto;
   min-height: inherit;
+}
+
+.sourceViewer[data-renderer="codemirror"] :global(.cm-editor) {
+  height: auto;
+  min-height: inherit;
+}
+
+.sourceViewer[data-renderer="codemirror"] :global(.cm-scroller) {
+  min-height: inherit;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .sourceLineNumbers,
@@ -1265,8 +779,9 @@
 .mermaidPane,
 .imagePane {
   min-height: 180px;
-  max-height: calc(100vh - 230px);
-  overflow: auto;
+  max-height: none;
+  overflow-x: visible;
+  overflow-y: visible;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--color-text-4) 34%, transparent) transparent;
 }
@@ -1376,28 +891,6 @@
   background: transparent;
 }
 
-.previewScrollShell > [data-custom-scrollbar="true"] {
-  scrollbar-width: none;
-  scrollbar-gutter: stable;
-  scrollbar-color: transparent transparent;
-  scroll-padding-bottom: var(--file-preview-content-bottom-safe-area);
-}
-
-.previewScrollShell > [data-custom-scrollbar="true"]::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
-.previewScrollShell > .markdownPane[data-custom-scrollbar="true"] {
-  padding-right: 24px;
-}
-
-.previewScrollShell > .htmlPane[data-custom-scrollbar="true"],
-.previewScrollShell > .diffPane[data-custom-scrollbar="true"] {
-  box-sizing: border-box;
-  padding-right: 16px;
-}
-
 .previewScrollBottomSafeArea {
   height: var(--file-preview-content-bottom-safe-area);
   pointer-events: none;
@@ -1501,8 +994,8 @@
 
 .body[data-chrome="panel"] > .previewScrollShell,
 .splitPanelBody > .previewScrollShell {
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: 100%;
   max-height: none;
 }
 
@@ -1516,19 +1009,19 @@
 .body[data-chrome="panel"] > .previewScrollShell > .diffPane,
 .body[data-chrome="panel"] > .previewScrollShell > .mermaidPane,
 .body[data-chrome="panel"] > .previewScrollShell > .imagePane {
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: 100%;
   max-height: none;
 }
 
 .markdownPane {
-  padding: 14px;
+  padding: 14px 14px 14px 8px;
 }
 
 .markdownPreviewBlock {
   display: grid;
   min-width: 0;
-  grid-template-columns: 50px minmax(0, 1fr);
+  grid-template-columns: var(--markdown-preview-source-gutter-width, 50px) minmax(0, 1fr);
   column-gap: 8px;
   align-items: start;
 }
@@ -1596,7 +1089,7 @@
 
 .markdownPreviewGutter {
   display: grid;
-  grid-template-columns: 18px minmax(22px, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   column-gap: 4px;
   align-self: stretch;
   align-items: start;
@@ -1622,7 +1115,9 @@
 
 .markdownPreviewLineNumber {
   display: flex;
-  min-width: 22px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   min-height: 18px;
   align-items: center;
   justify-content: flex-end;
@@ -1630,13 +1125,7 @@
   padding: 0 2px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-.markdownPreviewLineNumber[data-active="true"] {
-  background: rgb(250 204 21 / 28%);
-  color: var(--color-text-primary);
-  box-shadow: inset 0 0 0 1px rgb(234 179 8 / 22%);
-  font-weight: 600;
+  white-space: nowrap;
 }
 
 .markdownPreviewFoldButton,
@@ -1867,13 +1356,13 @@
 .splitPane {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  height: min(640px, calc(100vh - 230px));
+  height: auto;
   min-height: 220px;
 }
 
 .body[data-chrome="panel"] .splitPane {
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: 100%;
 }
 
 .splitPanel {
@@ -1910,8 +1399,8 @@
 
 .splitPanelBody {
   min-width: 0;
-  min-height: 0;
-  overflow: hidden;
+  min-height: 100%;
+  overflow: visible;
 }
 
 .splitPanelBody > .content,
@@ -1927,8 +1416,8 @@
 .splitPanelBody > .previewScrollShell > .diffPane,
 .splitPanelBody > .previewScrollShell > .mermaidPane,
 .splitPanelBody > .previewScrollShell > .imagePane {
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: 100%;
   max-height: none;
 }
 
@@ -2391,8 +1880,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .body,
-  .annotationPanel,
-  .annotationPopover,
   .findBar,
   .splitPanel,
   .imageFrame,

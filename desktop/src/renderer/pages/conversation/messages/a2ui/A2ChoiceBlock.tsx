@@ -10,6 +10,7 @@ import type {
   A2UISubmitHandler,
   ParsedA2UIMessage,
 } from "./A2UIBlock";
+import { A2CorrectionToggle } from "./A2CorrectionToggle";
 import { choiceSemanticAdapter } from "./adapters/choiceSemanticAdapter";
 import styles from "./A2ChoiceBlock.module.css";
 import type { A2UIRenderState } from "./A2UIState";
@@ -234,6 +235,7 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
   const selectedValueSet = useMemo(() => new Set(selectedValues), [selectedValues]);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (carouselAnimationFrameRef.current !== null) {
@@ -793,20 +795,18 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
                 motionKind="choice-correction"
                 variant="field"
               >
-                <button
-                  aria-expanded={correctionMode}
-                  aria-controls={`${message.id}:a2ui-choice-correction`}
-                  className={styles.correctionToggle}
-                  data-selected={correctionMode ? "true" : "false"}
+                <A2CorrectionToggle
+                  controlsId={`${message.id}:a2ui-choice-correction`}
                   disabled={!actionable || Boolean(localSubmitting)}
-                  type="button"
-                  onClick={toggleCorrectionMode}
-                >
-                  以上都不对！我来告诉keydex应该怎么做
-                </button>
+                  expanded={correctionMode}
+                  idleDescription="我来告诉 Keydex 应该怎么做"
+                  idleTitle="以上选项都不对"
+                  returnLabel="返回选择选项"
+                  onToggle={toggleCorrectionMode}
+                />
                 {correctionMode ? (
                   <textarea
-                    aria-label="我来告诉keydex应该怎么做"
+                    aria-label="我来告诉 Keydex 应该怎么做"
                     autoFocus
                     id={`${message.id}:a2ui-choice-correction`}
                     value={note}
@@ -1700,7 +1700,7 @@ function nextChoiceSelection(current: string[], value: string, model: ChoiceMode
 
 function choiceHelp(model: ChoiceModel, selectedCount: number, correctionMode: boolean, note: string): string {
   if (correctionMode) {
-    return note.trim() ? "已选：以上都不对 / 已填写说明" : "已选：以上都不对 / 需输入说明";
+    return note.trim() ? "已选：以上选项都不对 / 已填写说明" : "已选：以上选项都不对 / 需输入说明";
   }
   const selectedText = selectedCount ? `已选 ${selectedCount} 项` : "未选择";
   if (!model.multiple) {

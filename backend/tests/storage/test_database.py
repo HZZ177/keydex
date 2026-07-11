@@ -40,6 +40,7 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
         "mcp_runtime_snapshots",
         "mcp_audit_log",
         "workspaces",
+        "workspace_annotations",
         "sessions",
         "session_forks",
         "message_events",
@@ -51,6 +52,131 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
     }
     assert expected.issubset(first)
     assert expected.issubset(second)
+
+
+def test_init_database_replaces_legacy_workspace_annotations_schema(tmp_path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            create table workspace_file_annotations (
+              id text primary key,
+              scope_type text not null,
+              scope_id text not null,
+              path text not null,
+              anchor_type text not null,
+              comment text not null,
+              created_at text not null,
+              updated_at text not null
+            );
+            insert into workspace_file_annotations (
+              id, scope_type, scope_id, path, anchor_type, comment, created_at, updated_at
+            ) values (
+              'legacy-ann', 'workspace', 'workspace-1', 'README.md', 'file', 'Legacy',
+              '2026-07-11T00:00:00Z', '2026-07-11T00:00:00Z'
+            );
+            """
+        )
+
+    db = init_database(db_path)
+    with db.connect() as conn:
+        tables = {
+            str(row["name"])
+            for row in conn.execute(
+                "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'"
+            ).fetchall()
+        }
+        columns = {
+            str(row["name"])
+            for row in conn.execute("pragma table_info(workspace_annotations)").fetchall()
+        }
+        indexes = {
+            str(row["name"])
+            for row in conn.execute("pragma index_list(workspace_annotations)").fetchall()
+        }
+
+    assert "workspace_file_annotations" not in tables
+    assert columns == {
+        "id",
+        "workspace_id",
+        "document_path",
+        "target_type",
+        "selector_json",
+        "body",
+        "created_at",
+        "updated_at",
+    }
+    assert "idx_workspace_annotations_document" in indexes
+
+
+def test_workspace_annotations_schema_enforces_target_shape_and_workspace_cascade(
+    tmp_path,
+) -> None:
+    db = init_database(tmp_path / "app.db")
+    with db.connect() as conn:
+        conn.execute(
+            """
+            insert into workspaces (
+              id, name, root_path, normalized_root_path, created_at, updated_at
+            ) values (
+              'workspace-1', 'Workspace', '/tmp/workspace', '/tmp/workspace',
+              '2026-07-11T00:00:00Z', '2026-07-11T00:00:00Z'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into workspace_annotations (
+              id, workspace_id, document_path, target_type, selector_json, body,
+              created_at, updated_at
+            ) values (
+              'document-ann', 'workspace-1', 'README.md', 'document', null, 'Whole file',
+              '2026-07-11T00:00:00Z', '2026-07-11T00:00:00Z'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into workspace_annotations (
+              id, workspace_id, document_path, target_type, selector_json, body,
+              created_at, updated_at
+            ) values (
+              'text-ann', 'workspace-1', 'README.md', 'text', '{}', 'Selected text',
+              '2026-07-11T00:00:01Z', '2026-07-11T00:00:01Z'
+            )
+            """
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                insert into workspace_annotations (
+                  id, workspace_id, document_path, target_type, selector_json, body,
+                  created_at, updated_at
+                ) values (
+                  'bad-document', 'workspace-1', 'README.md', 'document', '{}', 'Bad',
+                  '2026-07-11T00:00:02Z', '2026-07-11T00:00:02Z'
+                )
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                insert into workspace_annotations (
+                  id, workspace_id, document_path, target_type, selector_json, body,
+                  created_at, updated_at
+                ) values (
+                  'bad-text', 'workspace-1', 'README.md', 'text', null, 'Bad',
+                  '2026-07-11T00:00:03Z', '2026-07-11T00:00:03Z'
+                )
+                """
+            )
+
+        conn.execute("delete from workspaces where id = 'workspace-1'")
+        remaining = conn.execute("select count(*) from workspace_annotations").fetchone()
+
+    assert remaining is not None
+    assert remaining[0] == 0
 
 
 def test_database_connections_use_busy_timeout_and_wal(tmp_path) -> None:

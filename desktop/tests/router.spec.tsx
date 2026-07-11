@@ -18,6 +18,7 @@ import {
 import { AppRouter } from "@/renderer/components/layout/Router";
 import { emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
+import { LAYOUT_PREFERENCES_KEY } from "@/renderer/hooks/layout/layoutStore";
 import { AgentSessionProvider, useAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
@@ -339,9 +340,13 @@ describe("AppRouter", () => {
 
   it("opens a markdown file as an external workbench preview inside the selected workspace", async () => {
     const filePath = "D:/docs/README.md";
+    localStorage.setItem(LAYOUT_PREFERENCES_KEY, JSON.stringify({ sidebarCollapsed: false }));
     const { runtime } = renderRouter([workbenchFilePreviewPath(filePath)]);
 
     expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId("app-shell").getAttribute("data-sidebar")).toBe("collapsed");
+    });
     await waitFor(() => {
       expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("workspace A");
     });
