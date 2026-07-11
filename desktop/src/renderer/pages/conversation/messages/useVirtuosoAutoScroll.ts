@@ -16,6 +16,7 @@ export interface UseVirtuosoAutoScrollResult {
   setScrollerRef: (ref: HTMLElement | Window | null) => void;
   handleAtBottomStateChange: (atBottom: boolean) => void;
   handleTotalListHeightChanged: () => void;
+  pinToCurrentPosition: () => void;
   cancelScrollAnimation: () => void;
   scrollToBottom: (behavior?: ScrollBehavior) => void;
 }
@@ -31,7 +32,6 @@ export function useVirtuosoAutoScroll(
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
-  const atBottomRef = useRef(true);
   const userPinnedRef = useRef(false);
   const userInputActiveRef = useRef(false);
   const upwardWheelPendingRef = useRef(false);
@@ -57,7 +57,6 @@ export function useVirtuosoAutoScroll(
       if (isUpwardWheelIntent(event)) {
         upwardWheelPendingRef.current = true;
         userPinnedRef.current = true;
-        atBottomRef.current = false;
         setUserPinnedScroll(true);
       }
     },
@@ -73,7 +72,6 @@ export function useVirtuosoAutoScroll(
 
     const bottomGap = getBottomGap(scroller);
     const atBottom = bottomGap <= FOLLOW_BOTTOM_THRESHOLD_PX;
-    atBottomRef.current = atBottom;
 
     setUserPinnedScroll((current) => current === userPinnedRef.current ? current : userPinnedRef.current);
     const nextShowScrollToBottom = bottomGap > AT_BOTTOM_THRESHOLD_PX;
@@ -105,7 +103,6 @@ export function useVirtuosoAutoScroll(
       userInputActiveRef.current = false;
       upwardWheelPendingRef.current = false;
       scrollbarDragActiveRef.current = false;
-      atBottomRef.current = true;
       setUserPinnedScroll((current) => current ? false : current);
       setShowScrollToBottom((current) => current ? false : current);
 
@@ -134,8 +131,16 @@ export function useVirtuosoAutoScroll(
     [cancelScrollAnimation, itemCount, updateBottomState],
   );
 
+  const pinToCurrentPosition = useCallback(() => {
+    cancelScrollAnimation();
+    userPinnedRef.current = true;
+    userInputActiveRef.current = false;
+    upwardWheelPendingRef.current = false;
+    scrollbarDragActiveRef.current = false;
+    setUserPinnedScroll((current) => current ? current : true);
+  }, [cancelScrollAnimation]);
+
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
-    atBottomRef.current = atBottom;
     setUserPinnedScroll((current) => current === userPinnedRef.current ? current : userPinnedRef.current);
     setShowScrollToBottom((current) => current === !atBottom ? current : !atBottom);
   }, []);
@@ -157,7 +162,7 @@ export function useVirtuosoAutoScroll(
       updateBottomState();
       return;
     }
-    if (!userPinnedRef.current && atBottomRef.current) {
+    if (!userPinnedRef.current) {
       scrollToBottom("auto");
       return;
     }
@@ -227,7 +232,6 @@ export function useVirtuosoAutoScroll(
     if (itemCount === 0) {
       cancelScrollAnimation();
       setShowScrollToBottom((current) => current ? false : current);
-      atBottomRef.current = true;
       userPinnedRef.current = false;
       userInputActiveRef.current = false;
       upwardWheelPendingRef.current = false;
@@ -236,7 +240,7 @@ export function useVirtuosoAutoScroll(
       return;
     }
 
-    if (autoFollow && !userPinnedRef.current && atBottomRef.current) {
+    if (autoFollow && !userPinnedRef.current) {
       scrollToBottom("auto");
       return;
     }
@@ -255,6 +259,7 @@ export function useVirtuosoAutoScroll(
     setScrollerRef,
     handleAtBottomStateChange,
     handleTotalListHeightChanged,
+    pinToCurrentPosition,
     cancelScrollAnimation,
     scrollToBottom,
   };

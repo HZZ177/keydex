@@ -1936,6 +1936,36 @@ describe("MessageList", () => {
     expect(scrollToIndex).not.toHaveBeenCalled();
   });
 
+  it("keeps an initially opened virtualized session pinned while Virtuoso settles item heights", () => {
+    const { result } = renderHook(() => useVirtuosoAutoScroll(12));
+    const scroller = document.createElement("div");
+    mockScrollMetrics(scroller, { scrollHeight: 1600, clientHeight: 200, scrollTop: 900 });
+
+    act(() => {
+      result.current.setScrollerRef(scroller);
+      result.current.handleAtBottomStateChange(false);
+      result.current.handleTotalListHeightChanged();
+    });
+
+    expect(scroller.scrollTop).toBe(1400);
+  });
+
+  it("preserves an explicit virtualized turn navigation while item heights settle", () => {
+    const { result } = renderHook(() => useVirtuosoAutoScroll(12));
+    const scroller = document.createElement("div");
+    mockScrollMetrics(scroller, { scrollHeight: 1600, clientHeight: 200, scrollTop: 520 });
+
+    act(() => {
+      result.current.setScrollerRef(scroller);
+      result.current.pinToCurrentPosition();
+      result.current.handleAtBottomStateChange(false);
+      result.current.handleTotalListHeightChanged();
+    });
+
+    expect(result.current.userPinnedScroll).toBe(true);
+    expect(scroller.scrollTop).toBe(520);
+  });
+
   it("does not auto-follow virtualized content after an external turn navigation target is active", () => {
     const scrollToIndex = vi.fn();
     const { result } = renderHook(() => useVirtuosoAutoScroll(3, { autoFollow: false }));

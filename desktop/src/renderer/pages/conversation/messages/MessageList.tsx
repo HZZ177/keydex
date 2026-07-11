@@ -595,6 +595,7 @@ export function MessageList({
         if (blockIndex === undefined) {
           return false;
         }
+        autoScroll.pinToCurrentPosition();
         virtuoso.scrollToIndex({
           align: "center",
           behavior: prefersReducedMotion() ? "auto" : "smooth",
@@ -615,7 +616,14 @@ export function MessageList({
       }
       return false;
     },
-    [autoScroll.virtuosoRef, displayTurns.length, setVisibleTurnIndexesIfChanged, timeline.turnBlockIndexes, useStaticList],
+    [
+      autoScroll.pinToCurrentPosition,
+      autoScroll.virtuosoRef,
+      displayTurns.length,
+      setVisibleTurnIndexesIfChanged,
+      timeline.turnBlockIndexes,
+      useStaticList,
+    ],
   );
 
   useEffect(() => {
