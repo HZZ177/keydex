@@ -62,6 +62,54 @@ describe("ConversationPanel", () => {
     expect(screen.getByTestId("message-list").getAttribute("data-performance-profile")).toBe("interactivePanel");
   });
 
+  it("resets the cached message list to the bottom when switching sessions", () => {
+    const scrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const clientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get: () => 1000 });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 200 });
+
+    try {
+      const runtime = fakeRuntime();
+      const sessionAMessage = { ...message("assistant-a", "assistant", "session A"), threadId: "ses-a" };
+      const sessionBMessage = { ...message("assistant-b", "assistant", "session B"), threadId: "ses-b" };
+      const { rerender } = render(
+        <ConversationPanel
+          model={panelModel({ sessionId: "ses-a", messages: [sessionAMessage] })}
+          workspaceRuntime={runtime}
+        />,
+      );
+      const firstSessionScroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+      expect(firstSessionScroller.scrollTop).toBe(800);
+      fireEvent.wheel(firstSessionScroller, { deltaY: -120 });
+      firstSessionScroller.scrollTop = 0;
+      fireEvent.scroll(firstSessionScroller);
+
+      rerender(
+        <ConversationPanel
+          model={panelModel({ sessionId: "ses-b", messages: [sessionBMessage] })}
+          workspaceRuntime={runtime}
+        />,
+      );
+      const secondSessionScroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+      expect(secondSessionScroller.scrollTop).toBe(800);
+      fireEvent.wheel(secondSessionScroller, { deltaY: -120 });
+      secondSessionScroller.scrollTop = 0;
+      fireEvent.scroll(secondSessionScroller);
+
+      rerender(
+        <ConversationPanel
+          model={panelModel({ sessionId: "ses-a", messages: [sessionAMessage] })}
+          workspaceRuntime={runtime}
+        />,
+      );
+      const restoredSessionScroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+      expect(restoredSessionScroller.scrollTop).toBe(800);
+    } finally {
+      restorePrototypeDescriptor("scrollHeight", scrollHeightDescriptor);
+      restorePrototypeDescriptor("clientHeight", clientHeightDescriptor);
+    }
+  });
+
   it("inherits layout-level A2UI render suspension for main conversation content", () => {
     render(
       <A2UIRenderSuspensionProvider suspended>
@@ -296,6 +344,7 @@ describe("ConversationPanel", () => {
     const { rerender } = render(
       <ConversationPanel
         model={panelModel({
+          sessionId: "ses-1",
           messages: [firstSessionMessage],
           loadToolDetails,
         })}
@@ -311,13 +360,13 @@ describe("ConversationPanel", () => {
     rerender(
       <ConversationPanel
         model={panelModel({
+          sessionId: "ses-2",
           messages: [secondSessionMessage],
           loadToolDetails,
         })}
         workspaceRuntime={fakeRuntime()}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "收起工具详情" }));
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
 
     await waitFor(() => {
@@ -331,6 +380,7 @@ describe("ConversationPanel", () => {
 
 function panelModel(overrides: Partial<ConversationPanelModel> = {}): ConversationPanelModel {
   return {
+    sessionId: "ses-1",
     messages: [],
     session: null,
     sessionViewState: null,
@@ -362,6 +412,17 @@ function panelModel(overrides: Partial<ConversationPanelModel> = {}): Conversati
     loadToolDetails: vi.fn(),
     ...overrides,
   } as unknown as ConversationPanelModel;
+}
+
+function restorePrototypeDescriptor(
+  key: "scrollHeight" | "clientHeight",
+  descriptor: PropertyDescriptor | undefined,
+) {
+  if (descriptor) {
+    Object.defineProperty(HTMLElement.prototype, key, descriptor);
+    return;
+  }
+  delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key];
 }
 
 function message(

@@ -121,7 +121,7 @@ describe("useA2UIStreamReveal", () => {
     unmount();
   });
 
-  it("reveals a small live created-only payload from the first semantic item", () => {
+  it("shows a created-only payload immediately even when it contains lifecycle evidence", () => {
     vi.useFakeTimers();
     const restoreRaf = installTimerBackedRaf();
     try {
@@ -129,22 +129,12 @@ describe("useA2UIStreamReveal", () => {
       render(<PlayerProbe parsed={liveCreatedOnlyChartMessage(4)} snapshots={snapshots} />);
 
       expect(snapshots[0]).toEqual({
-        rendered: 1,
+        rendered: 4,
         total: 4,
-        visibleItems: 1,
+        visibleItems: 4,
       });
-
-      act(() => {
-        vi.advanceTimersByTime(300);
-      });
-
-      expect(visiblePlayerItems()).toBeLessThan(4);
-
-      act(() => {
-        vi.advanceTimersByTime(2_400);
-      });
-
-      expect(visiblePlayerItems()).toBe(4);
+      expect(screen.getByTestId("a2ui-player-probe").getAttribute("data-enabled")).toBe("false");
+      expect(screen.getByTestId("a2ui-player-probe").getAttribute("data-phase")).toBe("created");
     } finally {
       restoreRaf();
       vi.clearAllTimers();

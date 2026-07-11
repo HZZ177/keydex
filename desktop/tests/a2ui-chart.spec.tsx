@@ -547,7 +547,7 @@ describe("A2ChartBlock", () => {
     expect(screen.queryByTestId("a2ui-chart-panel")).toBeNull();
   });
 
-  it("shows empty and streaming skeleton states without legacy type fallback", () => {
+  it("shows empty and type-specific ECharts placeholder states without legacy fallback", () => {
     const { rerender } = render(
       <A2UIBlock
         message={chartMessage({
@@ -561,11 +561,27 @@ describe("A2ChartBlock", () => {
 
     rerender(<A2UIBlock message={streamingChartMessage()} />);
 
-    const skeleton = screen.getByTestId("a2ui-chart-skeleton");
-    expect(skeleton.getAttribute("data-chart-skeleton-type")).toBe("pie");
-    expect(skeleton.getAttribute("aria-label")).toBe("饼图生成中");
-    expect(screen.getByTestId("a2ui-chart-skeleton-pie")).not.toBeNull();
+    const placeholder = screen.getByTestId("a2ui-echarts-surface");
+    expect(placeholder.getAttribute("data-chart-type")).toBe("pie");
+    expect(placeholder.getAttribute("data-a2ui-chart-placeholder")).toBe("true");
+    expect(placeholder.getAttribute("data-a2ui-chart-data-count")).toBe("0");
+    expect(placeholder.getAttribute("data-a2ui-chart-interactions")).toBe("none");
+    expect(placeholder.getAttribute("aria-label")).toBe("饼图生成中");
+    expect(optionSeries(lastSetOption())[0]?.type).toBe("pie");
+    expect(optionSeries(lastSetOption())[0]?.data).toHaveLength(4);
     expect(screen.queryByTestId("a2ui-stream-preview")).toBeNull();
+  });
+
+  it("uses the neutral dark palette for ECharts placeholders", () => {
+    document.documentElement.dataset.theme = "dark";
+    try {
+      render(<A2UIBlock message={streamingChartMessage()} />);
+
+      expect(lastSetOption().color).toEqual(["#444444", "#2a2a2a"]);
+      expect(screen.getByTestId("a2ui-echarts-surface").getAttribute("data-a2ui-chart-placeholder")).toBe("true");
+    } finally {
+      delete document.documentElement.dataset.theme;
+    }
   });
 
   it("keeps multi-chart shells visible while streaming before data arrives", () => {
@@ -584,15 +600,23 @@ describe("A2ChartBlock", () => {
       "pie",
       "trend",
     ]);
-    const skeletons = screen.getAllByTestId("a2ui-chart-skeleton");
-    expect(skeletons.map((skeleton) => skeleton.getAttribute("aria-label"))).toEqual([
+    const placeholders = screen.getAllByTestId("a2ui-echarts-surface");
+    expect(placeholders.map((placeholder) => placeholder.getAttribute("data-a2ui-chart-placeholder"))).toEqual([
+      "true",
+      "true",
+      "true",
+    ]);
+    expect(placeholders.map((placeholder) => placeholder.getAttribute("aria-label"))).toEqual([
       "柱状图生成中",
       "饼图生成中",
       "趋势图生成中",
     ]);
-    expect(screen.getByTestId("a2ui-chart-skeleton-column")).not.toBeNull();
-    expect(screen.getByTestId("a2ui-chart-skeleton-pie")).not.toBeNull();
-    expect(screen.getByTestId("a2ui-chart-skeleton-trend")).not.toBeNull();
+    const renderedPlaceholderTypes = new Set(
+      echartsMock.setOption.mock.calls.flatMap(([option]) => (
+        optionSeries(option as Record<string, unknown>).map((series) => series.type)
+      )),
+    );
+    expect(renderedPlaceholderTypes).toEqual(new Set(["bar", "pie", "line"]));
     expect(screen.queryByText("暂无图表数据")).toBeNull();
   });
 
@@ -610,8 +634,56 @@ describe("A2ChartBlock", () => {
     expect(panels.map((panel) => panel.getAttribute("data-chart-type"))).toEqual([
       "sankey",
     ]);
-    expect(screen.getAllByTestId("a2ui-chart-skeleton")).toHaveLength(1);
-    expect(screen.getByTestId("a2ui-chart-skeleton-sankey")).not.toBeNull();
+    const placeholder = screen.getByTestId("a2ui-echarts-surface");
+    expect(placeholder.getAttribute("data-a2ui-chart-placeholder")).toBe("true");
+    expect(placeholder.getAttribute("aria-label")).toBe("桑基图生成中");
+    const sankeySeries = optionSeries(lastSetOption())[0];
+    expect(sankeySeries?.type).toBe("sankey");
+    expect(sankeySeries?.data).toHaveLength(5);
+    expect(sankeySeries?.links).toHaveLength(4);
+  });
+
+  it("reuses the ECharts instance when a placeholder receives its first streamed data", () => {
+    const emptyPayload = {
+      title: "流式占位",
+      charts: [{ type: "trend", title: "趋势" }],
+    };
+    const dataPayload = {
+      title: "流式占位",
+      charts: [
+        {
+          type: "trend",
+          title: "趋势",
+          items: [
+            { name: "A", value: 10 },
+            { name: "B", value: 20 },
+          ],
+        },
+      ],
+    };
+    const { rerender } = render(
+      <A2ChartBlock parsed={parsedChart(emptyPayload, "waiting_created")} />,
+    );
+
+    const surface = screen.getByTestId("a2ui-echarts-surface");
+    expect(surface.getAttribute("data-a2ui-chart-placeholder")).toBe("true");
+    expect(echartsMock.init).toHaveBeenCalledTimes(1);
+    const placeholderCallCount = echartsMock.setOption.mock.calls.length;
+
+    rerender(<A2ChartBlock parsed={parsedChart(dataPayload, "waiting_created")} />);
+
+    expect(screen.getByTestId("a2ui-echarts-surface")).toBe(surface);
+    expect(surface.getAttribute("data-a2ui-chart-placeholder")).toBe("false");
+    expect(surface.getAttribute("data-a2ui-chart-data-count")).toBe("2");
+    expect(echartsMock.init).toHaveBeenCalledTimes(1);
+    expect(
+      echartsMock.setOption.mock.calls
+        .slice(placeholderCallCount)
+        .some(([option, options]) => (
+          optionSeries(option as Record<string, unknown>)[0]?.type === "line"
+          && (options as { notMerge?: boolean }).notMerge === true
+        )),
+    ).toBe(true);
   });
 
   it("reveals streamed multi-chart payloads in parallel inside each chart", () => {
@@ -903,7 +975,7 @@ describe("A2ChartBlock", () => {
     expect(lastSetOption().animation).toBe(false);
   });
 
-  it("reveals a live created frame when raw stream lifecycle events are present", () => {
+  it("does not replay a created frame when raw stream lifecycle events are present", () => {
     vi.useFakeTimers();
     const restoreRaf = installTimerBackedRaf();
     try {
@@ -933,22 +1005,12 @@ describe("A2ChartBlock", () => {
       );
 
       const chart = screen.getByTestId("a2ui-chart");
-      expect(chart.getAttribute("data-a2ui-player-enabled")).toBe("true");
-      expect(chartDataCounts()[0]).toBeGreaterThan(0);
-      expect(chartDataCounts()[0]).toBeLessThan(4);
-
-      act(() => {
-        vi.advanceTimersByTime(300);
-      });
-
-      expect(chartDataCounts()[0]).toBeLessThan(4);
-
-      act(() => {
-        vi.advanceTimersByTime(2_400);
-      });
-
+      const surface = screen.getByTestId("a2ui-echarts-surface");
+      expect(chart.getAttribute("data-a2ui-player-enabled")).toBe("false");
+      expect(chart.getAttribute("data-a2ui-player-phase")).toBe("created");
       expect(chartDataCounts()).toEqual([4]);
-      expect(screen.getByTestId("a2ui-chart").getAttribute("data-a2ui-player-phase")).toBe("created");
+      expect(surface.getAttribute("data-a2ui-chart-animation")).toBe("settled");
+      expect(lastSetOption().animation).toBe(false);
     } finally {
       restoreRaf();
       vi.clearAllTimers();
@@ -1095,7 +1157,7 @@ describe("A2ChartBlock", () => {
       rerender(<A2UIBlock message={terminalEmptyChartMessage("stream-chart-stream", "tool-chart-stream")} />);
 
       expect(chartDataCounts()).toEqual([4]);
-      expect(screen.queryByTestId("a2ui-chart-skeleton")).toBeNull();
+      expect(screen.getByTestId("a2ui-echarts-surface").getAttribute("data-a2ui-chart-placeholder")).toBe("false");
       expect(screen.queryByText("暂无图表数据")).toBeNull();
     } finally {
       restoreRaf();
@@ -1191,19 +1253,19 @@ describe("A2ChartBlock", () => {
       );
 
       expect(chartDataCounts()).toEqual([1]);
-      expect(screen.queryByTestId("a2ui-chart-skeleton")).toBeNull();
+      expect(screen.getByTestId("a2ui-echarts-surface").getAttribute("data-a2ui-chart-placeholder")).toBe("false");
 
       rerender(<A2UIBlock message={withDebugId(streamingChartMessage(secondPayload), "chunk-2")} />);
 
       expect(chartDataCounts()).toEqual([1]);
-      expect(screen.queryByTestId("a2ui-chart-skeleton")).toBeNull();
+      expect(screen.getByTestId("a2ui-echarts-surface").getAttribute("data-a2ui-chart-placeholder")).toBe("false");
 
       act(() => {
         vi.advanceTimersByTime(500);
       });
 
       expect(chartDataCounts()).toEqual([2]);
-      expect(screen.queryByTestId("a2ui-chart-skeleton")).toBeNull();
+      expect(screen.getByTestId("a2ui-echarts-surface").getAttribute("data-a2ui-chart-placeholder")).toBe("false");
     } finally {
       restoreRaf();
       vi.clearAllTimers();

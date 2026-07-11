@@ -30,7 +30,7 @@ describe("MessageThinking", () => {
     render(<MessageThinking message={thinking("completed", "分析完成", { duration_ms: 2400 })} />);
 
     expect(screen.getByRole("button", { name: /已完成思考/ }).getAttribute("aria-expanded")).toBe("false");
-    expect(screen.getByText("思考了 2.4 秒")).not.toBeNull();
+    expect(screen.getByText("思考了 2秒")).not.toBeNull();
     expect(screen.queryByText("分析完成")).toBeNull();
   });
 
@@ -39,10 +39,10 @@ describe("MessageThinking", () => {
       <MessageThinking message={thinking("completed", "分析完成", { duration_ms: 860 })} />,
     );
 
-    expect(screen.getByText("思考了 860 毫秒")).not.toBeNull();
+    expect(screen.getByText("思考了 860毫秒")).not.toBeNull();
 
     rerender(<MessageThinking message={thinking("completed", "分析完成", { duration_ms: 1000 })} />);
-    expect(screen.getByText("思考了 1000 毫秒")).not.toBeNull();
+    expect(screen.getByText("思考了 1000毫秒")).not.toBeNull();
   });
 
   it("updates the elapsed time while reasoning and freezes the persisted duration on completion", () => {
@@ -50,15 +50,15 @@ describe("MessageThinking", () => {
     vi.setSystemTime(new Date("2026-06-17T10:00:00Z"));
     const { rerender, unmount } = render(<MessageThinking message={thinking("running", "正在分析代码路径")} />);
 
-    expect(screen.getByText("思考了 0 毫秒")).not.toBeNull();
+    expect(screen.getByText("思考了 0毫秒")).not.toBeNull();
     act(() => vi.advanceTimersByTime(2400));
-    expect(screen.getByText("思考了 2.4 秒")).not.toBeNull();
+    expect(screen.getByText("思考了 2秒")).not.toBeNull();
 
     rerender(
       <MessageThinking message={thinking("completed", "正在分析代码路径", { duration_ms: 2400 })} />,
     );
     act(() => vi.advanceTimersByTime(1000));
-    expect(screen.getByText("思考了 2.4 秒")).not.toBeNull();
+    expect(screen.getByText("思考了 2秒")).not.toBeNull();
 
     unmount();
     vi.useRealTimers();

@@ -36,6 +36,7 @@ import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import type { AgentContextItem, AgentFileAttachment, TurnError } from "@/types/protocol";
 
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
+import { formatConversationDuration } from "./duration";
 import { MessageGhostFooter, type MessageGhostFooterData } from "./MessageGhostFooter";
 import { MarkdownImage } from "./MarkdownImage";
 import { SelectionToolbar } from "./SelectionToolbar";
@@ -903,17 +904,7 @@ export function ProcessingDuration({
 }
 
 export function formatProcessingDuration(durationMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) {
-    return `${hours}h${padDurationUnit(minutes)}m${padDurationUnit(seconds)}s`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m${padDurationUnit(seconds)}s`;
-  }
-  return `${seconds}s`;
+  return formatConversationDuration(durationMs);
 }
 
 export function MessageActionFooter({
@@ -1019,10 +1010,6 @@ function timestampMs(value: string | undefined): number | null {
   }
   const timestamp = new Date(value).getTime();
   return Number.isFinite(timestamp) ? timestamp : null;
-}
-
-function padDurationUnit(value: number): string {
-  return value.toString().padStart(2, "0");
 }
 
 function contextItemsFromPayload(payload: Record<string, unknown>): AgentContextItem[] {

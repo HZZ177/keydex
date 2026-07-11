@@ -128,7 +128,12 @@ export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
               motionKey={`chart:panel:${index}:${panel.type}`}
               motionKind="chart-panel"
             >
-              {panel.chart ? renderChart(panel.chart, animateInitialCharts, animateChartUpdates) : <ChartSkeleton type={panel.type} />}
+              {renderChart(
+                panel.chart ?? placeholderChartSpec(panel.type),
+                animateInitialCharts,
+                animateChartUpdates,
+                !panel.chart,
+              )}
               {caption ? (
                 <A2UIMotionItem
                   as="div"
@@ -143,7 +148,12 @@ export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
           );
         })
       ) : isStreaming ? (
-        <ChartSkeleton type={skeletonType} />
+        renderChart(
+          placeholderChartSpec(skeletonType),
+          animateInitialCharts,
+          animateChartUpdates,
+          true,
+        )
       ) : (
         <div className={styles.empty}>暂无图表数据</div>
       )}
@@ -162,18 +172,28 @@ function renderChart(
   chart: ChartSpec,
   animateInitial: boolean,
   animateUpdates: boolean,
+  placeholder = false,
 ) {
-  return <EChartsChart chart={chart} animateInitial={animateInitial} animateUpdates={animateUpdates} />;
+  return (
+    <EChartsChart
+      chart={chart}
+      animateInitial={animateInitial}
+      animateUpdates={animateUpdates}
+      placeholder={placeholder}
+    />
+  );
 }
 
 function EChartsChart({
   chart,
   animateInitial,
   animateUpdates,
+  placeholder,
 }: {
   chart: ChartSpec;
   animateInitial: boolean;
   animateUpdates: boolean;
+  placeholder: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<EChartsType | null>(null);
@@ -182,10 +202,18 @@ function EChartsChart({
   const lastOptionSignatureRef = useRef("");
   const [selectedItems, setSelectedItems] = useState<SelectedChartItems>([]);
   const [surfaceWidth, setSurfaceWidth] = useState(ECHARTS_FALLBACK_WIDTH);
-  const effectiveSelectedItems = isSelectableChart(chart.type) ? selectedItems : [];
-  const chartSignature = useMemo(() => chartOptionSignature(chart), [chart]);
+  const effectiveSelectedItems = !placeholder && isSelectableChart(chart.type) ? selectedItems : [];
+  const chartSignature = useMemo(
+    () => placeholder ? `placeholder:${chart.type}` : chartOptionSignature(chart),
+    [chart, placeholder],
+  );
   const selectedItemSignature = useMemo(() => selectedItemsSignature(effectiveSelectedItems), [effectiveSelectedItems]);
-  const option = useMemo(() => buildEChartsOption(chart, effectiveSelectedItems, surfaceWidth), [chart, effectiveSelectedItems, surfaceWidth]);
+  const option = useMemo(
+    () => placeholder
+      ? buildPlaceholderEChartsOption(chart.type)
+      : buildEChartsOption(chart, effectiveSelectedItems, surfaceWidth),
+    [chart, effectiveSelectedItems, placeholder, surfaceWidth],
+  );
   const optionSignature = useMemo(() => `${chartSignature}|selected:${selectedItemSignature}|width:${surfaceWidth}`, [chartSignature, selectedItemSignature, surfaceWidth]);
   const interactionMode = chartInteractionMode(chart.type);
 
@@ -231,7 +259,7 @@ function EChartsChart({
 
   useLayoutEffect(() => {
     const instance = chartRef.current;
-    if (!instance || !isSelectableChart(chart.type)) {
+    if (!instance || placeholder || !isSelectableChart(chart.type)) {
       return;
     }
     const handleClick = (params: unknown) => {
@@ -251,21 +279,23 @@ function EChartsChart({
     return () => {
       instance.off("click", handleClick);
     };
-  }, [chart.type]);
+  }, [chart.type, placeholder]);
 
   useLayoutEffect(() => {
     const instance = chartRef.current;
     if (!instance || lastOptionSignatureRef.current === optionSignature) {
       return;
     }
+    const leavingPlaceholder = lastOptionSignatureRef.current.startsWith("placeholder:") && !placeholder;
     const isInitialOption = !lastOptionSignatureRef.current;
-    const shouldAnimate = animateUpdates || (isInitialOption && animateInitial);
+    const shouldAnimate = !placeholder && (animateUpdates || (isInitialOption && animateInitial));
     if (shouldAnimate) {
       applyEChartsOption(
         instance,
         withStreamingEChartsAnimation(option),
         optionSignature,
         lastOptionSignatureRef,
+        leavingPlaceholder,
       );
       return;
     }
@@ -274,32 +304,33 @@ function EChartsChart({
       withoutEChartsAnimation(option),
       optionSignature,
       lastOptionSignatureRef,
-      true,
+      placeholder,
     );
-  }, [animateInitial, animateUpdates, option, optionSignature]);
+  }, [animateInitial, animateUpdates, option, optionSignature, placeholder]);
 
   return (
     <div
       ref={containerRef}
-      className={styles.echartsSurface}
+      className={`${styles.echartsSurface}${placeholder ? ` ${styles.placeholderSurface}` : ""}`}
       data-a2ui-chart-category-count={chart.categories.length}
-      data-a2ui-chart-animation={animateUpdates ? "enabled" : "settled"}
-      data-a2ui-chart-data-count={chartDataCount(chart)}
+      data-a2ui-chart-animation={!placeholder && animateUpdates ? "enabled" : "settled"}
+      data-a2ui-chart-data-count={placeholder ? 0 : chartDataCount(chart)}
       data-a2ui-chart-engine="echarts"
       data-a2ui-chart-format={chart.valueFormat}
-      data-a2ui-chart-interactions={interactionMode}
+      data-a2ui-chart-interactions={placeholder ? "none" : interactionMode}
       data-a2ui-chart-labels={chart.showLabels}
       data-a2ui-chart-mode={chart.type === "column" ? chart.mode : ""}
-      data-a2ui-chart-paced-commit={animateUpdates ? "true" : "false"}
+      data-a2ui-chart-paced-commit={!placeholder && animateUpdates ? "true" : "false"}
+      data-a2ui-chart-placeholder={placeholder ? "true" : "false"}
       data-a2ui-chart-renderer={chartRenderer(chart.type)}
       data-a2ui-chart-stream-adapter="setOption-diff"
-      data-a2ui-chart-tooltip={isAxisInteractionChart(chart.type) ? "axis" : "item"}
+      data-a2ui-chart-tooltip={placeholder ? "none" : isAxisInteractionChart(chart.type) ? "axis" : "item"}
       data-a2ui-chart-unit={chart.unit}
       data-a2ui-chart-zoom={chart.zoom ? "true" : "false"}
       data-chart-type={chart.type}
       data-testid="a2ui-echarts-surface"
       role="img"
-      aria-label={chart.title || `${chart.type} chart`}
+      aria-label={placeholder ? `${chartTypeLabel(chart.type)}生成中` : chart.title || `${chart.type} chart`}
       style={{ minHeight: height }}
     />
   );
@@ -310,15 +341,15 @@ function applyEChartsOption(
   option: EChartsOption,
   signature: string,
   lastOptionSignatureRef: MutableRefObject<string>,
-  force = false,
+  replace = false,
 ) {
-  if (!force && lastOptionSignatureRef.current === signature) {
+  if (lastOptionSignatureRef.current === signature) {
     return;
   }
   lastOptionSignatureRef.current = signature;
   instance.setOption(option, {
     lazyUpdate: false,
-    notMerge: false,
+    notMerge: replace,
   });
 }
 
@@ -444,6 +475,188 @@ function buildEChartsOption(chart: ChartSpec, selectedItems: SelectedChartItems 
     return buildSankeyOption(chart, layoutWidth);
   }
   return buildCartesianOption(chart, selectedItems);
+}
+
+function buildPlaceholderEChartsOption(type: ChartType): EChartsOption {
+  const palette = placeholderPalette();
+  const base: EChartsOption = {
+    animation: false,
+    aria: { enabled: false },
+    color: [palette.stroke, palette.fill],
+    tooltip: { show: false },
+  };
+  if (type === "pie") {
+    return {
+      ...base,
+      series: [
+        {
+          type: "pie",
+          silent: true,
+          radius: ["43%", "68%"],
+          center: ["50%", "48%"],
+          label: { show: false },
+          labelLine: { show: false },
+          data: [
+            { value: 34, itemStyle: { color: palette.stroke } },
+            { value: 26, itemStyle: { color: palette.secondary } },
+            { value: 22, itemStyle: { color: palette.fill } },
+            { value: 18, itemStyle: { color: palette.tertiary } },
+          ],
+          emphasis: { disabled: true },
+        } as SeriesOption,
+      ],
+    };
+  }
+  if (type === "sankey") {
+    return {
+      ...base,
+      series: [
+        {
+          type: "sankey",
+          silent: true,
+          data: [
+            { name: "source-a", itemStyle: { color: palette.stroke } },
+            { name: "source-b", itemStyle: { color: palette.secondary } },
+            { name: "middle", itemStyle: { color: palette.stroke } },
+            { name: "target-a", itemStyle: { color: palette.secondary } },
+            { name: "target-b", itemStyle: { color: palette.stroke } },
+          ],
+          links: [
+            { source: "source-a", target: "middle", value: 7 },
+            { source: "source-b", target: "middle", value: 4 },
+            { source: "middle", target: "target-a", value: 6 },
+            { source: "middle", target: "target-b", value: 5 },
+          ],
+          label: { show: false },
+          emphasis: { disabled: true },
+          lineStyle: {
+            color: "gradient",
+            curveness: 0.5,
+            opacity: 0.28,
+          },
+          nodeAlign: "justify",
+          nodeGap: 20,
+          nodeWidth: 12,
+          top: 38,
+          right: 42,
+          bottom: 38,
+          left: 42,
+        } as SeriesOption,
+      ],
+    };
+  }
+
+  const isTrend = type === "trend";
+  const values = isTrend ? [28, 43, 37, 58, 51, 72] : [38, 64, 49, 78, 57];
+  return {
+    ...base,
+    grid: {
+      bottom: 28,
+      containLabel: false,
+      left: 38,
+      right: 18,
+      top: 24,
+    },
+    xAxis: {
+      type: "category",
+      boundaryGap: !isTrend,
+      data: values.map((_, index) => `placeholder-${index}`),
+      axisLabel: { show: false },
+      axisLine: { lineStyle: { color: palette.stroke } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: "value",
+      min: 0,
+      max: 90,
+      axisLabel: { show: false },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: palette.grid, type: "dashed" } },
+    },
+    series: [
+      isTrend
+        ? {
+            type: "line",
+            silent: true,
+            data: values,
+            smooth: true,
+            showSymbol: false,
+            emphasis: { disabled: true },
+            lineStyle: { color: palette.stroke, width: 3 },
+            areaStyle: { color: palette.fill, opacity: 0.32 },
+          } as SeriesOption
+        : {
+            type: "bar",
+            silent: true,
+            data: values,
+            barMaxWidth: 34,
+            emphasis: { disabled: true },
+            itemStyle: {
+              color: palette.fill,
+              borderColor: palette.stroke,
+              borderWidth: 1,
+              borderRadius: [5, 5, 2, 2],
+            },
+          } as SeriesOption,
+    ],
+  };
+}
+
+function placeholderPalette() {
+  const dark = typeof document !== "undefined" && document.documentElement.dataset.theme === "dark";
+  return dark
+    ? {
+        fill: "#2a2a2a",
+        grid: "rgba(133, 133, 133, 0.15)",
+        secondary: "#333333",
+        stroke: "#444444",
+        tertiary: "#242424",
+      }
+    : {
+        fill: "#e2e2e2",
+        grid: "rgba(122, 122, 122, 0.14)",
+        secondary: "#dddddd",
+        stroke: "#c9c9c9",
+        tertiary: "#ececec",
+      };
+}
+
+function placeholderChartSpec(type: ChartType): ChartSpec {
+  return {
+    type,
+    title: "",
+    seriesLabel: "",
+    unit: "",
+    precision: null,
+    prefix: "",
+    suffix: "",
+    valueFormat: "number",
+    mode: "grouped",
+    sort: "none",
+    showLabels: "never",
+    showPercent: false,
+    smooth: true,
+    zoom: false,
+    categories: [],
+    series: [],
+    points: [],
+    nodes: [],
+    links: [],
+  };
+}
+
+function chartTypeLabel(type: ChartType): string {
+  if (type === "trend") {
+    return "趋势图";
+  }
+  if (type === "pie") {
+    return "饼图";
+  }
+  if (type === "sankey") {
+    return "桑基图";
+  }
+  return "柱状图";
 }
 
 function buildCartesianOption(chart: ChartSpec, selectedItems: SelectedChartItems): EChartsOption {
@@ -1138,81 +1351,6 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
-}
-
-function ChartSkeleton({ type }: { type: ChartType }) {
-  if (type === "trend") {
-    return (
-      <div
-        className={styles.skeleton}
-        data-chart-skeleton-type="trend"
-        data-testid="a2ui-chart-skeleton"
-        aria-label="趋势图生成中"
-      >
-        <span
-          className={styles.skeletonTrend}
-          data-testid="a2ui-chart-skeleton-trend"
-          aria-hidden="true"
-        >
-          <span className={styles.skeletonTrendSegmentA} />
-          <span className={styles.skeletonTrendSegmentB} />
-          <span className={styles.skeletonTrendSegmentC} />
-          <span className={styles.skeletonTrendSegmentD} />
-        </span>
-      </div>
-    );
-  }
-  if (type === "pie") {
-    return (
-      <div
-        className={styles.skeleton}
-        data-chart-skeleton-type="pie"
-        data-testid="a2ui-chart-skeleton"
-        aria-label="饼图生成中"
-      >
-        <span className={styles.skeletonPie} data-testid="a2ui-chart-skeleton-pie" />
-        <span className={styles.skeletonList} aria-hidden="true">
-          <span className={styles.skeletonLine} />
-          <span className={styles.skeletonLine} />
-          <span className={styles.skeletonLine} />
-          <span className={styles.skeletonLine} />
-        </span>
-      </div>
-    );
-  }
-  if (type === "sankey") {
-    return (
-      <div
-        className={styles.skeleton}
-        data-chart-skeleton-type="sankey"
-        data-testid="a2ui-chart-skeleton"
-        aria-label="桑基图生成中"
-      >
-        <span
-          className={styles.skeletonSankey}
-          data-testid="a2ui-chart-skeleton-sankey"
-          aria-hidden="true"
-        >
-          <span className={styles.skeletonSankeyLine} />
-          <span className={styles.skeletonSankeyLine} />
-          <span className={styles.skeletonSankeyLine} />
-        </span>
-      </div>
-    );
-  }
-  return (
-    <div
-      className={styles.skeleton}
-      data-chart-skeleton-type={type}
-      data-testid="a2ui-chart-skeleton"
-      aria-label="柱状图生成中"
-    >
-      <span className={styles.skeletonBar} data-testid="a2ui-chart-skeleton-column" />
-      <span className={styles.skeletonBar} />
-      <span className={styles.skeletonBar} />
-      <span className={styles.skeletonBar} />
-    </div>
-  );
 }
 
 function isStreamingStatus(status: string): boolean {

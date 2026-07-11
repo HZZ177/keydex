@@ -4,6 +4,7 @@ import { type UIEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef,
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 
+import { formatConversationDuration } from "./duration";
 import styles from "./MessageThinking.module.css";
 import { useDeferredUnmount } from "./useDeferredUnmount";
 
@@ -19,7 +20,7 @@ export function MessageThinking({ message }: MessageThinkingProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [touched, setTouched] = useState(false);
   const durationMs = useThinkingDuration(message, running);
-  const duration = durationMs === null ? "" : `思考了 ${formatDuration(durationMs)}`;
+  const duration = durationMs === null ? "" : `思考了 ${formatConversationDuration(durationMs)}`;
   const title = useMemo(() => titleFromMessage(message, running, failed), [failed, message, running]);
   const content = useMemo(() => normalizeMessageContent(message.content), [message.content]);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -141,7 +142,7 @@ function useThinkingDuration(message: ConversationMessage, running: boolean): nu
       return undefined;
     }
     setNowMs(Date.now());
-    const interval = window.setInterval(() => setNowMs(Date.now()), 100);
+    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(interval);
   }, [message.id, persistedDurationMs, running, startMs]);
 
@@ -168,12 +169,4 @@ function durationFromPayload(payload: Record<string, unknown>): number | null {
 function timestampMs(value: string): number | null {
   const timestamp = new Date(value).getTime();
   return Number.isFinite(timestamp) ? timestamp : null;
-}
-
-function formatDuration(ms: number): string {
-  if (ms <= 1000) {
-    return `${Math.round(ms)} 毫秒`;
-  }
-  const seconds = ms / 1000;
-  return `${seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1)} 秒`;
 }

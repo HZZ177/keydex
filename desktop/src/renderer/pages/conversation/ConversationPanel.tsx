@@ -66,6 +66,7 @@ export function ConversationPanel({
       data-conversation-panel-variant={variant}
     >
       <MessageList
+        key={model.sessionId || "empty-session"}
         messages={model.messages}
         variant={variant}
         performanceProfile={performanceProfile}

@@ -88,226 +88,24 @@
   line-height: 1.6;
 }
 
-.skeleton {
-  display: grid;
-  min-height: 220px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-items: end;
-  gap: 12px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 12px 0;
+.placeholderSurface {
+  pointer-events: none;
+  animation: a2ui-chart-placeholder-breathe 1.8s ease-in-out infinite alternate;
 }
 
-.skeletonBar {
-  display: block;
-  min-height: 34px;
-  border-radius: 6px 6px 3px 3px;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--color-border-subtle) 64%, transparent),
-    color-mix(in srgb, var(--surface-muted) 70%, transparent),
-    color-mix(in srgb, var(--color-border-subtle) 64%, transparent)
-  );
-  background-size: 180% 100%;
-  animation: a2ui-chart-skeleton 1.2s ease-in-out infinite;
-}
+@keyframes a2ui-chart-placeholder-breathe {
+  from {
+    opacity: 0.62;
+  }
 
-.skeletonBar:nth-child(1) {
-  height: 46%;
-}
-
-.skeletonBar:nth-child(2) {
-  height: 72%;
-}
-
-.skeletonBar:nth-child(3) {
-  height: 58%;
-}
-
-.skeletonBar:nth-child(4) {
-  height: 84%;
-}
-
-.skeleton[data-chart-skeleton-type="trend"],
-.skeleton[data-chart-skeleton-type="sankey"] {
-  display: block;
-  padding: 14px 0 10px;
-}
-
-.skeletonTrend {
-  position: relative;
-  display: block;
-  width: 100%;
-  min-height: 196px;
-  overflow: hidden;
-  border-left: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
-  background:
-    repeating-linear-gradient(
-      to bottom,
-      transparent 0,
-      transparent 47px,
-      color-mix(in srgb, var(--color-border-subtle) 32%, transparent) 48px
-    );
-}
-
-.skeletonTrendSegmentA,
-.skeletonTrendSegmentB,
-.skeletonTrendSegmentC,
-.skeletonTrendSegmentD {
-  position: absolute;
-  display: block;
-  height: 8px;
-  transform-origin: left center;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--color-border-subtle) 66%, transparent),
-    color-mix(in srgb, var(--surface-muted) 78%, transparent),
-    color-mix(in srgb, var(--color-border-subtle) 66%, transparent)
-  );
-  background-size: 180% 100%;
-  animation: a2ui-chart-skeleton 1.2s ease-in-out infinite;
-}
-
-.skeletonTrendSegmentA {
-  left: 5%;
-  bottom: 31%;
-  width: 24%;
-  transform: rotate(-15deg);
-}
-
-.skeletonTrendSegmentB {
-  left: 28%;
-  bottom: 39%;
-  width: 21%;
-  transform: rotate(8deg);
-}
-
-.skeletonTrendSegmentC {
-  left: 48%;
-  bottom: 36%;
-  width: 24%;
-  transform: rotate(-20deg);
-}
-
-.skeletonTrendSegmentD {
-  left: 70%;
-  bottom: 49%;
-  width: 25%;
-  transform: rotate(-11deg);
-}
-
-.skeleton[data-chart-skeleton-type="pie"] {
-  grid-template-columns: minmax(140px, 0.75fr) minmax(150px, 1fr);
-  align-items: center;
-  gap: 28px;
-}
-
-.skeletonPie {
-  display: block;
-  width: min(150px, 72%);
-  aspect-ratio: 1;
-  justify-self: center;
-  border-radius: 999px;
-  background:
-    conic-gradient(
-      from 20deg,
-      color-mix(in srgb, var(--color-border-subtle) 70%, transparent),
-      color-mix(in srgb, var(--surface-muted) 74%, transparent),
-      color-mix(in srgb, var(--color-border-subtle) 62%, transparent),
-      color-mix(in srgb, var(--surface-muted) 70%, transparent)
-    );
-  -webkit-mask: radial-gradient(circle, transparent 0 39%, #000 41% 100%);
-  mask: radial-gradient(circle, transparent 0 39%, #000 41% 100%);
-  animation: a2ui-chart-skeleton 1.2s ease-in-out infinite;
-}
-
-.skeletonList {
-  display: grid;
-  gap: 10px;
-}
-
-.skeletonLine {
-  display: block;
-  height: 12px;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--color-border-subtle) 64%, transparent),
-    color-mix(in srgb, var(--surface-muted) 70%, transparent),
-    color-mix(in srgb, var(--color-border-subtle) 64%, transparent)
-  );
-  background-size: 180% 100%;
-  animation: a2ui-chart-skeleton 1.2s ease-in-out infinite;
-}
-
-.skeletonLine:nth-child(1) {
-  width: 78%;
-}
-
-.skeletonLine:nth-child(2) {
-  width: 92%;
-}
-
-.skeletonLine:nth-child(3) {
-  width: 68%;
-}
-
-.skeletonLine:nth-child(4) {
-  width: 84%;
-}
-
-.skeletonSankey {
-  display: grid;
-  width: min(520px, 68%);
-  min-height: 112px;
-  align-content: center;
-  gap: 12px;
-  margin: 0 auto;
-}
-
-.skeletonSankeyLine {
-  display: block;
-  height: 8px;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--color-border-subtle) 36%, transparent),
-    color-mix(in srgb, var(--surface-muted) 72%, transparent),
-    color-mix(in srgb, var(--color-border-subtle) 36%, transparent)
-  );
-  background-size: 180% 100%;
-  animation: a2ui-chart-skeleton 1.2s ease-in-out infinite;
-}
-
-.skeletonSankeyLine:nth-child(1) {
-  width: 72%;
-}
-
-.skeletonSankeyLine:nth-child(2) {
-  width: 92%;
-}
-
-.skeletonSankeyLine:nth-child(3) {
-  width: 58%;
-}
-
-@media (max-width: 560px) {
-  .skeleton[data-chart-skeleton-type="pie"] {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 14px;
+  to {
+    opacity: 0.9;
   }
 }
 
-@keyframes a2ui-chart-skeleton {
-  0% {
-    background-position: 100% 0;
-  }
-
-  100% {
-    background-position: -100% 0;
+@media (prefers-reduced-motion: reduce) {
+  .placeholderSurface {
+    animation: none;
+    opacity: 0.78;
   }
 }

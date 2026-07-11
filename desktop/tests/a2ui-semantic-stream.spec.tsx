@@ -123,6 +123,27 @@ describe("A2UI semantic stream isolation", () => {
       vi.useRealTimers();
     }
   });
+
+  it("does not start semantic playback from a created frame with stream evidence", () => {
+    const fields = [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "budget", label: "Budget", type: "number" },
+      { name: "owner", label: "Owner", type: "text" },
+    ];
+    const finalParsed = parseA2UIMessage(formFinalMessage(fields));
+    const createdParsed = {
+      ...finalParsed,
+      status: "created" as const,
+      debug: finalParsed.debug ? { ...finalParsed.debug, status: "created" as const } : null,
+    };
+
+    render(<SemanticProbe parsed={createdParsed} scopeKey="created-form" />);
+
+    const probe = screen.getByTestId("semantic-probe");
+    expect(probe.getAttribute("data-enabled")).toBe("false");
+    expect(probe.getAttribute("data-phase")).toBe("created");
+    expect(probe.getAttribute("data-visible")).toBe("3");
+  });
 });
 
 function SemanticProbe({ parsed, scopeKey }: { parsed: ReturnType<typeof parseA2UIMessage>; scopeKey: string }) {

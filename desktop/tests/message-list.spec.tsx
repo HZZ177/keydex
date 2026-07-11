@@ -1184,14 +1184,14 @@ describe("MessageList", () => {
 
     try {
       const duration = screen.getByTestId("turn-processing-time");
-      expect(duration.textContent).toBe("已处理 1m05s");
+      expect(duration.textContent).toBe("已处理 1分5秒");
       expect(duration.getAttribute("data-live")).toBe("true");
       expect(duration.closest('[role="listitem"]')?.textContent).toContain("正在处理");
 
       act(() => {
         vi.advanceTimersByTime(1_000);
       });
-      expect(duration.textContent).toBe("已处理 1m06s");
+      expect(duration.textContent).toBe("已处理 1分6秒");
     } finally {
       unmount();
       vi.useRealTimers();
@@ -1214,7 +1214,7 @@ describe("MessageList", () => {
     );
 
     try {
-      expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 12s");
+      expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 12秒");
       expect(screen.getByTestId("turn-processing-time").closest('[role="listitem"]')?.textContent).toContain(
         "读取文件",
       );
@@ -1234,7 +1234,7 @@ describe("MessageList", () => {
     const duration = screen.getByTestId("turn-processing-time");
     const footer = duration.closest('footer[data-placement="turn"]');
     const footerDetails = footer?.querySelector('[data-turn-footer-details="true"]');
-    expect(duration.textContent).toBe("已处理 1h02m03s");
+    expect(duration.textContent).toBe("已处理 1小时2分3秒");
     expect(duration.getAttribute("data-live")).toBe("false");
     expect(footer).not.toBeNull();
     expect(footer?.firstElementChild).toBe(duration);
@@ -1242,6 +1242,36 @@ describe("MessageList", () => {
     expect(footerDetails?.contains(duration)).toBe(false);
     expect(within(footerDetails as HTMLElement).getByRole("button", { name: "复制消息" })).not.toBeNull();
     expect(footerDetails?.querySelector("time")).not.toBeNull();
+  });
+
+  it("shows sub-second frozen turn durations in milliseconds", () => {
+    const assistant = {
+      ...message("m2", "assistant", "你好"),
+      payload: { turnDurationMs: 286 },
+    };
+    const { rerender } = render(<MessageList messages={[message("m1", "user", "你好"), assistant]} />);
+
+    expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 286毫秒");
+
+    rerender(
+      <MessageList
+        messages={[
+          message("m1", "user", "你好"),
+          { ...assistant, payload: { turnDurationMs: 3_700 } },
+        ]}
+      />,
+    );
+    expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 3秒");
+
+    rerender(
+      <MessageList
+        messages={[
+          message("m1", "user", "你好"),
+          { ...assistant, payload: { turnDurationMs: 93_784_000 } },
+        ]}
+      />,
+    );
+    expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 1天2小时3分4秒");
   });
 
   it("keeps the duration live until a waiting turn reaches a terminal state", () => {

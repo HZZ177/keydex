@@ -223,8 +223,7 @@ export function useA2UISemanticStream(
     runtime.inputRevision = frame.inputRevision;
 
     const liveFrame = isSemanticLiveFrame(currentParsed);
-    const replayableCreatedFrame = isReplayableSemanticCreatedFrame(currentParsed);
-    if (!settledSemanticStreamKeys.has(frame.streamKey) && (liveFrame || replayableCreatedFrame)) {
+    if (!settledSemanticStreamKeys.has(frame.streamKey) && liveFrame) {
       if (!runtime.playbackStarted) {
         runtime.playbackStarted = true;
         changed = true;
@@ -327,7 +326,7 @@ function createRuntimeState(
   adapter: A2UISemanticAdapter,
 ): RuntimeState {
   const playbackStarted = !settledSemanticStreamKeys.has(key)
-    && (isSemanticLiveFrame(parsed) || isReplayableSemanticCreatedFrame(parsed));
+    && isSemanticLiveFrame(parsed);
   const visibleKeys = playbackStarted && !parsed.historyHydrated
     ? snapshot.units.slice(0, initialVisibleUnits).map((unit) => unit.key)
     : snapshot.units.map((unit) => unit.key);
@@ -495,13 +494,6 @@ function isSemanticLiveFrame(parsed: ParsedA2UIMessage): boolean {
   }
   const status = normalizeStatus(parsed.status);
   return STREAMING_STATUSES.has(status) || isInteractiveWaitingFrameWithStreamEvidence(parsed);
-}
-
-function isReplayableSemanticCreatedFrame(parsed: ParsedA2UIMessage): boolean {
-  return !parsed.historyHydrated &&
-    Boolean(parsed.a2ui) &&
-    normalizeStatus(parsed.status) === "created" &&
-    hasRawStreamLifecycleEvidence(parsed);
 }
 
 function isInteractiveWaitingFrameWithStreamEvidence(parsed: ParsedA2UIMessage): boolean {

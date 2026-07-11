@@ -64,10 +64,9 @@ const BACKLOG_WARMUP_VISIBLE_THRESHOLD = 20;
 const BACKLOG_WARMUP_MAX_UNITS_PER_TICK = 6;
 const BACKLOG_MAX_UNITS_PER_TICK = 24;
 const STREAMING_STATUSES = new Set(["started", "streaming", "finished"]);
-const settledPlaybackKeys = new Set<string>();
 
 export function resetA2UIStreamPlayerPlaybackForTests(): void {
-  settledPlaybackKeys.clear();
+  // The player no longer keeps process-global playback state.
 }
 
 export function useA2UIStreamPlayer(
@@ -217,8 +216,7 @@ export function useA2UIStreamPlayer(
     runtime.inputRevision = frame.inputRevision;
 
     const liveStreamFrame = isLiveStreamFrame(currentParsed);
-    const replayableCreatedFrame = isReplayableStreamBackedCreatedFrame(currentParsed, frame.playerKey);
-    if (liveStreamFrame || replayableCreatedFrame) {
+    if (liveStreamFrame) {
       runtime.streamPlaybackStarted = true;
     }
     const streamPlaybackStarted = runtime.streamPlaybackStarted;
@@ -342,9 +340,8 @@ function createInitialPlayerState(
   const runtime = createRuntime(key, parsed.payload, sourceSignature);
   const status = normalizeStatus(parsed.status);
   const liveStreamFrame = isLiveStreamFrame(parsed);
-  const replayableCreatedFrame = isReplayableStreamBackedCreatedFrame(parsed, key);
   const totalElementCount = getTotalElementCount(parsed.payload);
-  const shouldPlay = shouldUseStreamPlayer(parsed, liveStreamFrame || replayableCreatedFrame, totalElementCount);
+  const shouldPlay = shouldUseStreamPlayer(parsed, liveStreamFrame, totalElementCount);
 
   if (!shouldPlay) {
     runtime.finalPayload = parsed.payload;
@@ -455,41 +452,6 @@ function isLiveStreamFrame(parsed: ParsedA2UIMessage): boolean {
   return (
     (!parsed.a2ui && STREAMING_STATUSES.has(normalizeStatus(parsed.status))) ||
     isInteractiveWaitingFrameWithStreamEvidence(parsed)
-  );
-}
-
-function isReplayableStreamBackedCreatedFrame(parsed: ParsedA2UIMessage, key: string): boolean {
-  if (
-    parsed.historyHydrated ||
-    settledPlaybackKeys.has(key) ||
-    !parsed.a2ui ||
-    normalizeStatus(parsed.status) !== "created"
-  ) {
-    return false;
-  }
-  return hasRawStreamLifecycleEvidence(parsed) || hasCreatedLifecycleEvidence(parsed);
-}
-
-function hasRawStreamLifecycleEvidence(parsed: ParsedA2UIMessage): boolean {
-  return Boolean(
-    parsed.debug?.rawEvents?.some((event) => {
-      const action = typeof event.action === "string" ? event.action : "";
-      return action === "a2ui_stream_start" ||
-        action === "a2ui_stream_chunk" ||
-        action === "a2ui_stream_finish" ||
-        action === "a2ui.stream.start" ||
-        action === "a2ui.stream.chunk" ||
-        action === "a2ui.stream.finish";
-    }),
-  );
-}
-
-function hasCreatedLifecycleEvidence(parsed: ParsedA2UIMessage): boolean {
-  return Boolean(
-    parsed.debug?.rawEvents?.some((event) => {
-      const action = typeof event.action === "string" ? event.action : "";
-      return action === "a2ui_created" || action === "a2ui.created";
-    }),
   );
 }
 
@@ -606,7 +568,6 @@ function finalizeRuntimePayload(runtime: PlayerRuntime): void {
   runtime.displaySourceSignature = runtime.sourceSignature;
   runtime.drainStartedAt = null;
   runtime.phase = "created";
-  settledPlaybackKeys.add(runtime.key);
 }
 
 function getPayloadElementCount(payload: Record<string, unknown>): number {
