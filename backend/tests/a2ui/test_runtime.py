@@ -100,6 +100,7 @@ async def test_a2ui_runtime_reuses_registered_stream_context(tmp_path) -> None:
         "chart",
         {
             "stream_id": "trace-1:a2ui:tool-call-1",
+            "stream_group_id": "trace-1:a2ui:retry-group-1",
             "tool_call_id": "tool-call-1",
             "render_key": "chart",
             "run_id": "run-1",
@@ -117,11 +118,12 @@ async def test_a2ui_runtime_reuses_registered_stream_context(tmp_path) -> None:
 
     assert result["stream_id"] == "trace-1:a2ui:tool-call-1"
     assert dispatcher.events[0]["payload"]["a2ui"]["stream_id"] == "trace-1:a2ui:tool-call-1"
+    assert dispatcher.events[0]["payload"]["stream_group_id"] == "trace-1:a2ui:retry-group-1"
     assert consume_a2ui_stream_context("chart", tool_call_id="tool-call-1") is None
 
 
 @pytest.mark.asyncio
-async def test_a2ui_runtime_consumes_queued_stream_context_when_tool_call_id_mismatches(tmp_path) -> None:
+async def test_a2ui_runtime_does_not_consume_stream_context_when_tool_call_id_mismatches(tmp_path) -> None:
     clear_a2ui_stream_context()
     repositories = _repositories(tmp_path)
     dispatcher = RecordingDispatcher()
@@ -146,13 +148,18 @@ async def test_a2ui_runtime_consumes_queued_stream_context_when_tool_call_id_mis
         )
     )
 
-    assert result["stream_id"] == "trace-1:a2ui:other-call"
+    assert result["stream_id"] == "trace-1:a2ui:tool-call-1"
     assert dispatcher.events[0]["payload"]["a2ui"]["tool_call_id"] == "tool-call-1"
-    assert consume_a2ui_stream_context("chart", tool_call_id="other-call") is None
+    assert consume_a2ui_stream_context("chart", tool_call_id="other-call") == {
+        "stream_id": "trace-1:a2ui:other-call",
+        "tool_call_id": "other-call",
+        "render_key": "chart",
+        "run_id": "run-1",
+    }
 
 
 @pytest.mark.asyncio
-async def test_a2ui_runtime_prefers_stream_context_with_matching_run_id(tmp_path) -> None:
+async def test_a2ui_runtime_does_not_fallback_to_run_id_when_tool_call_id_is_present(tmp_path) -> None:
     clear_a2ui_stream_context()
     repositories = _repositories(tmp_path)
     dispatcher = RecordingDispatcher()
@@ -186,7 +193,7 @@ async def test_a2ui_runtime_prefers_stream_context_with_matching_run_id(tmp_path
         )
     )
 
-    assert result["stream_id"] == "trace-1:a2ui:current-call"
+    assert result["stream_id"] == "trace-1:a2ui:missing-call"
     assert consume_a2ui_stream_context("chart", tool_call_id="older-call") == {
         "stream_id": "trace-1:a2ui:older-call",
         "tool_call_id": "older-call",

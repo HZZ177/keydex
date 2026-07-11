@@ -30,11 +30,8 @@ class A2UIStreamBridge:
     def collectors(self) -> list[ToolProgressCollector]:
         return [self.collector]
 
-    def finish_for_tool_call(self, tool_call_id: str, *, run_id: str = "") -> dict[str, Any] | None:
-        return self.collector.finish_for_tool_call(tool_call_id, run_id=run_id)
-
-    def finish_for_run_id(self, run_id: str) -> dict[str, Any] | None:
-        return self.collector.finish_for_run_id(run_id)
+    def finish_for_tool_call(self, tool_call_id: str) -> dict[str, Any] | None:
+        return self.collector.finish_for_tool_call(tool_call_id)
 
     def finish_for_model_end(self) -> list[dict[str, Any]]:
         return self.collector.finish_for_model_end()
@@ -46,13 +43,9 @@ class A2UIStreamBridge:
         self,
         tool_call_id: str,
         *,
-        run_id: str = "",
         error: str = "",
     ) -> dict[str, Any] | None:
-        return self.collector.fail_for_tool_call(tool_call_id, run_id=run_id, error=error)
-
-    def fail_for_run_id(self, run_id: str, *, error: str = "") -> dict[str, Any] | None:
-        return self.collector.fail_for_run_id(run_id, error=error)
+        return self.collector.fail_for_tool_call(tool_call_id, error=error)
 
 
 class A2UIStreamCollector:
@@ -63,9 +56,9 @@ class A2UIStreamCollector:
         self._seen_keys: set[str] = set()
         self._chunk_indexes: dict[str, int] = {}
         self._states_by_tool_call_id: dict[str, ToolCallChunkState] = {}
-        self._states_by_run_id: dict[str, ToolCallChunkState] = {}
         self._stream_states: dict[str, ToolCallChunkState] = {}
         self._source_to_stream_key: dict[str, str] = {}
+        self._stream_group_ids: dict[str, str] = {}
         self._finished_keys: set[str] = set()
         self._registered_keys: set[str] = set()
 
@@ -74,8 +67,6 @@ class A2UIStreamCollector:
             return None
         state = self._merge_stream_state(state)
         key = _stream_key(state)
-        if state.bound_run_id:
-            self._states_by_run_id[state.bound_run_id] = state
         if state.key:
             self._states_by_tool_call_id[state.key] = state
         if state.tool_call_id:
@@ -94,11 +85,7 @@ class A2UIStreamCollector:
                     trace_id=self.trace_id,
                 ),
                 tool_call_id=_payload_tool_call_id(state),
-                stream_group_id=resolve_a2ui_stream_id(
-                    render_key=state.name,
-                    tool_call_id=_stream_group_key(state),
-                    trace_id=self.trace_id,
-                ),
+                stream_group_id=self._stream_group_id(state),
                 chunk_index=chunk_index,
                 args_delta=state.last_args_delta,
                 args_text_length=len(state.args_text),
@@ -109,16 +96,8 @@ class A2UIStreamCollector:
             DomainEventType.A2UI_STREAM_STARTED if is_start else DomainEventType.A2UI_STREAM_CHUNK,
         )
 
-    def finish_for_tool_call(self, tool_call_id: str, *, run_id: str = "") -> dict[str, Any] | None:
+    def finish_for_tool_call(self, tool_call_id: str) -> dict[str, Any] | None:
         state = self._states_by_tool_call_id.get(tool_call_id)
-        if state is None:
-            return None
-        if run_id and not state.bound_run_id:
-            state.bound_run_id = run_id
-        return self._finish_for_created(state, finish_reason="tool_call_started")
-
-    def finish_for_run_id(self, run_id: str) -> dict[str, Any] | None:
-        state = self._states_by_run_id.get(run_id)
         if state is None:
             return None
         return self._finish_for_created(state, finish_reason="tool_call_started")
@@ -127,19 +106,9 @@ class A2UIStreamCollector:
         self,
         tool_call_id: str,
         *,
-        run_id: str = "",
         error: str = "",
     ) -> dict[str, Any] | None:
         state = self._states_by_tool_call_id.get(tool_call_id)
-        if state is None:
-            return None
-        if run_id and not state.bound_run_id:
-            state.bound_run_id = run_id
-            self._states_by_run_id[run_id] = state
-        return self._fail_state(state, error=error)
-
-    def fail_for_run_id(self, run_id: str, *, error: str = "") -> dict[str, Any] | None:
-        state = self._states_by_run_id.get(run_id)
         if state is None:
             return None
         return self._fail_state(state, error=error)
@@ -150,7 +119,7 @@ class A2UIStreamCollector:
             payload = self._finish_state(
                 state,
                 finish_reason="tool_args_completed",
-                register_context=False,
+                register_context=True,
             )
             if payload is not None:
                 payloads.append(payload)
@@ -214,11 +183,7 @@ class A2UIStreamCollector:
                     trace_id=self.trace_id,
                 ),
                 tool_call_id=_payload_tool_call_id(state),
-                stream_group_id=resolve_a2ui_stream_id(
-                    render_key=state.name,
-                    tool_call_id=_stream_group_key(state),
-                    trace_id=self.trace_id,
-                ),
+                stream_group_id=self._stream_group_id(state),
                 chunk_index=chunk_index,
                 args_delta="",
                 args_text_length=len(state.args_text),
@@ -247,11 +212,7 @@ class A2UIStreamCollector:
                     trace_id=self.trace_id,
                 ),
                 tool_call_id=_payload_tool_call_id(state),
-                stream_group_id=resolve_a2ui_stream_id(
-                    render_key=state.name,
-                    tool_call_id=_stream_group_key(state),
-                    trace_id=self.trace_id,
-                ),
+                stream_group_id=self._stream_group_id(state),
                 chunk_index=chunk_index,
                 args_delta="",
                 args_text_length=len(state.args_text),
@@ -288,11 +249,7 @@ class A2UIStreamCollector:
                     tool_call_id=_stream_key(state),
                     trace_id=self.trace_id,
                 ),
-                "stream_group_id": resolve_a2ui_stream_id(
-                    render_key=state.name,
-                    tool_call_id=_stream_group_key(state),
-                    trace_id=self.trace_id,
-                ),
+                "stream_group_id": self._stream_group_id(state),
                 "tool_call_id": tool_call_id,
                 "render_key": state.name,
                 "run_id": state.bound_run_id,
@@ -304,9 +261,9 @@ class A2UIStreamCollector:
         self._seen_keys.clear()
         self._chunk_indexes.clear()
         self._states_by_tool_call_id.clear()
-        self._states_by_run_id.clear()
         self._stream_states.clear()
         self._source_to_stream_key.clear()
+        self._stream_group_ids.clear()
         self._finished_keys.clear()
         self._registered_keys.clear()
 
@@ -314,6 +271,7 @@ class A2UIStreamCollector:
         self._seen_keys.discard(key)
         self._chunk_indexes.pop(key, None)
         self._stream_states.pop(key, None)
+        self._stream_group_ids.pop(key, None)
         self._finished_keys.discard(key)
         self._registered_keys.discard(key)
         for source_key, stream_key in list(self._source_to_stream_key.items()):
@@ -322,9 +280,6 @@ class A2UIStreamCollector:
         for tool_call_id, indexed_state in list(self._states_by_tool_call_id.items()):
             if indexed_state is state:
                 self._states_by_tool_call_id.pop(tool_call_id, None)
-        for run_id, indexed_state in list(self._states_by_run_id.items()):
-            if indexed_state is state:
-                self._states_by_run_id.pop(run_id, None)
 
     def _merge_stream_state(self, incoming: ToolCallChunkState) -> ToolCallChunkState:
         stream_key = self._resolve_stream_state_key(incoming)
@@ -354,7 +309,6 @@ class A2UIStreamCollector:
             state.name = incoming.name
         if incoming.bound_run_id:
             state.bound_run_id = incoming.bound_run_id
-            self._states_by_run_id[incoming.bound_run_id] = state
 
         delta = incoming.last_args_delta
         state.last_args_delta = delta
@@ -366,6 +320,19 @@ class A2UIStreamCollector:
             state.args = dict(incoming.args or _parse_complete_object(incoming.args_text))
 
         return state
+
+    def _stream_group_id(self, state: ToolCallChunkState) -> str:
+        key = _stream_key(state)
+        existing = self._stream_group_ids.get(key)
+        if existing:
+            return existing
+        group_id = resolve_a2ui_stream_id(
+            render_key=state.name,
+            tool_call_id=f"group:{_retry_slot(state)}",
+            trace_id=self.trace_id,
+        )
+        self._stream_group_ids[key] = group_id
+        return group_id
 
     def _resolve_stream_state_key(self, state: ToolCallChunkState) -> str:
         source_key = _stream_key(state)
@@ -394,8 +361,9 @@ def _stream_key(state: ToolCallChunkState) -> str:
     return state.key or state.tool_call_id
 
 
-def _stream_group_key(state: ToolCallChunkState) -> str:
-    return _stream_key(state)
+def _retry_slot(state: ToolCallChunkState) -> str:
+    index = state.index if state.index is not None else _stream_key(state)
+    return f"{state.name}:{index}"
 
 
 def _payload_tool_call_id(state: ToolCallChunkState) -> str:

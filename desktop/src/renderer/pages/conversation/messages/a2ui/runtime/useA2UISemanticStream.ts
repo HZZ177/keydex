@@ -534,17 +534,11 @@ function buildSemanticStreamKey(
   adapter: A2UISemanticAdapter,
   scopeKey = "",
 ): string {
-  const scopedIdentity = stringIdentity(scopeKey);
   const identity =
-    scopedIdentity ||
     stringIdentity(parsed.a2ui?.stream_id) ||
     stringIdentity(parsed.debug?.streamId) ||
-    stringIdentity(parsed.debug?.streamGroupId) ||
-    stringIdentity(parsed.a2ui?.tool_call_id) ||
-    stringIdentity(parsed.debug?.toolCallId) ||
-    stringIdentity(parsed.interactionId) ||
-    traceTurnIdentity(parsed) ||
-    adapter.renderKey;
+    stringIdentity(scopeKey) ||
+    "a2ui-missing-stream-id";
   return [identity, adapter.renderKey].filter(Boolean).join(":");
 }
 
@@ -569,12 +563,6 @@ export function buildSemanticInputRevision(
     stringIdentity(lastEvent?.timestamp),
     stringIdentity(parsed.debug?.updatedAt),
   ].join("|");
-}
-
-function traceTurnIdentity(parsed: ParsedA2UIMessage): string {
-  const traceId = stringIdentity(parsed.debug?.traceId);
-  const turnIndex = stringIdentity(parsed.debug?.turnIndex);
-  return [traceId, turnIndex].filter(Boolean).join(":");
 }
 
 function normalizeStatus(status: unknown): string {

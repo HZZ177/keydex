@@ -202,29 +202,33 @@ async def process_agent_events(
                 tool_start_times[run_id] = time.perf_counter()
                 tool_call_count += 1
                 mcp_metadata = _mcp_metadata_from_event(event=event, data=data)
+                if a2ui_stream_bridge.registry.is_a2ui_tool(name):
+                    await _finish_a2ui_streams_for_model_end(
+                        bridge=a2ui_stream_bridge,
+                        dispatcher=dispatcher,
+                        session_id=session_id,
+                        trace_id=trace_id,
+                        user_id=user_id,
+                        active_session_id=active_session_id,
+                        run_id=run_id,
+                        turn_index=turn_index,
+                    )
+                    logger.info(
+                        f"[AgentEvents] 工具开始 | session_id={session_id} | "
+                        f"turn_index={turn_index} | trace_id={trace_id} | "
+                        f"tool={name} | run_id={run_id}"
+                    )
+                    continue
                 tool_call_id = tool_chunk_pipeline.bind_tool_run(
                     run_id=run_id,
                     tool_name=name,
                     params=_make_json_serializable(data.get("input")),
                 )
-                await _finish_a2ui_stream_for_tool_start(
-                    bridge=a2ui_stream_bridge,
-                    dispatcher=dispatcher,
-                    tool_call_id=tool_call_id,
-                    run_id=run_id,
-                    session_id=session_id,
-                    trace_id=trace_id,
-                    user_id=user_id,
-                    active_session_id=active_session_id,
-                    turn_index=turn_index,
-                )
                 logger.info(
                     f"[AgentEvents] 工具开始 | session_id={session_id} | "
                     f"turn_index={turn_index} | trace_id={trace_id} | "
-                    f"tool={name} | run_id={run_id}"
+                    f"tool={name} | run_id={run_id} | tool_call_id={tool_call_id or '-'}"
                 )
-                if a2ui_stream_bridge.registry.is_a2ui_tool(name):
-                    continue
                 await dispatcher.emit_event(
                     event_type=DomainEventType.LLM_TOOL_STARTED.value,
                     source="langchain_event_handler",
@@ -255,10 +259,7 @@ async def process_agent_events(
                 resolved_tool_name = name or _tool_name_from_output(output)
                 if a2ui_stream_bridge.registry.is_a2ui_tool(resolved_tool_name):
                     if _tool_output_is_error(output):
-                        tool_call_id = (
-                            tool_chunk_pipeline.tool_call_id_for_run(run_id)
-                            or _tool_call_id_from_output(output)
-                        )
+                        tool_call_id = _tool_call_id_from_output(output)
                         error_text = _stringify_tool_output(output)
                         logger.warning(
                             f"[AgentEvents] A2UI 工具返回错误 | session_id={session_id} | "
@@ -347,12 +348,13 @@ async def process_agent_events(
                 duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
                 error_text = str(data.get("error") or event.get("error") or "工具执行失败")
                 if a2ui_stream_bridge.registry.is_a2ui_tool(name):
+                    tool_call_id = str(data.get("tool_call_id") or "").strip()
                     logger.warning(
                         f"[AgentEvents] A2UI 工具异常 | session_id={session_id} | "
                         f"turn_index={turn_index} | trace_id={trace_id} | tool={name} | "
-                        f"run_id={run_id} | duration_ms={duration_ms} | error={error_text}"
+                        f"run_id={run_id} | tool_call_id={tool_call_id or '-'} | "
+                        f"duration_ms={duration_ms} | error={error_text}"
                     )
-                    tool_call_id = tool_chunk_pipeline.tool_call_id_for_run(run_id)
                     await _fail_a2ui_stream_for_tool_error(
                         bridge=a2ui_stream_bridge,
                         dispatcher=dispatcher,
@@ -578,37 +580,6 @@ async def _emit_a2ui_stream_payload(
     )
 
 
-async def _finish_a2ui_stream_for_tool_start(
-    *,
-    bridge: A2UIStreamBridge,
-    dispatcher: EventDispatcher,
-    tool_call_id: str,
-    run_id: str,
-    session_id: str,
-    trace_id: str,
-    user_id: str,
-    active_session_id: str,
-    turn_index: int,
-) -> None:
-    payload = None
-    if tool_call_id:
-        payload = bridge.finish_for_tool_call(tool_call_id, run_id=run_id)
-    if payload is None and run_id:
-        payload = bridge.finish_for_run_id(run_id)
-    if payload is None:
-        return
-    await _emit_a2ui_stream_payload(
-        dispatcher=dispatcher,
-        payload=payload,
-        session_id=session_id,
-        trace_id=trace_id,
-        user_id=user_id,
-        active_session_id=active_session_id,
-        run_id=run_id,
-        turn_index=turn_index,
-    )
-
-
 async def _fail_a2ui_stream_for_tool_error(
     *,
     bridge: A2UIStreamBridge,
@@ -622,12 +593,17 @@ async def _fail_a2ui_stream_for_tool_error(
     active_session_id: str,
     turn_index: int,
 ) -> None:
-    payload = None
-    if tool_call_id:
-        payload = bridge.fail_for_tool_call(tool_call_id, run_id=run_id, error=error)
-    if payload is None and run_id:
-        payload = bridge.fail_for_run_id(run_id, error=error)
+    payload = (
+        bridge.fail_for_tool_call(tool_call_id, error=error)
+        if tool_call_id
+        else None
+    )
     if payload is None:
+        logger.warning(
+            f"[AgentEvents] A2UI 工具失败未找到流式状态 | "
+            f"session_id={session_id} | trace_id={trace_id} | turn_index={turn_index} | "
+            f"tool_call_id={tool_call_id or '-'} | run_id={run_id or '-'} | error={error}"
+        )
         return
     await _emit_a2ui_stream_payload(
         dispatcher=dispatcher,

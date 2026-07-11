@@ -7,7 +7,6 @@ import type {
 
 import {
   applyA2UIEventToDebug,
-  buildA2UIDebugKey,
   createA2UIDebugState,
   extractA2UIEventSnapshot,
   mergeA2UIDebugSnapshot,
@@ -82,13 +81,17 @@ export function mergeA2UIEventIntoMessages(
 
   const now = options.now ?? Date.now();
   const snapshot = extractA2UIEventSnapshot(data);
-  const key = buildA2UIDebugKey(normalized, snapshot);
-  const directIndex = messages.findIndex((message) => isA2UIMessageMatch(message, key, snapshot));
-  const upgradeIndex = directIndex >= 0 ? -1 : findUpgradeableWeakA2UIMessageIndex(messages, snapshot);
-  const existingIndex = directIndex >= 0 ? directIndex : upgradeIndex;
+  const identity = resolveA2UIEventIdentity(normalized, snapshot);
+  if (!identity) {
+    return { action: normalized, created: false, debug: null, message: null, messages };
+  }
+  const key = identity.value;
+  const existingIndex = findA2UIMessageIndex(messages, identity);
+  if (existingIndex < 0 && normalized !== "a2ui_stream_start" && normalized !== "a2ui_created") {
+    return { action: normalized, created: false, debug: null, message: null, messages };
+  }
   const existingMessage = existingIndex >= 0 ? messages[existingIndex] : null;
-  const previousDebugId = existingMessage?.a2uiDebug?.id || key;
-  const runtimeKey = a2uiStreamIngressRuntimeKey(options.sessionId, previousDebugId);
+  const runtimeKey = a2uiStreamIngressRuntimeKey(options.sessionId, key);
   if (normalized === "a2ui_stream_start") {
     a2uiStreamIngressRuntimes.delete(runtimeKey);
   }
@@ -125,8 +128,6 @@ export function mergeA2UIEventIntoMessages(
         snapshot,
       })
     : cloneMessage(messages[index]);
-  const hadWeakIdentity = !hasStrongA2UIMessageIdentity(message);
-
   if (!message.a2uiDebug) {
     message.a2uiDebug = createA2UIDebugState(key, snapshot, now);
   } else {
@@ -161,9 +162,7 @@ export function mergeA2UIEventIntoMessages(
       now,
     });
   }
-  if (hadWeakIdentity && hasStrongA2UISnapshotIdentity(snapshot)) {
-    message.a2uiDebug.id = key;
-  }
+  message.a2uiDebug.id = key;
   message.streaming = normalized === "a2ui_stream_start" || normalized === "a2ui_stream_chunk";
   message.timestamp = now;
   if (isA2UIObject(message.a2uiDebug.a2ui)) {
@@ -198,14 +197,16 @@ export function mergeA2UIEventIntoMessages(
       messages: nextMessages.filter((item) => item !== message),
     };
   }
-  const mergedMessages = removeDuplicateWeakA2UIPlaceholders(nextMessages, message, snapshot);
+  const resolvedMessages = normalized === "a2ui_created"
+    ? removeResolvedA2UIRetryFailures(nextMessages, message)
+    : nextMessages;
 
   return {
     action: normalized,
     created,
     debug: message.a2uiDebug,
     message,
-    messages: mergedMessages,
+    messages: resolvedMessages,
   };
 }
 
@@ -235,93 +236,68 @@ export function createA2UIMessage({
   };
 }
 
-function isA2UIMessageMatch(
-  message: AgentChatMessage,
-  key: string,
-  snapshot: ReturnType<typeof extractA2UIEventSnapshot>,
-): boolean {
-  const debug = message.a2uiDebug;
-  if (message.role !== "a2ui" || !debug) {
-    return false;
+interface A2UIEventIdentity {
+  kind: "stream" | "interaction";
+  value: string;
+}
+
+function resolveA2UIEventIdentity(
+  action: A2UIEventAction,
+  snapshot: A2UIEventSnapshot,
+): A2UIEventIdentity | null {
+  if (
+    action === "a2ui_stream_start" ||
+    action === "a2ui_stream_chunk" ||
+    action === "a2ui_stream_finish" ||
+    action === "a2ui_created" ||
+    action === "a2ui_waiting_input"
+  ) {
+    return snapshot.streamId ? { kind: "stream", value: snapshot.streamId } : null;
   }
-  return (
-    debug.id === key ||
-    Boolean(snapshot.streamGroupId && debug.streamGroupId === snapshot.streamGroupId) ||
-    Boolean(snapshot.streamId && debug.streamId === snapshot.streamId) ||
-    Boolean(snapshot.interactionId && debug.interactionId === snapshot.interactionId) ||
-    Boolean(snapshot.toolCallId && debug.toolCallId === snapshot.toolCallId)
-  );
+  if (snapshot.interactionId) {
+    return { kind: "interaction", value: snapshot.interactionId };
+  }
+  if (snapshot.streamId) {
+    return { kind: "stream", value: snapshot.streamId };
+  }
+  return null;
 }
 
-function findUpgradeableWeakA2UIMessageIndex(
+function findA2UIMessageIndex(
   messages: AgentChatMessage[],
-  snapshot: ReturnType<typeof extractA2UIEventSnapshot>,
+  identity: A2UIEventIdentity,
 ): number {
-  const indexes = messages
-    .map((message, index) => ({ index, message }))
-    .filter(({ message }) => isUpgradeableWeakA2UIMessage(message, snapshot))
-    .map(({ index }) => index);
-  return indexes.length === 1 ? indexes[0] : -1;
+  return messages.findIndex((message) => {
+    if (message.role !== "a2ui" || !message.a2uiDebug) {
+      return false;
+    }
+    if (identity.kind === "stream") {
+      return message.a2uiDebug.streamId === identity.value || message.a2ui?.stream_id === identity.value;
+    }
+    return message.a2uiDebug.interactionId === identity.value ||
+      message.a2ui?.interaction?.interaction_id === identity.value;
+  });
 }
 
-function removeDuplicateWeakA2UIPlaceholders(
+function removeResolvedA2UIRetryFailures(
   messages: AgentChatMessage[],
   current: AgentChatMessage,
-  snapshot: ReturnType<typeof extractA2UIEventSnapshot>,
 ): AgentChatMessage[] {
-  if (!hasStrongA2UISnapshotIdentity(snapshot)) {
+  const streamGroupId = current.a2uiDebug?.streamGroupId;
+  if (!streamGroupId) {
     return messages;
   }
-  return messages.filter((message) => message === current || !isUpgradeableWeakA2UIMessage(message, snapshot));
+  return messages.filter((message) => {
+    if (message === current) {
+      return true;
+    }
+    const debug = message.a2uiDebug;
+    return !debug || debug.streamGroupId !== streamGroupId || !isRetryableA2UIFailure(debug);
+  });
 }
 
-function isUpgradeableWeakA2UIMessage(
-  message: AgentChatMessage,
-  snapshot: ReturnType<typeof extractA2UIEventSnapshot>,
-): boolean {
-  const debug = message.a2uiDebug;
-  if (
-    message.role !== "a2ui" ||
-    !debug ||
-    !hasStrongA2UISnapshotIdentity(snapshot) ||
-    hasStrongA2UIMessageIdentity(message) ||
-    !isA2UIStreamLifecycleMessage(message)
-  ) {
-    return false;
-  }
-  const sameRenderKey = Boolean(debug.renderKey && snapshot.renderKey && debug.renderKey === snapshot.renderKey);
-  const sameTrace = Boolean(debug.traceId && snapshot.traceId && debug.traceId === snapshot.traceId);
-  const sameTurn = typeof debug.turnIndex === "number" &&
-    typeof snapshot.turnIndex === "number" &&
-    debug.turnIndex === snapshot.turnIndex;
-  return sameRenderKey && sameTrace && sameTurn;
-}
-
-function hasStrongA2UISnapshotIdentity(snapshot: ReturnType<typeof extractA2UIEventSnapshot>): boolean {
-  return Boolean(snapshot.streamGroupId || snapshot.streamId || snapshot.interactionId || snapshot.toolCallId);
-}
-
-function hasStrongA2UIMessageIdentity(message: AgentChatMessage): boolean {
-  return Boolean(
-    message.a2ui?.stream_id ||
-      message.a2uiDebug?.streamGroupId ||
-      message.a2ui?.interaction?.interaction_id ||
-      message.a2ui?.tool_call_id ||
-      message.a2uiDebug?.streamId ||
-      message.a2uiDebug?.interactionId ||
-      message.a2uiDebug?.toolCallId,
-  );
-}
-
-function isA2UIStreamLifecycleMessage(message: AgentChatMessage): boolean {
-  const debug = message.a2uiDebug;
-  return Boolean(
-    message.streaming ||
-      debug?.status === "started" ||
-      debug?.status === "streaming" ||
-      debug?.status === "finished" ||
-      debug?.rawEvents?.some((event) => event.action.startsWith("a2ui_stream_")),
-  );
+function isRetryableA2UIFailure(debug: A2UIDebugBlockState): boolean {
+  return debug.status === "failed" && debug.finishReason === "tool_error";
 }
 
 function isDiscardedA2UIStreamFinish(
@@ -354,7 +330,9 @@ function isDuplicateA2UIEvent(
 }
 
 function buildA2UIEventSemanticKey(action: A2UIEventAction, snapshot: A2UIEventSnapshot): string {
-  const identity = snapshot.streamId || snapshot.streamGroupId || snapshot.interactionId || snapshot.toolCallId;
+  const identity = action === "a2ui_submit_ack" || action === "a2ui_cancel_ack" || action === "a2ui_resume"
+    ? snapshot.interactionId
+    : snapshot.streamId;
   if (!identity) {
     return "";
   }
@@ -365,6 +343,13 @@ function buildA2UIEventSemanticKey(action: A2UIEventAction, snapshot: A2UIEventS
     identity,
   ].join("|");
   if (action === "a2ui_stream_start" || action === "a2ui_stream_chunk" || action === "a2ui_stream_finish") {
+    if (
+      action === "a2ui_stream_finish" &&
+      snapshot.streamStatus === "failed" &&
+      snapshot.finishReason === "tool_error"
+    ) {
+      return [action, scope, "failed", "tool_error"].join("|");
+    }
     return [
       action,
       scope,

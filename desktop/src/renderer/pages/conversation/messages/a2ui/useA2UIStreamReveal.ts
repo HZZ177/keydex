@@ -420,14 +420,9 @@ export function useA2UIStreamReveal({
 
 export function buildA2UIRevealResetKey(parsed: ParsedA2UIMessage): string {
   const streamIdentity =
-    stringIdentity(parsed.debug?.id) ||
-    stringIdentity(parsed.debug?.streamId) ||
     stringIdentity(parsed.a2ui?.stream_id) ||
-    stringIdentity(parsed.debug?.streamGroupId) ||
-    stringIdentity(parsed.debug?.toolCallId) ||
-    stringIdentity(parsed.a2ui?.tool_call_id) ||
-    stringIdentity(parsed.interactionId) ||
-    "a2ui";
+    stringIdentity(parsed.debug?.streamId) ||
+    "a2ui-missing-stream-id";
   return [
     streamIdentity,
     parsed.renderKey,

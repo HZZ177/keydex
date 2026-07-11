@@ -564,6 +564,7 @@ describe("A2ChartBlock", () => {
     const skeleton = screen.getByTestId("a2ui-chart-skeleton");
     expect(skeleton.getAttribute("data-chart-skeleton-type")).toBe("pie");
     expect(skeleton.getAttribute("aria-label")).toBe("饼图生成中");
+    expect(screen.getByTestId("a2ui-chart-skeleton-pie")).not.toBeNull();
     expect(screen.queryByTestId("a2ui-stream-preview")).toBeNull();
   });
 
@@ -583,7 +584,15 @@ describe("A2ChartBlock", () => {
       "pie",
       "trend",
     ]);
-    expect(screen.getAllByTestId("a2ui-chart-skeleton")).toHaveLength(3);
+    const skeletons = screen.getAllByTestId("a2ui-chart-skeleton");
+    expect(skeletons.map((skeleton) => skeleton.getAttribute("aria-label"))).toEqual([
+      "柱状图生成中",
+      "饼图生成中",
+      "趋势图生成中",
+    ]);
+    expect(screen.getByTestId("a2ui-chart-skeleton-column")).not.toBeNull();
+    expect(screen.getByTestId("a2ui-chart-skeleton-pie")).not.toBeNull();
+    expect(screen.getByTestId("a2ui-chart-skeleton-trend")).not.toBeNull();
     expect(screen.queryByText("暂无图表数据")).toBeNull();
   });
 
@@ -602,6 +611,7 @@ describe("A2ChartBlock", () => {
       "sankey",
     ]);
     expect(screen.getAllByTestId("a2ui-chart-skeleton")).toHaveLength(1);
+    expect(screen.getByTestId("a2ui-chart-skeleton-sankey")).not.toBeNull();
   });
 
   it("reveals streamed multi-chart payloads in parallel inside each chart", () => {
@@ -1201,107 +1211,99 @@ describe("A2ChartBlock", () => {
     }
   });
 
-  it("paces ECharts stream commits instead of applying every fast chart update", () => {
-    vi.useFakeTimers();
-    try {
-      const payloadWithCount = (count: number) => ({
-        title: "快速流式",
-        charts: [
-          {
-            type: "column",
-            title: "快速增长",
-            series: [
-              {
-                name: "数量",
-                items: Array.from({ length: count }, (_, index) => ({
-                  name: `项 ${index + 1}`,
-                  value: (index + 1) * 10,
-                })),
-              },
-            ],
-          },
-        ],
-      });
-      const { rerender } = render(<A2ChartBlock parsed={parsedChart(payloadWithCount(1), "waiting_created")} />);
-      const initialCalls = echartsMock.setOption.mock.calls.length;
+  it("applies each released stream frame immediately without a second chart timer", () => {
+    const payloadWithCount = (count: number) => ({
+      title: "快速流式",
+      charts: [
+        {
+          type: "column",
+          title: "快速增长",
+          series: [
+            {
+              name: "数量",
+              items: Array.from({ length: count }, (_, index) => ({
+                name: `项 ${index + 1}`,
+                value: (index + 1) * 10,
+              })),
+            },
+          ],
+        },
+      ],
+    });
+    const { rerender } = render(<A2ChartBlock parsed={parsedChart(payloadWithCount(1), "waiting_created")} />);
+    const initialCalls = echartsMock.setOption.mock.calls.length;
 
-      rerender(<A2ChartBlock parsed={parsedChart(payloadWithCount(2), "waiting_created")} />);
-      rerender(<A2ChartBlock parsed={parsedChart(payloadWithCount(3), "waiting_created")} />);
+    rerender(<A2ChartBlock parsed={parsedChart(payloadWithCount(2), "waiting_created")} />);
+    expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 1);
+    expect(lastOptionDataCount()).toBe(2);
 
-      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls);
-
-      act(() => {
-        vi.advanceTimersByTime(200);
-      });
-
-      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 1);
-      expect(lastOptionDataCount()).toBe(2);
-
-      act(() => {
-        vi.advanceTimersByTime(200);
-      });
-
-      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 2);
-      expect(lastOptionDataCount()).toBe(3);
-    } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
-    }
+    rerender(<A2ChartBlock parsed={parsedChart(payloadWithCount(3), "waiting_created")} />);
+    expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 2);
+    expect(lastOptionDataCount()).toBe(3);
+    expect(echartsMock.setOption.mock.calls.at(-1)?.[1]).toMatchObject({ lazyUpdate: false });
   });
 
-  it("collapses stale ECharts stream options when fast updates outpace chart commits", () => {
-    vi.useFakeTimers();
-    try {
-      const payloadWithCount = (count: number) => ({
-        title: "大数据流式",
-        charts: [
-          {
-            type: "trend",
-            title: "访问趋势",
-            series: [
-              {
-                name: "访问量",
-                items: Array.from({ length: count }, (_, index) => ({
-                  name: `点 ${index + 1}`,
-                  value: index + 1,
-                })),
-              },
-            ],
-          },
-        ],
-      });
-      const { rerender } = render(<A2ChartBlock parsed={parsedChart(payloadWithCount(1), "waiting_created")} />);
-      const initialCalls = echartsMock.setOption.mock.calls.length;
+  it("does not collapse player-released frames inside the ECharts adapter", () => {
+    const payloadWithCount = (count: number) => ({
+      title: "大数据流式",
+      charts: [
+        {
+          type: "trend",
+          title: "访问趋势",
+          series: [
+            {
+              name: "访问量",
+              items: Array.from({ length: count }, (_, index) => ({
+                name: `点 ${index + 1}`,
+                value: index + 1,
+              })),
+            },
+          ],
+        },
+      ],
+    });
+    const { rerender } = render(<A2ChartBlock parsed={parsedChart(payloadWithCount(1), "waiting_created")} />);
+    const initialCalls = echartsMock.setOption.mock.calls.length;
 
-      for (let count = 2; count <= 20; count += 1) {
-        rerender(<A2ChartBlock parsed={parsedChart(payloadWithCount(count), "waiting_created")} />);
-      }
-
-      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls);
-
-      act(() => {
-        vi.advanceTimersByTime(200);
-      });
-
-      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 1);
-      expect(lastOptionDataCount()).toBe(2);
-
-      act(() => {
-        vi.advanceTimersByTime(200);
-      });
-
-      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 2);
-      expect(lastOptionDataCount()).toBe(20);
-
-      act(() => {
-        vi.advanceTimersByTime(400);
-      });
-
-      expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 2);
-    } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
+    for (let count = 2; count <= 20; count += 1) {
+      rerender(<A2ChartBlock parsed={parsedChart(payloadWithCount(count), "waiting_created")} />);
     }
+
+    expect(echartsMock.setOption.mock.calls.length).toBe(initialCalls + 19);
+    expect(lastOptionDataCount()).toBe(20);
+  });
+
+  it("keeps large streaming trends on one unsampled animation pipeline", () => {
+    const payload = {
+      title: "Large streaming trend",
+      charts: [
+        {
+          type: "trend",
+          title: "Stable trend",
+          series: [
+            {
+              name: "Value",
+              items: Array.from({ length: 120 }, (_, index) => ({
+                name: `Point ${index + 1}`,
+                value: index + 1,
+              })),
+            },
+          ],
+        },
+      ],
+    };
+
+    render(<A2ChartBlock parsed={parsedChart(payload, "waiting_created")} />);
+
+    const option = lastSetOption();
+    const series = optionSeries(option)[0];
+    expect(series.sampling).toBeUndefined();
+    expect(option.animationDuration).toBe(170);
+    expect(option.animationDurationUpdate).toBe(170);
+    expect(series.animationDelay).toBe(0);
+    expect(series.animationDelayUpdate).toBe(0);
+    expect(series.animationDuration).toBe(170);
+    expect(series.animationDurationUpdate).toBe(170);
   });
 
   it("keeps zoomed streaming trend charts on the full generated range", () => {

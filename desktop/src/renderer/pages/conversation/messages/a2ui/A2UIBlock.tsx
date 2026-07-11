@@ -117,6 +117,9 @@ class A2UIBlockErrorBoundary extends Component<
 
 function A2UIBlockContent({ message, onSubmit, onCancel, debugInfoEnabled, children }: A2UIBlockProps) {
   const rawParsed = useMemo(() => parseA2UIMessage(message), [message]);
+  if (rawParsed.renderState.isFailed) {
+    return <A2UIFailedAttemptPlaceholder parsed={rawParsed} />;
+  }
   if (rawParsed.renderKey === "chart") {
     return (
       <A2UIChartRuntimeContent
@@ -140,6 +143,24 @@ function A2UIBlockContent({ message, onSubmit, onCancel, debugInfoEnabled, child
     >
       {children}
     </A2UIResolvedContent>
+  );
+}
+
+function A2UIFailedAttemptPlaceholder({ parsed }: { parsed: ParsedA2UIMessage }) {
+  return (
+    <div
+      className={styles.failedAttempt}
+      data-testid="a2ui-block"
+      data-render-key={parsed.renderKey}
+      data-mode={parsed.mode}
+      data-status={parsed.status}
+      data-lifecycle={parsed.renderState.lifecycle}
+      data-outcome={parsed.renderState.outcome}
+      data-presentation={parsed.renderState.presentation}
+      role="status"
+    >
+      <A2UIFailedAttemptLine renderKey={parsed.renderKey} />
+    </div>
   );
 }
 
@@ -306,26 +327,44 @@ function renderBuiltInContent(
 ): ReactNode {
   if (parsed.renderKey === "chart") {
     if (parsed.renderState.isFailed) {
-      return <A2UIInlineError message={parsed.parseError} />;
+      return <A2UIFailedAttemptLine renderKey={parsed.renderKey} />;
     }
     return <A2ChartBlock parsed={parsed} />;
   }
   if (parsed.renderKey === "choice") {
     if (parsed.renderState.isFailed) {
-      return <A2UIInlineError message={parsed.parseError} />;
+      return <A2UIFailedAttemptLine renderKey={parsed.renderKey} />;
     }
     return <A2ChoiceBlock message={message} parsed={parsed} onSubmit={onSubmit} onCancel={onCancel} />;
   }
   if (parsed.renderKey === "form") {
     if (parsed.renderState.isFailed) {
-      return <A2UIInlineError message={parsed.parseError} />;
+      return <A2UIFailedAttemptLine renderKey={parsed.renderKey} />;
     }
     return <A2FormBlock message={message} parsed={parsed} onSubmit={onSubmit} onCancel={onCancel} />;
   }
   if (parsed.renderState.isFailed) {
-    return <A2UIInlineError message={parsed.parseError} />;
+    return <A2UIFailedAttemptLine renderKey={parsed.renderKey} />;
   }
   return null;
+}
+
+function A2UIFailedAttemptLine({ renderKey }: { renderKey: string }) {
+  const subject = failedAttemptSubject(renderKey);
+  return <A2UIInlineError prefix={`${subject}参数错误，正在重新生成`} />;
+}
+
+function failedAttemptSubject(renderKey: string): string {
+  switch (renderKey) {
+    case "chart":
+      return "图表";
+    case "choice":
+      return "选项";
+    case "form":
+      return "表单";
+    default:
+      return "内容";
+  }
 }
 
 export function parseA2UIMessage(message: ConversationMessage): ParsedA2UIMessage {

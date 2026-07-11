@@ -7,6 +7,7 @@ type A2UIStreamPlayerPhase = "idle" | "previewing" | "waiting_created" | "create
 interface PlayerRuntime {
   displayPayload: Record<string, unknown>;
   displaySourceSignature: string;
+  drainStartedAt: number | null;
   finalPayload: Record<string, unknown> | null;
   firstChunkTime: number | null;
   inputRevision: string;
@@ -61,7 +62,7 @@ const SMALL_PAYLOAD_SLOW_REVEAL_THRESHOLD = 10;
 const BACKLOG_DRAIN_TARGET_MS = 2_000;
 const BACKLOG_WARMUP_VISIBLE_THRESHOLD = 20;
 const BACKLOG_WARMUP_MAX_UNITS_PER_TICK = 6;
-const BACKLOG_MAX_UNITS_PER_TICK = 32;
+const BACKLOG_MAX_UNITS_PER_TICK = 24;
 const STREAMING_STATUSES = new Set(["started", "streaming", "finished"]);
 const settledPlaybackKeys = new Set<string>();
 
@@ -142,6 +143,7 @@ export function useA2UIStreamPlayer(
     }
     const total = getTotalElementCount(runtime.latestPayload);
     if (total <= 0) {
+      runtime.drainStartedAt = null;
       if (runtime.finalPayload) {
         scheduleFinalize(enabled);
       } else if (runtime.displaySourceSignature !== runtime.sourceSignature) {
@@ -155,6 +157,7 @@ export function useA2UIStreamPlayer(
       return;
     }
     if (runtime.renderedElementCount >= total) {
+      runtime.drainStartedAt = null;
       if (runtime.finalPayload) {
         scheduleFinalize(enabled);
       } else if (runtime.displaySourceSignature !== runtime.sourceSignature) {
@@ -168,6 +171,9 @@ export function useA2UIStreamPlayer(
       return;
     }
 
+    if (runtime.drainStartedAt === null) {
+      runtime.drainStartedAt = nowMs();
+    }
     if (runtime.renderedElementCount === 0) {
       runtime.renderedElementCount = initialRenderedElementCount(runtime.latestPayload);
       updateDisplayPayload();
@@ -180,6 +186,9 @@ export function useA2UIStreamPlayer(
       runtime.timer = null;
       const latestTotal = getTotalElementCount(runtime.latestPayload);
       runtime.renderedElementCount = Math.min(runtime.renderedElementCount + step, latestTotal);
+      if (runtime.renderedElementCount >= latestTotal) {
+        runtime.drainStartedAt = null;
+      }
       updateDisplayPayload();
       if (runtime.renderedElementCount >= latestTotal && runtime.finalPayload) {
         scheduleFinalize(enabled);
@@ -229,6 +238,7 @@ export function useA2UIStreamPlayer(
 
     if (!shouldPlay) {
       cancelScheduled();
+      runtime.drainStartedAt = null;
       runtime.latestPayload = currentParsed.payload;
       runtime.finalPayload = currentParsed.payload;
       runtime.displayPayload = currentParsed.payload;
@@ -309,6 +319,7 @@ function createRuntime(key: string, payload: Record<string, unknown>, sourceSign
   return {
     displayPayload: payload,
     displaySourceSignature: sourceSignature,
+    drainStartedAt: null,
     finalPayload: null,
     firstChunkTime: null,
     inputRevision: "",
@@ -395,17 +406,11 @@ function createSnapshot(
 }
 
 export function buildA2UIStreamPlayerKey(parsed: ParsedA2UIMessage, scopeKey = ""): string {
-  const scopedIdentity = stringIdentity(scopeKey);
   const streamIdentity =
     stringIdentity(parsed.a2ui?.stream_id) ||
     stringIdentity(parsed.debug?.streamId) ||
-    stringIdentity(parsed.debug?.streamGroupId) ||
-    stringIdentity(parsed.a2ui?.tool_call_id) ||
-    stringIdentity(parsed.debug?.toolCallId) ||
-    stringIdentity(parsed.interactionId) ||
-    scopedIdentity ||
-    traceTurnIdentity(parsed) ||
-    "a2ui";
+    stringIdentity(scopeKey) ||
+    "a2ui-missing-stream-id";
   return [streamIdentity, parsed.renderKey].filter(Boolean).join(":");
 }
 
@@ -430,15 +435,6 @@ export function buildA2UIStreamInputRevision(
     stringIdentity(lastEvent?.timestamp),
     stringIdentity(parsed.debug?.updatedAt),
   ].join("|");
-}
-
-function traceTurnIdentity(parsed: ParsedA2UIMessage): string {
-  const traceId = stringIdentity(parsed.debug?.traceId);
-  const turnIndex = stringIdentity(parsed.debug?.turnIndex);
-  if (!traceId && !turnIndex) {
-    return "";
-  }
-  return [traceId, turnIndex].filter(Boolean).join(":");
 }
 
 function shouldUseStreamPlayer(
@@ -529,17 +525,39 @@ function calculateInterval(runtime: PlayerRuntime): number {
 
 function calculateElementStep(runtime: PlayerRuntime, intervalMs: number): number {
   const total = getTotalElementCount(runtime.latestPayload);
-  const remaining = total - runtime.renderedElementCount;
+  const drainElapsedMs = runtime.drainStartedAt === null
+    ? 0
+    : Math.max(0, nowMs() - runtime.drainStartedAt);
+  return calculateA2UIStreamElementStep(
+    total,
+    runtime.renderedElementCount,
+    intervalMs,
+    drainElapsedMs,
+  );
+}
+
+export function calculateA2UIStreamElementStep(
+  totalElementCount: number,
+  renderedElementCount: number,
+  intervalMs: number,
+  drainElapsedMs = 0,
+): number {
+  const total = Math.max(0, Math.floor(totalElementCount));
+  const rendered = Math.max(0, Math.floor(renderedElementCount));
+  const remaining = total - rendered;
   if (remaining <= 0) {
     return 0;
   }
   if (total <= SMALL_PAYLOAD_SLOW_REVEAL_THRESHOLD) {
     return 1;
   }
-  const targetTicks = Math.max(1, Math.ceil(BACKLOG_DRAIN_TARGET_MS / Math.max(1, intervalMs)));
-  const effectiveBacklog = Math.max(remaining, total - BACKLOG_WARMUP_VISIBLE_THRESHOLD);
-  const targetStep = Math.ceil(effectiveBacklog / targetTicks);
-  const maxUnitsPerTick = runtime.renderedElementCount < BACKLOG_WARMUP_VISIBLE_THRESHOLD
+  const remainingDrainMs = Math.max(
+    intervalMs,
+    BACKLOG_DRAIN_TARGET_MS - Math.max(0, drainElapsedMs),
+  );
+  const targetTicks = Math.max(1, Math.ceil(remainingDrainMs / Math.max(1, intervalMs)));
+  const targetStep = Math.ceil(remaining / targetTicks);
+  const maxUnitsPerTick = rendered < BACKLOG_WARMUP_VISIBLE_THRESHOLD
     ? BACKLOG_WARMUP_MAX_UNITS_PER_TICK
     : BACKLOG_MAX_UNITS_PER_TICK;
   return Math.max(1, Math.min(maxUnitsPerTick, targetStep, remaining));
@@ -586,6 +604,7 @@ function finalizeRuntimePayload(runtime: PlayerRuntime): void {
   runtime.renderedElementCount = getTotalElementCount(runtime.latestPayload);
   runtime.displayPayload = runtime.finalPayload;
   runtime.displaySourceSignature = runtime.sourceSignature;
+  runtime.drainStartedAt = null;
   runtime.phase = "created";
   settledPlaybackKeys.add(runtime.key);
 }

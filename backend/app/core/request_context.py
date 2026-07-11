@@ -214,19 +214,22 @@ def consume_a2ui_stream_context(
 
     normalized_tool_call_id = str(tool_call_id or "").strip()
     normalized_run_id = str(run_id or "").strip()
-    matched_index = 0
+    matched_index: int | None = None
     if normalized_tool_call_id:
         for index, item in enumerate(queue):
             if str((item or {}).get("tool_call_id") or "").strip() == normalized_tool_call_id:
                 matched_index = index
                 break
-        else:
-            matched_index = 0
-    if normalized_run_id:
+    elif normalized_run_id:
         for index, item in enumerate(queue):
             if str((item or {}).get("run_id") or "").strip() == normalized_run_id:
                 matched_index = index
                 break
+    else:
+        matched_index = 0
+
+    if matched_index is None:
+        return None
 
     value = dict(queue.pop(matched_index) or {})
     if queue:
@@ -259,8 +262,9 @@ def discard_a2ui_stream_context(
         item_tool_call_id = str((item or {}).get("tool_call_id") or "").strip()
         item_run_id = str((item or {}).get("run_id") or "").strip()
         matches = (
-            bool(normalized_tool_call_id and item_tool_call_id == normalized_tool_call_id)
-            or bool(normalized_run_id and item_run_id == normalized_run_id)
+            item_tool_call_id == normalized_tool_call_id
+            if normalized_tool_call_id
+            else item_run_id == normalized_run_id
         )
         if matches:
             removed += 1

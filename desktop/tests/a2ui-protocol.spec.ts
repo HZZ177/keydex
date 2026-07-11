@@ -153,7 +153,7 @@ describe("A2UI protocol utilities", () => {
     });
   });
 
-  it("upgrades a weak stream placeholder when the stable stream identity arrives", () => {
+  it("rejects stream lifecycle events without a stream id", () => {
     const cache = new A2UIStreamCache();
 
     const started = cache.apply("a2ui_stream_start", {
@@ -161,45 +161,11 @@ describe("A2UI protocol utilities", () => {
       turn_index: 5,
       render_key: "chart",
       stream: { status: "start", chunk_index: 0, args_delta: '{"title":"图表"', args_text_length: 13 },
-    }, {
-      idFactory: () => "msg-weak-start",
-      now: 4000,
-    });
-    const chunk = cache.apply("a2ui_stream_chunk", {
-      trace_id: "trace-weak",
-      turn_index: 5,
-      render_key: "chart",
-      stream_id: "trace-weak:a2ui:call-chart",
-      tool_call_id: "call-chart",
-      stream: {
-        status: "chunk",
-        chunk_index: 1,
-        args_delta: ',"charts":[{"type":"column"}]}',
-        args_text_length: 42,
-      },
-    }, {
-      idFactory: () => "msg-strong-chunk",
-      now: 4001,
     });
 
-    expect(started.created).toBe(true);
-    expect(chunk.created).toBe(false);
-    expect(chunk.messages).toHaveLength(1);
-    expect(chunk.message).toMatchObject({
-      id: "msg-weak-start",
-      role: "a2ui",
-      streaming: true,
-      a2uiDebug: {
-        id: "trace-weak:a2ui:call-chart",
-        streamId: "trace-weak:a2ui:call-chart",
-        toolCallId: "call-chart",
-        chunkCount: 1,
-      },
-    });
-    expect(chunk.message?.a2uiDebug?.rawEvents.map((event) => event.action)).toEqual([
-      "a2ui_stream_start",
-      "a2ui_stream_chunk",
-    ]);
+    expect(started.created).toBe(false);
+    expect(started.message).toBeNull();
+    expect(started.messages).toHaveLength(0);
   });
 
   it("keeps concurrent choice and form streams isolated in one turn", () => {
@@ -209,6 +175,7 @@ describe("A2UI protocol utilities", () => {
       trace_id: "trace-parallel",
       turn_index: 2,
       render_key: "form",
+      stream_id: "trace-parallel:a2ui:form-0",
       stream: {
         status: "start",
         chunk_index: 0,
@@ -223,6 +190,7 @@ describe("A2UI protocol utilities", () => {
       trace_id: "trace-parallel",
       turn_index: 2,
       render_key: "choice",
+      stream_id: "trace-parallel:a2ui:choice-1",
       stream: {
         status: "start",
         chunk_index: 0,
@@ -241,16 +209,17 @@ describe("A2UI protocol utilities", () => {
     expect(snapshot.map((message) => message.id).sort()).toEqual(["msg-choice", "msg-form"]);
   });
 
-  it("merges A2UI stream chunks by explicit stream group when stream id drifts", () => {
+  it("merges lifecycle events only by the same stream id", () => {
     const cache = new A2UIStreamCache();
     const groupId = "trace-drift:a2ui:model-run:0";
+    const streamId = "trace-drift:a2ui:model-run-a:0";
 
     const started = cache.apply("a2ui_stream_start", {
       trace_id: "trace-drift",
       turn_index: 2,
       render_key: "chart",
       stream_group_id: groupId,
-      stream_id: "trace-drift:a2ui:model-run-a:0",
+      stream_id: streamId,
       tool_call_id: "model-run-a:0",
       stream: {
         status: "start",
@@ -265,7 +234,7 @@ describe("A2UI protocol utilities", () => {
       turn_index: 2,
       render_key: "chart",
       stream_group_id: groupId,
-      stream_id: "trace-drift:a2ui:model-run-b:0",
+      stream_id: streamId,
       tool_call_id: "model-run-b:0",
       stream: {
         status: "chunk",
@@ -280,7 +249,7 @@ describe("A2UI protocol utilities", () => {
       turn_index: 2,
       render_key: "chart",
       stream_group_id: groupId,
-      stream_id: "trace-drift:a2ui:model-run-c:0",
+      stream_id: streamId,
       tool_call_id: "model-run-c:0",
       stream: {
         status: "finish",
@@ -295,7 +264,7 @@ describe("A2UI protocol utilities", () => {
     expect(finished.created).toBe(false);
     expect(finished.messages).toHaveLength(1);
     expect(finished.message?.a2uiDebug).toMatchObject({
-      id: "trace-drift:a2ui:model-run-a:0",
+      id: streamId,
       streamGroupId: groupId,
       status: "finished",
       chunkCount: 1,
@@ -415,6 +384,227 @@ describe("A2UI protocol utilities", () => {
     expect(snapshot[0]?.a2uiDebug?.status).toBe("failed");
     expect(snapshot[1]?.a2uiDebug?.streamId).toBe("trace-1:a2ui:call_retry");
     expect(snapshot[1]?.a2uiDebug?.status).toBe("started");
+  });
+
+  it("keeps consecutive retry errors until the same A2UI retry group succeeds", () => {
+    const cache = new A2UIStreamCache();
+    const traceId = "trace-retry";
+    const turnIndex = 3;
+    const failAttempt = (
+      renderKey: "chart" | "form",
+      callId: string,
+      error: string,
+      streamGroupId: string,
+      attemptTraceId = traceId,
+    ) => {
+      cache.apply("a2ui_stream_start", {
+        render_key: renderKey,
+        stream_id: `${attemptTraceId}:a2ui:${callId}`,
+        stream_group_id: streamGroupId,
+        tool_call_id: callId,
+        trace_id: attemptTraceId,
+        turn_index: turnIndex,
+        stream: {
+          status: "start",
+          args_text: "{",
+          args_text_length: 1,
+        },
+      });
+      cache.apply("a2ui_stream_finish", {
+        render_key: renderKey,
+        stream_id: `${attemptTraceId}:a2ui:${callId}`,
+        stream_group_id: streamGroupId,
+        tool_call_id: callId,
+        trace_id: attemptTraceId,
+        turn_index: turnIndex,
+        stream: {
+          status: "failed",
+          args_text: "{",
+          args_text_length: 1,
+          finish_reason: "tool_error",
+          error,
+        },
+      });
+    };
+
+    failAttempt("chart", "call-chart-1", "第一次参数错误", "chart-retry-group");
+    failAttempt("chart", "call-chart-2", "第二次参数错误", "chart-retry-group");
+    failAttempt("form", "call-form-1", "无关表单错误", "form-retry-group");
+    failAttempt("chart", "call-chart-other-trace", "其他调用链错误", "other-retry-group", "trace-other");
+    cache.apply("a2ui_stream_start", {
+      render_key: "chart",
+      stream_id: `${traceId}:a2ui:call-chart-3`,
+      stream_group_id: "chart-retry-group",
+      tool_call_id: "call-chart-3",
+      trace_id: traceId,
+      turn_index: turnIndex,
+      stream: {
+        status: "start",
+        args_text: '{"title":"成功图表"}',
+        args_text_length: 16,
+      },
+    });
+
+    const retrying = cache.snapshot();
+    expect(retrying).toHaveLength(5);
+    expect(retrying.map((message) => message.a2uiDebug?.status)).toEqual([
+      "failed",
+      "failed",
+      "failed",
+      "failed",
+      "started",
+    ]);
+    expect(retrying[0]?.a2uiDebug?.streamGroupId).toBe(retrying[1]?.a2uiDebug?.streamGroupId);
+    expect(retrying[4]?.a2uiDebug?.streamGroupId).toBe(retrying[0]?.a2uiDebug?.streamGroupId);
+    expect(retrying[2]?.a2uiDebug?.streamGroupId).not.toBe(retrying[0]?.a2uiDebug?.streamGroupId);
+    expect(retrying[3]?.a2uiDebug?.streamGroupId).not.toBe(retrying[0]?.a2uiDebug?.streamGroupId);
+
+    cache.apply("a2ui_created", {
+      render_key: "chart",
+      stream_id: `${traceId}:a2ui:call-chart-3`,
+      stream_group_id: "chart-retry-group",
+      tool_call_id: "call-chart-3",
+      trace_id: traceId,
+      turn_index: turnIndex,
+      a2ui: a2uiObject({
+        render_key: "chart",
+        mode: "render",
+        stream_id: `${traceId}:a2ui:call-chart-3`,
+        tool_call_id: "call-chart-3",
+        trace_id: traceId,
+        turn_index: turnIndex,
+        interaction: null,
+      }),
+    });
+
+    const completed = cache.snapshot();
+    expect(completed).toHaveLength(3);
+    expect(completed[0]?.a2uiDebug).toMatchObject({
+      renderKey: "form",
+      status: "failed",
+      error: "无关表单错误",
+    });
+    expect(completed[1]?.a2uiDebug).toMatchObject({
+      renderKey: "chart",
+      traceId: "trace-other",
+      status: "failed",
+      error: "其他调用链错误",
+    });
+    expect(completed[2]?.a2uiDebug).toMatchObject({
+      renderKey: "chart",
+      status: "created",
+    });
+  });
+
+  it("ignores a terminal event for an unknown stream id even when its group matches", () => {
+    const cache = new A2UIStreamCache();
+    const argsText = '{"title":"错误图表","charts2":[]}';
+    const scope = {
+      render_key: "chart",
+      trace_id: "trace-drifted-error",
+      turn_index: 5,
+    };
+
+    cache.apply("a2ui_stream_start", {
+      ...scope,
+      stream_id: "trace-drifted-error:a2ui:model-run:0",
+      stream_group_id: "shared-group",
+      stream: {
+        status: "start",
+        args_text: argsText,
+        args_text_length: argsText.length,
+      },
+    });
+    cache.apply("a2ui_stream_finish", {
+      ...scope,
+      stream_id: "trace-drifted-error:a2ui:model-run:0",
+      stream_group_id: "shared-group",
+      stream: {
+        status: "finish",
+        args_text: argsText,
+        args_text_length: argsText.length,
+        finish_reason: "tool_args_completed",
+      },
+    });
+    cache.apply("a2ui_stream_finish", {
+      ...scope,
+      stream_id: "trace-drifted-error:a2ui:tool-run",
+      stream_group_id: "shared-group",
+      stream: {
+        status: "failed",
+        args_text: argsText,
+        args_text_length: argsText.length,
+        finish_reason: "tool_error",
+        error: "$.charts: required field is missing",
+      },
+    });
+
+    const messages = cache.snapshot();
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.a2uiDebug).toMatchObject({
+      status: "finished",
+      streamId: "trace-drifted-error:a2ui:model-run:0",
+    });
+  });
+
+  it("changes the exact failed stream from a chart preview to an error state", () => {
+    const cache = new A2UIStreamCache();
+    const scope = {
+      render_key: "chart",
+      trace_id: "trace-tool-error",
+      turn_index: 6,
+    };
+    const argsText = '{"title":"错误桑基图","charts2":[]}';
+    const streamId = "trace-tool-error:a2ui:call-1";
+
+    cache.apply("a2ui_stream_start", {
+      ...scope,
+      stream_id: streamId,
+      stream: { status: "start", args_text: argsText, args_text_length: argsText.length },
+    });
+    cache.apply("a2ui_stream_finish", {
+      ...scope,
+      stream_id: streamId,
+      stream: {
+        status: "finish",
+        args_text: argsText,
+        args_text_length: argsText.length,
+        finish_reason: "tool_args_completed",
+      },
+    });
+    cache.apply("a2ui_stream_finish", {
+      ...scope,
+      stream_id: streamId,
+      stream: {
+        status: "failed",
+        args_text: argsText,
+        args_text_length: argsText.length,
+        finish_reason: "tool_error",
+        error: "$.charts[0].series[0].name: required field is missing",
+      },
+    });
+    const duplicatedFailure = cache.apply("a2ui_stream_finish", {
+      ...scope,
+      stream_id: streamId,
+      stream: {
+        status: "failed",
+        chunk_index: 99,
+        finish_reason: "tool_error",
+        error: "工具执行失败：$.charts[0].series[0].name: required field is missing",
+      },
+    });
+
+    const failed = cache.snapshot();
+    expect(duplicatedFailure.message).toBeNull();
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.a2uiDebug).toMatchObject({
+      status: "failed",
+      finishReason: "tool_error",
+      streamId,
+      renderKey: "chart",
+      error: "$.charts[0].series[0].name: required field is missing",
+    });
+    expect(failed[0]?.a2uiDebug?.rawEvents).toHaveLength(3);
   });
 
   it("keeps A2UI stream buffers monotonic from start delta and authoritative args text", () => {

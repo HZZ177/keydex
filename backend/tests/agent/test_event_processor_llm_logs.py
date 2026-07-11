@@ -528,7 +528,7 @@ async def test_process_agent_events_emits_tool_progress_for_streamed_apply_patch
     ]
     assert len(progress_events) == 1
     file_change = progress_events[0].payload["files"][0]
-    assert file_change["operation"] == "update"
+    assert file_change["operation"] == "move"
     assert file_change["change_type"] == "move"
     assert file_change["old_path"] == "docs/old.md"
     assert file_change["new_path"] == "docs/new.md"

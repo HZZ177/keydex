@@ -721,89 +721,18 @@ function mergeHydratedA2UIDebugMessages(
   });
 }
 
-function isSameA2UIIdentity(left: AgentChatMessage, right: AgentChatMessage): boolean {
-  const leftIds = a2UIIdentityValues(left);
-  if (!leftIds.size) {
-    return false;
-  }
-  for (const value of a2UIIdentityValues(right)) {
-    if (leftIds.has(value)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function findMatchingLocalA2UIMessage(
   hydrated: AgentChatMessage,
   localMessages: AgentChatMessage[],
 ): AgentChatMessage | undefined {
-  const exact = localMessages.find((candidate) => isSameA2UIIdentity(hydrated, candidate));
-  if (exact) {
-    return exact;
-  }
-  const weakMatches = localMessages.filter((candidate) => isUpgradeableWeakA2UIMessagePair(hydrated, candidate));
-  return weakMatches.length === 1 ? weakMatches[0] : undefined;
+  const streamId = a2UIStreamId(hydrated);
+  return streamId
+    ? localMessages.find((candidate) => a2UIStreamId(candidate) === streamId)
+    : undefined;
 }
 
-function a2UIIdentityValues(message: AgentChatMessage): Set<string> {
-  return new Set(
-    [
-      message.a2ui?.stream_id,
-      message.a2uiDebug?.streamGroupId,
-      message.a2uiDebug?.streamId,
-      message.a2ui?.interaction?.interaction_id,
-      message.a2uiDebug?.interactionId,
-      message.a2ui?.tool_call_id,
-      message.a2uiDebug?.toolCallId,
-    ]
-      .map((value) => stringValue(value))
-      .filter(Boolean),
-  );
-}
-
-function isUpgradeableWeakA2UIMessagePair(
-  strongMessage: AgentChatMessage,
-  weakMessage: AgentChatMessage,
-): boolean {
-  return (
-    hasStrongA2UIMessageIdentity(strongMessage) &&
-    !hasStrongA2UIMessageIdentity(weakMessage) &&
-    isA2UIStreamLifecycleMessage(weakMessage) &&
-    a2UIRenderKey(strongMessage) !== "" &&
-    a2UIRenderKey(strongMessage) === a2UIRenderKey(weakMessage) &&
-    a2UITraceId(strongMessage) !== "" &&
-    a2UITraceId(strongMessage) === a2UITraceId(weakMessage) &&
-    a2UITurnIndex(strongMessage) !== null &&
-    a2UITurnIndex(strongMessage) === a2UITurnIndex(weakMessage)
-  );
-}
-
-function hasStrongA2UIMessageIdentity(message: AgentChatMessage): boolean {
-  return a2UIIdentityValues(message).size > 0;
-}
-
-function isA2UIStreamLifecycleMessage(message: AgentChatMessage): boolean {
-  const debug = message.a2uiDebug;
-  return Boolean(
-    message.streaming ||
-      debug?.status === "started" ||
-      debug?.status === "streaming" ||
-      debug?.status === "finished" ||
-      debug?.rawEvents?.some((event) => stringValue(event.action).startsWith("a2ui_stream_")),
-  );
-}
-
-function a2UIRenderKey(message: AgentChatMessage): string {
-  return stringValue(message.a2ui?.render_key) || stringValue(message.a2uiDebug?.renderKey);
-}
-
-function a2UITraceId(message: AgentChatMessage): string {
-  return stringValue(message.a2ui?.trace_id) || stringValue(message.a2uiDebug?.traceId) || stringValue(message.traceId);
-}
-
-function a2UITurnIndex(message: AgentChatMessage): number | null {
-  return numberValue(message.a2ui?.turn_index) ?? numberValue(message.a2uiDebug?.turnIndex) ?? numberValue(message.turnIndex);
+function a2UIStreamId(message: AgentChatMessage): string {
+  return stringValue(message.a2ui?.stream_id) || stringValue(message.a2uiDebug?.streamId);
 }
 
 function shouldPreserveLiveA2UIPlayback(message: AgentChatMessage): boolean {
@@ -912,8 +841,8 @@ function isEquivalentHydratedMessage(candidate: AgentChatMessage, localMessage: 
     return false;
   }
   if (localMessage.role === "a2ui") {
-    return isSameA2UIIdentity(candidate, localMessage) ||
-      isUpgradeableWeakA2UIMessagePair(candidate, localMessage);
+    const localStreamId = a2UIStreamId(localMessage);
+    return Boolean(localStreamId && a2UIStreamId(candidate) === localStreamId);
   }
   if (localMessage.role === "user") {
     return (

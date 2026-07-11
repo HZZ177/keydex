@@ -28,6 +28,14 @@
   border-color: transparent;
 }
 
+.failedAttempt {
+  display: block;
+  width: fit-content;
+  max-width: min(760px, 100%);
+  min-width: 0;
+  margin: 6px 0 8px;
+}
+
 .header {
   position: absolute;
   z-index: 3;

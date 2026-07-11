@@ -20,8 +20,14 @@ export function A2UIStateLine({ children, tone = "neutral", testId = "a2ui-state
   );
 }
 
-export function A2UIInlineError({ message }: { message?: string }) {
-  const text = message ? `A2UI 渲染失败，等待重新生成：${message}` : "A2UI 渲染失败，等待重新生成";
+export function A2UIInlineError({
+  message,
+  prefix = "A2UI 渲染失败，等待重新生成",
+}: {
+  message?: string;
+  prefix?: string;
+}) {
+  const text = message ? `${prefix}：${message}` : prefix;
   return (
     <div className={styles.errorLine} data-testid="a2ui-error-line" title={message || undefined} role="status">
       <AlertTriangle size={14} aria-hidden="true" />

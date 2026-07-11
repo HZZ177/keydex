@@ -321,7 +321,11 @@ async def test_event_processor_keeps_one_a2ui_stream_when_model_run_id_drifts() 
         "trace-1:a2ui:model_run_a:0",
         "trace-1:a2ui:model_run_a:0",
     ]
-    assert [event.payload["stream_group_id"] for event in a2ui_events] == stream_ids
+    assert [event.payload["stream_group_id"] for event in a2ui_events] == [
+        "trace-1:a2ui:group:chart:0",
+        "trace-1:a2ui:group:chart:0",
+        "trace-1:a2ui:group:chart:0",
+    ]
     assert a2ui_events[1].payload["stream"]["parsed_payload"] == {
         "title": "产品功能使用趋势",
         "charts": [{"type": "line", "items": [{"name": "W1", "value": 420}]}],
@@ -446,7 +450,7 @@ async def test_event_processor_discards_invalid_a2ui_stream_before_retry() -> No
 
 
 @pytest.mark.asyncio
-async def test_event_processor_marks_a2ui_stream_failed_on_tool_error() -> None:
+async def test_event_processor_marks_exact_a2ui_stream_failed_from_tool_error_id() -> None:
     emitted: list[DomainEvent] = []
 
     async def capture(event: DomainEvent) -> None:
@@ -501,7 +505,7 @@ async def test_event_processor_marks_a2ui_stream_failed_on_tool_error() -> None:
                     "data": {
                         "input": {
                             "title": "错误图表",
-                            "charts": [{"type": "column"}],
+                            "charts": [{"type": "column", "normalized": True}],
                         }
                     },
                 },
@@ -509,7 +513,10 @@ async def test_event_processor_marks_a2ui_stream_failed_on_tool_error() -> None:
                     "event": "on_tool_error",
                     "run_id": "tool_chart",
                     "name": "chart",
-                    "data": {"error": "$.charts[0].items[0].value: expected number"},
+                    "data": {
+                        "error": "$.charts[0].items[0].value: expected number",
+                        "tool_call_id": "call_chart",
+                    },
                 },
             ]
         ),

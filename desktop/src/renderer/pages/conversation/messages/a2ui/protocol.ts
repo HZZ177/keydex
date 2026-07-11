@@ -146,20 +146,8 @@ export function extractA2UIEventSnapshot(data: unknown): A2UIEventSnapshot {
   };
 }
 
-export function buildA2UIDebugKey(action: string, snapshot: A2UIEventSnapshot): string {
-  return (
-    snapshot.streamId ||
-    snapshot.streamGroupId ||
-    snapshot.interactionId ||
-    snapshot.toolCallId ||
-    [
-      "a2ui",
-      snapshot.traceId || "trace",
-      snapshot.turnIndex ?? "turn",
-      snapshot.renderKey || "render",
-      normalizeA2UIAction(action) || action,
-    ].join(":")
-  );
+export function buildA2UIDebugKey(_action: string, snapshot: A2UIEventSnapshot): string {
+  return snapshot.streamId || snapshot.interactionId || "";
 }
 
 export function createA2UIDebugState(

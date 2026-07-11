@@ -196,7 +196,10 @@ describe("A2UIBlock", () => {
     expect(screen.getByTestId("a2ui-block").getAttribute("data-status")).toBe("failed");
     expect(screen.getByTestId("a2ui-block").getAttribute("data-lifecycle")).toBe("failed");
     expect(screen.getByTestId("a2ui-block").getAttribute("data-outcome")).toBe("tool_failed");
-    expect(screen.getByTestId("a2ui-error-line").textContent).toContain("A2UI 渲染失败，等待重新生成");
+    expect(screen.getByTestId("a2ui-error-line").textContent).toBe(
+      "图表参数错误，正在重新生成",
+    );
+    expect(screen.getByTestId("a2ui-error-line").textContent).not.toContain("expected number");
     expect(screen.queryByTestId("a2ui-chart-panel")).toBeNull();
     expect(screen.queryByTestId("a2ui-stream-preview")).toBeNull();
   });

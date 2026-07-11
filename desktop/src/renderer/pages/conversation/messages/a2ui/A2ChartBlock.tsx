@@ -90,9 +90,7 @@ const ECHARTS_FALLBACK_WIDTH = 620;
 const ECHARTS_DEFAULT_HEIGHT = 280;
 const ECHARTS_PIE_HEIGHT = 300;
 const ECHARTS_STRUCTURE_HEIGHT = 360;
-const ECHARTS_STREAM_COMMIT_INTERVAL_MS = 200;
 const ECHARTS_STREAM_ANIMATION_DURATION_MS = 170;
-const ECHARTS_STREAM_MAX_PENDING_OPTIONS = 2;
 let canvasRendererAvailable: boolean | null = null;
 export function A2ChartBlock({ parsed }: A2ChartBlockProps) {
   const isStreaming = isStreamingStatus(parsed.status) || Boolean(parsed.streamPlayer?.enabled && parsed.streamPlayer.phase !== "created");
@@ -182,10 +180,6 @@ function EChartsChart({
   const height = chartHeight(chart);
   const heightRef = useRef(height);
   const lastOptionSignatureRef = useRef("");
-  const pendingAnimatedOptionsRef = useRef<Array<{ option: EChartsOption; signature: string }>>([]);
-  const pendingTerminalOptionRef = useRef<{ option: EChartsOption; signature: string } | null>(null);
-  const pendingCommitTimerRef = useRef<number | null>(null);
-  const lastAnimatedCommitAtRef = useRef(0);
   const [selectedItems, setSelectedItems] = useState<SelectedChartItems>([]);
   const [surfaceWidth, setSurfaceWidth] = useState(ECHARTS_FALLBACK_WIDTH);
   const effectiveSelectedItems = isSelectableChart(chart.type) ? selectedItems : [];
@@ -220,12 +214,6 @@ function EChartsChart({
 
     return () => {
       observer?.disconnect();
-      if (pendingCommitTimerRef.current !== null) {
-        window.clearTimeout(pendingCommitTimerRef.current);
-        pendingCommitTimerRef.current = null;
-      }
-      pendingAnimatedOptionsRef.current = [];
-      pendingTerminalOptionRef.current = null;
       chartRef.current = null;
       instance.dispose();
     };
@@ -273,43 +261,21 @@ function EChartsChart({
     const isInitialOption = !lastOptionSignatureRef.current;
     const shouldAnimate = animateUpdates || (isInitialOption && animateInitial);
     if (shouldAnimate) {
-      if (isInitialOption) {
-        applyEChartsOption(
-          instance,
-          withStreamingEChartsAnimation(option),
-          optionSignature,
-          lastOptionSignatureRef,
-          true,
-        );
-        lastAnimatedCommitAtRef.current = nowMs();
-        return;
-      }
-      enqueueAnimatedEChartsOption({
+      applyEChartsOption(
         instance,
-        lastAnimatedCommitAtRef,
+        withStreamingEChartsAnimation(option),
+        optionSignature,
         lastOptionSignatureRef,
-        option,
-        pendingAnimatedOptionsRef,
-        pendingCommitTimerRef,
-        pendingTerminalOptionRef,
-        signature: optionSignature,
-      });
+      );
       return;
     }
-    const terminalOption = withoutEChartsAnimation(option);
-    if (pendingAnimatedOptionsRef.current.length || pendingCommitTimerRef.current !== null) {
-      pendingTerminalOptionRef.current = { option: terminalOption, signature: optionSignature };
-      scheduleQueuedEChartsCommit({
-        instance,
-        lastAnimatedCommitAtRef,
-        lastOptionSignatureRef,
-        pendingAnimatedOptionsRef,
-        pendingCommitTimerRef,
-        pendingTerminalOptionRef,
-      });
-      return;
-    }
-    applyEChartsOption(instance, terminalOption, optionSignature, lastOptionSignatureRef, false, true);
+    applyEChartsOption(
+      instance,
+      withoutEChartsAnimation(option),
+      optionSignature,
+      lastOptionSignatureRef,
+      true,
+    );
   }, [animateInitial, animateUpdates, option, optionSignature]);
 
   return (
@@ -339,109 +305,11 @@ function EChartsChart({
   );
 }
 
-function enqueueAnimatedEChartsOption({
-  instance,
-  lastAnimatedCommitAtRef,
-  lastOptionSignatureRef,
-  option,
-  pendingAnimatedOptionsRef,
-  pendingCommitTimerRef,
-  pendingTerminalOptionRef,
-  signature,
-}: {
-  instance: EChartsType;
-  lastAnimatedCommitAtRef: MutableRefObject<number>;
-  lastOptionSignatureRef: MutableRefObject<string>;
-  option: EChartsOption;
-  pendingAnimatedOptionsRef: MutableRefObject<Array<{ option: EChartsOption; signature: string }>>;
-  pendingCommitTimerRef: MutableRefObject<number | null>;
-  pendingTerminalOptionRef: MutableRefObject<{ option: EChartsOption; signature: string } | null>;
-  signature: string;
-}) {
-  if (
-    pendingAnimatedOptionsRef.current.some((item) => item.signature === signature) ||
-    pendingTerminalOptionRef.current?.signature === signature
-  ) {
-    return;
-  }
-  pendingAnimatedOptionsRef.current.push({
-    option: withStreamingEChartsAnimation(option),
-    signature,
-  });
-  pendingAnimatedOptionsRef.current = collapsePendingAnimatedEChartsOptions(pendingAnimatedOptionsRef.current);
-  scheduleQueuedEChartsCommit({
-    instance,
-    lastAnimatedCommitAtRef,
-    lastOptionSignatureRef,
-    pendingAnimatedOptionsRef,
-    pendingCommitTimerRef,
-    pendingTerminalOptionRef,
-  });
-}
-
-function collapsePendingAnimatedEChartsOptions(
-  pendingOptions: Array<{ option: EChartsOption; signature: string }>,
-): Array<{ option: EChartsOption; signature: string }> {
-  if (pendingOptions.length <= ECHARTS_STREAM_MAX_PENDING_OPTIONS) {
-    return pendingOptions;
-  }
-  const first = pendingOptions[0];
-  const latest = pendingOptions[pendingOptions.length - 1];
-  return first.signature === latest.signature ? [first] : [first, latest];
-}
-
-function scheduleQueuedEChartsCommit({
-  instance,
-  lastAnimatedCommitAtRef,
-  lastOptionSignatureRef,
-  pendingAnimatedOptionsRef,
-  pendingCommitTimerRef,
-  pendingTerminalOptionRef,
-}: {
-  instance: EChartsType;
-  lastAnimatedCommitAtRef: MutableRefObject<number>;
-  lastOptionSignatureRef: MutableRefObject<string>;
-  pendingAnimatedOptionsRef: MutableRefObject<Array<{ option: EChartsOption; signature: string }>>;
-  pendingCommitTimerRef: MutableRefObject<number | null>;
-  pendingTerminalOptionRef: MutableRefObject<{ option: EChartsOption; signature: string } | null>;
-}) {
-  if (pendingCommitTimerRef.current !== null || typeof window === "undefined") {
-    return;
-  }
-  const elapsed = nowMs() - lastAnimatedCommitAtRef.current;
-  const delay = pendingAnimatedOptionsRef.current.length
-    ? Math.max(0, ECHARTS_STREAM_COMMIT_INTERVAL_MS - elapsed)
-    : 0;
-  pendingCommitTimerRef.current = window.setTimeout(() => {
-    pendingCommitTimerRef.current = null;
-    const next = pendingAnimatedOptionsRef.current.shift();
-    if (next) {
-      applyEChartsOption(instance, next.option, next.signature, lastOptionSignatureRef, true);
-      lastAnimatedCommitAtRef.current = nowMs();
-      scheduleQueuedEChartsCommit({
-        instance,
-        lastAnimatedCommitAtRef,
-        lastOptionSignatureRef,
-        pendingAnimatedOptionsRef,
-        pendingCommitTimerRef,
-        pendingTerminalOptionRef,
-      });
-      return;
-    }
-    const terminal = pendingTerminalOptionRef.current;
-    if (terminal) {
-      pendingTerminalOptionRef.current = null;
-      applyEChartsOption(instance, terminal.option, terminal.signature, lastOptionSignatureRef, false, true);
-    }
-  }, delay);
-}
-
 function applyEChartsOption(
   instance: EChartsType,
   option: EChartsOption,
   signature: string,
   lastOptionSignatureRef: MutableRefObject<string>,
-  lazyUpdate: boolean,
   force = false,
 ) {
   if (!force && lastOptionSignatureRef.current === signature) {
@@ -449,13 +317,9 @@ function applyEChartsOption(
   }
   lastOptionSignatureRef.current = signature;
   instance.setOption(option, {
-    lazyUpdate,
+    lazyUpdate: false,
     notMerge: false,
   });
-}
-
-function nowMs(): number {
-  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 }
 
 function withoutEChartsAnimation(option: EChartsOption): EChartsOption {
@@ -486,6 +350,7 @@ function withStreamingEChartsAnimation(option: EChartsOption): EChartsOption {
     animation: true,
     animationDelay: 0,
     animationDelayUpdate: 0,
+    animationDuration: ECHARTS_STREAM_ANIMATION_DURATION_MS,
     animationDurationUpdate: ECHARTS_STREAM_ANIMATION_DURATION_MS,
     animationEasingUpdate: "cubicOut",
     series,
@@ -498,6 +363,7 @@ function withStreamingSeriesAnimation(series: SeriesOption): SeriesOption {
     animation: true,
     animationDelay: 0,
     animationDelayUpdate: 0,
+    animationDuration: ECHARTS_STREAM_ANIMATION_DURATION_MS,
     animationDurationUpdate: ECHARTS_STREAM_ANIMATION_DURATION_MS,
   } as SeriesOption;
 }
@@ -602,7 +468,6 @@ function buildCartesianOption(chart: ChartSpec, selectedItems: SelectedChartItem
         animationDelay: staggerAnimationDelay,
         animationDelayUpdate: staggerAnimationDelay,
         smooth: chart.smooth,
-        sampling: data.length > 80 ? "lttb" : undefined,
         showSymbol: false,
         symbol: "circle",
         symbolSize: 6,
@@ -1276,6 +1141,27 @@ function escapeHtml(value: string): string {
 }
 
 function ChartSkeleton({ type }: { type: ChartType }) {
+  if (type === "trend") {
+    return (
+      <div
+        className={styles.skeleton}
+        data-chart-skeleton-type="trend"
+        data-testid="a2ui-chart-skeleton"
+        aria-label="趋势图生成中"
+      >
+        <span
+          className={styles.skeletonTrend}
+          data-testid="a2ui-chart-skeleton-trend"
+          aria-hidden="true"
+        >
+          <span className={styles.skeletonTrendSegmentA} />
+          <span className={styles.skeletonTrendSegmentB} />
+          <span className={styles.skeletonTrendSegmentC} />
+          <span className={styles.skeletonTrendSegmentD} />
+        </span>
+      </div>
+    );
+  }
   if (type === "pie") {
     return (
       <div
@@ -1284,7 +1170,7 @@ function ChartSkeleton({ type }: { type: ChartType }) {
         data-testid="a2ui-chart-skeleton"
         aria-label="饼图生成中"
       >
-        <span className={styles.skeletonPie} />
+        <span className={styles.skeletonPie} data-testid="a2ui-chart-skeleton-pie" />
         <span className={styles.skeletonList} aria-hidden="true">
           <span className={styles.skeletonLine} />
           <span className={styles.skeletonLine} />
@@ -1294,14 +1180,34 @@ function ChartSkeleton({ type }: { type: ChartType }) {
       </div>
     );
   }
+  if (type === "sankey") {
+    return (
+      <div
+        className={styles.skeleton}
+        data-chart-skeleton-type="sankey"
+        data-testid="a2ui-chart-skeleton"
+        aria-label="桑基图生成中"
+      >
+        <span
+          className={styles.skeletonSankey}
+          data-testid="a2ui-chart-skeleton-sankey"
+          aria-hidden="true"
+        >
+          <span className={styles.skeletonSankeyLine} />
+          <span className={styles.skeletonSankeyLine} />
+          <span className={styles.skeletonSankeyLine} />
+        </span>
+      </div>
+    );
+  }
   return (
     <div
       className={styles.skeleton}
       data-chart-skeleton-type={type}
       data-testid="a2ui-chart-skeleton"
-      aria-label="图表生成中"
+      aria-label="柱状图生成中"
     >
-      <span className={styles.skeletonBar} />
+      <span className={styles.skeletonBar} data-testid="a2ui-chart-skeleton-column" />
       <span className={styles.skeletonBar} />
       <span className={styles.skeletonBar} />
       <span className={styles.skeletonBar} />
@@ -1793,18 +1699,10 @@ function chartDataCount(chart: ChartSpec): number {
 
 function chartPanelStabilityKey(parsed: ParsedA2UIMessage): string {
   const identity = [
-    scalarText(parsed.debug?.streamId),
     scalarText(parsed.a2ui?.stream_id),
-    scalarText(parsed.debug?.streamGroupId),
-    scalarText(parsed.a2ui?.tool_call_id),
-    scalarText(parsed.debug?.toolCallId),
-    scalarText(parsed.interactionId),
+    scalarText(parsed.debug?.streamId),
   ].find(Boolean);
-  return identity || [
-    scalarText(parsed.debug?.traceId),
-    scalarText(parsed.debug?.turnIndex),
-    parsed.renderKey,
-  ].filter(Boolean).join(":");
+  return identity || "a2ui-missing-stream-id";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

@@ -1566,8 +1566,9 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
   });
 
-  it("merges A2UI stream preview by stream group when stream id changes during streaming", () => {
+  it("merges A2UI stream preview only when every event keeps the same stream id", () => {
     const streamGroupId = "trace-drift:a2ui:model-run:0";
+    const streamId = "trace-drift:a2ui:model-run-a:0";
     let state = createInitialAgentConversationState();
 
     state = reduceAgentWsEvent(state, {
@@ -1578,7 +1579,7 @@ describe("agentSessionStore reducer", () => {
         turn_index: 2,
         render_key: "chart",
         stream_group_id: streamGroupId,
-        stream_id: "trace-drift:a2ui:model-run-a:0",
+        stream_id: streamId,
         tool_call_id: "model-run-a:0",
         stream: {
           status: "start",
@@ -1598,7 +1599,7 @@ describe("agentSessionStore reducer", () => {
         turn_index: 2,
         render_key: "chart",
         stream_group_id: streamGroupId,
-        stream_id: "trace-drift:a2ui:model-run-b:0",
+        stream_id: streamId,
         tool_call_id: "model-run-b:0",
         stream: {
           status: "chunk",
@@ -1618,7 +1619,7 @@ describe("agentSessionStore reducer", () => {
         turn_index: 2,
         render_key: "chart",
         stream_group_id: streamGroupId,
-        stream_id: "trace-drift:a2ui:model-run-c:0",
+        stream_id: streamId,
         tool_call_id: "model-run-c:0",
         stream: {
           status: "finish",
@@ -1638,7 +1639,7 @@ describe("agentSessionStore reducer", () => {
       traceId: "trace-drift",
       turnIndex: 2,
       a2uiDebug: {
-        id: "trace-drift:a2ui:model-run-a:0",
+        id: streamId,
         streamGroupId,
         status: "finished",
         chunkCount: 1,
@@ -1776,7 +1777,7 @@ describe("agentSessionStore reducer", () => {
     );
   });
 
-  it("does not duplicate a live weak A2UI placeholder when history hydrates with the stable stream identity", () => {
+  it("rejects a live A2UI event without stream id and hydrates the stable history record", () => {
     let state = createInitialAgentConversationState();
 
     state = reduceAgentWsEvent(state, {
@@ -1795,8 +1796,7 @@ describe("agentSessionStore reducer", () => {
         timestamp_ms: 1_800_000_001_000,
       },
     });
-    const liveA2UIId = selectAgentMessages(state, "ses-1").find((message) => message.role === "a2ui")?.id;
-    expect(liveA2UIId).toBeTruthy();
+    expect(selectAgentMessages(state, "ses-1").filter((message) => message.role === "a2ui")).toHaveLength(0);
 
     state = agentConversationReducer(state, {
       type: "history/loaded",
@@ -1823,8 +1823,7 @@ describe("agentSessionStore reducer", () => {
 
     const messages = selectAgentMessages(state, "ses-1").filter((message) => message.role === "a2ui");
     expect(messages).toHaveLength(1);
-    expect(messages[0].id).toBe(liveA2UIId);
-    expect(messages[0].hydratedFromHistory).toBeFalsy();
+    expect(messages[0].hydratedFromHistory).toBe(true);
     expect(messages[0].a2ui).toMatchObject({
       render_key: "chart",
       stream_id: "trace-weak:a2ui:call-chart",

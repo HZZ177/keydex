@@ -5,6 +5,7 @@ import {
   type A2UIRevealUnit,
   type ParsedA2UIMessage,
   buildA2UIRevealResetKey,
+  calculateA2UIStreamElementStep,
   resetA2UIStreamPlayerPlaybackForTests,
   resolveA2UIRenderState,
   useA2UIStreamPlayer,
@@ -238,6 +239,8 @@ describe("useA2UIStreamReveal", () => {
   it("batches very large chart payloads so stream playback does not accumulate hundreds of ticks", () => {
     vi.useFakeTimers();
     const restoreRaf = installTimerBackedRaf();
+    const performanceOrigin = Date.now();
+    const performanceNow = vi.spyOn(performance, "now").mockImplementation(() => Date.now() - performanceOrigin);
     try {
       const snapshots: Array<{ rendered: number; total: number; visibleItems: number }> = [];
       const { rerender } = render(<PlayerProbe parsed={streamingPartialChartMessage(2)} snapshots={snapshots} />);
@@ -260,10 +263,21 @@ describe("useA2UIStreamReveal", () => {
 
       expect(visiblePlayerItems()).toBe(260);
     } finally {
+      performanceNow.mockRestore();
       restoreRaf();
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  it("sizes chart batches from the real playback backlog instead of the historical total", () => {
+    expect(calculateA2UIStreamElementStep(100, 95, 240)).toBe(1);
+    expect(calculateA2UIStreamElementStep(100, 80, 240)).toBe(3);
+    expect(calculateA2UIStreamElementStep(200, 180, 240)).toBe(3);
+    expect(calculateA2UIStreamElementStep(260, 100, 240)).toBe(18);
+    expect(calculateA2UIStreamElementStep(260, 100, 240, 1_600)).toBe(24);
+    expect(calculateA2UIStreamElementStep(260, 2, 240)).toBe(6);
+    expect(calculateA2UIStreamElementStep(1_000, 100, 240)).toBe(24);
   });
 });
 

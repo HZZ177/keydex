@@ -1567,7 +1567,7 @@ export interface A2UICreatedActionData {
   turn_index?: number | null;
   render_key?: A2UIRenderKey;
   mode?: A2UIMode;
-  stream_id?: string;
+  stream_id: string;
   stream_group_id?: string | null;
   tool_call_id?: string | null;
   interaction_id?: string;
