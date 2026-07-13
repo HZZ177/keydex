@@ -31,7 +31,8 @@ describe("ConversationTimelineRuntime", () => {
 
   it("jumps directly across 10,000 units without mounting intermediate ranges", () => {
     const harness = createRuntime();
-    harness.runtime.publish(units(10_000));
+    const values = units(10_000);
+    harness.runtime.publish(values);
     const mountsBefore = harness.renderer.mount.mock.calls.length;
     const patch = harness.runtime.updateViewport(390_000, 600);
 
@@ -39,6 +40,34 @@ describe("ConversationTimelineRuntime", () => {
     expect(patch.mounted).toBeLessThanOrEqual(36);
     expect(harness.renderer.mount.mock.calls.length - mountsBefore).toBeLessThanOrEqual(36);
     expect(harness.runtime.getUnitElement("unit-5000")).toBeNull();
+
+    const pendingHost = harness.root.querySelector<HTMLElement>("[data-conversation-unit-measurement-pending]")!;
+    const pendingUnit = values[Number(pendingHost.dataset.conversationUnitIndex)];
+    const totalBeforeCommit = harness.runtime.diagnostics().totalHeight;
+    vi.spyOn(pendingHost, "getBoundingClientRect").mockReturnValue({
+      bottom: 600,
+      height: 600,
+      left: 0,
+      right: 100,
+      top: 0,
+      width: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    expect(pendingHost.style.visibility).toBe("");
+    expect(pendingHost.dataset.conversationUnitMeasurementPending).toBeTruthy();
+    expect(pendingHost.dataset.conversationUnitScrollClip).toBe("true");
+    expect(harness.runtime.measureMounted()).toBeNull();
+    expect(harness.runtime.diagnostics().totalHeight).toBe(totalBeforeCommit);
+    expect(harness.runtime.commitRenderedUnit(pendingUnit)).toBe(true);
+    expect(pendingHost.dataset.conversationUnitMeasurementPending).toBeUndefined();
+    if (harness.runtime.getUnitElement(pendingUnit.id) === pendingHost) {
+      expect(pendingHost.dataset.conversationUnitScrollClip).toBeUndefined();
+    } else {
+      expect(pendingHost.parentElement).toBeNull();
+    }
+    expect(harness.runtime.diagnostics().totalHeight).toBe(totalBeforeCommit + 560);
   });
 
   it("reuses stable keyed slots and updates only units whose renderVersion changed", () => {
@@ -107,6 +136,8 @@ describe("ConversationTimelineRuntime", () => {
 
     const element = harness.runtime.getUnitElement("unit-0")!;
     expect(element.style.minHeight).toBe("");
+    expect(harness.runtime.diagnostics().totalHeight).toBe(120);
+    expect(harness.runtime.updateMeasuredHeight("unit-0", 0)).toBeNull();
     expect(harness.runtime.diagnostics().totalHeight).toBe(120);
   });
 
@@ -177,11 +208,18 @@ describe("ConversationTimelineRuntime", () => {
 
   it("lets a fast upward scroll own the viewport while late heights settle and locks the real top", () => {
     const harness = createRuntime();
-    harness.runtime.publish(units(100));
+    const values = units(100);
+    harness.runtime.publish(values);
+    harness.runtime.commitRenderedUnit(values[5]);
     harness.root.scrollTop = 400;
     harness.runtime.updateViewport();
 
     harness.runtime.setUserScrollInteraction(true);
+    const clippedHost = harness.runtime.getUnitElement("unit-5")!;
+    expect(clippedHost.dataset.conversationUnitScrollClip).toBe("true");
+    expect(clippedHost.style.height).toBe("40px");
+    expect(clippedHost.style.overflowY).toBe("clip");
+    expect(clippedHost.style.visibility).toBe("");
     harness.root.scrollTop = 200;
     harness.root.dispatchEvent(new Event("scroll"));
     harness.scrollRequests.length = 0;
@@ -213,6 +251,9 @@ describe("ConversationTimelineRuntime", () => {
     expect(harness.root.scrollTop).toBe(0);
     expect(harness.scrollRequests.at(-1)).toEqual({ scrollTop: 0, reason: "preserve-top" });
     expect(harness.runtime.diagnostics().deferredMeasurements).toBe(0);
+    expect(clippedHost.dataset.conversationUnitScrollClip).toBeUndefined();
+    expect(clippedHost.style.height).toBe("");
+    expect(clippedHost.style.overflowY).toBe("");
     harness.runtime.updateMeasuredHeight("unit-1", 400);
     expect(harness.root.scrollTop).toBe(0);
     expect(harness.runtime.diagnostics()).toMatchObject({ userScrollActive: false, topLocked: true });

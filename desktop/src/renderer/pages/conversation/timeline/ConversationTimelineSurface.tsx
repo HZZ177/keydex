@@ -79,7 +79,8 @@ export function ConversationTimelineSurface({
     const element = elementRef.current;
     if (!element) return;
     const roots = new Map<string, Root>();
-    const runtime = new ConversationTimelineRuntime(element, {
+    let runtime: ConversationTimelineRuntime;
+    runtime = new ConversationTimelineRuntime(element, {
       overscanPx,
       onPatch: () => onViewportChangedRef.current?.(),
       onScrollRequest: (request) => onScrollRequestRef.current?.(request),
@@ -87,10 +88,22 @@ export function ConversationTimelineSurface({
         mount(unit, host) {
           const root = createRoot(host);
           roots.set(unit.id, root);
-          root.render(renderUnitRef.current(unit));
+          const render = (nextUnit: ConversationRenderUnit) => {
+            root.render(
+              <ConversationTimelineMeasurementCommit
+                unit={nextUnit}
+                onCommit={(committedUnit) => {
+                  if (runtimeInstanceRef.current === runtime) runtime.commitRenderedUnit(committedUnit);
+                }}
+              >
+                {renderUnitRef.current(nextUnit)}
+              </ConversationTimelineMeasurementCommit>,
+            );
+          };
+          render(unit);
           return {
             update(nextUnit) {
-              root.render(renderUnitRef.current(nextUnit));
+              render(nextUnit);
             },
             destroy() {
               roots.delete(unit.id);
@@ -165,4 +178,19 @@ export function ConversationTimelineSurface({
       onScroll={onScroll}
     />
   );
+}
+
+function ConversationTimelineMeasurementCommit({
+  children,
+  onCommit,
+  unit,
+}: {
+  readonly children: ReactNode;
+  readonly onCommit: (unit: ConversationRenderUnit) => void;
+  readonly unit: ConversationRenderUnit;
+}) {
+  useLayoutEffect(() => {
+    onCommit(unit);
+  }, [onCommit, unit]);
+  return children;
 }

@@ -300,27 +300,71 @@
         background: #b98632;
       }
 
-      .project-mini {
-        display: grid;
-        gap: 2px;
-        width: 100%;
-        padding: 9px 10px;
-        border: 1px solid var(--line-soft);
-        border-radius: 7px;
-        background: var(--panel);
-        color: var(--text);
-        cursor: pointer;
-        text-align: left;
-      }
-
-      .project-mini span {
-        color: var(--faint);
-        font-size: 11px;
-      }
-
       .nav-list {
         display: grid;
         gap: 3px;
+      }
+
+      .project-workspaces {
+        display: grid;
+        gap: 12px;
+        min-height: 0;
+        overflow: auto;
+        padding: 0 2px 16px;
+      }
+
+      .project-group {
+        display: grid;
+        gap: 4px;
+      }
+
+      .project-label {
+        display: grid;
+        grid-template-columns: 22px minmax(0, 1fr);
+        gap: 7px;
+        align-items: center;
+        padding: 5px 7px;
+        color: var(--text);
+      }
+
+      .project-label .glyph {
+        width: 20px;
+        height: 20px;
+      }
+
+      .project-label-copy {
+        min-width: 0;
+      }
+
+      .project-label-copy strong,
+      .project-label-copy span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .project-label-copy strong {
+        font-size: 12px;
+        font-weight: 640;
+      }
+
+      .project-label-copy span {
+        margin-top: 2px;
+        color: var(--faint);
+        font-size: 10px;
+      }
+
+      .project-workbench {
+        justify-content: flex-start;
+        width: calc(100% - 24px);
+        margin-left: 24px;
+        padding: 5px 8px;
+      }
+
+      .project-workbench.active {
+        background: var(--panel-muted);
+        color: var(--text);
       }
 
       .side-bottom {
@@ -348,13 +392,22 @@
         background: rgba(255, 255, 255, 0.78);
       }
 
-      .project-picker {
-        justify-content: space-between;
-        min-width: 232px;
-        padding: 0 10px;
-        border-color: var(--line);
-        background: var(--panel);
+      .project-breadcrumb {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 220px;
+        color: var(--faint);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .project-breadcrumb strong {
+        max-width: 180px;
+        overflow: hidden;
         color: var(--text);
+        font-weight: 620;
+        text-overflow: ellipsis;
       }
 
       .page-heading {
@@ -925,6 +978,225 @@
         font-size: 13px;
       }
 
+      .workbench-summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        border: 1px solid var(--line-soft);
+        border-radius: 7px;
+        background: var(--panel-soft);
+      }
+
+      .workbench-summary-copy strong,
+      .workbench-summary-copy span {
+        display: block;
+      }
+
+      .workbench-summary-copy span {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .workbench-summary-stats {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+
+      .workbench-summary-stats div {
+        min-width: 56px;
+        text-align: right;
+      }
+
+      .workbench-summary-stats strong,
+      .workbench-summary-stats span {
+        display: block;
+      }
+
+      .workbench-summary-stats strong {
+        font-size: 18px;
+        font-weight: 650;
+      }
+
+      .workbench-summary-stats span {
+        margin-top: 2px;
+        color: var(--faint);
+        font-size: 10px;
+      }
+
+      .workbench-tree {
+        overflow: hidden;
+        border: 1px solid var(--line-soft);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+
+      .tree-header,
+      .tree-row {
+        display: grid;
+        grid-template-columns: minmax(360px, 1fr) 80px 86px 70px 92px 96px 132px;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .tree-header {
+        min-height: 37px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--line-soft);
+        background: var(--panel-soft);
+        color: var(--faint);
+        font-size: 10px;
+      }
+
+      .tree-row {
+        min-height: 47px;
+        padding: 5px 12px;
+        border-bottom: 1px solid var(--line-soft);
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .tree-row:last-child {
+        border-bottom: 0;
+      }
+
+      .tree-row:hover {
+        background: var(--panel-soft);
+      }
+
+      .tree-row.iteration-row {
+        min-height: 51px;
+        background: #fcfcfb;
+      }
+
+      .tree-row.iteration-row:hover {
+        background: var(--panel-soft);
+      }
+
+      .tree-title {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 7px;
+        padding-left: calc(var(--depth, 0) * 22px);
+      }
+
+      .tree-toggle,
+      .tree-spacer {
+        display: grid;
+        width: 22px;
+        height: 22px;
+        place-items: center;
+        flex: 0 0 auto;
+        border-radius: 5px;
+        color: var(--faint);
+      }
+
+      .tree-toggle {
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .tree-toggle:hover {
+        background: var(--panel-muted);
+        color: var(--text);
+      }
+
+      .tree-title-copy {
+        min-width: 0;
+      }
+
+      .tree-title-copy strong,
+      .tree-title-copy span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tree-title-copy strong {
+        color: var(--text);
+        font-weight: 580;
+      }
+
+      .tree-title-copy span {
+        margin-top: 2px;
+        color: var(--faint);
+        font-size: 10px;
+      }
+
+      .tree-action {
+        justify-self: end;
+        min-width: 118px;
+      }
+
+      .tree-muted {
+        color: var(--faint);
+        font-size: 11px;
+      }
+
+      .workbench-filterbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+        padding: 10px 12px;
+        border: 1px solid var(--line-soft);
+        border-radius: 7px;
+        background: var(--panel);
+      }
+
+      .workbench-filterbar .toolbar-left {
+        flex-wrap: wrap;
+      }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: rgba(34, 36, 39, 0.28);
+        backdrop-filter: blur(2px);
+      }
+
+      .modal-dialog {
+        width: min(420px, 92vw);
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .modal-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .modal-head strong {
+        font-size: 15px;
+      }
+
+      .modal-dialog p {
+        margin: 13px 0 18px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+      }
+
       .activity-list {
         display: grid;
         gap: 9px;
@@ -950,47 +1222,6 @@
         display: block;
         margin-top: 2px;
         color: var(--faint);
-      }
-
-      .project-menu {
-        position: fixed;
-        top: 48px;
-        left: 274px;
-        z-index: 70;
-        display: none;
-        width: 300px;
-        padding: 7px;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: rgba(255, 255, 255, 0.99);
-        box-shadow: var(--shadow);
-      }
-
-      .project-menu.show {
-        display: grid;
-        gap: 3px;
-      }
-
-      .project-option {
-        display: grid;
-        gap: 2px;
-        width: 100%;
-        padding: 9px 10px;
-        border-radius: 6px;
-        background: transparent;
-        color: var(--text);
-        cursor: pointer;
-        text-align: left;
-      }
-
-      .project-option:hover,
-      .project-option.active {
-        background: var(--panel-soft);
-      }
-
-      .project-option span {
-        color: var(--faint);
-        font-size: 10px;
       }
 
       .agent-capsule {
@@ -1154,6 +1385,16 @@
         .doc-layout {
           grid-template-columns: 170px 300px minmax(390px, 1fr);
         }
+
+        .tree-header,
+        .tree-row {
+          grid-template-columns: minmax(330px, 1fr) 76px 80px 68px 88px 128px;
+        }
+
+        .tree-header > :nth-child(6),
+        .tree-row > :nth-child(6) {
+          display: none;
+        }
       }
     </style>
   </head>
@@ -1188,25 +1429,8 @@
           <button class="side-button" type="button" data-toast="搜索项目对象和本地 Session"><span class="glyph">F</span><span>搜索</span></button>
         </div>
 
-        <div class="source-head"><span class="source-dot">KT-PM 云端</span><span>已同步</span></div>
-        <button id="sideProject" class="project-mini" type="button">
-          <strong id="sideProjectName">AI 项目管理平台</strong>
-          <span id="sideProjectMeta">普通项目 · 当前成员</span>
-        </button>
-        <nav class="nav-list" aria-label="云端项目页面">
-          <button class="nav-button active" data-page-target="dashboard"><span class="glyph">W</span><span>概览</span></button>
-          <button class="nav-button" data-page-target="mywork"><span class="glyph">M</span><span>我的事项</span></button>
-          <button class="nav-button" data-page-target="iterations"><span class="glyph">I</span><span>迭代</span></button>
-          <button class="nav-button" data-page-target="requirements"><span class="glyph">R</span><span>需求</span></button>
-          <button class="nav-button" data-page-target="tasks"><span class="glyph">T</span><span>任务</span></button>
-          <button class="nav-button" data-page-target="bugs"><span class="glyph">B</span><span>Bug</span></button>
-          <button class="nav-button" data-page-target="docs"><span class="glyph">D</span><span>文档</span></button>
-        </nav>
-
-        <div class="source-head"><span class="source-dot local">Keydex 本地</span><span>Task</span></div>
-        <nav class="nav-list" aria-label="Keydex 本地页面">
-          <button class="nav-button" data-page-target="goals"><span class="glyph">G</span><span>长程任务</span></button>
-        </nav>
+        <div class="source-head"><span>项目</span><span id="sideProjectCount">2</span></div>
+        <nav id="projectWorkspaces" class="project-workspaces" aria-label="项目工作台"></nav>
 
         <div class="side-bottom">
           <button class="side-button" type="button" data-toast="主题由 Keydex 全局设置控制"><span class="glyph">M</span><span>深色</span></button>
@@ -1216,10 +1440,10 @@
 
       <main class="main">
         <header class="topbar">
-          <button id="projectPicker" class="chip project-picker" type="button"><span id="projectPickerName">AI 项目管理平台</span><span>⌄</span></button>
+          <div class="project-breadcrumb"><span>项目</span><span>/</span><strong id="currentProjectName">AI 项目管理平台</strong><span>/</span><span>工作台</span></div>
           <div class="page-heading">
-            <strong id="pageTitle">概览</strong>
-            <span id="pageHint">当前用户在项目中的事项、迭代、文档和本地目标</span>
+            <strong id="pageTitle">我的工作台</strong>
+            <span id="pageHint">从分配给我的末端事项向上还原完整需求路径</span>
           </div>
           <div class="top-actions">
             <button id="cloudButton" class="chip online" type="button">云端已连接</button>
@@ -1231,7 +1455,7 @@
         <div class="pages">
           <section class="page active" data-page="dashboard">
             <div class="section-head">
-              <div><h2>项目概览</h2><p id="dashboardSubtitle">何守一在当前项目中的工作</p></div>
+              <div><h2>我的工作台</h2><p id="dashboardSubtitle">何守一在当前项目中的事项路径</p></div>
               <button class="button" type="button" data-open-agent>询问 Agent</button>
             </div>
             <div id="dashboardContent"></div>
@@ -1304,12 +1528,10 @@
       </main>
     </section>
 
-    <div id="projectMenu" class="project-menu"></div>
-
     <section id="agentCapsule" class="agent-capsule hidden">
       <div class="agent-compact">
         <button id="agentExpand" class="icon-button" type="button">⌃</button>
-        <button id="agentContext" class="context-pill" type="button">动态：概览</button>
+        <button id="agentContext" class="context-pill" type="button">动态：我的工作台</button>
         <input id="agentInput" class="agent-input" placeholder="询问当前项目、页面或选中的对象" />
         <button id="engineButton" class="chip" type="button">Keydex Agent</button>
         <button id="agentSend" class="button primary" type="button">发送</button>
@@ -1319,7 +1541,7 @@
           <div class="agent-msg">我会使用当前页面和选中对象的云端信息回答；需要更多内容时再调用云端 Tool。</div>
         </div>
         <div class="agent-side">
-          <div class="context-card"><strong>动态页面上下文</strong><span id="agentPageContext">概览 · 未选择对象</span></div>
+          <div class="context-card"><strong>动态页面上下文</strong><span id="agentPageContext">我的工作台 · 未选择对象</span></div>
           <div class="context-card"><strong>本地空间</strong><span id="agentWorkspaceContext">尚未解析</span></div>
           <div class="context-card"><strong>注入时机</strong><span>发送消息时即时编译；下一轮随页面更新</span></div>
           <div class="context-card"><strong>数据权限</strong><span>当前项目成员权限 · 读写事项与文档</span></div>
@@ -1327,6 +1549,17 @@
         </div>
       </div>
     </section>
+
+    <div id="phaseOneModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="phaseOneModalTitle">
+      <div class="modal-dialog">
+        <div class="modal-head">
+          <strong id="phaseOneModalTitle">开启长程任务</strong>
+          <button class="icon-button" type="button" data-close-phase-one-modal title="关闭">×</button>
+        </div>
+        <p><span id="phaseOneModalObject"></span><br />这不是一期的实际实现功能范围。</p>
+        <div class="modal-actions"><button class="button primary" type="button" data-close-phase-one-modal>知道了</button></div>
+      </div>
+    </div>
 
     <div id="toast" class="toast"></div>
 
@@ -1348,23 +1581,24 @@
         };
 
         const iterations = [
-          { id: 81, projectKey: "kt-pm", name: "Sprint08 · 项目模式 MVP", status: "in_progress", ownerName: "严光远", startDate: "2026-07-10", endDate: "2026-07-24", issueCount: 7, progress: 43, description: "完成云端项目数据承接、个人工作台和项目对象浏览。", overview: { total: 7, pending: 3, processing: 2, closed: 0, done: 2 } },
+          { id: 81, projectKey: "kt-pm", name: "Sprint08 · 项目模式 MVP", status: "in_progress", ownerName: "严光远", startDate: "2026-07-10", endDate: "2026-07-24", issueCount: 9, progress: 46, description: "完成云端项目数据承接、个人工作台和项目对象浏览。", overview: { total: 9, pending: 3, processing: 4, closed: 0, done: 2 } },
           { id: 74, projectKey: "kt-pm", name: "Sprint07 · 事项协作底座", status: "closed", ownerName: "严光远", startDate: "2026-06-10", endDate: "2026-07-06", issueCount: 18, progress: 100, description: "完成事项、迭代、文档、评论和状态流基础能力。", overview: { total: 18, pending: 0, processing: 0, closed: 1, done: 17 } },
           { id: 90, projectKey: "kt-pm", name: "需求池", status: "not_started", ownerName: "何守一", startDate: null, endDate: "2026-11-30", issueCount: 4, progress: 0, description: "尚未进入正式迭代的事项。", overview: { total: 4, pending: 4, processing: 0, closed: 0, done: 0 } },
           { id: 12, projectKey: "keydex", name: "0.8.0 桌面体验", status: "in_progress", ownerName: "何守一", startDate: "2026-07-08", endDate: "2026-07-30", issueCount: 3, progress: 33, description: "完善项目模式和工作台体验。", overview: { total: 3, pending: 1, processing: 1, closed: 0, done: 1 } },
         ];
 
         const issues = [
-          { id: 412, projectKey: "kt-pm", issueType: "requirement", title: "Keydex 项目模式接入云端身份与项目数据", stateId: 2, stateName: "处理中", stateCategory: "doing", priority: "high", assigneeName: "何守一", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "严光远", startDate: "2026-07-10", endDate: "2026-07-18", estimateHours: 18, actualHours: 6, difficulty: 2.5, versionNo: "0.8.0", labels: ["Keydex", "云端接入"], contentText: "Keydex 使用企微身份登录，读取当前用户有权访问的项目、事项、迭代和文档，并保持与 Web 端相同的权限边界。", updatedAt: "2026-07-12 14:26", createdAt: "2026-07-08 10:20", parentId: null, linkedDocs: [701, 703], linkedIssues: [425, 438], children: [425], nextStates: [{ id: 3, name: "已完成", category: "done" }] },
-          { id: 417, projectKey: "kt-pm", issueType: "requirement", title: "项目页面上下文提供给 Agent", stateId: 1, stateName: "待处理", stateCategory: "start", priority: "medium", assigneeName: "何守一", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "何守一", startDate: "2026-07-14", endDate: "2026-07-22", estimateHours: 12, actualHours: null, difficulty: 2, versionNo: "0.8.0", labels: ["Agent", "页面上下文"], contentText: "Agent 应获取当前项目、页面类型、打开对象和用户选择内容。上下文先提供摘要，需要全文时再通过 Tool 查询。", updatedAt: "2026-07-12 11:05", createdAt: "2026-07-09 16:40", parentId: null, linkedDocs: [702], linkedIssues: [426], children: [426], nextStates: [{ id: 2, name: "处理中", category: "doing" }] },
+          { id: 412, projectKey: "kt-pm", issueType: "requirement", title: "Keydex 项目模式接入云端身份与项目数据", stateId: 2, stateName: "处理中", stateCategory: "doing", priority: "high", assigneeName: "严光远", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "严光远", startDate: "2026-07-10", endDate: "2026-07-18", estimateHours: 18, actualHours: 6, difficulty: 2.5, versionNo: "0.8.0", labels: ["Keydex", "云端接入"], contentText: "Keydex 使用企微身份登录，读取当前用户有权访问的项目、事项、迭代和文档，并保持与 Web 端相同的权限边界。", updatedAt: "2026-07-12 14:26", createdAt: "2026-07-08 10:20", parentId: null, linkedDocs: [701, 703], linkedIssues: [417, 419, 438], children: [417, 419, 431], nextStates: [{ id: 3, name: "已完成", category: "done" }] },
+          { id: 417, projectKey: "kt-pm", issueType: "requirement", title: "项目页面上下文提供给 Agent", stateId: 2, stateName: "处理中", stateCategory: "doing", priority: "medium", assigneeName: "严光远", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "何守一", startDate: "2026-07-14", endDate: "2026-07-22", estimateHours: 12, actualHours: 4, difficulty: 2, versionNo: "0.8.0", labels: ["Agent", "页面上下文"], contentText: "Agent 应获取当前项目、页面类型、打开对象和用户选择内容。上下文先提供摘要，需要全文时再通过 Tool 查询。", updatedAt: "2026-07-12 11:05", createdAt: "2026-07-09 16:40", parentId: 412, linkedDocs: [702], linkedIssues: [425, 426, 438], children: [425, 426, 438], nextStates: [{ id: 3, name: "已完成", category: "done" }] },
+          { id: 419, projectKey: "kt-pm", issueType: "requirement", title: "明确项目模式第一阶段页面范围", stateId: 1, stateName: "待评审", stateCategory: "start", priority: "high", assigneeName: "何守一", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "严光远", startDate: "2026-07-13", endDate: "2026-07-15", estimateHours: 5, actualHours: 2, difficulty: 1.5, versionNo: "0.8.0", labels: ["一期", "产品设计"], contentText: "根据小组讨论结论，冻结扫码登录、项目平铺、个人事项树、单页详情和底部筛选范围。", updatedAt: "2026-07-13 11:20", createdAt: "2026-07-13 09:10", parentId: 412, linkedDocs: [701, 702], linkedIssues: [], children: [], nextStates: [{ id: 2, name: "处理中", category: "doing" }] },
           { id: 398, projectKey: "kt-pm", issueType: "requirement", title: "平台治理与企微登录基础", stateId: 3, stateName: "已完成", stateCategory: "done", priority: "high", assigneeName: "严光远", iterationId: 74, iterationName: "Sprint07 · 事项协作底座", creatorName: "严光远", startDate: "2026-06-23", endDate: "2026-07-02", estimateHours: 30, actualHours: 34, difficulty: 3, versionNo: "1.0", labels: ["治理", "企微"], contentText: "完成企微身份、用户、项目、成员、角色、权限、API Key、通知和审计基础。", updatedAt: "2026-07-02 18:10", createdAt: "2026-06-22 09:30", parentId: null, linkedDocs: [703], linkedIssues: [], children: [], nextStates: [] },
-          { id: 425, projectKey: "kt-pm", issueType: "task", title: "接入事项列表与筛选 API", stateId: 12, stateName: "开发中", stateCategory: "doing", priority: "high", assigneeName: "何守一", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "何守一", startDate: "2026-07-11", endDate: "2026-07-16", estimateHours: 8, actualHours: 3, difficulty: 1.5, versionNo: "0.8.0", labels: ["前端", "API"], contentText: "接入事项列表、字段元数据、筛选和排序接口，页面只展示云端实际返回字段。", updatedAt: "2026-07-12 15:40", createdAt: "2026-07-10 13:10", parentId: 412, linkedDocs: [701], linkedIssues: [], children: [], nextStates: [{ id: 13, name: "已完成", category: "done" }] },
+          { id: 425, projectKey: "kt-pm", issueType: "task", title: "接入事项列表与筛选 API", stateId: 12, stateName: "开发中", stateCategory: "doing", priority: "high", assigneeName: "何守一", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "何守一", startDate: "2026-07-11", endDate: "2026-07-16", estimateHours: 8, actualHours: 3, difficulty: 1.5, versionNo: "0.8.0", labels: ["前端", "API"], contentText: "接入事项列表、字段元数据、筛选和排序接口，页面只展示云端实际返回字段。", updatedAt: "2026-07-12 15:40", createdAt: "2026-07-10 13:10", parentId: 417, linkedDocs: [701], linkedIssues: [], children: [], nextStates: [{ id: 13, name: "已完成", category: "done" }] },
           { id: 426, projectKey: "kt-pm", issueType: "task", title: "实现文档库只读浏览", stateId: 11, stateName: "待开发", stateCategory: "start", priority: "medium", assigneeName: "何守一", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "何守一", startDate: "2026-07-15", endDate: "2026-07-20", estimateHours: 6, actualHours: null, difficulty: 1.5, versionNo: "0.8.0", labels: ["文档"], contentText: "展示云端文件夹树、文档列表、版本、标签、引用数和 Markdown 正文。", updatedAt: "2026-07-11 16:22", createdAt: "2026-07-10 14:12", parentId: 417, linkedDocs: [702], linkedIssues: [], children: [], nextStates: [{ id: 12, name: "开发中", category: "doing" }] },
           { id: 431, projectKey: "kt-pm", issueType: "task", title: "补充项目切换会话隔离测试", stateId: 13, stateName: "已完成", stateCategory: "done", priority: "medium", assigneeName: "张胜", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "何守一", startDate: "2026-07-10", endDate: "2026-07-12", estimateHours: 4, actualHours: 4, difficulty: 1, versionNo: "0.8.0", labels: ["测试"], contentText: "验证项目切换后页面筛选、选中对象和 Agent 上下文不会串项目。", updatedAt: "2026-07-12 10:18", createdAt: "2026-07-10 15:30", parentId: 412, linkedDocs: [], linkedIssues: [438], children: [], nextStates: [] },
-          { id: 438, projectKey: "kt-pm", issueType: "bug", title: "项目切换后事项筛选条件未重置", stateId: 22, stateName: "修复中", stateCategory: "doing", priority: "urgent", assigneeName: "何守一", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "张胜", startDate: "2026-07-12", endDate: "2026-07-14", estimateHours: 4, actualHours: 2, difficulty: 1.5, versionNo: "0.8.0", labels: ["项目切换", "回归"], contentText: "从项目 A 切到项目 B 后，事项类型和状态筛选仍保留项目 A 的值，导致列表为空。\n\n复现：先在项目 A 选择 Bug + 处理中，再切换项目 B。", updatedAt: "2026-07-12 16:08", createdAt: "2026-07-12 09:42", parentId: null, linkedDocs: [], linkedIssues: [412, 431], children: [], nextStates: [{ id: 23, name: "待验证", category: "doing" }] },
+          { id: 438, projectKey: "kt-pm", issueType: "bug", title: "项目切换后事项筛选条件未重置", stateId: 22, stateName: "修复中", stateCategory: "doing", priority: "urgent", assigneeName: "何守一", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "张胜", startDate: "2026-07-12", endDate: "2026-07-14", estimateHours: 4, actualHours: 2, difficulty: 1.5, versionNo: "0.8.0", labels: ["项目切换", "回归"], contentText: "从项目 A 切到项目 B 后，事项类型和状态筛选仍保留项目 A 的值，导致列表为空。\n\n复现：先在项目 A 选择 Bug + 处理中，再切换项目 B。", updatedAt: "2026-07-12 16:08", createdAt: "2026-07-12 09:42", parentId: 417, linkedDocs: [], linkedIssues: [412, 431], children: [], nextStates: [{ id: 23, name: "待验证", category: "doing" }] },
           { id: 442, projectKey: "kt-pm", issueType: "bug", title: "文档详情关联事项显示为空", stateId: 21, stateName: "待修复", stateCategory: "start", priority: "high", assigneeName: "何守一", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "张胜", startDate: null, endDate: "2026-07-17", estimateHours: null, actualHours: null, difficulty: null, versionNo: "0.8.0", labels: ["文档"], contentText: "文档已经存在 pm_doc_ref 记录，但详情页关联事项区域显示为空。", updatedAt: "2026-07-12 13:33", createdAt: "2026-07-11 17:28", parentId: null, linkedDocs: [701], linkedIssues: [426], children: [], nextStates: [{ id: 22, name: "修复中", category: "doing" }] },
           { id: 445, projectKey: "kt-pm", issueType: "bug", title: "迭代进度统计刷新滞后", stateId: 24, stateName: "已关闭", stateCategory: "done", priority: "medium", assigneeName: "严光远", iterationId: 81, iterationName: "Sprint08 · 项目模式 MVP", creatorName: "张胜", startDate: "2026-07-10", endDate: "2026-07-11", estimateHours: 3, actualHours: 3, difficulty: 1, versionNo: "1.0", labels: ["迭代"], contentText: "事项完成后迭代 overview 仍显示旧进度，刷新后恢复。", updatedAt: "2026-07-11 19:12", createdAt: "2026-07-10 16:01", parentId: null, linkedDocs: [], linkedIssues: [], children: [], nextStates: [] },
-          { id: 88, projectKey: "keydex", issueType: "requirement", title: "项目模式使用真实云端数据", stateId: 1, stateName: "待处理", stateCategory: "start", priority: "high", assigneeName: "何守一", iterationId: 12, iterationName: "0.8.0 桌面体验", creatorName: "何守一", startDate: "2026-07-12", endDate: "2026-07-20", estimateHours: 10, actualHours: 1, difficulty: 2, versionNo: "0.8.0", labels: ["项目模式"], contentText: "项目模式页面按照云端实际字段范围重新设计。", updatedAt: "2026-07-12 17:10", createdAt: "2026-07-12 12:00", parentId: null, linkedDocs: [], linkedIssues: [], children: [], nextStates: [{ id: 2, name: "处理中", category: "doing" }] },
+          { id: 88, projectKey: "keydex", issueType: "requirement", title: "项目模式使用真实云端数据", stateId: 1, stateName: "待处理", stateCategory: "start", priority: "high", assigneeName: "严光远", iterationId: 12, iterationName: "0.8.0 桌面体验", creatorName: "何守一", startDate: "2026-07-12", endDate: "2026-07-20", estimateHours: 10, actualHours: 1, difficulty: 2, versionNo: "0.8.0", labels: ["项目模式"], contentText: "项目模式页面按照云端实际字段范围重新设计。", updatedAt: "2026-07-12 17:10", createdAt: "2026-07-12 12:00", parentId: null, linkedDocs: [], linkedIssues: [91], children: [91], nextStates: [{ id: 2, name: "处理中", category: "doing" }] },
           { id: 91, projectKey: "keydex", issueType: "task", title: "重构项目模式单文件 Demo", stateId: 2, stateName: "处理中", stateCategory: "doing", priority: "high", assigneeName: "何守一", iterationId: 12, iterationName: "0.8.0 桌面体验", creatorName: "何守一", startDate: "2026-07-12", endDate: "2026-07-13", estimateHours: 6, actualHours: 2, difficulty: 1.5, versionNo: "0.8.0", labels: ["Demo"], contentText: "移除无数据来源页面，仅保留云端对象和本地 Goal。", updatedAt: "2026-07-12 17:26", createdAt: "2026-07-12 13:00", parentId: 88, linkedDocs: [], linkedIssues: [], children: [], nextStates: [{ id: 3, name: "已完成", category: "done" }] },
           { id: 94, projectKey: "keydex", issueType: "bug", title: "项目模式 Agent 胶囊遮挡底部内容", stateId: 1, stateName: "待处理", stateCategory: "start", priority: "medium", assigneeName: "张胜", iterationId: 12, iterationName: "0.8.0 桌面体验", creatorName: "张胜", startDate: null, endDate: "2026-07-22", estimateHours: null, actualHours: null, difficulty: null, versionNo: "0.8.0", labels: ["布局"], contentText: "低高度窗口中，Agent 胶囊遮挡表格最后一行。", updatedAt: "2026-07-12 16:44", createdAt: "2026-07-12 15:18", parentId: null, linkedDocs: [], linkedIssues: [], children: [], nextStates: [{ id: 2, name: "处理中", category: "doing" }] },
         ];
@@ -1409,12 +1643,14 @@
           detailReturnPage: "dashboard",
           context: null,
           issueFilters: {},
+          workbenchFilters: { iterationId: "all", issueType: "all" },
+          collapsedNodes: new Set(),
           folderId: null,
           docId: 701,
         };
 
         const pageInfo = {
-          dashboard: ["概览", "当前用户在项目中的事项、迭代、文档和本地目标"],
+          dashboard: ["我的工作台", "从分配给我的末端事项向上还原完整需求路径"],
           mywork: ["我的事项", "分配给何守一且尚未完成的云端事项"],
           iterations: ["迭代", "云端迭代列表、进度和事项统计"],
           requirements: ["需求", "按项目状态流展示的需求事项"],
@@ -1458,57 +1694,120 @@
           $("#qr").innerHTML = Array.from({ length: 121 }, () => "<i></i>").join("");
         }
 
-        function renderDashboard() {
+        function renderProjectWorkspaces() {
+          const visibleProjects = projects.filter((item) => item.type === "normal" && item.status === "active");
+          $("#sideProjectCount").textContent = visibleProjects.length;
+          $("#projectWorkspaces").innerHTML = visibleProjects.map((item) => `
+            <section class="project-group">
+              <div class="project-label">
+                <span class="glyph">P</span>
+                <div class="project-label-copy"><strong>${esc(item.name)}</strong><span>${esc(item.role)}</span></div>
+              </div>
+              <button class="side-button project-workbench ${state.projectKey === item.key ? "active" : ""}" type="button" data-project-workbench="${esc(item.key)}"><span class="glyph">W</span><span>工作台</span></button>
+            </section>`).join("");
+          $("#currentProjectName").textContent = project().name;
+          $("#dashboardSubtitle").textContent = `${currentUser}在“${project().name}”中的事项路径`;
+        }
+
+        function projectLeafIssues() {
           const all = projectIssues();
-          const mine = all.filter((item) => item.assigneeName === currentUser && item.stateCategory !== "done");
-          const due = mine.filter((item) => item.endDate && item.endDate <= "2026-07-18");
-          const activeIterations = projectIterations().filter((item) => item.status === "in_progress");
-          const recentDocs = projectDocs().slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 3);
-          const currentIteration = activeIterations[0] || projectIterations()[0];
-          const issueRows = mine.slice(0, 5).map(issueRow).join("");
-          const docRows = recentDocs.map((doc) => `
-            <div class="doc-row" data-doc-id="${doc.id}">
-              <div class="row-main"><strong>${esc(doc.title)}</strong><span>${esc(doc.authorName)} · ${esc(doc.version)} · 更新于 ${esc(doc.updatedAt)}</span></div>
-              <span class="tag">${doc.refCount} 个关联</span>
-            </div>`).join("");
-          const goalRows = goals.filter((goal) => goal.status !== "complete").slice(0, 2).map((goal) => `
-            <div class="goal-row" data-open-task="${esc(goal.id)}">
-              <div class="row-main"><strong>${esc(goal.title)}</strong><span>${goal.turnCount} turn · ${formatElapsed(goal.elapsedSeconds)} · ${goal.totalTokens.toLocaleString()} tokens</span></div>
-              <span class="tag ${goalClass(goal.status)}">${goalStatus(goal.status)}</span>
-            </div>`).join("");
+          const parents = new Set(all.map((item) => item.parentId).filter((id) => id != null));
+          return all.filter((item) => item.assigneeName === currentUser && !parents.has(item.id));
+        }
+
+        function filteredWorkbenchLeaves() {
+          const { iterationId, issueType } = state.workbenchFilters;
+          return projectLeafIssues().filter((item) => {
+            const iterationMatches = iterationId === "all" || item.iterationId === Number(iterationId);
+            const typeMatches = issueType === "all" || item.issueType === issueType;
+            return iterationMatches && typeMatches;
+          });
+        }
+
+        function workbenchClosure(leaves) {
+          const byId = new Map(projectIssues().map((item) => [item.id, item]));
+          const included = new Set();
+          leaves.forEach((leaf) => {
+            let current = leaf;
+            while (current && !included.has(current.id)) {
+              included.add(current.id);
+              current = current.parentId == null ? null : byId.get(current.parentId);
+            }
+          });
+          return { byId, included };
+        }
+
+        function renderIssueTreeRow(item, depth, included, byId, leafIds) {
+          const children = projectIssues().filter((candidate) => candidate.parentId === item.id && included.has(candidate.id));
+          const nodeKey = `issue:${item.id}`;
+          const collapsed = state.collapsedNodes.has(nodeKey);
+          const mine = leafIds.has(item.id);
+          const toggle = children.length
+            ? `<button class="tree-toggle" type="button" data-toggle-tree="${nodeKey}" title="${collapsed ? "展开" : "收起"}">${collapsed ? "›" : "⌄"}</button>`
+            : '<span class="tree-spacer"></span>';
+          const row = `
+            <div class="tree-row" data-issue-id="${item.id}">
+              <div class="tree-title" style="--depth:${depth}">${toggle}<div class="tree-title-copy"><strong>#${item.id} ${esc(item.title)}</strong><span>${mine ? "我的末端事项" : "上级需求路径"}${item.parentId ? ` · 上级 #${item.parentId}` : ""}</span></div></div>
+              <span><span class="tag ${typeClass(item.issueType)}">${typeLabel(item.issueType)}</span></span>
+              <span><span class="tag ${stateClass(item.stateCategory)}">${esc(item.stateName)}</span></span>
+              <span><span class="tag ${priorityClass(item.priority)}">${priorityLabel(item.priority)}</span></span>
+              <span>${esc(item.assigneeName || "未指定")}</span>
+              <span class="tree-muted">${esc(item.endDate || "-")}</span>
+              <span class="tree-action">${mine ? `<button class="button primary" type="button" data-phase-one-task="${item.id}">开启长程任务</button>` : '<span class="tree-muted">查看详情 →</span>'}</span>
+            </div>`;
+          if (collapsed) return row;
+          return row + children.map((child) => renderIssueTreeRow(child, depth + 1, included, byId, leafIds)).join("");
+        }
+
+        function renderIterationTree(iteration, leaves) {
+          const { byId, included } = workbenchClosure(leaves);
+          const roots = Array.from(included)
+            .map((id) => byId.get(id))
+            .filter((item) => item && (item.parentId == null || !included.has(item.parentId)));
+          const nodeKey = `iteration:${iteration.id}`;
+          const collapsed = state.collapsedNodes.has(nodeKey);
+          const leafIds = new Set(leaves.map((item) => item.id));
+          return `
+            <div class="tree-row iteration-row" data-iteration-id="${iteration.id}">
+              <div class="tree-title" style="--depth:0"><button class="tree-toggle" type="button" data-toggle-tree="${nodeKey}" title="${collapsed ? "展开" : "收起"}">${collapsed ? "›" : "⌄"}</button><div class="tree-title-copy"><strong>${esc(iteration.name)}</strong><span>${esc(iteration.startDate || "-")} 至 ${esc(iteration.endDate || "-")} · ${leaves.length} 个我的末端事项</span></div></div>
+              <span><span class="tag blue">迭代</span></span>
+              <span><span class="tag ${iterationClass(iteration.status)}">${iterationStatus(iteration.status)}</span></span>
+              <span class="tree-muted">${iteration.progress}%</span>
+              <span>${esc(iteration.ownerName || "-")}</span>
+              <span class="tree-muted">${esc(iteration.endDate || "-")}</span>
+              <span class="tree-action tree-muted">查看详情 →</span>
+            </div>
+            ${collapsed ? "" : roots.map((root) => renderIssueTreeRow(root, 1, included, byId, leafIds)).join("")}`;
+        }
+
+        function renderDashboard() {
+          const leaves = filteredWorkbenchLeaves();
+          const allLeaves = projectLeafIssues();
+          const due = allLeaves.filter((item) => item.stateCategory !== "done" && item.endDate && item.endDate <= "2026-07-18");
+          const grouped = projectIterations().map((iteration) => ({
+            iteration,
+            leaves: leaves.filter((item) => item.iterationId === iteration.id),
+          })).filter((group) => group.leaves.length);
+          const iterationOptions = projectIterations().map((item) => `<option value="${item.id}" ${Number(state.workbenchFilters.iterationId) === item.id ? "selected" : ""}>${esc(item.name)}</option>`).join("");
+          const rows = grouped.map((group) => renderIterationTree(group.iteration, group.leaves)).join("");
 
           $("#dashboardContent").innerHTML = `
-            <div class="summary-strip">
-              <div class="summary-cell"><span>分配给我</span><strong>${mine.length}</strong><small>需求、任务和 Bug</small></div>
-              <div class="summary-cell"><span>临近截止</span><strong>${due.length}</strong><small>截止日期不晚于 7 月 18 日</small></div>
-              <div class="summary-cell"><span>进行中迭代</span><strong>${activeIterations.length}</strong><small>${currentIteration ? esc(currentIteration.name) : "无"}</small></div>
-              <div class="summary-cell"><span>未读通知</span><strong>3</strong><small>角色变更、评论和系统通知</small></div>
-            </div>
-            <div class="dashboard-grid">
-              <section class="panel">
-                <div class="panel-head"><strong>分配给我的未完成事项</strong><button class="button quiet" data-page-target="mywork">查看全部</button></div>
-                <div class="panel-body"><div class="row-list">${issueRows || '<div class="empty-state">暂无未完成事项</div>'}</div></div>
-              </section>
-              <div class="stack">
-                ${currentIteration ? iterationPanel(currentIteration) : '<section class="panel"><div class="empty-state">暂无迭代</div></section>'}
-                <section class="panel">
-                  <div class="panel-head"><strong>Keydex 长程任务</strong><span class="source-dot local">本地</span></div>
-                  <div class="panel-body"><div class="row-list">${goalRows}</div></div>
-                </section>
+            <div class="workbench-filterbar">
+              <div class="toolbar-left">
+                <span class="tree-muted">筛选工作台</span>
+                <select class="select" data-workbench-filter="iteration"><option value="all">全部迭代</option>${iterationOptions}</select>
+                <select class="select" data-workbench-filter="type"><option value="all" ${state.workbenchFilters.issueType === "all" ? "selected" : ""}>全部事项类型</option><option value="requirement" ${state.workbenchFilters.issueType === "requirement" ? "selected" : ""}>需求</option><option value="task" ${state.workbenchFilters.issueType === "task" ? "selected" : ""}>任务</option><option value="bug" ${state.workbenchFilters.issueType === "bug" ? "selected" : ""}>Bug</option></select>
+                <button class="button quiet" type="button" data-reset-workbench-filter>重置</button>
               </div>
-              <section class="panel">
-                <div class="panel-head"><strong>最近更新文档</strong><button class="button quiet" data-page-target="docs">查看文档库</button></div>
-                <div class="panel-body"><div class="row-list">${docRows || '<div class="empty-state">暂无文档</div>'}</div></div>
-              </section>
-              <section class="panel">
-                <div class="panel-head"><strong>当前页面上下文</strong><span class="source-dot">云端</span></div>
-                <div class="panel-body kv">
-                  <div class="kv-row"><span>项目</span><strong>${esc(project().name)}</strong></div>
-                  <div class="kv-row"><span>用户</span><strong>${currentUser}</strong></div>
-                  <div class="kv-row"><span>角色</span><strong>${esc(project().role)}</strong></div>
-                  <div class="kv-row"><span>当前对象</span><strong>${state.context ? esc(state.context.label) : "未选择"}</strong></div>
-                </div>
-              </section>
+              <span class="source-dot">KT-PM 云端 · ${leaves.length} 个结果</span>
+            </div>
+            <div class="workbench-summary">
+              <div class="workbench-summary-copy"><strong>个人事项路径</strong><span>列表只以处理人为“${currentUser}”的末端事项为入口，同时保留它所属的迭代、父需求和子需求。</span></div>
+              <div class="workbench-summary-stats"><div><strong>${allLeaves.length}</strong><span>我的末端事项</span></div><div><strong>${due.length}</strong><span>临近截止</span></div><div><strong>${grouped.length}</strong><span>当前迭代组</span></div></div>
+            </div>
+            <div class="workbench-tree">
+              <div class="tree-header"><span>事项与需求路径</span><span>类型</span><span>状态</span><span>优先级</span><span>处理人</span><span>截止日期</span><span>操作</span></div>
+              ${rows || '<div class="empty-state">当前筛选下没有分配给我的末端事项</div>'}
             </div>`;
         }
 
@@ -1624,6 +1923,7 @@
         }
 
         function renderAll() {
+          renderProjectWorkspaces();
           renderDashboard();
           renderIssueCollection("mywork", null, true);
           renderIssueCollection("requirements", "requirement", false);
@@ -1644,6 +1944,7 @@
           $$("[data-page-target]").forEach((node) => node.classList.toggle("active", node.dataset.pageTarget === activeNavPage && node.classList.contains("nav-button")));
           $("#pageTitle").textContent = pageInfo[page][0];
           $("#pageHint").textContent = pageInfo[page][1];
+          renderProjectWorkspaces();
           updateContextUi();
         }
 
@@ -1679,13 +1980,14 @@
         function openIssue(id) {
           const item = issues.find((issue) => issue.id === Number(id));
           if (!item) return;
+          const isMine = projectLeafIssues().some((issue) => issue.id === item.id);
           setContext("issue", item, `#${item.id} ${item.title}`);
           const linkedDocs = item.linkedDocs.map((docId) => docs.find((doc) => doc.id === docId)).filter(Boolean);
           const linkedIssues = item.linkedIssues.map((issueId) => issues.find((issue) => issue.id === issueId)).filter(Boolean);
           const activityList = activities[item.id] || [{ text: `${item.creatorName} 创建事项`, time: item.createdAt, source: "web" }];
           openDetailPage(`#${item.id} ${typeLabel(item.issueType)}`, `
             <h2 style="margin:0 0 10px;font-size:18px">${esc(item.title)}</h2>
-            <div class="inline-actions" style="margin-bottom:12px"><button class="button" data-discuss-issue="${item.id}">和 Agent 讨论</button><button class="button primary" data-start-task-issue="${item.id}">启动长程任务</button></div>
+            <div class="inline-actions" style="margin-bottom:12px"><button class="button" data-discuss-issue="${item.id}">和 Agent 讨论</button>${isMine ? `<button class="button primary" data-phase-one-task="${item.id}">开启长程任务</button>` : ""}</div>
             <div class="kv">
               <div class="kv-row"><span>类型</span><strong>${typeLabel(item.issueType)}</strong></div>
               <div class="kv-row"><span>状态</span><span><span class="tag ${stateClass(item.stateCategory)}">${esc(item.stateName)}</span></span></div>
@@ -1699,8 +2001,8 @@
               <div class="kv-row"><span>标签</span><span>${item.labels.map((label) => `<span class="tag">${esc(label)}</span>`).join(" ") || "-"}</span></div>
             </div>
             <section class="detail-section"><h3>正文</h3><div class="detail-copy">${esc(item.contentText || "暂无正文")}</div></section>
-            <section class="detail-section"><h3>允许的下一状态</h3><div class="inline-actions">${item.nextStates.map((next) => `<button class="button" data-transition-issue="${item.id}" data-next-id="${next.id}" data-next-name="${esc(next.name)}" data-next-category="${next.category}">${esc(next.name)}</button>`).join("") || '<span class="page-count">没有可用流转</span>'}</div></section>
-            <section class="detail-section"><h3>关联文档</h3><div class="row-list">${linkedDocs.map((doc) => `<div class="doc-row" data-doc-id="${doc.id}"><div class="row-main"><strong>${esc(doc.title)}</strong><span>${esc(doc.version)} · ${esc(doc.authorName)}</span></div></div>`).join("") || '<span class="page-count">暂无关联文档</span>'}</div></section>
+            <section class="detail-section"><h3>允许的下一状态</h3><div class="meta-line">${item.nextStates.map((next) => `<span class="tag ${stateClass(next.category)}">${esc(next.name)}</span>`).join("") || '<span class="page-count">没有可用流转</span>'}</div></section>
+            <section class="detail-section"><h3>关联文档</h3><div class="row-list">${linkedDocs.map((doc) => `<div class="doc-row"><div class="row-main"><strong>${esc(doc.title)}</strong><span>${esc(doc.version)} · ${esc(doc.authorName)}</span></div><span class="tree-muted">云端关联资料</span></div>`).join("") || '<span class="page-count">暂无关联文档</span>'}</div></section>
             <section class="detail-section"><h3>关联事项</h3><div class="row-list">${linkedIssues.map((linked) => `<div class="work-row" data-issue-id="${linked.id}"><div class="row-main"><strong>#${linked.id} ${esc(linked.title)}</strong><span>${typeLabel(linked.issueType)} · ${esc(linked.stateName)}</span></div></div>`).join("") || '<span class="page-count">暂无关联事项</span>'}</div></section>
             <section class="detail-section"><h3>最近活动</h3><div class="activity-list">${activityList.map((activity) => `<div class="activity-item"><i></i><div>${esc(activity.text)}<small>${esc(activity.time)} · ${esc(activity.source)}</small></div></div>`).join("")}</div></section>`, `${project().name} · ${typeLabel(item.issueType)}详情`);
         }
@@ -1777,6 +2079,15 @@
           showToast("已从当前页面生成结构化 Task，并启动 Keydex Agent");
         }
 
+        function openPhaseOneModal(item) {
+          $("#phaseOneModalObject").textContent = item ? `#${item.id} ${item.title}` : "当前事项";
+          $("#phaseOneModal").classList.remove("hidden");
+        }
+
+        function closePhaseOneModal() {
+          $("#phaseOneModal").classList.add("hidden");
+        }
+
         function openAgent(prompt) {
           $("#agentCapsule").classList.add("open");
           if (prompt) $("#agentInput").value = prompt;
@@ -1811,20 +2122,13 @@
           state.projectKey = next.key;
           state.context = null;
           state.issueFilters = {};
+          state.workbenchFilters = { iterationId: "all", issueType: "all" };
+          state.collapsedNodes.clear();
           state.folderId = null;
           state.docId = projectDocs()[0]?.id || null;
-          $("#projectPickerName").textContent = next.name;
-          $("#sideProjectName").textContent = next.name;
-          $("#sideProjectMeta").textContent = `普通项目 · ${next.role}`;
-          $("#dashboardSubtitle").textContent = `${currentUser}在当前项目中的工作`;
-          $("#projectMenu").classList.remove("show");
           renderAll();
           setPage("dashboard");
-          showToast(`已切换到 ${next.name}`);
-        }
-
-        function renderProjectMenu() {
-          $("#projectMenu").innerHTML = projects.map((item) => `<button class="project-option ${state.projectKey === item.key ? "active" : ""}" data-project-key="${item.key}"><strong>${esc(item.name)}</strong><span>${item.type === "platform" ? "平台项目" : "普通项目"} · ${esc(item.role)} · ${item.status === "active" ? "活跃" : "归档"}</span></button>`).join("");
+          showToast(`已打开 ${next.name} / 工作台`);
         }
 
         function showIdentity() {
@@ -1853,7 +2157,6 @@
         }
 
         renderQr();
-        renderProjectMenu();
 
         $("#loginButton").addEventListener("click", () => {
           $("#authGate").classList.add("hidden");
@@ -1863,12 +2166,6 @@
           showToast("企微登录成功，已读取用户、项目和权限");
         });
 
-        $("#projectPicker").addEventListener("click", (event) => {
-          event.stopPropagation();
-          renderProjectMenu();
-          $("#projectMenu").classList.toggle("show");
-        });
-        $("#sideProject").addEventListener("click", () => $("#projectPicker").click());
         $("#detailBack").addEventListener("click", leaveDetailPage);
         $("#identityButton").addEventListener("click", showIdentity);
         $("#notificationButton").addEventListener("click", showNotifications);
@@ -1882,13 +2179,41 @@
         document.addEventListener("click", (event) => {
           const target = event.target instanceof Element ? event.target : null;
           if (!target) return;
-          if (!target.closest("#projectMenu") && !target.closest("#projectPicker")) $("#projectMenu").classList.remove("show");
+
+          if (target.closest("[data-close-phase-one-modal]") || target.id === "phaseOneModal") {
+            closePhaseOneModal();
+            return;
+          }
+
+          const phaseOneTask = target.closest("[data-phase-one-task]");
+          if (phaseOneTask) {
+            openPhaseOneModal(issues.find((issue) => issue.id === Number(phaseOneTask.dataset.phaseOneTask)));
+            return;
+          }
+
+          const treeToggle = target.closest("[data-toggle-tree]");
+          if (treeToggle) {
+            const key = treeToggle.dataset.toggleTree;
+            if (state.collapsedNodes.has(key)) state.collapsedNodes.delete(key);
+            else state.collapsedNodes.add(key);
+            renderDashboard();
+            return;
+          }
+
+          if (target.closest("[data-reset-workbench-filter]")) {
+            state.workbenchFilters = { iterationId: "all", issueType: "all" };
+            renderDashboard();
+            return;
+          }
 
           const nav = target.closest("[data-page-target]");
           if (nav) setPage(nav.dataset.pageTarget);
 
-          const projectOption = target.closest("[data-project-key]");
-          if (projectOption) switchProject(projectOption.dataset.projectKey);
+          const projectWorkbench = target.closest("[data-project-workbench]");
+          if (projectWorkbench) {
+            switchProject(projectWorkbench.dataset.projectWorkbench);
+            return;
+          }
 
           const issueTarget = target.closest("[data-issue-id]");
           if (issueTarget) openIssue(issueTarget.dataset.issueId);
@@ -1921,9 +2246,9 @@
           if (discussDoc) { const doc = docs.find((item) => item.id === Number(discussDoc.dataset.discussDoc)); openAgent(`请阅读并讨论《${doc.title}》`); }
 
           const taskIssue = target.closest("[data-start-task-issue]");
-          if (taskIssue) createTaskFrom("issue", issues.find((issue) => issue.id === Number(taskIssue.dataset.startTaskIssue)));
+          if (taskIssue) openPhaseOneModal(issues.find((issue) => issue.id === Number(taskIssue.dataset.startTaskIssue)));
           const taskDoc = target.closest("[data-start-task-doc]");
-          if (taskDoc) createTaskFrom("doc", docs.find((doc) => doc.id === Number(taskDoc.dataset.startTaskDoc)));
+          if (taskDoc) openPhaseOneModal(docs.find((doc) => doc.id === Number(taskDoc.dataset.startTaskDoc)));
 
           const openTaskTarget = target.closest("[data-open-task]");
           if (openTaskTarget) openTask(openTaskTarget.dataset.openTask);
@@ -1978,6 +2303,13 @@
         });
 
         document.addEventListener("change", (event) => {
+          const workbenchFilter = event.target.closest("[data-workbench-filter]");
+          if (workbenchFilter) {
+            if (workbenchFilter.dataset.workbenchFilter === "iteration") state.workbenchFilters.iterationId = workbenchFilter.value;
+            if (workbenchFilter.dataset.workbenchFilter === "type") state.workbenchFilters.issueType = workbenchFilter.value;
+            renderDashboard();
+            return;
+          }
           const category = event.target.closest("[data-filter-category]");
           const priority = event.target.closest("[data-filter-priority]");
           const iteration = event.target.closest("[data-filter-iteration]");
@@ -1991,7 +2323,7 @@
         });
 
         document.addEventListener("keydown", (event) => {
-          if (event.key === "Escape") $("#projectMenu").classList.remove("show");
+          if (event.key === "Escape") closePhaseOneModal();
         });
       })();
     </script>

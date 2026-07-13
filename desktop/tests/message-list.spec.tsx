@@ -5,6 +5,7 @@ import type { RuntimeBridge } from "@/runtime";
 import { ConversationTurnNavigator, MessageList } from "@/renderer/pages/conversation/messages";
 import {
   buildTurnNavigationItemsFromMessages,
+  conversationListModeFor,
   visibleTurnIndexesFromMountedTurns,
 } from "@/renderer/pages/conversation/messages/MessageList";
 import { conversationBaselineDiagnostics } from "@/renderer/pages/conversation/messages/conversationBaselineDiagnostics";
@@ -37,6 +38,31 @@ class AutoLoadingImage {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("MessageList", () => {
+  it("keeps ordinary histories native and virtualizes only beyond explicit cost thresholds", () => {
+    expect(conversationListModeFor({ turnCount: 120, unitCount: 420, a2uiWeight: 0 })).toBe("native");
+    expect(conversationListModeFor({ turnCount: 1, unitCount: 3, a2uiWeight: 100 })).toBe("native");
+    expect(conversationListModeFor({ turnCount: 121, unitCount: 360, a2uiWeight: 0 })).toBe("virtual");
+    expect(conversationListModeFor({ turnCount: 100, unitCount: 421, a2uiWeight: 0 })).toBe("virtual");
+    expect(conversationListModeFor({ turnCount: 41, unitCount: 180, a2uiWeight: 49 })).toBe("virtual");
+  });
+
+  it("keeps the chosen scroll surface stable while a conversation grows", () => {
+    const renderMessage = (entry: ConversationMessage) => <span>{entry.id}</span>;
+    const { rerender } = render(
+      <MessageList messages={historyMessages(2, "stable-native")} renderMessage={renderMessage} />,
+    );
+
+    expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("native");
+    rerender(<MessageList messages={historyMessages(121, "stable-native")} renderMessage={renderMessage} />);
+    expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("native");
+    expect(screen.queryByTestId("conversation-scroll-rail")).toBeNull();
+
+    const anotherConversation = historyMessages(121, "new-virtual")
+      .map((entry) => ({ ...entry, threadId: "thread-2" }));
+    rerender(<MessageList messages={anotherConversation} renderMessage={renderMessage} />);
+    expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("virtual");
+  });
+
   it("bounds turn navigator previews instead of retaining an entire giant reply", () => {
     const items = buildTurnNavigationItemsFromMessages([
       message("preview-user", "user", "简短问题"),
@@ -894,6 +920,26 @@ describe("MessageList", () => {
     expect(markers.map((marker) => marker.getAttribute("data-current"))).toEqual(["false", "false", "true", "true"]);
   });
 
+  it("updates native turn navigation without reconciling stable message units", async () => {
+    const renderMessage = vi.fn((entry: ConversationMessage) => <span>{entry.content}</span>);
+    render(<MessageList messages={historyMessages(4, "native-nav")} renderMessage={renderMessage} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed");
+    });
+    const rendersBeforeScroll = renderMessage.mock.calls.length;
+    const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+    const turns = screen.getAllByTestId("message-turn") as HTMLElement[];
+    mockElementRect(scroller, { height: 100, top: 0 });
+    [-80, -20, 20, 120].forEach((top, index) => mockElementTop(turns[index], top));
+    mockScrollMetrics(scroller, { scrollHeight: 600, clientHeight: 100, scrollTop: 180 });
+
+    await act(async () => {
+      fireEvent.scroll(scroller);
+    });
+
+    expect(renderMessage).toHaveBeenCalledTimes(rendersBeforeScroll);
+  });
+
   it("adds a new user turn without claiming it is visible before viewport confirmation", async () => {
     const initialMessages = [
       message("m1", "user", "第一轮问题"),
@@ -949,7 +995,7 @@ describe("MessageList", () => {
     expect(screen.getByTestId("message-list").getAttribute("data-turn-navigator")).toBe("false");
   });
 
-  it("keeps compact lists on the unified virtual renderer while processing", () => {
+  it("keeps an ordinary compact streaming conversation on the native renderer", () => {
     const originalResizeObserver = globalThis.ResizeObserver;
     const originalUserAgent = navigator.userAgent;
     class FakeResizeObserver {
@@ -970,7 +1016,9 @@ describe("MessageList", () => {
     try {
       render(<MessageList messages={[message("m1", "assistant", "流式内容")]} isProcessing />);
 
-      expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("virtual");
+      expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("native");
+      expect(screen.getByTestId("message-list-scroll").getAttribute("data-conversation-native-timeline")).toBe("true");
+      expect(screen.queryByTestId("conversation-scroll-rail")).toBeNull();
     } finally {
       Object.defineProperty(navigator, "userAgent", {
         configurable: true,
@@ -1895,6 +1943,9 @@ describe("MessageList", () => {
       await waitFor(() => {
         expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed");
       });
+      expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("native");
+      expect(scroller.getAttribute("data-conversation-native-timeline")).toBe("true");
+      expect(screen.queryByTestId("conversation-scroll-rail")).toBeNull();
       expect(scroller.scrollTop).toBe(timelineBottom(scroller));
       expect(scroller.querySelector(`[data-turn-index="${turnCount - 1}"]`)).not.toBeNull();
       expect(scroller.querySelector(`[data-conversation-unit-id="unit:footer:history-assistant-${turnCount - 1}"]`))
@@ -1928,7 +1979,7 @@ describe("MessageList", () => {
     }
   });
 
-  it("lets upward wheel intent interrupt virtual auto-follow before the scroll event", async () => {
+  it("lets upward wheel intent interrupt native auto-follow without enabling virtual scroll ownership", async () => {
     const running = { ...message("m1", "assistant", "正在输出"), status: "running" as const };
     const { rerender } = render(<MessageList messages={[running]} isProcessing />);
     const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
@@ -1936,7 +1987,8 @@ describe("MessageList", () => {
     mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
 
     fireEvent.wheel(scroller, { deltaY: -120 });
-    expect(scroller.dataset.conversationTimelineUserScrollActive).toBe("true");
+    expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("native");
+    expect(scroller.dataset.conversationTimelineUserScrollActive).toBeUndefined();
     mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 800 });
     rerender(
       <MessageList
@@ -1951,7 +2003,7 @@ describe("MessageList", () => {
     expect(scroller.scrollTop).toBe(800);
   });
 
-  it("marks native scrollbar dragging as active timeline scroll ownership", async () => {
+  it("keeps native scrollbar dragging outside virtual timeline ownership", async () => {
     render(<MessageList messages={[message("m1", "assistant", "long history")]} />);
     const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
     await waitFor(() => expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed"));
@@ -1973,13 +2025,15 @@ describe("MessageList", () => {
 
     fireEvent(scroller, new MouseEvent("pointerdown", { bubbles: true, clientX: 99, clientY: 20 }));
 
-    expect(scroller.dataset.conversationTimelineUserScrollActive).toBe("true");
+    expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("native");
+    expect(scroller.dataset.conversationTimelineUserScrollActive).toBeUndefined();
   });
 
-  it("keeps the controlled scrollbar thumb tied to pointer movement until release", async () => {
-    render(<MessageList messages={[message("m1", "assistant", "long history")]} />);
+  it("keeps the controlled scrollbar thumb tied to pointer movement for histories above the virtual threshold", async () => {
+    render(<MessageList messages={historyMessages(121, "controlled-rail")} />);
     const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
     await waitFor(() => expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed"));
+    expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("virtual");
     mockScrollMetrics(scroller, { scrollHeight: 2_000, clientHeight: 400, scrollTop: 600 });
     const rail = screen.getByTestId("conversation-scroll-rail") as HTMLDivElement;
     const track = rail.firstElementChild as HTMLDivElement;
@@ -2090,9 +2144,11 @@ describe("MessageList", () => {
         expect(scroller.querySelector('[data-turn-index="999"]')).not.toBeNull();
         expect(scroller.querySelector('[data-conversation-unit-id="unit:user-markdown:large-user-999"]')).not.toBeNull();
         expect(scroller.textContent).toContain("question-999");
+        expect(scroller.querySelectorAll("[data-conversation-unit-measurement-pending]")).toHaveLength(0);
       });
       expect(Number(scroller.getAttribute("data-conversation-timeline-mounted-units"))).toBeLessThan(80);
       expect(scroller.querySelectorAll("[data-conversation-unit-id]").length).toBeLessThan(80);
+      expect(scroller.querySelectorAll('[style*="visibility: hidden"]')).toHaveLength(0);
       expect(scroller.querySelectorAll('[data-conversation-unit-pinned="true"]')).toHaveLength(0);
       expect(scroller.querySelectorAll('[data-conversation-unit-tail-adjacent="true"]')).toHaveLength(1);
       expect(scroller.getAttribute("data-conversation-timeline-follow-bottom")).toBe("false");
@@ -2450,8 +2506,18 @@ function turnIndexFor(element: Element | null): string | null {
 }
 
 function timelineBottom(scroller: HTMLElement): number {
+  if (scroller.dataset.conversationNativeTimeline === "true") {
+    return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  }
   const canvas = scroller.querySelector<HTMLElement>("[data-conversation-timeline-total-height]");
   return Math.max(0, Number(canvas?.dataset.conversationTimelineTotalHeight ?? 0) - scroller.clientHeight);
+}
+
+function historyMessages(turnCount: number, prefix: string): ConversationMessage[] {
+  return Array.from({ length: turnCount }, (_, index) => [
+    { ...message(`${prefix}-user-${index}`, "user", `question-${index}`), turnId: `${prefix}-turn-${index}` },
+    { ...message(`${prefix}-assistant-${index}`, "assistant", `answer-${index}`), turnId: `${prefix}-turn-${index}` },
+  ]).flat();
 }
 
 function mockScrollMetrics(

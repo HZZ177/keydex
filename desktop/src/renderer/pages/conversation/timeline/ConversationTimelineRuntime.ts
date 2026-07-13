@@ -70,6 +70,7 @@ const MAX_RECYCLED_TIMELINE_SLOTS = 64;
 const TOP_INTENT_THRESHOLD_PX = 44;
 const USER_SCROLL_SETTLE_MS = 180;
 const SCROLL_TARGET_EPSILON_PX = 1;
+const MIN_MEASURED_UNIT_HEIGHT_PX = 1;
 
 export class ConversationTimelineRuntime {
   readonly canvas: HTMLDivElement;
@@ -132,7 +133,11 @@ export class ConversationTimelineRuntime {
     this.indexById = new Map(units.map((unit, index) => [unit.id, index]));
     for (const id of [...this.pinnedIds]) if (!this.indexById.has(id)) this.pinnedIds.delete(id);
     this.revision = `conversation-timeline:${++this.sequence}`;
-    const heights = units.map((unit) => this.measuredHeights.get(unit.id) ?? unit.estimatedHeight);
+    const heights = units.map((unit) => {
+      const measuredHeight = this.measuredHeights.get(unit.id);
+      if (measuredHeight !== undefined && measuredHeight >= MIN_MEASURED_UNIT_HEIGHT_PX) return measuredHeight;
+      return Math.max(MIN_MEASURED_UNIT_HEIGHT_PX, unit.estimatedHeight);
+    });
     this.heightIndex = new MarkdownHeightIndex(this.revision, heights);
     this.viewport = new MarkdownViewportController(this.heightIndex, {
       defaultOverscanPx: this.overscanPx,
@@ -181,11 +186,14 @@ export class ConversationTimelineRuntime {
   setUserScrollInteraction(active: boolean): void {
     this.assertActive();
     if (this.userScrollActive === active) return;
+    if (!active) this.collectInteractionMeasurements();
     this.userScrollActive = active;
     this.lastObservedScrollTop = this.root.scrollTop;
     setDatasetValue(this.root, "conversationTimelineUserScrollActive", active ? "true" : "false");
-    if (!active) {
+    if (active) this.applyInteractionClips();
+    else {
       this.flushDeferredMeasurements();
+      this.clearCommittedInteractionClips();
     }
   }
 
@@ -194,6 +202,7 @@ export class ConversationTimelineRuntime {
     const index = this.indexById.get(unitId);
     if (index === undefined || !this.heightIndex || !this.revision) return null;
     const normalized = finiteNonNegative(height, "height");
+    if (normalized < MIN_MEASURED_UNIT_HEIGHT_PX) return null;
     if (this.userScrollActive) {
       this.deferMeasuredHeight(unitId, normalized);
       return null;
@@ -209,8 +218,8 @@ export class ConversationTimelineRuntime {
   measureMounted(): ConversationTimelinePatch | null {
     if (this.userScrollActive) {
       for (const [id, slot] of this.slots) {
-        const height = slot.element.getBoundingClientRect().height;
-        if (!Number.isFinite(height) || height < 0) continue;
+        const height = this.interactionContentHeight(slot.element);
+        if (height === null) continue;
         this.deferMeasuredHeight(id, height);
       }
       return null;
@@ -219,7 +228,12 @@ export class ConversationTimelineRuntime {
     let changed = false;
     for (const [id, slot] of this.slots) {
       const height = slot.element.getBoundingClientRect().height;
-      if (!Number.isFinite(height) || height < 0 || this.measuredHeights.get(id) === height) continue;
+      if (
+        !Number.isFinite(height)
+        || height < MIN_MEASURED_UNIT_HEIGHT_PX
+        || slot.element.dataset.conversationUnitMeasurementPending
+        || this.measuredHeights.get(id) === height
+      ) continue;
       this.measuredHeights.set(id, height);
       const index = this.indexById.get(id);
       if (index !== undefined && this.heightIndex && this.revision) {
@@ -289,6 +303,24 @@ export class ConversationTimelineRuntime {
 
   getUnitElement(unitId: string): HTMLElement | null {
     return this.slots.get(unitId)?.element ?? null;
+  }
+
+  commitRenderedUnit(unit: Pick<ConversationRenderUnit, "id" | "renderVersion">): boolean {
+    this.assertActive();
+    const slot = this.slots.get(unit.id);
+    if (!slot || slot.unit.renderVersion !== unit.renderVersion) return false;
+    if (!commitConversationTimelineUnitMeasurement(slot.element, unit)) return false;
+
+    if (slot.element.dataset.conversationUnitScrollClip === "true") {
+      const contentHeight = this.interactionContentHeight(slot.element);
+      if (contentHeight !== null) this.updateMeasuredHeight(unit.id, contentHeight);
+      if (
+        !this.userScrollActive
+        && this.slots.get(unit.id) === slot
+        && !slot.element.dataset.conversationUnitMeasurementPending
+      ) this.clearInteractionClip(slot.element);
+    }
+    return true;
   }
 
   mountedUnitIds(): readonly string[] {
@@ -363,6 +395,12 @@ export class ConversationTimelineRuntime {
       if (!slot) {
         const recycled = this.takeRecycledSlot(unit.kind);
         if (recycled) {
+          setDatasetValue(recycled.element, "conversationUnitId", unit.id);
+          setDatasetValue(
+            recycled.element,
+            "conversationUnitMeasurementPending",
+            conversationTimelineUnitCommitKey(unit),
+          );
           recycled.handle.update(unit);
           recycled.unit = unit;
           slot = recycled;
@@ -370,6 +408,12 @@ export class ConversationTimelineRuntime {
           const element = this.root.ownerDocument.createElement("div");
           element.style.position = "absolute";
           element.style.insetInline = "0";
+          setDatasetValue(element, "conversationUnitId", unit.id);
+          setDatasetValue(
+            element,
+            "conversationUnitMeasurementPending",
+            conversationTimelineUnitCommitKey(unit),
+          );
           const handle = this.renderer.mount(unit, element);
           slot = { unit, element, handle };
         }
@@ -379,6 +423,11 @@ export class ConversationTimelineRuntime {
         this.resizeObserver?.observe(slot.element);
         created += 1;
       } else if (slot.unit.renderVersion !== unit.renderVersion) {
+        setDatasetValue(
+          slot.element,
+          "conversationUnitMeasurementPending",
+          conversationTimelineUnitCommitKey(unit),
+        );
         slot.handle.update(unit);
         slot.unit = unit;
         updated += 1;
@@ -393,6 +442,9 @@ export class ConversationTimelineRuntime {
       // measured DOM box. A min-height here makes a short 1-line unit report its
       // 120px estimate forever, so ResizeObserver can never correct the index.
       if (slot.element.style.minHeight) slot.element.style.removeProperty("min-height");
+      if (this.userScrollActive || slot.element.dataset.conversationUnitMeasurementPending) {
+        this.applyInteractionClip(slot, item.index);
+      } else this.clearInteractionClip(slot.element);
       setDatasetValue(slot.element, "conversationUnitIndex", String(item.index));
       setDatasetValue(slot.element, "conversationUnitKind", unit.kind);
       setDatasetValue(slot.element, "conversationUnitVisible", item.visible ? "true" : "false");
@@ -508,7 +560,10 @@ export class ConversationTimelineRuntime {
       || slot.unit.id !== id
       || !this.heightIndex
       || !this.revision
-      || height < 0
+      || !Number.isFinite(height)
+      || height < MIN_MEASURED_UNIT_HEIGHT_PX
+      || Boolean(element.dataset.conversationUnitMeasurementPending)
+      || element.dataset.conversationUnitScrollClip === "true"
     ) return null;
     const currentHeight = element.getBoundingClientRect().height;
     if (Number.isFinite(currentHeight) && Math.abs(currentHeight - height) > 0.5) return null;
@@ -516,6 +571,7 @@ export class ConversationTimelineRuntime {
   }
 
   private deferMeasuredHeight(unitId: string, height: number): void {
+    if (!Number.isFinite(height) || height < MIN_MEASURED_UNIT_HEIGHT_PX) return;
     if (this.measuredHeights.get(unitId) === height) {
       this.deferredMeasuredHeights.delete(unitId);
       return;
@@ -539,6 +595,70 @@ export class ConversationTimelineRuntime {
       }) !== 0 || changed;
     }
     return changed ? this.updateViewportAfterMeasurement(anchor) : null;
+  }
+
+  private applyInteractionClips(): void {
+    for (const [id, slot] of this.slots) {
+      const index = this.indexById.get(id);
+      if (index !== undefined) this.applyInteractionClip(slot, index);
+    }
+  }
+
+  private applyInteractionClip(slot: Slot, index: number): void {
+    if (!this.heightIndex) return;
+    const allocatedHeight = Math.max(MIN_MEASURED_UNIT_HEIGHT_PX, this.heightIndex.heightAt(index));
+    slot.element.style.height = `${allocatedHeight}px`;
+    slot.element.style.overflowX = "visible";
+    slot.element.style.overflowY = "clip";
+    setDatasetValue(slot.element, "conversationUnitScrollClip", "true");
+  }
+
+  private clearCommittedInteractionClips(): void {
+    for (const slot of this.slots.values()) {
+      if (!slot.element.dataset.conversationUnitMeasurementPending) this.clearInteractionClip(slot.element);
+    }
+  }
+
+  private clearInteractionClip(element: HTMLElement): void {
+    if (element.dataset.conversationUnitScrollClip !== "true") return;
+    element.style.removeProperty("height");
+    element.style.removeProperty("overflow-x");
+    element.style.removeProperty("overflow-y");
+    delete element.dataset.conversationUnitScrollClip;
+  }
+
+  private collectInteractionMeasurements(): void {
+    for (const [id, slot] of this.slots) {
+      const height = this.interactionContentHeight(slot.element);
+      if (height !== null) this.deferMeasuredHeight(id, height);
+    }
+  }
+
+  private interactionContentHeight(element: HTMLElement): number | null {
+    if (element.dataset.conversationUnitMeasurementPending) return null;
+    if (element.dataset.conversationUnitScrollClip !== "true") {
+      const height = element.getBoundingClientRect().height;
+      return Number.isFinite(height) && height >= MIN_MEASURED_UNIT_HEIGHT_PX ? height : null;
+    }
+
+    // Measure the host's real auto height while retaining the allocated clip
+    // for paint. Units are absolutely positioned, so this synchronous probe
+    // cannot reflow their siblings or alter the native scroll extent.
+    const allocatedHeight = element.style.height;
+    const overflowX = element.style.overflowX;
+    const overflowY = element.style.overflowY;
+    element.style.removeProperty("height");
+    element.style.removeProperty("overflow-x");
+    element.style.removeProperty("overflow-y");
+    let height: number;
+    try {
+      height = element.getBoundingClientRect().height;
+    } finally {
+      element.style.height = allocatedHeight;
+      element.style.overflowX = overflowX;
+      element.style.overflowY = overflowY;
+    }
+    return Number.isFinite(height) && height >= MIN_MEASURED_UNIT_HEIGHT_PX ? height : null;
   }
 
   private captureMeasurementAnchor(): ConversationTimelineAnchor | null {
@@ -649,4 +769,19 @@ function setDatasetValue(element: HTMLElement, key: string, value: string): void
 function recycleFamily(kind: ConversationRenderUnit["kind"]): string {
   if (kind === "user-markdown" || kind === "assistant-markdown") return "markdown";
   return kind;
+}
+
+function conversationTimelineUnitCommitKey(
+  unit: Pick<ConversationRenderUnit, "id" | "renderVersion">,
+): string {
+  return JSON.stringify([unit.id, unit.renderVersion]);
+}
+
+function commitConversationTimelineUnitMeasurement(
+  host: HTMLElement,
+  unit: Pick<ConversationRenderUnit, "id" | "renderVersion">,
+): boolean {
+  if (host.dataset.conversationUnitMeasurementPending !== conversationTimelineUnitCommitKey(unit)) return false;
+  delete host.dataset.conversationUnitMeasurementPending;
+  return true;
 }
