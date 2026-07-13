@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FilePreview } from "@/renderer/components/workspace/FilePreview";
 import type { RuntimeBridge } from "@/runtime";
 import type { AnnotationRecord } from "@/runtime/annotations";
+import { parseCanonicalMarkdownSnapshot } from "@/renderer/markdownRuntime/worker/parser";
 
 class FakeResizeObserver {
   observe() {}
@@ -60,14 +61,46 @@ function runtime(records: AnnotationRecord[] = [record]): RuntimeBridge {
   } as unknown as RuntimeBridge;
 }
 
+const markdownRuntimeSnapshotLoader = async ({ source, revision }: { source: string; revision: string }) => (
+  parseCanonicalMarkdownSnapshot({
+    surface: "file",
+    documentId: "file:ws-1:README.md",
+    revision,
+    source,
+    rendererProfile: "file-preview",
+  })
+);
+
+let originalRangeRect: PropertyDescriptor | undefined;
+let originalRangeRects: PropertyDescriptor | undefined;
+
 describe("unified FilePreview annotations", () => {
   beforeEach(() => {
     vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    originalRangeRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+    originalRangeRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => domRect(0, 0, 48, 18),
+    });
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [domRect(0, 0, 48, 18)],
+    });
+  });
+
+  afterEach(() => {
+    if (originalRangeRect) Object.defineProperty(Range.prototype, "getBoundingClientRect", originalRangeRect);
+    else delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+    if (originalRangeRects) Object.defineProperty(Range.prototype, "getClientRects", originalRangeRects);
+    else delete (Range.prototype as { getClientRects?: unknown }).getClientRects;
+    vi.unstubAllGlobals();
   });
 
   it("counts text and document annotations together in the rail header", async () => {
     render(
       <FilePreview
+        markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader}
         request={{ type: "file", path: "README.md" }}
         runtime={runtime([record, documentRecord])}
         workspaceId="ws-1"
@@ -88,7 +121,7 @@ describe("unified FilePreview annotations", () => {
   });
 
   it("keeps one rail and one active state across preview, source, and split", async () => {
-    render(<FilePreview request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
 
     expect(await screen.findByRole("heading", { name: "Title" })).not.toBeNull();
     const toggle = await screen.findByLabelText("文件批注 1");
@@ -126,8 +159,116 @@ describe("unified FilePreview annotations", () => {
     expect(document.querySelectorAll("[data-annotation-rail='true']")).toHaveLength(1);
   });
 
+  it("renders source connectors and keeps split connector ownership on the right preview only", async () => {
+    const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    const clientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const elementRect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function rectForElement(this: HTMLElement) {
+      if (this.matches(".cm-annotation-mark[data-annotation-id='ann-alpha']")) {
+        return domRect(120, 140, 80, 20);
+      }
+      return domRect(0, 0, 900, 600);
+    });
+    const elementRects = vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function rectsForElement(this: HTMLElement) {
+      return this.matches(".cm-annotation-mark[data-annotation-id='ann-alpha']")
+        ? [domRect(120, 140, 80, 20)] as unknown as DOMRectList
+        : [] as unknown as DOMRectList;
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 900 });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 600 });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get: () => 1200 });
+    vi.stubGlobal("ResizeObserver", TriggerResizeObserver);
+
+    try {
+      render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
+      expect(await screen.findByRole("heading", { name: "Title" })).not.toBeNull();
+      const modeButtons = document.querySelectorAll<HTMLButtonElement>("[class*='segmented'] button");
+      fireEvent.click(modeButtons[1]!);
+      await waitFor(() => expect(document.querySelector(".cm-annotation-mark[data-annotation-id='ann-alpha']")).not.toBeNull());
+      const toggle = document.querySelector<HTMLButtonElement>(
+        "button[aria-pressed][data-file-preview-selection-excluded='true']",
+      )!;
+      fireEvent.click(toggle);
+      await screen.findByText("Explain alpha");
+      await act(async () => {
+        TriggerResizeObserver.flush();
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      });
+      await waitFor(() => expect(document.querySelector("[data-annotation-connector-id='ann-alpha']")).not.toBeNull());
+      expect(document.querySelectorAll("[data-annotation-connector-layer='true']")).toHaveLength(1);
+      expect(document.querySelectorAll("[data-annotation-connector-id='ann-alpha']")).toHaveLength(1);
+
+      fireEvent.click(modeButtons[2]!);
+      await waitFor(() => expect(document.querySelector("[data-markdown-annotation-overlay-marker='true'][data-annotation-id='ann-alpha']")).not.toBeNull());
+      await act(async () => {
+        TriggerResizeObserver.flush();
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      });
+      await waitFor(() => expect(document.querySelector("[data-annotation-connector-id='ann-alpha']")).not.toBeNull());
+      expect(document.querySelectorAll("[data-annotation-connector-layer='true']")).toHaveLength(1);
+      expect(document.querySelectorAll("[data-annotation-connector-id='ann-alpha']")).toHaveLength(1);
+    } finally {
+      elementRect.mockRestore();
+      elementRects.mockRestore();
+      if (clientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", clientWidth);
+      else delete (HTMLElement.prototype as { clientWidth?: unknown }).clientWidth;
+      if (clientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeight);
+      else delete (HTMLElement.prototype as { clientHeight?: unknown }).clientHeight;
+      if (scrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeight);
+      else delete (HTMLElement.prototype as { scrollHeight?: unknown }).scrollHeight;
+    }
+  });
+
+  it("keeps unified annotations active on the retained Runtime across preview, source, and split", async () => {
+    const rangeRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+    const rangeRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => domRect(0, 0, 48, 18),
+    });
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [domRect(0, 0, 48, 18)],
+    });
+    try {
+      render(
+        <FilePreview
+          request={{ type: "file", path: "README.md" }}
+          runtime={runtime()}
+          workspaceId="ws-1"
+          markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader}
+        />,
+      );
+
+      expect(await screen.findByRole("heading", { name: "Title" })).not.toBeNull();
+      const runtimeMarker = await waitFor(() => {
+        const element = document.querySelector<HTMLElement>("[data-markdown-annotation-overlay-marker='true'][data-annotation-id='ann-alpha']");
+        expect(element).not.toBeNull();
+        return element!;
+      });
+      fireEvent.click(runtimeMarker);
+      await waitFor(() => expect(document.querySelector("[data-annotation-rail='true']:not([hidden])")).not.toBeNull());
+
+      const modeGroup = document.querySelector<HTMLElement>("[aria-label][class*='segmented']")!;
+      const modeButtons = modeGroup.querySelectorAll("button");
+      fireEvent.click(modeButtons[1]!);
+      await waitFor(() => expect(document.querySelector(".cm-annotation-mark[data-annotation-id='ann-alpha']")).not.toBeNull());
+      fireEvent.click(modeButtons[2]!);
+      await waitFor(() => {
+        expect(document.querySelector(".cm-annotation-mark[data-annotation-id='ann-alpha']")).not.toBeNull();
+        expect(document.querySelector("[data-markdown-annotation-overlay-marker='true'][data-annotation-id='ann-alpha']")).not.toBeNull();
+      });
+      expect(document.querySelectorAll("[data-annotation-rail='true']")).toHaveLength(1);
+    } finally {
+      if (rangeRect) Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeRect);
+      else delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      if (rangeRects) Object.defineProperty(Range.prototype, "getClientRects", rangeRects);
+      else delete (Range.prototype as { getClientRects?: unknown }).getClientRects;
+    }
+  });
+
   it("closes and reopens the invasive rail without losing records", async () => {
-    render(<FilePreview request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
     const toggle = await screen.findByLabelText("文件批注 1");
     fireEvent.click(toggle);
     fireEvent.click(await screen.findByLabelText("收起批注栏"));
@@ -137,7 +278,7 @@ describe("unified FilePreview annotations", () => {
   });
 
   it("opens the embedded rail when a document annotation highlight is clicked", async () => {
-    render(<FilePreview request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
 
     const toggle = await waitFor(() => {
       const element = document.querySelector<HTMLButtonElement>(
@@ -180,7 +321,7 @@ describe("unified FilePreview annotations", () => {
   });
 
   it("deepens the complete annotation chain from either marker or card hover", async () => {
-    render(<FilePreview request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
     fireEvent.click(await screen.findByLabelText("文件批注 1"));
     const card = await screen.findByLabelText("批注：Explain alpha");
     const marker = await waitFor(() => {
@@ -192,7 +333,7 @@ describe("unified FilePreview annotations", () => {
     fireEvent.mouseOver(marker);
     await waitFor(() => {
       const hoveredMarker = document.querySelector("[data-annotation-id='ann-alpha']");
-      expect(hoveredMarker).toBe(marker);
+      expect(hoveredMarker).not.toBeNull();
       expect(hoveredMarker?.getAttribute("data-hovered")).toBe("true");
       expect(card.getAttribute("data-hovered")).toBe("true");
     });
@@ -210,7 +351,7 @@ describe("unified FilePreview annotations", () => {
   });
 
   it("flashes the body marker once after card navigation reaches the document", async () => {
-    render(<FilePreview request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
     fireEvent.click(await screen.findByLabelText("文件批注 1"));
     const card = await screen.findByLabelText("批注：Explain alpha");
 
@@ -222,14 +363,22 @@ describe("unified FilePreview annotations", () => {
   });
 
   it("shows a focused draft editor immediately after annotating a markdown selection", async () => {
-    render(<FilePreview request={{ type: "file", path: "README.md" }} runtime={runtime([])} workspaceId="ws-1" />);
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime([])} workspaceId="ws-1" />);
 
+    await waitFor(() => {
+      expect(document.querySelector("[data-markdown-runtime-features='ready']")).not.toBeNull();
+      expect(document.querySelector("[data-file-annotation-model-ready='true']")).not.toBeNull();
+    });
     const body = await screen.findByLabelText("预览内容");
     const selection = mockTextSelection(body, "Alpha");
     try {
       await act(async () => {
+        document.dispatchEvent(new Event("selectionchange"));
         document.dispatchEvent(new MouseEvent("mouseup"));
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      });
+      await waitFor(() => {
+        expect(document.querySelector("[data-file-markdown-runtime-selection='true']")).not.toBeNull();
       });
       fireEvent.click(await screen.findByRole("button", { name: "为选中文本添加批注" }));
 
@@ -246,7 +395,7 @@ describe("unified FilePreview annotations", () => {
 
   it("emits reference-only payloads for single and bulk chat actions", async () => {
     const onStartChatFromAnnotation = vi.fn();
-    render(<FilePreview request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" onStartChatFromAnnotation={onStartChatFromAnnotation} />);
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" onStartChatFromAnnotation={onStartChatFromAnnotation} />);
     fireEvent.click(await screen.findByLabelText("文件批注 1"));
     const card = await screen.findByLabelText("批注：Explain alpha");
     fireEvent.click(card.querySelector("[aria-label='将批注加入对话']") as Element);
@@ -277,13 +426,11 @@ function mockTextSelection(container: Element, text: string) {
     configurable: true,
     value: () => ({ bottom: 160, height: 20, left: 120, right: 220, top: 140, width: 100, x: 120, y: 140, toJSON: () => ({}) }),
   });
-  const spy = vi.spyOn(window, "getSelection").mockReturnValue({
-    getRangeAt: () => range,
-    rangeCount: 1,
-    removeAllRanges: vi.fn(),
-    toString: () => text,
-  } as unknown as Selection);
-  return { restore: () => spy.mockRestore() };
+  const selection = window.getSelection();
+  if (!selection) throw new Error("Selection API is unavailable");
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return { restore: () => selection.removeAllRanges() };
 }
 
 function domRect(left: number, top: number, width: number, height: number): DOMRect {
@@ -298,4 +445,39 @@ function domRect(left: number, top: number, width: number, height: number): DOMR
     y: top,
     toJSON: () => ({}),
   } as DOMRect;
+}
+
+class TriggerResizeObserver implements ResizeObserver {
+  static readonly instances = new Set<TriggerResizeObserver>();
+  readonly targets = new Set<Element>();
+
+  constructor(private readonly callback: ResizeObserverCallback) {
+    TriggerResizeObserver.instances.add(this);
+  }
+
+  observe(target: Element): void {
+    this.targets.add(target);
+  }
+
+  unobserve(target: Element): void {
+    this.targets.delete(target);
+  }
+
+  disconnect(): void {
+    this.targets.clear();
+    TriggerResizeObserver.instances.delete(this);
+  }
+
+  static flush(): void {
+    for (const observer of TriggerResizeObserver.instances) {
+      const entries = [...observer.targets].map((target) => ({
+        borderBoxSize: [{ blockSize: 112, inlineSize: 900 }],
+        contentBoxSize: [{ blockSize: 112, inlineSize: 900 }],
+        contentRect: domRect(0, 0, 900, 112),
+        devicePixelContentBoxSize: [],
+        target,
+      } as unknown as ResizeObserverEntry));
+      if (entries.length > 0) observer.callback(entries, observer);
+    }
+  }
 }

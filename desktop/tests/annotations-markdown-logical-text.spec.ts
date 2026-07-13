@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { serializeMarkdownLogicalText } from "@/renderer/features/annotations/document/markdownLogicalText";
+import { serializeMarkdownLogicalText } from "./fixtures/annotationMarkdown";
 
 describe("markdown logical text", () => {
   it("serializes visible Markdown semantics with fixed block, row, and cell separators", () => {
@@ -25,10 +25,14 @@ describe("markdown logical text", () => {
     expect(result.logicalText).toBe([
       "Guide",
       "Hello bold and link with code.",
-      "first\nsecond",
-      "Name\tRole\nAda\tAdmin",
+      "first",
+      "[x] second",
+      "Name",
+      "Role",
+      "Ada",
+      "Admin",
       "const value = 1;",
-    ].join("\n\n"));
+    ].join("\n"));
     expect(result.blocks.map((block) => block.type)).toEqual([
       "heading",
       "paragraph",
@@ -65,7 +69,7 @@ describe("markdown logical text", () => {
     ].join("\n");
     const result = serializeMarkdownLogicalText(source);
 
-    expect(result.logicalText).toBe("引用 内容 😀\n\n架构图 and escaped * marker\n\nTitle");
+    expect(result.logicalText).toBe("引用 内容 😀\n架构图 and escaped * marker\nTitle");
     expect(result.logicalText).not.toContain("diagram.png");
   });
 

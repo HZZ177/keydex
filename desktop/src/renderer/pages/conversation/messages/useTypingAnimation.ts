@@ -5,12 +5,14 @@ import {
   createRuntimeTypingSpeedSourceId,
   reportRuntimeTypingSpeed,
 } from "@/renderer/hooks/useRuntimeTypingSpeed";
+import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnostics";
 
 export interface UseTypingAnimationOptions {
   content: string;
   enabled?: boolean;
   completeImmediately?: boolean;
   fastDrain?: boolean;
+  passthrough?: boolean;
   resetKey?: string;
 }
 
@@ -19,6 +21,7 @@ export function useTypingAnimation({
   enabled = true,
   completeImmediately = false,
   fastDrain = false,
+  passthrough = false,
   resetKey = "",
 }: UseTypingAnimationOptions) {
   const initialContent = initialDisplayedContent(content, enabled, completeImmediately, resetKey);
@@ -37,6 +40,12 @@ export function useTypingAnimation({
     displayedRef.current = nextContent;
     rememberDisplayedContent(resetKeyRef.current, nextContent);
     setDisplayedContent(nextContent);
+    conversationBaselineDiagnostics.record({
+      stage: "typing-commit",
+      messageId: resetKeyRef.current,
+      characters: contentRef.current.length,
+      displayedCharacters: nextContent.length,
+    });
   };
 
   const cancelFrame = () => {
@@ -51,6 +60,12 @@ export function useTypingAnimation({
 
   useEffect(() => {
     contentRef.current = content;
+    if (passthrough) {
+      cancelFrame();
+      displayedRef.current = content;
+      setIsAnimating(false);
+      return;
+    }
     if (fastDrainRef.current !== fastDrain) {
       fastDrainRef.current = fastDrain;
       carryRef.current = 0;
@@ -74,7 +89,29 @@ export function useTypingAnimation({
     }
 
     const diff = content.length - displayedRef.current.length;
-    if (diff < 0 || !content.startsWith(displayedRef.current)) {
+    if (diff < 0 || !isAppendOnlySnapshot(displayedRef.current, content)) {
+      cancelFrame();
+      commitDisplayedContent(content);
+      setIsAnimating(false);
+      return;
+    }
+
+    // Once a response is large, character-by-character animation multiplies
+    // every real ingress batch into many full Markdown snapshot revisions.
+    // Keep it streaming at the transport cadence without exhausting WebView
+    // heap/native snapshot buffers.
+    if (content.length >= LARGE_STREAM_DIRECT_COMMIT_CHARS) {
+      cancelFrame();
+      commitDisplayedContent(content);
+      setIsAnimating(false);
+      return;
+    }
+
+    // A completed/replayed large response must not spend minutes draining at
+    // character-animation speed. Preserve the visual catch-up for ordinary
+    // replies, but publish a large canonical backlog atomically so the shared
+    // Markdown runtime can settle immediately.
+    if (fastDrainRef.current && diff >= FAST_DRAIN_IMMEDIATE_BACKLOG_CHARS) {
       cancelFrame();
       commitDisplayedContent(content);
       setIsAnimating(false);
@@ -138,16 +175,30 @@ export function useTypingAnimation({
       lastTimestampRef.current = performance.now();
       frameRef.current = window.requestAnimationFrame(animate);
     }
-  }, [completeImmediately, content, enabled, fastDrain, resetKey]);
+  }, [completeImmediately, content, enabled, fastDrain, passthrough, resetKey]);
 
   useEffect(() => cancelFrame, []);
 
-  return { displayedContent, isAnimating };
+  return {
+    displayedContent: passthrough ? content : displayedContent,
+    isAnimating: passthrough ? false : isAnimating,
+  };
+}
+
+function isAppendOnlySnapshot(previous: string, next: string): boolean {
+  if (next === previous) return true;
+  if (next.length <= previous.length) return false;
+  if (previous.length <= 1_024) return next.startsWith(previous);
+  const windowSize = 512;
+  return next.slice(0, windowSize) === previous.slice(0, windowSize)
+    && next.slice(previous.length - windowSize, previous.length) === previous.slice(-windowSize);
 }
 
 const INITIAL_STREAM_BACKLOG_CHARS = 420;
 const INITIAL_STREAM_PREFIX_CHARS = 24;
 const MAX_DISPLAY_CACHE_SIZE = 80;
+const FAST_DRAIN_IMMEDIATE_BACKLOG_CHARS = 32 * 1024;
+const LARGE_STREAM_DIRECT_COMMIT_CHARS = 64 * 1024;
 const FAST_DRAIN_STREAM_STEP_OPTIONS = {
   minCharsPerSecond: 800,
   maxCharsPerSecond: 12000,

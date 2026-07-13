@@ -5,6 +5,7 @@ import { createPlainTextModel } from "@/renderer/features/annotations/document/P
 import { AnnotationProvider, useAnnotationStore } from "@/renderer/features/annotations/state/AnnotationProvider";
 import { createAnnotationStore, emptyResolvedAnnotationIndex } from "@/renderer/features/annotations/state/annotationStore";
 import type { TextSelector } from "@/runtime/annotations";
+import { createTextSelector } from "@/renderer/features/annotations/anchoring/createTextSelector";
 
 describe("AnnotationStore", () => {
   it("isolates every preview instance", () => {
@@ -65,6 +66,93 @@ describe("AnnotationStore", () => {
       records: [],
     });
     expect(store.getState().resolutions).toEqual(emptyResolvedAnnotationIndex());
+  });
+
+  it("preserves and rebases a draft when the same document publishes a new revision", () => {
+    const store = createAnnotationStore();
+    const first = createPlainTextModel("alpha target", "sha256:first");
+    store.getState().setDocument({ workspaceId: "ws", path: "README.md", model: first });
+    const selector = createTextSelector(first, { start: 0, end: 5 });
+    store.getState().beginDraft({ start: 0, end: 5 }, selector);
+    store.getState().updateInteractionBody("Keep this draft");
+    const next = createPlainTextModel("prefix alpha target", "sha256:next");
+
+    store.getState().setDocument({ workspaceId: "ws", path: "README.md", model: next });
+
+    expect(store.getState().interaction).toMatchObject({
+      type: "drafting",
+      body: "Keep this draft",
+      range: { start: 7, end: 12 },
+      selectionStatus: "ready",
+      selector: {
+        quote: { exact: "alpha" },
+        documentRevision: "sha256:next",
+      },
+    });
+    expect(store.getState().panelOpen).toBe(true);
+    expect(store.getState().error).toBeNull();
+  });
+
+  it("keeps draft text but clears an ambiguous selection until the user selects again", () => {
+    const store = createAnnotationStore();
+    const first = createPlainTextModel("target", "sha256:first");
+    store.getState().setDocument({ workspaceId: "ws", path: "README.md", model: first });
+    const ambiguousSelector: TextSelector = {
+      ...textSelector(),
+      position: { start: 100, end: 106 },
+      quote: { exact: "target", prefix: "", suffix: "" },
+    };
+    store.getState().beginDraft({ start: 0, end: 6 }, ambiguousSelector);
+    store.getState().updateInteractionBody("Do not lose me");
+
+    store.getState().setDocument({
+      workspaceId: "ws",
+      path: "README.md",
+      model: createPlainTextModel("target x target", "sha256:next"),
+    });
+
+    expect(store.getState().interaction).toEqual({
+      type: "drafting",
+      body: "Do not lose me",
+      range: null,
+      selector: null,
+      selectionStatus: "ambiguous",
+    });
+    expect(store.getState().error).toContain("ambiguous");
+
+    const nextModel = store.getState().document!.model;
+    const nextSelector = createTextSelector(nextModel, { start: 9, end: 15 });
+    store.getState().beginDraft({ start: 9, end: 15 }, nextSelector);
+    expect(store.getState().interaction).toMatchObject({
+      type: "drafting",
+      body: "Do not lose me",
+      selectionStatus: "ready",
+    });
+  });
+
+  it("rebases a pending retarget to a new stable selector on same-document revision", () => {
+    const store = createAnnotationStore();
+    const first = createPlainTextModel("alpha beta", "sha256:first");
+    store.getState().setDocument({ workspaceId: "ws", path: "README.md", model: first });
+    store.getState().beginRetarget("ann");
+    store.getState().setRetargetSelection(
+      { start: 6, end: 10 },
+      createTextSelector(first, { start: 6, end: 10 }),
+    );
+    const next = createPlainTextModel("insert alpha beta", "sha256:next");
+
+    store.getState().setDocument({ workspaceId: "ws", path: "README.md", model: next });
+
+    expect(store.getState().interaction).toMatchObject({
+      type: "retargeting",
+      annotationId: "ann",
+      range: { start: 13, end: 17 },
+      selectionStatus: "ready",
+      selector: {
+        quote: { exact: "beta" },
+        documentRevision: "sha256:next",
+      },
+    });
   });
 
   it("removes active and flash references when records disappear", () => {

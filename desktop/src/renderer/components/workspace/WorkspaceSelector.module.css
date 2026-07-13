@@ -143,11 +143,13 @@
 
 .menu {
   position: absolute;
+  box-sizing: border-box;
   left: 0;
   top: calc(100% + 8px);
   bottom: auto;
   z-index: 96;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   width: min(392px, 74vw);
   min-width: 300px;
   overflow: visible;
@@ -244,10 +246,16 @@
 
 .section {
   display: grid;
+  min-height: 0;
+  flex: 0 0 auto;
   gap: 2px;
   max-height: min(220px, 34vh);
   overflow: hidden auto;
   scrollbar-width: thin;
+}
+
+.workspaceSection {
+  flex: 1 1 auto;
 }
 
 .section + .section {

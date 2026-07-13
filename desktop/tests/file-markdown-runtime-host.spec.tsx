@@ -1,0 +1,520 @@
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  useRef,
+  useState,
+  type ComponentProps,
+  type MutableRefObject,
+} from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  FileMarkdownRuntimeHost,
+  type FileMarkdownRuntimeHostHandle,
+  type FileMarkdownRuntimeSnapshotLoader,
+} from "@/renderer/components/workspace/FileMarkdownRuntimeHost";
+import { FilePreview } from "@/renderer/components/workspace/FilePreview";
+import type { MarkdownSnapshot } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
+import type { MarkdownFindIndex } from "@/renderer/markdownRuntime/find";
+import type { AnnotationRenderState } from "@/renderer/features/annotations/navigation/types";
+import { parseCanonicalMarkdownSnapshot } from "@/renderer/markdownRuntime/worker/parser";
+import { markdownRuntimeDiagnostics } from "@/renderer/markdownRuntime/diagnostics";
+import { APP_FIND_SHORTCUT_EVENT } from "@/renderer/events/findShortcut";
+import type { MarkdownViewDescriptor } from "@/renderer/markdownRuntime/view";
+import { resetFileMarkdownRuntimeStoreForTests } from "@/renderer/components/workspace/fileMarkdownRuntime";
+
+class FakeResizeObserver {
+  static readonly instances: FakeResizeObserver[] = [];
+  readonly targets = new Set<Element>();
+  constructor(private readonly callback: ResizeObserverCallback) {
+    FakeResizeObserver.instances.push(this);
+  }
+  observe(target: Element) { this.targets.add(target); }
+  unobserve(target: Element) { this.targets.delete(target); }
+  disconnect() { this.targets.clear(); }
+  resize(target: Element, height: number) {
+    this.callback([{ target, contentRect: new DOMRect(0, 0, 900, height) } as ResizeObserverEntry], this as unknown as ResizeObserver);
+  }
+}
+
+let restoreMetrics: (() => void) | null = null;
+let restoreScrollTo: (() => void) | null = null;
+let restoreRangeMetrics: (() => void) | null = null;
+
+beforeEach(() => {
+  FakeResizeObserver.instances.length = 0;
+  vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  restoreMetrics = mockElementMetrics({ clientHeight: 400, clientWidth: 900 });
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTo");
+  Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+    configurable: true,
+    value: vi.fn(function scrollTo(this: HTMLElement, options: ScrollToOptions | number) {
+      this.scrollTop = typeof options === "number" ? options : options.top ?? this.scrollTop;
+    }),
+  });
+  restoreScrollTo = () => {
+    if (original) Object.defineProperty(HTMLElement.prototype, "scrollTo", original);
+    else delete (HTMLElement.prototype as { scrollTo?: unknown }).scrollTo;
+  };
+  const rangeRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+  const rangeRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () => new DOMRect(0, 0, 48, 18),
+  });
+  Object.defineProperty(Range.prototype, "getClientRects", {
+    configurable: true,
+    value: () => [new DOMRect(0, 0, 48, 18)],
+  });
+  restoreRangeMetrics = () => {
+    if (rangeRect) Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeRect);
+    else delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+    if (rangeRects) Object.defineProperty(Range.prototype, "getClientRects", rangeRects);
+    else delete (Range.prototype as { getClientRects?: unknown }).getClientRects;
+  };
+});
+
+afterEach(() => {
+  restoreMetrics?.();
+  restoreMetrics = null;
+  restoreScrollTo?.();
+  restoreScrollTo = null;
+  restoreRangeMetrics?.();
+  restoreRangeMetrics = null;
+  resetFileMarkdownRuntimeStoreForTests();
+  vi.unstubAllGlobals();
+});
+
+describe("FileMarkdownRuntimeHost", () => {
+  it("remeasures mounted blocks and moves following blocks after responsive reflow", async () => {
+    render(<RuntimeHarness source={"First paragraph\n\nSecond paragraph\n\nThird paragraph"} revision="measure-r1" loader={snapshotLoader()} />);
+    const canvas = await readyRuntimeCanvas();
+    const blocks = [...canvas.querySelectorAll<HTMLElement>("[data-markdown-block-id]")];
+    expect(blocks.length).toBeGreaterThanOrEqual(3);
+    const first = blocks[0]!;
+    const second = blocks[1]!;
+    const before = Number(second.dataset.markdownBlockTop);
+    const observer = FakeResizeObserver.instances.find((candidate) => candidate.targets.has(first));
+    expect(observer).toBeTruthy();
+
+    act(() => observer!.resize(first, 180));
+
+    await waitFor(() => expect(Number(second.dataset.markdownBlockTop)).toBeGreaterThan(before + 100));
+    expect(Number(first.dataset.markdownBlockHeight)).toBe(192);
+  });
+
+  it("publishes semantic content and keeps the mounted DOM bounded", async () => {
+    const source = Array.from({ length: 500 }, (_, index) => `## Heading ${index}\n\nParagraph ${index}`).join("\n\n");
+    const loader = snapshotLoader();
+    const handle = { current: null } as MutableRefObject<FileMarkdownRuntimeHostHandle | null>;
+
+    render(<RuntimeHarness source={source} revision="r1" loader={loader} runtimeRef={handle} />);
+
+    const canvas = await readyRuntimeCanvas();
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(canvas.querySelector("h2")?.textContent).toContain("Heading 0");
+    expect(Number(canvas.dataset.markdownMountedBlockCount)).toBeGreaterThan(0);
+    expect(Number(canvas.dataset.markdownMountedBlockCount)).toBeLessThan(80);
+    expect(canvas.querySelectorAll("[data-markdown-block-id]").length).toBeLessThan(80);
+    expect(handle.current?.diagnostics()).toMatchObject({
+      revision: "r1",
+      snapshotBlocks: 1_000,
+      mountedBlocks: Number(canvas.dataset.markdownMountedBlockCount),
+      image: { entries: 0, referenced: 0 },
+      mermaid: { entries: 0, referenced: 0 },
+    });
+    expect(handle.current?.diagnostics()?.domNodes).toBe(canvas.querySelectorAll("*").length);
+  });
+
+  it("coalesces scroll bursts into one retained viewport patch without rerendering React", async () => {
+    const source = Array.from({ length: 300 }, (_, index) => `Paragraph ${index}`).join("\n\n");
+    const renderCount = { current: 0 };
+    render(<RuntimeHarness source={source} revision="r1" loader={snapshotLoader()} renderCount={renderCount} />);
+    const canvas = await readyRuntimeCanvas();
+    const scroll = screen.getByTestId("runtime-scroll");
+    const beforeReactRenders = renderCount.current;
+    const beforeRuntimePatches = Number(canvas.dataset.markdownRuntimeRenderCount);
+
+    act(() => {
+      for (let index = 1; index <= 100; index += 1) {
+        scroll.scrollTop = index * 80;
+        fireEvent.scroll(scroll);
+      }
+    });
+
+    await waitFor(() => expect(Number(canvas.dataset.markdownRuntimeRenderCount)).toBeGreaterThan(beforeRuntimePatches));
+    expect(renderCount.current).toBe(beforeReactRenders);
+    expect(Number(canvas.dataset.markdownRuntimeRenderCount) - beforeRuntimePatches).toBe(1);
+    expect(canvas.querySelectorAll("[data-markdown-block-id]").length).toBeLessThan(80);
+  });
+
+  it("reveals source lines and blocks through the height index", async () => {
+    const handle = { current: null } as MutableRefObject<FileMarkdownRuntimeHostHandle | null>;
+    const source = Array.from({ length: 200 }, (_, index) => `## Heading ${index}\n\nBody ${index}`).join("\n\n");
+    render(<RuntimeHarness source={source} revision="r1" loader={snapshotLoader()} runtimeRef={handle} />);
+    await readyRuntimeCanvas();
+    const scroll = screen.getByTestId("runtime-scroll");
+    const snapshot = handle.current?.currentSnapshot();
+    const tailHeading = snapshot?.outline.at(-1);
+
+    expect(tailHeading).toBeTruthy();
+    expect(handle.current?.revealSourceLine(tailHeading!.source_line, { behavior: "auto", align: "center" })).toBe(true);
+    expect(scroll.scrollTop).toBeGreaterThan(0);
+    expect(handle.current?.revealBlock(tailHeading!.block_id, { behavior: "auto" })).toBe(true);
+    expect(scroll.scrollTop).toBeGreaterThan(0);
+  });
+
+  it("persists Runtime folds across preview remounts and expands a folded section for reveal", async () => {
+    const descriptor: MarkdownViewDescriptor = Object.freeze({
+      scopeId: "scope-fold",
+      entryId: "entry-fold",
+      viewId: "preview-fold",
+      kind: "preview",
+    });
+    const source = ["# Title", "", "Intro", "", "## Child", "", "Body", "", "# Next", "", "Tail"].join("\n");
+    const first = render(
+      <RuntimeHarness
+        source={source}
+        revision="fold-r1"
+        loader={snapshotLoader()}
+        viewDescriptor={descriptor}
+      />,
+    );
+    await readyRuntimeCanvas();
+    const titleButton = document.querySelector<HTMLButtonElement>(
+      "[data-markdown-preview-fold-button='true'][data-markdown-preview-fold-kind='section']",
+    )!;
+    fireEvent.click(titleButton);
+    expect(document.querySelector("[data-markdown-preview-fold-motion='collapse']")).not.toBeNull();
+    await waitFor(() => expect(titleButton.getAttribute("aria-expanded")).toBe("false"));
+    expect(document.querySelector("[data-markdown-preview-collapsed-section='true']")).not.toBeNull();
+
+    first.unmount();
+    const handle = { current: null } as MutableRefObject<FileMarkdownRuntimeHostHandle | null>;
+    render(
+      <RuntimeHarness
+        source={source}
+        revision="fold-r1"
+        loader={snapshotLoader()}
+        runtimeRef={handle}
+        viewDescriptor={descriptor}
+      />,
+    );
+    await readyRuntimeCanvas();
+    const restored = document.querySelector<HTMLButtonElement>(
+      "[data-markdown-preview-fold-button='true'][data-markdown-preview-fold-kind='section']",
+    )!;
+    expect(restored.getAttribute("aria-expanded")).toBe("false");
+
+    const child = handle.current!.currentSnapshot()!.blocks[2]!;
+    expect(handle.current!.revealBlock(child.id, { behavior: "auto" })).toBe(true);
+    expect(restored.getAttribute("aria-expanded")).toBe("true");
+    expect(handle.current!.getBlockElement(child.id)).not.toBeNull();
+  });
+
+  it("queries the runtime index and retains block-local Find overlays", async () => {
+    const handle = { current: null } as MutableRefObject<FileMarkdownRuntimeHostHandle | null>;
+    const source = Array.from({ length: 240 }, (_, index) => `Paragraph ${index} runtime-target`).join("\n\n");
+    const rendered = render(<RuntimeHarness source={source} revision="find-r1" loader={snapshotLoader()} runtimeRef={handle} />);
+    await readyRuntimeCanvas();
+
+    const index = await handle.current!.queryFind("runtime-target");
+    expect(index.matches).toHaveLength(240);
+    expect(index.matches.at(-1)?.sourceStart).toBeGreaterThan(source.length * 0.8);
+
+    rendered.rerender(
+      <RuntimeHarness
+        source={source}
+        revision="find-r1"
+        loader={snapshotLoader()}
+        runtimeRef={handle}
+        findIndex={index}
+        activeFindMatchId={index.matches[0]!.id}
+      />,
+    );
+    await waitFor(() => expect(document.querySelectorAll("[data-markdown-find-match='true']").length).toBeGreaterThan(0));
+    expect(document.querySelectorAll("[data-markdown-find-match='true']").length).toBeLessThan(80);
+    expect(document.querySelectorAll("[data-markdown-find-match='true'][data-active='true']")).toHaveLength(1);
+    expect(document.querySelector("[data-markdown-find-overlay='true'] [data-annotation-id]")).toBeNull();
+  });
+
+  it("renders runtime annotation overlays through the unified adapter binding", async () => {
+    const source = "# Runtime annotations\n\nAnnotated paragraph";
+    const snapshot = parse(source, "annotation-r1");
+    const paragraph = snapshot.blocks.at(-1)!;
+    const activate = vi.fn();
+    const bind = vi.fn(() => vi.fn());
+    const renderState: AnnotationRenderState = Object.freeze({
+      activeAnnotationId: "annotation-1",
+      flashAnnotationId: null,
+      flashToken: 0,
+      hoveredAnnotationId: null,
+      revision: "annotations:1",
+      markers: Object.freeze([Object.freeze({
+        annotationId: "annotation-1",
+        logicalRange: Object.freeze({ start: paragraph.logical_start, end: paragraph.logical_start + 9 }),
+        sourceRanges: Object.freeze([Object.freeze({ start: paragraph.source_start, end: paragraph.source_start + 9 })]),
+        blockRanges: Object.freeze([Object.freeze({
+          blockKey: paragraph.id,
+          range: Object.freeze({ start: 0, end: 9 }),
+        })]),
+      })]),
+    });
+
+    render(
+      <RuntimeHarness
+        source={source}
+        revision="annotation-r1"
+        loader={snapshotLoader()}
+        annotationRenderState={renderState}
+        bindAnnotation={bind}
+        onAnnotationActivate={activate}
+      />,
+    );
+    await readyRuntimeCanvas();
+    await waitFor(() => expect(document.querySelector("[data-markdown-annotation-overlay-marker='true']")).not.toBeNull());
+    expect(bind).toHaveBeenCalledTimes(1);
+    const marker = document.querySelector<HTMLElement>("[data-markdown-annotation-overlay-marker='true']")!;
+    expect(marker.dataset.annotationId).toBe("annotation-1");
+    fireEvent.click(marker);
+    expect(activate).toHaveBeenCalledWith("annotation-1");
+  });
+
+  it("ignores a late snapshot after a rapid document revision switch", async () => {
+    const pending = new Map<string, (snapshot: MarkdownSnapshot) => void>();
+    const loader = vi.fn(({ source, revision }: Parameters<FileMarkdownRuntimeSnapshotLoader>[0]) =>
+      new Promise<MarkdownSnapshot>((resolve) => pending.set(revision, () => resolve(parse(source, revision)))),
+    );
+    const rendered = render(<RuntimeHarness source="# A" revision="a" loader={loader} />);
+    rendered.rerender(<RuntimeHarness source="# B" revision="b" loader={loader} />);
+
+    await act(async () => pending.get("b")?.(parse("# B", "b")));
+    expect(await screen.findByRole("heading", { name: "B" })).not.toBeNull();
+    await act(async () => pending.get("a")?.(parse("# A", "a")));
+    expect(screen.queryByRole("heading", { name: "A" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "B" })).not.toBeNull();
+  });
+
+  it("surfaces Runtime failures without mounting legacy Markdown", async () => {
+    const loader = vi.fn().mockRejectedValue(new Error("worker exploded"));
+    render(<RuntimeHarness source="# Broken" revision="bad" loader={loader} />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("worker exploded");
+    expect(document.querySelector("[data-markdown-runtime-error='true']")).not.toBeNull();
+    expect(document.querySelector("[data-virtuoso-scroller='true']")).toBeNull();
+  });
+
+  it("keeps the last good Snapshot visible and recovers explicitly after a failed revision", async () => {
+    markdownRuntimeDiagnostics.clear();
+    let nextAttempts = 0;
+    const loader = vi.fn(async ({ source, revision }: Parameters<FileMarkdownRuntimeSnapshotLoader>[0]) => {
+      if (revision === "r2" && nextAttempts++ === 0) throw new Error("synthetic worker crash");
+      return parse(source, revision);
+    });
+    const rendered = render(<RuntimeHarness source="# Stable" revision="r1" loader={loader} />);
+    expect(await screen.findByRole("heading", { name: "Stable" })).not.toBeNull();
+
+    rendered.rerender(<RuntimeHarness source="# Recovered" revision="r2" loader={loader} />);
+    expect(await screen.findByRole("alert")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Stable" })).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "Recovered" })).toBeNull();
+    expect(document.querySelector("[data-markdown-runtime-status='stale-error']")).not.toBeNull();
+    expect(document.querySelector("[data-markdown-runtime-stale='true']")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry Runtime" }));
+    expect(await screen.findByRole("heading", { name: "Recovered" })).not.toBeNull();
+    await waitFor(() => expect(document.querySelector("[data-markdown-runtime-status='ready']")).not.toBeNull());
+    expect(screen.queryByRole("heading", { name: "Stable" })).toBeNull();
+    expect(document.querySelector("[data-markdown-runtime-stale='true']")).toBeNull();
+    expect(markdownRuntimeDiagnostics.snapshot().events).toContainEqual(expect.objectContaining({
+      stage: "host",
+      code: "load-failed-retained",
+      recovery: "retain-snapshot",
+    }));
+  });
+});
+
+describe("FilePreview Markdown Runtime boundary", () => {
+  it("uses only the new host with no legacy mode selector", async () => {
+    const loader = snapshotLoader();
+    render(<FilePreview request={contentRequest("# Runtime only")} markdownRuntimeSnapshotLoader={loader} />);
+
+    expect(await screen.findByRole("heading", { name: "Runtime only" })).not.toBeNull();
+    expect(document.querySelector("[data-file-markdown-engine='runtime']")).not.toBeNull();
+    expect(document.querySelector("[data-file-markdown-runtime-host='true']")).not.toBeNull();
+    expect(document.querySelector("[data-file-markdown-engine='legacy']")).toBeNull();
+    expect(document.querySelector("[data-file-markdown-engine='shadow']")).toBeNull();
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses only the new host in runtime mode and preserves preview/source mode switching", async () => {
+    const loader = snapshotLoader();
+    render(
+      <FilePreview
+        request={contentRequest("# Runtime\n\nBody")}
+        markdownRuntimeSnapshotLoader={loader}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Runtime" })).not.toBeNull();
+    expect(document.querySelector("[data-file-markdown-engine='runtime']")).not.toBeNull();
+    expect(document.querySelector("[data-file-markdown-runtime-host='true']")).not.toBeNull();
+    expect(document.querySelector("[data-file-markdown-engine='legacy']")).toBeNull();
+
+    const modeGroup = document.querySelector<HTMLElement>("[aria-label][class*='segmented']");
+    const modeButtons = modeGroup?.querySelectorAll("button") ?? [];
+    expect(modeButtons).toHaveLength(3);
+    fireEvent.click(modeButtons[1]!);
+    expect(document.querySelector("[data-file-markdown-runtime-host='true']")).toBeNull();
+    fireEvent.click(modeButtons[0]!);
+    expect(await screen.findByRole("heading", { name: "Runtime" })).not.toBeNull();
+  });
+
+  it("keeps runtime Find functional through the FilePreview toolbar and reveal path", async () => {
+    const source = Array.from({ length: 300 }, (_, index) => `Paragraph ${index} product-find-target`).join("\n\n");
+    render(
+      <FilePreview
+        request={contentRequest(source)}
+        markdownRuntimeSnapshotLoader={snapshotLoader()}
+      />,
+    );
+    const canvas = await readyRuntimeCanvas();
+    act(() => {
+      document.dispatchEvent(new CustomEvent(APP_FIND_SHORTCUT_EVENT, {
+        detail: { sourceTarget: canvas },
+      }));
+    });
+    const search = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>("[data-file-preview-search='true']");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const input = search.querySelector<HTMLInputElement>("input")!;
+    fireEvent.change(input, { target: { value: "product-find-target" } });
+
+    await waitFor(() => expect(search.textContent).toContain("1/300"));
+    await waitFor(() => expect(document.querySelectorAll("[data-markdown-find-match='true']").length).toBeGreaterThan(0));
+    const firstActive = document.querySelector<HTMLElement>("[data-markdown-find-match='true'][data-active='true']")
+      ?.dataset.markdownFindMatchId;
+    const buttons = search.querySelectorAll("button");
+    fireEvent.click(buttons[1]!);
+    await waitFor(() => {
+      const nextActive = document.querySelector<HTMLElement>("[data-markdown-find-match='true'][data-active='true']")
+        ?.dataset.markdownFindMatchId;
+      expect(nextActive).toBeTruthy();
+      expect(nextActive).not.toBe(firstActive);
+    });
+  });
+
+  it("does not route non-Markdown previews through the Markdown Runtime", async () => {
+    const loader = snapshotLoader();
+    render(
+      <FilePreview
+        request={{ type: "content", title: "plain.txt", content: "plain text", contentType: "text" }}
+        markdownRuntimeSnapshotLoader={loader}
+      />,
+    );
+
+    expect(await screen.findByText("plain text")).not.toBeNull();
+    expect(loader).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-file-markdown-runtime-host='true']")).toBeNull();
+  });
+});
+
+function RuntimeHarness({
+  source,
+  revision,
+  loader,
+  runtimeRef,
+  renderCount,
+  findIndex,
+  activeFindMatchId,
+  annotationRenderState,
+  bindAnnotation,
+  onAnnotationActivate,
+  viewDescriptor,
+}: {
+  source: string;
+  revision: string;
+  loader: FileMarkdownRuntimeSnapshotLoader;
+  runtimeRef?: MutableRefObject<FileMarkdownRuntimeHostHandle | null>;
+  renderCount?: { current: number };
+  findIndex?: MarkdownFindIndex | null;
+  activeFindMatchId?: string | null;
+  annotationRenderState?: AnnotationRenderState | null;
+  bindAnnotation?: ComponentProps<typeof FileMarkdownRuntimeHost>["bindAnnotation"];
+  onAnnotationActivate?: (annotationId: string) => void;
+  viewDescriptor?: MarkdownViewDescriptor;
+}) {
+  renderCount && (renderCount.current += 1);
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
+  const localRef = useRef<FileMarkdownRuntimeHostHandle | null>(null);
+  return (
+    <div ref={setScrollElement} data-testid="runtime-scroll" style={{ height: 400, overflowY: "auto" }}>
+      {scrollElement ? (
+        <FileMarkdownRuntimeHost
+          activeFindMatchId={activeFindMatchId}
+          annotationRenderState={annotationRenderState}
+          bindAnnotation={bindAnnotation}
+          findIndex={findIndex}
+          ref={runtimeRef ?? localRef}
+          workspaceId="workspace-1"
+          path="README.md"
+          source={source}
+          revision={revision}
+          scrollElement={scrollElement}
+          snapshotLoader={loader}
+          viewDescriptor={viewDescriptor}
+          onAnnotationActivate={onAnnotationActivate}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function snapshotLoader(): ReturnType<typeof vi.fn<FileMarkdownRuntimeSnapshotLoader>> {
+  return vi.fn(async ({ source, revision, signal }) => {
+    if (signal.aborted) throw signal.reason;
+    return parse(source, revision);
+  });
+}
+
+function parse(source: string, revision: string): MarkdownSnapshot {
+  return parseCanonicalMarkdownSnapshot({
+    surface: "file",
+    documentId: "file:workspace-1:README.md",
+    revision,
+    source,
+    rendererProfile: "file-preview",
+  });
+}
+
+function contentRequest(content: string) {
+  return {
+    type: "content" as const,
+    title: "README.md",
+    content,
+    contentType: "markdown" as const,
+    sourcePath: "README.md",
+  };
+}
+
+function readyRuntimeCanvas(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const canvas = document.querySelector<HTMLElement>("[data-file-markdown-runtime-canvas='true']");
+    expect(canvas?.dataset.markdownRuntimeStatus).toBe("ready");
+    return canvas!;
+  });
+}
+
+function mockElementMetrics(metrics: { clientHeight: number; clientWidth: number }): () => void {
+  const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+  const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => metrics.clientHeight });
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => metrics.clientWidth });
+  return () => {
+    if (height) Object.defineProperty(HTMLElement.prototype, "clientHeight", height);
+    else delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+    if (width) Object.defineProperty(HTMLElement.prototype, "clientWidth", width);
+    else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+  };
+}

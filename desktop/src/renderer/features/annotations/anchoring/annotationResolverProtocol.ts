@@ -1,16 +1,24 @@
 import type { AnnotationRecord } from "@/runtime/annotations";
 
-import { createMarkdownTextModel } from "../document/MarkdownTextModel";
+import { createMarkdownTextModelFromProjection } from "../document/MarkdownTextModel";
+import type { MarkdownLogicalDocument } from "../document/markdownLogicalText";
 import { createPlainTextModel } from "../document/PlainTextModel";
 import type { ResolvedAnnotationIndex } from "../domain/resolutions";
 import { resolveDocumentAnnotations } from "./resolveDocumentAnnotations";
 
 export interface AnnotationResolverPayload {
-  document: {
-    documentRevision: string;
-    kind: "markdown" | "plain-text";
-    rawSource: string;
-  };
+  document:
+    | {
+        documentRevision: string;
+        kind: "markdown";
+        rawSource: string;
+        markdownProjection: MarkdownLogicalDocument;
+      }
+    | {
+        documentRevision: string;
+        kind: "plain-text";
+        rawSource: string;
+      };
   records: AnnotationRecord[];
 }
 
@@ -27,7 +35,11 @@ export function resolveAnnotationPayload(
   payload: AnnotationResolverPayload,
 ): ResolvedAnnotationIndex {
   const model = payload.document.kind === "markdown"
-    ? createMarkdownTextModel(payload.document.rawSource, payload.document.documentRevision)
+    ? createMarkdownTextModelFromProjection(
+        payload.document.rawSource,
+        payload.document.documentRevision,
+        payload.document.markdownProjection,
+      )
     : createPlainTextModel(payload.document.rawSource, payload.document.documentRevision);
   return resolveDocumentAnnotations(model, payload.records);
 }

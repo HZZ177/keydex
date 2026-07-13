@@ -1043,7 +1043,7 @@
 }
 
 .detailActionButton:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-accent) 36%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--color-border-strong) 56%, transparent);
   outline-offset: 2px;
 }
 

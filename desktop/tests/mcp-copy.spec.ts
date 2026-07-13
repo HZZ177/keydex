@@ -15,7 +15,7 @@ describe("MCP copy helpers", () => {
     expect(mcpErrorMessage({ code: "timeout" })).toBe("MCP 操作超时，请稍后重试或调大超时时间。");
     expect(mcpErrorMessage({ code: "server_disabled" })).toBe("MCP 服务器已停用。");
     expect(mcpErrorMessage({ code: "approval_rejected" })).toBe("MCP 工具调用已被拒绝。");
-    expect(mcpErrorMessage({ code: "resource_reserved" })).toBe("MCP Resources 已预留，本期暂不开放读取。");
+    expect(mcpErrorMessage({ code: "resource_reserved" })).toBe("MCP 资源读取暂未开放。");
   });
 
   it("redacts sensitive values in fallback visible error messages", () => {
@@ -29,7 +29,7 @@ describe("MCP copy helpers", () => {
     expect(mcpServerStatusLabel("online")).toBe("在线");
     expect(mcpServerStatusLabel("auth_required")).toBe("需要认证");
     expect(mcpServerStatusLabel("online", false)).toBe("已停用");
-    expect(mcpToolEffectiveStateLabel("schema_changed")).toBe("Schema 已变化");
-    expect(mcpToolEffectiveStateLabel("approval_required")).toBe("需要审批");
+    expect(mcpToolEffectiveStateLabel("schema_changed")).toBe("参数已变化");
+    expect(mcpToolEffectiveStateLabel("approval_required")).toBe("需要确认");
   });
 });

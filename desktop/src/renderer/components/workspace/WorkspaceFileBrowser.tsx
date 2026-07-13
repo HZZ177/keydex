@@ -15,6 +15,8 @@ import type {
   PreviewAnnotationChatRequest,
   PreviewQuoteSelectionRequest,
 } from "@/renderer/providers/PreviewProvider";
+import type { PreviewMarkdownViewDescriptor } from "@/renderer/providers/previewTypes";
+import { stableMarkdownIdentityHash } from "@/renderer/markdownRuntime/document/identity";
 
 import {
   FilePreview,
@@ -22,6 +24,8 @@ import {
   type MarkdownOutlineItem,
   type MarkdownOutlineRevealRequest,
 } from "./FilePreview";
+import { evictFileMarkdownRuntimeEntry } from "./fileMarkdownRuntime";
+import type { FileMarkdownRuntimeSnapshotLoader } from "./FileMarkdownRuntimeHost";
 import { WorkspacePanel, type WorkspacePanelState } from "./WorkspacePanel";
 import styles from "./WorkspaceFileBrowser.module.css";
 
@@ -44,6 +48,7 @@ export interface WorkspaceFileBrowserProps {
   onPreviewPathChange?: (path: string | null) => void;
   onPreviewOutlineReveal?: (item: MarkdownOutlineItem) => void;
   onStateChange?: (state: WorkspaceFileBrowserState) => void;
+  markdownRuntimeSnapshotLoader?: FileMarkdownRuntimeSnapshotLoader;
 }
 
 const DEFAULT_TREE_WIDTH = 260;
@@ -51,6 +56,8 @@ const MIN_TREE_WIDTH = 180;
 const MAX_TREE_WIDTH_RATIO = 0.7;
 const MIN_PREVIEW_WIDTH = 280;
 const FILE_PREVIEW_CLOSE_MS = 180;
+const OUTLINE_ROW_HEIGHT = 30;
+const OUTLINE_OVERSCAN_ROWS = 12;
 
 type BrowserNavigationMode = "files" | "outline";
 
@@ -91,6 +98,7 @@ export function WorkspaceFileBrowser({
   onPreviewPathChange,
   onPreviewOutlineReveal,
   onStateChange,
+  markdownRuntimeSnapshotLoader,
 }: WorkspaceFileBrowserProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<ResizeState | null>(null);
@@ -117,6 +125,16 @@ export function WorkspaceFileBrowser({
     () => (mountedPreviewPath ? ({ type: "file", path: mountedPreviewPath } as const) : null),
     [mountedPreviewPath],
   );
+  const markdownViewDescriptor = useMemo<PreviewMarkdownViewDescriptor | undefined>(() => {
+    if (!mountedPreviewPath) return undefined;
+    const scopeId = `workspace-browser:${workspaceId ?? (sessionId ? `session:${sessionId}` : "global")}`;
+    return Object.freeze({
+      scopeId,
+      entryId: `sidebar:${stableMarkdownIdentityHash(mountedPreviewPath)}`,
+      viewId: "sidebar-file-preview",
+      kind: "sidebar",
+    });
+  }, [mountedPreviewPath, sessionId, workspaceId]);
   const fileRevealRequest = useMemo<FilePreviewRevealRequest | null>(
     () =>
       previewRevealTarget && previewRequestId
@@ -272,6 +290,7 @@ export function WorkspaceFileBrowser({
   );
 
   const closePreview = useCallback(() => {
+    const closingMarkdownView = markdownViewDescriptor;
     clearPreviewUnmountTimer();
     clearPreviewOpenFrame();
     onPreviewPathChange?.(null);
@@ -280,8 +299,11 @@ export function WorkspaceFileBrowser({
     previewUnmountTimerRef.current = window.setTimeout(() => {
       previewUnmountTimerRef.current = null;
       setMountedPreviewPath(null);
+      if (closingMarkdownView) {
+        evictFileMarkdownRuntimeEntry(closingMarkdownView.scopeId, closingMarkdownView.entryId);
+      }
     }, FILE_PREVIEW_CLOSE_MS);
-  }, [clearPreviewOpenFrame, clearPreviewUnmountTimer, onPreviewPathChange]);
+  }, [clearPreviewOpenFrame, clearPreviewUnmountTimer, markdownViewDescriptor, onPreviewPathChange]);
 
   useEffect(() => {
     setMarkdownOutline([]);
@@ -485,6 +507,8 @@ export function WorkspaceFileBrowser({
                 hideBreadcrumbs
                 outlineRevealRequest={outlineRevealRequest}
                 sourceRevealRequest={fileRevealRequest}
+                markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader}
+                markdownViewDescriptor={markdownViewDescriptor}
                 onMarkdownOutlineChange={handleMarkdownOutlineChange}
                 onQuoteSelection={onQuoteSelection}
                 onStartChatFromAnnotation={onStartChatFromAnnotation}
@@ -541,13 +565,42 @@ function MarkdownOutlinePanel({
   onReveal: (item: MarkdownOutlineItem) => void;
 }) {
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
+  const listRef = useRef<HTMLDivElement>(null);
+  const [outlineViewport, setOutlineViewport] = useState({ height: 600, scrollTop: 0 });
   useEffect(() => {
     setCollapsedIds(new Set());
+    if (listRef.current) listRef.current.scrollTop = 0;
+    setOutlineViewport((current) => ({ ...current, scrollTop: 0 }));
   }, [outline]);
   const rows = useMemo(
     () => markdownOutlineRows(outline, collapsedIds),
     [collapsedIds, outline],
   );
+  const visibleRows = useMemo(() => rows.filter((row) => !row.hidden), [rows]);
+  const startIndex = Math.max(
+    0,
+    Math.floor(outlineViewport.scrollTop / OUTLINE_ROW_HEIGHT) - OUTLINE_OVERSCAN_ROWS,
+  );
+  const endIndex = Math.min(
+    visibleRows.length,
+    Math.ceil((outlineViewport.scrollTop + outlineViewport.height) / OUTLINE_ROW_HEIGHT)
+      + OUTLINE_OVERSCAN_ROWS,
+  );
+  const mountedRows = visibleRows.slice(startIndex, endIndex);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || typeof ResizeObserver === "undefined") return;
+    const publish = () => {
+      setOutlineViewport((current) => ({
+        height: Math.max(1, list.clientHeight || current.height),
+        scrollTop: list.scrollTop,
+      }));
+    };
+    const resize = new ResizeObserver(publish);
+    resize.observe(list);
+    publish();
+    return () => resize.disconnect();
+  }, []);
   const toggleItem = useCallback((id: string) => {
     setCollapsedIds((current) => {
       const next = new Set(current);
@@ -568,16 +621,29 @@ function MarkdownOutlinePanel({
   }
   return (
     <nav className={styles.outlinePanel} aria-label="Markdown 文档大纲">
-      <div className={styles.outlineList}>
-        {rows.map(({ collapsed, hasChildren, hidden, item }) => (
+      <div
+        className={styles.outlineList}
+        data-outline-total-count={visibleRows.length}
+        data-outline-mounted-count={mountedRows.length}
+        onScroll={(event) => {
+          const target = event.currentTarget;
+          setOutlineViewport({
+            height: Math.max(1, target.clientHeight || outlineViewport.height),
+            scrollTop: target.scrollTop,
+          });
+        }}
+        ref={listRef}
+      >
+        {startIndex > 0 ? (
+          <div aria-hidden="true" data-outline-top-spacer="true" style={{ height: startIndex * OUTLINE_ROW_HEIGHT }} />
+        ) : null}
+        {mountedRows.map(({ collapsed, hasChildren, item }) => (
           <div
             key={item.id}
             className={styles.outlineItem}
             data-collapsed={collapsed ? "true" : "false"}
             data-has-children={hasChildren ? "true" : "false"}
-            data-visible={hidden ? "false" : "true"}
-            aria-hidden={hidden ? true : undefined}
-            inert={hidden ? true : undefined}
+            data-visible="true"
             style={{ "--workspace-outline-indent": `${Math.max(0, item.level - 1) * 12}px` } as CSSProperties}
           >
             {hasChildren ? (
@@ -603,6 +669,13 @@ function MarkdownOutlinePanel({
             </button>
           </div>
         ))}
+        {endIndex < visibleRows.length ? (
+          <div
+            aria-hidden="true"
+            data-outline-bottom-spacer="true"
+            style={{ height: (visibleRows.length - endIndex) * OUTLINE_ROW_HEIGHT }}
+          />
+        ) : null}
       </div>
     </nav>
   );

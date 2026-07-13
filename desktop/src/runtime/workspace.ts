@@ -1,4 +1,14 @@
 import type { HttpClient } from "./httpClient";
+import {
+  DEFAULT_PREVIEW_DOCUMENT_MAX_BYTES,
+  createDocumentReadRequest,
+  type DocumentReadResult,
+} from "./documentRead";
+import {
+  DocumentReadCoordinator,
+  readDocumentNdjsonResponse,
+  type DocumentReadTransportDiagnostics,
+} from "@/renderer/components/workspace/fileMarkdownAdapter/transport";
 
 export interface WorkspaceEntry {
   name: string;
@@ -58,6 +68,14 @@ export interface WorkspaceSearchOptions {
   signal?: AbortSignal;
 }
 
+export interface WorkspaceDocumentReadOptions {
+  signal?: AbortSignal;
+  expectedRevision?: string | null;
+  maxBytes?: number;
+  consumerId?: string;
+  onDiagnostics?: (diagnostics: DocumentReadTransportDiagnostics) => void;
+}
+
 export interface KeydexDiagnostic {
   code: string;
   reason: string;
@@ -101,12 +119,19 @@ export interface WorkspaceRuntime {
     options?: WorkspaceSubtreeOptions,
   ): Promise<WorkspaceSubtreeResponse>;
   readFile(scope: WorkspaceScope, path: string): Promise<WorkspaceFileResponse>;
+  readDocument(
+    scope: WorkspaceScope,
+    path: string,
+    options?: WorkspaceDocumentReadOptions,
+  ): Promise<DocumentReadResult>;
   readMedia(scope: WorkspaceScope, path: string): Promise<WorkspaceMediaResponse>;
   search(scope: WorkspaceScope, query: string, options?: WorkspaceSearchOptions): Promise<WorkspaceSearchResult[]>;
   listSkills(scope: WorkspaceScope, options?: WorkspaceSkillListOptions): Promise<WorkspaceSkillsResponse>;
+  releaseDocumentConsumer(consumerId: string): void;
 }
 
 export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
+  const coordinator = new DocumentReadCoordinator();
   return {
     listDirectory(scope, path = "") {
       return http.request<WorkspaceTreeResponse>(
@@ -123,6 +148,35 @@ export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
       return http.request<WorkspaceFileResponse>(
         `${workspaceBasePath(scope)}/read?path=${encodeURIComponent(path)}`,
       );
+    },
+    readDocument(scope, path, options = {}) {
+      const scopeKey = workspaceScopeKey(scope);
+      const consumerId = options.consumerId ?? `workspace-document-call-${nextDocumentConsumerId++}`;
+      return coordinator.read({
+        consumerId,
+        documentKey: `workspace:${scopeKey}:${path}`,
+        signal: options.signal,
+        load: async (signal) => {
+          const request = createDocumentReadRequest({
+            request_id: `workspace-document-${nextDocumentRequestId++}`,
+            document_id: `workspace:${scopeKey}:${path}`,
+            source: "workspace",
+            path,
+            expected_revision: options.expectedRevision,
+            preferred_transport: "auto",
+            max_bytes: options.maxBytes ?? DEFAULT_PREVIEW_DOCUMENT_MAX_BYTES,
+          });
+          const response = await http.requestRaw(`${workspaceBasePath(scope)}/read/document`, {
+            method: "POST",
+            body: request,
+            signal,
+          });
+          return readDocumentNdjsonResponse(response, request, {
+            signal,
+            onDiagnostics: options.onDiagnostics,
+          });
+        },
+      });
     },
     readMedia(scope, path) {
       return http.request<WorkspaceMediaResponse>(
@@ -141,8 +195,20 @@ export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
         { signal: options.signal },
       );
     },
+    releaseDocumentConsumer(consumerId) {
+      coordinator.release(consumerId);
+    },
   };
 }
+
+function workspaceScopeKey(scope: WorkspaceScope): string {
+  if ("sessionId" in scope && scope.sessionId) return `session:${scope.sessionId}`;
+  if ("workspaceId" in scope && scope.workspaceId) return `workspace:${scope.workspaceId}`;
+  throw new Error("workspace scope requires sessionId or workspaceId");
+}
+
+let nextDocumentRequestId = 1;
+let nextDocumentConsumerId = 1;
 
 function workspaceBasePath(scope: WorkspaceScope): string {
   if ("sessionId" in scope && scope.sessionId) {

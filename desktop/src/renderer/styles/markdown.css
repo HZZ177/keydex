@@ -88,6 +88,31 @@
   min-width: 0;
 }
 
+.keydex-markdown :where(li) > :where([data-markdown-nested-list="true"]) {
+  grid-column: 2;
+  margin: 4px 0 0;
+}
+
+.keydex-markdown :where([data-markdown-task-checkbox="true"]) {
+  margin: 0 7px 0 0;
+  vertical-align: -1px;
+}
+
+.keydex-markdown :where([data-markdown-math="display"]) {
+  max-width: 100%;
+  margin: 12px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.keydex-markdown :where([data-markdown-math-state="failed"]) {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--color-danger);
+}
+
 .keydex-markdown :where(blockquote) {
   margin: 14px 0;
   padding-left: 12px;
@@ -102,6 +127,46 @@
   margin: 12px 0;
   border-radius: var(--radius-sm);
   object-fit: contain;
+}
+
+/* File-type icons are inline UI chrome, not Markdown image resources. */
+.keydex-markdown :where(a[data-keydex-file-link="true"]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: -0.15em;
+}
+
+.keydex-markdown :where(img[data-keydex-file-link-icon="true"]) {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  max-width: 16px;
+  flex: 0 0 auto;
+  margin: 0;
+  border-radius: 0;
+  object-fit: contain;
+  user-select: none;
+}
+
+.keydex-markdown :where([data-keydex-file-link-label="true"]) {
+  min-width: 0;
+}
+
+.keydex-markdown :where([data-keydex-file-link-line-badge="true"]) {
+  display: inline-flex;
+  height: 16px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--surface-muted) 78%, transparent);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 0 4px;
+  text-decoration: none;
+  transform: translateY(0.02em);
 }
 
 .keydex-markdown :where(code):not(:where(pre code)) {
@@ -145,6 +210,219 @@
   margin: 0;
 }
 
+.keydex-markdown :where([data-markdown-code-frame="true"]) {
+  max-width: 100%;
+}
+
+.keydex-markdown :where([data-markdown-code-frame="true"] > [data-markdown-code-header="true"]) {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 12px;
+}
+
+.keydex-markdown :where([data-markdown-code-frame="true"] > [data-markdown-code-header="true"] > span) {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.keydex-markdown :where([data-markdown-code-frame="true"] > [data-markdown-code-header="true"] > button) {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.keydex-markdown :where([data-markdown-code-frame="true"] > pre) {
+  margin: 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-default) 62%, transparent);
+  border-radius: 0;
+}
+
+.keydex-markdown :where([data-markdown-mermaid-output="true"]) {
+  display: grid;
+  box-sizing: border-box;
+  max-width: 100%;
+  place-items: center;
+  overflow: hidden;
+  padding: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-default) 62%, transparent);
+  background: var(--color-bg-elevated);
+}
+
+.keydex-markdown :where([data-markdown-mermaid-output="true"] > svg) {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: min(560px, 56vh);
+  height: auto;
+  margin: 0 auto;
+}
+
+.keydex-markdown :where([data-markdown-preview-source-gutter="true"]) {
+  position: absolute;
+  z-index: 2;
+  inset: 0 auto auto 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
+  color: color-mix(in srgb, var(--color-text-tertiary) 78%, transparent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+
+.keydex-markdown :where([data-markdown-preview-gutter-block-id]) {
+  position: absolute;
+  inset-inline: 0;
+  display: grid;
+  box-sizing: border-box;
+  grid-template-columns: 18px minmax(0, 1fr);
+  column-gap: 4px;
+  align-items: start;
+  padding-top: 2px;
+  overflow: hidden;
+}
+
+.keydex-markdown :where([data-markdown-preview-line-number="true"]) {
+  position: absolute;
+  right: 6px;
+  left: 22px;
+  margin: 0;
+  overflow: visible;
+  color: inherit;
+  font: inherit;
+  line-height: var(--markdown-preview-gutter-line-height, 18px);
+  text-align: right;
+  white-space: pre;
+}
+
+.keydex-markdown :where([data-markdown-preview-fold-button="true"], [data-markdown-preview-fold-placeholder="true"]) {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  grid-column: 1;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+}
+
+.keydex-markdown :where([data-markdown-preview-fold-button="true"]) {
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text-tertiary) 82%, transparent);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.keydex-markdown :where([data-markdown-preview-fold-button="true"])::before {
+  width: 6px;
+  height: 6px;
+  border-right: 1.25px solid currentColor;
+  border-bottom: 1.25px solid currentColor;
+  content: "";
+  transform: rotate(-45deg);
+  transition: transform var(--motion-panel) var(--motion-ease-standard);
+}
+
+.keydex-markdown :where([data-markdown-preview-fold-button="true"][aria-expanded="true"])::before {
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.keydex-markdown :where([data-markdown-preview-fold-button="true"]:hover, [data-markdown-preview-fold-button="true"]:focus-visible) {
+  background: var(--surface-hover);
+  color: var(--color-text-secondary);
+  outline: none;
+}
+
+.keydex-markdown :where([data-markdown-preview-fold-overlay="true"]) {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.keydex-markdown :where([data-markdown-preview-collapsed-summary="true"]) {
+  position: absolute;
+  box-sizing: border-box;
+  min-height: 34px;
+  margin: 4px 0;
+  padding: 7px 10px;
+  border: 1px dashed color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-muted) 58%, transparent);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: var(--ui-line-height-normal);
+  user-select: none;
+  animation: keydexMarkdownFoldSummaryIn 160ms var(--motion-ease-out) both;
+}
+
+.keydex-markdown :where([data-markdown-preview-fold-motion="collapse"]) {
+  animation: keydexMarkdownFoldContentOut 180ms var(--motion-ease-standard) both;
+  pointer-events: none;
+}
+
+.keydex-markdown :where([data-markdown-preview-fold-motion="expand"]) {
+  animation: keydexMarkdownFoldContentIn 160ms var(--motion-ease-out) both;
+}
+
+@keyframes keydexMarkdownFoldContentIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes keydexMarkdownFoldContentOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes keydexMarkdownFoldSummaryIn {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .keydex-markdown :where(th, td) {
   padding: 8px 10px;
   border: 1px solid var(--color-border-2);
@@ -153,4 +431,14 @@
 .keydex-markdown :where(th) {
   background: var(--surface-muted);
   font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .keydex-markdown,
+  .keydex-markdown :where(*) {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

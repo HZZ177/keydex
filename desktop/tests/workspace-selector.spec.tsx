@@ -16,6 +16,45 @@ describe("WorkspaceSelector", () => {
     expect(screen.queryByRole("dialog", { name: "工作区选择" })).toBeNull();
   });
 
+  it("limits a bottom-placed menu to the available viewport height", () => {
+    const viewportHeightSpy = vi.spyOn(window, "innerHeight", "get").mockReturnValue(600);
+
+    render(
+      <WorkspaceSelector
+        value={{ type: "chat" }}
+        workspaces={[
+          workspace("ws-1", "keydex"),
+          workspace("ws-2", "kt-agent-framework"),
+          workspace("ws-3", "kt-pm-platform"),
+          workspace("ws-4", "zed-class"),
+        ]}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "选择工作区" });
+    const root = trigger.parentElement as HTMLDivElement;
+    const rootRectSpy = vi.spyOn(root, "getBoundingClientRect").mockReturnValue({
+      bottom: 250,
+      height: 30,
+      left: 0,
+      right: 200,
+      top: 220,
+      width: 200,
+      x: 0,
+      y: 220,
+      toJSON: () => ({}),
+    });
+
+    try {
+      fireEvent.click(trigger);
+
+      expect(screen.getByRole("dialog", { name: "工作区选择" }).style.maxHeight).toBe("330px");
+    } finally {
+      rootRectSpy.mockRestore();
+      viewportHeightSpy.mockRestore();
+    }
+  });
+
   it("selects a recent workspace and closes the menu", () => {
     const onSelectWorkspace = vi.fn();
     const selected = workspace("ws-1", "keydex");

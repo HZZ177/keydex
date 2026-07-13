@@ -14,6 +14,7 @@ import {
 } from "./DocumentTextModel";
 import {
   serializeMarkdownLogicalText,
+  type MarkdownLogicalSourceDocument,
   type MarkdownLogicalDocument,
   type MarkdownLogicalSegment,
 } from "./markdownLogicalText";
@@ -26,11 +27,20 @@ export class MarkdownTextModel implements DocumentTextModel {
   readonly blocks: readonly DocumentBlock[];
   readonly segments: readonly MarkdownLogicalSegment[];
 
-  constructor(rawSource: string, documentRevision: string) {
+  private readonly serialized: MarkdownLogicalDocument;
+
+  constructor(
+    rawSource: string,
+    documentRevision: string,
+    sourceDocument: MarkdownLogicalSourceDocument | MarkdownLogicalDocument,
+  ) {
     if (!documentRevision.trim()) {
       throw new Error("MarkdownTextModel requires a document revision");
     }
-    const serialized = serializeMarkdownLogicalText(rawSource);
+    const serialized = isLogicalDocument(sourceDocument)
+      ? sourceDocument
+      : serializeMarkdownLogicalText(rawSource, sourceDocument);
+    this.serialized = serialized;
     this.rawSource = rawSource;
     this.logicalText = serialized.logicalText;
     this.segments = serialized.segments;
@@ -38,13 +48,18 @@ export class MarkdownTextModel implements DocumentTextModel {
       documentRevision,
       textRevision: serialized.textRevision,
     });
+    const sourceRangesByBlock = sourceRangesByBlockKey(serialized);
     this.blocks = Object.freeze(serialized.blocks.map((block) => Object.freeze({
       key: block.key,
       logicalRange: freezeRange({ start: block.logicalStart, end: block.logicalEnd }),
-      sourceRanges: this.sourceRangesForSerializedBlock(serialized, block.key),
+      sourceRanges: sourceRangesByBlock.get(block.key) ?? Object.freeze([]),
       context: block.context,
     })));
     Object.freeze(this);
+  }
+
+  logicalDocument(): MarkdownLogicalDocument {
+    return this.serialized;
   }
 
   toSourceRanges(range: LogicalRange): readonly SourceRange[] {
@@ -172,26 +187,28 @@ export class MarkdownTextModel implements DocumentTextModel {
     return Object.freeze(projections);
   }
 
-  private sourceRangesForSerializedBlock(
-    serialized: MarkdownLogicalDocument,
-    blockKey: string,
-  ): readonly SourceRange[] {
-    const ranges: SourceRange[] = [];
-    for (const segment of serialized.segments) {
-      if (segment.blockKey !== blockKey || segment.sourceStart === null || segment.sourceEnd === null) {
-        continue;
-      }
-      appendSourceRange(ranges, { start: segment.sourceStart, end: segment.sourceEnd });
-    }
-    return Object.freeze(ranges.map(freezeRange));
-  }
 }
 
 export function createMarkdownTextModel(
   rawSource: string,
   documentRevision: string,
+  sourceDocument: MarkdownLogicalSourceDocument,
 ): MarkdownTextModel {
-  return new MarkdownTextModel(rawSource, documentRevision);
+  return new MarkdownTextModel(rawSource, documentRevision, sourceDocument);
+}
+
+export function createMarkdownTextModelFromProjection(
+  rawSource: string,
+  documentRevision: string,
+  projection: MarkdownLogicalDocument,
+): MarkdownTextModel {
+  return new MarkdownTextModel(rawSource, documentRevision, projection);
+}
+
+function isLogicalDocument(
+  value: MarkdownLogicalSourceDocument | MarkdownLogicalDocument,
+): value is MarkdownLogicalDocument {
+  return "logicalText" in value && "segments" in value && "textRevision" in value;
 }
 
 function appendSourceRange(ranges: SourceRange[], next: SourceRange): void {
@@ -201,4 +218,17 @@ function appendSourceRange(ranges: SourceRange[], next: SourceRange): void {
     return;
   }
   ranges.push({ ...next });
+}
+
+function sourceRangesByBlockKey(
+  serialized: MarkdownLogicalDocument,
+): ReadonlyMap<string, readonly SourceRange[]> {
+  const mutable = new Map<string, SourceRange[]>();
+  for (const segment of serialized.segments) {
+    if (segment.sourceStart === null || segment.sourceEnd === null) continue;
+    const ranges = mutable.get(segment.blockKey) ?? [];
+    appendSourceRange(ranges, { start: segment.sourceStart, end: segment.sourceEnd });
+    mutable.set(segment.blockKey, ranges);
+  }
+  return new Map([...mutable].map(([key, ranges]) => [key, Object.freeze(ranges.map(freezeRange))]));
 }

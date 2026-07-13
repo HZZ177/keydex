@@ -172,7 +172,11 @@ const EMPTY_RIGHT_SIDEBAR_SCOPE_STATE: RightSidebarScopePanelState = {
   initialPanelIds: [],
   nextPanelSeq: 0,
 };
-const layoutUiStateCacheByRuntime = new WeakMap<RuntimeBridge, Map<string, LayoutUiState>>();
+let layoutUiStateCacheByRuntime = new WeakMap<RuntimeBridge, Map<string, LayoutUiState>>();
+
+export function resetLayoutUiStateCacheForTests(): void {
+  layoutUiStateCacheByRuntime = new WeakMap<RuntimeBridge, Map<string, LayoutUiState>>();
+}
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => unknown;
@@ -1042,6 +1046,14 @@ function RightSidebarPanel({
   const activeRequest = activePreviewEntry?.request ?? (resolvedActivePanelId === activeEntryId ? request : null);
   const activeRenderContext = activePreviewEntry?.renderContext ?? renderContext;
   const activeRevealTarget = activePreviewEntry?.revealTarget ?? null;
+  const activePreviewMarkdownView = useMemo(
+    () => activePreviewEntry ? Object.freeze({
+      ...activePreviewEntry.markdownView,
+      viewId: "right-sidebar-preview",
+      kind: "sidebar" as const,
+    }) : undefined,
+    [activePreviewEntry],
+  );
   const filePanelQuoteSelection = useCallback(
     (request: PreviewQuoteSelectionRequest) => {
       filePanelRenderContext?.onQuoteSelection?.(request);
@@ -2098,6 +2110,7 @@ function RightSidebarPanel({
                           }
                         : null
                     }
+                    markdownViewDescriptor={activePreviewMarkdownView}
                     onQuoteSelection={activeRenderContext?.onQuoteSelection ? activePreviewQuoteSelection : undefined}
                     onStartChatFromAnnotation={activeRenderContext?.onStartChatFromAnnotation}
                     chrome="panel"

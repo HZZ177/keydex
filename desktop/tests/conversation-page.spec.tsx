@@ -1,10 +1,10 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import type { WorkspaceEntry, WorkspaceTreeResponse } from "@/runtime";
-import { Layout } from "@/renderer/components/layout/Layout";
+import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/layout/Layout";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { ConversationPage } from "@/renderer/pages/conversation";
 import { clearQuickChatSendQueue, queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
@@ -26,7 +26,11 @@ import type {
 
 describe("ConversationPage", () => {
   beforeEach(() => {
+    cleanup();
+    resetLayoutUiStateCacheForTests();
     clearQuickChatSendQueue();
+    localStorage.clear();
+    sessionStorage.clear();
   });
 
   it("restores an empty session history with a clear empty state", async () => {
@@ -1656,6 +1660,8 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByLabelText("发送"));
 
     expect(channel.chat).toHaveBeenCalledWith({
+      client_input_id: expect.any(String),
+      delivery_mode: "steer",
       session_id: "ses-1",
       message: "继续修改",
       provider_id: "provider-1",
@@ -1687,6 +1693,8 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByLabelText("发送"));
 
     expect(channel.chat).toHaveBeenCalledWith({
+      client_input_id: expect.any(String),
+      delivery_mode: "steer",
       session_id: "ses-1",
       message: "使用首页模型",
       provider_id: "provider-1",
@@ -1714,6 +1722,8 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByLabelText("发送"));
 
     expect(channel.chat).toHaveBeenCalledWith({
+      client_input_id: expect.any(String),
+      delivery_mode: "steer",
       session_id: "ses-1",
       message: "使用切换后的模型",
       provider_id: "provider-1",
@@ -1741,6 +1751,8 @@ describe("ConversationPage", () => {
 
     await waitFor(() => {
       expect(channel.chat).toHaveBeenCalledWith({
+        client_input_id: expect.any(String),
+        delivery_mode: "steer",
         session_id: "ses-1",
         message: "从快速对话发送",
         provider_id: "provider-1",
@@ -1790,6 +1802,8 @@ describe("ConversationPage", () => {
 
     await waitFor(() => {
       expect(channel.chat).toHaveBeenCalledWith({
+        client_input_id: expect.any(String),
+        delivery_mode: "steer",
         session_id: "ses-1",
         message: "冷启动快速对话",
         provider_id: "provider-1",
@@ -1868,6 +1882,8 @@ describe("ConversationPage", () => {
 
     expect(chat).toHaveBeenCalledTimes(2);
     expect(chat).toHaveBeenLastCalledWith({
+      client_input_id: expect.any(String),
+      delivery_mode: "steer",
       session_id: "ses-1",
       message: "修正后继续",
       provider_id: "provider-1",
@@ -1899,6 +1915,8 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByLabelText("发送"));
 
     expect(chat).toHaveBeenCalledWith({
+      client_input_id: expect.any(String),
+      delivery_mode: "steer",
       session_id: "ses-1",
       message: "调整后继续",
       provider_id: "provider-1",
@@ -2699,7 +2717,12 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByLabelText("展开右侧栏到对话区域"));
     expect(shell.dataset.rightSidebarMode).toBe("maximized");
 
-    const selection = await showSelectionToolbar(await screen.findByLabelText("预览内容"), "侧边栏 Markdown 内容");
+    const previewBody = await screen.findByLabelText("预览内容");
+    const selectableContent = previewBody.querySelector<HTMLElement>(
+      "[data-file-preview-selectable-content='preview']",
+    );
+    expect(selectableContent).not.toBeNull();
+    const selection = await showSelectionToolbar(selectableContent!, "侧边栏 Markdown 内容");
     fireEvent.click(await screen.findByRole("button", { name: "添加选中文本到对话" }));
 
     expect(shell.dataset.rightSidebarMode).toBe("split");

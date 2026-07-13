@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import mermaid, { type ParseResult, type RenderResult } from "mermaid";
 
-import type { RuntimeBridge } from "@/runtime";
+import type { DocumentReadResult, RuntimeBridge } from "@/runtime";
 import { FilePreview, type MarkdownOutlineItem, type MarkdownOutlineRevealRequest } from "@/renderer/components/workspace";
 import { APP_FIND_SHORTCUT_EVENT } from "@/renderer/events/findShortcut";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
@@ -26,6 +26,7 @@ vi.mock("mermaid", () => ({
 }));
 
 let restoreElementMetrics: (() => void) | null = null;
+let restorePreviewRangeMetrics: (() => void) | null = null;
 
 class FakeResizeObserver {
   observe() {}
@@ -33,10 +34,29 @@ class FakeResizeObserver {
   disconnect() {}
 }
 
+class AutoLoadingImage {
+  decoding = "async";
+  referrerPolicy = "";
+  naturalWidth = 320;
+  naturalHeight = 180;
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  private value = "";
+  get src() { return this.value; }
+  set src(value: string) {
+    this.value = value;
+    if (value) queueMicrotask(() => this.onload?.());
+  }
+  decode() { return Promise.resolve(); }
+}
+
 afterEach(() => {
   restoreElementMetrics?.();
   restoreElementMetrics = null;
+  restorePreviewRangeMetrics?.();
+  restorePreviewRangeMetrics = null;
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("FilePreview", () => {
@@ -51,15 +71,36 @@ describe("FilePreview", () => {
     });
     vi.mocked(mermaid.parse).mockResolvedValue(mermaidParseResult);
     vi.mocked(mermaid.render).mockResolvedValue(mermaidRenderResult);
+    const rangeRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+    const rangeRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => testRect({ left: 0, top: 0, width: 80, height: 20 }),
+    });
+    vi.stubGlobal("Image", AutoLoadingImage);
+    Object.defineProperty(window, "Image", { configurable: true, value: AutoLoadingImage });
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [testRect({ left: 0, top: 0, width: 80, height: 20 })],
+    });
+    restorePreviewRangeMetrics = () => {
+      if (rangeRect) Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeRect);
+      else delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      if (rangeRects) Object.defineProperty(Range.prototype, "getClientRects", rangeRects);
+      else delete (Range.prototype as { getClientRects?: unknown }).getClientRects;
+    };
   });
 
   it("reads text file content through workspace runtime", async () => {
     const runtime = fakeRuntime({
-      readFile: vi.fn().mockResolvedValue({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:README.md",
+        source: "workspace",
         path: "README.md",
         content: "# Hello\n",
         encoding: "utf-8",
         revision: "sha256:readme",
+        total_bytes: 8,
       }),
     });
 
@@ -69,7 +110,88 @@ describe("FilePreview", () => {
     expect(screen.getByRole("heading", { name: "Hello" })).not.toBeNull();
     expect(document.querySelector("[data-file-preview-root='true']")?.getAttribute("data-document-revision"))
       .toBe("sha256:readme");
-    expect(runtime.workspace.readFile).toHaveBeenCalledWith({ sessionId: "ses-1" }, "README.md");
+    expect(runtime.workspace.readDocument).toHaveBeenCalledWith(
+      { sessionId: "ses-1" },
+      "README.md",
+      expect.objectContaining({
+        consumerId: expect.stringMatching(/^file-preview-/u),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("loads a local file through the shared document snapshot pipeline", async () => {
+    const readDocument = vi.fn().mockResolvedValue({
+      document_id: "tauri:D:/notes/local.md",
+      source: "tauri",
+      path: "D:/notes/local.md",
+      revision: "sha256:local-snapshot",
+      encoding: "utf-8",
+      total_bytes: 15,
+      content: "# Local snapshot",
+    });
+    const runtime = {
+      localPreview: {
+        readFile: vi.fn(),
+        readDocument,
+        readMedia: vi.fn(),
+      },
+    } as unknown as RuntimeBridge;
+
+    render(<FilePreview request={{ type: "local-file", path: "D:/notes/local.md" }} runtime={runtime} />);
+
+    expect(await screen.findByRole("heading", { name: "Local snapshot" })).not.toBeNull();
+    expect(readDocument).toHaveBeenCalledWith(
+      "D:/notes/local.md",
+      expect.objectContaining({
+        consumerId: expect.stringMatching(/^file-preview-/u),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(document.querySelector("[data-file-preview-root='true']")?.getAttribute("data-document-revision"))
+      .toBe("sha256:local-snapshot");
+  });
+
+  it("keeps A/B late results out of the preview after a rapid switch to C", async () => {
+    const resolvers = new Map<string, (value: DocumentReadResult) => void>();
+    const signals = new Map<string, AbortSignal>();
+    const readDocument = vi.fn((_scope: unknown, path: string, options: { signal: AbortSignal }) => {
+      signals.set(path, options.signal);
+      return new Promise<DocumentReadResult>((resolve) => resolvers.set(path, resolve));
+    });
+    const runtime = fakeRuntime({ readDocument });
+    const rendered = render(
+      <FilePreview request={{ type: "file", path: "A.md" }} sessionId="ses-1" runtime={runtime} />,
+    );
+    await waitFor(() => expect(readDocument).toHaveBeenCalledTimes(1));
+    rendered.rerender(
+      <FilePreview request={{ type: "file", path: "B.md" }} sessionId="ses-1" runtime={runtime} />,
+    );
+    await waitFor(() => expect(readDocument).toHaveBeenCalledTimes(2));
+    rendered.rerender(
+      <FilePreview request={{ type: "file", path: "C.md" }} sessionId="ses-1" runtime={runtime} />,
+    );
+    await waitFor(() => expect(readDocument).toHaveBeenCalledTimes(3));
+
+    const snapshot = (path: string) => ({
+      document_id: `workspace:${path}`,
+      source: "workspace" as const,
+      path,
+      revision: `sha256:${path}`,
+      encoding: "utf-8" as const,
+      total_bytes: path.length + 2,
+      content: `# ${path}`,
+    });
+    resolvers.get("C.md")?.(snapshot("C.md"));
+    resolvers.get("B.md")?.(snapshot("B.md"));
+    resolvers.get("A.md")?.(snapshot("A.md"));
+
+    expect(await screen.findByRole("heading", { name: "C.md" })).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "A.md" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "B.md" })).toBeNull();
+    expect(signals.get("A.md")?.aborted).toBe(true);
+    expect(signals.get("B.md")?.aborted).toBe(true);
+    expect(signals.get("C.md")?.aborted).toBe(false);
   });
 
   it("renders large panel markdown without the old preparation skeleton", async () => {
@@ -303,11 +425,6 @@ describe("FilePreview", () => {
         expect(body.querySelectorAll("[data-file-preview-find-match='true']")[1].getAttribute("data-active")).toBe(
           "true",
         );
-        expect(scrollIntoView).toHaveBeenCalledWith({
-          block: "center",
-          inline: "nearest",
-          behavior: "auto",
-        });
       });
       const firstFindMark = body.querySelector("[data-file-preview-find-match='true']");
       expect(firstFindMark).not.toBeNull();
@@ -338,7 +455,6 @@ describe("FilePreview", () => {
       await act(async () => {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
       });
-      expect(scrollIntoView).not.toHaveBeenCalled();
 
       (input as HTMLInputElement).blur();
       act(() => {
@@ -489,7 +605,7 @@ describe("FilePreview", () => {
       await waitFor(() => {
         expect(input.value).toBe("前缀 重点内容 后缀");
         expect(within(search).getByText("1/2")).not.toBeNull();
-        expect(body.querySelectorAll("[data-file-preview-find-match='true']")).toHaveLength(4);
+        expect(body.querySelectorAll("[data-file-preview-find-match='true']")).toHaveLength(2);
       });
     } finally {
       selection?.restore();
@@ -527,7 +643,7 @@ describe("FilePreview", () => {
         expect(input.value).toContain("第一行");
         expect(input.value).toContain("第二行 结束");
         expect(within(search).getByText("1/2")).not.toBeNull();
-        expect(body.querySelectorAll("[data-file-preview-find-match='true']")).toHaveLength(4);
+        expect(body.querySelectorAll("[data-file-preview-find-match='true']")).toHaveLength(2);
       });
     } finally {
       selection?.restore();
@@ -905,8 +1021,44 @@ describe("FilePreview", () => {
 
     expect(screen.getByTestId("preview-split-pane")).not.toBeNull();
     expect(screen.getByLabelText("源码内容").textContent).toContain("# Guide");
-    expect(screen.getByLabelText("渲染预览").textContent).toContain("正文");
+    await waitFor(() => expect(screen.getByLabelText("渲染预览").textContent).toContain("正文"));
     expect(screen.getByRole("button", { name: "分屏" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps one virtualized line gutter in the right preview pane while split", async () => {
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "guide.md",
+        content: "# Guide\n\nfirst line\nsecond line\n\nTail",
+        encoding: "utf-8",
+      }),
+    });
+
+    render(<FilePreview request={{ type: "file", path: "guide.md" }} sessionId="ses-1" runtime={runtime} />);
+
+    expect(await screen.findByRole("heading", { name: "Guide" })).not.toBeNull();
+    const gutter = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>("[data-markdown-preview-source-gutter='true']");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    expect(gutter.textContent).toContain("1");
+    expect(gutter.textContent).toContain("3\n4");
+    expect(gutter.querySelector("pre")).toBeNull();
+    expect(gutter.querySelector("[data-markdown-preview-fold-button='true']")).not.toBeNull();
+    expect(gutter.querySelector("[data-markdown-preview-fold-placeholder='true']")).not.toBeNull();
+
+    const modeButtons = document.querySelectorAll<HTMLButtonElement>("[class*='segmented'] button");
+    fireEvent.click(modeButtons[2]!);
+    const split = screen.getByTestId("preview-split-pane");
+    const panels = split.querySelectorAll("section");
+    const splitGutters = document.querySelectorAll<HTMLElement>("[data-markdown-preview-source-gutter='true']");
+    expect(splitGutters).toHaveLength(1);
+    expect(panels[1]?.contains(splitGutters[0]!)).toBe(true);
+    expect(panels[0]?.contains(splitGutters[0]!)).toBe(false);
+    await waitFor(() => {
+      expect(panels[1]?.querySelectorAll("[data-markdown-preview-fold-button='true']").length).toBeGreaterThan(0);
+    });
   });
 
   it("reveals markdown outline targets in both source and preview panes while split", async () => {
@@ -943,13 +1095,6 @@ describe("FilePreview", () => {
       });
       fireEvent.click(revealButton);
 
-      await waitFor(() => {
-        expect(scrollIntoView).toHaveBeenCalledWith({
-          block: "start",
-          inline: "nearest",
-          behavior: "smooth",
-        });
-      });
       await waitFor(() => {
         expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
       });
@@ -1407,36 +1552,33 @@ describe("FilePreview", () => {
     });
 
     const chart = within(pane).getByLabelText("Mermaid 图表") as HTMLDivElement;
-    expect(chart).not.toBeNull();
-    expect(chart.getAttribute("data-interactive")).toBe("false");
     await waitFor(() => {
-      expect(chart?.style.getPropertyValue("--mermaid-scale")).toBe("0.24");
+      expect(chart.dataset.markdownMermaidWidth).toBe("2400");
+      expect(chart.dataset.markdownMermaidHeight).toBe("1200");
     });
-    expect(chart?.style.getPropertyValue("--mermaid-render-width")).toBe("576px");
-    expect(chart?.style.getPropertyValue("--mermaid-render-height")).toBe("288px");
-
-    const scrollPane = pane.closest<HTMLElement>("[data-document-scroll-viewport='true']");
-    expect(scrollPane).not.toBeNull();
-    scrollPane!.scrollTop = 0;
-    fireEvent.wheel(chart!, { clientX: 80, clientY: 90, deltaY: 120 });
-    expect(scrollPane!.scrollTop).toBe(120);
-    expect(chart?.style.getPropertyValue("--mermaid-scale")).toBe("0.24");
-    expect(within(pane).queryByRole("button", { name: "放大 Mermaid" })).toBeNull();
+    expect(chart.querySelector("svg")).not.toBeNull();
     const copyButton = within(pane).getByRole("button", { name: "复制 Mermaid 源码" });
+    expect(copyButton.querySelector("svg[data-markdown-action-icon='copy']")).not.toBeNull();
+    const openButton = within(pane).getByRole("button", { name: "打开 Mermaid 预览" });
+    expect(openButton.querySelector("svg[data-markdown-action-icon='maximize']")).not.toBeNull();
     fireEvent.click(copyButton);
     await waitFor(() => {
       expect(clipboard).toHaveBeenCalledWith("graph TD\nA[Start] --> B[Finish]");
-      expect(copyButton.getAttribute("title")).toBe("已复制 Mermaid 源码");
+      expect(copyButton.querySelector("svg[data-markdown-action-icon='check']")).not.toBeNull();
     });
 
-    fireEvent.click(within(pane).getByRole("button", { name: "打开 Mermaid 预览" }));
+    fireEvent.click(openButton);
     const dialog = await screen.findByRole("dialog", { name: "Mermaid 预览" });
-    const dialogChart = (await within(dialog).findByLabelText("Mermaid 图表")) as HTMLDivElement;
-    fireEvent.wheel(dialogChart, { clientX: 80, clientY: 90, deltaY: -30 });
+    expect(dialog.getAttribute("data-size")).toBe("fullscreen");
+    expect(dialog.parentElement?.getAttribute("data-backdrop")).toBe("preview");
+    const dialogChart = await within(dialog).findByLabelText("Mermaid 图表") as HTMLDivElement;
     await waitFor(() => {
-      expect(dialogChart.style.getPropertyValue("--mermaid-scale")).toBe("0.34");
+      expect(dialogChart.style.getPropertyValue("--mermaid-scale")).toBe("0.24");
     });
+    expect(within(dialog).getByText("24%")).not.toBeNull();
     expect(within(dialog).getByRole("button", { name: "放大 Mermaid" })).not.toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "放大 Mermaid" }));
+    expect(within(dialog).getByText("34%")).not.toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭 Mermaid 预览" }));
     expect(screen.queryByRole("dialog", { name: "Mermaid 预览" })).toBeNull();
   });
@@ -1475,7 +1617,7 @@ describe("FilePreview", () => {
     selection.restore();
   });
 
-  it("keeps markdown tables scrollable in preview content", () => {
+  it("keeps markdown tables scrollable in preview content", async () => {
     const { container } = render(
       <FilePreview
         request={{
@@ -1487,8 +1629,8 @@ describe("FilePreview", () => {
       />,
     );
 
-    expect(container.querySelector(".keydex-markdown-table-scroll")).not.toBeNull();
-    expect(screen.getByRole("table")).not.toBeNull();
+    expect(await screen.findByRole("table")).not.toBeNull();
+    expect(container.querySelector("[data-markdown-table-scroll='true']")).not.toBeNull();
   });
 
   it("resolves relative markdown images through workspace media runtime", async () => {
@@ -1516,11 +1658,11 @@ describe("FilePreview", () => {
     );
 
     const image = (await screen.findByAltText("示例图片")) as HTMLImageElement;
-    expect(image.getAttribute("src")).toBe("data:image/png;base64,abc");
+    await waitFor(() => expect(image.getAttribute("src")).toBe("data:image/png;base64,abc"));
     expect(runtime.workspace.readMedia).toHaveBeenCalledWith({ sessionId: "ses-1" }, "docs/assets/pixel.png");
   });
 
-  it("switches and closes preview history tabs from the shared preview provider", () => {
+  it("switches and closes preview history tabs from the shared preview provider", async () => {
     render(
       <PreviewProvider>
         <PreviewTabsHarness />
@@ -1533,7 +1675,7 @@ describe("FilePreview", () => {
     expect(screen.getByRole("tablist", { name: "预览历史" })).not.toBeNull();
     expect(screen.getAllByRole("tab")).toHaveLength(2);
     expect(screen.getByRole("tab", { name: "Markdown 片段" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("heading", { level: 1, name: "Markdown 片段" })).not.toBeNull();
+    expect(await screen.findByRole("heading", { level: 1, name: "Markdown 片段" })).not.toBeNull();
 
     fireEvent.click(screen.getByRole("tab", { name: "HTML 片段" }));
 
@@ -1543,7 +1685,7 @@ describe("FilePreview", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭预览 HTML 片段" }));
 
     expect(screen.queryByRole("tab", { name: "HTML 片段" })).toBeNull();
-    expect(screen.getByRole("heading", { level: 1, name: "Markdown 片段" })).not.toBeNull();
+    expect(await screen.findByRole("heading", { level: 1, name: "Markdown 片段" })).not.toBeNull();
   });
 
   it("reuses an open file preview and only updates its line reveal", async () => {

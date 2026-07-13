@@ -6,7 +6,10 @@ import type { ChatChannel, RuntimeBridge, WorkspaceSkillSummary, WsConnectionSta
 import { selectedQuoteFromText } from "@/renderer/components/chat/SendBox";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import type { AgentSessionController } from "@/renderer/hooks/useAgentSessionController";
-import { WorkbenchAssistantSurface } from "@/renderer/pages/workbench/WorkbenchAssistantSurface";
+import {
+  WorkbenchAssistantSurface,
+  WorkbenchMiniTurnNavigator,
+} from "@/renderer/pages/workbench/WorkbenchAssistantSurface";
 import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
@@ -851,6 +854,43 @@ describe("WorkbenchAssistantSurface", () => {
     expect(screen.getByTestId("message-list").getAttribute("data-turn-navigator")).toBe("true");
     expect(screen.getByTestId("conversation-turn-navigator")).not.toBeNull();
     expect(screen.getByTestId("conversation-turn-navigator-count").textContent).toBe("2 turn");
+  });
+
+  it("keeps a 10,000-turn capsule navigator bounded and preserves first middle last targets", async () => {
+    const onNavigateTurn = vi.fn();
+    render(
+      <WorkbenchMiniTurnNavigator
+        disabled={false}
+        onNavigateTurn={onNavigateTurn}
+        turns={Array.from({ length: 10_000 }, (_, index) => ({
+          id: `mini-bounded-turn-${index}`,
+          targetIndex: index,
+          userPreview: `问题 ${index}`,
+          assistantPreview: [`回答 ${index}`],
+        }))}
+      />,
+    );
+
+    const navigator = screen.getByTestId("workbench-mini-turn-navigator");
+    const viewport = screen.getByTestId("workbench-mini-turn-navigator-viewport");
+    expect(navigator.getAttribute("data-turn-count")).toBe("10000");
+    expect(Number(screen.getByTestId("workbench-mini-turn-navigator-rendered-count").textContent)).toBeLessThan(100);
+    expect(within(navigator).getAllByRole("button").length).toBeLessThan(100);
+
+    fireEvent.click(within(navigator).getByRole("button", { name: /跳转到第 1 轮/ }));
+    expect(onNavigateTurn).toHaveBeenLastCalledWith(0);
+
+    viewport.scrollTop = 5_000 * 12;
+    fireEvent.scroll(viewport);
+    const middle = await within(navigator).findByRole("button", { name: /跳转到第 5001 轮/ });
+    fireEvent.focus(middle);
+    expect(within(navigator).getByTestId("workbench-mini-turn-navigator-card").textContent).toContain("问题 5000");
+    fireEvent.click(middle);
+    expect(onNavigateTurn).toHaveBeenLastCalledWith(5_000);
+
+    fireEvent.click(within(navigator).getByRole("button", { name: /跳转到第 10000 轮/ }));
+    expect(onNavigateTurn).toHaveBeenLastCalledWith(9_999);
+    expect(onNavigateTurn).toHaveBeenCalledTimes(3);
   });
 
   it("shows a separate live message carrier while the assistant is running", async () => {

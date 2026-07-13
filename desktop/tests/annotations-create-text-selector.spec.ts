@@ -4,7 +4,7 @@ import {
   createTextSelector,
   TEXT_SELECTOR_CONTEXT_CHARACTERS,
 } from "@/renderer/features/annotations/anchoring/createTextSelector";
-import { createMarkdownTextModel } from "@/renderer/features/annotations/document/MarkdownTextModel";
+import { createMarkdownTextModel } from "./fixtures/annotationMarkdown";
 import { createPlainTextModel } from "@/renderer/features/annotations/document/PlainTextModel";
 
 describe("createTextSelector", () => {
@@ -15,7 +15,7 @@ describe("createTextSelector", () => {
 
     expect(selector).toEqual({
       position: { start, end: start + 6 },
-      quote: { exact: "target", prefix: "Guide\n\nAlpha ", suffix: " omega" },
+      quote: { exact: "target", prefix: "Guide\nAlpha ", suffix: " omega" },
       context: { containerType: "paragraph", headingPath: ["Guide"] },
       textRevision: model.revision.textRevision,
       documentRevision: "sha256:document",
@@ -51,7 +51,7 @@ describe("createTextSelector", () => {
     const selector = createTextSelector(model, range);
 
     expect(selector.quote.exact).toBe(model.logicalText.slice(range.start, range.end));
-    expect(selector.quote.exact).toBe("end\n\nBeta start");
+    expect(selector.quote.exact).toBe("end\nBeta start");
   });
 
   it("supports document boundaries", () => {

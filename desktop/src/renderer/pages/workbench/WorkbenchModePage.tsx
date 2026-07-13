@@ -22,6 +22,7 @@ import {
   type WorkspaceFileBrowserState,
   type WorkspaceSelection,
 } from "@/renderer/components/workspace";
+import { evictFileMarkdownRuntimeEntry } from "@/renderer/components/workspace/fileMarkdownRuntime";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { clampWorkbenchAssistantDrawerWidth } from "@/renderer/hooks/layout/layoutStore";
@@ -35,7 +36,7 @@ import {
   type PreviewFileRevealTarget,
   type PreviewRenderContext,
 } from "@/renderer/providers/PreviewProvider";
-import type { PreviewRequest } from "@/renderer/providers/previewTypes";
+import type { PreviewMarkdownViewDescriptor, PreviewRequest } from "@/renderer/providers/previewTypes";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { isAbsoluteFilePath } from "@/renderer/utils/fileLinks";
@@ -78,6 +79,7 @@ interface WorkbenchMainPreviewTabState {
   sourceEntryId: string | null;
   sourceLabel: string;
   title: string;
+  markdownView: PreviewMarkdownViewDescriptor;
 }
 
 interface WorkbenchPreviewTabsState {
@@ -177,6 +179,14 @@ export function WorkbenchModePage({
   );
   const [workbenchPreviewTabs, setWorkbenchPreviewTabs] =
     useState<WorkbenchPreviewTabsState>(initialWorkbenchUiState?.previewTabs ?? EMPTY_WORKBENCH_PREVIEW_TABS);
+  const retainedWorkbenchMarkdownViewsRef = useRef(new Map<string, PreviewMarkdownViewDescriptor>());
+  useEffect(() => {
+    const next = new Map(workbenchPreviewTabs.tabs.map((tab) => [tab.id, tab.markdownView]));
+    for (const [tabId, descriptor] of retainedWorkbenchMarkdownViewsRef.current) {
+      if (!next.has(tabId)) evictFileMarkdownRuntimeEntry(descriptor.scopeId, descriptor.entryId);
+    }
+    retainedWorkbenchMarkdownViewsRef.current = next;
+  }, [workbenchPreviewTabs.tabs]);
   const [activeMainPreviewOutline, setActiveMainPreviewOutline] = useState<MarkdownOutlineItem[]>(
     initialWorkbenchUiState?.activeMainPreviewOutline ?? [],
   );
@@ -413,6 +423,7 @@ export function WorkbenchModePage({
       revealTarget: PreviewFileRevealTarget | null = null,
       sourceEntryId: string | null = null,
       requestId?: number,
+      sourceMarkdownView?: PreviewMarkdownViewDescriptor | null,
     ) => {
       resetMainPreviewOutline();
       const tab: WorkbenchMainPreviewTabState = {
@@ -424,13 +435,26 @@ export function WorkbenchModePage({
         sourceEntryId,
         sourceLabel: previewSourceLabel(request),
         title: previewTitle(request),
+        markdownView: workbenchMarkdownViewDescriptor(
+          request,
+          renderContext,
+          workbenchPreviewTabId(request),
+          sourceMarkdownView,
+        ),
       };
       setWorkbenchPreviewTabs((current) => {
         const existingIndex = current.tabs.findIndex((item) => item.id === tab.id);
         const tabs =
           existingIndex === -1
             ? [...current.tabs, tab]
-            : current.tabs.map((item) => (item.id === tab.id ? tab : item));
+            : current.tabs.map((item) => (item.id === tab.id
+              ? {
+                  ...tab,
+                  markdownView: item.markdownView.entryId === tab.markdownView.entryId
+                    ? item.markdownView
+                    : tab.markdownView,
+                }
+              : item));
         return {
           activeTabId: tab.id,
           tabs,
@@ -710,6 +734,7 @@ export function WorkbenchModePage({
       activeEntry.revealTarget,
       activeEntry.id,
       activeEntry.openedAt,
+      activeEntry.markdownView,
     );
   }, [
     openWorkbenchMainPreview,
@@ -1354,6 +1379,7 @@ function WorkbenchMainPreviewTabs({
         outlineRevealRequest={outlineRevealRequest}
         request={activeTab.request}
         requestId={activeTab.requestId}
+        markdownView={activeTab.markdownView}
         revealTarget={activeTab.revealTarget}
         title={activeTab.title}
         onClose={onCloseActive}
@@ -1370,6 +1396,7 @@ function WorkbenchMainFilePreview({
   outlineRevealRequest,
   request,
   requestId,
+  markdownView,
   revealTarget,
   title,
   onClose,
@@ -1381,6 +1408,7 @@ function WorkbenchMainFilePreview({
   outlineRevealRequest?: MarkdownOutlineRevealRequest | null;
   request: PreviewRequest;
   requestId: number;
+  markdownView: PreviewMarkdownViewDescriptor;
   revealTarget: PreviewFileRevealTarget | null;
   title: string;
   onClose: () => void;
@@ -1417,6 +1445,7 @@ function WorkbenchMainFilePreview({
         runtime={context?.runtime ?? fallbackRuntime}
         outlineRevealRequest={outlineRevealRequest}
         sourceRevealRequest={sourceRevealRequest}
+        markdownViewDescriptor={markdownView}
         onMarkdownOutlineChange={onMarkdownOutlineChange}
         onQuoteSelection={context?.onQuoteSelection}
         onStartChatFromAnnotation={context?.onStartChatFromAnnotation}
@@ -1483,6 +1512,29 @@ function ExternalPreviewPendingPane({
 
 function previewRequestFromPath(path: string): PreviewRequest {
   return isAbsoluteFilePath(path) ? { type: "local-file", path } : { type: "file", path };
+}
+
+export function workbenchMarkdownViewDescriptor(
+  request: PreviewRequest,
+  context: PreviewRenderContext | null,
+  tabId: string,
+  source: PreviewMarkdownViewDescriptor | null | undefined,
+): PreviewMarkdownViewDescriptor {
+  if (source) {
+    return Object.freeze({
+      ...source,
+      viewId: "workbench-main-preview",
+      kind: "workbench",
+    });
+  }
+  const scopeId = context?.panelScopeKey
+    ?? (context?.workspaceId ? `workspace:${context.workspaceId}` : context?.sessionId ? `session:${context.sessionId}` : "workbench:global");
+  return Object.freeze({
+    scopeId,
+    entryId: `workbench:${tabId}`,
+    viewId: "workbench-main-preview",
+    kind: "workbench",
+  });
 }
 
 function workbenchPreviewTabId(request: PreviewRequest): string {

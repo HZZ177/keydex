@@ -4,13 +4,37 @@ const TEXTUAL_TOOL_PROTOCOL_BLOCK_PATTERN =
   /[\t ]*<\s*(tool_call|tool_result)\s*>[\s\S]*?<\s*\/\s*\1\s*>[\t ]*/gi;
 const TEXTUAL_TOOL_PROTOCOL_TAG_PATTERN = /<\s*\/?\s*(?:tool_call|tool_result)\b[^>]*>/i;
 
+import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnostics";
+import {
+  repairStreamingDisplayMathTail,
+  repairStreamingMarkdownTail,
+} from "@/renderer/markdownRuntime/streaming";
+
 export interface NormalizeMarkdownOptions {
   streaming?: boolean;
+  repairFence?: boolean;
 }
 
 export function normalizeMarkdownContent(content: string, options: NormalizeMarkdownOptions = {}): string {
-  const normalized = convertLatexDelimiters(content.replace(/file:\/\//g, ""));
-  return options.streaming ? repairStreamingMarkdown(normalized) : normalized;
+  const startedAt = conversationBaselineDiagnostics.isEnabled() && typeof performance !== "undefined"
+    ? performance.now()
+    : null;
+  let normalized = content;
+  if (normalized.includes("file://")) normalized = normalized.replace(/file:\/\//g, "");
+  if (normalized.includes("\\(") || normalized.includes("\\[")) normalized = convertLatexDelimiters(normalized);
+  const result = options.streaming
+    ? options.repairFence === false
+      ? repairStreamingDisplayMathTail(normalized)
+      : repairStreamingMarkdownTail(normalized)
+    : normalized;
+  if (startedAt !== null) {
+    conversationBaselineDiagnostics.record({
+      stage: "markdown-normalize",
+      characters: content.length,
+      durationMs: performance.now() - startedAt,
+    });
+  }
+  return result;
 }
 
 export function formatMessageTime(value: string): string {
@@ -91,48 +115,4 @@ function replaceLatexDelimiters(text: string): string {
   return text
     .replace(/\\\[([\s\S]*?)\\\]/g, (_match, content: string) => `$$${content}$$`)
     .replace(/\\\(([\s\S]*?)\\\)/g, (_match, content: string) => `$${content}$`);
-}
-
-function repairStreamingMarkdown(content: string): string {
-  return closeUnclosedDisplayMath(closeUnclosedFence(content));
-}
-
-function closeUnclosedFence(content: string): string {
-  const lines = content.split("\n");
-  let activeFence: { marker: "`" | "~"; length: number } | null = null;
-
-  for (const line of lines) {
-    const match = /^(\s*)(`{3,}|~{3,})/.exec(line);
-    if (!match) {
-      continue;
-    }
-    const markerText = match[2];
-    const marker = markerText[0] as "`" | "~";
-    if (!activeFence) {
-      activeFence = { marker, length: markerText.length };
-      continue;
-    }
-    if (activeFence.marker === marker && markerText.length >= activeFence.length) {
-      activeFence = null;
-    }
-  }
-
-  if (!activeFence) {
-    return content;
-  }
-  const closingFence = activeFence.marker.repeat(activeFence.length);
-  return `${content.endsWith("\n") ? content : `${content}\n`}${closingFence}`;
-}
-
-function closeUnclosedDisplayMath(content: string): string {
-  const outsideCode = stripCompleteCodeSegments(content);
-  const delimiterCount = outsideCode.match(/(^|[^\\])\$\$/g)?.length ?? 0;
-  if (delimiterCount % 2 === 0) {
-    return content;
-  }
-  return `${content.endsWith("\n") ? content : `${content}\n`}$$`;
-}
-
-function stripCompleteCodeSegments(content: string): string {
-  return content.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`/g, "");
 }

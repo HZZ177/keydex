@@ -29,11 +29,8 @@ import {
 
 import { AppDialog } from "@/renderer/components/dialog";
 import { LoadingSkeleton } from "@/renderer/components/loading";
-import {
-  MarkdownDocumentModelCache,
-  VirtualMarkdownPreview,
-} from "@/renderer/components/workspace/markdownPreviewEngine";
-import { useOptionalPreview } from "@/renderer/providers/PreviewProvider";
+import type { ConversationMessage } from "@/renderer/stores/conversationStore";
+import { useOptionalPreview, type PreviewContextValue } from "@/renderer/providers/PreviewProvider";
 import type { PreviewRequest } from "@/renderer/providers/previewTypes";
 import {
   centerMermaidViewport,
@@ -50,6 +47,8 @@ import { LineChangeTicker } from "./LineChangeTicker";
 import { copyText, normalizeMarkdownContent } from "./markdown";
 import styles from "./MessageText.module.css";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
+import { ConversationMarkdownRuntimeHost } from "./ConversationMarkdownRuntimeHost";
+import { createConversationMarkdownRendererRegistry } from "./ConversationMarkdownRendererProfile";
 
 const PREVIEW_LINES = 10;
 const VIEW_SWITCH_DELAY_MS = 180;
@@ -81,7 +80,12 @@ const MERMAID_MAX_SCALE = 10;
 const MERMAID_SCALE_STEP = 0.1;
 const MERMAID_FIT_PADDING = 64;
 const MERMAID_AUTO_FIT_FRAMES = 40;
-const fullscreenMarkdownModelCache = new MarkdownDocumentModelCache(24);
+let fullscreenMarkdownRegistry: ReturnType<typeof createConversationMarkdownRendererRegistry> | null = null;
+
+function getFullscreenMarkdownRegistry(): ReturnType<typeof createConversationMarkdownRendererRegistry> {
+  fullscreenMarkdownRegistry ??= createConversationMarkdownRendererRegistry();
+  return fullscreenMarkdownRegistry;
+}
 type ContentPreviewRequest = Extract<PreviewRequest, { type: "content" }>;
 type SyntaxHighlighterRuntimeProps = {
   language: string;
@@ -149,10 +153,16 @@ const LazyJsonTreeViewer = lazy(() =>
 export interface MarkdownCodeBlockProps {
   children?: ReactNode;
   defaultViewMode?: "source" | "preview";
+  previewContextOverride?: PreviewContextValue | null;
   streaming?: boolean;
 }
 
-export function MarkdownCodeBlock({ children, defaultViewMode, streaming = false }: MarkdownCodeBlockProps) {
+export function MarkdownCodeBlock({
+  children,
+  defaultViewMode,
+  previewContextOverride,
+  streaming = false,
+}: MarkdownCodeBlockProps) {
   const [expanded, setExpanded] = useState(false);
   const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
   const [viewModeOverride, setViewModeOverride] = useState<"source" | "preview" | null>(null);
@@ -163,7 +173,8 @@ export function MarkdownCodeBlock({ children, defaultViewMode, streaming = false
   const sourceViewportRef = useRef<HTMLDivElement>(null);
   const sourceAnimationRef = useRef<Animation | null>(null);
   const switchTimerRef = useRef<number | null>(null);
-  const previewContext = useOptionalPreview();
+  const inheritedPreviewContext = useOptionalPreview();
+  const previewContext = previewContextOverride === undefined ? inheritedPreviewContext : previewContextOverride;
   const captureExpansionAnchor = useExpansionScrollAnchor();
   const codeChild = getCodeChild(children);
   const className = codeChild?.props?.className;
@@ -573,6 +584,29 @@ function PreviewFullscreenDialog({
   );
 }
 
+/** Surface-owned dialog used by retained-DOM conversation Markdown blocks. */
+export function ConversationMermaidRuntimePreviewDialog({
+  code,
+  onClose,
+}: {
+  code: string;
+  onClose: () => void;
+}) {
+  const [theme, setTheme] = useState<"light" | "dark">(() => getTheme());
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => setTheme(getTheme()));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <PreviewFullscreenDialog title="Mermaid 预览" onClose={onClose}>
+      <MermaidPreview code={code} theme={theme} interactive size="fullscreen" />
+    </PreviewFullscreenDialog>
+  );
+}
+
 function CodeViewLoading({ targetMode: _targetMode }: { targetMode: "source" | "preview" | null }) {
   return (
     <LoadingSkeleton aria-label="正在切换代码视图" className={styles.codeViewLoading} lineCount={3} width="compact" />
@@ -618,19 +652,28 @@ function FullscreenPreviewContent({
 
 function FullscreenMarkdownPreview({ source }: { source: string }) {
   const normalizedSource = useMemo(() => normalizeMarkdownContent(source), [source]);
-  const model = useMemo(
-    () =>
-      fullscreenMarkdownModelCache.getOrCreate({
-        cacheKey: "message-code-fullscreen",
-        idPrefix: "message-code-fullscreen",
-        source: normalizedSource,
-      }),
-    [normalizedSource],
-  );
+  const message = useMemo<ConversationMessage>(() => ({
+    id: `message-code-fullscreen-${hashPreviewText(normalizedSource)}`,
+    threadId: "message-code-fullscreen",
+    turnId: null,
+    itemId: null,
+    kind: "assistant",
+    status: "completed",
+    content: normalizedSource,
+    payload: {},
+    createdAt: "",
+    updatedAt: "",
+  }), [normalizedSource]);
 
   return (
     <div className={styles.fullscreenMarkdown}>
-      <VirtualMarkdownPreview model={model} />
+      <ConversationMarkdownRuntimeHost
+        message={message}
+        registry={getFullscreenMarkdownRegistry()}
+        showCursor={false}
+        source={normalizedSource}
+        testSynchronous={import.meta.env.MODE === "test" && typeof Worker === "undefined"}
+      />
     </div>
   );
 }

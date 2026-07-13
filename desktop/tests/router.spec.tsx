@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentActionEnvelope } from "@/types/protocol";
 import type { AgentConnection, ChatChannel, ChatChannelOptions, RuntimeBridge, WsConnectionStatus } from "@/runtime";
@@ -26,6 +26,11 @@ import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectio
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
 import { FontProvider } from "@/renderer/providers/FontProvider";
 import type { AgentSession, CommandApprovalRequest, Workspace } from "@/types/protocol";
+
+beforeEach(() => {
+  localStorage.clear();
+  sessionStorage.clear();
+});
 
 function renderRouter(
   initialEntries: Array<string | { pathname: string; state?: unknown }>,
@@ -293,12 +298,12 @@ describe("AppRouter", () => {
     expect(screen.queryByRole("button", { name: /无项目聊天/ })).toBeNull();
   });
 
-  it("opens the project mode placeholder route", async () => {
+  it("opens the project mode demo route", async () => {
     renderRouter([PROJECT_PATH]);
 
     expect(await screen.findByTestId("project-mode-page", undefined, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByRole("button", { name: "项目模式" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByText("功能开发中，敬请期待")).not.toBeNull();
+    expect(screen.getByTitle("Keydex 项目模式 Demo").getAttribute("src")).toBe("/project-mode-demo.html");
     expect(screen.getByTestId("app-shell").dataset.rightSidebarEnabled).toBe("false");
     expect(screen.queryByLabelText("侧边栏")).toBeNull();
     expect(screen.queryByText("新对话")).toBeNull();
@@ -356,7 +361,13 @@ describe("AppRouter", () => {
     expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByTitle("keydex / D: / docs / README.md")).not.toBeNull();
     await waitFor(() => {
-      expect(runtime.localPreview.readFile).toHaveBeenCalledWith(filePath);
+      expect(runtime.localPreview.readDocument).toHaveBeenCalledWith(
+        filePath,
+        expect.objectContaining({
+          consumerId: expect.stringMatching(/^file-preview-/u),
+          signal: expect.any(AbortSignal),
+        }),
+      );
     });
     expect(runtime.workspaces.list).toHaveBeenCalled();
     expect(runtime.conversation.listSessions).toHaveBeenCalledWith({
@@ -371,7 +382,7 @@ describe("AppRouter", () => {
       "true",
     );
     expect(await within(externalTree).findByText("Intro")).not.toBeNull();
-    expect(runtime.localPreview.readFile).toHaveBeenCalledTimes(1);
+    expect(runtime.localPreview.readDocument).toHaveBeenCalledTimes(1);
   });
 
   it("previews an external workbench file before the runtime connection is ready", async () => {
@@ -392,7 +403,13 @@ describe("AppRouter", () => {
     expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByTitle("D: / docs / README.md")).not.toBeNull();
     await waitFor(() => {
-      expect(runtime.localPreview.readFile).toHaveBeenCalledWith(filePath);
+      expect(runtime.localPreview.readDocument).toHaveBeenCalledWith(
+        filePath,
+        expect.objectContaining({
+          consumerId: expect.stringMatching(/^file-preview-/u),
+          signal: expect.any(AbortSignal),
+        }),
+      );
     });
     expect(runtime.workspaces.list).not.toHaveBeenCalled();
     expect(runtime.conversation.listSessions).not.toHaveBeenCalled();
@@ -419,7 +436,7 @@ describe("AppRouter", () => {
       pageSize: 50,
     });
     expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "");
-    expect(runtime.localPreview.readFile).toHaveBeenCalledTimes(1);
+    expect(runtime.localPreview.readDocument).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a remembered-workspace external file in outline preview while the runtime starts", async () => {
@@ -437,7 +454,13 @@ describe("AppRouter", () => {
     expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByTitle("workspace A / D: / docs / README.md")).not.toBeNull();
     await waitFor(() => {
-      expect(runtime.localPreview.readFile).toHaveBeenCalledWith(filePath);
+      expect(runtime.localPreview.readDocument).toHaveBeenCalledWith(
+        filePath,
+        expect.objectContaining({
+          consumerId: expect.stringMatching(/^file-preview-/u),
+          signal: expect.any(AbortSignal),
+        }),
+      );
     });
     expect(runtime.workspaces.list).not.toHaveBeenCalled();
     expect(runtime.workspace.listDirectory).not.toHaveBeenCalled();
@@ -459,7 +482,7 @@ describe("AppRouter", () => {
     expect(screen.getByTestId("workbench-assistant-surface")).not.toBeNull();
     expect(screen.queryByTestId("workbench-external-preview-pending-pane")).toBeNull();
     expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "");
-    expect(runtime.localPreview.readFile).toHaveBeenCalledTimes(1);
+    expect(runtime.localPreview.readDocument).toHaveBeenCalledTimes(1);
   });
 
   it("closes an external workbench preview tab without reopening it from the file route", async () => {
@@ -655,6 +678,8 @@ describe("AppRouter", () => {
       });
     });
     expect(runtime.__spies.chat).toHaveBeenCalledWith({
+      client_input_id: expect.any(String),
+      delivery_mode: "steer",
       session_id: "new-workbench-session",
       message: "生成验收说明",
       provider_id: "provider-1",
@@ -1559,6 +1584,17 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
     localPreview: {
       readFile: vi.fn((path: string) =>
         Promise.resolve({ path, content: "# Local file\n\n## Intro\n\nBody", encoding: "utf-8" }),
+      ),
+      readDocument: vi.fn((path: string) =>
+        Promise.resolve({
+          document_id: `local-preview:${path}`,
+          source: "local-preview" as const,
+          path,
+          revision: "sha256:local-file",
+          encoding: "utf-8" as const,
+          total_bytes: 31,
+          content: "# Local file\n\n## Intro\n\nBody",
+        }),
       ),
       readMedia: vi.fn(),
     },

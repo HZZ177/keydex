@@ -124,6 +124,30 @@ describe("SourceAnnotationAdapter", () => {
     expect(geometry.markers.cross[1].top).toBe(70);
   });
 
+  it("prefers exact rendered annotation fragments for source connector geometry", () => {
+    const adapter = new SourceAnnotationAdapter();
+    const view = editor("alpha beta", adapter);
+    const viewport = document.createElement("div");
+    document.body.append(viewport);
+    adapter.attach(view, viewport);
+    adapter.render(renderState([{ annotationId: "alpha", sourceRanges: [{ start: 0, end: 5 }] }]));
+    Object.defineProperty(view, "contentHeight", { configurable: true, value: 600 });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 200 });
+    Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 500 });
+    Object.defineProperty(viewport, "scrollTop", { configurable: true, value: 40, writable: true });
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(rect(10, 20, 500, 200));
+    const marker = view.dom.querySelector<HTMLElement>(".cm-annotation-mark[data-annotation-id='alpha']")!;
+    vi.spyOn(marker, "getClientRects").mockReturnValue([rect(110, 80, 90, 20)] as unknown as DOMRectList);
+    const coordsAtPos = vi.spyOn(view, "coordsAtPos").mockImplementation(() => {
+      throw new Error("position inference must not run when rendered fragments exist");
+    });
+
+    const geometry = adapter.geometry();
+
+    expect(geometry.markers.alpha).toEqual([{ left: 100, right: 190, top: 100, bottom: 120 }]);
+    expect(coordsAtPos).not.toHaveBeenCalled();
+  });
+
   it("does not measure source geometry directly from the shared viewport scroll event", () => {
     const frames: FrameRequestCallback[] = [];
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {

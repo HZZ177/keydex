@@ -2,70 +2,56 @@ import type { AnnotationRecord } from "@/runtime/annotations";
 
 import type { DocumentTextModel } from "../document/DocumentTextModel";
 import type { ResolvedAnnotationIndex } from "../domain/resolutions";
+import type { AnnotationDocumentWorkerResolver } from "./DocumentWorkerAnnotationResolver";
 import {
   createAnnotationSetRevision,
   resolveDocumentAnnotations,
 } from "./resolveDocumentAnnotations";
-import type {
-  AnnotationResolverRequest,
-  AnnotationResolverResponse,
-} from "./annotationResolverProtocol";
-
-interface ResolverWorker {
-  onerror: ((event: ErrorEvent) => void) | null;
-  onmessage: ((event: MessageEvent<AnnotationResolverResponse>) => void) | null;
-  postMessage(message: AnnotationResolverRequest): void;
-  terminate(): void;
-}
 
 export interface AnnotationResolverOptions {
-  cacheSize?: number;
-  largeDocumentCharacters?: number;
-  largeRecordCount?: number;
-  workerFactory?: () => ResolverWorker;
+  readonly cacheSize?: number;
+  readonly largeDocumentCharacters?: number;
+  readonly largeRecordCount?: number;
+  readonly documentWorker?: AnnotationDocumentWorkerResolver | null;
 }
 
 export interface ResolveAnnotationsInput {
-  model: DocumentTextModel;
-  path: string;
-  records: readonly AnnotationRecord[];
-  signal?: AbortSignal;
-  workspaceId: string;
+  readonly model: DocumentTextModel;
+  readonly path: string;
+  readonly records: readonly AnnotationRecord[];
+  readonly signal?: AbortSignal;
+  readonly workspaceId: string;
 }
 
 interface ActiveResolution {
-  cancel: (message: string) => void;
-  worker: ResolverWorker;
+  readonly controller: AbortController;
+  readonly externalSignal: AbortSignal | null;
+  readonly onExternalAbort: (() => void) | null;
 }
 
+/**
+ * Resolves small/legacy inputs synchronously and delegates large Snapshot-backed
+ * Markdown inputs to the shared Document Worker. It never creates a second
+ * annotation-specific Worker and never reparses raw Markdown.
+ */
 export class AnnotationResolver {
   private readonly cache = new Map<string, ResolvedAnnotationIndex>();
   private readonly cacheSize: number;
   private readonly largeDocumentCharacters: number;
   private readonly largeRecordCount: number;
-  private readonly workerFactory: () => ResolverWorker;
+  private readonly documentWorker: AnnotationDocumentWorkerResolver | null;
   private active: ActiveResolution | null = null;
-  private requestId = 0;
 
   constructor(options: AnnotationResolverOptions = {}) {
     this.cacheSize = options.cacheSize ?? 8;
     this.largeDocumentCharacters = options.largeDocumentCharacters ?? 100_000;
     this.largeRecordCount = options.largeRecordCount ?? 50;
-    this.workerFactory = options.workerFactory ?? (() => {
-      if (typeof Worker === "undefined") {
-        throw new Error("Annotation resolver Worker is unavailable");
-      }
-      return new Worker(new URL("./annotationResolver.worker.ts", import.meta.url), {
-        type: "module",
-      });
-    });
+    this.documentWorker = options.documentWorker ?? null;
   }
 
   resolve(input: ResolveAnnotationsInput): Promise<ResolvedAnnotationIndex> {
     this.cancelActive("Annotation resolution superseded");
-    if (input.signal?.aborted) {
-      return Promise.reject(abortError("Annotation resolution aborted"));
-    }
+    if (input.signal?.aborted) return Promise.reject(abortError("Annotation resolution aborted"));
     const key = cacheKey(input);
     const cached = this.cache.get(key);
     if (cached) {
@@ -73,13 +59,14 @@ export class AnnotationResolver {
       this.cache.set(key, cached);
       return Promise.resolve(cached);
     }
-    if (input.model.logicalText.length < this.largeDocumentCharacters
-      && input.records.length < this.largeRecordCount) {
-      const result = resolveDocumentAnnotations(input.model, input.records);
-      this.remember(key, result);
-      return Promise.resolve(result);
+    const large = input.model.logicalText.length >= this.largeDocumentCharacters
+      || input.records.length >= this.largeRecordCount;
+    if (large && this.documentWorker && input.model.kind === "markdown") {
+      return this.resolveInDocumentWorker(input, key);
     }
-    return this.resolveInWorker(input, key);
+    const result = resolveDocumentAnnotations(input.model, input.records);
+    this.remember(key, result);
+    return Promise.resolve(result);
   }
 
   close(): void {
@@ -87,83 +74,53 @@ export class AnnotationResolver {
     this.cache.clear();
   }
 
-  private resolveInWorker(
+  private resolveInDocumentWorker(
     input: ResolveAnnotationsInput,
     key: string,
   ): Promise<ResolvedAnnotationIndex> {
-    const worker = this.workerFactory();
-    const id = ++this.requestId;
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const finish = () => {
-        input.signal?.removeEventListener("abort", onAbort);
-        worker.terminate();
-        if (this.active?.worker === worker) {
-          this.active = null;
-        }
-      };
-      const cancel = (message: string) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        finish();
-        reject(abortError(message));
-      };
-      const onAbort = () => cancel("Annotation resolution aborted");
-      worker.onmessage = (event) => {
-        if (settled || event.data.id !== id) {
-          return;
-        }
-        settled = true;
-        finish();
-        if (!event.data.ok) {
-          reject(new Error(event.data.error));
-          return;
-        }
-        this.remember(key, event.data.result);
-        resolve(event.data.result);
-      };
-      worker.onerror = (event) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        finish();
-        reject(new Error(event.message || "Annotation resolver Worker failed"));
-      };
-      this.active = { worker, cancel };
-      input.signal?.addEventListener("abort", onAbort, { once: true });
-      worker.postMessage({
-        id,
-        payload: {
-          document: {
-            documentRevision: input.model.revision.documentRevision,
-            kind: input.model.kind,
-            rawSource: input.model.rawSource,
-          },
-          records: [...input.records],
-        },
-      });
+    const controller = new AbortController();
+    const onExternalAbort = input.signal
+      ? () => controller.abort(abortError("Annotation resolution aborted"))
+      : null;
+    input.signal?.addEventListener("abort", onExternalAbort!, { once: true });
+    const active: ActiveResolution = {
+      controller,
+      externalSignal: input.signal ?? null,
+      onExternalAbort,
+    };
+    this.active = active;
+    return this.documentWorker!.resolve({
+      model: input.model,
+      path: input.path,
+      records: input.records,
+      signal: controller.signal,
+      workspaceId: input.workspaceId,
+    }).then((result) => {
+      if (controller.signal.aborted) throw controller.signal.reason ?? abortError("Annotation resolution aborted");
+      this.remember(key, result);
+      return result;
+    }).finally(() => {
+      this.releaseActive(active);
     });
   }
 
   private cancelActive(message: string): void {
     const active = this.active;
-    if (!active) {
-      return;
-    }
-    this.active = null;
-    active.cancel(message);
+    if (!active) return;
+    this.releaseActive(active);
+    active.controller.abort(abortError(message));
+  }
+
+  private releaseActive(active: ActiveResolution): void {
+    active.externalSignal?.removeEventListener("abort", active.onExternalAbort!);
+    if (this.active === active) this.active = null;
   }
 
   private remember(key: string, value: ResolvedAnnotationIndex): void {
     this.cache.set(key, value);
     while (this.cache.size > this.cacheSize) {
       const oldest = this.cache.keys().next().value as string | undefined;
-      if (oldest === undefined) {
-        break;
-      }
+      if (oldest === undefined) break;
       this.cache.delete(oldest);
     }
   }
@@ -173,6 +130,7 @@ function cacheKey(input: ResolveAnnotationsInput): string {
   return [
     input.workspaceId,
     input.path,
+    input.model.revision.documentRevision,
     input.model.revision.textRevision,
     createAnnotationSetRevision(input.records),
   ].join("\u0000");

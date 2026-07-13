@@ -4,12 +4,12 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  memo,
   useRef,
   useState,
   type ButtonHTMLAttributes,
   type CSSProperties,
   type FocusEvent,
-  type MutableRefObject,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -17,28 +17,23 @@ import { createPortal } from "react-dom";
 
 import { runtimeBridge, type RuntimeBridge, type WorkspaceScope } from "@/runtime";
 import { ContextChipIcon } from "@/renderer/components/chat/ContextChipIcon";
-import {
-  MarkdownBlockView,
-  MarkdownDocumentModelCache,
-  VirtualMarkdownPreview,
-  type MarkdownBlock,
-  type MarkdownDocumentModel,
-  type MarkdownBlockRendererProps,
-  type MarkdownBlockRendererRegistry,
-  type MarkdownInlineImageProps,
-} from "@/renderer/components/workspace/markdownPreviewEngine";
 import { ImagePreviewDialog } from "@/renderer/components/workspace/ImagePreviewSurface";
-import { useOptionalPreview, type PreviewFileRevealTarget, type PreviewRenderContext } from "@/renderer/providers/PreviewProvider";
+import {
+  useOptionalPreview,
+  type PreviewContextValue,
+  type PreviewFileRevealTarget,
+  type PreviewRenderContext,
+} from "@/renderer/providers/PreviewProvider";
 import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
-import { isAbsoluteFilePath } from "@/renderer/utils/fileLinks";
+import { ImageResourceRuntime } from "@/renderer/markdownRuntime/resources";
+import { isAbsoluteFilePath, parseFileLinkTarget } from "@/renderer/utils/fileLinks";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import type { AgentContextItem, AgentFileAttachment, TurnError } from "@/types/protocol";
 
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { formatConversationDuration } from "./duration";
 import { MessageGhostFooter, type MessageGhostFooterData } from "./MessageGhostFooter";
-import { MarkdownImage } from "./MarkdownImage";
 import { SelectionToolbar } from "./SelectionToolbar";
 import {
   copyText,
@@ -51,20 +46,10 @@ import {
 import { previewRenderContextFromWorkspaceScope } from "./previewRenderContext";
 import { useTextSelection } from "./useTextSelection";
 import { useTypingAnimation } from "./useTypingAnimation";
+import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnostics";
+import { ConversationMarkdownRuntimeHost } from "./ConversationMarkdownRuntimeHost";
+import { createConversationMarkdownRendererRegistry } from "./ConversationMarkdownRendererProfile";
 import styles from "./MessageText.module.css";
-
-const messageMarkdownModelCache = new MarkdownDocumentModelCache(96);
-const MESSAGE_MARKDOWN_SCROLL_PARENT_SELECTOR = "[data-message-list-scroll='true']";
-const MESSAGE_MARKDOWN_VIRTUAL_BLOCK_THRESHOLD = 96;
-const MESSAGE_MARKDOWN_VIRTUAL_TEXT_THRESHOLD = 80_000;
-const MESSAGE_MARKDOWN_VIRTUAL_MIN_BLOCKS_FOR_TEXT_THRESHOLD = 24;
-const MESSAGE_MARKDOWN_VIRTUAL_HEAVY_BLOCK_THRESHOLD = 8;
-const MESSAGE_MARKDOWN_VIRTUAL_MIN_BLOCKS_FOR_HEAVY_THRESHOLD = 32;
-type MessageMarkdownScrollParent = HTMLElement | false | null;
-interface MessageMarkdownScrollParentState {
-  messageId: string;
-  value: MessageMarkdownScrollParent;
-}
 
 export interface MessageTextProps {
   message: ConversationMessage;
@@ -72,33 +57,66 @@ export interface MessageTextProps {
   suppressStreamingCursor?: boolean;
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
+  previewContextOverride?: PreviewContextValue | null;
   onQuoteSelection?: (text: string) => void;
   onAskSelectionInBtwConversation?: (text: string) => void;
   onReverseFromMessage?: (message: ConversationMessage) => void;
 }
 
-export function MessageText({
+function MessageTextComponent({
   message,
   showActionRow = true,
   suppressStreamingCursor = false,
   workspaceRuntime,
   workspaceScope,
+  previewContextOverride,
   onQuoteSelection,
   onAskSelectionInBtwConversation,
   onReverseFromMessage,
 }: MessageTextProps) {
+  conversationBaselineDiagnostics.record({
+    stage: "message-text-render",
+    messageId: message.id,
+    status: message.status,
+    characters: message.content.length,
+  });
   const contentRef = useRef<HTMLDivElement>(null);
-  const previewContext = useOptionalPreview();
+  const inheritedPreviewContext = useOptionalPreview();
+  const previewContext = previewContextOverride === undefined ? inheritedPreviewContext : previewContextOverride;
   const isUser = message.kind === "user";
+  const useConversationRuntime = conversationMarkdownRuntimeEnabled(import.meta.env.MODE, typeof Worker !== "undefined");
   const isStreaming = message.status === "pending" || message.status === "running";
   const selection = useTextSelection(contentRef, Boolean(onQuoteSelection || onAskSelectionInBtwConversation));
   const cancelled = message.status === "cancelled" || message.payload.cancelled === true;
   const fastDrainTyping = !isUser && message.status === "completed" && !cancelled;
   const normalizedContent = useMemo(() => normalizeMessageContent(message.content), [message.content]);
-  const assistantContent = useMemo(
-    () => redactTextualToolProtocol(stripThinkTags(normalizedContent)),
-    [normalizedContent],
-  );
+  const assistantProjectionRef = useRef<{
+    source: string;
+    content: string;
+    redacted: boolean;
+  } | null>(null);
+  const assistantContent = useMemo(() => {
+    if (isUser) return { content: normalizedContent, redacted: false };
+    const previous = assistantProjectionRef.current;
+    if (
+      useConversationRuntime
+      && previous
+      && !previous.redacted
+      && previous.content === previous.source
+      && isAppendOnlyMessageSnapshot(previous.source, normalizedContent)
+    ) {
+      const appendedProbe = normalizedContent.slice(Math.max(0, previous.source.length - 128));
+      if (!STREAM_PROTOCOL_TAG_BOUNDARY_PATTERN.test(appendedProbe)) {
+        const result = { source: normalizedContent, content: normalizedContent, redacted: false };
+        assistantProjectionRef.current = result;
+        return result;
+      }
+    }
+    const projected = redactTextualToolProtocol(stripThinkTags(normalizedContent));
+    const result = { source: normalizedContent, ...projected };
+    assistantProjectionRef.current = result;
+    return result;
+  }, [isUser, normalizedContent, useConversationRuntime]);
   const content = isUser ? normalizedContent : assistantContent.content;
   const contextItems = useMemo(
     () => (isUser ? contextItemsFromPayload(message.payload) : []),
@@ -125,7 +143,10 @@ export function MessageText({
     () => (message.kind === "assistant" && message.status === "failed" ? turnErrorFromPayload(message.payload) : null),
     [message.kind, message.payload, message.status],
   );
-  const animationContent = useMemo(() => normalizeMarkdownContent(content), [content]);
+  const animationContent = useMemo(
+    () => normalizeMarkdownContent(content),
+    [content],
+  );
   const { displayedContent, isAnimating } = useTypingAnimation({
     content: animationContent,
     enabled: !isUser && isStreaming,
@@ -137,96 +158,47 @@ export function MessageText({
     !isUser &&
     isStreaming &&
     displayedContent.length < animationContent.length &&
-    animationContent.startsWith(displayedContent);
+    isAppendOnlyMessageSnapshot(displayedContent, animationContent);
   const visuallyStreaming = isStreaming || isAnimating;
   const renderedContent = useMemo(
-    () => normalizeMarkdownContent(displayedContent, { streaming: !isUser && visuallyStreaming }),
-    [displayedContent, isUser, visuallyStreaming],
+    () => normalizeMarkdownContent(displayedContent, { streaming: isStreaming, repairFence: false }),
+    [displayedContent, isStreaming],
   );
-  const markdownModel = useMemo(
-    () =>
-      messageMarkdownModelCache.getOrCreate({
-        cacheKey: `message:${message.id}`,
-        idPrefix: `message-${message.id}`,
-        source: renderedContent || " ",
-      }),
-    [message.id, renderedContent],
-  );
-  const shouldVirtualizeMarkdown = shouldVirtualizeMessageMarkdown({
-    cancelled,
-    isUser,
-    model: markdownModel,
-    visuallyStreaming,
-  });
-  const [markdownScrollParentState, setMarkdownScrollParentState] = useState<MessageMarkdownScrollParentState>({
-    messageId: "",
-    value: null,
-  });
-  const markdownScrollParent =
-    markdownScrollParentState.messageId === message.id ? markdownScrollParentState.value : null;
-  useLayoutEffect(() => {
-    if (!shouldVirtualizeMarkdown) {
-      setMarkdownScrollParentState({ messageId: message.id, value: null });
-      return;
-    }
-    setMarkdownScrollParentState({
-      messageId: message.id,
-      value: nearestMessageMarkdownScrollParent(contentRef.current),
-    });
-  }, [message.id, shouldVirtualizeMarkdown]);
-  const activeStreamingFence = useMemo(
-    () => (!isUser && visuallyStreaming ? findActiveStreamingFence(displayedContent) : null),
-    [displayedContent, isUser, visuallyStreaming],
-  );
-  const markdownRenderStateRef = useRef({
-    activeStreamingFence,
-    isUser,
-    visuallyStreaming,
-  });
-  markdownRenderStateRef.current = {
-    activeStreamingFence,
-    isUser,
-    visuallyStreaming,
-  };
   const showStreamingCursor =
     !suppressStreamingCursor && !isUser && isStreaming && !isAnimating && !hasPendingDisplayBacklog && !cancelled;
-  const markdownComponents = useMemo(
-    () =>
-      ({
-        code: (props: MarkdownBlockRendererProps) => (
-          <MessageMarkdownCodeBlock {...props} renderStateRef={markdownRenderStateRef} />
-        ),
-        fence: (props: MarkdownBlockRendererProps) => (
-          <MessageMarkdownCodeBlock {...props} renderStateRef={markdownRenderStateRef} />
-        ),
-      }) satisfies MarkdownBlockRendererRegistry,
-    [],
+  const conversationRuntimeRegistry = useMemo(
+    () => createConversationMarkdownRendererRegistry({ previewContext }),
+    [
+      previewContext,
+      previewContext?.activeScopeKey,
+      previewContext?.panelActiveEntryId,
+      previewContext?.panelOpen,
+    ],
   );
-  const renderMarkdownImage = useCallback(
-    (props: MarkdownInlineImageProps) => (
-      <MarkdownImage
-        alt={props.alt}
-        runtime={workspaceRuntime}
-        src={props.src}
-        workspaceScope={workspaceScope}
-      />
-    ),
+  const conversationImageRuntime = useMemo(
+    () => new ImageResourceRuntime({
+      sourcePathFor: () => null,
+      workspaceKeyFor: () => workspaceScope?.sessionId ?? null,
+      resourceRevisionFor: (_resource, context) => context.snapshot.revision,
+      readWorkspaceImage: workspaceRuntime && workspaceScope
+        ? async (path, _context, signal) => {
+            if (signal.aborted) throw signal.reason;
+            const response = await workspaceRuntime.workspace.readMedia(workspaceScope, path);
+            if (signal.aborted) throw signal.reason;
+            return {
+              dataUrl: response.data_url,
+              mediaType: response.media_type,
+              bytes: response.size,
+            };
+          }
+        : undefined,
+    }),
     [workspaceRuntime, workspaceScope],
   );
-  const renderStaticMarkdownBlocks = !shouldVirtualizeMarkdown || markdownScrollParent === false;
-  const markdownBlocks = useMemo(
-    () =>
-      renderStaticMarkdownBlocks
-        ? markdownModel.blocks.map((block) => (
-            <MarkdownBlockView
-              block={block}
-              key={messageMarkdownBlockKey(message.id, block)}
-              registry={markdownComponents}
-              renderImage={renderMarkdownImage}
-            />
-          ))
-        : null,
-    [markdownComponents, markdownModel.blocks, message.id, renderMarkdownImage, renderStaticMarkdownBlocks],
+  useEffect(() => () => conversationImageRuntime?.destroy(), [conversationImageRuntime]);
+  const conversationResourceLifecycle = useMemo(
+    () => ({ mount: conversationImageRuntime.mount.bind(conversationImageRuntime) }),
+    [conversationImageRuntime],
   );
   const openContextFile = useCallback(
     (item: AgentContextItem) => {
@@ -242,6 +214,24 @@ export function MessageText({
           onQuoteSelection,
           previewContext.hostContext,
         ),
+      );
+    },
+    [onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
+  );
+  const openMarkdownFileTarget = useCallback(
+    (path: string, line: number | null) => {
+      if (!previewContext) return;
+      const revealTarget: PreviewFileRevealTarget | null = line ? { lineStart: line, lineEnd: line } : null;
+      const renderContext = messageFilePreviewRenderContext(
+        workspaceScope,
+        workspaceRuntime,
+        onQuoteSelection,
+        previewContext.hostContext,
+      );
+      previewContext.openPreview(
+        isAbsoluteFilePath(path) ? { type: "local-file", path } : { type: "file", path },
+        renderContext,
+        revealTarget,
       );
     },
     [onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
@@ -263,20 +253,22 @@ export function MessageText({
       event.preventDefault();
       event.stopPropagation();
       const line = positiveIntegerOrNull(link.dataset.keydexFileLine);
-      const revealTarget: PreviewFileRevealTarget | null = line ? { lineStart: line, lineEnd: line } : null;
-      const renderContext = messageFilePreviewRenderContext(
-        workspaceScope,
-        workspaceRuntime,
-        onQuoteSelection,
-        previewContext.hostContext,
-      );
-      previewContext.openPreview(
-        isAbsoluteFilePath(path) ? { type: "local-file", path } : { type: "file", path },
-        renderContext,
-        revealTarget,
-      );
+      openMarkdownFileTarget(path, line);
     },
-    [onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
+    [openMarkdownFileTarget, previewContext],
+  );
+  const conversationRuntimeInteractions = useMemo(
+    () => ({
+      onLinkActivate: (_event: globalThis.MouseEvent, input: { href: string }) => {
+        const fileTarget = parseFileLinkTarget(input.href);
+        if (fileTarget) {
+          openMarkdownFileTarget(decodeFileLinkPath(fileTarget.path), fileTarget.line);
+          return;
+        }
+        if (/^https?:\/\//iu.test(input.href)) window.open(input.href, "_blank", "noopener,noreferrer");
+      },
+    }),
+    [openMarkdownFileTarget],
   );
 
   const userContextItems = isUser && regularContextItems.length > 0;
@@ -301,32 +293,36 @@ export function MessageText({
         />
       ) : null}
       {showBubble ? (
-        <div className={styles.bubble} data-testid="message-bubble">
+        <div
+          className={styles.bubble}
+          data-runtime-user-bubble={isUser && useConversationRuntime ? "true" : undefined}
+          data-testid="message-bubble"
+        >
           {!isUser && assistantContent.redacted ? (
             <div className={styles.protocolNotice} role="note">
               {textualToolProtocolNotice}
             </div>
           ) : null}
           {inlineContextItems ? <MessageContextItems items={regularContextItems} onOpenFile={openContextFile} /> : null}
+          {isUser && useConversationRuntime && renderedContent ? (
+            <span
+              aria-hidden="true"
+              className={styles.runtimeUserBubbleSizer}
+              data-runtime-user-bubble-sizer="true"
+              data-runtime-user-bubble-sizer-text={userBubbleIntrinsicSizerText(displayedContent)}
+            />
+          ) : null}
           {renderedContent || !userContextItems ? (
-            shouldVirtualizeMarkdown && markdownScrollParent === null ? (
-              <div className="keydex-markdown" data-message-markdown-mode="virtual-pending" ref={contentRef} />
-            ) : shouldVirtualizeMarkdown && markdownScrollParent ? (
-              <VirtualMarkdownPreview
-                customScrollParent={markdownScrollParent}
-                model={markdownModel}
-                registry={markdownComponents}
-                renderImage={renderMarkdownImage}
+            <ConversationMarkdownRuntimeHost
+                interactions={conversationRuntimeInteractions}
+                message={message}
+                registry={conversationRuntimeRegistry}
+                resourceLifecycle={conversationResourceLifecycle}
                 rootRef={contentRef}
+                showCursor={showStreamingCursor}
+                source={renderedContent}
+                testSynchronous={import.meta.env.MODE === "test" && typeof Worker === "undefined"}
               />
-            ) : (
-              <div className="keydex-markdown" data-message-markdown-mode="static" ref={contentRef}>
-                {markdownBlocks}
-                {showStreamingCursor ? (
-                  <StreamingCursor />
-                ) : null}
-              </div>
-            )
           ) : null}
           {turnError ? <TurnErrorNotice error={turnError} /> : null}
           {cancelled ? <div className={styles.cancelledBadge}>已取消</div> : null}
@@ -351,6 +347,35 @@ export function MessageText({
     </article>
   );
 }
+
+export function conversationMarkdownRuntimeEnabled(environmentMode: string, workerAvailable: boolean): boolean {
+  void environmentMode;
+  void workerAvailable;
+  return true;
+}
+
+export const MessageText = memo(MessageTextComponent);
+
+function userBubbleIntrinsicSizerText(source: string): string {
+  // The retained renderer positions its blocks absolutely, so they cannot
+  // contribute an intrinsic inline size to the bubble. Keep one bounded,
+  // invisible in-flow sample and let the browser's own text layout determine
+  // the natural width. Long messages are guaranteed to use the 50% cap without
+  // duplicating an unbounded message in the DOM.
+  if (source.length > 512) return "宽".repeat(64);
+  return source;
+}
+
+function isAppendOnlyMessageSnapshot(previous: string, next: string): boolean {
+  if (next === previous) return true;
+  if (next.length <= previous.length) return false;
+  if (previous.length <= 1_024) return next.startsWith(previous);
+  const windowSize = 512;
+  return next.slice(0, windowSize) === previous.slice(0, windowSize)
+    && next.slice(previous.length - windowSize, previous.length) === previous.slice(-windowSize);
+}
+
+const STREAM_PROTOCOL_TAG_BOUNDARY_PATTERN = /<\s*\/?\s*(?:think(?:ing)?|tool_call|tool_result)\b/iu;
 
 export function StreamingCursor() {
   return (
@@ -471,70 +496,6 @@ function MessageImageAttachments({
   );
 }
 
-interface MessageMarkdownRenderState {
-  activeStreamingFence: ActiveStreamingFence | null;
-  isUser: boolean;
-  visuallyStreaming: boolean;
-}
-
-function MessageMarkdownCodeBlock({
-  block,
-  renderStateRef,
-}: MarkdownBlockRendererProps & {
-  renderStateRef: MutableRefObject<MessageMarkdownRenderState>;
-}) {
-  const language = block.metadata.language;
-  const renderState = renderStateRef.current;
-  const streaming =
-    !renderState.isUser &&
-    renderState.visuallyStreaming &&
-    isBlockInsideActiveFence(block, renderState.activeStreamingFence);
-
-  return (
-    <MarkdownCodeBlock streaming={streaming}>
-      <code className={language ? `language-${language}` : undefined}>{block.textContent}</code>
-    </MarkdownCodeBlock>
-  );
-}
-
-function messageMarkdownBlockKey(messageId: string, block: MarkdownBlock): string {
-  return `${messageId}:${block.index}:${block.type}:${block.sourceStart}`;
-}
-
-function shouldVirtualizeMessageMarkdown({
-  cancelled,
-  isUser,
-  model,
-  visuallyStreaming,
-}: {
-  cancelled: boolean;
-  isUser: boolean;
-  model: MarkdownDocumentModel;
-  visuallyStreaming: boolean;
-}): boolean {
-  if (isUser || visuallyStreaming || cancelled || model.blocks.length < 2) {
-    return false;
-  }
-  if (model.blocks.length >= MESSAGE_MARKDOWN_VIRTUAL_BLOCK_THRESHOLD) {
-    return true;
-  }
-  if (
-    model.source.length >= MESSAGE_MARKDOWN_VIRTUAL_TEXT_THRESHOLD &&
-    model.blocks.length >= MESSAGE_MARKDOWN_VIRTUAL_MIN_BLOCKS_FOR_TEXT_THRESHOLD
-  ) {
-    return true;
-  }
-  const heavyBlockCount = model.blocks.filter((block) => block.type === "fence" || block.type === "table").length;
-  return (
-    heavyBlockCount >= MESSAGE_MARKDOWN_VIRTUAL_HEAVY_BLOCK_THRESHOLD &&
-    model.blocks.length >= MESSAGE_MARKDOWN_VIRTUAL_MIN_BLOCKS_FOR_HEAVY_THRESHOLD
-  );
-}
-
-function nearestMessageMarkdownScrollParent(root: HTMLElement | null): MessageMarkdownScrollParent {
-  return root?.closest<HTMLElement>(MESSAGE_MARKDOWN_SCROLL_PARENT_SELECTOR) ?? false;
-}
-
 function messageFilePreviewRenderContext(
   workspaceScope: WorkspaceScope | null | undefined,
   runtime: RuntimeBridge | undefined,
@@ -563,6 +524,14 @@ function messageFilePreviewRenderContext(
 function positiveIntegerOrNull(value: string | undefined): number | null {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function decodeFileLinkPath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
 }
 
 function MessageContextItems({
@@ -1419,72 +1388,4 @@ function scalarStringValue(value: unknown): string {
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-}
-
-interface ActiveStreamingFence {
-  contentStartLine: number;
-  contentStartOffset: number;
-  startLine: number;
-  startOffset: number;
-}
-
-function findActiveStreamingFence(content: string): ActiveStreamingFence | null {
-  const lines = content.split("\n");
-  let activeFence:
-    | {
-        marker: "`" | "~";
-        length: number;
-        contentStartLine: number;
-        contentStartOffset: number;
-        startLine: number;
-        startOffset: number;
-      }
-    | null = null;
-  let lineStartOffset = 0;
-
-  lines.forEach((line, index) => {
-    const match = /^(\s*)(`{3,}|~{3,})/.exec(line);
-    const lineNumber = index + 1;
-    const nextLineOffset = lineStartOffset + line.length + (index < lines.length - 1 ? 1 : 0);
-
-    if (!match) {
-      lineStartOffset = nextLineOffset;
-      return;
-    }
-
-    const markerText = match[2];
-    const marker = markerText[0] as "`" | "~";
-    if (!activeFence) {
-      activeFence = {
-        marker,
-        length: markerText.length,
-        startLine: lineNumber,
-        startOffset: lineStartOffset,
-        contentStartLine: lineNumber + 1,
-        contentStartOffset: nextLineOffset,
-      };
-      lineStartOffset = nextLineOffset;
-      return;
-    }
-
-    if (activeFence.marker === marker && markerText.length >= activeFence.length) {
-      activeFence = null;
-    }
-    lineStartOffset = nextLineOffset;
-  });
-
-  return activeFence;
-}
-
-function isBlockInsideActiveFence(block: MarkdownBlock, fence: ActiveStreamingFence | null): boolean {
-  if (!fence) {
-    return false;
-  }
-
-  return (
-    block.sourceStart <= fence.startOffset &&
-    block.sourceEnd >= fence.contentStartOffset &&
-    block.lineStart <= fence.startLine &&
-    block.lineEnd >= fence.contentStartLine
-  );
 }

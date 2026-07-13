@@ -1,15 +1,54 @@
-﻿import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+﻿import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge } from "@/runtime";
 import { ConversationTurnNavigator, MessageList } from "@/renderer/pages/conversation/messages";
-import { visibleTurnIndexesFromMountedTurns } from "@/renderer/pages/conversation/messages/MessageList";
+import {
+  buildTurnNavigationItemsFromMessages,
+  visibleTurnIndexesFromMountedTurns,
+} from "@/renderer/pages/conversation/messages/MessageList";
+import { conversationBaselineDiagnostics } from "@/renderer/pages/conversation/messages/conversationBaselineDiagnostics";
 import { MessageGroupBlock } from "@/renderer/pages/conversation/messages/MessageGroupBlock";
 import { useAutoScroll } from "@/renderer/pages/conversation/messages/useAutoScroll";
-import { useVirtuosoAutoScroll } from "@/renderer/pages/conversation/messages/useVirtuosoAutoScroll";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
+class AutoLoadingImage {
+  decoding = "async";
+  referrerPolicy = "";
+  naturalWidth = 320;
+  naturalHeight = 180;
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  private value = "";
+
+  get src() {
+    return this.value;
+  }
+
+  set src(value: string) {
+    this.value = value;
+    if (value) queueMicrotask(() => this.onload?.());
+  }
+
+  decode() {
+    return Promise.resolve();
+  }
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
 describe("MessageList", () => {
+  it("bounds turn navigator previews instead of retaining an entire giant reply", () => {
+    const items = buildTurnNavigationItemsFromMessages([
+      message("preview-user", "user", "简短问题"),
+      message("preview-assistant", "assistant", "x".repeat(1024 * 1024)),
+    ]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0].userPreview).toBe("简短问题");
+    expect(items[0].assistantPreview[0]).toHaveLength(240);
+  });
+
   it("renders empty and loading states", () => {
     const { rerender } = render(<MessageList messages={[]} emptyText="还没有消息" />);
 
@@ -31,8 +70,8 @@ describe("MessageList", () => {
   it("renders messages with the default lightweight renderer", () => {
     render(<MessageList messages={[message("m1", "user", "你好"), message("m2", "assistant", "收到")]} />);
 
-    expect(screen.getByText("你好")).not.toBeNull();
-    expect(screen.getByText("收到")).not.toBeNull();
+    expect(screen.getAllByText("你好").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("收到").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: "复制消息" }).length).toBe(2);
   });
 
@@ -738,8 +777,8 @@ describe("MessageList", () => {
       <MessageList messages={dirtyMessages} />,
     );
 
-    expect(screen.getByText("数组问题")).not.toBeNull();
-    expect(screen.getByText("对象回答")).not.toBeNull();
+    expect(screen.getAllByText("数组问题").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("对象回答").length).toBeGreaterThan(0);
     expect(screen.getByTestId("conversation-turn-navigator")).not.toBeNull();
     const markers = screen.getAllByRole("button", { name: /跳转到第 \d+ 轮/ });
     fireEvent.focus(markers[0]);
@@ -805,7 +844,7 @@ describe("MessageList", () => {
       const { rerender } = render(<MessageList messages={messages} loading turnNavigationRequest={request} />);
 
       expect(screen.queryByTestId("message-skeleton")).toBeNull();
-      expect(screen.getByText("第一轮问题")).not.toBeNull();
+      expect(screen.getAllByText("第一轮问题").length).toBeGreaterThan(0);
       expect(scrollIntoView).not.toHaveBeenCalled();
 
       rerender(<MessageList messages={messages} turnNavigationRequest={request} />);
@@ -1065,6 +1104,7 @@ describe("MessageList", () => {
   });
 
   it("loads relative markdown images through the session workspace scope", async () => {
+    vi.stubGlobal("Image", AutoLoadingImage);
     const readMedia = vi.fn().mockResolvedValue({
       path: "assets/pixel.png",
       media_type: "image/png",
@@ -1082,19 +1122,22 @@ describe("MessageList", () => {
     );
 
     const image = (await screen.findByAltText("项目图")) as HTMLImageElement;
-    expect(image.getAttribute("src")).toBe("data:image/png;base64,abc");
+    await waitFor(() => {
+      expect(image.getAttribute("src")).toBe("data:image/png;base64,abc");
+    });
     expect(readMedia).toHaveBeenCalledWith({ sessionId: "ses-1" }, "assets/pixel.png");
   });
 
   it("shows a readable failure state for relative markdown images without workspace scope", async () => {
+    vi.stubGlobal("Image", AutoLoadingImage);
     const readMedia = vi.fn();
 
     render(<MessageList messages={[message("m1", "assistant", "![项目图](assets/pixel.png)")]} />);
 
-    await waitFor(() => {
-      expect(screen.queryByAltText("项目图")).toBeNull();
-    });
-    expect(screen.getByRole("img", { name: "项目图" }).textContent).toContain("项目图");
+    const fallback = await screen.findByRole("img", { name: "项目图" });
+    expect(fallback.textContent).toContain("项目图");
+    expect((screen.getByAltText("项目图") as HTMLImageElement).dataset.markdownImageState).toBe("failed");
+    expect((screen.getByAltText("项目图") as HTMLImageElement).hidden).toBe(true);
     expect(readMedia).not.toHaveBeenCalled();
   });
 
@@ -1166,6 +1209,25 @@ describe("MessageList", () => {
     );
 
     expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(1);
+  });
+
+  it("keeps a 5,000-turn navigator marker DOM bounded", () => {
+    render(
+      <ConversationTurnNavigator
+        turns={Array.from({ length: 5_000 }, (_, index) => ({
+          id: `bounded-turn-${index}`,
+          targetIndex: index,
+          userPreview: `问题 ${index}`,
+          assistantPreview: [`回答 ${index}`],
+        }))}
+        highlightedIndexes={[4_999]}
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("conversation-turn-navigator-count").textContent).toBe("5000 turn");
+    expect(Number(screen.getByTestId("conversation-turn-navigator-rendered-count").textContent)).toBeLessThan(100);
+    expect(document.querySelectorAll("button[aria-label^='跳转到第']").length).toBeLessThan(100);
   });
 
   it("shows a live turn duration below the active assistant turn", () => {
@@ -1851,6 +1913,28 @@ describe("MessageList", () => {
     });
   });
 
+  it("keeps repeated detached scroll events off the MessageList React reconciliation path", () => {
+    conversationBaselineDiagnostics.enable();
+    try {
+      render(<MessageList messages={[message("m1", "assistant", "long history")]} />);
+      const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+      mockScrollMetrics(scroller, { scrollHeight: 2_000, clientHeight: 400, scrollTop: 600 });
+      fireEvent.wheel(scroller, { deltaY: -120 });
+      fireEvent.scroll(scroller);
+      conversationBaselineDiagnostics.reset();
+      for (let index = 0; index < 1_000; index += 1) {
+        scroller.scrollTop = 600 + (index % 20);
+        fireEvent.scroll(scroller);
+      }
+      const renders = conversationBaselineDiagnostics.snapshot().events.filter((event) => event.stage === "message-list-render");
+      expect(renders).toHaveLength(0);
+      expect(screen.getByTestId("message-list").getAttribute("data-follow-mode")).toBe("user-detached");
+    } finally {
+      conversationBaselineDiagnostics.enable(false);
+      conversationBaselineDiagnostics.reset();
+    }
+  });
+
   it("lets upward wheel intent interrupt static auto-follow before the scroll event", async () => {
     const running = { ...message("m1", "assistant", "正在输出"), status: "running" as const };
     const { rerender } = render(<MessageList messages={[running]} isProcessing />);
@@ -1897,186 +1981,6 @@ describe("MessageList", () => {
     expect(scroller.scrollTop).toBe(0);
   });
 
-  it("scrolls the virtualized scroller to its real bottom so bottom padding remains visible", () => {
-    const scrollToIndex = vi.fn();
-    const scrollTo = vi.fn();
-    const { result } = renderHook(() => useVirtuosoAutoScroll(3));
-    const scroller = document.createElement("div");
-    mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 120 });
-    Object.defineProperty(scroller, "scrollTo", { configurable: true, value: scrollTo });
-
-    act(() => {
-      result.current.setScrollerRef(scroller);
-      (result.current.virtuosoRef as unknown as { current: { scrollToIndex: typeof scrollToIndex } | null }).current = {
-        scrollToIndex,
-      };
-    });
-
-    expect(typeof result.current.followOutput).toBe("function");
-    expect((result.current.followOutput as (isAtBottom: boolean) => false)(true)).toBe(false);
-
-    act(() => {
-      result.current.scrollToBottom("smooth");
-    });
-
-    expect(scroller.scrollTop).toBe(120);
-    expect(scrollTo).not.toHaveBeenCalled();
-    act(() => {
-      result.current.handleTotalListHeightChanged();
-    });
-    expect(scroller.scrollTop).toBe(120);
-    expect(scrollToIndex).not.toHaveBeenCalled();
-
-    act(() => {
-      result.current.scrollToBottom("auto");
-    });
-
-    expect(scroller.scrollTop).toBe(800);
-    expect(scrollTo).not.toHaveBeenCalled();
-    expect(scrollToIndex).not.toHaveBeenCalled();
-  });
-
-  it("keeps an initially opened virtualized session pinned while Virtuoso settles item heights", () => {
-    const { result } = renderHook(() => useVirtuosoAutoScroll(12));
-    const scroller = document.createElement("div");
-    mockScrollMetrics(scroller, { scrollHeight: 1600, clientHeight: 200, scrollTop: 900 });
-
-    act(() => {
-      result.current.setScrollerRef(scroller);
-      result.current.handleAtBottomStateChange(false);
-      result.current.handleTotalListHeightChanged();
-    });
-
-    expect(scroller.scrollTop).toBe(1400);
-  });
-
-  it("preserves an explicit virtualized turn navigation while item heights settle", () => {
-    const { result } = renderHook(() => useVirtuosoAutoScroll(12));
-    const scroller = document.createElement("div");
-    mockScrollMetrics(scroller, { scrollHeight: 1600, clientHeight: 200, scrollTop: 520 });
-
-    act(() => {
-      result.current.setScrollerRef(scroller);
-      result.current.pinToCurrentPosition();
-      result.current.handleAtBottomStateChange(false);
-      result.current.handleTotalListHeightChanged();
-    });
-
-    expect(result.current.userPinnedScroll).toBe(true);
-    expect(scroller.scrollTop).toBe(520);
-  });
-
-  it("does not auto-follow virtualized content after an external turn navigation target is active", () => {
-    const scrollToIndex = vi.fn();
-    const { result } = renderHook(() => useVirtuosoAutoScroll(3, { autoFollow: false }));
-    const scroller = document.createElement("div");
-    mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 120 });
-
-    act(() => {
-      result.current.setScrollerRef(scroller);
-      (result.current.virtuosoRef as unknown as { current: { scrollToIndex: typeof scrollToIndex } | null }).current = {
-        scrollToIndex,
-      };
-    });
-
-    act(() => {
-      result.current.handleTotalListHeightChanged();
-    });
-
-    expect(scroller.scrollTop).toBe(120);
-    expect(scrollToIndex).not.toHaveBeenCalled();
-  });
-
-  it("does not pull the virtualized scrollbar while the native thumb is being dragged", () => {
-    const { result } = renderHook(() => useVirtuosoAutoScroll(3));
-    const scroller = document.createElement("div");
-    mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
-    mockElementRect(scroller, { height: 200, top: 0, width: 100 });
-    mockElementInlineSize(scroller, { clientWidth: 88, offsetWidth: 100 });
-
-    act(() => {
-      result.current.setScrollerRef(scroller);
-    });
-    act(() => {
-      scroller.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 96, clientY: 24 }));
-    });
-    mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 800 });
-
-    act(() => {
-      result.current.handleTotalListHeightChanged();
-    });
-
-    expect(scroller.scrollTop).toBe(800);
-  });
-
-  it("lets upward wheel intent interrupt virtualized auto-follow before the scroll event", () => {
-    const { result } = renderHook(() => useVirtuosoAutoScroll(3));
-    const scroller = document.createElement("div");
-    mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
-
-    act(() => {
-      result.current.setScrollerRef(scroller);
-    });
-    act(() => {
-      scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
-    });
-    mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 800 });
-
-    act(() => {
-      result.current.handleTotalListHeightChanged();
-    });
-
-    expect(result.current.userPinnedScroll).toBe(true);
-    expect(scroller.scrollTop).toBe(800);
-  });
-
-  it("keeps outer auto-follow active while a nested scroll area consumes the wheel", () => {
-    const { result } = renderHook(() => useVirtuosoAutoScroll(3));
-    const scroller = document.createElement("div");
-    const nestedScroller = document.createElement("div");
-    nestedScroller.style.overflowY = "auto";
-    scroller.append(nestedScroller);
-    mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
-    mockScrollMetrics(nestedScroller, { scrollHeight: 500, clientHeight: 100, scrollTop: 200 });
-
-    act(() => {
-      result.current.setScrollerRef(scroller);
-    });
-    act(() => {
-      nestedScroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
-    });
-    mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 800 });
-
-    act(() => {
-      result.current.handleTotalListHeightChanged();
-    });
-
-    expect(result.current.userPinnedScroll).toBe(false);
-    expect(scroller.scrollTop).toBe(1000);
-  });
-
-  it("keeps virtualized auto-follow after ordinary content pointer down", () => {
-    const { result } = renderHook(() => useVirtuosoAutoScroll(3));
-    const scroller = document.createElement("div");
-    mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
-    mockElementRect(scroller, { height: 200, top: 0, width: 100 });
-    mockElementInlineSize(scroller, { clientWidth: 88, offsetWidth: 100 });
-
-    act(() => {
-      result.current.setScrollerRef(scroller);
-    });
-    act(() => {
-      scroller.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 40, clientY: 24 }));
-    });
-    mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 800 });
-
-    act(() => {
-      result.current.handleTotalListHeightChanged();
-    });
-
-    expect(scroller.scrollTop).toBe(1000);
-  });
-
   it("starts following automatically when streamed content grows past the viewport", async () => {
     const first = message("m1", "assistant", "短回复");
     const { rerender } = render(<MessageList messages={[first]} isProcessing />);
@@ -2095,6 +1999,161 @@ describe("MessageList", () => {
     await waitFor(() => {
       expect(scroller.scrollTop).toBe(800);
     });
+  });
+
+  it("uses the unified timeline runtime for a 1,000-turn product list with bounded mounted DOM and direct reveal", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    const originalUserAgent = navigator.userAgent;
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    class PassiveResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: PassiveResizeObserver });
+    Object.defineProperty(navigator, "userAgent", { configurable: true, value: "Mozilla/5.0 Chrome" });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 600 });
+    const messages = Array.from({ length: 1_000 }, (_, index) => [
+      { ...message(`large-user-${index}`, "user", `question-${index}`), turnId: `turn-${index}` },
+      { ...message(`large-assistant-${index}`, "assistant", `answer-${index}`), turnId: `turn-${index}` },
+    ]).flat();
+
+    try {
+      render(
+        <MessageList
+          messages={messages}
+          turnNavigationRequest={{ requestId: 1, targetIndex: 999 }}
+        />,
+      );
+      const scroller = screen.getByTestId("message-list-scroll");
+      expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("virtual");
+      expect(scroller.getAttribute("data-conversation-timeline-runtime")).toBe("true");
+      expect(scroller.querySelectorAll('[data-message-list-scroll="true"]')).toHaveLength(0);
+      await waitFor(() => {
+        expect(scroller.querySelector('[data-turn-index="999"]')).not.toBeNull();
+        expect(scroller.querySelector('[data-conversation-unit-id="unit:user-markdown:large-user-999"]')).not.toBeNull();
+        expect(scroller.textContent).toContain("question-999");
+      });
+      expect(Number(scroller.getAttribute("data-conversation-timeline-mounted-units"))).toBeLessThan(80);
+      expect(scroller.querySelectorAll("[data-conversation-unit-id]").length).toBeLessThan(80);
+      expect(scroller.querySelectorAll('[data-conversation-unit-pinned="true"]')).toHaveLength(0);
+    } finally {
+      Object.defineProperty(navigator, "userAgent", { configurable: true, value: originalUserAgent });
+      if (originalResizeObserver) {
+        Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: originalResizeObserver });
+      } else {
+        delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+      }
+      restorePrototypeDescriptor("clientHeight", originalClientHeight);
+    }
+  });
+
+  it("renders heterogeneous conversation units once and updates only the changed unit", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    const originalUserAgent = navigator.userAgent;
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    class PassiveResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: PassiveResizeObserver });
+    Object.defineProperty(navigator, "userAgent", { configurable: true, value: "Mozilla/5.0 Chrome" });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 800 });
+
+    const history = Array.from({ length: 165 }, (_, index) => [
+      { ...message(`mixed-history-user-${index}`, "user", `history-question-${index}`), turnId: `turn-${index}` },
+      { ...message(`mixed-history-assistant-${index}`, "assistant", `history-answer-${index}`), turnId: `turn-${index}` },
+    ]).flat();
+    const mixedTurn: ConversationMessage[] = [
+      message("mixed-user", "user", "mixed-user-content"),
+      message("mixed-assistant", "assistant", "mixed-assistant-content"),
+      { ...message("mixed-thinking", "thinking", "mixed-thinking-content"), status: "running" },
+      message("mixed-tool", "tool", "mixed-tool-content"),
+      message("mixed-file", "file_change", "mixed-file-content"),
+      { ...message("mixed-a2ui", "a2ui", "mixed-a2ui-v1"), status: "pending" },
+      { ...message("mixed-approval", "approval", "mixed-approval-content"), status: "pending" },
+      { ...message("mixed-mcp", "mcp_elicitation", "mixed-mcp-content"), status: "pending" },
+      message("mixed-error", "error", "mixed-error-content"),
+      message("mixed-skill", "skill", "mixed-skill-content"),
+      message("mixed-task", "thread_task_status", "mixed-task-content"),
+      message("mixed-status", "status", "mixed-status-content"),
+    ];
+    const renderCounts = new Map<string, number>();
+    const renderMessage = vi.fn((entry: ConversationMessage) => {
+      renderCounts.set(entry.id, (renderCounts.get(entry.id) ?? 0) + 1);
+      return <div data-message-id={entry.id}>{entry.content}</div>;
+    });
+
+    try {
+      const { rerender } = render(
+        <MessageList
+          messages={[...history, ...mixedTurn]}
+          renderMessage={renderMessage}
+          turnNavigationRequest={{ requestId: 1, targetIndex: 165 }}
+        />,
+      );
+      const scroller = screen.getByTestId("message-list-scroll");
+      const expectedKinds = [
+        "user-markdown",
+        "assistant-markdown",
+        "reasoning",
+        "tool",
+        "file-change",
+        "a2ui",
+        "approval",
+        "mcp-elicitation",
+        "error",
+        "skill",
+        "task-status",
+        "status",
+        "footer",
+      ];
+      await waitFor(() => {
+        const mountedKinds = new Set(
+          Array.from(scroller.querySelectorAll<HTMLElement>("[data-conversation-unit-kind]"))
+            .map((element) => element.dataset.conversationUnitKind),
+        );
+        expectedKinds.forEach((kind) => expect(mountedKinds.has(kind)).toBe(true));
+        expect(scroller.querySelector('[data-message-id="mixed-a2ui"]')?.textContent).toBe("mixed-a2ui-v1");
+      });
+
+      const assistantHost = scroller.querySelector('[data-conversation-unit-id="unit:assistant-markdown:mixed-assistant"]');
+      const a2uiHost = scroller.querySelector('[data-conversation-unit-id="unit:a2ui:mixed-a2ui"]');
+      expect(assistantHost).not.toBeNull();
+      expect(a2uiHost).not.toBeNull();
+      for (const entry of mixedTurn.filter((candidate) => candidate.kind !== "thread_task_status")) {
+        expect(scroller.querySelectorAll(`[data-message-id="${entry.id}"]`)).toHaveLength(1);
+      }
+      const countsBefore = new Map(renderCounts);
+      const updatedMessages = [...history, ...mixedTurn.map((entry) => (
+        entry.id === "mixed-a2ui" ? { ...entry, content: "mixed-a2ui-v2" } : entry
+      ))];
+
+      rerender(
+        <MessageList
+          messages={updatedMessages}
+          renderMessage={renderMessage}
+          turnNavigationRequest={{ requestId: 1, targetIndex: 165 }}
+        />,
+      );
+      await waitFor(() => {
+        expect(scroller.querySelector('[data-message-id="mixed-a2ui"]')?.textContent).toBe("mixed-a2ui-v2");
+      });
+      expect(scroller.querySelector('[data-conversation-unit-id="unit:assistant-markdown:mixed-assistant"]')).toBe(assistantHost);
+      expect(scroller.querySelector('[data-conversation-unit-id="unit:a2ui:mixed-a2ui"]')).toBe(a2uiHost);
+      expect(renderCounts.get("mixed-a2ui")).toBe((countsBefore.get("mixed-a2ui") ?? 0) + 1);
+      expect(renderCounts.get("mixed-assistant")).toBe(countsBefore.get("mixed-assistant"));
+      expect(Number(scroller.getAttribute("data-conversation-timeline-mounted-units"))).toBeLessThan(80);
+    } finally {
+      Object.defineProperty(navigator, "userAgent", { configurable: true, value: originalUserAgent });
+      if (originalResizeObserver) {
+        Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: originalResizeObserver });
+      } else {
+        delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+      }
+      restorePrototypeDescriptor("clientHeight", originalClientHeight);
+    }
   });
 });
 

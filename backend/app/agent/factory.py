@@ -44,6 +44,7 @@ _TOOL_CALL_PREVIEW_ARGS_LIMIT = 800
 _TOOL_CALL_PREVIEW_MAX_CALLS = 5
 _LLM_BUSINESS_MAX_RETRIES = 3
 _LLM_RETRY_DELAYS_SECONDS = (0.8, 1.6, 3.2)
+_LLM_TERMINAL_TAIL_GRACE_SECONDS = 1.0
 
 
 def register_llm_gateway_trace_id(run_id: str, gateway_trace_id: str) -> None:
@@ -517,17 +518,37 @@ class PatchedChatOpenAI(ChatOpenAI):
                 response_preview = _ResponsePreviewCollector()
                 time_to_first_token: int | None = None
                 yielded_chunk = False
+                terminal_finish_reason: str | None = None
+                terminal_tail_deadline: float | None = None
+                received_usage = False
+                source_stream = super()._astream(
+                    messages,
+                    stop=stop,
+                    run_manager=run_manager,
+                    **kwargs,
+                )
                 try:
-                    async for chunk in super()._astream(
-                        messages,
-                        stop=stop,
-                        run_manager=run_manager,
-                        **kwargs,
-                    ):
+                    while True:
+                        try:
+                            if terminal_tail_deadline is None:
+                                chunk = await anext(source_stream)
+                            else:
+                                remaining = (
+                                    terminal_tail_deadline - asyncio.get_running_loop().time()
+                                )
+                                if remaining <= 0:
+                                    raise TimeoutError("LLM terminal stream tail did not close")
+                                chunk = await asyncio.wait_for(
+                                    anext(source_stream),
+                                    timeout=remaining,
+                                )
+                        except StopAsyncIteration:
+                            break
                         yielded_chunk = True
                         chunk_msg = getattr(chunk, "message", None)
                         usage = getattr(chunk_msg, "usage_metadata", None) if chunk_msg else None
                         if usage:
+                            received_usage = True
                             seen_input_tokens = _zero_repeated_usage_field(
                                 usage,
                                 "input_tokens",
@@ -558,7 +579,16 @@ class PatchedChatOpenAI(ChatOpenAI):
                         ):
                             time_to_first_token = _duration_ms(request_log.started_at)
                         response_preview.append(chunk_msg)
+                        finish_reason = _stream_chunk_finish_reason(chunk)
+                        if finish_reason and terminal_finish_reason is None:
+                            terminal_finish_reason = finish_reason
+                            terminal_tail_deadline = (
+                                asyncio.get_running_loop().time()
+                                + _LLM_TERMINAL_TAIL_GRACE_SECONDS
+                            )
                         yield chunk
+                        if terminal_finish_reason and received_usage:
+                            break
                 except (asyncio.CancelledError, GeneratorExit) as exc:
                     self._cancel_request_log(
                         request_log,
@@ -572,6 +602,29 @@ class PatchedChatOpenAI(ChatOpenAI):
                     )
                     raise
                 except BaseException as exc:
+                    if terminal_finish_reason and _is_terminal_stream_tail_timeout(exc):
+                        self._finish_request_log(
+                            request_log,
+                            response=None,
+                            response_preview=response_preview.preview(),
+                            usage=stream_usage,
+                            time_to_first_token=time_to_first_token,
+                        )
+                        logger.warning(
+                            f"[LLM] astream terminal tail timeout ignored | run_id={run_id} | "
+                            f"gateway_trace_id={gateway_trace_id} | "
+                            f"finish_reason={terminal_finish_reason} | "
+                            f"error={type(exc).__name__}"
+                        )
+                        if attempt > 1:
+                            await self._emit_retry_progress(
+                                stage="recovered",
+                                run_id=run_id,
+                                gateway_trace_id=gateway_trace_id,
+                                attempt=attempt,
+                                max_retries=max_retries,
+                            )
+                        return
                     self._fail_request_log(
                         request_log,
                         error=exc,
@@ -626,6 +679,8 @@ class PatchedChatOpenAI(ChatOpenAI):
                             max_retries=max_retries,
                         )
                     return
+                finally:
+                    await _close_async_iterator(source_stream)
         finally:
             pop_llm_gateway_trace_id(run_id)
 
@@ -805,6 +860,40 @@ def _should_retry_llm_error(error: BaseException) -> bool:
             status_code = exc.response.status_code
             return status_code in {408, 409, 429, 500, 502, 503, 504}
     return False
+
+
+def _stream_chunk_finish_reason(chunk: Any) -> str | None:
+    generation_info = getattr(chunk, "generation_info", None)
+    if isinstance(generation_info, dict):
+        finish_reason = generation_info.get("finish_reason")
+        if isinstance(finish_reason, str) and finish_reason.strip():
+            return finish_reason.strip()
+
+    message = getattr(chunk, "message", None)
+    response_metadata = getattr(message, "response_metadata", None)
+    if isinstance(response_metadata, dict):
+        finish_reason = response_metadata.get("finish_reason")
+        if isinstance(finish_reason, str) and finish_reason.strip():
+            return finish_reason.strip()
+    return None
+
+
+def _is_terminal_stream_tail_timeout(error: BaseException) -> bool:
+    return any(
+        is_stream_chunk_timeout_error(exc)
+        or isinstance(exc, (asyncio.TimeoutError, httpx.ReadTimeout, openai.APITimeoutError))
+        for exc in _exception_chain(error)
+    )
+
+
+async def _close_async_iterator(iterator: Any) -> None:
+    close = getattr(iterator, "aclose", None)
+    if not callable(close):
+        return
+    try:
+        await close()
+    except Exception as exc:
+        logger.debug(f"[LLM] close source stream failed | error={type(exc).__name__}: {exc}")
 
 
 def _exception_chain(error: BaseException) -> Iterator[BaseException]:

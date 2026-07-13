@@ -99,9 +99,10 @@ describe("A2UI shared component states", () => {
     );
 
     const result = within(screen.getByTestId("a2ui-form-result"));
-    expect(result.getByText("已提交表单")).not.toBeNull();
+    expect(result.getByText("本次填写已提交")).not.toBeNull();
     expect(result.getByText("发布活动")).not.toBeNull();
-    expect(result.getByText("备注：已确认")).not.toBeNull();
+    expect(result.getByText("给 Keydex 的补充信息")).not.toBeNull();
+    expect(result.getByText("已确认")).not.toBeNull();
     expect(screen.queryByRole("textbox", { name: /标题/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "提交参数" })).toBeNull();
   });

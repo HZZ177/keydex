@@ -36,13 +36,14 @@ describe("AnnotationDraftCard", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
-  it("cancels on Escape and when the document revision changes", () => {
+  it("cancels on Escape but preserves the draft across same-document revision changes", () => {
     const onCancel = vi.fn();
     const view = render(<ControlledDraft onCancel={onCancel} />);
     fireEvent.keyDown(screen.getByLabelText("批注内容"), { key: "Escape" });
     expect(onCancel).toHaveBeenCalledTimes(1);
     view.rerender(<ControlledDraft onCancel={onCancel} revision="rev-b" />);
-    expect(onCancel).toHaveBeenCalledTimes(2);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("[data-annotation-draft='true']")?.getAttribute("data-document-revision")).toBe("rev-b");
   });
 
   it("participates in the same collision layout as saved cards", () => {

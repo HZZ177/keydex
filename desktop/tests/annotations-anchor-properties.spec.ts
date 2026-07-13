@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTextSelector } from "@/renderer/features/annotations/anchoring/createTextSelector";
 import { resolveTextAnchor } from "@/renderer/features/annotations/anchoring/resolveTextAnchor";
-import { createMarkdownTextModel } from "@/renderer/features/annotations/document/MarkdownTextModel";
+import { createMarkdownTextModel } from "./fixtures/annotationMarkdown";
 import { createPlainTextModel } from "@/renderer/features/annotations/document/PlainTextModel";
 
 const SEED = 0x5eed_2026;

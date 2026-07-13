@@ -8,13 +8,26 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.app.annotations.service import document_revision_bytes
 from backend.app.api.dependencies import get_repositories
+from backend.app.api.document_read import (
+    DEFAULT_PREVIEW_DOCUMENT_MAX_BYTES,
+    DocumentReadErrorCode,
+    DocumentReadRequest,
+    DocumentReadSnapshotError,
+    DocumentReadSource,
+    create_document_read_response,
+    read_stable_utf8_document_snapshot,
+)
+from backend.app.api.document_read import (
+    DocumentReadSnapshot as WorkspaceDocumentSnapshot,
+)
 from backend.app.core.logger import logger
 from backend.app.core.ripgrep import (
     BUNDLED_RIPGREP_BINARY_NAME,
@@ -34,6 +47,7 @@ router = APIRouter(tags=["workspace"])
 RepositoriesDep = Depends(get_repositories)
 
 MAX_READ_BYTES = 512 * 1024
+MAX_PREVIEW_DOCUMENT_BYTES = DEFAULT_PREVIEW_DOCUMENT_MAX_BYTES
 MAX_MEDIA_BYTES = 2 * 1024 * 1024
 DEFAULT_SEARCH_LIMIT = 100
 MAX_SEARCH_SECONDS = 2.0
@@ -185,6 +199,16 @@ async def read_workspace_file(
     return _read_file(scope, path)
 
 
+@router.post("/api/workspaces/{workspace_id}/read/document")
+async def read_workspace_document(
+    workspace_id: str,
+    payload: DocumentReadRequest,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> StreamingResponse:
+    scope = _workspace_scope(repositories, workspace_id)
+    return await _document_read_response(scope, payload)
+
+
 @router.get("/api/workspaces/{workspace_id}/media", response_model=WorkspaceMediaResponse)
 async def read_workspace_media(
     workspace_id: str,
@@ -269,6 +293,16 @@ async def read_session_workspace_file(
 ) -> WorkspaceFileResponse:
     scope = _session_workspace_scope(repositories, session_id)
     return _read_file(scope, path)
+
+
+@router.post("/api/sessions/{session_id}/workspace/read/document")
+async def read_session_workspace_document(
+    session_id: str,
+    payload: DocumentReadRequest,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> StreamingResponse:
+    scope = _session_workspace_scope(repositories, session_id)
+    return await _document_read_response(scope, payload)
 
 
 @router.get("/api/sessions/{session_id}/workspace/media", response_model=WorkspaceMediaResponse)
@@ -514,6 +548,81 @@ def _read_file(scope: WorkspaceRuntimeContext, path: str) -> WorkspaceFileRespon
         encoding="utf-8",
         revision=document_revision_bytes(raw_content),
     )
+
+
+async def _document_read_response(
+    scope: WorkspaceRuntimeContext,
+    payload: DocumentReadRequest,
+) -> StreamingResponse:
+    if payload.source is not DocumentReadSource.WORKSPACE:
+        raise _workspace_error(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_request",
+            "Workspace document endpoint requires source=workspace",
+            {"retryable": False},
+        )
+
+    effective_max_bytes = min(payload.max_bytes, MAX_PREVIEW_DOCUMENT_BYTES)
+    snapshot = await asyncio.to_thread(
+        _read_document_snapshot,
+        scope,
+        payload.path,
+        effective_max_bytes,
+    )
+    if payload.expected_revision and payload.expected_revision != snapshot.revision:
+        raise _workspace_error(
+            status.HTTP_409_CONFLICT,
+            "revision_conflict",
+            "Document revision no longer matches the requested revision",
+            {
+                "retryable": True,
+                "expected_revision": payload.expected_revision,
+                "actual_revision": snapshot.revision,
+            },
+        )
+
+    return create_document_read_response(payload, snapshot)
+
+
+def _read_document_snapshot(
+    scope: WorkspaceRuntimeContext,
+    path: str,
+    max_bytes: int,
+) -> WorkspaceDocumentSnapshot:
+    target = _resolve(scope, path)
+    try:
+        return read_stable_utf8_document_snapshot(
+            target,
+            public_path=_relative_path(scope, target),
+            max_bytes=max_bytes,
+            open_file=_open_document_file,
+            read_open_file=_read_open_document,
+        )
+    except DocumentReadSnapshotError as exc:
+        status_code = {
+            DocumentReadErrorCode.NOT_FOUND: status.HTTP_404_NOT_FOUND,
+            DocumentReadErrorCode.TOO_LARGE: status.HTTP_413_CONTENT_TOO_LARGE,
+            DocumentReadErrorCode.UNSUPPORTED_ENCODING: status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            DocumentReadErrorCode.CHANGED_DURING_READ: status.HTTP_409_CONFLICT,
+            DocumentReadErrorCode.INVALID_REQUEST: status.HTTP_400_BAD_REQUEST,
+            DocumentReadErrorCode.IO_ERROR: (
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+                if exc.retryable
+                else status.HTTP_403_FORBIDDEN
+            ),
+        }.get(exc.code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        details = {"retryable": exc.retryable, **exc.details}
+        if exc.code is DocumentReadErrorCode.TOO_LARGE:
+            details["server_max_bytes"] = MAX_PREVIEW_DOCUMENT_BYTES
+        raise _workspace_error(status_code, exc.code.value, exc.message, details) from exc
+
+
+def _open_document_file(target: Path) -> BinaryIO:
+    return target.open("rb")
+
+
+def _read_open_document(handle: BinaryIO, limit: int) -> bytes:
+    return handle.read(limit)
 
 
 def _read_media(scope: WorkspaceRuntimeContext, path: str) -> WorkspaceMediaResponse:

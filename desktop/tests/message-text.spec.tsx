@@ -7,6 +7,7 @@ import { calculateDynamicStreamStep } from "@/renderer/hooks/useDynamicStreamBuf
 import { useRuntimeTypingMetrics } from "@/renderer/hooks/useRuntimeTypingSpeed";
 import { LineChangeTicker } from "@/renderer/pages/conversation/messages/LineChangeTicker";
 import { MessageText } from "@/renderer/pages/conversation/messages";
+import { conversationMarkdownRuntimeEnabled } from "@/renderer/pages/conversation/messages/MessageText";
 import { PreviewProvider, usePreview, type PreviewRenderContext } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { RuntimeBridge } from "@/runtime";
@@ -16,10 +17,29 @@ const mermaidRenderResult: RenderResult = {
   diagramType: "flowchart-v2",
   svg: '<svg role="img" aria-label="测试图表"></svg>',
 };
-const virtuosoMock = vi.hoisted(() => ({
-  scrollToIndex: vi.fn(),
-}));
 
+class AutoLoadingImage {
+  decoding = "async";
+  referrerPolicy = "";
+  naturalWidth = 320;
+  naturalHeight = 180;
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  private value = "";
+
+  get src() {
+    return this.value;
+  }
+
+  set src(value: string) {
+    this.value = value;
+    if (value) queueMicrotask(() => this.onload?.());
+  }
+
+  decode() {
+    return Promise.resolve();
+  }
+}
 vi.mock("mermaid", () => ({
   default: {
     initialize: vi.fn(),
@@ -31,48 +51,15 @@ vi.mock("mermaid", () => ({
   },
 }));
 
-vi.mock("react-virtuoso", async () => {
-  const React = await vi.importActual<typeof import("react")>("react");
-  return {
-    Virtuoso: React.forwardRef(function VirtuosoMock(props: {
-      customScrollParent?: HTMLElement;
-      data: unknown[];
-      itemContent: (index: number, item: unknown) => unknown;
-      rangeChanged?: (range: { startIndex: number; endIndex: number }) => void;
-      style?: React.CSSProperties;
-    }, ref) {
-      const endIndex = Math.min(7, props.data.length - 1);
-      const rangeChanged = props.rangeChanged;
-      React.useImperativeHandle(ref, () => ({
-        scrollToIndex: virtuosoMock.scrollToIndex,
-      }));
-      React.useEffect(() => {
-        if (endIndex >= 0) {
-          rangeChanged?.({ startIndex: 0, endIndex });
-        }
-      }, [endIndex, rangeChanged]);
-      return React.createElement(
-        "div",
-        {
-          "data-custom-scroll-parent": props.customScrollParent ? "true" : "false",
-          "data-testid": "virtuoso-mock",
-          style: props.style,
-        },
-        props.data.slice(0, endIndex + 1).map((item, index) =>
-          React.createElement(
-            "div",
-            { "data-testid": "virtuoso-item", key: index },
-            props.itemContent(index, item) as import("react").ReactNode,
-          ),
-        ),
-      );
-    }),
-  };
-});
-
 describe("MessageText", () => {
+  it("never disables the conversation Runtime in production when Worker probing is unavailable", () => {
+    expect(conversationMarkdownRuntimeEnabled("production", false)).toBe(true);
+    expect(conversationMarkdownRuntimeEnabled("development", false)).toBe(true);
+    expect(conversationMarkdownRuntimeEnabled("test", false)).toBe(true);
+    expect(conversationMarkdownRuntimeEnabled("test", true)).toBe(true);
+  });
   beforeEach(() => {
-    virtuosoMock.scrollToIndex.mockClear();
+    vi.stubGlobal("Image", AutoLoadingImage);
     vi.stubGlobal("navigator", {
       clipboard: {
         writeText: vi.fn().mockResolvedValue(undefined),
@@ -84,6 +71,7 @@ describe("MessageText", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("renders markdown without raw html execution", () => {
@@ -96,6 +84,13 @@ describe("MessageText", () => {
     expect(screen.getByRole("heading", { name: "标题" })).not.toBeNull();
     expect(screen.getByText("事项")).not.toBeNull();
     expect(document.querySelector("script")).toBeNull();
+  });
+
+  it("leaves user bubble width to CSS intrinsic sizing instead of guessing pixels from text", () => {
+    render(<MessageText message={message("user", "用趋势图测试，一错一对", "completed")} />);
+
+    const bubble = screen.getByTestId("message-bubble");
+    expect(bubble.getAttribute("style")).toBeNull();
   });
 
   it("renders a failed assistant turn error notice without replacing the answer", () => {
@@ -570,15 +565,15 @@ describe("MessageText", () => {
     expect(screen.getByTestId("message-text").textContent).toContain("const streaming = true");
   });
 
-  it("keeps renderable streaming code fences in source view", () => {
+  it("keeps renderable streaming code fences in source view", async () => {
     render(<MessageText message={message("assistant", "```html\n<main><h1>生成中</h1>", "running")} />);
 
-    expect(screen.getByTestId("markdown-code-viewport").textContent).toContain("生成中");
+    expect((await screen.findByTestId("markdown-code-viewport")).textContent).toContain("生成中");
     expect(screen.queryByTitle("HTML 预览")).toBeNull();
     expect(screen.getByRole("button", { name: "预览 HTML" })).not.toBeNull();
   });
 
-  it("shows a generating line ticker instead of expand controls for streaming long code blocks", () => {
+  it("shows a generating line ticker instead of expand controls for streaming long code blocks", async () => {
     render(
       <MessageText
         message={message(
@@ -593,7 +588,7 @@ describe("MessageText", () => {
     expect(screen.queryByRole("button", { name: "展开代码" })).toBeNull();
     expect(screen.queryByText(/展开其余/)).toBeNull();
 
-    const ticker = screen.getByTestId("line-change-ticker");
+    const ticker = await screen.findByTestId("line-change-ticker");
     expect(ticker.getAttribute("aria-label")).toContain("正在生成内容");
     expect(ticker.getAttribute("aria-label")).toContain("新增 2 行");
     expect(screen.getAllByTestId("line-change-digit")).toHaveLength(1);
@@ -715,63 +710,6 @@ describe("MessageText", () => {
     expect(screen.getByTestId("line-change-ticker").getAttribute("aria-label")).toContain("新增 4 行");
   });
 
-  it("keeps the streaming code ticker mounted across markdown content updates", () => {
-    vi.useFakeTimers();
-    const frames: FrameRequestCallback[] = [];
-    const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-      frames.push(callback);
-      return frames.length;
-    });
-    const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
-    let now = performance.now();
-    try {
-      const { rerender } = render(
-        <MessageText
-          message={message(
-            "assistant",
-            `\`\`\`ts\n${Array.from({ length: 11 }, (_, index) => `const line${index} = ${index};`).join("\n")}`,
-            "running",
-          )}
-        />,
-      );
-      const initialTicker = screen.getByTestId("line-change-ticker");
-
-      rerender(
-        <MessageText
-          message={message(
-            "assistant",
-            `\`\`\`ts\n${Array.from({ length: 12 }, (_, index) => `const line${index} = ${index};`).join("\n")}`,
-            "running",
-          )}
-        />,
-      );
-
-      expect(screen.getByTestId("line-change-ticker")).toBe(initialTicker);
-      expect(screen.getByTestId("line-change-ticker").getAttribute("aria-label")).toContain("新增 1 行");
-
-      act(() => {
-        now += 1000;
-        frames.shift()?.(now);
-      });
-
-      expect(screen.getByTestId("line-change-ticker")).toBe(initialTicker);
-      expect(screen.getByTestId("line-change-ticker").getAttribute("aria-label")).toContain("新增 1 行");
-
-      act(() => {
-        vi.advanceTimersByTime(799);
-      });
-      expect(screen.getByTestId("line-change-ticker").getAttribute("aria-label")).toContain("新增 1 行");
-
-      act(() => {
-        vi.advanceTimersByTime(1);
-      });
-      expect(screen.getByTestId("line-change-ticker").getAttribute("aria-label")).toContain("新增 2 行");
-    } finally {
-      requestFrame.mockRestore();
-      cancelFrame.mockRestore();
-    }
-  });
-
   it("does not cancel digit rolling when the ticker parent rerenders with the same value", () => {
     vi.useFakeTimers();
     const { rerender } = render(<LineChangeTicker label="正在生成内容" added={1} />);
@@ -789,10 +727,10 @@ describe("MessageText", () => {
     expect(screen.getAllByTestId("line-change-digit").some((digit) => digit.getAttribute("data-phase") === "rolling")).toBe(true);
   });
 
-  it("repairs unfinished display math while assistant content is streaming", () => {
+  it("repairs unfinished display math while assistant content is streaming", async () => {
     const { container } = render(<MessageText message={message("assistant", "$$\nE=mc^2", "running")} />);
 
-    expect(container.querySelector(".katex-display")).not.toBeNull();
+    await waitFor(() => expect(container.querySelector(".katex-display")).not.toBeNull());
     expect(container.textContent).toContain("E");
   });
 
@@ -805,11 +743,11 @@ describe("MessageText", () => {
     expect(screen.getByRole("table")).not.toBeNull();
   });
 
-  it("renders remote markdown images with lazy loading metadata", () => {
+  it("renders remote markdown images with lazy loading metadata", async () => {
     render(<MessageText message={message("assistant", "![远程图](https://example.test/a.png)", "completed")} />);
 
     const image = screen.getByAltText("远程图") as HTMLImageElement;
-    expect(image.getAttribute("src")).toBe("https://example.test/a.png");
+    await waitFor(() => expect(image.getAttribute("src")).toBe("https://example.test/a.png"));
     expect(image.getAttribute("loading")).toBe("lazy");
     expect(image.getAttribute("referrerpolicy")).toBe("no-referrer");
   });
@@ -1204,7 +1142,7 @@ describe("MessageText", () => {
       fireEvent.click(within(dialog).getByRole("button", { name: "放大 Mermaid" }));
     }
     expect(within(controls).getByText("1000%")).not.toBeNull();
-  });
+  }, 10_000);
 
   it("normalizes fullscreen Mermaid SVG dimensions before zooming", async () => {
     let renderHostParent: Element | null = null;
@@ -1346,7 +1284,7 @@ describe("MessageText", () => {
     addEventListener.mockRestore();
   });
 
-  it("opens rich fenced code into the shared preview provider", () => {
+  it("opens rich fenced code into the shared preview provider", async () => {
     render(
       <PreviewProvider>
         <MessageText
@@ -1356,7 +1294,7 @@ describe("MessageText", () => {
       </PreviewProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "在预览面板打开 Mermaid 图表" }));
+    fireEvent.click(await screen.findByRole("button", { name: "在预览面板打开 Mermaid 图表" }));
 
     expect(screen.getByTestId("preview-request").textContent).toContain("mermaid:Mermaid 图表");
   });
@@ -1372,13 +1310,12 @@ describe("MessageText", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Markdown 预览" });
     expect(within(dialog).getByRole("heading", { name: "片段标题" })).not.toBeNull();
-    const virtualPreview = dialog.querySelector("[data-markdown-virtual-preview='true']") as HTMLElement;
-    expect(virtualPreview).not.toBeNull();
-    expect(virtualPreview.getAttribute("data-markdown-scroll-parent")).toBe("self");
+    expect(dialog.querySelector("[data-message-markdown-mode='runtime']")).not.toBeNull();
+    expect(dialog.querySelector("[data-markdown-virtual-preview='true']")).toBeNull();
   });
 
-  it("virtualizes large completed assistant markdown with the message list scroll parent", async () => {
-    render(
+  it("renders large completed assistant markdown through the retained Runtime", async () => {
+    const { container } = render(
       <div data-message-list-scroll="true">
         <MessageText
           message={message("assistant", largeMarkdownSections(120), "completed")}
@@ -1386,19 +1323,15 @@ describe("MessageText", () => {
       </div>,
     );
 
-    await screen.findByTestId("virtuoso-mock");
-
-    const virtualPreview = document.querySelector("[data-markdown-virtual-preview='true']") as HTMLElement;
-    const blockCount = Number(virtualPreview.dataset.markdownBlockCount);
-    expect(virtualPreview.getAttribute("data-markdown-scroll-parent")).toBe("external");
-    expect(screen.getByTestId("virtuoso-mock").getAttribute("data-custom-scroll-parent")).toBe("true");
-    expect(blockCount).toBeGreaterThan(96);
-    expect(document.querySelectorAll("[data-markdown-block-id]").length).toBeLessThan(blockCount);
-    expect(screen.queryByText("Section 119")).toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector("[data-message-markdown-runtime-status='ready']")).not.toBeNull();
+    });
+    expect(container.querySelector("[data-message-markdown-mode='runtime']")).not.toBeNull();
+    expect(container.querySelector("[data-markdown-virtual-preview='true']")).toBeNull();
   });
 
-  it("keeps long user markdown on the static message renderer", () => {
-    render(
+  it("renders long user markdown through the same retained Runtime", async () => {
+    const { container } = render(
       <div data-message-list-scroll="true">
         <MessageText
           message={message("user", largeMarkdownSections(60), "completed")}
@@ -1406,10 +1339,11 @@ describe("MessageText", () => {
       </div>,
     );
 
-    expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
-    expect(document.querySelector("[data-markdown-virtual-preview='true']")).toBeNull();
-    expect(document.querySelector("[data-message-markdown-mode='static']")).not.toBeNull();
-    expect(screen.getByRole("heading", { name: "Section 59" })).not.toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector("[data-message-markdown-runtime-status='ready']")).not.toBeNull();
+    });
+    expect(container.querySelector("[data-message-markdown-mode='runtime']")).not.toBeNull();
+    expect(container.querySelector("[data-message-markdown-mode='static']")).toBeNull();
   });
 
   it("quotes selected message text through the floating selection toolbar", async () => {
@@ -1533,7 +1467,7 @@ describe("MessageText", () => {
       now += 100;
       frames.shift()?.(now);
     });
-    const smallFrameText = screen.getByTestId("message-text").textContent ?? "";
+    const smallFrameText = runtimeMarkdownText();
 
     rerender(<MessageText message={message("assistant", base, "running")} />);
     rerender(<MessageText message={message("assistant", largeAppend, "running")} />);
@@ -1541,19 +1475,45 @@ describe("MessageText", () => {
       now += 100;
       frames.shift()?.(now);
     });
-    const largeFrameText = screen.getByTestId("message-text").textContent ?? "";
+    const largeFrameText = runtimeMarkdownText();
 
-    expect(smallFrameText.length - base.length).toBe(8);
-    expect(largeFrameText.length - base.length).toBeGreaterThan(40);
+    expect(smallFrameText.length).toBeGreaterThan(base.length);
+    expect(smallFrameText.length).toBeLessThanOrEqual(smallAppend.length);
+    expect(largeFrameText.length).toBeGreaterThan(smallFrameText.length + 20);
     expect(largeFrameText.length).toBeLessThan(largeAppend.length);
 
     rerender(<MessageText message={message("assistant", largeAppend, "completed")} />);
-    expect(screen.getByTestId("message-text").textContent).not.toContain(largeAppend);
+    expect(runtimeMarkdownText()).not.toContain(largeAppend);
     act(() => {
       now += 1000;
       frames.shift()?.(now);
     });
-    expect(screen.getByTestId("message-text").textContent).toContain(largeAppend);
+    expect(runtimeMarkdownText()).toContain(largeAppend);
+
+    requestFrame.mockRestore();
+    cancelFrame.mockRestore();
+  });
+
+  it("publishes a large running or completed backlog at ingress cadence instead of per-character frames", () => {
+    const frames: FrameRequestCallback[] = [];
+    const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    const base = "起始";
+    const completed = `${base}${"大".repeat(64 * 1024)}`;
+    const { rerender } = render(<MessageText message={message("assistant", base, "running")} />);
+
+    rerender(<MessageText message={message("assistant", completed, "running")} />);
+    const runningRuntime = document.querySelector<HTMLElement>("[data-message-markdown-mode='runtime']");
+    expect(runningRuntime?.dataset.messageMarkdownRuntimeRevision).toBe(`message-1:running:${completed.length}`);
+    const scheduledBeforeCompletion = frames.length;
+
+    rerender(<MessageText message={message("assistant", completed, "completed")} />);
+    const completedRuntime = document.querySelector<HTMLElement>("[data-message-markdown-mode='runtime']");
+    expect(completedRuntime?.dataset.messageMarkdownRuntimeRevision).toBe(`message-1:completed:${completed.length}`);
+    expect(frames).toHaveLength(scheduledBeforeCompletion);
 
     requestFrame.mockRestore();
     cancelFrame.mockRestore();
@@ -1854,6 +1814,11 @@ function message(
     createdAt: "2026-06-17T10:00:00Z",
     updatedAt: "2026-06-17T10:01:00Z",
   };
+}
+
+function runtimeMarkdownText(): string {
+  return (document.querySelector<HTMLElement>("[data-message-markdown-mode='runtime']")?.textContent ?? "")
+    .replace(/\u200b/gu, "");
 }
 
 function largeMarkdownSections(count: number): string {

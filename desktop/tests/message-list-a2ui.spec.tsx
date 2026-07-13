@@ -65,6 +65,9 @@ describe("MessageList A2UI callback contract", () => {
       expect(root.getAttribute("data-list-mode")).toBe("virtual");
       expect(root.getAttribute("data-a2ui-count")).toBe("19");
       expect(Number(root.getAttribute("data-a2ui-weight"))).toBeGreaterThan(12);
+      expect(
+        screen.getByTestId("message-list-scroll").querySelectorAll('[data-conversation-unit-pinned="true"]').length,
+      ).toBeGreaterThan(0);
     });
   });
 
@@ -129,6 +132,7 @@ describe("MessageList A2UI callback contract", () => {
     render(<MessageList messages={[conversationStreamingA2UIMessage("agent:a2ui-chart", "created")]} a2uiRenderSuspended />);
 
     expect(screen.getByTestId("message-list").getAttribute("data-a2ui-render-suspended")).toBe("true");
+    expect(screen.getByTestId("message-list").getAttribute("data-follow-mode")).toBe("suspended");
     expect(screen.getByTestId("a2ui-block").getAttribute("data-a2ui-suspended")).toBe("resize");
     expect(screen.getByTestId("a2ui-resize-placeholder")).toBeTruthy();
     expect(screen.queryByTestId("a2ui-echarts-surface")).toBeNull();

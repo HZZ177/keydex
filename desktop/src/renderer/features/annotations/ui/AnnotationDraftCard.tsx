@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CompositionEvent, type KeyboardEvent } from "react";
+import { useState, type CompositionEvent, type KeyboardEvent } from "react";
 import { Check, X } from "lucide-react";
 
 import styles from "./AnnotationRail.module.css";
@@ -20,14 +20,7 @@ export function AnnotationDraftCard({
   pending: boolean;
   revision: string;
 }) {
-  const initialRevision = useRef(revision);
   const [composing, setComposing] = useState(false);
-
-  useEffect(() => {
-    if (revision !== initialRevision.current) {
-      onCancel();
-    }
-  }, [onCancel, revision]);
 
   const submit = () => {
     if (!pending && body.trim()) {
@@ -50,7 +43,7 @@ export function AnnotationDraftCard({
   };
 
   return (
-    <article aria-label="新建批注" className={`${styles.card} ${styles.draftCard}`} data-annotation-draft="true">
+    <article aria-label="新建批注" className={`${styles.card} ${styles.draftCard}`} data-annotation-draft="true" data-document-revision={revision}>
       <div className={styles.cardMeta}><strong>新批注</strong><span>已连接当前选区</span></div>
       <textarea
         aria-label="批注内容"

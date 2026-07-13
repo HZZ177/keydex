@@ -1,0 +1,371 @@
+import { isUpwardWheelIntent, wheelWillScrollElement, type WheelIntentEvent } from "../messages/scrollIntent";
+import { EXPANSION_SCROLL_LOCK_ATTR } from "../messages/useExpansionScrollAnchor";
+
+export type ConversationFollowMode =
+  | "following-bottom"
+  | "user-detached"
+  | "navigating-turn"
+  | "restoring-history"
+  | "suspended";
+
+export type ConversationContentMutation =
+  | "initial"
+  | "token-append"
+  | "typing-backlog"
+  | "timeline-publish"
+  | "resource-resize"
+  | "a2ui-live"
+  | "stream-complete";
+
+export interface ConversationFollowSnapshot {
+  readonly mode: ConversationFollowMode;
+  readonly reason: string;
+  readonly revision: number;
+  readonly bottomGap: number;
+  readonly showScrollToBottom: boolean;
+  readonly autoFollow: boolean;
+  readonly mutationSequence: number;
+  readonly scrollSequence: number;
+}
+
+export interface ConversationFollowControllerOptions {
+  readonly autoFollow?: boolean;
+  readonly followThresholdPx?: number;
+  readonly buttonThresholdPx?: number;
+  readonly onChange?: (snapshot: ConversationFollowSnapshot) => void;
+}
+
+const DEFAULT_FOLLOW_THRESHOLD = 4;
+const DEFAULT_BUTTON_THRESHOLD = 100;
+
+/** Explicit ownership state for the single conversation scroll element. */
+export class ConversationFollowController {
+  private element: HTMLElement | null = null;
+  private primaryElement: HTMLElement | null = null;
+  private fallbackElement: HTMLElement | null = null;
+  private mode: ConversationFollowMode = "following-bottom";
+  private reason = "initial";
+  private revision = 0;
+  private mutationSequence = 0;
+  private scrollSequence = 0;
+  private autoFollow: boolean;
+  private readonly followThreshold: number;
+  private readonly buttonThreshold: number;
+  private readonly onChange?: (snapshot: ConversationFollowSnapshot) => void;
+  private temporaryPreviousMode: ConversationFollowMode = "following-bottom";
+  private userIntent = false;
+  private scrollbarDrag = false;
+  private contentAvailable = false;
+  private followFrame: number | null = null;
+  private animationFrame: number | null = null;
+  private disposed = false;
+
+  constructor(options: ConversationFollowControllerOptions = {}) {
+    this.autoFollow = options.autoFollow ?? true;
+    this.mode = this.autoFollow ? "following-bottom" : "user-detached";
+    this.followThreshold = finiteNonNegative(options.followThresholdPx ?? DEFAULT_FOLLOW_THRESHOLD);
+    this.buttonThreshold = finiteNonNegative(options.buttonThresholdPx ?? DEFAULT_BUTTON_THRESHOLD);
+    this.onChange = options.onChange;
+  }
+
+  attach(element: HTMLElement | null): void {
+    this.assertActive();
+    if (this.element === element) return;
+    this.detachListeners();
+    this.element = element;
+    this.primaryElement = element;
+    this.fallbackElement = element ? findScrollableParent(element) : null;
+    if (element) {
+      this.attachElementListeners(element);
+      if (this.fallbackElement) this.attachElementListeners(this.fallbackElement);
+      window.addEventListener("pointerup", this.finishPointerIntent);
+      window.addEventListener("pointercancel", this.finishPointerIntent);
+      window.addEventListener("blur", this.finishPointerIntent);
+      if (this.mode === "following-bottom" && this.autoFollow && this.contentAvailable) this.scrollToBottom("auto");
+    }
+    this.emit(false);
+  }
+
+  setContentAvailable(available: boolean): void {
+    this.assertActive();
+    const becameAvailable = available && !this.contentAvailable;
+    this.contentAvailable = available;
+    if (!available) {
+      this.cancelScheduledScroll();
+      this.transition("following-bottom", "empty");
+      return;
+    }
+    // Initial/session-remount positioning is part of the commit contract: the
+    // first painted conversation must already be at the bottom. Later content
+    // mutations remain rAF-coalesced so streaming cannot write scrollTop for
+    // every token.
+    if (becameAvailable && this.element && this.mode === "following-bottom" && this.autoFollow) {
+      this.element.scrollTop = bottomScrollTop(this.element);
+      this.reason = "content:initial";
+      this.mutationSequence += 1;
+      this.emit();
+      return;
+    }
+    this.notifyContentMutation("initial");
+  }
+
+  setAutoFollow(enabled: boolean): void {
+    this.assertActive();
+    if (this.autoFollow === enabled) return;
+    this.autoFollow = enabled;
+    if (!enabled && this.mode === "following-bottom") this.transition("user-detached", "auto-follow-disabled");
+    else if (enabled && this.atBottom()) this.transition("following-bottom", "auto-follow-enabled-at-bottom");
+    else this.emit();
+  }
+
+  notifyContentMutation(kind: ConversationContentMutation): void {
+    this.assertActive();
+    this.mutationSequence += 1;
+    if (!this.autoFollow || this.mode !== "following-bottom" || !this.contentAvailable) {
+      this.emit();
+      return;
+    }
+    if (this.element?.hasAttribute(EXPANSION_SCROLL_LOCK_ATTR)) {
+      this.reason = `blocked:${kind}:expansion-lock`;
+      this.emit();
+      return;
+    }
+    this.scheduleFollow(kind);
+  }
+
+  beginNavigation(reason = "turn-navigation"): void {
+    this.assertActive();
+    this.cancelScheduledScroll();
+    this.temporaryPreviousMode = this.mode;
+    this.transition("navigating-turn", reason);
+  }
+
+  endNavigation(): void {
+    this.assertActive();
+    if (this.mode !== "navigating-turn") return;
+    this.transition(this.atBottom() && this.autoFollow ? "following-bottom" : "user-detached", "turn-navigation-ended");
+  }
+
+  beginHistoryRestore(): void {
+    this.assertActive();
+    this.cancelScheduledScroll();
+    this.temporaryPreviousMode = this.mode;
+    this.transition("restoring-history", "history-prepend");
+  }
+
+  endHistoryRestore(): void {
+    this.assertActive();
+    if (this.mode !== "restoring-history") return;
+    const next = this.temporaryPreviousMode === "following-bottom" && this.autoFollow
+      ? "following-bottom"
+      : "user-detached";
+    this.transition(next, "history-restored");
+    if (next === "following-bottom") this.notifyContentMutation("timeline-publish");
+  }
+
+  suspend(reason: string): void {
+    this.assertActive();
+    if (this.mode !== "suspended") this.temporaryPreviousMode = this.mode;
+    this.cancelScheduledScroll();
+    this.transition("suspended", reason || "suspended");
+  }
+
+  resume(reason = "resumed"): void {
+    this.assertActive();
+    if (this.mode !== "suspended") return;
+    const next = this.temporaryPreviousMode === "following-bottom" && this.autoFollow
+      ? "following-bottom"
+      : "user-detached";
+    this.transition(next, reason);
+    if (next === "following-bottom") this.notifyContentMutation("timeline-publish");
+  }
+
+  scrollToBottom(behavior: ScrollBehavior = "smooth"): void {
+    this.assertActive();
+    const element = this.element;
+    if (!element || !this.contentAvailable) return;
+    this.cancelScheduledScroll();
+    this.userIntent = false;
+    this.scrollbarDrag = false;
+    this.transition("following-bottom", "scroll-to-bottom");
+    if (behavior === "smooth" && !prefersReducedMotion()) {
+      element.scrollTop = bottomScrollTop(element);
+      this.emit();
+      return;
+    }
+    element.scrollTop = bottomScrollTop(element);
+    this.emit();
+  }
+
+  snapshot(): ConversationFollowSnapshot {
+    const bottomGap = this.bottomGap();
+    return Object.freeze({
+      mode: this.mode,
+      reason: this.reason,
+      revision: this.revision,
+      bottomGap,
+      showScrollToBottom: bottomGap > this.buttonThreshold,
+      autoFollow: this.autoFollow,
+      mutationSequence: this.mutationSequence,
+      scrollSequence: this.scrollSequence,
+    });
+  }
+
+  destroy(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.cancelScheduledScroll();
+    this.detachListeners();
+    this.element = null;
+    this.primaryElement = null;
+    this.fallbackElement = null;
+  }
+
+  private scheduleFollow(kind: ConversationContentMutation): void {
+    if (this.followFrame !== null) cancelAnimationFrame(this.followFrame);
+    this.reason = `content:${kind}`;
+    this.followFrame = requestAnimationFrame(() => {
+      this.followFrame = null;
+      if (this.mode !== "following-bottom" || !this.autoFollow || this.scrollbarDrag) return;
+      const element = this.element;
+      if (!element || element.hasAttribute(EXPANSION_SCROLL_LOCK_ATTR)) return;
+      element.scrollTop = bottomScrollTop(element);
+      this.emit();
+    });
+    this.emit();
+  }
+
+  private readonly handleWheel = (event: WheelEvent) => {
+    const element = this.resolveEventElement(event);
+    if (!element || !wheelWillScrollElement(event as WheelIntentEvent, element)) return;
+    this.cancelScheduledScroll();
+    this.userIntent = true;
+    if (isUpwardWheelIntent(event as WheelIntentEvent) && this.mode === "following-bottom") {
+      this.transition("user-detached", "user-wheel-up");
+    }
+  };
+
+  private readonly handlePointerDown = (event: Event) => {
+    const element = this.resolveEventElement(event);
+    if (!element || !isScrollbarPointerStart(event, element)) return;
+    this.cancelScheduledScroll();
+    this.userIntent = true;
+    this.scrollbarDrag = true;
+    if (this.mode === "following-bottom") this.transition("user-detached", "scrollbar-drag");
+  };
+
+  private readonly finishPointerIntent = () => {
+    this.scrollbarDrag = false;
+  };
+
+  private readonly handleScroll = (event: Event) => {
+    this.resolveEventElement(event);
+    this.scrollSequence += 1;
+    if (this.atBottom()) {
+      this.userIntent = false;
+      if (this.mode === "user-detached" && this.autoFollow) this.transition("following-bottom", "user-returned-bottom");
+      else this.emit();
+      return;
+    }
+    if (this.userIntent && this.mode === "following-bottom") this.transition("user-detached", "user-scroll");
+    else this.emit();
+  };
+
+  private transition(mode: ConversationFollowMode, reason: string): void {
+    if (this.mode === mode && this.reason === reason) return;
+    this.mode = mode;
+    this.reason = reason;
+    this.revision += 1;
+    this.emit(false);
+  }
+
+  private emit(increment = false): void {
+    if (increment) this.revision += 1;
+    this.onChange?.(this.snapshot());
+  }
+
+  private atBottom(): boolean {
+    return this.bottomGap() <= this.followThreshold;
+  }
+
+  private bottomGap(): number {
+    const element = this.element;
+    return element ? Math.max(0, bottomScrollTop(element) - element.scrollTop) : 0;
+  }
+
+  private cancelScheduledScroll(): void {
+    if (this.followFrame !== null) cancelAnimationFrame(this.followFrame);
+    if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
+    this.followFrame = null;
+    this.animationFrame = null;
+  }
+
+  private detachListeners(): void {
+    if (this.primaryElement) this.detachElementListeners(this.primaryElement);
+    if (this.fallbackElement) this.detachElementListeners(this.fallbackElement);
+    window.removeEventListener("pointerup", this.finishPointerIntent);
+    window.removeEventListener("pointercancel", this.finishPointerIntent);
+    window.removeEventListener("blur", this.finishPointerIntent);
+  }
+
+  private attachElementListeners(element: HTMLElement): void {
+    element.addEventListener("scroll", this.handleScroll, { passive: true });
+    element.addEventListener("wheel", this.handleWheel, { passive: true });
+    element.addEventListener("pointerdown", this.handlePointerDown);
+  }
+
+  private detachElementListeners(element: HTMLElement): void {
+    element.removeEventListener("scroll", this.handleScroll);
+    element.removeEventListener("wheel", this.handleWheel);
+    element.removeEventListener("pointerdown", this.handlePointerDown);
+  }
+
+  private resolveEventElement(event: Event): HTMLElement | null {
+    const source = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    if (source === this.fallbackElement && !isScrollable(this.primaryElement) && isScrollable(source)) {
+      this.element = source;
+    }
+    return this.element;
+  }
+
+  private assertActive(): void {
+    if (this.disposed) throw new Error("ConversationFollowController is destroyed");
+  }
+}
+
+function bottomScrollTop(element: HTMLElement): number {
+  return Math.max(0, element.scrollHeight - element.clientHeight);
+}
+
+function isScrollable(element: HTMLElement | null): element is HTMLElement {
+  return Boolean(element && element.scrollHeight > element.clientHeight);
+}
+
+function findScrollableParent(element: HTMLElement): HTMLElement | null {
+  let parent = element.parentElement;
+  while (parent) {
+    const overflowY = window.getComputedStyle(parent).overflowY;
+    if (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") return parent;
+    parent = parent.parentElement;
+  }
+  return null;
+}
+
+function isScrollbarPointerStart(event: Event, element: HTMLElement): boolean {
+  if (event.type !== "pointerdown" && event.type !== "mousedown") return false;
+  const pointer = event as MouseEvent;
+  const scrollbarSize = Math.max(0, element.offsetWidth - element.clientWidth);
+  if (!Number.isFinite(pointer.clientX) || scrollbarSize <= 0) return false;
+  const rect = element.getBoundingClientRect();
+  const edge = Math.max(12, Math.min(24, scrollbarSize));
+  return pointer.clientX >= rect.right - edge && pointer.clientX <= rect.right;
+}
+
+function finiteNonNegative(value: number): number {
+  if (!Number.isFinite(value) || value < 0) throw new Error("Follow threshold must be finite and non-negative");
+  return value;
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}

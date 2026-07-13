@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 
 import type { AnnotationsRuntime, TextSelector } from "@/runtime/annotations";
-import type { MarkdownDocumentModel } from "@/renderer/components/workspace/markdownPreviewEngine";
-import { markdownLogicalRangeFromDomRange } from "@/renderer/components/workspace/markdownPreviewEngine/selectionRange";
+import type { MarkdownDocumentModel } from "@/renderer/markdownShared/types";
+import type { MarkdownSnapshot } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
+import { markdownLogicalRangeFromDomRange } from "@/renderer/markdownShared/selectionRange";
 
 import { MarkdownAnnotationAdapter, type MarkdownAnnotationBinding } from "../adapters/MarkdownAnnotationAdapter";
 import { SourceAnnotationAdapter } from "../adapters/SourceAnnotationAdapter";
@@ -25,6 +26,8 @@ import type { AnnotationRenderMarker, AnnotationRenderState, AnnotationViewEvent
 import { annotationDocumentRegistry } from "../chat/AnnotationDocumentRegistry";
 import { createAnnotationActions } from "./annotationActions";
 import { createAnnotationStore, type AnnotationInteraction } from "./annotationStore";
+import { annotationSelectionFromMarkdownRuntime } from "./markdownRuntimeSelection";
+import type { MarkdownProjectedSelection } from "@/renderer/markdownRuntime/interaction/SelectionController";
 
 export const DRAFT_ANNOTATION_ID = "__annotation_draft__";
 export const RETARGET_ANNOTATION_ID = "__annotation_retarget__";
@@ -41,7 +44,7 @@ export function useUnifiedAnnotationSession({
 }: {
   documentRevision: string | null;
   kind: string;
-  markdownModel: MarkdownDocumentModel | null;
+  markdownModel: MarkdownDocumentModel | MarkdownSnapshot | null;
   mode: AnnotationViewMode;
   path: string | null;
   runtime: AnnotationsRuntime | null;
@@ -52,9 +55,9 @@ export function useUnifiedAnnotationSession({
   const model = useMemo<DocumentTextModel | null>(() => {
     if (!available || !documentRevision) return null;
     return kind === "markdown"
-      ? createMarkdownTextModel(source, documentRevision)
+      ? markdownModel ? createMarkdownTextModel(source, documentRevision, markdownModel) : null
       : createPlainTextModel(source, documentRevision);
-  }, [available, documentRevision, kind, source]);
+  }, [available, documentRevision, kind, markdownModel, source]);
   const store = useMemo(() => createAnnotationStore(), []);
   const state = useStore(store, (value) => value);
   const sourceAdapter = useMemo(() => new SourceAnnotationAdapter(), []);
@@ -107,9 +110,10 @@ export function useUnifiedAnnotationSession({
   }, [markdownAdapter, model, navigator, registry, sourceAdapter, store]);
 
   useEffect(() => {
-    sourceAdapter.setGeometryEnabled(state.panelOpen);
-    markdownAdapter.setGeometryEnabled(state.panelOpen);
-  }, [markdownAdapter, sourceAdapter, state.panelOpen]);
+    const connectorOwner = connectorViewId(mode);
+    sourceAdapter.setGeometryEnabled(state.panelOpen && connectorOwner === "source");
+    markdownAdapter.setGeometryEnabled(state.panelOpen && connectorOwner === "markdown");
+  }, [markdownAdapter, mode, sourceAdapter, state.panelOpen]);
 
   useEffect(() => {
     setGeometry({});
@@ -184,6 +188,9 @@ export function useUnifiedAnnotationSession({
     const result = markdownLogicalRangeFromDomRange(model as MarkdownTextModel, range, boundary);
     return result.range ? beginDraft({ coordinateSpace: "logical", range: result.range }) : false;
   }, [beginDraft, model]);
+  const beginDraftFromRuntimeSelection = useCallback((selection: MarkdownProjectedSelection | null) => {
+    return beginDraft(annotationSelectionFromMarkdownRuntime(selection, model));
+  }, [beginDraft, model]);
   const setRetargetSelection = useCallback((selection: DocumentSelection | null) => {
     if (!model || !selection) return false;
     const projection = model.projectSelection(selection);
@@ -196,9 +203,12 @@ export function useUnifiedAnnotationSession({
     const result = markdownLogicalRangeFromDomRange(model as MarkdownTextModel, range, boundary);
     return result.range ? setRetargetSelection({ coordinateSpace: "logical", range: result.range }) : false;
   }, [model, setRetargetSelection]);
+  const setRetargetFromRuntimeSelection = useCallback((selection: MarkdownProjectedSelection | null) => {
+    return setRetargetSelection(annotationSelectionFromMarkdownRuntime(selection, model));
+  }, [model, setRetargetSelection]);
   const submitDraft = useCallback(async () => {
     const interaction = store.getState().interaction;
-    if (!actions || interaction.type !== "drafting" || !interaction.body.trim()) return false;
+    if (!actions || interaction.type !== "drafting" || !interaction.body.trim() || !interaction.selector) return false;
     return Boolean(await actions.createText(interaction.body.trim(), interaction.selector));
   }, [actions, store]);
   const submitRetarget = useCallback(async (annotationId: string, selector: TextSelector) => Boolean(await actions?.retarget(annotationId, selector)), [actions]);
@@ -238,6 +248,7 @@ export function useUnifiedAnnotationSession({
     available,
     beginDraft,
     beginDraftFromMarkdownRange,
+    beginDraftFromRuntimeSelection,
     bindMarkdown,
     connectorGeometry: connectorGeometrySnapshot,
     draftAnchorY,
@@ -253,6 +264,7 @@ export function useUnifiedAnnotationSession({
     setLanePlacements: commitLanePlacements,
     setRetargetSelection,
     setRetargetFromMarkdownRange,
+    setRetargetFromRuntimeSelection,
     sourceAdapter,
     state,
     store,

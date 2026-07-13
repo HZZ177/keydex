@@ -27,7 +27,9 @@
 }
 
 .userMessage .bubble {
-  max-width: var(--message-user-bubble-max-width, min(568px, calc(100% - 36px)));
+  width: fit-content;
+  max-width: min(50%, var(--message-user-bubble-max-width, 50%));
+  box-sizing: border-box;
   border: var(--message-user-bubble-border, 0);
   border-radius: var(--radius-lg);
   background: var(--message-user-bubble-bg, var(--surface-muted));
@@ -37,6 +39,26 @@
   padding: 10px 14px;
   -webkit-backdrop-filter: var(--message-user-bubble-backdrop-filter, none);
   backdrop-filter: var(--message-user-bubble-backdrop-filter, none);
+}
+
+.runtimeUserBubbleSizer {
+  display: block;
+  width: max-content;
+  height: 0;
+  max-height: 0;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+  white-space: pre;
+  visibility: hidden;
+}
+
+.runtimeUserBubbleSizer::before {
+  content: attr(data-runtime-user-bubble-sizer-text);
+}
+
+.userMessage .bubble > :global([data-message-markdown-mode="runtime"]) {
+  width: 100%;
 }
 
 .userMessage .bubble:empty {

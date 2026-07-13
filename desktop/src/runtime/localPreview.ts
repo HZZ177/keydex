@@ -1,5 +1,18 @@
 import type { HttpClient } from "./httpClient";
 import { isTauriRuntime, type TauriInvoke } from "./agentConnection";
+import {
+  DEFAULT_PREVIEW_DOCUMENT_MAX_BYTES,
+  DocumentReadProtocolError,
+  createDocumentReadRequest,
+  createWholeDocumentReadResult,
+  type DocumentReadResult,
+  type DocumentReadSource,
+} from "./documentRead";
+import {
+  DocumentReadCoordinator,
+  readDocumentNdjsonResponse,
+  type DocumentReadTransportDiagnostics,
+} from "@/renderer/components/workspace/fileMarkdownAdapter/transport";
 
 export interface LocalPreviewFileResponse {
   path: string;
@@ -16,7 +29,17 @@ export interface LocalPreviewMediaResponse {
 
 export interface LocalPreviewRuntime {
   readFile(path: string): Promise<LocalPreviewFileResponse>;
+  readDocument(path: string, options?: LocalPreviewDocumentReadOptions): Promise<DocumentReadResult>;
   readMedia(path: string): Promise<LocalPreviewMediaResponse>;
+  releaseDocumentConsumer(consumerId: string): void;
+}
+
+export interface LocalPreviewDocumentReadOptions {
+  signal?: AbortSignal;
+  expectedRevision?: string | null;
+  maxBytes?: number;
+  consumerId?: string;
+  onDiagnostics?: (diagnostics: DocumentReadTransportDiagnostics) => void;
 }
 
 export interface LocalPreviewRuntimeOptions {
@@ -29,6 +52,7 @@ export function createLocalPreviewRuntime(
   http: HttpClient,
   options: LocalPreviewRuntimeOptions = {},
 ): LocalPreviewRuntime {
+  const coordinator = new DocumentReadCoordinator();
   return {
     readFile(path) {
       if ((options.isTauriRuntime ?? isTauriRuntime)()) {
@@ -38,13 +62,134 @@ export function createLocalPreviewRuntime(
         `/api/local-preview/read?path=${encodeURIComponent(path)}`,
       );
     },
+    readDocument(path, readOptions = {}) {
+      const tauri = (options.isTauriRuntime ?? isTauriRuntime)();
+      const source = tauri ? "tauri" : "local-preview";
+      const consumerId = readOptions.consumerId ?? `local-document-call-${nextDocumentConsumerId++}`;
+      return coordinator.read({
+        consumerId,
+        documentKey: `${source}:${path}`,
+        signal: readOptions.signal,
+        load: (signal) => tauri
+          ? readDesktopDocument(path, options, { ...readOptions, signal })
+          : readBrowserDocument(http, path, { ...readOptions, signal }),
+      });
+    },
     readMedia(path) {
       return http.request<LocalPreviewMediaResponse>(
         `/api/local-preview/media?path=${encodeURIComponent(path)}`,
       );
     },
+    releaseDocumentConsumer(consumerId) {
+      coordinator.release(consumerId);
+    },
   };
 }
+
+async function readBrowserDocument(
+  http: HttpClient,
+  path: string,
+  options: LocalPreviewDocumentReadOptions,
+): Promise<DocumentReadResult> {
+  const request = documentRequest(path, "local-preview", options);
+  const response = await http.requestRaw("/api/local-preview/read/document", {
+    method: "POST",
+    body: request,
+    signal: options.signal,
+  });
+  return readDocumentNdjsonResponse(response, request, {
+    signal: options.signal,
+    onDiagnostics: options.onDiagnostics,
+  });
+}
+
+async function readDesktopDocument(
+  path: string,
+  runtimeOptions: LocalPreviewRuntimeOptions,
+  readOptions: LocalPreviewDocumentReadOptions,
+): Promise<DocumentReadResult> {
+  assertNotCancelled(readOptions.signal);
+  let response: LocalPreviewFileResponse;
+  try {
+    response = await readDesktopTextFile(path, runtimeOptions);
+  } catch (error) {
+    throw normalizeDesktopReadError(error);
+  }
+  assertNotCancelled(readOptions.signal);
+  return adaptWholeFileToDocument(response, "tauri", readOptions);
+}
+
+async function adaptWholeFileToDocument(
+  response: LocalPreviewFileResponse,
+  source: DocumentReadSource,
+  options: LocalPreviewDocumentReadOptions,
+): Promise<DocumentReadResult> {
+  const request = documentRequest(response.path, source, options);
+  const { revision, byteLength } = await sha256Revision(response.content);
+  if (byteLength > request.max_bytes) {
+    throw new DocumentReadProtocolError(
+      "too_large",
+      `Document byte size ${byteLength} exceeds preview contract`,
+    );
+  }
+  assertNotCancelled(options.signal);
+  return createWholeDocumentReadResult({
+    request,
+    revision,
+    content: response.content,
+    byteLength,
+  });
+}
+
+function documentRequest(
+  path: string,
+  source: DocumentReadSource,
+  options: LocalPreviewDocumentReadOptions,
+) {
+  return createDocumentReadRequest({
+    request_id: `local-document-${nextDocumentRequestId++}`,
+    document_id: `${source}:${path}`,
+    source,
+    path,
+    expected_revision: options.expectedRevision,
+    preferred_transport: "auto",
+    max_bytes: options.maxBytes ?? DEFAULT_PREVIEW_DOCUMENT_MAX_BYTES,
+  });
+}
+
+async function sha256Revision(content: string): Promise<{ revision: string; byteLength: number }> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new DocumentReadProtocolError("io_error", "Web Crypto SHA-256 is unavailable");
+  }
+  const bytes = new TextEncoder().encode(content);
+  const digest = await subtle.digest("SHA-256", bytes.buffer as ArrayBuffer);
+  return {
+    revision: `sha256:${Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("")}`,
+    byteLength: bytes.byteLength,
+  };
+}
+
+function assertNotCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DocumentReadProtocolError("cancelled", "Document preview read cancelled", true);
+  }
+}
+
+function normalizeDesktopReadError(error: unknown): DocumentReadProtocolError {
+  if (error instanceof DocumentReadProtocolError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (/utf-?8|unicode|invalid data/i.test(message)) {
+    return new DocumentReadProtocolError("unsupported_encoding", message);
+  }
+  if (/not found|cannot find|does not exist|no such file|不是文件|不存在/i.test(message)) {
+    return new DocumentReadProtocolError("not_found", message);
+  }
+  return new DocumentReadProtocolError("io_error", message || "Desktop document read failed", true);
+}
+
+let nextDocumentRequestId = 1;
+let nextDocumentConsumerId = 1;
 
 async function readDesktopTextFile(
   path: string,

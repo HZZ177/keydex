@@ -37,6 +37,11 @@ export class HttpClient {
   }
 
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const response = await this.requestRaw(path, options);
+    return readSuccessBody<T>(response);
+  }
+
+  async requestRaw(path: string, options: RequestOptions = {}): Promise<Response> {
     const method = options.method ?? "GET";
     const hasBody = options.body !== undefined;
     const headers = {
@@ -73,7 +78,7 @@ export class HttpClient {
       });
     }
 
-    return readSuccessBody<T>(response);
+    return response;
   }
 }
 

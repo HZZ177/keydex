@@ -5,6 +5,17 @@ import type { RuntimeBridge, WorkspaceEntry, WorkspaceSubtreeResponse, Workspace
 import { WorkspaceFileBrowser, WorkspacePanel } from "@/renderer/components/workspace";
 import { APP_FIND_SHORTCUT_EVENT } from "@/renderer/events/findShortcut";
 import { APP_EXPAND_WORKSPACE_DIRECTORY_EVENT } from "@/renderer/events/workspaceFileContext";
+import { parseCanonicalMarkdownSnapshot } from "@/renderer/markdownRuntime/worker/parser";
+
+const markdownRuntimeSnapshotLoader = async ({ source, revision }: { source: string; revision: string }) => (
+  parseCanonicalMarkdownSnapshot({
+    surface: "file",
+    documentId: "workspace-panel:test.md",
+    revision,
+    source,
+    rendererProfile: "file-preview",
+  })
+);
 
 describe("WorkspacePanel", () => {
   it("renders cwd, expands directories and selects files", async () => {
@@ -568,7 +579,7 @@ describe("WorkspacePanel", () => {
       },
     );
 
-    render(<WorkspaceFileBrowser sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+    render(<WorkspaceFileBrowser markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} sessionId="ses-1" label="D:/repo" runtime={runtime} />);
 
     expect(await screen.findByRole("button", { name: "选择文件 README.md" })).not.toBeNull();
     expect(screen.getByTestId("workspace-file-browser-pathbar").textContent).toContain("/");
@@ -658,7 +669,7 @@ describe("WorkspacePanel", () => {
     );
 
     try {
-      render(<WorkspaceFileBrowser sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+      render(<WorkspaceFileBrowser markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} sessionId="ses-1" label="D:/repo" runtime={runtime} />);
 
       expect(await screen.findByRole("button", { name: "选择文件 README.md" })).not.toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "选择文件 README.md" }));
@@ -680,19 +691,23 @@ describe("WorkspacePanel", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "展开 Setup" }));
 
+      const documentViewport = document.querySelector<HTMLElement>("[data-document-scroll-viewport='true']");
+      const runtimeScrollTo = vi.fn();
+      expect(documentViewport).not.toBeNull();
+      Object.defineProperty(documentViewport!, "scrollTo", {
+        configurable: true,
+        value: runtimeScrollTo,
+      });
+
       fireEvent.click(screen.getByRole("button", { name: "跳转到 Details" }));
 
       await waitFor(() => {
-        expect(scrollIntoView).toHaveBeenCalledWith({
-          block: "start",
-          inline: "nearest",
+        expect(runtimeScrollTo).toHaveBeenCalledWith({
+          top: expect.any(Number),
           behavior: "smooth",
         });
       });
-      const scrolledElement = scrollIntoView.mock.contexts[
-        scrollIntoView.mock.contexts.length - 1
-      ] as HTMLElement;
-      expect(scrolledElement.dataset.markdownOutlineId).toBeTruthy();
+      expect(runtimeScrollTo.mock.calls.at(-1)?.[0].top).toBeGreaterThanOrEqual(0);
 
       fireEvent.click(screen.getByRole("button", { name: "文件" }));
 
@@ -706,12 +721,54 @@ describe("WorkspacePanel", () => {
     }
   });
 
+  it("keeps a 10,000-heading Markdown outline DOM bounded while preserving direct row access", async () => {
+    const runtime = fakeRuntime({ "": [] });
+    const outline = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `outline-${index}`,
+      level: 3,
+      line: index * 4 + 1,
+      title: `Section ${index}`,
+    }));
+
+    render(
+      <WorkspaceFileBrowser
+        initialNavigationMode="outline"
+        label="D:/repo"
+        previewOutline={outline}
+        previewOutlineReady
+        previewPlacement="external"
+        previewPath="README.md"
+        runtime={runtime}
+        sessionId="ses-1"
+      />,
+    );
+
+    const navigation = await screen.findByRole("navigation", { name: "Markdown 文档大纲" });
+    const list = navigation.querySelector<HTMLElement>("[data-outline-total-count]");
+    expect(list).not.toBeNull();
+    expect(list?.dataset.outlineTotalCount).toBe("10000");
+    expect(Number(list?.dataset.outlineMountedCount)).toBeLessThan(100);
+    expect(screen.getByRole("button", { name: "跳转到 Section 0" })).not.toBeNull();
+
+    Object.defineProperties(list!, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, value: 150_000, writable: true },
+    });
+    fireEvent.scroll(list!);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "跳转到 Section 5000" })).not.toBeNull();
+    });
+    expect(screen.queryByRole("button", { name: "跳转到 Section 0" })).toBeNull();
+    expect(Number(list?.dataset.outlineMountedCount)).toBeLessThan(100);
+  });
+
   it("collapses the file tree to an empty file prompt when no preview is open", async () => {
     const runtime = fakeRuntime({
       "": [entry("README.md", "README.md", "file", 12)],
     });
 
-    render(<WorkspaceFileBrowser sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+    render(<WorkspaceFileBrowser markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} sessionId="ses-1" label="D:/repo" runtime={runtime} />);
 
     const browser = await screen.findByTestId("workspace-file-browser");
     expect(await screen.findByText("README.md")).not.toBeNull();
@@ -747,7 +804,7 @@ describe("WorkspacePanel", () => {
       },
     );
 
-    render(<WorkspaceFileBrowser sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+    render(<WorkspaceFileBrowser markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} sessionId="ses-1" label="D:/repo" runtime={runtime} />);
 
     const browser = await screen.findByTestId("workspace-file-browser");
     await screen.findByText("README.md");
@@ -856,7 +913,7 @@ describe("WorkspacePanel", () => {
       new Set(["bad.txt"]),
     );
 
-    render(<WorkspaceFileBrowser sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+    render(<WorkspaceFileBrowser markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} sessionId="ses-1" label="D:/repo" runtime={runtime} />);
 
     await screen.findByText("bad.txt");
     fireEvent.click(screen.getByRole("button", { name: "选择文件 bad.txt" }));

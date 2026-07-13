@@ -230,16 +230,20 @@ export class SourceAnnotationAdapter implements AnnotationViewAdapter {
     }
     const scrollRect = scrollElement.getBoundingClientRect();
     const visibleRanges = view.visibleRanges;
+    const renderedRects = renderedMarkerRects(view, scrollElement, scrollRect);
     const markers: Record<string, readonly DocumentCoordinateRect[]> = {};
     for (const marker of this.renderState.markers) {
-      markers[marker.annotationId] = Object.freeze(marker.sourceRanges.flatMap((range) =>
-        visibleRanges.flatMap((visibleRange) => {
-          const start = Math.max(range.start, visibleRange.from);
-          const end = Math.min(range.end, visibleRange.to);
-          return end > start
-            ? safeSourceRangeRects(view, { start, end }, scrollElement, scrollRect)
-            : [];
-        })));
+      const exactRects = renderedRects.get(marker.annotationId) ?? [];
+      markers[marker.annotationId] = Object.freeze(exactRects.length > 0
+        ? exactRects
+        : marker.sourceRanges.flatMap((range) =>
+          visibleRanges.flatMap((visibleRange) => {
+            const start = Math.max(range.start, visibleRange.from);
+            const end = Math.min(range.end, visibleRange.to);
+            return end > start
+              ? safeSourceRangeRects(view, { start, end }, scrollElement, scrollRect)
+              : [];
+          })));
     }
     return Object.freeze({
       documentHeight: view.contentHeight,
@@ -314,6 +318,36 @@ export class SourceAnnotationAdapter implements AnnotationViewAdapter {
       listener(event);
     }
   }
+}
+
+function renderedMarkerRects(
+  view: EditorView,
+  scrollElement: HTMLElement,
+  scrollRect: DOMRect,
+): ReadonlyMap<string, readonly DocumentCoordinateRect[]> {
+  const markers = new Map<string, DocumentCoordinateRect[]>();
+  for (const element of view.dom.querySelectorAll<HTMLElement>(".cm-annotation-mark[data-annotation-id]")) {
+    const annotationId = element.dataset.annotationId;
+    if (!annotationId) continue;
+    let rects: readonly DOMRect[];
+    try {
+      rects = Array.from(element.getClientRects());
+    } catch {
+      rects = [];
+    }
+    const target = markers.get(annotationId) ?? [];
+    for (const rect of rects) {
+      if (rect.width <= 0 && rect.height <= 0) continue;
+      target.push(Object.freeze({
+        bottom: rect.bottom - scrollRect.top + scrollElement.scrollTop,
+        left: rect.left - scrollRect.left + scrollElement.scrollLeft,
+        right: rect.right - scrollRect.left + scrollElement.scrollLeft,
+        top: rect.top - scrollRect.top + scrollElement.scrollTop,
+      }));
+    }
+    if (target.length > 0) markers.set(annotationId, target);
+  }
+  return markers;
 }
 
 function decorationsForState(state: AnnotationRenderState, documentLength: number): DecorationSet {

@@ -1,4 +1,5 @@
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
+import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnostics";
 
 export type ProcessedMessageItem =
   | {
@@ -19,6 +20,9 @@ export type ProcessedMessageItem =
 export type MessageGroupKind = "tool_activity" | "file_changes";
 
 export function processMessages(messages: ConversationMessage[]): ProcessedMessageItem[] {
+  const startedAt = conversationBaselineDiagnostics.isEnabled() && typeof performance !== "undefined"
+    ? performance.now()
+    : null;
   const items: ProcessedMessageItem[] = [];
   let group: ConversationMessage[] = [];
   let groupKind: MessageGroupKind | null = null;
@@ -73,6 +77,13 @@ export function processMessages(messages: ConversationMessage[]): ProcessedMessa
   }
 
   flush();
+  if (startedAt !== null) {
+    conversationBaselineDiagnostics.record({
+      stage: "process-messages",
+      itemCount: messages.length,
+      durationMs: performance.now() - startedAt,
+    });
+  }
   return items;
 }
 

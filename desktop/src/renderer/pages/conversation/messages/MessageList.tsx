@@ -1,9 +1,9 @@
 import { ArrowDown } from "lucide-react";
 import {
-  forwardRef,
   type ReactNode,
   type PointerEvent,
   type UIEvent,
+  type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -11,19 +11,13 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  Virtuoso,
-  type Components,
-  type ItemProps,
-  type ListProps,
-  type ScrollerProps,
-} from "react-virtuoso";
 
 import type { RuntimeBridge, WorkspaceScope } from "@/runtime";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import type { ConversationMessage, ConversationRuntimeState } from "@/renderer/stores/conversationStore";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import type { AgentSessionFork } from "@/types/protocol";
+import { useOptionalPreview, type PreviewContextValue } from "@/renderer/providers/PreviewProvider";
 
 import styles from "./MessageList.module.css";
 import { ApprovalPrompt, type ApprovalDecisionHandler } from "./ApprovalPrompt";
@@ -41,18 +35,33 @@ import { SkillActivationBlock } from "./SkillActivationBlock";
 import { ThreadTaskStatusBlock } from "./ThreadTaskStatusBlock";
 import { ToolCallBlock } from "./ToolCallBlock";
 import { processMessages, type ProcessedMessageItem } from "./processMessages";
+import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnostics";
+import {
+  projectConversationRenderUnits,
+  type ConversationRenderUnit,
+  type ConversationRenderTurn,
+} from "../timeline/ConversationRenderUnit";
+import {
+  ConversationTimelineSurface,
+  type ConversationTimelineSurfaceHandle,
+} from "../timeline/ConversationTimelineSurface";
+import { ConversationNavigationController } from "../timeline/ConversationNavigationController";
+import { ConversationPinRegistry } from "../timeline/ConversationPinRegistry";
+import {
+  ConversationHydrationScheduler,
+  type ConversationHydrationCandidate,
+} from "@/renderer/markdownRuntime/history/ConversationHydrationScheduler";
+import { conversationMarkdownAdapter, conversationMarkdownRuntimeStore } from "./conversationMarkdownRuntime";
 import type { ToolDetailsLoader } from "./useLazyToolDetails";
-import { useAutoScroll } from "./useAutoScroll";
-import { useVirtuosoAutoScroll } from "./useVirtuosoAutoScroll";
+import { useConversationFollowController } from "../timeline/useConversationFollowController";
 
 const STATIC_MESSAGE_LIST_ITEM_LIMIT = 160;
 const INTERACTIVE_PANEL_STATIC_MESSAGE_LIST_ITEM_LIMIT = 48;
 const A2UI_STATIC_MESSAGE_LIST_WEIGHT_LIMIT = 12;
 const INTERACTIVE_PANEL_A2UI_STATIC_MESSAGE_LIST_WEIGHT_LIMIT = 6;
-const VIRTUAL_MESSAGE_VIEWPORT_BUFFER = { bottom: 2600, top: 1800 } as const;
+const CONVERSATION_TIMELINE_OVERSCAN_PX = 1000;
 const LOAD_OLDER_TRIGGER_PX = 44;
 const LOAD_OLDER_ARM_PX = 120;
-const TURN_NAVIGATION_RETRY_FRAMES = 8;
 const TURN_FOCUS_FLASH_DURATION_MS = 1300;
 
 export interface MessageListProps {
@@ -63,6 +72,7 @@ export interface MessageListProps {
   performanceProfile?: MessageListPerformanceProfile;
   turnNavigatorMode?: MessageListTurnNavigatorMode;
   turnNavigationRequest?: MessageListTurnNavigationRequest | null;
+  onTurnNavigate?: (targetIndex: number) => void;
   topNotice?: MessageListTopNotice | null;
   emptyLayout?: MessageListEmptyLayout;
   emptyText?: string;
@@ -73,6 +83,7 @@ export interface MessageListProps {
   renderMessage?: (message: ConversationMessage) => ReactNode;
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
+  previewContextOverride?: PreviewContextValue | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled?: boolean;
@@ -128,6 +139,7 @@ export function MessageList({
   performanceProfile = "default",
   turnNavigatorMode,
   turnNavigationRequest,
+  onTurnNavigate,
   topNotice = null,
   emptyLayout = "default",
   emptyText = "暂无消息",
@@ -135,6 +147,7 @@ export function MessageList({
   renderMessage,
   workspaceRuntime,
   workspaceScope,
+  previewContextOverride,
   onApprovalDecision,
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled = false,
@@ -156,14 +169,32 @@ export function MessageList({
   scrollButtonMode = "inline",
   onScrollControlsChange,
 }: MessageListProps) {
-  const olderLoadAnchorRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
+  conversationBaselineDiagnostics.record({
+    stage: "message-list-render",
+    itemCount: messages.length,
+  });
+  const inheritedPreviewContext = useOptionalPreview();
+  const previewContext = previewContextOverride === undefined ? inheritedPreviewContext : previewContextOverride;
+  const olderLoadAnchorRef = useRef<{ scrollTop: number; scrollHeight: number; runtime: boolean } | null>(null);
   const olderLoadRequestedRef = useRef(false);
   const olderLoadArmedRef = useRef(false);
   const nativeScrollbarDragRef = useRef(false);
-  const virtualVisibleTurnFrameRef = useRef<number | null>(null);
   const virtualScrollerRef = useRef<HTMLElement | null>(null);
+  const staticScrollerRef = useRef<HTMLDivElement | null>(null);
+  const staticContentRef = useRef<HTMLDivElement | null>(null);
+  const conversationTimelineRef = useRef<ConversationTimelineSurfaceHandle | null>(null);
+  const conversationNavigationRef = useRef<ConversationNavigationController | null>(null);
+  const navigationRequestSequenceRef = useRef(0);
+  const conversationPinRegistryRef = useRef<ConversationPinRegistry | null>(null);
+  const conversationHydrationRef = useRef<ConversationHydrationScheduler | null>(null);
+  if (!conversationNavigationRef.current) conversationNavigationRef.current = new ConversationNavigationController();
+  if (!conversationPinRegistryRef.current) conversationPinRegistryRef.current = new ConversationPinRegistry();
+  const conversationNavigation = conversationNavigationRef.current;
+  const conversationPinRegistry = conversationPinRegistryRef.current;
   const staticTurnRefsRef = useRef<Array<HTMLDivElement | null>>([]);
   const flashTurnFrameRef = useRef<number | null>(null);
+  const hydrationIdleRef = useRef<number | null>(null);
+  const hydrationTimeoutRef = useRef<number | null>(null);
   const flashTurnTimeoutRef = useRef<number | null>(null);
   const previousTurnSummaryRef = useRef<{ count: number; lastId: string | null } | null>(null);
   const [showOlderTrigger, setShowOlderTrigger] = useState(false);
@@ -217,16 +248,84 @@ export function MessageList({
   );
   const externalTurnNavigationRequestId = turnNavigationRequest?.requestId;
   const shouldAutoFollowMessages = externalTurnNavigationIndex === null;
-  const staticAutoScroll = useAutoScroll({
-    deps: [displayBlocks, isProcessing],
-    itemCount: displayBlocks.length,
-    autoFollow: shouldAutoFollowMessages,
-  });
-  const autoScroll = useVirtuosoAutoScroll(displayBlocks.length, { autoFollow: shouldAutoFollowMessages });
-  const scrollControls = useStaticList ? staticAutoScroll : autoScroll;
+  const autoScroll = useConversationFollowController(displayBlocks.length, { autoFollow: shouldAutoFollowMessages });
   const canLoadOlder = Boolean(hasMoreOlder && onLoadOlder);
   const olderLoader = renderOlderLoader({ canLoadOlder, loadingOlder, showTrigger: showOlderTrigger });
   const renderedTopNotice = useMemo(() => renderTopNotice(topNotice), [topNotice]);
+  const virtualRuntimeUnits = useMemo<readonly ConversationRenderUnit[]>(() => {
+    const globalVersion = [
+      isProcessing ? "processing" : "settled",
+      a2uiDebugInfoEnabled ? "a2ui-debug" : "a2ui-normal",
+      a2uiRenderSuspended ? "a2ui-suspended" : "a2ui-active",
+      showForkSourceMarkers ? "fork-markers" : "no-fork-markers",
+      turnFirstTokenAtMs ?? "no-first-token",
+      flashingTurnIndex ?? "no-flash",
+    ].join(":");
+    const topUnit: ConversationRenderUnit = Object.freeze({
+      id: "conversation-runtime:top",
+      kind: "status",
+      owner: "react",
+      turnId: null,
+      turnIndex: null,
+      businessTurnIndex: null,
+      sourceMessageIds: Object.freeze([]),
+      item: null,
+      parentUnitId: null,
+      dynamic: loadingOlder,
+      interactive: false,
+      pinPolicy: "never",
+      measurementPolicy: loadingOlder ? "observe-until-settled" : "estimate-once",
+      estimatedHeight: 22 + (canLoadOlder ? 46 : 0) + (topNotice ? 48 : 0),
+      renderVersion: `top:${canLoadOlder}:${loadingOlder}:${showOlderTrigger}:${String(topNotice?.content ?? "")}`,
+    });
+    const bottomUnit: ConversationRenderUnit = Object.freeze({
+      id: "conversation-runtime:bottom",
+      kind: "status",
+      owner: "shell",
+      turnId: null,
+      turnIndex: null,
+      businessTurnIndex: null,
+      sourceMessageIds: Object.freeze([]),
+      item: null,
+      parentUnitId: null,
+      dynamic: false,
+      interactive: false,
+      pinPolicy: "never",
+      measurementPolicy: "estimate-once",
+      estimatedHeight: 80,
+      renderVersion: "bottom:1",
+    });
+    return Object.freeze([
+      topUnit,
+      ...timeline.runtimeUnits.map((unit) => Object.freeze({
+        ...unit,
+        renderVersion: `${unit.renderVersion}:${globalVersion}`,
+      })),
+      bottomUnit,
+    ]);
+  }, [
+    a2uiDebugInfoEnabled,
+    a2uiRenderSuspended,
+    canLoadOlder,
+    flashingTurnIndex,
+    isProcessing,
+    loadingOlder,
+    showForkSourceMarkers,
+    showOlderTrigger,
+    timeline.runtimeUnits,
+    topNotice,
+    turnFirstTokenAtMs,
+  ]);
+  const hydrationCandidates = useMemo(
+    () => buildConversationHydrationCandidates(displayItems, timeline.runtimeUnits),
+    [displayItems, timeline.runtimeUnits],
+  );
+  const hydrationSessionId = hydrationCandidates[0]?.sessionId ?? visibleMessages[0]?.threadId ?? "";
+  const scrollControls = autoScroll;
+  const scrollToConversationBottom = useCallback((behavior?: ScrollBehavior) => {
+    conversationNavigation.recordUserScroll();
+    autoScroll.scrollToBottom(behavior);
+  }, [autoScroll.scrollToBottom, conversationNavigation]);
   const highlightedTurnNavigationIndexes = useMemo(
     () => findVisibleTurnNavigationIndexes(turnNavigationItems, visibleTurnIndexes),
     [turnNavigationItems, visibleTurnIndexes],
@@ -249,13 +348,16 @@ export function MessageList({
         return;
       }
       olderLoadRequestedRef.current = true;
+      const runtimeAnchorCaptured = !useStaticList && conversationNavigation.beginPrepend();
       olderLoadAnchorRef.current = {
         scrollTop: scroller.scrollTop,
         scrollHeight: scroller.scrollHeight,
+        runtime: runtimeAnchorCaptured,
       };
+      autoScroll.beginHistoryRestore();
       void onLoadOlder?.();
     },
-    [canLoadOlder, loadingOlder, onLoadOlder],
+    [autoScroll.beginHistoryRestore, canLoadOlder, conversationNavigation, loadingOlder, onLoadOlder, useStaticList],
   );
 
   const updateOlderLoadTrigger = useCallback(
@@ -301,25 +403,31 @@ export function MessageList({
   const markNativeScrollbarDrag = useCallback((event: { clientX: number; clientY: number }, scroller: HTMLElement) => {
     if (isNativeScrollbarPointerStart(event, scroller)) {
       nativeScrollbarDragRef.current = true;
+      return true;
     }
+    return false;
   }, []);
 
   const handleStaticPointerDown = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
-      staticAutoScroll.handlePointerDown();
       markNativeScrollbarDrag(event, event.currentTarget);
+      conversationNavigation.recordUserScroll();
     },
-    [markNativeScrollbarDrag, staticAutoScroll],
+    [conversationNavigation, markNativeScrollbarDrag],
   );
 
   const handleStaticScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
-      staticAutoScroll.handleScroll(event);
       updateOlderLoadTrigger(event.currentTarget);
       updateVisibleStaticTurns(event.currentTarget);
     },
-    [staticAutoScroll, updateOlderLoadTrigger, updateVisibleStaticTurns],
+    [updateOlderLoadTrigger, updateVisibleStaticTurns],
   );
+
+  const setStaticScrollerRef = useCallback((element: HTMLDivElement | null) => {
+    staticScrollerRef.current = element;
+    if (element && useStaticList) autoScroll.setScrollerRef(element);
+  }, [autoScroll.setScrollerRef, useStaticList]);
 
   const handleVirtualScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
@@ -329,19 +437,95 @@ export function MessageList({
     [updateOlderLoadTrigger, updateVisibleVirtualTurns],
   );
 
-  const handleVirtualRangeChanged = useCallback(() => {
-    if (typeof window === "undefined") {
-      updateVisibleVirtualTurns(virtualScrollerRef.current);
+  const setConversationTimelineScroller = useCallback(
+    (element: HTMLElement | null) => {
+      virtualScrollerRef.current = element;
+      if (element && !useStaticList) {
+        autoScroll.setScrollerRef(element);
+        conversationNavigation.attach(conversationTimelineRef.current);
+        conversationPinRegistry.attach(element, conversationTimelineRef.current);
+      } else if (!element) {
+        conversationNavigation.attach(null);
+        conversationPinRegistry.attach(null, null);
+      }
+    },
+    [autoScroll.setScrollerRef, conversationNavigation, conversationPinRegistry, useStaticList],
+  );
+
+  const updateConversationHydrationWindow = useCallback(() => {
+    if (typeof Worker !== "undefined" && hydrationSessionId) {
+      conversationHydrationRef.current ??= new ConversationHydrationScheduler({
+        store: conversationMarkdownRuntimeStore(),
+        adapter: conversationMarkdownAdapter(),
+      });
+      const runtime = conversationTimelineRef.current;
+      conversationHydrationRef.current.update({
+        sessionId: hydrationSessionId,
+        candidates: hydrationCandidates,
+        mountedUnitIds: runtime?.mountedUnitIds() ?? [],
+        navigationUnitIds: externalTurnNavigationIndex === null
+          ? []
+          : [timeline.turnUnitIds[externalTurnNavigationIndex]].filter((value): value is string => Boolean(value)),
+      });
+      const diagnostics = conversationHydrationRef.current.diagnostics();
+      if (virtualScrollerRef.current) {
+        virtualScrollerRef.current.dataset.conversationHydrationSelected = String(diagnostics.selected);
+        virtualScrollerRef.current.dataset.conversationHydrationCandidates = String(diagnostics.candidates);
+      }
+    }
+  }, [externalTurnNavigationIndex, hydrationCandidates, hydrationSessionId, timeline.turnUnitIds]);
+
+  const handleConversationViewportChanged = useCallback(() => {
+    conversationHydrationRef.current?.suspend();
+    if (typeof requestAnimationFrame !== "function") {
+      updateConversationHydrationWindow();
       return;
     }
-    if (virtualVisibleTurnFrameRef.current !== null) {
-      window.cancelAnimationFrame(virtualVisibleTurnFrameRef.current);
+    if (hydrationIdleRef.current !== null && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(hydrationIdleRef.current);
+      hydrationIdleRef.current = null;
     }
-    virtualVisibleTurnFrameRef.current = window.requestAnimationFrame(() => {
-      virtualVisibleTurnFrameRef.current = null;
-      updateVisibleVirtualTurns(virtualScrollerRef.current);
-    });
-  }, [updateVisibleVirtualTurns]);
+    if (hydrationTimeoutRef.current !== null) window.clearTimeout(hydrationTimeoutRef.current);
+    // Debounce from the latest viewport change. Continuous wheel/scroll input
+    // must never overlap speculative Markdown parsing.
+    hydrationTimeoutRef.current = window.setTimeout(() => {
+      hydrationTimeoutRef.current = null;
+      if (typeof window.requestIdleCallback === "function") {
+        hydrationIdleRef.current = window.requestIdleCallback(() => {
+          hydrationIdleRef.current = null;
+          updateConversationHydrationWindow();
+        });
+      } else updateConversationHydrationWindow();
+    }, 180);
+  }, [updateConversationHydrationWindow, virtualRuntimeUnits]);
+
+  const handleConversationTimelinePublished = useCallback(() => {
+    conversationNavigation.attach(conversationTimelineRef.current);
+    conversationPinRegistry.attach(virtualScrollerRef.current, conversationTimelineRef.current);
+    conversationPinRegistry.sync(virtualRuntimeUnits);
+    updateConversationHydrationWindow();
+    autoScroll.notifyContentMutation("timeline-publish");
+    updateVisibleVirtualTurns(virtualScrollerRef.current);
+  }, [
+    autoScroll.notifyContentMutation,
+    conversationNavigation,
+    conversationPinRegistry,
+    updateConversationHydrationWindow,
+    updateVisibleVirtualTurns,
+    virtualRuntimeUnits,
+  ]);
+
+  const handleVirtualPointerDown = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      markNativeScrollbarDrag(event, event.currentTarget);
+      conversationNavigation.recordUserScroll();
+    },
+    [conversationNavigation, markNativeScrollbarDrag],
+  );
+
+  const handleUserWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
+    if (event.deltaY !== 0) conversationNavigation.recordUserScroll();
+  }, [conversationNavigation]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -354,7 +538,7 @@ export function MessageList({
       nativeScrollbarDragRef.current = false;
       window.requestAnimationFrame(() => {
         if (useStaticList) {
-          updateVisibleStaticTurns(staticAutoScroll.containerRef.current);
+          updateVisibleStaticTurns(staticScrollerRef.current);
           return;
         }
         updateVisibleVirtualTurns(virtualScrollerRef.current);
@@ -368,50 +552,7 @@ export function MessageList({
       window.removeEventListener("pointercancel", finishNativeScrollbarDrag);
       window.removeEventListener("blur", finishNativeScrollbarDrag);
     };
-  }, [staticAutoScroll.containerRef, updateVisibleStaticTurns, updateVisibleVirtualTurns, useStaticList]);
-
-  const setVirtualScrollerRef = useCallback(
-    (ref: HTMLElement | Window | null) => {
-      const element = ref instanceof HTMLElement ? ref : null;
-      virtualScrollerRef.current = element;
-      autoScroll.setScrollerRef(ref);
-    },
-    [autoScroll.setScrollerRef],
-  );
-
-  const handleVirtualStartReached = useCallback(() => {
-    updateOlderLoadTrigger(virtualScrollerRef.current);
-  }, [updateOlderLoadTrigger]);
-
-  const handleVirtualAtBottomStateChange = useCallback(
-    (atBottom: boolean) => {
-      autoScroll.handleAtBottomStateChange(atBottom);
-      if (atBottom && showTurnNavigator) {
-        setVisibleTurnIndexesIfChanged(new Set([Math.max(0, displayTurns.length - 1)]));
-      }
-    },
-    [autoScroll.handleAtBottomStateChange, displayTurns.length, setVisibleTurnIndexesIfChanged, showTurnNavigator],
-  );
-
-  const handleVirtualAtTopStateChange = useCallback(
-    (atTop: boolean) => {
-      if (atTop) {
-        if (showTurnNavigator) {
-          setVisibleTurnIndexesIfChanged(new Set([0]));
-        }
-        updateOlderLoadTrigger(virtualScrollerRef.current);
-      }
-    },
-    [setVisibleTurnIndexesIfChanged, showTurnNavigator, updateOlderLoadTrigger],
-  );
-
-  useEffect(() => {
-    return () => {
-      if (virtualVisibleTurnFrameRef.current !== null && typeof window !== "undefined") {
-        window.cancelAnimationFrame(virtualVisibleTurnFrameRef.current);
-      }
-    };
-  }, []);
+  }, [updateVisibleStaticTurns, updateVisibleVirtualTurns, useStaticList]);
 
   useEffect(() => {
     if (loading || !canLoadOlder) {
@@ -421,6 +562,27 @@ export function MessageList({
       setShowOlderTrigger(false);
     }
   }, [canLoadOlder, isProcessing, listMode, loading, visibleMessages[0]?.id]);
+
+  useEffect(() => {
+    if (conversationHydrationRef.current && hydrationSessionId) {
+      conversationHydrationRef.current.switchSession(hydrationSessionId);
+    }
+    return () => {
+      if (hydrationIdleRef.current !== null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(hydrationIdleRef.current);
+        hydrationIdleRef.current = null;
+      }
+      if (hydrationTimeoutRef.current !== null) {
+        window.clearTimeout(hydrationTimeoutRef.current);
+        hydrationTimeoutRef.current = null;
+      }
+    };
+  }, [hydrationSessionId]);
+
+  useEffect(() => () => {
+    conversationHydrationRef.current?.destroy();
+    conversationHydrationRef.current = null;
+  }, []);
 
   useLayoutEffect(() => {
     setVisibleTurnIndexes((current) => normalizeVisibleTurnIndexes(current, displayTurns.length));
@@ -435,24 +597,48 @@ export function MessageList({
       olderLoadRequestedRef.current = false;
       return;
     }
-    const scroller = useStaticList ? staticAutoScroll.containerRef.current : virtualScrollerRef.current;
+    const scroller = useStaticList ? staticScrollerRef.current : virtualScrollerRef.current;
     if (!scroller) {
       olderLoadAnchorRef.current = null;
       olderLoadRequestedRef.current = false;
+      autoScroll.endHistoryRestore();
       return;
     }
-    const nextScrollHeight = scroller.scrollHeight;
-    scroller.scrollTop = nextScrollHeight - anchor.scrollHeight + anchor.scrollTop;
+    if (anchor.runtime) {
+      conversationNavigation.attach(conversationTimelineRef.current);
+      conversationNavigation.completePrepend();
+    } else {
+      const nextScrollHeight = scroller.scrollHeight;
+      scroller.scrollTop = nextScrollHeight - anchor.scrollHeight + anchor.scrollTop;
+    }
     olderLoadAnchorRef.current = null;
     olderLoadRequestedRef.current = false;
-  }, [displayTurns.length, loadingOlder, staticAutoScroll.containerRef, useStaticList]);
+    autoScroll.endHistoryRestore();
+  }, [autoScroll.endHistoryRestore, conversationNavigation, displayTurns.length, loadingOlder, useStaticList]);
 
   useLayoutEffect(() => {
     if (!useStaticList) {
       return;
     }
-    updateVisibleStaticTurns(staticAutoScroll.containerRef.current);
-  }, [displayTurns.length, staticAutoScroll.containerRef, updateVisibleStaticTurns, useStaticList]);
+    updateVisibleStaticTurns(staticScrollerRef.current);
+  }, [displayTurns.length, updateVisibleStaticTurns, useStaticList]);
+
+  useLayoutEffect(() => {
+    if (useStaticList) autoScroll.notifyContentMutation("timeline-publish");
+  }, [autoScroll.notifyContentMutation, displayBlocks, isProcessing, useStaticList]);
+
+  useEffect(() => {
+    const content = staticContentRef.current;
+    if (!useStaticList || !content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => autoScroll.notifyContentMutation("resource-resize"));
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [autoScroll.notifyContentMutation, useStaticList]);
+
+  useEffect(() => {
+    if (a2uiRenderSuspended) autoScroll.suspend("a2ui-render-resize");
+    else autoScroll.resume("a2ui-render-resumed");
+  }, [a2uiRenderSuspended, autoScroll.resume, autoScroll.suspend]);
 
   useLayoutEffect(() => {
     const previousTurnSummary = previousTurnSummaryRef.current;
@@ -477,70 +663,12 @@ export function MessageList({
     setVisibleTurnIndexesIfChanged(new Set([displayTurns.length - 1]));
   }, [displayTurns, isProcessing, setVisibleTurnIndexesIfChanged, showTurnNavigator]);
 
-  const virtualComponents = useMemo<Components<TimelineBlock>>(
-    () => ({
-      ...messageVirtuosoComponents,
-      Scroller: forwardRef<HTMLDivElement, ScrollerProps>(function MessageScroller(
-        { children, style, ...props },
-        ref,
-      ) {
-        const { onPointerDown, onScroll, ...scrollerProps } = props as typeof props & {
-          onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
-          onScroll?: (event: UIEvent<HTMLDivElement>) => void;
-        };
-        return (
-          <div
-            {...scrollerProps}
-            ref={ref}
-            className={styles.scroller}
-            data-message-list-scroll="true"
-            data-message-list-variant={variant}
-            data-testid="message-list-scroll"
-            style={style}
-            onPointerDown={(event) => {
-              onPointerDown?.(event);
-              markNativeScrollbarDrag(event, event.currentTarget);
-            }}
-            onScroll={(event) => {
-              onScroll?.(event);
-              handleVirtualScroll(event);
-            }}
-          >
-            {children}
-          </div>
-        );
-      }),
-      Header: function MessageListHeader() {
-        return (
-          <>
-            {olderLoader}
-            {renderedTopNotice}
-          </>
-        );
-      },
-      Item: function MessageItem({ children, style, ...props }: ItemProps<TimelineBlock>) {
-        const blockIndex = (props as { "data-index"?: number | string })["data-index"];
-        return (
-          <div
-            {...props}
-            className={styles.timelineBlock}
-            data-timeline-index={blockIndex}
-            style={style}
-          >
-            {children}
-          </div>
-        );
-      },
-    }),
-    [flashingTurnIndex, handleVirtualScroll, markNativeScrollbarDrag, olderLoader, renderedTopNotice, variant],
-  );
-
   useEffect(() => {
     onScrollControlsChange?.({
       showScrollToBottom: scrollControls.showScrollToBottom,
-      scrollToBottom: scrollControls.scrollToBottom,
+      scrollToBottom: scrollToConversationBottom,
     });
-  }, [onScrollControlsChange, scrollControls.scrollToBottom, scrollControls.showScrollToBottom]);
+  }, [onScrollControlsChange, scrollControls.showScrollToBottom, scrollToConversationBottom]);
 
   const clearTurnFlashTimers = useCallback(() => {
     if (typeof window === "undefined") {
@@ -582,46 +710,54 @@ export function MessageList({
   useEffect(() => () => clearTurnFlashTimers(), [clearTurnFlashTimers]);
 
   const navigateToTurn = useCallback(
-    (index: number) => {
+    (index: number, request?: { requestId?: string | number; flash?: boolean }) => {
       if (index < 0 || index >= displayTurns.length) {
         return true;
       }
+      onTurnNavigate?.(index);
       if (!useStaticList) {
-        const virtuoso = autoScroll.virtuosoRef.current;
-        if (!virtuoso) {
+        const unitId = timeline.turnUnitIds[index];
+        if (!unitId) {
           return false;
         }
-        const blockIndex = timeline.turnBlockIndexes[index];
-        if (blockIndex === undefined) {
-          return false;
-        }
-        autoScroll.pinToCurrentPosition();
-        virtuoso.scrollToIndex({
+        autoScroll.beginNavigation();
+        return conversationNavigation.requestNavigation({
+          requestId: request?.requestId ?? `turn-navigator:${++navigationRequestSequenceRef.current}`,
+          unitId,
           align: "center",
-          behavior: prefersReducedMotion() ? "auto" : "smooth",
-          index: blockIndex,
+          flash: request?.flash,
+          source: request?.requestId === undefined ? "turn-navigator" : "external",
+          onRevealed: () => {
+            autoScroll.endNavigation();
+            setVisibleTurnIndexesIfChanged(new Set([index]));
+            if (request?.flash) triggerTurnFlash(index);
+          },
         });
-        setVisibleTurnIndexesIfChanged(new Set([index]));
-        return true;
       }
 
       const target = staticTurnRefsRef.current[index];
       if (typeof target?.scrollIntoView === "function") {
+        autoScroll.beginNavigation();
         target.scrollIntoView({
           block: "center",
           behavior: prefersReducedMotion() ? "auto" : "smooth",
         });
+        autoScroll.endNavigation();
         setVisibleTurnIndexesIfChanged(new Set([index]));
+        if (request?.flash) triggerTurnFlash(index);
         return true;
       }
       return false;
     },
     [
-      autoScroll.pinToCurrentPosition,
-      autoScroll.virtuosoRef,
+      autoScroll.beginNavigation,
+      autoScroll.endNavigation,
+      conversationNavigation,
       displayTurns.length,
+      onTurnNavigate,
       setVisibleTurnIndexesIfChanged,
-      timeline.turnBlockIndexes,
+      timeline.turnUnitIds,
+      triggerTurnFlash,
       useStaticList,
     ],
   );
@@ -630,57 +766,35 @@ export function MessageList({
     if (externalTurnNavigationRequestId === undefined || loading || externalTurnNavigationIndex === null) {
       return;
     }
-    if (typeof window === "undefined") {
-      if (navigateToTurn(externalTurnNavigationIndex)) {
-        triggerTurnFlash(externalTurnNavigationIndex);
-      }
-      return;
-    }
-    let cancelled = false;
-    let frameId: number | null = null;
-    let remainingAttempts = TURN_NAVIGATION_RETRY_FRAMES;
-    const attemptNavigation = () => {
-      frameId = null;
-      if (cancelled) {
-        return;
-      }
-      const navigated = navigateToTurn(externalTurnNavigationIndex);
-      remainingAttempts -= 1;
-      if (navigated || remainingAttempts <= 0) {
-        if (navigated) {
-          triggerTurnFlash(externalTurnNavigationIndex);
-        }
-        return;
-      }
-      frameId = window.requestAnimationFrame(attemptNavigation);
-    };
-    frameId = window.requestAnimationFrame(attemptNavigation);
+    const requestId = `external:${externalTurnNavigationRequestId}`;
+    navigateToTurn(externalTurnNavigationIndex, {
+      requestId,
+      flash: turnNavigationRequest?.flash,
+    });
     return () => {
-      cancelled = true;
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
+      conversationNavigation.cancelNavigation(requestId);
     };
   }, [
+    conversationNavigation,
     externalTurnNavigationIndex,
     externalTurnNavigationRequestId,
     loading,
     navigateToTurn,
-    triggerTurnFlash,
+    turnNavigationRequest?.flash,
   ]);
 
   const messageListContent = useStaticList ? (
     <div
-      ref={staticAutoScroll.containerRef}
+      ref={setStaticScrollerRef}
       className={styles.scroller}
       data-message-list-scroll="true"
       data-message-list-variant={variant}
       data-testid="message-list-scroll"
       onPointerDown={handleStaticPointerDown}
       onScroll={handleStaticScroll}
-      onWheel={staticAutoScroll.handleWheel}
+      onWheel={handleUserWheel}
     >
-      <div ref={staticAutoScroll.contentRef} className={styles.list} role="list" aria-label="Messages">
+      <div ref={staticContentRef} className={styles.list} role="list" aria-label="Messages">
         {olderLoader}
         {renderedTopNotice}
         {displayBlocks.map((block) =>
@@ -693,6 +807,7 @@ export function MessageList({
             turnEndStreamingCursor,
             workspaceRuntime,
             workspaceScope,
+            previewContext,
             onApprovalDecision,
             onResolveMcpElicitation,
             a2uiDebugInfoEnabled,
@@ -717,30 +832,30 @@ export function MessageList({
       </div>
     </div>
   ) : (
-    <Virtuoso
-      ref={autoScroll.virtuosoRef}
-      className={styles.virtualScroller}
-      data={displayBlocks}
-      components={virtualComponents}
-      computeItemKey={(_, block) => block.id}
-      defaultItemHeight={120}
-      increaseViewportBy={VIRTUAL_MESSAGE_VIEWPORT_BUFFER}
-      followOutput={autoScroll.followOutput}
-      atBottomThreshold={8}
-      atTopThreshold={LOAD_OLDER_TRIGGER_PX}
-      atBottomStateChange={handleVirtualAtBottomStateChange}
-      atTopStateChange={handleVirtualAtTopStateChange}
-      totalListHeightChanged={autoScroll.handleTotalListHeightChanged}
-      scrollerRef={setVirtualScrollerRef}
-      startReached={handleVirtualStartReached}
-      rangeChanged={handleVirtualRangeChanged}
-      initialTopMostItemIndex={
-        externalTurnNavigationIndex === null
-          ? { align: "end", index: Math.max(0, displayBlocks.length - 1) }
-          : { align: "center", index: timeline.turnBlockIndexes[externalTurnNavigationIndex] ?? 0 }
-      }
-      itemContent={(_, block) =>
-        renderTimelineBlock({
+    <ConversationTimelineSurface
+      runtimeRef={conversationTimelineRef}
+      units={virtualRuntimeUnits}
+      className={`${styles.scroller} ${styles.virtualScroller}`}
+      canvasClassName={`${styles.list} ${styles.virtualList} ${styles.timelineRuntimeCanvas}`}
+      overscanPx={CONVERSATION_TIMELINE_OVERSCAN_PX}
+      variant={variant}
+      scrollerRef={setConversationTimelineScroller}
+      onPointerDown={handleVirtualPointerDown}
+      onScroll={handleVirtualScroll}
+      onWheel={handleUserWheel}
+      onPublished={handleConversationTimelinePublished}
+      onViewportChanged={handleConversationViewportChanged}
+      renderUnit={(unit) => {
+        if (unit.id === "conversation-runtime:top") {
+          return <div className={styles.timelineRuntimeTop}>{olderLoader}{renderedTopNotice}</div>;
+        }
+        if (unit.id === "conversation-runtime:bottom") {
+          return <div className={styles.virtualBottomSpacer} aria-hidden="true" />;
+        }
+        const block = timeline.runtimeBlockByUnitId.get(unit.id);
+        if (!block) return null;
+        return renderConversationRuntimeUnit({
+          unit,
           block,
           isLastTurn: block.type === "turn" && block.turnIndex === displayTurns.length - 1,
           focusFlash: block.type === "turn" && block.turnIndex === flashingTurnIndex,
@@ -749,6 +864,7 @@ export function MessageList({
           turnEndStreamingCursor,
           workspaceRuntime,
           workspaceScope,
+          previewContext,
           onApprovalDecision,
           onResolveMcpElicitation,
           a2uiDebugInfoEnabled,
@@ -765,8 +881,8 @@ export function MessageList({
           showForkSourceMarkers,
           onReverseFromMessage,
           isProcessing,
-        })
-      }
+        });
+      }}
     />
   );
 
@@ -774,6 +890,8 @@ export function MessageList({
     <section
       className={styles.root}
       data-list-mode={listMode}
+      data-follow-mode={autoScroll.snapshot.mode}
+      data-follow-reason={autoScroll.snapshot.reason}
       data-a2ui-count={a2uiRenderPressure.count}
       data-a2ui-live-count={a2uiRenderPressure.liveCount}
       data-a2ui-render-suspended={a2uiRenderSuspended ? "true" : "false"}
@@ -816,7 +934,7 @@ export function MessageList({
           className={styles.scrollButton}
           type="button"
           aria-label="滚动到底"
-          onClick={() => scrollControls.scrollToBottom()}
+          onClick={() => scrollToConversationBottom()}
         >
           <ArrowDown size={15} />
           <span>滚动到底</span>
@@ -836,50 +954,6 @@ export function MessageList({
   return list;
 }
 
-const messageVirtuosoComponents: Components<TimelineBlock> = {
-  Scroller: forwardRef<HTMLDivElement, ScrollerProps>(function MessageScroller(
-    { children, style, ...props },
-    ref,
-  ) {
-    return (
-      <div
-        {...props}
-        ref={ref}
-        className={styles.scroller}
-        data-message-list-scroll="true"
-        data-testid="message-list-scroll"
-        style={style}
-      >
-        {children}
-      </div>
-    );
-  }),
-  List: forwardRef<HTMLDivElement, ListProps>(function MessageListSurface({ children, style, ...props }, ref) {
-    return (
-      <div
-        {...props}
-        ref={ref}
-        className={`${styles.list} ${styles.virtualList}`}
-        role="list"
-        aria-label="娑堟伅鍒楄〃"
-        style={style}
-      >
-        {children}
-      </div>
-    );
-  }),
-  Footer: function MessageListBottomSpacer() {
-    return <div className={styles.virtualBottomSpacer} aria-hidden="true" />;
-  },
-  Item: function MessageItem({ children, style, ...props }: ItemProps<TimelineBlock>) {
-    const blockIndex = (props as { "data-index"?: number | string })["data-index"];
-    return (
-      <div {...props} className={styles.timelineBlock} data-timeline-index={blockIndex} style={style}>
-        {children}
-      </div>
-    );
-  },
-};
 
 function renderOlderLoader({
   canLoadOlder,
@@ -925,6 +999,194 @@ function renderTopNotice(notice: MessageListTopNotice | null): ReactNode {
   );
 }
 
+function renderConversationRuntimeUnit({
+  unit,
+  block,
+  isLastTurn,
+  focusFlash,
+  renderMessage,
+  assistantTurnFooters,
+  turnEndStreamingCursor,
+  workspaceRuntime,
+  workspaceScope,
+  previewContext,
+  onApprovalDecision,
+  onResolveMcpElicitation,
+  a2uiDebugInfoEnabled,
+  a2uiRenderSuspended,
+  onA2UISubmit,
+  onA2UICancel,
+  onFilePreview,
+  onLoadToolDetails,
+  onTerminateCommand,
+  onQuoteSelection,
+  onAskSelectionInBtwConversation,
+  onForkFromMessage,
+  onNavigateToForkSource,
+  showForkSourceMarkers,
+  onReverseFromMessage,
+  isProcessing,
+}: {
+  unit: ConversationRenderUnit;
+  block: TimelineBlock;
+  isLastTurn: boolean;
+  focusFlash: boolean;
+  renderMessage?: (message: ConversationMessage) => ReactNode;
+  assistantTurnFooters: AssistantTurnFooters;
+  turnEndStreamingCursor: TurnEndStreamingCursor;
+  workspaceRuntime?: RuntimeBridge;
+  workspaceScope?: WorkspaceScope | null;
+  previewContext?: PreviewContextValue | null;
+  onApprovalDecision?: ApprovalDecisionHandler;
+  onResolveMcpElicitation?: McpElicitationResolveHandler;
+  a2uiDebugInfoEnabled: boolean;
+  a2uiRenderSuspended: boolean;
+  onA2UISubmit?: A2UISubmitHandler;
+  onA2UICancel?: A2UICancelHandler;
+  onFilePreview?: (file: FileChangePreview) => void;
+  onLoadToolDetails?: ToolDetailsLoader;
+  onTerminateCommand?: (commandId: string) => Promise<void> | void;
+  onQuoteSelection?: (text: string) => void;
+  onAskSelectionInBtwConversation?: (text: string) => void;
+  onForkFromMessage?: (message: ConversationMessage) => void;
+  onNavigateToForkSource?: (fork: AgentSessionFork) => void;
+  showForkSourceMarkers: boolean;
+  onReverseFromMessage?: (message: ConversationMessage) => void;
+  isProcessing: boolean;
+}): ReactNode {
+  if (block.type === "event") {
+    if (!unit.item) return null;
+    return (
+      <div
+        className={`${styles.item} ${styles.runtimeUnitItem}`}
+        data-kind={block.kind}
+        data-testid="message-timeline-event"
+        role="listitem"
+      >
+        {renderMessageItem({
+          item: unit.item,
+          renderMessage,
+          showTurnEndStreamingCursor: false,
+          suppressStreamingCursorMessageIds: new Set(),
+          workspaceRuntime,
+          workspaceScope,
+          previewContext,
+          onApprovalDecision,
+          onResolveMcpElicitation,
+          a2uiDebugInfoEnabled,
+          a2uiRenderSuspended,
+          onA2UISubmit,
+          onA2UICancel,
+          onFilePreview,
+          onLoadToolDetails,
+          onTerminateCommand,
+          onQuoteSelection,
+          onAskSelectionInBtwConversation,
+          onForkFromMessage,
+          onNavigateToForkSource,
+          showForkSourceMarkers,
+          onReverseFromMessage,
+        })}
+      </div>
+    );
+  }
+
+  const turn = block.turn;
+  if (unit.kind === "turn-shell") {
+    return (
+      <div className={styles.runtimeTurnShell} aria-hidden={turn.showThreadTaskContinuationNotice ? undefined : "true"}>
+        {turn.showThreadTaskContinuationNotice ? (
+          <div className={`${styles.item} ${styles.runtimeUnitItem}`} data-kind="thread_task_continue" role="listitem">
+            <ThreadTaskContinuationNotice />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (unit.kind === "footer") {
+    const anchorItemId = lastFooterAnchorItemId(turn.items);
+    const footerMessage = anchorItemId ? assistantTurnFooters.footerByItemId.get(anchorItemId) : undefined;
+    const processingStartedAt = anchorItemId
+      ? assistantTurnFooters.processingStartByItemId.get(anchorItemId)
+      : undefined;
+    const showCursor = Boolean(anchorItemId && turnEndStreamingCursor.cursorAfterItemIds.has(anchorItemId));
+    return (
+      <div className={styles.runtimeTurnFooter} data-testid="message-turn-footer">
+        {withTurnProcessingDuration(
+          withTurnEndStreamingCursor(
+            withTurnActionFooter(
+              null,
+              footerMessage,
+              onForkFromMessage,
+              onReverseFromMessage,
+              onNavigateToForkSource,
+              showForkSourceMarkers,
+            ),
+            showCursor,
+          ),
+          processingStartedAt,
+        )}
+      </div>
+    );
+  }
+
+  if (unit.kind === "task-status") {
+    const firstStatusItem = turn.items.find(isThreadTaskStatusItem);
+    if (unit.item?.id !== firstStatusItem?.id || (isProcessing && isLastTurn)) {
+      return <div className={styles.runtimeTurnShell} aria-hidden="true" />;
+    }
+    const statusMessages = threadTaskStatusMessagesFromTurn(turn);
+    return (
+      <div
+        className={`${styles.item} ${styles.runtimeUnitItem}`}
+        data-kind="thread_task_status_summary"
+        data-testid="thread-task-status-summary"
+        role="listitem"
+      >
+        {statusMessages.map((message) => <ThreadTaskStatusBlock message={message} key={message.id} />)}
+      </div>
+    );
+  }
+
+  if (!unit.item) return <div className={styles.runtimeTurnShell} aria-hidden="true" />;
+  const renderableItems = turn.items.filter((item) => !isThreadTaskStatusItem(item) && !isTurnMarkerItem(item));
+  const focusAssistantItemId = focusFlash ? findLastAssistantItemId(renderableItems) : null;
+  return (
+    <div
+      className={`${styles.item} ${styles.runtimeUnitItem}`}
+      data-focus-flash={unit.item.id === focusAssistantItemId ? "true" : undefined}
+      data-kind={itemKind(unit.item)}
+      role="listitem"
+    >
+      {renderMessageItem({
+        item: unit.item,
+        renderMessage,
+        showTurnEndStreamingCursor: false,
+        suppressStreamingCursorMessageIds: turnEndStreamingCursor.suppressedMessageIds,
+        workspaceRuntime,
+        workspaceScope,
+        previewContext,
+        onApprovalDecision,
+        onResolveMcpElicitation,
+        a2uiDebugInfoEnabled,
+        a2uiRenderSuspended,
+        onA2UISubmit,
+        onA2UICancel,
+        onFilePreview,
+        onLoadToolDetails,
+        onTerminateCommand,
+        onQuoteSelection,
+        onAskSelectionInBtwConversation,
+        onForkFromMessage,
+        onNavigateToForkSource,
+        showForkSourceMarkers,
+        onReverseFromMessage,
+      })}
+    </div>
+  );
+}
+
 function renderTimelineBlock({
   block,
   isLastTurn,
@@ -934,6 +1196,7 @@ function renderTimelineBlock({
   turnEndStreamingCursor,
   workspaceRuntime,
   workspaceScope,
+  previewContext,
   onApprovalDecision,
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
@@ -960,6 +1223,7 @@ function renderTimelineBlock({
   turnEndStreamingCursor: TurnEndStreamingCursor;
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
+  previewContext?: PreviewContextValue | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled: boolean;
@@ -994,6 +1258,7 @@ function renderTimelineBlock({
           suppressStreamingCursorMessageIds: new Set(),
           workspaceRuntime,
           workspaceScope,
+          previewContext,
           onApprovalDecision,
           onResolveMcpElicitation,
           a2uiDebugInfoEnabled,
@@ -1031,6 +1296,7 @@ function renderTimelineBlock({
         turnEndStreamingCursor,
         workspaceRuntime,
         workspaceScope,
+        previewContext,
         onApprovalDecision,
         onResolveMcpElicitation,
         a2uiDebugInfoEnabled,
@@ -1060,6 +1326,7 @@ function renderMessageTurn({
   turnEndStreamingCursor,
   workspaceRuntime,
   workspaceScope,
+  previewContext,
   onApprovalDecision,
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
@@ -1084,6 +1351,7 @@ function renderMessageTurn({
   turnEndStreamingCursor: TurnEndStreamingCursor;
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
+  previewContext?: PreviewContextValue | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled: boolean;
@@ -1120,6 +1388,7 @@ function renderMessageTurn({
         suppressStreamingCursorMessageIds: turnEndStreamingCursor.suppressedMessageIds,
         workspaceRuntime,
         workspaceScope,
+        previewContext,
         onApprovalDecision,
         onResolveMcpElicitation,
         a2uiDebugInfoEnabled,
@@ -1177,6 +1446,7 @@ function renderMessageItem({
   suppressStreamingCursorMessageIds,
   workspaceRuntime,
   workspaceScope,
+  previewContext,
   onApprovalDecision,
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
@@ -1201,6 +1471,7 @@ function renderMessageItem({
   suppressStreamingCursorMessageIds: Set<string>;
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
+  previewContext?: PreviewContextValue | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled: boolean;
@@ -1226,6 +1497,7 @@ function renderMessageItem({
         suppressStreamingCursor={suppressStreamingCursorMessageIds.has(item.message.id)}
         workspaceRuntime={workspaceRuntime}
         workspaceScope={workspaceScope}
+        previewContext={previewContext}
         onApprovalDecision={onApprovalDecision}
         onResolveMcpElicitation={onResolveMcpElicitation}
         a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
@@ -1268,6 +1540,7 @@ function renderMessageItem({
           message={message}
           workspaceRuntime={workspaceRuntime}
           workspaceScope={workspaceScope}
+          previewContext={previewContext}
           onApprovalDecision={onApprovalDecision}
           onResolveMcpElicitation={onResolveMcpElicitation}
           onA2UISubmit={onA2UISubmit}
@@ -1417,6 +1690,7 @@ function DefaultMessage({
   suppressStreamingCursor = false,
   workspaceRuntime,
   workspaceScope,
+  previewContext,
   onApprovalDecision,
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
@@ -1434,6 +1708,7 @@ function DefaultMessage({
   suppressStreamingCursor?: boolean;
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
+  previewContext?: PreviewContextValue | null;
   onApprovalDecision?: ApprovalDecisionHandler;
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled?: boolean;
@@ -1517,6 +1792,7 @@ function DefaultMessage({
       suppressStreamingCursor={suppressStreamingCursor}
       workspaceRuntime={workspaceRuntime}
       workspaceScope={workspaceScope}
+      previewContextOverride={previewContext}
       onQuoteSelection={onQuoteSelection}
       onAskSelectionInBtwConversation={onAskSelectionInBtwConversation}
       onReverseFromMessage={onReverseFromMessage}
@@ -1898,17 +2174,15 @@ function findVisibleTurnNavigationIndexes(
   return visibleNavigationIndexes;
 }
 
-interface MessageTurn {
-  id: string;
-  items: ProcessedMessageItem[];
-  turnMarker: ConversationMessage | null;
-  showThreadTaskContinuationNotice: boolean;
-}
+type MessageTurn = ConversationRenderTurn;
 
 interface ConversationTimeline {
   blocks: TimelineBlock[];
   turns: MessageTurn[];
   turnBlockIndexes: number[];
+  runtimeUnits: readonly ConversationRenderUnit[];
+  runtimeBlockByUnitId: ReadonlyMap<string, TimelineBlock>;
+  turnUnitIds: readonly string[];
 }
 
 type TimelineBlock =
@@ -1936,45 +2210,82 @@ interface TurnEndStreamingCursor {
 }
 
 function buildConversationTimeline(displayItems: ProcessedMessageItem[]): ConversationTimeline {
-  const blocks: TimelineBlock[] = [];
-  const turns: MessageTurn[] = [];
+  const projection = projectConversationRenderUnits(displayItems);
+  const blocks: TimelineBlock[] = projection.segments.map((segment) => segment.type === "event"
+    ? {
+        type: "event" as const,
+        id: segment.id,
+        item: segment.item,
+        kind: itemKind(segment.item),
+      }
+    : {
+        type: "turn" as const,
+        id: segment.id,
+        turn: segment.turn,
+        turnIndex: segment.turnIndex,
+      });
+  const turns: MessageTurn[] = [...projection.turns];
   const turnBlockIndexes: number[] = [];
-  let pendingTurnItems: ProcessedMessageItem[] = [];
-
-  const flushTurns = () => {
-    if (!pendingTurnItems.length) {
-      return;
+  blocks.forEach((block, blockIndex) => {
+    if (block.type === "turn") turnBlockIndexes[block.turnIndex] = blockIndex;
+  });
+  const runtimeBlockByUnitId = new Map<string, TimelineBlock>();
+  const turnUnitIds: string[] = [];
+  const turnUnitPriorities: number[] = [];
+  for (const unit of projection.units) {
+    const block = unit.turnIndex === null
+      ? blocks.find((candidate) => candidate.type === "event" && candidate.item.id === unit.item?.id)
+      : blocks[turnBlockIndexes[unit.turnIndex]];
+    if (block) runtimeBlockByUnitId.set(unit.id, block);
+    if (unit.turnIndex !== null) {
+      const priority = turnNavigationUnitPriority(unit.kind);
+      if (turnUnitIds[unit.turnIndex] === undefined || priority < (turnUnitPriorities[unit.turnIndex] ?? Infinity)) {
+        turnUnitIds[unit.turnIndex] = unit.id;
+        turnUnitPriorities[unit.turnIndex] = priority;
+      }
     }
-    for (const turn of groupDisplayItemsByTurn(pendingTurnItems)) {
-      const turnIndex = turns.length;
-      turnBlockIndexes[turnIndex] = blocks.length;
-      turns.push(turn);
-      blocks.push({
-        type: "turn",
-        id: turn.id,
-        turn,
-        turnIndex,
-      });
-    }
-    pendingTurnItems = [];
-  };
-
-  for (const item of displayItems) {
-    if (isTimelineEventItem(item)) {
-      flushTurns();
-      blocks.push({
-        type: "event",
-        id: `event:${item.id}`,
-        item,
-        kind: itemKind(item),
-      });
-      continue;
-    }
-    pendingTurnItems.push(item);
   }
-  flushTurns();
 
-  return { blocks, turns, turnBlockIndexes };
+  return {
+    blocks,
+    turns,
+    turnBlockIndexes,
+    runtimeUnits: projection.units,
+    runtimeBlockByUnitId,
+    turnUnitIds: Object.freeze(turnUnitIds),
+  };
+}
+
+function turnNavigationUnitPriority(kind: ConversationRenderUnit["kind"]): number {
+  if (kind === "user-markdown") return 0;
+  if (kind === "assistant-markdown") return 1;
+  if (kind !== "turn-shell" && kind !== "footer") return 2;
+  return 3;
+}
+
+function buildConversationHydrationCandidates(
+  items: readonly ProcessedMessageItem[],
+  _units: readonly ConversationRenderUnit[],
+): ConversationHydrationCandidate[] {
+  const candidates: ConversationHydrationCandidate[] = [];
+  let order = 0;
+  for (const item of items) {
+    for (const message of messagesFromProcessedItem(item)) {
+      const messageOrder = order++;
+      if (message.kind !== "user" && message.kind !== "assistant") continue;
+      const source = normalizeMessageContent(message.content);
+      candidates.push(Object.freeze({
+        sessionId: message.threadId,
+        // ConversationMessage already satisfies the adapter's narrower input
+        // contract. Reusing it avoids one duplicate object per history item.
+        message,
+        source,
+        order: messageOrder,
+        unitId: `unit:${message.kind}-markdown:${message.id}`,
+      }));
+    }
+  }
+  return candidates;
 }
 
 function isTimelineEventItem(item: ProcessedMessageItem): boolean {
@@ -2309,15 +2620,19 @@ function previewLines(content: unknown, limit: number): string[] {
 
 function normalizePreviewText(content: unknown): string {
   return normalizeMessageContent(content)
+    .slice(0, TURN_PREVIEW_SOURCE_LIMIT)
     .replace(/```[\s\S]*?```/g, "代码块")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[[^\]]*]\(([^)]+)\)/g, "$1")
     .replace(/[#*_>~-]+/g, "")
     .split(/\r?\n/)
-    .map((line) => line.trim())
+    .map((line) => line.trim().slice(0, TURN_PREVIEW_LINE_LIMIT))
     .filter(Boolean)
     .join("\n");
 }
+
+const TURN_PREVIEW_SOURCE_LIMIT = 8 * 1024;
+const TURN_PREVIEW_LINE_LIMIT = 240;
 
 function collectAssistantTurnFooters(
   turns: MessageTurn[],
@@ -2426,7 +2741,7 @@ function collectTurnEndStreamingCursor(
   };
 }
 
-function lastFooterAnchorItemId(items: ProcessedMessageItem[]): string | null {
+function lastFooterAnchorItemId(items: readonly ProcessedMessageItem[]): string | null {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (!item) {
@@ -2443,7 +2758,7 @@ function lastFooterAnchorItemId(items: ProcessedMessageItem[]): string | null {
   return null;
 }
 
-function mapMessageIdsToDisplayItems(displayItems: ProcessedMessageItem[]): Map<string, string> {
+function mapMessageIdsToDisplayItems(displayItems: readonly ProcessedMessageItem[]): Map<string, string> {
   const itemIdByMessageId = new Map<string, string>();
   displayItems.forEach((item) => {
     if (item.type === "message") {

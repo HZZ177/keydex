@@ -136,6 +136,16 @@
   padding-bottom: 0;
 }
 
+.timelineRuntimeCanvas {
+  min-height: 100%;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.timelineRuntimeTop {
+  min-height: 22px;
+}
+
 .virtualBottomSpacer {
   height: var(--message-list-bottom-buffer);
 }
@@ -189,6 +199,25 @@
 
 .item:last-child {
   padding-bottom: 0;
+}
+
+/* Every virtual unit owns a separate local React root, so each item is also
+ * :last-child inside its host. Keep inter-unit rhythm explicit instead of
+ * inheriting the static whole-turn selector above. */
+.item.runtimeUnitItem {
+  padding-bottom: 20px;
+}
+
+.runtimeTurnShell {
+  min-height: 1px;
+  overflow-anchor: none;
+}
+
+.runtimeTurnFooter {
+  min-width: 0;
+  padding-bottom: 20px;
+  contain: layout paint style;
+  overflow-anchor: none;
 }
 
 .turnGroup {
@@ -390,7 +419,9 @@
 }
 
 .turnGroup:hover .turnActionRow [data-turn-footer-details="true"],
-.turnGroup:focus-within .turnActionRow [data-turn-footer-details="true"] {
+.turnGroup:focus-within .turnActionRow [data-turn-footer-details="true"],
+.runtimeTurnFooter:hover .turnActionRow [data-turn-footer-details="true"],
+.runtimeTurnFooter:focus-within .turnActionRow [data-turn-footer-details="true"] {
   opacity: 1;
   pointer-events: auto;
 }

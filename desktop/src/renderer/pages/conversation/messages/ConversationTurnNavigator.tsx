@@ -24,6 +24,8 @@ const MARKER_STEP_PX = 12;
 const MARKER_HIT_HEIGHT_PX = 14;
 const SCROLL_EDGE_PX = 24;
 const SCROLL_FADE_EPSILON_PX = 1;
+const MARKER_WINDOW_OVERSCAN = 12;
+const MARKER_INITIAL_WINDOW = 64;
 
 export function ConversationTurnNavigator({
   turns,
@@ -76,6 +78,13 @@ export function ConversationTurnNavigator({
   const railHeight = markerRailHeight(turns.length);
   const highlightedIndexSet = normalizeHighlightedIndexes(highlightedIndexes, turns.length);
   const highlightedRange = highlightedIndexRange(highlightedIndexSet);
+  const renderedMarkerIndexes = markerWindowIndexes(
+    turns.length,
+    viewportMetrics.scrollTop,
+    viewportMetrics.clientHeight,
+    highlightedIndexSet,
+    hoveredIndex,
+  );
   const activeTurn = hoveredIndex === null ? null : turns[hoveredIndex] ?? null;
   const activeMarkerTop =
     hoveredIndex === null
@@ -243,7 +252,9 @@ export function ConversationTurnNavigator({
         onScroll={handleViewportScroll}
       >
         <div className={styles.turnNavigatorRail} ref={railRef}>
-          {turns.map((turn, index) => (
+          {renderedMarkerIndexes.map((index) => {
+            const turn = turns[index];
+            return (
             <button
               className={styles.turnNavigatorMarker}
               key={turn.id}
@@ -270,7 +281,8 @@ export function ConversationTurnNavigator({
             >
               <span />
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -291,8 +303,31 @@ export function ConversationTurnNavigator({
       <div className={styles.turnNavigatorCount} data-testid="conversation-turn-navigator-count">
         {turns.length} turn
       </div>
+      <span hidden data-testid="conversation-turn-navigator-rendered-count">
+        {renderedMarkerIndexes.length}
+      </span>
     </nav>
   );
+}
+
+function markerWindowIndexes(
+  count: number,
+  scrollTop: number,
+  clientHeight: number,
+  highlighted: ReadonlySet<number>,
+  hovered: number | null,
+): number[] {
+  if (count <= MARKER_INITIAL_WINDOW) return Array.from({ length: count }, (_, index) => index);
+  const visibleCount = clientHeight > 0
+    ? Math.ceil(clientHeight / MARKER_STEP_PX)
+    : MARKER_INITIAL_WINDOW - MARKER_WINDOW_OVERSCAN * 2;
+  const first = clamp(Math.floor(scrollTop / MARKER_STEP_PX) - MARKER_WINDOW_OVERSCAN, 0, count - 1);
+  const last = clamp(first + visibleCount + MARKER_WINDOW_OVERSCAN * 2, first, count - 1);
+  const indexes = new Set<number>();
+  for (let index = first; index <= last; index += 1) indexes.add(index);
+  highlighted.forEach((index) => indexes.add(index));
+  if (hovered !== null) indexes.add(hovered);
+  return [...indexes].sort((left, right) => left - right);
 }
 
 function markerRailHeight(count: number): number {

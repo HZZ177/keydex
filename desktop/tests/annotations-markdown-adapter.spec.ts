@@ -66,6 +66,33 @@ describe("MarkdownAnnotationAdapter", () => {
     expect(revealBlock).toHaveBeenCalledWith("paragraph", controller.signal);
   });
 
+  it("uses the runtime range resolver without scanning a full block array", async () => {
+    const revealBlock = vi.fn().mockResolvedValue(undefined);
+    const blocksForSourceRange = vi.fn(() => [
+      { id: "paragraph", sourceStart: 0, sourceEnd: 10 },
+    ]);
+    const resolvedBinding = binding(revealBlock);
+    const adapter = new MarkdownAnnotationAdapter();
+    adapter.attach({ ...resolvedBinding, blocks: [], blocksForSourceRange });
+    adapter.render(renderState());
+
+    expect(blocksForSourceRange).toHaveBeenCalledWith({ start: 2, end: 6 });
+    expect(adapter.rangesForBlock("paragraph")).toMatchObject([
+      { annotationId: "single", blockLocalStart: 2, blockLocalEnd: 6 },
+      { annotationId: "cross", blockLocalStart: 8, blockLocalEnd: 10 },
+    ]);
+    await adapter.reveal({
+      annotationId: "single",
+      blockRanges: [],
+      logicalRange: { start: 2, end: 6 },
+      requestId: 2,
+      scroll: true,
+      signal: new AbortController().signal,
+      sourceRanges: [{ start: 2, end: 6 }],
+    });
+    expect(revealBlock).toHaveBeenCalledWith("paragraph", expect.any(AbortSignal));
+  });
+
   it("reports marker fragments in full-document coordinates", () => {
     const state = renderState();
     const resolvedBinding = binding();

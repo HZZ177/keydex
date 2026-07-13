@@ -31,11 +31,21 @@ describe("ConversationPage skill activation", () => {
 
     await waitFor(() => {
       expect(chat).toHaveBeenCalledWith({
+        client_input_id: expect.any(String),
+        delivery_mode: "steer",
         session_id: "ses-1",
         message: "implement this design",
         provider_id: "provider-1",
         model: "qwen-coder",
         runtime_params: {
+          message_context_items: [
+            expect.objectContaining({
+              id: "skill:dev-plan",
+              skill_name: "dev-plan",
+              source: "workspace",
+              type: "skill",
+            }),
+          ],
           skill_activation: {
             skill_name: "dev-plan",
             source: "workspace",

@@ -207,7 +207,9 @@ describe("style foundation", () => {
     expect(messageText).not.toContain('data-placement="detached"');
     expect(messageText).toMatch(/\.actions\[data-message-kind="assistant"\]\s+\.actionButton\s*{[^}]*width:\s*24px/s);
     expect(messageText).toMatch(/\.actions\[data-message-kind="assistant"\]\s+\.actionButton span\s*{[^}]*display:\s*none/s);
-    expect(messageList).toMatch(/\.turnGroup:hover\s+\.turnActionRow,[^{]+\.turnGroup:focus-within\s+\.turnActionRow\s*{[^}]*opacity:\s*1/s);
+    expect(messageList).toMatch(
+      /\.turnGroup:hover\s+\.turnActionRow\s+\[data-turn-footer-details="true"\],[^{]+\.runtimeTurnFooter:focus-within\s+\.turnActionRow\s+\[data-turn-footer-details="true"\]\s*{[^}]*opacity:\s*1/s,
+    );
     expect(filePreview).toMatch(/\.mermaidPane\s*{[^}]*place-items:\s*stretch/s);
     expect(filePreview).toMatch(/\.mermaidSvg\s*{[^}]*place-items:\s*start center/s);
     expect(filePreview).toMatch(/\.mermaidSvg\s*{[^}]*align-items:\s*safe center/s);
@@ -340,7 +342,7 @@ describe("style foundation", () => {
       /--titlebar-mode-switch-width:\s*calc\(\s*var\(--sidebar-default-width\)\s*-\s*var\(--sidebar-collapsed-width\)\s*\)/s,
     );
     expect(titlebar).toMatch(
-      /\.modeSwitch\s*{[^}]*width:\s*max\(\s*176px,\s*var\(--titlebar-mode-switch-width\)\s*\)/s,
+      /\.modeSwitch\s*{[^}]*width:\s*max\(\s*248px,\s*var\(--titlebar-mode-switch-width\)\s*\)/s,
     );
     expect(titlebar).toMatch(
       /\.modeSwitch\s*{[^}]*background:\s*color-mix\(in srgb,\s*var\(--surface-active\) 74%,\s*var\(--sidebar-bg\)\)/s,
@@ -378,9 +380,8 @@ describe("style foundation", () => {
     expect(shell).toMatch(/\.menuItem\s*{\s*width:\s*100%;[^}]*height:\s*30px/s);
     expect(shell).toMatch(/\.menuItem\s*{\s*width:\s*100%;[^}]*font-size:\s*13px/s);
     expect(shell).toMatch(/\.content\s*{[^}]*overflow:\s*auto/s);
-    expect(shell).toMatch(/\.content\s*{[^}]*border-top-left-radius:\s*12px/s);
-    expect(shell).toMatch(/\.content\s*{[^}]*border-bottom-left-radius:\s*12px/s);
-    expect(shell).toMatch(/\.menuItem\[data-active="true"\]\s*{[^}]*surface-active/s);
+    expect(shell).toMatch(/\.content\s*{[^}]*border-radius:\s*12px 0 0 12px/s);
+    expect(shell).toMatch(/\.menuItem\[data-active="true"\]\s*{[^}]*settings-selected-bg/s);
     expect(shell).not.toContain("暂未开放");
     expect(model).toContain("width: min(860px, calc(100% - 96px))");
     expect(model).toContain("padding: 76px 0 116px");

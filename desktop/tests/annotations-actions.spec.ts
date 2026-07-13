@@ -52,7 +52,25 @@ describe("annotation async actions", () => {
     expect(store.getState().error).toBe("save failed");
   });
 
-  it("cancels an obsolete draft or retarget interaction on a 409 revision conflict", async () => {
+  it("preserves draft body and selector after a permission failure", async () => {
+    const runtime = fakeRuntime({ create: vi.fn().mockRejectedValue(new Error("permission denied")) });
+    const store = documentStore("alpha");
+    const actions = createAnnotationActions({ runtime, store });
+    const textSelector = selector("alpha", 0);
+    store.getState().beginDraft({ start: 0, end: 5 }, textSelector);
+    store.getState().updateInteractionBody("Unsaved draft");
+
+    await expect(actions.createText("Unsaved draft", textSelector)).resolves.toBeNull();
+
+    expect(store.getState().interaction).toMatchObject({
+      type: "drafting",
+      body: "Unsaved draft",
+      selector: textSelector,
+    });
+    expect(store.getState().error).toBe("permission denied");
+  });
+
+  it("keeps draft and retarget input recoverable on a 409 revision conflict", async () => {
     const runtime = fakeRuntime({
       create: vi.fn().mockRejectedValue(revisionConflict()),
       replaceTarget: vi.fn().mockRejectedValue(revisionConflict()),
@@ -61,13 +79,19 @@ describe("annotation async actions", () => {
     const actions = createAnnotationActions({ runtime, store });
     const textSelector = selector("alpha", 0);
     store.getState().beginDraft({ start: 0, end: 5 }, textSelector);
+    store.getState().updateInteractionBody("Draft body");
 
     await actions.createText("Draft", textSelector);
-    expect(store.getState().interaction.type).toBe("idle");
+    expect(store.getState().interaction).toMatchObject({ type: "drafting", body: "Draft body" });
 
     store.getState().beginRetarget("ann");
+    store.getState().setRetargetSelection({ start: 0, end: 5 }, textSelector);
     await actions.retarget("ann", textSelector);
-    expect(store.getState().interaction.type).toBe("idle");
+    expect(store.getState().interaction).toMatchObject({
+      type: "retargeting",
+      annotationId: "ann",
+      selector: textSelector,
+    });
     expect(store.getState().error).toContain("changed");
   });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveDocumentAnnotations } from "@/renderer/features/annotations/anchoring/resolveDocumentAnnotations";
-import { createMarkdownTextModel } from "@/renderer/features/annotations/document/MarkdownTextModel";
+import { createMarkdownTextModel } from "./fixtures/annotationMarkdown";
 import { createPlainTextModel } from "@/renderer/features/annotations/document/PlainTextModel";
 import type { AnnotationRecord, TextSelector } from "@/runtime/annotations";
 

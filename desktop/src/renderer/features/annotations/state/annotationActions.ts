@@ -3,7 +3,6 @@ import type {
   AnnotationsRuntime,
   TextSelector,
 } from "@/runtime/annotations";
-import { isRuntimeHttpError } from "@/runtime/errors";
 
 import { AnnotationResolver } from "../anchoring/AnnotationResolver";
 import type { AnnotationStore } from "./annotationStore";
@@ -83,13 +82,11 @@ export function createAnnotationActions({
     kind,
     operation,
     records,
-    revisionSensitive = false,
   }: {
     annotationId?: string;
     kind: "create" | "update-body" | "retarget";
     operation: () => Promise<T>;
     records: (result: NonNullable<T>, current: readonly AnnotationRecord[]) => readonly AnnotationRecord[];
-    revisionSensitive?: boolean;
   }): Promise<T> => {
     const document = requireDocument(store);
     const identity = documentIdentity(document);
@@ -108,9 +105,6 @@ export function createAnnotationActions({
       return result;
     } catch (error) {
       if (isCurrentMutation(store, identity, token)) {
-        if (revisionSensitive && isRevisionConflict(error)) {
-          store.getState().cancelInteraction();
-        }
         store.getState().setError(errorMessage(error));
       }
       return null as T;
@@ -124,7 +118,6 @@ export function createAnnotationActions({
       const document = requireDocument(store);
       return mutate({
         kind: "create",
-        revisionSensitive: false,
         operation: () => runtime.create(document.workspaceId, {
           path: document.path,
           body,
@@ -137,7 +130,6 @@ export function createAnnotationActions({
       const document = requireDocument(store);
       return mutate({
         kind: "create",
-        revisionSensitive: true,
         operation: () => runtime.create(document.workspaceId, {
           path: document.path,
           body,
@@ -179,7 +171,6 @@ export function createAnnotationActions({
       return mutate({
         annotationId,
         kind: "retarget",
-        revisionSensitive: true,
         operation: () => runtime.replaceTarget(document.workspaceId, annotationId, {
           target: { type: "text", selector },
         }),
@@ -224,12 +215,6 @@ function isCurrentDocument(store: AnnotationStore, identity: string): boolean {
 
 function isCurrentMutation(store: AnnotationStore, identity: string, token: number): boolean {
   return isCurrentDocument(store, identity) && store.getState().pendingMutation?.token === token;
-}
-
-function isRevisionConflict(error: unknown): boolean {
-  return isRuntimeHttpError(error)
-    && error.status === 409
-    && error.code === "annotation_document_changed";
 }
 
 function errorMessage(error: unknown): string {

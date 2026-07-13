@@ -11,6 +11,28 @@ export {
 } from "./agentConnection";
 export { createSettingsRuntime } from "./settings";
 export { createLocalPreviewRuntime } from "./localPreview";
+export {
+  DEFAULT_DOCUMENT_CHUNK_BYTES,
+  DEFAULT_PREVIEW_DOCUMENT_MAX_BYTES,
+  DOCUMENT_READ_PROTOCOL_VERSION,
+  DocumentReadAssembler,
+  DocumentReadProtocolError,
+  createDocumentReadMessages,
+  createDocumentReadRequest,
+  createWholeDocumentReadResult,
+} from "./documentRead";
+export type {
+  DocumentReadChunkMessage,
+  DocumentReadCompleteMessage,
+  DocumentReadErrorCode,
+  DocumentReadErrorMessage,
+  DocumentReadMessage,
+  DocumentReadRequest,
+  DocumentReadResult,
+  DocumentReadSource,
+  DocumentReadStartMessage,
+  DocumentReadTransport,
+} from "./documentRead";
 export { createModelsRuntime } from "./models";
 export { createConversationRuntime } from "./conversation";
 export { createUsageRuntime } from "./usage";
@@ -44,6 +66,7 @@ export type {
 export type { HealthResponse, SettingsRuntime } from "./settings";
 export type {
   LocalPreviewFileResponse,
+  LocalPreviewDocumentReadOptions,
   LocalPreviewMediaResponse,
   LocalPreviewRuntimeOptions,
   LocalPreviewRuntime,
@@ -83,6 +106,7 @@ export type {
   WorkspaceFileResponse,
   WorkspaceMediaResponse,
   WorkspaceRuntime,
+  WorkspaceDocumentReadOptions,
   WorkspaceScope,
   WorkspaceSearchOptions,
   WorkspaceSearchResult,

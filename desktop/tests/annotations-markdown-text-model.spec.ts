@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { markdownLogicalRangeFromDomRange } from "@/renderer/components/workspace/markdownPreviewEngine/selectionRange";
-import { createMarkdownTextModel } from "@/renderer/features/annotations/document/MarkdownTextModel";
+import { markdownLogicalRangeFromDomRange } from "@/renderer/markdownShared/selectionRange";
+import { createMarkdownTextModel } from "./fixtures/annotationMarkdown";
 
 describe("MarkdownTextModel", () => {
   it("projects logical ranges to one or more exact visible source ranges", () => {

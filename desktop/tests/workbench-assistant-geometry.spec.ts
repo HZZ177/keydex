@@ -279,7 +279,7 @@ describe("workbench assistant geometry", () => {
     expect(css).toMatch(/\.drawerPanel\s*\{[\s\S]*background: transparent/);
     expect(css).toMatch(/\.drawerPanel\s*\{[\s\S]*box-shadow: none/);
     expect(css).not.toContain(".drawerComposer");
-    expect(css).toMatch(/\.chrome\[data-shell-mode="drawer"\] \.capsule,\s*\.chrome\[data-shell-mode="dock-morph"\] \.capsule\s*\{[\s\S]*padding: 8px 10px 16px/);
+    expect(css).toMatch(/\.chrome\[data-shell-mode="drawer"\] \.capsule,\s*\.chrome\[data-shell-mode="dock-morph"\] \.capsule\s*\{[\s\S]*padding: 8px 10px/);
     expect(css).not.toMatch(/\.chrome\[data-shell-mode="drawer"\] \.capsule,\s*\.chrome\[data-shell-mode="dock-morph"\] \.capsule,\s*\.chrome\[data-shell-mode="dock-out-morph"\] \.capsule/);
   });
 

@@ -1,4 +1,4 @@
-import type { MarkdownBlock } from "@/renderer/components/workspace/markdownPreviewEngine/types";
+import type { MarkdownBlock } from "@/renderer/markdownShared/types";
 
 import type { DocumentSelection, SourceRange } from "../document/DocumentTextModel";
 import type {
@@ -27,6 +27,9 @@ export interface MarkdownAnnotationMarkerRange {
 
 export interface MarkdownAnnotationBinding {
   readonly blocks: readonly Pick<MarkdownBlock, "id" | "sourceEnd" | "sourceStart">[];
+  readonly blocksForSourceRange?: (
+    range: SourceRange,
+  ) => readonly Pick<MarkdownBlock, "id" | "sourceEnd" | "sourceStart">[];
   readonly root: HTMLElement;
   readonly scrollElement: HTMLElement;
   revealBlock(blockKey: string, signal: AbortSignal): Promise<void>;
@@ -183,7 +186,7 @@ export class MarkdownAnnotationAdapter implements AnnotationViewAdapter {
     const binding = this.binding;
     const sourceRange = request.sourceRanges[0];
     const block = binding && sourceRange
-      ? binding.blocks.find((candidate) => overlapRange(sourceRange, candidate))
+      ? blocksForSourceRange(binding, sourceRange)[0] ?? null
       : null;
     if (!binding || !block) {
       throw new Error("Markdown annotation target is unavailable");
@@ -261,7 +264,7 @@ export class MarkdownAnnotationAdapter implements AnnotationViewAdapter {
     }
     for (const marker of this.renderState.markers) {
       for (const sourceRange of marker.sourceRanges) {
-        for (const block of binding.blocks) {
+        for (const block of blocksForSourceRange(binding, sourceRange)) {
           const overlap = overlapRange(sourceRange, block);
           if (!overlap) {
             continue;
@@ -320,6 +323,14 @@ export class MarkdownAnnotationAdapter implements AnnotationViewAdapter {
       listener(event);
     }
   }
+}
+
+function blocksForSourceRange(
+  binding: MarkdownAnnotationBinding,
+  range: SourceRange,
+): readonly Pick<MarkdownBlock, "id" | "sourceEnd" | "sourceStart">[] {
+  return binding.blocksForSourceRange?.(range)
+    ?? binding.blocks.filter((block) => overlapRange(range, block));
 }
 
 function overlapRange(

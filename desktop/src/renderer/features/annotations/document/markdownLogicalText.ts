@@ -1,9 +1,13 @@
-import { buildMarkdownDocumentModel } from "@/renderer/components/workspace/markdownPreviewEngine/parser";
-import { markdownPreviewContentHash } from "@/renderer/components/workspace/markdownPreviewEngine/identity";
+import { markdownPreviewContentHash } from "@/renderer/markdownShared/identity";
 import type {
   MarkdownBlock,
   MarkdownBlockType,
-} from "@/renderer/components/workspace/markdownPreviewEngine/types";
+  MarkdownDocumentModel,
+} from "@/renderer/markdownShared/types";
+import type {
+  MarkdownSnapshot,
+  MarkdownSnapshotBlock,
+} from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
 
 import type { DocumentContext } from "./DocumentTextModel";
 
@@ -53,31 +57,46 @@ const BLOCK_SEPARATOR = "\n\n";
 const LINE_SEPARATOR = "\n";
 const TABLE_CELL_SEPARATOR = "\t";
 
-export function serializeMarkdownLogicalText(source: string): MarkdownLogicalDocument {
-  const parsed = buildMarkdownDocumentModel(source);
-  const pending: PendingSegment[] = [];
-  const blocks: MarkdownLogicalBlock[] = [];
-  const headings: string[] = [];
+export type MarkdownLogicalSourceDocument = MarkdownSnapshot | MarkdownDocumentModel;
 
-  for (const block of parsed.blocks) {
+export function serializeMarkdownLogicalText(
+  source: string,
+  document: MarkdownLogicalSourceDocument,
+): MarkdownLogicalDocument {
+  if (isMarkdownSnapshot(document)) {
+    return serializeSnapshotLogicalText(source, document);
+  }
+  const sourceBlocks = document.blocks;
+  const pending: PendingSegment[] = [];
+  const logicalBlocks: MarkdownLogicalBlock[] = [];
+  const headings: string[] = [];
+  let pendingLogicalLength = 0;
+
+  for (const block of sourceBlocks) {
     const slices = visibleSlicesForBlock(block);
     if (!slices.some((slice) => slice.text.length > 0)) {
       continue;
     }
     if (pending.length > 0) {
-      pending.push(separatorSegment(block, blockContext(block, headings), BLOCK_SEPARATOR));
+      const separator = separatorSegment(block, blockContext(block, headings), BLOCK_SEPARATOR);
+      pending.push(separator);
+      pendingLogicalLength += separator.text.length;
     }
     if (block.type === "heading") {
       const title = slices.map((slice) => slice.text).join("").trim();
       updateHeadingPath(headings, block.metadata.headingLevel ?? 1, title);
     }
     const context = blockContext(block, headings);
-    const blockLogicalStart = pendingTextLength(pending);
+    const blockLogicalStart = pendingLogicalLength;
     for (const slice of slices) {
+      const firstNewSegment = pending.length;
       appendVisibleSlice(pending, block, context, slice);
+      for (let index = firstNewSegment; index < pending.length; index += 1) {
+        pendingLogicalLength += pending[index]!.text.length;
+      }
     }
-    const blockLogicalEnd = pendingTextLength(pending);
-    blocks.push(Object.freeze({
+    const blockLogicalEnd = pendingLogicalLength;
+    logicalBlocks.push(Object.freeze({
       context,
       key: block.id,
       logicalEnd: blockLogicalEnd,
@@ -96,11 +115,170 @@ export function serializeMarkdownLogicalText(source: string): MarkdownLogicalDoc
   });
   const logicalText = segments.map((segment) => segment.text).join("");
   return Object.freeze({
-    blocks: Object.freeze(blocks),
+    blocks: Object.freeze(logicalBlocks),
     logicalText,
     segments: Object.freeze(segments),
     textRevision: `md-logical:${markdownPreviewContentHash(logicalText)}`,
   });
+}
+
+function serializeSnapshotLogicalText(
+  source: string,
+  snapshot: MarkdownSnapshot,
+): MarkdownLogicalDocument {
+  const pending: PendingSegment[] = [];
+  const logicalBlocks: MarkdownLogicalBlock[] = [];
+  const headings: string[] = [];
+  let logicalCursor = 0;
+  let lastBlock: MarkdownBlock | null = null;
+  let lastContext: DocumentContext | null = null;
+
+  for (const snapshotBlock of snapshot.blocks) {
+    const block = snapshotBlockAdapter(source, snapshot, snapshotBlock);
+    const blockText = snapshot.logical_text.slice(snapshotBlock.logical_start, snapshotBlock.logical_end);
+    if (block.type === "heading") {
+      updateHeadingPath(headings, block.metadata.headingLevel ?? 1, blockText.trim());
+    }
+    const context = blockContext(block, headings);
+    if (snapshotBlock.logical_start > logicalCursor) {
+      pending.push(separatorSegment(
+        lastBlock ?? block,
+        lastContext ?? context,
+        snapshot.logical_text.slice(logicalCursor, snapshotBlock.logical_start),
+      ));
+    }
+
+    const spans = [...snapshotBlock.inline_spans]
+      .filter((span) => span.logical_end > span.logical_start)
+      .sort((left, right) => left.logical_start - right.logical_start || left.logical_end - right.logical_end);
+    let blockCursor = snapshotBlock.logical_start;
+    for (const span of spans) {
+      const start = Math.max(blockCursor, snapshotBlock.logical_start, span.logical_start);
+      const end = Math.min(snapshotBlock.logical_end, span.logical_end);
+      if (start >= end) continue;
+      if (start > blockCursor) {
+        pending.push(separatorSegment(block, context, snapshot.logical_text.slice(blockCursor, start)));
+      }
+      const text = snapshot.logical_text.slice(start, end);
+      const sourceStart = span.source_start + (start - span.logical_start);
+      const sourceEnd = sourceStart + text.length;
+      const sourceSpanLength = span.source_end - span.source_start;
+      const logicalSpanLength = span.logical_end - span.logical_start;
+      pending.push({
+        blockKey: block.id,
+        blockType: block.type,
+        context,
+        sourceStart: sourceSpanLength === logicalSpanLength ? sourceStart : null,
+        sourceEnd: sourceSpanLength === logicalSpanLength ? sourceEnd : null,
+        text,
+      });
+      blockCursor = end;
+    }
+    if (blockCursor < snapshotBlock.logical_end) {
+      const text = snapshot.logical_text.slice(blockCursor, snapshotBlock.logical_end);
+      const sourceOffset = source.indexOf(text, snapshotBlock.source_start);
+      const sourceEnd = sourceOffset >= snapshotBlock.source_start
+        && sourceOffset + text.length <= snapshotBlock.source_end
+        ? sourceOffset + text.length
+        : null;
+      pending.push({
+        blockKey: block.id,
+        blockType: block.type,
+        context,
+        sourceStart: sourceEnd === null ? null : sourceOffset,
+        sourceEnd,
+        text,
+      });
+    }
+    logicalBlocks.push(Object.freeze({
+      context,
+      key: block.id,
+      logicalEnd: snapshotBlock.logical_end,
+      logicalStart: snapshotBlock.logical_start,
+      sourceEnd: snapshotBlock.source_end,
+      sourceStart: snapshotBlock.source_start,
+      type: block.type,
+    }));
+    logicalCursor = snapshotBlock.logical_end;
+    lastBlock = block;
+    lastContext = context;
+  }
+
+  if (logicalCursor < snapshot.logical_text.length && lastBlock && lastContext) {
+    pending.push(separatorSegment(
+      lastBlock,
+      lastContext,
+      snapshot.logical_text.slice(logicalCursor),
+    ));
+  }
+
+  let offset = 0;
+  const segments = pending.map((segment) => {
+    const logicalStart = offset;
+    offset += segment.text.length;
+    return Object.freeze({ ...segment, logicalStart, logicalEnd: offset });
+  });
+  if (offset !== snapshot.logical_text.length) {
+    throw new Error("Snapshot logical projection must preserve canonical logical coordinates");
+  }
+  return Object.freeze({
+    blocks: Object.freeze(logicalBlocks),
+    logicalText: snapshot.logical_text,
+    segments: Object.freeze(segments),
+    textRevision: `md-logical:${markdownPreviewContentHash(snapshot.logical_text)}`,
+  });
+}
+
+function isMarkdownSnapshot(value: MarkdownLogicalSourceDocument): value is MarkdownSnapshot {
+  return "schema_version" in value;
+}
+
+function snapshotBlockAdapter(
+  source: string,
+  snapshot: MarkdownSnapshot,
+  block: MarkdownSnapshotBlock,
+): MarkdownBlock {
+  return {
+    id: block.id,
+    index: block.index,
+    type: snapshotBlockType(block),
+    sourceStart: block.source_start,
+    sourceEnd: block.source_end,
+    lineStart: block.line_start + 1,
+    lineEnd: Math.max(block.line_start + 1, block.line_end),
+    sourceText: source.slice(block.source_start, block.source_end),
+    textContent: snapshot.logical_text.slice(block.logical_start, block.logical_end),
+    contentHash: block.content_hash,
+    tokens: [],
+    metadata: {
+      headingLevel: block.metadata.heading_level,
+      language: block.metadata.language,
+      listOrdered: block.metadata.list?.ordered,
+      listStart: block.metadata.list?.start ?? undefined,
+      markup: block.metadata.fence_markup,
+    },
+  };
+}
+
+function snapshotBlockType(block: MarkdownSnapshotBlock): MarkdownBlockType {
+  switch (block.kind) {
+    case "thematic-break": return "thematic_break";
+    case "code": return block.metadata.fence_markup ? "fence" : "code";
+    case "mermaid": return "fence";
+    case "heading":
+    case "blockquote":
+    case "list":
+    case "table":
+    case "paragraph":
+      return block.kind;
+    case "html":
+      return "paragraph";
+    case "image":
+    case "math":
+      return "paragraph";
+    default:
+      return "unknown";
+  }
 }
 
 function appendVisibleSlice(
@@ -335,10 +513,6 @@ function blockContext(block: MarkdownBlock, headings: readonly string[]): Docume
 function updateHeadingPath(headings: string[], level: number, title: string): void {
   headings.length = Math.max(0, level - 1);
   headings[level - 1] = title;
-}
-
-function pendingTextLength(segments: readonly PendingSegment[]): number {
-  return segments.reduce((total, segment) => total + segment.text.length, 0);
 }
 
 function sourceLines(value: string, sourceStart: number): Array<{ sourceStart: number; text: string }> {

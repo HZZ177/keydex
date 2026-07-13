@@ -1,9 +1,9 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { useEffect, useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Layout } from "@/renderer/components/layout/Layout";
+import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/layout/Layout";
 import type { RuntimeBridge } from "@/runtime";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { MessageText } from "@/renderer/pages/conversation/messages";
@@ -11,6 +11,11 @@ import { useA2UIRenderSuspension } from "@/renderer/pages/conversation/messages/
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
+
+afterEach(() => {
+  cleanup();
+  resetLayoutUiStateCacheForTests();
+});
 
 function renderLayout(ui: ReactElement) {
   return render(
@@ -666,45 +671,45 @@ describe("Layout", () => {
     );
 
     const shell = screen.getByTestId("app-shell");
-    const codePreviewButton = screen.getByRole("button", { name: "在预览面板打开 Markdown 预览" });
+    const codePreviewButton = () => screen.getByRole("button", { name: /预览面板.*Markdown 预览$/ });
 
-    expect(codePreviewButton.getAttribute("aria-pressed")).toBe("false");
-    expect(codePreviewButton.querySelector(".lucide-panel-right-open")).not.toBeNull();
-    fireEvent.click(codePreviewButton);
+    expect(codePreviewButton().getAttribute("aria-pressed")).toBe("false");
+    expect(codePreviewButton().querySelector(".lucide-panel-right-open")).not.toBeNull();
+    fireEvent.click(codePreviewButton());
     await waitFor(() => {
       expect(shell.dataset.rightSidebar).toBe("open");
-      expect(codePreviewButton.getAttribute("aria-pressed")).toBe("true");
-      expect(codePreviewButton.querySelector(".lucide-panel-right-close")).not.toBeNull();
+      expect(codePreviewButton().getAttribute("aria-pressed")).toBe("true");
+      expect(codePreviewButton().querySelector(".lucide-panel-right-close")).not.toBeNull();
     });
     expect(screen.getByRole("tab", { name: "Markdown 预览" }).getAttribute("aria-selected")).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: "打开 HTML 窗口" }));
     expect(screen.getByRole("tab", { name: "HTML 窗口" }).getAttribute("aria-selected")).toBe("true");
     await waitFor(() => {
-      expect(codePreviewButton.getAttribute("aria-pressed")).toBe("false");
-      expect(codePreviewButton.querySelector(".lucide-panel-right-open")).not.toBeNull();
+      expect(codePreviewButton().getAttribute("aria-pressed")).toBe("false");
+      expect(codePreviewButton().querySelector(".lucide-panel-right-open")).not.toBeNull();
     });
 
-    fireEvent.click(codePreviewButton);
+    fireEvent.click(codePreviewButton());
     expect(screen.getAllByRole("tab")).toHaveLength(2);
     expect(screen.getByRole("tab", { name: "Markdown 预览" }).getAttribute("aria-selected")).toBe("true");
     await waitFor(() => {
-      expect(codePreviewButton.getAttribute("aria-pressed")).toBe("true");
-      expect(codePreviewButton.querySelector(".lucide-panel-right-close")).not.toBeNull();
+      expect(codePreviewButton().getAttribute("aria-pressed")).toBe("true");
+      expect(codePreviewButton().querySelector(".lucide-panel-right-close")).not.toBeNull();
     });
 
-    fireEvent.click(codePreviewButton);
+    fireEvent.click(codePreviewButton());
     await waitFor(() => {
       expect(shell.dataset.rightSidebar).toBe("closed");
-      expect(codePreviewButton.getAttribute("aria-pressed")).toBe("false");
-      expect(codePreviewButton.querySelector(".lucide-panel-right-open")).not.toBeNull();
+      expect(codePreviewButton().getAttribute("aria-pressed")).toBe("false");
+      expect(codePreviewButton().querySelector(".lucide-panel-right-open")).not.toBeNull();
     });
 
-    fireEvent.click(codePreviewButton);
+    fireEvent.click(codePreviewButton());
     await waitFor(() => {
       expect(shell.dataset.rightSidebar).toBe("open");
-      expect(codePreviewButton.getAttribute("aria-pressed")).toBe("true");
-      expect(codePreviewButton.querySelector(".lucide-panel-right-close")).not.toBeNull();
+      expect(codePreviewButton().getAttribute("aria-pressed")).toBe("true");
+      expect(codePreviewButton().querySelector(".lucide-panel-right-close")).not.toBeNull();
     });
     expect(screen.getByRole("tab", { name: "Markdown 预览" }).getAttribute("aria-selected")).toBe("true");
   });

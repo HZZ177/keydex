@@ -56,7 +56,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ComponentProps,
   type HTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -72,7 +71,6 @@ import type {
   WorkspaceScope,
 } from "@/runtime";
 import { AppDialog } from "@/renderer/components/dialog";
-import { MarkdownImage } from "@/renderer/pages/conversation/messages/MarkdownImage";
 import { SelectionToolbar } from "@/renderer/pages/conversation/messages/SelectionToolbar";
 import { copyText } from "@/renderer/pages/conversation/messages/markdown";
 import { useTextSelection, type SelectionPosition } from "@/renderer/pages/conversation/messages/useTextSelection";
@@ -90,7 +88,7 @@ import {
   type PreviewQuoteSelectionRequest,
 } from "@/renderer/providers/PreviewProvider";
 import { LoadingSkeleton } from "@/renderer/components/loading";
-import type { PreviewContentKind, PreviewRequest } from "@/renderer/providers/previewTypes";
+import type { PreviewContentKind, PreviewMarkdownViewDescriptor, PreviewRequest } from "@/renderer/providers/previewTypes";
 import {
   centerMermaidViewport,
   formatMermaidCssPixels,
@@ -102,17 +100,6 @@ import {
 import { getMermaidConfig } from "@/renderer/utils/mermaidConfig";
 import { parseUnifiedDiffDisplayLines } from "@/renderer/utils/unifiedDiff";
 
-import {
-  buildMarkdownAnnotationIndex,
-  buildResolvedMarkdownAnnotationIndex,
-  buildMarkdownFindIndex,
-  defaultMarkdownBlockRenderers,
-  markdownDocumentModelCache,
-  VirtualMarkdownPreview,
-  type MarkdownBlockRendererRegistry,
-  type MarkdownDocumentModel,
-  type VirtualMarkdownPreviewHandle,
-} from "./markdownPreviewEngine";
 import { AnnotationRail } from "@/renderer/features/annotations/ui/AnnotationRail";
 import { AnnotationStatusSection } from "@/renderer/features/annotations/ui/AnnotationStatusSection";
 import { DocumentAnnotationSection } from "@/renderer/features/annotations/ui/DocumentAnnotationSection";
@@ -127,10 +114,21 @@ import {
   connectorPreferredEdgeY,
   spreadConnectorEdgePorts,
 } from "@/renderer/features/annotations/layout/ConnectorGeometry";
-import { DRAFT_ANNOTATION_ID, useUnifiedAnnotationSession, RETARGET_ANNOTATION_ID, type UnifiedAnnotationSession } from "@/renderer/features/annotations/state/useUnifiedAnnotationSession";
+import { useUnifiedAnnotationSession, RETARGET_ANNOTATION_ID, type UnifiedAnnotationSession } from "@/renderer/features/annotations/state/useUnifiedAnnotationSession";
 import type { SourceAnnotationAdapter } from "@/renderer/features/annotations/adapters/SourceAnnotationAdapter";
-import type { MarkdownAnnotationBinding } from "@/renderer/features/annotations/adapters/MarkdownAnnotationAdapter";
 import { ImagePreviewSurface } from "./ImagePreviewSurface";
+import {
+  FileMarkdownRuntimeHost,
+  type FileMarkdownRuntimeHostHandle,
+  type FileMarkdownRuntimeSnapshotLoader,
+} from "./FileMarkdownRuntimeHost";
+import type { MarkdownSnapshot } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
+import type { MarkdownFindIndex as RuntimeMarkdownFindIndex } from "@/renderer/markdownRuntime/find";
+import type { MarkdownProjectedSelection } from "@/renderer/markdownRuntime/interaction";
+import { resolveMarkdownLinkTarget } from "@/renderer/markdownRuntime/interaction/InteractionController";
+import type { MarkdownRendererInteractionHandlers } from "@/renderer/markdownRuntime/renderers";
+import { stableMarkdownIdentityHash } from "@/renderer/markdownRuntime/document/identity";
+import { markdownRuntimeDiagnostics } from "@/renderer/markdownRuntime/diagnostics";
 import styles from "./FilePreview.module.css";
 
 export type FilePreviewRequest = PreviewRequest;
@@ -172,6 +170,13 @@ export interface FilePreviewProps {
   breadcrumbRootLabel?: string;
   hideBreadcrumbs?: boolean;
   bottomSafeArea?: string;
+  markdownRuntimeSnapshotLoader?: FileMarkdownRuntimeSnapshotLoader;
+  markdownViewDescriptor?: PreviewMarkdownViewDescriptor;
+}
+
+declare global {
+  // New-Runtime component-test oracle. Production builds never read this hook.
+  var __KEYDEX_TEST_FILE_MARKDOWN_SNAPSHOT_LOADER__: FileMarkdownRuntimeSnapshotLoader | undefined;
 }
 
 export function FilePreview({
@@ -189,13 +194,17 @@ export function FilePreview({
   breadcrumbRootLabel,
   hideBreadcrumbs = false,
   bottomSafeArea,
+  markdownRuntimeSnapshotLoader,
+  markdownViewDescriptor,
 }: FilePreviewProps) {
+  const effectiveMarkdownRuntimeSnapshotLoader = markdownRuntimeSnapshotLoader
+    ?? (import.meta.env.MODE === "test" ? globalThis.__KEYDEX_TEST_FILE_MARKDOWN_SNAPSHOT_LOADER__ : undefined);
   const previewRootRef = useRef<HTMLElement | null>(null);
   const annotationLayoutRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [documentViewport, setDocumentViewport] = useState<HTMLDivElement | null>(null);
   const [annotationActionsHost, setAnnotationActionsHost] = useState<HTMLDivElement | null>(null);
-  const markdownPreviewRef = useRef<VirtualMarkdownPreviewHandle | null>(null);
+  const markdownRuntimeHostRef = useRef<FileMarkdownRuntimeHostHandle | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const panelChrome = chrome === "panel";
   const usesFileOpenDelay = panelChrome && isPathPreviewRequest(request);
@@ -210,10 +219,12 @@ export function FilePreview({
   const previewLoading = immediateContent === null ? loading : false;
   const [error, setError] = useState<string | null>(null);
   const renderedPreviewContent = previewContent;
-  const [markdownModel, setMarkdownModel] = useState<MarkdownDocumentModel | null>(null);
-  const [markdownModelPreparing, setMarkdownModelPreparing] = useState(false);
-  const markdownPreparing = kind === "markdown" && !previewLoading && !error && markdownModelPreparing;
-  const previewBusy = previewLoading || fileOpenSettling || markdownPreparing;
+  const [markdownRuntimeSnapshot, setMarkdownRuntimeSnapshot] = useState<MarkdownSnapshot | null>(null);
+  const [markdownRuntimeError, setMarkdownRuntimeError] = useState<Error | null>(null);
+  const [markdownRuntimeFindIndex, setMarkdownRuntimeFindIndex] = useState<RuntimeMarkdownFindIndex | null>(null);
+  const [markdownRuntimeSelection, setMarkdownRuntimeSelection] = useState<MarkdownProjectedSelection | null>(null);
+  const [runtimeMermaidPreviewCode, setRuntimeMermaidPreviewCode] = useState<string | null>(null);
+  const previewBusy = previewLoading || fileOpenSettling;
   const [viewMode, setViewMode] = useState<"preview" | "source">("preview");
   const [splitMode, setSplitMode] = useState(false);
   const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
@@ -249,6 +260,8 @@ export function FilePreview({
   const [selectionMappingError, setSelectionMappingError] = useState<string | null>(null);
   const handledSourceRevealRequestIdRef = useRef(0);
   const lastFindScrollLineRef = useRef<FilePreviewFindScrollLine | null>(null);
+  const documentReadConsumerIdRef = useRef(`file-preview-${nextFilePreviewConsumerId++}`);
+  const standaloneMarkdownViewIdRef = useRef(`file-preview-${nextFilePreviewViewId++}`);
 
   useEffect(() => {
     const themeObserver = new MutationObserver(() => setTheme(getTheme()));
@@ -292,6 +305,11 @@ export function FilePreview({
     }
 
     setLoading(true);
+    const documentReadController = new AbortController();
+    const documentReadOptions = {
+      consumerId: documentReadConsumerIdRef.current,
+      signal: documentReadController.signal,
+    };
     const loader =
       request.type === "local-file"
         ? kind === "image"
@@ -300,9 +318,10 @@ export function FilePreview({
                 setMedia(response);
               }
             })
-          : runtime.localPreview.readFile(request.path).then((response) => {
+          : runtime.localPreview.readDocument(request.path, documentReadOptions).then((response) => {
               if (active) {
                 setContent(response.content);
+                setDocumentRevision(response.revision);
               }
             })
         : kind === "image"
@@ -311,7 +330,14 @@ export function FilePreview({
                 setMedia(response);
               }
             })
-          : runtime.workspace.readFile(fileLoadScope as WorkspaceScope, request.path).then((response) => {
+          : (runtime.workspace.readDocument
+              ? runtime.workspace.readDocument(
+                  fileLoadScope as WorkspaceScope,
+                  request.path,
+                  documentReadOptions,
+                )
+              : runtime.workspace.readFile(fileLoadScope as WorkspaceScope, request.path)
+            ).then((response) => {
               if (active) {
                 setContent(response.content);
                 setDocumentRevision(response.revision);
@@ -322,6 +348,17 @@ export function FilePreview({
       .catch((reason) => {
         if (active) {
           setError(errorMessage(reason));
+          markdownRuntimeDiagnostics.record({
+            stage: "ingress",
+            severity: "fatal",
+            code: "document-read-failed",
+            documentId: `file-preview:${workspaceId ?? sessionId ?? "local"}:${request.path}`,
+            revision: null,
+            recovery: "retry",
+            detail: reason,
+            blockId: null,
+            resourceId: null,
+          });
         }
       })
       .finally(() => {
@@ -332,6 +369,9 @@ export function FilePreview({
 
     return () => {
       active = false;
+      documentReadController.abort();
+      runtime.localPreview?.releaseDocumentConsumer?.(documentReadConsumerIdRef.current);
+      runtime.workspace?.releaseDocumentConsumer?.(documentReadConsumerIdRef.current);
     };
   }, [fileLoadScope, kind, resetCopyFeedback, runtime, request]);
 
@@ -353,76 +393,35 @@ export function FilePreview({
   const canSplit = kind === "markdown" || kind === "html";
   const sourceLabel = previewSourceLabel(request);
   const formattedSource = renderedPreviewContent;
+  const markdownRuntimeWorkspaceId = workspaceId ?? (sessionId ? `session:${sessionId}` : "local");
+  const markdownRuntimePath = revealPath ?? sourceLabel;
+  const markdownRuntimeRevision = documentRevision
+    ?? `inline:${stableMarkdownIdentityHash(renderedPreviewContent)}`;
+  const providerMarkdownViewDescriptor = previewContext?.activeEntry?.request === request
+    ? previewContext.activeEntry.markdownView
+    : null;
+  const resolvedMarkdownViewDescriptor = useMemo<PreviewMarkdownViewDescriptor>(() =>
+    markdownViewDescriptor ?? providerMarkdownViewDescriptor ?? Object.freeze({
+      scopeId: previewContext?.activeScopeKey ?? `workspace:${markdownRuntimeWorkspaceId}`,
+      entryId: `standalone:${stableMarkdownIdentityHash(`${markdownRuntimeWorkspaceId}:${markdownRuntimePath}`)}`,
+      viewId: standaloneMarkdownViewIdRef.current,
+      kind: "preview",
+    }), [markdownRuntimePath, markdownRuntimeWorkspaceId, markdownViewDescriptor, previewContext?.activeScopeKey, providerMarkdownViewDescriptor]);
   useEffect(() => {
-    if (kind !== "markdown" || previewLoading || fileOpenSettling || error) {
-      setMarkdownModel(null);
-      setMarkdownModelPreparing(false);
-      return;
-    }
-
-    let active = true;
-    setMarkdownModel(null);
-    setMarkdownModelPreparing(true);
-    const cancelBuild = scheduleMarkdownModelBuild(renderedPreviewContent, { deferLarge: !usesFileOpenDelay }, () => {
-      const model = markdownDocumentModelCache.getOrCreate({
-        cacheKey: sourceLabel,
-        idPrefix: "file-preview",
-        source: renderedPreviewContent,
-      });
-      if (!active) {
-        return;
-      }
-      setMarkdownModel(model);
-      setMarkdownModelPreparing(false);
-    });
-
-    return () => {
-      active = false;
-      cancelBuild();
-    };
-  }, [error, fileOpenSettling, kind, previewLoading, renderedPreviewContent, sourceLabel, usesFileOpenDelay]);
+    setMarkdownRuntimeSnapshot(null);
+    setMarkdownRuntimeError(null);
+    setMarkdownRuntimeFindIndex(null);
+    setMarkdownRuntimeSelection(null);
+  }, [kind, markdownRuntimePath, markdownRuntimeRevision]);
   const markdownOutline = useMemo(
-    () =>
-      markdownModel
-        ? markdownModel.outline.map((item) => ({
-          id: item.id,
-          level: item.level,
-          line: item.lineStart,
-          title: item.title,
-        }))
-        : [],
-    [markdownModel],
+    () => (markdownRuntimeSnapshot?.outline ?? []).map((item) => ({
+      id: item.id,
+      level: item.level,
+      line: item.source_line,
+      title: item.title,
+    })),
+    [markdownRuntimeSnapshot],
   );
-  const markdownContent = renderedPreviewContent || "文件为空";
-  const renderMarkdownImage = useCallback(
-    ({ alt, src }: { alt: string; src: string }) => (
-      <MarkdownImage
-        alt={alt}
-        src={src}
-        workspaceScope={scope}
-        runtime={runtime}
-        sourcePath={sourceLabel}
-      />
-    ),
-    [runtime, scope, sourceLabel],
-  );
-  const markdownRendererRegistry = useMemo<MarkdownBlockRendererRegistry>(
-    () => ({
-      fence: (props) => {
-        const language = props.block.metadata.language?.toLowerCase() ?? "";
-        if (language.startsWith("mermaid")) {
-          return (
-            <div {...props.blockAttributes}>
-              <NativeMermaidPreview code={props.block.textContent} layout="document" />
-            </div>
-          );
-        }
-        return defaultMarkdownBlockRenderers.fence?.(props) ?? null;
-      },
-    }),
-    [],
-  );
-
   useEffect(() => {
     if (!onMarkdownOutlineChange) {
       return;
@@ -441,7 +440,7 @@ export function FilePreview({
   const annotationSession = useUnifiedAnnotationSession({
     documentRevision,
     kind,
-    markdownModel,
+    markdownModel: markdownRuntimeSnapshot,
     mode: annotationMode,
     path: annotationPath,
     runtime: runtime?.annotations ?? null,
@@ -454,24 +453,6 @@ export function FilePreview({
   const flashAnnotationId = annotationSession.state.flashAnnotationId;
   const closeAnnotationPanel = useCallback(() => annotationSession.store.getState().closePanel(), [annotationSession.store]);
   const toggleAnnotationPanel = useCallback(() => annotationSession.store.getState().togglePanel(), [annotationSession.store]);
-  const markdownAnnotationIndex = useMemo(() => {
-    if (!markdownModel) return [];
-    const persistent = buildResolvedMarkdownAnnotationIndex(markdownModel, annotationSession.state.resolutions.resolved);
-    const interaction = annotationSession.state.interaction;
-    const range = interaction.type === "drafting"
-      ? interaction.range
-      : interaction.type === "retargeting" ? interaction.range : null;
-    if (!range || !annotationSession.model) return persistent;
-    const interactionId = interaction.type === "drafting" ? DRAFT_ANNOTATION_ID : RETARGET_ANNOTATION_ID;
-    return [
-      ...persistent,
-      ...buildMarkdownAnnotationIndex(markdownModel, [{
-        annotation: { id: interactionId },
-        sourceRanges: annotationSession.model.toSourceRanges(range),
-      }]),
-    ];
-  }, [annotationSession.model, annotationSession.state.interaction, annotationSession.state.resolutions.resolved, markdownModel]);
-
   useEffect(() => {
     const request = annotationSession.railRevealRequest;
     if (!request || !annotationPanelOpen || !documentViewport) {
@@ -515,10 +496,10 @@ export function FilePreview({
       const applied = interaction.type === "retargeting"
         ? selection
           ? annotationSession.setRetargetSelection(selection)
-          : annotationSession.setRetargetFromMarkdownRange(range, bodyRef.current)
+          : annotationSession.setRetargetFromRuntimeSelection(markdownRuntimeSelection)
         : selection
           ? annotationSession.beginDraft(selection)
-          : annotationSession.beginDraftFromMarkdownRange(range, bodyRef.current);
+          : annotationSession.beginDraftFromRuntimeSelection(markdownRuntimeSelection);
       if (!applied) {
         setSelectionMappingError("当前选区无法投影到文档文字模型。");
         return;
@@ -526,8 +507,45 @@ export function FilePreview({
       setSelectionMappingError(null);
       window.getSelection()?.removeAllRanges();
     },
-    [annotationSession, viewMode],
+    [annotationSession, markdownRuntimeSelection, viewMode],
   );
+  const openRuntimeLinkedPreview = previewContext?.openPreview;
+  const markdownRuntimeInteractions = useMemo<MarkdownRendererInteractionHandlers>(() => ({
+    onLinkActivate: (event, { href }) => {
+      const target = resolveMarkdownLinkTarget(href);
+      if (target.kind === "file") {
+        event.preventDefault();
+        event.stopPropagation();
+        openRuntimeLinkedPreview?.(
+          { type: target.absolute ? "local-file" : "file", path: target.path },
+          undefined,
+          target.line ? { lineStart: target.line, lineEnd: target.line } : null,
+        );
+        return;
+      }
+      if (target.kind === "anchor") {
+        event.preventDefault();
+        event.stopPropagation();
+        const outline = markdownRuntimeHostRef.current?.currentSnapshot()?.outline.find((item) => item.id === target.fragment);
+        if (outline) markdownRuntimeHostRef.current?.revealBlock(outline.block_id, { align: "start", behavior: "smooth" });
+        return;
+      }
+      if (target.kind === "unsafe") {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
+    onCodeCopy: async ({ code }) => {
+      try {
+        await copyText(code);
+        showCopyFeedback("copied");
+      } catch (error) {
+        showCopyFeedback("failed");
+        throw error;
+      }
+    },
+    onMermaidPreview: ({ code }) => setRuntimeMermaidPreviewCode(code),
+  }), [openRuntimeLinkedPreview, showCopyFeedback]);
 
   const quotePreviewSelection = useCallback(
     (selectionSnapshot: FilePreviewSelectionSnapshot) => {
@@ -535,9 +553,12 @@ export function FilePreview({
       const model = annotationSession.model;
       if (!text || !annotationPath) return;
       const sourceSelection = annotationSession.sourceAdapter.selection();
-      const previewRange = selectionSnapshot.selectionRange && bodyRef.current
-        ? previewSourceRangeFromSelection(selectionSnapshot.selectionRange, bodyRef.current)
+      const runtimeRange = markdownRuntimeSelection
+        ? { sourceStart: markdownRuntimeSelection.sourceStart, sourceEnd: markdownRuntimeSelection.sourceEnd }
         : null;
+      const previewRange = runtimeRange ?? (selectionSnapshot.selectionRange && bodyRef.current
+        ? previewSourceRangeFromSelection(selectionSnapshot.selectionRange, bodyRef.current)
+        : null);
       const logical = model && sourceSelection
         ? model.projectSelection(sourceSelection)?.logicalRange ?? null
         : model && kind === "markdown" && previewRange
@@ -563,7 +584,7 @@ export function FilePreview({
         sourceEnd: sourceRange?.end ?? null,
       });
     },
-    [annotationPath, annotationSession.model, annotationSession.sourceAdapter, formattedSource, kind, onQuoteSelection],
+    [annotationPath, annotationSession.model, annotationSession.sourceAdapter, formattedSource, kind, markdownRuntimeSelection, onQuoteSelection],
   );
 
   const saveAnnotationComment = useCallback(
@@ -604,40 +625,30 @@ export function FilePreview({
   useEffect(() => {
     if (!sourceRevealRequest || !revealPath || previewBusy || error) return;
     if (handledSourceRevealRequestIdRef.current === sourceRevealRequest.requestId) return;
-    handledSourceRevealRequestIdRef.current = sourceRevealRequest.requestId;
     const position = sourceRevealRequest.sourceStart
       ?? (sourceRevealRequest.lineStart ? sourcePositionForLine(formattedSource, sourceRevealRequest.lineStart) : null);
     if (position === null) return;
+    const runtimePreviewVisible = kind === "markdown" && (viewMode === "preview" || splitMode);
+    if (runtimePreviewVisible && !markdownRuntimeSnapshot) return;
+    handledSourceRevealRequestIdRef.current = sourceRevealRequest.requestId;
     setLineRevealRequest((current) => ({
       requestId: (current?.requestId ?? 0) + 1,
       position,
       block: "center",
     }));
-    if (kind === "markdown" && markdownModel && (viewMode === "preview" || splitMode)) {
-      const block = markdownModel.blocks.find((candidate) => position >= candidate.sourceStart && position <= candidate.sourceEnd);
-      if (block) void markdownPreviewRef.current?.revealBlock(block.id, { align: "center" });
+    if (kind === "markdown" && (viewMode === "preview" || splitMode)) {
+      markdownRuntimeHostRef.current?.revealSourceOffset(position, { align: "center" });
     }
-  }, [error, formattedSource, kind, markdownModel, previewBusy, revealPath, sourceRevealRequest, splitMode, viewMode]);
+  }, [error, formattedSource, kind, markdownRuntimeSnapshot, previewBusy, revealPath, sourceRevealRequest, splitMode, viewMode]);
   useEffect(() => {
     if (!outlineRevealRequest || kind !== "markdown") {
       return;
     }
-    const outlineItem = markdownModel?.outline.find((item) => item.id === outlineRevealRequest.id) ?? null;
+    const runtimeOutlineItem = markdownRuntimeSnapshot?.outline.find((item) => item.id === outlineRevealRequest.id) ?? null;
     if (viewMode !== "source" || splitMode) {
-      if (outlineItem) {
-        const heading = findMarkdownOutlineBlockHeading(bodyRef.current, outlineItem.blockId);
-        if (heading) {
-          heading.dataset.markdownOutlineId = outlineItem.id;
-          heading.scrollIntoView?.(FILE_PREVIEW_REVEAL_SCROLL_OPTIONS);
-        } else {
-          void markdownPreviewRef.current?.revealBlock(outlineItem.blockId, { align: "start" })
-            .catch(() => undefined);
-        }
-      } else {
-        const heading = findMarkdownOutlineHeading(bodyRef.current, outlineRevealRequest.id);
-        if (heading) {
-          heading.scrollIntoView?.(FILE_PREVIEW_REVEAL_SCROLL_OPTIONS);
-        }
+      if (!markdownRuntimeSnapshot) return;
+      if (runtimeOutlineItem) {
+        markdownRuntimeHostRef.current?.revealBlock(runtimeOutlineItem.block_id, { align: "start" });
       }
     }
     if (viewMode === "preview" && !splitMode) {
@@ -647,34 +658,52 @@ export function FilePreview({
       requestId: (current?.requestId ?? 0) + 1,
       position: sourcePositionForLine(formattedSource, outlineRevealRequest.line),
     }));
-  }, [formattedSource, kind, markdownModel, outlineRevealRequest, splitMode, viewMode]);
+  }, [formattedSource, kind, markdownRuntimeSnapshot, outlineRevealRequest, splitMode, viewMode]);
 
   const findMode: FilePreviewFindMode = splitMode && canSplit
     ? "split"
     : viewMode === "source" || !canRenderPreview
       ? "source"
       : "preview";
-  const markdownFindIndex = useMemo(
-    () =>
-      kind === "markdown" &&
-      markdownModel &&
-      findOpen &&
-      findQuery.trim() &&
-      (findMode === "preview" || findMode === "split")
-        ? buildMarkdownFindIndex(markdownModel, findQuery)
-        : null,
-    [findMode, findOpen, findQuery, kind, markdownModel],
-  );
+  useEffect(() => {
+    if (kind !== "markdown" || !findOpen || !findQuery.trim()
+      || (findMode !== "preview" && findMode !== "split") || !markdownRuntimeSnapshot) {
+      setMarkdownRuntimeFindIndex((current) => current ? null : current);
+      return;
+    }
+    const controller = new AbortController();
+    void markdownRuntimeHostRef.current?.queryFind(findQuery, { signal: controller.signal })
+      .then((index) => {
+        if (!controller.signal.aborted) setMarkdownRuntimeFindIndex(index);
+      })
+      .catch((reason) => {
+        if (controller.signal.aborted) return;
+        markdownRuntimeDiagnostics.record({
+          stage: "host",
+          severity: "error",
+          code: "runtime-find-failed",
+          documentId: markdownRuntimeSnapshot.document_id,
+          revision: markdownRuntimeSnapshot.revision,
+          recovery: "retain-snapshot",
+          detail: reason,
+          blockId: null,
+          resourceId: null,
+        });
+        setMarkdownRuntimeFindIndex(null);
+      });
+    return () => controller.abort();
+  }, [findMode, findOpen, findQuery, kind, markdownRuntimeSnapshot]);
+
   const markdownFindMatches = useMemo<MarkdownPreviewFindMatch[]>(
     () =>
-      (markdownFindIndex?.matches ?? []).map((match) => ({
+      (markdownRuntimeFindIndex?.matches ?? []).map((match) => ({
         blockId: match.blockId,
         id: match.id,
         sourceEnd: match.sourceEnd,
         sourceStart: match.sourceStart,
         type: "markdown",
       })),
-    [markdownFindIndex],
+    [markdownRuntimeFindIndex],
   );
 
   const openFind = useCallback(
@@ -796,9 +825,8 @@ export function FilePreview({
   );
 
   useLayoutEffect(() => {
-    const useDomMarkdownFind = kind === "markdown" && /\s/.test(findQuery);
     clearDomFindHighlights(bodyRef.current, {
-      includeControlledMarks: kind !== "markdown" || useDomMarkdownFind || !findOpen || !findQuery.trim(),
+      includeControlledMarks: kind !== "markdown" || !findOpen || !findQuery.trim(),
     });
     const shouldSearchSource = Boolean(sourceEditorView && (findMode === "source" || findMode === "split"));
     if (!findOpen || !findQuery.trim()) {
@@ -819,11 +847,10 @@ export function FilePreview({
       sourceEditorView && shouldSearchSource
         ? collectCodeMirrorFindMatches(sourceEditorView, query)
         : [];
-    const domMatches = kind !== "markdown" || useDomMarkdownFind
+    const domMatches = kind !== "markdown"
       ? collectDomFindMatches(filePreviewFindContainers(bodyRef.current, findMode, Boolean(sourceEditorView)), findQuery)
       : [];
-    const previewMarkdownMatches = useDomMarkdownFind ? [] : markdownFindMatches;
-    const matches = mergeFilePreviewFindMatches(findMode, codeMirrorMatches, previewMarkdownMatches, domMatches);
+    const matches = mergeFilePreviewFindMatches(findMode, codeMirrorMatches, markdownFindMatches, domMatches);
     const nextIndex = preferredFindMatchIndex(findMatchIndex, matches, bodyRef.current, sourceEditorView);
     setFindMatchCount(matches.length);
     if (nextIndex !== findMatchIndex) {
@@ -876,7 +903,7 @@ export function FilePreview({
       }
     }
     if (shouldRecenterActiveMatch) {
-      scrollFindMatchIntoView(activeMatch, markdownPreviewRef.current);
+      scrollFindMatchIntoView(activeMatch, markdownRuntimeHostRef.current);
     }
   }, [
     documentViewport,
@@ -913,37 +940,40 @@ export function FilePreview({
     }
 
     if (kind === "markdown") {
-      if (!markdownModel || markdownModel.blocks.length === 0) {
-        return (
-          <PreviewScrollPane className={styles.markdownPane} data-file-preview-selectable-content="preview" scrollElement={documentViewport}>
-            <div className="keydex-markdown">
-              <p>{markdownContent}</p>
-            </div>
-          </PreviewScrollPane>
-        );
-      }
       return (
         <PreviewScrollPane
           className={styles.markdownPane}
+          data-file-markdown-engine="runtime"
           data-file-preview-selectable-content="preview"
           scrollElement={documentViewport}
         >
           {(scrollElement) => scrollElement ? (
-            <UnifiedMarkdownPreview
-              bind={annotationSession.bindMarkdown}
-              onActivate={(annotationId) => annotationSession.markdownAdapter.activateMarker(annotationId)}
-              onMountedBlockIdsChange={annotationSession.notifyMarkdownLayoutChange}
-              previewRef={markdownPreviewRef}
-              activeAnnotationId={activeAnnotationId}
-              activeFindMatchId={activeMarkdownFindMatchId}
-              annotationIndex={markdownAnnotationIndex}
-              findIndex={markdownFindIndex}
-              flashAnnotationId={flashAnnotationId}
-              model={markdownModel}
-              registry={markdownRendererRegistry}
-              renderImage={renderMarkdownImage}
-              scrollElement={scrollElement}
-              showSourceGutter
+            <FileMarkdownRuntimeHost
+                activeFindMatchId={activeMarkdownFindMatchId}
+                annotationPanelOpen={annotationPanelOpen}
+                annotationRenderState={annotationSession.renderState}
+                bindAnnotation={annotationSession.bindMarkdown}
+                findIndex={markdownRuntimeFindIndex}
+                interactions={markdownRuntimeInteractions}
+                ref={markdownRuntimeHostRef}
+                path={markdownRuntimePath}
+                revision={markdownRuntimeRevision}
+                runtime={runtime}
+                scrollElement={scrollElement}
+                snapshotLoader={effectiveMarkdownRuntimeSnapshotLoader}
+                source={renderedPreviewContent}
+                workspaceId={markdownRuntimeWorkspaceId}
+                workspaceScope={scope}
+                viewDescriptor={resolvedMarkdownViewDescriptor}
+                onError={setMarkdownRuntimeError}
+                onAnnotationActivate={(annotationId) => annotationSession.markdownAdapter.activateMarker(annotationId)}
+                onAnnotationHover={(annotationId) => annotationSession.store.getState().hover(annotationId)}
+                onMountedBlocksChange={annotationSession.notifyMarkdownLayoutChange}
+                onSelectionChange={(selection) => {
+                  setMarkdownRuntimeSelection(selection);
+                  annotationSession.markdownAdapter.updateSelection(selection?.annotationSelection ?? null);
+                }}
+                onSnapshot={setMarkdownRuntimeSnapshot}
             />
           ) : null}
         </PreviewScrollPane>
@@ -1114,6 +1144,11 @@ export function FilePreview({
       data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
       data-file-preview-root="true"
       data-document-revision={documentRevision ?? undefined}
+      data-file-markdown-runtime-mode={kind === "markdown" ? "runtime" : undefined}
+      data-file-markdown-runtime-error={markdownRuntimeError ? "true" : undefined}
+      data-file-markdown-runtime-selection={markdownRuntimeSelection ? "true" : "false"}
+      data-file-annotation-model-ready={annotationSession.model ? "true" : "false"}
+      data-file-markdown-view-id={kind === "markdown" ? resolvedMarkdownViewDescriptor.viewId : undefined}
       aria-label="文件预览"
       style={previewStyle}
       ref={previewRootRef}
@@ -1278,6 +1313,11 @@ export function FilePreview({
       ) : null}
       {copyState === "failed" && !panelChrome ? <span className={styles.copyError}>复制失败</span> : null}
       {copyState === "copied" && !panelChrome ? <span className={styles.copyHint}>已复制</span> : null}
+      {runtimeMermaidPreviewCode !== null ? (
+        <FilePreviewFullscreenDialog title="Mermaid 预览" onClose={() => setRuntimeMermaidPreviewCode(null)}>
+          <NativeMermaidPreview code={runtimeMermaidPreviewCode} layout="fullscreen" />
+        </FilePreviewFullscreenDialog>
+      ) : null}
     </section>
   );
 }
@@ -1519,47 +1559,6 @@ function UnifiedAnnotationConnectors({
   );
 }
 
-function UnifiedMarkdownPreview({
-  bind,
-  onActivate,
-  previewRef,
-  scrollElement,
-  ...props
-}: Omit<ComponentProps<typeof VirtualMarkdownPreview>, "customScrollParent" | "ref" | "rootRef"> & {
-  bind(binding: MarkdownAnnotationBinding | null): () => void;
-  onActivate(annotationId: string): void;
-  previewRef: RefObject<VirtualMarkdownPreviewHandle | null>;
-  scrollElement: HTMLElement;
-}) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    return bind({
-      blocks: props.model.blocks,
-      root,
-      scrollElement,
-      revealBlock: (blockKey, signal) => previewRef.current?.revealBlock(blockKey, {
-        align: "center",
-        behavior: "smooth",
-        signal,
-      })
-        ?? Promise.reject(new Error("Markdown preview is not ready")),
-    });
-  }, [bind, previewRef, props.model.blocks, scrollElement]);
-  return (
-    <div onClick={(event) => {
-      const marker = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-annotation-id]") : null;
-      if (marker?.dataset.annotationId) {
-        event.preventDefault();
-        onActivate(marker.dataset.annotationId);
-      }
-    }}>
-      <VirtualMarkdownPreview {...props} customScrollParent={scrollElement} ref={previewRef} rootRef={rootRef} />
-    </div>
-  );
-}
-
 function FilePreviewLoading({ label }: { label: string }) {
   return <LoadingSkeleton className={styles.previewLoading} label={label} />;
 }
@@ -1749,8 +1748,6 @@ interface FilePreviewFindScrollLine {
 }
 
 const FILE_PREVIEW_OPEN_SETTLE_MS = 260;
-const MARKDOWN_MODEL_DEFER_CHARS = 48_000;
-const MARKDOWN_MODEL_DEFER_MS = 260;
 const ANNOTATION_PANEL_EXIT_MS = 160;
 const ANNOTATION_FLASH_ITERATIONS = 1;
 const ANNOTATION_FLASH_INTERVAL_MS = 700;
@@ -1842,41 +1839,6 @@ function previewSelectableContent(target: Element | null, body: HTMLElement): HT
   return body.querySelector<HTMLElement>(selector);
 }
 
-function scheduleMarkdownModelBuild(
-  source: string,
-  options: { deferLarge: boolean },
-  build: () => void,
-): () => void {
-  let timer: number | null = null;
-  let frame: number | null = null;
-
-  if (!options.deferLarge || source.length <= MARKDOWN_MODEL_DEFER_CHARS) {
-    build();
-    return () => {};
-  }
-
-  const runAfterPaint = () => {
-    frame = window.requestAnimationFrame(() => {
-      frame = null;
-      build();
-    });
-  };
-
-  timer = window.setTimeout(() => {
-    timer = null;
-    runAfterPaint();
-  }, MARKDOWN_MODEL_DEFER_MS);
-
-  return () => {
-    if (timer !== null) {
-      window.clearTimeout(timer);
-    }
-    if (frame !== null) {
-      window.cancelAnimationFrame(frame);
-    }
-  };
-}
-
 interface SourceSelection {
   selectedText: string;
   sourceStart: number;
@@ -1922,7 +1884,9 @@ function previewSourceRangeFromSelection(
   boundary: HTMLElement,
 ): { sourceStart: number; sourceEnd: number } | null {
   const allSegments = Array.from(
-    boundary.querySelectorAll<HTMLElement>("[data-preview-source-start][data-preview-source-end]"),
+    boundary.querySelectorAll<HTMLElement>(
+      "[data-preview-source-start][data-preview-source-end], [data-markdown-source-start][data-markdown-source-end]",
+    ),
   );
   const startSegment = previewSourceSegmentForNode(selectionRange.startContainer, boundary);
   const endSegment = previewSourceSegmentForNode(selectionRange.endContainer, boundary);
@@ -1940,8 +1904,8 @@ function previewSourceRangeFromSelection(
   let sourceStart: number | null = null;
   let sourceEnd: number | null = null;
   for (const segment of segments) {
-    const segmentStart = dataInteger(segment.dataset.previewSourceStart);
-    const segmentEnd = dataInteger(segment.dataset.previewSourceEnd);
+    const segmentStart = dataInteger(segment.dataset.previewSourceStart ?? segment.dataset.markdownSourceStart);
+    const segmentEnd = dataInteger(segment.dataset.previewSourceEnd ?? segment.dataset.markdownSourceEnd);
     const textLength = segment.textContent?.length ?? 0;
     if (segmentStart === null || segmentEnd === null || segmentEnd <= segmentStart || textLength <= 0) {
       continue;
@@ -1969,7 +1933,9 @@ function previewSourceRangeFromSelection(
 
 function previewSourceSegmentForNode(node: Node, boundary: HTMLElement): HTMLElement | null {
   const element = node instanceof Element ? node : node.parentElement;
-  const segment = element?.closest<HTMLElement>("[data-preview-source-start][data-preview-source-end]") ?? null;
+  const segment = element?.closest<HTMLElement>(
+    "[data-preview-source-start][data-preview-source-end], [data-markdown-source-start][data-markdown-source-end]",
+  ) ?? null;
   return segment && boundary.contains(segment) ? segment : null;
 }
 
@@ -2006,21 +1972,6 @@ function textOffsetWithinElement(element: HTMLElement, container: Node, offset: 
 
 function normalizeSelectionText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
-}
-
-function findMarkdownOutlineHeading(container: HTMLElement | null, headingId: string): HTMLElement | null {
-  if (!container) {
-    return null;
-  }
-  const elements = container.querySelectorAll<HTMLElement>("[data-markdown-outline-id]");
-  return Array.from(elements).find((element) => element.dataset.markdownOutlineId === headingId) ?? null;
-}
-
-function findMarkdownOutlineBlockHeading(container: HTMLElement | null, blockId: string): HTMLElement | null {
-  if (!container) {
-    return null;
-  }
-  return container.querySelector<HTMLElement>(`[data-markdown-outline-block-id='${cssString(blockId)}']`);
 }
 
 function sourcePositionForLine(source: string, line: number): number {
@@ -2693,26 +2644,19 @@ function clearDomFindHighlights(
 
 function scrollFindMatchIntoView(
   match: FilePreviewFindMatch | null,
-  markdownPreview: VirtualMarkdownPreviewHandle | null,
+  markdownRuntime: FileMarkdownRuntimeHostHandle | null,
 ): void {
   if (match?.type === "dom") {
     match.element.scrollIntoView?.(FILE_PREVIEW_FIND_SCROLL_OPTIONS);
     return;
   }
   if (match?.type === "markdown") {
-    scrollMarkdownFindMatchIntoView(match.id, markdownPreview);
+    markdownRuntime?.revealBlock(match.blockId, { align: "center", behavior: "auto" });
     return;
   }
   if (match?.type === "split") {
-    scrollMarkdownFindMatchIntoView(match.markdown.id, markdownPreview);
+    markdownRuntime?.revealBlock(match.markdown.blockId, { align: "center", behavior: "auto" });
   }
-}
-
-function scrollMarkdownFindMatchIntoView(
-  matchId: string,
-  markdownPreview: VirtualMarkdownPreviewHandle | null,
-): void {
-  void markdownPreview?.revealFindMatch(matchId, { align: "center" }).catch(() => undefined);
 }
 
 function sourceLineNumbers(source: string, start: number, end: number): { lineStart: number; lineEnd: number } {
@@ -4476,3 +4420,6 @@ function errorMessage(reason: unknown): string {
   }
   return "文件预览失败";
 }
+
+let nextFilePreviewConsumerId = 1;
+let nextFilePreviewViewId = 1;

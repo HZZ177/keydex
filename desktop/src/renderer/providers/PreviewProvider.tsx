@@ -1,10 +1,12 @@
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { PropsWithChildren } from "react";
 
 import type { RuntimeBridge } from "@/runtime";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
 
-import type { PreviewRequest } from "./previewTypes";
+import { evictFileMarkdownRuntimeEntry } from "@/renderer/components/workspace/fileMarkdownRuntime";
+
+import type { PreviewMarkdownViewDescriptor, PreviewRequest } from "./previewTypes";
 
 const MAX_PREVIEW_ENTRIES = 8;
 const GLOBAL_PREVIEW_SCOPE = "global";
@@ -52,6 +54,7 @@ export interface PreviewEntry {
   openedAt: number;
   renderContext: PreviewRenderContext | null;
   revealTarget: PreviewFileRevealTarget | null;
+  markdownView: PreviewMarkdownViewDescriptor;
 }
 
 export interface FilePanelRequest {
@@ -149,6 +152,22 @@ export function PreviewProvider({ children }: PropsWithChildren) {
     filePanelRequest: null,
     reviewPanelRequest: null,
   });
+  const retainedRuntimeEntriesRef = useRef(new Map<string, PreviewMarkdownViewDescriptor>());
+
+  useEffect(() => {
+    const next = new Map(state.entries.map((entry) => [entry.id, entry.markdownView]));
+    for (const [entryId, descriptor] of retainedRuntimeEntriesRef.current) {
+      if (!next.has(entryId)) evictFileMarkdownRuntimeEntry(descriptor.scopeId, descriptor.entryId);
+    }
+    retainedRuntimeEntriesRef.current = next;
+  }, [state.entries]);
+
+  useEffect(() => () => {
+    for (const descriptor of retainedRuntimeEntriesRef.current.values()) {
+      evictFileMarkdownRuntimeEntry(descriptor.scopeId, descriptor.entryId);
+    }
+    retainedRuntimeEntriesRef.current.clear();
+  }, []);
 
   const openPreview = useCallback((
     request: PreviewRequest | string,
@@ -410,6 +429,7 @@ function openPreviewInStore(
     const reusedEntry: PreviewEntry = {
       ...entry,
       openedAt: Math.max(entry.openedAt, existingEntry.openedAt + 1),
+      markdownView: existingEntry.markdownView,
       request: existingEntry.request,
     };
     return {
@@ -456,8 +476,9 @@ function createPreviewEntry(
   scopeKey: string,
   revealTarget: PreviewFileRevealTarget | null,
 ): PreviewEntry {
+  const id = `${scopeKey}:${previewEntryId(request)}`;
   return {
-    id: `${scopeKey}:${previewEntryId(request)}`,
+    id,
     scopeKey,
     request,
     title: previewTitle(request),
@@ -465,6 +486,12 @@ function createPreviewEntry(
     openedAt: Date.now(),
     renderContext,
     revealTarget,
+    markdownView: Object.freeze({
+      scopeId: scopeKey,
+      entryId: id,
+      viewId: "file-preview",
+      kind: "preview",
+    }),
   };
 }
 

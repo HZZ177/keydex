@@ -4,6 +4,8 @@ import type { AnnotationRecord, TextSelector } from "@/runtime/annotations";
 
 import type { DocumentTextModel, LogicalRange } from "../document/DocumentTextModel";
 import type { ResolvedAnnotationIndex } from "../domain/resolutions";
+import { resolveTextAnchor } from "../anchoring/resolveTextAnchor";
+import { createTextSelector } from "../anchoring/createTextSelector";
 
 export interface AnnotationDocumentState {
   readonly model: DocumentTextModel;
@@ -15,8 +17,9 @@ export type AnnotationInteraction =
   | { readonly type: "idle" }
   | {
       readonly body: string;
-      readonly range: LogicalRange;
-      readonly selector: TextSelector;
+      readonly range: LogicalRange | null;
+      readonly selector: TextSelector | null;
+      readonly selectionStatus: "ready" | "ambiguous" | "changed";
       readonly type: "drafting";
     }
   | { readonly annotationId: string; readonly body: string; readonly type: "editing" }
@@ -24,6 +27,7 @@ export type AnnotationInteraction =
       readonly annotationId: string;
       readonly range: LogicalRange | null;
       readonly selector: TextSelector | null;
+      readonly selectionStatus: "empty" | "ready" | "ambiguous" | "changed";
       readonly type: "retargeting";
     };
 
@@ -95,11 +99,18 @@ export function createAnnotationStore(): AnnotationStore {
       }));
     },
     beginDraft(range, selector) {
+      const current = get().interaction;
       set({
         activeAnnotationId: null,
         error: null,
         hoveredAnnotationId: null,
-        interaction: Object.freeze({ body: "", range, selector, type: "drafting" }),
+        interaction: Object.freeze({
+          body: current.type === "drafting" ? current.body : "",
+          range,
+          selector,
+          selectionStatus: "ready",
+          type: "drafting",
+        }),
         panelOpen: true,
       });
     },
@@ -115,7 +126,13 @@ export function createAnnotationStore(): AnnotationStore {
       set({
         activeAnnotationId: annotationId,
         error: null,
-        interaction: Object.freeze({ annotationId, range: null, selector: null, type: "retargeting" }),
+        interaction: Object.freeze({
+          annotationId,
+          range: null,
+          selector: null,
+          selectionStatus: "empty",
+          type: "retargeting",
+        }),
         panelOpen: true,
       });
     },
@@ -169,9 +186,18 @@ export function createAnnotationStore(): AnnotationStore {
       return requestId;
     },
     setDocument(document) {
+      const current = get();
+      const sameDocument = current.document?.workspaceId === document.workspaceId
+        && current.document.path === document.path;
+      if (!sameDocument) {
+        set({ ...initialAnnotationState(), document });
+        return;
+      }
+      const interaction = reconcileInteraction(current.interaction, document.model);
       set({
-        ...initialAnnotationState(),
         document,
+        interaction,
+        error: interactionSelectionError(interaction),
       });
     },
     setError(error) {
@@ -201,7 +227,12 @@ export function createAnnotationStore(): AnnotationStore {
       if (interaction.type !== "retargeting") {
         throw new Error("Cannot set retarget selection outside retargeting state");
       }
-      set({ interaction: Object.freeze({ ...interaction, range, selector }) });
+      set({ interaction: Object.freeze({
+        ...interaction,
+        range,
+        selector,
+        selectionStatus: "ready",
+      }) });
     },
     startMutation(kind, annotationId) {
       if (get().pendingMutation) {
@@ -264,4 +295,58 @@ function initialAnnotationState(): AnnotationState {
     records: Object.freeze([]),
     resolutions: emptyResolvedAnnotationIndex(),
   };
+}
+
+function reconcileInteraction(
+  interaction: AnnotationInteraction,
+  model: DocumentTextModel,
+): AnnotationInteraction {
+  if (interaction.type === "drafting") {
+    if (!interaction.selector) return interaction;
+    const resolution = resolveTextAnchor(model, interaction.selector);
+    if (resolution.status !== "resolved") {
+      return Object.freeze({
+        ...interaction,
+        range: null,
+        selector: null,
+        selectionStatus: resolution.status,
+      });
+    }
+    return Object.freeze({
+      ...interaction,
+      range: resolution.range,
+      selector: createTextSelector(model, resolution.range),
+      selectionStatus: "ready",
+    });
+  }
+  if (interaction.type === "retargeting" && interaction.selector) {
+    const resolution = resolveTextAnchor(model, interaction.selector);
+    if (resolution.status !== "resolved") {
+      return Object.freeze({
+        ...interaction,
+        range: null,
+        selector: null,
+        selectionStatus: resolution.status,
+      });
+    }
+    return Object.freeze({
+      ...interaction,
+      range: resolution.range,
+      selector: createTextSelector(model, resolution.range),
+      selectionStatus: "ready",
+    });
+  }
+  return interaction;
+}
+
+function interactionSelectionError(interaction: AnnotationInteraction): string | null {
+  if ((interaction.type === "drafting" || interaction.type === "retargeting")
+    && interaction.selectionStatus === "ambiguous") {
+    return "The annotation selection is ambiguous after the document changed; select the target again.";
+  }
+  if ((interaction.type === "drafting" || interaction.type === "retargeting")
+    && interaction.selectionStatus === "changed") {
+    return "The annotation selection changed with the document; select the target again.";
+  }
+  return null;
 }

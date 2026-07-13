@@ -122,6 +122,8 @@ const MINI_TURN_MARKER_PEAK_WIDTH = 30;
 const MINI_TURN_MARKER_STEP = 12;
 const MINI_TURN_MARKER_HIT_HEIGHT = 14;
 const MINI_TURN_SCROLL_EDGE = 12;
+const MINI_TURN_MARKER_WINDOW_OVERSCAN = 12;
+const MINI_TURN_MARKER_INITIAL_WINDOW = 64;
 
 export interface WorkbenchAssistantDockTransitionState {
   phase: DockTransitionPhase | "idle" | "resize";
@@ -1963,7 +1965,7 @@ function workbenchPreviewPanelScopeKey(workspaceId: string): string {
   return `workbench:${workspaceId}`;
 }
 
-function WorkbenchMiniTurnNavigator({
+export function WorkbenchMiniTurnNavigator({
   disabled,
   onNavigateTurn,
   turns,
@@ -2003,6 +2005,13 @@ function WorkbenchMiniTurnNavigator({
     ),
   );
   const isScrollable = viewportMetrics.scrollHeight - viewportMetrics.clientHeight > 1;
+  const renderedMarkerIndexes = miniTurnMarkerWindowIndexes(
+    turns.length,
+    viewportMetrics.scrollTop,
+    viewportMetrics.clientHeight,
+    activeIndex,
+    hoveredIndex,
+  );
 
   const setActiveIndex = (index: number | null) => {
     if (hoveredIndexRef.current === index) {
@@ -2187,7 +2196,9 @@ function WorkbenchMiniTurnNavigator({
               <span />
             </div>
           ) : null}
-          {turns.map((turn, index) => (
+          {renderedMarkerIndexes.map((index) => {
+            const turn = turns[index];
+            return (
             <button
               className={styles.miniTurnNavigatorMarker}
               key={turn.id}
@@ -2216,7 +2227,8 @@ function WorkbenchMiniTurnNavigator({
             >
               <span />
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
       {activeTurn ? (
@@ -2234,8 +2246,41 @@ function WorkbenchMiniTurnNavigator({
         </article>
       ) : null}
       <div className={styles.miniTurnNavigatorCount}>{turns.length} turn</div>
+      <span hidden data-testid="workbench-mini-turn-navigator-rendered-count">
+        {renderedMarkerIndexes.length}
+      </span>
     </div>
   );
+}
+
+function miniTurnMarkerWindowIndexes(
+  count: number,
+  scrollTop: number,
+  clientHeight: number,
+  current: number,
+  hovered: number | null,
+): number[] {
+  if (count <= MINI_TURN_MARKER_INITIAL_WINDOW) {
+    return Array.from({ length: count }, (_, index) => index);
+  }
+  const visibleCount = clientHeight > 0
+    ? Math.ceil(clientHeight / MINI_TURN_MARKER_STEP)
+    : MINI_TURN_MARKER_INITIAL_WINDOW - MINI_TURN_MARKER_WINDOW_OVERSCAN * 2;
+  const first = clampNumber(
+    Math.floor(scrollTop / MINI_TURN_MARKER_STEP) - MINI_TURN_MARKER_WINDOW_OVERSCAN,
+    0,
+    count - 1,
+  );
+  const last = clampNumber(
+    first + visibleCount + MINI_TURN_MARKER_WINDOW_OVERSCAN * 2,
+    first,
+    count - 1,
+  );
+  const indexes = new Set<number>();
+  for (let index = first; index <= last; index += 1) indexes.add(index);
+  if (current >= 0 && current < count) indexes.add(current);
+  if (hovered !== null && hovered >= 0 && hovered < count) indexes.add(hovered);
+  return [...indexes].sort((left, right) => left - right);
 }
 
 function miniTurnRailHeight(count: number): number {

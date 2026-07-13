@@ -74,7 +74,7 @@ describe("ConversationComposer", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "发送" }));
     });
-    expect(onSend).toHaveBeenCalledWith([], [], []);
+    expect(onSend).toHaveBeenCalledWith([], [], [], {});
   });
 
   it("uses the page interaction placeholder while A2UI is waiting for input", () => {

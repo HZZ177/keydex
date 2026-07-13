@@ -1,0 +1,1071 @@
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
+
+import type { RuntimeBridge, WorkspaceScope } from "@/runtime";
+import type { MarkdownSnapshot } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
+import {
+  estimateMarkdownSnapshotHeights,
+  measuredMarkdownBlockOccupiedHeight,
+} from "@/renderer/markdownRuntime/layout/heightEstimate";
+import { MarkdownMeasurementScheduler } from "@/renderer/markdownRuntime/layout/MeasurementScheduler";
+import type { MarkdownHeightUpdate } from "@/renderer/markdownRuntime/layout/HeightIndex";
+import {
+  MarkdownAnnotationOverlayController,
+  type MarkdownAnnotationOverlayMarker,
+  type MarkdownAnnotationOverlayState,
+} from "@/renderer/markdownRuntime/annotations";
+import { buildMarkdownFindIndex as buildRuntimeMarkdownFindIndex, type MarkdownFindIndex } from "@/renderer/markdownRuntime/find";
+import { MarkdownSelectionController, type MarkdownProjectedSelection } from "@/renderer/markdownRuntime/interaction";
+import { MarkdownPositionMapper } from "@/renderer/markdownRuntime/mapping";
+import type { AnnotationRenderState } from "@/renderer/features/annotations/navigation/types";
+import type { MarkdownAnnotationBinding } from "@/renderer/features/annotations/adapters/MarkdownAnnotationAdapter";
+import { markdownRuntimeDiagnostics } from "@/renderer/markdownRuntime/diagnostics";
+import { stableMarkdownIdentityHash } from "@/renderer/markdownRuntime/document/identity";
+import {
+  ImageResourceRuntime,
+  MermaidResourceRuntime,
+  type MarkdownImageResourceDiagnostics,
+  type MarkdownMermaidRuntimeDiagnostics,
+} from "@/renderer/markdownRuntime/resources";
+import type { MarkdownRuntimeStoreSnapshot } from "@/renderer/markdownRuntime/MarkdownRuntimeStore";
+import {
+  FILE_MARKDOWN_RENDERER_PROFILE,
+  type MarkdownRendererInteractionHandlers,
+  type MarkdownRendererResourceLifecycle,
+} from "@/renderer/markdownRuntime/renderers";
+import {
+  DocumentViewRuntime,
+  MarkdownEnvironmentController,
+  attachMarkdownRuntimeView,
+  type MarkdownRuntimeViewAttachment,
+  type MarkdownViewDescriptor,
+  type MarkdownViewStateAttachment,
+} from "@/renderer/markdownRuntime/view";
+import type { MarkdownRuntimeAttachment } from "@/renderer/markdownRuntime/MarkdownRuntimeStore";
+import { MARKDOWN_WORKER_PROTOCOL_VERSION } from "@/renderer/markdownRuntime/worker/protocol";
+
+import { fileMarkdownRuntimeStore, fileMarkdownViewStateStore } from "./fileMarkdownRuntime";
+
+export interface FileMarkdownRuntimeHostHandle {
+  revealSourceOffset(offset: number, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
+  revealSourceLine(line: number, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
+  revealBlock(blockId: string, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
+  getBlockElement(blockId: string): HTMLElement | null;
+  currentSnapshot(): MarkdownSnapshot | null;
+  queryFind(
+    query: string,
+    options?: { caseSensitive?: boolean; wholeWord?: boolean; limit?: number; signal?: AbortSignal },
+  ): Promise<MarkdownFindIndex>;
+  diagnostics(): FileMarkdownRuntimeHostDiagnostics | null;
+  retry(): void;
+}
+
+export interface FileMarkdownRuntimeHostDiagnostics {
+  readonly revision: string;
+  readonly snapshotBlocks: number;
+  readonly mountedBlocks: number;
+  readonly domNodes: number;
+  readonly store: MarkdownRuntimeStoreSnapshot;
+  readonly image: MarkdownImageResourceDiagnostics;
+  readonly mermaid: MarkdownMermaidRuntimeDiagnostics;
+  readonly stages: {
+    readonly setupMs: number;
+    readonly loadMs: number;
+    readonly publishMs: number;
+    readonly featureInstallMs: number;
+  };
+}
+
+export type FileMarkdownRuntimeSnapshotLoader = NonNullable<FileMarkdownRuntimeHostProps["snapshotLoader"]>;
+
+export interface FileMarkdownRuntimeHostProps {
+  readonly workspaceId: string;
+  readonly path: string;
+  readonly source: string;
+  readonly revision: string;
+  readonly scrollElement: HTMLElement;
+  readonly runtime?: RuntimeBridge;
+  readonly workspaceScope?: WorkspaceScope | null;
+  readonly interactions?: MarkdownRendererInteractionHandlers;
+  readonly viewDescriptor?: MarkdownViewDescriptor;
+  readonly snapshotLoader?: (input: {
+    source: string;
+    revision: string;
+    signal: AbortSignal;
+  }) => Promise<MarkdownSnapshot>;
+  readonly onSnapshot?: (snapshot: MarkdownSnapshot) => void;
+  readonly onOutlineChange?: (outline: MarkdownSnapshot["outline"]) => void;
+  readonly onError?: (error: Error | null) => void;
+  readonly onRender?: () => void;
+  readonly annotationRenderState?: AnnotationRenderState | null;
+  readonly activeFindMatchId?: string | null;
+  readonly findIndex?: MarkdownFindIndex | null;
+  readonly annotationPanelOpen?: boolean;
+  readonly bindAnnotation?: (binding: MarkdownAnnotationBinding | null) => () => void;
+  readonly onAnnotationActivate?: (annotationId: string) => void;
+  readonly onAnnotationHover?: (annotationId: string | null) => void;
+  readonly onMountedBlocksChange?: () => void;
+  readonly onSelectionChange?: (selection: MarkdownProjectedSelection | null) => void;
+}
+
+export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle, FileMarkdownRuntimeHostProps>(
+  function FileMarkdownRuntimeHost(props, forwardedRef) {
+    const hostRef = useRef<HTMLDivElement>(null);
+    const stateRef = useRef<HostState | null>(null);
+    const propsRef = useRef(props);
+    propsRef.current = props;
+    const lastGoodSnapshotRef = useRef<{ key: string; snapshot: MarkdownSnapshot } | null>(null);
+    const [error, setError] = useState<Error | null>(null);
+    const [retryToken, setRetryToken] = useState(0);
+
+    useImperativeHandle(forwardedRef, () => ({
+      revealSourceOffset: (offset, options) => revealOffset(stateRef.current, offset, options),
+      revealSourceLine: (line, options) => {
+        const state = stateRef.current;
+        if (!state?.snapshot || !Number.isSafeInteger(line) || line < 1) return false;
+        const blockIndex = markdownBlockIndexAtSourceLine(state.snapshot, line - 1);
+        const block = blockIndex === null ? null : state.snapshot.blocks[blockIndex];
+        return block ? revealBlock(state, block.id, options) : false;
+      },
+      revealBlock: (blockId, options) => revealBlock(stateRef.current, blockId, options),
+      getBlockElement: (blockId) => stateRef.current?.view.getBlockElement(blockId) ?? null,
+      currentSnapshot: () => stateRef.current?.snapshot ?? null,
+      queryFind: (query, options) => queryRuntimeFind(stateRef.current, query, options),
+      diagnostics: () => {
+        const state = stateRef.current;
+        if (!state?.snapshot) return null;
+        return Object.freeze({
+          revision: state.snapshot.revision,
+          snapshotBlocks: state.snapshot.blocks.length,
+          mountedBlocks: state.view.mountedBlockIds().length,
+          domNodes: hostRef.current?.querySelectorAll("*").length ?? 0,
+          store: fileMarkdownRuntimeStore().diagnostics(),
+          image: state.imageRuntime.diagnostics(),
+          mermaid: state.mermaidRuntime.diagnostics(),
+          stages: Object.freeze({ ...state.stages }),
+        });
+      },
+      retry: () => setRetryToken((value) => value + 1),
+    }), []);
+
+    useLayoutEffect(() => {
+      syncRuntimeFeatureState(stateRef.current, props);
+    });
+
+    useEffect(() => {
+      const host = hostRef.current;
+      if (!host) return;
+      const effectStartedAt = performance.now();
+      let active = true;
+      const controller = new AbortController();
+      const documentKey = `${props.workspaceId}\u0000${props.path}`;
+      let state!: HostState;
+      let resourceReflowFrame: number | null = null;
+      const scheduleResourceReflow = () => {
+        if (!active || resourceReflowFrame !== null) return;
+        resourceReflowFrame = window.requestAnimationFrame(() => {
+          resourceReflowFrame = null;
+          if (!active) return;
+          safeMeasureAndAnchor(state);
+          remeasureRuntimeOverlays(state);
+        });
+      };
+      let attachment: MarkdownRuntimeAttachment | null = null;
+      let visiblePrefixAttachment: MarkdownRuntimeAttachment | null = null;
+      let runtimeViewAttachment: MarkdownRuntimeViewAttachment | null = null;
+      let viewStateAttachment: MarkdownViewStateAttachment | null = null;
+      const imageRuntime = new ImageResourceRuntime({
+        sourcePathFor: () => props.path,
+        workspaceKeyFor: () => workspaceScopeKey(props.workspaceScope) ?? props.workspaceId,
+        resourceRevisionFor: () => props.revision,
+        readWorkspaceImage: props.runtime && props.workspaceScope
+          ? async (path, _context, signal) => {
+              if (signal.aborted) throw signal.reason;
+              const result = await props.runtime!.workspace.readMedia(props.workspaceScope!, path);
+              if (signal.aborted) throw signal.reason;
+              return { dataUrl: result.data_url, mediaType: result.media_type, bytes: result.size, revision: props.revision };
+            }
+          : undefined,
+        onStateChange: (event) => recordResourceDiagnostic(documentKey, props.revision, "image", event.resourceId, event.state, event.error),
+        onDimensions: scheduleResourceReflow,
+      });
+      const mermaidRuntime = new MermaidResourceRuntime({
+        onStateChange: (event) => recordResourceDiagnostic(documentKey, props.revision, "mermaid", event.resourceId, event.state, event.error),
+        onDimensions: scheduleResourceReflow,
+      });
+      const resources: MarkdownRendererResourceLifecycle = {
+        mount(resource, element, context) {
+          return imageRuntime.mount(resource, element, context) ?? mermaidRuntime.mount(resource, element, context);
+        },
+      };
+      const view = new DocumentViewRuntime(host, {
+        profile: FILE_MARKDOWN_RENDERER_PROFILE,
+        interactions: props.interactions,
+        resourceLifecycle: resources,
+        onFoldChange: (foldedBlockIds, patch) => {
+          if (!active) return;
+          if (patch && Math.abs(props.scrollElement.scrollTop - patch.viewport.scrollTop) > 0.5) {
+            props.scrollElement.scrollTop = patch.viewport.scrollTop;
+          }
+          state.viewState?.replaceFolds(foldedBlockIds);
+          syncMeasurementTargets(state);
+          syncRuntimeFeatureState(state, propsRef.current);
+          remeasureRuntimeOverlays(state);
+        },
+      });
+      const handleRetainedLinkFallback = (event: MouseEvent) => {
+        if (event.defaultPrevented || !(event.target instanceof Element)) return;
+        const anchor = event.target.closest<HTMLAnchorElement>("a[data-markdown-link-navigation='host']");
+        if (!anchor || !host.contains(anchor)) return;
+        const blockId = anchor.closest<HTMLElement>("[data-markdown-block-id]")?.dataset.markdownBlockId;
+        const block = blockId ? stateRef.current?.snapshot?.blocks.find((candidate) => candidate.id === blockId) : null;
+        const href = anchor.getAttribute("href") ?? "";
+        if (block && href) propsRef.current.interactions?.onLinkActivate?.(event, { href, block });
+      };
+      host.addEventListener("click", handleRetainedLinkFallback);
+      const environment = new MarkdownEnvironmentController(host, {
+        mermaidRuntime,
+        onRemeasure: () => {
+          safeMeasureAndAnchor(stateRef.current);
+          remeasureRuntimeOverlays(stateRef.current);
+        },
+      });
+      state = {
+        view,
+        environment,
+        imageRuntime,
+        mermaidRuntime,
+        scrollElement: props.scrollElement,
+        viewState: null,
+        viewStateUnsubscribe: null,
+        documentId: documentKey,
+        revision: props.revision,
+        snapshot: null,
+        renderCount: 0,
+        attachment: null,
+        mapper: null,
+        selection: null,
+        annotationOverlay: null,
+        findOverlay: null,
+        annotationBindingCleanup: null,
+        mountedBlockSignature: "",
+        findRequestSequence: 0,
+        measurement: null,
+        measuredElements: new Map(),
+        featureProps: props,
+        publishedAnnotationRenderState: null,
+        publishedFindIndex: null,
+        publishedActiveFindMatchId: null,
+        stages: { setupMs: 0, loadMs: 0, publishMs: 0, featureInstallMs: 0 },
+      };
+      if (typeof ResizeObserver !== "undefined") {
+        state.measurement = new MarkdownMeasurementScheduler({
+          revision: props.revision,
+          epoch: 0,
+          onMeasurements: (batch) => applyMeasuredHeightBatch(state, batch.updates, batch.revision),
+          onError: (reason) => recordMeasurementFailure(state, reason),
+        });
+      }
+      stateRef.current = state;
+      let featureInstallTimer: number | null = null;
+      const scheduleFeatureInstall = () => {
+        if (featureInstallTimer !== null) window.clearTimeout(featureInstallTimer);
+        // Visible-first: let the canonical viewport paint before building
+        // selection/annotation/find indexes for the whole document.
+        featureInstallTimer = window.setTimeout(() => {
+          featureInstallTimer = null;
+          if (!active || !state.snapshot) return;
+          const featureStartedAt = performance.now();
+          installRuntimeFeatures(state, propsRef.current);
+          state.stages.featureInstallMs = Math.max(0, performance.now() - featureStartedAt);
+          host.dataset.markdownRuntimeFeatures = "ready";
+          safeMeasureAndAnchor(state);
+        }, 50);
+      };
+      let viewportFrame: number | null = null;
+      const updateViewport = () => {
+        viewportFrame = null;
+        if (!state.snapshot) return;
+        const patch = view.updateViewport({
+          scrollTop: props.scrollElement.scrollTop,
+          viewportHeight: props.scrollElement.clientHeight,
+          revision: state.snapshot.revision,
+        });
+        persistScrollAnchor(state, patch.viewport.visibleRange.start);
+        recordRendererFailures(state, patch.render.failed);
+        syncMeasurementTargets(state);
+        syncRenderCount(host, state, props.onRender);
+        syncRuntimeFeatureState(state, propsRef.current);
+      };
+      const scheduleViewportUpdate = () => {
+        if (viewportFrame !== null) return;
+        viewportFrame = requestAnimationFrame(updateViewport);
+      };
+      props.scrollElement.addEventListener("scroll", scheduleViewportUpdate, { passive: true });
+      const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleViewportUpdate);
+      resize?.observe(props.scrollElement);
+
+      if (props.viewDescriptor) {
+        if (props.snapshotLoader) {
+          viewStateAttachment = fileMarkdownViewStateStore().attach(props.viewDescriptor);
+        } else {
+          runtimeViewAttachment = attachMarkdownRuntimeView({
+            runtimeStore: fileMarkdownRuntimeStore(),
+            viewStateStore: fileMarkdownViewStateStore(),
+            identity: { surface: "file", workspaceId: props.workspaceId, path: props.path },
+            view: props.viewDescriptor,
+          });
+          viewStateAttachment = runtimeViewAttachment.view;
+        }
+        state.viewState = viewStateAttachment;
+        view.setFoldedBlockIds(viewStateAttachment.snapshot().foldedBlockIds);
+        state.viewStateUnsubscribe = viewStateAttachment.subscribe((viewState) => {
+          if (!active) return;
+          const patch = view.setFoldedBlockIds(viewState.foldedBlockIds);
+          if (patch && Math.abs(props.scrollElement.scrollTop - patch.viewport.scrollTop) > 0.5) {
+            props.scrollElement.scrollTop = patch.viewport.scrollTop;
+          }
+          if (patch) {
+            syncMeasurementTargets(state);
+            syncRuntimeFeatureState(state, propsRef.current);
+            remeasureRuntimeOverlays(state);
+          }
+        });
+        host.dataset.markdownRuntimeViewId = props.viewDescriptor.viewId;
+        host.dataset.markdownRuntimeEntryId = props.viewDescriptor.entryId;
+      }
+      if (!props.snapshotLoader && !runtimeViewAttachment) {
+        attachment = fileMarkdownRuntimeStore().attach({
+          surface: "file",
+          workspaceId: props.workspaceId,
+          path: props.path,
+        }, `file-host:runtime:${stableMarkdownIdentityHash(`${props.workspaceId}:${props.path}:${nextFileRuntimeViewId++}`)}`);
+      }
+      state.attachment = runtimeViewAttachment?.document ?? attachment;
+      const retainedSnapshot = runtimeViewAttachment?.current()?.snapshot
+        ?? attachment?.current()?.snapshot
+        ?? (lastGoodSnapshotRef.current?.key === documentKey ? lastGoodSnapshotRef.current.snapshot : null);
+      if (retainedSnapshot) {
+        publishSnapshot(state, retainedSnapshot, "stale");
+        scheduleFeatureInstall();
+        syncRenderCount(host, state, props.onRender);
+        host.dataset.markdownRuntimeStale = "true";
+      } else {
+        host.dataset.markdownRuntimeStatus = "loading";
+      }
+      if (!retainedSnapshot && !props.snapshotLoader && props.source.length > FILE_VISIBLE_PREFIX_CHARACTERS) {
+        const prefixSource = visibleMarkdownPrefix(props.source, FILE_VISIBLE_PREFIX_CHARACTERS);
+        visiblePrefixAttachment = fileMarkdownRuntimeStore().attach({
+          surface: "file",
+          workspaceId: props.workspaceId,
+          path: `${props.path}#visible-prefix`,
+        }, `file-visible-prefix:${stableMarkdownIdentityHash(`${props.workspaceId}:${props.path}:${props.revision}`)}`);
+        void visiblePrefixAttachment.load({
+          revision: `${props.revision}:visible:${prefixSource.length}`,
+          source: prefixSource,
+          retention: "transient",
+          signal: controller.signal,
+        }).then((snapshot) => {
+          if (!active || state.snapshot) return;
+          publishSnapshot(state, snapshot, "ready");
+          host.dataset.markdownRuntimeCompleteness = "visible-prefix";
+          syncRenderCount(host, state, props.onRender);
+        }).catch((reason) => {
+          if (!active || controller.signal.aborted) return;
+          markdownRuntimeDiagnostics.record({
+            stage: "parser",
+            severity: "warning",
+            code: "visible-prefix-failed",
+            documentId: state.documentId,
+            revision: props.revision,
+            recovery: "none",
+            detail: reason,
+            blockId: null,
+            resourceId: null,
+          });
+        });
+      }
+      const loadStartedAt = performance.now();
+      state.stages.setupMs = Math.max(0, loadStartedAt - effectStartedAt);
+      const load = props.snapshotLoader
+        ? props.snapshotLoader({ source: props.source, revision: props.revision, signal: controller.signal })
+        : runtimeViewAttachment
+          ? runtimeViewAttachment.load({ revision: props.revision, source: props.source, signal: controller.signal })
+          : attachment!.load({ revision: props.revision, source: props.source, signal: controller.signal });
+      void load.then((snapshot) => {
+        if (!active) return;
+        state.stages.loadMs = Math.max(0, performance.now() - loadStartedAt);
+        state.snapshot = snapshot;
+        if (!runtimeViewAttachment && viewStateAttachment) {
+          viewStateAttachment.reconcileRevision(snapshot.revision, {
+            sourceCharacters: snapshot.source_characters,
+            blockIds: new Set(snapshot.blocks.map((block) => block.id)),
+          });
+        }
+        const publishStartedAt = performance.now();
+        publishSnapshot(state, snapshot, "ready");
+        state.stages.publishMs = Math.max(0, performance.now() - publishStartedAt);
+        restoreScrollAnchor(state);
+        syncRenderCount(host, state, props.onRender);
+        lastGoodSnapshotRef.current = { key: documentKey, snapshot };
+        visiblePrefixAttachment?.detach();
+        visiblePrefixAttachment = null;
+        delete host.dataset.markdownRuntimeStale;
+        host.dataset.markdownRuntimeCompleteness = "canonical";
+        setError(null);
+        props.onError?.(null);
+        props.onSnapshot?.(snapshot);
+        props.onOutlineChange?.(snapshot.outline);
+        scheduleFeatureInstall();
+      }).catch((reason) => {
+        if (!active || controller.signal.aborted) return;
+        const next = reason instanceof Error ? reason : new Error(String(reason));
+        host.dataset.markdownRuntimeStatus = state.snapshot ? "stale-error" : "error";
+        if (state.snapshot) host.dataset.markdownRuntimeStale = "true";
+        setError(next);
+        props.onError?.(next);
+        markdownRuntimeDiagnostics.record({
+          stage: "host",
+          severity: state.snapshot ? "error" : "fatal",
+          code: state.snapshot ? "load-failed-retained" : "load-failed",
+          documentId: state.documentId,
+          revision: props.revision,
+          recovery: state.snapshot ? "retain-snapshot" : "retry",
+          detail: next,
+          blockId: null,
+          resourceId: null,
+        });
+      });
+
+      return () => {
+        active = false;
+        controller.abort();
+        props.scrollElement.removeEventListener("scroll", scheduleViewportUpdate);
+        if (viewportFrame !== null) cancelAnimationFrame(viewportFrame);
+        if (featureInstallTimer !== null) window.clearTimeout(featureInstallTimer);
+        if (resourceReflowFrame !== null) window.cancelAnimationFrame(resourceReflowFrame);
+        resize?.disconnect();
+        attachment?.detach();
+        visiblePrefixAttachment?.detach();
+        runtimeViewAttachment?.detach();
+        state.viewStateUnsubscribe?.();
+        state.viewStateUnsubscribe = null;
+        if (!runtimeViewAttachment) viewStateAttachment?.detach();
+        environment.destroy();
+        state.measurement?.dispose();
+        state.measuredElements.clear();
+        destroyRuntimeFeatures(state);
+        delete host.dataset.markdownRuntimeFeatures;
+        host.removeEventListener("click", handleRetainedLinkFallback);
+        view.destroy();
+        imageRuntime.destroy();
+        mermaidRuntime.destroy();
+        if (stateRef.current === state) stateRef.current = null;
+      };
+    }, [
+      props.interactions,
+      props.path,
+      props.revision,
+      props.runtime,
+      props.scrollElement,
+      props.snapshotLoader,
+      props.source,
+      props.workspaceId,
+      props.workspaceScope,
+      props.viewDescriptor,
+      retryToken,
+    ]);
+
+    return (
+      <div
+        className="keydex-markdown"
+        data-file-markdown-runtime-host="true"
+        data-markdown-runtime-mode="runtime"
+      >
+        <div ref={hostRef} data-file-markdown-runtime-canvas="true" />
+        {error ? (
+          <div data-markdown-runtime-error="true" role="alert">
+            <span>Markdown Runtime failed: {error.message}</span>
+            <button type="button" data-markdown-runtime-retry="true" onClick={() => setRetryToken((value) => value + 1)}>
+              Retry Runtime
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
+  },
+);
+
+interface HostState {
+  readonly view: DocumentViewRuntime;
+  readonly environment: MarkdownEnvironmentController;
+  readonly imageRuntime: ImageResourceRuntime;
+  readonly mermaidRuntime: MermaidResourceRuntime;
+  readonly scrollElement: HTMLElement;
+  viewState: MarkdownViewStateAttachment | null;
+  viewStateUnsubscribe: (() => void) | null;
+  readonly documentId: string;
+  readonly revision: string;
+  snapshot: MarkdownSnapshot | null;
+  renderCount: number;
+  attachment: MarkdownRuntimeAttachment | null;
+  mapper: MarkdownPositionMapper | null;
+  selection: MarkdownSelectionController | null;
+  annotationOverlay: MarkdownAnnotationOverlayController | null;
+  findOverlay: MarkdownAnnotationOverlayController | null;
+  annotationBindingCleanup: (() => void) | null;
+  mountedBlockSignature: string;
+  findRequestSequence: number;
+  measurement: MarkdownMeasurementScheduler | null;
+  readonly measuredElements: Map<string, HTMLElement>;
+  featureProps: FileMarkdownRuntimeHostProps;
+  publishedAnnotationRenderState: AnnotationRenderState | null;
+  publishedFindIndex: MarkdownFindIndex | null;
+  publishedActiveFindMatchId: string | null;
+  readonly stages: { setupMs: number; loadMs: number; publishMs: number; featureInstallMs: number };
+}
+
+function installRuntimeFeatures(state: HostState, props: FileMarkdownRuntimeHostProps): void {
+  destroyRuntimeFeatures(state, false);
+  state.featureProps = props;
+  const snapshot = state.snapshot;
+  if (!snapshot || props.source.length !== snapshot.source_characters) return;
+  const mapper = new MarkdownPositionMapper(props.source, snapshot, {
+    heightIndex: state.view.getHeightIndex(),
+    mounted: state.view,
+  });
+  state.mapper = mapper;
+  state.annotationOverlay = new MarkdownAnnotationOverlayController({
+    snapshot,
+    mapper,
+    mounted: state.view,
+    reveal: ({ blockId }) => {
+      revealBlock(state, blockId, { align: "center", behavior: "smooth" });
+    },
+    onActivate: (annotationId) => state.featureProps.onAnnotationActivate?.(annotationId),
+    onHover: (annotationId) => state.featureProps.onAnnotationHover?.(annotationId),
+  });
+  state.findOverlay = new MarkdownAnnotationOverlayController({
+    snapshot,
+    mapper,
+    mounted: state.view,
+    variant: "find",
+  });
+  state.selection = new MarkdownSelectionController({
+    mapper,
+    boundary: state.view.host,
+    preserveFocusTarget: (target) => target !== null && (
+      state.view.host.contains(target)
+      || target.closest("[data-file-preview-selection-excluded='true']") !== null
+    ),
+    onChange: ({ selection }) => state.featureProps.onSelectionChange?.(selection),
+  });
+  state.selection.attach();
+  if (props.bindAnnotation) {
+    state.annotationBindingCleanup = props.bindAnnotation({
+      blocks: EMPTY_ANNOTATION_BINDING_BLOCKS,
+      blocksForSourceRange: (range) => annotationBlocksForSourceRange(snapshot, range.start, range.end),
+      root: state.view.host,
+      scrollElement: state.scrollElement,
+      revealBlock: async (blockId, signal) => {
+        if (signal.aborted) throw signal.reason;
+        if (!revealBlock(state, blockId, { align: "center", behavior: "smooth" })) {
+          throw new Error(`Markdown block ${blockId} is unavailable`);
+        }
+      },
+    });
+  }
+  syncRuntimeFeatureState(state, props);
+}
+
+const EMPTY_ANNOTATION_BINDING_BLOCKS = Object.freeze([]);
+
+function annotationBlocksForSourceRange(
+  snapshot: MarkdownSnapshot,
+  sourceStart: number,
+  sourceEnd: number,
+): readonly { readonly id: string; readonly sourceStart: number; readonly sourceEnd: number }[] {
+  const blocks = snapshot.blocks;
+  let low = 0;
+  let high = blocks.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (blocks[middle]!.source_end <= sourceStart) low = middle + 1;
+    else high = middle;
+  }
+  const overlapping = [];
+  for (let index = low; index < blocks.length; index += 1) {
+    const block = blocks[index]!;
+    if (block.source_start >= sourceEnd) break;
+    if (block.source_end > sourceStart) {
+      overlapping.push(Object.freeze({
+        id: block.id,
+        sourceStart: block.source_start,
+        sourceEnd: block.source_end,
+      }));
+    }
+  }
+  return Object.freeze(overlapping);
+}
+
+function syncRuntimeFeatureState(
+  state: HostState | null,
+  props: FileMarkdownRuntimeHostProps,
+): void {
+  if (!state) return;
+  state.featureProps = props;
+  const snapshot = state.snapshot;
+  if (!snapshot || !state.mapper || state.mapper.snapshot.revision !== snapshot.revision) return;
+  const annotationRenderState = props.annotationRenderState ?? null;
+  if (annotationRenderState !== state.publishedAnnotationRenderState) {
+    state.annotationOverlay?.publish(annotationOverlayState(
+      snapshot,
+      annotationRenderState,
+      (blockId) => state.view.getBlockIndex(blockId),
+    ));
+    state.publishedAnnotationRenderState = annotationRenderState;
+  }
+  const findIndex = props.findIndex?.revision === snapshot.revision ? props.findIndex : null;
+  const activeFindMatchId = props.activeFindMatchId ?? null;
+  if (findIndex !== state.publishedFindIndex || activeFindMatchId !== state.publishedActiveFindMatchId) {
+    state.findOverlay?.publish(findOverlayState(snapshot, findIndex, activeFindMatchId));
+    state.publishedFindIndex = findIndex;
+    state.publishedActiveFindMatchId = activeFindMatchId;
+  }
+  const mounted = state.view.mountedBlockIds();
+  state.annotationOverlay?.syncMountedBlocks(mounted);
+  state.findOverlay?.syncMountedBlocks(mounted);
+  const signature = mounted.join("\u0000");
+  if (signature !== state.mountedBlockSignature) {
+    state.mountedBlockSignature = signature;
+    syncMeasurementTargets(state);
+    props.onMountedBlocksChange?.();
+  }
+}
+
+function destroyRuntimeFeatures(state: HostState, notify = true): void {
+  state.annotationBindingCleanup?.();
+  state.annotationBindingCleanup = null;
+  state.selection?.destroy();
+  state.selection = null;
+  // The Find overlay is installed after the annotation overlay. Destroying it
+  // first preserves the shared block positioning invariant.
+  state.findOverlay?.destroy();
+  state.findOverlay = null;
+  state.annotationOverlay?.destroy();
+  state.annotationOverlay = null;
+  state.mapper = null;
+  state.mountedBlockSignature = "";
+  state.publishedAnnotationRenderState = null;
+  state.publishedFindIndex = null;
+  state.publishedActiveFindMatchId = null;
+  if (notify) state.featureProps.onSelectionChange?.(null);
+}
+
+function annotationOverlayState(
+  snapshot: MarkdownSnapshot,
+  renderState: AnnotationRenderState | null | undefined,
+  blockIndexForId?: (blockId: string) => number | null,
+): MarkdownAnnotationOverlayState {
+  const markers: MarkdownAnnotationOverlayMarker[] = [];
+  for (const marker of renderState?.markers ?? []) {
+    for (const range of marker.blockRanges) {
+      const blockIndex = blockIndexForId?.(range.blockKey) ?? null;
+      const block = blockIndex === null ? null : snapshot.blocks[blockIndex];
+      if (!block) continue;
+      markers.push(Object.freeze({
+        annotationId: marker.annotationId,
+        blockId: block.id,
+        blockIndex: block.index,
+        blockLocalStart: range.range.start,
+        blockLocalEnd: range.range.end,
+        logicalStart: block.logical_start + range.range.start,
+        logicalEnd: block.logical_start + range.range.end,
+      }));
+    }
+  }
+  return Object.freeze({
+    revision: snapshot.revision,
+    annotationSetRevision: renderState?.revision ?? "empty",
+    activeAnnotationId: renderState?.activeAnnotationId ?? null,
+    hoveredAnnotationId: renderState?.hoveredAnnotationId ?? null,
+    flashAnnotationId: renderState?.flashAnnotationId ?? null,
+    markers: Object.freeze(markers),
+  });
+}
+
+function findOverlayState(
+  snapshot: MarkdownSnapshot,
+  index: MarkdownFindIndex | null | undefined,
+  activeFindMatchId: string | null,
+): MarkdownAnnotationOverlayState {
+  const current = index?.revision === snapshot.revision ? index : null;
+  return Object.freeze({
+    revision: snapshot.revision,
+    annotationSetRevision: current
+      ? `${current.revision}:${current.query}:${current.caseSensitive}:${current.wholeWord}:${current.matches.length}`
+      : "empty",
+    activeAnnotationId: activeFindMatchId,
+    hoveredAnnotationId: null,
+    flashAnnotationId: null,
+    markers: Object.freeze((current?.matches ?? []).map((match) => Object.freeze({
+      annotationId: match.id,
+      blockId: match.blockId,
+      blockIndex: match.blockIndex,
+      blockLocalStart: match.blockLocalStart,
+      blockLocalEnd: match.blockLocalEnd,
+      logicalStart: match.logicalStart,
+      logicalEnd: match.logicalEnd,
+    }))),
+  });
+}
+
+async function queryRuntimeFind(
+  state: HostState | null,
+  query: string,
+  options: { caseSensitive?: boolean; wholeWord?: boolean; limit?: number; signal?: AbortSignal } = {},
+): Promise<MarkdownFindIndex> {
+  const snapshot = state?.snapshot;
+  if (!state || !snapshot) throw new Error("Markdown Runtime is not ready");
+  const caseSensitive = options.caseSensitive ?? false;
+  const wholeWord = options.wholeWord ?? false;
+  const limit = options.limit ?? 10_000;
+  const normalized = query.trim();
+  if (!state.attachment) {
+    return buildRuntimeMarkdownFindIndex(snapshot, normalized, {
+      caseSensitive,
+      wholeWord,
+      limit,
+      shouldCancel: () => options.signal?.aborted ?? false,
+    });
+  }
+  const response = await state.attachment.request({
+    protocol_version: MARKDOWN_WORKER_PROTOCOL_VERSION,
+    surface: snapshot.surface,
+    document_id: snapshot.document_id,
+    revision: snapshot.revision,
+    request_id: `file-find-${++state.findRequestSequence}`,
+    type: "query-find",
+    payload: {
+      query: normalized,
+      case_sensitive: caseSensitive,
+      whole_word: wholeWord,
+      limit,
+    },
+  }, { signal: options.signal });
+  if (response.type !== "find-result") {
+    throw new Error(`Expected Markdown find-result, received ${response.type}`);
+  }
+  const matches = response.payload.matches.map((match) => Object.freeze({
+    id: match.id,
+    blockId: match.block_id,
+    blockIndex: match.block_index,
+    blockLocalStart: match.block_local_start,
+    blockLocalEnd: match.block_local_end,
+    logicalStart: match.logical_start,
+    logicalEnd: match.logical_end,
+    sourceStart: match.source_start,
+    sourceEnd: match.source_end,
+    matchText: match.match_text,
+    snippet: match.snippet,
+  }));
+  return Object.freeze({
+    revision: response.revision,
+    query: response.payload.query,
+    caseSensitive,
+    wholeWord,
+    limited: matches.length >= limit,
+    matches: Object.freeze(matches),
+  });
+}
+
+function measureAndAnchor(state: HostState | null): void {
+  if (!state?.snapshot) return;
+  const updates = state.view.mountedBlockIds().flatMap((blockId) => {
+    if (!state.view.isBlockContentMeasurable(blockId)) return [];
+    const blockIndex = state.view.getBlockIndex(blockId);
+    if (blockIndex === null) return [];
+    const element = state.view.getBlockElement(blockId);
+    const borderBoxHeight = element?.getBoundingClientRect().height ?? 0;
+    const height = borderBoxHeight > 0
+      ? measuredMarkdownBlockOccupiedHeight(
+          borderBoxHeight,
+          blockIndex,
+          state.snapshot!.blocks.length,
+        )
+      : 0;
+    return height > 0 ? [{ index: blockIndex, height, kind: "measured" as const }] : [];
+  });
+  if (!updates.length) return;
+  const patch = state.view.updateMeasuredHeights(updates, state.snapshot.revision);
+  if (patch && Math.abs(state.scrollElement.scrollTop - patch.viewport.scrollTop) > 0.5) {
+    state.scrollElement.scrollTop = patch.viewport.scrollTop;
+  }
+  if (patch) syncRuntimeFeatureState(state, state.featureProps);
+}
+
+function safeMeasureAndAnchor(state: HostState | null): void {
+  try {
+    measureAndAnchor(state);
+  } catch (error) {
+    markdownRuntimeDiagnostics.record({
+      stage: "measurement",
+      severity: "error",
+      code: "measurement-failed",
+      documentId: state?.documentId ?? null,
+      revision: state?.revision ?? null,
+      recovery: "retain-snapshot",
+      detail: error,
+      blockId: null,
+      resourceId: null,
+    });
+  }
+}
+
+function syncMeasurementTargets(state: HostState): void {
+  const scheduler = state.measurement;
+  const snapshot = state.snapshot;
+  const heightIndex = state.view.getHeightIndex();
+  if (!scheduler || !snapshot || !heightIndex) return;
+  const mountedIds = new Set(state.view.mountedBlockIds());
+  for (const [blockId, element] of state.measuredElements) {
+    const current = state.view.getBlockElement(blockId);
+    if (mountedIds.has(blockId) && current === element) continue;
+    scheduler.unobserve(element);
+    state.measuredElements.delete(blockId);
+  }
+  for (const blockId of mountedIds) {
+    if (!state.view.isBlockContentMeasurable(blockId)) continue;
+    const element = state.view.getBlockElement(blockId);
+    const blockIndex = state.view.getBlockIndex(blockId);
+    if (!element || blockIndex === null || state.measuredElements.get(blockId) === element) continue;
+    scheduler.observe(element, {
+      index: blockIndex,
+      blockId,
+      initialHeight: Math.max(0, state.view.baseHeightAt(blockIndex) - (blockIndex < snapshot.blocks.length - 1 ? 12 : 0)),
+    });
+    state.measuredElements.set(blockId, element);
+  }
+}
+
+function applyMeasuredHeightBatch(
+  state: HostState,
+  updates: readonly MarkdownHeightUpdate[],
+  revision: string,
+): void {
+  const snapshot = state.snapshot;
+  if (!snapshot || snapshot.revision !== revision) return;
+  const occupied = updates.map((update) => ({
+    ...update,
+    height: measuredMarkdownBlockOccupiedHeight(update.height, update.index, snapshot.blocks.length),
+  }));
+  const patch = state.view.updateMeasuredHeights(occupied, revision);
+  if (!patch) return;
+  if (Math.abs(state.scrollElement.scrollTop - patch.viewport.scrollTop) > 0.5) {
+    state.scrollElement.scrollTop = patch.viewport.scrollTop;
+  }
+  syncMeasurementTargets(state);
+  syncRuntimeFeatureState(state, state.featureProps);
+  remeasureRuntimeOverlays(state);
+}
+
+function remeasureRuntimeOverlays(state: HostState | null): void {
+  state?.annotationOverlay?.remeasureMountedBlocks();
+  state?.findOverlay?.remeasureMountedBlocks();
+  state?.featureProps.onMountedBlocksChange?.();
+}
+
+function recordMeasurementFailure(state: HostState, error: unknown): void {
+  markdownRuntimeDiagnostics.record({
+    stage: "measurement",
+    severity: "error",
+    code: "measurement-observer-failed",
+    documentId: state.documentId,
+    revision: state.snapshot?.revision ?? state.revision,
+    recovery: "retain-snapshot",
+    detail: error,
+    blockId: null,
+    resourceId: null,
+  });
+}
+
+function publishSnapshot(state: HostState, snapshot: MarkdownSnapshot, status: "stale" | "ready"): void {
+  state.snapshot = snapshot;
+  state.measurement?.setContext({ revision: snapshot.revision, epoch: 0 });
+  state.measuredElements.clear();
+  const host = state.view.host;
+  const width = Math.max(1, state.scrollElement.clientWidth || host.clientWidth || 800);
+  const heights = estimateMarkdownSnapshotHeights(snapshot, { viewportWidth: width });
+  const initialScrollTop = state.viewState ? 0 : state.scrollElement.scrollTop;
+  if (state.viewState) state.scrollElement.scrollTop = 0;
+  const patch = state.view.publish(snapshot, heights, {
+    scrollTop: initialScrollTop,
+    viewportHeight: state.scrollElement.clientHeight,
+  });
+  restoreScrollAnchor(state);
+  syncMeasurementTargets(state);
+  host.dataset.markdownRuntimeStatus = status;
+  recordRendererFailures(state, patch.render.failed);
+}
+
+function recordRendererFailures(state: HostState, failed: number): void {
+  if (failed < 1) return;
+  markdownRuntimeDiagnostics.record({
+    stage: "renderer",
+    severity: "error",
+    code: "block-render-failed",
+    documentId: state.documentId,
+    revision: state.snapshot?.revision ?? state.revision,
+    recovery: "isolate-block",
+    detail: `${failed} block renderer(s) isolated`,
+    blockId: null,
+    resourceId: null,
+  });
+}
+
+function recordResourceDiagnostic(
+  documentId: string,
+  revision: string,
+  kind: "image" | "mermaid",
+  resourceId: string,
+  state: string,
+  error: string | null,
+): void {
+  markdownRuntimeDiagnostics.record({
+    stage: "resource",
+    severity: state === "failed" ? "error" : "info",
+    code: `${kind}-${state}`,
+    documentId,
+    revision,
+    recovery: state === "failed" ? "isolate-block" : "none",
+    detail: error,
+    blockId: null,
+    resourceId,
+  });
+}
+
+function syncRenderCount(host: HTMLElement, state: HostState, onRender?: () => void): void {
+  state.renderCount += 1;
+  host.dataset.markdownRuntimeRenderCount = String(state.renderCount);
+  onRender?.();
+}
+
+function persistScrollAnchor(state: HostState, visibleBlockIndex: number): void {
+  const block = state.snapshot?.blocks[visibleBlockIndex];
+  const index = state.view.getHeightIndex();
+  if (!block || !index || !state.viewState) return;
+  state.viewState.setScrollAnchor({
+    blockId: block.id,
+    sourceOffset: block.source_start,
+    alignment: "start",
+    offsetPx: state.scrollElement.scrollTop - index.offsetOf(block.index),
+  });
+}
+
+function restoreScrollAnchor(state: HostState): void {
+  const anchor = state.viewState?.snapshot().scrollAnchor;
+  const index = state.view.getHeightIndex();
+  const snapshot = state.snapshot;
+  if (!anchor || !index || !snapshot) return;
+  const blockIndex = anchor.blockId
+    ? state.view.getBlockIndex(anchor.blockId)
+    : markdownBlockIndexAtSourceOffset(snapshot, anchor.sourceOffset);
+  const block = blockIndex === null ? null : snapshot.blocks[blockIndex];
+  if (!block) return;
+  const scrollTop = Math.max(0, index.offsetOf(block.index) + anchor.offsetPx);
+  state.scrollElement.scrollTop = scrollTop;
+  state.view.updateViewport({ scrollTop, viewportHeight: state.scrollElement.clientHeight }, { origin: "automatic" });
+}
+
+function revealOffset(
+  state: HostState | null,
+  offset: number,
+  options?: { align?: "start" | "center"; behavior?: ScrollBehavior },
+): boolean {
+  const blockIndex = state?.snapshot ? markdownBlockIndexAtSourceOffset(state.snapshot, offset) : null;
+  const block = blockIndex === null ? null : state?.snapshot?.blocks[blockIndex];
+  return block ? revealBlock(state, block.id, options) : false;
+}
+
+function revealBlock(
+  state: HostState | null,
+  blockId: string,
+  options?: { align?: "start" | "center"; behavior?: ScrollBehavior },
+): boolean {
+  if (!state?.snapshot) return false;
+  const blockIndex = state.view.getBlockIndex(blockId);
+  const block = blockIndex === null ? null : state.snapshot.blocks[blockIndex];
+  if (!block) return false;
+  state.view.expandForBlock(blockId);
+  const index = state.view.getHeightIndex();
+  if (!index) return false;
+  const scroll = state.scrollElement;
+  const top = index.offsetOf(block.index);
+  const target = options?.align === "center" ? Math.max(0, top - scroll.clientHeight / 2 + index.heightAt(block.index) / 2) : top;
+  scroll.scrollTo({ top: target, behavior: state.environment.behavior(options?.behavior ?? "smooth") });
+  state.view.updateViewport({ scrollTop: target, viewportHeight: scroll.clientHeight }, { origin: "programmatic" });
+  persistScrollAnchor(state, block.index);
+  syncRuntimeFeatureState(state, state.featureProps);
+  return true;
+}
+
+function markdownBlockIndexAtSourceOffset(snapshot: MarkdownSnapshot, offset: number): number | null {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > snapshot.source_characters) return null;
+  let low = 0;
+  let high = snapshot.blocks.length - 1;
+  let candidate = -1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    if (snapshot.blocks[middle]!.source_start <= offset) {
+      candidate = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  if (candidate < 0) return null;
+  const block = snapshot.blocks[candidate]!;
+  return offset <= block.source_end ? candidate : null;
+}
+
+function markdownBlockIndexAtSourceLine(snapshot: MarkdownSnapshot, zeroBasedLine: number): number | null {
+  if (!Number.isSafeInteger(zeroBasedLine) || zeroBasedLine < 0 || zeroBasedLine >= snapshot.line_count) return null;
+  let low = 0;
+  let high = snapshot.blocks.length - 1;
+  let candidate = -1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    if (snapshot.blocks[middle]!.line_start <= zeroBasedLine) {
+      candidate = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  if (candidate < 0) return null;
+  const block = snapshot.blocks[candidate]!;
+  return zeroBasedLine < block.line_end ? candidate : null;
+}
+
+function workspaceScopeKey(scope?: WorkspaceScope | null): string | null {
+  if (!scope) return null;
+  return "sessionId" in scope && scope.sessionId ? `session:${scope.sessionId}` : `workspace:${scope.workspaceId}`;
+}
+
+let nextFileRuntimeViewId = 1;
+
+const FILE_VISIBLE_PREFIX_CHARACTERS = 128 * 1024;
+
+function visibleMarkdownPrefix(source: string, maximumCharacters: number): string {
+  let end = Math.min(source.length, maximumCharacters);
+  if (end < source.length && /[\uD800-\uDBFF]/u.test(source[end - 1] ?? "")) end -= 1;
+  const lineEnd = source.lastIndexOf("\n", end);
+  return source.slice(0, lineEnd > 0 ? lineEnd + 1 : end);
+}

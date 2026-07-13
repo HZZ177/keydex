@@ -1,9 +1,9 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge, WorkspaceEntry, WorkspaceTreeResponse } from "@/runtime";
-import { Layout } from "@/renderer/components/layout/Layout";
+import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/layout/Layout";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { HomePage } from "@/renderer/pages/home";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
@@ -13,6 +13,13 @@ import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
 import type { AgentSession, Workspace } from "@/types/protocol";
 
 describe("HomePage", () => {
+  beforeEach(() => {
+    cleanup();
+    resetLayoutUiStateCacheForTests();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
   it("creates a session from the centered quick chat prompt", async () => {
     const runtime = fakeRuntime({ model: "qwen-coder" });
     const onNavigateToConversation = vi.fn();
@@ -547,7 +554,7 @@ describe("HomePage", () => {
     expect((screen.getByLabelText("选择模型") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "正在准备发送" }) as HTMLButtonElement).disabled).toBe(true);
     expect(runtime.workspaces.list).not.toHaveBeenCalled();
-    expect(runtime.settings.getSettings).toHaveBeenCalledTimes(1);
+    expect(runtime.settings.getSettings).not.toHaveBeenCalled();
     expect(runtime.models.listProviders).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -565,6 +572,7 @@ describe("HomePage", () => {
     });
     expect(screen.queryByText("正在启动本地服务")).toBeNull();
     expect((screen.getByRole("button", { name: "选择工作区" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(runtime.settings.getSettings).toHaveBeenCalledTimes(1);
     expect(runtime.workspaces.list).toHaveBeenCalledTimes(1);
   });
 

@@ -327,6 +327,136 @@ async def test_patched_chat_openai_retries_streaming_before_first_chunk(
     assert progress_events[1].payload["stage"] == "recovered"
 
 @pytest.mark.asyncio
+async def test_patched_chat_openai_stops_after_terminal_usage_without_waiting_for_tail(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    tail_stream: _TimeoutAfterChunksStream | None = None
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal tail_stream
+        payload = json.loads((await request.aread()).decode("utf-8"))
+        chunks = [
+            _openai_stream_chunk(payload, delta={"content": "complete answer"}),
+            _openai_stream_chunk(payload, delta={}, finish_reason="stop"),
+            _openai_usage_stream_chunk(
+                payload,
+                usage={"prompt_tokens": 6, "completion_tokens": 4, "total_tokens": 10},
+            ),
+        ]
+        tail_stream = _TimeoutAfterChunksStream(chunks)
+        return httpx.Response(
+            200,
+            stream=tail_stream,
+            headers={"content-type": "text/event-stream; charset=utf-8"},
+        )
+
+    llm = _llm(
+        repositories,
+        http_transport=httpx.MockTransport(handler),
+        streaming=True,
+        model="terminal-tail-model",
+    )
+    token = _request_context()
+    text = ""
+    try:
+        async for chunk in llm.astream([HumanMessage(content="return a complete answer")]):
+            if isinstance(chunk.content, str):
+                text += chunk.content
+    finally:
+        reset_request_context(token)
+
+    records, total = repositories.llm_request_logs.list()
+    assert text == "complete answer"
+    assert tail_stream is not None
+    assert tail_stream.tail_read_attempted is False
+    assert tail_stream.closed is True
+    assert total == 1
+    assert records[0].status == "completed"
+    assert records[0].input_tokens == 6
+    assert records[0].output_tokens == 4
+    assert records[0].total_tokens == 10
+
+
+@pytest.mark.asyncio
+async def test_patched_chat_openai_ignores_read_timeout_after_terminal_chunk(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    tail_stream: _TimeoutAfterChunksStream | None = None
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal tail_stream
+        payload = json.loads((await request.aread()).decode("utf-8"))
+        tail_stream = _TimeoutAfterChunksStream(
+            [
+                _openai_stream_chunk(payload, delta={"content": "complete answer"}),
+                _openai_stream_chunk(payload, delta={}, finish_reason="stop"),
+            ]
+        )
+        return httpx.Response(
+            200,
+            stream=tail_stream,
+            headers={"content-type": "text/event-stream; charset=utf-8"},
+        )
+
+    llm = _llm(
+        repositories,
+        http_transport=httpx.MockTransport(handler),
+        streaming=True,
+        model="terminal-timeout-model",
+    )
+    token = _request_context()
+    try:
+        chunks = [
+            chunk
+            async for chunk in llm.astream([HumanMessage(content="return a complete answer")])
+        ]
+    finally:
+        reset_request_context(token)
+
+    records, total = repositories.llm_request_logs.list()
+    assert "".join(chunk.content for chunk in chunks if isinstance(chunk.content, str)) == (
+        "complete answer"
+    )
+    assert tail_stream is not None
+    assert tail_stream.tail_read_attempted is True
+    assert total == 1
+    assert records[0].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_patched_chat_openai_does_not_hide_timeout_before_terminal_chunk(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode("utf-8"))
+        return httpx.Response(
+            200,
+            stream=_TimeoutAfterChunksStream(
+                [_openai_stream_chunk(payload, delta={"content": "partial answer"})]
+            ),
+            headers={"content-type": "text/event-stream; charset=utf-8"},
+        )
+
+    llm = _llm(
+        repositories,
+        http_transport=httpx.MockTransport(handler),
+        streaming=True,
+        model="partial-timeout-model",
+    )
+    token = _request_context()
+    try:
+        with pytest.raises(httpx.ReadTimeout):
+            async for _chunk in llm.astream([HumanMessage(content="trigger a partial timeout")]):
+                pass
+    finally:
+        reset_request_context(token)
+
+    records, total = repositories.llm_request_logs.list()
+    assert total == 1
+    assert records[0].status == "failed"
+
+
+@pytest.mark.asyncio
 async def test_patched_chat_openai_uses_reasoning_chunk_for_time_to_first_token(
     tmp_path,
 ) -> None:
@@ -574,6 +704,22 @@ class _DelayedReasoningStream(httpx.AsyncByteStream):
             yield chunk.encode("utf-8")
 
 
+class _TimeoutAfterChunksStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[str]) -> None:
+        self.chunks = chunks
+        self.tail_read_attempted = False
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            yield chunk.encode("utf-8")
+        self.tail_read_attempted = True
+        raise httpx.ReadTimeout("stream tail stalled")
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 def _openai_stream_chunk(
     request_payload: dict[str, Any],
     *,
@@ -590,4 +736,20 @@ def _openai_stream_chunk(
     }
     if usage is not None:
         payload["usage"] = usage
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _openai_usage_stream_chunk(
+    request_payload: dict[str, Any],
+    *,
+    usage: dict[str, int],
+) -> str:
+    payload = {
+        "id": "chatcmpl-reasoning-first",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": str(request_payload.get("model") or "reasoning-first-model"),
+        "choices": [],
+        "usage": usage,
+    }
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"

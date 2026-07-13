@@ -1,5 +1,13 @@
 import { AlertCircle, Check, ChevronDown, ChevronRight, Folder, FolderPlus, Keyboard, MessageCircle, Search } from "lucide-react";
-import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type { Workspace } from "@/types/protocol";
 
@@ -29,6 +37,8 @@ type WorkspaceMenuOption = { type: "workspace"; key: string; workspace: Workspac
 
 const chatOptionKey = "chat";
 const MENU_EXIT_ANIMATION_MS = 120;
+const MENU_OFFSET_PX = 8;
+const VIEWPORT_EDGE_GAP_PX = 12;
 
 export function WorkspaceSelector({
   value,
@@ -59,6 +69,7 @@ export function WorkspaceSelector({
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [menuMaxHeight, setMenuMaxHeight] = useState<number | null>(null);
   const canOpen = !disabled && !readOnly;
   const selectedWorkspaceId = value.type === "workspace" ? value.workspace.id : null;
   const displayText =
@@ -232,6 +243,29 @@ export function WorkspaceSelector({
     }
     optionRefs.current.get(activeOption.key)?.scrollIntoView?.({ block: "nearest" });
   }, [activeOptionIndex, open, selectableOptions]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const updateMenuMaxHeight = () => {
+      const root = rootRef.current;
+      if (!root) {
+        return;
+      }
+      const rootRect = root.getBoundingClientRect();
+      const availableHeight =
+        placement === "top"
+          ? rootRect.top - MENU_OFFSET_PX - VIEWPORT_EDGE_GAP_PX
+          : window.innerHeight - rootRect.bottom - MENU_OFFSET_PX - VIEWPORT_EDGE_GAP_PX;
+      setMenuMaxHeight(Math.max(0, Math.floor(availableHeight)));
+    };
+
+    updateMenuMaxHeight();
+    window.addEventListener("resize", updateMenuMaxHeight);
+    return () => window.removeEventListener("resize", updateMenuMaxHeight);
+  }, [open, placement]);
 
   useEffect(
     () => () => {
@@ -407,6 +441,7 @@ export function WorkspaceSelector({
           role="dialog"
           aria-label="工作区选择"
           aria-hidden={menuClosing ? "true" : undefined}
+          style={menuMaxHeight === null ? undefined : { maxHeight: `${menuMaxHeight}px` }}
         >
           <div className={styles.menuLabel}>工作区</div>
           <label className={styles.searchBox}>
@@ -436,7 +471,7 @@ export function WorkspaceSelector({
             </div>
           ) : null}
 
-          <div className={styles.section} role="listbox" aria-label="最近工作区">
+          <div className={`${styles.section} ${styles.workspaceSection}`} role="listbox" aria-label="最近工作区">
             {loading ? <div className={styles.empty}>正在读取工作区</div> : null}
             {!loading && filteredWorkspaces.length
               ? filteredWorkspaces.map((workspace) => {
