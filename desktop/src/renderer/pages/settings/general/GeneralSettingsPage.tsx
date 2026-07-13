@@ -6,6 +6,7 @@ import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { useFontPreference, type AppFontFamily, type FontDownloadProgress } from "@/renderer/providers/FontProvider";
 import type { CloseWindowBehavior, ConversationSendDefaultMode, GeneralSettings } from "@/types/protocol";
 import { SettingsSelect } from "@/renderer/pages/settings/components";
+import { AnnualUsageOverview } from "@/renderer/pages/settings/usage/AnnualUsageOverview";
 import { closeWindowBehaviorStore } from "@/runtime/closeWindowBehaviorStore";
 import { isCloseWindowBehavior } from "@/runtime/windowLifecycle";
 
@@ -176,6 +177,8 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
           <p>管理本地应用偏好</p>
         </div>
       </header>
+
+      <AnnualUsageOverview runtime={runtime} />
 
       <section className={styles.section} data-settings-group aria-labelledby="behavior-settings-title">
         <h2 className={styles.groupTitle} data-settings-group-title id="behavior-settings-title">应用行为</h2>

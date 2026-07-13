@@ -54,6 +54,12 @@
   margin-top: 26px;
 }
 
+.annualOverview {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
 .header + .settingsGroup {
   margin-top: 0;
 }

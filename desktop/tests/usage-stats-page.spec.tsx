@@ -5,9 +5,12 @@ import type { ModelProvider, RuntimeBridge } from "@/runtime";
 import {
   buildUsageTrendOption,
   completeUsageTrendPoints,
-  TokenHeatWall,
   UsageStatsPage,
 } from "@/renderer/pages/settings/usage/UsageStatsPage";
+import {
+  AnnualUsageOverview,
+  TokenHeatWall,
+} from "@/renderer/pages/settings/usage/AnnualUsageOverview";
 import type {
   UsageRequestDetail,
   UsageRequestListResponse,
@@ -55,8 +58,8 @@ describe("UsageStatsPage", () => {
     expect(screen.getByText("305.7 tok/s")).not.toBeNull();
     expect(screen.queryByText("2.4s / 640ms")).toBeNull();
     expect(screen.getAllByText("538")).toHaveLength(2);
-    expect(screen.getByTestId("usage-token-heatwall")).not.toBeNull();
     expect(screen.getByTestId("usage-trend-chart")).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "年度概览" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "使用趋势" })).toBeNull();
     expect(screen.queryByText("Token 活动")).toBeNull();
     expect(screen.queryByRole("columnheader", { name: "会话" })).toBeNull();
@@ -68,22 +71,6 @@ describe("UsageStatsPage", () => {
         timezoneOffsetMinutes: expect.any(Number),
       }),
     );
-    expect(runtime.usage.getTrend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        bucket: "day",
-        startTime: expect.any(String),
-        endTime: expect.any(String),
-        timezoneOffsetMinutes: expect.any(Number),
-      }),
-    );
-    const heatCall = runtime.usage.getTrend.mock.calls.find(([options]) => options.bucket === "day" && options.startTime);
-    expect(heatCall).toBeTruthy();
-    if (heatCall) {
-      const [{ startTime, endTime }] = heatCall;
-      const days = (new Date(endTime).getTime() - new Date(startTime).getTime()) / (24 * 60 * 60 * 1000);
-      expect(days).toBeGreaterThanOrEqual(365);
-      expect(days).toBeLessThanOrEqual(367);
-    }
     await waitFor(() => {
       expect(setOption).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -224,9 +211,8 @@ describe("UsageStatsPage", () => {
       },
     });
 
-    render(<UsageStatsPage runtime={runtime} />);
+    render(<AnnualUsageOverview runtime={runtime} />);
 
-    await screen.findByText("24");
     const summaryCalls = runtime.usage.getSummary.mock.calls.length;
     const heatCalls = runtime.usage.getTrend.mock.calls.filter(([options]) => options.bucket === "day" && options.startTime)
       .length;
@@ -240,7 +226,9 @@ describe("UsageStatsPage", () => {
       expect(beforeRippleKey).not.toBe("");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "刷新年度概览" }));
+    const refreshButton = screen.getByRole("button", { name: "刷新年度概览" });
+    await waitFor(() => expect(refreshButton.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(refreshButton);
 
     await waitFor(() => {
       const nextHeatCalls = runtime.usage.getTrend.mock.calls.filter(
@@ -318,7 +306,7 @@ describe("UsageStatsPage", () => {
     await screen.findByText("24");
     await waitFor(() => {
       expect(runtime.usage.listRequests).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 12 }));
-      expect(runtime.usage.getTrend).toHaveBeenCalledTimes(2);
+      expect(runtime.usage.getTrend).toHaveBeenCalledTimes(1);
     });
 
     const summaryCalls = runtime.usage.getSummary.mock.calls.length;
@@ -346,7 +334,6 @@ describe("UsageStatsPage", () => {
     render(<UsageStatsPage runtime={runtime} />);
 
     expect(await screen.findAllByText("0")).not.toHaveLength(0);
-    expect(screen.getByTestId("usage-token-heatwall").textContent).toContain("暂无 Token 活动");
     expect(screen.getByTestId("usage-trend-empty").textContent).toBe("暂无趋势数据");
     expect(screen.getByTestId("usage-request-empty").textContent).toBe("暂无请求日志");
     expect(screen.queryByText("deepseek-v4-flash")).toBeNull();

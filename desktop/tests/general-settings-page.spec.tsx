@@ -79,6 +79,27 @@ describe("GeneralSettingsPage", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("shows the annual usage overview first on the general page", async () => {
+    const runtime = fakeRuntime();
+
+    renderPage(runtime);
+
+    const sectionHeadings = screen.getAllByRole("heading", { level: 2 });
+    expect(sectionHeadings[0].textContent).toBe("年度概览");
+    expect(screen.getByTestId("annual-usage-overview")).not.toBeNull();
+    expect(screen.getByTestId("usage-token-heatwall")).not.toBeNull();
+    await waitFor(() =>
+      expect(runtime.usage.getTrend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bucket: "day",
+          startTime: expect.any(String),
+          endTime: expect.any(String),
+          timezoneOffsetMinutes: expect.any(Number),
+        }),
+      ),
+    );
+  });
+
   it("downloads Maple Mono CN when selected and hides progress after completion", async () => {
     mockSuccessfulFontDownload();
 
@@ -249,6 +270,9 @@ function fakeRuntime(general: GeneralSettings = { close_window_behavior: null })
       saveGeneralSettings: vi.fn((nextGeneral: GeneralSettings) =>
         Promise.resolve({ ...response, general: nextGeneral }),
       ),
+    },
+    usage: {
+      getTrend: vi.fn(() => Promise.resolve({ points: [] })),
     },
   } as unknown as RuntimeBridge;
 }
