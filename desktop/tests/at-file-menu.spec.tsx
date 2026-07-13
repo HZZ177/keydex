@@ -188,7 +188,50 @@ describe("AtFileMenu", () => {
     expect(await screen.findByRole("option", { name: "选择文件 README.md" })).not.toBeNull();
   });
 
-  it("opens directories from the at menu and only inserts files", async () => {
+  it("references directories from the explicit at-menu action", async () => {
+    const onChange = vi.fn();
+    const onOpenFileReference = vi.fn();
+    const onListWorkspaceDirectory = vi.fn().mockResolvedValue([
+      { path: "src", name: "src", type: "directory" as const },
+      { path: "README.md", name: "README.md", type: "file" as const },
+    ]);
+
+    render(
+      <SendBox
+        value="@"
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        onChange={onChange}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onListWorkspaceDirectory={onListWorkspaceDirectory}
+        onOpenFileReference={onOpenFileReference}
+      />,
+    );
+
+    expect(await screen.findByRole("option", { name: "打开目录 src" })).not.toBeNull();
+    fireEvent.mouseDown(screen.getByRole("button", { name: "引用目录 src" }));
+
+    expect(onChange).toHaveBeenCalledWith("");
+    expect(screen.getByLabelText("已添加上下文").textContent).toContain("src");
+    const directoryChip = screen.getByRole("button", { name: "在文件列表中定位目录 src" });
+    expect(directoryChip.hasAttribute("disabled")).toBe(false);
+    expect(document.querySelector('[data-context-chip-icon="directory"]')).not.toBeNull();
+
+    fireEvent.click(directoryChip);
+    expect(onOpenFileReference).toHaveBeenCalledWith({
+      path: "src",
+      name: "src",
+      type: "directory",
+      source: "workspace",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "移除目录引用 src" }));
+    expect(screen.queryByRole("button", { name: "在文件列表中定位目录 src" })).toBeNull();
+  });
+
+  it("keeps directory browsing on the primary row action", async () => {
     const onChange = vi.fn();
     const onListWorkspaceDirectory = vi.fn((path: string) =>
       Promise.resolve(
@@ -215,10 +258,10 @@ describe("AtFileMenu", () => {
     );
 
     const input = screen.getByLabelText("继续输入");
-    expect(await screen.findByRole("option", { name: "打开目录 src" })).not.toBeNull();
+    const directoryOption = await screen.findByRole("option", { name: "打开目录 src" });
 
     await act(async () => {
-      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.mouseDown(directoryOption);
     });
 
     await waitFor(() => {
@@ -233,6 +276,68 @@ describe("AtFileMenu", () => {
 
     expect(onChange).toHaveBeenCalledWith("");
     expect(screen.getByLabelText("已添加上下文").textContent).toContain("main.ts");
+  });
+
+  it("references the active directory with control-enter", async () => {
+    render(
+      <SendBox
+        value="@"
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onListWorkspaceDirectory={vi.fn().mockResolvedValue([
+          { path: "src", name: "src", type: "directory" as const },
+        ])}
+      />,
+    );
+
+    const input = screen.getByLabelText("继续输入");
+    expect(await screen.findByRole("option", { name: "打开目录 src" })).not.toBeNull();
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+
+    expect(screen.getByLabelText("已添加上下文").textContent).toContain("src");
+    expect(screen.getByRole("button", { name: "目录引用 src" })).not.toBeNull();
+  });
+
+  it("browses into and out of directories with horizontal arrow keys", async () => {
+    const onListWorkspaceDirectory = vi.fn((path: string) =>
+      Promise.resolve(
+        path === "src"
+          ? [{ path: "src/main.ts", name: "main.ts", type: "file" as const }]
+          : [{ path: "src", name: "src", type: "directory" as const }],
+      ),
+    );
+
+    render(
+      <SendBox
+        value="@"
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onListWorkspaceDirectory={onListWorkspaceDirectory}
+      />,
+    );
+
+    const input = screen.getByLabelText("继续输入");
+    expect(await screen.findByRole("option", { name: "打开目录 src" })).not.toBeNull();
+
+    fireEvent.keyDown(input, { key: "ArrowRight" });
+    await waitFor(() => {
+      expect(onListWorkspaceDirectory).toHaveBeenCalledWith("src");
+    });
+    expect(await screen.findByRole("option", { name: "选择文件 src/main.ts" })).not.toBeNull();
+
+    fireEvent.keyDown(input, { key: "ArrowLeft" });
+    await waitFor(() => {
+      expect(onListWorkspaceDirectory.mock.calls.filter(([path]) => path === "")).toHaveLength(2);
+    });
+    expect(await screen.findByRole("option", { name: "打开目录 src" })).not.toBeNull();
   });
 
   it("shows real workspace search errors", async () => {

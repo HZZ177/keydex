@@ -65,6 +65,40 @@ describe("message injection composer helpers", () => {
     expect(prepared.runtimeParams?.message_injection).toHaveLength(1);
   });
 
+  it("injects directory references as scoped paths instead of file reads", () => {
+    const prepared = prepareComposerMessage("", [
+      { path: "src/components", name: "components", type: "directory", source: "workspace" },
+    ]);
+
+    expect(prepared.contextItems).toEqual([
+      expect.objectContaining({
+        type: "file",
+        label: "components",
+        path: "src/components",
+        fileType: "directory",
+        description: "工作区目录\nsrc/components",
+        metadata: expect.objectContaining({
+          kind: "file",
+          fileType: "directory",
+          source: "workspace",
+        }),
+      }),
+    ]);
+    const injection = prepared.runtimeParams?.message_injection?.[0];
+    expect(injection).toMatchObject({
+      type: "follow",
+      role: "HumanMessage",
+      metadata: {
+        kind: "file",
+        path: "src/components",
+        fileType: "directory",
+      },
+    });
+    expect(injection?.content).toContain("用户通过 @ 引用了工作区目录：src/components");
+    expect(injection?.content).toContain("先使用可用工具列出或搜索该目录");
+    expect(injection?.content).toContain("不要默认递归读取整个目录");
+  });
+
   it("packs file-backed quote context into one self-contained injection", () => {
     const quote = selectedQuoteFromText("selected text", {
       source: "selection",

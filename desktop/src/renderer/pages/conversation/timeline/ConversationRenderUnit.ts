@@ -172,12 +172,17 @@ function unitsForTurn(turn: ConversationRenderTurn, turnIndex: number): Conversa
       renderVersion: `shell:1:${turn.turnMarker?.id ?? "none"}`,
     }));
   }
-  for (const item of turn.items) units.push(unitForItem(item, turn.id, turnIndex, businessTurnIndex));
+  const statusItems = turn.items.filter(isThreadTaskStatusItem);
+  const renderableItems = turn.items.filter((item) => !isThreadTaskStatusItem(item));
+  for (const item of [...renderableItems, ...statusItems]) {
+    units.push(unitForItem(item, turn.id, turnIndex, businessTurnIndex));
+  }
   const lastAssistant = [...turn.items]
     .reverse()
     .flatMap(messagesFromItem)
     .find((message) => message.kind === "assistant");
-  if (lastAssistant) units.push(footerUnit(lastAssistant, turn.id, turnIndex, businessTurnIndex));
+  const footerAnchor = lastAssistant ?? [...turn.items].reverse().flatMap(messagesFromItem)[0];
+  if (footerAnchor) units.push(footerUnit(footerAnchor, turn.id, turnIndex, businessTurnIndex));
   return units;
 }
 
@@ -291,7 +296,7 @@ function contentRenderFingerprint(message: ConversationMessage, content: string)
 
 function footerPayloadVersion(payload: Record<string, unknown>): string {
   return stableMarkdownIdentityHash(JSON.stringify({
-    duration: payload.duration_ms ?? payload.durationMs,
+    duration: payload.turnDurationMs ?? payload.turn_duration_ms ?? payload.duration_ms ?? payload.durationMs,
     fork: payload.fork ?? payload.fork_source ?? payload.forkSource,
     firstToken: payload.first_token_at_ms ?? payload.firstTokenAtMs,
   }));
@@ -335,6 +340,10 @@ function isUserItem(item: ProcessedMessageItem): boolean {
 
 function isTurnMarkerItem(item: ProcessedMessageItem): item is Extract<ProcessedMessageItem, { type: "message" }> {
   return item.type === "message" && item.message.kind === "turn_marker";
+}
+
+function isThreadTaskStatusItem(item: ProcessedMessageItem): boolean {
+  return item.type === "message" && item.message.kind === "thread_task_status";
 }
 
 function itemBusinessTurnIndex(item: ProcessedMessageItem): number | null {

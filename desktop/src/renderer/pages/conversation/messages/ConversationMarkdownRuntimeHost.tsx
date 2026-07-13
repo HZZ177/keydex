@@ -14,7 +14,11 @@ import {
   CONVERSATION_MARKDOWN_RENDERER_PROFILE,
   RetainedMarkdownDocumentRenderer,
 } from "@/renderer/markdownRuntime/renderers";
-import { StreamingTailView } from "@/renderer/markdownRuntime/streaming";
+import {
+  createStreamingCursorElement,
+  setStreamingCursorVisible,
+  StreamingTailView,
+} from "@/renderer/markdownRuntime/streaming";
 import {
   MARKDOWN_WORKER_PROTOCOL_VERSION,
   type MarkdownWorkerResponse,
@@ -23,6 +27,7 @@ import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { parseCanonicalMarkdownSnapshot } from "@/renderer/markdownRuntime/worker/parser";
 
 import { conversationMarkdownAdapter, conversationMarkdownRuntimeStore } from "./conversationMarkdownRuntime";
+import styles from "./MessageText.module.css";
 
 export interface ConversationMarkdownRuntimeHostProps {
   readonly message: ConversationMessage;
@@ -87,12 +92,10 @@ function SynchronousConversationMarkdownRuntimeHost(props: ConversationMarkdownR
       interactions: props.interactions,
       resourceLifecycle: props.resourceLifecycle,
     });
-    const cursor = root.ownerDocument.createElement("span");
-    cursor.dataset.streamingMarkdownCursor = "true";
-    cursor.setAttribute("data-testid", "streaming-cursor");
-    cursor.setAttribute("aria-hidden", "true");
-    cursor.textContent = "\u200b";
-    cursor.hidden = true;
+    const cursor = createStreamingCursorElement(root.ownerDocument, {
+      cursorClassName: styles.streamingCursor,
+      cursorDotClassName: styles.streamingDot,
+    });
     root.append(cursor);
     rendererRef.current = renderer;
     cursorRef.current = cursor;
@@ -136,8 +139,8 @@ function SynchronousConversationMarkdownRuntimeHost(props: ConversationMarkdownR
       renderer.render(snapshot);
       if (cursorRef.current) {
         cursorRef.current.dataset.streamingMarkdownDisplayCursor = String(props.source.length);
-        if (props.showCursor) root.append(cursorRef.current);
-        else cursorRef.current.remove();
+        setStreamingCursorVisible(cursorRef.current, props.showCursor);
+        root.append(cursorRef.current);
       }
       root.dataset.messageMarkdownRuntimeStatus = "ready";
       root.dataset.messageMarkdownRuntimeRevision = snapshot.revision;
@@ -204,6 +207,8 @@ function AsynchronousConversationMarkdownRuntimeHost(props: ConversationMarkdown
       registry: props.registry,
       interactions: props.interactions,
       resourceLifecycle: props.resourceLifecycle,
+      cursorClassName: styles.streamingCursor,
+      cursorDotClassName: styles.streamingDot,
     });
     const state: RuntimeState = {
       active: true,

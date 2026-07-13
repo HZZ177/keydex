@@ -72,6 +72,9 @@ describe("ConversationMarkdownRuntimeHost", () => {
     await ready(rendered.container, "Please inspect this.");
 
     expect(rendered.container.querySelector('[data-message-markdown-mode="runtime"]')).not.toBeNull();
+    const userCursor = rendered.container.querySelector<HTMLElement>('[data-streaming-markdown-cursor="true"]');
+    expect(userCursor?.hidden).toBe(true);
+    expect(userCursor?.style.display).toBe("none");
     expect((rendered.container.querySelector('[data-runtime-user-bubble-sizer="true"]') as HTMLElement | null)?.dataset.runtimeUserBubbleSizerText)
       .toBe("# User heading\n\nPlease inspect this.");
     expect(screen.getByRole("heading", { name: "User heading" })).not.toBeNull();
@@ -166,7 +169,13 @@ describe("ConversationMarkdownRuntimeHost", () => {
     );
     await ready(container, "Beta");
     const alpha = findBlock(container, "Alpha");
-    expect(container.querySelector('[data-testid="streaming-cursor"]')).not.toBeNull();
+    const cursor = container.querySelector<HTMLElement>('[data-testid="streaming-cursor"]');
+    expect(cursor).not.toBeNull();
+    expect(cursor?.hidden).toBe(false);
+    expect(cursor?.className).not.toBe("");
+    const cursorDots = cursor?.querySelectorAll<HTMLElement>('[data-streaming-cursor-dot="true"]') ?? [];
+    expect(cursorDots).toHaveLength(3);
+    expect([...cursorDots].every((dot) => Boolean(dot.className))).toBe(true);
 
     const appendedSource = "Alpha\n\nBeta\n\nGamma";
     rerender(
@@ -202,6 +211,9 @@ describe("ConversationMarkdownRuntimeHost", () => {
         .toContain("conversation-settled:");
     });
     expect(container.querySelector('[data-testid="streaming-cursor"]')).toBeNull();
+    const completedCursor = container.querySelector<HTMLElement>('[data-streaming-markdown-cursor="true"]');
+    expect(completedCursor?.hidden).toBe(true);
+    expect(completedCursor?.style.display).toBe("none");
     expect(harness.canonicalParses).toBe(2);
   });
 

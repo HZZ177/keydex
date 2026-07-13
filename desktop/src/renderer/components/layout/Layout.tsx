@@ -114,6 +114,8 @@ interface RightSidebarFilePanelState {
   filePreviewPath: string | null;
   filePreviewRequestId: number;
   filePreviewRevealTarget: PreviewFileRevealTarget | null;
+  directoryRevealPath: string | null;
+  directoryRevealRequestId: number;
 }
 
 interface RightSidebarConversationPanelState {
@@ -1218,14 +1220,16 @@ function RightSidebarPanel({
     }
     updateActiveScopePanelState((current) =>
       activateOrCreateFilePanel(current, {
-        path: filePanelRequest?.path ?? null,
+        ...(filePanelRequest?.directoryRevealPath ? {} : { path: filePanelRequest?.path ?? null }),
         requestId: filePanelRequestId,
+        directoryRevealPath: filePanelRequest?.directoryRevealPath ?? null,
         revealTarget: filePanelRequest?.revealTarget ?? null,
         preferExisting: true,
       }),
     );
   }, [
     canOpenFiles,
+    filePanelRequest?.directoryRevealPath,
     filePanelRequest?.path,
     filePanelRequest?.requestId,
     filePanelRequest?.revealTarget,
@@ -2083,6 +2087,8 @@ function RightSidebarPanel({
                     previewPath={activeFilePanel?.filePreviewPath ?? null}
                     previewRequestId={activeFilePanel?.filePreviewRequestId ?? 0}
                     previewRevealTarget={activeFilePanel?.filePreviewRevealTarget ?? null}
+                    directoryRevealPath={activeFilePanel?.directoryRevealPath ?? null}
+                    directoryRevealRequestId={activeFilePanel?.directoryRevealRequestId ?? 0}
                     onQuoteSelection={filePanelRenderContext.onQuoteSelection ? filePanelQuoteSelection : undefined}
                     onStartChatFromAnnotation={filePanelRenderContext.onStartChatFromAnnotation}
                     onPreviewPathChange={updateFilePanelPreviewPath}
@@ -2180,7 +2186,16 @@ type LegacyRightSidebarScopePanelState = Partial<RightSidebarScopePanelState> & 
 function normalizeRightSidebarScopePanelState(
   state: LegacyRightSidebarScopePanelState | null | undefined,
 ): RightSidebarScopePanelState {
-  const filePanels = { ...(state?.filePanels ?? {}) };
+  const filePanels = Object.fromEntries(
+    Object.entries(state?.filePanels ?? {}).map(([panelId, panel]) => [
+      panelId,
+      {
+        ...panel,
+        directoryRevealPath: panel.directoryRevealPath ?? null,
+        directoryRevealRequestId: panel.directoryRevealRequestId ?? 0,
+      },
+    ]),
+  );
   let filePanelIds = state?.filePanelIds ?? [];
   if (filePanelIds.length === 0 && state?.filesOpen) {
     filePanelIds = [LEGACY_FILES_PANEL_ID];
@@ -2189,6 +2204,8 @@ function normalizeRightSidebarScopePanelState(
       filePreviewPath: state.filePreviewPath ?? null,
       filePreviewRequestId: state.filePreviewRequestId ?? 0,
       filePreviewRevealTarget: null,
+      directoryRevealPath: null,
+      directoryRevealRequestId: 0,
     };
   }
   const conversationPanelIds = state?.conversationPanelIds ?? [];
@@ -2237,6 +2254,7 @@ function activateOrCreateFilePanel(
   options: {
     path?: string | null;
     requestId?: number;
+    directoryRevealPath?: string | null;
     revealTarget?: PreviewFileRevealTarget | null;
     preferExisting?: boolean;
   } = {},
@@ -2260,8 +2278,10 @@ function activateOrCreateFilePanel(
       [panelId]: {
         id: panelId,
         filePreviewPath: hasPanelPathOption(options) ? options.path ?? null : null,
-        filePreviewRequestId: options.requestId ?? 0,
+        filePreviewRequestId: hasPanelPathOption(options) ? options.requestId ?? 0 : 0,
         filePreviewRevealTarget: options.revealTarget ?? null,
+        directoryRevealPath: options.directoryRevealPath ?? null,
+        directoryRevealRequestId: options.directoryRevealPath ? options.requestId ?? 0 : 0,
       },
     },
     initialPanelIds: activeInitialPanelId
@@ -2274,13 +2294,18 @@ function activateOrCreateFilePanel(
 function activateExistingFilePanel(
   state: RightSidebarScopePanelState,
   panelId: string,
-  options: { path?: string | null; requestId?: number; revealTarget?: PreviewFileRevealTarget | null },
+  options: {
+    path?: string | null;
+    requestId?: number;
+    directoryRevealPath?: string | null;
+    revealTarget?: PreviewFileRevealTarget | null;
+  },
 ): RightSidebarScopePanelState {
   const panel = state.filePanels[panelId];
   if (!panel) {
     return state;
   }
-  if (!hasPanelPathOption(options) && !options.requestId) {
+  if (!hasPanelPathOption(options) && !options.requestId && !options.directoryRevealPath) {
     return { ...state, activePanelId: panelId };
   }
   return {
@@ -2292,11 +2317,19 @@ function activateExistingFilePanel(
         ...panel,
         filePreviewPath: hasPanelPathOption(options) ? options.path ?? null : panel.filePreviewPath,
         filePreviewRequestId: options.requestId
-          ? Math.max(panel.filePreviewRequestId + 1, options.requestId)
+          ? hasPanelPathOption(options)
+            ? Math.max(panel.filePreviewRequestId + 1, options.requestId)
+            : panel.filePreviewRequestId
           : panel.filePreviewRequestId,
         filePreviewRevealTarget: Object.prototype.hasOwnProperty.call(options, "revealTarget")
           ? options.revealTarget ?? null
           : panel.filePreviewRevealTarget,
+        directoryRevealPath: Object.prototype.hasOwnProperty.call(options, "directoryRevealPath")
+          ? options.directoryRevealPath ?? null
+          : panel.directoryRevealPath,
+        directoryRevealRequestId: options.directoryRevealPath && options.requestId
+          ? Math.max(panel.directoryRevealRequestId + 1, options.requestId)
+          : panel.directoryRevealRequestId,
       },
     },
   };
@@ -2695,7 +2728,9 @@ function sameFilePanels(left: RightSidebarScopePanelState, right: RightSidebarSc
       Boolean(rightPanel) &&
       leftPanel.filePreviewPath === rightPanel.filePreviewPath &&
       leftPanel.filePreviewRequestId === rightPanel.filePreviewRequestId &&
-      samePreviewFileRevealTarget(leftPanel.filePreviewRevealTarget, rightPanel.filePreviewRevealTarget)
+      samePreviewFileRevealTarget(leftPanel.filePreviewRevealTarget, rightPanel.filePreviewRevealTarget) &&
+      leftPanel.directoryRevealPath === rightPanel.directoryRevealPath &&
+      leftPanel.directoryRevealRequestId === rightPanel.directoryRevealRequestId
     );
   });
 }

@@ -110,6 +110,7 @@ export function useConversationPanelModel({
   );
   const a2uiMessageCacheRef = useRef(new Map<string, A2UIConversationMessageCacheEntry>());
   const {
+    openDirectoryPanel,
     openFilePanel,
     openPreview: openPreviewRequest,
     openReviewPanel,
@@ -370,9 +371,13 @@ export function useConversationPanelModel({
       if (!workspaceAvailable || !file.path) {
         return;
       }
+      if (file.type === "directory") {
+        openDirectoryPanel(file.path, previewRenderContext);
+        return;
+      }
       openFilePanel(file.path, previewRenderContext, selectedFileRevealTarget(file));
     },
-    [openFilePanel, previewRenderContext, workspaceAvailable],
+    [openDirectoryPanel, openFilePanel, previewRenderContext, workspaceAvailable],
   );
 
   useEffect(() => {

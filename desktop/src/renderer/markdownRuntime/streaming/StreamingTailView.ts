@@ -16,6 +16,8 @@ export interface StreamingTailViewOptions {
   readonly registry?: SemanticMarkdownRendererRegistry;
   readonly interactions?: MarkdownRendererInteractionHandlers;
   readonly resourceLifecycle?: MarkdownRendererResourceLifecycle;
+  readonly cursorClassName?: string;
+  readonly cursorDotClassName?: string;
 }
 
 export interface StreamingTailViewPublishOptions {
@@ -31,6 +33,39 @@ export interface StreamingTailViewPatch {
   readonly patchedBlockIds: readonly string[];
   readonly cursorBlockId: string | null;
   readonly renderCount: number;
+}
+
+export function setStreamingCursorVisible(cursor: HTMLSpanElement, visible: boolean): void {
+  cursor.hidden = !visible;
+  if (visible) {
+    cursor.style.removeProperty("display");
+    cursor.dataset.testid = "streaming-cursor";
+  } else {
+    // Author CSS sets the cursor to inline-flex and therefore overrides the
+    // browser's low-specificity [hidden] rule. Keep hidden cursors out of
+    // layout explicitly for user and completed messages.
+    cursor.style.display = "none";
+    delete cursor.dataset.testid;
+  }
+}
+
+export function createStreamingCursorElement(
+  ownerDocument: Document,
+  options: Pick<StreamingTailViewOptions, "cursorClassName" | "cursorDotClassName"> = {},
+): HTMLSpanElement {
+  const cursor = ownerDocument.createElement("span");
+  cursor.dataset.streamingCursor = "true";
+  cursor.dataset.streamingMarkdownCursor = "true";
+  cursor.setAttribute("aria-hidden", "true");
+  if (options.cursorClassName) cursor.className = options.cursorClassName;
+  for (let index = 0; index < 3; index += 1) {
+    const dot = ownerDocument.createElement("span");
+    dot.dataset.streamingCursorDot = "true";
+    if (options.cursorDotClassName) dot.className = options.cursorDotClassName;
+    cursor.append(dot);
+  }
+  setStreamingCursorVisible(cursor, false);
+  return cursor;
 }
 
 export class StreamingTailView {
@@ -65,11 +100,7 @@ export class StreamingTailView {
       : new ResizeObserver(() => {
           if (this.snapshot) this.scheduleMeasurement(this.snapshot.revision);
         });
-    this.cursor = root.ownerDocument.createElement("span");
-    this.cursor.dataset.streamingMarkdownCursor = "true";
-    this.cursor.setAttribute("aria-hidden", "true");
-    this.cursor.textContent = "\u200b";
-    this.cursor.hidden = true;
+    this.cursor = createStreamingCursorElement(root.ownerDocument, options);
     root.append(this.cursor);
     root.dataset.streamingMarkdownTailView = "true";
   }
@@ -189,9 +220,7 @@ export class StreamingTailView {
     const activeFenceBlockId = options.activeFenceBlockId === undefined
       ? inferredActiveFence(snapshot)
       : options.activeFenceBlockId;
-    this.cursor.hidden = options.showCursor === false;
-    if (this.cursor.hidden) delete this.cursor.dataset.testid;
-    else this.cursor.dataset.testid = "streaming-cursor";
+    setStreamingCursorVisible(this.cursor, options.showCursor !== false);
     this.cursor.dataset.streamingMarkdownDisplayCursor = String(displayCursor);
     if (block) this.cursor.dataset.streamingMarkdownCursorBlockId = block.id;
     else delete this.cursor.dataset.streamingMarkdownCursorBlockId;

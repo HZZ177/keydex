@@ -102,6 +102,28 @@ describe("FileMarkdownRuntimeHost", () => {
     expect(Number(first.dataset.markdownBlockHeight)).toBe(192);
   });
 
+  it("keeps a live resource reflow authoritative over an older observer measurement", async () => {
+    render(<RuntimeHarness source={"First paragraph\n\nSecond paragraph\n\nThird paragraph"} revision="resource-r1" loader={snapshotLoader()} />);
+    const canvas = await readyRuntimeCanvas();
+    const blocks = [...canvas.querySelectorAll<HTMLElement>("[data-markdown-block-id]")];
+    const first = blocks[0]!;
+    const second = blocks[1]!;
+    vi.spyOn(first, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 760, 80));
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 760, 400));
+    const environmentObserver = FakeResizeObserver.instances.find((candidate) => candidate.targets.has(canvas));
+    const measurementObserver = FakeResizeObserver.instances.find((candidate) => candidate.targets.has(first));
+    expect(environmentObserver).toBeTruthy();
+    expect(measurementObserver).toBeTruthy();
+
+    act(() => {
+      environmentObserver!.resize(canvas, 400);
+      measurementObserver!.resize(first, 500);
+    });
+
+    await waitFor(() => expect(Number(second.dataset.markdownBlockTop)).toBe(92));
+    expect(Number(first.dataset.markdownBlockHeight)).toBe(92);
+  });
+
   it("publishes semantic content and keeps the mounted DOM bounded", async () => {
     const source = Array.from({ length: 500 }, (_, index) => `## Heading ${index}\n\nParagraph ${index}`).join("\n\n");
     const loader = snapshotLoader();
@@ -151,7 +173,7 @@ describe("FileMarkdownRuntimeHost", () => {
     const handle = { current: null } as MutableRefObject<FileMarkdownRuntimeHostHandle | null>;
     const source = Array.from({ length: 200 }, (_, index) => `## Heading ${index}\n\nBody ${index}`).join("\n\n");
     render(<RuntimeHarness source={source} revision="r1" loader={snapshotLoader()} runtimeRef={handle} />);
-    await readyRuntimeCanvas();
+    const canvas = await readyRuntimeCanvas();
     const scroll = screen.getByTestId("runtime-scroll");
     const snapshot = handle.current?.currentSnapshot();
     const tailHeading = snapshot?.outline.at(-1);
@@ -159,6 +181,30 @@ describe("FileMarkdownRuntimeHost", () => {
     expect(tailHeading).toBeTruthy();
     expect(handle.current?.revealSourceLine(tailHeading!.source_line, { behavior: "auto", align: "center" })).toBe(true);
     expect(scroll.scrollTop).toBeGreaterThan(0);
+    const highlightedBlock = canvas.querySelector<HTMLElement>("[data-markdown-source-reveal-active='true'][data-markdown-block-id]");
+    expect(highlightedBlock?.dataset.markdownBlockId).toBe(tailHeading!.block_id);
+    expect(highlightedBlock?.dataset.markdownSourceRevealLineStart).toBe(String(tailHeading!.source_line));
+    expect(canvas.querySelector("[data-markdown-preview-line-number='true'][data-markdown-source-reveal-active='true']"))
+      .toBeNull();
+    const revealMarker = await waitFor(() => {
+      const marker = canvas.querySelector<HTMLElement>("[data-markdown-source-reveal-marker='true']");
+      expect(marker).not.toBeNull();
+      return marker!;
+    });
+    expect(revealMarker.dataset.active).toBe("true");
+    expect(revealMarker.dataset.filePreviewFindMatch).toBeUndefined();
+    expect(revealMarker.style.background).toBe(
+      "color-mix(in srgb, var(--warning, #f0a020) 58%, transparent)",
+    );
+    expect(revealMarker.style.boxShadow).toBe(
+      "inset 0 -2px 0 color-mix(in srgb, var(--warning, #f0a020) 95%, transparent)",
+    );
+    const otherBlock = [...canvas.querySelectorAll<HTMLElement>("[data-markdown-block-id]")]
+      .find((element) => element !== highlightedBlock);
+    expect(otherBlock).toBeTruthy();
+    fireEvent.click(otherBlock!);
+    expect(canvas.querySelector("[data-markdown-source-reveal-active='true']")).toBeNull();
+    expect(canvas.querySelector("[data-markdown-source-reveal-marker='true']")).toBeNull();
     expect(handle.current?.revealBlock(tailHeading!.block_id, { behavior: "auto" })).toBe(true);
     expect(scroll.scrollTop).toBeGreaterThan(0);
   });

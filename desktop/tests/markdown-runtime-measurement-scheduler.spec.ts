@@ -142,6 +142,25 @@ describe("Markdown ResizeObserver MeasurementScheduler", () => {
     run.scheduler.dispose();
   });
 
+  it("lets an explicit live measurement supersede a queued resource fallback height", () => {
+    const run = harness();
+    const block = element();
+    run.scheduler.observe(block, { index: 0, blockId: "mermaid", initialHeight: 560 });
+    run.observer.emit(entry(block, 1_640));
+    expect(run.frameCount).toBe(1);
+
+    run.scheduler.synchronize(block, 432);
+    run.flushFrame();
+
+    expect(run.batches).toEqual([]);
+    expect(run.scheduler.diagnostics()).toMatchObject({ pending: 0, frameScheduled: false });
+    run.observer.emit(entry(block, 440));
+    run.flushFrame();
+    expect(run.batches[0].updates).toEqual([{ index: 0, height: 440, kind: "measured" }]);
+    block.remove();
+    run.scheduler.dispose();
+  });
+
   it("invalidates queued results across revision and view epoch changes", () => {
     const run = harness();
     const block = element();

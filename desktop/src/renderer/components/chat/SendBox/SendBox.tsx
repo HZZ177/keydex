@@ -75,8 +75,8 @@ const LazyAtFileMenu = lazy(() =>
 
 const MISSING_SOURCE_FILE_PATH_MESSAGE =
   "无法获取源文件路径，已拒绝作为临时副本添加。请在桌面端选择文件，或将文件放入工作区后用 @ 引用。";
-const FILE_ACCESS_DISABLED_MESSAGE = "当前文件访问权限为「无文件访问权限」，不能引入文件上下文。";
-const WORKSPACE_FILE_ONLY_MESSAGE = "当前文件访问权限仅允许引入工作区内文件，请将文件放入工作区后用 @ 引用。";
+const FILE_ACCESS_DISABLED_MESSAGE = "当前文件访问权限为「无文件访问权限」，不能引入文件或目录上下文。";
+const WORKSPACE_FILE_ONLY_MESSAGE = "当前文件访问权限仅允许引入工作区内文件或目录，请将内容放入工作区后用 @ 引用。";
 
 export interface SendBoxProps {
   value: string;
@@ -725,11 +725,7 @@ export function SendBox({
     }
   };
 
-  const selectFile = (result: WorkspaceSearchResult) => {
-    if (result.type === "directory" && onListWorkspaceDirectory) {
-      setAtBrowseState({ path: result.path, value: editorValue });
-      return;
-    }
+  const addAtReference = (result: WorkspaceSearchResult) => {
     dispatchFileSelection({ type: "add", file: selectedFileFromWorkspace(result) });
     const nextValue = removeAtQuery(editorValue);
     setAtBrowseState(null);
@@ -739,6 +735,14 @@ export function SendBox({
 
   const navigateAtDirectory = (path: string) => {
     setAtBrowseState({ path, value: editorValue });
+  };
+
+  const activateAtResult = (result: WorkspaceSearchResult, referenceDirectory = false) => {
+    if (result.type === "directory" && onListWorkspaceDirectory && !referenceDirectory) {
+      navigateAtDirectory(result.path);
+      return;
+    }
+    addAtReference(result);
   };
 
   const removeFile = (file: SelectedFile) => {
@@ -1080,11 +1084,24 @@ export function SendBox({
         setDismissedAtValue(editorValue);
         return;
       }
+      if (event.key === "ArrowRight") {
+        const result = atResults[atActiveIndex];
+        if (result?.type === "directory" && onListWorkspaceDirectory) {
+          event.preventDefault();
+          navigateAtDirectory(result.path);
+          return;
+        }
+      }
+      if (event.key === "ArrowLeft" && atDirectoryPath) {
+        event.preventDefault();
+        navigateAtDirectory(parentDirectoryPath(atDirectoryPath));
+        return;
+      }
       if (event.key === "Enter") {
         event.preventDefault();
         const result = atResults[atActiveIndex];
         if (result) {
-          selectFile(result);
+          activateAtResult(result, event.ctrlKey || event.metaKey);
         }
         return;
       }
@@ -1252,8 +1269,8 @@ export function SendBox({
             hint={atHint}
             directoryPath={atDirectoryPath}
             query={atQuery ?? ""}
-            onNavigateDirectory={navigateAtDirectory}
-            onSelect={selectFile}
+            onNavigateDirectory={onListWorkspaceDirectory ? navigateAtDirectory : undefined}
+            onSelect={addAtReference}
           />
         </Suspense>
       ) : null}
@@ -1644,6 +1661,12 @@ function fileName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() || path;
 }
 
+function parentDirectoryPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
 function externalFileRequestFiles(request: SendBoxExternalFileRequest): SelectedFile[] {
   if (request.files?.length) {
     return request.files;
@@ -1669,6 +1692,8 @@ function FileContextChip({
 }) {
   const fileKindLabel = selectedFileKindLabel(file);
   const chipLabel = fileName(file.name || file.path);
+  const referenceKindLabel = file.type === "directory" ? "目录" : "文件";
+  const canActivate = Boolean(onOpen);
 
   return (
     <ComposerContextHover
@@ -1678,13 +1703,19 @@ function FileContextChip({
       description={fileHoverDescription(file)}
       meta={fileKindLabel}
     >
-      <span className={styles.fileChip} data-context-type={file.type} data-openable={onOpen ? "true" : "false"}>
+      <span className={styles.fileChip} data-context-type={file.type} data-openable={canActivate ? "true" : "false"}>
         <button
           className={styles.contextChipMain}
           type="button"
-          aria-label={`打开文件引用 ${file.path}`}
-          data-clickable={onOpen ? "true" : "false"}
-          disabled={!onOpen}
+          aria-label={
+            canActivate
+              ? file.type === "directory"
+                ? `在文件列表中定位目录 ${file.path}`
+                : `打开${referenceKindLabel}引用 ${file.path}`
+              : `${referenceKindLabel}引用 ${file.path}`
+          }
+          data-clickable={canActivate ? "true" : "false"}
+          disabled={!canActivate}
           onClick={() => onOpen?.(file)}
         >
           <span className={styles.contextChipIcon} data-context-chip-icon={file.type} aria-hidden="true">
@@ -1695,7 +1726,7 @@ function FileContextChip({
         <button
           className={styles.fileChipRemove}
           type="button"
-          aria-label={`移除文件引用 ${file.path}`}
+          aria-label={`移除${referenceKindLabel}引用 ${file.path}`}
           onClick={onRemove}
         >
           <X size={12} strokeWidth={2} />

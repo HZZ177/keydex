@@ -9,7 +9,6 @@ import {
 } from "@/renderer/pages/conversation/messages/MessageList";
 import { conversationBaselineDiagnostics } from "@/renderer/pages/conversation/messages/conversationBaselineDiagnostics";
 import { MessageGroupBlock } from "@/renderer/pages/conversation/messages/MessageGroupBlock";
-import { useAutoScroll } from "@/renderer/pages/conversation/messages/useAutoScroll";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
 class AutoLoadingImage {
@@ -255,7 +254,7 @@ describe("MessageList", () => {
     expect(timelineEvent.getAttribute("data-kind")).toBe("context_compression");
     expect(notice.closest('[data-testid="message-turn"]')).toBeNull();
     expect(turnFooter).not.toBeNull();
-    expect(turn.contains(turnFooter)).toBe(true);
+    expect(turnIndexFor(turnFooter)).toBe(turnIndexFor(turn));
     expect(Boolean(turnFooter!.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
@@ -328,10 +327,10 @@ describe("MessageList", () => {
 
     const turns = screen.getAllByTestId("message-turn");
     expect(turns).toHaveLength(2);
-    expect(within(turns[0]).queryByTestId("thread-task-continuation-notice")).toBeNull();
-    expect(within(turns[0]).getByText("第一轮回复")).not.toBeNull();
-    expect(within(turns[1]).getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
-    expect(within(turns[1]).getByText("第二轮续跑回复")).not.toBeNull();
+    const continuation = screen.getByTestId("thread-task-continuation-notice");
+    expect(turnIndexFor(screen.getByText("第一轮回复"))).toBe("0");
+    expect(turnIndexFor(continuation)).toBe("1");
+    expect(turnIndexFor(screen.getByText("第二轮续跑回复"))).toBe("1");
   });
 
   it("does not show continuation dividers for ordinary user turn markers", () => {
@@ -378,9 +377,10 @@ describe("MessageList", () => {
 
     const turns = screen.getAllByTestId("message-turn");
     expect(turns).toHaveLength(3);
-    expect(within(turns[1]).getByText("第二轮续跑回复")).not.toBeNull();
-    expect(within(turns[2]).getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
-    expect(within(turns[2]).getByText("第三轮正在输出")).not.toBeNull();
+    expect(turnIndexFor(screen.getByText("第二轮续跑回复"))).toBe("1");
+    const notices = screen.getAllByTestId("thread-task-continuation-notice");
+    expect(turnIndexFor(notices[1])).toBe("2");
+    expect(turnIndexFor(screen.getByText("第三轮正在输出"))).toBe("2");
   });
 
   it("keeps completed goal continuation turns with action footers while the next turn is streaming", () => {
@@ -411,11 +411,17 @@ describe("MessageList", () => {
 
     const turns = screen.getAllByTestId("message-turn");
     expect(turns).toHaveLength(3);
-    expect(within(turns[1]).getByText("第二轮续跑回复")).not.toBeNull();
-    expect(within(turns[1]).getByRole("button", { name: "从该轮派生对话" })).not.toBeNull();
-    expect(within(turns[2]).getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
-    expect(within(turns[2]).getByText("第三轮正在输出")).not.toBeNull();
-    expect(within(turns[2]).queryByRole("button", { name: "从该轮派生对话" })).toBeNull();
+    expect(turnIndexFor(screen.getByText("第二轮续跑回复"))).toBe("1");
+    const forkButton = screen.getAllByRole("button", { name: "从该轮派生对话" }).find(
+      (button) => turnIndexFor(button) === "1",
+    );
+    expect(forkButton).toBeDefined();
+    expect(turnIndexFor(forkButton ?? null)).toBe("1");
+    expect(turnIndexFor(screen.getAllByTestId("thread-task-continuation-notice")[1])).toBe("2");
+    expect(turnIndexFor(screen.getByText("第三轮正在输出"))).toBe("2");
+    const forkButtons = screen.getAllByRole("button", { name: "从该轮派生对话" });
+    expect(forkButtons).toHaveLength(2);
+    expect(forkButtons.some((button) => turnIndexFor(button) === "2")).toBe(false);
   });
 
   it("places goal continuation turn markers before their run content and keeps goal status at turn end", () => {
@@ -471,16 +477,16 @@ describe("MessageList", () => {
 
     const turns = screen.getAllByTestId("message-turn");
     expect(turns).toHaveLength(3);
-    expect(within(turns[1]).getByText("第二轮回复")).not.toBeNull();
-    expect(within(turns[1]).queryByTestId("thread-task-status-summary")).toBeNull();
-    expect(within(turns[2]).getByTestId("thread-task-continuation-notice").textContent).toBe("目标继续执行");
-    expect(within(turns[2]).getByText("第三轮前半段")).not.toBeNull();
-    expect(within(turns[2]).getByText("第三轮总结")).not.toBeNull();
+    expect(turnIndexFor(screen.getByText("第二轮回复"))).toBe("1");
+    expect(turnIndexFor(screen.getAllByTestId("thread-task-continuation-notice")[1])).toBe("2");
+    expect(turnIndexFor(screen.getByText("第三轮前半段"))).toBe("2");
+    expect(turnIndexFor(screen.getByText("第三轮总结"))).toBe("2");
 
-    const statusSummary = within(turns[2]).getByTestId("thread-task-status-summary");
+    const statusSummary = screen.getByTestId("thread-task-status-summary");
+    expect(turnIndexFor(statusSummary)).toBe("2");
     expect(statusSummary.textContent).toContain("目标已完成");
     expect(statusSummary.textContent).toContain("三轮目标已完成");
-    expect(within(turns[2]).getByText("第三轮总结").compareDocumentPosition(statusSummary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("第三轮总结").compareDocumentPosition(statusSummary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("renders goal status updates at the end of the turn instead of their raw tool position", () => {
@@ -705,58 +711,37 @@ describe("MessageList", () => {
     expect(screen.getByTestId("message-list").getAttribute("data-performance-profile")).toBe("interactivePanel");
   });
 
-  it("renders a turn navigator with hover summary and static turn jumping", () => {
-    const originalScrollIntoView = Element.prototype.scrollIntoView;
-    const scrollIntoView = vi.fn();
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: scrollIntoView,
-    });
+  it("renders a turn navigator with hover summary and indexed turn jumping", async () => {
+    render(
+      <MessageList
+        messages={[
+          message("m1", "user", "第一轮问题"),
+          message("m2", "assistant", "第一行\n第二行\n第三行\n第四行"),
+          message("m3", "user", "第二轮问题"),
+          message("m4", "assistant", "第二轮回答"),
+        ]}
+      />,
+    );
 
-    try {
-      render(
-        <MessageList
-          messages={[
-            message("m1", "user", "第一轮问题"),
-            message("m2", "assistant", "第一行\n第二行\n第三行\n第四行"),
-            message("m3", "user", "第二轮问题"),
-            message("m4", "assistant", "第二轮回答"),
-          ]}
-        />,
-      );
+    expect(screen.getByTestId("conversation-turn-navigator")).not.toBeNull();
+    expect(screen.getByTestId("conversation-turn-navigator-viewport")).not.toBeNull();
+    expect(screen.getByTestId("conversation-turn-navigator-count").textContent).toBe("2 turn");
+    const markers = screen.getAllByRole("button", { name: /跳转到第 \d+ 轮/ });
+    expect(markers).toHaveLength(2);
+    expect(markers.map((marker) => marker.getAttribute("data-current"))).toEqual(["false", "false"]);
 
-      expect(screen.getByTestId("conversation-turn-navigator")).not.toBeNull();
-      expect(screen.getByTestId("conversation-turn-navigator-viewport")).not.toBeNull();
-      expect(screen.getByTestId("conversation-turn-navigator-count").textContent).toBe("2 turn");
-      const markers = screen.getAllByRole("button", { name: /跳转到第 \d+ 轮/ });
-      expect(markers).toHaveLength(2);
-      expect(markers[0].getAttribute("data-current")).toBe("true");
+    fireEvent.focus(markers[0]);
+    expect(markers[0].style.getPropertyValue("--turn-marker-width")).toBe("35px");
 
-      fireEvent.focus(markers[0]);
-      expect(markers[0].style.getPropertyValue("--turn-marker-width")).toBe("35px");
+    fireEvent.blur(markers[0]);
+    expect(markers[0].style.getPropertyValue("--turn-marker-width")).toBe("12px");
 
-      fireEvent.blur(markers[0]);
-      expect(markers[0].style.getPropertyValue("--turn-marker-width")).toBe("12px");
+    fireEvent.focus(markers[1]);
+    expect(screen.getByTestId("conversation-turn-navigator-card").textContent).toContain("第二轮问题");
+    expect(screen.getByTestId("conversation-turn-navigator-card").textContent).toContain("第二轮回答");
 
-      fireEvent.focus(markers[1]);
-      expect(screen.getByTestId("conversation-turn-navigator-card").textContent).toContain("第二轮问题");
-      expect(screen.getByTestId("conversation-turn-navigator-card").textContent).toContain("第二轮回答");
-
-      fireEvent.click(markers[1]);
-      expect(scrollIntoView).toHaveBeenCalledWith({
-        block: "center",
-        behavior: "smooth",
-      });
-    } finally {
-      if (originalScrollIntoView) {
-        Object.defineProperty(Element.prototype, "scrollIntoView", {
-          configurable: true,
-          value: originalScrollIntoView,
-        });
-      } else {
-        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
-      }
-    }
+    fireEvent.click(markers[1]);
+    await waitFor(() => expect(markers[1].getAttribute("data-current")).toBe("true"));
   });
 
   it("does not crash when turn preview content is not a string", () => {
@@ -826,14 +811,6 @@ describe("MessageList", () => {
   });
 
   it("keeps an external turn navigation request until delayed content is mounted", async () => {
-    const originalScrollIntoView = Element.prototype.scrollIntoView;
-    const scrollIntoView = vi.fn();
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: scrollIntoView,
-    });
-
-    try {
       const messages = [
         message("m1", "user", "第一轮问题"),
         message("m2", "assistant", "第一轮回答"),
@@ -845,37 +822,16 @@ describe("MessageList", () => {
 
       expect(screen.queryByTestId("message-skeleton")).toBeNull();
       expect(screen.getAllByText("第一轮问题").length).toBeGreaterThan(0);
-      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(screen.getAllByRole("button", { name: /跳转到第 \d+ 轮/ })[1].getAttribute("data-current")).toBe("false");
 
       rerender(<MessageList messages={messages} turnNavigationRequest={request} />);
 
       await waitFor(() => {
-        expect(scrollIntoView).toHaveBeenCalledWith({
-          block: "center",
-          behavior: "smooth",
-        });
+        expect(screen.getAllByRole("button", { name: /跳转到第 \d+ 轮/ })[1].getAttribute("data-current")).toBe("true");
       });
-    } finally {
-      if (originalScrollIntoView) {
-        Object.defineProperty(Element.prototype, "scrollIntoView", {
-          configurable: true,
-          value: originalScrollIntoView,
-        });
-      } else {
-        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
-      }
-    }
   });
 
   it("navigates to a business turn index and flashes the target assistant message", async () => {
-    const originalScrollIntoView = Element.prototype.scrollIntoView;
-    const scrollIntoView = vi.fn();
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: scrollIntoView,
-    });
-
-    try {
       render(
         <MessageList
           messages={[
@@ -889,26 +845,10 @@ describe("MessageList", () => {
       );
 
       await waitFor(() => {
-        expect(scrollIntoView).toHaveBeenCalledWith({
-          block: "center",
-          behavior: "smooth",
-        });
-      });
-      await waitFor(() => {
         expect(screen.getByText("第二轮回答").closest('[data-kind="assistant"]')?.getAttribute("data-focus-flash")).toBe(
           "true",
         );
       });
-    } finally {
-      if (originalScrollIntoView) {
-        Object.defineProperty(Element.prototype, "scrollIntoView", {
-          configurable: true,
-          value: originalScrollIntoView,
-        });
-      } else {
-        delete (Element.prototype as { scrollIntoView?: Element["scrollIntoView"] }).scrollIntoView;
-      }
-    }
   });
 
   it("highlights every static turn intersecting the visible viewport", async () => {
@@ -926,6 +866,10 @@ describe("MessageList", () => {
         ]}
       />,
     );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed");
+    });
 
     const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
     const turns = screen.getAllByTestId("message-turn") as HTMLElement[];
@@ -950,7 +894,7 @@ describe("MessageList", () => {
     expect(markers.map((marker) => marker.getAttribute("data-current"))).toEqual(["false", "false", "true", "true"]);
   });
 
-  it("adds and highlights a new user turn before the assistant reply completes", async () => {
+  it("adds a new user turn without claiming it is visible before viewport confirmation", async () => {
     const initialMessages = [
       message("m1", "user", "第一轮问题"),
       message("m2", "assistant", "第一轮回答"),
@@ -964,7 +908,7 @@ describe("MessageList", () => {
     await waitFor(() => {
       const markers = screen.getAllByRole("button", { name: /跳转到第 \d+ 轮/ });
       expect(markers).toHaveLength(3);
-      expect(markers[2].getAttribute("data-current")).toBe("true");
+      expect(markers[2].getAttribute("data-current")).toBe("false");
       expect(markers[2].getAttribute("data-entering")).toBe("true");
     });
   });
@@ -1005,7 +949,7 @@ describe("MessageList", () => {
     expect(screen.getByTestId("message-list").getAttribute("data-turn-navigator")).toBe("false");
   });
 
-  it("keeps compact lists on the static renderer while processing", () => {
+  it("keeps compact lists on the unified virtual renderer while processing", () => {
     const originalResizeObserver = globalThis.ResizeObserver;
     const originalUserAgent = navigator.userAgent;
     class FakeResizeObserver {
@@ -1026,7 +970,7 @@ describe("MessageList", () => {
     try {
       render(<MessageList messages={[message("m1", "assistant", "流式内容")]} isProcessing />);
 
-      expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("static");
+      expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("virtual");
     } finally {
       Object.defineProperty(navigator, "userAgent", {
         configurable: true,
@@ -1051,6 +995,7 @@ describe("MessageList", () => {
       const turn = document.createElement("div");
       turn.dataset.testid = "message-turn";
       turn.setAttribute("data-testid", "message-turn");
+      turn.dataset.turnIndex = String(20 + index);
       turn.dataset.index = String(20 + index);
       mockElementTop(turn, top);
       scroller.appendChild(turn);
@@ -1155,9 +1100,9 @@ describe("MessageList", () => {
     const textMessages = screen.getAllByTestId("message-text");
     expect(within(textMessages[1]).queryByRole("button", { name: "复制消息" })).toBeNull();
     expect(within(textMessages[2]).queryByRole("button", { name: "复制消息" })).toBeNull();
-    const finalAssistantItem = textMessages[2].closest('[role="listitem"]');
-    expect(finalAssistantItem).not.toBeNull();
-    expect(within(finalAssistantItem as HTMLElement).getByRole("button", { name: "复制消息" })).not.toBeNull();
+    const assistantFooter = screen.getByTestId("message-turn-footer");
+    expect(turnIndexFor(assistantFooter)).toBe(turnIndexFor(textMessages[2]));
+    expect(within(assistantFooter).getByRole("button", { name: "复制消息" })).not.toBeNull();
     expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(2);
   });
 
@@ -1175,9 +1120,9 @@ describe("MessageList", () => {
 
     const textMessages = screen.getAllByTestId("message-text");
     expect(within(textMessages[1]).queryByRole("button", { name: "复制消息" })).toBeNull();
-    const groupItem = screen.getByTestId("message-group-block").closest('[role="listitem"]');
-    expect(groupItem).not.toBeNull();
-    expect(within(groupItem as HTMLElement).getByRole("button", { name: "复制消息" })).not.toBeNull();
+    const assistantFooter = screen.getByTestId("message-turn-footer");
+    expect(turnIndexFor(assistantFooter)).toBe(turnIndexFor(screen.getByTestId("message-group-block")));
+    expect(within(assistantFooter).getByRole("button", { name: "复制消息" })).not.toBeNull();
     expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(2);
   });
 
@@ -1194,9 +1139,9 @@ describe("MessageList", () => {
 
     const textMessages = screen.getAllByTestId("message-text");
     expect(within(textMessages[1]).queryByRole("button", { name: "复制消息" })).toBeNull();
-    const fileChangeItem = screen.getByTestId("file-change-block").closest('[role="listitem"]');
-    expect(fileChangeItem).not.toBeNull();
-    expect(within(fileChangeItem as HTMLElement).getByRole("button", { name: "复制消息" })).not.toBeNull();
+    const assistantFooter = screen.getByTestId("message-turn-footer");
+    expect(turnIndexFor(assistantFooter)).toBe(turnIndexFor(screen.getByTestId("file-change-block")));
+    expect(within(assistantFooter).getByRole("button", { name: "复制消息" })).not.toBeNull();
     expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(2);
   });
 
@@ -1230,7 +1175,7 @@ describe("MessageList", () => {
     expect(document.querySelectorAll("button[aria-label^='跳转到第']").length).toBeLessThan(100);
   });
 
-  it("shows a live turn duration below the active assistant turn", () => {
+  it("shows a live turn duration below the active assistant turn", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-10T08:01:05.000Z"));
     const runningAssistant = {
@@ -1245,10 +1190,11 @@ describe("MessageList", () => {
     );
 
     try {
+      await act(async () => undefined);
       const duration = screen.getByTestId("turn-processing-time");
       expect(duration.textContent).toBe("已处理 1分5秒");
       expect(duration.getAttribute("data-live")).toBe("true");
-      expect(duration.closest('[role="listitem"]')?.textContent).toContain("正在处理");
+      expect(turnIndexFor(duration)).toBe(turnIndexFor(screen.getByText("正在处理")));
 
       act(() => {
         vi.advanceTimersByTime(1_000);
@@ -1260,7 +1206,7 @@ describe("MessageList", () => {
     }
   });
 
-  it("starts the live turn duration when the first agent output is a tool call", () => {
+  it("starts the live turn duration when the first agent output is a tool call", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-10T08:00:12.000Z"));
     const runningTool = {
@@ -1276,9 +1222,10 @@ describe("MessageList", () => {
     );
 
     try {
+      await act(async () => undefined);
       expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 12秒");
-      expect(screen.getByTestId("turn-processing-time").closest('[role="listitem"]')?.textContent).toContain(
-        "读取文件",
+      expect(turnIndexFor(screen.getByTestId("turn-processing-time"))).toBe(
+        turnIndexFor(screen.getByText("读取文件")),
       );
     } finally {
       unmount();
@@ -1306,7 +1253,7 @@ describe("MessageList", () => {
     expect(footerDetails?.querySelector("time")).not.toBeNull();
   });
 
-  it("shows sub-second frozen turn durations in milliseconds", () => {
+  it("shows sub-second frozen turn durations in milliseconds", async () => {
     const assistant = {
       ...message("m2", "assistant", "你好"),
       payload: { turnDurationMs: 286 },
@@ -1323,7 +1270,7 @@ describe("MessageList", () => {
         ]}
       />,
     );
-    expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 3秒");
+    await waitFor(() => expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 3秒"));
 
     rerender(
       <MessageList
@@ -1333,7 +1280,7 @@ describe("MessageList", () => {
         ]}
       />,
     );
-    expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 1天2小时3分4秒");
+    await waitFor(() => expect(screen.getByTestId("turn-processing-time").textContent).toBe("已处理 1天2小时3分4秒"));
   });
 
   it("keeps the duration live until a waiting turn reaches a terminal state", () => {
@@ -1369,9 +1316,11 @@ describe("MessageList", () => {
 
     const textMessages = screen.getAllByTestId("message-text");
     expect(within(textMessages[1]).queryByRole("button", { name: "复制消息" })).toBeNull();
-    const previousAssistantItem = textMessages[1].closest('[role="listitem"]');
-    expect(previousAssistantItem).not.toBeNull();
-    expect(within(previousAssistantItem as HTMLElement).getByRole("button", { name: "复制消息" })).not.toBeNull();
+    const previousTurnFooter = screen.getAllByTestId("message-turn-footer").find(
+      (footer) => turnIndexFor(footer) === turnIndexFor(textMessages[1]),
+    );
+    expect(previousTurnFooter).toBeDefined();
+    expect(within(previousTurnFooter as HTMLElement).getByRole("button", { name: "复制消息" })).not.toBeNull();
     expect(within(textMessages[3]).queryByRole("button", { name: "复制消息" })).toBeNull();
     expect(within(textMessages[4]).queryByRole("button", { name: "复制消息" })).toBeNull();
   });
@@ -1379,7 +1328,9 @@ describe("MessageList", () => {
   it("shows a pending assistant cursor while processing before the next stream chunk", () => {
     const { rerender } = render(<MessageList messages={[message("m1", "user", "开始")]} isProcessing />);
 
-    expect(screen.getByTestId("streaming-cursor")).not.toBeNull();
+    const pendingCursor = screen.getByTestId("streaming-cursor");
+    expect(pendingCursor.hidden).toBe(false);
+    expect(pendingCursor.querySelectorAll('[data-streaming-cursor-dot="true"]')).toHaveLength(3);
 
     rerender(
       <MessageList
@@ -1420,9 +1371,9 @@ describe("MessageList", () => {
     expect(screen.getAllByTestId("streaming-cursor")).toHaveLength(1);
     const assistantMessage = screen.getAllByTestId("message-text")[1];
     expect(within(assistantMessage).queryByTestId("streaming-cursor")).toBeNull();
-    const runningFileChangeItem = screen.getByTestId("file-change-block").closest('[role="listitem"]');
-    expect(runningFileChangeItem).not.toBeNull();
-    expect(within(runningFileChangeItem as HTMLElement).getByTestId("streaming-cursor")).not.toBeNull();
+    expect(turnIndexFor(screen.getByTestId("streaming-cursor"))).toBe(
+      turnIndexFor(screen.getByTestId("file-change-block")),
+    );
 
     rerender(
       <MessageList
@@ -1436,9 +1387,9 @@ describe("MessageList", () => {
     );
 
     expect(screen.getAllByTestId("streaming-cursor")).toHaveLength(1);
-    const completedFileChangeItem = screen.getByTestId("file-change-block").closest('[role="listitem"]');
-    expect(completedFileChangeItem).not.toBeNull();
-    expect(within(completedFileChangeItem as HTMLElement).getByTestId("streaming-cursor")).not.toBeNull();
+    expect(turnIndexFor(screen.getByTestId("streaming-cursor"))).toBe(
+      turnIndexFor(screen.getByTestId("file-change-block")),
+    );
   });
 
   it("summarizes consecutive tool messages and expands original blocks on demand", () => {
@@ -1883,8 +1834,8 @@ describe("MessageList", () => {
     Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 200 });
 
     try {
-      render(<AutoScrollHarness />);
-      expect(screen.getByTestId("auto-scroll-container").scrollTop).toBe(800);
+      render(<MessageList messages={[message("history-1", "assistant", "历史消息")]} />);
+      expect(screen.getByTestId("message-list-scroll").scrollTop).toBe(800);
     } finally {
       restorePrototypeDescriptor("scrollHeight", scrollHeightDescriptor);
       restorePrototypeDescriptor("clientHeight", clientHeightDescriptor);
@@ -1896,6 +1847,7 @@ describe("MessageList", () => {
     const second = message("m2", "assistant", "第二段");
     const { rerender } = render(<MessageList messages={[first]} />);
     const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+    await waitFor(() => expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed"));
     mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 120 });
 
     fireEvent.wheel(scroller, { deltaY: -120 });
@@ -1909,15 +1861,56 @@ describe("MessageList", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "滚动到底" }));
     await waitFor(() => {
-      expect(scroller.scrollTop).toBe(800);
+      expect(scroller.scrollTop).toBe(timelineBottom(scroller));
     });
   });
 
-  it("keeps repeated detached scroll events off the MessageList React reconciliation path", () => {
+  it.each([2, 59])("commits a %i-turn history at the physical timeline bottom", async (turnCount) => {
+    const scrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const clientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.dataset.messageListScroll !== "true") return 0;
+        return Number(
+          this.querySelector<HTMLElement>("[data-conversation-timeline-total-height]")
+            ?.dataset.conversationTimelineTotalHeight ?? 0,
+        );
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.dataset.messageListScroll === "true" ? 600 : 0;
+      },
+    });
+    const history = Array.from({ length: turnCount }, (_, index) => [
+      { ...message(`history-user-${index}`, "user", `question-${index}`), turnId: `turn-${index}` },
+      { ...message(`history-assistant-${index}`, "assistant", `answer-${index}`), turnId: `turn-${index}` },
+    ]).flat();
+
+    try {
+      render(<MessageList messages={history} />);
+      const scroller = screen.getByTestId("message-list-scroll") as HTMLElement;
+      await waitFor(() => {
+        expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed");
+      });
+      expect(scroller.scrollTop).toBe(timelineBottom(scroller));
+      expect(scroller.querySelector(`[data-turn-index="${turnCount - 1}"]`)).not.toBeNull();
+      expect(scroller.querySelector(`[data-conversation-unit-id="unit:footer:history-assistant-${turnCount - 1}"]`))
+        .not.toBeNull();
+    } finally {
+      restorePrototypeDescriptor("scrollHeight", scrollHeightDescriptor);
+      restorePrototypeDescriptor("clientHeight", clientHeightDescriptor);
+    }
+  });
+
+  it("keeps repeated detached scroll events off the MessageList React reconciliation path", async () => {
     conversationBaselineDiagnostics.enable();
     try {
       render(<MessageList messages={[message("m1", "assistant", "long history")]} />);
       const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+      await waitFor(() => expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed"));
       mockScrollMetrics(scroller, { scrollHeight: 2_000, clientHeight: 400, scrollTop: 600 });
       fireEvent.wheel(scroller, { deltaY: -120 });
       fireEvent.scroll(scroller);
@@ -1935,13 +1928,15 @@ describe("MessageList", () => {
     }
   });
 
-  it("lets upward wheel intent interrupt static auto-follow before the scroll event", async () => {
+  it("lets upward wheel intent interrupt virtual auto-follow before the scroll event", async () => {
     const running = { ...message("m1", "assistant", "正在输出"), status: "running" as const };
     const { rerender } = render(<MessageList messages={[running]} isProcessing />);
     const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+    await waitFor(() => expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed"));
     mockScrollMetrics(scroller, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
 
     fireEvent.wheel(scroller, { deltaY: -120 });
+    expect(scroller.dataset.conversationTimelineUserScrollActive).toBe("true");
     mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 800 });
     rerender(
       <MessageList
@@ -1956,7 +1951,68 @@ describe("MessageList", () => {
     expect(scroller.scrollTop).toBe(800);
   });
 
-  it("uses the outer scroll container when the message list itself is not scrollable", async () => {
+  it("marks native scrollbar dragging as active timeline scroll ownership", async () => {
+    render(<MessageList messages={[message("m1", "assistant", "long history")]} />);
+    const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+    await waitFor(() => expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed"));
+    Object.defineProperties(scroller, {
+      clientWidth: { configurable: true, value: 90 },
+      offsetWidth: { configurable: true, value: 100 },
+    });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({
+      bottom: 200,
+      height: 200,
+      left: 0,
+      right: 100,
+      top: 0,
+      width: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent(scroller, new MouseEvent("pointerdown", { bubbles: true, clientX: 99, clientY: 20 }));
+
+    expect(scroller.dataset.conversationTimelineUserScrollActive).toBe("true");
+  });
+
+  it("keeps the controlled scrollbar thumb tied to pointer movement until release", async () => {
+    render(<MessageList messages={[message("m1", "assistant", "long history")]} />);
+    const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+    await waitFor(() => expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed"));
+    mockScrollMetrics(scroller, { scrollHeight: 2_000, clientHeight: 400, scrollTop: 600 });
+    const rail = screen.getByTestId("conversation-scroll-rail") as HTMLDivElement;
+    const track = rail.firstElementChild as HTMLDivElement;
+    const thumb = screen.getByTestId("conversation-scroll-thumb") as HTMLDivElement;
+    Object.defineProperty(track, "clientHeight", { configurable: true, value: 200 });
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({
+      bottom: 200,
+      height: 200,
+      left: 0,
+      right: 14,
+      top: 0,
+      width: 14,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent(rail, new MouseEvent("pointerdown", { bubbles: true, clientY: 100 }));
+    expect(rail.dataset.dragging).toBe("true");
+    expect(scroller.dataset.conversationTimelineUserScrollActive).toBe("true");
+    expect(scroller.scrollTop).toBe(800);
+    expect(thumb.style.transform).toBe("translateY(80px)");
+
+    fireEvent(rail, new MouseEvent("pointermove", { bubbles: true, clientY: 150 }));
+    expect(scroller.scrollTop).toBe(1_300);
+    expect(thumb.style.transform).toBe("translateY(130px)");
+
+    fireEvent(rail, new MouseEvent("pointerup", { bubbles: true, clientY: 150 }));
+    expect(rail.dataset.dragging).toBeUndefined();
+    expect(scroller.dataset.conversationTimelineUserScrollActive).toBe("false");
+  });
+
+  it("keeps the message list as the sole scroll owner when nested in another scroll container", async () => {
     const first = message("m1", "assistant", "第一段");
     render(
       <div data-testid="outer-scroll" style={{ height: 200, overflowY: "auto" }}>
@@ -1965,20 +2021,21 @@ describe("MessageList", () => {
     );
     const outer = screen.getByTestId("outer-scroll") as HTMLDivElement;
     const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+    await waitFor(() => expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed"));
     mockScrollMetrics(outer, { scrollHeight: 1200, clientHeight: 200, scrollTop: 120 });
-    mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 1200, scrollTop: 0 });
+    mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 120 });
 
-    fireEvent.wheel(outer, { deltaY: -120 });
-    fireEvent.scroll(outer);
+    fireEvent.wheel(scroller, { deltaY: -120 });
+    fireEvent.scroll(scroller);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "滚动到底" })).not.toBeNull();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "滚动到底" }));
     await waitFor(() => {
-      expect(outer.scrollTop).toBe(1000);
+      expect(scroller.scrollTop).toBe(timelineBottom(scroller));
     });
-    expect(scroller.scrollTop).toBe(0);
+    expect(outer.scrollTop).toBe(120);
   });
 
   it("starts following automatically when streamed content grows past the viewport", async () => {
@@ -2037,6 +2094,8 @@ describe("MessageList", () => {
       expect(Number(scroller.getAttribute("data-conversation-timeline-mounted-units"))).toBeLessThan(80);
       expect(scroller.querySelectorAll("[data-conversation-unit-id]").length).toBeLessThan(80);
       expect(scroller.querySelectorAll('[data-conversation-unit-pinned="true"]')).toHaveLength(0);
+      expect(scroller.querySelectorAll('[data-conversation-unit-tail-adjacent="true"]')).toHaveLength(1);
+      expect(scroller.getAttribute("data-conversation-timeline-follow-bottom")).toBe("false");
     } finally {
       Object.defineProperty(navigator, "userAgent", { configurable: true, value: originalUserAgent });
       if (originalResizeObserver) {
@@ -2386,6 +2445,15 @@ function planMessage(): ConversationMessage {
   };
 }
 
+function turnIndexFor(element: Element | null): string | null {
+  return element?.closest<HTMLElement>("[data-turn-index]")?.dataset.turnIndex ?? null;
+}
+
+function timelineBottom(scroller: HTMLElement): number {
+  const canvas = scroller.querySelector<HTMLElement>("[data-conversation-timeline-total-height]");
+  return Math.max(0, Number(canvas?.dataset.conversationTimelineTotalHeight ?? 0) - scroller.clientHeight);
+}
+
 function mockScrollMetrics(
   element: HTMLElement,
   metrics: { scrollHeight: number; clientHeight: number; scrollTop: number },
@@ -2442,11 +2510,6 @@ function mockElementTopSequence(element: HTMLElement, tops: number[]) {
       } as DOMRect;
     },
   });
-}
-
-function AutoScrollHarness() {
-  const autoScroll = useAutoScroll({ deps: [], itemCount: 1 });
-  return <div ref={autoScroll.containerRef} data-testid="auto-scroll-container" />;
 }
 
 function restorePrototypeDescriptor(

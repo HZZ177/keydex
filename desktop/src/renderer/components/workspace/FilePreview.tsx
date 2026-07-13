@@ -258,7 +258,7 @@ export function FilePreview({
   const [activeMarkdownFindMatchId, setActiveMarkdownFindMatchId] = useState<string | null>(null);
   const [sourceFindState, setSourceFindState] = useState<CodeMirrorFindState | null>(null);
   const [selectionMappingError, setSelectionMappingError] = useState<string | null>(null);
-  const handledSourceRevealRequestIdRef = useRef(0);
+  const handledSourceRevealRequestIdsRef = useRef(new Map<string, number>());
   const lastFindScrollLineRef = useRef<FilePreviewFindScrollLine | null>(null);
   const documentReadConsumerIdRef = useRef(`file-preview-${nextFilePreviewConsumerId++}`);
   const standaloneMarkdownViewIdRef = useRef(`file-preview-${nextFilePreviewViewId++}`);
@@ -619,26 +619,28 @@ export function FilePreview({
   );
 
   useEffect(() => {
-    handledSourceRevealRequestIdRef.current = 0;
-  }, [annotationPath]);
-
-  useEffect(() => {
     if (!sourceRevealRequest || !revealPath || previewBusy || error) return;
-    if (handledSourceRevealRequestIdRef.current === sourceRevealRequest.requestId) return;
+    if (handledSourceRevealRequestIdsRef.current.get(revealPath) === sourceRevealRequest.requestId) return;
     const position = sourceRevealRequest.sourceStart
       ?? (sourceRevealRequest.lineStart ? sourcePositionForLine(formattedSource, sourceRevealRequest.lineStart) : null);
     if (position === null) return;
     const runtimePreviewVisible = kind === "markdown" && (viewMode === "preview" || splitMode);
     if (runtimePreviewVisible && !markdownRuntimeSnapshot) return;
-    handledSourceRevealRequestIdRef.current = sourceRevealRequest.requestId;
+    const runtimeRevealHandled = !runtimePreviewVisible
+      || (sourceRevealRequest.lineStart
+        ? markdownRuntimeHostRef.current?.revealSourceLines(
+          sourceRevealRequest.lineStart,
+          sourceRevealRequest.lineEnd ?? sourceRevealRequest.lineStart,
+          { align: "center", behavior: "auto" },
+        )
+        : markdownRuntimeHostRef.current?.revealSourceOffset(position, { align: "center", behavior: "auto" }));
+    if (!runtimeRevealHandled) return;
+    handledSourceRevealRequestIdsRef.current.set(revealPath, sourceRevealRequest.requestId);
     setLineRevealRequest((current) => ({
       requestId: (current?.requestId ?? 0) + 1,
       position,
       block: "center",
     }));
-    if (kind === "markdown" && (viewMode === "preview" || splitMode)) {
-      markdownRuntimeHostRef.current?.revealSourceOffset(position, { align: "center" });
-    }
   }, [error, formattedSource, kind, markdownRuntimeSnapshot, previewBusy, revealPath, sourceRevealRequest, splitMode, viewMode]);
   useEffect(() => {
     if (!outlineRevealRequest || kind !== "markdown") {
@@ -1205,6 +1207,18 @@ export function FilePreview({
       {error ? <div className={styles.error} role="alert">{error}</div> : null}
       {!previewBusy && !error ? (
         <div className={styles.documentViewportShell}>
+          {findOpen ? (
+            <FilePreviewFindBar
+              inputRef={findInputRef}
+              query={findQuery}
+              matchCount={findMatchCount}
+              matchIndex={findMatchIndex}
+              focusRequestId={findFocusRequestId}
+              onClose={closeFind}
+              onQueryChange={updateFindQuery}
+              onStep={stepFindMatch}
+            />
+          ) : null}
           <div
             ref={setDocumentViewport}
             className={styles.body}
@@ -1227,18 +1241,6 @@ export function FilePreview({
           >
             <div className={styles.documentColumn} ref={bodyRef}>
               {renderBodyContent()}
-              {findOpen ? (
-                <FilePreviewFindBar
-                  inputRef={findInputRef}
-                  query={findQuery}
-                  matchCount={findMatchCount}
-                  matchIndex={findMatchIndex}
-                  focusRequestId={findFocusRequestId}
-                  onClose={closeFind}
-                  onQueryChange={updateFindQuery}
-                  onStep={stepFindMatch}
-                />
-              ) : null}
               {quoteSelectionAvailable || annotationAvailable ? (
                 <FilePreviewSelectionLayer
                   bodyRef={bodyRef}

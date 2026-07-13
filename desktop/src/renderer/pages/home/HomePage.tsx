@@ -323,13 +323,18 @@ export function HomePage({
           if (!file.path) {
             return;
           }
-          previewContext.openFilePanel(file.path, {
+          const renderContext = {
             workspaceId: workspaceSelection.workspace.id,
             workspaceAvailable: true,
             workspaceLabel: workspaceSelection.workspace.root_path ?? workspaceSelection.workspace.name,
             runtime,
             onQuoteSelection: quoteSelection,
-          }, selectedFileRevealTarget(file));
+          };
+          if (file.type === "directory") {
+            previewContext.openDirectoryPanel(file.path, renderContext);
+            return;
+          }
+          previewContext.openFilePanel(file.path, renderContext, selectedFileRevealTarget(file));
         }
       : undefined;
 

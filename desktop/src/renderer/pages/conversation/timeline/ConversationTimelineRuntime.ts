@@ -16,7 +16,14 @@ export interface ConversationTimelineRuntimeOptions {
   readonly overscanPx?: number;
   readonly maxPinnedUnits?: number;
   readonly observeMeasurements?: boolean;
+  readonly followBottom?: boolean;
   readonly onPatch?: (patch: ConversationTimelinePatch) => void;
+  readonly onScrollRequest?: (request: ConversationTimelineScrollRequest) => void;
+}
+
+export interface ConversationTimelineScrollRequest {
+  readonly scrollTop: number;
+  readonly reason: "follow-bottom" | "preserve-top" | "reveal-unit" | "restore-anchor";
 }
 
 export interface ConversationTimelinePatch {
@@ -40,6 +47,10 @@ export interface ConversationTimelineDiagnostics {
   readonly domNodes: number;
   readonly patches: number;
   readonly scrollPatches: number;
+  readonly followBottom: boolean;
+  readonly userScrollActive: boolean;
+  readonly topLocked: boolean;
+  readonly deferredMeasurements: number;
 }
 
 export interface ConversationTimelineAnchor {
@@ -56,6 +67,9 @@ interface Slot {
 }
 
 const MAX_RECYCLED_TIMELINE_SLOTS = 64;
+const TOP_INTENT_THRESHOLD_PX = 44;
+const USER_SCROLL_SETTLE_MS = 180;
+const SCROLL_TARGET_EPSILON_PX = 1;
 
 export class ConversationTimelineRuntime {
   readonly canvas: HTMLDivElement;
@@ -63,9 +77,11 @@ export class ConversationTimelineRuntime {
   private readonly overscanPx: number;
   private readonly maxPinnedUnits: number;
   private readonly onPatch?: (patch: ConversationTimelinePatch) => void;
+  private readonly onScrollRequest?: (request: ConversationTimelineScrollRequest) => void;
   private readonly slots = new Map<string, Slot>();
   private readonly recycledSlots: Slot[] = [];
   private readonly measuredHeights = new Map<string, number>();
+  private readonly deferredMeasuredHeights = new Map<string, number>();
   private readonly pinnedIds = new Set<string>();
   private units: readonly ConversationRenderUnit[] = [];
   private indexById = new Map<string, number>();
@@ -75,6 +91,12 @@ export class ConversationTimelineRuntime {
   private sequence = 0;
   private patches = 0;
   private scrollPatches = 0;
+  private followBottom: boolean;
+  private userScrollActive = false;
+  private topLocked = false;
+  private lastObservedScrollTop = 0;
+  private expectedProgrammaticScrollTop: number | null = null;
+  private userScrollSettleTimer: number | null = null;
   private disposed = false;
   private readonly resizeObserver: ResizeObserver | null;
 
@@ -82,13 +104,21 @@ export class ConversationTimelineRuntime {
     this.renderer = options.renderer;
     this.overscanPx = finiteNonNegative(options.overscanPx ?? 800, "overscanPx");
     this.maxPinnedUnits = positiveInteger(options.maxPinnedUnits ?? 64, "maxPinnedUnits");
+    this.followBottom = options.followBottom ?? false;
     this.onPatch = options.onPatch;
+    this.onScrollRequest = options.onScrollRequest;
     this.canvas = root.ownerDocument.createElement("div");
     this.canvas.dataset.conversationTimelineCanvas = "true";
     this.canvas.style.position = "relative";
     this.canvas.style.width = "100%";
+    // Absolutely positioned units may temporarily be taller than their index
+    // estimate. They must not expand the browser's native scrollHeight behind
+    // the HeightIndex, otherwise the native thumb changes size while dragging.
+    this.canvas.style.overflowX = "visible";
+    this.canvas.style.overflowY = "clip";
     root.replaceChildren(this.canvas);
     root.dataset.conversationTimelineRuntime = "true";
+    this.lastObservedScrollTop = root.scrollTop;
     root.addEventListener("scroll", this.handleScroll, { passive: true });
     this.resizeObserver = options.observeMeasurements !== false && typeof ResizeObserver !== "undefined"
       ? new ResizeObserver((entries) => this.handleMeasurements(entries))
@@ -108,7 +138,9 @@ export class ConversationTimelineRuntime {
       defaultOverscanPx: this.overscanPx,
       maxPinnedBlocks: this.maxPinnedUnits,
     });
-    return this.patch(this.root.scrollTop, this.root.clientHeight);
+    return this.followBottom
+      ? this.updateViewportAtBottom(false)
+      : this.patch(this.root.scrollTop, this.root.clientHeight);
   }
 
   updateViewport(scrollTop = this.root.scrollTop, viewportHeight = this.root.clientHeight): ConversationTimelinePatch {
@@ -132,19 +164,58 @@ export class ConversationTimelineRuntime {
     return this.updateViewport();
   }
 
+  setFollowBottom(enabled: boolean): ConversationTimelinePatch | null {
+    this.assertActive();
+    if (this.followBottom === enabled) {
+      if (enabled) this.setTopLocked(false);
+      return null;
+    }
+    this.followBottom = enabled;
+    if (enabled) this.setTopLocked(false);
+    setDatasetValue(this.root, "conversationTimelineFollowBottom", enabled ? "true" : "false");
+    return enabled && this.viewport && this.heightIndex && this.revision
+      ? this.updateViewportAtBottom()
+      : null;
+  }
+
+  setUserScrollInteraction(active: boolean): void {
+    this.assertActive();
+    if (this.userScrollActive === active) return;
+    this.userScrollActive = active;
+    this.lastObservedScrollTop = this.root.scrollTop;
+    setDatasetValue(this.root, "conversationTimelineUserScrollActive", active ? "true" : "false");
+    if (!active) {
+      this.flushDeferredMeasurements();
+    }
+  }
+
   updateMeasuredHeight(unitId: string, height: number): ConversationTimelinePatch | null {
     this.assertActive();
     const index = this.indexById.get(unitId);
     if (index === undefined || !this.heightIndex || !this.revision) return null;
-    const anchor = this.captureAnchor();
     const normalized = finiteNonNegative(height, "height");
+    if (this.userScrollActive) {
+      this.deferMeasuredHeight(unitId, normalized);
+      return null;
+    }
+    const anchor = this.captureMeasurementAnchor();
     this.measuredHeights.set(unitId, normalized);
     const delta = this.heightIndex.update(index, normalized, { kind: "measured", revision: this.revision });
-    return delta === 0 ? null : this.updateViewportFromAnchor(anchor);
+    return delta === 0
+      ? null
+      : this.updateViewportAfterMeasurement(anchor);
   }
 
   measureMounted(): ConversationTimelinePatch | null {
-    const anchor = this.captureAnchor();
+    if (this.userScrollActive) {
+      for (const [id, slot] of this.slots) {
+        const height = slot.element.getBoundingClientRect().height;
+        if (!Number.isFinite(height) || height < 0) continue;
+        this.deferMeasuredHeight(id, height);
+      }
+      return null;
+    }
+    const anchor = this.captureMeasurementAnchor();
     let changed = false;
     for (const [id, slot] of this.slots) {
       const height = slot.element.getBoundingClientRect().height;
@@ -155,19 +226,23 @@ export class ConversationTimelineRuntime {
         changed = this.heightIndex.update(index, height, { kind: "measured", revision: this.revision }) !== 0 || changed;
       }
     }
-    return changed ? this.updateViewportFromAnchor(anchor) : null;
+    return changed ? this.updateViewportAfterMeasurement(anchor) : null;
   }
 
   revealUnit(unitId: string, align: "start" | "center" | "end" = "center"): boolean {
     this.assertActive();
     const index = this.indexById.get(unitId);
     if (index === undefined || !this.heightIndex) return false;
+    this.followBottom = false;
+    this.setTopLocked(false);
+    setDatasetValue(this.root, "conversationTimelineFollowBottom", "false");
     const top = this.heightIndex.offsetOf(index);
     const height = this.heightIndex.heightAt(index);
     const viewport = this.root.clientHeight;
     const target = align === "start" ? top : align === "end" ? top + height - viewport : top + height / 2 - viewport / 2;
-    this.root.scrollTop = Math.max(0, Math.min(target, Math.max(0, this.heightIndex.totalHeight - viewport)));
-    this.updateViewport();
+    const scrollTop = Math.max(0, Math.min(target, Math.max(0, this.heightIndex.totalHeight - viewport)));
+    this.patch(scrollTop, viewport);
+    this.requestScroll(scrollTop, "reveal-unit");
     return true;
   }
 
@@ -192,6 +267,9 @@ export class ConversationTimelineRuntime {
 
   restoreAnchor(anchor: ConversationTimelineAnchor): boolean {
     this.assertActive();
+    this.followBottom = false;
+    this.setTopLocked(false);
+    setDatasetValue(this.root, "conversationTimelineFollowBottom", "false");
     return this.updateViewportFromAnchor(anchor) !== null;
   }
 
@@ -200,8 +278,13 @@ export class ConversationTimelineRuntime {
     const index = this.indexById.get(anchor.unitId);
     if (index === undefined || !this.heightIndex) return null;
     const target = this.heightIndex.offsetOf(index) + anchor.offsetWithinUnit - anchor.viewportOffset;
-    this.root.scrollTop = Math.max(0, Math.min(target, Math.max(0, this.heightIndex.totalHeight - this.root.clientHeight)));
-    return this.updateViewport();
+    const scrollTop = Math.max(
+      0,
+      Math.min(target, Math.max(0, this.heightIndex.totalHeight - this.root.clientHeight)),
+    );
+    const patch = this.patch(scrollTop, this.root.clientHeight);
+    this.requestScroll(scrollTop, "restore-anchor");
+    return patch;
   }
 
   getUnitElement(unitId: string): HTMLElement | null {
@@ -224,6 +307,10 @@ export class ConversationTimelineRuntime {
       domNodes: this.root.querySelectorAll("*").length,
       patches: this.patches,
       scrollPatches: this.scrollPatches,
+      followBottom: this.followBottom,
+      userScrollActive: this.userScrollActive,
+      topLocked: this.topLocked,
+      deferredMeasurements: this.deferredMeasuredHeights.size,
     });
   }
 
@@ -231,22 +318,31 @@ export class ConversationTimelineRuntime {
     if (this.disposed) return;
     this.disposed = true;
     this.root.removeEventListener("scroll", this.handleScroll);
+    this.clearUserScrollSettleTimer();
     this.resizeObserver?.disconnect();
     for (const slot of this.slots.values()) slot.handle.destroy();
     for (const slot of this.recycledSlots) slot.handle.destroy();
     this.slots.clear();
     this.recycledSlots.length = 0;
+    this.deferredMeasuredHeights.clear();
     this.canvas.remove();
     delete this.root.dataset.conversationTimelineRuntime;
+    delete this.root.dataset.conversationTimelineUserScrollActive;
+    delete this.root.dataset.conversationTimelineTopLocked;
+    delete this.root.dataset.conversationTimelineLayoutMode;
   }
 
   private patch(scrollTop: number, viewportHeight: number): ConversationTimelinePatch {
     const patchStartedAt = performance.now();
+    const completeLayout = this.units.length <= this.maxPinnedUnits;
+    const pinnedIndices = completeLayout
+      ? this.units.map((_unit, index) => index)
+      : [...this.pinnedIds].map((id) => this.indexById.get(id)!).filter((index) => index !== undefined);
     const viewport = this.viewport!.update({
       scrollTop,
       viewportHeight,
       revision: this.revision!,
-      pinnedIndices: [...this.pinnedIds].map((id) => this.indexById.get(id)!).filter((index) => index !== undefined),
+      pinnedIndices,
     });
     const desiredIds = new Set(viewport.items.map((item) => this.units[item.index].id));
     let destroyed = 0;
@@ -301,9 +397,18 @@ export class ConversationTimelineRuntime {
       setDatasetValue(slot.element, "conversationUnitKind", unit.kind);
       setDatasetValue(slot.element, "conversationUnitVisible", item.visible ? "true" : "false");
       setDatasetValue(slot.element, "conversationUnitPinned", item.pinned ? "true" : "false");
+      setDatasetValue(
+        slot.element,
+        "conversationUnitTailAdjacent",
+        this.units[item.index + 1]?.id === "conversation-runtime:bottom" ? "true" : "false",
+      );
       if (unit.turnIndex !== null) {
         setDatasetValue(slot.element, "turnIndex", String(unit.turnIndex));
-        setDatasetValue(slot.element, "testid", "message-turn");
+        if (this.units[item.index - 1]?.turnIndex !== unit.turnIndex) {
+          setDatasetValue(slot.element, "testid", "message-turn");
+        } else {
+          delete slot.element.dataset.testid;
+        }
       } else {
         delete slot.element.dataset.turnIndex;
         delete slot.element.dataset.testid;
@@ -317,6 +422,8 @@ export class ConversationTimelineRuntime {
     setDatasetValue(this.canvas, "conversationTimelineTotalHeight", String(viewport.totalHeight));
     setDatasetValue(this.root, "conversationTimelineMountedUnits", String(this.slots.size));
     setDatasetValue(this.root, "conversationTimelineRevision", this.revision!);
+    setDatasetValue(this.root, "conversationTimelineFollowBottom", this.followBottom ? "true" : "false");
+    setDatasetValue(this.root, "conversationTimelineLayoutMode", completeLayout ? "complete" : "virtual");
     this.patches += 1;
     const patch = Object.freeze({
       revision: this.revision!,
@@ -349,23 +456,164 @@ export class ConversationTimelineRuntime {
   }
 
   private readonly handleScroll = () => {
-    if (!this.disposed && this.viewport) this.updateViewport(this.root.scrollTop, this.root.clientHeight);
+    if (this.disposed || !this.viewport) return;
+    const scrollTop = this.root.scrollTop;
+    const programmatic = this.consumeProgrammaticScroll(scrollTop);
+    if (!programmatic) this.markUserScrollActivity();
+    if (this.userScrollActive) {
+      if (scrollTop < this.lastObservedScrollTop && scrollTop <= TOP_INTENT_THRESHOLD_PX) {
+        this.setTopLocked(true);
+      } else if (scrollTop > this.lastObservedScrollTop) {
+        this.setTopLocked(false);
+      }
+    }
+    this.lastObservedScrollTop = scrollTop;
+    this.updateViewport(scrollTop, this.root.clientHeight);
   };
 
   private handleMeasurements(entries: readonly ResizeObserverEntry[]): void {
-    const anchor = this.captureAnchor();
-    let changed = false;
+    const measurements: Array<{ id: string; index: number; height: number }> = [];
     for (const entry of entries) {
-      const element = entry.target as HTMLElement;
-      const id = element.dataset.conversationUnitId;
-      const index = id ? this.indexById.get(id) : undefined;
-      const height = entry.contentRect.height;
-      if (!id || index === undefined || !this.heightIndex || !this.revision || height < 0) continue;
-      if (this.measuredHeights.get(id) === height) continue;
-      this.measuredHeights.set(id, height);
-      changed = this.heightIndex.update(index, height, { kind: "measured", revision: this.revision }) !== 0 || changed;
+      const measurement = this.validMeasurement(entry);
+      if (measurement) measurements.push(measurement);
     }
-    if (changed) this.updateViewportFromAnchor(anchor);
+    if (this.userScrollActive) {
+      for (const measurement of measurements) this.deferMeasuredHeight(measurement.id, measurement.height);
+      return;
+    }
+    const anchor = this.captureMeasurementAnchor();
+    let changed = false;
+    for (const measurement of measurements) {
+      if (this.measuredHeights.get(measurement.id) === measurement.height) continue;
+      this.measuredHeights.set(measurement.id, measurement.height);
+      changed = this.heightIndex!.update(measurement.index, measurement.height, {
+        kind: "measured",
+        revision: this.revision!,
+      }) !== 0 || changed;
+    }
+    if (changed) this.updateViewportAfterMeasurement(anchor);
+  }
+
+  private validMeasurement(entry: ResizeObserverEntry): { id: string; index: number; height: number } | null {
+    const element = entry.target as HTMLElement;
+    const id = element.dataset.conversationUnitId;
+    const index = id ? this.indexById.get(id) : undefined;
+    const height = entry.contentRect.height;
+    const slot = id ? this.slots.get(id) : undefined;
+    if (
+      !id
+      || index === undefined
+      || !slot
+      || slot.element !== element
+      || slot.unit.id !== id
+      || !this.heightIndex
+      || !this.revision
+      || height < 0
+    ) return null;
+    const currentHeight = element.getBoundingClientRect().height;
+    if (Number.isFinite(currentHeight) && Math.abs(currentHeight - height) > 0.5) return null;
+    return { id, index, height };
+  }
+
+  private deferMeasuredHeight(unitId: string, height: number): void {
+    if (this.measuredHeights.get(unitId) === height) {
+      this.deferredMeasuredHeights.delete(unitId);
+      return;
+    }
+    this.deferredMeasuredHeights.set(unitId, height);
+  }
+
+  private flushDeferredMeasurements(): ConversationTimelinePatch | null {
+    if (!this.deferredMeasuredHeights.size || !this.heightIndex || !this.revision) return null;
+    const pending = [...this.deferredMeasuredHeights];
+    this.deferredMeasuredHeights.clear();
+    const anchor = this.captureMeasurementAnchor();
+    let changed = false;
+    for (const [id, height] of pending) {
+      const index = this.indexById.get(id);
+      if (index === undefined || this.measuredHeights.get(id) === height) continue;
+      this.measuredHeights.set(id, height);
+      changed = this.heightIndex.update(index, height, {
+        kind: "measured",
+        revision: this.revision,
+      }) !== 0 || changed;
+    }
+    return changed ? this.updateViewportAfterMeasurement(anchor) : null;
+  }
+
+  private captureMeasurementAnchor(): ConversationTimelineAnchor | null {
+    return this.followBottom || this.userScrollActive || this.topLocked ? null : this.captureAnchor();
+  }
+
+  private updateViewportAfterMeasurement(anchor: ConversationTimelineAnchor | null): ConversationTimelinePatch | null {
+    if (this.topLocked) {
+      const patch = this.patch(0, this.root.clientHeight);
+      this.requestScroll(0, "preserve-top");
+      return patch;
+    }
+    if (this.userScrollActive) {
+      return this.patch(this.root.scrollTop, this.root.clientHeight);
+    }
+    if (this.followBottom) return this.updateViewportAtBottom();
+    return this.updateViewportFromAnchor(anchor);
+  }
+
+  private setTopLocked(locked: boolean): void {
+    if (this.topLocked === locked) return;
+    this.topLocked = locked;
+    setDatasetValue(this.root, "conversationTimelineTopLocked", locked ? "true" : "false");
+  }
+
+  private updateViewportAtBottom(countAsScrollPatch = true): ConversationTimelinePatch {
+    if (!this.heightIndex || !this.viewport || !this.revision) {
+      throw new Error("Conversation timeline has not been published");
+    }
+    if (countAsScrollPatch) this.scrollPatches += 1;
+    const target = Math.max(0, this.heightIndex.totalHeight - this.root.clientHeight);
+    const patch = this.patch(target, this.root.clientHeight);
+    this.requestScroll(target, "follow-bottom");
+    return patch;
+  }
+
+  private requestScroll(scrollTop: number, reason: ConversationTimelineScrollRequest["reason"]): void {
+    this.expectedProgrammaticScrollTop = scrollTop;
+    this.onScrollRequest?.(Object.freeze({ scrollTop, reason }));
+  }
+
+  private consumeProgrammaticScroll(scrollTop: number): boolean {
+    const expected = this.expectedProgrammaticScrollTop;
+    if (expected !== null) {
+      this.expectedProgrammaticScrollTop = null;
+      if (Math.abs(scrollTop - expected) <= SCROLL_TARGET_EPSILON_PX) return true;
+    }
+    if (!this.followBottom) return false;
+    const nativeBottom = Math.max(0, this.root.scrollHeight - this.root.clientHeight);
+    const indexedBottom = Math.max(0, (this.heightIndex?.totalHeight ?? 0) - this.root.clientHeight);
+    return Math.abs(scrollTop - nativeBottom) <= SCROLL_TARGET_EPSILON_PX
+      || Math.abs(scrollTop - indexedBottom) <= SCROLL_TARGET_EPSILON_PX;
+  }
+
+  private markUserScrollActivity(): void {
+    if (!this.userScrollActive) {
+      const previousScrollTop = this.lastObservedScrollTop;
+      this.setUserScrollInteraction(true);
+      // The first native scroll event arrives after scrollTop changed. Preserve
+      // the previous sample so top-intent detection still sees its direction.
+      this.lastObservedScrollTop = previousScrollTop;
+    }
+    this.clearUserScrollSettleTimer();
+    const view = this.root.ownerDocument.defaultView;
+    if (!view) return;
+    this.userScrollSettleTimer = view.setTimeout(() => {
+      this.userScrollSettleTimer = null;
+      if (!this.disposed && this.userScrollActive) this.setUserScrollInteraction(false);
+    }, USER_SCROLL_SETTLE_MS);
+  }
+
+  private clearUserScrollSettleTimer(): void {
+    if (this.userScrollSettleTimer === null) return;
+    this.root.ownerDocument.defaultView?.clearTimeout(this.userScrollSettleTimer);
+    this.userScrollSettleTimer = null;
   }
 
   private assertActive(): void {

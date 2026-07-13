@@ -37,6 +37,8 @@ export interface WorkspaceFileBrowserProps {
   previewPath?: string | null;
   previewRequestId?: number;
   previewRevealTarget?: PreviewFileRevealTarget | null;
+  directoryRevealPath?: string | null;
+  directoryRevealRequestId?: number;
   previewPlacement?: "inline" | "external";
   initialNavigationMode?: "files" | "outline";
   previewOutline?: MarkdownOutlineItem[];
@@ -87,6 +89,8 @@ export function WorkspaceFileBrowser({
   previewPath = null,
   previewRequestId = 0,
   previewRevealTarget = null,
+  directoryRevealPath = null,
+  directoryRevealRequestId = 0,
   previewPlacement = "inline",
   initialNavigationMode = "files",
   previewOutline = [],
@@ -453,6 +457,8 @@ export function WorkspaceFileBrowser({
               workspaceId={workspaceId}
               sessionId={sessionId}
               revealSelectedPathRequestId={previewRequestId}
+              revealDirectoryPath={directoryRevealPath}
+              revealDirectoryPathRequestId={directoryRevealRequestId}
               selectedPath={selectedPath}
               bottomSafeArea={bottomSafeArea}
               initialState={workspacePanelState}

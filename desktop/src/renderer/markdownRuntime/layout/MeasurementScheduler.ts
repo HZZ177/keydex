@@ -117,6 +117,22 @@ export class MarkdownMeasurementScheduler {
     }
   }
 
+  /**
+   * Keeps an explicit live DOM measurement authoritative over a ResizeObserver
+   * entry that may already be queued for the same element. Resource renderers
+   * use an explicit measurement after replacing their temporary source
+   * fallback, so an older observer entry must not restore the fallback height
+   * on the next animation frame.
+   */
+  synchronize(element: Element, height: number): void {
+    this.assertActive();
+    const record = this.records.get(element);
+    if (!record) return;
+    record.lastHeight = finiteNonNegative(height, "height");
+    this.pending.delete(element);
+    if (!this.pending.size) this.cancelScheduledFrame();
+  }
+
   flushNow(): void {
     this.assertActive();
     this.cancelScheduledFrame();

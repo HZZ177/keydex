@@ -9,6 +9,7 @@ import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider"
 import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectionProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
+import { saveSessionMarkdownFile } from "@/renderer/utils/sessionMarkdownExport";
 import type {
   AgentActionEnvelope,
   AgentChatMessagePayload,
@@ -19,6 +20,14 @@ import type {
   CommandApprovalRequest,
   Workspace,
 } from "@/types/protocol";
+
+vi.mock("@/renderer/utils/sessionMarkdownExport", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/renderer/utils/sessionMarkdownExport")>();
+  return {
+    ...actual,
+    saveSessionMarkdownFile: vi.fn().mockResolvedValue("downloaded"),
+  };
+});
 
 function renderSider(ui: ReactElement) {
   return render(<ThemeProvider>{ui}</ThemeProvider>);
@@ -1240,6 +1249,50 @@ describe("Sider", () => {
       expect(onNavigate).toHaveBeenCalledWith("/conversation/thread-fork");
     });
     expect(await screen.findByText("派生会话")).not.toBeNull();
+  });
+
+  it("exports the complete session as Markdown with conversation and reasoning text", async () => {
+    const sourceSession = thread({ id: "thread-a", title: "需求/讨论" });
+    const loadHistory = vi.fn().mockResolvedValue(
+      historyResponse(sourceSession, [
+        chatMessage({ role: "system", content: "内部系统提示" }),
+        chatMessage({ role: "user", content: "请分析这个需求", turnIndex: 1 }),
+        chatMessage({ role: "reasoning", content: "内部推理", turnIndex: 1 }),
+        chatMessage({ role: "assistant", content: "先看现状。", turnIndex: 1 }),
+        chatMessage({
+          role: "tool",
+          content: "",
+          toolName: "read_file",
+          toolParams: { path: "secret.md" },
+          toolResult: "工具结果",
+          turnIndex: 1,
+        }),
+        chatMessage({ role: "assistant", content: "结论如下。", turnIndex: 1 }),
+        chatMessage({ role: "a2ui", content: "A2UI 事件", contentType: "a2ui", turnIndex: 1 }),
+        chatMessage({ role: "assistant", content: "A2UI 参数", content_type: "a2ui", turnIndex: 1 }),
+      ]),
+    );
+    const runtime = fakeRuntime([sourceSession], { loadHistory });
+    vi.mocked(saveSessionMarkdownFile).mockClear();
+
+    renderSider(<Sider runtime={runtime} />);
+
+    await screen.findByText("需求/讨论");
+    fireEvent.click(within(openSessionMenu("需求/讨论")).getByRole("menuitem", { name: "导出记录" }));
+
+    await waitFor(() => {
+      expect(loadHistory).toHaveBeenCalledWith("thread-a", {
+        allTurns: true,
+        direction: "older",
+      });
+    });
+    expect(saveSessionMarkdownFile).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(saveSessionMarkdownFile).mock.calls[0]?.[0]).toBe(
+      "# 需求/讨论\n\n## 用户\n\n请分析这个需求\n\n## 思考\n\n内部推理\n\n## 助手\n\n先看现状。\n\n## 助手\n\n结论如下。\n",
+    );
+    expect(vi.mocked(saveSessionMarkdownFile).mock.calls[0]?.[1]).toMatch(
+      /^需求_讨论-\d{4}-\d{2}-\d{2}T.*\.md$/,
+    );
   });
 
   it("renames a session inside its workspace group without moving it", async () => {

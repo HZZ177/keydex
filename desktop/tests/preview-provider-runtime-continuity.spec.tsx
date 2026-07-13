@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useEffect, type MutableRefObject } from "react";
+import { useEffect, useMemo, type MutableRefObject } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FilePreview } from "@/renderer/components/workspace/FilePreview";
@@ -57,7 +57,7 @@ describe("PreviewProvider Markdown Runtime continuity", () => {
     const previewRef = { current: null } as MutableRefObject<PreviewContextValue | null>;
     render(
       <PreviewProvider>
-        <RuntimePreviewProbe previewRef={previewRef} source={source} />
+        <RuntimePreviewProbe previewRef={previewRef} source={source} sidebarDescriptor />
       </PreviewProvider>,
     );
 
@@ -71,6 +71,19 @@ describe("PreviewProvider Markdown Runtime continuity", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open tail target" }));
     await waitFor(() => expect(previewRef.current!.activeEntry!.openedAt).toBeGreaterThan(firstOpenedAt));
     await waitFor(() => expect(runtimeScroll().scrollTop).toBeGreaterThan(0));
+    const secondOpenedAt = previewRef.current!.activeEntry!.openedAt;
+    const scroll = runtimeScroll();
+    act(() => {
+      scroll.scrollTop = 0;
+      fireEvent.scroll(scroll);
+    });
+    await nextFrame();
+    expect(scroll.scrollTop).toBe(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open tail target" }));
+    await waitFor(() => expect(previewRef.current!.activeEntry!.openedAt).toBeGreaterThan(secondOpenedAt));
+    await waitFor(() => expect(scroll.scrollTop).toBeGreaterThan(0));
+    expect(scroll.scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ behavior: "auto" }));
 
     expect(previewRef.current!.entries).toHaveLength(1);
     expect(previewRef.current!.activeEntry!.markdownView).toBe(firstEntry.markdownView);
@@ -160,13 +173,23 @@ describe("PreviewProvider Markdown Runtime continuity", () => {
 
 function RuntimePreviewProbe({
   previewRef,
+  sidebarDescriptor = false,
   source,
 }: {
   previewRef: MutableRefObject<PreviewContextValue | null>;
+  sidebarDescriptor?: boolean;
   source: string;
 }) {
   const preview = usePreview();
   previewRef.current = preview;
+  const sidebarMarkdownViewDescriptor = useMemo(
+    () => preview.activeEntry ? Object.freeze({
+      ...preview.activeEntry.markdownView,
+      viewId: "right-sidebar-preview",
+      kind: "sidebar" as const,
+    }) : undefined,
+    [preview.activeEntry],
+  );
   const open = (request: PreviewRequest, line: number) => preview.openPreview(request, undefined, {
     lineStart: line,
     lineEnd: line,
@@ -185,6 +208,7 @@ function RuntimePreviewProbe({
             sourceRevealRequest={preview.activeEntry.revealTarget
               ? { requestId: preview.activeEntry.openedAt, ...preview.activeEntry.revealTarget }
               : null}
+            markdownViewDescriptor={sidebarDescriptor ? sidebarMarkdownViewDescriptor : undefined}
           />
         </div>
       ) : null}

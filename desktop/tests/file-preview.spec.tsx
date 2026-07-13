@@ -404,6 +404,8 @@ describe("FilePreview", () => {
 
       const search = await screen.findByRole("search", { name: "文件内容搜索" });
       const input = within(search).getByLabelText("搜索文件内容");
+      expect(search.closest("[data-document-scroll-viewport='true']")).toBeNull();
+      expect(search.parentElement).toBe(body.parentElement);
       await waitFor(() => {
         expect(document.activeElement).toBe(input);
       });
@@ -1707,6 +1709,10 @@ describe("FilePreview", () => {
 
     const previewRoot = await screen.findByTestId("reused-file-preview");
     expect(previewRoot.textContent).toContain("First target");
+    await waitFor(() => expect(
+      previewRoot.querySelector<HTMLElement>("[data-markdown-source-reveal-active='true'][data-markdown-block-id]")
+        ?.dataset.markdownSourceRevealLineStart,
+    ).toBe("3"));
     const firstOpenedAt = Number(screen.getByTestId("reused-preview-opened-at").textContent);
     expect(readFile).toHaveBeenCalledTimes(1);
 
@@ -1715,6 +1721,10 @@ describe("FilePreview", () => {
     await waitFor(() => {
       expect(Number(screen.getByTestId("reused-preview-opened-at").textContent)).toBeGreaterThan(firstOpenedAt);
     });
+    await waitFor(() => expect(
+      previewRoot.querySelector<HTMLElement>("[data-markdown-source-reveal-active='true'][data-markdown-block-id]")
+        ?.dataset.markdownSourceRevealLineStart,
+    ).toBe("5"));
     expect(screen.getByTestId("reused-file-preview")).toBe(previewRoot);
     expect(readFile).toHaveBeenCalledTimes(1);
   });

@@ -123,6 +123,11 @@ function runtimeHarness() {
   return new ConversationTimelineRuntime(root, {
     observeMeasurements: false,
     overscanPx: 200,
+    onScrollRequest(request) {
+      // The production timeline delegates every write to the follow controller.
+      // This navigation-only harness installs the equivalent explicit writer.
+      root.scrollTop = request.scrollTop;
+    },
     renderer: {
       mount(unit, host) {
         host.textContent = unit.id;

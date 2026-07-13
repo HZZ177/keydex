@@ -1,5 +1,6 @@
 import {
   ChevronDown,
+  Download,
   Folder,
   FolderOpen,
   GitBranch,
@@ -45,6 +46,11 @@ import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnec
 import { useTheme } from "@/renderer/providers/ThemeProvider";
 import { latestCompleteForkSource } from "@/renderer/pages/conversation/conversationForkSource";
 import { prefersReducedMotion } from "@/renderer/utils/motionPreference";
+import {
+  buildSessionMarkdown,
+  createSessionMarkdownFilename,
+  saveSessionMarkdownFile,
+} from "@/renderer/utils/sessionMarkdownExport";
 import type { AgentSession } from "@/types/protocol";
 
 import styles from "./Sider.module.css";
@@ -86,8 +92,8 @@ const WORKSPACE_SESSION_EXPAND_STEP = 10;
 const WORKSPACE_SESSION_HISTORY_PAGE_SIZE = 100;
 const SESSION_FORK_HISTORY_PAGE_SIZE = 100;
 const SESSION_ACTION_MENU_WIDTH = 112;
-const SESSION_ACTION_MENU_HEIGHT = 98;
-const SESSION_CONTEXT_ACTION_MENU_HEIGHT = 132;
+const SESSION_ACTION_MENU_HEIGHT = 132;
+const SESSION_CONTEXT_ACTION_MENU_HEIGHT = 166;
 const SESSION_ACTION_MENU_GAP = 10;
 const SESSION_ACTION_MENU_EDGE = 8;
 const SESSION_ACTION_MENU_CLOSE_MS = 120;
@@ -145,6 +151,7 @@ export function Sider({
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [forkingSessionId, setForkingSessionId] = useState<string | null>(null);
+  const [exportingSessionId, setExportingSessionId] = useState<string | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
   const loadedWorkspaceHistoryIdsRef = useRef<Set<string>>(new Set());
   const [showFooterFeather, setShowFooterFeather] = useState(false);
@@ -152,6 +159,7 @@ export function Sider({
     typeof runtime.conversation.updateSession === "function" && typeof runtime.conversation.deleteSession === "function";
   const canForkConversations =
     typeof runtime.conversation.loadHistory === "function" && typeof runtime.conversation.forkSession === "function";
+  const canExportConversations = typeof runtime.conversation.loadHistory === "function";
 
   const loadedGroups = useMemo(() => buildSessionGroups(loadedSessions), [loadedSessions]);
   const loadedPinnedItems = useMemo(() => buildPinnedEntries(loadedSessions), [loadedSessions]);
@@ -474,6 +482,39 @@ export function Sider({
     }
   }
 
+  async function exportConversation(item: SiderEntry) {
+    if (!canExportConversations) {
+      notifications.warning("当前后端不支持导出会话记录");
+      return;
+    }
+    if (exportingSessionId) {
+      return;
+    }
+    setExportingSessionId(item.id);
+    try {
+      const history = await runtime.conversation.loadHistory(item.id, {
+        allTurns: true,
+        direction: "older",
+      });
+      const markdown = buildSessionMarkdown(item.title, history.list);
+      if (!markdown) {
+        notifications.warning("当前会话没有可导出的对话正文");
+        return;
+      }
+      const result = await saveSessionMarkdownFile(
+        markdown,
+        createSessionMarkdownFilename(item.title),
+      );
+      if (result !== "cancelled") {
+        notifications.success("会话记录已导出");
+      }
+    } catch (reason) {
+      notifications.error(`导出失败：${errorMessage(reason)}`);
+    } finally {
+      setExportingSessionId(null);
+    }
+  }
+
   const loadWorkspaceSessions = useCallback(
     async (workspaceId: string) => {
       if (controlled || loadedWorkspaceHistoryIdsRef.current.has(workspaceId) || loadingWorkspaceHistoryIds.has(workspaceId)) {
@@ -591,11 +632,14 @@ export function Sider({
                   confirmDeleteId={confirmDeleteId}
                   canMutate={canMutateConversations}
                   canFork={canForkConversations}
+                  canExport={canExportConversations}
                   forkingSessionId={forkingSessionId}
+                  exportingSessionId={exportingSessionId}
                   sessionIndicators={sessionIndicators}
                   historyPreviewLimit={WORKSPACE_SESSION_PREVIEW_LIMIT}
                   getSessionPath={getSessionPath}
                   onConfirmDelete={startDeleteConversation}
+                  onExportSession={(item) => void exportConversation(item)}
                   onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                   onStartRename={startRenameConversation}
                   onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
@@ -614,7 +658,9 @@ export function Sider({
                   confirmDeleteId={confirmDeleteId}
                   canMutate={canMutateConversations}
                   canFork={canForkConversations}
+                  canExport={canExportConversations}
                   forkingSessionId={forkingSessionId}
+                  exportingSessionId={exportingSessionId}
                   sessionIndicators={sessionIndicators}
                   workspaceId={workbenchGroup.workspaceId}
                   disableSectionToggle
@@ -622,6 +668,7 @@ export function Sider({
                   hideTitle
                   getSessionPath={getSessionPath}
                   onConfirmDelete={startDeleteConversation}
+                  onExportSession={(item) => void exportConversation(item)}
                   onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                   onStartRename={startRenameConversation}
                   onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
@@ -659,10 +706,13 @@ export function Sider({
                 confirmDeleteId={confirmDeleteId}
                 canMutate={canMutateConversations}
                 canFork={canForkConversations}
+                canExport={canExportConversations}
                 forkingSessionId={forkingSessionId}
+                exportingSessionId={exportingSessionId}
                 sessionIndicators={sessionIndicators}
                 getSessionPath={getSessionPath}
                 onConfirmDelete={startDeleteConversation}
+                onExportSession={(item) => void exportConversation(item)}
                 onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                 onStartRename={startRenameConversation}
                 onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
@@ -691,7 +741,9 @@ export function Sider({
                   confirmDeleteId={confirmDeleteId}
                   canMutate={canMutateConversations}
                   canFork={canForkConversations}
+                  canExport={canExportConversations}
                   forkingSessionId={forkingSessionId}
+                  exportingSessionId={exportingSessionId}
                   sessionIndicators={sessionIndicators}
                   workspaceId={group.workspaceId}
                   getSessionPath={getSessionPath}
@@ -703,6 +755,7 @@ export function Sider({
                     group.workspaceId && !controlled ? () => loadWorkspaceSessions(group.workspaceId as string) : undefined
                   }
                   onConfirmDelete={startDeleteConversation}
+                  onExportSession={(item) => void exportConversation(item)}
                   onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                   onStartRename={startRenameConversation}
                   onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
@@ -725,11 +778,14 @@ export function Sider({
                 confirmDeleteId={confirmDeleteId}
                 canMutate={canMutateConversations}
                 canFork={canForkConversations}
+                canExport={canExportConversations}
                 forkingSessionId={forkingSessionId}
+                exportingSessionId={exportingSessionId}
                 sessionIndicators={sessionIndicators}
                 historyPreviewLimit={WORKSPACE_SESSION_PREVIEW_LIMIT}
                 getSessionPath={getSessionPath}
                 onConfirmDelete={startDeleteConversation}
+                onExportSession={(item) => void exportConversation(item)}
                 onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                 onStartRename={startRenameConversation}
                 onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
@@ -759,7 +815,9 @@ export function Sider({
                     confirmDeleteId={confirmDeleteId}
                     canMutate={canMutateConversations}
                     canFork={canForkConversations}
+                    canExport={canExportConversations}
                     forkingSessionId={forkingSessionId}
+                    exportingSessionId={exportingSessionId}
                     sessionIndicators={sessionIndicators}
                     workspaceId={group.workspaceId}
                     getSessionPath={getSessionPath}
@@ -775,6 +833,7 @@ export function Sider({
                         : undefined
                     }
                     onConfirmDelete={startDeleteConversation}
+                    onExportSession={(item) => void exportConversation(item)}
                     onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                     onStartRename={startRenameConversation}
                     onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
@@ -804,11 +863,14 @@ export function Sider({
                     confirmDeleteId={confirmDeleteId}
                     canMutate={canMutateConversations}
                     canFork={canForkConversations}
+                    canExport={canExportConversations}
                     forkingSessionId={forkingSessionId}
+                    exportingSessionId={exportingSessionId}
                     sessionIndicators={sessionIndicators}
                     hideTitle
                     getSessionPath={getSessionPath}
                     onConfirmDelete={startDeleteConversation}
+                    onExportSession={(item) => void exportConversation(item)}
                     onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                     onStartRename={startRenameConversation}
                     onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
@@ -1050,7 +1112,9 @@ interface SiderSectionProps {
   confirmDeleteId?: string | null;
   canMutate?: boolean;
   canFork?: boolean;
+  canExport?: boolean;
   forkingSessionId?: string | null;
+  exportingSessionId?: string | null;
   sessionIndicators?: Record<string, SessionIndicator>;
   workspaceId?: string;
   historyExpansionLoading?: boolean;
@@ -1058,6 +1122,7 @@ interface SiderSectionProps {
   getSessionPath?: (sessionId: string) => string;
   getWorkspaceNewConversationPath?: (workspaceId?: string) => string;
   onConfirmDelete?: (id: string) => void;
+  onExportSession?: (item: SiderEntry) => void;
   onForkSession?: (item: SiderEntry) => void;
   onLoadHistoryExpansion?: () => Promise<void> | void;
   onNavigate?: (path: string) => void;
@@ -1148,7 +1213,9 @@ function SiderSection({
   confirmDeleteId,
   canMutate = false,
   canFork = false,
+  canExport = false,
   forkingSessionId = null,
+  exportingSessionId = null,
   sessionIndicators = {},
   workspaceId,
   historyExpansionLoading = false,
@@ -1156,6 +1223,7 @@ function SiderSection({
   getSessionPath = conversationPath,
   getWorkspaceNewConversationPath = newWorkspaceConversationPath,
   onConfirmDelete,
+  onExportSession,
   onForkSession,
   onLoadHistoryExpansion,
   onNavigate,
@@ -1194,7 +1262,7 @@ function SiderSection({
   const hasExpandedHistory = visibleExtraItemCount > 0;
   const canExpandHistory = shouldLimitHistory && visibleExtraItemCount < extraItems.length;
   const historyToggleLoading = historyExpansionLoading || localHistoryExpansionLoading;
-  const canOpenActionMenu = canMutate || canFork;
+  const canOpenActionMenu = canMutate || canFork || canExport;
 
   useEffect(() => {
     const activePathChanged = previousActivePathRef.current !== activePath;
@@ -1389,6 +1457,7 @@ function SiderSection({
     const menuVisible = menuOpen || closingActionMenuId === item.id;
     const canShowHoverCard = editing?.id !== item.id && confirmDeleteId !== item.id && !menuVisible;
     const isForking = forkingSessionId === item.id;
+    const isExporting = exportingSessionId === item.id;
     const showContextRefresh = menuVisible && actionMenuSource === "context" && Boolean(onRefresh);
     const openContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
       if (!canOpenActionMenu) {
@@ -1507,6 +1576,21 @@ function SiderSection({
                         aria-label={`会话操作 ${item.title}`}
                         style={actionMenuPosition}
                       >
+                        {canExport ? (
+                          <button
+                            disabled={isExporting}
+                            role="menuitem"
+                            type="button"
+                            onClick={() => {
+                              setHoveredSession(null);
+                              closeActionMenu();
+                              onExportSession?.(item);
+                            }}
+                          >
+                            <Download size={13} aria-hidden="true" />
+                            <span>{isExporting ? "导出中" : "导出记录"}</span>
+                          </button>
+                        ) : null}
                         {canFork ? (
                           <button
                             disabled={isForking}

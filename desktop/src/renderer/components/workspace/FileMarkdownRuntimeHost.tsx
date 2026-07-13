@@ -23,7 +23,10 @@ import {
 } from "@/renderer/markdownRuntime/annotations";
 import { buildMarkdownFindIndex as buildRuntimeMarkdownFindIndex, type MarkdownFindIndex } from "@/renderer/markdownRuntime/find";
 import { MarkdownSelectionController, type MarkdownProjectedSelection } from "@/renderer/markdownRuntime/interaction";
-import { MarkdownPositionMapper } from "@/renderer/markdownRuntime/mapping";
+import {
+  MarkdownPositionMapper,
+  markdownSourceOffsetToLogical,
+} from "@/renderer/markdownRuntime/mapping";
 import type { AnnotationRenderState } from "@/renderer/features/annotations/navigation/types";
 import type { MarkdownAnnotationBinding } from "@/renderer/features/annotations/adapters/MarkdownAnnotationAdapter";
 import { markdownRuntimeDiagnostics } from "@/renderer/markdownRuntime/diagnostics";
@@ -56,6 +59,11 @@ import { fileMarkdownRuntimeStore, fileMarkdownViewStateStore } from "./fileMark
 export interface FileMarkdownRuntimeHostHandle {
   revealSourceOffset(offset: number, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
   revealSourceLine(line: number, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
+  revealSourceLines(
+    lineStart: number,
+    lineEnd: number,
+    options?: { align?: "start" | "center"; behavior?: ScrollBehavior },
+  ): boolean;
   revealBlock(blockId: string, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
   getBlockElement(blockId: string): HTMLElement | null;
   currentSnapshot(): MarkdownSnapshot | null;
@@ -128,12 +136,10 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
     useImperativeHandle(forwardedRef, () => ({
       revealSourceOffset: (offset, options) => revealOffset(stateRef.current, offset, options),
       revealSourceLine: (line, options) => {
-        const state = stateRef.current;
-        if (!state?.snapshot || !Number.isSafeInteger(line) || line < 1) return false;
-        const blockIndex = markdownBlockIndexAtSourceLine(state.snapshot, line - 1);
-        const block = blockIndex === null ? null : state.snapshot.blocks[blockIndex];
-        return block ? revealBlock(state, block.id, options) : false;
+        return revealSourceLines(stateRef.current, line, line, options);
       },
+      revealSourceLines: (lineStart, lineEnd, options) =>
+        revealSourceLines(stateRef.current, lineStart, lineEnd, options),
       revealBlock: (blockId, options) => revealBlock(stateRef.current, blockId, options),
       getBlockElement: (blockId) => stateRef.current?.view.getBlockElement(blockId) ?? null,
       currentSnapshot: () => stateRef.current?.snapshot ?? null,
@@ -229,7 +235,13 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         const href = anchor.getAttribute("href") ?? "";
         if (block && href) propsRef.current.interactions?.onLinkActivate?.(event, { href, block });
       };
+      const handleSourceRevealDismiss = (event: MouseEvent) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest("[data-markdown-source-reveal-active='true'][data-markdown-block-id]")) return;
+        clearSourceReveal(stateRef.current);
+      };
       host.addEventListener("click", handleRetainedLinkFallback);
+      host.addEventListener("click", handleSourceRevealDismiss, true);
       const environment = new MarkdownEnvironmentController(host, {
         mermaidRuntime,
         onRemeasure: () => {
@@ -254,6 +266,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         selection: null,
         annotationOverlay: null,
         findOverlay: null,
+        sourceRevealOverlay: null,
         annotationBindingCleanup: null,
         mountedBlockSignature: "",
         findRequestSequence: 0,
@@ -263,6 +276,8 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         publishedAnnotationRenderState: null,
         publishedFindIndex: null,
         publishedActiveFindMatchId: null,
+        publishedSourceReveal: null,
+        sourceReveal: null,
         stages: { setupMs: 0, loadMs: 0, publishMs: 0, featureInstallMs: 0 },
       };
       if (typeof ResizeObserver !== "undefined") {
@@ -464,6 +479,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         destroyRuntimeFeatures(state);
         delete host.dataset.markdownRuntimeFeatures;
         host.removeEventListener("click", handleRetainedLinkFallback);
+        host.removeEventListener("click", handleSourceRevealDismiss, true);
         view.destroy();
         imageRuntime.destroy();
         mermaidRuntime.destroy();
@@ -520,6 +536,7 @@ interface HostState {
   selection: MarkdownSelectionController | null;
   annotationOverlay: MarkdownAnnotationOverlayController | null;
   findOverlay: MarkdownAnnotationOverlayController | null;
+  sourceRevealOverlay: MarkdownAnnotationOverlayController | null;
   annotationBindingCleanup: (() => void) | null;
   mountedBlockSignature: string;
   findRequestSequence: number;
@@ -529,7 +546,18 @@ interface HostState {
   publishedAnnotationRenderState: AnnotationRenderState | null;
   publishedFindIndex: MarkdownFindIndex | null;
   publishedActiveFindMatchId: string | null;
+  publishedSourceReveal: SourceRevealState | null;
+  sourceReveal: SourceRevealState | null;
   readonly stages: { setupMs: number; loadMs: number; publishMs: number; featureInstallMs: number };
+}
+
+interface SourceRevealState {
+  readonly blockIds: readonly string[];
+  readonly lineStart: number;
+  readonly lineEnd: number;
+  readonly align: "start" | "center";
+  readonly behavior: ScrollBehavior;
+  refined: boolean;
 }
 
 function installRuntimeFeatures(state: HostState, props: FileMarkdownRuntimeHostProps): void {
@@ -558,6 +586,12 @@ function installRuntimeFeatures(state: HostState, props: FileMarkdownRuntimeHost
     mounted: state.view,
     variant: "find",
   });
+  state.sourceRevealOverlay = new MarkdownAnnotationOverlayController({
+    snapshot,
+    mapper,
+    mounted: state.view,
+    variant: "source-reveal",
+  });
   state.selection = new MarkdownSelectionController({
     mapper,
     boundary: state.view.host,
@@ -568,6 +602,8 @@ function installRuntimeFeatures(state: HostState, props: FileMarkdownRuntimeHost
     onChange: ({ selection }) => state.featureProps.onSelectionChange?.(selection),
   });
   state.selection.attach();
+  syncSourceReveal(state);
+  refineSourceReveal(state);
   if (props.bindAnnotation) {
     state.annotationBindingCleanup = props.bindAnnotation({
       blocks: EMPTY_ANNOTATION_BINDING_BLOCKS,
@@ -642,12 +678,14 @@ function syncRuntimeFeatureState(
   const mounted = state.view.mountedBlockIds();
   state.annotationOverlay?.syncMountedBlocks(mounted);
   state.findOverlay?.syncMountedBlocks(mounted);
+  state.sourceRevealOverlay?.syncMountedBlocks(mounted);
   const signature = mounted.join("\u0000");
   if (signature !== state.mountedBlockSignature) {
     state.mountedBlockSignature = signature;
     syncMeasurementTargets(state);
     props.onMountedBlocksChange?.();
   }
+  syncSourceReveal(state);
 }
 
 function destroyRuntimeFeatures(state: HostState, notify = true): void {
@@ -655,8 +693,10 @@ function destroyRuntimeFeatures(state: HostState, notify = true): void {
   state.annotationBindingCleanup = null;
   state.selection?.destroy();
   state.selection = null;
-  // The Find overlay is installed after the annotation overlay. Destroying it
-  // first preserves the shared block positioning invariant.
+  // Overlays are installed in annotation -> Find -> source-reveal order.
+  // Destroy them in reverse to preserve the shared block positioning invariant.
+  state.sourceRevealOverlay?.destroy();
+  state.sourceRevealOverlay = null;
   state.findOverlay?.destroy();
   state.findOverlay = null;
   state.annotationOverlay?.destroy();
@@ -666,6 +706,7 @@ function destroyRuntimeFeatures(state: HostState, notify = true): void {
   state.publishedAnnotationRenderState = null;
   state.publishedFindIndex = null;
   state.publishedActiveFindMatchId = null;
+  state.publishedSourceReveal = null;
   if (notify) state.featureProps.onSelectionChange?.(null);
 }
 
@@ -794,6 +835,9 @@ function measureAndAnchor(state: HostState | null): void {
     if (blockIndex === null) return [];
     const element = state.view.getBlockElement(blockId);
     const borderBoxHeight = element?.getBoundingClientRect().height ?? 0;
+    if (element && borderBoxHeight > 0) {
+      state.measurement?.synchronize(element, borderBoxHeight);
+    }
     const height = borderBoxHeight > 0
       ? measuredMarkdownBlockOccupiedHeight(
           borderBoxHeight,
@@ -879,6 +923,7 @@ function applyMeasuredHeightBatch(
 function remeasureRuntimeOverlays(state: HostState | null): void {
   state?.annotationOverlay?.remeasureMountedBlocks();
   state?.findOverlay?.remeasureMountedBlocks();
+  state?.sourceRevealOverlay?.remeasureMountedBlocks();
   state?.featureProps.onMountedBlocksChange?.();
 }
 
@@ -994,6 +1039,41 @@ function revealOffset(
   return block ? revealBlock(state, block.id, options) : false;
 }
 
+function revealSourceLines(
+  state: HostState | null,
+  lineStart: number,
+  lineEnd: number,
+  options?: { align?: "start" | "center"; behavior?: ScrollBehavior },
+): boolean {
+  if (!state?.snapshot || !Number.isSafeInteger(lineStart) || !Number.isSafeInteger(lineEnd)
+    || lineStart < 1 || lineEnd < lineStart || lineEnd > state.snapshot.line_count) {
+    return false;
+  }
+  const blockIndex = markdownBlockIndexAtSourceLine(state.snapshot, lineStart - 1)
+    ?? markdownBlockIndexNearestSourceLine(state.snapshot, lineStart - 1);
+  const block = blockIndex === null ? null : state.snapshot.blocks[blockIndex];
+  if (!block) return false;
+  const matchingBlockIds = state.snapshot.blocks
+    .filter((candidate) => candidate.line_start < lineEnd && candidate.line_end >= lineStart)
+    .map((candidate) => candidate.id);
+  state.sourceReveal = {
+    blockIds: matchingBlockIds.length > 0 ? matchingBlockIds : [block.id],
+    lineStart,
+    lineEnd,
+    align: options?.align ?? "start",
+    behavior: options?.behavior ?? "smooth",
+    refined: false,
+  };
+  if (!revealBlock(state, block.id, options)) {
+    state.sourceReveal = null;
+    syncSourceReveal(state);
+    return false;
+  }
+  syncSourceReveal(state);
+  refineSourceReveal(state);
+  return true;
+}
+
 function revealBlock(
   state: HostState | null,
   blockId: string,
@@ -1014,6 +1094,119 @@ function revealBlock(
   persistScrollAnchor(state, block.index);
   syncRuntimeFeatureState(state, state.featureProps);
   return true;
+}
+
+function refineSourceReveal(state: HostState): void {
+  const reveal = state.sourceReveal;
+  const position = reveal && !reveal.refined ? state.mapper?.sourceLine(reveal.lineStart) : null;
+  if (!reveal || !position?.dom) return;
+  const scroll = state.scrollElement;
+  const viewportRect = scroll.getBoundingClientRect();
+  const targetDocumentTop = scroll.scrollTop + position.dom.rect.top - viewportRect.top;
+  const targetHeight = Math.max(1, position.dom.rect.height);
+  const heightIndex = state.view.getHeightIndex();
+  if (!heightIndex) return;
+  const unclamped = reveal.align === "center"
+    ? targetDocumentTop - scroll.clientHeight / 2 + targetHeight / 2
+    : targetDocumentTop;
+  const target = Math.max(0, Math.min(unclamped, Math.max(0, heightIndex.totalHeight - scroll.clientHeight)));
+  reveal.refined = true;
+  scroll.scrollTo({ top: target, behavior: state.environment.behavior(reveal.behavior) });
+  state.view.updateViewport({ scrollTop: target, viewportHeight: scroll.clientHeight }, { origin: "programmatic" });
+  const blockIndex = position.blockIndex;
+  if (blockIndex !== null) persistScrollAnchor(state, blockIndex);
+  syncRuntimeFeatureState(state, state.featureProps);
+}
+
+function syncSourceReveal(state: HostState): void {
+  state.view.host.querySelectorAll<HTMLElement>("[data-markdown-source-reveal-active='true']").forEach((element) => {
+    delete element.dataset.markdownSourceRevealActive;
+    delete element.dataset.markdownSourceRevealLineStart;
+    delete element.dataset.markdownSourceRevealLineEnd;
+  });
+  const reveal = state.sourceReveal;
+  if (reveal) {
+    const blockIds = new Set(reveal.blockIds);
+    for (const blockId of blockIds) {
+      const block = state.view.getBlockElement(blockId);
+      if (!block) continue;
+      block.dataset.markdownSourceRevealActive = "true";
+      block.dataset.markdownSourceRevealLineStart = String(reveal.lineStart);
+      block.dataset.markdownSourceRevealLineEnd = String(reveal.lineEnd);
+    }
+  }
+  if (state.sourceRevealOverlay && state.sourceReveal !== state.publishedSourceReveal) {
+    state.sourceRevealOverlay.publish(sourceRevealOverlayState(state));
+    state.publishedSourceReveal = state.sourceReveal;
+  }
+  state.sourceRevealOverlay?.syncMountedBlocks(state.view.mountedBlockIds());
+}
+
+function sourceRevealOverlayState(state: HostState): MarkdownAnnotationOverlayState {
+  const snapshot = state.snapshot;
+  const reveal = state.sourceReveal;
+  if (!snapshot || !reveal) {
+    return Object.freeze({
+      revision: snapshot?.revision ?? state.revision,
+      annotationSetRevision: "empty",
+      activeAnnotationId: null,
+      hoveredAnnotationId: null,
+      flashAnnotationId: null,
+      markers: Object.freeze([]),
+    });
+  }
+  const range = sourceOffsetsForLineRange(state.featureProps.source, reveal.lineStart, reveal.lineEnd);
+  const annotationId = `source-reveal:${reveal.lineStart}:${reveal.lineEnd}`;
+  const markers = range ? snapshot.blocks.flatMap((block) => {
+    const sourceStart = Math.max(block.source_start, range.start);
+    const sourceEnd = Math.min(block.source_end, range.end);
+    if (sourceEnd <= sourceStart) return [];
+    const logicalStart = markdownSourceOffsetToLogical(block, sourceStart);
+    const logicalEnd = markdownSourceOffsetToLogical(block, sourceEnd);
+    if (logicalEnd <= logicalStart) return [];
+    return [Object.freeze({
+      annotationId,
+      blockId: block.id,
+      blockIndex: block.index,
+      blockLocalStart: logicalStart - block.logical_start,
+      blockLocalEnd: logicalEnd - block.logical_start,
+      logicalStart,
+      logicalEnd,
+    })];
+  }) : [];
+  return Object.freeze({
+    revision: snapshot.revision,
+    annotationSetRevision: `${snapshot.revision}:${annotationId}`,
+    activeAnnotationId: annotationId,
+    hoveredAnnotationId: null,
+    flashAnnotationId: null,
+    markers: Object.freeze(markers),
+  });
+}
+
+function sourceOffsetsForLineRange(
+  source: string,
+  lineStart: number,
+  lineEnd: number,
+): { start: number; end: number } | null {
+  const starts = [0];
+  for (let index = 0; index < source.length; index += 1) {
+    if (source.charCodeAt(index) === 10) starts.push(index + 1);
+  }
+  const start = starts[lineStart - 1];
+  const nextLineStart = starts[lineEnd];
+  if (start === undefined) return null;
+  const endWithNewline = nextLineStart ?? source.length;
+  const end = endWithNewline > start && source.charCodeAt(endWithNewline - 1) === 10
+    ? endWithNewline - 1
+    : endWithNewline;
+  return { start, end };
+}
+
+function clearSourceReveal(state: HostState | null): void {
+  if (!state?.sourceReveal) return;
+  state.sourceReveal = null;
+  syncSourceReveal(state);
 }
 
 function markdownBlockIndexAtSourceOffset(snapshot: MarkdownSnapshot, offset: number): number | null {
@@ -1052,6 +1245,16 @@ function markdownBlockIndexAtSourceLine(snapshot: MarkdownSnapshot, zeroBasedLin
   if (candidate < 0) return null;
   const block = snapshot.blocks[candidate]!;
   return zeroBasedLine < block.line_end ? candidate : null;
+}
+
+function markdownBlockIndexNearestSourceLine(snapshot: MarkdownSnapshot, zeroBasedLine: number): number | null {
+  if (!Number.isSafeInteger(zeroBasedLine) || zeroBasedLine < 0 || zeroBasedLine >= snapshot.line_count
+    || snapshot.blocks.length === 0) {
+    return null;
+  }
+  const next = snapshot.blocks.find((block) => block.line_start >= zeroBasedLine);
+  if (next) return next.index;
+  return snapshot.blocks.at(-1)?.index ?? null;
 }
 
 function workspaceScopeKey(scope?: WorkspaceScope | null): string | null {

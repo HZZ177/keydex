@@ -240,6 +240,36 @@ describe("WorkspacePanel", () => {
     });
   });
 
+  it("reveals and focuses a referenced directory without expanding its whole subtree", async () => {
+    const runtime = fakeRuntime({
+      "": [entry("src", "src", "directory")],
+      src: [entry("components", "src/components", "directory")],
+      "src/components": [entry("Button.tsx", "src/components/Button.tsx", "file", 24)],
+    });
+
+    const view = render(<WorkspacePanel sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+    expect(await screen.findByRole("button", { name: "展开 src" })).not.toBeNull();
+
+    view.rerender(
+      <WorkspacePanel
+        sessionId="ses-1"
+        label="D:/repo"
+        runtime={runtime}
+        revealDirectoryPath="src/components"
+        revealDirectoryPathRequestId={1}
+      />,
+    );
+
+    const directory = await screen.findByRole("button", { name: "折叠 components" });
+    expect(await screen.findByRole("button", { name: "选择文件 src/components/Button.tsx" })).not.toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(directory);
+    });
+    expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ sessionId: "ses-1" }, "src");
+    expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ sessionId: "ses-1" }, "src/components");
+    expect(runtime.workspace.listDirectorySubtree).not.toHaveBeenCalled();
+  });
+
   it("shows backend workspace errors", async () => {
     const runtime = {
       workspace: {

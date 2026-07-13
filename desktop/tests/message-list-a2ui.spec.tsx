@@ -244,6 +244,9 @@ describe("MessageList A2UI callback contract", () => {
       );
 
       const scroller = screen.getByTestId("message-list-scroll");
+      await waitFor(() => {
+        expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed");
+      });
       defineScrollMetric(scroller, "clientHeight", 400);
       defineScrollMetric(scroller, "scrollHeight", 2000);
       scroller.scrollTop = 520;

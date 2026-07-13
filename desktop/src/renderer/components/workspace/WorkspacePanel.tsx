@@ -37,6 +37,8 @@ export interface WorkspacePanelProps {
   chrome?: "default" | "panel";
   selectedPath?: string | null;
   revealSelectedPathRequestId?: number;
+  revealDirectoryPath?: string | null;
+  revealDirectoryPathRequestId?: number;
   bottomSafeArea?: string;
   initialState?: WorkspacePanelState | null;
   onSelectFile?: (path: string) => void;
@@ -74,6 +76,8 @@ export function WorkspacePanel({
   chrome = "default",
   selectedPath: controlledSelectedPath,
   revealSelectedPathRequestId = 0,
+  revealDirectoryPath: requestedDirectoryPath = null,
+  revealDirectoryPathRequestId = 0,
   bottomSafeArea,
   initialState = null,
   onSelectFile,
@@ -84,6 +88,7 @@ export function WorkspacePanel({
   const treeRef = useRef<HTMLDivElement | null>(null);
   const filterInputRef = useRef<HTMLInputElement | null>(null);
   const handledRevealSelectedPathRequestIdRef = useRef(0);
+  const handledRevealDirectoryPathRequestIdRef = useRef(0);
   const [entriesByPath, setEntriesByPath] = useState<EntryMap>(() => initialState?.entriesByPath ?? {});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
     () => new Set(initialState?.expandedPaths ?? [""]),
@@ -341,6 +346,28 @@ export function WorkspacePanel({
     await loadDirectorySubtree(path);
   }, [entriesByPath, loadDirectorySubtree]);
 
+  const revealDirectoryPath = useCallback(async (path: string) => {
+    const normalizedPath = path.trim();
+    if (!normalizedPath) {
+      return;
+    }
+    const paths = directoryRevealPaths(normalizedPath);
+    setFilterQuery("");
+    setExpandedPaths((expanded) => {
+      const next = new Set(expanded);
+      paths.forEach((entryPath) => next.add(entryPath));
+      return next;
+    });
+    for (const entryPath of paths) {
+      await loadDirectory(entryPath);
+    }
+    setKeyboardActivePath(normalizedPath);
+    setLocateRequest((current) => ({
+      id: (current?.id ?? 0) + 1,
+      path: normalizedPath,
+    }));
+  }, [loadDirectory]);
+
   useEffect(() => {
     return subscribeExpandWorkspaceDirectory((detail) => {
       if (detail.sessionId && detail.sessionId !== sessionId) {
@@ -493,6 +520,19 @@ export function WorkspacePanel({
     handledRevealSelectedPathRequestIdRef.current = revealSelectedPathRequestId;
     void revealFilePath(path);
   }, [effectiveSelectedPath, revealFilePath, revealSelectedPathRequestId]);
+
+  useEffect(() => {
+    const path = requestedDirectoryPath?.trim();
+    if (
+      !path ||
+      !revealDirectoryPathRequestId ||
+      handledRevealDirectoryPathRequestIdRef.current === revealDirectoryPathRequestId
+    ) {
+      return;
+    }
+    handledRevealDirectoryPathRequestIdRef.current = revealDirectoryPathRequestId;
+    void revealDirectoryPath(path);
+  }, [requestedDirectoryPath, revealDirectoryPath, revealDirectoryPathRequestId]);
 
   useEffect(() => {
     if (!locateRequest) {

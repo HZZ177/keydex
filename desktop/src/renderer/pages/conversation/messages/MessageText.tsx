@@ -83,6 +83,10 @@ function MessageTextComponent({
   const contentRef = useRef<HTMLDivElement>(null);
   const inheritedPreviewContext = useOptionalPreview();
   const previewContext = previewContextOverride === undefined ? inheritedPreviewContext : previewContextOverride;
+  const previewContextRef = useRef(previewContext);
+  previewContextRef.current = previewContext;
+  const previewAvailable = previewContext !== null;
+  const previewScopeKey = previewContext?.activeScopeKey ?? null;
   const isUser = message.kind === "user";
   const useConversationRuntime = conversationMarkdownRuntimeEnabled(import.meta.env.MODE, typeof Worker !== "undefined");
   const isStreaming = message.status === "pending" || message.status === "running";
@@ -167,13 +171,8 @@ function MessageTextComponent({
   const showStreamingCursor =
     !suppressStreamingCursor && !isUser && isStreaming && !isAnimating && !hasPendingDisplayBacklog && !cancelled;
   const conversationRuntimeRegistry = useMemo(
-    () => createConversationMarkdownRendererRegistry({ previewContext }),
-    [
-      previewContext,
-      previewContext?.activeScopeKey,
-      previewContext?.panelActiveEntryId,
-      previewContext?.panelOpen,
-    ],
+    () => createConversationMarkdownRendererRegistry({ previewContext: previewContextRef.current }),
+    [previewAvailable, previewScopeKey],
   );
   const conversationImageRuntime = useMemo(
     () => new ImageResourceRuntime({
@@ -203,43 +202,49 @@ function MessageTextComponent({
   const openContextFile = useCallback(
     (item: AgentContextItem) => {
       const path = contextItemOpenPath(item);
-      if (!path || !previewContext) {
+      if (!path) {
         return;
       }
-      previewContext.openFilePanel(
-        path,
-        previewRenderContextFromWorkspaceScope(
-          workspaceScope,
-          workspaceRuntime,
-          onQuoteSelection,
-          previewContext.hostContext,
-        ),
-      );
-    },
-    [onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
-  );
-  const openMarkdownFileTarget = useCallback(
-    (path: string, line: number | null) => {
-      if (!previewContext) return;
-      const revealTarget: PreviewFileRevealTarget | null = line ? { lineStart: line, lineEnd: line } : null;
-      const renderContext = messageFilePreviewRenderContext(
+      if (!previewContext) {
+        return;
+      }
+      const renderContext = previewRenderContextFromWorkspaceScope(
         workspaceScope,
         workspaceRuntime,
         onQuoteSelection,
         previewContext.hostContext,
       );
-      previewContext.openPreview(
+      if (item.fileType === "directory") {
+        previewContext.openDirectoryPanel(path, renderContext);
+        return;
+      }
+      previewContext.openFilePanel(path, renderContext);
+    },
+    [onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
+  );
+  const openMarkdownFileTarget = useCallback(
+    (path: string, line: number | null) => {
+      const currentPreviewContext = previewContextRef.current;
+      if (!currentPreviewContext) return;
+      const revealTarget: PreviewFileRevealTarget | null = line ? { lineStart: line, lineEnd: line } : null;
+      const renderContext = messageFilePreviewRenderContext(
+        workspaceScope,
+        workspaceRuntime,
+        onQuoteSelection,
+        currentPreviewContext.hostContext,
+      );
+      currentPreviewContext.openPreview(
         isAbsoluteFilePath(path) ? { type: "local-file", path } : { type: "file", path },
         renderContext,
         revealTarget,
       );
     },
-    [onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
+    [onQuoteSelection, workspaceRuntime, workspaceScope],
   );
   const handleMarkdownFileLinkClick = useCallback(
     (event: MouseEvent<HTMLElement>) => {
       const target = event.target;
-      if (!(target instanceof Element) || !previewContext) {
+      if (!(target instanceof Element)) {
         return;
       }
       const link = target.closest<HTMLAnchorElement>("a[data-keydex-file-link='true']");
@@ -255,7 +260,7 @@ function MessageTextComponent({
       const line = positiveIntegerOrNull(link.dataset.keydexFileLine);
       openMarkdownFileTarget(path, line);
     },
-    [openMarkdownFileTarget, previewContext],
+    [openMarkdownFileTarget],
   );
   const conversationRuntimeInteractions = useMemo(
     () => ({
@@ -379,10 +384,15 @@ const STREAM_PROTOCOL_TAG_BOUNDARY_PATTERN = /<\s*\/?\s*(?:think(?:ing)?|tool_ca
 
 export function StreamingCursor() {
   return (
-    <span className={styles.streamingCursor} data-testid="streaming-cursor" aria-hidden="true">
-      <span className={styles.streamingDot} />
-      <span className={styles.streamingDot} />
-      <span className={styles.streamingDot} />
+    <span
+      className={styles.streamingCursor}
+      data-streaming-cursor="true"
+      data-testid="streaming-cursor"
+      aria-hidden="true"
+    >
+      <span className={styles.streamingDot} data-streaming-cursor-dot="true" />
+      <span className={styles.streamingDot} data-streaming-cursor-dot="true" />
+      <span className={styles.streamingDot} data-streaming-cursor-dot="true" />
     </span>
   );
 }
@@ -617,7 +627,8 @@ function MessageFileContextChip({
   item: AgentContextItem;
   onOpenFile?: (item: AgentContextItem) => void;
 }) {
-  const canOpen = Boolean(item.path && onOpenFile);
+  const isDirectory = item.fileType === "directory";
+  const canActivate = Boolean(item.path && onOpenFile);
   const pathPreview = item.path || item.content || item.label;
   const chipLabel = contextFileName(item.name || item.label || pathPreview);
   const description = contextItemDescription(item, pathPreview || fileContextKindLabel(item));
@@ -633,12 +644,16 @@ function MessageFileContextChip({
       chipElement="button"
       chipButtonProps={{
         type: "button",
-        "aria-label": `打开文件引用 ${item.path || item.label}`,
-        disabled: !canOpen,
+        "aria-label": canActivate
+          ? isDirectory
+            ? `在文件列表中定位目录 ${item.path || item.label}`
+            : `打开文件引用 ${item.path || item.label}`
+          : `${isDirectory ? "目录" : "文件"}引用 ${item.path || item.label}`,
+        disabled: !canActivate,
         onClick: () => onOpenFile?.(item),
       }}
       chipProps={{
-        "data-clickable": canOpen ? "true" : "false",
+        "data-clickable": canActivate ? "true" : "false",
         "data-context-type": item.type,
       }}
       showCopyAction={false}

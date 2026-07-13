@@ -1,6 +1,9 @@
 import { createRoot, type Root } from "react-dom/client";
 
-import { resolveMaterialFileIcon } from "@/renderer/components/workspace/materialIconTheme";
+import {
+  loadMaterialFileIcon,
+  resolveMaterialFileIcon,
+} from "@/renderer/components/workspace/materialIconTheme";
 import type { MarkdownSnapshotBlock } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
 import {
   SemanticMarkdownRendererRegistry,
@@ -105,6 +108,11 @@ function enhanceConversationElement(element: HTMLElement): void {
     iconElement.style.borderRadius = "0";
     iconElement.style.objectFit = "contain";
     iconElement.style.flex = "0 0 auto";
+    void loadMaterialFileIcon(targetPath).then((loadedIcon) => {
+      if (iconElement.dataset.iconId === loadedIcon.id) {
+        iconElement.src = loadedIcon.src;
+      }
+    });
     const label = anchor.ownerDocument.createElement("span");
     label.textContent = labelText;
     label.dataset.keydexFileLinkLabel = "true";

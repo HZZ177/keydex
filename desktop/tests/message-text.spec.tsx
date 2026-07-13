@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { calculateDynamicStreamStep } from "@/renderer/hooks/useDynamicStreamBuffer";
 import { useRuntimeTypingMetrics } from "@/renderer/hooks/useRuntimeTypingSpeed";
+import {
+  loadMaterialFileIcon,
+  resolveMaterialFileIcon,
+} from "@/renderer/components/workspace/materialIconTheme";
 import { LineChangeTicker } from "@/renderer/pages/conversation/messages/LineChangeTicker";
 import { MessageText } from "@/renderer/pages/conversation/messages";
 import { conversationMarkdownRuntimeEnabled } from "@/renderer/pages/conversation/messages/MessageText";
@@ -310,6 +314,39 @@ describe("MessageText", () => {
     expect(screen.getByTestId("file-panel-request").textContent).toBe("session:ses-1:README.md");
   });
 
+  it("reveals restored directory context chips in the Files panel request", () => {
+    render(
+      <PreviewProvider>
+        <MessageText
+          message={message("user", "请看这个目录", "completed", {
+            contextItems: [
+              {
+                id: "ctx-directory",
+                type: "file",
+                fileType: "directory",
+                label: "src",
+                name: "src",
+                content: "workspace directory: src",
+                source: "follow",
+                path: "src",
+              },
+            ],
+          })}
+          workspaceRuntime={{} as RuntimeBridge}
+          workspaceScope={{ sessionId: "ses-1" }}
+        />
+        <FilePanelProbe />
+      </PreviewProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "在文件列表中定位目录 src" }));
+
+    const request = screen.getByTestId("file-panel-request");
+    expect(request.dataset.filePath).toBe("");
+    expect(request.dataset.directoryRevealPath).toBe("src");
+    expect(request.dataset.scopeKey).toBe("session:ses-1");
+  });
+
   it("opens absolute markdown file links as single local previews with line reveal", () => {
     render(
       <PreviewProvider>
@@ -347,6 +384,34 @@ describe("MessageText", () => {
     });
   });
 
+  it("loads the concrete file icon without rebuilding the conversation Runtime when the preview opens", async () => {
+    const path = "backend/tests/test_health.py";
+    const fallbackIcon = resolveMaterialFileIcon(path);
+    render(
+      <PreviewProvider>
+        <MessageText
+          message={message("assistant", `引用 [test_health.py](<${path}:1>)`, "completed")}
+          workspaceRuntime={{} as RuntimeBridge}
+        />
+      </PreviewProvider>,
+    );
+
+    const link = screen.getByRole("link", { name: "test_health.py" });
+    const block = link.closest<HTMLElement>("[data-markdown-block-id]");
+    const icon = link.querySelector<HTMLImageElement>("[data-keydex-file-link-icon='true']");
+    expect(block).not.toBeNull();
+    expect(icon?.dataset.iconId).toBe("python");
+
+    const loadedIcon = await loadMaterialFileIcon(path);
+    expect(loadedIcon.src).not.toBe(fallbackIcon.src);
+    await waitFor(() => expect(icon?.src).toContain(loadedIcon.src));
+
+    fireEvent.click(link);
+
+    expect(screen.getByRole("link", { name: "test_health.py" })).toBe(link);
+    expect(link.closest("[data-markdown-block-id]")).toBe(block);
+  });
+
   it("does not render a line badge for file links without line targets", () => {
     render(
       <PreviewProvider>
@@ -379,10 +444,14 @@ describe("MessageText", () => {
     );
 
     const link = screen.getByRole("link", { name: "MessageText.tsx" });
+    const block = link.closest("[data-markdown-block-id]");
     expect(link.getAttribute("data-keydex-file-link")).toBe("true");
     expect(link.querySelector("[data-keydex-file-link-icon='true']")?.getAttribute("data-icon-id")).toBe("react_ts");
     expect(link.querySelector("[data-keydex-file-link-line-badge='true']")?.textContent).toBe("L120");
     fireEvent.click(link);
+
+    expect(screen.getByRole("link", { name: "MessageText.tsx" })).toBe(link);
+    expect(link.closest("[data-markdown-block-id]")).toBe(block);
 
     const payload = previewEntryPayload();
     expect(payload).toMatchObject({
@@ -1880,7 +1949,16 @@ function previewEntryPayload() {
 function FilePanelProbe() {
   const preview = usePreview();
   const request = preview.filePanelRequest;
-  return <output data-testid="file-panel-request">{request ? `${request.scopeKey}:${request.path}` : ""}</output>;
+  return (
+    <output
+      data-testid="file-panel-request"
+      data-file-path={request?.path ?? ""}
+      data-directory-reveal-path={request?.directoryRevealPath ?? ""}
+      data-scope-key={request?.scopeKey ?? ""}
+    >
+      {request ? `${request.scopeKey}:${request.path}` : ""}
+    </output>
+  );
 }
 
 function mockSelection(container: Element, text: string) {

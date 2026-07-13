@@ -39,9 +39,9 @@ export interface MarkdownAnnotationOverlayControllerOptions {
   readonly reveal?: (target: MarkdownAnnotationRevealTarget) => void | Promise<void>;
   readonly onActivate?: (annotationId: string) => void;
   readonly onHover?: (annotationId: string | null) => void;
-  /** Reuses the same block-local retained overlay machinery for Find without
-   * exposing Find markers to the annotation adapter or accessibility tree. */
-  readonly variant?: "annotation" | "find";
+  /** Reuses the same block-local retained overlay machinery for Find and
+   * source reveals without exposing those markers to the annotation adapter. */
+  readonly variant?: "annotation" | "find" | "source-reveal";
 }
 
 export interface MarkdownAnnotationOverlayPatchStats {
@@ -96,7 +96,7 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
   private readonly reveal?: (target: MarkdownAnnotationRevealTarget) => void | Promise<void>;
   private readonly onActivate?: (annotationId: string) => void;
   private readonly onHover?: (annotationId: string | null) => void;
-  private readonly variant: "annotation" | "find";
+  private readonly variant: "annotation" | "find" | "source-reveal";
   private state: MarkdownAnnotationOverlayState;
   private markersByBlock = new Map<string, readonly MarkdownAnnotationOverlayMarker[]>();
   private markerByAnnotation = new Map<string, MarkdownAnnotationOverlayMarker>();
@@ -438,9 +438,12 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
     if (this.variant === "annotation") {
       layer.dataset.markdownAnnotationOverlay = "true";
       layer.dataset.markdownAnnotationBlockId = blockId;
-    } else {
+    } else if (this.variant === "find") {
       layer.dataset.markdownFindOverlay = "true";
       layer.dataset.markdownFindBlockId = blockId;
+    } else {
+      layer.dataset.markdownSourceRevealOverlay = "true";
+      layer.dataset.markdownSourceRevealBlockId = blockId;
     }
     layer.style.position = "absolute";
     layer.style.inset = "0";
@@ -448,12 +451,12 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
     layer.style.pointerEvents = "none";
     layer.style.zIndex = "2";
     const handleClick = (event: MouseEvent) => {
-      if (this.variant === "find") return;
+      if (this.variant !== "annotation") return;
       const annotationId = this.annotationAtEvent(blockId, event);
       if (annotationId) this.onActivate?.(annotationId);
     };
     const handleMove = (event: MouseEvent) => {
-      if (this.variant === "find") return;
+      if (this.variant !== "annotation") return;
       this.commitPointerAnnotation(this.annotationAtEvent(blockId, event));
     };
     const handleLeave = () => {
@@ -489,7 +492,9 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
     const flash = marker.annotationId === this.state.flashAnnotationId;
     element.className = this.variant === "annotation"
       ? "keydex-markdown-annotation-overlay-marker"
-      : "keydex-markdown-find-overlay-marker";
+      : this.variant === "find"
+        ? "keydex-markdown-find-overlay-marker"
+        : "keydex-markdown-source-reveal-overlay-marker";
     if (this.variant === "annotation") {
       element.dataset.annotationId = marker.annotationId;
       element.dataset.markdownAnnotationOverlayMarker = "true";
@@ -497,7 +502,7 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
       element.dataset.markdownAnnotationBlockLocalStart = String(marker.blockLocalStart);
       element.dataset.markdownAnnotationBlockLocalEnd = String(marker.blockLocalEnd);
       element.dataset.markdownAnnotationFragment = String(fragmentIndex);
-    } else {
+    } else if (this.variant === "find") {
       element.classList.add("findMark");
       element.dataset.filePreviewFindMatch = "true";
       element.dataset.findMatchId = marker.annotationId;
@@ -507,6 +512,10 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
       element.dataset.markdownFindBlockLocalStart = String(marker.blockLocalStart);
       element.dataset.markdownFindBlockLocalEnd = String(marker.blockLocalEnd);
       element.dataset.markdownFindFragment = String(fragmentIndex);
+    } else {
+      element.dataset.markdownSourceRevealMarker = "true";
+      element.dataset.markdownSourceRevealBlockId = marker.blockId;
+      element.dataset.markdownSourceRevealFragment = String(fragmentIndex);
     }
     element.dataset.active = active ? "true" : "false";
     element.dataset.hovered = hovered ? "true" : "false";
@@ -518,7 +527,7 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
     element.style.width = `${rect.width}px`;
     element.style.height = `${rect.height}px`;
     element.style.borderRadius = "3px";
-    if (this.variant === "find") {
+    if (this.variant !== "annotation") {
       element.style.background = active
         ? "color-mix(in srgb, var(--warning, #f0a020) 58%, transparent)"
         : "color-mix(in srgb, var(--warning, #f0a020) 28%, transparent)";

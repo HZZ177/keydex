@@ -6,13 +6,17 @@ import {
   ConversationTimelineRuntime,
   type ConversationTimelineAnchor,
   type ConversationTimelineDiagnostics,
+  type ConversationTimelineScrollRequest,
 } from "./ConversationTimelineRuntime";
 
 export interface ConversationTimelineSurfaceHandle {
   revealUnit(unitId: string, align?: "start" | "center" | "end"): boolean;
+  setFollowBottom(enabled: boolean): void;
+  setUserScrollInteraction(active: boolean): void;
   captureAnchor(viewportOffset?: number): ConversationTimelineAnchor | null;
   restoreAnchor(anchor: ConversationTimelineAnchor): boolean;
   setPinned(unitId: string, pinned: boolean): void;
+  getUnitElement(unitId: string): HTMLElement | null;
   mountedUnitIds(): readonly string[];
   diagnostics(): ConversationTimelineDiagnostics | null;
   measureMounted(): void;
@@ -31,6 +35,8 @@ export interface ConversationTimelineSurfaceProps {
   readonly onScroll?: (event: React.UIEvent<HTMLDivElement>) => void;
   readonly onPublished?: (diagnostics: ConversationTimelineDiagnostics) => void;
   readonly onViewportChanged?: () => void;
+  readonly onScrollRequest?: (request: ConversationTimelineScrollRequest) => void;
+  readonly followBottom?: boolean;
   readonly variant?: string;
 }
 
@@ -52,6 +58,8 @@ export function ConversationTimelineSurface({
   onScroll,
   onPublished,
   onViewportChanged,
+  onScrollRequest,
+  followBottom = false,
   variant,
 }: ConversationTimelineSurfaceProps) {
   const elementRef = useRef<HTMLDivElement | null>(null);
@@ -59,9 +67,13 @@ export function ConversationTimelineSurface({
   const renderUnitRef = useRef(renderUnit);
   const onPublishedRef = useRef(onPublished);
   const onViewportChangedRef = useRef(onViewportChanged);
+  const onScrollRequestRef = useRef(onScrollRequest);
+  const scrollerRefRef = useRef(scrollerRef);
   renderUnitRef.current = renderUnit;
   onPublishedRef.current = onPublished;
   onViewportChangedRef.current = onViewportChanged;
+  onScrollRequestRef.current = onScrollRequest;
+  scrollerRefRef.current = scrollerRef;
 
   useLayoutEffect(() => {
     const element = elementRef.current;
@@ -70,6 +82,7 @@ export function ConversationTimelineSurface({
     const runtime = new ConversationTimelineRuntime(element, {
       overscanPx,
       onPatch: () => onViewportChangedRef.current?.(),
+      onScrollRequest: (request) => onScrollRequestRef.current?.(request),
       renderer: {
         mount(unit, host) {
           const root = createRoot(host);
@@ -89,6 +102,7 @@ export function ConversationTimelineSurface({
           };
         },
       },
+      followBottom,
     });
     runtime.canvas.className = canvasClassName ?? "";
     const canvasObserver = typeof ResizeObserver === "undefined"
@@ -98,11 +112,18 @@ export function ConversationTimelineSurface({
     runtimeInstanceRef.current = runtime;
     const handle: ConversationTimelineSurfaceHandle = {
       revealUnit: (unitId, align) => runtime.revealUnit(unitId, align),
+      setFollowBottom: (enabled) => {
+        runtime.setFollowBottom(enabled);
+      },
+      setUserScrollInteraction: (active) => {
+        runtime.setUserScrollInteraction(active);
+      },
       captureAnchor: (viewportOffset) => runtime.captureAnchor(viewportOffset),
       restoreAnchor: (anchor) => runtime.restoreAnchor(anchor),
       setPinned: (unitId, pinned) => {
         runtime.setPinned(unitId, pinned);
       },
+      getUnitElement: (unitId) => runtime.getUnitElement(unitId),
       mountedUnitIds: () => runtime.mountedUnitIds(),
       diagnostics: () => runtime.diagnostics(),
       measureMounted: () => {
@@ -110,16 +131,20 @@ export function ConversationTimelineSurface({
       },
     };
     if (runtimeRef) runtimeRef.current = handle;
-    scrollerRef?.(element);
+    scrollerRefRef.current?.(element);
     return () => {
-      scrollerRef?.(null);
+      scrollerRefRef.current?.(null);
       if (runtimeRef?.current === handle) runtimeRef.current = null;
       canvasObserver?.disconnect();
       runtime.destroy();
       runtimeInstanceRef.current = null;
       roots.clear();
     };
-  }, [canvasClassName, overscanPx, runtimeRef, scrollerRef]);
+  }, [canvasClassName, overscanPx, runtimeRef]);
+
+  useLayoutEffect(() => {
+    runtimeInstanceRef.current?.setFollowBottom(followBottom);
+  }, [followBottom]);
 
   useLayoutEffect(() => {
     const runtime = runtimeInstanceRef.current;

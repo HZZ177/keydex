@@ -477,7 +477,9 @@
   animation: none;
 }
 
-.body[data-chrome="panel"] .documentCanvas {
+.body[data-chrome="panel"] .documentCanvas,
+.body[data-chrome="panel"] .documentColumn {
+  height: 100%;
   min-height: 100%;
 }
 
@@ -485,8 +487,13 @@
 .body[data-chrome="panel"] .documentColumn > .content,
 .body[data-chrome="panel"] .documentColumn > .diff,
 .body[data-chrome="panel"] .documentColumn > .sourceViewer,
-.body[data-chrome="panel"] .documentColumn > .splitPane {
-  height: auto;
+.body[data-chrome="panel"] .documentColumn > .splitPane,
+.body[data-chrome="panel"] .documentColumn > .markdownPane,
+.body[data-chrome="panel"] .documentColumn > .htmlPane,
+.body[data-chrome="panel"] .documentColumn > .diffPane,
+.body[data-chrome="panel"] .documentColumn > .mermaidPane,
+.body[data-chrome="panel"] .documentColumn > .imagePane {
+  height: 100%;
   min-height: 100%;
   max-height: none;
 }
@@ -992,24 +999,18 @@
   background: color-mix(in srgb, var(--color-text-4) 48%, transparent);
 }
 
-.body[data-chrome="panel"] > .previewScrollShell,
 .splitPanelBody > .previewScrollShell {
   height: auto;
   min-height: 100%;
   max-height: none;
 }
 
-.body[data-chrome="panel"] > .markdownPane,
-.body[data-chrome="panel"] > .htmlPane,
-.body[data-chrome="panel"] > .diffPane,
-.body[data-chrome="panel"] > .mermaidPane,
-.body[data-chrome="panel"] > .imagePane,
-.body[data-chrome="panel"] > .previewScrollShell > .markdownPane,
-.body[data-chrome="panel"] > .previewScrollShell > .htmlPane,
-.body[data-chrome="panel"] > .previewScrollShell > .diffPane,
-.body[data-chrome="panel"] > .previewScrollShell > .mermaidPane,
-.body[data-chrome="panel"] > .previewScrollShell > .imagePane {
-  height: auto;
+.body[data-chrome="panel"] .documentColumn > .previewScrollShell > .markdownPane,
+.body[data-chrome="panel"] .documentColumn > .previewScrollShell > .htmlPane,
+.body[data-chrome="panel"] .documentColumn > .previewScrollShell > .diffPane,
+.body[data-chrome="panel"] .documentColumn > .previewScrollShell > .mermaidPane,
+.body[data-chrome="panel"] .documentColumn > .previewScrollShell > .imagePane {
+  height: 100%;
   min-height: 100%;
   max-height: none;
 }
@@ -1447,6 +1448,7 @@
 .mermaidPane {
   position: relative;
   display: grid;
+  box-sizing: border-box;
   min-width: 0;
   place-items: stretch;
   background: var(--color-bg-elevated);
@@ -1590,8 +1592,7 @@
   min-height: 0;
 }
 
-.body[data-chrome="panel"] > .mermaidPane,
-.body[data-chrome="panel"] > .mermaidPane > .mermaidSvg {
+.body[data-chrome="panel"] .documentColumn > .mermaidPane > .mermaidSvg {
   min-height: 0;
 }
 

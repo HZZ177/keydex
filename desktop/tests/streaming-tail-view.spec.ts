@@ -99,6 +99,8 @@ describe("StreamingTailView", () => {
 
     expect(openPatch.cursorBlockId).toBe(fence.id);
     expect(view.cursor.hidden).toBe(false);
+    expect(view.cursor.style.display).toBe("");
+    expect(view.cursor.querySelectorAll('[data-streaming-cursor-dot="true"]')).toHaveLength(3);
     expect(view.cursor.dataset.streamingMarkdownActiveFenceBlockId).toBe(fence.id);
     expect(view.cursor.previousElementSibling).toBe(view.getBlockElement(fence.id));
 
@@ -106,6 +108,7 @@ describe("StreamingTailView", () => {
     const closed = parser.update({ source: closedSource, revision: "f2", epoch: 1 }).snapshot;
     view.publish(closed, { showCursor: false });
     expect(view.cursor.hidden).toBe(true);
+    expect(view.cursor.style.display).toBe("none");
     expect(view.cursor.dataset.streamingMarkdownActiveFenceBlockId).toBeUndefined();
     expect(view.cursor.dataset.streamingMarkdownCursorBlockId).toBe(closed.blocks.at(-1)?.id);
   });

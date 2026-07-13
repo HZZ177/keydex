@@ -211,6 +211,16 @@ describe("style foundation", () => {
       /\.turnGroup:hover\s+\.turnActionRow\s+\[data-turn-footer-details="true"\],[^{]+\.runtimeTurnFooter:focus-within\s+\.turnActionRow\s+\[data-turn-footer-details="true"\]\s*{[^}]*opacity:\s*1/s,
     );
     expect(filePreview).toMatch(/\.mermaidPane\s*{[^}]*place-items:\s*stretch/s);
+    expect(filePreview).toMatch(/\.mermaidPane\s*{[^}]*box-sizing:\s*border-box/s);
+    expect(filePreview).toMatch(
+      /\.body\[data-chrome="panel"\]\s+\.documentCanvas,\s*\.body\[data-chrome="panel"\]\s+\.documentColumn\s*{[^}]*height:\s*100%/s,
+    );
+    expect(filePreview).toMatch(
+      /\.body\[data-chrome="panel"\]\s+\.documentColumn\s*>\s*\.previewScrollShell,[^{]+\.body\[data-chrome="panel"\]\s+\.documentColumn\s*>\s*\.mermaidPane,[^{]+\.body\[data-chrome="panel"\]\s+\.documentColumn\s*>\s*\.imagePane\s*{[^}]*height:\s*100%/s,
+    );
+    expect(filePreview).toMatch(
+      /\.body\[data-chrome="panel"\]\s+\.documentColumn\s*>\s*\.previewScrollShell\s*>\s*\.markdownPane,[^{]+\.body\[data-chrome="panel"\]\s+\.documentColumn\s*>\s*\.previewScrollShell\s*>\s*\.htmlPane,[^{]+\.body\[data-chrome="panel"\]\s+\.documentColumn\s*>\s*\.previewScrollShell\s*>\s*\.imagePane\s*{[^}]*height:\s*100%/s,
+    );
     expect(filePreview).toMatch(/\.mermaidSvg\s*{[^}]*place-items:\s*start center/s);
     expect(filePreview).toMatch(/\.mermaidSvg\s*{[^}]*align-items:\s*safe center/s);
     expect(filePreview).toMatch(/\.mermaidSvg\s*{[^}]*justify-items:\s*safe center/s);

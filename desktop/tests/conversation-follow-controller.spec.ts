@@ -18,6 +18,15 @@ describe("ConversationFollowController", () => {
     const harness = createHarness();
     harness.controller.setContentAvailable(true);
     expect(harness.element.scrollTop).toBe(800);
+    expect(harness.controller.snapshot()).toMatchObject({
+      mode: "bootstrapping-tail",
+      bootstrapCommitted: false,
+    });
+    harness.controller.setTailReady(true);
+    expect(harness.controller.snapshot()).toMatchObject({
+      mode: "following-bottom",
+      bootstrapCommitted: true,
+    });
     for (const kind of ["token-append", "typing-backlog", "stream-complete"] as const) {
       harness.metrics.scrollHeight += 200;
       harness.controller.notifyContentMutation(kind);
@@ -26,9 +35,35 @@ describe("ConversationFollowController", () => {
     }
   });
 
+  it("keeps the initial tail uncommitted through late height growth and exposes only the final bottom", () => {
+    const harness = createHarness();
+    harness.controller.setContentAvailable(true);
+
+    harness.metrics.scrollHeight = 6_000;
+    harness.controller.notifyContentMutation("timeline-publish");
+    harness.metrics.scrollHeight = 8_600;
+    harness.controller.notifyContentMutation("resource-resize");
+
+    expect(harness.element.scrollTop).toBe(8_400);
+    expect(harness.controller.snapshot()).toMatchObject({
+      mode: "bootstrapping-tail",
+      bootstrapCommitted: false,
+      tailReady: false,
+    });
+
+    harness.controller.setTailReady(true);
+    expect(harness.element.scrollTop).toBe(8_400);
+    expect(harness.controller.snapshot()).toMatchObject({
+      mode: "following-bottom",
+      bootstrapCommitted: true,
+      tailReady: true,
+    });
+  });
+
   it("detaches immediately on upward wheel and never lets later content steal the viewport", () => {
     const harness = createHarness();
     harness.controller.setContentAvailable(true);
+    harness.controller.setTailReady(true);
     harness.element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
     expect(harness.controller.snapshot()).toMatchObject({ mode: "user-detached", reason: "user-wheel-up" });
     harness.metrics.scrollHeight = 1_400;
@@ -41,6 +76,7 @@ describe("ConversationFollowController", () => {
   it("resumes only after the user reaches bottom or explicitly presses scroll-to-bottom", () => {
     const harness = createHarness();
     harness.controller.setContentAvailable(true);
+    harness.controller.setTailReady(true);
     harness.element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
     harness.metrics.scrollHeight = 1_400;
     harness.element.scrollTop = 1_200;
@@ -56,6 +92,7 @@ describe("ConversationFollowController", () => {
   it("holds navigation ownership across late measurement and exits detached away from bottom", () => {
     const harness = createHarness();
     harness.controller.setContentAvailable(true);
+    harness.controller.setTailReady(true);
     harness.controller.beginNavigation();
     harness.element.scrollTop = 240;
     harness.metrics.scrollHeight = 1_600;
@@ -69,6 +106,7 @@ describe("ConversationFollowController", () => {
   it("preserves explicit history-restore ownership and its prior detached state", () => {
     const harness = createHarness();
     harness.controller.setContentAvailable(true);
+    harness.controller.setTailReady(true);
     harness.element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
     harness.controller.beginHistoryRestore();
     harness.metrics.scrollHeight = 1_600;
@@ -83,6 +121,7 @@ describe("ConversationFollowController", () => {
   it("suspends A2UI live updates and resumes the exact previous follow policy", () => {
     const harness = createHarness();
     harness.controller.setContentAvailable(true);
+    harness.controller.setTailReady(true);
     harness.controller.suspend("a2ui-live");
     harness.metrics.scrollHeight = 1_300;
     harness.controller.notifyContentMutation("a2ui-live");
@@ -96,6 +135,7 @@ describe("ConversationFollowController", () => {
   it("does not fight expansion locks and catches up after the lock is released", () => {
     const harness = createHarness();
     harness.controller.setContentAvailable(true);
+    harness.controller.setTailReady(true);
     harness.element.setAttribute(EXPANSION_SCROLL_LOCK_ATTR, "true");
     harness.metrics.scrollHeight = 1_300;
     harness.controller.notifyContentMutation("resource-resize");
@@ -109,6 +149,7 @@ describe("ConversationFollowController", () => {
   it("treats native scrollbar dragging as user detach and cleans listeners on destroy", () => {
     const harness = createHarness();
     harness.controller.setContentAvailable(true);
+    harness.controller.setTailReady(true);
     harness.element.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 98, clientY: 20 }));
     expect(harness.controller.snapshot()).toMatchObject({ mode: "user-detached", reason: "scrollbar-drag" });
     harness.controller.destroy();

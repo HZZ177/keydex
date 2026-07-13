@@ -7,6 +7,16 @@ import {
 import type { ConversationRenderUnit, ConversationRenderUnitKind } from "@/renderer/pages/conversation/timeline/ConversationRenderUnit";
 
 describe("ConversationTimelineRuntime", () => {
+  it("fully lays out small histories so every unit can be measured before the user navigates them", () => {
+    const harness = createRuntime();
+    const patch = harness.runtime.publish(units(40));
+
+    expect(patch.mounted).toBe(40);
+    expect(harness.root.dataset.conversationTimelineLayoutMode).toBe("complete");
+    expect(harness.runtime.mountedUnitIds()).toHaveLength(40);
+    expect(harness.runtime.canvas.style.overflowY).toBe("clip");
+  });
+
   it.each([100, 1_000, 10_000])("keeps mounted units and DOM bounded for %i messages", (count) => {
     const harness = createRuntime();
     const patch = harness.runtime.publish(units(count));
@@ -111,6 +121,165 @@ describe("ConversationTimelineRuntime", () => {
     expect(harness.runtime.revealUnit("missing")).toBe(false);
   });
 
+  it("publishes the first virtual viewport at the bottom and keeps it there while measured heights settle", () => {
+    const harness = createRuntime({ followBottom: true });
+    const patch = harness.runtime.publish(units(1_000));
+
+    expect(harness.root.scrollTop).toBe(39_400);
+    expect(patch.viewport.visibleRange.start).toBeGreaterThan(980);
+    expect(harness.runtime.getUnitElement("unit-0")).toBeNull();
+    expect(harness.runtime.getUnitElement("unit-999")).not.toBeNull();
+    expect(harness.runtime.diagnostics().followBottom).toBe(true);
+
+    harness.runtime.updateMeasuredHeight("unit-999", 100);
+    expect(harness.root.scrollTop).toBe(39_460);
+  });
+
+  it("top-aligns a revealed unit and clamps the final unit to the bottom", () => {
+    const harness = createRuntime({ followBottom: true });
+    harness.runtime.publish(units(1_000));
+
+    expect(harness.runtime.revealUnit("unit-500", "start")).toBe(true);
+    expect(harness.root.scrollTop).toBe(20_000);
+    expect(harness.runtime.diagnostics().followBottom).toBe(false);
+
+    expect(harness.runtime.revealUnit("unit-999", "start")).toBe(true);
+    expect(harness.root.scrollTop).toBe(39_400);
+  });
+
+  it("never writes scrollTop directly and delegates every timeline movement to the scroll owner", () => {
+    const harness = createRuntime({ followBottom: true, applyScrollRequests: false });
+
+    harness.runtime.publish(units(1_000));
+    expect(harness.root.scrollTop).toBe(0);
+    expect(harness.scrollRequests.at(-1)).toEqual({ scrollTop: 39_400, reason: "follow-bottom" });
+
+    harness.runtime.revealUnit("unit-500", "start");
+    expect(harness.root.scrollTop).toBe(0);
+    expect(harness.scrollRequests.at(-1)).toEqual({ scrollTop: 20_000, reason: "reveal-unit" });
+  });
+
+  it("marks only the semantic unit immediately before the explicit bottom spacer", () => {
+    const harness = createRuntime();
+    const bottom = {
+      ...unit(2, "footer"),
+      id: "conversation-runtime:bottom",
+      turnId: null,
+      turnIndex: null,
+      businessTurnIndex: null,
+    } satisfies ConversationRenderUnit;
+    harness.runtime.publish([unit(0), unit(1), bottom]);
+
+    expect(harness.runtime.getUnitElement("unit-0")?.dataset.conversationUnitTailAdjacent).toBe("false");
+    expect(harness.runtime.getUnitElement("unit-1")?.dataset.conversationUnitTailAdjacent).toBe("true");
+    expect(harness.runtime.getUnitElement("conversation-runtime:bottom")?.dataset.conversationUnitTailAdjacent).toBe("false");
+  });
+
+  it("lets a fast upward scroll own the viewport while late heights settle and locks the real top", () => {
+    const harness = createRuntime();
+    harness.runtime.publish(units(100));
+    harness.root.scrollTop = 400;
+    harness.runtime.updateViewport();
+
+    harness.runtime.setUserScrollInteraction(true);
+    harness.root.scrollTop = 200;
+    harness.root.dispatchEvent(new Event("scroll"));
+    harness.scrollRequests.length = 0;
+    const estimatedTotalHeight = harness.runtime.diagnostics().totalHeight;
+    harness.runtime.updateMeasuredHeight("unit-0", 100);
+    expect(harness.root.scrollTop).toBe(200);
+    expect(harness.scrollRequests).toEqual([]);
+    expect(harness.runtime.diagnostics()).toMatchObject({
+      totalHeight: estimatedTotalHeight,
+      deferredMeasurements: 1,
+    });
+
+    harness.root.scrollTop = 40;
+    harness.root.dispatchEvent(new Event("scroll"));
+    harness.scrollRequests.length = 0;
+
+    harness.runtime.updateMeasuredHeight("unit-0", 500);
+    expect(harness.root.scrollTop).toBe(40);
+    expect(harness.scrollRequests).toEqual([]);
+    expect(harness.runtime.diagnostics()).toMatchObject({
+      totalHeight: estimatedTotalHeight,
+      deferredMeasurements: 1,
+      userScrollActive: true,
+      topLocked: true,
+    });
+    expect(harness.runtime.getUnitElement("unit-0")).not.toBeNull();
+
+    harness.runtime.setUserScrollInteraction(false);
+    expect(harness.root.scrollTop).toBe(0);
+    expect(harness.scrollRequests.at(-1)).toEqual({ scrollTop: 0, reason: "preserve-top" });
+    expect(harness.runtime.diagnostics().deferredMeasurements).toBe(0);
+    harness.runtime.updateMeasuredHeight("unit-1", 400);
+    expect(harness.root.scrollTop).toBe(0);
+    expect(harness.runtime.diagnostics()).toMatchObject({ userScrollActive: false, topLocked: true });
+
+    harness.runtime.setUserScrollInteraction(true);
+    harness.root.scrollTop = 120;
+    harness.root.dispatchEvent(new Event("scroll"));
+    expect(harness.runtime.diagnostics().topLocked).toBe(false);
+  });
+
+  it("detects native scrollbar movement from the scroll event even when Chromium omits pointerdown", () => {
+    vi.useFakeTimers();
+    const harness = createRuntime();
+    harness.runtime.publish(units(100));
+    harness.root.scrollTop = 400;
+    harness.root.dispatchEvent(new Event("scroll"));
+    const totalHeight = harness.runtime.diagnostics().totalHeight;
+
+    expect(harness.runtime.diagnostics().userScrollActive).toBe(true);
+    harness.runtime.updateMeasuredHeight("unit-0", 200);
+    expect(harness.runtime.diagnostics()).toMatchObject({
+      totalHeight,
+      deferredMeasurements: 1,
+    });
+
+    vi.advanceTimersByTime(180);
+    expect(harness.runtime.diagnostics()).toMatchObject({
+      userScrollActive: false,
+      deferredMeasurements: 0,
+      totalHeight: totalHeight + 160,
+    });
+    vi.useRealTimers();
+  });
+
+  it("does not classify a timeline-owned scroll request as a user scrollbar drag", () => {
+    const harness = createRuntime({ followBottom: true });
+    harness.runtime.publish(units(100));
+
+    harness.root.dispatchEvent(new Event("scroll"));
+
+    expect(harness.runtime.diagnostics().userScrollActive).toBe(false);
+  });
+
+  it("gives an upward gesture immediate ownership before follow-bottom state finishes committing", () => {
+    const harness = createRuntime({ followBottom: true });
+    harness.runtime.publish(units(100));
+
+    harness.runtime.setUserScrollInteraction(true);
+    harness.root.scrollTop = 40;
+    harness.root.dispatchEvent(new Event("scroll"));
+    harness.scrollRequests.length = 0;
+    harness.runtime.updateMeasuredHeight("unit-0", 500);
+
+    expect(harness.root.scrollTop).toBe(40);
+    expect(harness.scrollRequests).toEqual([]);
+    expect(harness.runtime.diagnostics()).toMatchObject({
+      followBottom: true,
+      userScrollActive: true,
+      topLocked: true,
+      deferredMeasurements: 1,
+    });
+
+    harness.runtime.setUserScrollInteraction(false);
+    expect(harness.root.scrollTop).toBe(0);
+    expect(harness.scrollRequests).toEqual([{ scrollTop: 0, reason: "preserve-top" }]);
+  });
+
   it("enforces pin/identity contracts and destroys every local renderer", () => {
     const harness = createRuntime({ maxPinnedUnits: 1 });
     const values = units(100);
@@ -127,12 +296,17 @@ describe("ConversationTimelineRuntime", () => {
   });
 });
 
-function createRuntime(options: { maxPinnedUnits?: number } = {}) {
+function createRuntime(options: {
+  maxPinnedUnits?: number;
+  followBottom?: boolean;
+  applyScrollRequests?: boolean;
+} = {}) {
   const root = document.createElement("div");
   Object.defineProperty(root, "clientHeight", { configurable: true, value: 600 });
   Object.defineProperty(root, "scrollTop", { configurable: true, writable: true, value: 0 });
   const updates: string[] = [];
   const destroyed: string[] = [];
+  const scrollRequests: Array<{ scrollTop: number; reason: string }> = [];
   const renderer: ConversationTimelineUnitRenderer & {
     mount: ReturnType<typeof vi.fn>;
     updates: string[];
@@ -157,8 +331,13 @@ function createRuntime(options: { maxPinnedUnits?: number } = {}) {
     overscanPx: 200,
     maxPinnedUnits: options.maxPinnedUnits,
     observeMeasurements: false,
+    followBottom: options.followBottom,
+    onScrollRequest: (request) => {
+      scrollRequests.push(request);
+      if (options.applyScrollRequests !== false) root.scrollTop = request.scrollTop;
+    },
   });
-  return { root, runtime, renderer };
+  return { root, runtime, renderer, scrollRequests };
 }
 
 function units(count: number): ConversationRenderUnit[] {

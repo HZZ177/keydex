@@ -872,6 +872,16 @@ export function WorkbenchModePage({
                     previewPath={activeWorkbenchPreviewPath}
                     previewRequestId={activeWorkbenchPreviewTab?.requestId ?? 0}
                     previewRevealTarget={activeWorkbenchPreviewTab?.revealTarget ?? null}
+                    directoryRevealPath={
+                      previewContext?.filePanelRequest?.scopeKey === previewContext?.activeScopeKey
+                        ? previewContext?.filePanelRequest?.directoryRevealPath ?? null
+                        : null
+                    }
+                    directoryRevealRequestId={
+                      previewContext?.filePanelRequest?.scopeKey === previewContext?.activeScopeKey
+                        ? previewContext?.filePanelRequest?.requestId ?? 0
+                        : 0
+                    }
                     previewPlacement="external"
                     previewOutline={activeMainPreviewOutline}
                     previewOutlineReady={activeMainPreviewOutlineReady}

@@ -112,19 +112,19 @@ const FILE_ACCESS_POLICIES: Array<{
     value: "no_file_access",
     label: "无文件访问权限",
     preview: "Agent 不能引用、读取或修改本地文件。",
-    description: "输入框禁用 @ 文件和文件附件；后端文件工具会直接拒绝读写和搜索请求。",
+    description: "输入框禁用 @ 文件、目录和文件附件；后端文件工具会直接拒绝读写和搜索请求。",
   },
   {
     value: "workspace_read_only",
     label: "工作区内只读",
     preview: "Agent 只能读取当前工作区内文件。",
-    description: "允许 @ 工作区文件和工作区内附件；读取、目录和搜索工具可用，创建和编辑调用会返回权限错误。",
+    description: "允许 @ 工作区文件、目录和工作区内附件；读取、目录和搜索工具可用，创建和编辑调用会返回权限错误。",
   },
   {
     value: "workspace_trusted",
     label: "工作区内信任",
     preview: "Agent 可以读写当前工作区。",
-    description: "允许 @ 工作区文件和工作区内附件；文件读写、搜索和编辑工具仅限当前工作区。",
+    description: "允许 @ 工作区文件、目录和工作区内附件；文件读写、搜索和编辑工具仅限当前工作区。",
   },
   {
     value: "full_access",

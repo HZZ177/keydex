@@ -360,6 +360,10 @@ export function WorkbenchAssistantSurface({
       if (!workspaceId || !file.path) {
         return;
       }
+      if (file.type === "directory") {
+        previewContext.openDirectoryPanel(file.path, workbenchPreviewRenderContext);
+        return;
+      }
       previewContext.openFilePanel(file.path, workbenchPreviewRenderContext, selectedFileRevealTarget(file));
     },
     [previewContext, workbenchPreviewRenderContext, workspaceId],

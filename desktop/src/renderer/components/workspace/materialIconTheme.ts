@@ -27,6 +27,7 @@ const iconSrcCache = new Map<string, string>([
   [FALLBACK_FILE_ICON_KEY, fileIconUrl],
   [FALLBACK_FOLDER_ICON_KEY, folderIconUrl],
 ]);
+const iconSrcPromises = new Map<string, Promise<string>>();
 
 export interface MaterialIconAsset {
   id: string;
@@ -43,6 +44,14 @@ interface MaterialIconInfo {
 
 export function resolveMaterialFileIcon(path: string): MaterialIconAsset {
   return cachedIconAsset(resolveMaterialFileIconInfo(path));
+}
+
+export async function loadMaterialFileIcon(path: string): Promise<MaterialIconAsset> {
+  const info = resolveMaterialFileIconInfo(path);
+  return {
+    id: info.id,
+    src: await loadIconSrc(info),
+  };
 }
 
 export function resolveMaterialFolderIcon(): MaterialIconAsset {
@@ -138,18 +147,25 @@ async function loadIconSrc(info: MaterialIconInfo): Promise<string> {
     return cached;
   }
 
+  const pending = iconSrcPromises.get(info.key);
+  if (pending) {
+    return pending;
+  }
+
   const loader = iconLoaders[info.key] ?? iconLoaders[FALLBACK_FILE_ICON_KEY];
   if (!loader) {
     return info.fallbackSrc;
   }
 
-  try {
-    const src = await loader();
-    iconSrcCache.set(info.key, src);
-    return src;
-  } catch {
-    return info.fallbackSrc;
-  }
+  const request = loader()
+    .then((src) => {
+      iconSrcCache.set(info.key, src);
+      return src;
+    })
+    .catch(() => info.fallbackSrc)
+    .finally(() => iconSrcPromises.delete(info.key));
+  iconSrcPromises.set(info.key, request);
+  return request;
 }
 
 function normalizePath(path: string): string {

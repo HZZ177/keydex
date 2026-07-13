@@ -61,6 +61,7 @@ export interface FilePanelRequest {
   requestId: number;
   scopeKey: string;
   path: string | null;
+  directoryRevealPath: string | null;
   revealTarget: PreviewFileRevealTarget | null;
   renderContext: PreviewRenderContext | null;
 }
@@ -110,6 +111,7 @@ export interface PreviewContextValue extends PreviewState {
     revealTarget?: PreviewFileRevealTarget | null,
   ): void;
   openFilePanel(path?: string | null, renderContext?: PreviewRenderContext, revealTarget?: PreviewFileRevealTarget | null): void;
+  openDirectoryPanel(path: string, renderContext?: PreviewRenderContext): void;
   openReviewPanel(request?: OpenReviewPanelRequest, renderContext?: PreviewRenderContext): void;
   togglePreview(
     request: PreviewRequest | string,
@@ -193,7 +195,30 @@ export function PreviewProvider({ children }: PropsWithChildren) {
           requestId: (current.filePanelRequest?.requestId ?? 0) + 1,
           scopeKey: previewScopeKey(context),
           path: path || null,
+          directoryRevealPath: null,
           revealTarget,
+          renderContext: context,
+        },
+      };
+    });
+  }, []);
+
+  const openDirectoryPanel = useCallback((path: string, renderContext?: PreviewRenderContext) => {
+    const normalizedPath = path.trim();
+    if (!normalizedPath) {
+      return;
+    }
+    setState((current) => {
+      const context = renderContext ?? current.hostContext;
+      return {
+        ...current,
+        hostContext: context ?? current.hostContext,
+        filePanelRequest: {
+          requestId: (current.filePanelRequest?.requestId ?? 0) + 1,
+          scopeKey: previewScopeKey(context),
+          path: null,
+          directoryRevealPath: normalizedPath,
+          revealTarget: null,
           renderContext: context,
         },
       };
@@ -375,6 +400,7 @@ export function PreviewProvider({ children }: PropsWithChildren) {
       activeScopeKey,
       openPreview,
       openFilePanel,
+      openDirectoryPanel,
       openReviewPanel,
       togglePreview,
       switchPreview,
@@ -394,6 +420,7 @@ export function PreviewProvider({ children }: PropsWithChildren) {
       open,
       openPreview,
       openFilePanel,
+      openDirectoryPanel,
       openReviewPanel,
       togglePreview,
       request,

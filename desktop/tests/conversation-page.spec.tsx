@@ -2203,6 +2203,99 @@ describe("ConversationPage", () => {
     expect(screen.getAllByTestId("message-text")[0].textContent).toContain("@README.md");
   });
 
+  it("references a project directory and sends directory-specific context", async () => {
+    const { runtime, channel } = fakeRuntime({
+      workspaceEntriesByPath: {
+        "": [
+          workspaceEntry("README.md", "README.md", "file", 128),
+          workspaceEntry("src", "src", "directory"),
+        ],
+        src: [workspaceEntry("index.ts", "src/index.ts", "file", 64)],
+      },
+      session: agentSession({
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        cwd: "D:/repo",
+        workspace_roots: ["D:/repo"],
+        workspace: workspace("ws-1", "repo", "D:/repo"),
+      }),
+    });
+    renderConversationInLayout(<ConversationPage threadId="ses-1" runtime={runtime} />, runtime);
+
+    await screen.findByLabelText("继续输入");
+    typeComposer("@");
+    await screen.findByRole("option", { name: "打开目录 src" });
+    const referenceDirectoryButton = screen.getByRole("button", { name: "引用目录 src" });
+    await act(async () => {
+      fireEvent.mouseDown(referenceDirectoryButton);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("继续输入").textContent).toBe("");
+    });
+    const composerContext = screen.getByLabelText("已添加上下文");
+    expect(composerContext.textContent).toContain("src");
+    expect(composerContext.querySelector('[data-context-chip-icon="directory"]')).not.toBeNull();
+    const composerDirectoryChip = screen.getByRole("button", { name: "在文件列表中定位目录 src" });
+    expect(composerDirectoryChip.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(composerDirectoryChip);
+    await waitFor(() => {
+      expect(screen.getByTestId("app-shell").dataset.rightSidebar).toBe("open");
+    });
+    expect(await screen.findByRole("button", { name: "选择文件 src/index.ts" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "折叠 src" })).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser").dataset.previewOpen).toBe("false");
+
+    fireEvent.click(screen.getByRole("button", { name: "折叠 src" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "选择文件 src/index.ts" })).toBeNull();
+    });
+
+    await waitSendEnabled();
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("发送"));
+    });
+
+    const chatMock = channel.chat as unknown as ReturnType<typeof vi.fn>;
+    const payload = chatMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const runtimeParams = payload.runtime_params as
+      | {
+          message_context_items?: Array<Record<string, unknown>>;
+          message_injection?: Array<Record<string, unknown>>;
+        }
+      | undefined;
+    expect(runtimeParams?.message_context_items?.[0]).toMatchObject({
+      type: "file",
+      path: "src",
+      fileType: "directory",
+    });
+    expect(runtimeParams?.message_injection?.[0]).toMatchObject({
+      type: "follow",
+      role: "HumanMessage",
+      metadata: {
+        kind: "file",
+        path: "src",
+        fileType: "directory",
+      },
+    });
+    expect(runtimeParams?.message_injection?.[0]?.content).toContain("用户通过 @ 引用了工作区目录：src");
+    expect(runtimeParams?.message_injection?.[0]?.content).toContain("先使用可用工具列出或搜索该目录");
+
+    const sentMessage = screen.getAllByTestId("message-text")[0];
+    expect(sentMessage.textContent).toContain("@src");
+    expect(sentMessage.querySelector('[data-context-chip-icon="directory"]')).not.toBeNull();
+    const historyDirectoryChip = within(sentMessage).getByRole("button", {
+      name: "在文件列表中定位目录 src",
+    });
+    expect(historyDirectoryChip.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(historyDirectoryChip);
+    expect(await screen.findByRole("button", { name: "选择文件 src/index.ts" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "折叠 src" })).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser").dataset.previewOpen).toBe("false");
+  });
+
   it("opens a selected file reference chip in the right sidebar file preview", async () => {
     const projectSession = agentSession({
       session_type: "workspace",

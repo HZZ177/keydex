@@ -1,7 +1,9 @@
 import { isUpwardWheelIntent, wheelWillScrollElement, type WheelIntentEvent } from "../messages/scrollIntent";
 import { EXPANSION_SCROLL_LOCK_ATTR } from "../messages/useExpansionScrollAnchor";
+import type { ConversationTimelineScrollRequest } from "./ConversationTimelineRuntime";
 
 export type ConversationFollowMode =
+  | "bootstrapping-tail"
   | "following-bottom"
   | "user-detached"
   | "navigating-turn"
@@ -26,6 +28,8 @@ export interface ConversationFollowSnapshot {
   readonly autoFollow: boolean;
   readonly mutationSequence: number;
   readonly scrollSequence: number;
+  readonly bootstrapCommitted: boolean;
+  readonly tailReady: boolean;
 }
 
 export interface ConversationFollowControllerOptions {
@@ -41,9 +45,7 @@ const DEFAULT_BUTTON_THRESHOLD = 100;
 /** Explicit ownership state for the single conversation scroll element. */
 export class ConversationFollowController {
   private element: HTMLElement | null = null;
-  private primaryElement: HTMLElement | null = null;
-  private fallbackElement: HTMLElement | null = null;
-  private mode: ConversationFollowMode = "following-bottom";
+  private mode: ConversationFollowMode = "bootstrapping-tail";
   private reason = "initial";
   private revision = 0;
   private mutationSequence = 0;
@@ -56,13 +58,17 @@ export class ConversationFollowController {
   private userIntent = false;
   private scrollbarDrag = false;
   private contentAvailable = false;
+  private bootstrapCommitted: boolean;
+  private tailReady = false;
+  private bootstrapFrame: number | null = null;
   private followFrame: number | null = null;
   private animationFrame: number | null = null;
   private disposed = false;
 
   constructor(options: ConversationFollowControllerOptions = {}) {
     this.autoFollow = options.autoFollow ?? true;
-    this.mode = this.autoFollow ? "following-bottom" : "user-detached";
+    this.mode = this.autoFollow ? "bootstrapping-tail" : "user-detached";
+    this.bootstrapCommitted = !this.autoFollow;
     this.followThreshold = finiteNonNegative(options.followThresholdPx ?? DEFAULT_FOLLOW_THRESHOLD);
     this.buttonThreshold = finiteNonNegative(options.buttonThresholdPx ?? DEFAULT_BUTTON_THRESHOLD);
     this.onChange = options.onChange;
@@ -73,15 +79,15 @@ export class ConversationFollowController {
     if (this.element === element) return;
     this.detachListeners();
     this.element = element;
-    this.primaryElement = element;
-    this.fallbackElement = element ? findScrollableParent(element) : null;
     if (element) {
       this.attachElementListeners(element);
-      if (this.fallbackElement) this.attachElementListeners(this.fallbackElement);
       window.addEventListener("pointerup", this.finishPointerIntent);
       window.addEventListener("pointercancel", this.finishPointerIntent);
       window.addEventListener("blur", this.finishPointerIntent);
-      if (this.mode === "following-bottom" && this.autoFollow && this.contentAvailable) this.scrollToBottom("auto");
+      if (this.autoFollow && this.contentAvailable && this.shouldFollowTail()) {
+        this.writeScrollTop(bottomScrollTop(element));
+        if (this.mode === "bootstrapping-tail" && this.tailReady) this.scheduleBootstrapCommit();
+      }
     }
     this.emit(false);
   }
@@ -92,17 +98,16 @@ export class ConversationFollowController {
     this.contentAvailable = available;
     if (!available) {
       this.cancelScheduledScroll();
-      this.transition("following-bottom", "empty");
+      this.tailReady = false;
+      this.bootstrapCommitted = !this.autoFollow;
+      this.transition(this.autoFollow ? "bootstrapping-tail" : "user-detached", "empty");
       return;
     }
-    // Initial/session-remount positioning is part of the commit contract: the
-    // first painted conversation must already be at the bottom. Later content
-    // mutations remain rAF-coalesced so streaming cannot write scrollTop for
-    // every token.
-    if (becameAvailable && this.element && this.mode === "following-bottom" && this.autoFollow) {
-      this.element.scrollTop = bottomScrollTop(this.element);
+    if (becameAvailable && this.element && this.autoFollow && this.mode === "bootstrapping-tail") {
+      this.writeScrollTop(bottomScrollTop(this.element));
       this.reason = "content:initial";
       this.mutationSequence += 1;
+      if (this.tailReady) this.scheduleBootstrapCommit();
       this.emit();
       return;
     }
@@ -113,20 +118,76 @@ export class ConversationFollowController {
     this.assertActive();
     if (this.autoFollow === enabled) return;
     this.autoFollow = enabled;
-    if (!enabled && this.mode === "following-bottom") this.transition("user-detached", "auto-follow-disabled");
-    else if (enabled && this.atBottom()) this.transition("following-bottom", "auto-follow-enabled-at-bottom");
-    else this.emit();
+    if (!enabled) {
+      this.bootstrapCommitted = true;
+      if (this.mode === "following-bottom" || this.mode === "bootstrapping-tail") {
+        this.transition("user-detached", "auto-follow-disabled");
+      } else this.emit();
+      return;
+    }
+    if (!this.contentAvailable) {
+      this.bootstrapCommitted = false;
+      this.transition("bootstrapping-tail", "auto-follow-enabled-empty");
+    } else if (this.atBottom()) {
+      this.bootstrapCommitted = true;
+      this.transition("following-bottom", "auto-follow-enabled-at-bottom");
+    } else this.emit();
+  }
+
+  resetForIdentity(reason = "conversation-changed"): void {
+    this.assertActive();
+    this.cancelScheduledScroll();
+    this.contentAvailable = false;
+    this.tailReady = false;
+    this.bootstrapCommitted = !this.autoFollow;
+    this.userIntent = false;
+    this.scrollbarDrag = false;
+    this.transition(this.autoFollow ? "bootstrapping-tail" : "user-detached", reason);
+  }
+
+  setTailReady(ready: boolean): void {
+    this.assertActive();
+    if (this.tailReady === ready) {
+      if (ready && this.mode === "bootstrapping-tail") this.scheduleBootstrapCommit();
+      return;
+    }
+    this.tailReady = ready;
+    if (!ready && this.bootstrapFrame !== null) {
+      cancelAnimationFrame(this.bootstrapFrame);
+      this.bootstrapFrame = null;
+    }
+    if (ready && this.mode === "bootstrapping-tail" && this.contentAvailable && this.autoFollow) {
+      this.scheduleBootstrapCommit();
+    }
+    this.emit();
+  }
+
+  applyScrollRequest(request: ConversationTimelineScrollRequest): void {
+    this.assertActive();
+    if (!this.element) return;
+    if (request.reason === "follow-bottom" && !this.shouldFollowTail()) return;
+    this.writeScrollTop(request.scrollTop);
+    if (request.reason === "follow-bottom" && this.mode === "bootstrapping-tail" && this.tailReady) {
+      this.scheduleBootstrapCommit();
+    }
   }
 
   notifyContentMutation(kind: ConversationContentMutation): void {
     this.assertActive();
     this.mutationSequence += 1;
-    if (!this.autoFollow || this.mode !== "following-bottom" || !this.contentAvailable) {
+    if (!this.autoFollow || !this.shouldFollowTail() || !this.contentAvailable) {
       this.emit();
       return;
     }
     if (this.element?.hasAttribute(EXPANSION_SCROLL_LOCK_ATTR)) {
       this.reason = `blocked:${kind}:expansion-lock`;
+      this.emit();
+      return;
+    }
+    if (this.mode === "bootstrapping-tail") {
+      this.reason = `content:${kind}`;
+      if (this.element) this.writeScrollTop(bottomScrollTop(this.element));
+      if (this.tailReady) this.scheduleBootstrapCommit();
       this.emit();
       return;
     }
@@ -136,6 +197,7 @@ export class ConversationFollowController {
   beginNavigation(reason = "turn-navigation"): void {
     this.assertActive();
     this.cancelScheduledScroll();
+    this.bootstrapCommitted = true;
     this.temporaryPreviousMode = this.mode;
     this.transition("navigating-turn", reason);
   }
@@ -149,6 +211,7 @@ export class ConversationFollowController {
   beginHistoryRestore(): void {
     this.assertActive();
     this.cancelScheduledScroll();
+    this.bootstrapCommitted = true;
     this.temporaryPreviousMode = this.mode;
     this.transition("restoring-history", "history-prepend");
   }
@@ -156,7 +219,7 @@ export class ConversationFollowController {
   endHistoryRestore(): void {
     this.assertActive();
     if (this.mode !== "restoring-history") return;
-    const next = this.temporaryPreviousMode === "following-bottom" && this.autoFollow
+    const next = this.temporaryPreviousMode !== "user-detached" && this.autoFollow
       ? "following-bottom"
       : "user-detached";
     this.transition(next, "history-restored");
@@ -173,27 +236,24 @@ export class ConversationFollowController {
   resume(reason = "resumed"): void {
     this.assertActive();
     if (this.mode !== "suspended") return;
-    const next = this.temporaryPreviousMode === "following-bottom" && this.autoFollow
+    const next = this.temporaryPreviousMode !== "user-detached" && this.autoFollow
       ? "following-bottom"
       : "user-detached";
     this.transition(next, reason);
     if (next === "following-bottom") this.notifyContentMutation("timeline-publish");
   }
 
-  scrollToBottom(behavior: ScrollBehavior = "smooth"): void {
+  scrollToBottom(_behavior: ScrollBehavior = "smooth"): void {
     this.assertActive();
     const element = this.element;
     if (!element || !this.contentAvailable) return;
     this.cancelScheduledScroll();
     this.userIntent = false;
     this.scrollbarDrag = false;
+    this.bootstrapCommitted = true;
+    this.tailReady = true;
     this.transition("following-bottom", "scroll-to-bottom");
-    if (behavior === "smooth" && !prefersReducedMotion()) {
-      element.scrollTop = bottomScrollTop(element);
-      this.emit();
-      return;
-    }
-    element.scrollTop = bottomScrollTop(element);
+    this.writeScrollTop(bottomScrollTop(element));
     this.emit();
   }
 
@@ -204,10 +264,12 @@ export class ConversationFollowController {
       reason: this.reason,
       revision: this.revision,
       bottomGap,
-      showScrollToBottom: bottomGap > this.buttonThreshold,
+      showScrollToBottom: this.bootstrapCommitted && bottomGap > this.buttonThreshold,
       autoFollow: this.autoFollow,
       mutationSequence: this.mutationSequence,
       scrollSequence: this.scrollSequence,
+      bootstrapCommitted: this.bootstrapCommitted,
+      tailReady: this.tailReady,
     });
   }
 
@@ -217,8 +279,23 @@ export class ConversationFollowController {
     this.cancelScheduledScroll();
     this.detachListeners();
     this.element = null;
-    this.primaryElement = null;
-    this.fallbackElement = null;
+  }
+
+  private scheduleBootstrapCommit(): void {
+    if (this.bootstrapFrame !== null || this.mode !== "bootstrapping-tail") return;
+    this.bootstrapFrame = requestAnimationFrame(() => {
+      this.bootstrapFrame = null;
+      if (
+        this.mode !== "bootstrapping-tail"
+        || !this.tailReady
+        || !this.contentAvailable
+        || !this.autoFollow
+        || !this.element
+      ) return;
+      this.writeScrollTop(bottomScrollTop(this.element));
+      this.bootstrapCommitted = true;
+      this.transition("following-bottom", "tail-bootstrap-committed");
+    });
   }
 
   private scheduleFollow(kind: ConversationContentMutation): void {
@@ -229,14 +306,14 @@ export class ConversationFollowController {
       if (this.mode !== "following-bottom" || !this.autoFollow || this.scrollbarDrag) return;
       const element = this.element;
       if (!element || element.hasAttribute(EXPANSION_SCROLL_LOCK_ATTR)) return;
-      element.scrollTop = bottomScrollTop(element);
+      this.writeScrollTop(bottomScrollTop(element));
       this.emit();
     });
     this.emit();
   }
 
   private readonly handleWheel = (event: WheelEvent) => {
-    const element = this.resolveEventElement(event);
+    const element = this.element;
     if (!element || !wheelWillScrollElement(event as WheelIntentEvent, element)) return;
     this.cancelScheduledScroll();
     this.userIntent = true;
@@ -246,7 +323,7 @@ export class ConversationFollowController {
   };
 
   private readonly handlePointerDown = (event: Event) => {
-    const element = this.resolveEventElement(event);
+    const element = this.element;
     if (!element || !isScrollbarPointerStart(event, element)) return;
     this.cancelScheduledScroll();
     this.userIntent = true;
@@ -259,8 +336,11 @@ export class ConversationFollowController {
   };
 
   private readonly handleScroll = (event: Event) => {
-    this.resolveEventElement(event);
     this.scrollSequence += 1;
+    if (this.mode === "bootstrapping-tail") {
+      this.emit();
+      return;
+    }
     if (this.atBottom()) {
       this.userIntent = false;
       if (this.mode === "user-detached" && this.autoFollow) this.transition("following-bottom", "user-returned-bottom");
@@ -288,6 +368,18 @@ export class ConversationFollowController {
     return this.bottomGap() <= this.followThreshold;
   }
 
+  private shouldFollowTail(): boolean {
+    return this.mode === "following-bottom" || this.mode === "bootstrapping-tail";
+  }
+
+  private writeScrollTop(scrollTop: number): void {
+    const element = this.element;
+    if (!element) return;
+    const target = Math.max(0, scrollTop);
+    if (Math.abs(element.scrollTop - target) <= 0.5) return;
+    element.scrollTop = target;
+  }
+
   private bottomGap(): number {
     const element = this.element;
     return element ? Math.max(0, bottomScrollTop(element) - element.scrollTop) : 0;
@@ -295,14 +387,15 @@ export class ConversationFollowController {
 
   private cancelScheduledScroll(): void {
     if (this.followFrame !== null) cancelAnimationFrame(this.followFrame);
+    if (this.bootstrapFrame !== null) cancelAnimationFrame(this.bootstrapFrame);
     if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
     this.followFrame = null;
+    this.bootstrapFrame = null;
     this.animationFrame = null;
   }
 
   private detachListeners(): void {
-    if (this.primaryElement) this.detachElementListeners(this.primaryElement);
-    if (this.fallbackElement) this.detachElementListeners(this.fallbackElement);
+    if (this.element) this.detachElementListeners(this.element);
     window.removeEventListener("pointerup", this.finishPointerIntent);
     window.removeEventListener("pointercancel", this.finishPointerIntent);
     window.removeEventListener("blur", this.finishPointerIntent);
@@ -320,14 +413,6 @@ export class ConversationFollowController {
     element.removeEventListener("pointerdown", this.handlePointerDown);
   }
 
-  private resolveEventElement(event: Event): HTMLElement | null {
-    const source = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-    if (source === this.fallbackElement && !isScrollable(this.primaryElement) && isScrollable(source)) {
-      this.element = source;
-    }
-    return this.element;
-  }
-
   private assertActive(): void {
     if (this.disposed) throw new Error("ConversationFollowController is destroyed");
   }
@@ -335,20 +420,6 @@ export class ConversationFollowController {
 
 function bottomScrollTop(element: HTMLElement): number {
   return Math.max(0, element.scrollHeight - element.clientHeight);
-}
-
-function isScrollable(element: HTMLElement | null): element is HTMLElement {
-  return Boolean(element && element.scrollHeight > element.clientHeight);
-}
-
-function findScrollableParent(element: HTMLElement): HTMLElement | null {
-  let parent = element.parentElement;
-  while (parent) {
-    const overflowY = window.getComputedStyle(parent).overflowY;
-    if (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") return parent;
-    parent = parent.parentElement;
-  }
-  return null;
 }
 
 function isScrollbarPointerStart(event: Event, element: HTMLElement): boolean {
@@ -364,8 +435,4 @@ function isScrollbarPointerStart(event: Event, element: HTMLElement): boolean {
 function finiteNonNegative(value: number): number {
   if (!Number.isFinite(value) || value < 0) throw new Error("Follow threshold must be finite and non-negative");
   return value;
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }

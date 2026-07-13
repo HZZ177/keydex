@@ -179,8 +179,8 @@ function quoteContextItems(quotes: SelectedQuote[]): AgentContextItem[] {
 
 function fileContextItem(file: SelectedFile, index: number): AgentContextItem {
   const id = `file:${index}:${hashText(file.path)}`;
-  const description = file.path;
   const kindLabel = selectedFileKindLabel(file);
+  const description = file.type === "directory" ? `${kindLabel}\n${file.path}` : file.path;
   return {
     id,
     type: "file",
@@ -229,6 +229,9 @@ function injectionContent(item: AgentContextItem): string {
   }
   if (item.type === "file") {
     const target = contextFileKindLabel(item);
+    if (item.fileType === "directory") {
+      return `用户通过 @ 引用了${target}：${item.path || item.label}\n请将该目录作为本次请求的范围上下文。需要了解内容时，先使用可用工具列出或搜索该目录，再按需读取相关文件；不要默认递归读取整个目录，也不要把路径当作用户普通文本。`;
+    }
     return `用户通过 @ 引用了${target}：${item.path || item.label}\n请在需要时使用可用工具读取或查看该路径，不要把路径当作用户普通文本。`;
   }
   if (item.type === "source_quote") {

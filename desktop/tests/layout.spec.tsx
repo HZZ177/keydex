@@ -764,6 +764,22 @@ describe("Layout", () => {
       expect(remountedShell.dataset.rightSidebar).toBe("open");
     });
   });
+
+  it("opens the Files panel and reveals a directory without previewing it", async () => {
+    renderLayoutWithPreview(<RightSidebarDirectoryPanelHarness />);
+
+    const shell = screen.getByTestId("app-shell");
+    expect(shell.dataset.rightSidebar).toBe("closed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal src directory" }));
+
+    await waitFor(() => {
+      expect(shell.dataset.rightSidebar).toBe("open");
+    });
+    expect(await screen.findByRole("button", { name: "选择文件 src/index.ts" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "折叠 src" })).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser").dataset.previewOpen).toBe("false");
+  });
 });
 
 function RightSidebarPreviewHarness() {
@@ -877,6 +893,22 @@ function RightSidebarFilePanelRemountHarness() {
   );
 }
 
+function RightSidebarDirectoryPanelHarness() {
+  const preview = usePreview();
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => preview.openDirectoryPanel("src", sessionPreviewContext())}
+      >
+        Reveal src directory
+      </button>
+      <ScopedConversationLayout />
+    </>
+  );
+}
+
 function ScopedConversationLayout() {
   const { setPreviewHostContext } = usePreview();
 
@@ -894,10 +926,15 @@ function ScopedConversationLayout() {
 
 const filePanelRuntime = {
   workspace: {
-    listDirectory: () =>
+    listDirectory: (_scope: unknown, path = "") =>
       Promise.resolve({
         root: "D:/repo",
-        entries: [{ name: "README.md", path: "README.md", type: "file", size: 12, modified_at: null }],
+        entries: path === "src"
+          ? [{ name: "index.ts", path: "src/index.ts", type: "file", size: 24, modified_at: null }]
+          : [
+              { name: "README.md", path: "README.md", type: "file", size: 12, modified_at: null },
+              { name: "src", path: "src", type: "directory", size: null, modified_at: null },
+            ],
       }),
     readFile: (_scope: unknown, path: string) => Promise.resolve({ path, content: "# README", encoding: "utf-8" }),
     readMedia: () => Promise.reject(new Error("not implemented")),

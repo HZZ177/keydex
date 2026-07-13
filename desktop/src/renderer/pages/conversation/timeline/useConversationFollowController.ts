@@ -1,20 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   ConversationFollowController,
   type ConversationContentMutation,
   type ConversationFollowSnapshot,
 } from "./ConversationFollowController";
+import type { ConversationTimelineScrollRequest } from "./ConversationTimelineRuntime";
 
 export interface UseConversationFollowControllerOptions {
   readonly autoFollow?: boolean;
+  readonly identity?: string;
 }
 
 export interface UseConversationFollowControllerResult {
   readonly snapshot: ConversationFollowSnapshot;
   readonly showScrollToBottom: boolean;
   readonly userPinnedScroll: boolean;
+  readonly shouldFollowTail: boolean;
   readonly setScrollerRef: (element: HTMLElement | null) => void;
+  readonly setTailReady: (ready: boolean) => void;
+  readonly applyScrollRequest: (request: ConversationTimelineScrollRequest) => void;
   readonly notifyContentMutation: (kind: ConversationContentMutation) => void;
   readonly beginNavigation: () => void;
   readonly endNavigation: () => void;
@@ -27,7 +32,7 @@ export interface UseConversationFollowControllerResult {
 
 export function useConversationFollowController(
   itemCount: number,
-  { autoFollow = true }: UseConversationFollowControllerOptions = {},
+  { autoFollow = true, identity = "default" }: UseConversationFollowControllerOptions = {},
 ): UseConversationFollowControllerResult {
   const controllerRef = useRef<ConversationFollowController | null>(null);
   const [snapshot, setSnapshot] = useState<ConversationFollowSnapshot>(() => emptySnapshot(autoFollow));
@@ -38,12 +43,19 @@ export function useConversationFollowController(
     });
   }
   const controller = controllerRef.current;
+  const identityRef = useRef(identity);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     controller.setAutoFollow(autoFollow);
   }, [autoFollow, controller]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (identityRef.current === identity) return;
+    identityRef.current = identity;
+    controller.resetForIdentity();
+  }, [controller, identity]);
+
+  useLayoutEffect(() => {
     controller.setContentAvailable(itemCount > 0);
   }, [controller, itemCount]);
 
@@ -52,6 +64,11 @@ export function useConversationFollowController(
   const setScrollerRef = useCallback((element: HTMLElement | null) => controller.attach(element), [controller]);
   const notifyContentMutation = useCallback(
     (kind: ConversationContentMutation) => controller.notifyContentMutation(kind),
+    [controller],
+  );
+  const setTailReady = useCallback((ready: boolean) => controller.setTailReady(ready), [controller]);
+  const applyScrollRequest = useCallback(
+    (request: ConversationTimelineScrollRequest) => controller.applyScrollRequest(request),
     [controller],
   );
   const beginNavigation = useCallback(() => controller.beginNavigation(), [controller]);
@@ -66,7 +83,10 @@ export function useConversationFollowController(
     snapshot,
     showScrollToBottom: snapshot.showScrollToBottom,
     userPinnedScroll: snapshot.mode === "user-detached",
+    shouldFollowTail: snapshot.mode === "bootstrapping-tail" || snapshot.mode === "following-bottom",
     setScrollerRef,
+    setTailReady,
+    applyScrollRequest,
     notifyContentMutation,
     beginNavigation,
     endNavigation,
@@ -80,7 +100,7 @@ export function useConversationFollowController(
 
 function emptySnapshot(autoFollow: boolean): ConversationFollowSnapshot {
   return Object.freeze({
-    mode: autoFollow ? "following-bottom" : "user-detached",
+    mode: autoFollow ? "bootstrapping-tail" : "user-detached",
     reason: "initial",
     revision: 0,
     bottomGap: 0,
@@ -88,6 +108,8 @@ function emptySnapshot(autoFollow: boolean): ConversationFollowSnapshot {
     autoFollow,
     mutationSequence: 0,
     scrollSequence: 0,
+    bootstrapCommitted: !autoFollow,
+    tailReady: false,
   });
 }
 
@@ -95,5 +117,7 @@ function snapshotsEqual(left: ConversationFollowSnapshot, right: ConversationFol
   return left.mode === right.mode
     && left.reason === right.reason
     && left.showScrollToBottom === right.showScrollToBottom
-    && left.autoFollow === right.autoFollow;
+    && left.autoFollow === right.autoFollow
+    && left.bootstrapCommitted === right.bootstrapCommitted
+    && left.tailReady === right.tailReady;
 }
