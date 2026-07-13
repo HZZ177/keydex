@@ -87,6 +87,7 @@ import {
   type PreviewFileRevealTarget,
   type PreviewQuoteSelectionRequest,
 } from "@/renderer/providers/PreviewProvider";
+import { useOptionalFileChanges } from "@/renderer/providers/FileChangeProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import type { PreviewContentKind, PreviewMarkdownViewDescriptor, PreviewRequest } from "@/renderer/providers/previewTypes";
@@ -175,6 +176,7 @@ export interface FilePreviewProps {
   bottomSafeArea?: string;
   markdownRuntimeSnapshotLoader?: FileMarkdownRuntimeSnapshotLoader;
   markdownViewDescriptor?: PreviewMarkdownViewDescriptor;
+  refreshRequestId?: number;
 }
 
 declare global {
@@ -200,6 +202,7 @@ export function FilePreview({
   bottomSafeArea,
   markdownRuntimeSnapshotLoader,
   markdownViewDescriptor,
+  refreshRequestId = 0,
 }: FilePreviewProps) {
   const notifications = useNotifications();
   const effectiveMarkdownRuntimeSnapshotLoader = markdownRuntimeSnapshotLoader
@@ -208,6 +211,12 @@ export function FilePreview({
   const annotationLayoutRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [documentViewport, setDocumentViewport] = useState<HTMLDivElement | null>(null);
+  const documentViewportRef = useRef<HTMLDivElement | null>(null);
+  const pendingScrollRestoreRef = useRef<number | null>(null);
+  const setDocumentViewportElement = useCallback((element: HTMLDivElement | null) => {
+    documentViewportRef.current = element;
+    setDocumentViewport(element);
+  }, []);
   const [annotationActionsHost, setAnnotationActionsHost] = useState<HTMLDivElement | null>(null);
   const markdownRuntimeHostRef = useRef<FileMarkdownRuntimeHostHandle | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
@@ -219,6 +228,13 @@ export function FilePreview({
   const [documentRevision, setDocumentRevision] = useState<string | null>(null);
   const [media, setMedia] = useState<WorkspaceMediaResponse | null>(null);
   const [loading, setLoading] = useState(isPathPreviewRequest(request));
+  const [reloading, setReloading] = useState(false);
+  const [reloadError, setReloadError] = useState<string | null>(null);
+  const [fileUnavailable, setFileUnavailable] = useState(false);
+  const [reloadVersion, setReloadVersion] = useState(0);
+  const hasLoadedRef = useRef(immediatePreviewContent(request) !== null);
+  const requestIdentityRef = useRef<string | null>(null);
+  const handledRefreshRequestIdRef = useRef(refreshRequestId);
   const [fileOpenSettling, setFileOpenSettling] = useState(usesFileOpenDelay);
   const previewContent = immediateContent ?? content;
   const previewLoading = immediateContent === null ? loading : false;
@@ -229,17 +245,32 @@ export function FilePreview({
   const [markdownRuntimeFindIndex, setMarkdownRuntimeFindIndex] = useState<RuntimeMarkdownFindIndex | null>(null);
   const [markdownRuntimeSelection, setMarkdownRuntimeSelection] = useState<MarkdownProjectedSelection | null>(null);
   const [runtimeMermaidPreviewCode, setRuntimeMermaidPreviewCode] = useState<string | null>(null);
+  const publishMarkdownRuntimeSnapshot = useCallback((snapshot: MarkdownSnapshot | null) => {
+    setMarkdownRuntimeSnapshot(snapshot);
+    const scrollTop = pendingScrollRestoreRef.current;
+    if (scrollTop === null) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      if (documentViewportRef.current) {
+        documentViewportRef.current.scrollTop = scrollTop;
+      }
+      pendingScrollRestoreRef.current = null;
+    });
+  }, []);
   const previewBusy = previewLoading || fileOpenSettling;
   const [viewMode, setViewMode] = useState<"preview" | "source">("preview");
   const [splitMode, setSplitMode] = useState(false);
   const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
   const [theme, setTheme] = useState<"light" | "dark">(() => getTheme());
   const previewContext = useOptionalPreview();
+  const fileChanges = useOptionalFileChanges();
   const previewEntries = previewContext?.entries ?? [];
   const activePreviewId = previewContext?.activeEntryId ?? null;
   const showPreviewTabs = previewEntries.length > 1;
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const fileLoadScope = request.type === "file" ? scope : null;
+  const requestIdentity = previewRequestIdentity(request, workspaceId, sessionId);
   const annotationPathCandidate = workspaceAnnotationPath === undefined
     ? request.type === "file" ? request.path : null
     : workspaceAnnotationPath;
@@ -251,7 +282,7 @@ export function FilePreview({
     : request.type === "content"
       ? request.sourcePath ?? null
       : null;
-  const quoteSelectionAvailable = Boolean(onQuoteSelection && annotationPath);
+  const quoteSelectionAvailable = Boolean(onQuoteSelection && annotationPath && !fileUnavailable);
   const sourceSelectionRef = useRef<SourceSelection | null>(null);
   const updateSourceSelection = useCallback((nextSelection: SourceSelection | null) => {
     if (!sourceSelectionsEqual(sourceSelectionRef.current, nextSelection)) {
@@ -267,10 +298,78 @@ export function FilePreview({
   const [findMatchIndex, setFindMatchIndex] = useState(-1);
   const [activeMarkdownFindMatchId, setActiveMarkdownFindMatchId] = useState<string | null>(null);
   const [sourceFindState, setSourceFindState] = useState<CodeMirrorFindState | null>(null);
+  const handledAnnotationRevealRequestIdsRef = useRef(new Map<string, number>());
   const handledSourceRevealRequestIdsRef = useRef(new Map<string, number>());
   const lastFindScrollLineRef = useRef<FilePreviewFindScrollLine | null>(null);
   const documentReadConsumerIdRef = useRef(`file-preview-${nextFilePreviewConsumerId++}`);
   const standaloneMarkdownViewIdRef = useRef(`file-preview-${nextFilePreviewViewId++}`);
+
+  const reloadCurrentFile = useCallback(() => {
+    if (!isPathPreviewRequest(request)) {
+      return;
+    }
+    if (documentViewportRef.current) {
+      pendingScrollRestoreRef.current = documentViewportRef.current.scrollTop;
+    }
+    setReloadVersion((version) => version + 1);
+  }, [requestIdentity]);
+
+  useEffect(() => {
+    if (refreshRequestId === handledRefreshRequestIdRef.current) {
+      return;
+    }
+    handledRefreshRequestIdRef.current = refreshRequestId;
+    reloadCurrentFile();
+  }, [refreshRequestId, reloadCurrentFile]);
+
+  useEffect(() => {
+    if (!fileChanges || !workspaceId || request.type !== "file") {
+      return;
+    }
+    const watchedPath = normalizePreviewEventPath(request.path);
+    return fileChanges.subscribeWorkspace(workspaceId, (notification) => {
+      if (notification.resyncRequired) {
+        reloadCurrentFile();
+        return;
+      }
+      const relevant = notification.changes.filter(
+        (change) => normalizePreviewEventPath(change.path) === watchedPath,
+      );
+      if (!relevant.length) {
+        return;
+      }
+      if (relevant.some((change) => change.kind !== "deleted")) {
+        setFileUnavailable(false);
+        reloadCurrentFile();
+        return;
+      }
+      setFileUnavailable(true);
+      setReloadError("文件已删除，仍显示上次内容；同路径重建后将自动恢复。");
+    });
+  }, [fileChanges, reloadCurrentFile, requestIdentity, workspaceId]);
+
+  useEffect(() => {
+    if (!fileChanges || request.type !== "local-file") {
+      return;
+    }
+    const watchId = `file-preview:${stableMarkdownIdentityHash(requestIdentity)}`;
+    return fileChanges.subscribeLocalFile(watchId, request.path, (notification) => {
+      if (notification.resyncRequired) {
+        reloadCurrentFile();
+        return;
+      }
+      if (!notification.changes.length) {
+        return;
+      }
+      if (notification.changes.some((change) => change.kind !== "deleted")) {
+        setFileUnavailable(false);
+        reloadCurrentFile();
+        return;
+      }
+      setFileUnavailable(true);
+      setReloadError("文件已删除，仍显示上次内容；同路径重建后将自动恢复。");
+    });
+  }, [fileChanges, reloadCurrentFile, requestIdentity]);
 
   useEffect(() => {
     const themeObserver = new MutationObserver(() => setTheme(getTheme()));
@@ -281,39 +380,64 @@ export function FilePreview({
 
   useEffect(() => {
     let active = true;
-    setError(null);
-    setMedia(null);
-    setDocumentRevision(null);
-    resetCopyFeedback();
-    setViewMode(defaultViewMode(request));
-    setSplitMode(false);
+    const identityChanged = requestIdentityRef.current !== requestIdentity;
+    requestIdentityRef.current = requestIdentity;
+    if (identityChanged) {
+      setError(null);
+      setReloadError(null);
+      setFileUnavailable(false);
+      setMedia(null);
+      setDocumentRevision(null);
+      resetCopyFeedback();
+      setViewMode(defaultViewMode(request));
+      setSplitMode(false);
+      hasLoadedRef.current = immediatePreviewContent(request) !== null;
+    }
 
     if (request.type === "content") {
-      setContent(request.content || "");
+      const nextContent = request.content || "";
+      setContent(nextContent);
       setLoading(false);
+      setReloading(false);
       return () => {
         active = false;
       };
     }
 
     if (request.type === "diff") {
-      setContent(request.diff || "暂无 diff");
+      const nextContent = request.diff || "暂无 diff";
+      setContent(nextContent);
       setLoading(false);
+      setReloading(false);
       return () => {
         active = false;
       };
     }
 
-    setContent("");
+    if (identityChanged) {
+      setContent("");
+    }
     if (!runtime || (request.type === "file" && !fileLoadScope)) {
       setError("工作区预览运行时未就绪");
       setLoading(false);
+      setReloading(false);
       return () => {
         active = false;
       };
     }
 
-    setLoading(true);
+    const preservePrevious = !identityChanged && hasLoadedRef.current;
+    if (
+      preservePrevious &&
+      pendingScrollRestoreRef.current === null &&
+      documentViewportRef.current
+    ) {
+      pendingScrollRestoreRef.current = documentViewportRef.current.scrollTop;
+    }
+    setError(null);
+    setReloadError(null);
+    setLoading(!preservePrevious);
+    setReloading(preservePrevious);
     const documentReadController = new AbortController();
     const documentReadOptions = {
       consumerId: documentReadConsumerIdRef.current,
@@ -325,18 +449,24 @@ export function FilePreview({
           ? runtime.localPreview.readMedia(request.path).then((response) => {
               if (active) {
                 setMedia(response);
+                hasLoadedRef.current = true;
+                setFileUnavailable(false);
               }
             })
           : runtime.localPreview.readDocument(request.path, documentReadOptions).then((response) => {
               if (active) {
                 setContent(response.content);
                 setDocumentRevision(response.revision);
+                hasLoadedRef.current = true;
+                setFileUnavailable(false);
               }
             })
         : kind === "image"
           ? runtime.workspace.readMedia(fileLoadScope as WorkspaceScope, request.path).then((response) => {
               if (active) {
                 setMedia(response);
+                hasLoadedRef.current = true;
+                setFileUnavailable(false);
               }
             })
           : (runtime.workspace.readDocument
@@ -350,13 +480,20 @@ export function FilePreview({
               if (active) {
                 setContent(response.content);
                 setDocumentRevision(response.revision);
+                hasLoadedRef.current = true;
+                setFileUnavailable(false);
               }
             });
 
     void loader
       .catch((reason) => {
         if (active) {
-          setError(errorMessage(reason));
+          const message = errorMessage(reason);
+          if (preservePrevious) {
+            setReloadError(`刷新失败，仍显示上次内容：${message}`);
+          } else {
+            setError(message);
+          }
           markdownRuntimeDiagnostics.record({
             stage: "ingress",
             severity: "fatal",
@@ -373,6 +510,7 @@ export function FilePreview({
       .finally(() => {
         if (active) {
           setLoading(false);
+          setReloading(false);
         }
       });
 
@@ -382,7 +520,28 @@ export function FilePreview({
       runtime.localPreview?.releaseDocumentConsumer?.(documentReadConsumerIdRef.current);
       runtime.workspace?.releaseDocumentConsumer?.(documentReadConsumerIdRef.current);
     };
-  }, [fileLoadScope, kind, resetCopyFeedback, runtime, request]);
+  }, [fileLoadScope, kind, reloadVersion, requestIdentity, resetCopyFeedback, runtime]);
+
+  useLayoutEffect(() => {
+    const scrollTop = pendingScrollRestoreRef.current;
+    const viewport = documentViewportRef.current;
+    if (scrollTop === null || !viewport) {
+      return;
+    }
+    viewport.scrollTop = scrollTop;
+    const frame = window.requestAnimationFrame(() => {
+      if (documentViewportRef.current) {
+        documentViewportRef.current.scrollTop = scrollTop;
+      }
+      if (
+        kind !== "markdown" ||
+        (markdownRuntimeSnapshot && markdownRuntimeSnapshot.revision === documentRevision)
+      ) {
+        pendingScrollRestoreRef.current = null;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [documentRevision, kind, markdownRuntimeSnapshot]);
 
   useEffect(() => {
     if (!usesFileOpenDelay) {
@@ -394,7 +553,7 @@ export function FilePreview({
       setFileOpenSettling(false);
     }, FILE_PREVIEW_OPEN_SETTLE_MS);
     return () => window.clearTimeout(timer);
-  }, [request, usesFileOpenDelay]);
+  }, [requestIdentity, usesFileOpenDelay]);
 
   const title = previewTitle(request);
   const canPreview = kind === "markdown" || kind === "html" || kind === "mermaid";
@@ -462,7 +621,7 @@ export function FilePreview({
       notifications.error(annotationNotificationError);
     }
   }, [annotationNotificationError, notifications]);
-  const annotationAvailable = annotationSession.available;
+  const annotationAvailable = annotationSession.available && !fileUnavailable;
   const annotationPanelOpen = annotationSession.state.panelOpen;
   const activeAnnotationId = annotationSession.state.activeAnnotationId;
   const flashAnnotationId = annotationSession.state.flashAnnotationId;
@@ -492,12 +651,12 @@ export function FilePreview({
   }, [annotationPanelOpen, annotationSession.railRevealRequest, documentViewport]);
 
   useEffect(() => {
-    if (!annotationPath) return;
+    if (!annotationPath || fileUnavailable) return;
     return subscribeStartWorkspaceFileAnnotation((detail) => {
       if (detail.path !== annotationPath || detail.workspaceId !== workspaceId) return;
       annotationSession.store.getState().openPanel();
     });
-  }, [annotationPath, annotationSession.store, workspaceId]);
+  }, [annotationPath, annotationSession.store, fileUnavailable, workspaceId]);
 
   const startSelectionAnnotation = useCallback(
     (selectionSnapshot: FilePreviewSelectionSnapshot) => {
@@ -611,9 +770,11 @@ export function FilePreview({
     [annotationSession.actions],
   );
   const startChatFromResolution = useCallback(
-    (item: { record: { id: string; document_path: string; workspace_id: string } }) => {
+    (item: { record: { body: string; id: string; document_path: string; target: { type: "document" | "text" }; workspace_id: string } }) => {
       onStartChatFromAnnotation?.({
         annotationId: item.record.id,
+        body: item.record.body,
+        kind: item.record.target.type,
         path: item.record.document_path,
         workspaceId: item.record.workspace_id,
       });
@@ -621,9 +782,11 @@ export function FilePreview({
     [onStartChatFromAnnotation],
   );
   const startChatFromResolutions = useCallback(
-    (items: readonly { record: { id: string; document_path: string; workspace_id: string } }[]) => {
+    (items: readonly { record: { body: string; id: string; document_path: string; target: { type: "document" | "text" }; workspace_id: string } }[]) => {
       const references = items.map((item) => ({
         annotationId: item.record.id,
+        body: item.record.body,
+        kind: item.record.target.type,
         path: item.record.document_path,
         workspaceId: item.record.workspace_id,
       }));
@@ -633,7 +796,44 @@ export function FilePreview({
   );
 
   useEffect(() => {
+    const revealRequest = sourceRevealRequest;
+    const annotationId = revealRequest?.annotationId?.trim();
+    if (!revealRequest || !annotationId || !revealPath || previewBusy || error || !annotationAvailable) return;
+    if (handledAnnotationRevealRequestIdsRef.current.get(revealPath) === revealRequest.requestId) return;
+    const state = annotationSession.store.getState();
+    if (state.loading) return;
+    const resolution = state.resolutions.byId[annotationId];
+    if (!resolution) {
+      if (!state.error) {
+        handledAnnotationRevealRequestIdsRef.current.set(revealPath, revealRequest.requestId);
+        notifications.warning("这条批注已不存在，或不属于当前文件。");
+      }
+      return;
+    }
+    handledAnnotationRevealRequestIdsRef.current.set(revealPath, revealRequest.requestId);
+    state.activate(annotationId, true);
+    if (resolution.status === "resolved") {
+      annotationSession.navigate(resolution);
+      return;
+    }
+    annotationSession.requestRailReveal(annotationId);
+  }, [
+    annotationAvailable,
+    annotationSession.navigate,
+    annotationSession.requestRailReveal,
+    annotationSession.state.loading,
+    annotationSession.state.resolutions.annotationSetRevision,
+    annotationSession.store,
+    error,
+    notifications,
+    previewBusy,
+    revealPath,
+    sourceRevealRequest,
+  ]);
+
+  useEffect(() => {
     if (!sourceRevealRequest || !revealPath || previewBusy || error) return;
+    if (sourceRevealRequest.annotationId) return;
     if (handledSourceRevealRequestIdsRef.current.get(revealPath) === sourceRevealRequest.requestId) return;
     const position = sourceRevealRequest.sourceStart
       ?? (sourceRevealRequest.lineStart ? sourcePositionForLine(formattedSource, sourceRevealRequest.lineStart) : null);
@@ -989,7 +1189,7 @@ export function FilePreview({
                   setMarkdownRuntimeSelection(selection);
                   annotationSession.markdownAdapter.updateSelection(selection?.annotationSelection ?? null);
                 }}
-                onSnapshot={setMarkdownRuntimeSnapshot}
+                onSnapshot={publishMarkdownRuntimeSnapshot}
             />
           ) : null}
         </PreviewScrollPane>
@@ -1159,6 +1359,10 @@ export function FilePreview({
       data-chrome={chrome}
       data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
       data-file-preview-root="true"
+      data-file-preview-reloading={reloading ? "true" : "false"}
+      data-file-preview-unavailable={fileUnavailable ? "true" : "false"}
+      data-file-preview-new-annotations-enabled={annotationAvailable ? "true" : "false"}
+      data-file-preview-file-allows-annotations={fileUnavailable ? "false" : "true"}
       data-document-revision={documentRevision ?? undefined}
       data-file-markdown-runtime-mode={kind === "markdown" ? "runtime" : undefined}
       data-file-markdown-runtime-error={markdownRuntimeError ? "true" : undefined}
@@ -1214,6 +1418,12 @@ export function FilePreview({
             <PathBreadcrumbs path={sourceLabel} rootLabel={breadcrumbRootLabel} />
           </div>
         ) : null}
+        {reloading ? (
+          <span className={styles.reloadStatus} role="status">正在刷新，当前仍显示上次内容</span>
+        ) : null}
+        {reloadError ? (
+          <span className={styles.reloadError} role="alert">{reloadError}</span>
+        ) : null}
         {renderActions()}
       </header>
 
@@ -1234,7 +1444,7 @@ export function FilePreview({
             />
           ) : null}
           <div
-            ref={setDocumentViewport}
+            ref={setDocumentViewportElement}
             className={styles.body}
             data-annotation-rail-open={annotationPanelOpen ? "true" : "false"}
             data-chrome={chrome}
@@ -1280,6 +1490,7 @@ export function FilePreview({
               {annotationPath && annotationPanelOpen ? (
                 <UnifiedAnnotationRailContent
                   actionsHost={annotationActionsHost}
+                  canCreateDocument={annotationAvailable}
                   canStartChat={Boolean(onStartChatFromAnnotation)}
                   onClose={closeAnnotationPanel}
                   onDelete={deleteAnnotation}
@@ -1322,6 +1533,7 @@ export function FilePreview({
 
 function UnifiedAnnotationRailContent({
   actionsHost,
+  canCreateDocument,
   canStartChat,
   onClose,
   onDelete,
@@ -1331,6 +1543,7 @@ function UnifiedAnnotationRailContent({
   session,
 }: {
   actionsHost: HTMLElement | null;
+  canCreateDocument: boolean;
   canStartChat: boolean;
   onClose(): void;
   onDelete(annotationId: string): Promise<boolean>;
@@ -1343,6 +1556,12 @@ function UnifiedAnnotationRailContent({
   const [documentComposerOpen, setDocumentComposerOpen] = useState(false);
   const [documentSectionCollapsed, setDocumentSectionCollapsed] = useState(false);
   const state = session.state;
+  useEffect(() => {
+    const annotationId = session.railRevealRequest?.annotationId;
+    if (annotationId && state.resolutions.document.some((item) => item.record.id === annotationId)) {
+      setDocumentSectionCollapsed(false);
+    }
+  }, [session.railRevealRequest, state.resolutions.document]);
   const interaction = state.interaction;
   const retargetRecord = interaction.type === "retargeting"
     ? state.records.find((record) => record.id === interaction.annotationId) ?? null
@@ -1354,13 +1573,13 @@ function UnifiedAnnotationRailContent({
   const documentSectionReserved = state.resolutions.document.length === 0
     ? 0
     : documentSectionCollapsed
-      ? 44
+      ? 52
       : state.resolutions.document.length * 132;
-  const reservedTop = 64 + documentSectionReserved + (documentComposerOpen ? 112 : 0);
+  const reservedTop = 64 + documentSectionReserved + (documentComposerOpen ? 160 : 0);
   const pending = Boolean(state.pendingMutation);
   const createDocument = async () => {
     const body = documentDraft.trim();
-    if (!body || !session.actions) return;
+    if (!canCreateDocument || !body || !session.actions) return;
     const created = await session.actions.createDocument(body);
     if (created) {
       setDocumentDraft("");
@@ -1379,10 +1598,14 @@ function UnifiedAnnotationRailContent({
       />
       {documentComposerOpen ? (
         <div className={styles.documentAnnotationComposer}>
-          <textarea aria-label="全文批注内容" autoFocus disabled={pending} onChange={(event) => setDocumentDraft(event.target.value)} value={documentDraft} />
-          <div>
+          <div className={styles.documentAnnotationComposerHeader}>
+            <strong>新建全文批注</strong>
+            <span>适用于整份文档</span>
+          </div>
+          <textarea aria-label="全文批注内容" autoFocus disabled={pending || !canCreateDocument} onChange={(event) => setDocumentDraft(event.target.value)} placeholder="写下针对整份文档的批注…" value={documentDraft} />
+          <div className={styles.documentAnnotationComposerActions}>
             <button onClick={() => { setDocumentDraft(""); setDocumentComposerOpen(false); }} type="button">取消</button>
-            <button disabled={pending || !documentDraft.trim()} onClick={() => void createDocument()} type="button">保存全文批注</button>
+            <button className={styles.documentAnnotationComposerPrimary} disabled={pending || !canCreateDocument || !documentDraft.trim()} onClick={() => void createDocument()} type="button">保存全文批注</button>
           </div>
         </div>
       ) : null}
@@ -1423,6 +1646,7 @@ function UnifiedAnnotationRailContent({
       <button
         aria-label="新增文档批注"
         aria-pressed={documentComposerOpen}
+        disabled={!canCreateDocument}
         onClick={() => setDocumentComposerOpen((open) => !open)}
         type="button"
       >
@@ -3194,11 +3418,11 @@ function FilePreviewScrollRail({
   return (
     <div
       ref={railRef}
+      aria-hidden="true"
       className={styles.previewScrollRail}
       data-surface={surface}
       data-visible={metrics.visible ? "true" : "false"}
       data-testid={railTestId}
-      aria-hidden="true"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={finishDrag}
@@ -3210,6 +3434,7 @@ function FilePreviewScrollRail({
         data-direction="up"
         data-testid={railTestId ? `${railTestId}-up` : undefined}
         tabIndex={-1}
+        aria-hidden="true"
         aria-label="Scroll up"
         onPointerCancel={finishButtonScroll}
         onPointerDown={(event) => startButtonScroll(event, -1)}
@@ -3228,6 +3453,7 @@ function FilePreviewScrollRail({
         data-direction="down"
         data-testid={railTestId ? `${railTestId}-down` : undefined}
         tabIndex={-1}
+        aria-hidden="true"
         aria-label="Scroll down"
         onPointerCancel={finishButtonScroll}
         onPointerDown={(event) => startButtonScroll(event, 1)}
@@ -4389,6 +4615,33 @@ function ImagePreview({
       unavailableText="图片未加载"
     />
   );
+}
+
+function previewRequestIdentity(
+  request: FilePreviewRequest,
+  workspaceId?: string,
+  sessionId?: string,
+): string {
+  if (request.type === "file") {
+    return `file:${workspaceId ?? ""}:${sessionId ?? ""}:${normalizePreviewEventPath(request.path)}`;
+  }
+  if (request.type === "local-file") {
+    return `local-file:${request.path.trim()}`;
+  }
+  if (request.type === "diff") {
+    return `diff:${request.path}:${stableMarkdownIdentityHash(request.diff)}`;
+  }
+  return [
+    "content",
+    request.title,
+    request.contentType,
+    request.sourcePath ?? "",
+    stableMarkdownIdentityHash(request.content),
+  ].join(":");
+}
+
+function normalizePreviewEventPath(path: string): string {
+  return path.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
 }
 
 function previewTitle(request: FilePreviewRequest): string {

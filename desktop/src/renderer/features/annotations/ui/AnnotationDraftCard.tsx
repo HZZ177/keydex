@@ -54,13 +54,14 @@ export function AnnotationDraftCard({
         onCompositionEnd={handleComposition}
         onCompositionStart={handleComposition}
         onKeyDown={handleKeyDown}
-        placeholder="输入批注，Enter 提交，Shift+Enter 换行"
+        placeholder="写下批注…"
         value={body}
       />
       {error ? <div className={styles.cardError} role="alert">{error}</div> : null}
       <div className={styles.cardActions}>
+        <span className={styles.editorHint}>Enter 提交 · Shift + Enter 换行</span>
         <button aria-label="取消新建批注" disabled={pending} onClick={onCancel} type="button"><X size={14} /></button>
-        <button aria-label="提交新批注" disabled={pending || !body.trim()} onClick={submit} type="button"><Check size={14} /></button>
+        <button aria-label="提交新批注" className={styles.confirmAction} disabled={pending || !body.trim()} onClick={submit} type="button"><Check size={14} /></button>
       </div>
     </article>
   );

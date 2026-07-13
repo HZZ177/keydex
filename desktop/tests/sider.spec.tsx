@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, ListSessionsOptions, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import { Sider } from "@/renderer/components/layout/Sider";
-import { emitSessionCreated, emitSessionUpdated } from "@/renderer/events/sessionEvents";
+import { emitSessionCreated, emitSessionDeleted, emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider";
 import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectionProvider";
@@ -377,6 +377,22 @@ describe("Sider", () => {
     const movedButton = screen.getByRole("button", { name: "继续历史会话" });
     expect(movedButton.parentElement).toBe(olderRow);
     expect(Boolean(movedButton.compareDocumentPosition(newerButton) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes a session deleted from the conversation header without reloading history", async () => {
+    const runtime = fakeRuntime([
+      thread({ id: "thread-a", title: "保留会话" }),
+      thread({ id: "thread-b", title: "删除会话" }),
+    ]);
+
+    renderSider(<Sider runtime={runtime} />);
+
+    expect(await screen.findByRole("button", { name: "删除会话" })).not.toBeNull();
+    act(() => emitSessionDeleted("thread-b"));
+
+    expect(screen.queryByRole("button", { name: "删除会话" })).toBeNull();
+    expect(screen.getByRole("button", { name: "保留会话" })).not.toBeNull();
     expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
   });
 
@@ -1278,7 +1294,7 @@ describe("Sider", () => {
     renderSider(<Sider runtime={runtime} />);
 
     await screen.findByText("需求/讨论");
-    fireEvent.click(within(openSessionMenu("需求/讨论")).getByRole("menuitem", { name: "导出记录" }));
+    fireEvent.click(within(openSessionMenu("需求/讨论")).getByRole("menuitem", { name: "导出对话记录" }));
 
     await waitFor(() => {
       expect(loadHistory).toHaveBeenCalledWith("thread-a", {

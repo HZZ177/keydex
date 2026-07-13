@@ -135,6 +135,169 @@ describe("RuntimeWsClient", () => {
     });
   });
 
+  it("parses typed workspace and local file watch events", () => {
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const client = new RuntimeWsClient({
+      baseUrl: "ws://127.0.0.1:8765",
+      WebSocketImpl: FakeWebSocket,
+      onEvent,
+      onError,
+    });
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+
+    socket.message({
+      action: "workspaceWatchBound",
+      data: { workspace_id: "ws-1", sequence: 0, resync_required: true },
+    });
+    socket.message({
+      action: "workspaceFilesChanged",
+      data: {
+        workspace_id: "ws-1",
+        sequence: 1,
+        resync_required: false,
+        changes: [{ kind: "modified", path: "src/main.ts" }],
+      },
+    });
+    socket.message({ action: "workspaceWatchUnbound", data: { workspace_id: "ws-1" } });
+    socket.message({
+      action: "localFileWatchBound",
+      data: { watch_id: "local-1", path: "D:/tmp/a.md", sequence: 0, resync_required: true },
+    });
+    socket.message({
+      action: "localFileChanged",
+      data: {
+        watch_id: "local-1",
+        path: "D:/tmp/a.md",
+        sequence: 1,
+        resync_required: false,
+        changes: [{ kind: "deleted", path: "D:/tmp/a.md" }],
+      },
+    });
+    socket.message({ action: "localFileWatchUnbound", data: { watch_id: "local-1" } });
+    socket.message(
+      JSON.stringify({
+        action: "workspaceFilesChanged",
+        data: {
+          workspace_id: "ws-1",
+          sequence: 2,
+          resync_required: false,
+          changes: [{ kind: "renamed", path: "bad" }],
+        },
+      }),
+    );
+
+    expect(onEvent).toHaveBeenCalledTimes(6);
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends workspace watch bind after socket opens", () => {
+    const client = new RuntimeWsClient({
+      baseUrl: "ws://127.0.0.1:8765",
+      WebSocketImpl: FakeWebSocket,
+      onEvent: vi.fn(),
+    });
+
+    client.bindWorkspaceWatch("ws-1");
+    client.connect();
+    FakeWebSocket.instances[0].open();
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toEqual([
+      { action: "bind_workspace_watch", data: { workspace_id: "ws-1" } },
+    ]);
+  });
+
+  it("rebinds desired workspace watches after reconnect", () => {
+    vi.useFakeTimers();
+    const client = new RuntimeWsClient({
+      baseUrl: "ws://127.0.0.1:8765",
+      WebSocketImpl: FakeWebSocket,
+      reconnectDelayMs: 10,
+      onEvent: vi.fn(),
+    });
+    client.bindWorkspaceWatch("ws-1");
+    client.connect();
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].serverClose();
+    vi.advanceTimersByTime(10);
+    FakeWebSocket.instances[1].open();
+
+    expect(FakeWebSocket.instances[1].sent.map((item) => JSON.parse(item))).toEqual([
+      { action: "bind_workspace_watch", data: { workspace_id: "ws-1" } },
+    ]);
+  });
+
+  it("does not rebind workspace watch after explicit unbind", () => {
+    vi.useFakeTimers();
+    const client = new RuntimeWsClient({
+      baseUrl: "ws://127.0.0.1:8765",
+      WebSocketImpl: FakeWebSocket,
+      reconnectDelayMs: 10,
+      onEvent: vi.fn(),
+    });
+    client.bindWorkspaceWatch("ws-1");
+    client.connect();
+    FakeWebSocket.instances[0].open();
+    client.unbindWorkspaceWatch("ws-1");
+    FakeWebSocket.instances[0].serverClose();
+    vi.advanceTimersByTime(10);
+    FakeWebSocket.instances[1].open();
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+      action: "unbind_workspace_watch",
+      data: { workspace_id: "ws-1" },
+    });
+    expect(FakeWebSocket.instances[1].sent).toEqual([]);
+  });
+
+  it("rebinds desired local file watches after reconnect", () => {
+    vi.useFakeTimers();
+    const client = new RuntimeWsClient({
+      baseUrl: "ws://127.0.0.1:8765",
+      WebSocketImpl: FakeWebSocket,
+      reconnectDelayMs: 10,
+      onEvent: vi.fn(),
+    });
+    client.bindLocalFileWatch("local-1", "D:/tmp/a.md");
+    client.connect();
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].serverClose();
+    vi.advanceTimersByTime(10);
+    FakeWebSocket.instances[1].open();
+
+    expect(FakeWebSocket.instances[1].sent.map((item) => JSON.parse(item))).toEqual([
+      {
+        action: "bind_local_file_watch",
+        data: { watch_id: "local-1", path: "D:/tmp/a.md" },
+      },
+    ]);
+  });
+
+  it("does not rebind local file watch after explicit unbind", () => {
+    vi.useFakeTimers();
+    const client = new RuntimeWsClient({
+      baseUrl: "ws://127.0.0.1:8765",
+      WebSocketImpl: FakeWebSocket,
+      reconnectDelayMs: 10,
+      onEvent: vi.fn(),
+    });
+    client.bindLocalFileWatch("local-1", "D:/tmp/a.md");
+    client.connect();
+    FakeWebSocket.instances[0].open();
+    client.unbindLocalFileWatch("local-1");
+    FakeWebSocket.instances[0].serverClose();
+    vi.advanceTimersByTime(10);
+    FakeWebSocket.instances[1].open();
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+      action: "unbind_local_file_watch",
+      data: { watch_id: "local-1" },
+    });
+    expect(FakeWebSocket.instances[1].sent).toEqual([]);
+  });
+
   it("surfaces malformed websocket messages", () => {
     const onError = vi.fn();
     const onStatus = vi.fn();

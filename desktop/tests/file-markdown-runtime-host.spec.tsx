@@ -16,6 +16,7 @@ import { FilePreview } from "@/renderer/components/workspace/FilePreview";
 import type { MarkdownSnapshot } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
 import type { MarkdownFindIndex } from "@/renderer/markdownRuntime/find";
 import type { AnnotationRenderState } from "@/renderer/features/annotations/navigation/types";
+import type { MarkdownAnnotationBinding } from "@/renderer/features/annotations/adapters/MarkdownAnnotationAdapter";
 import { parseCanonicalMarkdownSnapshot } from "@/renderer/markdownRuntime/worker/parser";
 import { markdownRuntimeDiagnostics } from "@/renderer/markdownRuntime/diagnostics";
 import { APP_FIND_SHORTCUT_EVENT } from "@/renderer/events/findShortcut";
@@ -323,6 +324,43 @@ describe("FileMarkdownRuntimeHost", () => {
     expect(marker.dataset.annotationId).toBe("annotation-1");
     fireEvent.click(marker);
     expect(activate).toHaveBeenCalledWith("annotation-1");
+  });
+
+  it("animates annotation navigation across a long virtualized document without losing the target", async () => {
+    const source = Array.from({ length: 500 }, (_, index) => `Paragraph ${index}`).join("\n\n");
+    let annotationBinding: MarkdownAnnotationBinding | null = null;
+    const bind = vi.fn((binding: MarkdownAnnotationBinding | null) => {
+      if (binding) {
+        annotationBinding = binding;
+      }
+      return vi.fn();
+    });
+    render(
+      <RuntimeHarness
+        source={source}
+        revision="annotation-long-r1"
+        loader={snapshotLoader()}
+        bindAnnotation={bind}
+      />,
+    );
+    await readyRuntimeCanvas();
+    await waitFor(() => expect(annotationBinding).not.toBeNull());
+    const tail = parse(source, "annotation-long-r1").blocks.at(-1)!;
+    const scroll = screen.getByTestId("runtime-scroll") as HTMLElement;
+    const scrollTo = vi.mocked(scroll.scrollTo);
+    const callsBeforeReveal = scrollTo.mock.calls.length;
+
+    await annotationBinding!.revealBlock(tail.id, new AbortController().signal);
+
+    expect(scroll.scrollTop).toBeGreaterThan(0);
+    const revealCalls = scrollTo.mock.calls.slice(callsBeforeReveal);
+    const revealTops = revealCalls.map(([value]) => {
+      const options = value as unknown as ScrollToOptions | number;
+      return typeof options === "number" ? options : options.top ?? 0;
+    });
+    expect(revealTops.length).toBeGreaterThan(2);
+    expect(new Set(revealTops).size).toBeGreaterThan(2);
+    expect(revealTops.at(-1)).toBeGreaterThan(revealTops[0] ?? 0);
   });
 
   it("ignores a late snapshot after a rapid document revision switch", async () => {

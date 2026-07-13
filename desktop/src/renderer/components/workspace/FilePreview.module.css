@@ -122,6 +122,29 @@
   min-height: 28px;
 }
 
+.reloadStatus,
+.reloadError {
+  overflow: hidden;
+  max-width: min(320px, 34vw);
+  flex: 0 1 auto;
+  padding: 3px 7px;
+  border-radius: var(--radius-xs);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reloadStatus {
+  color: var(--color-text-secondary);
+  background: var(--surface-hover);
+}
+
+.reloadError {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+}
+
 .pathBreadcrumbs {
   --breadcrumb-segment-max: 168px;
   --breadcrumb-final-segment-max: 260px;
@@ -389,26 +412,28 @@
   box-sizing: border-box;
   width: 320px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 8px 10px;
-  border-top: 1px solid var(--color-border-subtle);
-  background: color-mix(in srgb, var(--color-bg-elevated) 96%, transparent);
-  box-shadow: 0 -8px 18px rgb(15 23 42 / 6%);
+  gap: 7px;
+  padding: 9px 11px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 84%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 -8px 20px rgb(15 23 42 / 5%);
 }
 
 .annotationBottomActionsHost button {
   display: inline-flex;
   min-width: 0;
-  height: 36px;
+  height: 34px;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+  border-radius: 8px;
   color: var(--color-text-secondary);
-  background: var(--color-bg-base);
+  background: color-mix(in srgb, var(--surface-muted) 62%, transparent);
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   transition:
     border-color var(--motion-fast) var(--motion-ease-standard),
@@ -418,9 +443,9 @@
 
 .annotationBottomActionsHost button:hover:not(:disabled),
 .annotationBottomActionsHost button[aria-pressed="true"] {
-  border-color: color-mix(in srgb, var(--annotation-accent) 45%, var(--color-border-subtle));
+  border-color: color-mix(in srgb, var(--annotation-accent) 38%, var(--color-border-subtle));
   color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--annotation-accent) 10%, var(--color-bg-base));
+  background: color-mix(in srgb, var(--annotation-accent) 8%, var(--color-bg-elevated));
 }
 
 .annotationBottomActionsHost button:focus-visible {
@@ -435,36 +460,106 @@
 
 .documentAnnotationComposer {
   display: grid;
-  gap: 7px;
-  padding: 10px 10px 10px var(--annotation-card-inline-inset, 32px);
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-elevated);
+  gap: 9px;
+  padding: 12px 12px 13px var(--annotation-card-inline-inset, 32px);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 84%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 96%, var(--surface-muted));
+}
+
+.documentAnnotationComposerHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.documentAnnotationComposerHeader strong {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.documentAnnotationComposerHeader span {
+  color: var(--color-text-4);
+  font-size: 10.5px;
 }
 
 .documentAnnotationComposer textarea {
-  min-height: 64px;
+  box-sizing: border-box;
+  min-height: 76px;
   resize: vertical;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 6px;
-  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 88%, transparent);
+  border-radius: 9px;
+  outline: none;
+  padding: 9px 10px;
   color: var(--color-text-primary);
-  background: var(--color-bg-base);
+  background: color-mix(in srgb, var(--color-bg-elevated) 78%, var(--surface-muted));
+  box-shadow: inset 0 1px 2px rgb(15 23 42 / 4%);
+  caret-color: var(--annotation-accent);
   font: inherit;
+  font-size: 13px;
+  line-height: 1.58;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease-standard),
+    background-color var(--motion-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-fast) var(--motion-ease-standard);
 }
 
-.documentAnnotationComposer > div {
+.documentAnnotationComposer textarea::placeholder {
+  color: var(--color-text-4);
+}
+
+.documentAnnotationComposer textarea:focus {
+  border-color: color-mix(in srgb, var(--annotation-accent) 62%, var(--color-border-default));
+  background: var(--color-bg-elevated);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--annotation-accent) 11%, transparent),
+    inset 0 1px 2px rgb(15 23 42 / 4%);
+}
+
+.documentAnnotationComposerActions {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
 }
 
 .documentAnnotationComposer button {
-  min-height: 28px;
-  border: 0;
-  border-radius: 5px;
-  padding: 0 8px;
+  min-height: 29px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 80%, transparent);
+  border-radius: 7px;
+  padding: 0 10px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--surface-muted) 70%, transparent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease-standard),
+    color var(--motion-fast) var(--motion-ease-standard),
+    background-color var(--motion-fast) var(--motion-ease-standard);
+}
+
+.documentAnnotationComposer button:hover:not(:disabled) {
+  border-color: var(--color-border-default);
   color: var(--color-text-primary);
-  background: var(--surface-muted);
+  background: var(--surface-hover);
+}
+
+.documentAnnotationComposer .documentAnnotationComposerPrimary {
+  border-color: var(--color-text-primary);
+  color: var(--color-text-inverse);
+  background: var(--color-text-primary);
+}
+
+.documentAnnotationComposer .documentAnnotationComposerPrimary:hover:not(:disabled) {
+  border-color: var(--color-text-2);
+  color: var(--color-text-inverse);
+  background: var(--color-text-2);
+}
+
+.documentAnnotationComposer button:disabled {
+  cursor: default;
+  opacity: 0.42;
 }
 
 .body[data-chrome="panel"] {
@@ -607,6 +702,7 @@
 }
 
 .previewAnnotationMark[data-annotation-navigation-flash="true"],
+:global(.keydex-markdown-annotation-overlay-marker[data-annotation-navigation-flash="true"]),
 :global(.cm-annotation-mark[data-annotation-navigation-flash="true"]) {
   animation: annotationNavigationTargetFlash 720ms var(--motion-ease-out) 1;
 }

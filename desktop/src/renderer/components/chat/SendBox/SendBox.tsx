@@ -1745,12 +1745,28 @@ function quoteHoverDescription(quote: SelectedQuote): string {
 }
 
 function fileHoverDescription(file: SelectedFile): string {
-  return file.annotationReference ? `批注引用\n${file.path}` : file.path;
+  if (!file.annotationReference) {
+    return file.path;
+  }
+  const summary = file.annotationReference.body?.trim().replace(/\s+/g, " ") ?? "";
+  if (!summary) {
+    return "批注摘要暂不可用";
+  }
+  const maxLength = 160;
+  return summary.length > maxLength
+    ? `${summary.slice(0, maxLength - 1).trimEnd()}…`
+    : summary;
 }
 
 function selectedFileKindLabel(file: SelectedFile): string {
   if (file.annotationReference) {
-    return "文档批注";
+    if (file.annotationReference.kind === "document") {
+      return "全文批注";
+    }
+    if (file.annotationReference.kind === "text") {
+      return "选区批注";
+    }
+    return "批注";
   }
   if (file.source === "workspace") {
     return file.type === "directory" ? "工作区目录" : "工作区文件";

@@ -152,6 +152,10 @@ export interface ChatChannel {
   terminateCommand(sessionId: string, commandId: string): void;
   requestStatus(sessionId?: string): void;
   ping(): void;
+  bindWorkspaceWatch?(workspaceId: string): void;
+  unbindWorkspaceWatch?(workspaceId: string): void;
+  bindLocalFileWatch?(watchId: string, path: string): void;
+  unbindLocalFileWatch?(watchId: string): void;
 }
 
 export interface ConversationRuntimeOptions {
@@ -364,6 +368,10 @@ export function createConversationRuntime(
           }),
         requestStatus: (sessionId) => client.requestStatus(sessionId),
         ping: () => client.ping(),
+        bindWorkspaceWatch: (workspaceId) => client.bindWorkspaceWatch(workspaceId),
+        unbindWorkspaceWatch: (workspaceId) => client.unbindWorkspaceWatch(workspaceId),
+        bindLocalFileWatch: (watchId, path) => client.bindLocalFileWatch(watchId, path),
+        unbindLocalFileWatch: (watchId) => client.unbindLocalFileWatch(watchId),
       };
     },
   };

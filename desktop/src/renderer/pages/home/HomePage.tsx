@@ -22,6 +22,7 @@ import { WorkspaceSelector, type WorkspaceSelection } from "@/renderer/component
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import { useWorkspaceSkills } from "@/renderer/hooks/useWorkspaceSkills";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import { useWorkspaceFileWatchScope } from "@/renderer/providers/FileChangeProvider";
 import {
   useOptionalPreview,
   type PreviewFileRevealTarget,
@@ -89,6 +90,7 @@ export function HomePage({
   const previewContext = useOptionalPreview();
   const setPreviewHostContext = previewContext?.setPreviewHostContext;
   const selectedWorkspaceId = workspaceSelection.type === "workspace" ? workspaceSelection.workspace.id : "";
+  useWorkspaceFileWatchScope(selectedWorkspaceId);
   const workspaceSkillScope = useMemo(
     () => (selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : null),
     [selectedWorkspaceId],
@@ -574,10 +576,12 @@ function workspaceEntriesToSearchResults(entries: WorkspaceEntry[]): WorkspaceSe
 }
 
 function selectedFileRevealTarget(file: SelectedFile): PreviewFileRevealTarget | null {
-  if (!file.lineStart && !file.lineEnd && file.sourceStart == null && file.sourceEnd == null) {
+  const annotationId = file.annotationReference?.annotationId.trim() || null;
+  if (!annotationId && !file.lineStart && !file.lineEnd && file.sourceStart == null && file.sourceEnd == null) {
     return null;
   }
   return {
+    annotationId,
     selectedText: file.selectedText ?? null,
     lineStart: file.lineStart ?? null,
     lineEnd: file.lineEnd ?? null,

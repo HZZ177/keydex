@@ -31,3 +31,43 @@
 .composerStack > * {
   width: 100%;
 }
+
+.renameDialogForm {
+  display: grid;
+  gap: 18px;
+}
+
+.renameDialogField {
+  display: grid;
+  gap: 8px;
+}
+
+.renameDialogField span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.renameDialogField input {
+  width: 100%;
+  height: 36px;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  outline: none;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  padding: 0 10px;
+}
+
+.renameDialogField input:focus {
+  border-color: color-mix(in srgb, var(--color-text-primary) 36%, var(--color-border-default));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+}
+
+.renameDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

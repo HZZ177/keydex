@@ -1957,6 +1957,13 @@ describe("WorkbenchAssistantSurface", () => {
                 name: "main.ts",
                 type: "file",
                 source: "workspace",
+                annotationReference: {
+                  annotationId: "ann-main",
+                  body: "Check this implementation",
+                  kind: "text",
+                  path: "src/main.ts",
+                  workspaceId: "ws-1",
+                },
               },
             },
             quoteChipRequest: { requestId: 1, quote },
@@ -1980,6 +1987,7 @@ describe("WorkbenchAssistantSurface", () => {
     fireEvent.click(fileChip);
     await waitFor(() => {
       expect(screen.getByTestId("preview-file-panel-path").textContent).toBe("src/main.ts");
+      expect(screen.getByTestId("preview-file-panel-reveal").textContent).toContain('"annotationId":"ann-main"');
     });
 
     fireEvent.click(quoteChip);

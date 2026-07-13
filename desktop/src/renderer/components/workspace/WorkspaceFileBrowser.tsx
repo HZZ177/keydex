@@ -125,6 +125,7 @@ export function WorkspaceFileBrowser({
   const [markdownOutline, setMarkdownOutline] = useState<MarkdownOutlineItem[]>([]);
   const [markdownOutlineReady, setMarkdownOutlineReady] = useState(false);
   const [outlineRevealRequest, setOutlineRevealRequest] = useState<MarkdownOutlineRevealRequest | null>(null);
+  const [previewRefreshRequestId, setPreviewRefreshRequestId] = useState(0);
   const previewRequest = useMemo(
     () => (mountedPreviewPath ? ({ type: "file", path: mountedPreviewPath } as const) : null),
     [mountedPreviewPath],
@@ -464,6 +465,7 @@ export function WorkspaceFileBrowser({
               initialState={workspacePanelState}
               onSelectFile={openPreview}
               onStateChange={setWorkspacePanelState}
+              onManualRefresh={() => setPreviewRefreshRequestId((requestId) => requestId + 1)}
             />
           </div>
           {outlineAvailable ? (
@@ -507,6 +509,7 @@ export function WorkspaceFileBrowser({
                 workspaceId={workspaceId}
                 sessionId={sessionId}
                 request={previewRequest}
+                refreshRequestId={previewRefreshRequestId}
                 runtime={runtime}
                 chrome="panel"
                 bottomSafeArea={bottomSafeArea}

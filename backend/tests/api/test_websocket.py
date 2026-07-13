@@ -44,6 +44,16 @@ class FakeAgentFactory(AgentFactory):
         return self.model
 
 
+def _receive_until_action(websocket: Any, terminal_action: str, *, limit: int = 32) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for _ in range(limit):
+        event = websocket.receive_json()
+        events.append(event)
+        if event.get("action") == terminal_action:
+            return events
+    raise AssertionError(f"未在 {limit} 个 WebSocket 事件内收到 {terminal_action}")
+
+
 def _client(
     tmp_path,
     model: Any | None = None,
@@ -173,7 +183,13 @@ def test_websocket_chat_streams_projection_actions(tmp_path) -> None:
                 "model": "qwen-coder",
             }
         )
-        events = [ws.receive_json() for _ in range(4)]
+        received_events = _receive_until_action(ws, "completed")
+
+    events = [
+        event
+        for event in received_events
+        if event["action"] in {"turn_started", "stream", "completed"}
+    ]
 
     assert [event["action"] for event in events] == [
         "turn_started",
@@ -246,7 +262,14 @@ def test_websocket_chat_streams_tool_actions_and_history(tmp_path) -> None:
                 "model": "qwen-coder",
             }
         )
-        events = [ws.receive_json() for _ in range(5)]
+        received_events = _receive_until_action(ws, "completed")
+
+    events = [
+        event
+        for event in received_events
+        if event["action"]
+        in {"turn_started", "tool_start", "tool_end", "stream", "completed"}
+    ]
 
     assert [event["action"] for event in events] == [
         "turn_started",

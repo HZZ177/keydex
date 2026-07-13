@@ -21,6 +21,35 @@ describe("AnnotationRail", () => {
     expect(document.querySelector("[data-annotation-total-count='true']")?.textContent).toBe("4");
   });
 
+  it("shows the active text annotation position and routes previous and next navigation", () => {
+    const onNavigateNext = vi.fn();
+    const onNavigatePrevious = vi.fn();
+    renderRail(resolvedItems(), {
+      activeAnnotationId: "b",
+      onNavigateNext,
+      onNavigatePrevious,
+    });
+
+    expect(document.querySelector("[data-annotation-navigation-position='true']")?.textContent).toBe("2 / 2");
+    fireEvent.click(screen.getByLabelText("上一条选区批注"));
+    fireEvent.click(screen.getByLabelText("下一条选区批注"));
+
+    expect(onNavigatePrevious).toHaveBeenCalledTimes(1);
+    expect(onNavigateNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the same logical order for the position counter and adjacent navigation", () => {
+    const onNavigate = vi.fn();
+    renderRail(resolvedItems(), { activeAnnotationId: "a", onNavigate });
+
+    expect(document.querySelector("[data-annotation-navigation-position='true']")?.textContent).toBe("1 / 2");
+    fireEvent.click(screen.getByLabelText("下一条选区批注"));
+
+    expect(onNavigate).toHaveBeenCalledWith(expect.objectContaining({
+      record: expect.objectContaining({ id: "b" }),
+    }));
+  });
+
   it("positions resolved cards from the deterministic lane layout and marks active", () => {
     const items = resolvedItems();
     renderRail(items, { activeAnnotationId: "b" });

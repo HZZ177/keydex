@@ -17,7 +17,7 @@ describe("ChatLayout", () => {
     );
 
     expect(screen.getByRole("heading", { name: "对话 thread-1" })).not.toBeNull();
-    expect(screen.getByLabelText("更多对话操作")).not.toBeNull();
+    expect(screen.queryByLabelText("更多对话操作")).toBeNull();
     expect(screen.getByTestId("chat-reading-column")).not.toBeNull();
     expect(screen.getByTestId("conversation-composer")).not.toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
@@ -40,6 +40,11 @@ describe("ChatLayout", () => {
 
   it("keeps the message flow mounted when the conversation menu opens", () => {
     let mounts = 0;
+    const onExport = vi.fn();
+    const onFork = vi.fn();
+    const onRename = vi.fn();
+    const onDelete = vi.fn();
+    const onRefresh = vi.fn();
     function MessageFlow() {
       useEffect(() => {
         mounts += 1;
@@ -48,7 +53,20 @@ describe("ChatLayout", () => {
     }
 
     render(
-      <ChatLayout title="对话 thread-1">
+      <ChatLayout
+        title="对话 thread-1"
+        sessionActions={{
+          canExport: true,
+          onExport,
+          canFork: true,
+          onFork,
+          canMutate: true,
+          onRename,
+          onDelete,
+          showRefresh: true,
+          onRefresh,
+        }}
+      >
         <MessageFlow />
       </ChatLayout>,
     );
@@ -56,8 +74,17 @@ describe("ChatLayout", () => {
     expect(screen.queryByRole("complementary")).toBeNull();
     expect(screen.getByTestId("message-flow")).not.toBeNull();
     fireEvent.click(screen.getByLabelText("更多对话操作"));
-    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
-    expect(screen.getByRole("menuitem", { name: "复制标题" })).not.toBeNull();
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "导出对话记录",
+      "从对话派生",
+      "重命名",
+      "删除",
+      "刷新",
+    ]);
+    expect(screen.queryByRole("menuitem", { name: "复制标题" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "重命名" }));
+    expect(onRename).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menu", { name: "对话操作菜单" })).toBeNull();
     expect(screen.queryByText("已连接")).toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
     expect(mounts).toBe(1);

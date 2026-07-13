@@ -10,6 +10,8 @@ export interface SelectedFile {
   source: SelectedFileSource;
   annotationReference?: {
     annotationId: string;
+    body?: string;
+    kind?: "document" | "text";
     path: string;
     workspaceId: string;
   } | null;

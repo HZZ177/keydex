@@ -708,6 +708,70 @@ describe("ConversationPage", () => {
     expect(navigateToConversation).toHaveBeenCalledWith("ses-source");
   });
 
+  it("uses the sidebar session actions in the conversation header menu", async () => {
+    const session = agentSession({ id: "ses-1", title: "原会话名称" });
+    const messages = [
+      historyMessage("user", "历史问题", { messageEventId: "evt-user-1", turnIndex: 1 }),
+      historyMessage("assistant", "历史回答", { messageEventId: "evt-ai-1", turnIndex: 1 }),
+    ];
+    const updateSession = vi.fn().mockResolvedValue({ ...session, title: "新会话名称" });
+    const deleteSession = vi.fn().mockResolvedValue(undefined);
+    const forkSession = vi.fn().mockResolvedValue({
+      session: agentSession({ id: "ses-fork", title: "派生会话" }),
+      source: branchSource({ message_event_id: "evt-ai-1" }),
+    });
+    const onNavigateToConversation = vi.fn();
+    const onDeleted = vi.fn();
+    const { runtime } = fakeRuntime({
+      session,
+      history: messages,
+      updateSession,
+      deleteSession,
+      forkSession,
+    });
+
+    renderConversationWithNotifications(
+      <ConversationPage
+        threadId="ses-1"
+        runtime={runtime}
+        onNavigateToConversation={onNavigateToConversation}
+        onDeleted={onDeleted}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "原会话名称" })).not.toBeNull();
+    fireEvent.click(screen.getByLabelText("更多对话操作"));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "导出对话记录",
+      "从对话派生",
+      "重命名",
+      "删除",
+      "刷新",
+    ]);
+    expect(screen.queryByRole("menuitem", { name: "复制标题" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "重命名" }));
+    fireEvent.change(screen.getByLabelText("会话名称"), { target: { value: "新会话名称" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存重命名" }));
+    await waitFor(() => expect(updateSession).toHaveBeenCalledWith("ses-1", { title: "新会话名称" }));
+    expect(await screen.findByRole("heading", { name: "新会话名称" })).not.toBeNull();
+
+    fireEvent.click(screen.getByLabelText("更多对话操作"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "刷新" }));
+    await waitFor(() => expect(runtime.conversation.loadHistory).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByLabelText("更多对话操作"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "从对话派生" }));
+    await waitFor(() => expect(forkSession).toHaveBeenCalledWith("ses-1", { messageEventId: "evt-ai-1" }));
+    expect(onNavigateToConversation).toHaveBeenCalledWith("ses-fork");
+
+    fireEvent.click(screen.getByLabelText("更多对话操作"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "删除" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    await waitFor(() => expect(deleteSession).toHaveBeenCalledWith("ses-1"));
+    expect(onDeleted).toHaveBeenCalledTimes(1);
+  });
+
   it("confirms and reverses a restored user message in the current session", async () => {
     const navigateToConversation = vi.fn();
     const session = agentSession({ id: "ses-1", title: "源会话" });
@@ -3053,6 +3117,10 @@ function fakeRuntime({
     source: branchSource(),
   }),
   compressContext = vi.fn().mockResolvedValue(undefined),
+  updateSession = vi.fn().mockImplementation((_sessionId: string, patch: Partial<AgentSession>) =>
+    Promise.resolve({ ...session, ...patch }),
+  ),
+  deleteSession = vi.fn().mockResolvedValue(undefined),
   loadHistory,
   workspaceSearch = vi.fn().mockResolvedValue([]),
   workspaceListSkills = vi.fn().mockResolvedValue({
@@ -3076,6 +3144,8 @@ function fakeRuntime({
   forkSession?: ReturnType<typeof vi.fn>;
   reverseSession?: ReturnType<typeof vi.fn>;
   compressContext?: ReturnType<typeof vi.fn>;
+  updateSession?: ReturnType<typeof vi.fn>;
+  deleteSession?: ReturnType<typeof vi.fn>;
   loadHistory?: ReturnType<typeof vi.fn>;
   workspaceSearch?: ReturnType<typeof vi.fn>;
   workspaceListSkills?: ReturnType<typeof vi.fn>;
@@ -3108,9 +3178,8 @@ function fakeRuntime({
       forkSession,
       reverseSession,
       compressContext,
-      updateSession: vi.fn().mockImplementation((_sessionId: string, patch: Partial<AgentSession>) =>
-        Promise.resolve({ ...session, ...patch }),
-      ),
+      updateSession,
+      deleteSession,
       loadHistory:
         loadHistory ??
         (historyError

@@ -3029,10 +3029,12 @@ function workspaceEntriesToSearchResults(entries: WorkspaceEntry[]): WorkspaceSe
 }
 
 function selectedFileRevealTarget(file: SelectedFile): PreviewFileRevealTarget | null {
-  if (!file.lineStart && !file.lineEnd && file.sourceStart == null && file.sourceEnd == null) {
+  const annotationId = file.annotationReference?.annotationId.trim() || null;
+  if (!annotationId && !file.lineStart && !file.lineEnd && file.sourceStart == null && file.sourceEnd == null) {
     return null;
   }
   return {
+    annotationId,
     selectedText: file.selectedText ?? null,
     lineStart: file.lineStart ?? null,
     lineEnd: file.lineEnd ?? null,

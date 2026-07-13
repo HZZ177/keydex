@@ -38,6 +38,7 @@ import {
 } from "@/renderer/providers/PreviewProvider";
 import type { PreviewMarkdownViewDescriptor, PreviewRequest } from "@/renderer/providers/previewTypes";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import { useWorkspaceFileWatchScope } from "@/renderer/providers/FileChangeProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { isAbsoluteFilePath, workspaceRelativeFilePath } from "@/renderer/utils/fileLinks";
 import type { AgentSession, PendingInputMode, Workspace } from "@/types/protocol";
@@ -147,6 +148,7 @@ export function WorkbenchModePage({
   onOpenMcpSettings,
 }: WorkbenchModePageProps) {
   const notifications = useNotifications();
+  useWorkspaceFileWatchScope(workspaceId);
   const [conversationSendDefaultMode, setConversationSendDefaultMode] = useState<PendingInputMode>("steer");
   const runtimeConnection = useOptionalRuntimeConnection();
   const backendReady = runtimeConnection?.ready ?? true;
@@ -179,6 +181,10 @@ export function WorkbenchModePage({
   );
   const [workbenchPreviewTabs, setWorkbenchPreviewTabs] =
     useState<WorkbenchPreviewTabsState>(initialWorkbenchUiState?.previewTabs ?? EMPTY_WORKBENCH_PREVIEW_TABS);
+  const workbenchPreviewTabsRef = useRef(workbenchPreviewTabs);
+  useEffect(() => {
+    workbenchPreviewTabsRef.current = workbenchPreviewTabs;
+  }, [workbenchPreviewTabs]);
   const retainedWorkbenchMarkdownViewsRef = useRef(new Map<string, PreviewMarkdownViewDescriptor>());
   useEffect(() => {
     const next = new Map(workbenchPreviewTabs.tabs.map((tab) => [tab.id, tab.markdownView]));
@@ -425,11 +431,36 @@ export function WorkbenchModePage({
       requestId?: number,
       sourceMarkdownView?: PreviewMarkdownViewDescriptor | null,
     ) => {
+      const tabId = workbenchPreviewTabId(request);
+      const existingActiveTab = workbenchPreviewTabsRef.current.activeTabId === tabId
+        ? workbenchPreviewTabsRef.current.tabs.find((item) => item.id === tabId) ?? null
+        : null;
+      const canRevealInActiveTab = existingActiveTab?.request.type === request.type;
+      const nextRequestId = requestId ?? nextMainPreviewRequestId();
+      if (existingActiveTab && canRevealInActiveTab) {
+        setWorkbenchPreviewTabs((current) => {
+          const next = {
+            activeTabId: tabId,
+            tabs: current.tabs.map((item) => item.id === tabId
+              ? {
+                  ...item,
+                  requestId: nextRequestId,
+                  revealTarget,
+                  renderContext: renderContext ?? item.renderContext,
+                  sourceEntryId: sourceEntryId ?? item.sourceEntryId,
+                }
+              : item),
+          };
+          workbenchPreviewTabsRef.current = next;
+          return next;
+        });
+        return;
+      }
       resetMainPreviewOutline();
       const tab: WorkbenchMainPreviewTabState = {
-        id: workbenchPreviewTabId(request),
+        id: tabId,
         request,
-        requestId: requestId ?? nextMainPreviewRequestId(),
+        requestId: nextRequestId,
         revealTarget,
         renderContext,
         sourceEntryId,
@@ -438,7 +469,7 @@ export function WorkbenchModePage({
         markdownView: workbenchMarkdownViewDescriptor(
           request,
           renderContext,
-          workbenchPreviewTabId(request),
+          tabId,
           sourceMarkdownView,
         ),
       };
@@ -455,10 +486,12 @@ export function WorkbenchModePage({
                     : tab.markdownView,
                 }
               : item));
-        return {
+        const next = {
           activeTabId: tab.id,
           tabs,
         };
+        workbenchPreviewTabsRef.current = next;
+        return next;
       });
     },
     [nextMainPreviewRequestId, resetMainPreviewOutline],
@@ -1422,6 +1455,7 @@ function WorkbenchMainFilePreview({
       return null;
     }
     return {
+      annotationId: revealTarget.annotationId ?? null,
       requestId,
       selectedText: revealTarget.selectedText ?? null,
       lineStart: revealTarget.lineStart ?? null,
@@ -1431,6 +1465,7 @@ function WorkbenchMainFilePreview({
     };
   }, [
     requestId,
+    revealTarget?.annotationId,
     revealTarget?.lineEnd,
     revealTarget?.lineStart,
     revealTarget?.selectedText,

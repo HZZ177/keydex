@@ -29,6 +29,7 @@ import {
 } from "@/renderer/markdownRuntime/mapping";
 import type { AnnotationRenderState } from "@/renderer/features/annotations/navigation/types";
 import type { MarkdownAnnotationBinding } from "@/renderer/features/annotations/adapters/MarkdownAnnotationAdapter";
+import { smoothScrollElementTo } from "@/renderer/features/annotations/navigation/AnnotationNavigationEffects";
 import { markdownRuntimeDiagnostics } from "@/renderer/markdownRuntime/diagnostics";
 import { stableMarkdownIdentityHash } from "@/renderer/markdownRuntime/document/identity";
 import {
@@ -612,9 +613,7 @@ function installRuntimeFeatures(state: HostState, props: FileMarkdownRuntimeHost
       scrollElement: state.scrollElement,
       revealBlock: async (blockId, signal) => {
         if (signal.aborted) throw signal.reason;
-        if (!revealBlock(state, blockId, { align: "center", behavior: "smooth" })) {
-          throw new Error(`Markdown block ${blockId} is unavailable`);
-        }
+        await revealAnnotationBlock(state, blockId, signal);
       },
     });
   }
@@ -1094,6 +1093,44 @@ function revealBlock(
   persistScrollAnchor(state, block.index);
   syncRuntimeFeatureState(state, state.featureProps);
   return true;
+}
+
+async function revealAnnotationBlock(
+  state: HostState,
+  blockId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const blockIndex = state.view.getBlockIndex(blockId);
+  const block = blockIndex === null ? null : state.snapshot?.blocks[blockIndex];
+  if (!block) {
+    throw new Error(`Markdown block ${blockId} is unavailable`);
+  }
+  state.view.expandForBlock(blockId);
+  const index = state.view.getHeightIndex();
+  if (!index) {
+    throw new Error(`Markdown block ${blockId} is unavailable`);
+  }
+  const scroll = state.scrollElement;
+  const blockTop = index.offsetOf(block.index);
+  const unclampedTarget = blockTop - scroll.clientHeight / 2 + index.heightAt(block.index) / 2;
+  const target = Math.max(0, Math.min(
+    unclampedTarget,
+    Math.max(0, index.totalHeight - scroll.clientHeight),
+  ));
+  if (state.environment.behavior("smooth") === "auto") {
+    scroll.scrollTo({ top: target, behavior: "auto" });
+  } else {
+    await smoothScrollElementTo(scroll, target, signal);
+  }
+  if (signal.aborted) {
+    throw signal.reason;
+  }
+  state.view.updateViewport(
+    { scrollTop: target, viewportHeight: scroll.clientHeight },
+    { origin: "programmatic" },
+  );
+  persistScrollAnchor(state, block.index);
+  syncRuntimeFeatureState(state, state.featureProps);
 }
 
 function refineSourceReveal(state: HostState): void {

@@ -1024,7 +1024,7 @@ describe("SendBox", () => {
       />,
     );
 
-    expect(screen.getAllByRole("button", { name: "打开文件引用 README.md" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "文件引用 README.md" })).toHaveLength(2);
   });
 
   it("removes only the clicked same-path annotation file chip after a controlled batched request", async () => {
@@ -1068,15 +1068,15 @@ describe("SendBox", () => {
     render(<ControlledBatchedFiles />);
 
     await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: "打开文件引用 README.md" })).toHaveLength(2);
+      expect(screen.getAllByRole("button", { name: "文件引用 README.md" })).toHaveLength(2);
     });
     fireEvent.click(screen.getAllByRole("button", { name: "移除文件引用 README.md" })[1]);
     await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: "打开文件引用 README.md" })).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: "文件引用 README.md" })).toHaveLength(1);
     });
     fireEvent.click(screen.getAllByRole("button", { name: "移除文件引用 README.md" })[0]);
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "打开文件引用 README.md" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "文件引用 README.md" })).toBeNull();
     });
   });
 
@@ -1117,11 +1117,11 @@ describe("SendBox", () => {
 
     render(<ControlledSamePathFiles />);
 
-    expect(screen.getAllByRole("button", { name: "打开文件引用 README.md" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "文件引用 README.md" })).toHaveLength(2);
     fireEvent.click(screen.getAllByRole("button", { name: "移除文件引用 README.md" })[1]);
-    expect(screen.getAllByRole("button", { name: "打开文件引用 README.md" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "文件引用 README.md" })).toHaveLength(1);
     fireEvent.click(screen.getAllByRole("button", { name: "移除文件引用 README.md" })[0]);
-    expect(screen.queryByRole("button", { name: "打开文件引用 README.md" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "文件引用 README.md" })).toBeNull();
   });
 
   it("removes a remaining same-path annotation file chip after deleting the first one", () => {
@@ -1162,9 +1162,9 @@ describe("SendBox", () => {
     render(<ControlledSamePathFiles />);
 
     fireEvent.click(screen.getAllByRole("button", { name: "移除文件引用 README.md" })[0]);
-    expect(screen.getAllByRole("button", { name: "打开文件引用 README.md" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "文件引用 README.md" })).toHaveLength(1);
     fireEvent.click(screen.getAllByRole("button", { name: "移除文件引用 README.md" })[0]);
-    expect(screen.queryByRole("button", { name: "打开文件引用 README.md" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "文件引用 README.md" })).toBeNull();
   });
 
   it("shows the full file path in a hover card for top file chips", () => {
@@ -1207,6 +1207,56 @@ describe("SendBox", () => {
       expect(hoverCard?.textContent).toContain("FileWithLongName.tsx");
       expect(hoverCard?.textContent).toContain(path);
       expect(fireEvent.mouseDown(hoverCard as Element)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows annotation type and summary instead of a fixed annotation label and file path", () => {
+    vi.useFakeTimers();
+    const path = "docs/README.md";
+
+    try {
+      render(
+        <SendBox
+          value=""
+          runtimeState="idle"
+          canSend={false}
+          canStop={false}
+          externalFileRequest={{
+            requestId: 1,
+            file: {
+              path,
+              name: "README.md",
+              type: "file",
+              source: "workspace",
+              annotationReference: {
+                annotationId: "ann-alpha",
+                body: "  Explain   the alpha section\nwith more context.  ",
+                kind: "text",
+                path,
+                workspaceId: "ws-1",
+              },
+            },
+          }}
+          onChange={vi.fn()}
+          onSend={vi.fn()}
+          onStop={vi.fn()}
+        />,
+      );
+
+      fireEvent.mouseEnter(screen.getByText("README.md"));
+      act(() => {
+        vi.advanceTimersByTime(220);
+      });
+
+      const hoverCard = document.querySelector('[data-sendbox-context-hover-card="true"]');
+      expect(hoverCard?.textContent).toContain("README.md");
+      expect(hoverCard?.textContent).toContain("选区批注");
+      expect(hoverCard?.textContent).toContain("Explain the alpha section with more context.");
+      expect(hoverCard?.textContent).not.toContain(path);
+      expect(hoverCard?.textContent).not.toContain("批注引用");
+      expect(hoverCard?.textContent).not.toContain("文档批注");
     } finally {
       vi.useRealTimers();
     }

@@ -32,6 +32,7 @@ export interface PreviewQuoteSelectionRequest {
 }
 
 export interface PreviewFileRevealTarget {
+  annotationId?: string | null;
   selectedText?: string | null;
   lineStart?: number | null;
   lineEnd?: number | null;
@@ -41,6 +42,8 @@ export interface PreviewFileRevealTarget {
 
 export interface PreviewAnnotationChatRequest {
   annotationId: string;
+  body?: string;
+  kind?: "document" | "text";
   path: string;
   workspaceId: string;
 }

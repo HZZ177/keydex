@@ -782,6 +782,18 @@ describe("AppRouter", () => {
     );
     fireEvent.click(await within(tree).findByTestId("workspace-browser-outline-tab"));
     expect(await within(tree).findByText("Workbench file")).not.toBeNull();
+    const previewRoot = document.querySelector("[data-file-preview-root='true']");
+    const readCount = vi.mocked(runtime.workspace.readFile).mock.calls.length;
+
+    fireEvent.click(screen.getByTestId("reveal-workbench-file-readme-line"));
+
+    await waitFor(() => expect(
+      document.querySelector<HTMLElement>("[data-markdown-source-reveal-active='true'][data-markdown-block-id]")
+        ?.dataset.markdownSourceRevealLineStart,
+    ).toBe("3"));
+    expect(document.querySelector("[data-file-preview-root='true']")).toBe(previewRoot);
+    expect(runtime.workspace.readFile).toHaveBeenCalledTimes(readCount);
+    expect(within(tree).getByText("Workbench file")).not.toBeNull();
     expect(screen.queryByTestId("workspace-file-browser-preview")).toBeNull();
     expect(shell.dataset.rightSidebar).toBe("closed");
     expect(screen.queryByLabelText("展开右侧栏")).toBeNull();
@@ -1768,6 +1780,13 @@ function WorkbenchFileOpenProbe() {
     <>
       <button type="button" data-testid="open-workbench-file-readme" onClick={() => preview.openFilePanel("README.md")}>
         测试打开工作台文件
+      </button>
+      <button
+        type="button"
+        data-testid="reveal-workbench-file-readme-line"
+        onClick={() => preview.openFilePanel("README.md", undefined, { lineStart: 3, lineEnd: 3 })}
+      >
+        Reveal workbench README line
       </button>
       <button
         type="button"

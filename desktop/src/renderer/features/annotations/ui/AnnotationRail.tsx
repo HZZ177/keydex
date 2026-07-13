@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronUp, MessageSquareText, X } from "lucide-react";
 
 import type { ResolvedTextAnnotation } from "../domain/resolutions";
 import { layoutAnnotationLane, type AnnotationLanePlacement } from "../layout/AnnotationLaneLayout";
@@ -47,6 +47,8 @@ export function AnnotationRail({
   onLayout,
   onHoverChange,
   onSave,
+  onNavigateNext,
+  onNavigatePrevious,
   onStartChat,
   reservedTop = 64,
   top,
@@ -66,6 +68,8 @@ export function AnnotationRail({
   onLayout?(placements: readonly AnnotationLanePlacement[]): void;
   onHoverChange(annotationId: string | null): void;
   onSave(annotationId: string, body: string): Promise<boolean>;
+  onNavigateNext?(): void;
+  onNavigatePrevious?(): void;
   onStartChat?(item: ResolvedTextAnnotation): void;
   reservedTop?: number;
   top?: ReactNode;
@@ -127,6 +131,43 @@ export function AnnotationRail({
     () => new Map(items.map((item) => [item.resolution.record.id, item.resolution])),
     [items],
   );
+  const orderedNavigationItems = useMemo(
+    () => [...items].sort((left, right) => (
+      left.resolution.projection.logicalRange.start - right.resolution.projection.logicalRange.start
+      || left.resolution.record.id.localeCompare(right.resolution.record.id)
+    )),
+    [items],
+  );
+  const activeNavigationIndex = orderedNavigationItems.findIndex(
+    (item) => item.resolution.record.id === activeAnnotationId,
+  );
+  const navigateAdjacent = useCallback((direction: -1 | 1) => {
+    if (orderedNavigationItems.length === 0) {
+      return;
+    }
+    const origin = activeNavigationIndex >= 0
+      ? activeNavigationIndex
+      : direction > 0 ? -1 : 0;
+    const targetIndex = (origin + direction + orderedNavigationItems.length) % orderedNavigationItems.length;
+    const target = orderedNavigationItems[targetIndex];
+    if (target) {
+      onNavigate(target.resolution);
+    }
+  }, [activeNavigationIndex, onNavigate, orderedNavigationItems]);
+  const handleNavigatePrevious = useCallback(() => {
+    if (onNavigatePrevious) {
+      onNavigatePrevious();
+      return;
+    }
+    navigateAdjacent(-1);
+  }, [navigateAdjacent, onNavigatePrevious]);
+  const handleNavigateNext = useCallback(() => {
+    if (onNavigateNext) {
+      onNavigateNext();
+      return;
+    }
+    navigateAdjacent(1);
+  }, [navigateAdjacent, onNavigateNext]);
 
   useLayoutEffect(() => {
     onLayout?.(placements);
@@ -140,8 +181,25 @@ export function AnnotationRail({
       style={{ height: laneLayout.documentHeight }}
     >
       <header className={styles.header}>
-        <div><strong>批注</strong><span data-annotation-total-count="true">{totalCount}</span></div>
-        <button aria-label="收起批注栏" onClick={onClose} type="button"><X size={15} /></button>
+        <div className={styles.headerTitle}>
+          <MessageSquareText aria-hidden="true" className={styles.headerIcon} size={16} />
+          <strong>批注</strong>
+          <span className={styles.headerCount} data-annotation-total-count="true">{totalCount}</span>
+        </div>
+        <div className={styles.headerActions}>
+          <div aria-label="选区批注导航" className={styles.headerNavigation} role="group">
+            <button aria-label="上一条选区批注" disabled={orderedNavigationItems.length === 0} onClick={handleNavigatePrevious} type="button">
+              <ChevronUp size={14} />
+            </button>
+            <span className={styles.headerPosition} data-annotation-navigation-position="true">
+              {activeNavigationIndex >= 0 ? activeNavigationIndex + 1 : "–"} / {orderedNavigationItems.length}
+            </span>
+            <button aria-label="下一条选区批注" disabled={orderedNavigationItems.length === 0} onClick={handleNavigateNext} type="button">
+              <ChevronDown size={14} />
+            </button>
+          </div>
+          <button aria-label="收起批注栏" onClick={onClose} type="button"><X size={15} /></button>
+        </div>
       </header>
       {top ? <div className={styles.topSection}>{top}</div> : null}
       <div className={styles.lane}>

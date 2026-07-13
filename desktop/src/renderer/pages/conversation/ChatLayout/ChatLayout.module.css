@@ -131,7 +131,7 @@
   left: calc(100% - 26px);
   z-index: 30;
   display: grid;
-  width: 220px;
+  width: 152px;
   gap: 3px;
   border: 1px solid var(--color-border-default);
   border-radius: 10px;
@@ -166,6 +166,11 @@
 .menuItem:focus-visible {
   background: var(--surface-hover);
   color: var(--color-text-primary);
+}
+
+.menuItem:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .menuItem span {

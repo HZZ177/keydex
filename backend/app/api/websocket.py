@@ -36,6 +36,7 @@ from backend.app.services.chat_stream_manager import (
     ChatStreamAlreadyRunningError,
     ChatStreamMissingSessionError,
 )
+from backend.app.services.file_change_hub import normalize_local_file_path
 from backend.app.services.chat_types import (
     PENDING_INPUT_MODE_STEER,
     PENDING_INPUT_MODES,
@@ -62,7 +63,8 @@ class WebSocketChannelAdapter:
 
     async def send(self, *, session_id: str, action: str, data: dict[str, Any]) -> bool:
         payload = dict(data or {})
-        payload.setdefault("session_id", session_id)
+        if session_id:
+            payload.setdefault("session_id", session_id)
         async with self._send_lock:
             await self.websocket.send_text(
                 json.dumps({"action": action, "data": payload}, ensure_ascii=False)
@@ -77,6 +79,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
     trace_token = trace_id_var.set(connection_trace_id)
     runtime = websocket.app.state.runtime
     keydex_watcher = getattr(websocket.app.state, "keydex_workspace_watcher", None)
+    file_change_hub = getattr(websocket.app.state, "file_change_hub", None)
     settings = runtime.settings
     repositories = runtime.repositories
     stream_manager = runtime.chat_stream_manager
@@ -138,6 +141,77 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     f"[WebSocket] 收到 action | trace_id={connection_trace_id} | "
                     f"action={action} | bound_session_id={bound_session_id or '-'}"
                 )
+                if action == "bind_workspace_watch":
+                    workspace_id = str(payload.get("workspace_id") or "").strip()
+                    if not workspace_id:
+                        await send_error("missing_workspace", "workspace_id 必填")
+                        continue
+                    workspace = repositories.workspaces.get(workspace_id)
+                    if workspace is None:
+                        await send_error("workspace_not_found", "工作区不存在")
+                        continue
+                    if file_change_hub is None:
+                        await send_error("file_watch_unavailable", "文件变动监听服务未启用")
+                        continue
+                    sequence = await file_change_hub.subscribe_workspace(
+                        workspace_id,
+                        workspace.root_path,
+                        adapter,
+                    )
+                    await send(
+                        "workspaceWatchBound",
+                        {
+                            "workspace_id": workspace_id,
+                            "sequence": sequence,
+                            "resync_required": True,
+                        },
+                    )
+                    continue
+
+                if action == "unbind_workspace_watch":
+                    workspace_id = str(payload.get("workspace_id") or "").strip()
+                    if file_change_hub is not None and workspace_id:
+                        await file_change_hub.unsubscribe_workspace(workspace_id, adapter)
+                    await send("workspaceWatchUnbound", {"workspace_id": workspace_id})
+                    continue
+
+                if action == "bind_local_file_watch":
+                    watch_id = str(payload.get("watch_id") or "").strip()
+                    raw_path = str(payload.get("path") or "").strip()
+                    if not watch_id:
+                        await send_error("missing_watch_id", "watch_id 必填")
+                        continue
+                    try:
+                        path = normalize_local_file_path(raw_path, require_file=True)
+                    except ValueError as exc:
+                        await send_error("invalid_local_file_watch", str(exc))
+                        continue
+                    if file_change_hub is None:
+                        await send_error("file_watch_unavailable", "文件变动监听服务未启用")
+                        continue
+                    normalized_path, sequence = await file_change_hub.subscribe_local_file(
+                        watch_id,
+                        path,
+                        adapter,
+                    )
+                    await send(
+                        "localFileWatchBound",
+                        {
+                            "watch_id": watch_id,
+                            "path": str(normalized_path),
+                            "sequence": sequence,
+                            "resync_required": True,
+                        },
+                    )
+                    continue
+
+                if action == "unbind_local_file_watch":
+                    watch_id = str(payload.get("watch_id") or "").strip()
+                    if file_change_hub is not None and watch_id:
+                        await file_change_hub.unsubscribe_local_file(watch_id, adapter)
+                    await send("localFileWatchUnbound", {"watch_id": watch_id})
+                    continue
+
                 if action == "create_session":
                     session = session_service.create_session(
                         session_id=str(payload.get("session_id") or new_id()),
@@ -590,6 +664,8 @@ async def chat_websocket(websocket: WebSocket) -> None:
                 await send_error("ws_action_error", str(exc))
     finally:
         await stream_manager.unsubscribe_all(adapter)
+        if file_change_hub is not None:
+            await file_change_hub.unsubscribe_all(adapter)
         for session_id in list(bound_session_ids):
             await _unregister_keydex_watcher(keydex_watcher, session_id)
         trace_id_var.reset(trace_token)

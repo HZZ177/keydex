@@ -44,7 +44,7 @@ export function AnnotationRetargetCard({
       {error || localError ? <div className={styles.cardError} role="alert">{error || localError}</div> : null}
       <div className={styles.cardActions}>
         <button aria-label="取消重新关联" disabled={pending} onClick={onCancel} type="button"><X size={14} /></button>
-        <button aria-label="确认重新关联" disabled={pending || !selector} onClick={() => void confirm()} type="button"><Check size={14} /></button>
+        <button aria-label="确认重新关联" className={styles.confirmAction} disabled={pending || !selector} onClick={() => void confirm()} type="button"><Check size={14} /></button>
       </div>
     </article>
   );

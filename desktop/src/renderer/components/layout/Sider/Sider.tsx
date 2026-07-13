@@ -1,26 +1,21 @@
 import {
   ChevronDown,
-  Download,
   Folder,
   FolderOpen,
   GitBranch,
-  GitBranchPlus,
   LoaderCircle,
   MessageCircle,
   Moon,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
-  Pencil,
   Pin,
   PinOff,
-  RefreshCw,
   Search,
   Settings,
   ShieldCheck,
   SquarePen,
   Sun,
-  Trash2,
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -32,11 +27,13 @@ import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { AppDialog, ConfirmDialog, DialogButton } from "@/renderer/components/dialog";
 import type { AppMode } from "@/renderer/components/layout/appMode";
 import { LoadingSkeleton } from "@/renderer/components/loading";
+import { SessionActionMenuItems } from "@/renderer/components/session/SessionActionMenuItems";
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import {
   emitSessionCreated,
   emitSessionUpdated,
   subscribeSessionCreated,
+  subscribeSessionDeleted,
   subscribeSessionUpdated,
   type AgentSessionUpdate,
 } from "@/renderer/events/sessionEvents";
@@ -373,6 +370,15 @@ export function Sider({
     }
     return subscribeSessionCreated((session) => {
       setLoadedSessionsAndCache((items) => upsertSession(items, session));
+    });
+  }, [controlled, setLoadedSessionsAndCache]);
+
+  useEffect(() => {
+    if (controlled) {
+      return;
+    }
+    return subscribeSessionDeleted((sessionId) => {
+      setLoadedSessionsAndCache((items) => items.filter((item) => item.id !== sessionId));
     });
   }, [controlled, setLoadedSessionsAndCache]);
 
@@ -1576,78 +1582,39 @@ function SiderSection({
                         aria-label={`会话操作 ${item.title}`}
                         style={actionMenuPosition}
                       >
-                        {canExport ? (
-                          <button
-                            disabled={isExporting}
-                            role="menuitem"
-                            type="button"
-                            onClick={() => {
-                              setHoveredSession(null);
-                              closeActionMenu();
-                              onExportSession?.(item);
-                            }}
-                          >
-                            <Download size={13} aria-hidden="true" />
-                            <span>{isExporting ? "导出中" : "导出记录"}</span>
-                          </button>
-                        ) : null}
-                        {canFork ? (
-                          <button
-                            disabled={isForking}
-                            role="menuitem"
-                            type="button"
-                            onClick={() => {
-                              setHoveredSession(null);
-                              closeActionMenu();
-                              onForkSession?.(item);
-                            }}
-                          >
-                            <GitBranchPlus size={13} aria-hidden="true" />
-                            <span>{isForking ? "派生中" : "从对话派生"}</span>
-                          </button>
-                        ) : null}
-                        {canMutate ? (
-                          <>
-                            <button
-                              role="menuitem"
-                              type="button"
-                              onClick={() => {
-                                setHoveredSession(null);
-                                closeActionMenu();
-                                onStartRename?.(item);
-                              }}
-                            >
-                              <Pencil size={13} aria-hidden="true" />
-                              <span>重命名</span>
-                            </button>
-                            <button
-                              role="menuitem"
-                              type="button"
-                              onClick={() => {
-                                setHoveredSession(null);
-                                closeActionMenu();
-                                onConfirmDelete?.(item.id);
-                              }}
-                            >
-                              <Trash2 size={13} aria-hidden="true" />
-                              <span>删除</span>
-                            </button>
-                          </>
-                        ) : null}
-                        {showContextRefresh ? (
-                          <button
-                            role="menuitem"
-                            type="button"
-                            onClick={() => {
-                              setHoveredSession(null);
-                              closeActionMenu();
-                              void onRefresh?.();
-                            }}
-                          >
-                            <RefreshCw size={13} aria-hidden="true" />
-                            <span>刷新</span>
-                          </button>
-                        ) : null}
+                        <SessionActionMenuItems
+                          canExport={canExport}
+                          exporting={isExporting}
+                          onExport={() => {
+                            setHoveredSession(null);
+                            closeActionMenu();
+                            onExportSession?.(item);
+                          }}
+                          canFork={canFork}
+                          forking={isForking}
+                          onFork={() => {
+                            setHoveredSession(null);
+                            closeActionMenu();
+                            onForkSession?.(item);
+                          }}
+                          canMutate={canMutate}
+                          onRename={() => {
+                            setHoveredSession(null);
+                            closeActionMenu();
+                            onStartRename?.(item);
+                          }}
+                          onDelete={() => {
+                            setHoveredSession(null);
+                            closeActionMenu();
+                            onConfirmDelete?.(item.id);
+                          }}
+                          showRefresh={showContextRefresh}
+                          onRefresh={() => {
+                            setHoveredSession(null);
+                            closeActionMenu();
+                            void onRefresh?.();
+                          }}
+                        />
                       </div>,
                       document.body,
                     )

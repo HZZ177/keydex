@@ -73,6 +73,8 @@ export interface AgentSessionControllerQuoteSelectionRequest {
 
 export interface AgentSessionControllerAnnotationRequest {
   annotationId: string;
+  body?: string;
+  kind?: "document" | "text";
   path: string;
   workspaceId: string;
 }
@@ -523,13 +525,20 @@ export function useAgentSessionController({
       const annotationId = request.annotationId.trim();
       const workspaceId = request.workspaceId.trim();
       if (!path || !annotationId || !workspaceId) return [];
+      const body = request.body?.trim();
       return [{
         id: `annotation:${workspaceId}:${annotationId}`,
         path,
         name: fileName(path),
         type: "file",
         source: "workspace",
-        annotationReference: { annotationId, path, workspaceId },
+        annotationReference: {
+          annotationId,
+          body: body || undefined,
+          kind: request.kind,
+          path,
+          workspaceId,
+        },
       }];
     });
     if (files.length) {

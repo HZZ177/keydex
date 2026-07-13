@@ -198,6 +198,7 @@ export class MarkdownAnnotationAdapter implements AnnotationViewAdapter {
     if (request.signal.aborted) {
       throw abortError("Markdown annotation reveal aborted");
     }
+    centerMountedAnnotationMarker(binding, request.annotationId);
   }
 
   geometry(): AnnotationViewGeometrySnapshot {
@@ -323,6 +324,28 @@ export class MarkdownAnnotationAdapter implements AnnotationViewAdapter {
       listener(event);
     }
   }
+}
+
+function centerMountedAnnotationMarker(
+  binding: MarkdownAnnotationBinding,
+  annotationId: string,
+): void {
+  const marker = Array.from(
+    binding.root.querySelectorAll<HTMLElement>("[data-annotation-id]"),
+  ).find((element) => element.dataset.annotationId === annotationId);
+  if (!marker || typeof binding.scrollElement.scrollTo !== "function") {
+    return;
+  }
+  const scroll = binding.scrollElement;
+  const viewportRect = scroll.getBoundingClientRect();
+  const markerRect = marker.getBoundingClientRect();
+  const markerDocumentTop = scroll.scrollTop + markerRect.top - viewportRect.top;
+  const target = markerDocumentTop - scroll.clientHeight / 2 + markerRect.height / 2;
+  const maxScrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+  scroll.scrollTo({
+    behavior: "auto",
+    top: Math.max(0, Math.min(target, maxScrollTop)),
+  });
 }
 
 function blocksForSourceRange(

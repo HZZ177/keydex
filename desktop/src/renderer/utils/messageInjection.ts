@@ -70,7 +70,7 @@ function annotationContextItem(context: AssembledAnnotationContext): AgentContex
   return {
     id: `annotation:${context.workspaceId}:${context.annotationId}`,
     type: "annotation",
-    label: context.kind === "text" ? "文字批注" : "全文批注",
+    label: context.kind === "text" ? "选区批注" : "全文批注",
     content: context.kind === "text" ? context.exact : context.content,
     description: context.body,
     role: "HumanMessage",
@@ -224,7 +224,7 @@ function contextItemToFollowInjection(item: AgentContextItem): RuntimeMessageInj
 
 function injectionContent(item: AgentContextItem): string {
   if (item.type === "annotation") {
-    const kind = item.metadata?.annotation_kind === "document" ? "全文批注" : "文字批注";
+    const kind = item.metadata?.annotation_kind === "document" ? "全文批注" : "选区批注";
     return `用户引用了当前文档中的${kind}。\n文件：${item.path || item.label}\n批注：${item.description || ""}\n当前内容：\n${item.content}\n文档版本：${normalizedOptionalText(item.metadata?.document_revision)}\n请只依据这次发送时解析出的当前内容处理该批注。`;
   }
   if (item.type === "file") {

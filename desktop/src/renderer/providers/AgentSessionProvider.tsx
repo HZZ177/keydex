@@ -21,6 +21,7 @@ import {
   type UpdatePendingInputPayload,
   type WsConnectionStatus,
 } from "@/runtime";
+import { isFileWatchEventAction } from "@/types/protocol";
 import type { A2UICancelActionPayload, A2UISubmitActionPayload, AgentActionEnvelope } from "@/types/protocol";
 import type { McpElicitationResolvePayload } from "@/types/protocol";
 import { emitSessionEventsFromRuntimeEvent } from "@/renderer/events/sessionEvents";
@@ -52,6 +53,10 @@ export interface AgentSessionRuntimeContextValue {
   terminateCommand: (sessionId: string, commandId: string) => void;
   resolveMcpElicitation: (payload: McpElicitationResolvePayload) => void;
   ping: () => void;
+  bindWorkspaceWatch: (workspaceId: string) => void;
+  unbindWorkspaceWatch: (workspaceId: string) => void;
+  bindLocalFileWatch: (watchId: string, path: string) => void;
+  unbindLocalFileWatch: (watchId: string) => void;
 }
 
 const AgentSessionRuntimeContext = createContext<AgentSessionRuntimeContextValue | null>(null);
@@ -65,6 +70,8 @@ export function AgentSessionProvider({
   const [runtimeDetail, setRuntimeDetail] = useState<string | null>(null);
   const channelRef = useRef<ChatChannel | null>(null);
   const pendingBindSessionIdsRef = useRef(new Set<string>());
+  const desiredWorkspaceWatchIdsRef = useRef(new Set<string>());
+  const desiredLocalFileWatchesRef = useRef(new Map<string, string>());
   const eventListenersRef = useRef(new Set<(event: AgentActionEnvelope) => void>());
   const requestedStatusRef = useRef(false);
   const runtimeConnection = useOptionalRuntimeConnection();
@@ -102,8 +109,10 @@ export function AgentSessionProvider({
   }, []);
 
   const receiveRuntimeEvent = useCallback((event: AgentActionEnvelope) => {
-    dispatch({ type: "event/receive", event });
-    emitSessionEventsFromRuntimeEvent(event);
+    if (!isFileWatchEventAction(event.action)) {
+      dispatch({ type: "event/receive", event });
+      emitSessionEventsFromRuntimeEvent(event);
+    }
     for (const listener of eventListenersRef.current) {
       listener(event);
     }
@@ -123,6 +132,12 @@ export function AgentSessionProvider({
       },
     });
     channelRef.current = channel;
+    for (const workspaceId of desiredWorkspaceWatchIdsRef.current) {
+      channel.bindWorkspaceWatch?.(workspaceId);
+    }
+    for (const [watchId, path] of desiredLocalFileWatchesRef.current) {
+      channel.bindLocalFileWatch?.(watchId, path);
+    }
     return () => {
       channel.close();
       if (channelRef.current === channel) {
@@ -255,6 +270,48 @@ export function AgentSessionProvider({
     channel.ping();
   }, []);
 
+  const bindWorkspaceWatch = useCallback((workspaceId: string) => {
+    const cleaned = workspaceId.trim();
+    if (!cleaned || desiredWorkspaceWatchIdsRef.current.has(cleaned)) {
+      return;
+    }
+    desiredWorkspaceWatchIdsRef.current.add(cleaned);
+    channelRef.current?.bindWorkspaceWatch?.(cleaned);
+  }, []);
+
+  const unbindWorkspaceWatch = useCallback((workspaceId: string) => {
+    const cleaned = workspaceId.trim();
+    if (!desiredWorkspaceWatchIdsRef.current.delete(cleaned)) {
+      return;
+    }
+    channelRef.current?.unbindWorkspaceWatch?.(cleaned);
+  }, []);
+
+  const bindLocalFileWatch = useCallback((watchId: string, path: string) => {
+    const cleanedWatchId = watchId.trim();
+    const cleanedPath = path.trim();
+    if (!cleanedWatchId || !cleanedPath) {
+      return;
+    }
+    const existing = desiredLocalFileWatchesRef.current.get(cleanedWatchId);
+    if (existing === cleanedPath) {
+      return;
+    }
+    if (existing) {
+      throw new Error("同一 watch_id 不能绑定不同文件");
+    }
+    desiredLocalFileWatchesRef.current.set(cleanedWatchId, cleanedPath);
+    channelRef.current?.bindLocalFileWatch?.(cleanedWatchId, cleanedPath);
+  }, []);
+
+  const unbindLocalFileWatch = useCallback((watchId: string) => {
+    const cleaned = watchId.trim();
+    if (!desiredLocalFileWatchesRef.current.delete(cleaned)) {
+      return;
+    }
+    channelRef.current?.unbindLocalFileWatch?.(cleaned);
+  }, []);
+
   const value = useMemo<AgentSessionRuntimeContextValue>(
     () => ({
       runtime,
@@ -276,8 +333,12 @@ export function AgentSessionProvider({
       terminateCommand,
       resolveMcpElicitation,
       ping,
+      bindWorkspaceWatch,
+      unbindWorkspaceWatch,
+      bindLocalFileWatch,
+      unbindLocalFileWatch,
     }),
-    [bindSession, cancel, cancelA2UI, cancelPendingInput, chat, ping, reorderPendingInputs, resolveMcpElicitation, resumePendingInputs, runtime, runtimeDetail, state, submitA2UI, subscribeEvent, terminateCommand, updatePendingInput, wsStatus],
+    [bindLocalFileWatch, bindSession, bindWorkspaceWatch, cancel, cancelA2UI, cancelPendingInput, chat, ping, reorderPendingInputs, resolveMcpElicitation, resumePendingInputs, runtime, runtimeDetail, state, submitA2UI, subscribeEvent, terminateCommand, unbindLocalFileWatch, unbindWorkspaceWatch, updatePendingInput, wsStatus],
   );
 
   return (

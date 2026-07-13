@@ -97,12 +97,12 @@ function DocumentCard({ item, onDelete, onSave, onStartChat }: {
   return (
     <article aria-label={`全文批注：${item.record.body}`} className={styles.card} data-annotation-card-id={item.record.id}>
       <div className={styles.cardMeta}><span>全文</span><time dateTime={item.record.created_at}>{formatTime(item.record.created_at)}</time></div>
-      {editing ? <textarea aria-label="编辑全文批注" autoFocus className={styles.editor} disabled={pending} onChange={(event) => setBody(event.target.value)} value={body} /> : <p className={styles.cardBody}>{item.record.body}</p>}
+      {editing ? <textarea aria-label="编辑全文批注" autoFocus className={styles.editor} disabled={pending} onChange={(event) => setBody(event.target.value)} placeholder="写下针对整份文档的批注…" value={body} /> : <p className={styles.cardBody}>{item.record.body}</p>}
       {error ? <div className={styles.cardError} role="alert">{error}</div> : null}
       <div className={styles.cardActions}>
         {editing ? <>
-          <button aria-label="保存全文批注" disabled={pending || !body.trim()} onClick={() => void save()} type="button"><Check size={14} /></button>
           <button aria-label="取消编辑全文批注" disabled={pending} onClick={() => { setBody(item.record.body); setEditing(false); }} type="button"><X size={14} /></button>
+          <button aria-label="保存全文批注" className={styles.confirmAction} disabled={pending || !body.trim()} onClick={() => void save()} type="button"><Check size={14} /></button>
         </> : <>
           <button aria-label="编辑全文批注" onClick={() => setEditing(true)} type="button"><Pencil size={14} /></button>
           <button aria-label="删除全文批注" disabled={pending} onClick={() => void remove()} type="button"><Trash2 size={14} /></button>

@@ -10,6 +10,7 @@ export type WorkspaceFileSearchFn = (
 export interface UseWorkspaceFileSearchOptions {
   enabled: boolean;
   query: string;
+  refreshToken?: number;
   search?: WorkspaceFileSearchFn;
 }
 
@@ -22,6 +23,7 @@ export interface WorkspaceFileSearchState {
 export function useWorkspaceFileSearch({
   enabled,
   query,
+  refreshToken = 0,
   search,
 }: UseWorkspaceFileSearchOptions): WorkspaceFileSearchState {
   const [results, setResults] = useState<WorkspaceSearchResult[]>([]);
@@ -72,7 +74,7 @@ export function useWorkspaceFileSearch({
       active = false;
       controller.abort();
     };
-  }, [enabled, normalizedQuery, search]);
+  }, [enabled, normalizedQuery, refreshToken, search]);
 
   return { error, loading, results };
 }

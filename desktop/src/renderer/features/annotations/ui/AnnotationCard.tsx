@@ -78,7 +78,7 @@ export function AnnotationCard({
       tabIndex={0}
     >
       <div className={styles.cardMeta}>
-        <span>文字批注</span>
+        <span>选区批注</span>
         <time dateTime={item.record.created_at}>{formatTime(item.record.created_at)}</time>
       </div>
       {editing ? (
@@ -99,6 +99,7 @@ export function AnnotationCard({
               void save();
             }
           }}
+          placeholder="写下批注…"
           value={body}
         />
       ) : (
@@ -108,14 +109,15 @@ export function AnnotationCard({
       <div className={styles.cardActions} onClick={stop}>
         {editing ? (
           <>
-            <button aria-label="保存批注" disabled={pending || !body.trim()} onClick={() => void save()} type="button">
-              <Check size={14} />
-            </button>
+            <span className={styles.editorHint}>Ctrl/⌘ + Enter 保存 · Esc 取消</span>
             <button aria-label="取消编辑" disabled={pending} onClick={() => {
               setBody(item.record.body);
               setEditing(false);
             }} type="button">
               <X size={14} />
+            </button>
+            <button aria-label="保存批注" className={styles.confirmAction} disabled={pending || !body.trim()} onClick={() => void save()} type="button">
+              <Check size={14} />
             </button>
           </>
         ) : (

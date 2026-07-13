@@ -14,6 +14,7 @@ export interface ConversationPageProps {
   onOpenModelSettings?: () => void;
   onQuickSendConsumed?: () => void;
   onNavigateToConversation?: (threadId: string) => void;
+  onDeleted?: () => void;
 }
 
 export function ConversationPage({
@@ -27,6 +28,7 @@ export function ConversationPage({
   onOpenModelSettings,
   onQuickSendConsumed,
   onNavigateToConversation,
+  onDeleted,
 }: ConversationPageProps) {
   return (
     <ConversationSessionSurface
@@ -40,6 +42,7 @@ export function ConversationPage({
       onOpenModelSettings={onOpenModelSettings}
       onQuickSendConsumed={onQuickSendConsumed}
       onNavigateToConversation={onNavigateToConversation}
+      onDeleted={onDeleted}
     />
   );
 }

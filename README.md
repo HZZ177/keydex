@@ -307,6 +307,59 @@ pnpm run test:e2e:settings-usage
 pnpm run test:e2e:runtime-foundation
 ```
 
+### 工作区文件自动刷新
+
+目录树、当前文件预览、图片预览和活跃文件搜索通过现有 `/agent-base/ws/chat`
+WebSocket 接收文件变更，不需要刷新页面。Home、Workbench、Conversation 和外部
+`local-file` 预览共用同一连接与引用计数订阅；断线重连会重新绑定，并以全量重读已加载目录
+恢复状态。
+
+客户端请求：
+
+| action | data |
+|---|---|
+| `bindWorkspaceWatch` / `unbindWorkspaceWatch` | `{ workspace_id }` |
+| `bindLocalFileWatch` | `{ watch_id, path }`，`path` 必须是已存在的绝对文件路径 |
+| `unbindLocalFileWatch` | `{ watch_id }` |
+
+服务端事件：
+
+| action | data |
+|---|---|
+| `workspaceWatchBound` | `{ workspace_id, sequence, resync_required }` |
+| `workspaceFilesChanged` | `{ workspace_id, sequence, resync_required, changes }` |
+| `workspaceWatchUnbound` | `{ workspace_id }` |
+| `localFileWatchBound` | `{ watch_id, path, sequence, resync_required }` |
+| `localFileChanged` | `{ watch_id, path, sequence, resync_required, changes }` |
+| `localFileWatchUnbound` | `{ watch_id }` |
+
+`changes` 中每项为 `{ kind: "added" | "modified" | "deleted", path }`。Workspace
+事件使用工作区相对 POSIX path；local-file 事件使用规范化绝对路径。每个 scope 的
+`sequence` 严格递增。首次 bind ACK、sequence gap、watcher 异常或单批超过 256 个唯一路径
+都会要求 `resync_required=true`；客户端此时只重读已经加载的目录，不预加载整棵目录树。
+
+Watcher 以 200ms 窗口合并事件，并忽略 `.git`、`.hg`、`.svn`、`node_modules`、
+`.venv`、`venv`、`dist`、`build`、`target`、`__pycache__`、`.pytest_cache`、
+`.mypy_cache`、`.ruff_cache`、`.idea`、`.vscode` 及常见临时文件。显式 exact
+local-file watch 不受 workspace ignore 影响。被忽略目录里的 workspace 内容不保证自动刷新，
+请使用目录面板的“刷新工作区”；该动作会同时刷新已加载目录、当前预览和活跃搜索。
+
+排障时先确认 WebSocket 已收到 Bound ACK，再检查同 scope 的 sequence 是否连续。如果出现
+resync 或刷新失败，页面会保留旧正文并显示可恢复提示；手动刷新不依赖 watcher。实现不承诺
+rename 推断、断线期间事件重放、轮询 fallback，也不会把文件事件写入 Agent 消息 store。
+
+聚焦验证命令：
+
+```powershell
+& .\.venv\Scripts\python.exe -m pytest backend/tests/services/test_file_change_hub.py backend/tests/api/test_websocket_file_watch.py
+pnpm --dir desktop exec vitest run tests/ws-client.spec.ts tests/file-change-provider.spec.tsx tests/workspace-panel-file-change.spec.tsx tests/file-preview-auto-refresh.spec.tsx tests/workspace-file-change-scope.spec.tsx
+```
+
+开发测试状态记录在 `.dev/issues/2026-07-13_22-30-38-workspace-file-change-auto-refresh.csv`；
+页面级验收结果与截图记录在
+`.dev/e2e/contracts/2026-07-13_22-30-38-workspace-file-change-auto-refresh.csv` 及其中的
+`evidence_path`。
+
 ### 打包
 
 打包不是日常开发默认动作。只有明确需要 Windows exe 时再执行：

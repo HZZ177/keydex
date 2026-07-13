@@ -66,6 +66,40 @@ describe("MarkdownAnnotationAdapter", () => {
     expect(revealBlock).toHaveBeenCalledWith("paragraph", controller.signal);
   });
 
+  it("refines a coarse block reveal by centering the mounted annotation marker", async () => {
+    const revealBlock = vi.fn().mockResolvedValue(undefined);
+    const resolvedBinding = binding(revealBlock);
+    const marker = document.createElement("mark");
+    marker.dataset.annotationId = "single";
+    resolvedBinding.root.append(marker);
+    Object.defineProperties(resolvedBinding.scrollElement, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 2_000 },
+      scrollTop: { configurable: true, value: 1_200, writable: true },
+    });
+    vi.spyOn(resolvedBinding.scrollElement, "getBoundingClientRect").mockReturnValue(rect(0, 0, 300, 200));
+    vi.spyOn(marker, "getBoundingClientRect").mockReturnValue(rect(20, 30, 40, 20));
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      resolvedBinding.scrollElement.scrollTop = top ?? resolvedBinding.scrollElement.scrollTop;
+    });
+    Object.defineProperty(resolvedBinding.scrollElement, "scrollTo", { configurable: true, value: scrollTo });
+    const adapter = new MarkdownAnnotationAdapter();
+    adapter.attach(resolvedBinding);
+
+    await adapter.reveal({
+      annotationId: "single",
+      blockRanges: [{ blockKey: "logical-paragraph", range: { start: 2, end: 6 } }],
+      logicalRange: { start: 2, end: 6 },
+      requestId: 1,
+      scroll: true,
+      signal: new AbortController().signal,
+      sourceRanges: [{ start: 2, end: 6 }],
+    });
+
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 1_140 });
+    expect(resolvedBinding.scrollElement.scrollTop).toBe(1_140);
+  });
+
   it("uses the runtime range resolver without scanning a full block array", async () => {
     const revealBlock = vi.fn().mockResolvedValue(undefined);
     const blocksForSourceRange = vi.fn(() => [

@@ -1,9 +1,11 @@
+import { isFileWatchEventAction } from "@/types/protocol";
 import type {
   A2UICancelActionPayload,
   A2UISubmitActionPayload,
   AgentActionEnvelope,
   AgentChatAction,
   AgentInboundAction,
+  FileWatchEventAction,
 } from "@/types/protocol";
 
 export type WsConnectionStatus = "idle" | "connecting" | "open" | "reconnecting" | "closed" | "error";
@@ -37,6 +39,8 @@ export class RuntimeWsClient {
   private socket: WebSocketLike | null = null;
   private sessionId: string | null = null;
   private readonly boundSessionIds = new Set<string>();
+  private readonly desiredWorkspaceWatchIds = new Set<string>();
+  private readonly desiredLocalFileWatches = new Map<string, string>();
   private status: WsConnectionStatus = "idle";
   private reconnectAttempts = 0;
   private closedByClient = false;
@@ -116,6 +120,59 @@ export class RuntimeWsClient {
     }
   }
 
+  bindWorkspaceWatch(workspaceId: string) {
+    const cleaned = workspaceId.trim();
+    if (!cleaned) {
+      throw new Error("workspace_id 必填");
+    }
+    const alreadyDesired = this.desiredWorkspaceWatchIds.has(cleaned);
+    this.desiredWorkspaceWatchIds.add(cleaned);
+    if (!alreadyDesired && this.socket?.readyState === SOCKET_OPEN) {
+      this.sendAction("bind_workspace_watch", { workspace_id: cleaned });
+    }
+  }
+
+  unbindWorkspaceWatch(workspaceId: string) {
+    const cleaned = workspaceId.trim();
+    if (!cleaned) {
+      return;
+    }
+    const wasDesired = this.desiredWorkspaceWatchIds.delete(cleaned);
+    if (wasDesired && this.socket?.readyState === SOCKET_OPEN) {
+      this.sendAction("unbind_workspace_watch", { workspace_id: cleaned });
+    }
+  }
+
+  bindLocalFileWatch(watchId: string, path: string) {
+    const cleanedWatchId = watchId.trim();
+    const cleanedPath = path.trim();
+    if (!cleanedWatchId || !cleanedPath) {
+      throw new Error("watch_id 和 path 必填");
+    }
+    const existing = this.desiredLocalFileWatches.get(cleanedWatchId);
+    if (existing && existing !== cleanedPath) {
+      throw new Error("同一 watch_id 不能绑定不同文件");
+    }
+    this.desiredLocalFileWatches.set(cleanedWatchId, cleanedPath);
+    if (!existing && this.socket?.readyState === SOCKET_OPEN) {
+      this.sendAction("bind_local_file_watch", {
+        watch_id: cleanedWatchId,
+        path: cleanedPath,
+      });
+    }
+  }
+
+  unbindLocalFileWatch(watchId: string) {
+    const cleaned = watchId.trim();
+    if (!cleaned) {
+      return;
+    }
+    const wasDesired = this.desiredLocalFileWatches.delete(cleaned);
+    if (wasDesired && this.socket?.readyState === SOCKET_OPEN) {
+      this.sendAction("unbind_local_file_watch", { watch_id: cleaned });
+    }
+  }
+
   chat(data: Record<string, unknown>) {
     this.sendAction("chat", this.withSession(data));
   }
@@ -152,6 +209,12 @@ export class RuntimeWsClient {
       this.setStatus("open");
       for (const sessionId of this.boundSessionIds) {
         this.sendAction("bind_session", { session_id: sessionId });
+      }
+      for (const workspaceId of this.desiredWorkspaceWatchIds) {
+        this.sendAction("bind_workspace_watch", { workspace_id: workspaceId });
+      }
+      for (const [watchId, path] of this.desiredLocalFileWatches) {
+        this.sendAction("bind_local_file_watch", { watch_id: watchId, path });
       }
     };
     socket.onerror = (event) => {
@@ -267,12 +330,59 @@ function normalizeWsBaseUrl(baseUrl: string) {
 }
 
 function isAgentEnvelope(value: unknown): value is AgentActionEnvelope<AgentChatAction> {
-  return (
+  const validEnvelope = (
     Boolean(value) &&
     typeof value === "object" &&
     typeof (value as { action?: unknown }).action === "string" &&
     Boolean((value as { action?: string }).action) &&
     typeof (value as { data?: unknown }).data === "object" &&
     (value as { data?: unknown }).data !== null
+  );
+  if (!validEnvelope) {
+    return false;
+  }
+  const event = value as AgentActionEnvelope;
+  return !isFileWatchEventAction(event.action) || isValidFileWatchData(event.action, event.data);
+}
+
+function isValidFileWatchData(action: FileWatchEventAction, data: object): boolean {
+  const record = data as Record<string, unknown>;
+  if (action.startsWith("workspace")) {
+    if (typeof record.workspace_id !== "string" || !record.workspace_id) {
+      return false;
+    }
+  } else if (typeof record.watch_id !== "string" || !record.watch_id) {
+    return false;
+  }
+  if (action.endsWith("Unbound")) {
+    return true;
+  }
+  if (
+    typeof record.sequence !== "number" ||
+    !Number.isInteger(record.sequence) ||
+    typeof record.resync_required !== "boolean"
+  ) {
+    return false;
+  }
+  if (action === "localFileWatchBound" || action === "localFileChanged") {
+    if (typeof record.path !== "string" || !record.path) {
+      return false;
+    }
+  }
+  if (action === "workspaceFilesChanged" || action === "localFileChanged") {
+    return Array.isArray(record.changes) && record.changes.every(isValidFileChangeItem);
+  }
+  return true;
+}
+
+function isValidFileChangeItem(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    (record.kind === "added" || record.kind === "modified" || record.kind === "deleted") &&
+    typeof record.path === "string" &&
+    Boolean(record.path)
   );
 }

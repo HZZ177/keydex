@@ -42,6 +42,24 @@ const documentRecord: AnnotationRecord = {
   target: { type: "document" },
 };
 
+const paragraphRecord: AnnotationRecord = {
+  ...record,
+  id: "ann-paragraph",
+  body: "Explain paragraph",
+  created_at: "2026-07-11T10:05:00Z",
+  updated_at: "2026-07-11T10:05:00Z",
+  target: {
+    type: "text",
+    selector: {
+      position: { start: 15, end: 24 },
+      quote: { exact: "paragraph", prefix: "# Title\n\nAlpha ", suffix: "." },
+      context: { containerType: "paragraph", headingPath: ["Title"] },
+      textRevision: "old",
+      documentRevision: "old",
+    },
+  },
+};
+
 function runtime(records: AnnotationRecord[] = [record]): RuntimeBridge {
   return {
     workspace: {
@@ -119,6 +137,64 @@ describe("unified FilePreview annotations", () => {
     await waitFor(() => {
       expect(Number.parseFloat(placement?.style.top ?? "0")).toBeLessThan(expandedTop);
     });
+  });
+
+  it("keeps annotation controls out of the document scrollbar", async () => {
+    render(
+      <FilePreview
+        markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader}
+        request={{ type: "file", path: "README.md" }}
+        runtime={runtime([record, documentRecord])}
+        workspaceId="ws-1"
+      />,
+    );
+
+    const toggle = await screen.findByLabelText("文件批注 2");
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(document.querySelector("[data-annotation-scroll-marker='true']")).toBeNull();
+    expect(screen.queryByRole("button", { name: /定位批注/ })).toBeNull();
+  });
+
+  it("navigates and flashes the matching body marker from both adjacent controls after a distant manual scroll", async () => {
+    render(
+      <FilePreview
+        markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader}
+        request={{ type: "file", path: "README.md" }}
+        runtime={runtime([record, paragraphRecord])}
+        workspaceId="ws-1"
+      />,
+    );
+
+    fireEvent.click(await screen.findByLabelText("文件批注 2"));
+    const viewport = document.querySelector<HTMLElement>("[data-document-scroll-viewport='true']")!;
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 12_000 },
+      scrollTo: { configurable: true, value: vi.fn() },
+      scrollTop: { configurable: true, value: 10_000, writable: true },
+    });
+    fireEvent.scroll(viewport);
+
+    fireEvent.click(screen.getByLabelText("下一条选区批注"));
+    await waitFor(() => {
+      expect(document.querySelector("[data-annotation-navigation-position='true']")?.textContent).toBe("1 / 2");
+      expect(document.querySelector("[data-annotation-id='ann-alpha']")?.getAttribute("data-annotation-navigation-flash")).toBe("true");
+    });
+    fireEvent.animationEnd(document.querySelector("[data-annotation-id='ann-alpha']") as Element);
+    fireEvent.click(screen.getByLabelText("下一条选区批注"));
+    await waitFor(() => {
+      expect(document.querySelector("[data-annotation-navigation-position='true']")?.textContent).toBe("2 / 2");
+      expect(document.querySelector("[data-annotation-id='ann-paragraph']")?.getAttribute("data-annotation-navigation-flash")).toBe("true");
+      expect(document.querySelector("[data-annotation-id='ann-alpha']")?.getAttribute("data-annotation-navigation-flash")).toBeNull();
+    });
+    fireEvent.animationEnd(document.querySelector("[data-annotation-id='ann-paragraph']") as Element);
+    fireEvent.click(screen.getByLabelText("上一条选区批注"));
+    await waitFor(() => {
+      expect(document.querySelector("[data-annotation-navigation-position='true']")?.textContent).toBe("1 / 2");
+      expect(document.querySelector("[data-annotation-id='ann-alpha']")?.getAttribute("data-annotation-navigation-flash")).toBe("true");
+      expect(document.querySelector("[data-annotation-id='ann-paragraph']")?.getAttribute("data-annotation-navigation-flash")).toBeNull();
+    });
+    expect(vi.mocked(viewport.scrollTo)).toHaveBeenCalled();
   });
 
   it("uses a workspace-relative annotation path for a local file preview", async () => {
@@ -452,16 +528,73 @@ describe("unified FilePreview annotations", () => {
     await waitFor(() => expect(card.getAttribute("data-hovered")).toBe("false"));
   });
 
-  it("flashes the body marker once after card navigation reaches the document", async () => {
+  it("scrolls to and flashes the body marker once after card navigation reaches the document", async () => {
     render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
     fireEvent.click(await screen.findByLabelText("文件批注 1"));
     const card = await screen.findByLabelText("批注：Explain alpha");
+    const viewport = document.querySelector<HTMLElement>("[data-document-scroll-viewport='true']")!;
+    const scrollTo = vi.fn();
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 12_000 },
+      scrollTo: { configurable: true, value: scrollTo },
+      scrollTop: { configurable: true, value: 10_000, writable: true },
+    });
 
     fireEvent.click(card);
 
     await waitFor(() => {
       expect(document.querySelector("[data-annotation-id='ann-alpha']")?.getAttribute("data-annotation-navigation-flash")).toBe("true");
     });
+    expect(scrollTo).toHaveBeenCalled();
+  });
+
+  it("reveals and highlights an annotation from a same-file capsule without reloading the document", async () => {
+    const localRuntime = runtime();
+    const request = { type: "file" as const, path: "README.md" };
+    const view = render(
+      <FilePreview
+        markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader}
+        request={request}
+        runtime={localRuntime}
+        workspaceId="ws-1"
+      />,
+    );
+
+    const marker = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>("[data-annotation-id='ann-alpha']");
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    const previewRoot = document.querySelector<HTMLElement>("[data-file-preview-root='true']");
+    const viewport = document.querySelector<HTMLElement>("[data-document-scroll-viewport='true']")!;
+    const scrollTo = vi.fn();
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1600 },
+      scrollTo: { configurable: true, value: scrollTo },
+      scrollTop: { configurable: true, value: 0, writable: true },
+    });
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(domRect(0, 0, 1000, 400));
+    vi.spyOn(marker, "getBoundingClientRect").mockReturnValue(domRect(720, 720, 48, 18));
+
+    view.rerender(
+      <FilePreview
+        markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader}
+        request={request}
+        runtime={localRuntime}
+        sourceRevealRequest={{ annotationId: "ann-alpha", requestId: 1 }}
+        workspaceId="ws-1"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("文件批注 1").getAttribute("aria-pressed")).toBe("true"));
+    await waitFor(() => {
+      expect(document.querySelector("[data-annotation-id='ann-alpha']")?.getAttribute("data-annotation-navigation-flash")).toBe("true");
+    });
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "auto" })));
+    expect(document.querySelector("[data-file-preview-root='true']")).toBe(previewRoot);
+    expect(localRuntime.workspace.readFile).toHaveBeenCalledTimes(1);
   });
 
   it("shows a focused draft editor immediately after annotating a markdown selection", async () => {
@@ -501,9 +634,21 @@ describe("unified FilePreview annotations", () => {
     fireEvent.click(await screen.findByLabelText("文件批注 1"));
     const card = await screen.findByLabelText("批注：Explain alpha");
     fireEvent.click(card.querySelector("[aria-label='将批注加入对话']") as Element);
-    expect(onStartChatFromAnnotation).toHaveBeenLastCalledWith({ annotationId: "ann-alpha", workspaceId: "ws-1", path: "README.md" });
+    expect(onStartChatFromAnnotation).toHaveBeenLastCalledWith({
+      annotationId: "ann-alpha",
+      body: "Explain alpha",
+      kind: "text",
+      workspaceId: "ws-1",
+      path: "README.md",
+    });
     fireEvent.click(screen.getByLabelText("全部引入对话"));
-    expect(onStartChatFromAnnotation).toHaveBeenLastCalledWith([{ annotationId: "ann-alpha", workspaceId: "ws-1", path: "README.md" }]);
+    expect(onStartChatFromAnnotation).toHaveBeenLastCalledWith([{
+      annotationId: "ann-alpha",
+      body: "Explain alpha",
+      kind: "text",
+      workspaceId: "ws-1",
+      path: "README.md",
+    }]);
   });
 });
 

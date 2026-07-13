@@ -92,6 +92,10 @@
   gap: 6px;
 }
 
+.searchRow[data-has-refresh="true"] {
+  grid-template-columns: minmax(0, 1fr) 28px 28px;
+}
+
 .searchBox {
   display: grid;
   height: 28px;
@@ -137,7 +141,8 @@
   color: var(--color-text-tertiary);
 }
 
-.locateButton {
+.locateButton,
+.refreshButton {
   display: inline-flex;
   width: 28px;
   height: 28px;
@@ -153,18 +158,21 @@
     color var(--motion-fast) var(--motion-ease-standard);
 }
 
-.locateButton:hover:not(:disabled) {
+.locateButton:hover:not(:disabled),
+.refreshButton:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--color-border-default) 86%, var(--color-text-tertiary));
   background: var(--surface-hover);
   color: var(--color-text-primary);
 }
 
-.locateButton:disabled {
+.locateButton:disabled,
+.refreshButton:disabled {
   cursor: default;
   opacity: 0.45;
 }
 
-.locateButton:focus-visible {
+.locateButton:focus-visible,
+.refreshButton:focus-visible {
   outline: 0;
   box-shadow: var(
     --settings-focus-ring,

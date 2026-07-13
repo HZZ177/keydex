@@ -1059,6 +1059,12 @@ export const AGENT_CHAT_ACTIONS = [
   "pending_input_resumed",
   "pending_input_failed",
   "workspaceSkillsChanged",
+  "workspaceWatchBound",
+  "workspaceWatchUnbound",
+  "workspaceFilesChanged",
+  "localFileWatchBound",
+  "localFileWatchUnbound",
+  "localFileChanged",
   "command_terminated",
   "mcp_server_status_changed",
   "mcp_runtime_snapshot_created",
@@ -1145,6 +1151,10 @@ export const AGENT_INBOUND_ACTIONS = [
   "get_status",
   "terminate_command",
   "mcp_elicitation_resolved",
+  "bind_workspace_watch",
+  "unbind_workspace_watch",
+  "bind_local_file_watch",
+  "unbind_local_file_watch",
 ] as const;
 
 export type AgentInboundAction = (typeof AGENT_INBOUND_ACTIONS)[number];
@@ -1815,6 +1825,57 @@ export interface AgentStreamActionData {
   trace_id?: string;
   trace_record_id?: string;
   turn_index?: number | null;
+}
+
+export type FileChangeKind = "added" | "modified" | "deleted";
+
+export interface FileChangeEventItem {
+  kind: FileChangeKind;
+  path: string;
+}
+
+export interface WorkspaceWatchBoundData {
+  workspace_id: string;
+  sequence: number;
+  resync_required: boolean;
+}
+
+export interface WorkspaceFilesChangedData extends WorkspaceWatchBoundData {
+  changes: FileChangeEventItem[];
+}
+
+export interface WorkspaceWatchUnboundData {
+  workspace_id: string;
+}
+
+export interface LocalFileWatchBoundData {
+  watch_id: string;
+  path: string;
+  sequence: number;
+  resync_required: boolean;
+}
+
+export interface LocalFileChangedData extends LocalFileWatchBoundData {
+  changes: FileChangeEventItem[];
+}
+
+export interface LocalFileWatchUnboundData {
+  watch_id: string;
+}
+
+export const FILE_WATCH_EVENT_ACTIONS = [
+  "workspaceWatchBound",
+  "workspaceWatchUnbound",
+  "workspaceFilesChanged",
+  "localFileWatchBound",
+  "localFileWatchUnbound",
+  "localFileChanged",
+] as const;
+
+export type FileWatchEventAction = (typeof FILE_WATCH_EVENT_ACTIONS)[number];
+
+export function isFileWatchEventAction(action: string): action is FileWatchEventAction {
+  return (FILE_WATCH_EVENT_ACTIONS as readonly string[]).includes(action);
 }
 
 export interface AgentFirstTokenData {

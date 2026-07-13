@@ -205,12 +205,17 @@
 
 .userContextItems {
   display: flex;
+  width: 100%;
+  min-width: 0;
   max-width: var(--message-user-bubble-max-width, min(568px, calc(100% - 36px)));
+  justify-self: end;
   justify-content: flex-end;
   background: transparent;
 }
 
 .userContextItems .contextItems {
+  width: 100%;
+  min-width: 0;
   justify-content: flex-end;
   margin-bottom: 0;
 }
@@ -343,12 +348,14 @@
 .contextItemWrapper {
   position: relative;
   display: inline-flex;
-  max-width: 100%;
+  min-width: 0;
+  max-width: var(--message-context-chip-max-width, min(340px, 100%));
 }
 
 .contextItemChip {
   display: inline-flex;
-  max-width: var(--message-context-chip-max-width, min(340px, 100%));
+  min-width: 0;
+  max-width: 100%;
   box-sizing: border-box;
   min-height: 30px;
   align-items: center;
@@ -415,6 +422,7 @@
   font-weight: 560;
   line-height: 15px;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .contextItemChip[data-clickable="true"] {
@@ -542,8 +550,10 @@
   color: var(--color-text-tertiary);
   font-size: 11px;
   line-height: 1.35;
+  overflow-wrap: anywhere;
   user-select: text;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .actions {

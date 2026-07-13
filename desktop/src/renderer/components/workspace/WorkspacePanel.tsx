@@ -23,10 +23,17 @@ import type {
 import { APP_FIND_SHORTCUT_EVENT, type AppFindShortcutDetail } from "@/renderer/events/findShortcut";
 import { subscribeExpandWorkspaceDirectory } from "@/renderer/events/workspaceFileContext";
 import { useWorkspaceFileSearch } from "@/renderer/hooks/useWorkspaceFileSearch";
+import { useOptionalFileChanges } from "@/renderer/providers/FileChangeProvider";
 import { WORKSPACE_FILE_SEARCH_BUDGET_HINT } from "@/renderer/utils/workspaceFileSearchBudget";
 import { LoadingSkeleton } from "@/renderer/components/loading";
+import type { FileChangeEventItem } from "@/types/protocol";
 
 import { useMaterialEntryIcon } from "./materialIconTheme";
+import {
+  planWorkspaceDirectoryInvalidation,
+  purgeDeletedDirectoryPaths,
+  purgeDeletedPathSet,
+} from "./workspaceFileInvalidation";
 import styles from "./WorkspacePanel.module.css";
 
 export interface WorkspacePanelProps {
@@ -43,6 +50,7 @@ export interface WorkspacePanelProps {
   initialState?: WorkspacePanelState | null;
   onSelectFile?: (path: string) => void;
   onStateChange?: (state: WorkspacePanelState) => void;
+  onManualRefresh?: () => void;
 }
 
 type EntryMap = Record<string, WorkspaceEntry[]>;
@@ -61,6 +69,8 @@ export interface WorkspacePanelState {
 }
 const TREE_GROUP_TRANSITION_MS = 180;
 const ENTRY_NAME_TOOLTIP_DELAY_MS = 500;
+const DIRECTORY_RESYNC_CONCURRENCY = 4;
+const SEARCH_INVALIDATION_DEBOUNCE_MS = 250;
 const SUBTREE_EXPAND_OPTIONS = {
   maxDepth: 6,
   maxDirs: 300,
@@ -82,6 +92,7 @@ export function WorkspacePanel({
   initialState = null,
   onSelectFile,
   onStateChange,
+  onManualRefresh,
 }: WorkspacePanelProps) {
   const initialStateRef = useRef(initialState);
   const panelRef = useRef<HTMLElement | null>(null);
@@ -104,11 +115,18 @@ export function WorkspacePanel({
   const [workspaceRoot, setWorkspaceRoot] = useState(initialState?.workspaceRoot ?? "");
   const [selectedPath, setSelectedPath] = useState<string | null>(initialState?.selectedPath ?? null);
   const [filterQuery, setFilterQuery] = useState(initialState?.filterQuery ?? "");
+  const [searchRefreshToken, setSearchRefreshToken] = useState(0);
   const [keyboardActivePath, setKeyboardActivePath] = useState<string | null>(
     initialState?.keyboardActivePath ?? null,
   );
   const [locateRequest, setLocateRequest] = useState<{ id: number; path: string } | null>(null);
   const onSelectFileRef = useRef(onSelectFile);
+  const entriesByPathRef = useRef<EntryMap>(initialState?.entriesByPath ?? {});
+  const directoryGenerationsRef = useRef(new Map<string, number>());
+  const loadingGenerationsRef = useRef(new Map<string, number>());
+  const scopeEpochRef = useRef(0);
+  const searchRefreshTimerRef = useRef<number | null>(null);
+  const fileChanges = useOptionalFileChanges();
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const scopeLabel = label ?? workspaceId ?? sessionId ?? "未绑定工作区";
   const searchWorkspace = useCallback(
@@ -121,11 +139,65 @@ export function WorkspacePanel({
     [runtime, scope],
   );
 
+  const loadDirectory = useCallback(async (path: string, force = false): Promise<WorkspaceEntry[] | null> => {
+    if (!force && entriesByPathRef.current[path]) {
+      return entriesByPathRef.current[path];
+    }
+    if (!scope) {
+      setErrorsByPath((errors) => ({ ...errors, [path]: "工作区未绑定" }));
+      return null;
+    }
+
+    const epoch = scopeEpochRef.current;
+    const generation = (directoryGenerationsRef.current.get(path) ?? 0) + 1;
+    directoryGenerationsRef.current.set(path, generation);
+    loadingGenerationsRef.current.set(path, generation);
+    setLoadingPaths((paths) => addToSet(paths, path));
+    setErrorsByPath((errors) => removeKey(errors, path));
+    try {
+      const response = await runtime.workspace.listDirectory(scope, path);
+      if (
+        epoch !== scopeEpochRef.current ||
+        directoryGenerationsRef.current.get(path) !== generation
+      ) {
+        return entriesByPathRef.current[path] ?? null;
+      }
+      const sortedEntries = sortEntries(response.entries);
+      setWorkspaceRoot(response.root);
+      setEntriesByPath((entries) => {
+        const next = { ...entries, [path]: sortedEntries };
+        entriesByPathRef.current = next;
+        return next;
+      });
+      return sortedEntries;
+    } catch (reason) {
+      if (
+        epoch === scopeEpochRef.current &&
+        directoryGenerationsRef.current.get(path) === generation
+      ) {
+        setErrorsByPath((errors) => ({ ...errors, [path]: errorMessage(reason) }));
+      }
+      return null;
+    } finally {
+      if (
+        epoch === scopeEpochRef.current &&
+        loadingGenerationsRef.current.get(path) === generation
+      ) {
+        loadingGenerationsRef.current.delete(path);
+        setLoadingPaths((paths) => removeFromSet(paths, path));
+      }
+    }
+  }, [runtime, scope]);
+
   useEffect(() => {
-    let active = true;
+    scopeEpochRef.current += 1;
+    directoryGenerationsRef.current.clear();
+    loadingGenerationsRef.current.clear();
     const restoredState = initialStateRef.current;
     const restoredRootEntries = restoredState?.entriesByPath[""];
-    setEntriesByPath(restoredState?.entriesByPath ?? {});
+    const restoredEntries = restoredState?.entriesByPath ?? {};
+    entriesByPathRef.current = restoredEntries;
+    setEntriesByPath(restoredEntries);
     setErrorsByPath(restoredState?.errorsByPath ?? {});
     setExpandedPaths(new Set(restoredState?.expandedPaths ?? [""]));
     setBulkExpandedSubtreePaths(new Set(restoredState?.bulkExpandedSubtreePaths ?? []));
@@ -139,51 +211,14 @@ export function WorkspacePanel({
       setErrorsByPath({ "": "工作区未绑定" });
       setLoadingPaths(new Set());
       return () => {
-        active = false;
+        scopeEpochRef.current += 1;
       };
     }
-    if (restoredRootEntries) {
-      void runtime.workspace
-        .listDirectory(scope, "")
-        .then((response) => {
-          if (!active) {
-            return;
-          }
-          setWorkspaceRoot(response.root);
-          setEntriesByPath((entries) => ({ ...entries, "": sortEntries(response.entries) }));
-        })
-        .catch((reason) => {
-          if (active) {
-            setErrorsByPath((errors) => ({ ...errors, "": errorMessage(reason) }));
-          }
-        });
-      return () => {
-        active = false;
-      };
-    }
-    void runtime.workspace
-      .listDirectory(scope, "")
-      .then((response) => {
-        if (!active) {
-          return;
-        }
-        setWorkspaceRoot(response.root);
-        setEntriesByPath((entries) => ({ ...entries, "": sortEntries(response.entries) }));
-      })
-      .catch((reason) => {
-        if (active) {
-          setErrorsByPath({ "": errorMessage(reason) });
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setLoadingPaths(new Set());
-        }
-      });
+    void loadDirectory("", true);
     return () => {
-      active = false;
+      scopeEpochRef.current += 1;
     };
-  }, [runtime, scope]);
+  }, [loadDirectory, scope]);
 
   useEffect(() => {
     onStateChange?.({
@@ -214,6 +249,7 @@ export function WorkspacePanel({
   const searchState = useWorkspaceFileSearch({
     enabled: searchActive && Boolean(scope),
     query: filterQuery,
+    refreshToken: searchRefreshToken,
     search: searchWorkspace,
   });
   const visibleRootEntries = useMemo(
@@ -266,29 +302,93 @@ export function WorkspacePanel({
     });
   }, [effectiveSelectedPath, keyboardEntries]);
 
-  const loadDirectory = useCallback(async (path: string, force = false): Promise<WorkspaceEntry[] | null> => {
-    if (!force && entriesByPath[path]) {
-      return entriesByPath[path];
+  const purgeDeletedDirectories = useCallback((deletedDirectoryPaths: readonly string[]) => {
+    if (!deletedDirectoryPaths.length) {
+      return;
     }
-    setLoadingPaths((paths) => addToSet(paths, path));
-    setErrorsByPath((errors) => removeKey(errors, path));
-    try {
-      if (!scope) {
-        setErrorsByPath((errors) => ({ ...errors, [path]: "工作区未绑定" }));
-        return null;
+    const currentEntries = entriesByPathRef.current;
+    const nextEntries = purgeDeletedDirectoryPaths(currentEntries, deletedDirectoryPaths);
+    for (const path of Object.keys(currentEntries)) {
+      if (!(path in nextEntries)) {
+        directoryGenerationsRef.current.set(
+          path,
+          (directoryGenerationsRef.current.get(path) ?? 0) + 1,
+        );
+        loadingGenerationsRef.current.delete(path);
       }
-      const response = await runtime.workspace.listDirectory(scope, path);
-      const sortedEntries = sortEntries(response.entries);
-      setWorkspaceRoot(response.root);
-      setEntriesByPath((entries) => ({ ...entries, [path]: sortedEntries }));
-      return sortedEntries;
-    } catch (reason) {
-      setErrorsByPath((errors) => ({ ...errors, [path]: errorMessage(reason) }));
-      return null;
-    } finally {
-      setLoadingPaths((paths) => removeFromSet(paths, path));
     }
-  }, [entriesByPath, runtime, scope]);
+    entriesByPathRef.current = nextEntries;
+    setEntriesByPath(nextEntries);
+    setErrorsByPath((errors) => purgeDeletedDirectoryPaths(errors, deletedDirectoryPaths));
+    setExpandedPaths((paths) => purgeDeletedPathSet(paths, deletedDirectoryPaths));
+    setBulkExpandedSubtreePaths((paths) => purgeDeletedPathSet(paths, deletedDirectoryPaths));
+    setSubtreeBusyPaths((paths) => purgeDeletedPathSet(paths, deletedDirectoryPaths));
+    setLoadingPaths((paths) => purgeDeletedPathSet(paths, deletedDirectoryPaths));
+  }, []);
+
+  const refreshLoadedDirectories = useCallback(async () => {
+    const loadedPaths = Object.keys(entriesByPathRef.current);
+    await runWithConcurrency(
+      loadedPaths,
+      DIRECTORY_RESYNC_CONCURRENCY,
+      (path) => loadDirectory(path, true),
+    );
+  }, [loadDirectory]);
+
+  const scheduleSearchRefresh = useCallback(() => {
+    if (!searchActive) {
+      return;
+    }
+    if (searchRefreshTimerRef.current !== null) {
+      window.clearTimeout(searchRefreshTimerRef.current);
+    }
+    searchRefreshTimerRef.current = window.setTimeout(() => {
+      searchRefreshTimerRef.current = null;
+      setSearchRefreshToken((token) => token + 1);
+    }, SEARCH_INVALIDATION_DEBOUNCE_MS);
+  }, [searchActive]);
+
+  const refreshWorkspacePanel = useCallback(async () => {
+    if (searchRefreshTimerRef.current !== null) {
+      window.clearTimeout(searchRefreshTimerRef.current);
+      searchRefreshTimerRef.current = null;
+    }
+    if (searchActive) {
+      setSearchRefreshToken((token) => token + 1);
+    }
+    onManualRefresh?.();
+    await refreshLoadedDirectories();
+  }, [onManualRefresh, refreshLoadedDirectories, searchActive]);
+
+  useEffect(
+    () => () => {
+      if (searchRefreshTimerRef.current !== null) {
+        window.clearTimeout(searchRefreshTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const applyWorkspaceChanges = useCallback(async (changes: readonly FileChangeEventItem[]) => {
+    const plan = planWorkspaceDirectoryInvalidation(changes, Object.keys(entriesByPathRef.current));
+    purgeDeletedDirectories(plan.deletedDirectoryPaths);
+    await Promise.all(plan.directoriesToRefresh.map((path) => loadDirectory(path, true)));
+  }, [loadDirectory, purgeDeletedDirectories]);
+
+  useEffect(() => {
+    if (!fileChanges || !workspaceId) {
+      return;
+    }
+    return fileChanges.subscribeWorkspace(workspaceId, (notification) => {
+      if (notification.resyncRequired) {
+        void refreshLoadedDirectories();
+        scheduleSearchRefresh();
+        return;
+      }
+      void applyWorkspaceChanges(notification.changes);
+      scheduleSearchRefresh();
+    });
+  }, [applyWorkspaceChanges, fileChanges, refreshLoadedDirectories, scheduleSearchRefresh, workspaceId]);
 
   const toggleDirectory = useCallback(async (path: string) => {
     if (expandedPaths.has(path)) {
@@ -314,10 +414,14 @@ export function WorkspacePanel({
       }
       const response = await runtime.workspace.listDirectorySubtree(scope, path, SUBTREE_EXPAND_OPTIONS);
       setWorkspaceRoot(response.root);
-      setEntriesByPath((entries) => ({
-        ...entries,
-        ...sortEntryMap(response.entries_by_path),
-      }));
+      setEntriesByPath((entries) => {
+        const next = {
+          ...entries,
+          ...sortEntryMap(response.entries_by_path),
+        };
+        entriesByPathRef.current = next;
+        return next;
+      });
       setExpandedPaths((paths) => {
         const next = new Set(paths);
         response.expanded_paths.forEach((entryPath) => next.add(entryPath));
@@ -577,7 +681,7 @@ export function WorkspacePanel({
             <span>当前工作区</span>
             <strong title={scopeLabel}>{scopeLabel}</strong>
           </div>
-          <button disabled={rootLoading} onClick={() => void loadDirectory("", true)} type="button">
+          <button disabled={rootLoading || searchLoading} onClick={() => void refreshWorkspacePanel()} type="button">
             <RefreshCw className={rootLoading ? styles.spinning : undefined} size={14} />
             <span>刷新</span>
           </button>
@@ -590,7 +694,7 @@ export function WorkspacePanel({
         </div>
       ) : null}
 
-      <div className={styles.searchRow}>
+      <div className={styles.searchRow} data-has-refresh={chrome === "panel" ? "true" : undefined}>
         <label className={styles.searchBox}>
           <Search size={16} />
           <input
@@ -613,6 +717,22 @@ export function WorkspacePanel({
         >
           <Crosshair size={16} strokeWidth={1.8} />
         </button>
+        {chrome === "panel" ? (
+          <button
+            className={styles.refreshButton}
+            type="button"
+            aria-label="刷新工作区"
+            title="刷新已加载目录、当前预览和搜索"
+            disabled={loadingPaths.size > 0 || searchLoading}
+            onClick={() => void refreshWorkspacePanel()}
+          >
+            <RefreshCw
+              className={loadingPaths.size > 0 || searchLoading ? styles.spinning : undefined}
+              size={16}
+              strokeWidth={1.8}
+            />
+          </button>
+        ) : null}
         <p className={styles.searchHint}>{WORKSPACE_FILE_SEARCH_BUDGET_HINT}</p>
       </div>
 
@@ -1271,6 +1391,26 @@ function sortEntries(entries: WorkspaceEntry[]): WorkspaceEntry[] {
 function sortEntryMap(entriesByPath: EntryMap): EntryMap {
   return Object.fromEntries(
     Object.entries(entriesByPath).map(([path, entries]) => [path, sortEntries(entries)]),
+  );
+}
+
+async function runWithConcurrency<T>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T) => Promise<unknown>,
+): Promise<void> {
+  let nextIndex = 0;
+  const runWorker = async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      if (item !== undefined) {
+        await worker(item);
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => runWorker()),
   );
 }
 

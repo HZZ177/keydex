@@ -13,12 +13,20 @@ import {
   isContextCompressionSlashCommand,
   type SlashCommand,
 } from "@/renderer/components/chat/SlashCommandMenu";
+import { AppDialog, ConfirmDialog, DialogButton } from "@/renderer/components/dialog";
 import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
 import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
 import { useOptionalRightSidebarConversation } from "@/renderer/components/layout/RightSidebarConversationContext";
+import { emitSessionCreated, emitSessionDeleted, emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import { useWorkspaceFileWatchScope } from "@/renderer/providers/FileChangeProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
+import {
+  buildSessionMarkdown,
+  createSessionMarkdownFilename,
+  saveSessionMarkdownFile,
+} from "@/renderer/utils/sessionMarkdownExport";
 import type {
   AgentActionEnvelope,
   AgentSession,
@@ -36,6 +44,7 @@ import { ComposerApprovalCard } from "./ComposerApprovalCard";
 import {
   createBtwConversationHistorySnapshot,
   filterBtwConversationVisibleMessages,
+  latestCompleteForkSource,
   type BtwConversationHistorySnapshot,
 } from "./conversationForkSource";
 import { consumeQuickChatSend, type QueuedQuickChatSend } from "./quickSend";
@@ -66,6 +75,7 @@ export interface ConversationSessionSurfaceProps {
   onSidecarQuoteRequestHandled?: (requestId: number) => void;
   onQuickSendConsumed?: () => void;
   onNavigateToConversation?: (threadId: string) => void;
+  onDeleted?: () => void;
 }
 
 export function ConversationSessionSurface({
@@ -85,6 +95,7 @@ export function ConversationSessionSurface({
   onSidecarQuoteRequestHandled,
   onQuickSendConsumed,
   onNavigateToConversation,
+  onDeleted,
 }: ConversationSessionSurfaceProps) {
   const isSidecar = mode === "sidecar";
   const [allowPersistentTrust, setAllowPersistentTrust] = useState(true);
@@ -96,6 +107,10 @@ export function ConversationSessionSurface({
   const [goalError, setGoalError] = useState<string | null>(null);
   const [goalCreating, setGoalCreating] = useState(false);
   const [contextCompressionRunning, setContextCompressionRunning] = useState(false);
+  const [editingTitle, setEditingTitle] = useState<string | null>(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [forkingSession, setForkingSession] = useState(false);
+  const [exportingSession, setExportingSession] = useState(false);
   const quickSendConsumedRef = useRef<string | null>(null);
   const pendingQuickSendRef = useRef<QueuedQuickChatSend | null>(null);
   const scrollToBottomAfterSendRef = useRef<(() => void) | null>(null);
@@ -144,6 +159,7 @@ export function ConversationSessionSurface({
   const setSelectedSkill = controller.setSelectedSkill;
   const loading = controller.loading;
   const session = controller.session;
+  useWorkspaceFileWatchScope(session?.workspace_id);
   const pendingApproval = controller.pendingApproval;
   const agentMessages = controller.agentMessages;
 
@@ -230,6 +246,109 @@ export function ConversationSessionSurface({
   );
   const title = session?.title || (threadId ? `对话 ${threadId}` : "对话");
   const workspaceMeta = conversationWorkspaceMeta(session);
+
+  useEffect(() => {
+    setEditingTitle(null);
+    setConfirmDeleteOpen(false);
+    setForkingSession(false);
+    setExportingSession(false);
+  }, [threadId]);
+
+  const renameSession = useCallback(async () => {
+    const sessionId = session?.id?.trim() ?? "";
+    const cleanedTitle = editingTitle?.trim() ?? "";
+    if (!cleanedTitle) {
+      notifications.warning("会话标题不能为空");
+      return;
+    }
+    if (!sessionId || typeof runtime.conversation.updateSession !== "function") {
+      notifications.warning("当前后端不支持重命名会话");
+      return;
+    }
+    try {
+      const updated = await runtime.conversation.updateSession(sessionId, { title: cleanedTitle });
+      controller.dispatch({ type: "session/upsert", session: updated });
+      emitSessionUpdated(updated);
+      setEditingTitle(null);
+      notifications.success("已重命名会话");
+    } catch (reason) {
+      notifications.error(errorMessage(reason));
+    }
+  }, [controller, editingTitle, notifications, runtime, session?.id]);
+
+  const deleteSession = useCallback(async () => {
+    const sessionId = session?.id?.trim() ?? "";
+    if (!sessionId || typeof runtime.conversation.deleteSession !== "function") {
+      notifications.warning("当前后端不支持删除会话");
+      return;
+    }
+    try {
+      await runtime.conversation.deleteSession(sessionId);
+      emitSessionDeleted(sessionId);
+      setConfirmDeleteOpen(false);
+      notifications.success("已删除会话");
+      onDeleted?.();
+    } catch (reason) {
+      notifications.error(errorMessage(reason));
+    }
+  }, [notifications, onDeleted, runtime, session?.id]);
+
+  const forkSessionFromLatestTurn = useCallback(async () => {
+    const sessionId = session?.id?.trim() ?? "";
+    if (!sessionId || typeof runtime.conversation.forkSession !== "function" || forkingSession) {
+      return;
+    }
+    setForkingSession(true);
+    try {
+      const history = await runtime.conversation.loadHistory(sessionId, { pageSize: 100 });
+      const source = latestCompleteForkSource(history.list);
+      if (!source) {
+        notifications.warning("没有可派生的完整回合");
+        return;
+      }
+      const response = await runtime.conversation.forkSession(sessionId, source);
+      emitSessionCreated(response.session);
+      notifications.success("已创建派生会话");
+      onNavigateToConversation?.(response.session.id);
+    } catch (reason) {
+      notifications.error(`派生失败：${errorMessage(reason)}`);
+    } finally {
+      setForkingSession(false);
+    }
+  }, [forkingSession, notifications, onNavigateToConversation, runtime, session?.id]);
+
+  const exportSession = useCallback(async () => {
+    const sessionId = session?.id?.trim() ?? "";
+    if (!sessionId || exportingSession) {
+      return;
+    }
+    setExportingSession(true);
+    try {
+      const history = await runtime.conversation.loadHistory(sessionId, {
+        allTurns: true,
+        direction: "older",
+      });
+      const markdown = buildSessionMarkdown(title, history.list);
+      if (!markdown) {
+        notifications.warning("当前会话没有可导出的对话正文");
+        return;
+      }
+      const result = await saveSessionMarkdownFile(markdown, createSessionMarkdownFilename(title));
+      if (result !== "cancelled") {
+        notifications.success("会话记录已导出");
+      }
+    } catch (reason) {
+      notifications.error(`导出失败：${errorMessage(reason)}`);
+    } finally {
+      setExportingSession(false);
+    }
+  }, [exportingSession, notifications, runtime, session?.id, title]);
+
+  const refreshSession = useCallback(() => {
+    void controller.reloadHistory().catch((reason: unknown) => {
+      notifications.error(errorMessage(reason));
+    });
+  }, [controller, notifications]);
   const connectionReady = controller.connectionReady;
   const canSend = controller.canSend;
   const canStop = controller.canStop;
@@ -760,40 +879,115 @@ export function ConversationSessionSurface({
     );
   }
 
+  const canMutateSession =
+    Boolean(session?.id) &&
+    typeof runtime.conversation.updateSession === "function" &&
+    typeof runtime.conversation.deleteSession === "function";
+  const canForkSession =
+    Boolean(session?.id) &&
+    typeof runtime.conversation.loadHistory === "function" &&
+    typeof runtime.conversation.forkSession === "function";
+  const canExportSession = Boolean(session?.id) && typeof runtime.conversation.loadHistory === "function";
+
   return (
-    <ChatLayout
-      title={title}
-      workspaceLabel={workspaceMeta?.label}
-      workspaceTitle={workspaceMeta?.title}
-      sourceSessionAction={
-        session?.fork_source && onNavigateToConversation
-          ? {
-              title: "查看源会话",
-              onClick: () => navigateToForkSource(session.fork_source),
-            }
-          : undefined
-      }
-      composerAccessory={
-        <ConversationPanelComposerAccessory
+    <>
+      <ChatLayout
+        title={title}
+        workspaceLabel={workspaceMeta?.label}
+        workspaceTitle={workspaceMeta?.title}
+        sourceSessionAction={
+          session?.fork_source && onNavigateToConversation
+            ? {
+                title: "查看源会话",
+                onClick: () => navigateToForkSource(session.fork_source),
+              }
+            : undefined
+        }
+        sessionActions={{
+          canExport: canExportSession,
+          exporting: exportingSession,
+          onExport: () => void exportSession(),
+          canFork: canForkSession,
+          forking: forkingSession,
+          onFork: () => void forkSessionFromLatestTurn(),
+          canMutate: canMutateSession,
+          onRename: () => setEditingTitle(title),
+          onDelete: () => setConfirmDeleteOpen(true),
+          showRefresh: true,
+          onRefresh: refreshSession,
+        }}
+        composerAccessory={
+          <ConversationPanelComposerAccessory
+            model={panelModel}
+            runtime={runtime}
+            onOpenMcpSettings={onOpenMcpSettings}
+          />
+        }
+        composer={composer}
+      >
+        <ConversationPanel
           model={panelModel}
-          runtime={runtime}
-          onOpenMcpSettings={onOpenMcpSettings}
+          workspaceRuntime={runtime}
+          scrollButtonMode="external"
+          turnNavigationRequest={focusTurnNavigationRequest}
+          onAskSelectionInBtwConversation={rightSidebarConversation ? askSelectionInBtwConversation : undefined}
+          emptyText="还没有消息，输入需求开始对话。"
+          emptyTestId="conversation-empty"
+          a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
+          a2uiRenderSuspended={a2uiRenderSuspended}
         />
-      }
-      composer={composer}
-    >
-      <ConversationPanel
-        model={panelModel}
-        workspaceRuntime={runtime}
-        scrollButtonMode="external"
-        turnNavigationRequest={focusTurnNavigationRequest}
-        onAskSelectionInBtwConversation={rightSidebarConversation ? askSelectionInBtwConversation : undefined}
-        emptyText="还没有消息，输入需求开始对话。"
-        emptyTestId="conversation-empty"
-        a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
-        a2uiRenderSuspended={a2uiRenderSuspended}
-      />
-    </ChatLayout>
+      </ChatLayout>
+
+      {editingTitle !== null ? (
+        <AppDialog
+          title="重命名会话"
+          description="修改后会同步到会话历史。"
+          size="form"
+          closeLabel="取消重命名"
+          closeOnOverlayClick={false}
+          onClose={() => setEditingTitle(null)}
+        >
+          <form
+            className={styles.renameDialogForm}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void renameSession();
+            }}
+          >
+            <label className={styles.renameDialogField}>
+              <span>会话名称</span>
+              <input
+                autoFocus
+                aria-label="会话名称"
+                onChange={(event) => setEditingTitle(event.target.value)}
+                onFocus={(event) => event.currentTarget.select()}
+                value={editingTitle}
+              />
+            </label>
+            <footer className={styles.renameDialogActions}>
+              <DialogButton type="button" aria-label="取消重命名" onClick={() => setEditingTitle(null)}>
+                取消
+              </DialogButton>
+              <DialogButton tone="primary" type="submit" aria-label="保存重命名">
+                保存
+              </DialogButton>
+            </footer>
+          </form>
+        </AppDialog>
+      ) : null}
+
+      {confirmDeleteOpen ? (
+        <ConfirmDialog
+          title="确认删除会话？"
+          description="会删除该会话的历史记录，操作不可撤销。"
+          preview={title.trim() || "该会话"}
+          confirmLabel="删除"
+          confirmTone="danger"
+          onCancel={() => setConfirmDeleteOpen(false)}
+          onConfirm={() => void deleteSession()}
+        />
+      ) : null}
+    </>
   );
 }
 

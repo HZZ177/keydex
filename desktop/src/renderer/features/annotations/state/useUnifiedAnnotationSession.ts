@@ -73,6 +73,10 @@ export function useUnifiedAnnotationSession({
   const [lanePlacements, setLanePlacements] = useState<readonly AnnotationLanePlacement[]>([]);
   const [railRevealRequest, setRailRevealRequest] = useState<{ annotationId: string; token: number } | null>(null);
   const railRevealSequence = useRef(0);
+  const requestRailReveal = useCallback((annotationId: string) => {
+    railRevealSequence.current += 1;
+    setRailRevealRequest({ annotationId, token: railRevealSequence.current });
+  }, []);
   const commitLanePlacements = useCallback((placements: readonly AnnotationLanePlacement[]) => {
     setLanePlacements((current) => sameLanePlacements(current, placements) ? current : placements);
   }, []);
@@ -83,8 +87,7 @@ export function useUnifiedAnnotationSession({
     const handle = (viewId: AnnotationViewId) => (event: AnnotationViewEvent) => {
       if (event.type === "marker-activate") {
         navigator.activateFromMarker(event.annotationId);
-        railRevealSequence.current += 1;
-        setRailRevealRequest({ annotationId: event.annotationId, token: railRevealSequence.current });
+        requestRailReveal(event.annotationId);
       } else if (event.type === "marker-hover") {
         store.getState().hover(event.annotationId);
       } else if (event.type === "selection") {
@@ -107,7 +110,7 @@ export function useUnifiedAnnotationSession({
       unregisterSource();
       unregisterMarkdown();
     };
-  }, [markdownAdapter, model, navigator, registry, sourceAdapter, store]);
+  }, [markdownAdapter, model, navigator, registry, requestRailReveal, sourceAdapter, store]);
 
   useEffect(() => {
     const connectorOwner = connectorViewId(mode);
@@ -259,6 +262,7 @@ export function useUnifiedAnnotationSession({
     notifyMarkdownLayoutChange,
     railItems,
     railRevealRequest,
+    requestRailReveal,
     retargetAnchorY,
     renderState,
     setLanePlacements: commitLanePlacements,

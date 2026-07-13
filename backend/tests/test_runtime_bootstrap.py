@@ -28,11 +28,28 @@ def test_create_app_mounts_desktop_runtime_and_keeps_health(tmp_path) -> None:
     assert "update_plan" in app.state.runtime.tool_registry.names()
     assert "domain_events" in app.state.runtime.capabilities
     assert "message_events" in app.state.runtime.capabilities
+    assert hasattr(app.state, "file_change_hub")
 
     response = TestClient(app).get("/api/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_application_lifespan_closes_file_change_hub(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+    close_calls = 0
+
+    async def close_file_change_hub() -> None:
+        nonlocal close_calls
+        close_calls += 1
+
+    app.state.file_change_hub.close = close_file_change_hub
+
+    with TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200
+
+    assert close_calls == 1
 
 
 def test_create_app_exposes_disabled_mcp_manager_without_client_startup(tmp_path) -> None:

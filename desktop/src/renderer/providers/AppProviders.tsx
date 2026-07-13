@@ -5,6 +5,7 @@ import { PreviewProvider } from "./PreviewProvider";
 import { ThemeProvider } from "./ThemeProvider";
 import { FontProvider } from "./FontProvider";
 import { AgentSessionProvider } from "./AgentSessionProvider";
+import { FileChangeProvider } from "./FileChangeProvider";
 import { AppContextMenuProvider } from "./AppContextMenuProvider";
 import { AppUpdateController } from "./AppUpdateController";
 import { NotificationProvider } from "./NotificationProvider";
@@ -34,9 +35,11 @@ export function AppProviders({
               <WindowClosePreferenceController runtime={runtime} />
               <FontProvider>
                 <AgentSessionProvider runtime={runtime}>
-                  <PreviewProvider>
-                    <HashRouter>{children}</HashRouter>
-                  </PreviewProvider>
+                  <FileChangeProvider>
+                    <PreviewProvider>
+                      <HashRouter>{children}</HashRouter>
+                    </PreviewProvider>
+                  </FileChangeProvider>
                 </AgentSessionProvider>
               </FontProvider>
             </RuntimeConnectionProvider>

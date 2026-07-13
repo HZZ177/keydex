@@ -16,12 +16,16 @@ describe("annotation chat references", () => {
     const runtime = { conversation: { openChatChannel } } as unknown as RuntimeBridge;
     const { result } = renderHook(() => useAgentSessionController({ runtime, enabled: false }));
     act(() => result.current.startChatFromAnnotation([
-      { annotationId: "a", workspaceId: "ws", path: "doc.txt" },
-      { annotationId: "b", workspaceId: "ws", path: "doc.txt" },
+      { annotationId: "a", body: "Explain alpha", kind: "text", workspaceId: "ws", path: "doc.txt" },
+      { annotationId: "b", body: "Review everything", kind: "document", workspaceId: "ws", path: "doc.txt" },
     ]));
     expect(result.current.fileChipRequest?.files).toHaveLength(2);
     expect(result.current.fileChipRequest?.files?.map((file) => file.id)).toEqual([
       "annotation:ws:a", "annotation:ws:b",
+    ]);
+    expect(result.current.fileChipRequest?.files?.map((file) => file.annotationReference)).toEqual([
+      { annotationId: "a", body: "Explain alpha", kind: "text", path: "doc.txt", workspaceId: "ws" },
+      { annotationId: "b", body: "Review everything", kind: "document", path: "doc.txt", workspaceId: "ws" },
     ]);
     expect(openChatChannel).not.toHaveBeenCalled();
   });

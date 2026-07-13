@@ -705,6 +705,7 @@ function ConversationRoute({ runtime }: { runtime: RuntimeBridge }) {
         onOpenMcpSettings={() => void navigate("/settings/mcp", { state: { from: location.pathname } })}
         onOpenModelSettings={() => void navigate("/settings/model-defaults", { state: { from: location.pathname } })}
         onNavigateToConversation={(nextThreadId) => void navigate(conversationPath(nextThreadId))}
+        onDeleted={() => void navigate(HOME_PATH)}
       />
     </RoutedLayout>
   );

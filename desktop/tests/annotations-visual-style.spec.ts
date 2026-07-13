@@ -41,6 +41,7 @@ describe("annotation visual style", () => {
     const railCss = readSource("renderer/features/annotations/ui/AnnotationRail.module.css");
 
     expect(previewCss).toContain('[data-annotation-navigation-flash="true"]');
+    expect(previewCss).toContain('.keydex-markdown-annotation-overlay-marker[data-annotation-navigation-flash="true"]');
     expect(previewCss).toContain("annotationNavigationTargetFlash");
     expect(railCss).toContain('.card[data-annotation-navigation-flash="true"]');
     expect(railCss).toContain("annotationCardNavigationFlash");

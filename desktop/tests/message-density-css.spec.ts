@@ -16,6 +16,17 @@ describe("conversation message density CSS contract", () => {
     expect(messageTextCss).toContain("var(--message-context-chip-max-width");
     expect(cssRule(messageTextCss, ".userMessage .bubble")).toContain("width: fit-content");
     expect(cssRule(messageTextCss, ".userMessage .bubble")).toContain("max-width: min(50%");
+    expect(cssRule(messageTextCss, ".userContextItems")).toContain("width: 100%");
+    expect(cssRule(messageTextCss, ".userContextItems")).toContain("justify-self: end");
+    expect(cssRule(messageTextCss, ".userContextItems .contextItems")).toContain("width: 100%");
+    expect(cssRule(messageTextCss, ".contextItemWrapper")).toContain(
+      "max-width: var(--message-context-chip-max-width",
+    );
+    expect(cssRule(messageTextCss, ".contextItemChip")).toContain("max-width: 100%");
+    expect(cssRule(messageTextCss, ".contextItemLabel")).toContain("text-overflow: ellipsis");
+    expect(cssRule(messageTextCss, ".contextItemLabel")).toContain("white-space: nowrap");
+    expect(cssRule(messageTextCss, ".contextItemPathMeta")).toContain("overflow-wrap: anywhere");
+    expect(cssRule(messageTextCss, ".contextItemPathMeta")).toContain("white-space: normal");
     expect(toolCallCss).toContain("var(--message-tool-detail-width");
     expect(fileChangeCss).toContain("var(--message-tool-detail-width");
   });

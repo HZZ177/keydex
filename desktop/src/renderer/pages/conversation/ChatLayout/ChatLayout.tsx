@@ -1,8 +1,11 @@
-import { Check, Copy, FolderOpen, GitBranch, MoreHorizontal, SendHorizontal } from "lucide-react";
+import { FolderOpen, GitBranch, MoreHorizontal, SendHorizontal } from "lucide-react";
 import { type PropsWithChildren, type ReactNode, useEffect, useRef, useState } from "react";
 
+import {
+  SessionActionMenuItems,
+  type SessionActionMenuItemsProps,
+} from "@/renderer/components/session/SessionActionMenuItems";
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
-import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 
 import styles from "./ChatLayout.module.css";
 
@@ -14,6 +17,7 @@ export interface ChatLayoutProps extends PropsWithChildren {
     title?: string;
     onClick: () => void;
   };
+  sessionActions?: Omit<SessionActionMenuItemsProps, "itemClassName" | "iconSize">;
   composer?: ReactNode;
   composerAccessory?: ReactNode;
 }
@@ -23,15 +27,15 @@ export function ChatLayout({
   workspaceLabel,
   workspaceTitle,
   sourceSessionAction,
+  sessionActions,
   children,
   composer,
   composerAccessory,
 }: ChatLayoutProps) {
   const layoutRef = useRef<HTMLElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const { copyState: titleCopyState, showCopyFeedback: showTitleCopyFeedback } = useCopyFeedback();
-  const titleCopied = titleCopyState === "copied";
   const menuRef = useRef<HTMLDivElement>(null);
+  const hasMenuActions = Boolean(sourceSessionAction || sessionActions);
 
   useEffect(() => {
     if (!menuOpen) {
@@ -57,18 +61,14 @@ export function ChatLayout({
     };
   }, [menuOpen]);
 
-  const copyTitle = async () => {
-    try {
-      await navigator.clipboard?.writeText(title);
-      showTitleCopyFeedback("copied");
-    } catch {
-      showTitleCopyFeedback("failed");
-    }
-  };
-
   const openSourceSession = () => {
     setMenuOpen(false);
     sourceSessionAction?.onClick();
+  };
+
+  const runSessionAction = (action?: () => void) => {
+    setMenuOpen(false);
+    action?.();
   };
 
   return (
@@ -90,19 +90,21 @@ export function ChatLayout({
               </div>
             ) : null}
             <h1 className={styles.title}>{title}</h1>
-            <button
-              className={styles.moreButton}
-              type="button"
-              aria-label="更多对话操作"
-              data-tooltip-label="更多操作"
-              aria-expanded={menuOpen}
-              aria-haspopup="menu"
-              onClick={() => setMenuOpen((open) => !open)}
-            >
-              <MoreHorizontal size={16} />
-            </button>
+            {hasMenuActions ? (
+              <button
+                className={styles.moreButton}
+                type="button"
+                aria-label="更多对话操作"
+                data-tooltip-label="更多操作"
+                aria-expanded={menuOpen}
+                aria-haspopup="menu"
+                onClick={() => setMenuOpen((open) => !open)}
+              >
+                <MoreHorizontal size={16} />
+              </button>
+            ) : null}
 
-            {menuOpen ? (
+            {menuOpen && hasMenuActions ? (
               <div className={styles.menu} role="menu" aria-label="对话操作菜单">
                 {sourceSessionAction ? (
                   <button
@@ -116,10 +118,18 @@ export function ChatLayout({
                     <span>查看源会话</span>
                   </button>
                 ) : null}
-                <button className={styles.menuItem} type="button" role="menuitem" onClick={() => void copyTitle()}>
-                  {titleCopied ? <Check size={15} /> : <Copy size={15} />}
-                  <span>{titleCopied ? "已复制标题" : "复制标题"}</span>
-                </button>
+                {sessionActions ? (
+                  <SessionActionMenuItems
+                    {...sessionActions}
+                    itemClassName={styles.menuItem}
+                    iconSize={15}
+                    onExport={() => runSessionAction(sessionActions.onExport)}
+                    onFork={() => runSessionAction(sessionActions.onFork)}
+                    onRename={() => runSessionAction(sessionActions.onRename)}
+                    onDelete={() => runSessionAction(sessionActions.onDelete)}
+                    onRefresh={() => runSessionAction(sessionActions.onRefresh)}
+                  />
+                ) : null}
               </div>
             ) : null}
           </div>

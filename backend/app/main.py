@@ -45,6 +45,7 @@ from backend.app.model.e2e_transport import create_e2e_model_transport
 from backend.app.runtime import create_desktop_runtime
 from backend.app.services.agent_runtime import AgentRuntimeProvider, LazyChatService
 from backend.app.services.chat_stream_manager import ChatStreamManager
+from backend.app.services.file_change_hub import FileChangeHub
 from backend.app.services.thread_task_elapsed_ticker import ThreadTaskElapsedTicker
 from backend.app.services.thread_task_events import ThreadTaskEventPublisher
 from backend.app.services.thread_task_runtime import ThreadTaskRuntime, ThreadTaskStateLocks
@@ -73,6 +74,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            try:
+                await app.state.file_change_hub.close()
+            except Exception as exc:
+                logger.opt(exception=True).error(
+                    f"[App] FileChangeHub 关闭失败 | error={exc}"
+                )
             await app.state.thread_task_elapsed_ticker.stop()
             await app.state.mcp_manager.shutdown()
             if not warmup_task.done():
@@ -202,6 +209,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             data=data,
         ),
     )
+    app.state.file_change_hub = FileChangeHub()
     app.state.runtime = create_desktop_runtime(
         settings=resolved_settings,
         database=app.state.database,
