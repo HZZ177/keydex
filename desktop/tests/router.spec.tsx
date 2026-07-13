@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,7 +36,7 @@ function renderRouter(
   initialEntries: Array<string | { pathname: string; state?: unknown }>,
   options: RenderRouterOptions = {},
 ) {
-  const { extra, starter = () => Promise.resolve(agentConnection()), ...runtimeOptions } = options;
+  const { extra, routeExtra, starter = () => Promise.resolve(agentConnection()), ...runtimeOptions } = options;
   const runtime = fakeRuntime(runtimeOptions);
   const result = render(
     <ThemeProvider>
@@ -48,6 +48,7 @@ function renderRouter(
                 <PreviewProvider>
                   {extra}
                   <MemoryRouter initialEntries={initialEntries}>
+                    {routeExtra}
                     <AppRouter runtime={runtime} />
                   </MemoryRouter>
                 </PreviewProvider>
@@ -65,7 +66,7 @@ function renderRouterWithoutLayoutProvider(
   initialEntries: Array<string | { pathname: string; state?: unknown }>,
   options: RenderRouterOptions = {},
 ) {
-  const { extra, starter = () => Promise.resolve(agentConnection()), ...runtimeOptions } = options;
+  const { extra, routeExtra, starter = () => Promise.resolve(agentConnection()), ...runtimeOptions } = options;
   const runtime = fakeRuntime(runtimeOptions);
   const result = render(
     <ThemeProvider>
@@ -76,6 +77,7 @@ function renderRouterWithoutLayoutProvider(
               <PreviewProvider>
                 {extra}
                 <MemoryRouter initialEntries={initialEntries}>
+                  {routeExtra}
                   <AppRouter runtime={runtime} />
                 </MemoryRouter>
               </PreviewProvider>
@@ -385,6 +387,61 @@ describe("AppRouter", () => {
     expect(runtime.localPreview.readDocument).toHaveBeenCalledTimes(1);
   });
 
+  it("loads annotations for an externally opened workspace file with a relative path", async () => {
+    const filePath = "D:/Pycharm Projects/keydex/README.md";
+    const annotationsList = vi.fn().mockResolvedValue([]);
+    renderRouter([workbenchFilePreviewPath(filePath)], { annotationsList });
+
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    await waitFor(() => {
+      expect(annotationsList).toHaveBeenCalledWith(
+        "workspace A",
+        "README.md",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+  });
+
+  it("refreshes an already-open file when the same external intent arrives again", async () => {
+    const filePath = "D:/Pycharm Projects/keydex/README.md";
+    const readDocument = vi
+      .fn()
+      .mockResolvedValueOnce({
+        document_id: `local-preview:${filePath}`,
+        source: "local-preview",
+        path: filePath,
+        revision: "sha256:before",
+        encoding: "utf-8",
+        total_bytes: 8,
+        content: "# Before",
+      })
+      .mockResolvedValueOnce({
+        document_id: `local-preview:${filePath}`,
+        source: "local-preview",
+        path: filePath,
+        revision: "sha256:after",
+        encoding: "utf-8",
+        total_bytes: 7,
+        content: "# After",
+      });
+    renderRouter([workbenchFilePreviewPath(filePath, "workspace A")], {
+      localPreviewReadDocument: readDocument,
+      routeExtra: <WorkbenchExternalOpenProbe filePath={filePath} />,
+    });
+
+    expect(await screen.findByRole("heading", { name: "Before" }, { timeout: 10000 })).not.toBeNull();
+    const outlineTree = screen.getByTestId("workspace-file-browser-tree");
+    expect(await within(outlineTree).findByText("Before")).not.toBeNull();
+    fireEvent.click(screen.getByTestId("reopen-external-workbench-file"));
+
+    expect(await screen.findByRole("heading", { name: "After" }, { timeout: 10000 })).not.toBeNull();
+    expect(await within(outlineTree).findByText("After")).not.toBeNull();
+    expect(within(outlineTree).queryByText("Before")).toBeNull();
+    expect(readDocument).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("1");
+    expect(screen.getByRole("tab", { name: "README.md" }).getAttribute("aria-selected")).toBe("true");
+  });
+
   it("previews an external workbench file before the runtime connection is ready", async () => {
     const filePath = "D:/docs/README.md";
     const connection = createDeferred<AgentConnection>();
@@ -489,6 +546,7 @@ describe("AppRouter", () => {
     const filePath = "D:/docs/README.md";
     renderRouter([workbenchFilePreviewPath(filePath, "workspace A")], {
       extra: <WorkbenchFileOpenProbe />,
+      routeExtra: <WorkbenchExternalOpenProbe filePath={filePath} />,
     });
 
     expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
@@ -510,6 +568,13 @@ describe("AppRouter", () => {
     });
     expect(screen.getByRole("tab", { name: "package.json" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("1");
+
+    fireEvent.click(screen.getByTestId("reopen-external-workbench-file"));
+
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByRole("tab", { name: "README.md" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "package.json" }).getAttribute("aria-selected")).toBe("false");
+    expect(screen.getByTestId("workbench-main-file-preview").getAttribute("data-open-tab-count")).toBe("2");
   });
 
   it("keeps pinned workbench sessions in the sidebar pinned section", async () => {
@@ -1379,10 +1444,13 @@ describe("AppRouter", () => {
 
 interface RenderRouterOptions extends FakeRuntimeOptions {
   extra?: ReactNode;
+  routeExtra?: ReactNode;
   starter?: () => Promise<AgentConnection>;
 }
 
 interface FakeRuntimeOptions {
+  annotationsList?: ReturnType<typeof vi.fn>;
+  localPreviewReadDocument?: ReturnType<typeof vi.fn>;
   sessionWorkspaceId?: string;
   sessions?: AgentSession[];
   workspaceSearch?: ReturnType<typeof vi.fn>;
@@ -1585,19 +1653,32 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
       readFile: vi.fn((path: string) =>
         Promise.resolve({ path, content: "# Local file\n\n## Intro\n\nBody", encoding: "utf-8" }),
       ),
-      readDocument: vi.fn((path: string) =>
-        Promise.resolve({
-          document_id: `local-preview:${path}`,
-          source: "local-preview" as const,
-          path,
-          revision: "sha256:local-file",
-          encoding: "utf-8" as const,
-          total_bytes: 31,
-          content: "# Local file\n\n## Intro\n\nBody",
-        }),
-      ),
+      readDocument:
+        options.localPreviewReadDocument ??
+        vi.fn((path: string) =>
+          Promise.resolve({
+            document_id: `local-preview:${path}`,
+            source: "local-preview" as const,
+            path,
+            revision: "sha256:local-file",
+            encoding: "utf-8" as const,
+            total_bytes: 31,
+            content: "# Local file\n\n## Intro\n\nBody",
+          }),
+        ),
       readMedia: vi.fn(),
     },
+    ...(options.annotationsList
+      ? {
+          annotations: {
+            list: options.annotationsList,
+            create: vi.fn(),
+            updateBody: vi.fn(),
+            replaceTarget: vi.fn(),
+            delete: vi.fn(),
+          },
+        }
+      : {}),
     workspace: {
       listDirectory,
       readFile: vi.fn((_scope: unknown, path: string) =>
@@ -1702,6 +1783,19 @@ function WorkbenchFileOpenProbe() {
         测试打开工作台预览
       </button>
     </>
+  );
+}
+
+function WorkbenchExternalOpenProbe({ filePath }: { filePath: string }) {
+  const navigate = useNavigate();
+  return (
+    <button
+      type="button"
+      data-testid="reopen-external-workbench-file"
+      onClick={() => void navigate(workbenchFilePreviewPath(filePath, "workspace A"))}
+    >
+      Reopen external workbench file
+    </button>
   );
 }
 

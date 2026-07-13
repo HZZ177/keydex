@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FilePreview } from "@/renderer/components/workspace/FilePreview";
+import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import type { RuntimeBridge } from "@/runtime";
 import type { AnnotationRecord } from "@/runtime/annotations";
 import { parseCanonicalMarkdownSnapshot } from "@/renderer/markdownRuntime/worker/parser";
@@ -118,6 +119,107 @@ describe("unified FilePreview annotations", () => {
     await waitFor(() => {
       expect(Number.parseFloat(placement?.style.top ?? "0")).toBeLessThan(expandedTop);
     });
+  });
+
+  it("uses a workspace-relative annotation path for a local file preview", async () => {
+    const list = vi.fn().mockResolvedValue([]);
+    const localRuntime = {
+      localPreview: {
+        readDocument: vi.fn().mockResolvedValue({
+          document_id: "tauri:D:/repo/notes.txt",
+          source: "tauri",
+          path: "D:/repo/notes.txt",
+          content: "Title\n\nAlpha paragraph.",
+          encoding: "utf-8",
+          revision: "sha256:current",
+          total_bytes: 23,
+        }),
+        readFile: vi.fn(),
+        readMedia: vi.fn(),
+      },
+      annotations: {
+        list,
+        create: vi.fn(),
+        updateBody: vi.fn(),
+        replaceTarget: vi.fn(),
+        delete: vi.fn(),
+      },
+    } as unknown as RuntimeBridge;
+
+    render(
+      <FilePreview
+        request={{ type: "local-file", path: "D:/repo/notes.txt" }}
+        runtime={localRuntime}
+        workspaceAnnotationPath="notes.txt"
+        workspaceId="ws-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(list).toHaveBeenCalledWith("ws-1", "notes.txt", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    });
+  });
+
+  it("does not send an absolute local file path to the workspace annotation runtime", async () => {
+    const list = vi.fn().mockResolvedValue([]);
+    const localRuntime = {
+      localPreview: {
+        readDocument: vi.fn().mockResolvedValue({
+          document_id: "tauri:D:/outside/notes.txt",
+          source: "tauri",
+          path: "D:/outside/notes.txt",
+          content: "Title",
+          encoding: "utf-8",
+          revision: "sha256:outside",
+          total_bytes: 5,
+        }),
+        readFile: vi.fn(),
+        readMedia: vi.fn(),
+      },
+      annotations: {
+        list,
+        create: vi.fn(),
+        updateBody: vi.fn(),
+        replaceTarget: vi.fn(),
+        delete: vi.fn(),
+      },
+    } as unknown as RuntimeBridge;
+
+    render(
+      <FilePreview
+        request={{ type: "local-file", path: "D:/outside/notes.txt" }}
+        runtime={localRuntime}
+        workspaceId="ws-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector("[data-file-preview-root='true']")?.getAttribute("data-document-revision"))
+        .toBe("sha256:outside");
+    });
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it("routes annotation runtime failures through the global notification viewport", async () => {
+    const message = "Annotation path must be workspace-relative";
+    const failedRuntime = runtime([]);
+    vi.mocked(failedRuntime.annotations.list).mockRejectedValue(new Error(message));
+
+    render(
+      <NotificationProvider>
+        <FilePreview
+          markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader}
+          request={{ type: "file", path: "README.md" }}
+          runtime={failedRuntime}
+          workspaceId="ws-1"
+        />
+      </NotificationProvider>,
+    );
+
+    const notificationViewport = screen.getByTestId("notification-viewport");
+    await waitFor(() => expect(within(notificationViewport).getByText(message)).not.toBeNull());
+    expect(within(notificationViewport).getByTestId("notification-item").getAttribute("data-type")).toBe("error");
+    expect(within(screen.getByLabelText("文件预览")).queryByText(message)).toBeNull();
   });
 
   it("keeps one rail and one active state across preview, source, and split", async () => {

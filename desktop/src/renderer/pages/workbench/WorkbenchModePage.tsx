@@ -39,7 +39,7 @@ import {
 import type { PreviewMarkdownViewDescriptor, PreviewRequest } from "@/renderer/providers/previewTypes";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
-import { isAbsoluteFilePath } from "@/renderer/utils/fileLinks";
+import { isAbsoluteFilePath, workspaceRelativeFilePath } from "@/renderer/utils/fileLinks";
 import type { AgentSession, PendingInputMode, Workspace } from "@/types/protocol";
 
 import {
@@ -207,7 +207,7 @@ export function WorkbenchModePage({
     selectedSessionId,
     workspaceId,
   });
-  const closedExternalPreviewPathRef = useRef<string | null>(null);
+  const handledExternalPreviewIntentPathRef = useRef<string | null>(null);
   const activeWorkbenchPreviewPath = activeWorkbenchPreviewTab
     ? targetPathForPreviewRequest(activeWorkbenchPreviewTab.request)
     : null;
@@ -540,7 +540,6 @@ export function WorkbenchModePage({
         previewContext?.setPreviewHostContext(workbenchPreviewRenderContext);
       }
       if (closingExternalPreview) {
-        closedExternalPreviewPathRef.current = externalPreviewPath;
         onExternalPreviewClosed?.();
       }
     },
@@ -657,30 +656,28 @@ export function WorkbenchModePage({
   ]);
 
   useEffect(() => {
-    if (!externalPreviewIntentPath || !workbenchPreviewRenderContext) {
+    if (!externalPreviewIntentPath) {
+      handledExternalPreviewIntentPathRef.current = null;
       return;
     }
-    if (closedExternalPreviewPathRef.current === externalPreviewIntentPath) {
+    if (
+      !workbenchPreviewRenderContext ||
+      handledExternalPreviewIntentPathRef.current === externalPreviewIntentPath
+    ) {
       return;
     }
+    handledExternalPreviewIntentPathRef.current = externalPreviewIntentPath;
     const request: PreviewRequest = { type: "local-file", path: externalPreviewIntentPath };
     const tabId = workbenchPreviewTabId(request);
     const existingTab = workbenchPreviewTabs.tabs.find((item) => item.id === tabId);
-    if (!existingTab) {
-      openWorkbenchMainPreview(request, workbenchPreviewRenderContext);
-      onExternalPreviewIntentConsumed?.();
-      return;
-    }
-    if (existingTab.renderContext === workbenchPreviewRenderContext) {
-      onExternalPreviewIntentConsumed?.();
-      return;
-    }
-    setWorkbenchPreviewTabs((current) => ({
-      activeTabId: current.activeTabId ?? tabId,
-      tabs: current.tabs.map((item) =>
-        item.id === tabId ? { ...item, renderContext: workbenchPreviewRenderContext } : item,
-      ),
-    }));
+    openWorkbenchMainPreview(
+      request,
+      workbenchPreviewRenderContext,
+      existingTab?.revealTarget ?? null,
+      existingTab?.sourceEntryId ?? null,
+      undefined,
+      existingTab?.markdownView ?? null,
+    );
     onExternalPreviewIntentConsumed?.();
   }, [
     externalPreviewIntentPath,
@@ -707,16 +704,6 @@ export function WorkbenchModePage({
       ),
     }));
   }, [externalPreviewPath, workbenchPreviewRenderContext, workbenchPreviewTabs.tabs]);
-
-  useEffect(() => {
-    if (
-      !closedExternalPreviewPathRef.current ||
-      closedExternalPreviewPathRef.current === externalPreviewIntentPath
-    ) {
-      return;
-    }
-    closedExternalPreviewPathRef.current = null;
-  }, [externalPreviewIntentPath]);
 
   useEffect(() => {
     const activeEntry = previewContext?.open ? previewContext.activeEntry : null;
@@ -921,6 +908,7 @@ export function WorkbenchModePage({
                   context={activeWorkbenchPreviewTab.renderContext ?? workbenchPreviewRenderContext}
                   fallbackRuntime={runtime}
                   fallbackWorkspaceId={workspaceId}
+                  workspaceRootPath={selectedWorkspace?.root_path}
                   outlineRevealRequest={mainPreviewOutlineRevealRequest}
                   onCloseActive={closeActiveWorkbenchPreviewTab}
                   onCloseTab={closeWorkbenchPreviewTab}
@@ -1090,6 +1078,7 @@ function WorkbenchMainPreviewTabs({
   context,
   fallbackRuntime,
   fallbackWorkspaceId,
+  workspaceRootPath,
   outlineRevealRequest,
   onCloseActive,
   onCloseTab,
@@ -1101,6 +1090,7 @@ function WorkbenchMainPreviewTabs({
   context: PreviewRenderContext | null;
   fallbackRuntime: RuntimeBridge;
   fallbackWorkspaceId?: string;
+  workspaceRootPath?: string;
   outlineRevealRequest?: MarkdownOutlineRevealRequest | null;
   onCloseActive: () => void;
   onCloseTab: (tabId: string) => void;
@@ -1386,6 +1376,7 @@ function WorkbenchMainPreviewTabs({
         context={context}
         fallbackRuntime={fallbackRuntime}
         fallbackWorkspaceId={fallbackWorkspaceId}
+        workspaceRootPath={workspaceRootPath}
         outlineRevealRequest={outlineRevealRequest}
         request={activeTab.request}
         requestId={activeTab.requestId}
@@ -1403,6 +1394,7 @@ function WorkbenchMainFilePreview({
   context,
   fallbackRuntime,
   fallbackWorkspaceId,
+  workspaceRootPath,
   outlineRevealRequest,
   request,
   requestId,
@@ -1415,6 +1407,7 @@ function WorkbenchMainFilePreview({
   context: PreviewRenderContext | null;
   fallbackRuntime: RuntimeBridge;
   fallbackWorkspaceId?: string;
+  workspaceRootPath?: string;
   outlineRevealRequest?: MarkdownOutlineRevealRequest | null;
   request: PreviewRequest;
   requestId: number;
@@ -1444,6 +1437,12 @@ function WorkbenchMainFilePreview({
     revealTarget?.sourceEnd,
     revealTarget?.sourceStart,
   ]);
+  const workspaceAnnotationPath = useMemo(
+    () => request.type === "local-file" && workspaceRootPath
+      ? workspaceRelativeFilePath(request.path, workspaceRootPath)
+      : undefined,
+    [request, workspaceRootPath],
+  );
 
   return (
     <div className={styles.mainPreviewBody} role="tabpanel" aria-label={title}>
@@ -1451,6 +1450,7 @@ function WorkbenchMainFilePreview({
         breadcrumbRootLabel={context?.workspaceLabel}
         workspaceId={context?.workspaceId ?? fallbackWorkspaceId}
         sessionId={context?.sessionId}
+        workspaceAnnotationPath={workspaceAnnotationPath}
         request={request}
         runtime={context?.runtime ?? fallbackRuntime}
         outlineRevealRequest={outlineRevealRequest}

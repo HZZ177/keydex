@@ -62,6 +62,29 @@ export function isAbsoluteFilePath(path: string): boolean {
   return isWindowsAbsoluteFilePath(value) || value.startsWith("/") || value.startsWith("\\\\") || value.startsWith("//");
 }
 
+export function workspaceRelativeFilePath(path: string, workspaceRootPath: string): string | null {
+  const target = normalizePathSeparators(path);
+  const root = normalizePathSeparators(workspaceRootPath);
+  if (!isAbsoluteFilePath(target) || !isAbsoluteFilePath(root)) {
+    return null;
+  }
+
+  const normalizedRoot = root === "/" ? root : root.replace(/\/+$/u, "");
+  const rootPrefix = normalizedRoot === "/" ? normalizedRoot : `${normalizedRoot}/`;
+  const caseInsensitive = isWindowsAbsoluteFilePath(normalizedRoot) || normalizedRoot.startsWith("//");
+  const comparableTarget = caseInsensitive ? target.toLowerCase() : target;
+  const comparablePrefix = caseInsensitive ? rootPrefix.toLowerCase() : rootPrefix;
+  if (!comparableTarget.startsWith(comparablePrefix)) {
+    return null;
+  }
+
+  const relativePath = target.slice(rootPrefix.length).replace(/^\/+|\/+$/gu, "");
+  if (!relativePath || relativePath.split("/").some((segment) => segment === "..")) {
+    return null;
+  }
+  return relativePath;
+}
+
 function normalizeMarkdownLinkTarget(value: string | undefined): string {
   const trimmed = value?.trim() ?? "";
   if (trimmed.startsWith("<") && trimmed.endsWith(">")) {
@@ -77,6 +100,10 @@ function hasNonFileScheme(value: string): boolean {
 
 function isWindowsAbsoluteFilePath(value: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(value);
+}
+
+function normalizePathSeparators(value: string): string {
+  return value.trim().replace(/\\/g, "/");
 }
 
 function splitTrailingLineNumber(value: string): { path: string; line: number | null } {

@@ -7,6 +7,7 @@ import type { DocumentReadResult, RuntimeBridge } from "@/runtime";
 import { FilePreview, type MarkdownOutlineItem, type MarkdownOutlineRevealRequest } from "@/renderer/components/workspace";
 import { APP_FIND_SHORTCUT_EVENT } from "@/renderer/events/findShortcut";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
+import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 
 const mermaidParseResult: ParseResult = { diagramType: "flowchart-v2", config: {} };
 const mermaidRenderResult: RenderResult = {
@@ -1616,6 +1617,48 @@ describe("FilePreview", () => {
       sourceEnd: 12,
     });
     expect(selection.removeAllRanges).toHaveBeenCalled();
+    selection.restore();
+  });
+
+  it("shows an unsupported rendered selection as a global warning", async () => {
+    const message = "当前选区无法投影到文档文字模型。";
+    vi.mocked(mermaid.render).mockResolvedValueOnce({
+      ...mermaidRenderResult,
+      svg: '<svg role="img" aria-label="测试图表" viewBox="0 0 2400 1200"><text>Rendered node</text></svg>',
+    });
+    const runtime = {
+      workspace: {
+        readFile: vi.fn().mockResolvedValue({
+          path: "diagram.md",
+          content: "# Diagram\n\n```mermaid\ngraph TD\nA[Start] --> B[Finish]\n```",
+          encoding: "utf-8",
+          revision: "sha256:diagram",
+        }),
+        readMedia: vi.fn(),
+      },
+      annotations: {
+        list: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        updateBody: vi.fn(),
+        replaceTarget: vi.fn(),
+        delete: vi.fn(),
+      },
+    } as unknown as RuntimeBridge;
+
+    render(
+      <NotificationProvider>
+        <FilePreview request={{ type: "file", path: "diagram.md" }} runtime={runtime} workspaceId="ws-1" />
+      </NotificationProvider>,
+    );
+
+    const renderedNode = await screen.findByText("Rendered node");
+    const selection = await showSelectionToolbar(renderedNode, "Rendered node");
+    fireEvent.click(await screen.findByRole("button", { name: "为选中文本添加批注" }));
+
+    const notificationViewport = screen.getByTestId("notification-viewport");
+    await waitFor(() => expect(within(notificationViewport).getByText(message)).not.toBeNull());
+    expect(within(notificationViewport).getByTestId("notification-item").getAttribute("data-type")).toBe("warning");
+    expect(within(screen.getByLabelText("文件预览")).queryByText(message)).toBeNull();
     selection.restore();
   });
 

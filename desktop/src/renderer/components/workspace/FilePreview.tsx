@@ -87,6 +87,7 @@ import {
   type PreviewFileRevealTarget,
   type PreviewQuoteSelectionRequest,
 } from "@/renderer/providers/PreviewProvider";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import type { PreviewContentKind, PreviewMarkdownViewDescriptor, PreviewRequest } from "@/renderer/providers/previewTypes";
 import {
@@ -98,6 +99,7 @@ import {
   type SvgDimensions,
 } from "@/renderer/utils/mermaidSvg";
 import { getMermaidConfig } from "@/renderer/utils/mermaidConfig";
+import { isAbsoluteFilePath } from "@/renderer/utils/fileLinks";
 import { parseUnifiedDiffDisplayLines } from "@/renderer/utils/unifiedDiff";
 
 import { AnnotationRail } from "@/renderer/features/annotations/ui/AnnotationRail";
@@ -158,6 +160,7 @@ export interface FilePreviewRevealRequest extends PreviewFileRevealTarget {
 export interface FilePreviewProps {
   workspaceId?: string;
   sessionId?: string;
+  workspaceAnnotationPath?: string | null;
   request: FilePreviewRequest;
   runtime?: RuntimeBridge;
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
@@ -182,6 +185,7 @@ declare global {
 export function FilePreview({
   workspaceId,
   sessionId,
+  workspaceAnnotationPath,
   request,
   runtime,
   onQuoteSelection,
@@ -197,6 +201,7 @@ export function FilePreview({
   markdownRuntimeSnapshotLoader,
   markdownViewDescriptor,
 }: FilePreviewProps) {
+  const notifications = useNotifications();
   const effectiveMarkdownRuntimeSnapshotLoader = markdownRuntimeSnapshotLoader
     ?? (import.meta.env.MODE === "test" ? globalThis.__KEYDEX_TEST_FILE_MARKDOWN_SNAPSHOT_LOADER__ : undefined);
   const previewRootRef = useRef<HTMLElement | null>(null);
@@ -235,7 +240,12 @@ export function FilePreview({
   const showPreviewTabs = previewEntries.length > 1;
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const fileLoadScope = request.type === "file" ? scope : null;
-  const annotationPath = request.type === "file" || request.type === "local-file" ? request.path : null;
+  const annotationPathCandidate = workspaceAnnotationPath === undefined
+    ? request.type === "file" ? request.path : null
+    : workspaceAnnotationPath;
+  const annotationPath = annotationPathCandidate && !isAbsoluteFilePath(annotationPathCandidate)
+    ? annotationPathCandidate
+    : null;
   const revealPath = isPathPreviewRequest(request)
     ? request.path
     : request.type === "content"
@@ -257,7 +267,6 @@ export function FilePreview({
   const [findMatchIndex, setFindMatchIndex] = useState(-1);
   const [activeMarkdownFindMatchId, setActiveMarkdownFindMatchId] = useState<string | null>(null);
   const [sourceFindState, setSourceFindState] = useState<CodeMirrorFindState | null>(null);
-  const [selectionMappingError, setSelectionMappingError] = useState<string | null>(null);
   const handledSourceRevealRequestIdsRef = useRef(new Map<string, number>());
   const lastFindScrollLineRef = useRef<FilePreviewFindScrollLine | null>(null);
   const documentReadConsumerIdRef = useRef(`file-preview-${nextFilePreviewConsumerId++}`);
@@ -447,6 +456,12 @@ export function FilePreview({
     source: formattedSource,
     workspaceId: workspaceId ?? null,
   });
+  const annotationNotificationError = annotationSession.state.error || annotationSession.state.navigation.error;
+  useEffect(() => {
+    if (annotationNotificationError) {
+      notifications.error(annotationNotificationError);
+    }
+  }, [annotationNotificationError, notifications]);
   const annotationAvailable = annotationSession.available;
   const annotationPanelOpen = annotationSession.state.panelOpen;
   const activeAnnotationId = annotationSession.state.activeAnnotationId;
@@ -501,13 +516,12 @@ export function FilePreview({
           ? annotationSession.beginDraft(selection)
           : annotationSession.beginDraftFromRuntimeSelection(markdownRuntimeSelection);
       if (!applied) {
-        setSelectionMappingError("当前选区无法投影到文档文字模型。");
+        notifications.warning("当前选区无法投影到文档文字模型。");
         return;
       }
-      setSelectionMappingError(null);
       window.getSelection()?.removeAllRanges();
     },
-    [annotationSession, markdownRuntimeSelection, viewMode],
+    [annotationSession, markdownRuntimeSelection, notifications, viewMode],
   );
   const openRuntimeLinkedPreview = previewContext?.openPreview;
   const markdownRuntimeInteractions = useMemo<MarkdownRendererInteractionHandlers>(() => ({
@@ -1250,24 +1264,6 @@ export function FilePreview({
                   onQuote={quotePreviewSelection}
                   onAnnotate={startSelectionAnnotation}
                 />
-              ) : null}
-              {selectionMappingError ? (
-                <div
-                  className={styles.selectionAnnotationError}
-                  role="alert"
-                  data-file-preview-selection-excluded="true"
-                >
-                  {selectionMappingError}
-                </div>
-              ) : null}
-              {annotationSession.state.error || annotationSession.state.navigation.error ? (
-                <div
-                  className={styles.selectionAnnotationError}
-                  role="alert"
-                  data-file-preview-selection-excluded="true"
-                >
-                  {annotationSession.state.error || annotationSession.state.navigation.error}
-                </div>
               ) : null}
             </div>
             <UnifiedAnnotationConnectors layoutRef={annotationLayoutRef} open={annotationPanelOpen} session={annotationSession} />

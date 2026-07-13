@@ -498,22 +498,6 @@
   max-height: none;
 }
 
-.selectionAnnotationError {
-  position: absolute;
-  z-index: 5;
-  right: 14px;
-  bottom: 14px;
-  max-width: min(360px, calc(100% - 28px));
-  border: 1px solid color-mix(in srgb, var(--color-danger-6) 34%, var(--color-border-subtle));
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-bg-elevated) 94%, var(--color-danger-6));
-  box-shadow: var(--shadow-floating);
-  color: var(--color-danger-6);
-  font-size: 11px;
-  line-height: 1.45;
-  padding: 8px 10px;
-}
-
 .findBar {
   position: absolute;
   z-index: 8;
