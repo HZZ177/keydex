@@ -115,6 +115,9 @@ describe("GeneralSettingsPage", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Maple Mono/ }));
 
     const progress = await screen.findByRole("progressbar");
+    const option = screen.getByRole("radio", { name: /Maple Mono/ });
+    expect(option.querySelector(".lucide-loader-circle")).not.toBeNull();
+    expect(option.querySelector(".lucide-download")).toBeNull();
     expect(progress.textContent).toContain("0 B / 34.8 MB");
     expect(progress.textContent).toContain("0/944");
   });
@@ -127,6 +130,9 @@ describe("GeneralSettingsPage", () => {
     fireEvent.click(screen.getByRole("radio", { name: /JetBrains Mono/ }));
 
     const progress = await screen.findByRole("progressbar");
+    const option = screen.getByRole("radio", { name: /JetBrains Mono/ });
+    expect(option.querySelector(".lucide-loader-circle")).not.toBeNull();
+    expect(option.querySelector(".lucide-download")).toBeNull();
     expect(progress.textContent).toContain("0 B / 109 KB");
     expect(progress.textContent).toContain("0/10");
   });

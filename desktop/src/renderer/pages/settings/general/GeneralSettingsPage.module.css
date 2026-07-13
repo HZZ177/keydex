@@ -172,6 +172,10 @@
   color: var(--color-accent);
 }
 
+.optionSpinner {
+  animation: option-spinner 900ms linear infinite;
+}
+
 .optionText {
   display: grid;
   min-width: 0;
@@ -246,5 +250,17 @@
   .settingRow {
     grid-template-columns: 1fr;
     gap: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .optionSpinner {
+    animation: none;
+  }
+}
+
+@keyframes option-spinner {
+  to {
+    transform: rotate(360deg);
   }
 }

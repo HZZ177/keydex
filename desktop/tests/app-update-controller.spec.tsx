@@ -7,6 +7,7 @@ import {
   AppUpdateController,
   useAppUpdate,
 } from "@/renderer/providers/AppUpdateController";
+import { AboutSettingsPage } from "@/renderer/pages/settings/about/AboutSettingsPage";
 import {
   canUseAppUpdater,
   checkForAppUpdate,
@@ -19,6 +20,7 @@ vi.mock("@/runtime", () => ({
   canUseAppUpdater: vi.fn(),
   checkForAppUpdate: vi.fn(),
   downloadAndInstallAppUpdate: vi.fn(),
+  getCurrentAppVersion: vi.fn().mockResolvedValue("0.1.0"),
 }));
 
 const canUseAppUpdaterMock = vi.mocked(canUseAppUpdater);
@@ -116,6 +118,31 @@ describe("AppUpdateController", () => {
     expect(screen.queryByRole("button", { name: "页面下载更新" })).toBeNull();
     expect(await screen.findByText(/正在下载更新 25%/)).not.toBeNull();
     expect((screen.getByRole("button", { name: "下载中" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows download progress only in the dialog when started from the about page", async () => {
+    const user = userEvent.setup();
+    checkForAppUpdateMock.mockResolvedValue(createPendingUpdate());
+    downloadAndInstallAppUpdateMock.mockImplementation(
+      (_pendingUpdate: PendingAppUpdate, onProgress?: (progress: AppUpdateProgress) => void) =>
+        new Promise<void>(() => {
+          onProgress?.({ downloadedBytes: 512, totalBytes: 1024, finished: false });
+        }),
+    );
+
+    render(
+      <AppUpdateController>
+        <AboutSettingsPage />
+      </AppUpdateController>,
+    );
+
+    expect(await screen.findByRole("dialog", { name: "发现新版本" })).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await user.click(screen.getByRole("button", { name: "下载更新并重启" }));
+
+    const progressBars = await screen.findAllByRole("progressbar", { name: "更新下载进度" });
+    expect(progressBars).toHaveLength(1);
+    expect(progressBars[0].closest('[role="dialog"]')).not.toBeNull();
   });
 });
 

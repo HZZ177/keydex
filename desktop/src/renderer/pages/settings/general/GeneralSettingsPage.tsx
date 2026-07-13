@@ -1,4 +1,4 @@
-import { Check, Download, Laptop, MessagesSquare, Power, Type } from "lucide-react";
+import { Check, Download, Laptop, LoaderCircle, MessagesSquare, Power, Type } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -277,7 +277,9 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
                       <span className={styles.optionDescription}>{optionDescription}</span>
                     </span>
                     <span className={styles.optionState} aria-hidden="true">
-                      {selected ? (
+                      {isOptionDownloading ? (
+                        <LoaderCircle className={styles.optionSpinner} size={15} />
+                      ) : selected ? (
                         <Check size={15} />
                       ) : isFontAssetOption && !cached ? (
                         <Download size={15} />

@@ -10,10 +10,7 @@ import {
   useAppUpdate,
   type AppUpdateStatus,
 } from "@/renderer/providers/AppUpdateController";
-import {
-  appUpdateProgressPercent,
-  appUpdateProgressText,
-} from "@/renderer/utils/appUpdateDisplay";
+import { appUpdateProgressPercent } from "@/renderer/utils/appUpdateDisplay";
 
 import styles from "./AboutSettingsPage.module.css";
 
@@ -93,27 +90,7 @@ export function AboutSettingsPage() {
             </div>
           </div>
 
-          {status === "downloading" ? (
-            <div
-              aria-label="更新下载进度"
-              aria-valuemax={100}
-              aria-valuemin={0}
-              aria-valuenow={appUpdateProgressPercent(progress)}
-              className={`${styles.progress} ${progress.totalBytes ? "" : styles.progressIndeterminate}`}
-              role="progressbar"
-            >
-              <span className={styles.progressTrack}>
-                <span
-                  className={styles.progressValue}
-                  style={{ width: `${appUpdateProgressPercent(progress)}%` }}
-                />
-              </span>
-              <span className={styles.progressText}>{appUpdateProgressText(progress)}</span>
-            </div>
-          ) : null}
-
           {pendingUpdate?.body ? <p className={styles.notes}>{pendingUpdate.body}</p> : null}
-
         </div>
       </section>
     </main>
