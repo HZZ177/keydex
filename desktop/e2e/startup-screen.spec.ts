@@ -26,7 +26,9 @@ test("normal startup matches the approved text-free composition and exits to the
   await expect(startup).toBeVisible();
   await expect(startup).toHaveAttribute("data-phase", "pending");
   await expect(startup).toHaveAttribute("data-reduced-motion", "true");
-  await expect(page.getByTestId("titlebar")).toContainText("Keydex");
+  const titlebar = page.getByTestId("titlebar");
+  await expect(titlebar).toContainText("Keydex");
+  await expect(titlebar).toHaveCSS("background-color", "rgb(245, 240, 232)");
   await expect(canvas).toHaveText("");
   await expect(canvas.locator("img[src='/keydex-startup-mark.png']")).toBeVisible();
   await expect(canvas.getByRole("progressbar")).toHaveCount(0);

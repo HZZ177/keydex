@@ -26,20 +26,25 @@ describe("StartupScreen", () => {
     const canvas = screen.getByTestId("startup-canvas");
     expect(root.dataset.phase).toBe("pending");
     expect(screen.getByTestId("titlebar").textContent).toBe("Keydex");
+    expect(within(screen.getByTestId("titlebar")).getByRole("img", { name: "Keydex" })).not.toBeNull();
     expect(within(canvas).queryByRole("progressbar")).toBeNull();
     expect(within(canvas).queryByRole("button")).toBeNull();
     expect(canvas.textContent).toBe("");
     expect(canvas.querySelector("img")?.getAttribute("src")).toBe("/keydex-startup-mark.png");
   });
 
-  it("locks the approved warm canvas and responsive logo scale", () => {
+  it("locks the warm Keydex canvas and compact reference ratio", () => {
     const cssPath = resolve(process.cwd(), "src/renderer/components/startup/StartupScreen.module.css");
     const css = readFileSync(cssPath, "utf8").toLowerCase();
     expect(css).toContain("#f7f3ec");
-    expect(css).toContain("clamp(220px, 26vw, 420px)");
+    expect(css).toContain("clamp(76px, 6.5vw, 108px)");
     expect(css).not.toContain("progress");
     expect(css).not.toContain("#1677ff");
-    expect(css).toContain("startup-signal-sweep 2400ms");
+    expect(css).toContain("startup-signal-pulse 1800ms");
+    expect(css).not.toContain("repeating-radial-gradient");
+    expect(css).not.toContain("repeating-conic-gradient");
+    expect(css).not.toContain("constructionlines");
+    expect(css).not.toContain("startup-logo-breathe");
     expect(css).not.toContain("rotate(");
   });
 

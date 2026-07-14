@@ -40,7 +40,6 @@ export function StartupScreen({ phase = "pending", onExitComplete, onRetry }: St
         {phase === "error" ? "本地服务连接失败" : "本地服务正在启动"}
       </span>
       <main className={styles.canvas} data-testid="startup-canvas">
-        <div className={styles.constructionLines} aria-hidden="true" />
         <div className={styles.logoStage}>
           <img className={styles.logo} src="/keydex-startup-mark.png" alt="" draggable={false} />
           <span className={styles.signalTrack} aria-hidden="true">

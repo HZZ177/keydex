@@ -69,30 +69,13 @@
   pointer-events: none;
 }
 
-.constructionLines {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  z-index: 0;
-  width: min(78vw, 1100px);
-  aspect-ratio: 1;
-  border: 1px solid rgb(93 72 51 / 3.8%);
-  border-radius: 50%;
-  background:
-    repeating-radial-gradient(circle at center, transparent 0 92px, rgb(93 72 51 / 3%) 93px 94px),
-    repeating-conic-gradient(from 0deg, rgb(93 72 51 / 3%) 0 0.16deg, transparent 0.16deg 15deg);
-  opacity: 0.72;
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-}
-
 .logoStage {
-  --startup-logo-y: clamp(-44px, -4vh, -18px);
+  --startup-logo-y: calc(var(--titlebar-height) / -2);
 
   position: relative;
   z-index: 1;
-  width: clamp(220px, 26vw, 420px);
-  animation: startup-logo-enter 440ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  width: clamp(76px, 6.5vw, 108px);
+  animation: startup-logo-enter 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
   transform: translateY(var(--startup-logo-y));
 }
 
@@ -100,42 +83,61 @@
   display: block;
   width: 100%;
   height: auto;
-  filter: drop-shadow(0 18px 18px rgb(74 48 31 / 12%)) drop-shadow(0 4px 6px rgb(74 48 31 / 7%));
+  filter: drop-shadow(0 8px 12px rgb(74 48 31 / 8%)) drop-shadow(0 2px 4px rgb(74 48 31 / 4%));
   user-select: none;
   -webkit-user-drag: none;
 }
 
 .signalTrack {
   position: absolute;
-  right: 43.2%;
-  bottom: 13.9%;
-  width: 18.5%;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, transparent, rgb(255 176 116 / 30%) 42%, rgb(255 236 194 / 88%));
-  filter: drop-shadow(0 0 4px rgb(255 120 71 / 55%));
-  animation: startup-signal-sweep 2400ms cubic-bezier(0.45, 0, 0.3, 1) infinite;
-  opacity: 0;
-  will-change: transform, opacity;
+  bottom: -18px;
+  left: 50%;
+  width: 30px;
+  height: 6px;
+  opacity: 1;
+  transform: translateX(-50%);
+  transition: opacity 180ms ease;
 }
 
+.signalTrack::before,
+.signalTrack::after,
 .signalDot {
   position: absolute;
   top: 50%;
-  right: -2px;
-  width: 6px;
-  height: 6px;
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
-  background: #fff7d8;
-  box-shadow:
-    0 0 0 1px rgb(255 255 255 / 72%),
-    0 0 7px 2px rgb(255 129 69 / 72%);
+  background: #cb674d;
+  box-shadow: 0 0 0 0 rgb(203 103 77 / 0%);
   transform: translateY(-50%);
+  animation: startup-signal-pulse 1800ms cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.signalTrack::before,
+.signalTrack::after {
+  content: "";
+}
+
+.signalTrack::before {
+  left: 2px;
+  animation-delay: -1200ms;
+}
+
+.signalDot {
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  background: #d87455;
+  animation-delay: -600ms;
+}
+
+.signalTrack::after {
+  right: 2px;
 }
 
 .screen[data-phase="error"] .signalTrack,
 .screen[data-phase="exiting"] .signalTrack {
-  animation: none;
   opacity: 0;
 }
 
@@ -179,7 +181,7 @@
 @keyframes startup-logo-enter {
   from {
     opacity: 0;
-    transform: translateY(calc(var(--startup-logo-y) + 8px)) scale(0.985);
+    transform: translateY(calc(var(--startup-logo-y) + 6px)) scale(0.985);
   }
 
   to {
@@ -188,36 +190,23 @@
   }
 }
 
-@keyframes startup-signal-sweep {
+@keyframes startup-signal-pulse {
   0%,
-  14% {
-    opacity: 0;
-    transform: translateX(-58%);
-  }
-
-  28% {
-    opacity: 0.48;
-  }
-
-  70% {
-    opacity: 1;
-    transform: translateX(34%);
-  }
-
-  84%,
+  54%,
   100% {
-    opacity: 0;
-    transform: translateX(48%);
+    box-shadow: 0 0 0 0 rgb(203 103 77 / 0%);
+    opacity: 0.24;
+  }
+
+  18% {
+    box-shadow: 0 0 0 3px rgb(203 103 77 / 7%);
+    opacity: 0.92;
   }
 }
 
 @media (max-width: 520px) {
-  .constructionLines {
-    width: 820px;
-  }
-
   .logoStage {
-    width: min(68vw, 280px);
+    width: 76px;
   }
 }
 
@@ -226,15 +215,15 @@
     animation: startup-opacity-enter 280ms ease-out both;
   }
 
-  .signalTrack {
+  .signalTrack::before,
+  .signalTrack::after,
+  .signalDot {
     animation: none;
-    opacity: 0.72;
-    transform: none;
+    opacity: 0.34;
   }
 
-  .screen[data-phase="error"] .signalTrack,
-  .screen[data-phase="exiting"] .signalTrack {
-    opacity: 0;
+  .signalDot {
+    opacity: 0.72;
   }
 
   .retry {
