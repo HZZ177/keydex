@@ -11,7 +11,10 @@ import {
   type MarkdownWorkerRequest,
   type MarkdownWorkerResponse,
 } from "@/renderer/markdownRuntime/worker/protocol";
-import { createMarkdownSnapshot } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
+import {
+  createMarkdownSnapshot,
+  createMarkdownSnapshotChunkHeader,
+} from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
 import { createMarkdownStreamTailPatch } from "@/renderer/markdownRuntime/streaming/StreamTailPatch";
 
 class FakeWorker implements DocumentWorkerLike {
@@ -133,6 +136,83 @@ function streamRequest(baseRevision: string, revision: string, requestId: string
 }
 
 describe("DocumentWorkerHost", () => {
+  it("assembles a chunked Snapshot without publishing an incomplete document", async () => {
+    const worker = new FakeWorker();
+    const host = new DocumentWorkerHost({ workerFactory: () => worker });
+    const attachment = host.attach("file", "file:README.md");
+    const request = parseRequest("chunked", "chunked-request");
+    const snapshot = createMarkdownSnapshot({
+      surface: "file",
+      document_id: request.document_id,
+      revision: request.revision,
+      renderer_profile: "file-preview",
+      mode: "canonical",
+      source_bytes: 7,
+      source_characters: 7,
+      logical_text: "chunked",
+      line_count: 1,
+      blocks: [{
+        id: "chunked-block",
+        identity_key: "paragraph:chunked",
+        content_hash: "hash:chunked",
+        index: 0,
+        kind: "paragraph",
+        parent_id: null,
+        depth: 0,
+        source_start: 0,
+        source_end: 7,
+        logical_start: 0,
+        logical_end: 7,
+        line_start: 0,
+        line_end: 1,
+        inline_spans: [],
+        metadata: {},
+      }],
+      outline: [],
+      resources: [],
+      stream: { kind: "canonical", finalized: true },
+      indexes: {
+        line_map_revision: request.revision,
+        logical_projection_revision: request.revision,
+        source_index_revision: request.revision,
+        find_index_revision: null,
+        annotation_index_revision: null,
+      },
+    });
+    const pending = attachment.request(request);
+    const responseIdentity = {
+      protocol_version: MARKDOWN_WORKER_PROTOCOL_VERSION,
+      surface: request.surface,
+      document_id: request.document_id,
+      revision: request.revision,
+      request_id: request.request_id,
+    } as const;
+
+    worker.emit({
+      ...responseIdentity,
+      type: "snapshot-start",
+      payload: createMarkdownSnapshotChunkHeader(snapshot),
+    });
+    expect(attachment.currentSnapshot()).toBeNull();
+    worker.emit({
+      ...responseIdentity,
+      type: "snapshot-chunk",
+      payload: { collection: "blocks", start: 0, items: snapshot.blocks },
+    });
+    expect(attachment.currentSnapshot()).toBeNull();
+    worker.emit({
+      ...responseIdentity,
+      type: "snapshot-complete",
+      payload: { block_count: 1, outline_count: 0, resource_count: 0 },
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      type: "snapshot-result",
+      payload: { revision: "chunked", logical_text: "chunked" },
+    });
+    expect(attachment.currentSnapshot()?.payload).toEqual(snapshot);
+  });
+
   it("materializes a bounded stream-tail patch against the published base Snapshot", async () => {
     const worker = new FakeWorker();
     const host = new DocumentWorkerHost({ workerFactory: () => worker });

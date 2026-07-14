@@ -2,10 +2,14 @@ import type { AnnotationRecord } from "@/runtime/annotations";
 import type { ResolvedAnnotationIndex } from "@/renderer/features/annotations/domain/resolutions";
 import {
   MARKDOWN_SNAPSHOT_SCHEMA_VERSION,
+  assertValidMarkdownSnapshotChunkHeader,
   assertValidMarkdownSnapshotOnce,
   type MarkdownSnapshot,
   type MarkdownSnapshotBlock,
+  type MarkdownSnapshotChunkCounts,
+  type MarkdownSnapshotChunkHeader,
   type MarkdownSnapshotOutlineEntry,
+  type MarkdownSnapshotResource,
 } from "../document/MarkdownSnapshot";
 import { decodeSelectedMarkdownSnapshot } from "./codec";
 import type { MarkdownStreamTailPatch } from "../streaming/StreamTailPatch";
@@ -23,6 +27,7 @@ export type MarkdownWorkerCapability =
   | "find-index"
   | "annotation-resolve"
   | "snapshot-hydration"
+  | "chunked-snapshot"
   | "transferable-array-buffer";
 
 export interface MarkdownWorkerIdentity {
@@ -57,6 +62,22 @@ export type MarkdownWorkerBlockPayload = MarkdownSnapshotBlock;
 export type MarkdownWorkerOutlinePayload = MarkdownSnapshotOutlineEntry;
 export type MarkdownSnapshotPayload = MarkdownSnapshot;
 export type MarkdownStreamTailPatchPayload = MarkdownStreamTailPatch;
+export type MarkdownSnapshotChunkPayload =
+  | {
+      readonly collection: "blocks";
+      readonly start: number;
+      readonly items: readonly MarkdownSnapshotBlock[];
+    }
+  | {
+      readonly collection: "outline";
+      readonly start: number;
+      readonly items: readonly MarkdownSnapshotOutlineEntry[];
+    }
+  | {
+      readonly collection: "resources";
+      readonly start: number;
+      readonly items: readonly MarkdownSnapshotResource[];
+    };
 
 export interface MarkdownFindMatchPayload {
   readonly id: string;
@@ -139,6 +160,18 @@ export type MarkdownWorkerResponse =
   | (MarkdownWorkerIdentity & {
       readonly type: "snapshot-result";
       readonly payload: MarkdownSnapshotPayload;
+    })
+  | (MarkdownWorkerIdentity & {
+      readonly type: "snapshot-start";
+      readonly payload: MarkdownSnapshotChunkHeader;
+    })
+  | (MarkdownWorkerIdentity & {
+      readonly type: "snapshot-chunk";
+      readonly payload: MarkdownSnapshotChunkPayload;
+    })
+  | (MarkdownWorkerIdentity & {
+      readonly type: "snapshot-complete";
+      readonly payload: MarkdownSnapshotChunkCounts;
     })
   | (MarkdownWorkerIdentity & {
       readonly type: "stream-tail-patch-result";
@@ -276,6 +309,24 @@ export function validateMarkdownWorkerResponse(value: unknown): MarkdownWorkerRe
         invalid("snapshot identity does not match response envelope");
       }
       break;
+    case "snapshot-start":
+      try {
+        assertValidMarkdownSnapshotChunkHeader(message.payload);
+      } catch (error) {
+        invalid(error instanceof Error ? error.message : String(error));
+      }
+      if (message.payload.surface !== message.surface
+        || message.payload.document_id !== message.document_id
+        || message.payload.revision !== message.revision) {
+        invalid("snapshot chunk identity does not match response envelope");
+      }
+      break;
+    case "snapshot-chunk":
+      validateSnapshotChunk(message.payload);
+      break;
+    case "snapshot-complete":
+      validateSnapshotChunkCounts(message.payload);
+      break;
     case "stream-tail-patch-result":
       validateStreamTailPatch(message.payload);
       break;
@@ -315,6 +366,24 @@ export function validateMarkdownWorkerResponse(value: unknown): MarkdownWorkerRe
       );
   }
   return message as unknown as MarkdownWorkerResponse;
+}
+
+function validateSnapshotChunk(value: unknown): void {
+  assertRecord(value, "snapshot chunk");
+  if (value.collection !== "blocks" && value.collection !== "outline" && value.collection !== "resources") {
+    invalid("snapshot chunk collection is invalid");
+  }
+  assertNonNegativeInteger(value.start, "snapshot chunk start");
+  if (!Array.isArray(value.items) || value.items.length === 0) {
+    invalid("snapshot chunk items must be a non-empty array");
+  }
+}
+
+function validateSnapshotChunkCounts(value: unknown): void {
+  assertRecord(value, "snapshot chunk counts");
+  for (const field of ["block_count", "outline_count", "resource_count"] as const) {
+    assertNonNegativeInteger(value[field], field);
+  }
 }
 
 function validateStreamTailPatch(value: unknown): asserts value is MarkdownStreamTailPatchPayload {
@@ -556,6 +625,7 @@ const WORKER_CAPABILITIES = new Set<string>([
   "find-index",
   "annotation-resolve",
   "snapshot-hydration",
+  "chunked-snapshot",
   "transferable-array-buffer",
 ]);
 const WORKER_ERROR_CODES = new Set<string>([

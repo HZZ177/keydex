@@ -142,6 +142,21 @@ export interface MarkdownSnapshot {
   readonly estimated_bytes: number;
 }
 
+export interface MarkdownSnapshotChunkHeader extends Omit<
+  MarkdownSnapshot,
+  "blocks" | "outline" | "resources"
+> {
+  readonly block_count: number;
+  readonly outline_count: number;
+  readonly resource_count: number;
+}
+
+export interface MarkdownSnapshotChunkCounts {
+  readonly block_count: number;
+  readonly outline_count: number;
+  readonly resource_count: number;
+}
+
 export type MarkdownSnapshotInput = Omit<
   MarkdownSnapshot,
   "schema_version" | "estimated_bytes"
@@ -258,6 +273,178 @@ export function assertValidMarkdownSnapshotOnce(value: unknown): asserts value i
   if (value !== null && typeof value === "object" && validatedMarkdownSnapshotIdentities.has(value)) return;
   assertValidMarkdownSnapshot(value);
   validatedMarkdownSnapshotIdentities.add(value as object);
+}
+
+export function createMarkdownSnapshotChunkHeader(snapshot: MarkdownSnapshot): MarkdownSnapshotChunkHeader {
+  assertValidMarkdownSnapshotOnce(snapshot);
+  return Object.freeze({
+    schema_version: snapshot.schema_version,
+    surface: snapshot.surface,
+    document_id: snapshot.document_id,
+    revision: snapshot.revision,
+    renderer_profile: snapshot.renderer_profile,
+    mode: snapshot.mode,
+    source_bytes: snapshot.source_bytes,
+    source_characters: snapshot.source_characters,
+    logical_text: snapshot.logical_text,
+    line_count: snapshot.line_count,
+    stream: snapshot.stream,
+    indexes: snapshot.indexes,
+    estimated_bytes: snapshot.estimated_bytes,
+    block_count: snapshot.blocks.length,
+    outline_count: snapshot.outline.length,
+    resource_count: snapshot.resources.length,
+  });
+}
+
+/**
+ * Incrementally validates and assembles a Snapshot received over several
+ * Worker messages. Validation work stays bounded by the individual chunk,
+ * avoiding one giant structured-clone/contract-validation task on the UI
+ * thread for very large documents.
+ */
+export class MarkdownSnapshotChunkAssembler {
+  private readonly header: MarkdownSnapshotChunkHeader;
+  private readonly blocks: MarkdownSnapshotBlock[] = [];
+  private readonly outline: MarkdownSnapshotOutlineEntry[] = [];
+  private readonly resources: MarkdownSnapshotResource[] = [];
+  private readonly blockIds = new Set<string>();
+  private readonly outlineIds = new Set<string>();
+  private readonly resourceIds = new Set<string>();
+  private previousSourceEnd = 0;
+
+  constructor(value: unknown) {
+    assertValidMarkdownSnapshotChunkHeader(value);
+    this.header = value;
+  }
+
+  get expectedCounts(): MarkdownSnapshotChunkCounts {
+    return {
+      block_count: this.header.block_count,
+      outline_count: this.header.outline_count,
+      resource_count: this.header.resource_count,
+    };
+  }
+
+  appendBlocks(start: number, items: readonly MarkdownSnapshotBlock[]): void {
+    this.assertChunkStart(start, this.blocks.length, "block");
+    if (this.blocks.length + items.length > this.header.block_count) fail("block chunk exceeds declared count");
+    for (const block of items) {
+      const index = this.blocks.length;
+      validateBlock(
+        block,
+        index,
+        this.header.source_characters,
+        this.header.logical_text.length,
+        this.header.line_count,
+      );
+      if (this.blockIds.has(block.id)) fail(`duplicate block id ${block.id}`);
+      if (block.source_start < this.previousSourceEnd) fail(`block ${block.id} overlaps its predecessor`);
+      assertNoRendererState(block);
+      this.blockIds.add(block.id);
+      this.previousSourceEnd = block.source_end;
+      this.blocks.push(block);
+    }
+  }
+
+  appendOutline(start: number, items: readonly MarkdownSnapshotOutlineEntry[]): void {
+    this.assertChunkStart(start, this.outline.length, "outline");
+    if (this.outline.length + items.length > this.header.outline_count) fail("outline chunk exceeds declared count");
+    for (const entry of items) {
+      assertRecord(entry, "outline entry");
+      nonEmpty(entry.id, "outline id");
+      nonEmpty(entry.block_id, "outline block_id");
+      nonEmpty(entry.title, "outline title");
+      integer(entry.level, "outline level");
+      integer(entry.source_line, "outline source_line");
+      if (!this.blockIds.has(entry.block_id as string)) fail(`outline block ${String(entry.block_id)} is missing`);
+      if (this.outlineIds.has(entry.id as string)) fail(`duplicate outline id ${String(entry.id)}`);
+      assertNoRendererState(entry);
+      this.outlineIds.add(entry.id as string);
+      this.outline.push(entry);
+    }
+  }
+
+  appendResources(start: number, items: readonly MarkdownSnapshotResource[]): void {
+    this.assertChunkStart(start, this.resources.length, "resource");
+    if (this.resources.length + items.length > this.header.resource_count) fail("resource chunk exceeds declared count");
+    for (const resource of items) {
+      validateResource(
+        resource,
+        this.blockIds,
+        this.header.source_characters,
+        this.header.logical_text.length,
+      );
+      if (this.resourceIds.has(resource.id)) fail(`duplicate resource id ${resource.id}`);
+      assertNoRendererState(resource);
+      this.resourceIds.add(resource.id);
+      this.resources.push(resource);
+    }
+  }
+
+  finalize(counts: MarkdownSnapshotChunkCounts): MarkdownSnapshot {
+    const expected = this.expectedCounts;
+    for (const field of ["block_count", "outline_count", "resource_count"] as const) {
+      if (counts[field] !== expected[field]) fail(`snapshot completion ${field} mismatch`);
+    }
+    if (this.blocks.length !== expected.block_count
+      || this.outline.length !== expected.outline_count
+      || this.resources.length !== expected.resource_count) {
+      fail("snapshot completed before every chunk arrived");
+    }
+    const snapshot: MarkdownSnapshot = {
+      schema_version: this.header.schema_version,
+      surface: this.header.surface,
+      document_id: this.header.document_id,
+      revision: this.header.revision,
+      renderer_profile: this.header.renderer_profile,
+      mode: this.header.mode,
+      source_bytes: this.header.source_bytes,
+      source_characters: this.header.source_characters,
+      logical_text: this.header.logical_text,
+      line_count: this.header.line_count,
+      blocks: Object.freeze(this.blocks),
+      outline: Object.freeze(this.outline),
+      resources: Object.freeze(this.resources),
+      stream: this.header.stream,
+      indexes: this.header.indexes,
+      estimated_bytes: this.header.estimated_bytes,
+    };
+    validatedMarkdownSnapshotIdentities.add(snapshot);
+    return snapshot;
+  }
+
+  private assertChunkStart(start: number, expected: number, label: string): void {
+    integer(start, `${label} chunk start`);
+    if (start !== expected) fail(`${label} chunk start ${start} does not match ${expected}`);
+  }
+}
+
+export function assertValidMarkdownSnapshotChunkHeader(
+  value: unknown,
+): asserts value is MarkdownSnapshotChunkHeader {
+  assertRecord(value, "snapshot chunk header");
+  if (value.schema_version !== MARKDOWN_SNAPSHOT_SCHEMA_VERSION) fail("snapshot schema version mismatch");
+  if (value.surface !== "file" && value.surface !== "message") fail("snapshot surface is invalid");
+  nonEmpty(value.document_id, "document_id");
+  nonEmpty(value.revision, "revision");
+  if (value.renderer_profile !== "file-preview" && value.renderer_profile !== "conversation") {
+    fail("renderer_profile is invalid");
+  }
+  if (value.mode !== "canonical" && value.mode !== "stream-tail") fail("snapshot mode is invalid");
+  if (typeof value.logical_text !== "string") fail("snapshot logical text must be a string");
+  for (const field of [
+    "source_bytes",
+    "source_characters",
+    "line_count",
+    "estimated_bytes",
+    "block_count",
+    "outline_count",
+    "resource_count",
+  ] as const) integer(value[field], field);
+  validateStream(value.stream, value.block_count as number, value.source_characters as number, value.mode);
+  validateIndexes(value.indexes);
+  assertNoRendererState(value);
 }
 
 export function estimateMarkdownSnapshotBytes(snapshot: Omit<MarkdownSnapshot, "estimated_bytes">): number {

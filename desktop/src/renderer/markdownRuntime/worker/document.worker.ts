@@ -5,7 +5,10 @@ import {
   type MarkdownWorkerResponse,
 } from "./protocol";
 import { MarkdownParserCancelledError, parseCanonicalMarkdownSnapshot } from "./parser";
-import type { MarkdownSnapshot } from "../document/MarkdownSnapshot";
+import {
+  createMarkdownSnapshotChunkHeader,
+  type MarkdownSnapshot,
+} from "../document/MarkdownSnapshot";
 import { StreamingTailParser } from "../streaming/StreamingTailParser";
 import { createMarkdownStreamTailPatch } from "../streaming/StreamTailPatch";
 import { encodeSelectedMarkdownSnapshot } from "./codec";
@@ -27,7 +30,15 @@ const sourceByteLengths = new Map<string, number>();
 const annotationModels = new Map<string, MarkdownTextModel>();
 const tailParsers = new Map<string, StreamingTailParser>();
 
+const CHUNKED_SNAPSHOT_THRESHOLD_BYTES = 8 * 1024 * 1024;
+const SNAPSHOT_CHUNK_ITEMS = 512;
+const SNAPSHOT_CHUNKS_PER_YIELD = 4;
+
 scope.addEventListener("message", (event) => {
+  void handleMessage(event);
+});
+
+async function handleMessage(event: MessageEvent<unknown>): Promise<void> {
   let request: MarkdownWorkerRequest;
   try {
     request = validateMarkdownWorkerRequest(event.data);
@@ -55,7 +66,15 @@ scope.addEventListener("message", (event) => {
       ...identity(request),
       type: "capabilities-result",
       payload: {
-        supported: ["canonical-parse", "stream-tail-parse", "find-index", "annotation-resolve", "snapshot-hydration", "transferable-array-buffer"],
+        supported: [
+          "canonical-parse",
+          "stream-tail-parse",
+          "find-index",
+          "annotation-resolve",
+          "snapshot-hydration",
+          "chunked-snapshot",
+          "transferable-array-buffer",
+        ],
         max_transfer_bytes: 20 * 1024 * 1024,
       },
     });
@@ -117,11 +136,7 @@ scope.addEventListener("message", (event) => {
       sourceByteLengths.set(key, request.payload.source.byte_length);
       annotationModels.delete(key);
       tailParsers.delete(key);
-      const encoded = encodeSelectedMarkdownSnapshot(snapshot);
-      scope.postMessage(
-        { ...identity(request), type: "snapshot-result", payload: encoded.payload },
-        [...encoded.transfer],
-      );
+      await postSnapshotResult(request, snapshot);
     } catch (error) {
       const cancelled = error instanceof MarkdownParserCancelledError;
       scope.postMessage({
@@ -181,11 +196,7 @@ scope.addEventListener("message", (event) => {
       annotationModels.delete(key);
       if (request.payload.final) tailParsers.delete(key);
       if (request.payload.final) {
-        const encoded = encodeSelectedMarkdownSnapshot(result.snapshot);
-        scope.postMessage(
-          { ...identity(request), type: "snapshot-result", payload: encoded.payload },
-          [...encoded.transfer],
-        );
+        await postSnapshotResult(request, result.snapshot);
       } else {
         const patch = createMarkdownStreamTailPatch(baseSnapshot, result.snapshot, {
           logicalPrefixCharacters: result.logicalPrefixCharacters,
@@ -318,7 +329,88 @@ scope.addEventListener("message", (event) => {
       retryable: false,
     },
   });
-});
+}
+
+async function postSnapshotResult(
+  request: Extract<MarkdownWorkerRequest, { type: "parse-canonical" | "parse-stream-tail" }>,
+  snapshot: MarkdownSnapshot,
+): Promise<void> {
+  if (snapshot.estimated_bytes < CHUNKED_SNAPSHOT_THRESHOLD_BYTES) {
+    const encoded = encodeSelectedMarkdownSnapshot(snapshot);
+    scope.postMessage(
+      { ...identity(request), type: "snapshot-result", payload: encoded.payload },
+      [...encoded.transfer],
+    );
+    return;
+  }
+
+  throwIfCancelled(request.request_id);
+  const header = createMarkdownSnapshotChunkHeader(snapshot);
+  scope.postMessage({ ...identity(request), type: "snapshot-start", payload: header });
+  let chunksSinceYield = 0;
+
+  for (let start = 0; start < snapshot.blocks.length; start += SNAPSHOT_CHUNK_ITEMS) {
+    throwIfCancelled(request.request_id);
+    scope.postMessage({
+      ...identity(request),
+      type: "snapshot-chunk",
+      payload: {
+        collection: "blocks",
+        start,
+        items: snapshot.blocks.slice(start, start + SNAPSHOT_CHUNK_ITEMS),
+      },
+    });
+    chunksSinceYield = await yieldAfterChunk(chunksSinceYield);
+  }
+  for (let start = 0; start < snapshot.outline.length; start += SNAPSHOT_CHUNK_ITEMS) {
+    throwIfCancelled(request.request_id);
+    scope.postMessage({
+      ...identity(request),
+      type: "snapshot-chunk",
+      payload: {
+        collection: "outline",
+        start,
+        items: snapshot.outline.slice(start, start + SNAPSHOT_CHUNK_ITEMS),
+      },
+    });
+    chunksSinceYield = await yieldAfterChunk(chunksSinceYield);
+  }
+  for (let start = 0; start < snapshot.resources.length; start += SNAPSHOT_CHUNK_ITEMS) {
+    throwIfCancelled(request.request_id);
+    scope.postMessage({
+      ...identity(request),
+      type: "snapshot-chunk",
+      payload: {
+        collection: "resources",
+        start,
+        items: snapshot.resources.slice(start, start + SNAPSHOT_CHUNK_ITEMS),
+      },
+    });
+    chunksSinceYield = await yieldAfterChunk(chunksSinceYield);
+  }
+
+  throwIfCancelled(request.request_id);
+  scope.postMessage({
+    ...identity(request),
+    type: "snapshot-complete",
+    payload: {
+      block_count: snapshot.blocks.length,
+      outline_count: snapshot.outline.length,
+      resource_count: snapshot.resources.length,
+    },
+  });
+}
+
+async function yieldAfterChunk(chunksSinceYield: number): Promise<number> {
+  const next = chunksSinceYield + 1;
+  if (next < SNAPSHOT_CHUNKS_PER_YIELD) return next;
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  return 0;
+}
+
+function throwIfCancelled(requestId: string): void {
+  if (cancelledRequests.delete(requestId)) throw new MarkdownParserCancelledError();
+}
 
 function identity(request: MarkdownWorkerRequest) {
   return {

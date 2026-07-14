@@ -12,6 +12,7 @@ import type { RuntimeBridge, WorkspaceScope } from "@/runtime";
 import type { MarkdownSnapshot } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
 import {
   estimateMarkdownSnapshotHeights,
+  estimateMarkdownSnapshotHeightsIncrementally,
   measuredMarkdownBlockOccupiedHeight,
 } from "@/renderer/markdownRuntime/layout/heightEstimate";
 import { MarkdownMeasurementScheduler } from "@/renderer/markdownRuntime/layout/MeasurementScheduler";
@@ -368,15 +369,19 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
       const retainedSnapshot = runtimeViewAttachment?.current()?.snapshot
         ?? attachment?.current()?.snapshot
         ?? (lastGoodSnapshotRef.current?.key === documentKey ? lastGoodSnapshotRef.current.snapshot : null);
-      if (retainedSnapshot) {
-        publishSnapshot(state, retainedSnapshot, "stale");
+      const immediateRetainedSnapshot = retainedSnapshot
+        && retainedSnapshot.estimated_bytes < INCREMENTAL_SNAPSHOT_PREPARATION_BYTES
+        ? retainedSnapshot
+        : null;
+      if (immediateRetainedSnapshot) {
+        publishSnapshot(state, immediateRetainedSnapshot, "stale");
         scheduleFeatureInstall();
         syncRenderCount(host, state, props.onRender);
         host.dataset.markdownRuntimeStale = "true";
       } else {
         host.dataset.markdownRuntimeStatus = "loading";
       }
-      if (!retainedSnapshot && !props.snapshotLoader && props.source.length > FILE_VISIBLE_PREFIX_CHARACTERS) {
+      if (!immediateRetainedSnapshot && !props.snapshotLoader && props.source.length > FILE_VISIBLE_PREFIX_CHARACTERS) {
         const prefixSource = visibleMarkdownPrefix(props.source, FILE_VISIBLE_PREFIX_CHARACTERS);
         visiblePrefixAttachment = fileMarkdownRuntimeStore().attach({
           surface: "file",
@@ -415,9 +420,15 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         : runtimeViewAttachment
           ? runtimeViewAttachment.load({ revision: props.revision, source: props.source, signal: controller.signal })
           : attachment!.load({ revision: props.revision, source: props.source, signal: controller.signal });
-      void load.then((snapshot) => {
+      void load.then(async (snapshot) => {
         if (!active) return;
         state.stages.loadMs = Math.max(0, performance.now() - loadStartedAt);
+        const preparedHeights = snapshot.estimated_bytes >= INCREMENTAL_SNAPSHOT_PREPARATION_BYTES
+          ? await prepareSnapshotHeights(state, snapshot)
+          : null;
+        if (!active) return;
+        if (preparedHeights) await yieldMainThread();
+        if (!active) return;
         state.snapshot = snapshot;
         if (!runtimeViewAttachment && viewStateAttachment) {
           viewStateAttachment.reconcileRevision(snapshot.revision, {
@@ -426,7 +437,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
           });
         }
         const publishStartedAt = performance.now();
-        publishSnapshot(state, snapshot, "ready");
+        publishSnapshot(state, snapshot, "ready", preparedHeights ?? undefined);
         state.stages.publishMs = Math.max(0, performance.now() - publishStartedAt);
         restoreScrollAnchor(state);
         syncRenderCount(host, state, props.onRender);
@@ -940,13 +951,18 @@ function recordMeasurementFailure(state: HostState, error: unknown): void {
   });
 }
 
-function publishSnapshot(state: HostState, snapshot: MarkdownSnapshot, status: "stale" | "ready"): void {
+function publishSnapshot(
+  state: HostState,
+  snapshot: MarkdownSnapshot,
+  status: "stale" | "ready",
+  preparedHeights?: Float64Array,
+): void {
   state.snapshot = snapshot;
   state.measurement?.setContext({ revision: snapshot.revision, epoch: 0 });
   state.measuredElements.clear();
   const host = state.view.host;
   const width = Math.max(1, state.scrollElement.clientWidth || host.clientWidth || 800);
-  const heights = estimateMarkdownSnapshotHeights(snapshot, { viewportWidth: width });
+  const heights = preparedHeights ?? estimateMarkdownSnapshotHeights(snapshot, { viewportWidth: width });
   const initialScrollTop = state.viewState ? 0 : state.scrollElement.scrollTop;
   if (state.viewState) state.scrollElement.scrollTop = 0;
   const patch = state.view.publish(snapshot, heights, {
@@ -957,6 +973,20 @@ function publishSnapshot(state: HostState, snapshot: MarkdownSnapshot, status: "
   syncMeasurementTargets(state);
   host.dataset.markdownRuntimeStatus = status;
   recordRendererFailures(state, patch.render.failed);
+}
+
+function prepareSnapshotHeights(state: HostState, snapshot: MarkdownSnapshot): Promise<Float64Array> {
+  const host = state.view.host;
+  const width = Math.max(1, state.scrollElement.clientWidth || host.clientWidth || 800);
+  return estimateMarkdownSnapshotHeightsIncrementally(
+    snapshot,
+    { viewportWidth: width },
+    yieldMainThread,
+  );
+}
+
+function yieldMainThread(): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
 }
 
 function recordRendererFailures(state: HostState, failed: number): void {
@@ -1302,6 +1332,7 @@ function workspaceScopeKey(scope?: WorkspaceScope | null): string | null {
 let nextFileRuntimeViewId = 1;
 
 const FILE_VISIBLE_PREFIX_CHARACTERS = 128 * 1024;
+const INCREMENTAL_SNAPSHOT_PREPARATION_BYTES = 8 * 1024 * 1024;
 
 function visibleMarkdownPrefix(source: string, maximumCharacters: number): string {
   let end = Math.min(source.length, maximumCharacters);

@@ -145,21 +145,30 @@ export class DocumentViewRuntime {
       throw new Error(`Height count ${heights.length} does not match ${snapshot.blocks.length} blocks`);
     }
     this.snapshot = snapshot;
-    this.blockIndexById = new Map(snapshot.blocks.map((block) => [block.id, block.index]));
-    this.baseHeights = Float64Array.from(heights, (height) => normalizedHeight(height));
+    const blockIds = new Array<string>(snapshot.blocks.length);
+    this.blockIndexById = new Map();
+    for (const block of snapshot.blocks) {
+      this.blockIndexById.set(block.id, block.index);
+      blockIds[block.index] = block.id;
+    }
+    this.baseHeights = heights instanceof Float64Array
+      ? heights.slice()
+      : Float64Array.from(heights, (height) => normalizedHeight(height));
     this.foldDescriptors = buildFoldDescriptors(snapshot.blocks);
     this.foldedBlockIds = new Set(
       [...this.foldedBlockIds].filter((blockId) => this.foldDescriptors.has(blockId)),
     );
     this.rebuildFoldProjection();
+    const hasFoldProjection = this.hiddenBlockIndices.size > 0 || this.foldedBlockIds.size > 0;
     const nextHeightIndex = new MarkdownHeightIndex(
       snapshot.revision,
-      snapshot.blocks.map((block) => this.effectiveHeightAt(block.index)),
+      hasFoldProjection
+        ? snapshot.blocks.map((block) => this.effectiveHeightAt(block.index))
+        : this.baseHeights,
     );
     if (this.viewport) this.viewport.reset(nextHeightIndex);
     else this.viewport = new MarkdownViewportController(nextHeightIndex, this.viewportOptions);
     this.heightIndex = nextHeightIndex;
-    const blockIds = snapshot.blocks.map((block) => block.id);
     if (this.scrollAnchor) this.scrollAnchor.reset(nextHeightIndex, blockIds);
     else this.scrollAnchor = new MarkdownScrollAnchorController(
       nextHeightIndex,
@@ -707,6 +716,11 @@ export class DocumentViewRuntime {
   private rebuildFoldProjection(): void {
     const snapshot = this.snapshot;
     if (!snapshot) {
+      this.hiddenBlockIndices.clear();
+      this.visibleBlockIndices = Object.freeze([]);
+      return;
+    }
+    if (this.foldedBlockIds.size === 0) {
       this.hiddenBlockIndices.clear();
       this.visibleBlockIndices = Object.freeze([]);
       return;

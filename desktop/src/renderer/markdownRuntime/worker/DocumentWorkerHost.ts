@@ -14,6 +14,7 @@ import {
   MarkdownRevisionPublicationGate,
   type MarkdownRevisionPublication,
 } from "../document/identity";
+import { MarkdownSnapshotChunkAssembler } from "../document/MarkdownSnapshot";
 import { applyMarkdownStreamTailPatch } from "../streaming/StreamTailPatch";
 
 export interface DocumentWorkerLike {
@@ -50,6 +51,7 @@ interface WorkerTask {
   cancelPosted: boolean;
   onAbort?: () => void;
   publication?: MarkdownRevisionPublication;
+  chunkedSnapshot?: MarkdownSnapshotChunkAssembler;
 }
 
 interface DocumentState {
@@ -137,6 +139,7 @@ export class DocumentWorkerHost {
             "find-index",
             "annotation-resolve",
             "snapshot-hydration",
+            "chunked-snapshot",
             "transferable-array-buffer",
           ],
         },
@@ -261,6 +264,20 @@ export class DocumentWorkerHost {
     }
     const task = this.requests.get(response.request_id);
     if (!task || !responseMatchesRequest(task.request, response)) return;
+    if (response.type === "snapshot-start"
+      || response.type === "snapshot-chunk"
+      || response.type === "snapshot-complete") {
+      try {
+        this.handleSnapshotChunk(task, response);
+      } catch (error) {
+        this.handleCrash(normalizeWorkerError(error).message);
+      }
+      return;
+    }
+    if (task.chunkedSnapshot && response.type === "snapshot-result") {
+      this.handleCrash("Markdown Worker mixed chunked and monolithic Snapshot responses");
+      return;
+    }
     if (response.type === "stream-tail-patch-result") {
       const state = this.states.get(documentKey(response.surface, response.document_id));
       const base = state?.lastSnapshot?.payload;
@@ -285,6 +302,54 @@ export class DocumentWorkerHost {
       return;
     }
     this.finishTask(task, response);
+  }
+
+  private handleSnapshotChunk(
+    task: WorkerTask,
+    response: Extract<MarkdownWorkerResponse, {
+      type: "snapshot-start" | "snapshot-chunk" | "snapshot-complete";
+    }>,
+  ): void {
+    if (!isParseRequest(task.request)) {
+      throw new MarkdownWorkerProtocolError("invalid-message", "Only parse requests may publish Snapshot chunks");
+    }
+    if (response.type === "snapshot-start") {
+      if (task.chunkedSnapshot) {
+        throw new MarkdownWorkerProtocolError("invalid-message", "Markdown Worker started a Snapshot twice");
+      }
+      task.chunkedSnapshot = new MarkdownSnapshotChunkAssembler(response.payload);
+      return;
+    }
+    const assembler = task.chunkedSnapshot;
+    if (!assembler) {
+      throw new MarkdownWorkerProtocolError("invalid-message", "Markdown Worker sent a Snapshot chunk before its header");
+    }
+    if (response.type === "snapshot-chunk") {
+      const chunk = response.payload;
+      switch (chunk.collection) {
+        case "blocks":
+          assembler.appendBlocks(chunk.start, chunk.items);
+          break;
+        case "outline":
+          assembler.appendOutline(chunk.start, chunk.items);
+          break;
+        case "resources":
+          assembler.appendResources(chunk.start, chunk.items);
+          break;
+      }
+      return;
+    }
+    const snapshot = assembler.finalize(response.payload);
+    task.chunkedSnapshot = undefined;
+    this.finishTask(task, {
+      protocol_version: response.protocol_version,
+      surface: response.surface,
+      document_id: response.document_id,
+      revision: response.revision,
+      request_id: response.request_id,
+      type: "snapshot-result",
+      payload: snapshot,
+    });
   }
 
   private finishTask(task: WorkerTask, response: MarkdownWorkerResponse): void {

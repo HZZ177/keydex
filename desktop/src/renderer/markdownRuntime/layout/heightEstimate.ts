@@ -113,6 +113,29 @@ export function estimateMarkdownSnapshotHeights(
   return estimateMarkdownBlockHeights(snapshot.blocks, context);
 }
 
+export async function estimateMarkdownSnapshotHeightsIncrementally(
+  snapshot: MarkdownSnapshot,
+  options: MarkdownHeightEstimateOptions,
+  yieldControl: () => Promise<void>,
+  chunkSize = 2_048,
+): Promise<Float64Array> {
+  if (!Number.isSafeInteger(chunkSize) || chunkSize < 1) throw new Error("chunkSize must be a positive integer");
+  const context = createMarkdownHeightEstimateContext(snapshot, options);
+  const heights = new Float64Array(snapshot.blocks.length);
+  for (let start = 0; start < snapshot.blocks.length; start += chunkSize) {
+    const end = Math.min(snapshot.blocks.length, start + chunkSize);
+    for (let index = start; index < end; index += 1) {
+      heights[index] = estimateMarkdownBlockHeightWithGap(
+        snapshot.blocks[index],
+        context,
+        index < snapshot.blocks.length - 1,
+      );
+    }
+    if (end < snapshot.blocks.length) await yieldControl();
+  }
+  return heights;
+}
+
 export function estimateMarkdownBlockHeights(
   blocks: readonly MarkdownSnapshotBlock[],
   context: MarkdownHeightEstimateContext,
