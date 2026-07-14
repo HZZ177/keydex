@@ -564,6 +564,7 @@ export function UsageTrendChart({ points }: { points: UsageTrendPoint[] }) {
 
 export function buildUsageTrendOption(points: UsageTrendPoint[]): EChartsOption {
   const labels = points.map((item) => formatTrendAxisLabel(item.time));
+  const axisUnit = usageTrendAxisUnit(points);
   return {
     animationDuration: 260,
     color: ["#1f75ff", "#16a064", "#d9480f", "#7c5cff"],
@@ -580,7 +581,7 @@ export function buildUsageTrendOption(points: UsageTrendPoint[]): EChartsOption 
       itemHeight: 9,
       textStyle: { color: "#7a7a7a" },
     },
-    grid: { left: 46, right: 28, top: 28, bottom: 44 },
+    grid: { left: 12, right: 28, top: 28, bottom: 44, containLabel: true },
     xAxis: {
       type: "category",
       boundaryGap: false,
@@ -591,7 +592,10 @@ export function buildUsageTrendOption(points: UsageTrendPoint[]): EChartsOption 
     },
     yAxis: {
       type: "value",
-      axisLabel: { color: "#8a8a8a" },
+      axisLabel: {
+        color: "#8a8a8a",
+        formatter: (value: number) => formatUsageTrendAxisValue(value, axisUnit),
+      },
       splitLine: { lineStyle: { color: "#eeeeee", type: "dashed" } },
     },
     series: [
@@ -605,6 +609,43 @@ export function buildUsageTrendOption(points: UsageTrendPoint[]): EChartsOption 
       buildUsageLineSeries({ name: "请求数", data: points.map((item) => item.request_count), yAxisIndex: 0 }),
     ],
   };
+}
+
+type UsageTrendAxisUnit = {
+  divisor: number;
+  suffix: string;
+};
+
+function usageTrendAxisUnit(points: UsageTrendPoint[]): UsageTrendAxisUnit {
+  const maxValue = points.reduce(
+    (currentMax, item) => Math.max(
+      currentMax,
+      nonCacheInputTokens(item),
+      item.cache_read_tokens,
+      item.output_tokens,
+      item.request_count,
+    ),
+    0,
+  );
+  if (maxValue >= 1_000_000_000) {
+    return { divisor: 1_000_000_000, suffix: "B" };
+  }
+  if (maxValue >= 1_000_000) {
+    return { divisor: 1_000_000, suffix: "M" };
+  }
+  if (maxValue >= 1_000) {
+    return { divisor: 1_000, suffix: "K" };
+  }
+  return { divisor: 1, suffix: "" };
+}
+
+function formatUsageTrendAxisValue(value: number, unit: UsageTrendAxisUnit): string {
+  const scaledValue = value / unit.divisor;
+  const formattedValue = new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits: unit.divisor === 1 ? 0 : 2,
+    minimumFractionDigits: 0,
+  }).format(Object.is(scaledValue, -0) ? 0 : scaledValue);
+  return `${formattedValue}${unit.suffix}`;
 }
 
 function buildUsageLineSeries({

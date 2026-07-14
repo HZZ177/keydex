@@ -63,6 +63,19 @@ describe("style foundation", () => {
     expect(sider).toMatch(/\.sider\[data-collapsed="true"\]\s+\.footer::before\s*{[^}]*right:\s*0/s);
   });
 
+  it("keeps project actions inside the project row and reveals them on hover or focus", () => {
+    const sider = readSource("renderer/components/layout/Sider/Sider.module.css");
+    const siderComponent = readSource("renderer/components/layout/Sider/Sider.tsx");
+
+    expect(sider).toMatch(/\.sectionTitleRow\s*{[^}]*position:\s*relative[^}]*grid-template-columns:\s*minmax\(0, 1fr\)[^}]*border-radius:\s*var\(--radius-pill\)/s);
+    expect(sider).toMatch(/\.sectionHeaderActions\s*{[^}]*position:\s*absolute[^}]*right:\s*8px[^}]*opacity:\s*0[^}]*pointer-events:\s*none/s);
+    expect(sider).toMatch(/\.sectionTitleRow:hover \.sectionHeaderActions,[\s\S]*\.sectionTitleRow:focus-within \.sectionHeaderActions,[\s\S]*\.sectionTitleRow\[data-menu-open="true"\] \.sectionHeaderActions\s*{[^}]*opacity:\s*1[^}]*pointer-events:\s*auto/s);
+    expect(sider).toMatch(/\.sectionTitle\.projectSectionTitle\s*{[^}]*box-sizing:\s*border-box[^}]*max-width:\s*100%[^}]*padding:\s*2px 9px/s);
+    expect(sider).toMatch(/\.sectionTitleRow:hover \.projectSectionTitle,[\s\S]*\.sectionTitleRow:focus-within \.projectSectionTitle,[\s\S]*\.sectionTitleRow\[data-menu-open="true"\] \.projectSectionTitle\s*{[^}]*padding-right:\s*60px/s);
+    expect(sider).toMatch(/\.sectionTitle\.projectSectionTitle\s*>\s*span\s*{[^}]*flex:\s*1 1 auto/s);
+    expect(siderComponent).not.toContain("styles.sectionChevron");
+  });
+
   it("keeps workbench preview tabs scrollable without a visible native scrollbar", () => {
     const workbench = readSource("renderer/pages/workbench/WorkbenchModePage.module.css");
 
@@ -72,13 +85,13 @@ describe("style foundation", () => {
     expect(workbench).toMatch(/\.previewTabStrip::-webkit-scrollbar\s*{[^}]*display:\s*none/s);
   });
 
-  it("keeps all composer context capsules in a three-column, three-row scroll viewport", () => {
+  it("keeps all composer context capsules tightly wrapped in a three-row scroll viewport", () => {
     const sendBox = readSource("renderer/components/chat/SendBox/SendBox.module.css");
     const workbenchAssistant = readSource("renderer/pages/workbench/WorkbenchAssistantSurface.module.css");
 
-    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*display:\s*grid/s);
-    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
-    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*grid-auto-rows:\s*var\(--sendbox-context-chip-height\)/s);
+    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*display:\s*flex/s);
+    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*flex-wrap:\s*wrap/s);
+    expect(sendBox).toMatch(/\.fileChips\s*{[^}]*align-content:\s*flex-start/s);
     expect(sendBox).toMatch(/\.fileChips\s*{[^}]*--sendbox-context-chip-viewport-max-height:\s*100px/s);
     expect(sendBox).toMatch(
       /\.fileChips\s*{[^}]*max-height:\s*var\(--sendbox-context-chip-viewport-max-height\)/s,
@@ -86,7 +99,7 @@ describe("style foundation", () => {
     expect(sendBox).toMatch(/\.fileChips\s*{[^}]*overflow-y:\s*auto/s);
     expect(sendBox).toMatch(/\.fileChips\s*{[^}]*scrollbar-gutter:\s*stable/s);
     expect(sendBox).toMatch(
-      /\.quoteChipWrapper,\s*\.fileChipWrapper,\s*\.skillChipWrapper\s*{[^}]*width:\s*100%/s,
+      /\.quoteChipWrapper,\s*\.fileChipWrapper,\s*\.skillChipWrapper\s*{[^}]*width:\s*auto[^}]*flex:\s*0 1 auto/s,
     );
     expect(sendBox).toMatch(
       /\.root\[data-variant="keydex"\]\s+\.input\s*{[^}]*flex:\s*0 0 auto/s,
@@ -253,8 +266,7 @@ describe("style foundation", () => {
     expect(sider).toMatch(/\.historyMeta\s*{[^}]*white-space:\s*nowrap/s);
     expect(sider).toMatch(/\.historyRow\s*{[^}]*position:\s*relative/s);
     expect(sider).toMatch(/\.historyRow\[data-active="true"\]\s*{[^}]*background:\s*var\(--sidebar-pill-active\)/s);
-    expect(sider).toMatch(/\.sectionChevron\s*{[^}]*transition:\s*transform 160ms var\(--motion-ease-standard\)/s);
-    expect(sider).toMatch(/\.sectionTitle\[aria-expanded="false"\]\s+\.sectionChevron\s*{[^}]*transform:\s*rotate\(-90deg\)/s);
+    expect(sider).not.toContain(".sectionChevron");
     expect(sider).toMatch(/\.sectionItems\s*{[^}]*grid-template-rows:\s*1fr/s);
     expect(sider).toMatch(/\.sectionItems\[data-expanded="false"\]\s*{[^}]*grid-template-rows:\s*0fr/s);
     expect(sider).toMatch(

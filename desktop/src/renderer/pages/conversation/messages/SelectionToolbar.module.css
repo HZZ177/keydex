@@ -17,6 +17,122 @@
   animation: toolbarEnter 110ms ease-out both;
 }
 
+.toolbar[data-mode="comment"] {
+  border-radius: 18px;
+  padding: 4px 5px 4px 9px;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-fast) var(--motion-ease-standard);
+}
+
+.toolbar[data-mode="comment"]::after {
+  position: absolute;
+  bottom: -5px;
+  left: calc(50% + var(--selection-pointer-offset-x, 0px));
+  width: 9px;
+  height: 9px;
+  border-right: 1px solid color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 96%, white);
+  content: "";
+  pointer-events: none;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.toolbar[data-mode="comment"]:focus-within {
+  border-color: color-mix(in srgb, var(--color-border-strong) 78%, transparent);
+  box-shadow:
+    0 10px 24px rgb(15 23 42 / 10%),
+    0 2px 7px rgb(15 23 42 / 7%),
+    0 0 0 2px color-mix(in srgb, var(--color-border-default) 22%, transparent);
+}
+
+.commentForm {
+  display: flex;
+  width: min(280px, calc(100vw - 44px));
+  align-items: center;
+  gap: 4px;
+}
+
+.commentInput {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 28px;
+  max-height: 64px;
+  flex: 1 1 auto;
+  resize: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 5px 4px;
+  scrollbar-color: color-mix(in srgb, var(--color-text-tertiary) 38%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.commentInput::-webkit-scrollbar {
+  width: 4px;
+}
+
+.commentInput::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.commentInput::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-tertiary) 34%, transparent);
+}
+
+.commentInput::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.commentInput::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.submitAction {
+  display: inline-flex;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-hover) 76%, transparent);
+  color: var(--color-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 9px;
+}
+
+.submitAction:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.submitAction:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-border-strong) 62%, transparent);
+  outline-offset: 1px;
+}
+
+.submitAction:disabled {
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: default;
+  opacity: 0.58;
+}
+
 .action {
   border: 0;
   background: transparent;
@@ -51,7 +167,31 @@
   outline: none;
 }
 
+.selectionHighlight {
+  position: fixed;
+  z-index: 79;
+  inset: 0;
+  pointer-events: none;
+}
+
+.selectionHighlightSegment {
+  position: absolute;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 9%, transparent);
+  animation: selectionHighlightEnter 100ms ease-out both;
+}
+
 @keyframes toolbarEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes selectionHighlightEnter {
   from {
     opacity: 0;
   }
@@ -62,6 +202,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .toolbar {
+    animation: none;
+  }
+
+  .selectionHighlightSegment {
     animation: none;
   }
 }

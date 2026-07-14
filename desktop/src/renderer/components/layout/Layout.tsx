@@ -249,7 +249,8 @@ export interface LayoutProps extends PropsWithChildren {
   contentMode?: "reading" | "full";
   showChatBucket?: boolean;
   newConversationPath?: string;
-  deleteActiveFallbackPath?: string;
+  archiveActiveFallbackPath?: string;
+  workspaceArchiveFallbackPath?: string;
   getSessionPath?: (sessionId: string) => string;
   getWorkspaceNewConversationPath?: (workspaceId?: string) => string;
   workbenchWorkspaceSelector?: WorkbenchWorkspaceSelectorProps;
@@ -269,7 +270,8 @@ export function Layout({
   contentMode = "reading",
   showChatBucket,
   newConversationPath,
-  deleteActiveFallbackPath,
+  archiveActiveFallbackPath,
+  workspaceArchiveFallbackPath,
   getSessionPath,
   getWorkspaceNewConversationPath,
   workbenchWorkspaceSelector,
@@ -886,7 +888,8 @@ export function Layout({
                   conversations={conversations}
                   showChatBucket={showChatBucket}
                   newConversationPath={newConversationPath}
-                  deleteActiveFallbackPath={deleteActiveFallbackPath}
+                  archiveActiveFallbackPath={archiveActiveFallbackPath}
+                  workspaceArchiveFallbackPath={workspaceArchiveFallbackPath}
                   getSessionPath={getSessionPath}
                   getWorkspaceNewConversationPath={getWorkspaceNewConversationPath}
                   onToggleSidebar={toggleSidebar}

@@ -7,6 +7,7 @@ import pytest
 from backend.app.services import (
     GetHistoryRequest,
     ListSessionsRequest,
+    SessionArchivedError,
     SessionNotFoundError,
     SessionService,
     SessionValidationError,
@@ -484,7 +485,7 @@ def test_session_service_updates_session_terminal_status(tmp_path) -> None:
     assert service.close_session("ses_status")["status"] == "closed"
 
 
-def test_session_service_renames_and_deletes_session(tmp_path) -> None:
+def test_session_service_renames_and_rejects_archived_session(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     repositories.sessions.create(
         session_id="ses_mutation",
@@ -502,10 +503,11 @@ def test_session_service_renames_and_deletes_session(tmp_path) -> None:
     with pytest.raises(SessionValidationError, match="会话标题不能为空"):
         service.rename_session("ses_mutation", "  ")
 
-    deleted = service.delete_session("ses_mutation")
-
-    assert deleted["id"] == "ses_mutation"
+    repositories.sessions.archive_manual(
+        "ses_mutation",
+        archived_at="2026-07-14T12:00:00Z",
+    )
     assert repositories.sessions.get("ses_mutation") is None
     assert service.list_sessions(ListSessionsRequest())["total"] == 0
-    with pytest.raises(SessionNotFoundError, match="会话不存在"):
-        service.delete_session("ses_mutation")
+    with pytest.raises(SessionArchivedError, match="会话已归档"):
+        service.get_session_detail("ses_mutation")

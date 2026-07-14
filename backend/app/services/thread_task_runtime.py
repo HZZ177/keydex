@@ -287,7 +287,7 @@ class ThreadTaskRuntime:
                 return {
                     "session_id": cleaned or None,
                     "status": "skipped",
-                    "reason": "session_missing_or_deleted",
+                    "reason": "session_missing_or_archived",
                 }
             task = self._repositories.thread_tasks.get_open_by_session(cleaned)
             if task is None:

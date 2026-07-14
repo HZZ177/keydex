@@ -1287,7 +1287,7 @@ export function FilePreview({
   }), [openRuntimeLinkedPreview, showCopyFeedback]);
 
   const quotePreviewSelection = useCallback(
-    (selectionSnapshot: FilePreviewSelectionSnapshot) => {
+    (selectionSnapshot: FilePreviewSelectionSnapshot, comment?: string) => {
       const text = selectionSnapshot.selectedText.trim();
       const model = annotationSession.model;
       if (!text || !annotationPath) return;
@@ -1317,6 +1317,7 @@ export function FilePreview({
       onQuoteSelection?.({
         path: annotationPath,
         selectedText: text,
+        ...(comment ? { comment } : {}),
         lineStart: lineRange?.lineStart ?? null,
         lineEnd: lineRange?.lineEnd ?? null,
         sourceStart: sourceRange?.start ?? null,
@@ -2579,7 +2580,7 @@ function FilePreviewSelectionLayer({
   enabled: boolean;
   quoteSelectionAvailable: boolean;
   annotationAvailable: boolean;
-  onQuote: (snapshot: FilePreviewSelectionSnapshot) => void;
+  onQuote: (snapshot: FilePreviewSelectionSnapshot, comment?: string) => void;
   onAnnotate: (snapshot: FilePreviewSelectionSnapshot) => void;
 }) {
   const selection = useTextSelection(bodyRef, {
@@ -2595,7 +2596,7 @@ function FilePreviewSelectionLayer({
     [selection.selectionPosition, selection.selectionRange],
   );
   const handleQuote = useCallback(
-    (selectedText: string) => onQuote(currentSnapshot(selectedText)),
+    (selectedText: string, comment?: string) => onQuote(currentSnapshot(selectedText), comment),
     [currentSnapshot, onQuote],
   );
   const handleAnnotate = useCallback(
@@ -2607,6 +2608,7 @@ function FilePreviewSelectionLayer({
     <SelectionToolbar
       selectedText={selection.selectedText}
       position={selection.selectionPosition}
+      selectionRange={selection.selectionRange}
       onQuote={quoteSelectionAvailable ? handleQuote : undefined}
       onAnnotate={annotationAvailable ? handleAnnotate : undefined}
       onClear={selection.clearSelection}

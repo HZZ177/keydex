@@ -17,6 +17,7 @@ import {
 } from "@/renderer/components/layout/appMode";
 import { AppRouter } from "@/renderer/components/layout/Router";
 import { emitSessionUpdated } from "@/renderer/events/sessionEvents";
+import { emitLifecycleEvent } from "@/renderer/events/lifecycleEvents";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { LAYOUT_PREFERENCES_KEY } from "@/renderer/hooks/layout/layoutStore";
 import { AgentSessionProvider, useAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
@@ -220,6 +221,8 @@ describe("AppRouter", () => {
     expect(screen.getByRole("button", { name: "扩展功能" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "策略配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "用量统计" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "项目管理" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "归档管理" })).not.toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: "返回应用" })[1]);
     expect(await screen.findByTestId("home-page", undefined, { timeout: 10000 })).not.toBeNull();
   });
@@ -268,6 +271,26 @@ describe("AppRouter", () => {
 
     expect(await screen.findByRole("heading", { name: "外观" }, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByTestId("appearance-settings-page")).not.toBeNull();
+  });
+
+  it("opens the project management settings route", async () => {
+    const { runtime } = renderRouter(["/settings/projects"]);
+
+    expect(await screen.findByRole("heading", { name: "项目管理" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("project-management-page")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "项目管理" }).getAttribute("data-active")).toBe("true");
+    expect(runtime.workspaces.list).toHaveBeenCalled();
+  });
+
+  it("opens the archive management settings route", async () => {
+    const { runtime } = renderRouter(["/settings/archive"]);
+
+    expect(await screen.findByRole("heading", { name: "归档管理" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("archive-management-page")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "归档管理" }).getAttribute("data-active")).toBe("true");
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(runtime.archive.listArchivedWorkspaces).toHaveBeenCalled();
+    expect(runtime.archive.listArchivedSessions).toHaveBeenCalled();
   });
 
   it("opens MCP settings inside the settings workspace", async () => {
@@ -360,6 +383,46 @@ describe("AppRouter", () => {
       workspaceId: "workspace A",
       pageSize: 50,
     });
+  });
+
+  it("leaves an archived workbench workspace scope so workspace preview listeners unmount", async () => {
+    const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"], {
+      routeExtra: <RouterLocationProbe />,
+    });
+    await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 });
+
+    act(() => emitLifecycleEvent({
+      type: "workspace_archived",
+      workspace_id: "workspace A",
+      operation_id: "op-workspace-archive",
+      revision: 10,
+      occurred_at: "2026-07-14T10:00:00Z",
+    }));
+
+    await waitFor(() => expect(screen.getByTestId("router-location").textContent).toBe("/workbench"));
+    expect(await screen.findByTestId("workbench-workspace-picker")).not.toBeNull();
+    expect(screen.queryByTestId("workbench-workspace-shell")).toBeNull();
+    expect(runtime.workspaces.list).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back only to the current workbench project when one session is archived", async () => {
+    renderRouter(["/workbench/workspace%20A/session/session%201"], {
+      routeExtra: <RouterLocationProbe />,
+    });
+    await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 });
+
+    act(() => emitLifecycleEvent({
+      type: "session_archived",
+      session_id: "session 1",
+      workspace_id: "workspace A",
+      operation_id: "op-session-archive",
+      revision: 11,
+      occurred_at: "2026-07-14T11:00:00Z",
+    }));
+
+    await waitFor(() => expect(screen.getByTestId("router-location").textContent).toBe("/workbench/workspace%20A"));
+    expect(screen.getByTestId("workbench-workspace-shell")).not.toBeNull();
+    expect(screen.getByTestId("workbench-mode-page").getAttribute("data-selected-session-id")).toBe("");
   });
 
   it("collapses the sidebar only on the first workbench entry for the current app runtime", async () => {
@@ -1850,6 +1913,14 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
       list: vi.fn(() => Promise.resolve({ list: [workspace("workspace A", "keydex")], total: 1 })),
       create: () => Promise.reject(new Error("not implemented")),
       get: vi.fn((workspaceId: string) => Promise.resolve(workspace(workspaceId, workspaceId))),
+      archive: vi.fn(),
+      restore: vi.fn(),
+      purgeArchived: vi.fn(),
+    },
+    archive: {
+      listArchivedWorkspaces: vi.fn(() => Promise.resolve({ list: [], items: [], next_cursor: null, has_more: false, total: 0, total_kind: "exact" })),
+      listArchivedSessions: vi.fn(() => Promise.resolve({ list: [], items: [], next_cursor: null, has_more: false, total: 0, total_kind: "exact" })),
+      listWorkspaceArchivedSessions: vi.fn(() => Promise.resolve({ list: [], items: [], next_cursor: null, has_more: false, total: 0, total_kind: "exact" })),
     },
     localPreview: {
       readFile: vi.fn((path: string) =>
@@ -1892,6 +1963,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
     desktopPicker: {
       isDirectoryPickerAvailable: () => false,
       pickDirectory: () => Promise.resolve(null),
+      revealPath: vi.fn(),
     },
     conversation: {
       listSessions,
@@ -1914,7 +1986,9 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
           }),
         )),
       updateSession,
-      deleteSession: vi.fn().mockResolvedValue(undefined),
+      archiveSession: vi.fn(),
+      restoreSession: vi.fn(),
+      purgeArchivedSession: vi.fn(),
       openChatChannel: vi.fn((onEvent: (event: AgentActionEnvelope) => void, options?: ChatChannelOptions) => {
         emit = onEvent;
         const channel = fakeChannel(options?.onStatus, chat);
@@ -2110,6 +2184,8 @@ function agentSession(patch: Partial<AgentSession> = {}): AgentSession {
     source_trace_id: null,
     created_at: "2026-06-17T10:00:00Z",
     updated_at: "2026-06-17T10:00:00Z",
+    archived_at: null,
+    archive_origin: null,
     is_debug: false,
     is_scheduled: false,
     is_current: false,
@@ -2129,7 +2205,7 @@ function workspace(id: string, name: string): Workspace {
     created_at: "2026-06-21T00:00:00Z",
     updated_at: "2026-06-21T00:00:00Z",
     last_opened_at: null,
-    is_deleted: false,
+    archived_at: null,
   };
 }
 

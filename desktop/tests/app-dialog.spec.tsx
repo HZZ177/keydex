@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppDialog, ConfirmDialog } from "@/renderer/components/dialog";
@@ -70,5 +71,37 @@ describe("AppDialog", () => {
 
     expect((screen.getByRole("button", { name: "取消" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "正在处理" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("traps keyboard focus and restores it to the opener after close", async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>打开管理弹窗</button>
+          {open ? (
+            <AppDialog title="焦点管理" onClose={() => setOpen(false)} footer={<button type="button">最后操作</button>}>
+              <input autoFocus aria-label="首选输入" />
+            </AppDialog>
+          ) : null}
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const opener = screen.getByRole("button", { name: "打开管理弹窗" });
+    opener.focus();
+    fireEvent.click(opener);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("首选输入")));
+
+    const last = screen.getByRole("button", { name: "最后操作" });
+    last.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "关闭" }));
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 });

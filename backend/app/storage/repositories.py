@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import sqlite3
@@ -118,6 +120,41 @@ A2UI_RESUME_STATUSES = frozenset(
 _UNSET = object()
 
 
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _encode_archive_cursor(archived_at: str, entity_id: str) -> str:
+    payload = json.dumps([archived_at, entity_id], separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_archive_cursor(cursor: str | None) -> tuple[str, str] | None:
+    if cursor is None:
+        return None
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("归档列表 cursor 无效") from exc
+    if (
+        not isinstance(payload, list)
+        or len(payload) != 2
+        or not all(isinstance(item, str) and item for item in payload)
+    ):
+        raise ValueError("归档列表 cursor 无效")
+    return payload[0], payload[1]
+
+
+def _lifecycle_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _lifecycle_payload_hash(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return _lifecycle_hash(canonical)
+
+
 def _clip_text(value: str | None, limit: int = 4000) -> str | None:
     if value is None:
         return None
@@ -209,7 +246,42 @@ class WorkspaceRecord:
     created_at: str
     updated_at: str
     last_opened_at: str | None = None
-    is_deleted: bool = False
+    archived_at: str | None = None
+
+    @property
+    def is_archived(self) -> bool:
+        return self.archived_at is not None
+
+
+@dataclass(frozen=True)
+class ArchivedWorkspaceSummary:
+    workspace: WorkspaceRecord
+    session_total: int
+    manual_session_count: int
+    project_session_count: int
+
+
+@dataclass(frozen=True)
+class ArchivedWorkspacePage:
+    items: list[ArchivedWorkspaceSummary]
+    next_cursor: str | None
+    has_more: bool
+
+
+@dataclass(frozen=True)
+class WorkspaceArchiveMutation:
+    record: WorkspaceRecord | None
+    changed: bool
+    newly_archived: int = 0
+    manual_preserved: int = 0
+    project_preserved: int = 0
+
+
+@dataclass(frozen=True)
+class WorkspaceRestoreMutation:
+    record: WorkspaceRecord | None
+    changed: bool
+    restored_sessions: int = 0
 
 
 @dataclass(frozen=True)
@@ -243,8 +315,60 @@ class SessionRecord:
     context_window_usage: dict[str, Any] | None = None
     context_compression_epoch: int = 0
     pinned_at: str | None = None
-    is_deleted: bool = False
+    archived_at: str | None = None
+    archive_origin: str | None = None
     title_source: str = "manual"
+
+    @property
+    def is_archived(self) -> bool:
+        return self.archived_at is not None
+
+
+@dataclass(frozen=True)
+class ArchivedSessionSummary:
+    session: SessionRecord
+    workspace_name: str | None
+    workspace_archived_at: str | None
+
+
+@dataclass(frozen=True)
+class ArchivedSessionPage:
+    items: list[ArchivedSessionSummary]
+    next_cursor: str | None
+    has_more: bool
+
+
+@dataclass(frozen=True)
+class SessionLifecycleMutation:
+    record: SessionRecord | None
+    changed: bool
+
+
+@dataclass(frozen=True)
+class LifecycleOperationRecord:
+    id: str
+    request_id: str
+    payload_hash: str
+    entity_type: str
+    entity_id: str | None
+    entity_hash: str
+    action: str
+    state: str
+    revision: int
+    counts: dict[str, int]
+    result: dict[str, Any]
+    error_code: str | None
+    error_detail: dict[str, Any]
+    quarantine_token: str | None
+    created_at: str
+    updated_at: str
+    completed_at: str | None
+
+
+@dataclass(frozen=True)
+class LifecycleOperationCreateResult:
+    operation: LifecycleOperationRecord
+    created: bool
 
 
 @dataclass(frozen=True)
@@ -2854,6 +2978,294 @@ class ModelProvidersRepository:
         )
 
 
+class LifecycleOperationsRepository:
+    VALID_ENTITY_TYPES = {"workspace", "session"}
+    VALID_ACTIONS = {"archive", "restore", "purge"}
+    VALID_STATES = {
+        "planned",
+        "running",
+        "quarantined",
+        "db_committed",
+        "completed",
+        "cleanup_failed",
+        "rolled_back",
+        "compensation_failed",
+        "blocked",
+        "failed",
+    }
+    SAFE_ERROR_DETAIL_KEYS = {
+        "retryable",
+        "phase",
+        "blocker_count",
+        "operation_id",
+        "state",
+        "code",
+    }
+
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def create_or_replay(
+        self,
+        *,
+        request_id: str,
+        entity_type: str,
+        entity_id: str,
+        action: str,
+        payload: dict[str, Any],
+        operation_id: str | None = None,
+    ) -> LifecycleOperationCreateResult:
+        self._validate_entity_type(entity_type)
+        self._validate_action(action)
+        cleaned_request_id = request_id.strip()
+        cleaned_entity_id = entity_id.strip()
+        if not cleaned_request_id:
+            raise ValueError("request_id 不能为空")
+        if not cleaned_entity_id:
+            raise ValueError("entity_id 不能为空")
+        entity_hash = _lifecycle_hash(cleaned_entity_id)
+        payload_hash = _lifecycle_payload_hash(payload)
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            existing = conn.execute(
+                """
+                select * from lifecycle_operations
+                where entity_type = ? and entity_hash = ? and request_id = ?
+                """,
+                (entity_type, entity_hash, cleaned_request_id),
+            ).fetchone()
+            if existing is not None:
+                operation = self._from_row(existing)
+                if operation.action != action or operation.payload_hash != payload_hash:
+                    raise ValueError("request_id 已用于不同的生命周期请求")
+                return LifecycleOperationCreateResult(operation=operation, created=False)
+            resolved_id = operation_id or new_id()
+            conn.execute(
+                """
+                insert into lifecycle_operations (
+                  id, request_id, payload_hash, entity_type, entity_id, entity_hash,
+                  action, state, revision, counts_json, result_json, error_detail_json,
+                  created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, 'planned', 1, '{}', '{}', '{}', ?, ?)
+                """,
+                (
+                    resolved_id,
+                    cleaned_request_id,
+                    payload_hash,
+                    entity_type,
+                    cleaned_entity_id,
+                    entity_hash,
+                    action,
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute(
+                "select * from lifecycle_operations where id = ?",
+                (resolved_id,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("创建 lifecycle operation 后无法读取")
+        return LifecycleOperationCreateResult(operation=self._from_row(row), created=True)
+
+    def get(self, operation_id: str) -> LifecycleOperationRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "select * from lifecycle_operations where id = ?",
+                (operation_id,),
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def get_by_request(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        request_id: str,
+    ) -> LifecycleOperationRecord | None:
+        self._validate_entity_type(entity_type)
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """
+                select * from lifecycle_operations
+                where entity_type = ? and entity_hash = ? and request_id = ?
+                """,
+                (entity_type, _lifecycle_hash(entity_id.strip()), request_id.strip()),
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def list_cleanup_failed(self) -> list[LifecycleOperationRecord]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                select * from lifecycle_operations
+                where state = 'cleanup_failed'
+                order by updated_at asc, id asc
+                """
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def update(
+        self,
+        operation_id: str,
+        *,
+        expected_revision: int,
+        state: str | None = None,
+        counts: dict[str, int] | None = None,
+        result: dict[str, Any] | None = None,
+        error_code: str | None | object = _UNSET,
+        error_detail: dict[str, Any] | None = None,
+        quarantine_token: str | None | object = _UNSET,
+        completed: bool = False,
+    ) -> LifecycleOperationRecord | None:
+        assignments = ["revision = revision + 1", "updated_at = ?"]
+        params: list[Any] = [to_iso_z(utc_now())]
+        if state is not None:
+            self._validate_state(state)
+            assignments.append("state = ?")
+            params.append(state)
+        if counts is not None:
+            normalized_counts = {str(key): int(value) for key, value in counts.items()}
+            assignments.append("counts_json = ?")
+            params.append(_json_dumps(normalized_counts))
+        if result is not None:
+            assignments.append("result_json = ?")
+            params.append(_json_dumps(_sanitize_metadata(result)))
+        if error_code is not _UNSET:
+            assignments.append("error_code = ?")
+            params.append(error_code)
+        if error_detail is not None:
+            safe_detail = {
+                key: _sanitize_metadata(value)
+                for key, value in error_detail.items()
+                if key in self.SAFE_ERROR_DETAIL_KEYS
+            }
+            assignments.append("error_detail_json = ?")
+            params.append(_json_dumps(safe_detail))
+        if quarantine_token is not _UNSET:
+            assignments.append("quarantine_token = ?")
+            params.append(quarantine_token)
+        if completed:
+            assignments.append("completed_at = ?")
+            params.append(to_iso_z(utc_now()))
+        params.extend([operation_id, expected_revision])
+        with self.db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                f"""
+                update lifecycle_operations
+                set {', '.join(assignments)}
+                where id = ? and revision = ?
+                """,
+                params,
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = conn.execute(
+                "select * from lifecycle_operations where id = ?",
+                (operation_id,),
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def scrub_completed_purge(self, operation_id: str) -> LifecycleOperationRecord | None:
+        with self.db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                update lifecycle_operations
+                set entity_id = null,
+                    result_json = '{}',
+                    error_detail_json = '{}',
+                    quarantine_token = null,
+                    revision = revision + 1,
+                    updated_at = ?
+                where id = ? and action = 'purge' and state = 'completed'
+                """,
+                (to_iso_z(utc_now()), operation_id),
+            )
+            row = conn.execute(
+                "select * from lifecycle_operations where id = ?",
+                (operation_id,),
+            ).fetchone()
+        if cursor.rowcount == 0:
+            return self._from_row(row) if row is not None else None
+        return self._from_row(row)
+
+    def acquire_lock(
+        self,
+        *,
+        operation_id: str,
+        entity_type: str,
+        entity_id: str,
+        ttl_seconds: int = 30,
+        now: datetime | None = None,
+    ) -> bool:
+        self._validate_entity_type(entity_type)
+        acquired_time = now or utc_now()
+        acquired_at = to_iso_z(acquired_time)
+        expires_at = to_iso_z(acquired_time + timedelta(seconds=max(1, ttl_seconds)))
+        lock_key = f"{entity_type}:{_lifecycle_hash(entity_id.strip())}"
+        with self.db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                insert into lifecycle_locks (
+                  lock_key, owner_operation_id, acquired_at, expires_at
+                ) values (?, ?, ?, ?)
+                on conflict(lock_key) do update set
+                  owner_operation_id = excluded.owner_operation_id,
+                  acquired_at = excluded.acquired_at,
+                  expires_at = excluded.expires_at
+                where lifecycle_locks.owner_operation_id = excluded.owner_operation_id
+                   or lifecycle_locks.expires_at <= excluded.acquired_at
+                """,
+                (lock_key, operation_id, acquired_at, expires_at),
+            )
+        return cursor.rowcount > 0
+
+    def release_locks(self, operation_id: str) -> int:
+        with self.db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                "delete from lifecycle_locks where owner_operation_id = ?",
+                (operation_id,),
+            )
+        return cursor.rowcount
+
+    @classmethod
+    def _validate_entity_type(cls, entity_type: str) -> None:
+        if entity_type not in cls.VALID_ENTITY_TYPES:
+            raise ValueError(f"不支持的生命周期对象类型: {entity_type}")
+
+    @classmethod
+    def _validate_action(cls, action: str) -> None:
+        if action not in cls.VALID_ACTIONS:
+            raise ValueError(f"不支持的生命周期操作: {action}")
+
+    @classmethod
+    def _validate_state(cls, state: str) -> None:
+        if state not in cls.VALID_STATES:
+            raise ValueError(f"不支持的生命周期状态: {state}")
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> LifecycleOperationRecord:
+        return LifecycleOperationRecord(
+            id=row["id"],
+            request_id=row["request_id"],
+            payload_hash=row["payload_hash"],
+            entity_type=row["entity_type"],
+            entity_id=row["entity_id"],
+            entity_hash=row["entity_hash"],
+            action=row["action"],
+            state=row["state"],
+            revision=int(row["revision"]),
+            counts={str(key): int(value) for key, value in _json_loads(row["counts_json"], {}).items()},
+            result=_json_loads(row["result_json"], {}),
+            error_code=row["error_code"],
+            error_detail=_json_loads(row["error_detail_json"], {}),
+            quarantine_token=row["quarantine_token"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            completed_at=row["completed_at"],
+        )
+
+
 class WorkspacesRepository:
     VALID_TYPES = {"project"}
 
@@ -2902,57 +3314,158 @@ class WorkspacesRepository:
             raise RuntimeError(f"创建 workspace 后无法读取: {workspace_id}")
         return record
 
-    def get(self, workspace_id: str, *, include_deleted: bool = False) -> WorkspaceRecord | None:
-        query = "select * from workspaces where id = ?"
-        params: list[Any] = [workspace_id]
-        if not include_deleted:
-            query += " and is_deleted = 0"
+    def get(self, workspace_id: str) -> WorkspaceRecord | None:
+        query = "select * from workspaces where id = ? and archived_at is null"
         with self.db.connect() as conn:
-            row = conn.execute(query, params).fetchone()
+            row = conn.execute(query, (workspace_id,)).fetchone()
         return self._from_row(row) if row else None
+
+    def get_archived(self, workspace_id: str) -> WorkspaceRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "select * from workspaces where id = ? and archived_at is not null",
+                (workspace_id,),
+            ).fetchone()
+        return self._from_row(row) if row else None
+
+    def archive_project(
+        self,
+        workspace_id: str,
+        *,
+        archived_at: str,
+    ) -> WorkspaceArchiveMutation:
+        with self.db.transaction(immediate=True) as conn:
+            before = conn.execute(
+                "select * from workspaces where id = ?",
+                (workspace_id,),
+            ).fetchone()
+            if before is None:
+                return WorkspaceArchiveMutation(record=None, changed=False)
+            preserved = conn.execute(
+                """
+                select
+                  coalesce(sum(case when archive_origin = 'manual' then 1 else 0 end), 0)
+                    as manual_count,
+                  coalesce(sum(case when archive_origin = 'project' then 1 else 0 end), 0)
+                    as project_count
+                from sessions
+                where workspace_id = ? and archived_at is not null
+                """,
+                (workspace_id,),
+            ).fetchone()
+            workspace_cursor = conn.execute(
+                """
+                update workspaces
+                set archived_at = ?
+                where id = ? and archived_at is null
+                """,
+                (archived_at, workspace_id),
+            )
+            newly_archived = 0
+            if workspace_cursor.rowcount > 0:
+                session_cursor = conn.execute(
+                    """
+                    update sessions
+                    set archived_at = ?, archive_origin = 'project'
+                    where workspace_id = ? and archived_at is null
+                    """,
+                    (archived_at, workspace_id),
+                )
+                newly_archived = session_cursor.rowcount
+            row = conn.execute(
+                "select * from workspaces where id = ?",
+                (workspace_id,),
+            ).fetchone()
+        return WorkspaceArchiveMutation(
+            record=self._from_row(row),
+            changed=workspace_cursor.rowcount > 0,
+            newly_archived=newly_archived,
+            manual_preserved=int(preserved["manual_count"] or 0),
+            project_preserved=int(preserved["project_count"] or 0),
+        )
+
+    def restore_project_only(self, workspace_id: str) -> WorkspaceRestoreMutation:
+        return self._restore_project(workspace_id, restore_project_sessions=False)
+
+    def restore_with_project_sessions(self, workspace_id: str) -> WorkspaceRestoreMutation:
+        return self._restore_project(workspace_id, restore_project_sessions=True)
+
+    def _restore_project(
+        self,
+        workspace_id: str,
+        *,
+        restore_project_sessions: bool,
+    ) -> WorkspaceRestoreMutation:
+        with self.db.transaction(immediate=True) as conn:
+            existing = conn.execute(
+                "select id from workspaces where id = ?",
+                (workspace_id,),
+            ).fetchone()
+            if existing is None:
+                return WorkspaceRestoreMutation(record=None, changed=False)
+            workspace_cursor = conn.execute(
+                """
+                update workspaces
+                set archived_at = null
+                where id = ? and archived_at is not null
+                """,
+                (workspace_id,),
+            )
+            restored_sessions = 0
+            if restore_project_sessions:
+                session_cursor = conn.execute(
+                    """
+                    update sessions
+                    set archived_at = null, archive_origin = null
+                    where workspace_id = ?
+                      and archived_at is not null
+                      and archive_origin = 'project'
+                    """,
+                    (workspace_id,),
+                )
+                restored_sessions = session_cursor.rowcount
+            row = conn.execute(
+                "select * from workspaces where id = ?",
+                (workspace_id,),
+            ).fetchone()
+        return WorkspaceRestoreMutation(
+            record=self._from_row(row) if row is not None else None,
+            changed=workspace_cursor.rowcount > 0 or restored_sessions > 0,
+            restored_sessions=restored_sessions,
+        )
 
     def get_by_root_path(
         self,
         root_path: str | Path,
-        *,
-        include_deleted: bool = False,
     ) -> WorkspaceRecord | None:
         resolved_root = self._resolve_workspace_directory(root_path)
         return self.get_by_normalized_root_path(
             normalize_workspace_root_for_storage(resolved_root),
-            include_deleted=include_deleted,
         )
 
     def get_by_normalized_root_path(
         self,
         normalized_root_path: str,
-        *,
-        include_deleted: bool = False,
     ) -> WorkspaceRecord | None:
-        query = "select * from workspaces where normalized_root_path = ?"
-        params: list[Any] = [normalized_root_path]
-        if not include_deleted:
-            query += " and is_deleted = 0"
-        query += " order by is_deleted asc, updated_at desc, created_at desc limit 1"
+        query = """
+            select * from workspaces
+            where normalized_root_path = ? and archived_at is null
+            order by updated_at desc, created_at desc limit 1
+        """
         with self.db.connect() as conn:
-            row = conn.execute(query, params).fetchone()
+            row = conn.execute(query, (normalized_root_path,)).fetchone()
         return self._from_row(row) if row else None
 
     def list(
         self,
         *,
-        include_deleted: bool = False,
         limit: int = 100,
     ) -> list[WorkspaceRecord]:
-        filters: list[str] = []
-        if not include_deleted:
-            filters.append("is_deleted = 0")
-        where = f"where {' and '.join(filters)}" if filters else ""
         with self.db.connect() as conn:
             rows = conn.execute(
-                f"""
+                """
                 select * from workspaces
-                {where}
+                where archived_at is null
                 order by
                   last_opened_at is null,
                   last_opened_at desc,
@@ -2964,6 +3477,72 @@ class WorkspacesRepository:
                 (max(1, min(limit, 500)),),
             ).fetchall()
         return [self._from_row(row) for row in rows]
+
+    def list_archived(
+        self,
+        *,
+        query: str | None = None,
+        cursor: str | None = None,
+        limit: int = 100,
+    ) -> ArchivedWorkspacePage:
+        page_size = max(1, min(limit, 200))
+        filters = ["w.archived_at is not null"]
+        params: list[Any] = []
+        cleaned_query = str(query or "").strip().casefold()
+        if cleaned_query:
+            pattern = f"%{_escape_like(cleaned_query)}%"
+            filters.append(
+                "(lower(w.name) like ? escape '\\' "
+                "or lower(w.normalized_root_path) like ? escape '\\')"
+            )
+            params.extend([pattern, pattern])
+        cursor_value = _decode_archive_cursor(cursor)
+        if cursor_value is not None:
+            archived_at, workspace_id = cursor_value
+            filters.append("(w.archived_at < ? or (w.archived_at = ? and w.id < ?))")
+            params.extend([archived_at, archived_at, workspace_id])
+        params.append(page_size + 1)
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                select
+                  w.*,
+                  count(s.id) as archived_session_total,
+                  coalesce(sum(case when s.archive_origin = 'manual' then 1 else 0 end), 0)
+                    as manual_session_count,
+                  coalesce(sum(case when s.archive_origin = 'project' then 1 else 0 end), 0)
+                    as project_session_count
+                from workspaces w
+                left join sessions s
+                  on s.workspace_id = w.id and s.archived_at is not null
+                where {' and '.join(filters)}
+                group by w.id
+                order by w.archived_at desc, w.id desc
+                limit ?
+                """,
+                params,
+            ).fetchall()
+        has_more = len(rows) > page_size
+        visible_rows = rows[:page_size]
+        items = [
+            ArchivedWorkspaceSummary(
+                workspace=self._from_row(row),
+                session_total=int(row["archived_session_total"] or 0),
+                manual_session_count=int(row["manual_session_count"] or 0),
+                project_session_count=int(row["project_session_count"] or 0),
+            )
+            for row in visible_rows
+        ]
+        last = visible_rows[-1] if has_more and visible_rows else None
+        return ArchivedWorkspacePage(
+            items=items,
+            next_cursor=(
+                _encode_archive_cursor(last["archived_at"], last["id"])
+                if last is not None
+                else None
+            ),
+            has_more=has_more,
+        )
 
     def update(
         self,
@@ -3001,7 +3580,7 @@ class WorkspacesRepository:
                 f"""
                 update workspaces
                 set {", ".join(assignments)}
-                where id = ? and is_deleted = 0
+                where id = ? and archived_at is null
                 """,
                 params,
             )
@@ -3011,21 +3590,6 @@ class WorkspacesRepository:
 
     def touch(self, workspace_id: str, *, opened_at: str | None = None) -> WorkspaceRecord | None:
         return self.update(workspace_id, last_opened_at=opened_at or to_iso_z(utc_now()))
-
-    def soft_delete(self, workspace_id: str) -> WorkspaceRecord | None:
-        now = to_iso_z(utc_now())
-        with self.db.transaction() as conn:
-            cursor = conn.execute(
-                """
-                update workspaces
-                set is_deleted = 1, updated_at = ?
-                where id = ? and is_deleted = 0
-                """,
-                (now, workspace_id),
-            )
-        if cursor.rowcount == 0:
-            return None
-        return self.get(workspace_id, include_deleted=True)
 
     @classmethod
     def _validate_type(cls, workspace_type: str) -> None:
@@ -3064,7 +3628,7 @@ class WorkspacesRepository:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             last_opened_at=row["last_opened_at"],
-            is_deleted=bool(row["is_deleted"]),
+            archived_at=row["archived_at"],
         )
 
 
@@ -3162,14 +3726,66 @@ class SessionsRepository:
             raise RuntimeError(f"创建 session 后无法读取: {session_id}")
         return record
 
-    def get(self, session_id: str, *, include_deleted: bool = False) -> SessionRecord | None:
-        query = "select * from sessions where id = ?"
-        params: list[Any] = [session_id]
-        if not include_deleted:
-            query += " and is_deleted = 0"
+    def get(self, session_id: str) -> SessionRecord | None:
+        query = "select * from sessions where id = ? and archived_at is null"
         with self.db.connect() as conn:
-            row = conn.execute(query, params).fetchone()
+            row = conn.execute(query, (session_id,)).fetchone()
         return self._from_row(row) if row else None
+
+    def get_archived(self, session_id: str) -> SessionRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "select * from sessions where id = ? and archived_at is not null",
+                (session_id,),
+            ).fetchone()
+        return self._from_row(row) if row else None
+
+    def archive_manual(
+        self,
+        session_id: str,
+        *,
+        archived_at: str,
+    ) -> SessionLifecycleMutation:
+        with self.db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                update sessions
+                set archived_at = ?, archive_origin = 'manual'
+                where id = ? and archived_at is null
+                """,
+                (archived_at, session_id),
+            )
+            row = conn.execute("select * from sessions where id = ?", (session_id,)).fetchone()
+        return SessionLifecycleMutation(
+            record=self._from_row(row) if row is not None else None,
+            changed=cursor.rowcount > 0,
+        )
+
+    def restore(self, session_id: str) -> SessionLifecycleMutation:
+        with self.db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                update sessions
+                set archived_at = null, archive_origin = null
+                where id = ? and archived_at is not null
+                """,
+                (session_id,),
+            )
+            row = conn.execute("select * from sessions where id = ?", (session_id,)).fetchone()
+        return SessionLifecycleMutation(
+            record=self._from_row(row) if row is not None else None,
+            changed=cursor.rowcount > 0,
+        )
+
+    def hard_delete_internal(self, session_id: str) -> bool:
+        """Remove an incomplete internal session created by a failed transaction-like workflow."""
+        with self.db.transaction(immediate=True) as conn:
+            conn.execute(
+                "delete from session_forks where source_session_id = ? or target_session_id = ?",
+                (session_id, session_id),
+            )
+            cursor = conn.execute("delete from sessions where id = ?", (session_id,))
+        return cursor.rowcount > 0
 
     def list(
         self,
@@ -3180,7 +3796,6 @@ class SessionsRepository:
         session_tag: str | None = None,
         workspace_id: str | None = None,
         session_type: str | None = None,
-        include_deleted: bool = False,
         include_internal: bool = False,
         limit: int = 100,
     ) -> list[SessionRecord]:
@@ -3219,8 +3834,7 @@ class SessionsRepository:
                 )
                 """
             )
-        if not include_deleted:
-            filters.append("is_deleted = 0")
+        filters.append("archived_at is null")
 
         where = f"where {' and '.join(filters)}" if filters else ""
         params.append(max(1, min(limit, 500)))
@@ -3240,6 +3854,77 @@ class SessionsRepository:
                 params,
             ).fetchall()
         return [self._from_row(row) for row in rows]
+
+    def list_archived(
+        self,
+        *,
+        query: str | None = None,
+        workspace_id: str | None = None,
+        workspace_ids: list[str] | None = None,
+        exclude_archived_workspaces: bool = True,
+        cursor: str | None = None,
+        limit: int = 100,
+    ) -> ArchivedSessionPage:
+        page_size = max(1, min(limit, 200))
+        filters = ["s.archived_at is not null"]
+        params: list[Any] = []
+        if workspace_id is not None:
+            filters.append("s.workspace_id = ?")
+            params.append(workspace_id)
+        elif workspace_ids:
+            selected_workspace_ids = list(dict.fromkeys(item for item in workspace_ids if item))
+            if selected_workspace_ids:
+                placeholders = ", ".join("?" for _ in selected_workspace_ids)
+                filters.append(f"s.workspace_id in ({placeholders})")
+                params.extend(selected_workspace_ids)
+        if exclude_archived_workspaces:
+            filters.append("(w.id is null or w.archived_at is null)")
+        cleaned_query = str(query or "").strip().casefold()
+        if cleaned_query:
+            pattern = f"%{_escape_like(cleaned_query)}%"
+            filters.append("lower(coalesce(s.title, '')) like ? escape '\\'")
+            params.append(pattern)
+        cursor_value = _decode_archive_cursor(cursor)
+        if cursor_value is not None:
+            archived_at, session_id = cursor_value
+            filters.append("(s.archived_at < ? or (s.archived_at = ? and s.id < ?))")
+            params.extend([archived_at, archived_at, session_id])
+        params.append(page_size + 1)
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                select
+                  s.*,
+                  w.name as archived_workspace_name,
+                  w.archived_at as archived_workspace_archived_at
+                from sessions s
+                left join workspaces w on w.id = s.workspace_id
+                where {' and '.join(filters)}
+                order by s.archived_at desc, s.id desc
+                limit ?
+                """,
+                params,
+            ).fetchall()
+        has_more = len(rows) > page_size
+        visible_rows = rows[:page_size]
+        items = [
+            ArchivedSessionSummary(
+                session=self._from_row(row),
+                workspace_name=row["archived_workspace_name"],
+                workspace_archived_at=row["archived_workspace_archived_at"],
+            )
+            for row in visible_rows
+        ]
+        last = visible_rows[-1] if has_more and visible_rows else None
+        return ArchivedSessionPage(
+            items=items,
+            next_cursor=(
+                _encode_archive_cursor(last["archived_at"], last["id"])
+                if last is not None
+                else None
+            ),
+            has_more=has_more,
+        )
 
     def update(
         self,
@@ -3327,7 +4012,7 @@ class SessionsRepository:
         params.append(session_id)
         with self.db.transaction() as conn:
             conn.execute(
-                f"update sessions set {', '.join(assignments)} where id = ? and is_deleted = 0",
+                f"update sessions set {', '.join(assignments)} where id = ? and archived_at is null",
                 params,
             )
         return self.get(session_id)
@@ -3338,7 +4023,7 @@ class SessionsRepository:
                 """
                 select context_compression_epoch
                 from sessions
-                where id = ? and is_deleted = 0
+                where id = ? and archived_at is null
                 """,
                 (session_id,),
             ).fetchone()
@@ -3354,7 +4039,7 @@ class SessionsRepository:
                 update sessions
                 set context_compression_epoch = context_compression_epoch + 1,
                     updated_at = ?
-                where id = ? and is_deleted = 0
+                where id = ? and archived_at is null
                 """,
                 (now, session_id),
             )
@@ -3393,7 +4078,7 @@ class SessionsRepository:
                 update sessions
                 set title = ?, title_source = 'auto', updated_at = ?
                 where id = ?
-                  and is_deleted = 0
+                  and archived_at is null
                   and title_source in ({placeholders})
                 """,
                 [cleaned, now, session_id, *allowed_sources],
@@ -3408,7 +4093,7 @@ class SessionsRepository:
         params.append(session_id)
         with self.db.transaction() as conn:
             conn.execute(
-                f"update sessions set {', '.join(assignments)} where id = ? and is_deleted = 0",
+                f"update sessions set {', '.join(assignments)} where id = ? and archived_at is null",
                 params,
             )
         return self.get(session_id)
@@ -3424,7 +4109,7 @@ class SessionsRepository:
                 """
                 update sessions
                 set context_window_usage_json = ?, updated_at = ?
-                where id = ? and is_deleted = 0
+                where id = ? and archived_at is null
                 """,
                 (_json_dumps(snapshot), now, session_id),
             )
@@ -3439,7 +4124,7 @@ class SessionsRepository:
                 """
                 update sessions
                 set pinned_at = ?
-                where id = ? and is_deleted = 0
+                where id = ? and archived_at is null
                 """,
                 (pinned_at, session_id),
             )
@@ -3449,21 +4134,6 @@ class SessionsRepository:
 
     def close(self, session_id: str) -> SessionRecord | None:
         return self.update(session_id, status="closed")
-
-    def soft_delete(self, session_id: str) -> SessionRecord | None:
-        now = to_iso_z(utc_now())
-        with self.db.transaction() as conn:
-            cursor = conn.execute(
-                """
-                update sessions
-                set is_deleted = 1, updated_at = ?
-                where id = ? and is_deleted = 0
-                """,
-                (now, session_id),
-            )
-        if cursor.rowcount == 0:
-            return None
-        return self.get(session_id, include_deleted=True)
 
     @classmethod
     def _validate_status(cls, status: str) -> None:
@@ -3482,6 +4152,14 @@ class SessionsRepository:
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> SessionRecord:
+        archived_at = row["archived_at"]
+        archive_origin = row["archive_origin"]
+        if (archived_at is None) != (archive_origin is None):
+            raise RuntimeError(
+                "session archive state is invalid: archived_at and archive_origin must match"
+            )
+        if archive_origin not in {None, "manual", "project"}:
+            raise RuntimeError(f"session archive origin is invalid: {archive_origin}")
         return SessionRecord(
             id=row["id"],
             user_id=row["user_id"],
@@ -3513,7 +4191,8 @@ class SessionsRepository:
             title_source=row["title_source"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            is_deleted=bool(row["is_deleted"]),
+            archived_at=archived_at,
+            archive_origin=archive_origin,
         )
 
 
@@ -7170,6 +7849,7 @@ class StorageRepositories:
         self.mcp_audit_log = McpAuditLogRepository(db)
         self.settings = SettingsRepository(db)
         self.model_providers = ModelProvidersRepository(db)
+        self.lifecycle_operations = LifecycleOperationsRepository(db)
         self.workspaces = WorkspacesRepository(db)
         self.sessions = SessionsRepository(db)
         self.session_forks = SessionForksRepository(db)

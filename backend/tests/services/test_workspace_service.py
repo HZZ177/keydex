@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from backend.app.services import (
-    WorkspaceDeletedError,
+    WorkspaceArchivedError,
     WorkspaceNotFoundError,
     WorkspaceService,
     WorkspaceServiceError,
@@ -56,7 +56,7 @@ def test_workspace_service_maps_path_errors(tmp_path) -> None:
         assert exc.value.code == code
 
 
-def test_workspace_service_distinguishes_missing_and_deleted_workspace(tmp_path) -> None:
+def test_workspace_service_distinguishes_missing_and_archived_workspace(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = _service(repositories)
     project = tmp_path / "project"
@@ -67,11 +67,14 @@ def test_workspace_service_distinguishes_missing_and_deleted_workspace(tmp_path)
         service.get_workspace("missing")
     assert missing.value.code == "workspace_not_found"
 
-    service.delete_workspace(workspace["id"])
+    repositories.workspaces.archive_project(
+        workspace["id"],
+        archived_at="2026-07-14T12:00:00Z",
+    )
 
-    with pytest.raises(WorkspaceDeletedError) as deleted:
+    with pytest.raises(WorkspaceArchivedError) as archived:
         service.get_workspace(workspace["id"])
-    assert deleted.value.code == "workspace_deleted"
+    assert archived.value.code == "workspace_archived"
 
 
 def test_workspace_service_builds_runtime_context_for_session(tmp_path) -> None:

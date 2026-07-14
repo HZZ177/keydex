@@ -12,7 +12,7 @@ export interface SkillActivationBlockProps {
   message: ConversationMessage;
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
-  onQuoteSelection?: (text: string) => void;
+  onQuoteSelection?: (text: string, comment?: string) => void;
 }
 
 interface SkillActivationViewModel {

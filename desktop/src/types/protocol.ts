@@ -39,7 +39,8 @@ export interface Thread {
   status: ThreadStatus;
   created_at: string;
   updated_at: string;
-  archived: boolean;
+  archived_at: string | null;
+  archive_origin: "manual" | "project" | null;
 }
 
 export interface TurnError {
@@ -1195,7 +1196,7 @@ export interface Workspace {
   created_at: string;
   updated_at: string;
   last_opened_at: string | null;
-  is_deleted: boolean;
+  archived_at: string | null;
 }
 
 export interface AgentSession {
@@ -1227,6 +1228,8 @@ export interface AgentSession {
   fork_source?: AgentSessionFork | null;
   created_at: string;
   updated_at: string;
+  archived_at: string | null;
+  archive_origin: "manual" | "project" | null;
   is_debug: boolean;
   is_scheduled: boolean;
   is_current: boolean;

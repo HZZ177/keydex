@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useEffect, useId, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import styles from "./AppDialog.module.css";
@@ -56,6 +56,12 @@ export function AppDialog({
 }: AppDialogProps) {
   const titleId = useId();
   const descriptionId = useId();
+  const panelRef = useRef<HTMLElement | null>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
   const labelledBy = title ? titleId : undefined;
   const describedBy = description ? descriptionId : undefined;
 
@@ -74,6 +80,44 @@ export function AppDialog({
     document.addEventListener("keydown", closeOnEscapeKey, true);
     return () => document.removeEventListener("keydown", closeOnEscapeKey, true);
   }, [closeOnEscape, onClose]);
+
+  useEffect(() => {
+    if (!modal) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const previouslyFocused = previouslyFocusedRef.current;
+    const focusInitial = window.requestAnimationFrame(() => {
+      if (panel.contains(document.activeElement)) return;
+      const preferred = panel.querySelector<HTMLElement>("[autofocus]");
+      (preferred ?? focusableElements(panel)[0] ?? panel).focus();
+    });
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const focusable = focusableElements(panel);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !panel.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", trapFocus, true);
+    return () => {
+      window.cancelAnimationFrame(focusInitial);
+      document.removeEventListener("keydown", trapFocus, true);
+      if (previouslyFocused?.isConnected) {
+        window.requestAnimationFrame(() => previouslyFocused.focus());
+      }
+    };
+  }, [modal]);
 
   const overlayClasses = [styles.overlay, overlayClassName].filter(Boolean).join(" ");
   const panelClasses = [styles.panel, panelClassName].filter(Boolean).join(" ");
@@ -98,6 +142,7 @@ export function AppDialog({
       }}
     >
       <section
+        ref={panelRef}
         aria-label={!labelledBy ? ariaLabel : undefined}
         aria-labelledby={labelledBy}
         aria-describedby={describedBy}
@@ -105,6 +150,7 @@ export function AppDialog({
         className={panelClasses}
         data-size={size}
         role="dialog"
+        tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
       >
         {hasHeader ? (
@@ -133,4 +179,15 @@ export function AppDialog({
   );
 
   return createPortal(dialog, document.body);
+}
+
+function focusableElements(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>([
+    "button:not([disabled])",
+    "a[href]",
+    "input:not([disabled])",
+    "select:not([disabled])",
+    "textarea:not([disabled])",
+    "[tabindex]:not([tabindex='-1'])",
+  ].join(","))).filter((element) => element.getAttribute("aria-hidden") !== "true");
 }

@@ -157,6 +157,7 @@ export function HomePage({
   const quoteSelection = useCallback((request: PreviewQuoteSelectionRequest) => {
     const quote = selectedQuoteFromText(request.selectedText, {
       source: "selection",
+      comment: request.comment,
       file: {
         path: request.path,
         name: fileName(request.path),

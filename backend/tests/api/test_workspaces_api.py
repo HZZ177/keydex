@@ -10,7 +10,7 @@ def _client(tmp_path) -> TestClient:
     return TestClient(create_app(AppSettings(data_dir=tmp_path / "data")))
 
 
-def test_workspaces_api_creates_lists_updates_and_deletes(tmp_path) -> None:
+def test_workspaces_api_creates_lists_updates_and_archives(tmp_path) -> None:
     project = tmp_path / "project"
     project.mkdir()
 
@@ -27,9 +27,12 @@ def test_workspaces_api_creates_lists_updates_and_deletes(tmp_path) -> None:
         listed = client.get("/api/workspaces")
         renamed = client.patch(f"/api/workspaces/{workspace['id']}", json={"name": "新项目"})
         touched = client.patch(f"/api/workspaces/{workspace['id']}", json={"touch": True})
-        deleted = client.delete(f"/api/workspaces/{workspace['id']}")
-        listed_after_delete = client.get("/api/workspaces")
-        detail_after_delete = client.get(f"/api/workspaces/{workspace['id']}")
+        archived = client.post(
+            f"/api/workspaces/{workspace['id']}/archive",
+            json={"request_id": "req-workspace-api-archive", "stop_active_sessions": False},
+        )
+        listed_after_archive = client.get("/api/workspaces")
+        detail_after_archive = client.get(f"/api/workspaces/{workspace['id']}")
 
     assert created.status_code == 200
     assert workspace["name"] == "项目"
@@ -42,10 +45,11 @@ def test_workspaces_api_creates_lists_updates_and_deletes(tmp_path) -> None:
     assert renamed.json()["workspace"]["name"] == "新项目"
     assert touched.status_code == 200
     assert touched.json()["workspace"]["last_opened_at"] is not None
-    assert deleted.status_code == 204
-    assert listed_after_delete.json()["total"] == 0
-    assert detail_after_delete.status_code == 410
-    assert detail_after_delete.json()["detail"]["code"] == "workspace_deleted"
+    assert archived.status_code == 200
+    assert archived.json()["workspace_id"] == workspace["id"]
+    assert listed_after_archive.json()["total"] == 0
+    assert detail_after_archive.status_code == 409
+    assert detail_after_archive.json()["detail"]["code"] == "workspace_archived"
 
 
 def test_workspaces_api_returns_clear_errors_for_invalid_paths(tmp_path) -> None:
@@ -75,9 +79,9 @@ def test_workspaces_api_returns_404_for_missing_workspace(tmp_path) -> None:
     with _client(tmp_path) as client:
         detail = client.get("/api/workspaces/missing")
         rename = client.patch("/api/workspaces/missing", json={"name": "新名称"})
-        delete = client.delete("/api/workspaces/missing")
+        legacy_delete = client.delete("/api/workspaces/missing")
 
     assert detail.status_code == 404
     assert detail.json()["detail"]["code"] == "workspace_not_found"
     assert rename.status_code == 404
-    assert delete.status_code == 404
+    assert legacy_delete.status_code == 405

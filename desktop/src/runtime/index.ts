@@ -44,6 +44,7 @@ export { createConversationRuntime } from "./conversation";
 export { createUsageRuntime } from "./usage";
 export { createWorkspaceRuntime } from "./workspace";
 export { createWorkspacesRuntime } from "./workspaces";
+export { createArchiveRuntime, createLifecycleRequestId, decodeLifecycleRuntimeError } from "./archive";
 export { createDesktopPickerRuntime } from "./desktopPicker";
 export { createAttachmentsRuntime } from "./attachments";
 export { createAnnotationsRuntime } from "./annotations";
@@ -141,6 +142,26 @@ export type {
   WorkspaceResponse,
   WorkspacesRuntime,
 } from "./workspaces";
+export type {
+  ArchiveCatalogPage,
+  ArchiveListOptions,
+  ArchiveOrigin,
+  ArchiveRuntime,
+  ArchiveSessionPayload,
+  ArchiveWorkspacePayload,
+  ArchivedSessionItem,
+  ArchivedWorkspaceItem,
+  LifecycleEventPayload,
+  LifecycleRuntimeError,
+  PurgeResult,
+  RestoreSessionPayload,
+  RestoreWorkspacePayload,
+  SessionArchiveResult,
+  SessionRestoreResult,
+  WorkspaceArchiveResult,
+  WorkspaceRestoreMode,
+  WorkspaceRestoreResult,
+} from "./archive";
 export type {
   AttachmentMediaResponse,
   AttachmentRecord,

@@ -20,6 +20,7 @@ import {
 } from "@/runtime";
 import type { RuntimeSelectedModel } from "@/renderer/components/model";
 import { subscribeSessionUpdated, type AgentSessionUpdate } from "@/renderer/events/sessionEvents";
+import { createLifecycleEventGate, subscribeLifecycleEvents } from "@/renderer/events/lifecycleEvents";
 import { queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
 import { LayoutStateProvider, useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
@@ -116,6 +117,16 @@ const McpConsolePage = lazy(() =>
     default: module.McpConsolePage,
   })),
 );
+const ProjectManagementPage = lazy(() =>
+  import("@/renderer/pages/settings/projects/ProjectManagementPage").then((module) => ({
+    default: module.ProjectManagementPage,
+  })),
+);
+const ArchiveManagementPage = lazy(() =>
+  import("@/renderer/pages/settings/archive/ArchiveManagementPage").then((module) => ({
+    default: module.ArchiveManagementPage,
+  })),
+);
 const workbenchSidebarInitializedByRuntime = new WeakSet<RuntimeBridge>();
 
 export interface AppRouterProps {
@@ -186,6 +197,8 @@ function AppRoutes({
             <Route path="/settings/mcp" element={<McpSettingsRoute runtime={runtime} />} />
             <Route path="/settings/general" element={<GeneralSettingsRoute runtime={runtime} />} />
             <Route path="/settings/appearance" element={<AppearanceSettingsRoute />} />
+            <Route path="/settings/projects" element={<ProjectSettingsRoute runtime={runtime} />} />
+            <Route path="/settings/archive" element={<ArchiveSettingsRoute runtime={runtime} />} />
             <Route path="/settings/about" element={<AboutSettingsRoute />} />
             <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
           </Routes>
@@ -296,7 +309,8 @@ function RoutedLayout({
   conversations,
   showChatBucket,
   newConversationPath,
-  deleteActiveFallbackPath,
+  archiveActiveFallbackPath,
+  workspaceArchiveFallbackPath,
   getSessionPath,
   getWorkspaceNewConversationPath,
   workbenchWorkspaceSelector,
@@ -309,7 +323,8 @@ function RoutedLayout({
   conversations?: SiderEntry[];
   showChatBucket?: boolean;
   newConversationPath?: string;
-  deleteActiveFallbackPath?: string;
+  archiveActiveFallbackPath?: string;
+  workspaceArchiveFallbackPath?: string;
   getSessionPath?: (sessionId: string) => string;
   getWorkspaceNewConversationPath?: (workspaceId?: string) => string;
   workbenchWorkspaceSelector?: WorkbenchWorkspaceSelectorProps;
@@ -354,7 +369,8 @@ function RoutedLayout({
       conversations={conversations}
       showChatBucket={showChatBucket}
       newConversationPath={newConversationPath}
-      deleteActiveFallbackPath={deleteActiveFallbackPath}
+      archiveActiveFallbackPath={archiveActiveFallbackPath}
+      workspaceArchiveFallbackPath={workspaceArchiveFallbackPath}
       getSessionPath={getSessionPath}
       getWorkspaceNewConversationPath={getWorkspaceNewConversationPath}
       workbenchWorkspaceSelector={workbenchWorkspaceSelector}
@@ -395,6 +411,15 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaceSessions, setWorkspaceSessions] = useState<AgentSession[]>([]);
+  const invalidWorkspaceIdsRef = useRef(new Set<string>());
+  const invalidSessionIdsRef = useRef(new Set<string>());
+  const lifecycleEventGateRef = useRef(createLifecycleEventGate());
+  const workspaceCatalogLoadedRef = useRef(false);
+  const workspaceCatalogRuntimeRef = useRef(runtime);
+  if (workspaceCatalogRuntimeRef.current !== runtime) {
+    workspaceCatalogRuntimeRef.current = runtime;
+    workspaceCatalogLoadedRef.current = false;
+  }
 
   useLayoutEffect(() => {
     if (workbenchSidebarInitializedByRuntime.has(runtime)) {
@@ -413,11 +438,17 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
 
   useEffect(() => {
     if (!backendReady) {
+      workspaceCatalogLoadedRef.current = false;
       setWorkspaceLoading(!backendError);
       setWorkspaceError(backendError ? backendErrorMessage : null);
       if (backendError) {
         setWorkspaces([]);
       }
+      return;
+    }
+
+    if (workspaceCatalogLoadedRef.current) {
+      setWorkspaceLoading(false);
       return;
     }
 
@@ -430,7 +461,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
         if (!active) {
           return;
         }
-        let nextWorkspaces = response.list;
+        let nextWorkspaces = response.list.filter((workspace) => !invalidWorkspaceIdsRef.current.has(workspace.id));
         if (decodedWorkspaceId && !nextWorkspaces.some((workspace) => workspace.id === decodedWorkspaceId)) {
           try {
             const workspace = await runtime.workspaces.get(decodedWorkspaceId);
@@ -442,6 +473,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
           }
         }
         if (active) {
+          workspaceCatalogLoadedRef.current = true;
           setWorkspaces(nextWorkspaces);
         }
       })
@@ -475,7 +507,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
       })
       .then((response) => {
         if (active) {
-          setWorkspaceSessions(response.list);
+          setWorkspaceSessions(response.list.filter((session) => !invalidSessionIdsRef.current.has(session.id)));
         }
       })
       .catch(() => {
@@ -496,6 +528,45 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
       setWorkspaceSessions((current) => mergeWorkspaceSessionUpdate(current, session, decodedWorkspaceId));
     });
   }, [decodedWorkspaceId]);
+
+  useEffect(() => subscribeLifecycleEvents((event) => {
+    if (!lifecycleEventGateRef.current(event)) return;
+    if ((event.type === "workspace_archived" || event.type === "workspace_purged") && event.workspace_id) {
+      invalidWorkspaceIdsRef.current.add(event.workspace_id);
+      setWorkspaces((current) => current.filter((workspace) => workspace.id !== event.workspace_id));
+      setWorkspaceSessions((current) => current.filter((session) => session.workspace_id !== event.workspace_id));
+      if (event.workspace_id === decodedWorkspaceId) {
+        void navigate(WORKBENCH_PATH, { replace: true });
+      }
+      return;
+    }
+
+    if (event.type === "workspace_restored" && event.workspace_id) {
+      invalidWorkspaceIdsRef.current.delete(event.workspace_id);
+      void runtime.workspaces.get(event.workspace_id).then((workspace) => {
+        if (!invalidWorkspaceIdsRef.current.has(workspace.id) && workspace.archived_at === null) {
+          setWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
+        }
+      }).catch(() => undefined);
+      return;
+    }
+    if ((event.type === "session_archived" || event.type === "session_purged") && event.session_id) {
+      invalidSessionIdsRef.current.add(event.session_id);
+      setWorkspaceSessions((current) => current.filter((session) => session.id !== event.session_id));
+      if (event.session_id === decodedSessionId && decodedWorkspaceId) {
+        void navigate(workbenchPath(decodedWorkspaceId), { replace: true });
+      }
+      return;
+    }
+    if (event.type === "session_restored" && event.session_id) {
+      invalidSessionIdsRef.current.delete(event.session_id);
+      void runtime.conversation.getSession(event.session_id).then((session) => {
+        if (!invalidSessionIdsRef.current.has(session.id) && session.workspace_id === decodedWorkspaceId) {
+          setWorkspaceSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
+        }
+      }).catch(() => undefined);
+    }
+  }), [decodedSessionId, decodedWorkspaceId, navigate, runtime]);
 
   useEffect(() => {
     if (!backendReady || !decodedWorkspaceId || !decodedSessionId) {
@@ -553,6 +624,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
               id: selectedWorkspace.id,
               title: selectedWorkspace.name || selectedWorkspace.root_path || selectedWorkspace.id,
               updatedAt: selectedWorkspace.updated_at,
+              rootPath: selectedWorkspace.root_path,
             },
           ]
         : [],
@@ -656,7 +728,8 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
       conversations={decodedWorkspaceId ? workspaceConversationEntries : []}
       showChatBucket={false}
       newConversationPath={decodedWorkspaceId ? workbenchPath(decodedWorkspaceId) : WORKBENCH_PATH}
-      deleteActiveFallbackPath={decodedWorkspaceId ? workbenchPath(decodedWorkspaceId) : WORKBENCH_PATH}
+      archiveActiveFallbackPath={decodedWorkspaceId ? workbenchPath(decodedWorkspaceId) : WORKBENCH_PATH}
+      workspaceArchiveFallbackPath={WORKBENCH_PATH}
       getSessionPath={getWorkbenchSessionPath}
       getWorkspaceNewConversationPath={getWorkbenchNewPath}
       workbenchWorkspaceSelector={
@@ -813,7 +886,7 @@ function ConversationRoute({ runtime }: { runtime: RuntimeBridge }) {
         onOpenMcpSettings={() => void navigate("/settings/mcp", { state: { from: location.pathname } })}
         onOpenModelSettings={() => void navigate("/settings/model-defaults", { state: { from: location.pathname } })}
         onNavigateToConversation={(nextThreadId) => void navigate(conversationPath(nextThreadId))}
-        onDeleted={() => void navigate(HOME_PATH)}
+        onArchived={() => void navigate(HOME_PATH)}
       />
     </RoutedLayout>
   );
@@ -920,6 +993,26 @@ function ConfigSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
     <SettingsShell activeSection="config">
       <SettingsRuntimeGate>
         <ConfigSettingsPage runtime={runtime} />
+      </SettingsRuntimeGate>
+    </SettingsShell>
+  );
+}
+
+function ProjectSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
+  return (
+    <SettingsShell activeSection="projects">
+      <SettingsRuntimeGate>
+        <ProjectManagementPage runtime={runtime} />
+      </SettingsRuntimeGate>
+    </SettingsShell>
+  );
+}
+
+function ArchiveSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
+  return (
+    <SettingsShell activeSection="archive">
+      <SettingsRuntimeGate>
+        <ArchiveManagementPage runtime={runtime} />
       </SettingsRuntimeGate>
     </SettingsShell>
   );

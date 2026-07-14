@@ -140,7 +140,7 @@ test("workbench drawer keeps markdown, code preview, selection quote and accesso
 
   await selectVisibleText(page, "Visible Code Preview Anchor");
   await expect(page.getByRole("toolbar", { name: "选中文本操作" })).toBeVisible();
-  await page.getByRole("button", { name: "添加选中文本到对话" }).click();
+  await page.getByRole("button", { name: "引用选中文本" }).click();
   await expect(page.getByLabel("已添加上下文")).toContainText("引用片段");
 
   await dispatchAgentEvent(page, {

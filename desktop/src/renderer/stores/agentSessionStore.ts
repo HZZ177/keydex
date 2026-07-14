@@ -4028,6 +4028,11 @@ function normalizeSession(data: Record<string, unknown>): AgentSession {
     fork_source: normalizeSessionFork(data.fork_source),
     created_at: stringValue(data.created_at) || now,
     updated_at: stringValue(data.updated_at) || now,
+    archived_at: nullableString(data.archived_at),
+    archive_origin:
+      data.archive_origin === "manual" || data.archive_origin === "project"
+        ? data.archive_origin
+        : null,
     is_debug: Boolean(data.is_debug),
     is_scheduled: Boolean(data.is_scheduled),
     is_current: Boolean(data.is_current),
@@ -4100,7 +4105,7 @@ function normalizeWorkspace(value: unknown): Workspace | null {
     created_at: stringValue(workspace.created_at),
     updated_at: stringValue(workspace.updated_at),
     last_opened_at: nullableString(workspace.last_opened_at),
-    is_deleted: Boolean(workspace.is_deleted),
+    archived_at: nullableString(workspace.archived_at),
   };
 }
 

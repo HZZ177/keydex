@@ -125,13 +125,15 @@ function quoteContextItems(quotes: SelectedQuote[]): AgentContextItem[] {
     }
     const id = quote.id || `quote:${index}:${hashText(content)}`;
     const preview = quote.preview || selectedQuotePreview(content);
+    const comment = normalizedOptionalText(quote.comment);
     if (quote.file) {
       const description = sourceQuoteDescription(quote);
+      const label = comment ? "评论" : sourceQuoteLabel(quote);
       return [
         {
           id,
           type: "source_quote",
-          label: sourceQuoteLabel(quote),
+          label,
           content,
           description,
           role: "HumanMessage",
@@ -142,7 +144,7 @@ function quoteContextItems(quotes: SelectedQuote[]): AgentContextItem[] {
           metadata: {
             id,
             kind: "source_quote",
-            label: sourceQuoteLabel(quote),
+            label,
             preview,
             source: quote.source,
             path: quote.file.path,
@@ -152,25 +154,30 @@ function quoteContextItems(quotes: SelectedQuote[]): AgentContextItem[] {
             line_end: quote.file.lineEnd ?? null,
             source_start: quote.file.sourceStart ?? null,
             source_end: quote.file.sourceEnd ?? null,
+            ...(comment ? { comment } : {}),
             description,
           },
         },
       ];
     }
+    const description = comment ? quoteDescription(content, comment) : "";
+    const label = comment ? "评论" : "引用片段";
     return [
       {
         id,
         type: "quote",
-        label: "引用片段",
+        label,
         content,
         role: "HumanMessage",
         source: "follow",
+        ...(description ? { description } : {}),
         metadata: {
           id,
           kind: "quote",
-          label: "引用片段",
+          label,
           preview,
           source: quote.source,
+          ...(comment ? { comment, description } : {}),
         },
       },
     ];
@@ -239,9 +246,15 @@ function injectionContent(item: AgentContextItem): string {
     const sourceRange = metadataSourceRange(item.metadata);
     const lineLocation = lineRange ? `行位置：${lineRange}\n` : "";
     const sourceLocation = sourceRange ? `源码范围：${sourceRange}\n` : "";
-    return `用户引用了工作区文件中的一个自洽片段。\n文件：${item.path || item.label}\n${lineLocation}${sourceLocation}引用内容：\n${item.content}\n\n请把这条消息视为一个完整的文件来源片段，不要和其他文件或其他引用片段混淆。如需更多上下文，请使用文件工具读取该文件。`;
+    const comment = contextItemComment(item);
+    const commentSection = comment ? `\n\n用户评论：\n${comment}` : "";
+    return `用户引用了工作区文件中的一个自洽片段。\n文件：${item.path || item.label}\n${lineLocation}${sourceLocation}引用内容：\n${item.content}${commentSection}\n\n请把这条消息视为一个完整的文件来源片段，不要和其他文件或其他引用片段混淆。如需更多上下文，请使用文件工具读取该文件。`;
   }
   if (item.type === "quote") {
+    const comment = contextItemComment(item);
+    if (comment) {
+      return `用户添加了以下引用片段作为上下文：\n引用片段：${item.content}\n\n评论：${comment}`;
+    }
     return `用户添加了以下引用片段作为上下文：\n${item.content}`;
   }
   return item.content;
@@ -272,9 +285,18 @@ function sourceQuoteLabel(quote: SelectedQuote): string {
 function sourceQuoteDescription(quote: SelectedQuote): string {
   const lineRange = sourceQuoteLineRange(quote.file?.lineStart, quote.file?.lineEnd);
   const location = quote.file?.path ? `${quote.file.path}${lineRange ? ` · ${lineRange}` : ""}` : "";
-  return [location, quote.text]
+  const comment = normalizedOptionalText(quote.comment);
+  return [location, `引用片段：${quote.text}`, comment ? `评论：${comment}` : ""]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function quoteDescription(content: string, comment: string): string {
+  return `引用片段：${content}\n\n评论：${comment}`;
+}
+
+function contextItemComment(item: AgentContextItem): string {
+  return normalizedOptionalText(item.metadata?.comment);
 }
 
 function metadataLineRange(metadata: Record<string, unknown> | undefined): string | null {

@@ -52,6 +52,10 @@ class ThreadTaskSessionNotFoundError(ThreadTaskServiceError):
     code = "session_not_found"
 
 
+class ThreadTaskSessionArchivedError(ThreadTaskServiceError):
+    code = "entity_archived"
+
+
 class ThreadTaskValidationError(ThreadTaskServiceError):
     code = "invalid_task_payload"
 
@@ -492,6 +496,8 @@ class ThreadTaskService:
     def _require_session(self, session_id: str) -> Any:
         session = self._sessions.get(session_id)
         if session is None:
+            if self._sessions.get_archived(session_id) is not None:
+                raise ThreadTaskSessionArchivedError(f"会话已归档: {session_id}")
             raise ThreadTaskSessionNotFoundError(f"会话不存在: {session_id}")
         return session
 

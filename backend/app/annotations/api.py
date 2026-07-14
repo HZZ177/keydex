@@ -93,8 +93,8 @@ def _call(operation, *args, **kwargs):
 def _error_status(code: str) -> int:
     if code in {"workspace_not_found", "annotation_not_found", "annotation_path_not_found"}:
         return status.HTTP_404_NOT_FOUND
-    if code == "workspace_deleted":
-        return status.HTTP_410_GONE
+    if code == "workspace_archived":
+        return status.HTTP_409_CONFLICT
     if code == "annotation_path_forbidden":
         return status.HTTP_403_FORBIDDEN
     if code == "annotation_document_changed":

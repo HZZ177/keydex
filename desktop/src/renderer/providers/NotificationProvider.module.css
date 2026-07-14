@@ -12,9 +12,6 @@
 }
 
 .toast {
-  --notification-border: color-mix(in srgb, var(--color-border-default) 82%, var(--color-text-tertiary));
-  --notification-outer-ring: color-mix(in srgb, var(--color-border-default) 62%, transparent);
-
   width: fit-content;
   min-width: min(210px, 100%);
   max-width: min(520px, 100%);
@@ -24,11 +21,9 @@
   align-items: center;
   gap: 10px;
   padding: 8px 8px 8px 12px;
-  border: 1px solid var(--notification-border);
   border-radius: var(--radius-pill);
   background: var(--surface-bg);
   box-shadow:
-    0 0 0 1px var(--notification-outer-ring),
     0 12px 34px rgb(15 23 42 / 12%),
     0 2px 8px rgb(15 23 42 / 8%);
   color: var(--color-text-1);
@@ -45,26 +40,18 @@
 
 .toast[data-type="success"] {
   --notification-accent: var(--color-success-6);
-  --notification-border: color-mix(in srgb, var(--color-success-6) 34%, var(--color-border-default));
-  --notification-outer-ring: color-mix(in srgb, var(--color-success-6) 14%, transparent);
 }
 
 .toast[data-type="error"] {
   --notification-accent: var(--color-danger);
-  --notification-border: color-mix(in srgb, var(--color-danger) 58%, var(--color-border-default));
-  --notification-outer-ring: color-mix(in srgb, var(--color-danger) 22%, transparent);
 }
 
 .toast[data-type="warning"] {
   --notification-accent: var(--color-warning-6);
-  --notification-border: color-mix(in srgb, var(--color-warning-6) 56%, var(--color-border-default));
-  --notification-outer-ring: color-mix(in srgb, var(--color-warning-6) 22%, transparent);
 }
 
 .toast[data-type="info"] {
   --notification-accent: var(--color-info-6);
-  --notification-border: color-mix(in srgb, var(--color-info-6) 34%, var(--color-border-default));
-  --notification-outer-ring: color-mix(in srgb, var(--color-info-6) 14%, transparent);
 }
 
 .toast[data-exiting="true"] {
@@ -153,6 +140,7 @@
   align-items: flex-start;
 }
 
+.actionButton,
 .expandButton,
 .closeButton {
   width: 22px;
@@ -162,6 +150,15 @@
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-3);
+}
+
+.actionButton {
+  width: auto;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--notification-accent) 35%, var(--color-border-default));
+  color: var(--notification-accent);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .expandButton {
@@ -181,6 +178,7 @@
   transform: scale(1);
 }
 
+.actionButton:hover,
 .expandButton:hover,
 .closeButton:hover {
   background: var(--surface-hover);

@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.annotations.api import router as annotations_router
 from backend.app.api.approvals import router as approvals_router
+from backend.app.api.archive import router as archive_router
 from backend.app.api.attachments import router as attachments_router
 from backend.app.api.health import router as health_router
 from backend.app.api.local_preview import router as local_preview_router
@@ -51,6 +52,7 @@ from backend.app.services.agent_runtime import AgentRuntimeProvider, LazyChatSer
 from backend.app.services.chat_stream_manager import ChatStreamManager
 from backend.app.services.file_change_hub import FileChangeHub
 from backend.app.services.file_history_service import FileHistoryService
+from backend.app.services.lifecycle_events import LifecycleEventPublisher
 from backend.app.services.thread_task_elapsed_ticker import ThreadTaskElapsedTicker
 from backend.app.services.thread_task_events import ThreadTaskEventPublisher
 from backend.app.services.thread_task_runtime import ThreadTaskRuntime, ThreadTaskStateLocks
@@ -229,6 +231,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         repositories=app.state.repositories,
     )
     app.state.chat_stream_manager = ChatStreamManager(app.state.chat_service)
+    app.state.lifecycle_event_publisher = LifecycleEventPublisher(app.state.chat_stream_manager)
     app.state.mcp_elicitation_service = McpElicitationService(
         app.state.repositories,
         broadcaster=lambda session_id, action, data: app.state.chat_stream_manager.broadcast(
@@ -284,6 +287,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(annotations_router)
     app.include_router(approvals_router)
+    app.include_router(archive_router)
     app.include_router(attachments_router)
     app.include_router(local_preview_router)
     app.include_router(mcp_router)

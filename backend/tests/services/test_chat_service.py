@@ -33,6 +33,7 @@ from backend.app.mcp.tools import (
 )
 from backend.app.model import ModelSettings
 from backend.app.services import ChatCancellationToken, ChatRequest, ChatService
+from backend.app.services.archive_lifecycle_service import ArchiveLifecycleError
 from backend.app.services.chat_service import _chat_turn_error
 from backend.app.storage import (
     MODEL_DEFAULT_CHAT,
@@ -291,6 +292,35 @@ def _service(
         checkpointer,
         factory,
     )
+
+
+def test_chat_session_guard_rejects_send_after_archive(tmp_path) -> None:
+    service, repositories, _checkpointer, _factory = _service(
+        tmp_path,
+        ToolFriendlyFakeModel(responses=[AIMessage(content="unused")]),
+    )
+    session = repositories.sessions.create(
+        session_id="session-archived-send",
+        user_id="local-user",
+        scene_id="desktop-agent",
+    )
+    repositories.sessions.archive_manual(
+        session.id,
+        archived_at="2026-07-14T00:00:00Z",
+    )
+
+    with pytest.raises(ArchiveLifecycleError) as archived:
+        service._ensure_session(
+            ChatRequest(
+                session_id=session.id,
+                message="should not send",
+                provider_id="provider-1",
+                model="qwen-coder",
+            )
+        )
+
+    assert archived.value.code == "entity_archived"
+    assert repositories.sessions.get_archived(session.id) is not None
 
 
 def _configure_mcp_tool(

@@ -1575,19 +1575,20 @@ function QuoteContextChip({
   onRemove: () => void;
 }) {
   const chipLabel = quoteChipLabel(quote);
+  const contextKind = quote.comment?.trim() ? "comment" : "quote";
   const quoteFile = selectedFileFromQuote(quote);
   const canOpen = Boolean(quoteFile && onOpen);
 
   return (
     <ComposerContextHover
       className={styles.quoteChipWrapper}
-      hoverAnchor="quote"
+      hoverAnchor={contextKind}
       title={chipLabel}
       description={quoteHoverDescription(quote)}
     >
       <span
         className={styles.quoteInputChip}
-        data-context-type="quote"
+        data-context-type={contextKind}
         data-openable={canOpen ? "true" : "false"}
         data-quote-index={index}
         data-source-quote={quote.file ? "true" : "false"}
@@ -1595,7 +1596,9 @@ function QuoteContextChip({
         <button
           className={styles.contextChipMain}
           type="button"
-          aria-label={canOpen && quoteFile ? `打开引用来源 ${quoteFile.path}` : `${chipLabel}：${quote.preview}`}
+          aria-label={canOpen && quoteFile
+            ? `${contextKind === "comment" ? "打开评论来源" : "打开引用来源"} ${quoteFile.path}`
+            : `${chipLabel}：${quote.preview}`}
           data-clickable={canOpen ? "true" : "false"}
           disabled={!canOpen}
           onClick={() => {
@@ -1604,8 +1607,8 @@ function QuoteContextChip({
             }
           }}
         >
-          <span className={styles.contextChipIcon} data-context-chip-icon="quote" aria-hidden="true">
-            <ContextChipIcon kind="quote" />
+          <span className={styles.contextChipIcon} data-context-chip-icon={contextKind} aria-hidden="true">
+            <ContextChipIcon kind={contextKind} />
           </span>
           <span className={styles.contextChipLabel}>{chipLabel}</span>
         </button>
@@ -1644,6 +1647,9 @@ function selectedFileFromQuote(quote: SelectedQuote): SelectedFile | null {
 }
 
 function quoteChipLabel(quote: SelectedQuote): string {
+  if (quote.comment?.trim()) {
+    return "评论";
+  }
   if (!quote.file) {
     return "引用片段";
   }
@@ -1741,7 +1747,9 @@ function FileContextChip({
 function quoteHoverDescription(quote: SelectedQuote): string {
   const lineLabel = quote.file ? quoteLineLabel(quote.file.lineStart, quote.file.lineEnd) : null;
   const location = quote.file?.path ? `${quote.file.path}${lineLabel ? ` · ${lineLabel}` : ""}` : "";
-  return [location, quote.text || quote.preview]
+  const comment = quote.comment?.trim() || "";
+  const quoteText = quote.text || quote.preview;
+  return [location, `引用片段：${quoteText}`, comment ? `评论：${comment}` : ""]
     .filter(Boolean)
     .join("\n\n");
 }
@@ -1791,7 +1799,7 @@ function ComposerContextHover({
   children,
 }: {
   className: string;
-  hoverAnchor: "skill" | "quote" | "file";
+  hoverAnchor: "skill" | "quote" | "comment" | "file";
   title: string;
   description: string;
   meta?: string | null;

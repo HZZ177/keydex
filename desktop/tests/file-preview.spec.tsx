@@ -2015,7 +2015,7 @@ describe("FilePreview", () => {
 
     const body = await screen.findByLabelText("预览内容");
     const selection = await showSelectionToolbar(body, "正文内容");
-    fireEvent.click(await screen.findByRole("button", { name: "添加选中文本到对话" }));
+    fireEvent.click(await screen.findByRole("button", { name: "引用选中文本" }));
 
     expect(onQuoteSelection).toHaveBeenCalledWith({
       path: "guide.md",

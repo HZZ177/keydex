@@ -58,7 +58,7 @@ export interface MessageTextProps {
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
   previewContextOverride?: PreviewContextValue | null;
-  onQuoteSelection?: (text: string) => void;
+  onQuoteSelection?: (text: string, comment?: string) => void;
   onAskSelectionInBtwConversation?: (text: string) => void;
   onReverseFromMessage?: (message: ConversationMessage) => void;
 }
@@ -335,6 +335,7 @@ function MessageTextComponent({
             <SelectionToolbar
               selectedText={selection.selectedText}
               position={selection.selectionPosition}
+              selectionRange={selection.selectionRange}
               onQuote={onQuoteSelection}
               onAskInBtwConversation={onAskSelectionInBtwConversation}
               onClear={selection.clearSelection}
@@ -509,7 +510,7 @@ function MessageImageAttachments({
 function messageFilePreviewRenderContext(
   workspaceScope: WorkspaceScope | null | undefined,
   runtime: RuntimeBridge | undefined,
-  onQuoteSelection: ((text: string) => void) | undefined,
+  onQuoteSelection: ((text: string, comment?: string) => void) | undefined,
   hostContext: PreviewRenderContext | null | undefined,
 ): PreviewRenderContext | undefined {
   const workspaceContext = previewRenderContextFromWorkspaceScope(
@@ -526,7 +527,7 @@ function messageFilePreviewRenderContext(
     context.runtime = runtime;
   }
   if (onQuoteSelection) {
-    context.onQuoteSelection = (request) => onQuoteSelection(request.selectedText);
+    context.onQuoteSelection = (request) => onQuoteSelection(request.selectedText, request.comment);
   }
   return Object.keys(context).length ? context : undefined;
 }
@@ -691,6 +692,7 @@ function MessageSourceQuoteContextChip({
   item: AgentContextItem;
   onOpenFile?: (item: AgentContextItem) => void;
 }) {
+  const contextKind = contextItemHasComment(item) ? "comment" : "quote";
   const canOpen = Boolean(item.path && onOpenFile);
   const lineLabel = contextItemLineLabel(item);
   const path = item.path || item.label;
@@ -708,7 +710,7 @@ function MessageSourceQuoteContextChip({
       chipElement="button"
       chipButtonProps={{
         type: "button",
-        "aria-label": `打开文件引用 ${path}`,
+        "aria-label": `${contextKind === "comment" ? "打开评论来源" : "打开文件引用"} ${path}`,
         disabled: !canOpen,
         onClick: () => onOpenFile?.(item),
       }}
@@ -718,8 +720,8 @@ function MessageSourceQuoteContextChip({
       }}
       showCopyAction={false}
     >
-      <span className={styles.contextItemIcon} data-context-chip-icon="quote" aria-hidden="true">
-        <ContextChipIcon kind="quote" />
+      <span className={styles.contextItemIcon} data-context-chip-icon={contextKind} aria-hidden="true">
+        <ContextChipIcon kind={contextKind} />
       </span>
       <span className={styles.contextItemLabel}>{item.label}</span>
     </FloatingQuotePreview>
@@ -782,6 +784,7 @@ function skillContextLabel(label: string, skillName: string): string {
 }
 
 function MessageQuoteContextChip({ item }: { item: AgentContextItem }) {
+  const contextKind = contextItemHasComment(item) ? "comment" : "quote";
   const preview = contextItemDescription(item, item.content || item.label);
   return (
     <FloatingQuotePreview
@@ -795,8 +798,8 @@ function MessageQuoteContextChip({ item }: { item: AgentContextItem }) {
       chipProps={{ "data-context-type": item.type }}
       showCopyAction={false}
     >
-      <span className={styles.contextItemIcon} data-context-chip-icon="quote" aria-hidden="true">
-        <ContextChipIcon kind="quote" />
+      <span className={styles.contextItemIcon} data-context-chip-icon={contextKind} aria-hidden="true">
+        <ContextChipIcon kind={contextKind} />
       </span>
       <span className={styles.contextItemLabel}>
         {item.type === "file" ? "@" : ""}
@@ -826,6 +829,10 @@ function MessagePlainContextChip({ item }: { item: AgentContextItem }) {
       <span className={styles.contextItemLabel}>{item.label}</span>
     </FloatingQuotePreview>
   );
+}
+
+function contextItemHasComment(item: AgentContextItem): boolean {
+  return Boolean(stringValue(item.metadata?.comment).trim());
 }
 
 function contextItemDescription(item: AgentContextItem, fallback: string): string {

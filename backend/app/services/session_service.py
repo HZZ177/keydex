@@ -22,6 +22,13 @@ class SessionNotFoundError(SessionServiceError):
     """Raised when a requested session does not exist."""
 
 
+class SessionArchivedError(SessionServiceError):
+    def __init__(self, session_id: str) -> None:
+        super().__init__(f"会话已归档: {session_id}")
+        self.code = "entity_archived"
+        self.details = {"session_id": session_id}
+
+
 class SessionValidationError(SessionServiceError):
     """Raised when a session mutation payload is invalid."""
 
@@ -258,16 +265,6 @@ class SessionService:
         )
         return self._serialize_session(record, current_session_id=current_session_id)
 
-    def delete_session(self, session_id: str) -> dict[str, Any]:
-        self._require_session(session_id)
-        record = self._sessions.soft_delete(session_id)
-        if record is None:
-            raise SessionNotFoundError(f"会话不存在: {session_id}")
-        if self._session_forks is not None:
-            self._session_forks.soft_delete_by_target(session_id)
-        logger.info(f"[SessionService] 删除会话 | session_id={session_id}")
-        return self._serialize_session(record)
-
     def get_history(self, request: GetHistoryRequest) -> dict[str, Any]:
         session = self._require_session(request.session_id)
         page = max(1, int(request.page or 1))
@@ -402,6 +399,8 @@ class SessionService:
     def _require_session(self, session_id: str) -> SessionRecord:
         record = self._sessions.get(session_id)
         if record is None:
+            if self._sessions.get_archived(session_id) is not None:
+                raise SessionArchivedError(session_id)
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         return record
 
@@ -525,6 +524,8 @@ class SessionService:
             ),
             "created_at": record.created_at,
             "updated_at": record.updated_at,
+            "archived_at": record.archived_at,
+            "archive_origin": record.archive_origin,
             "is_debug": record.is_debug,
             "is_scheduled": record.is_scheduled,
             "is_current": record.id == current_session_id if current_session_id else False,

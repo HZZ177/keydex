@@ -211,7 +211,7 @@ function makeWorkspace(id: string, name: string): Workspace {
     created_at: "2026-06-25T10:00:00Z",
     updated_at: "2026-06-25T10:00:00Z",
     last_opened_at: null,
-    is_deleted: false,
+    archived_at: null,
   };
 }
 

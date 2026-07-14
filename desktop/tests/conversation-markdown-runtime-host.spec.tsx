@@ -136,7 +136,7 @@ describe("ConversationMarkdownRuntimeHost", () => {
     const markdown = rendered.container.querySelector(".keydex-markdown")!;
     const selection = mockRuntimeSelection(markdown, "Runtime selection text");
     act(() => document.dispatchEvent(new MouseEvent("mouseup")));
-    fireEvent.click(await screen.findByRole("button", { name: "添加选中文本到对话" }));
+    fireEvent.click(await screen.findByRole("button", { name: "引用选中文本" }));
     expect(quote).toHaveBeenCalledWith("Runtime selection text");
     selection.restore();
 

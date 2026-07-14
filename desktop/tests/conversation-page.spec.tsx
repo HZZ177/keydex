@@ -715,18 +715,27 @@ describe("ConversationPage", () => {
       historyMessage("assistant", "历史回答", { messageEventId: "evt-ai-1", turnIndex: 1 }),
     ];
     const updateSession = vi.fn().mockResolvedValue({ ...session, title: "新会话名称" });
-    const deleteSession = vi.fn().mockResolvedValue(undefined);
+    const archiveSession = vi.fn().mockImplementation((sessionId: string) => Promise.resolve({
+      operation_id: "op-archive",
+      request_id: "req-archive",
+      session_id: sessionId,
+      workspace_id: null,
+      changed: true,
+      archived_at: "2026-07-14T00:00:00Z",
+      archive_origin: "manual",
+      event: null,
+    }));
     const forkSession = vi.fn().mockResolvedValue({
       session: agentSession({ id: "ses-fork", title: "派生会话" }),
       source: branchSource({ message_event_id: "evt-ai-1" }),
     });
     const onNavigateToConversation = vi.fn();
-    const onDeleted = vi.fn();
+    const onArchived = vi.fn();
     const { runtime } = fakeRuntime({
       session,
       history: messages,
       updateSession,
-      deleteSession,
+      archiveSession,
       forkSession,
     });
 
@@ -735,7 +744,7 @@ describe("ConversationPage", () => {
         threadId="ses-1"
         runtime={runtime}
         onNavigateToConversation={onNavigateToConversation}
-        onDeleted={onDeleted}
+        onArchived={onArchived}
       />,
     );
 
@@ -745,7 +754,7 @@ describe("ConversationPage", () => {
       "导出对话记录",
       "从对话派生",
       "重命名",
-      "删除",
+      "归档",
       "刷新",
     ]);
     expect(screen.queryByRole("menuitem", { name: "复制标题" })).toBeNull();
@@ -766,10 +775,12 @@ describe("ConversationPage", () => {
     expect(onNavigateToConversation).toHaveBeenCalledWith("ses-fork");
 
     fireEvent.click(screen.getByLabelText("更多对话操作"));
-    fireEvent.click(screen.getByRole("menuitem", { name: "删除" }));
-    fireEvent.click(screen.getByRole("button", { name: "删除" }));
-    await waitFor(() => expect(deleteSession).toHaveBeenCalledWith("ses-1"));
-    expect(onDeleted).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("menuitem", { name: "归档会话" }));
+    await waitFor(() => expect(archiveSession).toHaveBeenCalledWith(
+      "ses-1",
+      expect.objectContaining({ stopIfActive: false }),
+    ));
+    expect(onArchived).toHaveBeenCalledTimes(1);
   });
 
   it("confirms and reverses a restored user message in the current session", async () => {
@@ -2185,7 +2196,7 @@ describe("ConversationPage", () => {
     act(() => {
       document.dispatchEvent(new MouseEvent("mouseup"));
     });
-    fireEvent.click(await screen.findByRole("button", { name: "添加选中文本到对话" }));
+    fireEvent.click(await screen.findByRole("button", { name: "引用选中文本" }));
 
     const input = screen.getByLabelText("继续输入");
     expect(input.textContent).toBe("");
@@ -3010,7 +3021,7 @@ describe("ConversationPage", () => {
     );
     expect(selectableContent).not.toBeNull();
     const selection = await showSelectionToolbar(selectableContent!, "侧边栏 Markdown 内容");
-    fireEvent.click(await screen.findByRole("button", { name: "添加选中文本到对话" }));
+    fireEvent.click(await screen.findByRole("button", { name: "引用选中文本" }));
 
     expect(shell.dataset.rightSidebarMode).toBe("split");
     expect(screen.getByLabelText("已添加上下文").textContent).toContain("README.md");
@@ -3299,7 +3310,16 @@ function fakeRuntime({
   updateSession = vi.fn().mockImplementation((_sessionId: string, patch: Partial<AgentSession>) =>
     Promise.resolve({ ...session, ...patch }),
   ),
-  deleteSession = vi.fn().mockResolvedValue(undefined),
+  archiveSession = vi.fn().mockImplementation((sessionId: string) => Promise.resolve({
+    operation_id: "op-archive",
+    request_id: "req-archive",
+    session_id: sessionId,
+    workspace_id: null,
+    changed: true,
+    archived_at: "2026-07-14T00:00:00Z",
+    archive_origin: "manual",
+    event: null,
+  })),
   loadHistory,
   workspaceSearch = vi.fn().mockResolvedValue([]),
   workspaceListSkills = vi.fn().mockResolvedValue({
@@ -3328,7 +3348,7 @@ function fakeRuntime({
   getSession?: ReturnType<typeof vi.fn>;
   compressContext?: ReturnType<typeof vi.fn>;
   updateSession?: ReturnType<typeof vi.fn>;
-  deleteSession?: ReturnType<typeof vi.fn>;
+  archiveSession?: ReturnType<typeof vi.fn>;
   loadHistory?: ReturnType<typeof vi.fn>;
   workspaceSearch?: ReturnType<typeof vi.fn>;
   workspaceListSkills?: ReturnType<typeof vi.fn>;
@@ -3366,7 +3386,7 @@ function fakeRuntime({
       getSession,
       compressContext,
       updateSession,
-      deleteSession,
+      archiveSession,
       loadHistory:
         loadHistory ??
         (historyError
@@ -3575,6 +3595,8 @@ function agentSession(patch: Partial<AgentSession> = {}): AgentSession {
     is_current: false,
     current_model_provider_id: "provider-1",
     current_model: "qwen-coder",
+    archived_at: null,
+    archive_origin: null,
     ...patch,
   };
 }
@@ -3625,7 +3647,7 @@ function workspace(id: string, name: string, rootPath: string): Workspace {
     created_at: "2026-06-21T00:00:00Z",
     updated_at: "2026-06-21T00:00:00Z",
     last_opened_at: null,
-    is_deleted: false,
+    archived_at: null,
   };
 }
 

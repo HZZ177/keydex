@@ -1,8 +1,10 @@
 import {
   AppWindow,
+  Archive,
   ArrowLeft,
   BarChart3,
   Bot,
+  FolderKanban,
   Moon,
   Palette,
   PanelLeftClose,
@@ -37,6 +39,8 @@ export type SettingsSection =
   | "config"
   | "usage"
   | "mcp"
+  | "projects"
+  | "archive"
   | "about";
 
 const settingsItems = [
@@ -48,6 +52,8 @@ const settingsItems = [
   { id: "mcp", label: "MCP服务器", path: "/settings/mcp", icon: PlugZap, iconName: "plug-zap" },
   { id: "config", label: "策略配置", path: "/settings/policy-config", icon: Wrench, iconName: "wrench" },
   { id: "usage", label: "用量统计", path: "/settings/usage", icon: BarChart3, iconName: "bar-chart-3" },
+  { id: "projects", label: "项目管理", path: "/settings/projects", icon: FolderKanban, iconName: "folder-kanban" },
+  { id: "archive", label: "归档管理", path: "/settings/archive", icon: Archive, iconName: "archive" },
   { id: "about", label: "关于", path: "/settings/about", icon: AppWindow, iconName: "app-window" },
 ] satisfies Array<{ id: SettingsSection; label: string; path: string; icon: LucideIcon; iconName: string }>;
 
@@ -135,6 +141,7 @@ export function SettingsShell({
                     className={styles.menuItem}
                     data-active={activeSection === item.id ? "true" : "false"}
                     data-icon={item.iconName}
+                    aria-current={activeSection === item.id ? "page" : undefined}
                     key={item.id}
                     onClick={() => navigateSettings(item.path)}
                     type="button"

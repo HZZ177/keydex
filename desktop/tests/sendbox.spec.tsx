@@ -670,7 +670,9 @@ describe("SendBox", () => {
 
   it("renders external quote requests as removable top context chips", async () => {
     const onChange = vi.fn();
-    const quote = selectedQuoteFromText("这是一段选中的历史内容");
+    const quote = selectedQuoteFromText("这是一段选中的历史内容", {
+      comment: "请重点检查这里",
+    });
     if (!quote) {
       throw new Error("quote not created");
     }
@@ -691,24 +693,34 @@ describe("SendBox", () => {
 
       const input = screen.getByLabelText("继续输入");
       expect(input.textContent).toBe("");
-      expect(screen.getByLabelText("已添加上下文").textContent).toContain("引用片段");
-      fireEvent.mouseOver(screen.getByText("引用片段"));
+      expect(screen.getByLabelText("已添加上下文").textContent).toContain("评论");
+      expect(screen.queryByText("引用片段")).toBeNull();
+      expect(document.querySelector('[data-context-type="comment"]')).not.toBeNull();
+      expect(document.querySelector('[data-context-chip-icon="comment"]')).not.toBeNull();
+      fireEvent.mouseOver(screen.getByText("评论"));
       act(() => {
         vi.advanceTimersByTime(199);
       });
-      expect(screen.queryByText("这是一段选中的历史内容")).toBeNull();
+      expect(document.querySelector('[data-sendbox-context-hover-card="true"]')).toBeNull();
       act(() => {
         vi.advanceTimersByTime(1);
       });
-      expect(screen.getByText("这是一段选中的历史内容")).not.toBeNull();
+      const hoverCard = document.querySelector('[data-sendbox-context-hover-card="true"]');
+      expect(hoverCard).not.toBeNull();
+      const hoverText = hoverCard?.textContent ?? "";
+      expect(hoverText).toContain("引用片段：这是一段选中的历史内容");
+      expect(hoverText).toContain("评论：请重点检查这里");
+      expect(hoverText.indexOf("引用片段：这是一段选中的历史内容")).toBeLessThan(
+        hoverText.indexOf("评论：请重点检查这里"),
+      );
       expect(screen.queryByRole("button", { name: "复制" })).toBeNull();
     } finally {
       vi.useRealTimers();
     }
 
-    fireEvent.click(screen.getByRole("button", { name: /删除引用片段/ }));
+    fireEvent.click(screen.getByRole("button", { name: /删除评论/ }));
 
-    expect(screen.queryByText("引用片段")).toBeNull();
+    expect(screen.queryByText("评论")).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -915,7 +927,7 @@ describe("SendBox", () => {
         vi.advanceTimersByTime(200);
       });
 
-      expect(screen.getByText("这是一段选中的历史内容")).not.toBeNull();
+      expect(screen.getByText("引用片段：这是一段选中的历史内容")).not.toBeNull();
 
       const chipWrapper = screen.getByLabelText("已添加上下文").firstElementChild;
       expect(chipWrapper).not.toBeNull();
@@ -925,7 +937,7 @@ describe("SendBox", () => {
         vi.advanceTimersByTime(120);
       });
 
-      expect(screen.queryByText("这是一段选中的历史内容")).toBeNull();
+      expect(screen.queryByText("引用片段：这是一段选中的历史内容")).toBeNull();
     } finally {
       vi.useRealTimers();
     }

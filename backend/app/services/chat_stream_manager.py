@@ -477,6 +477,15 @@ class ChatStreamManager:
                         self._subscribers.pop(cleaned, None)
         return sent
 
+    async def broadcast_all(self, *, action: str, data: dict[str, Any]) -> int:
+        async with self._lock:
+            session_ids = sorted(self._subscribers)
+        delivered = 0
+        for session_id in session_ids:
+            if await self.broadcast(session_id=session_id, action=action, data=data):
+                delivered += 1
+        return delivered
+
     async def status(self, session_id: str | None = None) -> dict[str, Any]:
         async with self._lock:
             running = {key: run for key, run in self._runs.items() if not run.task.done()}

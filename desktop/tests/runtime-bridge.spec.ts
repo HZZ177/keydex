@@ -276,7 +276,7 @@ describe("RuntimeBridge", () => {
       created_at: "2026-06-21T00:00:00Z",
       updated_at: "2026-06-21T00:00:00Z",
       last_opened_at: null,
-      is_deleted: false,
+      archived_at: null,
     };
     const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
       const url = requestUrl(input);
@@ -292,8 +292,18 @@ describe("RuntimeBridge", () => {
       if (url.endsWith("/api/workspaces/ws%201") && init.method === "PATCH") {
         return Promise.resolve(jsonResponse(200, { workspace: { ...workspace, id: "ws 1", name: "repo" } }));
       }
-      if (url.endsWith("/api/workspaces/ws%201") && init.method === "DELETE") {
-        return Promise.resolve(jsonResponse(204, undefined));
+      if (url.endsWith("/api/workspaces/ws%201/archive") && init.method === "POST") {
+        return Promise.resolve(jsonResponse(200, {
+          operation_id: "op-workspace-archive",
+          request_id: "req-workspace-archive",
+          workspace_id: "ws 1",
+          changed: true,
+          archived_at: "2026-07-14T00:00:00Z",
+          newly_archived: 0,
+          manual_preserved: 0,
+          project_preserved: 0,
+          event: null,
+        }));
       }
       return jsonResponse(404, { detail: "not found" });
     });
@@ -307,7 +317,10 @@ describe("RuntimeBridge", () => {
     await expect(runtime.workspaces.update("ws 1", { name: "repo", touch: true })).resolves.toMatchObject({
       name: "repo",
     });
-    await expect(runtime.workspaces.delete("ws 1")).resolves.toBeUndefined();
+    await expect(runtime.workspaces.archive("ws 1", {
+      requestId: "req-workspace-archive",
+      stopActiveSessions: true,
+    })).resolves.toMatchObject({ workspace_id: "ws 1", changed: true });
 
     expect(fetcher).toHaveBeenNthCalledWith(1, "http://127.0.0.1:8765/api/workspaces", expect.objectContaining({
       method: "GET",
@@ -331,8 +344,11 @@ describe("RuntimeBridge", () => {
     );
     expect(fetcher).toHaveBeenNthCalledWith(
       5,
-      "http://127.0.0.1:8765/api/workspaces/ws%201",
-      expect.objectContaining({ method: "DELETE" }),
+      "http://127.0.0.1:8765/api/workspaces/ws%201/archive",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ request_id: "req-workspace-archive", stop_active_sessions: true }),
+      }),
     );
   });
 
@@ -357,7 +373,7 @@ describe("RuntimeBridge", () => {
         created_at: "2026-06-18T00:00:00Z",
         updated_at: "2026-06-18T00:00:00Z",
         last_opened_at: null,
-        is_deleted: false,
+        archived_at: null,
       },
       active_session_id: null,
       parent_session_id: null,
@@ -365,6 +381,8 @@ describe("RuntimeBridge", () => {
       source_trace_id: null,
       created_at: "2026-06-18T00:00:00Z",
       updated_at: "2026-06-18T00:00:00Z",
+      archived_at: null,
+      archive_origin: null,
       is_debug: false,
       is_scheduled: false,
       is_current: false,
@@ -385,8 +403,17 @@ describe("RuntimeBridge", () => {
       if (url.endsWith("/api/sessions/ses%201") && init.method === "PATCH") {
         return Promise.resolve(jsonResponse(200, { session: { ...session, id: "ses 1", title: "新标题" } }));
       }
-      if (url.endsWith("/api/sessions/ses%201") && init.method === "DELETE") {
-        return Promise.resolve(jsonResponse(204, undefined));
+      if (url.endsWith("/api/sessions/ses%201/archive") && init.method === "POST") {
+        return Promise.resolve(jsonResponse(200, {
+          operation_id: "op-session-archive",
+          request_id: "req-session-archive",
+          session_id: "ses 1",
+          workspace_id: "ws-1",
+          changed: true,
+          archived_at: "2026-07-14T00:00:00Z",
+          archive_origin: "manual",
+          event: null,
+        }));
       }
       if (url.includes("/api/sessions/ses%201/history?") && init.method === "GET") {
         return Promise.resolve(
@@ -492,7 +519,10 @@ describe("RuntimeBridge", () => {
       id: "ses 1",
       title: "新标题",
     });
-    await expect(runtime.conversation.deleteSession("ses 1")).resolves.toBeUndefined();
+    await expect(runtime.conversation.archiveSession("ses 1", {
+      requestId: "req-session-archive",
+      stopIfActive: true,
+    })).resolves.toMatchObject({ session_id: "ses 1", archive_origin: "manual" });
     await expect(runtime.conversation.loadHistory("ses 1", { turnIndex: 1, order: "asc" })).resolves.toMatchObject({
       list: [{ role: "assistant", content: "历史" }],
       turn_indexes: [1],
@@ -555,8 +585,11 @@ describe("RuntimeBridge", () => {
     );
     expect(fetcher).toHaveBeenNthCalledWith(
       5,
-      "http://127.0.0.1:8765/api/sessions/ses%201",
-      expect.objectContaining({ method: "DELETE" }),
+      "http://127.0.0.1:8765/api/sessions/ses%201/archive",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ request_id: "req-session-archive", stop_if_active: true }),
+      }),
     );
     expect(fetcher).toHaveBeenNthCalledWith(
       6,

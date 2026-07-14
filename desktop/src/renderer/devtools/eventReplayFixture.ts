@@ -86,7 +86,8 @@ function thread(status: Thread["status"]): Thread {
     status,
     created_at: "2026-06-17T10:00:00Z",
     updated_at: "2026-06-17T10:00:00Z",
-    archived: false,
+    archived_at: null,
+    archive_origin: null,
   };
 }
 

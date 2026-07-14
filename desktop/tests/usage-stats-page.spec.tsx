@@ -422,6 +422,7 @@ describe("UsageStatsPage", () => {
     ]);
 
     expect(option.legend).toMatchObject({ data: ["非缓存输入", "命中缓存", "输出", "请求数"] });
+    expect(option.grid).toMatchObject({ left: 12, containLabel: true });
     expect(option.xAxis).toMatchObject({ data: ["06/19"] });
     expect(option.series).toEqual(
       expect.arrayContaining([
@@ -450,6 +451,31 @@ describe("UsageStatsPage", () => {
     ]);
 
     expect(option.xAxis).toMatchObject({ data: ["06/19 16:00"] });
+  });
+
+  it("formats trend y-axis labels with a unit selected from the data scale", () => {
+    const formatterFor = (maxValue: number) => {
+      const option = buildUsageTrendOption([
+        {
+          time: "2026-06-19",
+          request_count: 3,
+          input_tokens: maxValue,
+          cache_read_tokens: 0,
+          output_tokens: 0,
+          total_tokens: maxValue,
+          failed_count: 0,
+        },
+      ]);
+      const yAxis = option.yAxis as {
+        axisLabel?: { formatter?: (value: number) => string };
+      };
+      return yAxis.axisLabel?.formatter;
+    };
+
+    expect(formatterFor(999)?.(999)).toBe("999");
+    expect(formatterFor(500_000)?.(25_000)).toBe("25K");
+    expect(formatterFor(2_500_000)?.(500_000)).toBe("0.5M");
+    expect(formatterFor(3_000_000_000)?.(1_500_000_000)).toBe("1.5B");
   });
 
   it("renders token heat wall cells with total token tooltip data", () => {

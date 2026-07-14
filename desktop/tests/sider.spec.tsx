@@ -2,12 +2,15 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
+import { RuntimeHttpError } from "@/runtime";
 import type { ChatChannel, ListSessionsOptions, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import { Sider } from "@/renderer/components/layout/Sider";
-import { emitSessionCreated, emitSessionDeleted, emitSessionUpdated } from "@/renderer/events/sessionEvents";
+import { emitLifecycleEvent } from "@/renderer/events/lifecycleEvents";
+import { emitSessionCreated, emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider";
 import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectionProvider";
+import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
 import { saveSessionMarkdownFile } from "@/renderer/utils/sessionMarkdownExport";
 import type {
@@ -30,7 +33,7 @@ vi.mock("@/renderer/utils/sessionMarkdownExport", async (importOriginal) => {
 });
 
 function renderSider(ui: ReactElement) {
-  return render(<ThemeProvider>{ui}</ThemeProvider>);
+  return render(<ThemeProvider><NotificationProvider>{ui}</NotificationProvider></ThemeProvider>);
 }
 
 function openSessionMenu(title: string) {
@@ -97,7 +100,7 @@ describe("Sider", () => {
         newConversationPath="/workbench/ws-1"
         getSessionPath={(sessionId) => `/workbench/ws-1/session/${sessionId}`}
         getWorkspaceNewConversationPath={(workspaceId) => `/workbench/${workspaceId ?? "ws-1"}`}
-        deleteActiveFallbackPath="/workbench/ws-1"
+        archiveActiveFallbackPath="/workbench/ws-1"
         onNavigate={onNavigate}
       />,
     );
@@ -357,6 +360,73 @@ describe("Sider", () => {
     expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
   });
 
+  it("reloads restored project sessions when returning after the sidebar missed the restore event", async () => {
+    const existing = thread({ id: "thread-existing", title: "已有会话" });
+    const restored = thread({
+      id: "thread-restored",
+      title: "恢复的项目会话",
+      session_type: "workspace",
+      workspace_id: "ws-restored",
+      workspace: workspace("ws-restored", "恢复的项目"),
+      updated_at: "2026-07-15T01:00:00Z",
+    });
+    const runtime = fakeRuntime([existing]);
+    const view = renderSider(<Sider runtime={runtime} />);
+
+    expect(await screen.findByRole("button", { name: "已有会话" })).not.toBeNull();
+    expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
+    view.unmount();
+    vi.mocked(runtime.conversation.listSessions).mockResolvedValue({
+      list: [restored, existing], total: 2, page: 1, page_size: 50,
+    });
+
+    act(() => emitLifecycleEvent({
+      type: "workspace_restored",
+      workspace_id: "ws-restored",
+      operation_id: "op-restore-missed",
+      occurred_at: "2026-07-15T01:00:00Z",
+      revision: 1,
+      changed: true,
+      mode: "with_project_sessions",
+    }));
+    renderSider(<Sider runtime={runtime} />);
+
+    expect(await screen.findByRole("button", { name: "恢复的项目会话" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "收起项目 恢复的项目" })).not.toBeNull();
+    expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(2);
+  });
+
+  it("reloads all restored project sessions when the workspace restore event is received live", async () => {
+    const existing = thread({ id: "thread-live-existing", title: "原会话" });
+    const restored = thread({
+      id: "thread-live-restored",
+      title: "实时恢复会话",
+      session_type: "workspace",
+      workspace_id: "ws-live-restored",
+      workspace: workspace("ws-live-restored", "实时恢复项目"),
+      updated_at: "2026-07-15T02:00:00Z",
+    });
+    const runtime = fakeRuntime([existing]);
+    renderSider(<Sider runtime={runtime} />);
+    expect(await screen.findByRole("button", { name: "原会话" })).not.toBeNull();
+    vi.mocked(runtime.conversation.listSessions).mockResolvedValue({
+      list: [restored, existing], total: 2, page: 1, page_size: 50,
+    });
+
+    act(() => emitLifecycleEvent({
+      type: "workspace_restored",
+      workspace_id: "ws-live-restored",
+      operation_id: "op-restore-live",
+      occurred_at: "2026-07-15T02:00:00Z",
+      revision: 1,
+      changed: true,
+      mode: "with_project_sessions",
+    }));
+
+    expect(await screen.findByRole("button", { name: "实时恢复会话" })).not.toBeNull();
+    expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(2);
+  });
+
   it("moves only the updated session to the top without reloading session history", async () => {
     const runtime = fakeRuntime([
       thread({ id: "thread-newer", title: "较新的会话", updated_at: "2026-06-17T10:30:00Z" }),
@@ -380,7 +450,7 @@ describe("Sider", () => {
     expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
   });
 
-  it("removes a session deleted from the conversation header without reloading history", async () => {
+  it("removes a session archived from another surface without reloading history", async () => {
     const runtime = fakeRuntime([
       thread({ id: "thread-a", title: "保留会话" }),
       thread({ id: "thread-b", title: "删除会话" }),
@@ -389,10 +459,83 @@ describe("Sider", () => {
     renderSider(<Sider runtime={runtime} />);
 
     expect(await screen.findByRole("button", { name: "删除会话" })).not.toBeNull();
-    act(() => emitSessionDeleted("thread-b"));
+    act(() => emitLifecycleEvent({
+      type: "session_archived",
+      session_id: "thread-b",
+      operation_id: "op-remote",
+      request_id: "req-remote",
+      occurred_at: "2026-07-14T00:00:00Z",
+      revision: 1,
+      changed: true,
+    }));
 
     expect(screen.queryByRole("button", { name: "删除会话" })).toBeNull();
     expect(screen.getByRole("button", { name: "保留会话" })).not.toBeNull();
+    expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the next session in the same project when a remote event archives the current session", async () => {
+    const runtime = fakeRuntime([
+      thread({ id: "thread-current", title: "当前项目会话", session_type: "workspace", workspace_id: "ws-1", workspace: workspace("ws-1", "keydex") }),
+      thread({ id: "thread-next", title: "下一个项目会话", session_type: "workspace", workspace_id: "ws-1", workspace: workspace("ws-1", "keydex") }),
+      thread({ id: "thread-other", title: "其他项目会话", session_type: "workspace", workspace_id: "ws-2", workspace: workspace("ws-2", "other") }),
+    ]);
+    const onNavigate = vi.fn();
+    renderSider(<Sider activePath="/conversation/thread-current" runtime={runtime} onNavigate={onNavigate} />);
+    await screen.findByText("当前项目会话");
+
+    act(() => emitLifecycleEvent({
+      type: "session_archived",
+      session_id: "thread-current",
+      workspace_id: "ws-1",
+      operation_id: "op-current",
+      request_id: "req-current",
+      occurred_at: "2026-07-14T00:01:00Z",
+      revision: 2,
+      changed: true,
+    }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/conversation/thread-next");
+    expect(screen.queryByText("当前项目会话")).toBeNull();
+  });
+
+  it("leaves the archived workspace scope while preserving the session fallback for single-session archive", async () => {
+    const runtime = fakeRuntime([
+      thread({ id: "thread-current", title: "当前项目会话", session_type: "workspace", workspace_id: "ws-1", workspace: workspace("ws-1", "keydex") }),
+    ]);
+    const onNavigate = vi.fn();
+    renderSider(<Sider
+      activePath="/workbench/ws-1/session/thread-current"
+      runtime={runtime}
+      archiveActiveFallbackPath="/workbench/ws-1"
+      workspaceArchiveFallbackPath="/workbench"
+      getSessionPath={(id) => `/workbench/ws-1/session/${id}`}
+      onNavigate={onNavigate}
+    />);
+    await screen.findByText("当前项目会话");
+
+    act(() => emitLifecycleEvent({ type: "workspace_archived", workspace_id: "ws-1", operation_id: "op-workspace", revision: 4, occurred_at: "2026-07-14T04:00:00Z" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/workbench");
+    expect(screen.queryByText("当前项目会话")).toBeNull();
+    expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not revive a session when a restore lookup resolves after a newer archive event", async () => {
+    const runtime = fakeRuntime([]);
+    const restored = createDeferred<AgentSession>();
+    runtime.conversation.getSession = vi.fn(() => restored.promise);
+    renderSider(<Sider runtime={runtime} />);
+    await waitFor(() => expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1));
+
+    act(() => emitLifecycleEvent({ type: "session_restored", session_id: "thread-race", operation_id: "op-restore", revision: 1, occurred_at: "2026-07-14T01:00:00Z" }));
+    act(() => emitLifecycleEvent({ type: "session_archived", session_id: "thread-race", operation_id: "op-archive", revision: 2, occurred_at: "2026-07-14T02:00:00Z" }));
+    await act(async () => {
+      restored.resolve(thread({ id: "thread-race", title: "不应复活" }));
+      await restored.promise;
+    });
+
+    expect(screen.queryByText("不应复活")).toBeNull();
     expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
   });
 
@@ -498,7 +641,7 @@ describe("Sider", () => {
     const keydexToggle = screen.getByRole("button", { name: "收起项目 keydex" });
     expect(keydexToggle.getAttribute("aria-expanded")).toBe("true");
     expect(keydexToggle.querySelector(".lucide-folder-open")).not.toBeNull();
-    expect(keydexToggle.querySelector(".lucide-chevron-down")).not.toBeNull();
+    expect(keydexToggle.querySelector(".lucide-chevron-down")).toBeNull();
     expect(screen.getByRole("button", { name: "项目会话 A" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("button", { name: "项目会话 B" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "纯聊天" })).not.toBeNull();
@@ -508,7 +651,7 @@ describe("Sider", () => {
     expect(collapsedKeydexToggle.getAttribute("aria-expanded")).toBe("false");
     expect(collapsedKeydexToggle.querySelector(".lucide-folder")).not.toBeNull();
     expect(collapsedKeydexToggle.querySelector(".lucide-folder-open")).toBeNull();
-    expect(collapsedKeydexToggle.querySelector(".lucide-chevron-down")).not.toBeNull();
+    expect(collapsedKeydexToggle.querySelector(".lucide-chevron-down")).toBeNull();
     expect(screen.queryByRole("button", { name: "项目会话 A" })).toBeNull();
 
     fireEvent.click(collapsedKeydexToggle);
@@ -590,7 +733,9 @@ describe("Sider", () => {
     });
     expect(await within(group).findByRole("button", { name: "项目会话 15" })).not.toBeNull();
     expect(within(group).queryByRole("button", { name: "项目会话 16" })).toBeNull();
-    expect(group.querySelector('[data-history-extra-items="true"]')?.getAttribute("data-expanded")).toBe("true");
+    await waitFor(() => expect(
+      group.querySelector('[data-history-extra-items="true"]')?.getAttribute("data-expanded"),
+    ).toBe("true"));
     expect(within(group).getByRole("button", { name: "展开 keydex 会话历史" })).not.toBeNull();
     expect(within(group).getByRole("button", { name: "折叠 keydex 会话历史" })).not.toBeNull();
 
@@ -630,11 +775,15 @@ describe("Sider", () => {
 
     view.rerender(
       <ThemeProvider>
-        <Sider runtime={runtime} activePath="/conversation/workspace-6" />
+        <NotificationProvider>
+          <Sider runtime={runtime} activePath="/conversation/workspace-6" />
+        </NotificationProvider>
       </ThemeProvider>,
     );
 
-    expect(group.querySelector('[data-history-extra-items="true"]')?.getAttribute("data-expanded")).toBe("true");
+    await waitFor(() => expect(
+      group.querySelector('[data-history-extra-items="true"]')?.getAttribute("data-expanded"),
+    ).toBe("true"));
     expect(within(group).getByRole("button", { name: "项目会话 6" }).getAttribute("aria-current")).toBe("page");
   });
 
@@ -666,7 +815,9 @@ describe("Sider", () => {
 
     const pinned = await screen.findByRole("region", { name: "置顶" });
     const project = await screen.findByRole("region", { name: "keydex" });
-    expect(within(pinned).getByRole("button", { name: "收起置顶区域" }).querySelector(".lucide-pin")).toBeNull();
+    const pinnedToggle = within(pinned).getByRole("button", { name: "收起置顶区域" });
+    expect(pinnedToggle.querySelector(".lucide-pin")).toBeNull();
+    expect(pinnedToggle.querySelector(".lucide-chevron-down")).not.toBeNull();
     expect(Boolean(pinned.compareDocumentPosition(project) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(within(pinned).getByRole("button", { name: "置顶会话 1" })).not.toBeNull();
     expect(within(pinned).getByRole("button", { name: "置顶会话 5" })).not.toBeNull();
@@ -677,7 +828,8 @@ describe("Sider", () => {
     fireEvent.click(within(pinned).getByRole("button", { name: "展开 置顶 会话历史" }));
     expect(within(pinned).getByRole("button", { name: "置顶会话 6" })).not.toBeNull();
 
-    fireEvent.click(within(pinned).getByRole("button", { name: "收起置顶区域" }));
+    fireEvent.click(pinnedToggle);
+    expect(pinnedToggle.getAttribute("aria-expanded")).toBe("false");
     expect(within(pinned).queryByRole("button", { name: "置顶会话 1" })).toBeNull();
   });
 
@@ -688,7 +840,9 @@ describe("Sider", () => {
 
     const emptyPinned = await screen.findByRole("region", { name: "置顶" });
     expect(within(emptyPinned).getByText("暂无置顶")).not.toBeNull();
-    expect(within(emptyPinned).getByRole("button", { name: "收起置顶区域" }).querySelector(".lucide-pin")).toBeNull();
+    const emptyPinnedToggle = within(emptyPinned).getByRole("button", { name: "收起置顶区域" });
+    expect(emptyPinnedToggle.querySelector(".lucide-pin")).toBeNull();
+    expect(emptyPinnedToggle.querySelector(".lucide-chevron-down")).not.toBeNull();
     await screen.findByRole("button", { name: "待置顶会话" });
     const pinButton = screen.getByRole("button", { name: "置顶 待置顶会话" });
     const emptyPinIcon = pinButton.querySelector("svg");
@@ -1184,7 +1338,7 @@ describe("Sider", () => {
     const menu = screen.getByRole("menu", { name: "会话操作 右键会话" });
     expect(within(menu).getByRole("menuitem", { name: "从对话派生" })).not.toBeNull();
     expect(within(menu).getByRole("menuitem", { name: "重命名" })).not.toBeNull();
-    expect(within(menu).getByRole("menuitem", { name: "删除" })).not.toBeNull();
+    expect(within(menu).getByRole("menuitem", { name: "归档会话" }).getAttribute("data-tone")).toBe("danger");
     expect(within(menu).getByRole("menuitem", { name: "刷新" })).not.toBeNull();
 
     fireEvent.click(within(menu).getByRole("menuitem", { name: "重命名" }));
@@ -1365,42 +1519,164 @@ describe("Sider", () => {
     expect(Boolean(newNode.compareDocumentPosition(oldNode) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
-  it("deletes conversations after explicit delete confirmation", async () => {
-    const runtime = fakeRuntime([thread({ id: "thread-a", title: "待删除会话" })]);
+  it("optimistically archives a conversation and performs a real restore for Undo", async () => {
+    const runtime = fakeRuntime([thread({ id: "thread-a", title: "待归档会话" })]);
     renderSider(<Sider runtime={runtime} />);
 
-    await screen.findByText("待删除会话");
-    fireEvent.click(within(openSessionMenu("待删除会话")).getByRole("menuitem", { name: "删除" }));
-    const dialog = screen.getByRole("dialog", { name: "确认删除会话？" });
-    expect(within(dialog).getByText("待删除会话")).not.toBeNull();
-    expect(within(dialog).getAllByRole("button").map((button) => button.textContent)).toEqual(["取消", "删除"]);
-    fireEvent.click(within(dialog).getByRole("button", { name: "删除" }));
+    await screen.findByText("待归档会话");
+    fireEvent.click(within(openSessionMenu("待归档会话")).getByRole("menuitem", { name: "归档会话" }));
+    expect(screen.queryByText("待归档会话")).toBeNull();
 
     await waitFor(() => {
-      expect(runtime.conversation.deleteSession).toHaveBeenCalledWith("thread-a");
+      expect(runtime.conversation.archiveSession).toHaveBeenCalledWith(
+        "thread-a",
+        expect.objectContaining({ stopIfActive: false }),
+      );
     });
-    expect(screen.queryByText("待删除会话")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "撤销" }));
+    await waitFor(() => expect(runtime.conversation.restoreSession).toHaveBeenCalledWith(
+      "thread-a",
+      expect.objectContaining({ requestId: expect.stringMatching(/^session-undo:/) }),
+    ));
+    expect(await screen.findByText("待归档会话")).not.toBeNull();
   });
 
-  it("returns to quick chat when the active conversation is deleted", async () => {
+  it("returns to quick chat when the active conversation is archived", async () => {
     const runtime = fakeRuntime([thread({ id: "thread-a", title: "当前会话" })]);
     const onNavigate = vi.fn();
     renderSider(<Sider activePath="/conversation/thread-a" runtime={runtime} onNavigate={onNavigate} />);
 
     await screen.findByText("当前会话");
-    fireEvent.click(within(openSessionMenu("当前会话")).getByRole("menuitem", { name: "删除" }));
-    const dialog = screen.getByRole("dialog", { name: "确认删除会话？" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "删除" }));
+    fireEvent.click(within(openSessionMenu("当前会话")).getByRole("menuitem", { name: "归档会话" }));
 
     await waitFor(() => {
       expect(onNavigate).toHaveBeenCalledWith("/guid");
     });
   });
+
+  it("rolls an optimistic archive back in place without reloading the list", async () => {
+    const archiveSession = vi.fn().mockRejectedValue(new Error("network down"));
+    const runtime = fakeRuntime([
+      thread({ id: "thread-first", title: "第一条", updated_at: "2026-06-17T11:00:00Z" }),
+      thread({ id: "thread-failed", title: "归档失败", updated_at: "2026-06-17T10:00:00Z" }),
+    ], { archiveSession });
+    renderSider(<Sider runtime={runtime} />);
+
+    const first = await screen.findByRole("button", { name: "第一条" });
+    fireEvent.click(within(openSessionMenu("归档失败")).getByRole("menuitem", { name: "归档会话" }));
+    expect(screen.queryByRole("button", { name: "归档失败" })).toBeNull();
+
+    const restored = await screen.findByRole("button", { name: "归档失败" });
+    expect(Boolean(first.compareDocumentPosition(restored) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores the row and asks before stopping when archive preflight reports blockers", async () => {
+    const blocked = new RuntimeHttpError({
+      code: "archive_requires_stop_confirmation",
+      message: "需要停止",
+      details: { blocker_count: 2, blockers: [{ type: "running" }, { type: "pending_input" }] },
+      status: 409,
+      method: "POST",
+      path: "/archive",
+      body: {},
+      rawText: "",
+    });
+    const archiveSession = vi.fn()
+      .mockRejectedValueOnce(blocked)
+      .mockResolvedValueOnce(archiveResult("thread-a"));
+    const runtime = fakeRuntime([thread({ id: "thread-a", title: "运行中会话" })], { archiveSession });
+    renderSider(<Sider runtime={runtime} />);
+
+    await screen.findByText("运行中会话");
+    fireEvent.click(within(openSessionMenu("运行中会话")).getByRole("menuitem", { name: "归档会话" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "停止并归档会话？" });
+    expect(screen.getAllByText("运行中会话").length).toBeGreaterThanOrEqual(2);
+    expect(within(dialog).getByText(/停止并归档（2 项）/)).not.toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "停止并归档（2 项）" }));
+
+    await waitFor(() => expect(archiveSession).toHaveBeenLastCalledWith(
+      "thread-a",
+      expect.objectContaining({ stopIfActive: true }),
+    ));
+    expect(screen.queryByText("运行中会话")).toBeNull();
+  });
+
+  it("manages a project from the agent sidebar project overflow menu", async () => {
+    const updateWorkspace = vi.fn(async (workspaceId: string, payload: { name?: string | null }) => ({
+      ...workspace(workspaceId, payload.name ?? "keydex"),
+      name: payload.name ?? "keydex",
+    }));
+    const revealPath = vi.fn().mockResolvedValue(undefined);
+    const runtime = fakeRuntime([
+      thread({
+        id: "thread-project-menu",
+        title: "项目会话",
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "keydex"),
+      }),
+    ], { updateWorkspace, revealPath });
+    renderSider(<Sider runtime={runtime} />);
+
+    await screen.findByRole("button", { name: "收起项目 keydex" });
+    fireEvent.click(screen.getByRole("button", { name: "更多项目操作 keydex" }));
+    let menu = screen.getByRole("menu", { name: "项目操作 keydex" });
+    expect(within(menu).getByRole("menuitem", { name: "资源管理器" })).not.toBeNull();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "重命名" }));
+    const dialog = await screen.findByRole("dialog", { name: "重命名项目" });
+    fireEvent.change(within(dialog).getByLabelText("项目名称"), { target: { value: "keydex-next" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存项目名称" }));
+
+    await waitFor(() => expect(updateWorkspace).toHaveBeenCalledWith("ws-1", { name: "keydex-next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "更多项目操作 keydex-next" }));
+    menu = screen.getByRole("menu", { name: "项目操作 keydex-next" });
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "资源管理器" }));
+    await waitFor(() => expect(revealPath).toHaveBeenCalledWith("D:/Pycharm Projects/keydex"));
+  });
+
+  it("opens the same project actions on right click and archives the project", async () => {
+    const archiveWorkspace = vi.fn().mockResolvedValue({
+      operation_id: "op-workspace-archive",
+      request_id: "req-workspace-archive",
+      workspace_id: "ws-1",
+      changed: true,
+      archived_at: "2026-07-15T00:00:00Z",
+      newly_archived: 1,
+      manual_preserved: 0,
+      project_preserved: 0,
+      event: null,
+    });
+    const runtime = fakeRuntime([
+      thread({
+        id: "thread-project-context",
+        title: "项目会话",
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "keydex"),
+      }),
+    ], { archiveWorkspace, updateWorkspace: vi.fn(), revealPath: vi.fn() });
+    renderSider(<Sider runtime={runtime} />);
+
+    const projectToggle = await screen.findByRole("button", { name: "收起项目 keydex" });
+    fireEvent.contextMenu(projectToggle, { clientX: 80, clientY: 120 });
+    const menu = await screen.findByRole("menu", { name: "项目操作 keydex" });
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "归档" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "归档项目？" })).getByRole("button", { name: "归档项目" }));
+
+    await waitFor(() => expect(archiveWorkspace).toHaveBeenCalledWith("ws-1", expect.objectContaining({ stopActiveSessions: false })));
+    expect(screen.queryByRole("button", { name: "收起项目 keydex" })).toBeNull();
+  });
 });
 
 interface FakeRuntimeOptions {
+  archiveSession?: RuntimeBridge["conversation"]["archiveSession"];
   forkSession?: RuntimeBridge["conversation"]["forkSession"];
   loadHistory?: RuntimeBridge["conversation"]["loadHistory"];
+  updateWorkspace?: RuntimeBridge["workspaces"]["update"];
+  archiveWorkspace?: RuntimeBridge["workspaces"]["archive"];
+  revealPath?: RuntimeBridge["desktopPicker"]["revealPath"];
 }
 
 function fakeRuntime(threads: AgentSession[], options: FakeRuntimeOptions = {}): RuntimeBridge {
@@ -1414,15 +1690,36 @@ function fakeRuntime(threads: AgentSession[], options: FakeRuntimeOptions = {}):
     const current = threads.find((item) => item.id === threadId) ?? thread({ id: threadId });
     return Promise.resolve({ ...current, ...patch, updated_at: "2026-06-17T11:00:00Z" });
   });
-  const deleteSession = vi.fn().mockResolvedValue(undefined);
+  const archiveSession = options.archiveSession ?? vi.fn(async (sessionId: string) => archiveResult(sessionId));
+  const restoreSession = vi.fn(async (sessionId: string) => ({
+    operation_id: "op-restore",
+    request_id: "req-restore",
+    session_id: sessionId,
+    workspace_id: null,
+    workspace: null,
+    changed: true,
+    event: null,
+  }));
+  const getSession = vi.fn(async (sessionId: string) => threads.find((item) => item.id === sessionId) ?? thread({ id: sessionId }));
   return {
     conversation: {
       listSessions,
       updateSession,
-      deleteSession,
+      archiveSession,
+      restoreSession,
+      getSession,
       ...(options.forkSession ? { forkSession: options.forkSession } : {}),
       ...(options.loadHistory ? { loadHistory: options.loadHistory } : {}),
     },
+    ...(options.updateWorkspace || options.archiveWorkspace ? {
+      workspaces: {
+        update: options.updateWorkspace ?? vi.fn(),
+        archive: options.archiveWorkspace ?? vi.fn(),
+      },
+    } : {}),
+    ...(options.revealPath ? {
+      desktopPicker: { revealPath: options.revealPath },
+    } : {}),
   } as unknown as RuntimeBridge;
 }
 
@@ -1490,6 +1787,8 @@ function thread(patch: Partial<AgentSession> = {}): AgentSession {
     is_current: false,
     current_model_provider_id: "provider-1",
     current_model: "qwen-coder",
+    archived_at: null,
+    archive_origin: null,
     ...patch,
   };
 }
@@ -1504,7 +1803,20 @@ function workspace(id: string, name: string): Workspace {
     created_at: "2026-06-21T00:00:00Z",
     updated_at: "2026-06-21T00:00:00Z",
     last_opened_at: null,
-    is_deleted: false,
+    archived_at: null,
+  };
+}
+
+function archiveResult(sessionId: string) {
+  return {
+    operation_id: "op-archive",
+    request_id: "req-archive",
+    session_id: sessionId,
+    workspace_id: null,
+    changed: true,
+    archived_at: "2026-07-14T00:00:00Z",
+    archive_origin: "manual" as const,
+    event: null,
   };
 }
 

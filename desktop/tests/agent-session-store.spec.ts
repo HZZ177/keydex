@@ -156,7 +156,7 @@ describe("agentSessionStore reducer", () => {
         created_at: "2026-06-18T07:00:00Z",
         updated_at: "2026-06-18T07:00:00Z",
         last_opened_at: "2026-06-18T07:00:00Z",
-        is_deleted: false,
+        archived_at: null,
       },
     };
     let state = agentConversationReducer(createInitialAgentConversationState(), {
@@ -3905,6 +3905,8 @@ function session(id: string, updatedAt: string, status: AgentSession["status"] =
     source_trace_id: null,
     created_at: "2026-06-18T07:00:00Z",
     updated_at: updatedAt,
+    archived_at: null,
+    archive_origin: null,
     is_debug: false,
     is_scheduled: false,
     is_current: false,

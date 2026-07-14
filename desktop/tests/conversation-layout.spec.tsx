@@ -43,7 +43,7 @@ describe("ChatLayout", () => {
     const onExport = vi.fn();
     const onFork = vi.fn();
     const onRename = vi.fn();
-    const onDelete = vi.fn();
+    const onArchive = vi.fn();
     const onRefresh = vi.fn();
     function MessageFlow() {
       useEffect(() => {
@@ -62,7 +62,7 @@ describe("ChatLayout", () => {
           onFork,
           canMutate: true,
           onRename,
-          onDelete,
+          onArchive,
           showRefresh: true,
           onRefresh,
         }}
@@ -78,10 +78,14 @@ describe("ChatLayout", () => {
       "导出对话记录",
       "从对话派生",
       "重命名",
-      "删除",
+      "归档",
       "刷新",
     ]);
     expect(screen.queryByRole("menuitem", { name: "复制标题" })).toBeNull();
+    expect(screen.getByTestId("session-archive-icon")).not.toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "归档会话" }));
+    expect(onArchive).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByLabelText("更多对话操作"));
     fireEvent.click(screen.getByRole("menuitem", { name: "重命名" }));
     expect(onRename).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("menu", { name: "对话操作菜单" })).toBeNull();
@@ -128,6 +132,8 @@ function fakeRuntime(): RuntimeBridge {
     is_current: false,
     current_model_provider_id: "provider-1",
     current_model: "qwen-coder",
+    archived_at: null,
+    archive_origin: null,
   };
   const history: AgentHistoryResponse = {
     list: [],

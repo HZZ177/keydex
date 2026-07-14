@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { runtimeBridge, type RuntimeBridge } from "@/runtime";
+import {
+  createLifecycleRequestId,
+  decodeLifecycleRuntimeError,
+  runtimeBridge,
+  type LifecycleRuntimeError,
+  type RuntimeBridge,
+} from "@/runtime";
 import {
   agentAttachmentFromSelected,
   selectedQuoteFromText,
@@ -17,7 +23,8 @@ import { AppDialog, ConfirmDialog, DialogButton } from "@/renderer/components/di
 import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
 import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
 import { useOptionalRightSidebarConversation } from "@/renderer/components/layout/RightSidebarConversationContext";
-import { emitSessionCreated, emitSessionDeleted, emitSessionUpdated } from "@/renderer/events/sessionEvents";
+import { emitLifecycleEvent } from "@/renderer/events/lifecycleEvents";
+import { emitSessionCreated, emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useWorkspaceFileWatchScope } from "@/renderer/providers/FileChangeProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
@@ -75,7 +82,7 @@ export interface ConversationSessionSurfaceProps {
   onSidecarQuoteRequestHandled?: (requestId: number) => void;
   onQuickSendConsumed?: () => void;
   onNavigateToConversation?: (threadId: string) => void;
-  onDeleted?: () => void;
+  onArchived?: () => void;
 }
 
 export function ConversationSessionSurface({
@@ -95,7 +102,7 @@ export function ConversationSessionSurface({
   onSidecarQuoteRequestHandled,
   onQuickSendConsumed,
   onNavigateToConversation,
-  onDeleted,
+  onArchived,
 }: ConversationSessionSurfaceProps) {
   const isSidecar = mode === "sidecar";
   const [allowPersistentTrust, setAllowPersistentTrust] = useState(true);
@@ -108,7 +115,8 @@ export function ConversationSessionSurface({
   const [goalCreating, setGoalCreating] = useState(false);
   const [contextCompressionRunning, setContextCompressionRunning] = useState(false);
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveBlocker, setArchiveBlocker] = useState<LifecycleRuntimeError | null>(null);
   const [forkingSession, setForkingSession] = useState(false);
   const [exportingSession, setExportingSession] = useState(false);
   const quickSendConsumedRef = useRef<string | null>(null);
@@ -249,7 +257,8 @@ export function ConversationSessionSurface({
 
   useEffect(() => {
     setEditingTitle(null);
-    setConfirmDeleteOpen(false);
+    setArchiveBlocker(null);
+    setArchiveBusy(false);
     setForkingSession(false);
     setExportingSession(false);
   }, [threadId]);
@@ -276,22 +285,37 @@ export function ConversationSessionSurface({
     }
   }, [controller, editingTitle, notifications, runtime, session?.id]);
 
-  const deleteSession = useCallback(async () => {
+  const archiveSession = useCallback(async (stopIfActive = false) => {
     const sessionId = session?.id?.trim() ?? "";
-    if (!sessionId || typeof runtime.conversation.deleteSession !== "function") {
-      notifications.warning("当前后端不支持删除会话");
+    if (!sessionId || typeof runtime.conversation.archiveSession !== "function" || archiveBusy) {
+      if (!sessionId) {
+        notifications.warning("当前会话不可归档");
+      }
       return;
     }
+    setArchiveBusy(true);
     try {
-      await runtime.conversation.deleteSession(sessionId);
-      emitSessionDeleted(sessionId);
-      setConfirmDeleteOpen(false);
-      notifications.success("已删除会话");
-      onDeleted?.();
+      const result = await runtime.conversation.archiveSession(sessionId, {
+        requestId: createLifecycleRequestId("session-archive"),
+        stopIfActive,
+      });
+      if (result.event) {
+        emitLifecycleEvent(result.event);
+      }
+      setArchiveBlocker(null);
+      notifications.success("已归档");
+      onArchived?.();
     } catch (reason) {
-      notifications.error(errorMessage(reason));
+      const decoded = decodeLifecycleRuntimeError(reason);
+      if (decoded?.kind === "archive_requires_stop_confirmation") {
+        setArchiveBlocker(decoded);
+      } else {
+        notifications.error(errorMessage(reason));
+      }
+    } finally {
+      setArchiveBusy(false);
     }
-  }, [notifications, onDeleted, runtime, session?.id]);
+  }, [archiveBusy, notifications, onArchived, runtime, session?.id]);
 
   const forkSessionFromLatestTurn = useCallback(async () => {
     const sessionId = session?.id?.trim() ?? "";
@@ -882,7 +906,7 @@ export function ConversationSessionSurface({
   const canMutateSession =
     Boolean(session?.id) &&
     typeof runtime.conversation.updateSession === "function" &&
-    typeof runtime.conversation.deleteSession === "function";
+    typeof runtime.conversation.archiveSession === "function";
   const canForkSession =
     Boolean(session?.id) &&
     typeof runtime.conversation.loadHistory === "function" &&
@@ -912,7 +936,8 @@ export function ConversationSessionSurface({
           onFork: () => void forkSessionFromLatestTurn(),
           canMutate: canMutateSession,
           onRename: () => setEditingTitle(title),
-          onDelete: () => setConfirmDeleteOpen(true),
+          archiving: archiveBusy,
+          onArchive: () => void archiveSession(false),
           showRefresh: true,
           onRefresh: refreshSession,
         }}
@@ -976,15 +1001,16 @@ export function ConversationSessionSurface({
         </AppDialog>
       ) : null}
 
-      {confirmDeleteOpen ? (
+      {archiveBlocker ? (
         <ConfirmDialog
-          title="确认删除会话？"
-          description="会删除该会话的历史记录，操作不可撤销。"
-          preview={title.trim() || "该会话"}
-          confirmLabel="删除"
-          confirmTone="danger"
-          onCancel={() => setConfirmDeleteOpen(false)}
-          onConfirm={() => void deleteSession()}
+          title="停止并归档会话？"
+          description="该会话仍有运行、等待、审批、排队输入或任务。确认后会先安全停止这些活动，再归档会话。"
+          preview={`受影响活动：${archiveBlockerCount(archiveBlocker)} 项`}
+          confirmLabel={archiveBusy ? "正在停止并归档" : "停止并归档"}
+          cancelDisabled={archiveBusy}
+          confirmDisabled={archiveBusy}
+          onCancel={() => setArchiveBlocker(null)}
+          onConfirm={() => void archiveSession(true)}
         />
       ) : null}
     </>
@@ -1010,6 +1036,11 @@ function conversationWorkspaceMeta(session: AgentSession | null): { label: strin
     label,
     title: rootPath ? `${label}\n${rootPath}` : label,
   };
+}
+
+function archiveBlockerCount(error: LifecycleRuntimeError): number {
+  const count = error.details.blocker_count;
+  return typeof count === "number" && Number.isFinite(count) ? count : 1;
 }
 
 function workspaceNameFromPath(path: string): string {

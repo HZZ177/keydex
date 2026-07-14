@@ -291,6 +291,6 @@ function workspace(id: string, name: string): Workspace {
     created_at: "2026-06-21T00:00:00Z",
     updated_at: "2026-06-21T00:00:00Z",
     last_opened_at: null,
-    is_deleted: false,
+    archived_at: null,
   };
 }

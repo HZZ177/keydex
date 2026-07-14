@@ -423,6 +423,8 @@ function agentSession(): AgentSession {
     source_trace_id: null,
     created_at: "2026-07-03T00:00:00Z",
     updated_at: "2026-07-03T00:00:00Z",
+    archived_at: null,
+    archive_origin: null,
     is_debug: false,
     is_scheduled: false,
     is_current: false,

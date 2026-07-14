@@ -130,7 +130,12 @@ describe("useConversationPanelModel", () => {
         runtime_params: {
           message_context_items: [
             { type: "file", id: "file-1", label: "alpha.py", path: "src/alpha.py", content: "src/alpha.py" },
-            { type: "quote", label: "引用", content: "selected code", metadata: { source: "selection" } },
+            {
+              type: "quote",
+              label: "引用",
+              content: "selected code",
+              metadata: { source: "selection", comment: "保留这条评论" },
+            },
             { type: "skill", label: "/review", skill_name: "review", content: "Review changes" },
           ],
         },
@@ -160,7 +165,7 @@ describe("useConversationPanelModel", () => {
       expect.objectContaining({
         value: "继续检查",
         files: [expect.objectContaining({ path: "src/alpha.py" })],
-        quotes: [expect.objectContaining({ text: "selected code" })],
+        quotes: [expect.objectContaining({ text: "selected code", comment: "保留这条评论" })],
         selectedSkill: expect.objectContaining({ name: "review" }),
         attachments: [expect.objectContaining({ attachment_id: "att-1", name: "review.png" })],
       }),

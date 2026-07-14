@@ -275,12 +275,49 @@
 }
 
 .sectionTitleRow {
+  position: relative;
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  margin-bottom: 2px;
+  border-radius: var(--radius-pill);
+  color: var(--color-text-2);
+  transition:
+    background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
+}
+
+.sectionTitleRow[data-menu-open="true"] {
+  z-index: 2;
+}
+
+.sectionHeaderActions {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-bottom: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity var(--motion-fast) ease;
+}
+
+.sectionTitleRow:hover,
+.sectionTitleRow:focus-within,
+.sectionTitleRow[data-menu-open="true"] {
+  background: var(--sidebar-pill-hover);
+  color: var(--color-text-1);
+}
+
+.sectionTitleRow:hover .sectionHeaderActions,
+.sectionTitleRow:focus-within .sectionHeaderActions,
+.sectionTitleRow[data-menu-open="true"] .sectionHeaderActions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 button.sectionTitle {
@@ -296,10 +333,24 @@ button.sectionTitle {
   line-height: 1.25;
 }
 
-.projectSectionTitle {
+.sectionTitle[data-kind="pinned"] {
+  font-weight: 600;
+}
+
+.sectionTitle.projectSectionTitle {
+  box-sizing: border-box;
+  max-width: 100%;
   min-height: 32px;
-  padding-block: 2px;
+  padding: 2px 9px;
+  background: transparent;
+  color: inherit;
   line-height: 1.35;
+}
+
+.sectionTitleRow:hover .projectSectionTitle,
+.sectionTitleRow:focus-within .projectSectionTitle,
+.sectionTitleRow[data-menu-open="true"] .projectSectionTitle {
+  padding-right: 60px;
 }
 
 .projectSectionTitle span {
@@ -343,12 +394,39 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
   color: currentColor;
 }
 
+.sectionTitleRow > button.sectionTitle:hover,
+.sectionTitleRow > button.sectionTitle:focus-visible {
+  background: transparent;
+  color: inherit;
+}
+
+.sectionHeaderActions > .sectionNewButton {
+  width: 22px;
+  height: 22px;
+  border-radius: 0;
+  background: transparent;
+}
+
+.sectionHeaderActions > .sectionNewButton:hover,
+.sectionHeaderActions > .sectionNewButton:focus-visible {
+  background: transparent;
+  color: var(--color-text-1);
+}
+
 .sectionTitle span {
   min-width: 0;
   flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sectionTitle.projectSectionTitle > span {
+  flex: 1 1 auto;
+}
+
+.sectionTitle.projectSectionTitle[data-kind="pinned"] > span {
+  flex: 0 1 auto;
 }
 
 .sectionChevron {
@@ -782,6 +860,16 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
 .historyActionMenu button:disabled:focus-visible {
   background: transparent;
   color: var(--color-text-2);
+}
+
+.historyActionMenu button[data-tone="danger"] {
+  color: color-mix(in srgb, var(--color-danger) 84%, var(--color-text-2));
+}
+
+.historyActionMenu button[data-tone="danger"]:hover,
+.historyActionMenu button[data-tone="danger"]:focus-visible {
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  color: var(--color-danger);
 }
 
 .historyActionMenu svg {

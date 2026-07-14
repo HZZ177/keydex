@@ -219,6 +219,8 @@ function agentSession(patch: Partial<AgentSession> = {}): AgentSession {
     source_trace_id: null,
     created_at: "2026-06-17T10:00:00Z",
     updated_at: "2026-06-17T10:00:00Z",
+    archived_at: null,
+    archive_origin: null,
     is_debug: false,
     is_scheduled: false,
     is_current: false,
@@ -238,7 +240,7 @@ function workspace(id: string, name: string, rootPath: string): Workspace {
     created_at: "2026-06-21T00:00:00Z",
     updated_at: "2026-06-21T00:00:00Z",
     last_opened_at: null,
-    is_deleted: false,
+    archived_at: null,
   };
 }
 

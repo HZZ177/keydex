@@ -1036,7 +1036,7 @@ def _entry_sort_key(path: Path) -> tuple[int, str]:
 def _service_error(exc: WorkspaceServiceError) -> HTTPException:
     status_code = {
         "workspace_not_found": status.HTTP_404_NOT_FOUND,
-        "workspace_deleted": status.HTTP_410_GONE,
+        "workspace_archived": status.HTTP_409_CONFLICT,
         "session_not_workspace": status.HTTP_400_BAD_REQUEST,
         "session_workspace_missing": status.HTTP_400_BAD_REQUEST,
         "session_cwd_forbidden": status.HTTP_403_FORBIDDEN,

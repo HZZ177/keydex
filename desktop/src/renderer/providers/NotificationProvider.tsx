@@ -21,6 +21,8 @@ export interface NotificationInput {
   title?: string;
   message: string;
   durationMs?: number;
+  actionLabel?: string;
+  onAction?: () => void | Promise<void>;
 }
 
 export interface NotificationContextValue {
@@ -38,6 +40,8 @@ interface NotificationItem extends Required<Pick<NotificationInput, "type" | "me
   id: string;
   title?: string;
   exiting?: boolean;
+  actionLabel?: string;
+  onAction?: () => void | Promise<void>;
 }
 
 const DEFAULT_DURATION_MS = 3000;
@@ -92,6 +96,8 @@ export function NotificationProvider({ children }: PropsWithChildren) {
       title: input.title,
       message: input.message,
       durationMs: input.durationMs ?? DEFAULT_DURATION_MS,
+      actionLabel: input.actionLabel,
+      onAction: input.onAction,
     };
     setItems((current) => [...current, item].slice(-MAX_VISIBLE_NOTIFICATIONS));
     return id;
@@ -311,6 +317,18 @@ function NotificationToast({
         </span>
       </span>
       <span className={styles.actions}>
+        {item.actionLabel && item.onAction ? (
+          <button
+            className={styles.actionButton}
+            type="button"
+            onClick={() => {
+              onDismiss(item.id);
+              void item.onAction?.();
+            }}
+          >
+            {item.actionLabel}
+          </button>
+        ) : null}
         {overflowing ? (
           <button
             className={styles.expandButton}

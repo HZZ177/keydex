@@ -3,6 +3,7 @@ export interface SelectedQuote {
   text: string;
   preview: string;
   source: "selection";
+  comment?: string;
   file?: SelectedQuoteFileSource | null;
 }
 
@@ -17,6 +18,7 @@ export interface SelectedQuoteFileSource {
 
 export interface SelectedQuoteOptions {
   source?: SelectedQuote["source"];
+  comment?: string | null;
   file?: SelectedQuoteFileSource | null;
 }
 
@@ -73,6 +75,7 @@ export function selectedQuoteFromText(
       ? { source: sourceOrOptions }
       : sourceOrOptions;
   const source = options.source ?? "selection";
+  const comment = normalizeQuoteComment(options.comment);
   const file = normalizeSelectedQuoteFileSource(options.file ?? null);
   const idParts = ["quote", source, normalized];
   if (file) {
@@ -84,13 +87,26 @@ export function selectedQuoteFromText(
       String(file.sourceEnd ?? ""),
     );
   }
+  if (comment) {
+    idParts.push(comment);
+  }
   return {
     id: `quote:${source}:${hashText(idParts.join("\n"))}`,
     text: normalized,
     preview: selectedQuotePreview(normalized),
     source,
+    ...(comment ? { comment } : {}),
     file,
   };
+}
+
+function normalizeQuoteComment(comment: string | null | undefined): string {
+  return (comment ?? "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
 }
 
 function normalizeSelectedQuoteFileSource(file: SelectedQuoteFileSource | null): SelectedQuoteFileSource | null {

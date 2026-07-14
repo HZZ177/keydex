@@ -319,16 +319,17 @@ create table if not exists workspaces (
   created_at text not null,
   updated_at text not null,
   last_opened_at text,
-  is_deleted integer not null default 0
+  archived_at text
 );
 
 create unique index if not exists idx_workspaces_normalized_root_active
   on workspaces(normalized_root_path)
-  where is_deleted = 0;
+  where archived_at is null;
 create index if not exists idx_workspaces_last_opened
   on workspaces(last_opened_at desc, updated_at desc, created_at desc);
-create index if not exists idx_workspaces_deleted_updated
-  on workspaces(is_deleted, updated_at desc);
+create index if not exists idx_workspaces_archived
+  on workspaces(archived_at desc, id desc)
+  where archived_at is not null;
 
 create table if not exists sessions (
   id text primary key,
@@ -361,7 +362,17 @@ create table if not exists sessions (
   title_source text not null default 'manual',
   created_at text not null,
   updated_at text not null,
-  is_deleted integer not null default 0,
+  archived_at text,
+  archive_origin text,
+  check (
+    (archived_at is null and archive_origin is null)
+    or
+    (
+      archived_at is not null
+      and archive_origin is not null
+      and archive_origin in ('manual', 'project')
+    )
+  ),
   foreign key(workspace_id) references workspaces(id) on delete set null
 );
 
@@ -375,6 +386,11 @@ create index if not exists idx_sessions_active_session_id on sessions(active_ses
 create index if not exists idx_sessions_parent_session_id on sessions(parent_session_id);
 create index if not exists idx_sessions_child_session_id on sessions(child_session_id);
 create index if not exists idx_sessions_updated_at on sessions(updated_at desc);
+create index if not exists idx_sessions_archived
+  on sessions(archived_at desc, id desc)
+  where archived_at is not null;
+create index if not exists idx_sessions_workspace_archive
+  on sessions(workspace_id, archive_origin, archived_at desc, id desc);
 
 create table if not exists thread_tasks (
   id text primary key,
@@ -1021,6 +1037,48 @@ create table if not exists file_history_locks (
 create index if not exists idx_file_history_locks_expires
   on file_history_locks(expires_at);
 
+create table if not exists lifecycle_operations (
+  id text primary key,
+  request_id text not null,
+  payload_hash text not null,
+  entity_type text not null check (entity_type in ('workspace', 'session')),
+  entity_id text,
+  entity_hash text not null,
+  action text not null check (action in ('archive', 'restore', 'purge')),
+  state text not null check (
+    state in (
+      'planned', 'running', 'quarantined', 'db_committed', 'completed',
+      'cleanup_failed', 'rolled_back', 'compensation_failed', 'blocked', 'failed'
+    )
+  ),
+  revision integer not null default 1 check (revision >= 1),
+  counts_json text not null default '{}',
+  result_json text not null default '{}',
+  error_code text,
+  error_detail_json text not null default '{}',
+  quarantine_token text,
+  created_at text not null,
+  updated_at text not null,
+  completed_at text,
+  unique(entity_type, entity_hash, request_id)
+);
+
+create index if not exists idx_lifecycle_operations_entity_action
+  on lifecycle_operations(entity_type, entity_hash, action, created_at desc);
+create index if not exists idx_lifecycle_operations_state
+  on lifecycle_operations(state, updated_at);
+
+create table if not exists lifecycle_locks (
+  lock_key text primary key,
+  owner_operation_id text not null,
+  acquired_at text not null,
+  expires_at text not null,
+  foreign key(owner_operation_id) references lifecycle_operations(id) on delete cascade
+);
+
+create index if not exists idx_lifecycle_locks_expires
+  on lifecycle_locks(expires_at);
+
 create table if not exists llm_request_logs (
   id text primary key,
   trace_id text not null,
@@ -1143,7 +1201,7 @@ create index if not exists idx_sessions_type_updated
   on sessions(session_type, updated_at desc);
 create index if not exists idx_sessions_pinned_at
   on sessions(pinned_at desc)
-  where pinned_at is not null and is_deleted = 0;
+  where pinned_at is not null and archived_at is null;
 create index if not exists idx_command_approval_requests_session_status
   on command_approval_requests(session_id, status, created_at desc);
 create index if not exists idx_command_approval_requests_status_created
@@ -1186,6 +1244,7 @@ class Database:
             should_migrate_legacy_sessions = (
                 bool(legacy_session_columns) and "workspace_id" not in legacy_session_columns
             )
+            self._migrate_archive_lifecycle_schema(conn)
             conn.executescript(SCHEMA_SQL)
             self._ensure_column(conn, "sessions", "workspace_id", "text")
             self._ensure_column(
@@ -1306,6 +1365,12 @@ class Database:
                     conn,
                     default_workspace_root=default_workspace_root,
                 )
+            foreign_key_errors = conn.execute("pragma foreign_key_check").fetchall()
+            if foreign_key_errors:
+                raise RuntimeError(
+                    "归档生命周期 schema 迁移后外键校验失败: "
+                    f"{[tuple(row) for row in foreign_key_errors[:5]]}"
+                )
         logger.info(f"[Database] 初始化 schema 完成 | path={self.path}")
 
     @staticmethod
@@ -1313,6 +1378,281 @@ class Database:
         return {
             str(row["name"]) for row in conn.execute(f"pragma table_info({table_name})").fetchall()
         }
+
+    @staticmethod
+    def _migration_column_expr(
+        columns: set[str],
+        column_name: str,
+        *,
+        alias: str,
+        default_sql: str,
+    ) -> str:
+        if column_name in columns:
+            return f'{alias}."{column_name}"'
+        return default_sql
+
+    @classmethod
+    def _migrate_archive_lifecycle_schema(cls, conn: sqlite3.Connection) -> None:
+        workspace_columns = cls._column_names(conn, "workspaces")
+        session_columns = cls._column_names(conn, "sessions")
+        migrate_workspaces = bool(workspace_columns) and (
+            "is_deleted" in workspace_columns or "archived_at" not in workspace_columns
+        )
+        migrate_sessions = bool(session_columns) and (
+            "is_deleted" in session_columns
+            or "archived_at" not in session_columns
+            or "archive_origin" not in session_columns
+        )
+        if not migrate_workspaces and not migrate_sessions:
+            return
+
+        migrated_at = to_iso_z(utc_now())
+        conn.commit()
+        conn.execute("pragma foreign_keys = off")
+        conn.execute("pragma legacy_alter_table = on")
+        try:
+            conn.execute("begin immediate")
+            for index_name in (
+                "idx_workspaces_normalized_root_active",
+                "idx_workspaces_last_opened",
+                "idx_workspaces_deleted_updated",
+                "idx_workspaces_archived",
+                "idx_sessions_scene_id",
+                "idx_sessions_scene_id_version_seq",
+                "idx_sessions_user_scene_session_tag",
+                "idx_sessions_status",
+                "idx_sessions_active_session_id",
+                "idx_sessions_parent_session_id",
+                "idx_sessions_child_session_id",
+                "idx_sessions_updated_at",
+                "idx_sessions_workspace_id",
+                "idx_sessions_session_type",
+                "idx_sessions_workspace_updated",
+                "idx_sessions_type_updated",
+                "idx_sessions_pinned_at",
+                "idx_sessions_archived",
+                "idx_sessions_workspace_archive",
+            ):
+                conn.execute(f'drop index if exists "{index_name}"')
+
+            if migrate_workspaces:
+                conn.execute("drop table if exists workspaces__archive_new")
+                conn.execute(
+                    """
+                    create table workspaces__archive_new (
+                      id text primary key,
+                      name text not null,
+                      root_path text not null,
+                      normalized_root_path text not null,
+                      type text not null default 'project',
+                      created_at text not null,
+                      updated_at text not null,
+                      last_opened_at text,
+                      archived_at text
+                    )
+                    """
+                )
+                workspace_expr = lambda name, default: cls._migration_column_expr(  # noqa: E731
+                    workspace_columns,
+                    name,
+                    alias="w",
+                    default_sql=default,
+                )
+                if "archived_at" in workspace_columns:
+                    workspace_archived_expr = "w.archived_at"
+                    workspace_params: tuple[str, ...] = ()
+                elif "is_deleted" in workspace_columns:
+                    workspace_archived_expr = (
+                        "case when coalesce(w.is_deleted, 0) = 1 then ? else null end"
+                    )
+                    workspace_params = (migrated_at,)
+                else:
+                    workspace_archived_expr = "null"
+                    workspace_params = ()
+                conn.execute(
+                    f"""
+                    insert into workspaces__archive_new (
+                      id, name, root_path, normalized_root_path, type,
+                      created_at, updated_at, last_opened_at, archived_at
+                    )
+                    select
+                      {workspace_expr('id', "''")},
+                      {workspace_expr('name', "''")},
+                      {workspace_expr('root_path', "''")},
+                      {workspace_expr('normalized_root_path', "''")},
+                      {workspace_expr('type', "'project'")},
+                      {workspace_expr('created_at', "''")},
+                      {workspace_expr('updated_at', "''")},
+                      {workspace_expr('last_opened_at', 'null')},
+                      {workspace_archived_expr}
+                    from workspaces w
+                    """,
+                    workspace_params,
+                )
+
+            if migrate_sessions:
+                conn.execute("drop table if exists sessions__archive_new")
+                conn.execute(
+                    """
+                    create table sessions__archive_new (
+                      id text primary key,
+                      user_id text not null,
+                      scene_id text not null,
+                      scene_version_seq integer,
+                      status text not null,
+                      is_debug integer not null default 0,
+                      debug_type text,
+                      is_scheduled integer not null default 0,
+                      scheduled_task_id text,
+                      session_tag text not null default 'chat',
+                      active_session_id text,
+                      parent_session_id text,
+                      child_session_id text,
+                      source_trace_id text,
+                      source_active_session_id text,
+                      source_checkpoint_id text,
+                      source_checkpoint_ns text,
+                      workspace_id text,
+                      session_type text not null default 'chat',
+                      cwd text,
+                      workspace_roots_json text not null default '[]',
+                      current_model_provider_id text,
+                      current_model text,
+                      context_window_usage_json text,
+                      context_compression_epoch integer not null default 0,
+                      pinned_at text,
+                      title text,
+                      title_source text not null default 'manual',
+                      created_at text not null,
+                      updated_at text not null,
+                      archived_at text,
+                      archive_origin text,
+                      check (
+                        (archived_at is null and archive_origin is null)
+                        or
+                        (
+                          archived_at is not null
+                          and archive_origin is not null
+                          and archive_origin in ('manual', 'project')
+                        )
+                      ),
+                      foreign key(workspace_id) references workspaces(id) on delete set null
+                    )
+                    """
+                )
+                session_expr = lambda name, default: cls._migration_column_expr(  # noqa: E731
+                    session_columns,
+                    name,
+                    alias="s",
+                    default_sql=default,
+                )
+                legacy_session_was_deleted = (
+                    "coalesce(s.is_deleted, 0) = 1"
+                    if "is_deleted" in session_columns
+                    else "s.archived_at is not null"
+                )
+                workspace_join = ""
+                workspace_archived = "0"
+                if workspace_columns and "workspace_id" in session_columns:
+                    workspace_join = "left join workspaces w on w.id = s.workspace_id"
+                    if "is_deleted" in workspace_columns:
+                        workspace_archived = "coalesce(w.is_deleted, 0) = 1"
+                    elif "archived_at" in workspace_columns:
+                        workspace_archived = "w.archived_at is not null"
+                valid_existing_archive = (
+                    "s.archived_at is not null "
+                    "and s.archive_origin in ('manual', 'project')"
+                    if {"archived_at", "archive_origin"}.issubset(session_columns)
+                    else "0"
+                )
+                existing_archived_at = (
+                    "s.archived_at" if "archived_at" in session_columns else "null"
+                )
+                existing_origin = (
+                    "s.archive_origin" if "archive_origin" in session_columns else "null"
+                )
+                conn.execute(
+                    f"""
+                    insert into sessions__archive_new (
+                      id, user_id, scene_id, scene_version_seq, status, is_debug,
+                      debug_type, is_scheduled, scheduled_task_id, session_tag,
+                      active_session_id, parent_session_id, child_session_id,
+                      source_trace_id, source_active_session_id, source_checkpoint_id,
+                      source_checkpoint_ns, workspace_id, session_type, cwd,
+                      workspace_roots_json, current_model_provider_id, current_model,
+                      context_window_usage_json, context_compression_epoch, pinned_at,
+                      title, title_source, created_at, updated_at,
+                      archived_at, archive_origin
+                    )
+                    select
+                      {session_expr('id', "''")},
+                      {session_expr('user_id', "''")},
+                      {session_expr('scene_id', "''")},
+                      {session_expr('scene_version_seq', 'null')},
+                      {session_expr('status', "'active'")},
+                      {session_expr('is_debug', '0')},
+                      {session_expr('debug_type', 'null')},
+                      {session_expr('is_scheduled', '0')},
+                      {session_expr('scheduled_task_id', 'null')},
+                      {session_expr('session_tag', "'chat'")},
+                      {session_expr('active_session_id', 's.id')},
+                      {session_expr('parent_session_id', 'null')},
+                      {session_expr('child_session_id', 'null')},
+                      {session_expr('source_trace_id', 'null')},
+                      {session_expr('source_active_session_id', 'null')},
+                      {session_expr('source_checkpoint_id', 'null')},
+                      {session_expr('source_checkpoint_ns', 'null')},
+                      {session_expr('workspace_id', 'null')},
+                      {session_expr('session_type', "'chat'")},
+                      {session_expr('cwd', 'null')},
+                      {session_expr('workspace_roots_json', "'[]'")},
+                      {session_expr('current_model_provider_id', 'null')},
+                      {session_expr('current_model', 'null')},
+                      {session_expr('context_window_usage_json', 'null')},
+                      {session_expr('context_compression_epoch', '0')},
+                      {session_expr('pinned_at', 'null')},
+                      {session_expr('title', 'null')},
+                      {session_expr('title_source', "'manual'")},
+                      {session_expr('created_at', "''")},
+                      {session_expr('updated_at', "''")},
+                      case
+                        when {valid_existing_archive} then {existing_archived_at}
+                        when {legacy_session_was_deleted} then ?
+                        when {workspace_archived} then ?
+                        else null
+                      end,
+                      case
+                        when {valid_existing_archive} then {existing_origin}
+                        when {legacy_session_was_deleted} then 'manual'
+                        when {workspace_archived} then 'project'
+                        else null
+                      end
+                    from sessions s
+                    {workspace_join}
+                    """,
+                    (migrated_at, migrated_at),
+                )
+
+            if migrate_sessions:
+                conn.execute("drop table sessions")
+            if migrate_workspaces:
+                conn.execute("drop table workspaces")
+                conn.execute("alter table workspaces__archive_new rename to workspaces")
+            if migrate_sessions:
+                conn.execute("alter table sessions__archive_new rename to sessions")
+            foreign_key_errors = conn.execute("pragma foreign_key_check").fetchall()
+            if foreign_key_errors:
+                raise RuntimeError(
+                    "归档生命周期表重建外键校验失败: "
+                    f"{[tuple(row) for row in foreign_key_errors[:5]]}"
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.execute("pragma legacy_alter_table = off")
+            conn.execute("pragma foreign_keys = on")
 
     @staticmethod
     def _ensure_column(
@@ -1396,7 +1736,7 @@ class Database:
         workspace = conn.execute(
             """
             select id from workspaces
-            where normalized_root_path = ? and is_deleted = 0
+            where normalized_root_path = ? and archived_at is null
             limit 1
             """,
             (normalized_root,),

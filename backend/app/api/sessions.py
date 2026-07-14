@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.app.api.dependencies import get_repositories
@@ -36,6 +36,7 @@ from backend.app.services.session_reverse_service import (
 from backend.app.services.session_service import (
     GetHistoryRequest,
     ListSessionsRequest,
+    SessionArchivedError,
     SessionNotFoundError,
     SessionService,
     SessionValidationError,
@@ -66,8 +67,9 @@ class CreateSessionRequest(BaseModel):
 
 
 class UpdateSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str | None = None
-    archived: bool | None = None
     pinned: bool | None = None
     current_model_provider_id: str | None = None
     current_model: str | None = None
@@ -376,8 +378,8 @@ def get_session(
             session_id,
             current_session_id=current_session_id,
         )
-    except SessionNotFoundError as exc:
-        raise _not_found(exc) from exc
+    except (SessionNotFoundError, SessionArchivedError) as exc:
+        raise _session_access_error(exc) from exc
     return SessionResponse(session=session)
 
 
@@ -390,9 +392,7 @@ def update_session(
 ) -> SessionResponse:
     service = _service(repositories)
     try:
-        if payload.archived is True:
-            session = service.delete_session(session_id)
-        elif "title" in payload.model_fields_set:
+        if "title" in payload.model_fields_set:
             session = service.rename_session(session_id, payload.title or "")
         elif "pinned" in payload.model_fields_set:
             session = service.set_session_pinned(
@@ -412,23 +412,11 @@ def update_session(
                 session_id,
                 current_session_id=current_session_id,
             )
-    except SessionNotFoundError as exc:
-        raise _not_found(exc) from exc
+    except (SessionNotFoundError, SessionArchivedError) as exc:
+        raise _session_access_error(exc) from exc
     except SessionValidationError as exc:
         raise _bad_request("invalid_session_patch", str(exc)) from exc
     return SessionResponse(session=session)
-
-
-@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_session(
-    session_id: str,
-    repositories: StorageRepositories = RepositoriesDep,
-) -> Response:
-    try:
-        _service(repositories).delete_session(session_id)
-    except SessionNotFoundError as exc:
-        raise _not_found(exc) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{session_id}/fork", response_model=SessionBranchResponse)
@@ -766,8 +754,8 @@ def get_session_tool_details(
             start_event_id=start_event_id,
             end_event_id=end_event_id,
         )
-    except SessionNotFoundError as exc:
-        raise _not_found(exc) from exc
+    except (SessionNotFoundError, SessionArchivedError) as exc:
+        raise _session_access_error(exc) from exc
     except SessionValidationError as exc:
         raise _bad_request("invalid_tool_detail", str(exc)) from exc
     return ToolDetailResponse(detail=detail)
@@ -779,8 +767,8 @@ def _history_response(
 ) -> SessionHistoryResponse:
     try:
         result = _service(repositories).get_history(request)
-    except SessionNotFoundError as exc:
-        raise _not_found(exc) from exc
+    except (SessionNotFoundError, SessionArchivedError) as exc:
+        raise _session_access_error(exc) from exc
     if hasattr(repositories, "pending_inputs"):
         result["pending_inputs"] = [
             record.to_dict()
@@ -808,10 +796,15 @@ def _fork_service(repositories: StorageRepositories) -> SessionForkService:
     return SessionForkService(repositories)
 
 
-def _not_found(exc: SessionNotFoundError) -> HTTPException:
+def _session_access_error(exc: SessionNotFoundError | SessionArchivedError) -> HTTPException:
+    archived = isinstance(exc, SessionArchivedError)
     return HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail={"code": "session_not_found", "message": str(exc), "details": {}},
+        status_code=status.HTTP_409_CONFLICT if archived else status.HTTP_404_NOT_FOUND,
+        detail={
+            "code": "session_archived" if archived else "session_not_found",
+            "message": str(exc),
+            "details": {},
+        },
     )
 
 
@@ -849,7 +842,7 @@ def _file_history_error(exc: FileHistoryError) -> HTTPException:
 def _workspace_error(exc: WorkspaceServiceError) -> HTTPException:
     status_code = {
         "workspace_not_found": status.HTTP_404_NOT_FOUND,
-        "workspace_deleted": status.HTTP_410_GONE,
+        "workspace_archived": status.HTTP_409_CONFLICT,
     }.get(exc.code, status.HTTP_400_BAD_REQUEST)
     return HTTPException(
         status_code=status_code,

@@ -27,11 +27,11 @@ class WorkspaceNotFoundError(WorkspaceServiceError):
         )
 
 
-class WorkspaceDeletedError(WorkspaceServiceError):
+class WorkspaceArchivedError(WorkspaceServiceError):
     def __init__(self, workspace_id: str) -> None:
         super().__init__(
-            "workspace_deleted",
-            f"工作区已删除: {workspace_id}",
+            "workspace_archived",
+            f"项目已归档: {workspace_id}",
             {"workspace_id": workspace_id},
         )
 
@@ -69,8 +69,8 @@ class WorkspaceService:
         )
         return self.serialize_workspace(record)
 
-    def list_workspaces(self, *, include_deleted: bool = False) -> dict[str, Any]:
-        records = self._workspaces.list(include_deleted=include_deleted)
+    def list_workspaces(self) -> dict[str, Any]:
+        records = self._workspaces.list()
         return {
             "list": [self.serialize_workspace(record) for record in records],
             "total": len(records),
@@ -93,13 +93,6 @@ class WorkspaceService:
             raise WorkspaceNotFoundError(workspace_id)
         return self.serialize_workspace(record)
 
-    def delete_workspace(self, workspace_id: str) -> dict[str, Any]:
-        self.require_workspace(workspace_id)
-        record = self._workspaces.soft_delete(workspace_id)
-        if record is None:
-            raise WorkspaceNotFoundError(workspace_id)
-        return self.serialize_workspace(record)
-
     def touch_workspace(self, workspace_id: str) -> dict[str, Any]:
         self.require_workspace(workspace_id)
         record = self._workspaces.touch(workspace_id)
@@ -111,9 +104,9 @@ class WorkspaceService:
         record = self._workspaces.get(workspace_id)
         if record is not None:
             return record
-        deleted = self._workspaces.get(workspace_id, include_deleted=True)
-        if deleted is not None:
-            raise WorkspaceDeletedError(workspace_id)
+        archived = self._workspaces.get_archived(workspace_id)
+        if archived is not None:
+            raise WorkspaceArchivedError(workspace_id)
         raise WorkspaceNotFoundError(workspace_id)
 
     def runtime_context_for_session(self, session: SessionRecord) -> WorkspaceRuntimeContext:
@@ -177,7 +170,7 @@ class WorkspaceService:
             "created_at": record.created_at,
             "updated_at": record.updated_at,
             "last_opened_at": record.last_opened_at,
-            "is_deleted": record.is_deleted,
+            "archived_at": record.archived_at,
         }
 
     @staticmethod

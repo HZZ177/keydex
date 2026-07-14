@@ -1,4 +1,4 @@
-import { Download, GitBranchPlus, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { Archive, Download, GitBranchPlus, Pencil, RefreshCw } from "lucide-react";
 
 export interface SessionActionMenuItemsProps {
   itemClassName?: string;
@@ -10,7 +10,8 @@ export interface SessionActionMenuItemsProps {
   onFork?: () => void;
   canMutate?: boolean;
   onRename?: () => void;
-  onDelete?: () => void;
+  archiving?: boolean;
+  onArchive?: () => void;
   showRefresh?: boolean;
   onRefresh?: () => void;
   iconSize?: number;
@@ -26,7 +27,8 @@ export function SessionActionMenuItems({
   onFork,
   canMutate = false,
   onRename,
-  onDelete,
+  archiving = false,
+  onArchive,
   showRefresh = false,
   onRefresh,
   iconSize = 13,
@@ -51,9 +53,17 @@ export function SessionActionMenuItems({
             <Pencil size={iconSize} aria-hidden="true" />
             <span>重命名</span>
           </button>
-          <button className={itemClassName} role="menuitem" type="button" onClick={onDelete}>
-            <Trash2 size={iconSize} aria-hidden="true" />
-            <span>删除</span>
+          <button
+            aria-label={archiving ? "正在归档会话" : "归档会话"}
+            className={itemClassName}
+            data-tone="danger"
+            disabled={archiving}
+            role="menuitem"
+            type="button"
+            onClick={onArchive}
+          >
+            <Archive data-testid="session-archive-icon" size={iconSize} aria-hidden="true" />
+            <span>{archiving ? "归档中" : "归档"}</span>
           </button>
         </>
       ) : null}

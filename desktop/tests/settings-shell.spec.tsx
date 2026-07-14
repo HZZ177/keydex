@@ -2,12 +2,12 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
-import { SettingsShell } from "@/renderer/pages/settings/SettingsShell";
+import { SettingsShell, type SettingsSection } from "@/renderer/pages/settings/SettingsShell";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
 
 function renderShell(
-  activeSection: "general" | "appearance" | "providers" | "modelDefaults" | "extensions" | "usage" | "config" | "mcp" = "providers",
+  activeSection: SettingsSection = "providers",
 ) {
   return render(
     <ThemeProvider>
@@ -36,8 +36,17 @@ describe("SettingsShell", () => {
     expect(screen.getByRole("button", { name: "MCP服务器" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "策略配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "用量统计" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "项目管理" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "归档管理" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "切换主题" })).not.toBeNull();
     expect(screen.queryByText("暂未开放")).toBeNull();
+  });
+
+  it("marks project and archive management as separate accessible sections", () => {
+    renderShell("archive");
+
+    expect(screen.getByRole("button", { name: "归档管理" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("button", { name: "项目管理" }).getAttribute("aria-current")).toBeNull();
   });
 
   it("uses the same MCP icon family as the runtime capsule instead of the extensions icon", () => {

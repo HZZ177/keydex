@@ -17,6 +17,7 @@ describe("message injection composer helpers", () => {
     expect(prepared.contextItems.map((item) => item.type)).toEqual(["quote", "file"]);
     expect(prepared.contextItems[0]).toMatchObject({
       type: "quote",
+      label: "引用片段",
       content: "selected text",
       role: "HumanMessage",
       source: "follow",
@@ -53,6 +54,41 @@ describe("message injection composer helpers", () => {
       },
     });
     expect(injections[1]?.content).toContain("src/main.ts");
+  });
+
+  it("keeps an optional quote comment in structured context and model injection", () => {
+    const quote = selectedQuoteFromText("selected text", {
+      source: "selection",
+      comment: "  这里需要核对边界  ",
+    });
+    if (!quote) {
+      throw new Error("quote not created");
+    }
+
+    expect(quote.comment).toBe("这里需要核对边界");
+    const prepared = prepareComposerMessage("", [], { quotes: [quote] });
+
+    expect(prepared.contextItems[0]).toMatchObject({
+      type: "quote",
+      label: "评论",
+      content: "selected text",
+      description: "引用片段：selected text\n\n评论：这里需要核对边界",
+      metadata: {
+        kind: "quote",
+        label: "评论",
+        comment: "这里需要核对边界",
+      },
+    });
+    expect(prepared.runtimeParams?.message_injection?.[0]).toMatchObject({
+      metadata: {
+        kind: "quote",
+        label: "评论",
+        comment: "这里需要核对边界",
+      },
+    });
+    expect(prepared.runtimeParams?.message_injection?.[0]?.content).toContain(
+      "引用片段：selected text\n\n评论：这里需要核对边界",
+    );
   });
 
   it("allows file-only sends without polluting the visible message", () => {

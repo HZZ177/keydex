@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from backend.app.api.dependencies import get_repositories
@@ -85,18 +85,6 @@ def update_workspace(
     return WorkspaceResponse(workspace=workspace)
 
 
-@router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_workspace(
-    workspace_id: str,
-    repositories: StorageRepositories = RepositoriesDep,
-) -> Response:
-    try:
-        _service(repositories).delete_workspace(workspace_id)
-    except WorkspaceServiceError as exc:
-        raise _workspace_error(exc) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
 def _service(repositories: StorageRepositories) -> WorkspaceService:
     return WorkspaceService(repositories.workspaces)
 
@@ -109,7 +97,7 @@ def _workspace_error(exc: WorkspaceServiceError) -> HTTPException:
         "workspace_path_invalid": status.HTTP_400_BAD_REQUEST,
         "workspace_path_not_found": status.HTTP_404_NOT_FOUND,
         "workspace_not_found": status.HTTP_404_NOT_FOUND,
-        "workspace_deleted": status.HTTP_410_GONE,
+        "workspace_archived": status.HTTP_409_CONFLICT,
     }.get(exc.code, status.HTTP_400_BAD_REQUEST)
     return HTTPException(
         status_code=status_code,

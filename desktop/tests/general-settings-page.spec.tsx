@@ -37,6 +37,25 @@ describe("GeneralSettingsPage", () => {
     );
   });
 
+  it("does not expose file history controls on the general page", async () => {
+    const runtime = fakeRuntime({
+      close_window_behavior: null,
+      conversation_send_default_mode: "steer",
+      file_history_enabled: true,
+      file_history_max_storage_bytes: 1_073_741_824,
+      file_history_max_versions_per_file: 1_000,
+      file_history_max_rewind_points: 100,
+      file_history_retention_days: 30,
+    });
+
+    renderPage(runtime);
+
+    await waitFor(() => expect(runtime.settings.getSettings).toHaveBeenCalled());
+    expect(screen.queryByRole("heading", { name: "文件回溯" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /文件历史开关/ })).toBeNull();
+    expect(screen.queryByRole("spinbutton", { name: /文件历史|单文件历史/ })).toBeNull();
+  });
+
   it("saves the close window behavior from the general page", async () => {
     const runtime = fakeRuntime();
 
@@ -99,71 +118,6 @@ describe("GeneralSettingsPage", () => {
     expect(screen.getByRole("button", { name: /加入等待队列/ })).not.toBeNull();
   });
 
-  it("saves file history enablement and retention limits without dropping other settings", async () => {
-    const runtime = fakeRuntime({
-      close_window_behavior: "minimize_to_tray",
-      conversation_send_default_mode: "queue",
-      file_history_enabled: true,
-      file_history_max_storage_bytes: 1_073_741_824,
-      file_history_max_versions_per_file: 1_000,
-      file_history_max_rewind_points: 100,
-      file_history_retention_days: 30,
-    });
-
-    renderPage(runtime);
-
-    const enabledTrigger = await screen.findByRole("button", { name: /文件历史开关/ });
-    fireEvent.click(enabledTrigger);
-    fireEvent.click(screen.getByRole("option", { name: /已关闭/ }));
-
-    await waitFor(() =>
-      expect(runtime.settings.saveGeneralSettings).toHaveBeenLastCalledWith({
-        close_window_behavior: "minimize_to_tray",
-        conversation_send_default_mode: "queue",
-        file_history_enabled: false,
-        file_history_max_storage_bytes: 1_073_741_824,
-        file_history_max_versions_per_file: 1_000,
-        file_history_max_rewind_points: 100,
-        file_history_retention_days: 30,
-      }),
-    );
-
-    const capacity = screen.getByRole("spinbutton", { name: "文件历史容量上限 MB" });
-    fireEvent.change(capacity, { target: { value: "256" } });
-    fireEvent.blur(capacity);
-    await waitFor(() =>
-      expect(runtime.settings.saveGeneralSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({ file_history_max_storage_bytes: 268_435_456 }),
-      ),
-    );
-
-    const versions = screen.getByRole("spinbutton", { name: "单文件历史版本上限" });
-    fireEvent.change(versions, { target: { value: "125" } });
-    fireEvent.blur(versions);
-    await waitFor(() =>
-      expect(runtime.settings.saveGeneralSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({ file_history_max_versions_per_file: 125 }),
-      ),
-    );
-
-    const points = screen.getByRole("spinbutton", { name: "文件历史可回溯点上限" });
-    fireEvent.change(points, { target: { value: "250" } });
-    fireEvent.blur(points);
-    await waitFor(() =>
-      expect(runtime.settings.saveGeneralSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({ file_history_max_rewind_points: 100 }),
-      ),
-    );
-
-    const retention = screen.getByRole("spinbutton", { name: "文件历史保留天数" });
-    fireEvent.change(retention, { target: { value: "45" } });
-    fireEvent.blur(retention);
-    await waitFor(() =>
-      expect(runtime.settings.saveGeneralSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({ file_history_retention_days: 45 }),
-      ),
-    );
-  });
 });
 
 function fakeRuntime(general: GeneralSettings = { close_window_behavior: null }): RuntimeBridge {

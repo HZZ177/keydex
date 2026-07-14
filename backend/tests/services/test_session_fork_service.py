@@ -337,6 +337,33 @@ def test_session_fork_service_rolls_back_when_clone_fails(tmp_path) -> None:
     assert [session.id for session in repositories.sessions.list(limit=10)] == ["ses_source"]
 
 
+@pytest.mark.parametrize("action", ["fork", "reverse"])
+def test_session_fork_and_reverse_reject_archived_source(tmp_path, action: str) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+    repositories.sessions.archive_manual(
+        "ses_source",
+        archived_at="2026-07-14T00:00:00Z",
+    )
+    service = SessionForkService(repositories, checkpointer=saver)
+
+    with pytest.raises(SessionForkServiceError) as archived:
+        if action == "fork":
+            service.fork_session(
+                session_id="ses_source",
+                user_id="local-user",
+                message_event_id="evt_ai_1",
+            )
+        else:
+            service.reverse_session(
+                session_id="ses_source",
+                user_id="local-user",
+                message_event_id="evt_user_1",
+            )
+
+    assert archived.value.code == "entity_archived"
+    assert repositories.sessions.get_archived("ses_source") is not None
+
+
 class FailingCloneCheckpointSaver(SQLiteCheckpointSaver):
     def clone_checkpoint_to_thread(self, **_kwargs) -> None:
         raise RuntimeError("clone failed")

@@ -28,6 +28,13 @@ import type {
 } from "@/types/protocol";
 
 import type { HttpClient } from "./httpClient";
+import type {
+  ArchiveSessionPayload,
+  PurgeResult,
+  RestoreSessionPayload,
+  SessionArchiveResult,
+  SessionRestoreResult,
+} from "./archive";
 import {
   RuntimeWsClient,
   createWsClient,
@@ -273,7 +280,9 @@ export interface ConversationRuntime {
   createSession(payload?: CreateSessionPayload): Promise<AgentSession>;
   getSession(sessionId: string): Promise<AgentSession>;
   updateSession(sessionId: string, payload: UpdateSessionPayload): Promise<AgentSession>;
-  deleteSession(sessionId: string): Promise<void>;
+  archiveSession(sessionId: string, payload: ArchiveSessionPayload): Promise<SessionArchiveResult>;
+  restoreSession(sessionId: string, payload: RestoreSessionPayload): Promise<SessionRestoreResult>;
+  purgeArchivedSession(sessionId: string, requestId: string): Promise<PurgeResult>;
   forkSession(sessionId: string, payload: SessionBranchPayload): Promise<AgentSessionBranchResponse>;
   reverseSession(sessionId: string, payload: SessionBranchPayload): Promise<AgentSessionBranchResponse>;
   previewSessionReverse(sessionId: string, messageEventId: string): Promise<SessionReversePreview>;
@@ -327,10 +336,29 @@ export function createConversationRuntime(
         })
         .then((response) => response.session);
     },
-    deleteSession(sessionId) {
-      return http.request<void>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-        method: "DELETE",
-      });
+    archiveSession(sessionId, payload) {
+      return http.request<SessionArchiveResult>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/archive`,
+        {
+          method: "POST",
+          body: {
+            request_id: payload.requestId,
+            stop_if_active: payload.stopIfActive ?? false,
+          },
+        },
+      );
+    },
+    restoreSession(sessionId, payload) {
+      return http.request<SessionRestoreResult>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/restore`,
+        { method: "POST", body: { request_id: payload.requestId } },
+      );
+    },
+    purgeArchivedSession(sessionId, requestId) {
+      return http.request<PurgeResult>(
+        `/api/archive/sessions/${encodeURIComponent(sessionId)}/purge`,
+        { method: "POST", body: { request_id: requestId, confirmed: true } },
+      );
     },
     forkSession(sessionId, payload) {
       return http.request<AgentSessionBranchResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/fork`, {

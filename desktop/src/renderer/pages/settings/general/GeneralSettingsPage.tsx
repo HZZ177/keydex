@@ -1,4 +1,4 @@
-import { DatabaseBackup, Files, MessagesSquare, Power } from "lucide-react";
+import { MessagesSquare, Power } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
@@ -45,11 +45,6 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   file_history_max_rewind_points: 100,
   file_history_retention_days: 30,
 };
-
-const fileHistoryEnabledOptions = [
-  { value: "enabled", label: "已开启", description: "受控文件修改会记录可回溯版本" },
-  { value: "disabled", label: "已关闭", description: "受控代码修改会明确报错，不会静默失去历史" },
-] as const;
 
 export interface GeneralSettingsPageProps {
   runtime?: RuntimeBridge;
@@ -140,27 +135,6 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
       });
   };
 
-  const saveFileHistorySettings = (patch: Partial<GeneralSettings>) => {
-    if (generalSaving) {
-      return;
-    }
-    const previousGeneral = general;
-    const nextGeneral = { ...general, ...patch };
-    setGeneral(nextGeneral);
-    setGeneralSaving(true);
-    setGeneralError(null);
-    void runtime.settings
-      .saveGeneralSettings(nextGeneral)
-      .then((settings) => {
-        setGeneral({ ...DEFAULT_GENERAL_SETTINGS, ...(settings.general ?? nextGeneral) });
-      })
-      .catch((reason) => {
-        setGeneral(previousGeneral);
-        setGeneralError(errorMessage(reason));
-      })
-      .finally(() => setGeneralSaving(false));
-  };
-
   return (
     <main className={styles.page} data-settings-page data-testid="general-settings-page">
       <header className={styles.header} data-settings-header>
@@ -222,129 +196,6 @@ export function GeneralSettingsPage({ runtime = runtimeBridge }: GeneralSettings
               {generalError}
             </p>
           ) : null}
-        </div>
-      </section>
-
-      <section className={styles.section} data-settings-group aria-labelledby="file-history-settings-title">
-        <h2 className={styles.groupTitle} data-settings-group-title id="file-history-settings-title">文件回溯</h2>
-        <div className={styles.settingsPanel} data-settings-panel>
-          <div className={styles.settingRow} data-settings-row>
-            <header className={styles.sectionHeader} data-settings-row-text>
-              <span className={styles.settingIcon} aria-hidden="true"><DatabaseBackup size={17} /></span>
-              <div className={styles.settingTextBlock}>
-                <h3>文件历史</h3>
-                <p>关闭后不会静默继续代码修改；重新开启不会删除已有安全快照。</p>
-              </div>
-            </header>
-            <SettingsSelect
-              ariaLabel="文件历史开关"
-              disabled={generalLoading || generalSaving}
-              onChange={(value) => saveFileHistorySettings({ file_history_enabled: value === "enabled" })}
-              options={[...fileHistoryEnabledOptions]}
-              value={general.file_history_enabled === false ? "disabled" : "enabled"}
-            />
-          </div>
-
-          <div className={styles.settingRow} data-settings-row>
-            <header className={styles.sectionHeader} data-settings-row-text>
-              <span className={styles.settingIcon} aria-hidden="true"><Files size={17} /></span>
-              <div className={styles.settingTextBlock}>
-                <h3>存储容量上限</h3>
-                <p>达到上限时明确拒绝新增备份，不会静默丢失恢复能力。</p>
-              </div>
-            </header>
-            <label className={styles.numberControl}>
-              <input
-                aria-label="文件历史容量上限 MB"
-                type="number"
-                min={1}
-                disabled={generalLoading || generalSaving}
-                defaultValue={Math.round((general.file_history_max_storage_bytes ?? 1_073_741_824) / 1_048_576)}
-                key={general.file_history_max_storage_bytes}
-                onBlur={(event) => {
-                  const megabytes = Math.max(1, Number(event.currentTarget.value) || 1);
-                  saveFileHistorySettings({ file_history_max_storage_bytes: Math.round(megabytes * 1_048_576) });
-                }}
-              />
-              <span>MB</span>
-            </label>
-          </div>
-
-          <div className={styles.settingRow} data-settings-row>
-            <header className={styles.sectionHeader} data-settings-row-text>
-              <span className={styles.settingIcon} aria-hidden="true"><Files size={17} /></span>
-              <div className={styles.settingTextBlock}>
-                <h3>单文件版本上限</h3>
-                <p>保护本地磁盘，同时保留 operation 和 active cursor 依赖的版本。</p>
-              </div>
-            </header>
-            <label className={styles.numberControl}>
-              <input
-                aria-label="单文件历史版本上限"
-                type="number"
-                min={1}
-                disabled={generalLoading || generalSaving}
-                defaultValue={general.file_history_max_versions_per_file ?? 1_000}
-                key={general.file_history_max_versions_per_file}
-                onBlur={(event) => {
-                  const versions = Math.max(1, Math.round(Number(event.currentTarget.value) || 1));
-                  saveFileHistorySettings({ file_history_max_versions_per_file: versions });
-                }}
-              />
-              <span>版本</span>
-            </label>
-          </div>
-
-          <div className={styles.settingRow} data-settings-row>
-            <header className={styles.sectionHeader} data-settings-row-text>
-              <span className={styles.settingIcon} aria-hidden="true"><Files size={17} /></span>
-              <div className={styles.settingTextBlock}>
-                <h3>可回溯点上限</h3>
-                <p>每个会话最多保留 100 个可选择的输入前文件状态。</p>
-              </div>
-            </header>
-            <label className={styles.numberControl}>
-              <input
-                aria-label="文件历史可回溯点上限"
-                type="number"
-                min={1}
-                max={100}
-                disabled={generalLoading || generalSaving}
-                defaultValue={general.file_history_max_rewind_points ?? 100}
-                key={general.file_history_max_rewind_points}
-                onBlur={(event) => {
-                  const points = Math.min(100, Math.max(1, Math.round(Number(event.currentTarget.value) || 1)));
-                  saveFileHistorySettings({ file_history_max_rewind_points: points });
-                }}
-              />
-              <span>个</span>
-            </label>
-          </div>
-
-          <div className={styles.settingRow} data-settings-row>
-            <header className={styles.sectionHeader} data-settings-row-text>
-              <span className={styles.settingIcon} aria-hidden="true"><DatabaseBackup size={17} /></span>
-              <div className={styles.settingTextBlock}>
-                <h3>历史保留时间</h3>
-                <p>过期且未被活动游标或 operation 使用的版本会在清理阶段删除。</p>
-              </div>
-            </header>
-            <label className={styles.numberControl}>
-              <input
-                aria-label="文件历史保留天数"
-                type="number"
-                min={1}
-                disabled={generalLoading || generalSaving}
-                defaultValue={general.file_history_retention_days ?? 30}
-                key={general.file_history_retention_days}
-                onBlur={(event) => {
-                  const days = Math.max(1, Math.round(Number(event.currentTarget.value) || 1));
-                  saveFileHistorySettings({ file_history_retention_days: days });
-                }}
-              />
-              <span>天</span>
-            </label>
-          </div>
         </div>
       </section>
 

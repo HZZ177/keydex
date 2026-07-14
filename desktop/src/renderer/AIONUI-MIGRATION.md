@@ -38,7 +38,7 @@ Modified for Keydex.
 | 会话搜索 | Keydex 会话搜索入口与 AionUi 历史列表经验 | 左侧顶部搜索打开 session 搜索弹窗；侧栏内不保留重复搜索输入 |
 | 图片预览 | `packages/desktop/src/renderer/pages/conversation/Preview/components/viewers/ImageViewer.tsx` | 参考图片居中、加载/失败状态和 object-contain；本项目通过 Python workspace media API 返回 data URL |
 | Markdown 图片 | `packages/desktop/src/renderer/pages/conversation/Preview/components/viewers/MarkdownViewer.tsx` | 参考相对图片解析和加载状态；本项目通过 Python workspace media API 返回 data URL |
-| 选中文本工具条 | `packages/desktop/src/renderer/hooks/ui/useTextSelection.ts`、`packages/desktop/src/renderer/pages/conversation/Preview/components/renderers/SelectionToolbar.tsx` | 参考选区检测和悬浮操作；本项目落成“添加到对话”，覆盖消息正文和 Preview 正文 |
+| 选中文本工具条 | `packages/desktop/src/renderer/hooks/ui/useTextSelection.ts`、`packages/desktop/src/renderer/pages/conversation/Preview/components/renderers/SelectionToolbar.tsx` | 参考选区检测和悬浮操作；本项目提供“引用”和“评论并引用”两个入口，覆盖消息正文和 Preview 正文；后者评论必填 |
 | Preview 打开事件 | `packages/desktop/src/renderer/components/Markdown/MermaidBlock.tsx` | 参考 `openPreview(...)` 交互；本项目用 `PreviewProvider` 承载消息富格式内容预览请求 |
 | 模型设置 | `packages/desktop/src/renderer/components/settings/SettingsModal/contents/ModelModalContent.tsx` | 裁剪为 OpenAI-compatible Provider 管理 |
 | HTTP bridge | `packages/desktop/src/renderer/common/adapter/httpBridge.ts` | 只参考 facade 思想；不得迁移 stub fallback |
@@ -91,7 +91,7 @@ Modified for Keydex.
 - 输入框上方的打字机胶囊显示运行时真实输出速率与当前缓冲区待输出字符数：空闲为 0 字符/秒 / 待输出 0 字，消息动画输出期间按当前 backlog 算出的有效速率与剩余 backlog 实时更新。
 - 按需 workspace 文件树、搜索和 AionUi 类轻量 Preview 面板。
 - 消息内富格式代码块打开到右侧 Preview 面板的事件通道。
-- 消息区和 Preview 正文支持选中文本后添加到对话输入区。
+- 消息区和 Preview 正文支持选中文本后直接引用或评论并引用到对话输入区；“评论并引用”的评论内容必填，并在输入区显示为“评论”胶囊。
 - 工作区图片文件可直接在 Preview 面板中按图片查看，不走文本读取链路。
 - Preview 面板保留最近预览历史标签，支持切换和关闭；不迁移 AionUi 文件快照版本管理。
 - Preview 面板对 Markdown、HTML、Mermaid 保留源码/预览同屏查看，Diff 继续使用专用彩色渲染。

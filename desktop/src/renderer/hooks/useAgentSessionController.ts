@@ -64,7 +64,8 @@ export type AgentSessionControllerEnsureSessionResult = string | AgentSession | 
 
 export interface AgentSessionControllerQuoteSelectionRequest {
   selectedText: string;
-  path: string;
+  comment?: string;
+  path?: string;
   lineStart?: number | null;
   lineEnd?: number | null;
   sourceStart?: number | null;
@@ -124,7 +125,7 @@ export interface AgentSessionController {
   canSend: boolean;
   canStop: boolean;
   usingSharedRuntime: boolean;
-  quoteSelection: (request: string | AgentSessionControllerQuoteSelectionRequest) => void;
+  quoteSelection: (request: string | AgentSessionControllerQuoteSelectionRequest, comment?: string) => void;
   startChatFromAnnotation: (request: AgentSessionControllerAnnotationRequest | AgentSessionControllerAnnotationRequest[]) => void;
   reloadHistory: () => Promise<void>;
   loadOlderHistory: () => Promise<void>;
@@ -492,20 +493,23 @@ export function useAgentSessionController({
     setRuntimeDetail,
   ]);
 
-  const quoteSelection = useCallback((request: string | AgentSessionControllerQuoteSelectionRequest) => {
+  const quoteSelection = useCallback((request: string | AgentSessionControllerQuoteSelectionRequest, comment?: string) => {
     const quote =
       typeof request === "string"
-        ? selectedQuoteFromText(request, "selection")
+        ? selectedQuoteFromText(request, { source: "selection", comment })
         : selectedQuoteFromText(request.selectedText, {
             source: "selection",
-            file: {
-              path: request.path,
-              name: fileName(request.path),
-              lineStart: request.lineStart ?? null,
-              lineEnd: request.lineEnd ?? null,
-              sourceStart: request.sourceStart ?? null,
-              sourceEnd: request.sourceEnd ?? null,
-            },
+            comment: request.comment,
+            file: request.path
+              ? {
+                  path: request.path,
+                  name: fileName(request.path),
+                  lineStart: request.lineStart ?? null,
+                  lineEnd: request.lineEnd ?? null,
+                  sourceStart: request.sourceStart ?? null,
+                  sourceEnd: request.sourceEnd ?? null,
+                }
+              : null,
           });
     if (!quote) {
       return;

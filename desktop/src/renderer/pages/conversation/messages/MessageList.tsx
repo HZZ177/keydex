@@ -103,7 +103,7 @@ export interface MessageListProps {
   onFilePreview?: (file: FileChangePreview) => void;
   onLoadToolDetails?: ToolDetailsLoader;
   onTerminateCommand?: (commandId: string) => Promise<void> | void;
-  onQuoteSelection?: (text: string) => void;
+  onQuoteSelection?: (text: string, comment?: string) => void;
   onAskSelectionInBtwConversation?: (text: string) => void;
   onForkFromMessage?: (message: ConversationMessage) => void;
   onNavigateToForkSource?: (fork: AgentSessionFork) => void;
@@ -1151,7 +1151,7 @@ function renderConversationRuntimeUnit({
   onFilePreview?: (file: FileChangePreview) => void;
   onLoadToolDetails?: ToolDetailsLoader;
   onTerminateCommand?: (commandId: string) => Promise<void> | void;
-  onQuoteSelection?: (text: string) => void;
+  onQuoteSelection?: (text: string, comment?: string) => void;
   onAskSelectionInBtwConversation?: (text: string) => void;
   onForkFromMessage?: (message: ConversationMessage) => void;
   onNavigateToForkSource?: (fork: AgentSessionFork) => void;
@@ -1336,7 +1336,7 @@ function renderMessageTurn({
   onFilePreview?: (file: FileChangePreview) => void;
   onLoadToolDetails?: ToolDetailsLoader;
   onTerminateCommand?: (commandId: string) => Promise<void> | void;
-  onQuoteSelection?: (text: string) => void;
+  onQuoteSelection?: (text: string, comment?: string) => void;
   onAskSelectionInBtwConversation?: (text: string) => void;
   onForkFromMessage?: (message: ConversationMessage) => void;
   onNavigateToForkSource?: (fork: AgentSessionFork) => void;
@@ -1456,7 +1456,7 @@ function renderMessageItem({
   onFilePreview?: (file: FileChangePreview) => void;
   onLoadToolDetails?: ToolDetailsLoader;
   onTerminateCommand?: (commandId: string) => Promise<void> | void;
-  onQuoteSelection?: (text: string) => void;
+  onQuoteSelection?: (text: string, comment?: string) => void;
   onAskSelectionInBtwConversation?: (text: string) => void;
   onForkFromMessage?: (message: ConversationMessage) => void;
   onNavigateToForkSource?: (fork: AgentSessionFork) => void;
@@ -1693,7 +1693,7 @@ function DefaultMessage({
   onFilePreview?: (file: FileChangePreview) => void;
   onLoadToolDetails?: ToolDetailsLoader;
   onTerminateCommand?: (commandId: string) => Promise<void> | void;
-  onQuoteSelection?: (text: string) => void;
+  onQuoteSelection?: (text: string, comment?: string) => void;
   onAskSelectionInBtwConversation?: (text: string) => void;
   onReverseFromMessage?: (message: ConversationMessage) => void;
 }) {

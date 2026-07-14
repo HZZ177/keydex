@@ -64,4 +64,24 @@ describe("DesktopPickerRuntime", () => {
     expect(runtime.isDirectoryPickerAvailable()).toBe(true);
     await expect(runtime.pickDirectory()).rejects.toThrow("文件夹选择器不可用");
   });
+
+  it("uses the desktop invoke bridge to reveal a path in the resource manager", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const runtime = createDesktopPickerRuntime({
+      invoke,
+      isTauriRuntime: () => true,
+    });
+
+    await expect(runtime.revealPath(" D:\\repo ")).resolves.toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith("open_path_in_file_manager", { path: "D:\\repo" });
+  });
+
+  it("reports a clear capability error instead of calling Tauri invoke in a browser", async () => {
+    const runtime = createDesktopPickerRuntime({
+      getTauriGlobal: () => ({}),
+      isTauriRuntime: () => false,
+    });
+
+    await expect(runtime.revealPath("D:\\repo")).rejects.toThrow("当前环境无法打开资源管理器");
+  });
 });

@@ -290,6 +290,29 @@ describe("MessageText", () => {
     expect(preview.closest('[data-testid="message-text"]')).toBeNull();
   });
 
+  it("renders restored commented quotes as comment capsules", () => {
+    render(
+      <MessageText
+        message={message("user", "", "completed", {
+          contextItems: [
+            {
+              id: "ctx-comment",
+              type: "quote",
+              label: "评论",
+              content: "被评论的引用内容",
+              description: "引用片段：被评论的引用内容\n\n评论：请检查这里",
+              source: "follow",
+              metadata: { comment: "请检查这里" },
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("评论")).not.toBeNull();
+    expect(document.querySelector('[data-context-chip-icon="comment"]')).not.toBeNull();
+  });
+
   it("opens restored file context chips without a quote hover card", () => {
     render(
       <PreviewProvider>
@@ -1423,7 +1446,7 @@ describe("MessageText", () => {
     expect(container.querySelector("[data-message-markdown-mode='static']")).toBeNull();
   });
 
-  it("quotes selected message text through the floating selection toolbar", async () => {
+  it("comments on and quotes selected message text through an anchored input bubble", async () => {
     const onQuoteSelection = vi.fn();
     const { container } = render(
       <MessageText
@@ -1440,7 +1463,7 @@ describe("MessageText", () => {
     act(() => {
       document.dispatchEvent(new Event("selectionchange"));
     });
-    expect(screen.queryByRole("button", { name: "添加选中文本到对话" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "评论并引用选中文本" })).toBeNull();
     act(() => {
       document.dispatchEvent(new MouseEvent("mouseup"));
     });
@@ -1448,11 +1471,43 @@ describe("MessageText", () => {
     expect(toolbar.parentElement).toBe(document.body);
     expect(toolbar.style.left).toBe("170px");
     expect(toolbar.style.top).toBe("132px");
+    expect(screen.getByRole("button", { name: "引用选中文本" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "评论并引用选中文本" })).not.toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "添加选中文本到对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "评论并引用选中文本" }));
+    const input = await screen.findByRole("textbox", { name: "评论内容" });
+    const submit = screen.getByRole<HTMLButtonElement>("button", { name: "确认评论并引用" });
+    expect(input.tagName).toBe("TEXTAREA");
+    expect(submit.disabled).toBe(true);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onQuoteSelection).not.toHaveBeenCalled();
+    expect(input.closest("[role='toolbar']")?.getAttribute("style")).toContain("left: 170px");
+    const highlight = document.querySelector("[data-text-selection-highlight='true']");
+    const highlightSegment = highlight?.querySelector<HTMLElement>("[data-text-selection-highlight-segment='true']");
+    expect(highlight?.parentElement).toBe(document.body);
+    expect(highlightSegment?.style.left).toBe("120px");
+    expect(highlightSegment?.style.top).toBe("140px");
+    expect(highlightSegment?.style.width).toBe("100px");
+    expect(highlightSegment?.style.height).toBe("20px");
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(onQuoteSelection).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "这里需要补充边界条件\n并检查异常路径" } });
+    expect(submit.disabled).toBe(false);
+    selection.dropBrowserRange();
+    await act(async () => {
+      fireEvent.scroll(input);
+      fireEvent.scroll(window);
+      await new Promise((resolve) => window.setTimeout(resolve, 24));
+    });
+    expect(screen.getByRole("textbox", { name: "评论内容" })).toBe(input);
+    fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(onQuoteSelection).toHaveBeenCalledWith("这一段可以被引用");
+    expect(onQuoteSelection).toHaveBeenCalledWith(
+      "这一段可以被引用",
+      "这里需要补充边界条件\n并检查异常路径",
+    );
     expect(selection.removeAllRanges).toHaveBeenCalled();
+    expect(document.querySelector("[data-text-selection-highlight='true']")).toBeNull();
     selection.restore();
   });
 
@@ -1973,6 +2028,20 @@ function mockSelection(container: Element, text: string) {
   const removeAllRanges = vi.fn();
   const range = {
     commonAncestorContainer: container,
+    cloneRange: () => range,
+    getClientRects: () => [
+      {
+        left: 120,
+        top: 140,
+        right: 220,
+        bottom: 160,
+        width: 100,
+        height: 20,
+        x: 120,
+        y: 140,
+        toJSON: () => ({}),
+      },
+    ],
     getBoundingClientRect: () => ({
       left: 120,
       top: 140,
@@ -1994,6 +2063,11 @@ function mockSelection(container: Element, text: string) {
 
   return {
     removeAllRanges,
+    dropBrowserRange: () => spy.mockReturnValue({
+      toString: () => "",
+      rangeCount: 0,
+      removeAllRanges,
+    } as unknown as Selection),
     restore: () => spy.mockRestore(),
   };
 }

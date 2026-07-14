@@ -20,6 +20,7 @@ from backend.app.services import (
     ThreadTaskTransitionError,
     ThreadTaskValidationError,
 )
+from backend.app.services.thread_task_service import ThreadTaskSessionArchivedError
 from backend.app.storage import StorageRepositories, init_database
 
 
@@ -166,6 +167,25 @@ def _task_request(task_id: str, run_id: str) -> ChatRequest:
             }
         },
     )
+
+
+def test_thread_task_mutations_reject_archived_session(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    repositories.sessions.archive_manual(
+        "session-1",
+        archived_at="2026-07-14T00:00:00Z",
+    )
+    service = _service(repositories)
+
+    with pytest.raises(ThreadTaskSessionArchivedError):
+        service.create_task(
+            session_id="session-1",
+            type="goal",
+            title="Archived",
+            objective="must not be created",
+        )
+
+    assert repositories.thread_tasks.get_open_by_session("session-1") is None
 
 
 def test_thread_task_service_creates_goal_and_lists_open_task(tmp_path) -> None:
@@ -1115,12 +1135,15 @@ async def test_thread_task_runtime_logs_continuation_lifecycle_fields(tmp_path) 
 
 
 @pytest.mark.asyncio
-async def test_thread_task_runtime_skips_deleted_session(tmp_path) -> None:
+async def test_thread_task_runtime_skips_archived_session(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     state_locks = ThreadTaskStateLocks()
     service = _service(repositories, state_locks=state_locks)
     task = service.create_task(session_id="session-1", type="goal", objective="目标")
-    repositories.sessions.soft_delete("session-1")
+    repositories.sessions.archive_manual(
+        "session-1",
+        archived_at="2026-07-14T12:00:00Z",
+    )
     manager = RecordingChatStreamManager()
     runtime = ThreadTaskRuntime(
         state_locks=state_locks,
@@ -1132,7 +1155,7 @@ async def test_thread_task_runtime_skips_deleted_session(tmp_path) -> None:
     result = await runtime.continue_if_idle("session-1")
 
     assert result["status"] == "skipped"
-    assert result["reason"] == "session_missing_or_deleted"
+    assert result["reason"] == "session_missing_or_archived"
     assert repositories.thread_task_runs.list_by_task(task["id"]) == []
     assert manager.requests == []
 

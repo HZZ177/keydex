@@ -344,7 +344,8 @@ export function useConversationPanelModel({
     };
   }, []);
 
-  const quoteSelection: (request: string | PreviewQuoteSelectionRequest) => void = controller.quoteSelection;
+  const quoteSelection: (request: string | PreviewQuoteSelectionRequest, comment?: string) => void =
+    controller.quoteSelection;
   const startChatFromAnnotation: (request: PreviewAnnotationChatRequest | PreviewAnnotationChatRequest[]) => void =
     controller.startChatFromAnnotation;
 
@@ -1200,10 +1201,12 @@ function selectedQuoteFromContextItem(
     return null;
   }
   const source: SelectedQuote["source"] = "selection";
+  const comment = trimmedString(metadata?.comment);
   const path = trimmedString(item.path) || trimmedString(metadata?.path);
   if (type === "source_quote" && path) {
     return selectedQuoteFromText(content, {
       source,
+      comment,
       file: {
         path,
         name: trimmedString(item.name) || trimmedString(metadata?.name) || fileName(path),
@@ -1216,6 +1219,7 @@ function selectedQuoteFromContextItem(
   }
   return selectedQuoteFromText(content, {
     source,
+    comment,
   });
 }
 

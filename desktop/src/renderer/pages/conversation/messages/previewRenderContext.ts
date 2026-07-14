@@ -4,7 +4,7 @@ import type { PreviewRenderContext } from "@/renderer/providers/PreviewProvider"
 export function previewRenderContextFromWorkspaceScope(
   workspaceScope: WorkspaceScope | null | undefined,
   runtime: RuntimeBridge | undefined,
-  onQuoteSelection: ((text: string) => void) | undefined,
+  onQuoteSelection: ((text: string, comment?: string) => void) | undefined,
   hostContext: PreviewRenderContext | null | undefined,
 ): PreviewRenderContext | undefined {
   if (hostContext?.workspaceAvailable && previewContextMatchesWorkspaceScope(hostContext, workspaceScope)) {
@@ -26,7 +26,7 @@ export function previewRenderContextFromWorkspaceScope(
     context.runtime = runtime;
   }
   if (onQuoteSelection) {
-    context.onQuoteSelection = (request) => onQuoteSelection(request.selectedText);
+    context.onQuoteSelection = (request) => onQuoteSelection(request.selectedText, request.comment);
   }
   return context;
 }

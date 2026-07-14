@@ -1,8 +1,8 @@
 import type { AgentActionEnvelope, AgentSession } from "@/types/protocol";
+import { emitLifecycleEventFromRuntimeEvent } from "./lifecycleEvents";
 
 const SESSION_CREATED_EVENT = "keydex-session-created";
 const SESSION_UPDATED_EVENT = "keydex-session-updated";
-const SESSION_DELETED_EVENT = "keydex-session-deleted";
 
 export type AgentSessionUpdate = Partial<AgentSession> & { id: string };
 
@@ -20,14 +20,10 @@ export function emitSessionUpdated(session: AgentSessionUpdate) {
   window.dispatchEvent(new CustomEvent<AgentSessionUpdate>(SESSION_UPDATED_EVENT, { detail: session }));
 }
 
-export function emitSessionDeleted(sessionId: string) {
-  if (typeof window === "undefined" || !sessionId) {
+export function emitSessionEventsFromRuntimeEvent(event: AgentActionEnvelope) {
+  if (emitLifecycleEventFromRuntimeEvent(event)) {
     return;
   }
-  window.dispatchEvent(new CustomEvent<string>(SESSION_DELETED_EVENT, { detail: sessionId }));
-}
-
-export function emitSessionEventsFromRuntimeEvent(event: AgentActionEnvelope) {
   if (event.action === "session_created") {
     const session = sessionFromEventData(event.data);
     if (session) {
@@ -86,20 +82,6 @@ export function subscribeSessionUpdated(handler: (session: AgentSessionUpdate) =
   };
   window.addEventListener(SESSION_UPDATED_EVENT, listener);
   return () => window.removeEventListener(SESSION_UPDATED_EVENT, listener);
-}
-
-export function subscribeSessionDeleted(handler: (sessionId: string) => void): () => void {
-  if (typeof window === "undefined") {
-    return () => undefined;
-  }
-  const listener = (event: Event) => {
-    const sessionId = (event as CustomEvent<string>).detail;
-    if (sessionId) {
-      handler(sessionId);
-    }
-  };
-  window.addEventListener(SESSION_DELETED_EVENT, listener);
-  return () => window.removeEventListener(SESSION_DELETED_EVENT, listener);
 }
 
 function sessionFromEventData(data: unknown): AgentSession | null {

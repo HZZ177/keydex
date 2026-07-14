@@ -84,7 +84,7 @@ def test_workspace_repository_updates_touches_and_sorts_by_recent_opened(tmp_pat
     ]
 
 
-def test_workspace_repository_soft_deletes_without_removing_sessions(tmp_path) -> None:
+def test_workspace_repository_archives_project_and_releases_active_root(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     project = tmp_path / "project"
     project.mkdir()
@@ -99,13 +99,20 @@ def test_workspace_repository_soft_deletes_without_removing_sessions(tmp_path) -
         workspace_roots=[str(project.resolve())],
     )
 
-    deleted = repositories.workspaces.soft_delete(workspace.id)
+    archived = repositories.workspaces.archive_project(
+        workspace.id,
+        archived_at="2026-07-14T12:00:00Z",
+    )
 
-    assert deleted is not None
-    assert deleted.is_deleted is True
+    assert archived.changed is True
+    assert archived.record is not None
+    assert archived.record.archived_at == "2026-07-14T12:00:00Z"
     assert repositories.workspaces.get(workspace.id) is None
-    assert repositories.workspaces.get(workspace.id, include_deleted=True) == deleted
-    assert repositories.sessions.get(session.id) == session
+    assert repositories.workspaces.get_archived(workspace.id) == archived.record
+    assert repositories.sessions.get(session.id) is None
+    archived_session = repositories.sessions.get_archived(session.id)
+    assert archived_session is not None
+    assert archived_session.archive_origin == "project"
 
     recreated = repositories.workspaces.create(
         workspace_id="ws_project_new",

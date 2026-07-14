@@ -36,6 +36,7 @@ _EXPORTS = {
     "ListSessionsRequest": ("backend.app.services.session_service", "ListSessionsRequest"),
     "MessageEventService": ("backend.app.services.message_event_service", "MessageEventService"),
     "SessionNotFoundError": ("backend.app.services.session_service", "SessionNotFoundError"),
+    "SessionArchivedError": ("backend.app.services.session_service", "SessionArchivedError"),
     "SessionService": ("backend.app.services.session_service", "SessionService"),
     "SessionValidationError": ("backend.app.services.session_service", "SessionValidationError"),
     "ThreadTaskConflictError": (
@@ -86,7 +87,7 @@ _EXPORTS = {
     "UsageRequestQuery": ("backend.app.services.usage_service", "UsageRequestQuery"),
     "UsageService": ("backend.app.services.usage_service", "UsageService"),
     "UsageValidationError": ("backend.app.services.usage_service", "UsageValidationError"),
-    "WorkspaceDeletedError": ("backend.app.services.workspace_service", "WorkspaceDeletedError"),
+    "WorkspaceArchivedError": ("backend.app.services.workspace_service", "WorkspaceArchivedError"),
     "WorkspaceNotFoundError": ("backend.app.services.workspace_service", "WorkspaceNotFoundError"),
     "WorkspaceRuntimeContext": (
         "backend.app.services.workspace_service",

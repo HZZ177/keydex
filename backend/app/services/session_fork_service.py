@@ -169,7 +169,7 @@ class SessionForkService:
             self.checkpointer.delete_thread(target_session_id)
             self.repositories.session_forks.soft_delete_by_target(target_session_id)
             if self.repositories.sessions.get(target_session_id) is not None:
-                self.repositories.sessions.soft_delete(target_session_id)
+                self.repositories.sessions.hard_delete_internal(target_session_id)
             if isinstance(exc, SessionForkServiceError):
                 raise
             raise SessionForkServiceError(
@@ -260,7 +260,7 @@ class SessionForkService:
                 """
                 update sessions
                    set active_session_id = ?, status = 'active', updated_at = ?
-                 where id = ? and is_deleted = 0
+                 where id = ? and archived_at is null
                 """,
                 (source.active_session_id, to_iso_z(utc_now()), source_session.id),
             )
@@ -715,6 +715,12 @@ class SessionForkService:
     def _require_session(self, session_id: str) -> SessionRecord:
         session = self.repositories.sessions.get(session_id)
         if session is None:
+            if self.repositories.sessions.get_archived(session_id) is not None:
+                raise SessionForkServiceError(
+                    "entity_archived",
+                    "session 已归档",
+                    {"session_id": session_id},
+                )
             raise SessionForkServiceError(
                 "session_not_found",
                 "session 不存在",

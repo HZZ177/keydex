@@ -100,7 +100,8 @@ function thread(id: string, updatedAt: string, status: Thread["status"] = "idle"
     status,
     created_at: "2026-06-17T09:00:00Z",
     updated_at: updatedAt,
-    archived: false,
+    archived_at: null,
+    archive_origin: null,
   };
 }
 

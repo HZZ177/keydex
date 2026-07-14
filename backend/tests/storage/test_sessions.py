@@ -278,7 +278,7 @@ def test_session_repository_auto_title_write_respects_title_source(tmp_path) -> 
     assert repositories.sessions.get(auto_session.id).title == "自动标题"
 
 
-def test_session_repository_filters_soft_deleted_records_and_clamps_limit(tmp_path) -> None:
+def test_session_repository_filters_archived_records_and_clamps_limit(tmp_path) -> None:
     repositories = _repositories(tmp_path)
 
     for index in range(3):
@@ -290,13 +290,15 @@ def test_session_repository_filters_soft_deleted_records_and_clamps_limit(tmp_pa
         )
         time.sleep(0.001)
 
-    with repositories.db.transaction() as conn:
-        conn.execute("update sessions set is_deleted = 1 where id = ?", ("ses_limit_1",))
+    repositories.sessions.archive_manual(
+        "ses_limit_1",
+        archived_at="2026-07-14T12:00:00Z",
+    )
 
     assert repositories.sessions.get("ses_limit_1") is None
-    deleted = repositories.sessions.get("ses_limit_1", include_deleted=True)
-    assert deleted is not None
-    assert deleted.is_deleted is True
+    archived = repositories.sessions.get_archived("ses_limit_1")
+    assert archived is not None
+    assert archived.archive_origin == "manual"
 
     visible_ids = [
         session.id
@@ -311,20 +313,14 @@ def test_session_repository_filters_soft_deleted_records_and_clamps_limit(tmp_pa
     limited = repositories.sessions.list(user_id="local-user", scene_id="desktop-agent", limit=1)
     assert [session.id for session in limited] == ["ses_limit_2"]
 
-    with_deleted = repositories.sessions.list(
-        user_id="local-user",
-        scene_id="desktop-agent",
-        include_deleted=True,
-        limit=10,
+    archived_page = repositories.sessions.list_archived(
+        query="会话 1",
+        exclude_archived_workspaces=False,
     )
-    assert {session.id for session in with_deleted} == {
-        "ses_limit_0",
-        "ses_limit_1",
-        "ses_limit_2",
-    }
+    assert [item.session.id for item in archived_page.items] == ["ses_limit_1"]
 
 
-def test_session_repository_soft_deletes_session(tmp_path) -> None:
+def test_session_repository_archives_and_restores_session_idempotently(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     session = repositories.sessions.create(
         session_id="ses_delete",
@@ -333,14 +329,26 @@ def test_session_repository_soft_deletes_session(tmp_path) -> None:
         title="待删除",
     )
 
-    deleted = repositories.sessions.soft_delete(session.id)
+    archived = repositories.sessions.archive_manual(
+        session.id,
+        archived_at="2026-07-14T12:00:00Z",
+    )
 
-    assert deleted is not None
-    assert deleted.id == session.id
-    assert deleted.is_deleted is True
-    assert deleted.updated_at >= session.updated_at
+    assert archived.record is not None
+    assert archived.record.id == session.id
+    assert archived.record.archive_origin == "manual"
+    assert archived.record.updated_at == session.updated_at
     assert repositories.sessions.get(session.id) is None
-    assert repositories.sessions.soft_delete(session.id) is None
+    assert repositories.sessions.archive_manual(
+        session.id,
+        archived_at="2026-07-14T13:00:00Z",
+    ).changed is False
+
+    restored = repositories.sessions.restore(session.id)
+    assert restored.changed is True
+    assert restored.record is not None
+    assert restored.record.archived_at is None
+    assert repositories.sessions.get(session.id) is not None
 
 
 def test_session_repository_rejects_invalid_status(tmp_path) -> None:

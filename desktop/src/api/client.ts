@@ -94,8 +94,8 @@ export class ApiClient {
     });
   }
 
-  async listThreads(includeArchived = false): Promise<Thread[]> {
-    return this.request(`/api/sessions?include_archived=${includeArchived ? "true" : "false"}`);
+  async listThreads(): Promise<Thread[]> {
+    return this.request("/api/sessions");
   }
 
   async createThread(payload: CreateThreadPayload): Promise<Thread> {
@@ -108,7 +108,7 @@ export class ApiClient {
 
   async updateThread(
     threadId: string,
-    patch: { title?: string | null; archived?: boolean; pinned?: boolean | null },
+    patch: { title?: string | null; pinned?: boolean | null },
   ): Promise<Thread> {
     return this.request(`/api/sessions/${encodeURIComponent(threadId)}`, {
       method: "PATCH",

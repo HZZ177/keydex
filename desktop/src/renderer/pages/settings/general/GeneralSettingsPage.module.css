@@ -110,32 +110,6 @@
   font-size: 12px;
 }
 
-.numberControl {
-  display: flex;
-  align-items: center;
-  justify-self: end;
-  gap: 8px;
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-}
-
-.numberControl input {
-  width: 132px;
-  height: 34px;
-  box-sizing: border-box;
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
-  outline: 0;
-  background: var(--color-bg-elevated);
-  color: var(--color-text-primary);
-  font-family: var(--font-mono);
-  padding: 0 10px;
-}
-
-.numberControl input:focus-visible {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--surface-hover) 55%, transparent);
-}
-
 @media (max-width: 760px) {
   .page {
     width: calc(100% - 28px);

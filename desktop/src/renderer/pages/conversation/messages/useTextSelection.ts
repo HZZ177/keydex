@@ -153,7 +153,10 @@ function scheduleDeferredSelectionUpdate(): void {
   }, 0);
 }
 
-function scheduleActiveSelectionUpdate(): void {
+function scheduleActiveSelectionUpdate(event?: Event): void {
+  if (event?.type === "scroll" && eventTargetsSelectionOverlay(event)) {
+    return;
+  }
   if (scheduledActiveSelectionUpdateId !== null) {
     return;
   }
@@ -161,6 +164,11 @@ function scheduleActiveSelectionUpdate(): void {
     scheduledActiveSelectionUpdateId = null;
     updateGlobalSelection({ activeOnly: true });
   }, 16);
+}
+
+function eventTargetsSelectionOverlay(event: Event): boolean {
+  const target = event.target;
+  return target instanceof Element && Boolean(target.closest("[data-text-selection-overlay='true']"));
 }
 
 function clearScheduledSelectionUpdates(): void {
@@ -176,6 +184,9 @@ function clearScheduledSelectionUpdates(): void {
 
 function updateGlobalSelection({ activeOnly }: { activeOnly: boolean }): void {
   if (selectionSubscribers.size === 0) {
+    return;
+  }
+  if (activeOnly && selectionCommentOverlayIsOpen()) {
     return;
   }
   const selection = window.getSelection();
@@ -218,6 +229,10 @@ function updateGlobalSelection({ activeOnly }: { activeOnly: boolean }): void {
   }
   activeSelectionSubscriber = target;
   target.setSnapshot(snapshot);
+}
+
+function selectionCommentOverlayIsOpen(): boolean {
+  return Boolean(document.querySelector("[data-text-selection-overlay='true'][data-mode='comment']"));
 }
 
 function findSelectionSubscriber(range: Range, activeOnly: boolean): SelectionSubscriber | null {

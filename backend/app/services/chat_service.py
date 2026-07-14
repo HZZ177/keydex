@@ -45,6 +45,7 @@ from backend.app.mcp.tools import (
     mcp_capability_discovery_tools_from_snapshot,
     mcp_local_tools_from_snapshot,
 )
+from backend.app.services.archive_lifecycle_service import ArchiveLifecycleError
 from backend.app.model import (
     ModelSelectionError,
     ResolvedModelSelection,
@@ -1998,6 +1999,12 @@ class ChatService:
             if existing is not None:
                 logger.debug(f"[Session] 复用已有会话 | session_id={existing.id}")
                 return existing
+            if self.repositories.sessions.get_archived(request.session_id) is not None:
+                raise ArchiveLifecycleError(
+                    "entity_archived",
+                    "会话已归档，恢复后才能继续发送",
+                    {"session_id": request.session_id},
+                )
         created = self.repositories.sessions.create(
             session_id=request.session_id or new_id(),
             user_id=request.user_id or self.settings.default_user_id,

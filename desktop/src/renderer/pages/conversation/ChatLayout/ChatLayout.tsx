@@ -126,7 +126,7 @@ export function ChatLayout({
                     onExport={() => runSessionAction(sessionActions.onExport)}
                     onFork={() => runSessionAction(sessionActions.onFork)}
                     onRename={() => runSessionAction(sessionActions.onRename)}
-                    onDelete={() => runSessionAction(sessionActions.onDelete)}
+                    onArchive={() => runSessionAction(sessionActions.onArchive)}
                     onRefresh={() => runSessionAction(sessionActions.onRefresh)}
                   />
                 ) : null}

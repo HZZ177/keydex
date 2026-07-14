@@ -263,7 +263,7 @@ function workspace() {
     created_at: "2026-07-14T00:00:00Z",
     updated_at: "2026-07-14T00:00:00Z",
     last_opened_at: "2026-07-14T00:00:00Z",
-    is_deleted: false,
+    archived_at: null,
   };
 }
 

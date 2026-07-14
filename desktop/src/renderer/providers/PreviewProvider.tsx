@@ -25,6 +25,7 @@ export interface PreviewRenderContext {
 export interface PreviewQuoteSelectionRequest {
   path: string;
   selectedText: string;
+  comment?: string;
   lineStart?: number | null;
   lineEnd?: number | null;
   sourceStart?: number | null;

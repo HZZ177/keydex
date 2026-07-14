@@ -298,9 +298,10 @@ describe("HomePage", () => {
     const body = await screen.findByLabelText("预览内容");
     expect(await screen.findByText("Alpha selected text")).not.toBeNull();
     const selection = await showSelectionToolbar(body, "Alpha selected text");
-    expect(await screen.findByRole("button", { name: "添加选中文本到对话" })).not.toBeNull();
+    expect(await screen.findByRole("button", { name: "引用选中文本" })).not.toBeNull();
+    expect(await screen.findByRole("button", { name: "评论并引用选中文本" })).not.toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "添加选中文本到对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "引用选中文本" }));
 
     expect(await screen.findByText("README.md · L3")).not.toBeNull();
     fireEvent.click(screen.getByLabelText("发送"));
@@ -941,6 +942,8 @@ function fakeRuntime({
     source_trace_id: null,
     created_at: "2026-06-17T10:00:00Z",
     updated_at: "2026-06-17T10:00:00Z",
+    archived_at: null,
+    archive_origin: null,
     is_debug: false,
     is_scheduled: false,
     is_current: false,
@@ -1075,6 +1078,6 @@ function workspace(
     created_at: "2026-06-21T00:00:00Z",
     updated_at: "2026-06-21T00:00:00Z",
     last_opened_at: lastOpenedAt,
-    is_deleted: false,
+    archived_at: null,
   };
 }

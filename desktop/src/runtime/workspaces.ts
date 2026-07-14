@@ -1,6 +1,14 @@
 import type { Workspace } from "@/types/protocol";
 
 import type { HttpClient } from "./httpClient";
+import {
+  ArchiveCatalogContractError,
+  type ArchiveWorkspacePayload,
+  type PurgeResult,
+  type RestoreWorkspacePayload,
+  type WorkspaceArchiveResult,
+  type WorkspaceRestoreResult,
+} from "./archive";
 
 export interface WorkspaceListResponse {
   list: Workspace[];
@@ -26,13 +34,21 @@ export interface WorkspacesRuntime {
   create(payload: CreateWorkspacePayload): Promise<Workspace>;
   get(workspaceId: string): Promise<Workspace>;
   update(workspaceId: string, payload: UpdateWorkspacePayload): Promise<Workspace>;
-  delete(workspaceId: string): Promise<void>;
+  archive(workspaceId: string, payload: ArchiveWorkspacePayload): Promise<WorkspaceArchiveResult>;
+  restore(workspaceId: string, payload: RestoreWorkspacePayload): Promise<WorkspaceRestoreResult>;
+  purgeArchived(workspaceId: string, requestId: string, confirmationName: string): Promise<PurgeResult>;
+  purgeArchivedSessions(workspaceId: string, requestId: string, confirmationName: string): Promise<PurgeResult>;
 }
 
 export function createWorkspacesRuntime(http: HttpClient): WorkspacesRuntime {
   return {
     list() {
-      return http.request<WorkspaceListResponse>("/api/workspaces");
+      return http.request<WorkspaceListResponse>("/api/workspaces").then((response) => {
+        if (response.list.some((workspace) => workspace.archived_at !== null)) {
+          throw new ArchiveCatalogContractError("活动项目列表意外包含已归档项目");
+        }
+        return response;
+      });
     },
     create(payload) {
       return http
@@ -61,10 +77,44 @@ export function createWorkspacesRuntime(http: HttpClient): WorkspacesRuntime {
         })
         .then((response) => response.workspace);
     },
-    delete(workspaceId) {
-      return http.request<void>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
-        method: "DELETE",
-      });
+    archive(workspaceId, payload) {
+      return http.request<WorkspaceArchiveResult>(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/archive`,
+        {
+          method: "POST",
+          body: {
+            request_id: payload.requestId,
+            stop_active_sessions: payload.stopActiveSessions ?? false,
+          },
+        },
+      );
+    },
+    restore(workspaceId, payload) {
+      return http.request<WorkspaceRestoreResult>(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/restore`,
+        {
+          method: "POST",
+          body: { request_id: payload.requestId, mode: payload.mode },
+        },
+      );
+    },
+    purgeArchived(workspaceId, requestId, confirmationName) {
+      return http.request<PurgeResult>(
+        `/api/archive/workspaces/${encodeURIComponent(workspaceId)}/purge`,
+        {
+          method: "POST",
+          body: { request_id: requestId, confirmation_name: confirmationName },
+        },
+      );
+    },
+    purgeArchivedSessions(workspaceId, requestId, confirmationName) {
+      return http.request<PurgeResult>(
+        `/api/archive/workspaces/${encodeURIComponent(workspaceId)}/sessions/purge`,
+        {
+          method: "POST",
+          body: { request_id: requestId, confirmation_name: confirmationName },
+        },
+      );
     },
   };
 }

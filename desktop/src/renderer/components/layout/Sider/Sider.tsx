@@ -1,4 +1,5 @@
 import {
+  Archive,
   ChevronDown,
   Folder,
   FolderOpen,
@@ -9,6 +10,7 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Pin,
   PinOff,
   Search,
@@ -23,7 +25,13 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, SetStateA
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { runtimeBridge, type RuntimeBridge } from "@/runtime";
+import {
+  createLifecycleRequestId,
+  decodeLifecycleRuntimeError,
+  runtimeBridge,
+  type LifecycleRuntimeError,
+  type RuntimeBridge,
+} from "@/runtime";
 import { AppDialog, ConfirmDialog, DialogButton } from "@/renderer/components/dialog";
 import type { AppMode } from "@/renderer/components/layout/appMode";
 import { LoadingSkeleton } from "@/renderer/components/loading";
@@ -33,10 +41,15 @@ import {
   emitSessionCreated,
   emitSessionUpdated,
   subscribeSessionCreated,
-  subscribeSessionDeleted,
   subscribeSessionUpdated,
   type AgentSessionUpdate,
 } from "@/renderer/events/sessionEvents";
+import {
+  createLifecycleEventGate,
+  emitLifecycleEvent,
+  getLifecycleEventRevision,
+  subscribeLifecycleEvents,
+} from "@/renderer/events/lifecycleEvents";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
@@ -58,6 +71,7 @@ export interface SiderEntry {
   updatedAt?: string;
   pinnedAt?: string;
   groupTitle?: string;
+  rootPath?: string;
   forked?: boolean;
 }
 
@@ -68,6 +82,7 @@ interface SiderGroup {
   items: SiderEntry[];
   latestUpdatedAt?: string;
   workspaceId?: string;
+  rootPath?: string;
 }
 
 interface SessionIndicator {
@@ -94,7 +109,14 @@ const SESSION_CONTEXT_ACTION_MENU_HEIGHT = 166;
 const SESSION_ACTION_MENU_GAP = 10;
 const SESSION_ACTION_MENU_EDGE = 8;
 const SESSION_ACTION_MENU_CLOSE_MS = 120;
-const sessionHistoryCacheByRuntime = new WeakMap<RuntimeBridge, AgentSession[]>();
+const PROJECT_ACTION_MENU_ID = "__project_actions__";
+const PROJECT_CONTEXT_ACTION_MENU_HEIGHT = 108;
+interface SessionHistoryCacheEntry {
+  sessions: AgentSession[];
+  lifecycleRevision: number;
+}
+
+const sessionHistoryCacheByRuntime = new WeakMap<RuntimeBridge, SessionHistoryCacheEntry>();
 
 export interface SiderProps {
   collapsed?: boolean;
@@ -105,7 +127,8 @@ export interface SiderProps {
   activePath?: string;
   showChatBucket?: boolean;
   newConversationPath?: string;
-  deleteActiveFallbackPath?: string;
+  archiveActiveFallbackPath?: string;
+  workspaceArchiveFallbackPath?: string;
   getSessionPath?: (sessionId: string) => string;
   getWorkspaceNewConversationPath?: (workspaceId?: string) => string;
   onToggleSidebar?: () => void;
@@ -121,7 +144,8 @@ export function Sider({
   activePath = "",
   showChatBucket = true,
   newConversationPath = newPromptConversationPath(),
-  deleteActiveFallbackPath = "/guid",
+  archiveActiveFallbackPath = "/guid",
+  workspaceArchiveFallbackPath = archiveActiveFallbackPath,
   getSessionPath = conversationPath,
   getWorkspaceNewConversationPath = newWorkspaceConversationPath,
   onToggleSidebar,
@@ -146,17 +170,30 @@ export function Sider({
   );
   const [loadingWorkspaceHistoryIds, setLoadingWorkspaceHistoryIds] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [editingWorkspace, setEditingWorkspace] = useState<{ id: string; title: string } | null>(null);
+  const [archivingSessionId, setArchivingSessionId] = useState<string | null>(null);
+  const [archiveConfirmation, setArchiveConfirmation] = useState<{
+    item: SiderEntry;
+    error: LifecycleRuntimeError;
+  } | null>(null);
   const [forkingSessionId, setForkingSessionId] = useState<string | null>(null);
   const [exportingSessionId, setExportingSessionId] = useState<string | null>(null);
+  const [archivingWorkspaceId, setArchivingWorkspaceId] = useState<string | null>(null);
+  const [workspaceArchiveTarget, setWorkspaceArchiveTarget] = useState<{ id: string; title: string } | null>(null);
+  const [workspaceArchiveBlocker, setWorkspaceArchiveBlocker] = useState<LifecycleRuntimeError | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
+  const lifecycleEventGateRef = useRef(createLifecycleEventGate());
+  const lifecycleEntityStateRef = useRef(new Map<string, string>());
   const loadedWorkspaceHistoryIdsRef = useRef<Set<string>>(new Set());
   const [showFooterFeather, setShowFooterFeather] = useState(false);
   const canMutateConversations =
-    typeof runtime.conversation.updateSession === "function" && typeof runtime.conversation.deleteSession === "function";
+    typeof runtime.conversation.updateSession === "function" && typeof runtime.conversation.archiveSession === "function";
   const canForkConversations =
     typeof runtime.conversation.loadHistory === "function" && typeof runtime.conversation.forkSession === "function";
   const canExportConversations = typeof runtime.conversation.loadHistory === "function";
+  const canManageWorkspaces = appMode === "agent"
+    && typeof runtime.workspaces?.update === "function"
+    && typeof runtime.workspaces?.archive === "function";
 
   const loadedGroups = useMemo(() => buildSessionGroups(loadedSessions), [loadedSessions]);
   const loadedPinnedItems = useMemo(() => buildPinnedEntries(loadedSessions), [loadedSessions]);
@@ -202,10 +239,6 @@ export function Sider({
   const historyItems = useMemo(
     () => [...pinnedItems, ...displayHistoryGroups.flatMap((group) => group.items)],
     [displayHistoryGroups, pinnedItems],
-  );
-  const deleteCandidate = useMemo(
-    () => (confirmDeleteId ? historyItems.find((item) => item.id === confirmDeleteId) ?? null : null),
-    [confirmDeleteId, historyItems],
   );
   const showInitialHistorySkeleton = historyEmptyLoading && !collapsed && historyItems.length === 0;
   const searchResults = useMemo(() => {
@@ -311,7 +344,7 @@ export function Sider({
       window.cancelAnimationFrame(animationFrame);
       resizeObserver?.disconnect();
     };
-  }, [collapsed, confirmDeleteId, editing, historyGroups, loadingHistory, updateFooterFeather]);
+  }, [archivingSessionId, collapsed, editing, historyGroups, loadingHistory, updateFooterFeather]);
 
   const reloadSessions = useCallback(
     async (isActive: () => boolean = () => true, options: { force?: boolean } = {}) => {
@@ -319,7 +352,9 @@ export function Sider({
         window.location.reload();
         return;
       }
-      if (!options.force && readSessionHistoryCache(runtime) !== null) {
+      const cachedAtStart = readSessionHistoryCache(runtime);
+      const cacheWasCurrentAtStart = isSessionHistoryCacheCurrent(runtime);
+      if (!options.force && cachedAtStart !== null && cacheWasCurrentAtStart) {
         setLoadingHistory(false);
         return;
       }
@@ -331,7 +366,9 @@ export function Sider({
       try {
         const response = await runtime.conversation.listSessions({ pageSize: 50 });
         if (isActive()) {
-          const sessionsCreatedDuringLoad = options.force ? null : readSessionHistoryCache(runtime);
+          const sessionsCreatedDuringLoad = options.force || (cachedAtStart !== null && !cacheWasCurrentAtStart)
+            ? null
+            : readSessionHistoryCache(runtime);
           setLoadedSessionsAndCache(
             sessionsCreatedDuringLoad === null ? response.list : mergeSessions(response.list, sessionsCreatedDuringLoad),
           );
@@ -377,10 +414,63 @@ export function Sider({
     if (controlled) {
       return;
     }
-    return subscribeSessionDeleted((sessionId) => {
-      setLoadedSessionsAndCache((items) => items.filter((item) => item.id !== sessionId));
+    return subscribeLifecycleEvents((event) => {
+      if (!lifecycleEventGateRef.current(event)) {
+        return;
+      }
+      const entityId = event.session_id ?? event.workspace_id;
+      const entityKey = entityId ? `${event.session_id ? "session" : "workspace"}:${entityId}` : null;
+      const eventToken = `${event.operation_id ?? ""}:${event.revision ?? 0}:${event.occurred_at ?? ""}:${event.type}`;
+      if (entityKey) lifecycleEntityStateRef.current.set(entityKey, eventToken);
+      if ((event.type === "session_archived" || event.type === "session_purged") && event.session_id) {
+        const archived = loadedSessions.find((item) => item.id === event.session_id);
+        if (isActivePath(activePath, getSessionPath(event.session_id))) {
+          const fallback = loadedSessions.find(
+            (item) => item.id !== event.session_id && item.workspace_id === archived?.workspace_id,
+          );
+          onNavigate?.(fallback ? getSessionPath(fallback.id) : archiveActiveFallbackPath);
+        }
+        setLoadedSessionsAndCache((items) => items.filter((item) => item.id !== event.session_id));
+        return;
+      }
+      if ((event.type === "workspace_archived" || event.type === "workspace_purged") && event.workspace_id) {
+        const activeSession = loadedSessions.find(
+          (item) => item.workspace_id === event.workspace_id && isActivePath(activePath, getSessionPath(item.id)),
+        );
+        if (activeSession) {
+          onNavigate?.(workspaceArchiveFallbackPath);
+        }
+        setLoadedSessionsAndCache((items) => items.filter((item) => item.workspace_id !== event.workspace_id));
+        return;
+      }
+      if (event.type === "session_restored" && event.session_id) {
+        const restoredEntityKey = entityKey;
+        void runtime.conversation.getSession(event.session_id).then(
+          (session) => {
+            if (restoredEntityKey && lifecycleEntityStateRef.current.get(restoredEntityKey) === eventToken) {
+              setLoadedSessionsAndCache((items) => upsertSession(items, session));
+            }
+          },
+          () => undefined,
+        );
+        return;
+      }
+      if (event.type === "workspace_restored" && event.workspace_id) {
+        void reloadSessions(undefined, { force: true });
+      }
     });
-  }, [controlled, setLoadedSessionsAndCache]);
+  }, [
+    activePath,
+    archiveActiveFallbackPath,
+    controlled,
+    getSessionPath,
+    loadedSessions,
+    onNavigate,
+    runtime,
+    reloadSessions,
+    setLoadedSessionsAndCache,
+    workspaceArchiveFallbackPath,
+  ]);
 
   useEffect(() => {
     if (controlled) {
@@ -414,33 +504,159 @@ export function Sider({
 
   function startRenameConversation(item: SiderEntry) {
     setSearchOpen(false);
-    setConfirmDeleteId(null);
+    setArchiveConfirmation(null);
     setEditing({ id: item.id, title: item.title });
   }
 
-  function startDeleteConversation(id: string) {
-    setSearchOpen(false);
-    setEditing(null);
-    setConfirmDeleteId(id);
-  }
-
-  async function deleteConversation(id: string) {
-    if (!canMutateConversations) {
-      notifications.warning("当前后端不支持删除会话");
+  async function renameWorkspace(id: string, title: string) {
+    const cleaned = title.trim();
+    if (!cleaned) {
+      notifications.warning("项目名称不能为空");
+      return;
+    }
+    if (!canManageWorkspaces) {
+      notifications.warning("当前环境不支持管理项目");
       return;
     }
     try {
-      await runtime.conversation.deleteSession(id);
-      setLoadedSessionsAndCache((items) => items.filter((item) => item.id !== id));
-      setConfirmDeleteId(null);
-      notifications.success("已删除会话");
-      if (isActivePath(activePath, getSessionPath(id))) {
-        onNavigate?.(deleteActiveFallbackPath);
-      }
+      const updated = await runtime.workspaces.update(id, { name: cleaned });
+      setLoadedSessionsAndCache((items) => items.map((session) => {
+        if (session.workspace_id !== id || !session.workspace) return session;
+        return { ...session, workspace: { ...session.workspace, name: updated.name } };
+      }));
+      setEditingWorkspace(null);
+      notifications.success("项目已重命名");
     } catch (reason) {
       notifications.error(errorMessage(reason));
     }
   }
+
+  function startRenameWorkspace(id: string, title: string) {
+    setSearchOpen(false);
+    setEditing(null);
+    setEditingWorkspace({ id, title });
+  }
+
+  async function revealWorkspace(rootPath?: string) {
+    if (!rootPath) {
+      notifications.warning("当前项目没有可用的本地目录");
+      return;
+    }
+    try {
+      await runtime.desktopPicker.revealPath(rootPath);
+    } catch (reason) {
+      notifications.error(errorMessage(reason));
+    }
+  }
+
+  async function archiveWorkspace(stopActiveSessions: boolean) {
+    if (!workspaceArchiveTarget || archivingWorkspaceId || !canManageWorkspaces) return;
+    setArchivingWorkspaceId(workspaceArchiveTarget.id);
+    try {
+      const result = await runtime.workspaces.archive(workspaceArchiveTarget.id, {
+        requestId: createLifecycleRequestId("workspace-archive"),
+        stopActiveSessions,
+      });
+      if (result.event) emitLifecycleEvent(result.event);
+      const archivedWorkspaceId = workspaceArchiveTarget.id;
+      const activeWorkspaceSession = loadedSessions.some(
+        (session) => session.workspace_id === archivedWorkspaceId && isActivePath(activePath, getSessionPath(session.id)),
+      );
+      setLoadedSessionsAndCache((items) => items.filter((session) => session.workspace_id !== archivedWorkspaceId));
+      if (activeWorkspaceSession) onNavigate?.(workspaceArchiveFallbackPath);
+      setWorkspaceArchiveTarget(null);
+      setWorkspaceArchiveBlocker(null);
+      notifications.success(`项目已归档，随项目归档 ${result.newly_archived} 个会话`, {
+        actionLabel: "查看归档",
+        onAction: () => onNavigate?.("/settings/archive"),
+      });
+    } catch (reason) {
+      const decoded = decodeLifecycleRuntimeError(reason);
+      if (decoded?.kind === "archive_requires_stop_confirmation") setWorkspaceArchiveBlocker(decoded);
+      else notifications.error(errorMessage(reason));
+    } finally {
+      setArchivingWorkspaceId(null);
+    }
+  }
+
+  const restoreArchivedConversation = useCallback(async (item: SiderEntry) => {
+    try {
+      const result = await runtime.conversation.restoreSession(item.id, {
+        requestId: createLifecycleRequestId("session-undo"),
+      });
+      if (result.event) {
+        emitLifecycleEvent(result.event);
+      }
+      const restored = await runtime.conversation.getSession(item.id);
+      setLoadedSessionsAndCache((items) => upsertSession(items, restored));
+      notifications.success("已恢复会话");
+    } catch (reason) {
+      const decoded = decodeLifecycleRuntimeError(reason);
+      notifications.error(
+        decoded?.kind === "workspace_archived" ? "当前所属项目已归档，请先恢复项目" : errorMessage(reason),
+        decoded?.kind === "workspace_archived"
+          ? { actionLabel: "打开归档管理", onAction: () => onNavigate?.("/settings/archive") }
+          : undefined,
+      );
+    }
+  }, [notifications, onNavigate, runtime, setLoadedSessionsAndCache]);
+
+  const archiveConversation = useCallback(async (item: SiderEntry, stopIfActive = false) => {
+    if (!canMutateConversations || archivingSessionId) {
+      return;
+    }
+    const snapshot = loadedSessions.find((session) => session.id === item.id) ?? null;
+    const sameGroupFallback = historyItems.find(
+      (candidate) => candidate.id !== item.id && candidate.groupTitle === item.groupTitle,
+    );
+    setSearchOpen(false);
+    setEditing(null);
+    setArchiveConfirmation(null);
+    setArchivingSessionId(item.id);
+    setLoadedSessionsAndCache((items) => items.filter((session) => session.id !== item.id));
+    try {
+      const result = await runtime.conversation.archiveSession(item.id, {
+        requestId: createLifecycleRequestId("session-archive"),
+        stopIfActive,
+      });
+      if (result.event) {
+        emitLifecycleEvent(result.event);
+      }
+      if (isActivePath(activePath, getSessionPath(item.id))) {
+        onNavigate?.(sameGroupFallback ? getSessionPath(sameGroupFallback.id) : archiveActiveFallbackPath);
+      }
+      notifications.success("已归档", {
+        durationMs: 6000,
+        actionLabel: "撤销",
+        onAction: () => restoreArchivedConversation(item),
+      });
+    } catch (reason) {
+      if (snapshot) {
+        setLoadedSessionsAndCache((items) => upsertSession(items, snapshot));
+      }
+      const decoded = decodeLifecycleRuntimeError(reason);
+      if (decoded?.kind === "archive_requires_stop_confirmation") {
+        setArchiveConfirmation({ item, error: decoded });
+      } else {
+        notifications.error(errorMessage(reason));
+      }
+    } finally {
+      setArchivingSessionId(null);
+    }
+  }, [
+    activePath,
+    archiveActiveFallbackPath,
+    archivingSessionId,
+    canMutateConversations,
+    getSessionPath,
+    historyItems,
+    loadedSessions,
+    notifications,
+    onNavigate,
+    restoreArchivedConversation,
+    runtime,
+    setLoadedSessionsAndCache,
+  ]);
 
   async function togglePinnedConversation(item: SiderEntry, pinned: boolean) {
     if (!canMutateConversations) {
@@ -467,7 +683,7 @@ export function Sider({
     }
     setSearchOpen(false);
     setEditing(null);
-    setConfirmDeleteId(null);
+    setArchiveConfirmation(null);
     setForkingSessionId(item.id);
     try {
       const history = await runtime.conversation.loadHistory(item.id, { pageSize: SESSION_FORK_HISTORY_PAGE_SIZE });
@@ -635,7 +851,7 @@ export function Sider({
                   emptyLoading={false}
                   activePath={activePath}
                   editing={editing}
-                  confirmDeleteId={confirmDeleteId}
+                  archivingSessionId={archivingSessionId}
                   canMutate={canMutateConversations}
                   canFork={canForkConversations}
                   canExport={canExportConversations}
@@ -644,7 +860,7 @@ export function Sider({
                   sessionIndicators={sessionIndicators}
                   historyPreviewLimit={WORKSPACE_SESSION_PREVIEW_LIMIT}
                   getSessionPath={getSessionPath}
-                  onConfirmDelete={startDeleteConversation}
+                  onArchive={(item) => void archiveConversation(item)}
                   onExportSession={(item) => void exportConversation(item)}
                   onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                   onStartRename={startRenameConversation}
@@ -661,7 +877,7 @@ export function Sider({
                   emptyLoading={historyEmptyLoading}
                   activePath={activePath}
                   editing={editing}
-                  confirmDeleteId={confirmDeleteId}
+                  archivingSessionId={archivingSessionId}
                   canMutate={canMutateConversations}
                   canFork={canForkConversations}
                   canExport={canExportConversations}
@@ -673,7 +889,7 @@ export function Sider({
                   flat
                   hideTitle
                   getSessionPath={getSessionPath}
-                  onConfirmDelete={startDeleteConversation}
+                  onArchive={(item) => void archiveConversation(item)}
                   onExportSession={(item) => void exportConversation(item)}
                   onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                   onStartRename={startRenameConversation}
@@ -709,7 +925,7 @@ export function Sider({
                 emptyLoading={false}
                 activePath={activePath}
                 editing={editing}
-                confirmDeleteId={confirmDeleteId}
+                archivingSessionId={archivingSessionId}
                 canMutate={canMutateConversations}
                 canFork={canForkConversations}
                 canExport={canExportConversations}
@@ -717,7 +933,7 @@ export function Sider({
                 exportingSessionId={exportingSessionId}
                 sessionIndicators={sessionIndicators}
                 getSessionPath={getSessionPath}
-                onConfirmDelete={startDeleteConversation}
+                onArchive={(item) => void archiveConversation(item)}
                 onExportSession={(item) => void exportConversation(item)}
                 onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                 onStartRename={startRenameConversation}
@@ -744,7 +960,7 @@ export function Sider({
                   emptyLoading={historyEmptyLoading}
                   activePath={activePath}
                   editing={editing}
-                  confirmDeleteId={confirmDeleteId}
+                  archivingSessionId={archivingSessionId}
                   canMutate={canMutateConversations}
                   canFork={canForkConversations}
                   canExport={canExportConversations}
@@ -760,7 +976,7 @@ export function Sider({
                   onLoadHistoryExpansion={
                     group.workspaceId && !controlled ? () => loadWorkspaceSessions(group.workspaceId as string) : undefined
                   }
-                  onConfirmDelete={startDeleteConversation}
+                  onArchive={(item) => void archiveConversation(item)}
                   onExportSession={(item) => void exportConversation(item)}
                   onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                   onStartRename={startRenameConversation}
@@ -781,7 +997,7 @@ export function Sider({
                 emptyLoading={false}
                 activePath={activePath}
                 editing={editing}
-                confirmDeleteId={confirmDeleteId}
+                archivingSessionId={archivingSessionId}
                 canMutate={canMutateConversations}
                 canFork={canForkConversations}
                 canExport={canExportConversations}
@@ -790,7 +1006,7 @@ export function Sider({
                 sessionIndicators={sessionIndicators}
                 historyPreviewLimit={WORKSPACE_SESSION_PREVIEW_LIMIT}
                 getSessionPath={getSessionPath}
-                onConfirmDelete={startDeleteConversation}
+                onArchive={(item) => void archiveConversation(item)}
                 onExportSession={(item) => void exportConversation(item)}
                 onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                 onStartRename={startRenameConversation}
@@ -818,7 +1034,7 @@ export function Sider({
                     emptyLoading={false}
                     activePath={activePath}
                     editing={editing}
-                    confirmDeleteId={confirmDeleteId}
+                    archivingSessionId={archivingSessionId}
                     canMutate={canMutateConversations}
                     canFork={canForkConversations}
                     canExport={canExportConversations}
@@ -826,6 +1042,8 @@ export function Sider({
                     exportingSessionId={exportingSessionId}
                     sessionIndicators={sessionIndicators}
                     workspaceId={group.workspaceId}
+                    workspaceRootPath={group.rootPath}
+                    canManageWorkspace={canManageWorkspaces}
                     getSessionPath={getSessionPath}
                     getWorkspaceNewConversationPath={getWorkspaceNewConversationPath}
                     historyExpansionLoading={Boolean(
@@ -838,10 +1056,16 @@ export function Sider({
                         ? () => loadWorkspaceSessions(group.workspaceId as string)
                         : undefined
                     }
-                    onConfirmDelete={startDeleteConversation}
+                    onArchive={(item) => void archiveConversation(item)}
                     onExportSession={(item) => void exportConversation(item)}
                     onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                     onStartRename={startRenameConversation}
+                    onStartWorkspaceRename={(workspaceId, title) => startRenameWorkspace(workspaceId, title)}
+                    onRevealWorkspace={(rootPath) => void revealWorkspace(rootPath)}
+                    onArchiveWorkspace={(workspaceId, title) => {
+                      setWorkspaceArchiveTarget({ id: workspaceId, title });
+                      setWorkspaceArchiveBlocker(null);
+                    }}
                     onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                     onRefresh={refreshSessionList}
                     onNavigate={navigateTo}
@@ -866,7 +1090,7 @@ export function Sider({
                     emptyLoading={historyEmptyLoading}
                     activePath={activePath}
                     editing={editing}
-                    confirmDeleteId={confirmDeleteId}
+                    archivingSessionId={archivingSessionId}
                     canMutate={canMutateConversations}
                     canFork={canForkConversations}
                     canExport={canExportConversations}
@@ -875,7 +1099,7 @@ export function Sider({
                     sessionIndicators={sessionIndicators}
                     hideTitle
                     getSessionPath={getSessionPath}
-                    onConfirmDelete={startDeleteConversation}
+                    onArchive={(item) => void archiveConversation(item)}
                     onExportSession={(item) => void exportConversation(item)}
                     onForkSession={(item) => void forkConversationFromLatestTurn(item)}
                     onStartRename={startRenameConversation}
@@ -935,11 +1159,33 @@ export function Sider({
           onSubmit={(id, title) => void renameConversation(id, title)}
         />
       ) : null}
-      {deleteCandidate ? (
-        <SessionDeleteDialog
-          title={deleteCandidate.title}
-          onCancel={() => setConfirmDeleteId(null)}
-          onConfirm={() => void deleteConversation(deleteCandidate.id)}
+      {editingWorkspace ? (
+        <WorkspaceRenameDialog
+          editing={editingWorkspace}
+          onCancel={() => setEditingWorkspace(null)}
+          onChange={(title) => setEditingWorkspace((value) => (value ? { ...value, title } : value))}
+          onSubmit={(id, title) => void renameWorkspace(id, title)}
+        />
+      ) : null}
+      {archiveConfirmation ? (
+        <SessionArchiveConfirmationDialog
+          blockerCount={archiveBlockerCount(archiveConfirmation.error)}
+          busy={archivingSessionId === archiveConfirmation.item.id}
+          title={archiveConfirmation.item.title}
+          onCancel={() => setArchiveConfirmation(null)}
+          onConfirm={() => void archiveConversation(archiveConfirmation.item, true)}
+        />
+      ) : null}
+      {workspaceArchiveTarget ? (
+        <ConfirmDialog
+          title={workspaceArchiveBlocker ? "停止会话并归档项目？" : "归档项目？"}
+          description={workspaceArchiveBlocker ? "项目中仍有运行、等待、审批、排队输入或任务。确认后会先停止这些活动，再归档项目及其中的会话。" : "项目及其中的会话将移至归档管理。本地目录及文件不会被删除。"}
+          preview={workspaceArchiveBlocker ? `${workspaceArchiveTarget.title} · 受影响活动 ${archiveBlockerCount(workspaceArchiveBlocker)} 项` : workspaceArchiveTarget.title}
+          confirmLabel={workspaceArchiveBlocker ? "停止会话并归档项目" : "归档项目"}
+          cancelDisabled={archivingWorkspaceId === workspaceArchiveTarget.id}
+          confirmDisabled={archivingWorkspaceId === workspaceArchiveTarget.id}
+          onCancel={() => { setWorkspaceArchiveTarget(null); setWorkspaceArchiveBlocker(null); }}
+          onConfirm={() => void archiveWorkspace(Boolean(workspaceArchiveBlocker))}
         />
       ) : null}
     </aside>
@@ -1080,11 +1326,50 @@ function SessionRenameDialog({
   );
 }
 
-function SessionDeleteDialog({
+function WorkspaceRenameDialog({
+  editing,
+  onCancel,
+  onChange,
+  onSubmit,
+}: {
+  editing: { id: string; title: string };
+  onCancel: () => void;
+  onChange: (title: string) => void;
+  onSubmit: (id: string, title: string) => void;
+}) {
+  const inputId = useId();
+  return (
+    <AppDialog
+      title="重命名项目"
+      description="仅修改 Keydex 中显示的名称，不会重命名本地目录。"
+      size="form"
+      closeLabel="取消重命名项目"
+      closeOnOverlayClick={false}
+      onClose={onCancel}
+    >
+      <form className={styles.renameDialogForm} onSubmit={(event) => { event.preventDefault(); onSubmit(editing.id, editing.title); }}>
+        <label className={styles.renameDialogField} htmlFor={inputId}>
+          <span>项目名称</span>
+          <input id={inputId} autoFocus aria-label="项目名称" onChange={(event) => onChange(event.target.value)} onFocus={(event) => event.currentTarget.select()} value={editing.title} />
+        </label>
+        <footer className={styles.renameDialogActions}>
+          <DialogButton type="button" aria-label="取消重命名项目" onClick={onCancel}>取消</DialogButton>
+          <DialogButton tone="primary" type="submit" aria-label="保存项目名称">保存</DialogButton>
+        </footer>
+      </form>
+    </AppDialog>
+  );
+}
+
+function SessionArchiveConfirmationDialog({
+  blockerCount,
+  busy,
   title,
   onCancel,
   onConfirm,
 }: {
+  blockerCount: number;
+  busy: boolean;
   title: string;
   onCancel: () => void;
   onConfirm: () => void;
@@ -1092,11 +1377,12 @@ function SessionDeleteDialog({
   const summary = title.trim() || "该会话";
   return (
     <ConfirmDialog
-      title="确认删除会话？"
-      description="会删除该会话的历史记录，操作不可撤销。"
+      title="停止并归档会话？"
+      description="该会话仍有运行、等待、审批、排队输入或任务。确认后会先安全停止这些活动，再归档会话。"
       preview={summary}
-      confirmLabel="删除"
-      confirmTone="danger"
+      confirmLabel={busy ? "正在停止并归档" : `停止并归档（${blockerCount} 项）`}
+      cancelDisabled={busy}
+      confirmDisabled={busy}
       onCancel={onCancel}
       onConfirm={onConfirm}
     />
@@ -1115,7 +1401,7 @@ interface SiderSectionProps {
   flat?: boolean;
   activePath?: string;
   editing?: { id: string; title: string } | null;
-  confirmDeleteId?: string | null;
+  archivingSessionId?: string | null;
   canMutate?: boolean;
   canFork?: boolean;
   canExport?: boolean;
@@ -1123,17 +1409,22 @@ interface SiderSectionProps {
   exportingSessionId?: string | null;
   sessionIndicators?: Record<string, SessionIndicator>;
   workspaceId?: string;
+  workspaceRootPath?: string;
+  canManageWorkspace?: boolean;
   historyExpansionLoading?: boolean;
   historyPreviewLimit?: number;
   getSessionPath?: (sessionId: string) => string;
   getWorkspaceNewConversationPath?: (workspaceId?: string) => string;
-  onConfirmDelete?: (id: string) => void;
+  onArchive?: (item: SiderEntry) => void;
   onExportSession?: (item: SiderEntry) => void;
   onForkSession?: (item: SiderEntry) => void;
   onLoadHistoryExpansion?: () => Promise<void> | void;
   onNavigate?: (path: string) => void;
   onRefresh?: () => Promise<void> | void;
   onStartRename?: (item: SiderEntry) => void;
+  onStartWorkspaceRename?: (workspaceId: string, title: string) => void;
+  onRevealWorkspace?: (rootPath?: string) => void;
+  onArchiveWorkspace?: (workspaceId: string, title: string) => void;
   onTogglePinned?: (item: SiderEntry, pinned: boolean) => void;
 }
 
@@ -1216,7 +1507,7 @@ function SiderSection({
   flat = false,
   activePath = "",
   editing,
-  confirmDeleteId,
+  archivingSessionId,
   canMutate = false,
   canFork = false,
   canExport = false,
@@ -1224,17 +1515,22 @@ function SiderSection({
   exportingSessionId = null,
   sessionIndicators = {},
   workspaceId,
+  workspaceRootPath,
+  canManageWorkspace = false,
   historyExpansionLoading = false,
   historyPreviewLimit,
   getSessionPath = conversationPath,
   getWorkspaceNewConversationPath = newWorkspaceConversationPath,
-  onConfirmDelete,
+  onArchive,
   onExportSession,
   onForkSession,
   onLoadHistoryExpansion,
   onNavigate,
   onRefresh,
   onStartRename,
+  onStartWorkspaceRename,
+  onRevealWorkspace,
+  onArchiveWorkspace,
   onTogglePinned,
 }: SiderSectionProps) {
   const [hoveredSession, setHoveredSession] = useState<SessionHoverCard | null>(null);
@@ -1268,7 +1564,17 @@ function SiderSection({
   const hasExpandedHistory = visibleExtraItemCount > 0;
   const canExpandHistory = shouldLimitHistory && visibleExtraItemCount < extraItems.length;
   const historyToggleLoading = historyExpansionLoading || localHistoryExpansionLoading;
-  const canOpenActionMenu = canMutate || canFork || canExport;
+  const canOpenSessionActionMenu = canMutate || canFork || canExport;
+  const canOpenProjectActionMenu = Boolean(
+    kind === "workspace"
+    && workspaceId
+    && canManageWorkspace
+    && onStartWorkspaceRename
+    && onRevealWorkspace
+    && onArchiveWorkspace,
+  );
+  const projectMenuOpen = actionMenuId === PROJECT_ACTION_MENU_ID;
+  const projectMenuVisible = projectMenuOpen || closingActionMenuId === PROJECT_ACTION_MENU_ID;
 
   useEffect(() => {
     const activePathChanged = previousActivePathRef.current !== activePath;
@@ -1461,12 +1767,13 @@ function SiderSection({
     );
     const menuOpen = actionMenuId === item.id;
     const menuVisible = menuOpen || closingActionMenuId === item.id;
-    const canShowHoverCard = editing?.id !== item.id && confirmDeleteId !== item.id && !menuVisible;
+    const canShowHoverCard = editing?.id !== item.id && archivingSessionId !== item.id && !menuVisible;
     const isForking = forkingSessionId === item.id;
     const isExporting = exportingSessionId === item.id;
+    const isArchiving = archivingSessionId === item.id;
     const showContextRefresh = menuVisible && actionMenuSource === "context" && Boolean(onRefresh);
     const openContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
-      if (!canOpenActionMenu) {
+      if (!canOpenSessionActionMenu) {
         return;
       }
       event.preventDefault();
@@ -1485,12 +1792,12 @@ function SiderSection({
         layout={reduceSessionMotion ? false : "position"}
         layoutId={reduceSessionMotion ? undefined : `${sessionLayoutScopeId}-${item.id}`}
         transition={{ layout: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } }}
-        data-app-context-menu={canOpenActionMenu ? "local" : undefined}
+        data-app-context-menu={canOpenSessionActionMenu ? "local" : undefined}
         data-active={active ? "true" : "false"}
-        data-can-actions={canOpenActionMenu ? "true" : "false"}
+        data-can-actions={canOpenSessionActionMenu ? "true" : "false"}
         data-can-mutate={canMutate ? "true" : "false"}
         data-menu-open={menuVisible ? "true" : "false"}
-        onContextMenu={canOpenActionMenu ? openContextMenu : undefined}
+        onContextMenu={canOpenSessionActionMenu ? openContextMenu : undefined}
         onBlurCapture={
           canShowHoverCard
             ? (event) => {
@@ -1523,7 +1830,7 @@ function SiderSection({
             <span>{item.title}</span>
           </span>
         </button>
-        {hasMeta || canOpenActionMenu ? (
+        {hasMeta || canOpenSessionActionMenu ? (
           <div className={styles.historyTrailing}>
             {hasMeta ? (
               <span className={styles.historyMeta}>
@@ -1533,7 +1840,7 @@ function SiderSection({
                 <SessionStatusIndicators indicator={indicator} />
               </span>
             ) : null}
-            {canOpenActionMenu ? (
+            {canOpenSessionActionMenu ? (
               <div
                 className={styles.historyActions}
                 data-menu-open={menuOpen ? "true" : "false"}
@@ -1603,10 +1910,11 @@ function SiderSection({
                             closeActionMenu();
                             onStartRename?.(item);
                           }}
-                          onDelete={() => {
+                          archiving={isArchiving}
+                          onArchive={() => {
                             setHoveredSession(null);
                             closeActionMenu();
-                            onConfirmDelete?.(item.id);
+                            onArchive?.(item);
                           }}
                           showRefresh={showContextRefresh}
                           onRefresh={() => {
@@ -1624,6 +1932,18 @@ function SiderSection({
           </div>
         ) : null}
       </motion.div>
+    );
+  };
+
+  const openProjectContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
+    if (!canOpenProjectActionMenu) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setHoveredProject(null);
+    openActionMenu(
+      PROJECT_ACTION_MENU_ID,
+      getActionMenuPositionFromPoint(event.clientX, event.clientY, PROJECT_CONTEXT_ACTION_MENU_HEIGHT),
+      "context",
     );
   };
 
@@ -1713,7 +2033,13 @@ function SiderSection({
       data-flat={flat ? "true" : "false"}
     >
       {hideTitle ? null : canToggleSection ? (
-        <div className={styles.sectionTitleRow} data-kind={kind}>
+        <div
+          className={styles.sectionTitleRow}
+          data-app-context-menu={canOpenProjectActionMenu ? "local" : undefined}
+          data-kind={kind}
+          data-menu-open={projectMenuVisible ? "true" : undefined}
+          onContextMenu={canOpenProjectActionMenu ? openProjectContextMenu : undefined}
+        >
           <button
             className={`${styles.sectionTitle} ${styles.projectSectionTitle}`}
             type="button"
@@ -1729,19 +2055,59 @@ function SiderSection({
               <Folder size={15} strokeWidth={1.75} aria-hidden="true" />
             )}
             <span>{title}</span>
-            <ChevronDown className={styles.sectionChevron} size={14} strokeWidth={1.9} aria-hidden="true" />
+            {kind === "pinned" ? (
+              <ChevronDown className={styles.sectionChevron} size={14} strokeWidth={1.9} aria-hidden="true" />
+            ) : null}
           </button>
           {workspaceId ? (
-            <button
-              className={styles.sectionNewButton}
-              type="button"
-              aria-label={`在项目 ${title} 中新建对话`}
-              data-tooltip-label="新建对话"
-              title={`在项目 ${title} 中新建对话`}
-              onClick={() => onNavigate?.(getWorkspaceNewConversationPath(workspaceId))}
-            >
-              <SquarePen size={14} strokeWidth={1.8} aria-hidden="true" />
-            </button>
+            <div className={styles.sectionHeaderActions} ref={projectMenuOpen ? actionTriggerRef : null}>
+              <button
+                className={styles.sectionNewButton}
+                type="button"
+                aria-label={`在项目 ${title} 中新建对话`}
+                data-tooltip-label="新建对话"
+                title={`在项目 ${title} 中新建对话`}
+                onClick={() => onNavigate?.(getWorkspaceNewConversationPath(workspaceId))}
+              >
+                <SquarePen size={14} strokeWidth={1.8} aria-hidden="true" />
+              </button>
+              {canOpenProjectActionMenu ? (
+                <button
+                  className={styles.sectionNewButton}
+                  type="button"
+                  aria-label={`更多项目操作 ${title}`}
+                  aria-expanded={projectMenuOpen}
+                  aria-haspopup="menu"
+                  data-tooltip-label="更多操作"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setHoveredProject(null);
+                    if (projectMenuOpen) {
+                      closeActionMenu();
+                      return;
+                    }
+                    openActionMenu(PROJECT_ACTION_MENU_ID, getActionMenuPosition(event.currentTarget), "button");
+                  }}
+                >
+                  <MoreHorizontal size={14} aria-hidden="true" />
+                </button>
+              ) : null}
+              {projectMenuVisible && actionMenuPosition ? createPortal(
+                <div
+                  className={styles.historyActionMenu}
+                  data-state={projectMenuOpen ? "open" : "closing"}
+                  ref={actionMenuRef}
+                  role="menu"
+                  aria-label={`项目操作 ${title}`}
+                  style={actionMenuPosition}
+                >
+                  <button type="button" role="menuitem" onClick={() => { closeActionMenu(); onStartWorkspaceRename?.(workspaceId, title); }}><Pencil size={14} /><span>重命名</span></button>
+                  <button type="button" role="menuitem" disabled={!workspaceRootPath} onClick={() => { closeActionMenu(); onRevealWorkspace?.(workspaceRootPath); }}><FolderOpen size={14} /><span>资源管理器</span></button>
+                  <button type="button" role="menuitem" data-tone="danger" onClick={() => { closeActionMenu(); onArchiveWorkspace?.(workspaceId, title); }}><Archive size={14} /><span>归档</span></button>
+                </div>,
+                document.body,
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : (
@@ -1963,8 +2329,10 @@ function buildSessionGroups(sessions: AgentSession[]): SiderGroup[] {
           items: [],
           latestUpdatedAt: session.updated_at,
           workspaceId: meta.workspaceId,
+          rootPath: meta.rootPath,
         };
       group.title = meta.title;
+      group.rootPath = meta.rootPath ?? group.rootPath;
       group.latestUpdatedAt = maxTime(group.latestUpdatedAt, session.updated_at);
       group.items.push(sessionToEntry(session, group.title));
       groups.set(group.id, group);
@@ -1986,6 +2354,7 @@ function buildControlledGroups(projects: SiderEntry[], conversations: SiderEntry
       items: [],
       latestUpdatedAt: project.updatedAt,
       workspaceId: project.id,
+      rootPath: project.rootPath,
     }));
   }
   const title = projects[0]?.title ?? "对话";
@@ -1997,6 +2366,7 @@ function buildControlledGroups(projects: SiderEntry[], conversations: SiderEntry
       items: conversations.map((item) => ({ ...item, groupTitle: title })),
       latestUpdatedAt: conversations[0]?.updatedAt,
       workspaceId: projects[0]?.id,
+      rootPath: projects[0]?.rootPath,
     },
   ];
 }
@@ -2018,7 +2388,7 @@ function withoutPinnedItems(groups: SiderGroup[]): SiderGroup[] {
     .filter((group) => group.kind === "workspace" || group.items.length > 0);
 }
 
-function sessionGroupMeta(session: AgentSession): Pick<SiderGroup, "id" | "title" | "kind" | "workspaceId"> {
+function sessionGroupMeta(session: AgentSession): Pick<SiderGroup, "id" | "title" | "kind" | "workspaceId" | "rootPath"> {
   if (session.session_type === "workspace") {
     if (session.workspace) {
       return {
@@ -2026,28 +2396,39 @@ function sessionGroupMeta(session: AgentSession): Pick<SiderGroup, "id" | "title
         title: session.workspace.name || session.workspace.root_path,
         kind: "workspace",
         workspaceId: session.workspace.id,
+        rootPath: session.workspace.root_path,
       };
     }
     return {
       id: `workspace:${session.workspace_id ?? "missing"}`,
       title: "工作区不可用",
       kind: "workspace",
+      rootPath: undefined,
     };
   }
   return {
     id: "chat",
     title: "对话",
     kind: "chat",
+    rootPath: undefined,
   };
 }
 
 function readSessionHistoryCache(runtime: RuntimeBridge): AgentSession[] | null {
   const cached = sessionHistoryCacheByRuntime.get(runtime);
-  return cached ? [...cached] : cached ?? null;
+  return cached ? [...cached.sessions] : null;
+}
+
+function isSessionHistoryCacheCurrent(runtime: RuntimeBridge): boolean {
+  const cached = sessionHistoryCacheByRuntime.get(runtime);
+  return cached !== undefined && cached.lifecycleRevision === getLifecycleEventRevision();
 }
 
 function writeSessionHistoryCache(runtime: RuntimeBridge, sessions: AgentSession[]) {
-  sessionHistoryCacheByRuntime.set(runtime, [...sessions]);
+  sessionHistoryCacheByRuntime.set(runtime, {
+    sessions: [...sessions],
+    lifecycleRevision: getLifecycleEventRevision(),
+  });
 }
 
 function upsertSession(sessions: AgentSession[], session: AgentSession): AgentSession[] {
@@ -2192,4 +2573,9 @@ function errorMessage(reason: unknown): string {
     return (reason as { message: string }).message;
   }
   return "读取会话历史失败";
+}
+
+function archiveBlockerCount(error: LifecycleRuntimeError): number {
+  const count = error.details.blocker_count;
+  return typeof count === "number" && Number.isFinite(count) ? count : 1;
 }
