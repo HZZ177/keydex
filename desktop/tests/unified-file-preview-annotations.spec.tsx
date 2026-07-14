@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FilePreview } from "@/renderer/components/workspace/FilePreview";
@@ -335,6 +336,71 @@ describe("unified FilePreview annotations", () => {
     });
     expect(screen.getByLabelText("批注：Explain alpha")).not.toBeNull();
     expect(document.querySelectorAll("[data-annotation-rail='true']")).toHaveLength(1);
+  });
+
+  it("keeps split-view annotation highlights mounted after auto-save advances the document revision", async () => {
+    let resolveDraftSnapshot!: (snapshot: ReturnType<typeof parseCanonicalMarkdownSnapshot>) => void;
+    const draftSnapshot = new Promise<ReturnType<typeof parseCanonicalMarkdownSnapshot>>((resolve) => {
+      resolveDraftSnapshot = resolve;
+    });
+    const delayedSnapshotLoader = vi.fn(async ({ source, revision }: { source: string; revision: string }) => {
+      if (source === "# Title\n\nAlpha paragraph.") {
+        return markdownRuntimeSnapshotLoader({ source, revision });
+      }
+      return draftSnapshot;
+    });
+    const writeDocument = vi.fn().mockResolvedValue({
+      protocol_version: "document-write/v1",
+      path: "README.md",
+      revision: "sha256:after-save",
+      encoding: "utf-8",
+      total_bytes: 29,
+    });
+    const editableRuntime = runtime();
+    editableRuntime.workspace.writeDocument = writeDocument;
+
+    render(
+      <FilePreview
+        markdownRuntimeSnapshotLoader={delayedSnapshotLoader}
+        request={{ type: "file", path: "README.md" }}
+        runtime={editableRuntime}
+        workspaceId="ws-1"
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Title" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "分屏" }));
+    await waitFor(() => {
+      expect(document.querySelector(".cm-annotation-mark[data-annotation-id='ann-alpha']")).not.toBeNull();
+      expect(document.querySelector("[data-markdown-annotation-overlay-marker='true'][data-annotation-id='ann-alpha']")).not.toBeNull();
+    });
+    const sourceViewer = screen.getByTestId("file-source-viewer");
+    const view = EditorView.findFromDOM(sourceViewer);
+    act(() => {
+      view?.dispatch({
+        changes: { from: 0, insert: "X" },
+        userEvent: "input",
+      });
+    });
+
+    await waitFor(() => expect(writeDocument).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const root = document.querySelector("[data-file-preview-root='true']");
+      expect(root?.getAttribute("data-document-revision")).toBe("sha256:after-save");
+      expect(root?.getAttribute("data-file-annotation-model-ready")).toBe("true");
+      expect(document.querySelector(".cm-annotation-mark[data-annotation-id='ann-alpha']")?.textContent).toBe("Alpha");
+      expect(document.querySelector("[data-markdown-annotation-overlay-marker='true'][data-annotation-id='ann-alpha']")).not.toBeNull();
+    });
+    await act(async () => {
+      resolveDraftSnapshot(parseCanonicalMarkdownSnapshot({
+        surface: "file",
+        documentId: "file:ws-1:README.md",
+        revision: "draft:after-edit",
+        source: "X# Title\n\nAlpha paragraph.",
+        rendererProfile: "file-preview",
+      }));
+      await draftSnapshot;
+    });
   });
 
   it("renders source connectors and keeps split connector ownership on the right preview only", async () => {

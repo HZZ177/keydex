@@ -62,6 +62,9 @@ export function useUnifiedAnnotationSession({
       ? markdownModel ? createMarkdownTextModel(source, documentRevision, markdownModel) : null
       : createPlainTextModel(source, documentRevision);
   }, [available, documentRevision, kind, markdownModel, source]);
+  const resolutionRevision = model?.kind === "markdown"
+    ? model.markdownSnapshotRevision ?? model.revision.textRevision
+    : model?.revision.textRevision ?? null;
   const store = useMemo(() => createAnnotationStore(), []);
   const state = useStore(store, (value) => value);
   const sourceAdapter = useMemo(() => new SourceAnnotationAdapter(), []);
@@ -127,17 +130,23 @@ export function useUnifiedAnnotationSession({
   }, [markdownAdapter, mode, sourceAdapter, state.panelOpen]);
 
   useEffect(() => {
-    setGeometry({});
-    setSelections({});
-    setLanePlacements([]);
-    setRailRevealRequest(null);
     if (!available || !model || !path || !workspaceId || !actions) {
       store.getState().dispose();
       return;
     }
     store.getState().setDocument({ model, path, workspaceId });
-    void actions.load();
   }, [actions, available, model, path, store, workspaceId]);
+
+  useEffect(() => {
+    setGeometry({});
+    setSelections({});
+    setLanePlacements([]);
+    setRailRevealRequest(null);
+    if (!available || !resolutionRevision || !path || !workspaceId || !actions) {
+      return;
+    }
+    void actions.load();
+  }, [actions, available, path, resolutionRevision, workspaceId]);
 
   useEffect(() => {
     if (!available || !model || !path || !workspaceId) return;
@@ -159,16 +168,24 @@ export function useUnifiedAnnotationSession({
     store.getState().dispose();
   }, [actions, markdownAdapter, navigator, registry, sourceAdapter, store]);
 
-  const markers = useMemo<readonly AnnotationRenderMarker[]>(() => {
-    const persistent = state.resolutions.resolved.map((item) => ({
+  const persistentMarkers = useMemo<readonly AnnotationRenderMarker[]>(() => Object.freeze(
+    state.resolutions.resolved.map((item) => Object.freeze({
       annotationId: item.record.id,
       blockRanges: item.projection.blockRanges,
       logicalRange: item.projection.logicalRange,
       sourceRanges: item.projection.sourceRanges,
-    }));
-    const interactionMarker = interactionRenderMarker(state.interaction, model);
-    return Object.freeze(interactionMarker ? [...persistent, interactionMarker] : persistent);
-  }, [model, state.interaction, state.resolutions.resolved]);
+    })),
+  ), [state.resolutions.resolved]);
+  const interactionMarker = useMemo(
+    () => interactionRenderMarker(state.interaction, model),
+    [model, state.interaction],
+  );
+  const markers = useMemo<readonly AnnotationRenderMarker[]>(
+    () => interactionMarker
+      ? Object.freeze([...persistentMarkers, interactionMarker])
+      : persistentMarkers,
+    [interactionMarker, persistentMarkers],
+  );
   const renderState = useMemo<AnnotationRenderState>(() => Object.freeze({
     activeAnnotationId: state.activeAnnotationId,
     flashAnnotationId: state.flashAnnotationId,

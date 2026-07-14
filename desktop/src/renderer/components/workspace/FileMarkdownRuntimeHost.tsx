@@ -120,7 +120,7 @@ export interface FileMarkdownRuntimeHostProps {
     revision: string;
     signal: AbortSignal;
   }) => Promise<MarkdownSnapshot>;
-  readonly onSnapshot?: (snapshot: MarkdownSnapshot) => void;
+  readonly onSnapshot?: (snapshot: MarkdownSnapshot, source: string) => void;
   readonly onOutlineChange?: (outline: MarkdownSnapshot["outline"]) => void;
   readonly onError?: (error: Error | null) => void;
   readonly onRender?: () => void;
@@ -493,7 +493,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         host.dataset.markdownRuntimeCompleteness = "canonical";
         setError(null);
         props.onError?.(null);
-        props.onSnapshot?.(snapshot);
+        props.onSnapshot?.(snapshot, props.source);
         props.onOutlineChange?.(snapshot.outline);
         scheduleFeatureInstall();
       }).catch((reason) => {
@@ -561,13 +561,14 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
       if (!state || !loadSnapshot) return;
       lastRequestedLoadRef.current = loadKey;
       state.revision = props.revision;
+      const loadSource = props.source;
       const loadSequence = ++state.loadSequence;
       const controller = new AbortController();
       let active = true;
       const loadStartedAt = performance.now();
 
       void loadSnapshot({
-        source: props.source,
+        source: loadSource,
         revision: props.revision,
         signal: controller.signal,
       }).then(async (snapshot) => {
@@ -594,7 +595,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         state.view.host.dataset.markdownRuntimeCompleteness = "canonical";
         setError(null);
         propsRef.current.onError?.(null);
-        propsRef.current.onSnapshot?.(snapshot);
+        propsRef.current.onSnapshot?.(snapshot, loadSource);
         propsRef.current.onOutlineChange?.(snapshot.outline);
         state.scheduleFeatureInstall?.();
       }).catch((reason) => {

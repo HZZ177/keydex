@@ -290,12 +290,14 @@ export function FilePreview({
   const previewLoading = immediateContent === null ? loading : false;
   const [error, setError] = useState<string | null>(null);
   const [markdownRuntimeSnapshot, setMarkdownRuntimeSnapshot] = useState<MarkdownSnapshot | null>(null);
+  const [markdownRuntimeSource, setMarkdownRuntimeSource] = useState<string | null>(null);
   const [markdownRuntimeError, setMarkdownRuntimeError] = useState<Error | null>(null);
   const [markdownRuntimeFindIndex, setMarkdownRuntimeFindIndex] = useState<RuntimeMarkdownFindIndex | null>(null);
   const [markdownRuntimeSelection, setMarkdownRuntimeSelection] = useState<MarkdownProjectedSelection | null>(null);
   const [runtimeMermaidPreviewCode, setRuntimeMermaidPreviewCode] = useState<string | null>(null);
-  const publishMarkdownRuntimeSnapshot = useCallback((snapshot: MarkdownSnapshot | null) => {
+  const publishMarkdownRuntimeSnapshot = useCallback((snapshot: MarkdownSnapshot, source: string) => {
     setMarkdownRuntimeSnapshot(snapshot);
+    setMarkdownRuntimeSource(source);
     const scrollTop = pendingScrollRestoreRef.current;
     if (scrollTop === null) {
       return;
@@ -989,6 +991,9 @@ export function FilePreview({
     }), [markdownRuntimePath, markdownRuntimeWorkspaceId, markdownViewDescriptor, previewContext?.activeScopeKey, providerMarkdownViewDescriptor]);
   useEffect(() => {
     setMarkdownRuntimeSnapshot(null);
+    setMarkdownRuntimeSource(null);
+  }, [kind, markdownRuntimePath]);
+  useEffect(() => {
     setMarkdownRuntimeError(null);
     setMarkdownRuntimeFindIndex(null);
     setMarkdownRuntimeSelection(null);
@@ -1036,7 +1041,9 @@ export function FilePreview({
     mode: annotationMode,
     path: annotationPath,
     runtime: runtime?.annotations ?? null,
-    source: formattedSource,
+    source: kind === "markdown" && markdownRuntimeSource !== null
+      ? markdownRuntimeSource
+      : formattedSource,
     workspaceId: workspaceId ?? null,
   });
   const annotationNotificationError = annotationSession.state.error || annotationSession.state.navigation.error;
