@@ -17,6 +17,19 @@ def test_plan_progress_prompt_defines_usage_and_lifecycle() -> None:
     assert "不要创建计划" in PLAN_PROGRESS_PROMPT
     assert "开始下一步骤前立即再次调用 `update_plan`" in PLAN_PROGRESS_PROMPT
     assert "不应遗留 `pending` 或 `in_progress`" in PLAN_PROGRESS_PROMPT
+    assert "计划状态属于当前 session" in PLAN_PROGRESS_PROMPT
+    assert "新的完整数组替换上一份计划" in PLAN_PROGRESS_PROMPT
+    assert "已经 `completed` 或 `failed` 的步骤" in PLAN_PROGRESS_PROMPT
+    assert "步骤完成不代表它不再相关" in PLAN_PROGRESS_PROMPT
+    assert "不得仅因步骤已经完成而将其省略" in PLAN_PROGRESS_PROMPT
+    assert "被取消、被替代或确认不再需要执行" in PLAN_PROGRESS_PROMPT
+    assert "全部步骤正常完成时，保留完整计划" in PLAN_PROGRESS_PROMPT
+    assert "不要发送" in PLAN_PROGRESS_PROMPT
+    assert "旧计划被明确放弃" in PLAN_PROGRESS_PROMPT
+    assert "空数组是有效的完整快照" in PLAN_PROGRESS_PROMPT
+    assert "用户开启明显无关的新任务时" in PLAN_PROGRESS_PROMPT
+    assert "新任务不需要计划" in PLAN_PROGRESS_PROMPT
+    assert "这不算为简单任务" in PLAN_PROGRESS_PROMPT
 
 
 def test_claude_file_edit_prompt_matches_tool_set() -> None:

@@ -966,6 +966,45 @@ def test_message_event_service_restores_update_plan_ui_payload(tmp_path) -> None
     }
 
 
+def test_message_event_service_preserves_empty_plan_snapshot_when_details_deferred(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_plan_empty_start",
+        "tool_start",
+        {
+            "tool": "update_plan",
+            "params": {"plan": []},
+            "run_id": "tool_plan_empty",
+        },
+    )
+    _append(
+        repositories,
+        "evt_plan_empty_end",
+        "tool_end",
+        {
+            "run_id": "tool_plan_empty",
+            "result": "",
+            "ui_payload": {
+                "explanation": "当前不再需要计划",
+                "entries": [],
+            },
+        },
+    )
+
+    messages = service.get_display_messages("ses_history", include_tool_details=False)
+
+    assert messages[0]["toolName"] == "update_plan"
+    assert messages[0]["uiPayload"] == {
+        "entries": [],
+        "explanation": "当前不再需要计划",
+    }
+
+
 def test_message_event_service_restores_thread_task_tool_summary_when_details_deferred(
     tmp_path,
 ) -> None:

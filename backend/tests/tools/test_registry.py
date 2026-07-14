@@ -205,6 +205,23 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
     assert "简单问答" in specs["update_plan"].description
     assert "开始下一步骤前立即再次调用本工具" in specs["update_plan"].description
     assert "最终回复前不得遗留 pending 或 in_progress" in specs["update_plan"].description
+    assert "计划状态属于整个 session" in specs["update_plan"].description
+    assert "新数组会完整替换旧计划" in specs["update_plan"].description
+    assert "已经 completed 或 failed 的步骤" in specs["update_plan"].description
+    assert "步骤完成不代表它不再相关" in specs["update_plan"].description
+    assert "不得仅因步骤已经完成而将其省略" in specs["update_plan"].description
+    assert "被取消、被替代或确认不再需要执行" in specs["update_plan"].description
+    assert "全部步骤正常完成时应保留完整计划" in specs["update_plan"].description
+    assert "不要发送 plan: []" in specs["update_plan"].description
+    assert "旧计划被明确放弃" in specs["update_plan"].description
+    assert "发送空数组 plan: []" in specs["update_plan"].description
+    assert "用户开启明显无关的新任务时" in specs["update_plan"].description
+    assert "不要让旧计划继续残留" in specs["update_plan"].description
+    assert "action" not in specs["update_plan"].parameters["properties"]
+    plan_item_schema = specs["update_plan"].parameters["properties"]["plan"]["items"]
+    assert "action" not in plan_item_schema["properties"]
+    assert plan_item_schema["required"] == ["step", "status"]
+    assert plan_item_schema["additionalProperties"] is False
     assert specs["update_thread_task"].parameters["properties"]["status"]["enum"] == [
         "complete",
         "blocked",

@@ -2086,8 +2086,9 @@ describe("WorkbenchAssistantSurface", () => {
       </WorkbenchSurfaceTestProviders>,
     );
 
-    expect(await screen.findByTestId("plan-summary-pill")).not.toBeNull();
-    expect(screen.getByText(/第 1 \/ 1 步 · 复用主对话面板/)).not.toBeNull();
+    expect((await screen.findByTestId("plan-summary-pill")).textContent).toBe("1/1 步");
+    expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
+    expect(screen.getByTestId("plan-summary-card").textContent).toContain("复用主对话面板");
   });
 
   it("renders shared file-change accessory data from Agent messages", async () => {

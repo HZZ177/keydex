@@ -1289,7 +1289,9 @@ describe("AppRouter", () => {
     });
 
     const planPill = await screen.findByTestId("plan-summary-pill", undefined, { timeout: 10000 });
-    expect(within(planPill).getByText(/补充状态胶囊/)).not.toBeNull();
+    expect(planPill.textContent).toBe("2/2 步");
+    expect(within(planPill).queryByText(/补充状态胶囊/)).toBeNull();
+    expect(screen.getByTestId("plan-summary-card").textContent).toContain("补充状态胶囊");
     expect(screen.getByRole("button", { name: "展开工作台输入框" })).not.toBeNull();
   });
 

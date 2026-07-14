@@ -44,7 +44,11 @@ import {
   type TurnFileChangeItem,
   type TurnFileChangeSummary,
 } from "./turnFileChangeSummary";
-import { buildActiveTurnPlanSummary, type TurnPlanEntry, type TurnPlanSummary } from "./turnPlanSummary";
+import {
+  buildSessionPlanSummary,
+  type SessionPlanEntry,
+  type SessionPlanSummary,
+} from "./sessionPlanSummary";
 
 type ThreadTaskUpdatePayload = {
   objective?: string | null;
@@ -104,7 +108,7 @@ export function ConversationComposerAccessory({
 }) {
   const runtimeTypingMetrics = useRuntimeTypingMetrics();
   const fileChangeSummary = useMemo(() => buildActiveTurnFileChangeSummary(messages), [messages]);
-  const planSummary = useMemo(() => buildActiveTurnPlanSummary(messages), [messages]);
+  const planSummary = useMemo(() => buildSessionPlanSummary(messages), [messages]);
   const activeTurnHasMcpTool = useMemo(() => activeTurnContainsMcpTool(messages), [messages]);
   const activeTaskRunning = Boolean(
     activeTask && runningTaskRun && runningTaskRun.task_id === activeTask.id && runningTaskRun.status === "running",
@@ -168,14 +172,6 @@ export function ConversationComposerAccessory({
         node: <TurnFileChangePill summary={fileChangeSummary} onFilePreview={onFilePreview} />,
       },
       {
-        id: "turn-plan-summary",
-        active: Boolean(planSummary),
-        description: planSummary ? planMenuDescription(planSummary) : "暂无计划",
-        label: "计划",
-        priority: 80,
-        node: planSummary ? <TurnPlanPill summary={planSummary} /> : null,
-      },
-      {
         id: "runtime-typing-speed",
         active: true,
         description: "打字速度和待输出字符",
@@ -200,7 +196,6 @@ export function ConversationComposerAccessory({
       onPendingInputReorder,
       onUpdateTask,
       pendingInputs,
-      planSummary,
       runtimeTypingMetrics.backlog,
       runtimeTypingMetrics.speed,
     ],
@@ -244,14 +239,29 @@ export function ConversationComposerAccessory({
 
   return (
     <div className={styles.composerAccessoryBar} aria-label="输入框状态">
-      <span className={styles.composerAccessoryItem} data-selected-item={selectedItem.id}>
-        <span className={styles.accessoryShell} data-selected-item={selectedItem.id}>
+      <span
+        className={styles.composerAccessoryItem}
+        data-has-plan={planSummary ? "true" : "false"}
+        data-selected-item={selectedItem.id}
+      >
+        <span
+          className={styles.accessoryShell}
+          data-has-plan={planSummary ? "true" : "false"}
+          data-selected-item={selectedItem.id}
+        >
+          {planSummary ? (
+            <span className={styles.persistentPlanSlot} data-testid="persistent-plan-slot">
+              <SessionPlanPill summary={planSummary} />
+            </span>
+          ) : null}
           <ComposerAccessorySwitcher
             items={accessoryItems}
             selectedItemId={selectedItem.id}
             onSelect={setManualSelectedId}
           />
-          <span className={styles.accessoryContent}>{selectedItem.node}</span>
+          <span className={styles.accessoryContent} data-testid="composer-accessory-content">
+            {selectedItem.node}
+          </span>
         </span>
       </span>
       {showScrollButton ? (
@@ -1293,34 +1303,45 @@ function TurnFileChangePill({
   );
 }
 
-function TurnPlanPill({ summary }: { summary: TurnPlanSummary }) {
+function SessionPlanPill({ summary }: { summary: SessionPlanSummary }) {
   const activeStepNumber = Math.min(summary.activeIndex + 1, summary.totalCount);
-  const activeContent = summary.activeEntry?.content ?? "计划已同步";
   const activeStatus = summary.activeEntry?.status ?? "completed";
+  const progress = summary.totalCount > 0 ? activeStepNumber / summary.totalCount : 0;
+  const progressOffset = Math.max(0, 100 - progress * 100);
 
   return (
     <div className={styles.planPillWrap}>
-      <span className={`${styles.typingSpeedPill} ${styles.planSummaryPill}`} data-testid="plan-summary-pill">
-        <span className={styles.planSummaryIcon} data-status={activeStatus} aria-hidden="true">
-          {activeStatus === "failed" ? (
-            <CircleX size={13} />
-          ) : activeStatus === "completed" ? (
-            <CircleCheck size={13} />
-          ) : activeStatus === "in_progress" ? (
-            <LoaderCircle className={styles.planStatusLoading} size={13} />
-          ) : (
-            <Circle size={13} />
-          )}
-        </span>
+      <span
+        className={styles.planSummaryPill}
+        data-testid="plan-summary-pill"
+        aria-label={`计划进度 ${activeStepNumber}/${summary.totalCount} 步`}
+      >
+        <svg
+          className={styles.planProgressRing}
+          data-status={activeStatus}
+          data-testid="plan-progress-ring"
+          viewBox="0 0 16 16"
+          aria-hidden="true"
+        >
+          <circle className={styles.planProgressTrack} cx="8" cy="8" r="6" pathLength="100" />
+          <circle
+            className={styles.planProgressValue}
+            cx="8"
+            cy="8"
+            r="6"
+            pathLength="100"
+            strokeDasharray="100"
+            strokeDashoffset={progressOffset}
+          />
+        </svg>
         <span className={styles.planSummaryText}>
-          第 {activeStepNumber} / {summary.totalCount} 步 · {activeContent}
-          {activeStatus === "failed" ? " · 失败" : ""}
+          {activeStepNumber}/{summary.totalCount} 步
         </span>
       </span>
       <div className={styles.planHoverCard} role="tooltip" data-testid="plan-summary-card">
         <ol className={styles.planList} aria-label="当前计划">
           {summary.entries.map((entry, index) => (
-            <TurnPlanRow entry={entry} key={`${entry.status}-${index}-${entry.content}`} />
+            <SessionPlanRow entry={entry} key={`${entry.status}-${index}-${entry.content}`} />
           ))}
         </ol>
       </div>
@@ -1328,7 +1349,7 @@ function TurnPlanPill({ summary }: { summary: TurnPlanSummary }) {
   );
 }
 
-function TurnPlanRow({ entry }: { entry: TurnPlanEntry }) {
+function SessionPlanRow({ entry }: { entry: SessionPlanEntry }) {
   return (
     <li className={styles.planRow} data-status={entry.status}>
       <span className={styles.planStatusIcon} aria-hidden="true">
@@ -1347,11 +1368,6 @@ function TurnPlanRow({ entry }: { entry: TurnPlanEntry }) {
       </span>
     </li>
   );
-}
-
-function planMenuDescription(summary: TurnPlanSummary): string {
-  const completed = `${summary.completedCount}/${summary.totalCount} 已完成`;
-  return summary.failedCount > 0 ? `${completed}，${summary.failedCount} 失败` : completed;
 }
 
 function threadTaskMenuDescription(task: ThreadTask, running: boolean): string {

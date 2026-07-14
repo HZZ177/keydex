@@ -7,6 +7,7 @@ from backend.app.tools.registry import ToolRegistry
 
 PlanStatus = Literal["pending", "in_progress", "completed", "failed"]
 VALID_PLAN_STATUSES: set[str] = {"pending", "in_progress", "completed", "failed"}
+_PLAN_ENTRY_FIELDS = {"step", "content", "status"}
 
 
 def create_plan_tools() -> list[FunctionTool]:
@@ -14,7 +15,8 @@ def create_plan_tools() -> list[FunctionTool]:
         FunctionTool(
             name="update_plan",
             description=(
-                "创建或更新当前任务的完整执行计划，并向用户同步真实进度。"
+                "创建或更新当前 session 的执行计划，并向用户同步真实进度。"
+                "计划状态属于整个 session，不会因为用户发送下一条消息而自动清除。"
                 "对预计需要至少 3 个有意义动作、包含多项用户要求、涉及多个文件或资源、"
                 "存在先后依赖或需要先调研再实施的任务，应主动使用本工具；"
                 "简单问答、单条命令、一个局部小修改或能够立即完成的任务不要使用。"
@@ -27,7 +29,17 @@ def create_plan_tools() -> list[FunctionTool]:
                 "任务范围变化时，发送调整后的完整计划并通过 explanation 说明原因。"
                 "任何时候最多只能有一个步骤处于 in_progress。"
                 "最终回复前不得遗留 pending 或 in_progress；"
-                "全部完成时应将所有步骤标记为 completed。"
+                "全部完成时应将所有步骤标记为 completed；完成态计划仍保留在当前 session。"
+                "每次调用提供的新数组会完整替换旧计划。属于当前任务范围的所有步骤，包括"
+                "已经 completed 或 failed 的步骤，都必须继续保留在后续完整快照中。"
+                "步骤完成不代表它不再相关，不得仅因步骤已经完成而将其省略。"
+                "只有任务范围发生变化，某个步骤被取消、被替代或确认不再需要执行时，"
+                "才从下一份完整快照中省略该步骤。"
+                "全部步骤正常完成时应保留完整计划并标记为 completed，不要发送 plan: []。"
+                "只有旧计划被明确放弃，或用户切换到无需计划的无关新任务且当前没有新计划时，"
+                "才发送空数组 plan: []；空数组是有效的完整快照，会把当前计划更新为空。"
+                "用户开启明显无关的新任务时，不要让旧计划继续残留：新任务需要计划就直接"
+                "发送新计划完整快照，新任务无需计划就在开始工作前发送 plan: []。"
             ),
             parameters={
                 "type": "object",
@@ -41,7 +53,12 @@ def create_plan_tools() -> list[FunctionTool]:
                     },
                     "plan": {
                         "type": "array",
-                        "description": "当前任务的完整计划快照，不是本次发生变化的局部步骤。",
+                        "description": (
+                            "当前 session 的最新完整步骤快照，不是局部变化；本数组会完整替换"
+                            "上一份计划。当前任务范围内的步骤即使已经 completed 或 failed 也要"
+                            "继续保留；只有被取消、被替代或确认无需执行的步骤才从新快照省略。"
+                            "旧计划被明确放弃且当前没有新计划时可传空数组 []。"
+                        ),
                         "items": {
                             "type": "object",
                             "properties": {
@@ -52,9 +69,11 @@ def create_plan_tools() -> list[FunctionTool]:
                                 "status": {
                                     "type": "string",
                                     "enum": ["pending", "in_progress", "completed", "failed"],
+                                    "description": "步骤当前状态。",
                                 },
                             },
                             "required": ["step", "status"],
+                            "additionalProperties": False,
                         },
                     },
                 },
@@ -76,8 +95,8 @@ async def update_plan_tool(
     context: ToolExecutionContext,
 ) -> dict[str, Any]:
     raw_plan = args.get("plan")
-    entries = _normalize_plan(raw_plan)
     explanation = _optional_text(args.get("explanation"))
+    entries = _normalize_plan(raw_plan)
     completed = sum(1 for entry in entries if entry["status"] == "completed")
     failed = sum(1 for entry in entries if entry["status"] == "failed")
     active = next((entry["content"] for entry in entries if entry["status"] == "in_progress"), None)
@@ -93,12 +112,23 @@ async def update_plan_tool(
             "计划已同步，但仍有 pending 步骤且当前没有 in_progress。"
             "继续工作前请再次调用 update_plan，将下一步骤设为 in_progress。"
         )
-    else:
+    elif entries:
         model_guidance = (
             "计划已同步，当前没有 pending 或 in_progress 步骤。"
             "如果任务已经结束，可以进行最终回复；如果仍有工作，请先更新计划。"
         )
+    else:
+        model_guidance = (
+            "计划已同步，当前计划为空。没有需要跟踪的复杂工作时可以继续或最终回复；"
+            "如果仍有复杂工作，请先发送新的完整计划。"
+        )
 
+    summary = {
+        "total": len(entries),
+        "completed": completed,
+        "failed": failed,
+        "active": active,
+    }
     ui_payload = {
         "explanation": explanation,
         "entries": entries,
@@ -108,12 +138,7 @@ async def update_plan_tool(
         "plan": [{"step": entry["content"], "status": entry["status"]} for entry in entries],
         "entries": entries,
         "ui_payload": ui_payload,
-        "summary": {
-            "total": len(entries),
-            "completed": completed,
-            "failed": failed,
-            "active": active,
-        },
+        "summary": summary,
         "model_guidance": model_guidance,
         "session_id": context.session_id,
         "turn_index": context.turn_index,
@@ -121,8 +146,8 @@ async def update_plan_tool(
 
 
 def _normalize_plan(raw_plan: Any) -> list[dict[str, PlanStatus]]:
-    if not isinstance(raw_plan, list) or not raw_plan:
-        raise ToolExecutionError("plan 必须是非空数组", code="invalid_tool_args")
+    if not isinstance(raw_plan, list):
+        raise ToolExecutionError("plan 必须是数组", code="invalid_tool_args")
 
     entries: list[dict[str, PlanStatus]] = []
     active_count = 0
@@ -133,11 +158,19 @@ def _normalize_plan(raw_plan: Any) -> list[dict[str, PlanStatus]]:
                 code="invalid_tool_args",
                 details={"index": index},
             )
+        unsupported_fields = sorted(set(raw_entry) - _PLAN_ENTRY_FIELDS)
+        if unsupported_fields:
+            raise ToolExecutionError(
+                "plan 步骤包含不支持的字段",
+                code="invalid_tool_args",
+                details={"index": index, "fields": unsupported_fields},
+            )
         content = _required_text(raw_entry.get("step", raw_entry.get("content")), index=index)
         status = _normalize_status(raw_entry.get("status"), index=index)
         if status == "in_progress":
             active_count += 1
-        entries.append({"content": content, "status": status})
+        entry = {"content": content, "status": status}
+        entries.append(entry)
 
     if active_count > 1:
         raise ToolExecutionError(

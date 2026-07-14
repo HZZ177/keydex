@@ -57,6 +57,60 @@ async def test_update_plan_tool_creates_plan_ui_payload(tmp_path) -> None:
     assert result.result["turn_index"] == 3
 
 
+async def test_update_plan_tool_returns_only_steps_in_replacement_snapshot(tmp_path) -> None:
+    result = await _run(
+        {
+            "explanation": "移除不再需要的步骤",
+            "plan": [
+                {"step": "保留已完成分析", "status": "completed"},
+                {"step": "继续验证", "status": "in_progress"},
+            ],
+        },
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert result.result["plan"] == [
+        {"step": "保留已完成分析", "status": "completed"},
+        {"step": "继续验证", "status": "in_progress"},
+    ]
+    assert result.result["ui_payload"] == {
+        "explanation": "移除不再需要的步骤",
+        "entries": [
+            {"content": "保留已完成分析", "status": "completed"},
+            {"content": "继续验证", "status": "in_progress"},
+        ],
+    }
+    assert result.result["summary"] == {
+        "total": 2,
+        "completed": 1,
+        "failed": 0,
+        "active": "继续验证",
+    }
+
+
+async def test_update_plan_tool_accepts_empty_replacement_snapshot(tmp_path) -> None:
+    result = await _run(
+        {"explanation": "当前不再需要计划", "plan": []},
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert result.result["plan"] == []
+    assert result.result["entries"] == []
+    assert result.result["ui_payload"] == {
+        "explanation": "当前不再需要计划",
+        "entries": [],
+    }
+    assert result.result["summary"] == {
+        "total": 0,
+        "completed": 0,
+        "failed": 0,
+        "active": None,
+    }
+    assert "当前计划为空" in result.result["model_guidance"]
+
+
 async def test_update_plan_tool_accepts_content_alias_for_history_payload(tmp_path) -> None:
     result = await _run(
         {
@@ -123,8 +177,26 @@ async def test_update_plan_tool_rejects_multiple_active_steps(tmp_path) -> None:
     assert result.error["code"] == "invalid_plan_state"
 
 
-async def test_update_plan_tool_rejects_empty_plan(tmp_path) -> None:
-    result = await _run({"plan": []}, tmp_path)
+async def test_update_plan_tool_requires_status_for_every_step(tmp_path) -> None:
+    result = await _run(
+        {
+            "plan": [{"step": "缺少状态"}],
+        },
+        tmp_path,
+    )
+
+    assert result.ok is False
+    assert result.error["code"] == "invalid_plan_status"
+
+
+async def test_update_plan_tool_rejects_unsupported_step_fields(tmp_path) -> None:
+    result = await _run(
+        {
+            "plan": [{"step": "实现功能", "status": "pending", "note": "额外字段"}],
+        },
+        tmp_path,
+    )
 
     assert result.ok is False
     assert result.error["code"] == "invalid_tool_args"
+    assert result.error["details"] == {"index": 0, "fields": ["note"]}

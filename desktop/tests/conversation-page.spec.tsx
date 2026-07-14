@@ -1342,7 +1342,7 @@ describe("ConversationPage", () => {
     expect(screen.getByTestId("typing-speed-pill").textContent).toBe("打字机 0 字符/s - 待输出 0 字");
   });
 
-  it("restores persisted update_plan into the composer accessory plan panel", async () => {
+  it("restores a session plan and keeps it across the next user message", async () => {
     const { runtime } = fakeRuntime({
       history: [
         historyMessage("user", "梳理计划"),
@@ -1363,10 +1363,11 @@ describe("ConversationPage", () => {
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     const pill = await screen.findByTestId("plan-summary-pill");
-    expect(pill.textContent).toContain("第 2 / 3 步");
-    expect(pill.textContent).toContain("实现计划胶囊面板");
-    expect(screen.queryByTestId("typing-speed-pill")).toBeNull();
+    expect(pill.textContent).toBe("2/3 步");
+    expect(pill.textContent).not.toContain("实现计划胶囊面板");
+    expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
     expect(screen.getByTestId("plan-summary-card").textContent).not.toContain("把计划同步到胶囊");
+    expect(screen.getByTestId("plan-summary-card").textContent).toContain("实现计划胶囊面板");
     expect(screen.getByTestId("plan-summary-card").textContent).toContain("补充回归测试");
 
     typeComposer("继续");
@@ -1374,9 +1375,81 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByLabelText("发送"));
 
     await waitFor(() => {
-      expect(screen.queryByTestId("plan-summary-pill")).toBeNull();
+      expect(screen.getByTestId("plan-summary-pill").textContent).toBe("2/3 步");
     });
     expect(screen.getByTestId("typing-speed-pill").textContent).toBe("打字机 0 字符/s - 待输出 0 字");
+  });
+
+  it("removes an omitted session plan step from a streaming replacement snapshot", async () => {
+    const { runtime, emit } = fakeRuntime({
+      history: [
+        historyMessage("user", "执行旧任务"),
+        historyMessage("tool", "", {
+          toolName: "update_plan",
+          status: "completed",
+          uiPayload: {
+            entries: [
+              { content: "移除旧任务步骤", status: "completed" },
+              { content: "保留验证步骤", status: "in_progress" },
+            ],
+          },
+        }),
+        historyMessage("user", "改为处理无关的小问题"),
+      ],
+    });
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    expect((await screen.findByTestId("plan-summary-pill")).textContent).toBe("2/2 步");
+
+    await act(async () => {
+      emit(agentEvent("tool_start", {
+        id: "evt-plan-replace",
+        session_id: "ses-1",
+        run_id: "run-plan-replace",
+        tool_name: "update_plan",
+        params: {
+          plan: [
+            { step: "保留验证步骤", status: "in_progress" },
+          ],
+        },
+      }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("plan-summary-pill").textContent).toBe("1/1 步");
+    });
+    expect(screen.getByTestId("plan-summary-card").textContent).not.toContain("移除旧任务步骤");
+    expect(screen.getByTestId("plan-summary-card").textContent).toContain("保留验证步骤");
+    expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
+  });
+
+  it("does not restore an older session plan after an empty replacement snapshot", async () => {
+    const { runtime } = fakeRuntime({
+      history: [
+        historyMessage("user", "执行旧任务"),
+        historyMessage("tool", "", {
+          toolName: "update_plan",
+          status: "completed",
+          uiPayload: {
+            entries: [{ content: "旧任务步骤", status: "completed" }],
+          },
+        }),
+        historyMessage("user", "切换任务"),
+        historyMessage("tool", "", {
+          toolName: "update_plan",
+          status: "completed",
+          uiPayload: {
+            entries: [],
+          },
+        }),
+        historyMessage("assistant", "已切换"),
+      ],
+    });
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await readyComposer();
+    expect(screen.queryByTestId("plan-summary-pill")).toBeNull();
+    expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
   });
 
   it("shows streaming update_plan arguments in the composer accessory plan panel", async () => {
@@ -1400,9 +1473,11 @@ describe("ConversationPage", () => {
     });
 
     const pill = await screen.findByTestId("plan-summary-pill");
-    expect(pill.textContent).toContain("第 2 / 2 步");
-    expect(pill.textContent).toContain("渲染胶囊计划");
+    expect(pill.textContent).toBe("2/2 步");
+    expect(pill.textContent).not.toContain("渲染胶囊计划");
+    expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
     expect(screen.getByTestId("plan-summary-card").textContent).toContain("确认计划入口");
+    expect(screen.getByTestId("plan-summary-card").textContent).toContain("渲染胶囊计划");
   });
 
   it("shows failed update_plan steps in the composer accessory plan panel", async () => {
@@ -1425,12 +1500,14 @@ describe("ConversationPage", () => {
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     const pill = await screen.findByTestId("plan-summary-pill");
-    expect(pill.textContent).toContain("第 2 / 3 步");
-    expect(pill.textContent).toContain("执行集成测试");
-    expect(pill.textContent).toContain("失败");
+    expect(pill.textContent).toBe("2/3 步");
+    expect(pill.textContent).not.toContain("执行集成测试");
+    expect(screen.getByTestId("plan-progress-ring").dataset.status).toBe("failed");
+    expect(screen.getByTestId("plan-summary-card").textContent).toContain("执行集成测试");
 
     fireEvent.click(screen.getByLabelText("切换胶囊信息"));
-    expect(screen.getByRole("menuitemradio", { name: /1\/3 已完成，1 失败/ })).not.toBeNull();
+    expect(screen.queryByRole("menuitemradio", { name: /计划/ })).toBeNull();
+    expect(screen.getByRole("menuitemradio", { name: /打字机/ })).not.toBeNull();
   });
 
   it("shows a later completed update_plan step over an earlier failed step", async () => {
@@ -1453,10 +1530,61 @@ describe("ConversationPage", () => {
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     const pill = await screen.findByTestId("plan-summary-pill");
-    expect(pill.textContent).toContain("第 3 / 3 步");
-    expect(pill.textContent).toContain("执行集成测试");
-    expect(pill.textContent).not.toContain("失败");
+    expect(pill.textContent).toBe("3/3 步");
+    expect(pill.textContent).not.toContain("执行集成测试");
+    expect(screen.getByTestId("plan-progress-ring").dataset.status).toBe("completed");
     expect(screen.getByTestId("plan-summary-card").textContent).toContain("编写单元测试");
+    expect(screen.getByTestId("plan-summary-card").textContent).toContain("执行集成测试");
+  });
+
+  it("keeps a compact plan beside the active composer accessory item", async () => {
+    const { runtime } = fakeRuntime({
+      history: [
+        historyMessage("user", "按计划修改文件"),
+        historyMessage("tool", "", {
+          toolName: "update_plan",
+          status: "completed",
+          uiPayload: {
+            entries: [
+              { content: "分析胶囊结构", status: "completed" },
+              { content: "实现双槽布局", status: "in_progress" },
+              { content: "验证交互行为", status: "pending" },
+            ],
+          },
+        }),
+        historyMessage("tool", "", {
+          toolName: "apply_patch",
+          toolParams: { path: "desktop/src/App.tsx" },
+          fileChanges: [
+            {
+              path: "desktop/src/App.tsx",
+              operation: "update",
+              additions: 12,
+              deletions: 3,
+            },
+          ],
+          status: "completed",
+        }),
+      ],
+    });
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    const planSlot = await screen.findByTestId("persistent-plan-slot");
+    const contentSlot = screen.getByTestId("composer-accessory-content");
+    expect(screen.getByTestId("plan-summary-pill").textContent).toBe("2/3 步");
+    expect(screen.getByTestId("file-change-summary-pill").textContent).toContain("+12");
+    expect(
+      Boolean(planSlot.compareDocumentPosition(contentSlot) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true);
+
+    fireEvent.click(screen.getByLabelText("切换胶囊信息"));
+    expect(screen.queryByRole("menuitemradio", { name: /计划/ })).toBeNull();
+    expect(screen.getByRole("menuitemradio", { name: /文件变更/ })).not.toBeNull();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /打字机/ }));
+
+    expect(screen.getByTestId("plan-summary-pill").textContent).toBe("2/3 步");
+    expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
+    expect(screen.queryByTestId("file-change-summary-pill")).toBeNull();
   });
 
   it("excludes failed file changes from composer accessory totals", async () => {

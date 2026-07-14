@@ -153,7 +153,7 @@ describe("ConversationComposerAccessory thread task", () => {
     expect(previewIds()).toEqual(["pending-threshold-1", "pending-threshold-2", "pending-threshold-3"]);
   });
 
-  it("selects the active thread task before plan summaries", () => {
+  it("shows the compact plan beside an active thread task", () => {
     const view = render(
       <ConversationComposerAccessory
         messages={[planMessage()]}
@@ -169,10 +169,10 @@ describe("ConversationComposerAccessory thread task", () => {
     );
     expect(screen.getByTestId("thread-task-pill").textContent).toContain("完成目标面板");
     expect(screen.getByTestId("thread-task-pill").textContent).toContain("1小时1分");
-    expect(screen.queryByTestId("plan-summary-pill")).toBeNull();
+    expect(screen.getByTestId("plan-summary-pill").textContent).toBe("1/2 步");
   });
 
-  it("falls back to the plan item when the active thread task disappears", () => {
+  it("keeps the compact plan and falls back to typing when the active thread task disappears", () => {
     const props = {
       messages: [planMessage()],
       showScrollToBottom: false,
@@ -189,9 +189,10 @@ describe("ConversationComposerAccessory thread task", () => {
     view.rerender(<ConversationComposerAccessory {...props} activeTask={null} />);
 
     expect(view.container.querySelector("[data-selected-item]")?.getAttribute("data-selected-item")).toBe(
-      "turn-plan-summary",
+      "runtime-typing-speed",
     );
-    expect(screen.getByTestId("plan-summary-pill").textContent).toContain("第 1 / 2 步");
+    expect(screen.getByTestId("plan-summary-pill").textContent).toBe("1/2 步");
+    expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
     expect(screen.queryByTestId("thread-task-pill")).toBeNull();
   });
 

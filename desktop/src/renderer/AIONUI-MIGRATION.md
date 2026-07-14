@@ -31,7 +31,7 @@ Modified for Keydex.
 | SendBox | `packages/desktop/src/renderer/components/chat/SendBox/index.tsx` | 参考自动高度、IME、发送/停止、slash、@ 文件菜单；删除语音、BTW、DOM snippet |
 | MessageList | `packages/desktop/src/renderer/pages/conversation/Messages/MessageList.tsx` | 参考自动滚动、手动上滚检测、滚动到底按钮、hover action row，以及多段 AI 回复只在末尾显示动作行；消息正文不再额外创建内部滚动条 |
 | Thinking | `packages/desktop/src/renderer/pages/conversation/Messages/components/MessageThinking.tsx` | 参考折叠、计时、running/done/failed 状态；按 runtime event 时序内联在正文流里，以幽灵面板呈现 |
-| 计划胶囊 | `packages/desktop/src/renderer/pages/conversation/ComposerAccessory.tsx` | 参考 Keydex 胶囊 To do list 展开效果；本项目通过正式 `update_plan` 工具事件驱动，计划只在胶囊面板展示，不再占用正文消息流 |
+| 计划胶囊 | `packages/desktop/src/renderer/pages/conversation/ComposerAccessory.tsx` | 参考 Keydex 胶囊 To do list 展开效果；本项目通过正式 `update_plan` 工具事件驱动 session 级计划。有计划时左侧固定显示圆环与 `x/x 步` 的短槽，右侧继续显示文件变更、目标、待发送等当前组件，切换菜单不再包含计划。每次更新用完整数组替换旧计划；当前任务内已完成/失败的步骤继续保留，只有被取消、替代或确认无需执行的步骤才省略。空数组仅表示旧计划被明确放弃且当前没有新计划；计划不占用正文消息流 |
 | 工具组摘要 | `packages/desktop/src/renderer/pages/conversation/Messages/components/MessageToolGroupSummary.tsx` | 参考工具步骤列表、状态点、运行态 breathing 和详情展开；本项目从现有 runtime message payload 生成 compact summary |
 | Preview 面板 | `packages/desktop/src/renderer/pages/conversation/Preview/components/PreviewPanel`、`MarkdownViewer`、`HTMLViewer`、`DiffViewer` | 参考模式切换、源码/预览分屏、工具栏、Markdown/HTML/Diff 专用渲染和轻量多标签历史；删除快照版本、编辑保存、HTML inspect 等重功能 |
 | 右侧侧栏 | Keydex 右侧工作区/预览面板与 AionUi PreviewPanel 经验 | 工作区和预览作为对话页右侧 in-flow side rail，不再使用窄小 fixed 弹窗 |
@@ -83,7 +83,7 @@ Modified for Keydex.
 - 真实模型流式输出。
 - 正式 tools schema 注入与真实工具执行事件；不把模型输出的 `<tool_call>` 文本伪装成已执行工具。
 - thinking / reasoning 折叠行。
-- `update_plan` 工具驱动的计划步骤卡片，支持完成/进行中/待处理状态和展开折叠。
+- `update_plan` 工具驱动的 session 级计划胶囊，支持完成/进行中/待处理/失败状态和展开折叠；后续用户消息不会自动清掉计划。更新提交完整替换快照，当前任务内已完成/失败的步骤继续保留；只有被取消、替代或确认无需执行的步骤才省略。全部步骤正常完成时保留完整完成态计划，`plan: []` 只用于明确放弃旧计划且当前没有新计划的场景。
 - 工具、命令、diff、审批的低噪音内联块；连续工具/文件组在折叠态也显示 compact step summary。
 - 消息复制/时间行默认低噪音隐藏，hover/focus 时显现；多段 AI 回复只在一轮末尾显示一次。
 - OpenAI-compatible Provider 设置、刷新、搜索选择和健康检查。

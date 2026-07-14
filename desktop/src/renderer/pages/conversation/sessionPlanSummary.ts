@@ -2,38 +2,76 @@ import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
 export type PlanStatus = "pending" | "in_progress" | "completed" | "failed";
 
-export interface TurnPlanEntry {
+export interface SessionPlanEntry {
   content: string;
   status: PlanStatus;
 }
 
-export interface TurnPlanSummary {
-  activeEntry: TurnPlanEntry | null;
+export interface SessionPlanSummary {
+  activeEntry: SessionPlanEntry | null;
   activeIndex: number;
   completedCount: number;
-  entries: TurnPlanEntry[];
+  entries: SessionPlanEntry[];
   explanation: string | null;
   failedCount: number;
   totalCount: number;
 }
 
-export function buildActiveTurnPlanSummary(messages: ConversationMessage[]): TurnPlanSummary | null {
-  const lastUserIndex = messages.findLastIndex((message) => message.kind === "user");
-  const turnMessages = messages.slice(lastUserIndex + 1);
-  for (let index = turnMessages.length - 1; index >= 0; index -= 1) {
-    const message = turnMessages[index];
+type PlanSnapshotResolution =
+  | { found: false; summary: null }
+  | { found: true; summary: SessionPlanSummary | null };
+
+export function buildSessionPlanSummary(messages: ConversationMessage[]): SessionPlanSummary | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
     if (message.kind !== "plan" || message.status === "failed") {
       continue;
     }
-    const summary = planSummaryFromMessage(message);
-    if (summary) {
-      return summary;
+    const resolution = resolvePlanSnapshot(message);
+    if (resolution.found) {
+      return resolution.summary;
     }
   }
   return null;
 }
 
-export function planSummaryFromMessage(message: ConversationMessage): TurnPlanSummary | null {
+export function planSummaryFromMessage(message: ConversationMessage): SessionPlanSummary | null {
+  return resolvePlanSnapshot(message).summary;
+}
+
+function resolvePlanSnapshot(message: ConversationMessage): PlanSnapshotResolution {
+  const sources = planPayloadSources(message);
+
+  for (const source of sources) {
+    const rawEntries = rawEntriesFromSource(source);
+    if (rawEntries === null) {
+      continue;
+    }
+    const entries = rawEntries.map(normalizeEntry).filter((entry): entry is SessionPlanEntry => Boolean(entry));
+    if (!entries.length) {
+      return { found: true, summary: null };
+    }
+    const completedCount = entries.filter((entry) => entry.status === "completed").length;
+    const failedCount = entries.filter((entry) => entry.status === "failed").length;
+    const activeIndex = activePlanEntryIndex(entries);
+    return {
+      found: true,
+      summary: {
+        activeEntry: entries[activeIndex] ?? null,
+        activeIndex,
+        completedCount,
+        entries,
+        explanation: stringValue(source.explanation),
+        failedCount,
+        totalCount: entries.length,
+      },
+    };
+  }
+
+  return { found: false, summary: null };
+}
+
+function planPayloadSources(message: ConversationMessage): Record<string, unknown>[] {
   const payload = message.payload;
   const directUiPayload = asRecord(payload.ui_payload) ?? asRecord(payload.uiPayload);
   const result = asRecord(payload.result);
@@ -43,7 +81,7 @@ export function planSummaryFromMessage(message: ConversationMessage): TurnPlanSu
   const outputResult = asRecord(outputData?.result);
   const call = asRecord(payload.call);
   const callArguments = parseMaybeJson(call?.arguments);
-  const sources = [
+  return [
     nestedUiPayload,
     directUiPayload,
     resultUiPayload,
@@ -52,30 +90,9 @@ export function planSummaryFromMessage(message: ConversationMessage): TurnPlanSu
     asRecord(payload),
     callArguments,
   ].filter((source): source is Record<string, unknown> => Boolean(source));
-
-  for (const source of sources) {
-    const entries = entriesFromSource(source);
-    if (!entries.length) {
-      continue;
-    }
-    const completedCount = entries.filter((entry) => entry.status === "completed").length;
-    const failedCount = entries.filter((entry) => entry.status === "failed").length;
-    const activeIndex = activePlanEntryIndex(entries);
-    return {
-      activeEntry: entries[activeIndex] ?? null,
-      activeIndex,
-      completedCount,
-      entries,
-      explanation: stringValue(source.explanation),
-      failedCount,
-      totalCount: entries.length,
-    };
-  }
-
-  return null;
 }
 
-export function activePlanEntryIndex(entries: TurnPlanEntry[]): number {
+export function activePlanEntryIndex(entries: SessionPlanEntry[]): number {
   if (!entries.length) {
     return -1;
   }
@@ -87,19 +104,18 @@ export function activePlanEntryIndex(entries: TurnPlanEntry[]): number {
   return 0;
 }
 
-function entriesFromSource(source: Record<string, unknown>): TurnPlanEntry[] {
+function rawEntriesFromSource(source: Record<string, unknown>): unknown[] | null {
   const nested = asRecord(source.ui_payload) ?? asRecord(source.uiPayload);
-  const rawEntries = Array.isArray(source.entries)
-    ? source.entries
-    : Array.isArray(source.plan)
-      ? source.plan
-      : nested
-        ? entriesFromSource(nested)
-        : [];
-  return rawEntries.map(normalizeEntry).filter((entry): entry is TurnPlanEntry => Boolean(entry));
+  if (Array.isArray(source.entries)) {
+    return source.entries;
+  }
+  if (Array.isArray(source.plan)) {
+    return source.plan;
+  }
+  return nested ? rawEntriesFromSource(nested) : null;
 }
 
-function normalizeEntry(value: unknown): TurnPlanEntry | null {
+function normalizeEntry(value: unknown): SessionPlanEntry | null {
   const record = asRecord(value);
   if (!record) {
     return null;
