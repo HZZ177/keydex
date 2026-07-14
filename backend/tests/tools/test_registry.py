@@ -201,6 +201,10 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
     assert "*** Move to: <path>" in specs["apply_patch"].description
     assert "run_command" not in specs
     assert "最多只能有一个步骤处于 in_progress" in specs["update_plan"].description
+    assert "应主动使用本工具" in specs["update_plan"].description
+    assert "简单问答" in specs["update_plan"].description
+    assert "开始下一步骤前立即再次调用本工具" in specs["update_plan"].description
+    assert "最终回复前不得遗留 pending 或 in_progress" in specs["update_plan"].description
     assert specs["update_thread_task"].parameters["properties"]["status"]["enum"] == [
         "complete",
         "blocked",

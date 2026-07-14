@@ -51,6 +51,8 @@ async def test_update_plan_tool_creates_plan_ui_payload(tmp_path) -> None:
         "failed": 1,
         "active": "实现工具",
     }
+    assert "继续执行当前 in_progress 步骤“实现工具”" in result.result["model_guidance"]
+    assert "在开始下一步骤前再次调用 update_plan" in result.result["model_guidance"]
     assert result.result["session_id"] == "ses_plan"
     assert result.result["turn_index"] == 3
 
@@ -75,6 +77,25 @@ async def test_update_plan_tool_accepts_content_alias_for_history_payload(tmp_pa
         "content": "验证结果",
         "status": "completed",
     }
+    assert "当前没有 pending 或 in_progress 步骤" in result.result["model_guidance"]
+
+
+async def test_update_plan_tool_prompts_for_active_step_when_only_pending_remains(
+    tmp_path,
+) -> None:
+    result = await _run(
+        {
+            "plan": [
+                {"step": "分析需求", "status": "completed"},
+                {"step": "验证结果", "status": "pending"},
+            ],
+        },
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert "仍有 pending 步骤且当前没有 in_progress" in result.result["model_guidance"]
+    assert "将下一步骤设为 in_progress" in result.result["model_guidance"]
 
 
 async def test_update_plan_tool_rejects_invalid_status(tmp_path) -> None:

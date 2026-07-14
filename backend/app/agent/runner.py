@@ -18,7 +18,11 @@ from backend.app.agent.runtime_settings import (
     default_agent_runtime_settings,
 )
 from backend.app.agent.state import KeydexAgentState
-from backend.app.agent.system_prompt import DEFAULT_SYSTEM_PROMPT, build_file_edit_prompt_section
+from backend.app.agent.system_prompt import (
+    DEFAULT_SYSTEM_PROMPT,
+    PLAN_PROGRESS_PROMPT,
+    build_file_edit_prompt_section,
+)
 from backend.app.command_approval import load_command_settings
 from backend.app.core.logger import logger
 from backend.app.keydex.skills import SkillCatalog, build_skill_index
@@ -158,6 +162,17 @@ class AgentRunner:
             system_prompt if system_prompt is not None else self.default_system_prompt
         )
         prompt = resolved_system_prompt.strip() if resolved_system_prompt else ""
+        available_tool_names = {
+            str(getattr(tool, "name", "") or "")
+            for tool in tools
+            if str(getattr(tool, "name", "") or "")
+        }
+        if "update_plan" in available_tool_names:
+            prompt = (
+                f"{prompt}\n\n{PLAN_PROGRESS_PROMPT}"
+                if prompt
+                else PLAN_PROGRESS_PROMPT
+            )
         if enable_tools:
             file_edit_prompt = build_file_edit_prompt_section(
                 runtime_settings.file_edit_tool_style

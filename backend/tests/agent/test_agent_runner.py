@@ -304,6 +304,48 @@ def test_agent_runner_can_disable_registered_tools(tmp_path) -> None:
     assert factory.created_tool_counts == [0]
 
 
+def test_agent_runner_appends_plan_prompt_when_update_plan_is_available(tmp_path) -> None:
+    runner, factory = _runner(tmp_path, registry=create_default_tool_registry())
+
+    runner.create_agent(
+        model="qwen-coder",
+        system_prompt="自定义提示",
+        tool_context=ToolExecutionContext(
+            session_id="ses_1",
+            user_id="user_1",
+            workspace_root=tmp_path,
+            turn_index=1,
+            trace_id="trace_1",
+        ),
+    )
+
+    prompt = factory.created_system_prompts[-1]
+    assert prompt.startswith("自定义提示")
+    assert "## 计划与进度" in prompt
+    assert "最终回复前检查计划" in prompt
+
+
+def test_agent_runner_omits_plan_prompt_when_tools_are_disabled(tmp_path) -> None:
+    runner, factory = _runner(tmp_path, registry=create_default_tool_registry())
+
+    runner.create_agent(
+        model="qwen-coder",
+        system_prompt="自定义提示",
+        tool_context=ToolExecutionContext(
+            session_id="ses_1",
+            user_id="user_1",
+            workspace_root=tmp_path,
+            turn_index=1,
+            trace_id="trace_1",
+        ),
+        enable_tools=False,
+    )
+
+    prompt = factory.created_system_prompts[-1]
+    assert prompt.startswith("自定义提示")
+    assert "## 计划与进度" not in prompt
+
+
 def test_agent_runner_keeps_file_tools_visible_when_file_access_disabled(tmp_path) -> None:
     runner, factory = _runner(tmp_path, registry=_file_tool_registry())
 
