@@ -38,6 +38,7 @@ include = ["backend*"]
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 asyncio_mode = "auto"
+markers = ["performance: bounded file-history scale tests"]
 
 [tool.ruff]
 line-length = 100

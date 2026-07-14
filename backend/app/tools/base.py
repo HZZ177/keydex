@@ -6,10 +6,13 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from backend.app.core.logger import logger, redact_sensitive
 from backend.app.model import ToolSpec
+
+if TYPE_CHECKING:
+    from backend.app.services.file_history_service import FileHistoryService
 
 _TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _MAX_ARG_PREVIEW_CHARS = 160
@@ -42,10 +45,36 @@ class ToolExecutionContext:
     workspace_root: Path
     turn_index: int
     trace_id: str | None = None
+    active_session_id: str | None = None
+    assistant_message_id: str | None = None
+    input_file_snapshot_id: str | None = None
+    file_history_service: FileHistoryService | None = None
+    file_history_tracking: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace_root", Path(self.workspace_root).resolve())
+
+    @property
+    def tool_call_id(self) -> str | None:
+        value = str(self.metadata.get("tool_call_id") or "").strip()
+        return value or None
+
+    def require_file_history(self) -> tuple[FileHistoryService, str]:
+        """Return turn-scoped history dependencies or a stable explicit error."""
+
+        if not self.file_history_tracking:
+            raise ToolExecutionError(
+                "当前工具执行上下文明确未启用文件历史",
+                code="file_history_untracked",
+            )
+        if self.file_history_service is None or not self.input_file_snapshot_id:
+            raise ToolExecutionError(
+                "受控文件工具缺少当前轮文件历史上下文",
+                code="file_history_context_missing",
+                details={"session_id": self.session_id, "turn_index": self.turn_index},
+            )
+        return self.file_history_service, self.input_file_snapshot_id
 
 
 @dataclass(frozen=True)

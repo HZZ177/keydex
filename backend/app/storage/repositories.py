@@ -541,6 +541,8 @@ class TraceRecord:
     user_message_preview: str | None = None
     input_checkpoint_id: str | None = None
     input_checkpoint_ns: str | None = None
+    input_file_snapshot_id: str | None = None
+    input_file_snapshot_status: str | None = None
     output_checkpoint_id: str | None = None
     output_checkpoint_ns: str | None = None
     metadata: dict[str, Any] | None = None
@@ -5863,6 +5865,25 @@ class TraceRecordsRepository:
             row = conn.execute(query, params).fetchone()
         return self._from_row(row) if row else None
 
+    def set_input_file_snapshot(
+        self,
+        trace_id: str,
+        *,
+        snapshot_id: str | None,
+        status: str,
+    ) -> TraceRecord | None:
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                update trace_record
+                   set input_file_snapshot_id = ?, input_file_snapshot_status = ?,
+                       updated_at = ?
+                 where trace_id = ? and is_deleted = 0
+                """,
+                (snapshot_id, status, to_iso_z(utc_now()), trace_id),
+            )
+        return self.get(trace_id)
+
     def list_by_session(self, session_id: str) -> list[TraceRecord]:
         with self.db.connect() as conn:
             rows = conn.execute(
@@ -5968,6 +5989,8 @@ class TraceRecordsRepository:
             user_message_preview=row["user_message_preview"],
             input_checkpoint_id=row["input_checkpoint_id"],
             input_checkpoint_ns=row["input_checkpoint_ns"],
+            input_file_snapshot_id=row["input_file_snapshot_id"],
+            input_file_snapshot_status=row["input_file_snapshot_status"],
             output_checkpoint_id=row["output_checkpoint_id"],
             output_checkpoint_ns=row["output_checkpoint_ns"],
             metadata=_json_loads(row["metadata_json"], {}),
@@ -7131,6 +7154,7 @@ class StorageRepositories:
 
     def __init__(self, db: Database) -> None:
         from backend.app.annotations.repository import WorkspaceAnnotationsRepository
+        from backend.app.storage.file_history_repository import FileHistoryRepository
 
         self.db = db
         self.mcp_servers = McpServersRepository(db)
@@ -7163,6 +7187,7 @@ class StorageRepositories:
         self.trace_records = TraceRecordsRepository(db)
         self.trace_event_logs = TraceEventLogsRepository(db)
         self.llm_request_logs = LLMRequestLogsRepository(db)
+        self.file_history = FileHistoryRepository(db)
 
 
 def legacy_model_provider_from_settings(value: dict[str, Any]) -> ModelProviderRecord | None:

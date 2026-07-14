@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from collections.abc import AsyncIterator
@@ -88,6 +89,8 @@ class DelayedSSEStream(httpx.AsyncByteStream):
 
 def _chat_chunks(payload: dict[str, Any]) -> list[str]:
     user_message = _last_user_message(payload)
+    if "e2e-rewind-" in user_message.lower():
+        return _rewind_fixture_chunks(payload, user_message)
     if "PendingInputEcho" in user_message:
         return _content_chunks(
             payload,
@@ -175,6 +178,188 @@ def _chat_chunks(payload: dict[str, Any]) -> list[str]:
         "最终检查点：Markdown、代码块和长文本已经完整显示。"
     )
     return _content_chunks(payload, markdown, usage={"prompt_tokens": 11, "completion_tokens": 38})
+
+
+def _rewind_fixture_chunks(payload: dict[str, Any], user_message: str) -> list[str]:
+    """Drive rewind E2E fixtures through the same controlled tools as a real turn."""
+
+    if _has_tool_message(payload):
+        return _content_chunks(
+            payload,
+            f"e2e-rewind fixture completed: {_scenario_marker(user_message)}",
+            usage={"prompt_tokens": 18, "completion_tokens": 10},
+        )
+    scenario = user_message.lower()
+    if "no-code" in scenario or scenario.endswith("-anchor"):
+        return _content_chunks(
+            payload,
+            f"e2e-rewind conversation anchor: {_scenario_marker(user_message)}",
+            usage={"prompt_tokens": 12, "completion_tokens": 8},
+        )
+    if "running" in scenario:
+        chunks = [
+            _chat_sse(
+                payload,
+                delta={"reasoning_content": f"e2e-rewind running checkpoint {index + 1}/80。"},
+            )
+            for index in range(80)
+        ]
+        chunks.extend(
+            _content_chunks(
+                payload,
+                "e2e-rewind running fixture completed.",
+                usage={"prompt_tokens": 12, "completion_tokens": 8},
+            )
+        )
+        return chunks
+
+    tool_name, arguments = _rewind_tool_call(payload, user_message)
+    if not tool_name:
+        available = ", ".join(_payload_tool_names(payload)) or "none"
+        return _content_chunks(
+            payload,
+            f"e2e-rewind tool unavailable. available tools: {available}",
+            usage={"prompt_tokens": 12, "completion_tokens": 10},
+        )
+    return [
+        _chat_sse(
+            payload,
+            delta={"reasoning_content": f"e2e-rewind fixture is calling {tool_name}."},
+        ),
+        _chat_sse(
+            payload,
+            delta={
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": (
+                            "call_e2e_rewind_"
+                            + hashlib.sha256(user_message.encode("utf-8")).hexdigest()[:16]
+                        ),
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(
+                                arguments,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                        },
+                    }
+                ]
+            },
+            finish_reason="tool_calls",
+        ),
+        _sse_done(),
+    ]
+
+
+def _rewind_tool_call(
+    payload: dict[str, Any],
+    user_message: str,
+) -> tuple[str, dict[str, Any]]:
+    scenario = user_message.lower()
+    available = set(_payload_tool_names(payload))
+    if "cycle-struct-recreate" in scenario:
+        arguments = {"path": "cycle-struct.txt", "content": "STRUCT V2\n"}
+        return ("create_file", arguments) if "create_file" in available else ("", {})
+    if "cycle-struct-delete" in scenario:
+        return (
+            ("delete_file", {"path": "cycle-struct.txt"})
+            if "delete_file" in available
+            else ("", {})
+        )
+    if "cycle-struct-create" in scenario:
+        arguments = {"path": "cycle-struct.txt", "content": "STRUCT V1\n"}
+        return ("create_file", arguments) if "create_file" in available else ("", {})
+    if "multi-patch" in scenario or "apply-patch" in scenario:
+        patch = (
+            "*** Begin Patch\n"
+            "*** Add File: a.txt\n"
+            "+A created by e2e-rewind\n"
+            "*** Add File: extra-1.txt\n"
+            "+extra 1\n"
+            "*** Add File: extra-2.txt\n"
+            "+extra 2\n"
+            "*** Add File: extra-3.txt\n"
+            "+extra 3\n"
+            "*** Add File: extra-4.txt\n"
+            "+extra 4\n"
+            "*** Add File: extra-5.txt\n"
+            "+extra 5\n"
+            "*** Add File: extra-6.txt\n"
+            "+extra 6\n"
+            "*** Add File: extra-7.txt\n"
+            "+extra 7\n"
+            "*** Add File: extra-8.txt\n"
+            "+extra 8\n"
+            "*** Update File: b.txt\n"
+            "@@\n"
+            "-B before\n"
+            "+B after\n"
+            "*** Delete File: c.txt\n"
+            "*** End Patch"
+        )
+        return ("apply_patch", {"patch": patch}) if "apply_patch" in available else ("", {})
+    if "delete" in scenario:
+        return (
+            ("delete_file", {"path": "delete-me.txt"})
+            if "delete_file" in available
+            else ("", {})
+        )
+    if "move" in scenario:
+        arguments = {"path": "source.txt", "new_path": "nested/target.txt"}
+        return ("move_file", arguments) if "move_file" in available else ("", {})
+    if "create" in scenario:
+        arguments = {"path": "created.txt", "content": "created by e2e-rewind\n"}
+        return ("create_file", arguments) if "create_file" in available else ("", {})
+
+    explicit = re.search(
+        r"e2e-rewind-write-(?P<path>[a-z0-9_.-]+)-(?P<old>[a-z0-9_.-]+)-to-(?P<new>[a-z0-9_.-]+)",
+        scenario,
+    )
+    if explicit:
+        path_alias = explicit.group("path")
+        path = path_alias if "." in path_alias else f"{path_alias}.txt"
+        old_marker = explicit.group("old")
+        new_marker = explicit.group("new")
+        old_string = "" if old_marker == "missing" else f"{old_marker.upper()}\n"
+        return _rewind_edit_tool_call(
+            available,
+            path=path,
+            old_string=old_string,
+            new_string=f"{new_marker.upper()}\n",
+        )
+
+    match = re.search(r"e2e-rewind-(?:both|code|conversation)-([a-z])\b", scenario)
+    if match:
+        marker = match.group(1).upper()
+        previous = "" if marker == "A" else f"{chr(ord(marker) - 1)}\n"
+        return _rewind_edit_tool_call(
+            available,
+            path="main.txt",
+            old_string=previous,
+            new_string=f"{marker}\n",
+        )
+    return "", {}
+
+
+def _rewind_edit_tool_call(
+    available: set[str],
+    *,
+    path: str,
+    old_string: str,
+    new_string: str,
+) -> tuple[str, dict[str, Any]]:
+    if "edit_file" in available:
+        return "edit_file", {
+            "path": path,
+            "old_string": old_string,
+            "new_string": new_string,
+        }
+    if not old_string and "create_file" in available:
+        return "create_file", {"path": path, "content": new_string}
+    return "", {}
 
 
 def _command_runtime_chunks(payload: dict[str, Any], user_message: str) -> list[str]:

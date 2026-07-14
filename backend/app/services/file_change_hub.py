@@ -165,6 +165,29 @@ def coalesce_file_changes(
     return FileChangeBatch(changes=merged)
 
 
+def _normalize_unordered_watcher_batch(changes: list[FileChange]) -> list[FileChange]:
+    """Treat add+delete for one path as an atomic replace.
+
+    ``watchfiles`` yields a set, so the order between those two raw events is not
+    meaningful. Normalizing before the order-sensitive coalescer keeps local and
+    workspace subscribers deterministic.
+    """
+
+    kinds_by_path: dict[str, set[FileChangeKind]] = {}
+    for change in changes:
+        kinds_by_path.setdefault(change.path, set()).add(change.kind)
+    atomic_replaces = {
+        path
+        for path, kinds in kinds_by_path.items()
+        if "added" in kinds and "deleted" in kinds
+    }
+    if not atomic_replaces:
+        return changes
+    normalized = [change for change in changes if change.path not in atomic_replaces]
+    normalized.extend(FileChange("modified", path) for path in sorted(atomic_replaces))
+    return normalized
+
+
 class FileChangeHub:
     def __init__(
         self,
@@ -183,8 +206,44 @@ class FileChangeHub:
         self._local_subscriptions: dict[
             tuple[FileChangeSubscriber, str], _LocalFileSubscription
         ] = {}
+        self._published_operation_phases: dict[tuple[str, str], None] = {}
         self._lock = asyncio.Lock()
         self._closed = False
+
+    async def publish_operation_changes(
+        self,
+        workspace_id: str,
+        operation_id: str,
+        changes: Iterable[FileChange] = (),
+        *,
+        phase: str = "complete",
+        resync_required: bool = False,
+    ) -> bool:
+        """Publish one deduplicated restore/compensation result to existing watchers."""
+
+        key = (operation_id.strip(), phase.strip())
+        if not key[0] or not key[1]:
+            raise ValueError("operation_id 和 phase 不能为空")
+        async with self._lock:
+            self._ensure_open()
+            if key in self._published_operation_phases:
+                return False
+            self._published_operation_phases[key] = None
+            while len(self._published_operation_phases) > 2048:
+                self._published_operation_phases.pop(next(iter(self._published_operation_phases)))
+        batch = coalesce_file_changes(changes)
+        if not batch.changes and not resync_required:
+            return True
+        failed = await self._broadcast_workspace(
+            workspace_id,
+            FileChangeBatch(
+                changes=batch.changes,
+                resync_required=resync_required or batch.resync_required,
+            ),
+        )
+        for subscriber in failed:
+            await self.unsubscribe_all(subscriber)
+        return True
 
     async def subscribe_workspace(
         self,
@@ -330,7 +389,7 @@ class FileChangeHub:
                     continue
                 if not should_ignore_workspace_path(relative):
                     normalized.append(FileChange(kind=kind, path=relative))
-            batch = coalesce_file_changes(normalized)
+            batch = coalesce_file_changes(_normalize_unordered_watcher_batch(normalized))
             if batch.changes or batch.resync_required:
                 failed.update(await self._broadcast_workspace(workspace_id, batch))
 
@@ -349,7 +408,7 @@ class FileChangeHub:
                             path=str(subscription.path),
                         )
                     )
-            batch = coalesce_file_changes(normalized)
+            batch = coalesce_file_changes(_normalize_unordered_watcher_batch(normalized))
             if batch.changes or batch.resync_required:
                 if not await self._broadcast_local(subscription, batch):
                     failed.add(subscription.subscriber)
@@ -396,6 +455,7 @@ class FileChangeHub:
             self._workspace_root_keys.clear()
             self._workspace_sequences.clear()
             self._local_subscriptions.clear()
+            self._published_operation_phases.clear()
             for watched in roots:
                 watched.stop_event.set()
             tasks = [watched.task for watched in roots if watched.task is not None]

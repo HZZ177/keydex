@@ -783,14 +783,11 @@ describe("ConversationPage", () => {
       .fn()
       .mockResolvedValueOnce(historyResponse(session, initialHistory))
       .mockResolvedValue(historyResponse(session, []));
-    const reverseSession = vi.fn().mockResolvedValue({
-      session,
-      source: branchSource({ message_event_id: "evt-user-1", checkpoint_id: null }),
-    });
+    const executeSessionReverse = vi.fn().mockResolvedValue(reverseResult({ restored_input: "历史问题" }));
     const { runtime } = fakeRuntime({
       session,
       loadHistory,
-      reverseSession,
+      executeSessionReverse,
     });
 
     renderConversationWithNotifications(
@@ -799,13 +796,20 @@ describe("ConversationPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "回溯到此处" }));
 
-    expect(reverseSession).not.toHaveBeenCalled();
-    expect(await screen.findByRole("dialog", { name: "确认回溯到此处？" })).not.toBeNull();
+    expect(executeSessionReverse).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog", { name: "回溯到此处" });
     expect(screen.getAllByText("历史问题").length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "确认回溯" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "回溯到此处" }));
 
     await waitFor(() => {
-      expect(reverseSession).toHaveBeenCalledWith("ses-1", { messageEventId: "evt-user-1" });
+      expect(executeSessionReverse).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({
+          message_event_id: "evt-user-1",
+          mode: "conversation",
+          decision: "full",
+        }),
+      );
       expect(navigateToConversation).not.toHaveBeenCalled();
       expect(loadHistory).toHaveBeenCalledTimes(2);
     });
@@ -906,16 +910,11 @@ describe("ConversationPage", () => {
       .fn()
       .mockResolvedValueOnce(historyResponse(session, initialHistory))
       .mockResolvedValue(historyResponse(session, []));
-    const reverseSession = vi.fn().mockResolvedValue({
-      session,
-      source: branchSource({ message_event_id: "evt-user-1", checkpoint_id: null }),
-    });
     const chat = vi.fn();
     const { runtime } = fakeRuntime({
       session,
       chat,
       loadHistory,
-      reverseSession,
       workspaceListSkills: vi.fn().mockResolvedValue({
         workspace_root: "D:/repo",
         fingerprint: "test-fingerprint",
@@ -936,7 +935,8 @@ describe("ConversationPage", () => {
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "回溯到此处" }));
-    fireEvent.click(await screen.findByRole("button", { name: "确认回溯" }));
+    const reverseDialog = await screen.findByRole("dialog", { name: "回溯到此处" });
+    fireEvent.click(await within(reverseDialog).findByRole("button", { name: "回溯到此处" }));
 
     const dock = await screen.findByTestId("conversation-composer");
     await waitFor(() => {
@@ -990,25 +990,26 @@ describe("ConversationPage", () => {
     expect(JSON.stringify(payload.runtime_params.message_injection)).toContain("README.md");
   });
 
-  it("shows reverse failure copy with a reverse-specific prefix", async () => {
+  it("shows a product-facing message when a rewind cannot be completed", async () => {
     const session = agentSession({ id: "ses-1", title: "源会话" });
-    const reverseSession = vi.fn().mockRejectedValue({
+    const executeSessionReverse = vi.fn().mockRejectedValue({
       detail: { message: "该轮缺少输入前 checkpoint，不能安全回退" },
     });
     const { runtime } = fakeRuntime({
       session,
       history: [historyMessage("user", "历史问题", { messageEventId: "evt-user-1" })],
-      reverseSession,
+      executeSessionReverse,
     });
 
     renderConversationWithNotifications(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "回溯到此处" }));
-    fireEvent.click(await screen.findByRole("button", { name: "确认回溯" }));
+    const dialog = await screen.findByRole("dialog", { name: "回溯到此处" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: "回溯到此处" }));
 
-    expect((await screen.findByRole("alert")).textContent).toContain(
-      "回溯失败：该轮缺少输入前 checkpoint，不能安全回退",
-    );
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("暂时无法完成回溯，请稍后重试");
+    expect((await screen.findByTestId("notification-item")).textContent).toContain("暂时无法完成回溯，请稍后重试");
+    expect(document.body.textContent).not.toContain("checkpoint");
   });
 
   it("renders command approval as the composer instead of a conversation message", async () => {
@@ -3100,6 +3101,45 @@ async function waitSendEnabled() {
   });
 }
 
+function reversePreview(
+  overrides: Partial<Awaited<ReturnType<RuntimeBridge["conversation"]["previewSessionReverse"]>>> = {},
+) {
+  return {
+    operation_id: "operation-1",
+    source: {},
+    conversation_available: true,
+    code_available: false,
+    default_mode: "conversation" as const,
+    snapshot_id: null,
+    preview_token: "preview-token-1",
+    files: [],
+    insertions: 0,
+    deletions: 0,
+    warnings: [],
+    ...overrides,
+  };
+}
+
+function reverseResult(
+  overrides: Partial<Awaited<ReturnType<RuntimeBridge["conversation"]["executeSessionReverse"]>>> = {},
+) {
+  return {
+    operation_id: "operation-1",
+    status: "full" as const,
+    mode: "conversation" as const,
+    decision: "full" as const,
+    conversation_rewound: true,
+    restored_files: [],
+    skipped_files: [],
+    forced_files: [],
+    failed_files: [],
+    restored_input: null,
+    source: {},
+    error_code: null,
+    ...overrides,
+  };
+}
+
 function fakeRuntime({
   history = [],
   session = agentSession(),
@@ -3116,6 +3156,16 @@ function fakeRuntime({
     session,
     source: branchSource(),
   }),
+  previewSessionReverse = vi.fn().mockResolvedValue(reversePreview()),
+  executeSessionReverse = vi.fn().mockResolvedValue(reverseResult()),
+  getSessionReverseStatus = vi.fn().mockResolvedValue({
+    operation_id: "operation-1",
+    status: "failed",
+    result: null,
+    error_code: null,
+    blocked_paths: [],
+  }),
+  getSession = vi.fn().mockResolvedValue(session),
   compressContext = vi.fn().mockResolvedValue(undefined),
   updateSession = vi.fn().mockImplementation((_sessionId: string, patch: Partial<AgentSession>) =>
     Promise.resolve({ ...session, ...patch }),
@@ -3143,6 +3193,10 @@ function fakeRuntime({
   cancel?: ReturnType<typeof vi.fn>;
   forkSession?: ReturnType<typeof vi.fn>;
   reverseSession?: ReturnType<typeof vi.fn>;
+  previewSessionReverse?: ReturnType<typeof vi.fn>;
+  executeSessionReverse?: ReturnType<typeof vi.fn>;
+  getSessionReverseStatus?: ReturnType<typeof vi.fn>;
+  getSession?: ReturnType<typeof vi.fn>;
   compressContext?: ReturnType<typeof vi.fn>;
   updateSession?: ReturnType<typeof vi.fn>;
   deleteSession?: ReturnType<typeof vi.fn>;
@@ -3177,6 +3231,10 @@ function fakeRuntime({
     conversation: {
       forkSession,
       reverseSession,
+      previewSessionReverse,
+      executeSessionReverse,
+      getSessionReverseStatus,
+      getSession,
       compressContext,
       updateSession,
       deleteSession,

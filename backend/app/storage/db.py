@@ -756,6 +756,8 @@ create table if not exists trace_record (
   user_message_preview text,
   input_checkpoint_id text,
   input_checkpoint_ns text,
+  input_file_snapshot_id text,
+  input_file_snapshot_status text,
   output_checkpoint_id text,
   output_checkpoint_ns text,
   metadata_json text,
@@ -773,6 +775,251 @@ create index if not exists idx_trace_record_session_turn_created_at
   on trace_record(session_id, turn_index, created_at);
 create index if not exists idx_trace_record_agg
   on trace_record(scene_id, scene_version_seq, end_time, status, user_id, created_at);
+
+create table if not exists file_history_session_state (
+  session_id text primary key,
+  active_snapshot_id text,
+  next_sequence integer not null default 1 check (next_sequence >= 1),
+  state text not null default 'ready'
+    check (state in ('ready', 'disabled', 'degraded', 'blocked')),
+  blocked_reason text,
+  revision integer not null default 0 check (revision >= 0),
+  created_at text not null,
+  updated_at text not null,
+  foreign key(session_id) references sessions(id) on delete cascade
+);
+
+create table if not exists file_history_snapshots (
+  id text primary key,
+  session_id text not null,
+  active_session_id text,
+  trace_id text,
+  user_message_event_id text,
+  parent_snapshot_id text,
+  kind text not null check (kind in ('input', 'restore_result')),
+  sequence integer not null check (sequence >= 1),
+  workspace_root text not null,
+  workspace_identity text not null,
+  status text not null
+    check (status in ('pending', 'ready', 'failed', 'superseded')),
+  error_code text,
+  created_at text not null,
+  updated_at text not null,
+  foreign key(session_id) references sessions(id) on delete cascade,
+  foreign key(parent_snapshot_id) references file_history_snapshots(id) on delete set null,
+  unique(session_id, sequence),
+  unique(session_id, user_message_event_id)
+);
+
+create index if not exists idx_file_history_snapshots_session_status_sequence
+  on file_history_snapshots(session_id, status, sequence desc);
+create index if not exists idx_file_history_snapshots_trace
+  on file_history_snapshots(trace_id)
+  where trace_id is not null;
+create index if not exists idx_file_history_snapshots_parent
+  on file_history_snapshots(parent_snapshot_id)
+  where parent_snapshot_id is not null;
+
+create table if not exists file_history_snapshot_entries (
+  snapshot_id text not null,
+  canonical_path text not null,
+  display_path text not null,
+  state text not null check (state in ('file', 'missing')),
+  backup_file_name text,
+  version integer not null check (version >= 1),
+  backup_time text not null,
+  size integer,
+  mode integer,
+  content_hash text,
+  primary key(snapshot_id, canonical_path),
+  foreign key(snapshot_id) references file_history_snapshots(id) on delete cascade,
+  check (
+    (state = 'missing' and backup_file_name is null and size is null and content_hash is null)
+    or
+    (
+      state = 'file' and backup_file_name is not null
+      and size is not null and content_hash is not null
+    )
+  )
+);
+
+create index if not exists idx_file_history_entries_path_snapshot
+  on file_history_snapshot_entries(canonical_path, snapshot_id);
+create index if not exists idx_file_history_entries_backup
+  on file_history_snapshot_entries(backup_file_name)
+  where backup_file_name is not null;
+
+create table if not exists file_history_tracked_files (
+  session_id text not null,
+  canonical_path text not null,
+  display_path text not null,
+  latest_version integer not null default 0 check (latest_version >= 0),
+  first_snapshot_id text,
+  last_snapshot_id text,
+  last_observed_state text check (last_observed_state in ('file', 'missing')),
+  last_observed_hash text,
+  last_observed_size integer,
+  last_observed_mtime_ns integer,
+  last_observed_mode integer,
+  created_at text not null,
+  updated_at text not null,
+  primary key(session_id, canonical_path),
+  foreign key(session_id) references sessions(id) on delete cascade,
+  foreign key(first_snapshot_id) references file_history_snapshots(id) on delete set null,
+  foreign key(last_snapshot_id) references file_history_snapshots(id) on delete set null
+);
+
+create index if not exists idx_file_history_tracked_updated
+  on file_history_tracked_files(session_id, updated_at desc);
+
+create table if not exists file_history_mutations (
+  id text primary key,
+  session_id text not null,
+  active_session_id text,
+  trace_id text,
+  turn_index integer,
+  snapshot_id text,
+  workspace_identity text not null,
+  canonical_path text not null,
+  display_path text not null,
+  tool_name text,
+  tool_call_id text,
+  batch_id text,
+  mutation_kind text not null
+    check (mutation_kind in ('create', 'update', 'delete', 'move_source', 'move_destination')),
+  before_state text not null check (before_state in ('file', 'missing')),
+  before_hash text,
+  after_state text check (after_state in ('file', 'missing')),
+  after_hash text,
+  status text not null check (status in ('prepared', 'committed', 'aborted', 'dirty')),
+  error_code text,
+  created_at text not null,
+  updated_at text not null,
+  foreign key(session_id) references sessions(id) on delete cascade,
+  foreign key(snapshot_id) references file_history_snapshots(id) on delete set null
+);
+
+create index if not exists idx_file_history_mutations_session_trace
+  on file_history_mutations(session_id, trace_id, created_at);
+create index if not exists idx_file_history_mutations_workspace_path
+  on file_history_mutations(workspace_identity, canonical_path, created_at desc);
+create index if not exists idx_file_history_mutations_batch
+  on file_history_mutations(batch_id)
+  where batch_id is not null;
+create unique index if not exists idx_file_history_mutations_snapshot_path
+  on file_history_mutations(snapshot_id, canonical_path)
+  where snapshot_id is not null;
+
+create table if not exists file_history_path_heads (
+  workspace_identity text not null,
+  canonical_path text not null,
+  display_path text not null,
+  session_id text not null,
+  trace_id text,
+  mutation_id text,
+  state text not null check (state in ('file', 'missing')),
+  content_hash text,
+  revision integer not null default 1 check (revision >= 1),
+  updated_at text not null,
+  primary key(workspace_identity, canonical_path),
+  foreign key(session_id) references sessions(id) on delete cascade,
+  foreign key(mutation_id) references file_history_mutations(id) on delete set null
+);
+
+create index if not exists idx_file_history_path_heads_session
+  on file_history_path_heads(session_id, updated_at desc);
+
+create table if not exists file_history_operations (
+  id text primary key,
+  request_id text not null,
+  session_id text not null,
+  active_session_id text,
+  target_snapshot_id text,
+  target_trace_id text,
+  target_message_event_id text,
+  workspace_identity text,
+  mode text check (mode in ('both', 'code', 'conversation')),
+  decision text check (
+    decision is null or decision in (
+      'full', 'safe_partial', 'force_conflicts', 'conversation_only', 'cancel'
+    )
+  ),
+  state text not null check (
+    state in (
+      'previewed', 'running', 'full', 'partial', 'cancelled', 'failed',
+      'compensated', 'compensation_failed', 'blocked'
+    )
+  ),
+  preview_token text,
+  preview_revision integer not null default 1 check (preview_revision >= 1),
+  conversation_rewound integer not null default 0,
+  active_snapshot_before text,
+  active_snapshot_after text,
+  restored_count integer not null default 0,
+  skipped_count integer not null default 0,
+  forced_count integer not null default 0,
+  error_code text,
+  error_detail_json text not null default '{}',
+  compensation_state text not null default 'not_needed'
+    check (compensation_state in ('not_needed', 'pending', 'complete', 'failed')),
+  created_at text not null,
+  updated_at text not null,
+  completed_at text,
+  foreign key(session_id) references sessions(id) on delete cascade,
+  foreign key(target_snapshot_id) references file_history_snapshots(id) on delete set null,
+  unique(session_id, request_id)
+);
+
+create index if not exists idx_file_history_operations_session_created
+  on file_history_operations(session_id, created_at desc);
+create index if not exists idx_file_history_operations_state
+  on file_history_operations(state, updated_at);
+create index if not exists idx_file_history_operations_target
+  on file_history_operations(target_snapshot_id)
+  where target_snapshot_id is not null;
+
+create table if not exists file_history_operation_files (
+  operation_id text not null,
+  canonical_path text not null,
+  display_path text not null,
+  preview_current_state text not null check (preview_current_state in ('file', 'missing')),
+  preview_current_hash text,
+  target_state text not null check (target_state in ('file', 'missing')),
+  target_backup_file_name text,
+  target_hash text,
+  target_size integer,
+  target_mode integer,
+  classification text not null
+    check (classification in ('ready', 'forceable_conflict', 'unrecoverable')),
+  reason_code text,
+  writer_session_id text,
+  user_authorized integer not null default 0,
+  result_state text not null default 'pending'
+    check (result_state in ('pending', 'restored', 'forced', 'skipped', 'failed', 'compensated')),
+  error_code text,
+  safety_state text check (safety_state in ('file', 'missing')),
+  safety_backup_file_name text,
+  safety_hash text,
+  safety_size integer,
+  safety_mode integer,
+  updated_at text not null,
+  primary key(operation_id, canonical_path),
+  foreign key(operation_id) references file_history_operations(id) on delete cascade
+);
+
+create index if not exists idx_file_history_operation_files_classification
+  on file_history_operation_files(operation_id, classification, result_state);
+
+create table if not exists file_history_locks (
+  lock_key text primary key,
+  owner_operation_id text not null,
+  acquired_at text not null,
+  expires_at text not null,
+  foreign key(owner_operation_id) references file_history_operations(id) on delete cascade
+);
+
+create index if not exists idx_file_history_locks_expires
+  on file_history_locks(expires_at);
 
 create table if not exists llm_request_logs (
   id text primary key,
@@ -990,6 +1237,15 @@ class Database:
             self._ensure_column(conn, "llm_request_logs", "time_to_first_token", "integer")
             self._ensure_column(conn, "trace_record", "input_checkpoint_id", "text")
             self._ensure_column(conn, "trace_record", "input_checkpoint_ns", "text")
+            self._ensure_column(conn, "trace_record", "input_file_snapshot_id", "text")
+            self._ensure_column(conn, "trace_record", "input_file_snapshot_status", "text")
+            conn.execute(
+                """
+                create index if not exists idx_trace_record_input_file_snapshot
+                  on trace_record(input_file_snapshot_id)
+                  where input_file_snapshot_id is not null
+                """
+            )
             self._ensure_column(
                 conn,
                 "compression_staging",

@@ -59,6 +59,7 @@ from backend.app.services.chat_message_payload import (
     resolve_image_attachments,
 )
 from backend.app.services.chat_types import ChatCancellationToken, ChatRequest, ChatTurnResult
+from backend.app.services.file_history_service import FileHistoryService
 from backend.app.services.message_event_service import MessageEventService
 from backend.app.services.thread_task_prompt import build_task_initial_prompt
 from backend.app.services.thread_task_service import ThreadTaskService
@@ -860,6 +861,7 @@ class ChatService:
         keydex_runtime_cache: KeydexWorkspaceRuntimeCache | None = None,
         thread_task_service: ThreadTaskService | None = None,
         mcp_manager: McpToolExecutor | None = None,
+        file_history_service: FileHistoryService | None = None,
     ) -> None:
         self.settings = settings
         self.repositories = repositories
@@ -870,6 +872,10 @@ class ChatService:
         self.thread_task_service = thread_task_service or ThreadTaskService(repositories)
         self.mcp_manager = mcp_manager
         self.mcp_active_tool_window = McpActiveToolWindow()
+        self.file_history_service = file_history_service or FileHistoryService(
+            repositories,
+            data_dir=settings.data_dir,
+        )
 
     def _build_initial_thread_task_injection(
         self,
@@ -935,6 +941,7 @@ class ChatService:
         _, max_turn = self.repositories.message_events.get_max_seq_and_turn(session.id)
         turn_index = max_turn + 1
         trace_id = new_id()
+        user_message_event_id = new_id()
         root_node_id = f"{trace_id}-root"
         started_at = time.perf_counter()
         active_session_id = session.active_session_id or session.id
@@ -994,6 +1001,7 @@ class ChatService:
             aggregator=aggregator,
         )
         dispatcher_context_token = set_request_context(event_dispatcher=dispatcher)
+        input_file_snapshot_id: str | None = None
 
         try:
             image_attachments, attachment_payloads = self._resolve_image_attachments(
@@ -1055,6 +1063,36 @@ class ChatService:
                     trace_id=trace_id,
                     turn_index=turn_index,
                     attachments=attachment_payloads,
+                    message_event_id=user_message_event_id,
+                )
+            if session.session_type == "workspace" and self.file_history_service.enabled:
+                workspace_context = self.workspace_service.runtime_context_for_session(session)
+                try:
+                    snapshot = self.file_history_service.make_input_snapshot(
+                        session_id=session.id,
+                        active_session_id=active_session_id,
+                        trace_id=trace_id,
+                        message_event_id=user_message_event_id,
+                        workspace_root=workspace_context.cwd,
+                    )
+                except Exception:
+                    self.repositories.trace_records.set_input_file_snapshot(
+                        trace_id,
+                        snapshot_id=None,
+                        status="failed",
+                    )
+                    raise
+                input_file_snapshot_id = snapshot.id
+                self.repositories.trace_records.set_input_file_snapshot(
+                    trace_id,
+                    snapshot_id=snapshot.id,
+                    status=snapshot.status,
+                )
+            elif session.session_type == "workspace":
+                self.repositories.trace_records.set_input_file_snapshot(
+                    trace_id,
+                    snapshot_id=None,
+                    status="disabled",
                 )
 
             outcome = await self._run_agent_loop(
@@ -1069,6 +1107,7 @@ class ChatService:
                 image_attachments=image_attachments,
                 skill_activation=skill_activation,
                 keydex_snapshot=skill_activation_snapshot,
+                input_file_snapshot_id=input_file_snapshot_id,
             )
 
             duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
@@ -1334,6 +1373,7 @@ class ChatService:
         image_attachments: list[AttachmentRecord] | None = None,
         skill_activation: SkillActivationRequest | None = None,
         keydex_snapshot: KeydexWorkspaceRuntimeSnapshot | None = None,
+        input_file_snapshot_id: str | None = None,
     ) -> AgentLoopOutcome:
         active_session_id = session.active_session_id or session.id
         tool_context, enable_tools = self._build_tool_context(
@@ -1342,6 +1382,7 @@ class ChatService:
             trace_id=trace_id,
             turn_index=turn_index,
             keydex_snapshot=keydex_snapshot,
+            input_file_snapshot_id=input_file_snapshot_id,
         )
         tool_context.metadata["repositories"] = self.repositories
         tool_context.metadata["thread_task_service"] = self.thread_task_service
@@ -1526,6 +1567,7 @@ class ChatService:
         trace_id: str,
         turn_index: int,
         keydex_snapshot: KeydexWorkspaceRuntimeSnapshot | None = None,
+        input_file_snapshot_id: str | None = None,
     ) -> tuple[ToolExecutionContext, bool]:
         if session.session_type == "workspace":
             workspace_context = self.workspace_service.runtime_context_for_session(session)
@@ -1539,6 +1581,11 @@ class ChatService:
                     workspace_root=workspace_context.cwd,
                     turn_index=turn_index,
                     trace_id=trace_id,
+                    active_session_id=session.active_session_id or session.id,
+                    assistant_message_id=f"{trace_id}-assistant",
+                    input_file_snapshot_id=input_file_snapshot_id,
+                    file_history_service=self.file_history_service,
+                    file_history_tracking=True,
                     metadata={
                         "workspace_id": workspace_context.workspace_id,
                         "workspace_roots": [
@@ -1560,6 +1607,11 @@ class ChatService:
                     workspace_root=self.settings.data_dir,
                     turn_index=turn_index,
                     trace_id=trace_id,
+                    active_session_id=session.active_session_id or session.id,
+                    assistant_message_id=f"{trace_id}-assistant",
+                    input_file_snapshot_id=None,
+                    file_history_service=self.file_history_service,
+                    file_history_tracking=False,
                     metadata={"tools_enabled": False},
                 ),
                 False,
@@ -1915,6 +1967,7 @@ class ChatService:
         trace_id: str,
         turn_index: int,
         attachments: list[dict[str, Any]] | None = None,
+        message_event_id: str,
     ) -> None:
         context_items = _build_message_context_items(request.runtime_params)
         await dispatcher.emit_event(
@@ -1929,6 +1982,7 @@ class ChatService:
                 "session_id": session.id,
                 "trace_id": trace_id,
                 "trace_record_id": trace_id,
+                "message_event_id": message_event_id,
                 "messageTimeMs": int(time.time() * 1000),
             },
             trace_id=trace_id,

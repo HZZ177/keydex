@@ -1,0 +1,497 @@
+import { AlertTriangle, ChevronRight, FileCode2, LoaderCircle } from "lucide-react";
+import { useState } from "react";
+
+import { AppDialog, DialogButton } from "@/renderer/components/dialog";
+import {
+  fileReviewDisplayLines,
+  UnifiedDiffRows,
+} from "@/renderer/components/review/FileReviewDiff";
+import type { FileReviewChange } from "@/renderer/utils/fileReview";
+import type {
+  SessionReverseDecision,
+  SessionReverseFilePreview,
+  SessionReverseMode,
+} from "@/runtime";
+
+import type { ReverseDialogState } from "./useConversationPanelModel";
+
+import styles from "./ReverseDialog.module.css";
+
+export interface ReverseDialogProps {
+  state: ReverseDialogState;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onSelectMode: (mode: SessionReverseMode) => void;
+  onDecision: (decision: SessionReverseDecision) => void;
+  onRetryPreview: () => void;
+}
+
+const MODES: Array<{
+  value: SessionReverseMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "both",
+    label: "同时回溯修改和对话",
+    description: "恢复目标消息发送前的文件，并删除该消息及之后的对话。",
+  },
+  {
+    value: "code",
+    label: "只回溯修改",
+    description: "只恢复文件；对话、消息和输入框保持不变。",
+  },
+  {
+    value: "conversation",
+    label: "只回溯对话",
+    description: "只删除后续对话并恢复输入；修改过的文件不会回滚。",
+  },
+];
+
+export function ReverseDialog({
+  state,
+  onCancel,
+  onConfirm,
+  onSelectMode,
+  onDecision,
+  onRetryPreview,
+}: ReverseDialogProps) {
+  const preview = state.preview;
+  const summary = state.candidate.content.trim().split(/\r?\n/u).find(Boolean) ?? "这一轮对话";
+
+  return (
+    <AppDialog
+      title={dialogTitle(state)}
+      description={dialogDescription(state)}
+      size="form"
+      closeOnOverlayClick={!state.executing}
+      closeOnEscape={!state.executing}
+      onClose={state.executing ? undefined : onCancel}
+      panelClassName={styles.dialog}
+      bodyClassName={styles.body}
+      footer={
+        <DialogFooter
+          state={state}
+          onCancel={onCancel}
+          onConfirm={onConfirm}
+          onRetryPreview={onRetryPreview}
+        />
+      }
+    >
+      <p className={styles.target} title={summary}>
+        回溯目标：{summary}
+      </p>
+      {state.loading ? (
+        <div className={styles.loading} role="status">
+          <LoaderCircle aria-hidden="true" className={styles.spinner} size={16} />
+          正在检查可回溯的内容…
+        </div>
+      ) : null}
+      {state.error ? (
+        <div className={styles.error} role="alert">
+          <AlertTriangle aria-hidden="true" size={16} />
+          <span>
+            {errorLabel(state.errorCode)}
+            {isBlockedError(state.errorCode) && state.preview ? (
+              <IssueDetails operationId={state.preview.operation_id} />
+            ) : null}
+          </span>
+        </div>
+      ) : null}
+      {preview && state.phase !== "result" ? (
+        <>
+          <section className={styles.section} aria-labelledby="reverse-mode-heading">
+            <h3 id="reverse-mode-heading">选择回溯范围</h3>
+            <div className={styles.modeList}>
+              {MODES.map((mode) => {
+                const disabled = mode.value !== "conversation" && !preview.code_available;
+                return (
+                  <label className={styles.modeRow} data-disabled={disabled || undefined} key={mode.value}>
+                    <input
+                      type="radio"
+                      name="reverse-mode"
+                      value={mode.value}
+                      checked={state.mode === mode.value}
+                      disabled={disabled || state.executing}
+                      onChange={() => onSelectMode(mode.value)}
+                    />
+                    <span>
+                      <strong>{mode.label}</strong>
+                      <small>{mode.description}</small>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            {state.mode === "conversation" ? (
+              <p className={styles.notice}>
+                仅回溯对话，修改过的文件不会回滚。
+              </p>
+            ) : !preview.code_available ? (
+              <p className={styles.notice}>
+                这条消息之前没有文件修改记录，因此只能回溯对话。
+              </p>
+            ) : null}
+          </section>
+          {state.mode !== "conversation" ? (
+            state.phase === "decision" ? (
+              <ReverseDecisionPanel state={state} onDecision={onDecision} />
+            ) : (
+              <ReverseFilePreview state={state} />
+            )
+          ) : null}
+        </>
+      ) : null}
+      {state.result ? <ReverseResult state={state} /> : null}
+    </AppDialog>
+  );
+}
+
+type DecisionAction = "cancel" | "safe_partial" | "force_conflicts";
+
+const DECISION_HELP: Record<DecisionAction, string> = {
+  cancel: "不回溯文件或对话，保留当前内容。",
+  safe_partial: "跳过上方文件，只回溯其他文件；对话按上方选择处理。",
+  force_conflicts: "回溯包括上方文件在内的所有文件，并覆盖其他来源的修改。",
+};
+
+function ReverseDecisionPanel({
+  state,
+  onDecision,
+}: {
+  state: ReverseDialogState;
+  onDecision: (decision: SessionReverseDecision) => void;
+}) {
+  const preview = state.preview;
+  const [activeAction, setActiveAction] = useState<DecisionAction | null>(null);
+  if (!preview) {
+    return null;
+  }
+  const files = preview.files.filter((file) => file.classification !== "ready");
+  const hasReady = preview.files.some((file) => file.classification === "ready");
+  const canRestoreAll =
+    files.length > 0 && files.every((file) => file.classification === "forceable_conflict");
+  const hasUnavailable = files.some((file) => file.classification === "unrecoverable");
+  const actionProps = (action: DecisionAction) => ({
+    onBlur: () => setActiveAction(null),
+    onFocus: () => setActiveAction(action),
+    onMouseEnter: () => setActiveAction(action),
+    onMouseLeave: () => setActiveAction(null),
+  });
+
+  return (
+    <section
+      className={`${styles.section} ${styles.fileSection} ${styles.decisionSection}`}
+      aria-labelledby="reverse-decision-heading"
+      data-testid="reverse-decision-panel"
+    >
+      <div className={styles.sectionHeading}>
+        <h3 id="reverse-decision-heading">需要确认的文件</h3>
+        <span>{files.length} 个文件</span>
+      </div>
+      <p className={styles.decisionIntro}>
+        {hasUnavailable
+          ? "以下文件无法直接回溯，请选择只处理其他文件或取消。"
+          : "以下文件已在其他对话或应用中修改，回溯所有文件会覆盖这些修改。"}
+      </p>
+      <div className={styles.decisionFileList} aria-label="需要确认的文件">
+        {files.map((file) => <ReverseFilePreviewItem file={file} key={file.path} />)}
+      </div>
+      <div className={styles.decisionControls}>
+        <div className={styles.decisionActions} role="group" aria-label="选择文件处理方式">
+          <DialogButton
+            disabled={state.executing}
+            onClick={() => onDecision("cancel")}
+            {...actionProps("cancel")}
+          >
+            取消回溯
+          </DialogButton>
+          <DialogButton
+            disabled={state.executing || !hasReady}
+            onClick={() => onDecision("safe_partial")}
+            {...actionProps("safe_partial")}
+          >
+            仅回溯其他文件
+          </DialogButton>
+          {canRestoreAll ? (
+            <DialogButton
+              tone="danger"
+              disabled={state.executing}
+              onClick={() => onDecision("force_conflicts")}
+              {...actionProps("force_conflicts")}
+            >
+              回溯所有文件
+            </DialogButton>
+          ) : null}
+        </div>
+        <p className={styles.decisionHelp} aria-live="polite" data-testid="reverse-decision-help">
+          {activeAction ? DECISION_HELP[activeAction] : "将鼠标移到选项上查看说明。"}
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function ReverseFilePreview({ state }: { state: ReverseDialogState }) {
+  const preview = state.preview;
+  if (!preview) {
+    return null;
+  }
+  return (
+    <section className={`${styles.section} ${styles.fileSection}`} aria-labelledby="reverse-files-heading">
+      <div className={styles.sectionHeading}>
+        <h3 id="reverse-files-heading">预计回溯</h3>
+        <span>
+          {preview.files.length} 个文件 · 涉及 {preview.insertions + preview.deletions} 行
+        </span>
+      </div>
+      {preview.warnings.map((warning) => (
+        <p className={styles.notice} key={warning}>{warningLabel(warning)}</p>
+      ))}
+      {preview.files.length ? (
+        <div className={styles.fileList} data-testid="reverse-file-list">
+          {preview.files.map((file) => <ReverseFilePreviewItem file={file} key={file.path} />)}
+        </div>
+      ) : (
+        <p className={styles.empty}>文件已经是目标状态，无需修改。</p>
+      )}
+    </section>
+  );
+}
+
+function ReverseFilePreviewItem({ file }: { file: SessionReverseFilePreview }) {
+  const statusLabel = classificationLabel(file.classification, file.reason_code);
+  return (
+    <details className={styles.fileRow} data-testid="reverse-file-preview">
+      <summary className={styles.fileSummary}>
+        <ChevronRight aria-hidden="true" className={styles.fileChevron} size={14} />
+        <FileCode2 aria-hidden="true" size={14} />
+        <code>{file.path}</code>
+        <span data-classification={file.classification}>{statusLabel}</span>
+        <span
+          className={styles.fileStats}
+          aria-label={`新增 ${file.insertions} 行，删除 ${file.deletions} 行`}
+        >
+          <b data-kind="added">+{file.insertions}</b>
+          <b data-kind="removed">-{file.deletions}</b>
+        </span>
+      </summary>
+      <div className={styles.fileExpanded}>
+        {file.binary ? (
+          <p>该文件可以回溯，但不提供代码行预览。</p>
+        ) : file.diff ? (
+          <>
+            <UnifiedDiffRows lines={fileReviewDisplayLines(fileReviewChange(file))} />
+            {file.truncated ? <p>内容较多，仅展示部分差异。</p> : null}
+          </>
+        ) : (
+          <p>{file.truncated ? "内容较多，仅展示部分差异。" : "没有需要展示的代码差异。"}</p>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function fileReviewChange(file: SessionReverseFilePreview): FileReviewChange {
+  return {
+    path: file.path,
+    additions: file.insertions,
+    deletions: file.deletions,
+    diff: file.diff ?? "",
+    operation:
+      file.current_state === "missing" && file.target_state === "file"
+        ? "add"
+        : file.current_state === "file" && file.target_state === "missing"
+          ? "delete"
+          : "update",
+    source: "final",
+  };
+}
+
+function ReverseResult({ state }: { state: ReverseDialogState }) {
+  const result = state.result;
+  if (!result) {
+    return null;
+  }
+  const succeededFiles = uniqueFiles([...result.restored_files, ...result.forced_files]);
+  const skippedFiles = uniqueFiles(result.skipped_files);
+  const failedFiles = uniqueFiles(result.failed_files);
+  const successfulPaths = new Set(succeededFiles);
+  const successfulChanges = (state.preview?.files ?? []).reduce(
+    (total, file) => {
+      if (successfulPaths.has(file.path)) {
+        total.insertions += file.insertions;
+        total.deletions += file.deletions;
+      }
+      return total;
+    },
+    { insertions: 0, deletions: 0 },
+  );
+  const affectedLines = successfulChanges.insertions + successfulChanges.deletions;
+  const conversationOnly = result.mode === "conversation" || result.decision === "conversation_only";
+  const rows = [
+    ["回溯成功", result.restored_files],
+    ["强制回溯", result.forced_files],
+    ["已跳过", result.skipped_files],
+    ["回溯失败", result.failed_files],
+  ] as const;
+  return (
+    <section className={styles.result} data-status={result.status} aria-live="polite">
+      <strong>{resultLabel(result.status)}</strong>
+      <p className={styles.resultSummary}>
+        {conversationOnly
+          ? "对话已恢复，修改过的文件未回滚。"
+          : `共成功回溯 ${succeededFiles.length} 个文件，影响 ${affectedLines} 行代码。`}
+      </p>
+      <div className={styles.resultMetrics} aria-label="回溯结果统计">
+        <ResultMetric label="成功文件" value={succeededFiles.length} />
+        <ResultMetric label="影响代码行" value={affectedLines} />
+        <ResultMetric label="跳过文件" value={skippedFiles.length} />
+        <ResultMetric label="失败文件" value={failedFiles.length} />
+      </div>
+      {!conversationOnly && affectedLines > 0 ? (
+        <p className={styles.lineBreakdown}>
+          代码变化：增加 {successfulChanges.insertions} 行，删除 {successfulChanges.deletions} 行
+        </p>
+      ) : null}
+      {rows.map(([label, files]) =>
+        files.length ? (
+          <div className={styles.resultFiles} key={label}>
+            <b>{label}</b>
+            <ul>{files.map((file) => <li key={file}><code>{file}</code></li>)}</ul>
+          </div>
+        ) : null,
+      )}
+      {result.status === "blocked" || result.status === "compensation_failed" ? (
+        <p>部分文件没有恢复完成。请先检查失败文件，确认内容无误后再继续。</p>
+      ) : null}
+      {result.status !== "full" ? <IssueDetails operationId={result.operation_id} /> : null}
+    </section>
+  );
+}
+
+function ResultMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <span>
+      <b>{value}</b>
+      <small>{label}</small>
+    </span>
+  );
+}
+
+function IssueDetails({ operationId }: { operationId: string }) {
+  return (
+    <details className={styles.issueDetails}>
+      <summary>查看问题详情</summary>
+      <span>问题编号：<code>{operationId}</code></span>
+    </details>
+  );
+}
+
+function uniqueFiles(files: string[]): string[] {
+  return [...new Set(files)];
+}
+
+function DialogFooter({
+  state,
+  onCancel,
+  onConfirm,
+  onRetryPreview,
+}: {
+  state: ReverseDialogState;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onRetryPreview: () => void;
+}) {
+  if (state.phase === "result") {
+    return <DialogButton onClick={onCancel}>关闭</DialogButton>;
+  }
+  if (state.errorCode === "file_preview_stale" || (!state.preview && state.error)) {
+    return (
+      <>
+        <DialogButton onClick={onCancel}>取消</DialogButton>
+        <DialogButton tone="primary" onClick={onRetryPreview}>重新预览</DialogButton>
+      </>
+    );
+  }
+  if (state.phase === "decision") {
+    return null;
+  }
+  return (
+    <>
+      <DialogButton disabled={state.executing} onClick={onCancel}>取消</DialogButton>
+      <DialogButton
+        tone="danger"
+        disabled={state.loading || state.executing || !state.preview}
+        onClick={onConfirm}
+      >
+        {state.executing ? "正在回溯…" : "回溯到此处"}
+      </DialogButton>
+    </>
+  );
+}
+
+function dialogTitle(state: ReverseDialogState): string {
+  if (state.phase === "result") return "回溯结果";
+  return "回溯到此处";
+}
+
+function dialogDescription(state: ReverseDialogState): string {
+  if (state.phase === "result") return "查看本次回溯的文件和代码变化。";
+  if (state.phase === "decision") return "确认被其他来源修改的文件要如何处理。";
+  if (state.mode === "conversation") return "确认需要恢复的对话范围，修改过的文件不会回滚。";
+  return "查看预计回溯的内容，再选择需要恢复的范围。";
+}
+
+function classificationLabel(classification: string, reason?: string | null): string {
+  if (classification === "ready") return "可以回溯";
+  if (classification === "forceable_conflict" && reason === "other_session_write") {
+    return "另一个对话已修改";
+  }
+  if (classification === "forceable_conflict" && reason === "external_drift") {
+    return "已在对话外修改";
+  }
+  if (classification === "forceable_conflict") return "已被其他内容修改";
+  if (reason?.includes("backup_missing") || reason?.includes("backup_corrupt")) return "历史版本不可用";
+  if (reason === "workspace_mismatch") return "不属于当前项目";
+  if (reason?.includes("path") || reason?.includes("symlink")) return "文件位置不安全";
+  return "无法自动回溯";
+}
+
+function warningLabel(warning: string): string {
+  if (warning === "file_conflicts_detected" || warning === "shell_mcp_ide_writes_detected_as_drift_only") {
+    return "部分文件在其他对话或应用中发生了变化，回溯前需要确认处理方式。";
+  }
+  if (warning === "file_snapshot_missing" || warning === "file_snapshot_unavailable") {
+    return "这条消息之前没有可用的文件修改记录，因此只能回溯对话。";
+  }
+  if (warning === "file_backup_missing" || warning === "file_backup_corrupt") {
+    return "部分文件的历史版本不可用，无法自动回溯。";
+  }
+  return "部分历史内容无法用于文件回溯。";
+}
+
+function resultLabel(status: string): string {
+  if (status === "full") return "回溯完成";
+  if (status === "partial") return "部分回溯完成";
+  if (status === "compensated") return "回溯未完成，文件已恢复原状";
+  if (status === "blocked" || status === "compensation_failed") return "回溯未完成";
+  return "回溯结果";
+}
+
+function errorLabel(code: string | null): string {
+  if (code === "file_preview_stale") return "文件状态已经变化，请重新检查后再回溯。";
+  if (code === "file_restore_turn_running") return "当前回复仍在进行中，请先停止或等待完成后再回溯。";
+  if (code === "file_restore_session_busy" || code === "file_restore_locked") {
+    return "正在处理其他文件修改，请稍后再试。";
+  }
+  if (code === "file_restore_compensated") return "本次回溯未完成，文件已恢复到操作前状态。";
+  if (code === "file_restore_compensation_failed" || code === "file_restore_blocked") {
+    return "部分文件没有恢复完成，需要你检查后再继续。";
+  }
+  return "暂时无法完成回溯，请稍后重试。";
+}
+
+function isBlockedError(code: string | null): boolean {
+  return code === "file_restore_compensation_failed" || code === "file_restore_blocked";
+}

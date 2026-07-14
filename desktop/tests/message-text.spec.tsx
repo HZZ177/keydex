@@ -97,6 +97,14 @@ describe("MessageText", () => {
     expect(bubble.getAttribute("style")).toBeNull();
   });
 
+  it("keeps URL-like natural language in conversation messages as plain text", () => {
+    render(<MessageText message={message("user", "测试，根目录建个test.md", "completed")} />);
+
+    const root = screen.getByTestId("message-text");
+    expect(root.textContent).toContain("测试，根目录建个test.md");
+    expect(within(root).queryByRole("link")).toBeNull();
+  });
+
   it("renders a failed assistant turn error notice without replacing the answer", () => {
     render(
       <MessageText

@@ -24,7 +24,7 @@ export interface FileReviewPanelProps {
 }
 
 export function FileReviewCard({ file, compact = true, titlePrefix = "" }: FileReviewCardProps) {
-  const lines = useMemo(() => previewLinesForFile(file), [file]);
+  const lines = useMemo(() => fileReviewDisplayLines(file), [file]);
   const copySource = file.diff || file.content || "";
   const { copyState, showCopyFeedback } = useCopyFeedback();
   const copied = copyState === "copied";
@@ -214,7 +214,7 @@ function FileReviewSection({
 }
 
 function FileReviewFullDiff({ file, lineWrapping }: { file: FileReviewChange; lineWrapping: boolean }) {
-  const lines = useMemo(() => previewLinesForFile(file), [file]);
+  const lines = useMemo(() => fileReviewDisplayLines(file), [file]);
   return lines.length ? (
     <UnifiedDiffRows className={styles.panelDiff} lines={lines} wrap={lineWrapping} />
   ) : (
@@ -273,7 +273,7 @@ function LineStats({ additions, deletions }: { additions: number; deletions: num
   );
 }
 
-function previewLinesForFile(file: FileReviewChange): UnifiedDiffDisplayLine[] {
+export function fileReviewDisplayLines(file: FileReviewChange): UnifiedDiffDisplayLine[] {
   const diffLines = parseRenderableDiffLines(file.diff);
   if (diffLines.length) {
     return diffLines;

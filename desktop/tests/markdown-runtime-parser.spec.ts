@@ -58,6 +58,25 @@ describe("single-pass Markdown Worker parser", () => {
     );
   });
 
+  it("disables fuzzy autolinks for conversations while preserving file-preview and explicit links", () => {
+    const naturalLanguage = "测试，根目录建个test.md；访问 https://example.com";
+    const conversation = parse(naturalLanguage, "message");
+    const filePreview = parse(naturalLanguage, "file");
+    const explicitConversationLink = parse("访问 [官网](https://example.com)", "message");
+
+    expect(conversation.blocks.flatMap((block) => block.inline_spans)).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "link" })]),
+    );
+    expect(filePreview.blocks.flatMap((block) => block.inline_spans)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "link" })]),
+    );
+    expect(explicitConversationLink.blocks.flatMap((block) => block.inline_spans)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "link", attributes: expect.objectContaining({ href: "https://example.com" }) }),
+      ]),
+    );
+  });
+
   it("captures all current special syntax and resources in the Snapshot", () => {
     const snapshot = parse(markdownPreviewRendererParityFixture);
     const kinds = new Set(snapshot.blocks.map((block) => block.kind));

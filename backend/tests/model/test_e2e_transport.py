@@ -623,3 +623,72 @@ async def test_e2e_transport_returns_deterministic_side_task_outputs() -> None:
     assert title_response.json()["choices"][0]["message"]["content"] == "E2E 自动标题"
     assert compression_response.status_code == 200
     assert "E2E 压缩摘要" in compression_response.json()["choices"][0]["message"]["content"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prompt", "tool_name", "argument_name", "argument_value"),
+    [
+        ("e2e-rewind-both-A", "edit_file", "old_string", ""),
+        ("e2e-rewind-both-B", "edit_file", "old_string", "A\n"),
+        ("e2e-rewind-create-file", "create_file", "path", "created.txt"),
+        ("e2e-rewind-delete", "delete_file", "path", "delete-me.txt"),
+        ("e2e-rewind-move", "move_file", "new_path", "nested/target.txt"),
+        ("e2e-rewind-multi-patch", "apply_patch", "patch", "*** Add File: a.txt"),
+        (
+            "e2e-rewind-write-cycle-missing-to-d",
+            "edit_file",
+            "new_string",
+            "D\n",
+        ),
+    ],
+)
+async def test_e2e_transport_drives_rewind_fixtures_through_controlled_tools(
+    prompt: str,
+    tool_name: str,
+    argument_name: str,
+    argument_value: str,
+) -> None:
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": name,
+                "parameters": {"type": "object"},
+            },
+        }
+        for name in ("edit_file", "create_file", "delete_file", "move_file", "apply_patch")
+    ]
+    request = {
+        "model": E2E_MODEL_ID,
+        "stream": True,
+        "messages": [{"role": "user", "content": prompt}],
+        "tools": tools,
+    }
+    async with httpx.AsyncClient(
+        base_url="http://e2e-model.test",
+        transport=create_e2e_model_transport(delay_ms=0),
+    ) as client:
+        first = await client.post("/v1/chat/completions", json=request)
+        replay = await client.post("/v1/chat/completions", json=request)
+
+    assert first.status_code == replay.status_code == 200
+    assert first.text == replay.text
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in first.text.splitlines()
+        if line.startswith("data: {")
+    ]
+    functions = [
+        call["function"]
+        for event in events
+        for call in event["choices"][0]["delta"].get("tool_calls", [])
+    ]
+    assert len(functions) == 1
+    assert functions[0]["name"] == tool_name
+    arguments = json.loads(functions[0]["arguments"])
+    if argument_name == "patch":
+        assert argument_value in arguments[argument_name]
+    else:
+        assert arguments[argument_name] == argument_value

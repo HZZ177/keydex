@@ -75,6 +75,11 @@ def _context_for_tool(
         workspace_root=context.workspace_root,
         turn_index=context.turn_index,
         trace_id=context.trace_id,
+        active_session_id=context.active_session_id,
+        assistant_message_id=context.assistant_message_id,
+        input_file_snapshot_id=context.input_file_snapshot_id,
+        file_history_service=context.file_history_service,
+        file_history_tracking=context.file_history_tracking,
         metadata=metadata,
     )
 

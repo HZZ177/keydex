@@ -64,12 +64,20 @@ interface BlockDraft {
   readonly tokens: readonly Token[];
 }
 
-const defaultMarkdownIt = new MarkdownIt({
-  breaks: true,
-  html: false,
-  linkify: true,
-  typographer: false,
-});
+const defaultMarkdownItByRendererProfile: Record<MarkdownParserInput["rendererProfile"], MarkdownIt> = {
+  conversation: new MarkdownIt({
+    breaks: true,
+    html: false,
+    linkify: false,
+    typographer: false,
+  }),
+  "file-preview": new MarkdownIt({
+    breaks: true,
+    html: false,
+    linkify: true,
+    typographer: false,
+  }),
+};
 
 const TOP_LEVEL_BLOCK_TYPES = new Set([
   "blockquote_open",
@@ -100,7 +108,7 @@ export function parseCanonicalMarkdownSnapshot(
   checkpoint(options);
   const frontmatter = frontmatterRange(input.source);
   const parserSource = frontmatter ? maskSourceRange(input.source, frontmatter.start, frontmatter.end) : input.source;
-  const markdownIt = options.markdownIt ?? defaultMarkdownIt;
+  const markdownIt = options.markdownIt ?? defaultMarkdownItByRendererProfile[input.rendererProfile];
   const tokens = markdownIt.parse(parserSource, {}) as Token[];
   const markdownItCompletedAt = now();
   checkpoint(options);

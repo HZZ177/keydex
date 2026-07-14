@@ -16,6 +16,8 @@ def test_app_settings_exposes_desktop_runtime_defaults(tmp_path) -> None:
     assert settings.default_user_id == "local-user"
     assert settings.default_scene_id == "desktop-agent"
     assert settings.max_history_messages >= 1
+    assert settings.file_history_max_rewind_points == 100
+    assert settings.file_history_retention_days == 30
     assert settings.tool_timeout_seconds > 0
     assert settings.shell_timeout_seconds > 0
     assert settings.e2e_model_transport is False
@@ -42,6 +44,8 @@ def test_app_settings_can_be_overridden_by_environment(monkeypatch, tmp_path) ->
     monkeypatch.setenv("KEYDEX_TOOL_TIMEOUT_SECONDS", "9.5")
     monkeypatch.setenv("KEYDEX_E2E_MODEL_TRANSPORT", "true")
     monkeypatch.setenv("KEYDEX_E2E_STREAM_DELAY_MS", "0")
+    monkeypatch.setenv("KEYDEX_FILE_HISTORY_MAX_REWIND_POINTS", "64")
+    monkeypatch.setenv("KEYDEX_FILE_HISTORY_RETENTION_DAYS", "45")
     monkeypatch.setenv("KEYDEX_MCP_ENABLED", "false")
     monkeypatch.setenv("KEYDEX_MCP_DEFAULT_STARTUP_TIMEOUT_SEC", "7")
     monkeypatch.setenv("KEYDEX_MCP_DEFAULT_TOOL_TIMEOUT_SEC", "11")
@@ -58,6 +62,8 @@ def test_app_settings_can_be_overridden_by_environment(monkeypatch, tmp_path) ->
     assert settings.tool_timeout_seconds == 9.5
     assert settings.e2e_model_transport is True
     assert settings.e2e_stream_delay_ms == 0
+    assert settings.file_history_max_rewind_points == 64
+    assert settings.file_history_retention_days == 45
     assert settings.mcp_enabled is False
     assert settings.mcp_default_startup_timeout_sec == 7
     assert settings.mcp_default_tool_timeout_sec == 11
@@ -86,3 +92,11 @@ def test_app_settings_reject_invalid_mcp_values() -> None:
 
     with pytest.raises(ValidationError):
         AppSettings(mcp_direct_tool_budget=0)
+
+
+def test_app_settings_reject_invalid_file_history_retention_values() -> None:
+    with pytest.raises(ValidationError):
+        AppSettings(file_history_max_rewind_points=101)
+
+    with pytest.raises(ValidationError):
+        AppSettings(file_history_retention_days=0)

@@ -10,6 +10,7 @@
     "test:backend": ".venv\\Scripts\\python.exe -m pytest",
     "test:frontend": "pnpm --dir desktop run test",
     "test:e2e:smoke": "node .dev/e2e/playwright-smoke.mjs",
+    "test:e2e:file-rewind": "node .dev/e2e/file-history-rewind.mjs",
     "test:e2e:app-shell": "node .dev/e2e/app-shell-sessions.mjs",
     "test:e2e:settings": "node .dev/e2e/empty-input-settings.mjs",
     "test:e2e:stream": "node .dev/e2e/stream-markdown-scroll.mjs",

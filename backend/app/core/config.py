@@ -27,6 +27,12 @@ class AppSettings(BaseSettings):
     default_scene_id: str = "desktop-agent"
     default_scene_name: str = "Keydex"
     max_history_messages: int = Field(default=40, ge=1)
+    file_history_enabled: bool = True
+    file_history_max_storage_bytes: int = Field(default=1_073_741_824, ge=1)
+    file_history_max_versions_per_file: int = Field(default=1_000, ge=1)
+    file_history_max_rewind_points: int = Field(default=100, ge=1, le=100)
+    file_history_retention_days: int = Field(default=30, ge=1)
+    file_history_orphan_grace_seconds: int = Field(default=86_400, ge=0)
     tool_timeout_seconds: float = Field(default=120.0, gt=0)
     shell_timeout_seconds: float = Field(default=120.0, gt=0)
     log_level: str = "INFO"

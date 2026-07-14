@@ -94,6 +94,86 @@ export interface SessionBranchPayload {
   turnIndex?: number | null;
 }
 
+export type SessionReverseMode = "both" | "code" | "conversation";
+export type SessionReverseDecision =
+  | "full"
+  | "safe_partial"
+  | "force_conflicts"
+  | "conversation_only"
+  | "cancel";
+export type SessionReverseOperationStatus =
+  | "previewed"
+  | "running"
+  | "full"
+  | "partial"
+  | "cancelled"
+  | "failed"
+  | "compensated"
+  | "compensation_failed"
+  | "blocked";
+
+export interface SessionReverseFilePreview {
+  path: string;
+  current_state: string;
+  target_state: string;
+  classification: "ready" | "forceable_conflict" | "unrecoverable";
+  reason_code?: string | null;
+  current_hash?: string | null;
+  target_hash?: string | null;
+  writer_session_id?: string | null;
+  binary: boolean;
+  truncated: boolean;
+  insertions: number;
+  deletions: number;
+  diff?: string | null;
+}
+
+export interface SessionReversePreview {
+  operation_id: string;
+  source: Record<string, unknown>;
+  conversation_available: boolean;
+  code_available: boolean;
+  default_mode: SessionReverseMode;
+  snapshot_id?: string | null;
+  preview_token: string;
+  files: SessionReverseFilePreview[];
+  insertions: number;
+  deletions: number;
+  warnings: string[];
+}
+
+export interface SessionReverseExecutePayload {
+  message_event_id: string;
+  operation_id: string;
+  preview_token: string;
+  request_id: string;
+  mode: SessionReverseMode;
+  decision: SessionReverseDecision;
+}
+
+export interface SessionReverseResult {
+  operation_id: string;
+  status: SessionReverseOperationStatus;
+  mode: SessionReverseMode;
+  decision: SessionReverseDecision;
+  conversation_rewound: boolean;
+  restored_files: string[];
+  skipped_files: string[];
+  forced_files: string[];
+  failed_files: string[];
+  restored_input?: string | null;
+  source: Record<string, unknown>;
+  error_code?: string | null;
+}
+
+export interface SessionReverseStatus {
+  operation_id: string;
+  status: SessionReverseOperationStatus;
+  result?: SessionReverseResult | null;
+  error_code?: string | null;
+  blocked_paths: string[];
+}
+
 export interface CreateThreadTaskPayload {
   type?: Extract<ThreadTaskType, "goal">;
   objective: string;
@@ -196,6 +276,12 @@ export interface ConversationRuntime {
   deleteSession(sessionId: string): Promise<void>;
   forkSession(sessionId: string, payload: SessionBranchPayload): Promise<AgentSessionBranchResponse>;
   reverseSession(sessionId: string, payload: SessionBranchPayload): Promise<AgentSessionBranchResponse>;
+  previewSessionReverse(sessionId: string, messageEventId: string): Promise<SessionReversePreview>;
+  executeSessionReverse(
+    sessionId: string,
+    payload: SessionReverseExecutePayload,
+  ): Promise<SessionReverseResult>;
+  getSessionReverseStatus(sessionId: string, operationId: string): Promise<SessionReverseStatus>;
   compressContext(sessionId: string): Promise<ManualContextCompressionResponse>;
   loadHistory(sessionId: string, options?: LoadHistoryOptions): Promise<AgentHistoryResponse>;
   loadToolDetails(sessionId: string, ref: LoadToolDetailsOptions): Promise<AgentToolDetails>;
@@ -257,6 +343,26 @@ export function createConversationRuntime(
         method: "POST",
         body: branchPayload(payload),
       });
+    },
+    previewSessionReverse(sessionId, messageEventId) {
+      return http.request<SessionReversePreview>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/reverse/preview`,
+        {
+          method: "POST",
+          body: { message_event_id: messageEventId },
+        },
+      );
+    },
+    executeSessionReverse(sessionId, payload) {
+      return http.request<SessionReverseResult>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/reverse`,
+        { method: "POST", body: payload },
+      );
+    },
+    getSessionReverseStatus(sessionId, operationId) {
+      return http.request<SessionReverseStatus>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/reverse/${encodeURIComponent(operationId)}`,
+      );
     },
     compressContext(sessionId) {
       return http.request<ManualContextCompressionResponse>(

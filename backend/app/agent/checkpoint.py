@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import sqlite3
 import warnings
 from collections.abc import AsyncIterator, Iterator, Sequence
+from contextlib import contextmanager
 from inspect import signature
 from typing import Any
 
@@ -329,17 +331,18 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
         thread_id: str,
         checkpoint_id: str | None,
         checkpoint_ns: str = "",
+        conn: sqlite3.Connection | None = None,
     ) -> None:
         if not thread_id.strip():
             raise ValueError("thread_id must not be empty")
         cleaned_checkpoint_id = (checkpoint_id or "").strip()
         if not cleaned_checkpoint_id:
-            with self.db.transaction() as conn:
-                conn.execute(
+            with self._transaction(conn) as active:
+                active.execute(
                     "delete from checkpoint_writes_v2 where thread_id = ? and checkpoint_ns = ?",
                     (thread_id, checkpoint_ns),
                 )
-                conn.execute(
+                active.execute(
                     "delete from checkpoints_v2 where thread_id = ? and checkpoint_ns = ?",
                     (thread_id, checkpoint_ns),
                 )
@@ -359,8 +362,8 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
         checkpoint_ids = [str(row["checkpoint_id"]) for row in source_rows]
         placeholders = ", ".join("?" for _ in checkpoint_ids)
         now = to_iso_z(utc_now())
-        with self.db.transaction() as conn:
-            conn.execute(
+        with self._transaction(conn) as active:
+            active.execute(
                 f"""
                 delete from checkpoint_writes_v2
                 where thread_id = ?
@@ -369,7 +372,7 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
                 """,
                 (thread_id, checkpoint_ns, *checkpoint_ids),
             )
-            conn.execute(
+            active.execute(
                 f"""
                 delete from checkpoints_v2
                 where thread_id = ?
@@ -378,7 +381,7 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
                 """,
                 (thread_id, checkpoint_ns, *checkpoint_ids),
             )
-            conn.execute(
+            active.execute(
                 """
                 update checkpoints_v2
                 set created_at = ?
@@ -386,6 +389,17 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
                 """,
                 (now, thread_id, checkpoint_ns, cleaned_checkpoint_id),
             )
+
+    @contextmanager
+    def _transaction(
+        self,
+        conn: sqlite3.Connection | None,
+    ) -> Iterator[sqlite3.Connection]:
+        if conn is not None:
+            yield conn
+            return
+        with self.db.transaction() as active:
+            yield active
 
     def clone_checkpoint_to_thread(
         self,

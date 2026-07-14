@@ -646,9 +646,26 @@ export function WorkspacePanel({
     if (!target) {
       return;
     }
-    target.scrollIntoView?.({ behavior: "smooth", block: "center", inline: "nearest" });
-    target.focus({ preventScroll: true });
-    setLocateRequest(null);
+    let frame: number | null = null;
+    const completeLocateWhenLayoutSettles = () => {
+      const currentTarget = findTreeEntryButton(treeRef.current, locateRequest.path);
+      if (!currentTarget) {
+        return;
+      }
+      if (!treeEntryLayoutIsSettled(currentTarget, treeRef.current)) {
+        frame = window.requestAnimationFrame(completeLocateWhenLayoutSettles);
+        return;
+      }
+      currentTarget.scrollIntoView?.({ behavior: "smooth", block: "center", inline: "nearest" });
+      currentTarget.focus({ preventScroll: true });
+      setLocateRequest((current) => (current?.id === locateRequest.id ? null : current));
+    };
+    completeLocateWhenLayoutSettles();
+    return () => {
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
   }, [entriesByPath, expandedPaths, locateRequest, searchActive]);
 
   useEffect(() => {
@@ -1472,6 +1489,23 @@ function findTreeEntryButton(root: HTMLElement | null, path: string): HTMLElemen
       (element) => element.dataset.entryPath === path,
     ) ?? null
   );
+}
+
+function treeEntryLayoutIsSettled(target: HTMLElement, treeRoot: HTMLElement | null): boolean {
+  let ancestor = target.parentElement;
+  while (ancestor && ancestor !== treeRoot) {
+    if (
+      ancestor.getAttribute("role") === "group" &&
+      (
+        ancestor.dataset.open !== "true" ||
+        ancestor.style.getPropertyValue("--tree-group-height") !== "auto"
+      )
+    ) {
+      return false;
+    }
+    ancestor = ancestor.parentElement;
+  }
+  return true;
 }
 
 function isElementEllipsized(element: HTMLElement): boolean {

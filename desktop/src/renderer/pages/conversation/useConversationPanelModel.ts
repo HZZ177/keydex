@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { RuntimeBridge, WorkspaceEntry, WorkspaceSearchResult, WorkspaceSkillSummary } from "@/runtime";
+import type {
+  SessionReverseDecision,
+  SessionReverseMode,
+  SessionReversePreview,
+  SessionReverseResult,
+} from "@/runtime/conversation";
 import {
   selectedImageAttachmentFromAgent,
   selectedQuoteFromText,
@@ -82,6 +88,20 @@ export interface ContextWindowUsageStatus {
   updatedAtMs: number;
 }
 
+export interface ReverseDialogState {
+  sessionId: string;
+  candidate: ConversationMessage;
+  messageEventId: string;
+  phase: "preview" | "decision" | "result";
+  loading: boolean;
+  executing: boolean;
+  mode: SessionReverseMode;
+  preview: SessionReversePreview | null;
+  result: SessionReverseResult | null;
+  error: string | null;
+  errorCode: string | null;
+}
+
 export type ConversationPanelModel = ReturnType<typeof useConversationPanelModel>;
 
 export function useConversationPanelModel({
@@ -101,7 +121,9 @@ export function useConversationPanelModel({
   const appliedContextWindowSnapshotKeyRef = useRef<string | null>(null);
   const contextWindowSessionIdRef = useRef<string | null>(null);
   const [forkCandidate, setForkCandidate] = useState<ConversationMessage | null>(null);
-  const [reverseCandidate, setReverseCandidate] = useState<ConversationMessage | null>(null);
+  const [reverseState, setReverseState] = useState<ReverseDialogState | null>(null);
+  const reverseRequestGenerationRef = useRef(0);
+  const reverseExecuteInFlightRef = useRef(false);
   const scrollFrameRef = useRef<number | null>(null);
   const handledRuntimeSideEffectKeysRef = useRef(new Set<string>());
   const scrollToBottomRef = useRef<((behavior?: ScrollBehavior) => void) | null>(null);
@@ -386,7 +408,9 @@ export function useConversationPanelModel({
 
   useEffect(() => {
     setForkCandidate(null);
-    setReverseCandidate(null);
+    reverseRequestGenerationRef.current += 1;
+    reverseExecuteInFlightRef.current = false;
+    setReverseState(null);
   }, [sessionId]);
 
   const loadToolDetails = useCallback<ToolDetailsLoader>(
@@ -505,9 +529,181 @@ export function useConversationPanelModel({
     [controller, emitForkSessionCreated, notifications, onBranchSessionCreated, onForkSessionCreated, runtime, sessionId],
   );
 
+  const loadReversePreview = useCallback(
+    (message: ConversationMessage) => {
+      const messageEventId =
+        typeof message.payload.messageEventId === "string" ? message.payload.messageEventId : "";
+      if (!messageEventId) {
+        notifications.warning("该消息还不能回溯");
+        return;
+      }
+      setForkCandidate(null);
+      const generation = ++reverseRequestGenerationRef.current;
+      reverseExecuteInFlightRef.current = false;
+      setReverseState({
+        sessionId,
+        candidate: message,
+        messageEventId,
+        phase: "preview",
+        loading: true,
+        executing: false,
+        mode: "both",
+        preview: null,
+        result: null,
+        error: null,
+        errorCode: null,
+      });
+      void runtime.conversation
+        .previewSessionReverse(sessionId, messageEventId)
+        .then((preview) => {
+          if (reverseRequestGenerationRef.current !== generation) {
+            return;
+          }
+          setReverseState((current) =>
+            current?.sessionId === sessionId && current.messageEventId === messageEventId
+              ? { ...current, loading: false, mode: preview.default_mode, preview }
+              : current,
+          );
+        })
+        .catch((reason) => {
+          if (reverseRequestGenerationRef.current !== generation) {
+            return;
+          }
+          setReverseState((current) =>
+            current?.sessionId === sessionId && current.messageEventId === messageEventId
+              ? {
+                  ...current,
+                  loading: false,
+                  error: errorMessage(reason),
+                  errorCode: runtimeErrorCode(reason),
+                }
+              : current,
+          );
+        });
+    },
+    [notifications, runtime, sessionId],
+  );
+
+  const executeReverse = useCallback(
+    (decision: SessionReverseDecision) => {
+      const state = reverseState;
+      const preview = state?.preview;
+      if (
+        !state ||
+        !preview ||
+        state.loading ||
+        state.executing ||
+        reverseExecuteInFlightRef.current
+      ) {
+        return;
+      }
+      const generation = reverseRequestGenerationRef.current;
+      reverseExecuteInFlightRef.current = true;
+      const requestId = `reverse-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      setReverseState({ ...state, executing: true, error: null, errorCode: null });
+      void runtime.conversation
+        .executeSessionReverse(sessionId, {
+          message_event_id: state.messageEventId,
+          operation_id: preview.operation_id,
+          preview_token: preview.preview_token,
+          request_id: requestId,
+          mode: state.mode,
+          decision,
+        })
+        .then(async (result) => {
+          if (reverseRequestGenerationRef.current !== generation || state.sessionId !== sessionId) {
+            return;
+          }
+          reverseExecuteInFlightRef.current = false;
+          setReverseState((current) =>
+            current?.sessionId === sessionId
+              ? {
+                  ...current,
+                  phase: "result",
+                  executing: false,
+                  result,
+                  error: null,
+                  errorCode: result.error_code ?? null,
+                }
+              : current,
+          );
+          if (result.conversation_rewound) {
+            try {
+              await controller.reloadHistory();
+              if (reverseRequestGenerationRef.current !== generation) {
+                return;
+              }
+              controller.restoreComposerDraft({
+                ...composerDraftFromMessage(state.candidate),
+                value: result.restored_input ?? state.candidate.content,
+              });
+              const refreshed = await runtime.conversation.getSession(sessionId);
+              if (reverseRequestGenerationRef.current !== generation) {
+                return;
+              }
+              controller.dispatch({ type: "session/upsert", session: refreshed });
+            } catch {
+              notifications.warning("回溯已完成，但本地对话刷新失败，请重新打开会话");
+            }
+          }
+          if (result.status === "partial") {
+            notifications.warning("已完成部分回溯，请查看跳过的文件");
+          } else {
+            notifications.success("已回溯到此处");
+          }
+        })
+        .catch((reason) => {
+          if (reverseRequestGenerationRef.current !== generation) {
+            return;
+          }
+          reverseExecuteInFlightRef.current = false;
+          const code = runtimeErrorCode(reason);
+          void runtime.conversation
+            .getSessionReverseStatus(sessionId, preview.operation_id)
+            .then((status) => {
+              const terminalResult = status.result;
+              if (
+                reverseRequestGenerationRef.current !== generation ||
+                state.sessionId !== sessionId ||
+                !terminalResult ||
+                !["compensated", "compensation_failed", "blocked"].includes(status.status)
+              ) {
+                return;
+              }
+              setReverseState((current) =>
+                current?.sessionId === sessionId && current.preview?.operation_id === preview.operation_id
+                  ? {
+                      ...current,
+                      phase: "result",
+                      executing: false,
+                      result: terminalResult,
+                      error: null,
+                      errorCode: status.error_code ?? terminalResult.error_code ?? code,
+                    }
+                  : current,
+              );
+            })
+            .catch(() => undefined);
+          setReverseState((current) =>
+            current?.sessionId === sessionId
+              ? {
+                  ...current,
+                  executing: false,
+                  error: errorMessage(reason),
+                  errorCode: code,
+                }
+              : current,
+          );
+          notifications.error(reverseActionErrorMessage(code));
+        });
+    },
+    [controller, notifications, reverseState, runtime, sessionId],
+  );
+
   const forkFromMessage = useCallback(
     (message: ConversationMessage) => {
-      setReverseCandidate(null);
+      reverseRequestGenerationRef.current += 1;
+      setReverseState(null);
       setForkCandidate(message);
     },
     [],
@@ -515,10 +711,9 @@ export function useConversationPanelModel({
 
   const reverseFromMessage = useCallback(
     (message: ConversationMessage) => {
-      setForkCandidate(null);
-      setReverseCandidate(message);
+      loadReversePreview(message);
     },
-    [],
+    [loadReversePreview],
   );
 
   const navigateToForkSource = useCallback(
@@ -542,17 +737,48 @@ export function useConversationPanelModel({
   }, [branchFromMessage, forkCandidate]);
 
   const cancelReverseFromMessage = useCallback(() => {
-    setReverseCandidate(null);
+    reverseRequestGenerationRef.current += 1;
+    reverseExecuteInFlightRef.current = false;
+    setReverseState(null);
+  }, []);
+
+  const selectReverseMode = useCallback((mode: SessionReverseMode) => {
+    setReverseState((current) =>
+      current && current.phase !== "result" ? { ...current, mode, phase: "preview" } : current,
+    );
   }, []);
 
   const confirmReverseFromMessage = useCallback(() => {
-    const message = reverseCandidate;
-    if (!message) {
+    const state = reverseState;
+    if (!state?.preview) {
       return;
     }
-    setReverseCandidate(null);
-    void branchFromMessage(message, "reverse");
-  }, [branchFromMessage, reverseCandidate]);
+    const hasFileProblem =
+      state.mode !== "conversation" &&
+      state.preview.files.some((file) => file.classification !== "ready");
+    if (hasFileProblem) {
+      setReverseState({ ...state, phase: "decision" });
+      return;
+    }
+    executeReverse("full");
+  }, [executeReverse, reverseState]);
+
+  const decideReverseFailure = useCallback(
+    (decision: SessionReverseDecision) => {
+      if (decision === "cancel") {
+        cancelReverseFromMessage();
+        return;
+      }
+      executeReverse(decision);
+    },
+    [cancelReverseFromMessage, executeReverse],
+  );
+
+  const retryReversePreview = useCallback(() => {
+    if (reverseState) {
+      loadReversePreview(reverseState.candidate);
+    }
+  }, [loadReversePreview, reverseState]);
 
   const upsertThreadTask = useCallback(
     (task: ThreadTask) => {
@@ -688,9 +914,12 @@ export function useConversationPanelModel({
     confirmForkFromMessage,
     navigateToForkSource,
     reverseFromMessage,
-    reverseConfirmation: reverseCandidate,
+    reverseConfirmation: reverseState,
     cancelReverseFromMessage,
     confirmReverseFromMessage,
+    selectReverseMode,
+    decideReverseFailure,
+    retryReversePreview,
     updateThreadTask,
     deleteThreadTask,
   };
@@ -1074,6 +1303,25 @@ function branchActionErrorMessage(mode: "fork" | "reverse", reason: unknown): st
     return message;
   }
   return message === "操作失败" ? "回溯失败" : `回溯失败：${message}`;
+}
+
+function reverseActionErrorMessage(code: string | null): string {
+  if (code === "file_preview_stale") {
+    return "文件状态已经变化，请重新检查后再回溯";
+  }
+  if (code === "file_restore_turn_running") {
+    return "当前回复仍在进行中，请先停止或等待完成后再回溯";
+  }
+  if (code === "file_restore_session_busy" || code === "file_restore_locked") {
+    return "正在处理其他文件修改，请稍后再试";
+  }
+  if (code === "file_restore_compensated") {
+    return "本次回溯未完成，文件已恢复到操作前状态";
+  }
+  if (code === "file_restore_compensation_failed" || code === "file_restore_blocked") {
+    return "部分文件没有恢复完成，需要你检查后再继续";
+  }
+  return "暂时无法完成回溯，请稍后重试";
 }
 
 function reviewFilesFromPreview(file: FileChangePreview): FileReviewChange[] {

@@ -1,6 +1,17 @@
 """存储投影与运行记录模块。"""
 
 from backend.app.storage.db import Database, init_database
+from backend.app.storage.file_history_repository import (
+    FileHistoryMutationRecord,
+    FileHistoryOperationFileRecord,
+    FileHistoryOperationRecord,
+    FileHistoryPathHeadRecord,
+    FileHistoryRepository,
+    FileHistorySessionStateRecord,
+    FileHistorySnapshotEntryRecord,
+    FileHistorySnapshotRecord,
+    FileHistoryTrackedFileRecord,
+)
 from backend.app.storage.repositories import (
     A2UI_RESUME_STATUS_DEFERRED,
     A2UI_RESUME_STATUS_FAILED,
@@ -73,6 +84,15 @@ from backend.app.storage.repositories import (
 
 __all__ = [
     "Database",
+    "FileHistoryMutationRecord",
+    "FileHistoryOperationFileRecord",
+    "FileHistoryOperationRecord",
+    "FileHistoryPathHeadRecord",
+    "FileHistoryRepository",
+    "FileHistorySessionStateRecord",
+    "FileHistorySnapshotEntryRecord",
+    "FileHistorySnapshotRecord",
+    "FileHistoryTrackedFileRecord",
     "A2UI_RESUME_STATUS_DEFERRED",
     "A2UI_RESUME_STATUS_FAILED",
     "A2UI_RESUME_STATUS_NOT_STARTED",

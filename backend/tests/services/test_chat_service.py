@@ -365,7 +365,9 @@ async def test_chat_service_uses_langchain_agent_and_persists_history(tmp_path) 
     assert result.final_content == "你好"
     assert factory.requested_models == ["qwen-coder"]
     assert [
-        item["action"] for item in chat_adapter.sent if item["action"] != "turn_started"
+        item["action"]
+        for item in chat_adapter.sent
+        if item["action"] not in {"turn_started", "middleware_progress"}
     ] == ["stream", "completed"]
     history = service.message_event_service.get_display_messages(result.session_id)
     visible_history = [message for message in history if message["role"] != "turn"]
@@ -582,7 +584,11 @@ async def test_chat_service_routes_langchain_tool_events(tmp_path) -> None:
     )
 
     assert result.status == "completed"
-    visible_events = [item for item in chat_adapter.sent if item["action"] != "turn_started"]
+    visible_events = [
+        item
+        for item in chat_adapter.sent
+        if item["action"] not in {"turn_started", "middleware_progress"}
+    ]
     assert [item["action"] for item in visible_events] == [
         "tool_start",
         "tool_end",
@@ -962,16 +968,7 @@ async def test_chat_service_mcp_disabled_keeps_local_workspace_tools_available(
         ("create_file", {"path": "test.txt", "content": "hello"}),
         (
             "edit_file",
-            {
-                "patch": (
-                    "*** Begin Patch\n"
-                    "*** Update File: README.md\n"
-                    "@@\n"
-                    "-old\n"
-                    "+new\n"
-                    "*** End Patch"
-                )
-            },
+            {"path": "README.md", "old_string": "old", "new_string": "new"},
         ),
     ],
 )
@@ -1431,7 +1428,9 @@ async def test_chat_service_disables_project_tools_for_chat_session(tmp_path) ->
     assert result.status == "completed"
     assert factory.created_tool_counts == [0]
     assert [
-        item["action"] for item in chat_adapter.sent if item["action"] != "turn_started"
+        item["action"]
+        for item in chat_adapter.sent
+        if item["action"] not in {"turn_started", "middleware_progress"}
     ] == ["stream", "completed"]
 
 
@@ -1530,7 +1529,11 @@ async def test_chat_service_patches_cancelled_partial_output_into_checkpoint(tmp
     result = await asyncio.wait_for(task, timeout=1)
 
     assert result.status == "cancelled"
-    visible_events = [item for item in chat_adapter.sent if item["action"] != "turn_started"]
+    visible_events = [
+        item
+        for item in chat_adapter.sent
+        if item["action"] not in {"turn_started", "llm_first_token"}
+    ]
     assert [item["action"] for item in visible_events] == ["stream", "cancelled"]
     assert visible_events[0]["data"]["content"] == "半截"
     assert [message.type for message in agent.updated_messages] == ["human", "ai"]
@@ -1600,3 +1603,84 @@ async def test_chat_service_closes_pending_tool_call_when_cancelled(tmp_path) ->
         "tool": "run_cmd",
     }
     assert agent.updated_messages[3].content == "半截\n\n[用户在此处取消]"
+
+
+@pytest.mark.asyncio
+async def test_workspace_turn_persists_message_anchored_input_file_snapshot(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="完成")])
+    service, repositories, _checkpointer, _factory = _service(tmp_path, model)
+    workspace = repositories.workspaces.create(workspace_id="ws_history", root_path=project)
+    session = repositories.sessions.create(
+        session_id="session-history",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="记录文件快照",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    snapshots = repositories.file_history.list_snapshots(session.id)
+    user_events = [
+        event
+        for event in repositories.message_events.list_by_session(session.id, limit=100)
+        if event.action == "user_message"
+    ]
+    trace = repositories.trace_records.get(result.trace_id)
+    assert result.status == "completed"
+    assert len(snapshots) == len(user_events) == 1
+    assert snapshots[0].user_message_event_id == user_events[0].id
+    assert trace is not None
+    assert trace.input_file_snapshot_id == snapshots[0].id
+    assert trace.input_file_snapshot_status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_disabled_file_history_allows_chat_but_records_disabled_snapshot_status(
+    tmp_path,
+) -> None:
+    project = tmp_path / "project-disabled"
+    project.mkdir()
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="只聊天")])
+    service, repositories, _checkpointer, _factory = _service(tmp_path, model)
+    service.file_history_service.enabled = False
+    workspace = repositories.workspaces.create(
+        workspace_id="ws_history_disabled",
+        root_path=project,
+    )
+    session = repositories.sessions.create(
+        session_id="session-history-disabled",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="不修改文件",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    trace = repositories.trace_records.get(result.trace_id)
+    assert result.status == "completed"
+    assert repositories.file_history.list_snapshots(session.id) == []
+    assert trace is not None
+    assert trace.input_file_snapshot_id is None
+    assert trace.input_file_snapshot_status == "disabled"

@@ -416,8 +416,13 @@ class PersistenceProjection:
     ) -> None:
         fallback_trace_id = event.trace_id if event else ""
         trace_record_id = str(payload.get("trace_record_id") or fallback_trace_id or "").strip()
+        event_id = new_id()
+        if action == ReplayAction.USER_MESSAGE.value:
+            requested_id = str(payload.get("message_event_id") or "").strip()
+            if requested_id:
+                event_id = requested_id
         record = self._repository.append(
-            event_id=new_id(),
+            event_id=event_id,
             session_id=self._session_id,
             trace_record_id=trace_record_id or None,
             turn_index=self._turn_index,

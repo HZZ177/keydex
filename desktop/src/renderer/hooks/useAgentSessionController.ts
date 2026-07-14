@@ -551,9 +551,6 @@ export function useAgentSessionController({
 
   useEffect(() => {
     return subscribeAddWorkspaceFileToChat((detail) => {
-      if (detail.file.type !== "file") {
-        return;
-      }
       if (detail.sessionId && sessionId && detail.sessionId !== sessionId) {
         return;
       }

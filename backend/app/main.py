@@ -24,7 +24,11 @@ from backend.app.api.mcp import router as mcp_router
 from backend.app.api.model_providers import router as model_providers_router
 from backend.app.api.models import router as models_router
 from backend.app.api.sessions import router as sessions_router
-from backend.app.api.settings import load_effective_model_settings, load_model_settings
+from backend.app.api.settings import (
+    load_effective_model_settings,
+    load_general_settings,
+    load_model_settings,
+)
 from backend.app.api.settings import router as settings_router
 from backend.app.api.thread_tasks import router as thread_tasks_router
 from backend.app.api.usage import router as usage_router
@@ -46,6 +50,7 @@ from backend.app.runtime import create_desktop_runtime
 from backend.app.services.agent_runtime import AgentRuntimeProvider, LazyChatService
 from backend.app.services.chat_stream_manager import ChatStreamManager
 from backend.app.services.file_change_hub import FileChangeHub
+from backend.app.services.file_history_service import FileHistoryService
 from backend.app.services.thread_task_elapsed_ticker import ThreadTaskElapsedTicker
 from backend.app.services.thread_task_events import ThreadTaskEventPublisher
 from backend.app.services.thread_task_runtime import ThreadTaskRuntime, ThreadTaskStateLocks
@@ -69,6 +74,21 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 pass
 
         await app.state.mcp_manager.start()
+        if app.state.file_history_service.enabled:
+            recovered = await asyncio.to_thread(
+                app.state.file_history_service.recover_incomplete_operations
+            )
+            cleanup = await asyncio.to_thread(
+                app.state.file_history_service.cleanup_history,
+                orphan_grace_seconds=resolved_settings.file_history_orphan_grace_seconds,
+            )
+            logger.info(
+                "[FileHistory] 启动恢复与清理完成 | "
+                f"recovered_operations={len(recovered)} | "
+                f"deleted_artifacts={len(cleanup['deleted_artifacts'])} | "
+                f"expired_locks={cleanup['expired_locks']} | "
+                f"usage_bytes={cleanup['usage_bytes']}"
+            )
         warmup_task = asyncio.create_task(run_warmup())
         app.state.thread_task_elapsed_ticker.start()
         try:
@@ -116,6 +136,38 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         default_workspace_root=resolved_settings.workspace_root,
     )
     app.state.repositories = StorageRepositories(app.state.database)
+    stored_general = app.state.repositories.settings.get("general_settings", default={})
+    general_settings = load_general_settings(app.state.repositories)
+    stored_general = stored_general if isinstance(stored_general, dict) else {}
+    app.state.file_history_service = FileHistoryService(
+        app.state.repositories,
+        data_dir=resolved_settings.data_dir,
+        enabled=(
+            general_settings.file_history_enabled
+            if "file_history_enabled" in stored_general
+            else resolved_settings.file_history_enabled
+        ),
+        max_storage_bytes=(
+            general_settings.file_history_max_storage_bytes
+            if "file_history_max_storage_bytes" in stored_general
+            else resolved_settings.file_history_max_storage_bytes
+        ),
+        max_versions_per_file=(
+            general_settings.file_history_max_versions_per_file
+            if "file_history_max_versions_per_file" in stored_general
+            else resolved_settings.file_history_max_versions_per_file
+        ),
+        max_rewind_points=(
+            general_settings.file_history_max_rewind_points
+            if "file_history_max_rewind_points" in stored_general
+            else resolved_settings.file_history_max_rewind_points
+        ),
+        retention_days=(
+            general_settings.file_history_retention_days
+            if "file_history_retention_days" in stored_general
+            else resolved_settings.file_history_retention_days
+        ),
+    )
     app.state.mcp_manager = McpManager(
         settings=resolved_settings,
         repositories=app.state.repositories,
@@ -167,6 +219,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             keydex_runtime_cache=app.state.keydex_runtime_cache,
             thread_task_service=app.state.thread_task_service,
             mcp_manager=app.state.mcp_manager,
+            file_history_service=app.state.file_history_service,
         )
 
     app.state.agent_runtime_provider = AgentRuntimeProvider(build_chat_service)

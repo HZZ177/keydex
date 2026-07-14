@@ -586,6 +586,97 @@ describe("RuntimeBridge", () => {
     );
   });
 
+  it("routes file rewind preview execute and status with encoded identifiers", async () => {
+    const preview = {
+      operation_id: "operation 1",
+      source: { message_event_id: "event 1" },
+      conversation_available: true,
+      code_available: true,
+      default_mode: "both",
+      snapshot_id: "snapshot 1",
+      preview_token: "token 1",
+      files: [],
+      insertions: 0,
+      deletions: 0,
+      warnings: [],
+    };
+    const result = {
+      operation_id: "operation 1",
+      status: "full",
+      mode: "code",
+      decision: "full",
+      conversation_rewound: false,
+      restored_files: ["src/a.ts"],
+      skipped_files: [],
+      forced_files: [],
+      failed_files: [],
+      source: {},
+    };
+    const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
+      const url = requestUrl(input);
+      if (url.endsWith("/api/sessions/session%201/reverse/preview")) {
+        return jsonResponse(200, preview);
+      }
+      if (url.endsWith("/api/sessions/session%201/reverse") && init.method === "POST") {
+        return jsonResponse(200, result);
+      }
+      if (url.endsWith("/api/sessions/session%201/reverse/operation%201")) {
+        return jsonResponse(200, {
+          operation_id: "operation 1",
+          status: "full",
+          result,
+          error_code: null,
+          blocked_paths: [],
+        });
+      }
+      return jsonResponse(404, { detail: "not found" });
+    });
+    const runtime = createRuntimeBridge({ baseUrl: "http://127.0.0.1:8765", fetcher });
+
+    await expect(runtime.conversation.previewSessionReverse("session 1", "event 1")).resolves.toEqual(preview);
+    await expect(runtime.conversation.executeSessionReverse("session 1", {
+      message_event_id: "event 1",
+      operation_id: "operation 1",
+      preview_token: "token 1",
+      request_id: "request 1",
+      mode: "code",
+      decision: "full",
+    })).resolves.toEqual(result);
+    await expect(runtime.conversation.getSessionReverseStatus("session 1", "operation 1")).resolves.toMatchObject({
+      operation_id: "operation 1",
+      status: "full",
+    });
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:8765/api/sessions/session%201/reverse/preview",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ message_event_id: "event 1" }),
+      }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:8765/api/sessions/session%201/reverse",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          message_event_id: "event 1",
+          operation_id: "operation 1",
+          preview_token: "token 1",
+          request_id: "request 1",
+          mode: "code",
+          decision: "full",
+        }),
+      }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      "http://127.0.0.1:8765/api/sessions/session%201/reverse/operation%201",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("routes thread task calls through the conversation runtime API", async () => {
     const task = {
       id: "task 1",

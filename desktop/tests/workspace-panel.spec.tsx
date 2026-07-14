@@ -270,6 +270,85 @@ describe("WorkspacePanel", () => {
     expect(runtime.workspace.listDirectorySubtree).not.toHaveBeenCalled();
   });
 
+  it("waits for deep directory expansion to settle before scrolling to the located file", async () => {
+    let locatedElement: Element | null = null;
+    let locatedBeforeLayoutSettled = false;
+    const scrollIntoView = vi.fn(function (this: Element, options?: ScrollIntoViewOptions) {
+      if (options?.behavior === "smooth") {
+        const ancestorGroups: HTMLElement[] = [];
+        let ancestor = this.parentElement;
+        while (ancestor) {
+          if (ancestor.getAttribute("role") === "group") {
+            ancestorGroups.push(ancestor);
+          }
+          ancestor = ancestor.parentElement;
+        }
+        const layoutSettled = ancestorGroups.every((group) => (
+          group.dataset.open === "true" &&
+          group.style.getPropertyValue("--tree-group-height") === "auto"
+        ));
+        locatedBeforeLayoutSettled ||= !layoutSettled;
+        if (layoutSettled) {
+          locatedElement = this;
+        }
+      }
+    });
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const peerDirectories = Array.from({ length: 40 }, (_, index) => {
+      const name = `peer-${String(index).padStart(2, "0")}`;
+      return entry(name, `A/B/${name}`, "directory");
+    });
+    const runtime = fakeRuntime({
+      "": [entry("A", "A", "directory")],
+      A: [entry("B", "A/B", "directory")],
+      "A/B": [...peerDirectories, entry("C", "A/B/C", "directory")],
+      "A/B/C": [entry("D", "A/B/C/D", "directory")],
+      "A/B/C/D": [entry("E.txt", "A/B/C/D/E.txt", "file", 24)],
+    });
+
+    try {
+      render(
+        <WorkspacePanel
+          selectedPath="A/B/C/D/E.txt"
+          sessionId="ses-1"
+          label="D:/repo"
+          runtime={runtime}
+        />,
+      );
+
+      expect(await screen.findByRole("button", { name: "展开 A" })).not.toBeNull();
+      scrollIntoView.mockClear();
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("button", { name: "定位当前文件" }));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      const target = document.querySelector<HTMLElement>('[data-entry-path="A/B/C/D/E.txt"]');
+      expect(target).not.toBeNull();
+      expect(locatedElement).toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(180);
+      });
+      expect(locatedBeforeLayoutSettled).toBe(false);
+      expect(locatedElement).toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(20);
+      });
+      expect(locatedElement).toBe(target);
+    } finally {
+      vi.useRealTimers();
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        configurable: true,
+        value: originalScrollIntoView,
+      });
+    }
+  });
+
   it("shows backend workspace errors", async () => {
     const runtime = {
       workspace: {
@@ -526,11 +605,13 @@ describe("WorkspacePanel", () => {
 
       const selected = await screen.findByRole("button", { name: "选择文件 src/components/main.py" });
       expect(selected.getAttribute("data-selected")).toBe("true");
-      expect(document.activeElement).toBe(selected);
-      expect(scrollIntoView).toHaveBeenCalledWith({
-        behavior: "smooth",
-        block: "center",
-        inline: "nearest",
+      await waitFor(() => {
+        expect(document.activeElement).toBe(selected);
+        expect(scrollIntoView).toHaveBeenCalledWith({
+          behavior: "smooth",
+          block: "center",
+          inline: "nearest",
+        });
       });
       await waitFor(() => {
         expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ sessionId: "ses-1" }, "src");

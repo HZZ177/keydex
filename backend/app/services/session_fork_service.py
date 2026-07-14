@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
+from backend.app.core.time import to_iso_z, utc_now
 from backend.app.services.checkpoint_service import (
     CheckpointService,
     CheckpointServiceError,
@@ -61,6 +64,8 @@ class SessionReverseSource:
 class SessionReverseResult:
     session: SessionRecord
     source: SessionReverseSource
+    restored_input: str | None = None
+    restored_attachments: tuple[dict[str, Any], ...] = ()
 
 
 class SessionForkService:
@@ -195,37 +200,17 @@ class SessionForkService:
             turn_index=turn_index,
         )
         try:
-            self.checkpointer.rollback_thread_to_checkpoint(
-                thread_id=source.active_session_id,
-                checkpoint_id=source.checkpoint_id,
-                checkpoint_ns=source.checkpoint_ns,
+            result, deleted_events, deleted_traces = self.rewind_conversation(
+                source_session=source_session,
+                source=source,
             )
-            deleted_events = self.repositories.message_events.delete_from_turn(
-                source_session.id,
-                source.turn_index,
-            )
-            deleted_traces = self.repositories.trace_records.soft_delete_from_turn(
-                source_session.id,
-                source.turn_index,
-            )
-            updated = self.repositories.sessions.update(
-                source_session.id,
-                active_session_id=source.active_session_id,
-                status="active",
-            )
-            if updated is None:
-                raise SessionForkServiceError(
-                    "session_not_found",
-                    "session 不存在",
-                    {"session_id": source_session.id},
-                )
             logger.info(
                 "[SessionForkService] 回退 session 到历史轮次 | "
                 f"session_id={source_session.id} | active_session_id={source.active_session_id} | "
                 f"turn_index={source.turn_index} | checkpoint_id={source.checkpoint_id or '-'} | "
                 f"deleted_events={deleted_events} | deleted_traces={deleted_traces}"
             )
-            return SessionReverseResult(session=updated, source=source)
+            return result
         except Exception as exc:
             if isinstance(exc, SessionForkServiceError):
                 raise
@@ -238,6 +223,171 @@ class SessionForkService:
                     "checkpoint_id": source.checkpoint_id,
                 },
             ) from exc
+
+    def rewind_conversation(
+        self,
+        *,
+        source_session: SessionRecord,
+        source: SessionReverseSource,
+    ) -> tuple[SessionReverseResult, int, int]:
+        target_event = (
+            self.repositories.message_events.get(source.message_event_id)
+            if source.message_event_id
+            else None
+        )
+        restored_input = None
+        restored_attachments: tuple[dict[str, Any], ...] = ()
+        if target_event is not None:
+            restored_input = str((target_event.data or {}).get("content") or "")
+            raw_attachments = (target_event.data or {}).get("attachments")
+            if isinstance(raw_attachments, list):
+                restored_attachments = tuple(
+                    item for item in raw_attachments if isinstance(item, dict)
+                )
+        with self.repositories.db.transaction(immediate=True) as conn:
+            self.checkpointer.rollback_thread_to_checkpoint(
+                thread_id=source.active_session_id,
+                checkpoint_id=source.checkpoint_id,
+                checkpoint_ns=source.checkpoint_ns,
+                conn=conn,
+            )
+            deleted_events, deleted_traces = self._rewind_turn_artifacts(
+                conn,
+                session_id=source_session.id,
+                turn_index=source.turn_index,
+            )
+            conn.execute(
+                """
+                update sessions
+                   set active_session_id = ?, status = 'active', updated_at = ?
+                 where id = ? and is_deleted = 0
+                """,
+                (source.active_session_id, to_iso_z(utc_now()), source_session.id),
+            )
+        updated = self._require_session(source_session.id)
+        return (
+            SessionReverseResult(
+                session=updated,
+                source=source,
+                restored_input=restored_input,
+                restored_attachments=restored_attachments,
+            ),
+            deleted_events,
+            deleted_traces,
+        )
+
+    def _rewind_turn_artifacts(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        session_id: str,
+        turn_index: int,
+    ) -> tuple[int, int]:
+        now = to_iso_z(utc_now())
+        event_rows = conn.execute(
+            """
+            select data_json from message_events
+             where session_id = ? and turn_index > ? and is_deleted = 0
+            """,
+            (session_id, turn_index),
+        ).fetchall()
+        attachment_ids = self._attachment_ids(event_rows)
+        trace_rows = conn.execute(
+            """
+            select trace_id from trace_record
+             where session_id = ? and turn_index >= ? and is_deleted = 0
+            """,
+            (session_id, turn_index),
+        ).fetchall()
+        trace_ids = tuple(str(row[0]) for row in trace_rows)
+        deleted_events = conn.execute(
+            "delete from message_events where session_id = ? and turn_index >= ?",
+            (session_id, turn_index),
+        ).rowcount
+        if trace_ids:
+            placeholders = ",".join("?" for _ in trace_ids)
+            conn.execute(
+                f"delete from trace_event_log where trace_record_id in ({placeholders})",
+                trace_ids,
+            )
+        conn.execute(
+            "delete from llm_request_logs where session_id = ? and turn_index >= ?",
+            (session_id, turn_index),
+        )
+        conn.execute(
+            """
+            update a2ui_interactions set is_deleted = 1, updated_at = ?
+             where session_id = ? and turn_index >= ? and is_deleted = 0
+            """,
+            (now, session_id, turn_index),
+        )
+        conn.execute(
+            """
+            update command_approval_requests set is_deleted = 1, updated_at = ?
+             where session_id = ? and turn_index >= ? and is_deleted = 0
+            """,
+            (now, session_id, turn_index),
+        )
+        conn.execute(
+            "delete from thread_task_runs where session_id = ? and turn_index >= ?",
+            (session_id, turn_index),
+        )
+        conn.execute(
+            """
+            update session_pending_inputs
+               set is_deleted = 1, status = 'cancelled', cancelled_at = ?, updated_at = ?
+             where session_id = ? and promoted_turn_index >= ? and is_deleted = 0
+            """,
+            (now, now, session_id, turn_index),
+        )
+        if attachment_ids:
+            placeholders = ",".join("?" for _ in attachment_ids)
+            conn.execute(
+                f"update attachments set is_deleted = 1, updated_at = ? "
+                f"where id in ({placeholders})",
+                (now, *attachment_ids),
+            )
+        deleted_traces = conn.execute(
+            """
+            update trace_record set is_deleted = 1, updated_at = ?
+             where session_id = ? and turn_index >= ? and is_deleted = 0
+            """,
+            (now, session_id, turn_index),
+        ).rowcount
+        return int(deleted_events), int(deleted_traces)
+
+    @staticmethod
+    def _attachment_ids(rows: list[sqlite3.Row]) -> tuple[str, ...]:
+        values: set[str] = set()
+        for row in rows:
+            try:
+                payload = json.loads(row[0] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            attachments = payload.get("attachments") if isinstance(payload, dict) else None
+            if not isinstance(attachments, list):
+                continue
+            for item in attachments:
+                if isinstance(item, dict):
+                    attachment_id = str(item.get("id") or "").strip()
+                    if attachment_id:
+                        values.add(attachment_id)
+        return tuple(sorted(values))
+
+    def resolve_reverse_source(
+        self,
+        *,
+        session_id: str,
+        message_event_id: str,
+    ) -> SessionReverseSource:
+        source_session = self._require_session(session_id)
+        return self._resolve_reverse_source(
+            source_session=source_session,
+            checkpoint_id=None,
+            trace_id=None,
+            message_event_id=message_event_id,
+            turn_index=None,
+        )
 
     def _copy_visible_history(
         self,

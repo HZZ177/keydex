@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from backend.app.agent.runtime_settings import (
@@ -43,6 +43,11 @@ class AppearanceSettings(BaseModel):
 class GeneralSettings(BaseModel):
     close_window_behavior: Literal["exit", "minimize_to_tray"] | None = None
     conversation_send_default_mode: Literal["steer", "queue"] = "steer"
+    file_history_enabled: bool = True
+    file_history_max_storage_bytes: int = Field(default=1_073_741_824, ge=1)
+    file_history_max_versions_per_file: int = Field(default=1_000, ge=1)
+    file_history_max_rewind_points: int = Field(default=100, ge=1, le=100)
+    file_history_retention_days: int = Field(default=30, ge=1)
 
 
 class SettingsResponse(BaseModel):
@@ -287,36 +292,50 @@ async def get_settings(
 
 @router.put("", response_model=SettingsResponse)
 async def put_settings(
-    request: UpdateSettingsRequest,
+    payload: UpdateSettingsRequest,
+    request: Request,
     repositories: StorageRepositories = RepositoriesDep,
 ) -> SettingsResponse:
-    if request.model is not None:
+    if payload.model is not None:
         current = load_model_settings(repositories)
-        merged = merge_model_settings(current, request.model)
+        merged = merge_model_settings(current, payload.model)
         repositories.settings.set(MODEL_SETTINGS_KEY, merged.model_dump(mode="json"))
         logger.info(
             "[SettingsAPI] 更新模型设置 | "
             f"base_url={merged.base_url} | model={merged.model} | "
             f"api_key_set={bool(merged.api_key)}"
         )
-    if request.appearance is not None:
+    if payload.appearance is not None:
         repositories.settings.set(
             APPEARANCE_SETTINGS_KEY,
-            request.appearance.model_dump(mode="json"),
+            payload.appearance.model_dump(mode="json"),
         )
-        logger.info(f"[SettingsAPI] 更新外观设置 | font_family={request.appearance.font_family}")
-    if request.general is not None:
+        logger.info(f"[SettingsAPI] 更新外观设置 | font_family={payload.appearance.font_family}")
+    if payload.general is not None:
         repositories.settings.set(
             GENERAL_SETTINGS_KEY,
-            request.general.model_dump(mode="json"),
+            payload.general.model_dump(mode="json"),
         )
+        file_history = getattr(request.app.state, "file_history_service", None)
+        if file_history is not None:
+            file_history.enabled = payload.general.file_history_enabled
+            file_history.max_storage_bytes = payload.general.file_history_max_storage_bytes
+            file_history.max_versions_per_file = payload.general.file_history_max_versions_per_file
+            file_history.max_rewind_points = payload.general.file_history_max_rewind_points
+            file_history.retention_days = payload.general.file_history_retention_days
         logger.info(
             "[SettingsAPI] 更新常规设置 | "
-            f"close_window_behavior={request.general.close_window_behavior} | "
-            f"conversation_send_default_mode={request.general.conversation_send_default_mode}"
+            f"close_window_behavior={payload.general.close_window_behavior} | "
+            f"conversation_send_default_mode={payload.general.conversation_send_default_mode} | "
+            f"file_history_enabled={payload.general.file_history_enabled} | "
+            f"file_history_max_storage_bytes={payload.general.file_history_max_storage_bytes} | "
+            "file_history_max_versions_per_file="
+            f"{payload.general.file_history_max_versions_per_file} | "
+            f"file_history_max_rewind_points={payload.general.file_history_max_rewind_points} | "
+            f"file_history_retention_days={payload.general.file_history_retention_days}"
         )
-    if request.command is not None:
-        validated_command = _validated_command_settings(request.command)
+    if payload.command is not None:
+        validated_command = _validated_command_settings(payload.command)
         save_command_settings(repositories, validated_command)
         logger.info(
             "[SettingsAPI] 更新命令配置 | "

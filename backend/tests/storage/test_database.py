@@ -49,6 +49,15 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
         "trace_record",
         "llm_request_logs",
         "trace_event_log",
+        "file_history_session_state",
+        "file_history_snapshots",
+        "file_history_snapshot_entries",
+        "file_history_tracked_files",
+        "file_history_mutations",
+        "file_history_path_heads",
+        "file_history_operations",
+        "file_history_operation_files",
+        "file_history_locks",
     }
     assert expected.issubset(first)
     assert expected.issubset(second)
@@ -190,6 +199,85 @@ def test_database_connections_use_busy_timeout_and_wal(tmp_path) -> None:
     assert busy_timeout[0] >= 30000
     assert journal_mode is not None
     assert str(journal_mode[0]).lower() == "wal"
+
+
+def test_file_history_schema_is_idempotent_and_supports_restore_results(tmp_path) -> None:
+    db_path = tmp_path / "app.db"
+    db = init_database(db_path)
+    init_database(db_path)
+
+    with db.connect() as conn:
+        trace_columns = {
+            str(row["name"]) for row in conn.execute("pragma table_info(trace_record)")
+        }
+        operation_indexes = {
+            str(row["name"])
+            for row in conn.execute("pragma index_list(file_history_operations)")
+        }
+        session_indexes = {
+            str(row["name"])
+            for row in conn.execute("pragma index_list(file_history_snapshots)")
+        }
+
+        conn.execute(
+            """
+            insert into sessions (
+              id, user_id, scene_id, status, created_at, updated_at
+            ) values ('session-file-history', 'user', 'scene', 'active', ?, ?)
+            """,
+            ("2026-07-14T00:00:00Z", "2026-07-14T00:00:00Z"),
+        )
+        conn.execute(
+            """
+            insert into file_history_snapshots (
+              id, session_id, kind, sequence, workspace_root, workspace_identity,
+              status, created_at, updated_at
+            ) values (?, ?, 'restore_result', 1, ?, ?, 'ready', ?, ?)
+            """,
+            (
+                "snapshot-restore-result",
+                "session-file-history",
+                str(tmp_path),
+                str(tmp_path).casefold(),
+                "2026-07-14T00:00:01Z",
+                "2026-07-14T00:00:01Z",
+            ),
+        )
+        conn.execute(
+            """
+            insert into file_history_session_state (
+              session_id, active_snapshot_id, next_sequence, state,
+              created_at, updated_at
+            ) values (?, ?, 2, 'blocked', ?, ?)
+            """,
+            (
+                "session-file-history",
+                "snapshot-restore-result",
+                "2026-07-14T00:00:02Z",
+                "2026-07-14T00:00:02Z",
+            ),
+        )
+        row = conn.execute(
+            "select active_snapshot_id, next_sequence, state from file_history_session_state"
+        ).fetchone()
+
+    assert {"input_file_snapshot_id", "input_file_snapshot_status"}.issubset(trace_columns)
+    assert {
+        "idx_file_history_operations_session_created",
+        "idx_file_history_operations_state",
+        "idx_file_history_operations_target",
+    }.issubset(operation_indexes)
+    assert {
+        "idx_file_history_snapshots_session_status_sequence",
+        "idx_file_history_snapshots_trace",
+        "idx_file_history_snapshots_parent",
+    }.issubset(session_indexes)
+    assert row is not None
+    assert dict(row) == {
+        "active_snapshot_id": "snapshot-restore-result",
+        "next_sequence": 2,
+        "state": "blocked",
+    }
 
 
 def test_init_database_creates_mcp_server_schema_and_constraints(tmp_path) -> None:

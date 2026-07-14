@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import stat
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -13,6 +14,7 @@ from backend.app.agent.tool_call_progress import (
 from backend.app.core.logger import logger
 from backend.app.tools.base import FunctionTool, ToolExecutionContext, ToolExecutionError
 from backend.app.tools.file_access import relative_tool_path, resolve_file_access_path
+from backend.app.tools.file_history import tracked_file_mutation
 from backend.app.tools.registry import ToolRegistry
 
 APPLY_PATCH_USAGE = """在文件访问权限允许范围内创建、修改、删除或移动 UTF-8 文本文件，
@@ -134,7 +136,23 @@ async def apply_patch_tool(
 
     operations = _parse_patch(patch)
     planned_changes = _preflight_changes(operations, context)
-    _write_planned_changes(planned_changes)
+    tracked_paths: list[tuple[Path, str]] = []
+    for change in planned_changes:
+        mutation_kind = {
+            "add": "create",
+            "update": "update",
+            "delete": "delete",
+            "move": "move_source",
+        }[change.kind]
+        tracked_paths.append((change.target, mutation_kind))
+        if change.destination != change.target:
+            tracked_paths.append((change.destination, "move_destination"))
+    with tracked_file_mutation(
+        context,
+        tool_name="apply_patch",
+        changes=tracked_paths,
+    ):
+        _write_planned_changes(planned_changes)
     changes = [_change_result(change, context) for change in planned_changes]
 
     logger.info(
@@ -564,7 +582,10 @@ def _raise_invalid_line_after_end_of_file(line: str, line_number: int) -> None:
             "line": line,
             "line_number": line_number,
             "expected_prefixes": ["@@", END_PATCH_MARKER],
-            "hint": "*** End of File 表示当前 hunk 已锚定文件末尾；后续非空内容必须从新的 @@ 块开始。",
+            "hint": (
+                "*** End of File 表示当前 hunk 已锚定文件末尾；"
+                "后续非空内容必须从新的 @@ 块开始。"
+            ),
         },
     )
 
@@ -602,16 +623,25 @@ def _raise_invalid_update_hunk_line(line: str, line_number: int) -> None:
     message = "Update File 内容行缺少行类型前缀"
     if line.startswith("*** Add File: "):
         message = "Update File 正文中不能嵌入 *** Add File 文件操作头"
-        hint = "请把 *** Add File 放在文件操作层，也就是结束当前 Update File hunk 后再开始新的文件操作。"
+        hint = (
+            "请把 *** Add File 放在文件操作层，也就是结束当前 Update File hunk 后"
+            "再开始新的文件操作。"
+        )
     elif line.startswith("*** Update File: ") or line.startswith("*** Delete File: "):
         message = "文件操作头位置错误"
         hint = "文件操作头只能出现在文件操作层；如果要结束当前修改，请先完成当前 @@ 块。"
     elif line.startswith("*** Move to: "):
         message = "*** Move to 只能紧跟在 *** Update File 后面"
-        hint = "请把 *** Move to: <new-path> 放到 *** Update File: <path> 的下一行，不能放在 @@ 块内。"
+        hint = (
+            "请把 *** Move to: <new-path> 放到 *** Update File: <path> 的下一行，"
+            "不能放在 @@ 块内。"
+        )
     elif line.startswith("*** "):
         message = "无法识别或位置错误的 Update File 标记"
-        hint = "只有单独一行的 *** End of File 可以出现在 Update File 正文中，且前一个 @@ 块必须已有内容。"
+        hint = (
+            "只有单独一行的 *** End of File 可以出现在 Update File 正文中，"
+            "且前一个 @@ 块必须已有内容。"
+        )
     elif line.startswith("--- ") or line.startswith("+++ "):
         message = "Update File 正文不接受普通 unified diff 文件头"
         hint = "不要写 ---/+++ 文件头；在 *** Update File: <path> 后直接写 @@ 和变更行。"
@@ -668,14 +698,45 @@ def _find_sequence(lines: list[str], sequence: list[str], start: int) -> int | N
 
 
 def _write_planned_changes(changes: list[PlannedChange]) -> None:
+    originals: dict[Path, tuple[bytes | None, int | None]] = {}
     for change in changes:
-        if change.kind == "delete":
-            change.target.unlink()
+        for path in (change.target, change.destination):
+            if path in originals:
+                continue
+            if path.exists():
+                metadata = path.stat()
+                originals[path] = (path.read_bytes(), stat.S_IMODE(metadata.st_mode))
+            else:
+                originals[path] = (None, None)
+    try:
+        for change in changes:
+            if change.kind == "delete":
+                change.target.unlink()
+                continue
+            change.destination.parent.mkdir(parents=True, exist_ok=True)
+            change.destination.write_text(change.after, encoding="utf-8", newline="")
+            if (
+                change.kind == "move"
+                and change.target != change.destination
+                and change.target.exists()
+            ):
+                change.target.unlink()
+    except Exception:
+        _restore_original_files(originals)
+        raise
+
+
+def _restore_original_files(originals: dict[Path, tuple[bytes | None, int | None]]) -> None:
+    for path in originals:
+        if path.exists() and path.is_file():
+            path.unlink()
+    for path, (content, mode) in originals.items():
+        if content is None:
             continue
-        change.destination.parent.mkdir(parents=True, exist_ok=True)
-        change.destination.write_text(change.after, encoding="utf-8", newline="")
-        if change.kind == "move" and change.target != change.destination and change.target.exists():
-            change.target.unlink()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        if mode is not None:
+            path.chmod(mode)
 
 
 def _change_result(change: PlannedChange, context: ToolExecutionContext) -> dict[str, Any]:

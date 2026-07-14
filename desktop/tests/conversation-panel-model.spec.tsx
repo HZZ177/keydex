@@ -38,15 +38,20 @@ describe("useConversationPanelModel", () => {
     expect(result.current.searchWorkspace).toBeTypeOf("function");
     expect(result.current.listWorkspaceDirectory).toBeTypeOf("function");
 
-    await result.current.searchWorkspace?.("README", { signal: undefined });
+    await act(async () => {
+      await result.current.searchWorkspace?.("README", { signal: undefined });
+    });
     expect(runtime.workspace.search).toHaveBeenCalledWith({ sessionId: "ses-1" }, "README", { signal: undefined });
 
-    const entries = await result.current.listWorkspaceDirectory?.("/");
+    let entries;
+    await act(async () => {
+      entries = await result.current.listWorkspaceDirectory?.("/");
+    });
     expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ sessionId: "ses-1" }, "/");
     expect(entries).toEqual([{ path: "README.md", name: "README.md", type: "file" }]);
   });
 
-  it("includes workspace id in existing workspace session preview context", () => {
+  it("includes workspace id in existing workspace session preview context", async () => {
     const runtime = fakeRuntime();
     const controller = fakeController({
       session: agentSession({
@@ -64,6 +69,7 @@ describe("useConversationPanelModel", () => {
 
     expect(result.current.previewRenderContext.sessionId).toBe("ses-1");
     expect(result.current.previewRenderContext.workspaceId).toBe("ws-1");
+    await waitFor(() => expect(runtime.workspace.listSkills).toHaveBeenCalled());
   });
 
   it("keeps pure chat and unavailable workspace sessions out of workspace file search", () => {
@@ -316,6 +322,200 @@ describe("useConversationPanelModel", () => {
       expect(runtime.workspace.listSkills).toHaveBeenCalledWith({ sessionId: "ses-1" }, { forceReload: true });
     });
   });
+
+  it("previews and executes code-only rewind without reloading conversation", async () => {
+    const runtime = fakeRuntime();
+    const reloadHistory = vi.fn().mockResolvedValue(undefined);
+    const restoreComposerDraft = vi.fn();
+    const controller = fakeController({ reloadHistory, restoreComposerDraft });
+    const { result } = renderHook(
+      () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller }),
+      { wrapper: Providers },
+    );
+
+    act(() => result.current.reverseFromMessage(reverseMessage()));
+    await waitFor(() => expect(result.current.reverseConfirmation?.preview).not.toBeNull());
+    act(() => result.current.selectReverseMode("code"));
+    act(() => result.current.confirmReverseFromMessage());
+    await waitFor(() => expect(result.current.reverseConfirmation?.result?.status).toBe("full"));
+
+    expect(runtime.conversation.previewSessionReverse).toHaveBeenCalledWith("ses-1", "event-user-1");
+    expect(runtime.conversation.executeSessionReverse).toHaveBeenCalledWith(
+      "ses-1",
+      expect.objectContaining({ mode: "code", decision: "full", operation_id: "operation-1" }),
+    );
+    expect(reloadHistory).not.toHaveBeenCalled();
+    expect(restoreComposerDraft).not.toHaveBeenCalled();
+  });
+
+  it("drops a late preview response after switching sessions", async () => {
+    const runtime = fakeRuntime();
+    let resolvePreview: ((value: ReturnType<typeof reversePreview>) => void) | null = null;
+    vi.mocked(runtime.conversation.previewSessionReverse).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePreview = resolve;
+      }),
+    );
+    const controller = fakeController();
+    const { result, rerender } = renderHook(
+      ({ sessionId }) => useConversationPanelModel({ runtime, sessionId, controller }),
+      { wrapper: Providers, initialProps: { sessionId: "ses-1" } },
+    );
+
+    act(() => result.current.reverseFromMessage(reverseMessage()));
+    rerender({ sessionId: "ses-2" });
+    await act(async () => {
+      resolvePreview?.(reversePreview());
+      await Promise.resolve();
+    });
+
+    expect(result.current.reverseConfirmation).toBeNull();
+  });
+
+  it("executes a conversation rewind once and applies only conversation UI side effects", async () => {
+    const runtime = fakeRuntime();
+    vi.mocked(runtime.conversation.executeSessionReverse).mockResolvedValueOnce({
+      operation_id: "operation-1",
+      status: "full",
+      mode: "conversation",
+      decision: "full",
+      conversation_rewound: true,
+      restored_files: [],
+      skipped_files: [],
+      forced_files: [],
+      failed_files: [],
+      restored_input: "restored draft",
+      source: {},
+    });
+    const reloadHistory = vi.fn().mockResolvedValue(undefined);
+    const restoreComposerDraft = vi.fn();
+    const dispatch = vi.fn();
+    const controller = fakeController({ reloadHistory, restoreComposerDraft, dispatch });
+    const { result } = renderHook(
+      () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller }),
+      { wrapper: Providers },
+    );
+
+    act(() => result.current.reverseFromMessage(reverseMessage()));
+    await waitFor(() => expect(result.current.reverseConfirmation?.preview).not.toBeNull());
+    act(() => result.current.selectReverseMode("conversation"));
+    act(() => result.current.confirmReverseFromMessage());
+    await waitFor(() => expect(result.current.reverseConfirmation?.result?.status).toBe("full"));
+
+    expect(reloadHistory).toHaveBeenCalledTimes(1);
+    expect(restoreComposerDraft).toHaveBeenCalledWith(expect.objectContaining({ value: "restored draft" }));
+    expect(runtime.conversation.getSession).toHaveBeenCalledWith("ses-1");
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "session/upsert" }));
+  });
+
+  it("guards synchronous double confirmation with one execute request", async () => {
+    const runtime = fakeRuntime();
+    let resolveExecute: ((value: Awaited<ReturnType<RuntimeBridge["conversation"]["executeSessionReverse"]>>) => void) | null = null;
+    vi.mocked(runtime.conversation.executeSessionReverse).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveExecute = resolve;
+      }),
+    );
+    const { result } = renderHook(
+      () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller: fakeController() }),
+      { wrapper: Providers },
+    );
+
+    act(() => result.current.reverseFromMessage(reverseMessage()));
+    await waitFor(() => expect(result.current.reverseConfirmation?.preview).not.toBeNull());
+    act(() => {
+      result.current.confirmReverseFromMessage();
+      result.current.confirmReverseFromMessage();
+    });
+
+    expect(runtime.conversation.executeSessionReverse).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveExecute?.({
+        operation_id: "operation-1",
+        status: "full",
+        mode: "both",
+        decision: "full",
+        conversation_rewound: false,
+        restored_files: [],
+        skipped_files: [],
+        forced_files: [],
+        failed_files: [],
+        source: {},
+      });
+      await Promise.resolve();
+    });
+  });
+
+  it("keeps a successful backend result when local conversation refresh fails", async () => {
+    const runtime = fakeRuntime();
+    vi.mocked(runtime.conversation.executeSessionReverse).mockResolvedValueOnce({
+      operation_id: "operation-1",
+      status: "full",
+      mode: "both",
+      decision: "full",
+      conversation_rewound: true,
+      restored_files: ["src/a.ts"],
+      skipped_files: [],
+      forced_files: [],
+      failed_files: [],
+      restored_input: "restored draft",
+      source: {},
+    });
+    const controller = fakeController({ reloadHistory: vi.fn().mockRejectedValue(new Error("local refresh")) });
+    const { result } = renderHook(
+      () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller }),
+      { wrapper: Providers },
+    );
+
+    act(() => result.current.reverseFromMessage(reverseMessage()));
+    await waitFor(() => expect(result.current.reverseConfirmation?.preview).not.toBeNull());
+    act(() => result.current.confirmReverseFromMessage());
+    await waitFor(() => expect(result.current.reverseConfirmation?.result?.status).toBe("full"));
+
+    expect(result.current.reverseConfirmation?.error).toBeNull();
+    expect(result.current.reverseConfirmation?.result?.restored_files).toEqual(["src/a.ts"]);
+  });
+
+  it.each(["compensated", "compensation_failed", "blocked"] as const)(
+    "loads the persisted %s terminal result after execute rejects",
+    async (status) => {
+      const runtime = fakeRuntime();
+      vi.mocked(runtime.conversation.executeSessionReverse).mockRejectedValueOnce({
+        code: "file_restore_failed",
+        message: "restore failed",
+      });
+      vi.mocked(runtime.conversation.getSessionReverseStatus).mockResolvedValueOnce({
+        operation_id: "operation-1",
+        status,
+        error_code: status === "compensated" ? "file_restore_failed" : "file_restore_compensation_failed",
+        blocked_paths: status === "compensated" ? [] : ["src/a.ts"],
+        result: {
+          operation_id: "operation-1",
+          status,
+          mode: "both",
+          decision: "full",
+          conversation_rewound: false,
+          restored_files: [],
+          skipped_files: [],
+          forced_files: [],
+          failed_files: status === "compensated" ? [] : ["src/a.ts"],
+          source: {},
+        },
+      });
+      const { result } = renderHook(
+        () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller: fakeController() }),
+        { wrapper: Providers },
+      );
+
+      act(() => result.current.reverseFromMessage(reverseMessage()));
+      await waitFor(() => expect(result.current.reverseConfirmation?.preview).not.toBeNull());
+      act(() => result.current.confirmReverseFromMessage());
+
+      await waitFor(() => expect(result.current.reverseConfirmation?.result?.status).toBe(status));
+      expect(runtime.conversation.getSessionReverseStatus).toHaveBeenCalledWith("ses-1", "operation-1");
+      expect(result.current.reverseConfirmation?.phase).toBe("result");
+    },
+  );
 });
 
 function Providers({ children }: PropsWithChildren) {
@@ -382,6 +582,27 @@ function fakeRuntime(): RuntimeBridge {
         toolResult: "loaded result",
         status: "completed",
       }),
+      previewSessionReverse: vi.fn().mockResolvedValue(reversePreview()),
+      executeSessionReverse: vi.fn().mockResolvedValue({
+        operation_id: "operation-1",
+        status: "full",
+        mode: "code",
+        decision: "full",
+        conversation_rewound: false,
+        restored_files: [],
+        skipped_files: [],
+        forced_files: [],
+        failed_files: [],
+        source: {},
+      }),
+      getSessionReverseStatus: vi.fn().mockResolvedValue({
+        operation_id: "operation-1",
+        status: "full",
+        result: null,
+        error_code: null,
+        blocked_paths: [],
+      }),
+      getSession: vi.fn().mockResolvedValue(agentSession()),
     },
     workspace: {
       search: vi.fn().mockResolvedValue([]),
@@ -447,6 +668,37 @@ function toolMessage() {
       toolDetailsDeferred: true,
     },
   } as const;
+}
+
+function reverseMessage() {
+  return {
+    id: "message-user-1",
+    threadId: "ses-1",
+    turnId: "turn-1",
+    itemId: "item-user-1",
+    kind: "user",
+    status: "completed",
+    content: "restore this",
+    createdAt: "2026-07-14T00:00:00.000Z",
+    updatedAt: "2026-07-14T00:00:00.000Z",
+    payload: { messageEventId: "event-user-1" },
+  } as const;
+}
+
+function reversePreview() {
+  return {
+    operation_id: "operation-1",
+    source: { message_event_id: "event-user-1" },
+    conversation_available: true,
+    code_available: true,
+    default_mode: "both" as const,
+    snapshot_id: "snapshot-1",
+    preview_token: "preview-token",
+    files: [],
+    insertions: 0,
+    deletions: 0,
+    warnings: [],
+  };
 }
 
 function fileEditMessage() {

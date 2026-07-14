@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, RuntimeBridge, WsConnectionStatus } from "@/runtime";
+import { emitAddWorkspaceFileToChat } from "@/renderer/events/workspaceFileContext";
 import { subscribeSessionUpdated, type AgentSessionUpdate } from "@/renderer/events/sessionEvents";
 import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
 import type {
@@ -76,6 +77,45 @@ describe("useAgentSessionController thread tasks", () => {
     });
     expect(listThreadTasks).not.toHaveBeenCalled();
     expect(result.current.activeTask).toBeNull();
+  });
+
+  it("adds workspace directory context requests to the composer", async () => {
+    const { runtime } = fakeRuntime();
+    const { result } = renderHook(() =>
+      useAgentSessionController({
+        runtime,
+        sessionId: "ses-1",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.session?.id).toBe("ses-1");
+    });
+
+    act(() => {
+      emitAddWorkspaceFileToChat({
+        absolutePath: String.raw`D:\repo\src`,
+        file: {
+          path: "src",
+          name: "src",
+          type: "directory",
+          source: "workspace",
+        },
+        sessionId: "ses-1",
+        workspaceId: "ws-1",
+        workspaceRoot: String.raw`D:\repo`,
+      });
+    });
+
+    expect(result.current.fileChipRequest).toMatchObject({
+      requestId: 1,
+      file: {
+        path: "src",
+        name: "src",
+        type: "directory",
+        source: "workspace",
+      },
+    });
   });
 
   it("waits until enabled before opening the channel and loading session history", async () => {

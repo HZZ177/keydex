@@ -24,6 +24,8 @@ export interface HealthResponse {
   agent_status?: "idle" | "warming" | "ready" | "failed" | "unknown" | string;
   agent_error?: string | null;
   agent_warmup_duration_ms?: number | null;
+  capabilities?: string[];
+  file_history_enabled?: boolean;
 }
 
 export interface SettingsRuntime {

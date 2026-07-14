@@ -16,6 +16,7 @@ from backend.app.tools.file_access import (
     relative_tool_path,
     resolve_file_access_path,
 )
+from backend.app.tools.file_history import tracked_file_mutation
 from backend.app.tools.file_snapshots import record_file_snapshot
 from backend.app.tools.registry import ToolRegistry
 
@@ -45,7 +46,8 @@ READ_FILE_DESCRIPTION = (
 
 CREATE_FILE_DESCRIPTION = (
     "在文件访问权限允许范围内创建新的 UTF-8 文本文件，并返回文件变更 diff。"
-    "目标文件已存在时会失败；修改已有文件请使用 edit_file，删除或移动已有文件请使用 delete_file/move_file。"
+    "目标文件已存在时会失败；修改已有文件请使用 edit_file，"
+    "删除或移动已有文件请使用 delete_file/move_file。"
 )
 
 LIST_DIR_DESCRIPTION = (
@@ -294,8 +296,11 @@ async def write_file_tool(
             details={"path": _relative(path, context)},
         )
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8", newline="")
+    with tracked_file_mutation(
+        context, tool_name="create_file", changes=((path, "create"),)
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8", newline="")
 
     relative = _relative(path, context)
     size = path.stat().st_size

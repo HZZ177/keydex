@@ -40,6 +40,7 @@ class DesktopAgentRuntime:
             "tools",
             "langchain_agent",
             "chat_ws",
+            "file_history_rewind",
         )
 
 

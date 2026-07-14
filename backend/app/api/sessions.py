@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.app.api.dependencies import get_repositories
 from backend.app.core.config import AppSettings, get_settings
+from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.services.agent_runtime import AgentRuntimeInitializationError
+from backend.app.services.file_change_hub import FileChange, FileChangeHub
+from backend.app.services.file_history_service import (
+    FileClassification,
+    FileHistoryError,
+    FileHistoryErrorCode,
+    FileHistoryService,
+    FileOperationStatus,
+    FileRestoreDecision,
+    FileRestoreMode,
+)
 from backend.app.services.manual_context_compression_service import (
     ManualContextCompressionResult,
     ManualContextCompressionService,
@@ -16,6 +28,10 @@ from backend.app.services.manual_context_compression_service import (
 from backend.app.services.session_fork_service import (
     SessionForkService,
     SessionForkServiceError,
+)
+from backend.app.services.session_reverse_service import (
+    SessionReverseExecution,
+    SessionReverseService,
 )
 from backend.app.services.session_service import (
     GetHistoryRequest,
@@ -25,6 +41,7 @@ from backend.app.services.session_service import (
     SessionValidationError,
 )
 from backend.app.services.workspace_service import (
+    WorkspaceService,
     WorkspaceServiceError,
 )
 from backend.app.storage import StorageRepositories
@@ -65,6 +82,142 @@ class SessionBranchRequest(BaseModel):
     trace_id: str | None = None
     message_event_id: str | None = None
     turn_index: int | None = None
+
+
+class SessionReversePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_event_id: str = Field(min_length=1)
+
+
+class SessionReverseRequest(BaseModel):
+    """Execute contract plus a temporary conversation-only compatibility shape."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message_event_id: str | None = None
+    operation_id: str | None = None
+    mode: FileRestoreMode = FileRestoreMode.CONVERSATION
+    decision: FileRestoreDecision = FileRestoreDecision.FULL
+    preview_token: str | None = None
+    request_id: str = Field(default_factory=new_id, min_length=1)
+    user_id: str | None = None
+    title: str | None = None
+    checkpoint_id: str | None = None
+    checkpoint_ns: str | None = None
+    trace_id: str | None = None
+    turn_index: int | None = None
+
+
+class SessionReverseFileResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    current_state: str
+    target_state: str
+    classification: FileClassification
+    reason_code: str | None = None
+    current_hash: str | None = None
+    target_hash: str | None = None
+    writer_session_id: str | None = None
+    binary: bool = False
+    truncated: bool = False
+    insertions: int = 0
+    deletions: int = 0
+    diff: str | None = None
+
+    @field_validator("path")
+    @classmethod
+    def reject_private_path(cls, value: str) -> str:
+        normalized = value.replace("\\", "/")
+        if not normalized or normalized.startswith("/") or ":/" in normalized:
+            raise ValueError("reverse file path must be workspace-relative")
+        if ".." in normalized.split("/"):
+            raise ValueError("reverse file path must not traverse parents")
+        return normalized
+
+
+class SessionReversePreviewResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str
+    source: dict[str, Any]
+    conversation_available: bool
+    code_available: bool
+    default_mode: FileRestoreMode
+    snapshot_id: str | None = None
+    preview_token: str
+    files: list[SessionReverseFileResponse] = Field(default_factory=list)
+    insertions: int = 0
+    deletions: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SessionReverseResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str
+    status: FileOperationStatus
+    mode: FileRestoreMode
+    decision: FileRestoreDecision
+    conversation_rewound: bool
+    restored_files: list[str] = Field(default_factory=list)
+    skipped_files: list[str] = Field(default_factory=list)
+    forced_files: list[str] = Field(default_factory=list)
+    failed_files: list[str] = Field(default_factory=list)
+    restored_input: str | None = None
+    source: dict[str, Any] = Field(default_factory=dict)
+    error_code: str | None = None
+
+
+class SessionReverseStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str
+    status: FileOperationStatus
+    result: SessionReverseResponse | None = None
+    error_code: str | None = None
+    blocked_paths: list[str] = Field(default_factory=list)
+
+
+@router.post(
+    "/{session_id}/reverse/preview",
+    response_model=SessionReversePreviewResponse,
+)
+def preview_session_reverse(
+    session_id: str,
+    payload: SessionReversePreviewRequest,
+    request: Request,
+    repositories: StorageRepositories = RepositoriesDep,
+    settings: AppSettings = SettingsDep,
+) -> SessionReversePreviewResponse:
+    session = repositories.sessions.get(session_id)
+    if session is None:
+        raise _bad_request("session_not_found", "session 不存在", status.HTTP_404_NOT_FOUND)
+    if session.session_type != "workspace":
+        raise _bad_request("session_not_workspace", "纯聊天会话没有文件回溯能力")
+    try:
+        workspace = WorkspaceService(repositories.workspaces).runtime_context_for_session(session)
+        history = _file_history_service(request, repositories, settings)
+        history.assert_preview_available(session_id)
+        source = _fork_service(repositories).resolve_reverse_source(
+            session_id=session_id,
+            message_event_id=payload.message_event_id,
+        )
+        preview = history.create_preview(
+            session_id=session_id,
+            active_session_id=session.active_session_id or session.id,
+            message_event_id=payload.message_event_id,
+            workspace_root=workspace.cwd,
+            source=source.to_dict(),
+        )
+        return SessionReversePreviewResponse(**preview.to_dict())
+    except FileHistoryError as exc:
+        raise _file_history_error(exc) from exc
+    except SessionForkServiceError as exc:
+        raise _branch_error(exc) from exc
+    except WorkspaceServiceError as exc:
+        raise _workspace_error(exc) from exc
 
 
 class SessionContextCompressionRequest(BaseModel):
@@ -303,12 +456,131 @@ def fork_session(
     return SessionBranchResponse(session=session, source=result.source.to_dict())
 
 
-@router.post("/{session_id}/reverse", response_model=SessionBranchResponse)
-def reverse_session(
+@router.post(
+    "/{session_id}/reverse",
+    response_model=SessionReverseResponse | SessionBranchResponse,
+)
+async def reverse_session(
     session_id: str,
-    payload: SessionBranchRequest,
+    payload: SessionReverseRequest,
+    request: Request,
     repositories: StorageRepositories = RepositoriesDep,
     settings: AppSettings = SettingsDep,
+) -> SessionReverseResponse | SessionBranchResponse:
+    if payload.operation_id is None:
+        return _legacy_reverse_session(session_id, payload, repositories, settings)
+    if not payload.message_event_id or not payload.preview_token:
+        raise _bad_request(
+            "invalid_reverse_request",
+            "文件回溯执行需要 message_event_id、operation_id 和 preview_token",
+        )
+    reverse_started = time.perf_counter()
+    try:
+        session = repositories.sessions.get(session_id)
+        if session is None:
+            raise _bad_request("session_not_found", "session 不存在", status.HTTP_404_NOT_FOUND)
+        if session.session_type != "workspace":
+            raise _bad_request("session_not_workspace", "纯聊天会话没有文件回溯能力")
+        workspace = WorkspaceService(repositories.workspaces).runtime_context_for_session(session)
+        history = _file_history_service(request, repositories, settings)
+        result = SessionReverseService(
+            repositories,
+            file_history=history,
+        ).execute(
+            session_id=session_id,
+            workspace_root=workspace.cwd,
+            request=SessionReverseExecution(
+                operation_id=payload.operation_id,
+                preview_token=payload.preview_token,
+                request_id=payload.request_id,
+                message_event_id=payload.message_event_id,
+                mode=payload.mode,
+                decision=payload.decision,
+            ),
+        )
+    except FileHistoryError as exc:
+        await _publish_reverse_failure(
+            request,
+            repositories,
+            workspace_id=session.workspace_id if "session" in locals() else None,
+            operation_id=payload.operation_id,
+            error=exc,
+        )
+        logger.warning(
+            "[FileHistory] 回溯失败 | "
+            f"operation_id={payload.operation_id} | mode={payload.mode} | "
+            f"decision={payload.decision} | result=failed | error_code={exc.code} | "
+            f"duration_ms={int((time.perf_counter() - reverse_started) * 1000)}"
+        )
+        raise _file_history_error(exc) from exc
+    except SessionForkServiceError as exc:
+        raise _branch_error(exc) from exc
+    except WorkspaceServiceError as exc:
+        raise _workspace_error(exc) from exc
+    await _publish_reverse_result(
+        request,
+        repositories,
+        workspace_id=session.workspace_id,
+        operation_id=result.operation_id,
+    )
+    logger.info(
+        "[FileHistory] 回溯完成 | "
+        f"operation_id={result.operation_id} | mode={result.mode} | "
+        f"decision={result.decision} | result={result.status} | "
+        f"restored_count={len(result.restored_files)} | "
+        f"skipped_count={len(result.skipped_files)} | "
+        f"forced_count={len(result.forced_files)} | "
+        f"failed_count={len(result.failed_files)} | "
+        f"conversation_rewound={result.conversation_rewound} | "
+        f"duration_ms={int((time.perf_counter() - reverse_started) * 1000)}"
+    )
+    return SessionReverseResponse(**result.to_dict())
+
+
+@router.get(
+    "/{session_id}/reverse/{operation_id}",
+    response_model=SessionReverseStatusResponse,
+)
+def get_session_reverse_status(
+    session_id: str,
+    operation_id: str,
+    request: Request,
+    repositories: StorageRepositories = RepositoriesDep,
+    settings: AppSettings = SettingsDep,
+) -> SessionReverseStatusResponse:
+    try:
+        result = SessionReverseService(
+            repositories,
+            file_history=_file_history_service(request, repositories, settings),
+        ).get_result(session_id=session_id, operation_id=operation_id)
+    except FileHistoryError as exc:
+        raise _file_history_error(exc) from exc
+    blocked_paths: list[str] = []
+    if result.status in {
+        FileOperationStatus.COMPENSATION_FAILED,
+        FileOperationStatus.BLOCKED,
+    }:
+        blocked_paths = [
+            item.display_path
+            for item in repositories.file_history.list_operation_files(operation_id)
+            if item.error_code
+        ]
+        if not blocked_paths:
+            blocked_paths = list(result.failed_files)
+    return SessionReverseStatusResponse(
+        operation_id=result.operation_id,
+        status=result.status,
+        result=SessionReverseResponse(**result.to_dict()),
+        error_code=result.error_code,
+        blocked_paths=blocked_paths,
+    )
+
+
+def _legacy_reverse_session(
+    session_id: str,
+    payload: SessionReverseRequest,
+    repositories: StorageRepositories,
+    settings: AppSettings,
 ) -> SessionBranchResponse:
     try:
         result = _fork_service(repositories).reverse_session(
@@ -325,6 +597,59 @@ def reverse_session(
         raise _branch_error(exc) from exc
     session = _service(repositories).get_session_detail(result.session.id)
     return SessionBranchResponse(session=session, source=result.source.to_dict())
+
+
+async def _publish_reverse_result(
+    request: Request,
+    repositories: StorageRepositories,
+    *,
+    workspace_id: str | None,
+    operation_id: str,
+) -> None:
+    hub = getattr(request.app.state, "file_change_hub", None)
+    if not isinstance(hub, FileChangeHub) or not workspace_id:
+        return
+    changes: list[FileChange] = []
+    for item in repositories.file_history.list_operation_files(operation_id):
+        if item.result_state not in {"restored", "forced"}:
+            continue
+        if item.preview_current_state == "missing" and item.target_state == "file":
+            kind = "added"
+        elif item.target_state == "missing":
+            kind = "deleted"
+        else:
+            kind = "modified"
+        changes.append(FileChange(kind=kind, path=item.display_path))
+    await hub.publish_operation_changes(workspace_id, operation_id, changes)
+
+
+async def _publish_reverse_failure(
+    request: Request,
+    repositories: StorageRepositories,
+    *,
+    workspace_id: str | None,
+    operation_id: str,
+    error: FileHistoryError,
+) -> None:
+    if error.code not in {
+        str(FileHistoryErrorCode.COMPENSATED),
+        str(FileHistoryErrorCode.COMPENSATION_FAILED),
+        str(FileHistoryErrorCode.CONVERSATION_FAILED),
+        str(FileHistoryErrorCode.RESTORE_FAILED),
+    }:
+        return
+    hub = getattr(request.app.state, "file_change_hub", None)
+    if not isinstance(hub, FileChangeHub) or not workspace_id:
+        return
+    operation = repositories.file_history.get_operation(operation_id)
+    if operation is None or operation.compensation_state == "not_needed":
+        return
+    await hub.publish_operation_changes(
+        workspace_id,
+        operation_id,
+        phase="compensation",
+        resync_required=True,
+    )
 
 
 @router.post("/{session_id}/context-compression", response_model=SessionContextCompressionResponse)
@@ -490,10 +815,34 @@ def _not_found(exc: SessionNotFoundError) -> HTTPException:
     )
 
 
-def _bad_request(code: str, message: str) -> HTTPException:
+def _bad_request(
+    code: str,
+    message: str,
+    status_code: int = status.HTTP_400_BAD_REQUEST,
+) -> HTTPException:
     return HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
+        status_code=status_code,
         detail={"code": code, "message": message, "details": {}},
+    )
+
+
+def _file_history_service(
+    request: Request,
+    repositories: StorageRepositories,
+    settings: AppSettings,
+) -> FileHistoryService:
+    service = getattr(request.app.state, "file_history_service", None)
+    if isinstance(service, FileHistoryService):
+        return service
+    service = FileHistoryService(repositories, data_dir=settings.data_dir)
+    request.app.state.file_history_service = service
+    return service
+
+
+def _file_history_error(exc: FileHistoryError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.http_status,
+        detail={"code": exc.code, "message": str(exc), "details": exc.details},
     )
 
 

@@ -12,6 +12,7 @@ from backend.app.agent.tool_call_progress import (
 from backend.app.core.logger import logger
 from backend.app.tools.base import FunctionTool, ToolExecutionContext, ToolExecutionError
 from backend.app.tools.file_access import relative_tool_path, resolve_file_access_path
+from backend.app.tools.file_history import tracked_file_mutation
 from backend.app.tools.file_snapshots import (
     ensure_file_snapshot_store,
     read_current_file_content,
@@ -21,7 +22,8 @@ from backend.app.tools.registry import ToolRegistry
 
 EDIT_FILE_DESCRIPTION = (
     "精确替换文件访问权限允许范围内已有 UTF-8 文本文件的一段内容。"
-    "old_string 非空时必须与当前文件内容完全一致且默认只允许匹配一次；建议先用 read_file 确认上下文，但不是硬性要求。"
+    "old_string 非空时必须与当前文件内容完全一致且默认只允许匹配一次；"
+    "建议先用 read_file 确认上下文，但不是硬性要求。"
     "old_string 为空时仅用于创建不存在的文件，或写入已有空文件/纯空白文件；目标非空会失败。"
     "如果此前读取过该文件且文件随后发生变化，会拒绝覆盖当前内容。"
     "replace_all=true 时会替换所有匹配；new_string 为空表示删除该片段。"
@@ -52,7 +54,10 @@ def create_edit_operation_tools() -> list[FunctionTool]:
                     },
                     "old_string": {
                         "type": "string",
-                        "description": "要替换的原文；非空时必须逐字匹配当前文件内容。为空时仅用于创建不存在文件或写入空文件/纯空白文件。",
+                        "description": (
+                            "要替换的原文；非空时必须逐字匹配当前文件内容。"
+                            "为空时仅用于创建不存在文件或写入空文件/纯空白文件。"
+                        ),
                     },
                     "new_string": {
                         "type": "string",
@@ -61,7 +66,9 @@ def create_edit_operation_tools() -> list[FunctionTool]:
                     "replace_all": {
                         "type": "boolean",
                         "default": False,
-                        "description": "是否替换所有匹配。默认 false，多处匹配时会拒绝并提示补充上下文。",
+                        "description": (
+                            "是否替换所有匹配。默认 false，多处匹配时会拒绝并提示补充上下文。"
+                        ),
                     },
                 },
                 "required": ["path", "old_string", "new_string"],
@@ -91,11 +98,15 @@ def create_edit_operation_tools() -> list[FunctionTool]:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "源文件路径，工作区相对路径；完全访问时也可使用绝对文件路径。",
+                        "description": (
+                            "源文件路径，工作区相对路径；完全访问时也可使用绝对文件路径。"
+                        ),
                     },
                     "new_path": {
                         "type": "string",
-                        "description": "目标文件路径，工作区相对路径；完全访问时也可使用绝对文件路径。",
+                        "description": (
+                            "目标文件路径，工作区相对路径；完全访问时也可使用绝对文件路径。"
+                        ),
                     },
                 },
                 "required": ["path", "new_path"],
@@ -157,13 +168,23 @@ async def edit_file_tool(
             details={
                 "path": _relative(path, context),
                 "match_count": match_count,
-                "hint": "请提供更长的 old_string 上下文，或确认需要全部替换时设置 replace_all=true。",
+                "hint": (
+                    "请提供更长的 old_string 上下文，"
+                    "或确认需要全部替换时设置 replace_all=true。"
+                ),
             },
         )
 
-    after = before.replace(old_string, new_string) if replace_all else before.replace(old_string, new_string, 1)
-    path.write_text(after, encoding="utf-8", newline="")
-    record_file_snapshot(path, context=context, content=after, full_read=True)
+    after = (
+        before.replace(old_string, new_string)
+        if replace_all
+        else before.replace(old_string, new_string, 1)
+    )
+    with tracked_file_mutation(
+        context, tool_name="edit_file", changes=((path, "update"),)
+    ):
+        path.write_text(after, encoding="utf-8", newline="")
+        record_file_snapshot(path, context=context, content=after, full_read=True)
     relative = _relative(path, context)
     change = _file_change(
         path=relative,
@@ -177,7 +198,13 @@ async def edit_file_tool(
         f"path={relative} | replace_all={replace_all} | matches={match_count} | "
         f"added={change['added_lines']} | deleted={change['deleted_lines']}"
     )
-    return {"path": relative, "changed": True, "match_count": match_count, **change, "files": [change]}
+    return {
+        "path": relative,
+        "changed": True,
+        "match_count": match_count,
+        **change,
+        "files": [change],
+    }
 
 
 def _edit_empty_old_string(
@@ -191,9 +218,12 @@ def _edit_empty_old_string(
         raise ToolExecutionError("路径不是文件", code="path_not_file", details={"path": relative})
 
     if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(new_string, encoding="utf-8", newline="")
-        record_file_snapshot(path, context=context, content=new_string, full_read=True)
+        with tracked_file_mutation(
+            context, tool_name="edit_file", changes=((path, "create"),)
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(new_string, encoding="utf-8", newline="")
+            record_file_snapshot(path, context=context, content=new_string, full_read=True)
         change = _file_change(
             path=relative,
             before="",
@@ -225,8 +255,11 @@ def _edit_empty_old_string(
             },
         )
 
-    path.write_text(new_string, encoding="utf-8", newline="")
-    record_file_snapshot(path, context=context, content=new_string, full_read=True)
+    with tracked_file_mutation(
+        context, tool_name="edit_file", changes=((path, "update"),)
+    ):
+        path.write_text(new_string, encoding="utf-8", newline="")
+        record_file_snapshot(path, context=context, content=new_string, full_read=True)
     change = _file_change(
         path=relative,
         before=before,
@@ -252,18 +285,35 @@ async def delete_file_tool(
     context: ToolExecutionContext,
 ) -> dict[str, Any]:
     path = _resolve(args.get("path"), context)
-    before = read_current_file_content(path, context=context)
+    before, removed_bytes = _read_structural_file(path, context=context)
     relative = _relative(path, context)
-    path.unlink()
-    ensure_file_snapshot_store(context).discard(path)
-    change = _file_change(
-        path=relative,
-        before=before,
-        after="",
-        operation="delete",
-        change_type="delete",
+    with tracked_file_mutation(
+        context, tool_name="delete_file", changes=((path, "delete"),)
+    ):
+        path.unlink()
+        ensure_file_snapshot_store(context).discard(path)
+    change = (
+        _file_change(
+            path=relative,
+            before=before,
+            after="",
+            operation="delete",
+            change_type="delete",
+        )
+        if before is not None
+        else finalize_file_change(
+            {
+                "path": relative,
+                "operation": "delete",
+                "change_type": "delete",
+                "added_lines": 0,
+                "deleted_lines": 0,
+                "diff": None,
+                "binary": True,
+            }
+        )
     )
-    change["removed_bytes"] = len(before.encode("utf-8"))
+    change["removed_bytes"] = removed_bytes
     logger.info(
         "[EditOpsTool] 删除文件完成 | "
         f"path={relative} | deleted_lines={change['deleted_lines']}"
@@ -283,25 +333,35 @@ async def move_file_tool(
             code="no_op_move",
             details={"path": _relative(source, context)},
         )
-    before = read_current_file_content(source, context=context)
+    before, _source_bytes = _read_structural_file(source, context=context)
     if destination.exists():
         raise ToolExecutionError(
             "移动目标已存在",
             code="target_exists",
             details={"path": _relative(destination, context)},
         )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    source.replace(destination)
-    store = ensure_file_snapshot_store(context)
-    store.discard(source)
-    record_file_snapshot(destination, context=context, content=before, full_read=True)
+    with tracked_file_mutation(
+        context,
+        tool_name="move_file",
+        changes=((source, "move_source"), (destination, "move_destination")),
+    ):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+        store = ensure_file_snapshot_store(context)
+        store.discard(source)
+        if before is not None:
+            record_file_snapshot(destination, context=context, content=before, full_read=True)
+        else:
+            store.discard(destination)
     old_path = _relative(source, context)
     new_path = _relative(destination, context)
-    diff = build_text_diff(path=new_path, before=before, after=before)
-    if not diff:
-        diff = f"--- a/{old_path}\n+++ b/{new_path}"
-    else:
-        diff = diff.replace(f"--- a/{new_path}", f"--- a/{old_path}", 1)
+    diff = None
+    if before is not None:
+        diff = build_text_diff(path=new_path, before=before, after=before)
+        if not diff:
+            diff = f"--- a/{old_path}\n+++ b/{new_path}"
+        else:
+            diff = diff.replace(f"--- a/{new_path}", f"--- a/{old_path}", 1)
     change = finalize_file_change(
         {
             "path": new_path,
@@ -312,6 +372,7 @@ async def move_file_tool(
             "added_lines": 0,
             "deleted_lines": 0,
             "diff": diff,
+            "binary": before is None,
         }
     )
     logger.info(f"[EditOpsTool] 移动文件完成 | old_path={old_path} | new_path={new_path}")
@@ -323,6 +384,31 @@ async def move_file_tool(
         **change,
         "files": [change],
     }
+
+
+def _read_structural_file(
+    path: Path,
+    *,
+    context: ToolExecutionContext,
+) -> tuple[str | None, int]:
+    try:
+        content = read_current_file_content(path, context=context)
+    except ToolExecutionError as exc:
+        if exc.code != "file_not_text":
+            raise
+        try:
+            return None, path.stat().st_size
+        except OSError as stat_exc:
+            raise ToolExecutionError(
+                "无法读取待操作文件",
+                code="file_read_failed",
+                details={"path": _relative(path, context)},
+            ) from stat_exc
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = len(content.encode("utf-8"))
+    return content, size
 
 
 def _file_change(

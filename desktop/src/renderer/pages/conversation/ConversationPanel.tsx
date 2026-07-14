@@ -11,6 +11,7 @@ import {
   type MessageListTurnNavigatorMode,
 } from "./messages";
 import { useA2UIRenderSuspension } from "./messages/a2ui/A2UIRenderSuspensionContext";
+import { ReverseDialog } from "./ReverseDialog";
 import type { ConversationPanelModel } from "./useConversationPanelModel";
 
 import styles from "./ConversationPanel.module.css";
@@ -111,10 +112,13 @@ export function ConversationPanel({
         />
       ) : null}
       {model.reverseConfirmation ? (
-        <ReverseConfirmDialog
-          preview={model.reverseConfirmation.content}
+        <ReverseDialog
+          state={model.reverseConfirmation}
           onCancel={model.cancelReverseFromMessage}
           onConfirm={model.confirmReverseFromMessage}
+          onSelectMode={model.selectReverseMode}
+          onDecision={model.decideReverseFailure}
+          onRetryPreview={model.retryReversePreview}
         />
       ) : null}
     </div>
@@ -137,29 +141,6 @@ function ForkConfirmDialog({
       description="会以当前对话截至这条回复的上下文创建新的派生会话，并切换到新会话。当前对话不会被修改。"
       preview={summary}
       confirmLabel="派生对话"
-      onCancel={onCancel}
-      onConfirm={onConfirm}
-    />
-  );
-}
-
-function ReverseConfirmDialog({
-  preview,
-  onCancel,
-  onConfirm,
-}: {
-  preview: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const summary = preview.trim().split(/\r?\n/u).find(Boolean) ?? "这一轮对话";
-  return (
-    <ConfirmDialog
-      title="确认回溯到此处？"
-      description="会删除这条用户消息以及之后的回复、工具调用和后续消息，并把这条用户消息重新填充到输入框。"
-      preview={summary}
-      confirmLabel="确认回溯"
-      confirmTone="danger"
       onCancel={onCancel}
       onConfirm={onConfirm}
     />

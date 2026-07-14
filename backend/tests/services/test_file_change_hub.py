@@ -138,6 +138,41 @@ def test_coalesces_modify_then_delete_as_deleted() -> None:
     assert batch.changes == (FileChange("deleted", "a.txt"),)
 
 
+@pytest.mark.asyncio
+async def test_restore_operation_publication_is_immediate_and_deduplicated(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    hub = FileChangeHub(start_tasks=False)
+    subscriber = RecordingSubscriber()
+    await hub.subscribe_workspace("workspace-1", root, subscriber)
+
+    first = await hub.publish_operation_changes(
+        "workspace-1",
+        "operation-1",
+        [FileChange("modified", "src/main.py")],
+    )
+    replay = await hub.publish_operation_changes(
+        "workspace-1",
+        "operation-1",
+        [FileChange("modified", "src/main.py")],
+    )
+
+    assert first is True
+    assert replay is False
+    assert subscriber.events == [
+        (
+            "workspaceFilesChanged",
+            {
+                "workspace_id": "workspace-1",
+                "sequence": 1,
+                "resync_required": False,
+                "changes": [{"kind": "modified", "path": "src/main.py"}],
+            },
+        )
+    ]
+    await hub.close()
+
+
 def test_coalesces_delete_then_add_as_modified() -> None:
     batch = coalesce_file_changes(
         [FileChange("deleted", "a.txt"), FileChange("added", "a.txt")]

@@ -374,6 +374,12 @@ function useMenuItems(context: MenuContext): MenuItem[] {
           id: "expand-workspace-directory",
           label: "展开所有下级菜单",
         },
+        {
+          action: () => addWorkspaceEntryToChat(workspaceEntry),
+          icon: MessageSquarePlus,
+          id: "add-workspace-directory-to-chat",
+          label: "添加该目录到会话",
+        },
       ]);
     }
 
@@ -411,7 +417,7 @@ function useMenuItems(context: MenuContext): MenuItem[] {
           label: "复制工作区相对路径",
         },
         {
-          action: () => addWorkspaceFileToChat(workspaceEntry),
+          action: () => addWorkspaceEntryToChat(workspaceEntry),
           icon: MessageSquarePlus,
           id: "add-workspace-file-to-chat",
           label: "添加到聊天",
@@ -473,10 +479,10 @@ function addDocumentActions(items: MenuItem[], documentEntry: WorkspaceEntryCont
   return [
     ...items,
     {
-      action: () => addWorkspaceFileToChat(documentEntry),
+      action: () => addWorkspaceEntryToChat(documentEntry),
       icon: MessageSquarePlus,
       id: "chat-with-workspace-document",
-      label: "对该文档对话",
+      label: "添加该文件到对话",
     },
     {
       action: () => startWorkspaceFileAnnotation(documentEntry),
@@ -553,13 +559,13 @@ async function openWorkspaceFileInFileManager(context: WorkspaceEntryContext) {
   await invokeDesktopCommand("open_path_in_file_manager", { path: context.absolutePath });
 }
 
-function addWorkspaceFileToChat(context: WorkspaceEntryContext) {
+function addWorkspaceEntryToChat(context: WorkspaceEntryContext) {
   emitAddWorkspaceFileToChat({
     absolutePath: context.absolutePath,
     file: {
       path: context.path,
       name: context.name || fileName(context.path),
-      type: "file",
+      type: context.kind,
       source: "workspace",
     },
     sessionId: context.sessionId,

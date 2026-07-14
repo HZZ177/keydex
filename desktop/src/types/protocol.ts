@@ -771,6 +771,11 @@ export type PendingInputStatus =
 export interface GeneralSettings {
   close_window_behavior: CloseWindowBehavior | null;
   conversation_send_default_mode?: ConversationSendDefaultMode;
+  file_history_enabled?: boolean;
+  file_history_max_storage_bytes?: number;
+  file_history_max_versions_per_file?: number;
+  file_history_max_rewind_points?: number;
+  file_history_retention_days?: number;
 }
 
 export type FileAccessMode = "no_file_access" | "workspace_read_only" | "workspace_trusted" | "full_access";

@@ -263,12 +263,12 @@ describe("AppContextMenuProvider", () => {
       const menu = screen.getByRole("menu", { name: "页面右键菜单" });
       expect(menu.dataset.contextKind).toBe("workspace-document");
       expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-        "对该文档对话",
+        "添加该文件到对话",
         "对该文档新增批注",
         "刷新",
       ]);
 
-      fireEvent.click(screen.getByRole("menuitem", { name: "对该文档对话" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "添加该文件到对话" }));
 
       await waitFor(() => expect(listener).toHaveBeenCalledWith({
         absolutePath: "docs/guide.md",
@@ -323,9 +323,12 @@ describe("AppContextMenuProvider", () => {
   });
 
   it("shows directory actions for workspace directories", async () => {
-    const listener = vi.fn();
-    const handleEvent = (event: Event) => listener((event as CustomEvent).detail);
-    document.addEventListener(APP_EXPAND_WORKSPACE_DIRECTORY_EVENT, handleEvent);
+    const expandListener = vi.fn();
+    const addToChatListener = vi.fn();
+    const handleExpandEvent = (event: Event) => expandListener((event as CustomEvent).detail);
+    const handleAddToChatEvent = (event: Event) => addToChatListener((event as CustomEvent).detail);
+    document.addEventListener(APP_EXPAND_WORKSPACE_DIRECTORY_EVENT, handleExpandEvent);
+    document.addEventListener(APP_ADD_WORKSPACE_FILE_TO_CHAT_EVENT, handleAddToChatEvent);
 
     try {
       render(
@@ -351,21 +354,39 @@ describe("AppContextMenuProvider", () => {
       expect(menu.dataset.contextKind).toBe("workspace-directory");
       expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
         "展开所有下级菜单",
+        "添加该目录到会话",
         "刷新",
       ]);
       expect(screen.queryByRole("menuitem", { name: "暂无可用操作" })).toBeNull();
       expect(screen.queryByRole("menuitem", { name: "复制绝对路径" })).toBeNull();
 
+      fireEvent.click(screen.getByRole("menuitem", { name: "添加该目录到会话" }));
+
+      await waitFor(() => expect(addToChatListener).toHaveBeenCalledWith({
+        absolutePath: String.raw`D:\repo\src`,
+        file: {
+          path: "src",
+          name: "src",
+          type: "directory",
+          source: "workspace",
+        },
+        sessionId: "ses-1",
+        workspaceId: "ws-1",
+        workspaceRoot: String.raw`D:\repo`,
+      }));
+
+      fireEvent.contextMenu(screen.getByRole("button", { name: "src" }), { clientX: 12, clientY: 18 });
       fireEvent.click(screen.getByRole("menuitem", { name: "展开所有下级菜单" }));
 
-      await waitFor(() => expect(listener).toHaveBeenCalledWith({
+      await waitFor(() => expect(expandListener).toHaveBeenCalledWith({
         path: "src",
         sessionId: "ses-1",
         workspaceId: "ws-1",
         workspaceRoot: String.raw`D:\repo`,
       }));
     } finally {
-      document.removeEventListener(APP_EXPAND_WORKSPACE_DIRECTORY_EVENT, handleEvent);
+      document.removeEventListener(APP_EXPAND_WORKSPACE_DIRECTORY_EVENT, handleExpandEvent);
+      document.removeEventListener(APP_ADD_WORKSPACE_FILE_TO_CHAT_EVENT, handleAddToChatEvent);
     }
   });
 });

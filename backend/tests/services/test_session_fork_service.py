@@ -186,6 +186,7 @@ def test_session_reverse_rolls_back_same_session_to_user_turn_input_checkpoint(t
     assert source.active_session_id == "ses_source"
     assert result.source.checkpoint_id == "ckpt_1"
     assert result.source.turn_index == 2
+    assert result.restored_input == "问题 2"
     assert repositories.message_events.count_by_session("ses_source") == 2
     trace_ids = [
         trace.trace_id for trace in repositories.trace_records.list_by_session("ses_source")
@@ -205,6 +206,34 @@ def test_session_reverse_rolls_back_same_session_to_user_turn_input_checkpoint(t
         data={"session_id": "ses_source", "content": "新的第二轮"},
     )
     assert rewritten.seq == 3
+
+
+def test_session_reverse_rolls_back_checkpoint_and_rows_as_one_transaction(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+    service = SessionForkService(repositories, checkpointer=saver)
+
+    def fail_after_checkpoint(*_args, **_kwargs):
+        raise RuntimeError("injected conversation transaction failure")
+
+    monkeypatch.setattr(service, "_rewind_turn_artifacts", fail_after_checkpoint)
+    with pytest.raises(SessionForkServiceError) as error:
+        service.reverse_session(
+            session_id="ses_source",
+            user_id="local-user",
+            message_event_id="evt_user_2",
+        )
+
+    assert error.value.code == "session_reverse_failed"
+    assert repositories.message_events.count_by_session("ses_source") == 4
+    assert len(repositories.trace_records.list_by_session("ses_source")) == 2
+    latest = saver.get_tuple(
+        {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
+    )
+    assert latest is not None
+    assert latest.config["configurable"]["checkpoint_id"] == "ckpt_2"
 
 
 def test_session_reverse_first_turn_clears_history_and_checkpoints(tmp_path) -> None:
