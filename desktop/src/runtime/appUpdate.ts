@@ -75,6 +75,6 @@ export async function downloadAndInstallAppUpdate(
       finished: true,
     });
   });
-  const { relaunch } = await import("@tauri-apps/plugin-process");
-  await relaunch();
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("relaunch_after_app_update");
 }

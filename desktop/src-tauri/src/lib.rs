@@ -23,6 +23,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const WINDOW_CLOSE_REQUESTED_EVENT: &str = "keydex://window-close-requested";
 const ASSOCIATED_FILE_OPEN_REQUESTED_EVENT: &str = "keydex://associated-file-open-requested";
+const UPDATE_RELAUNCH_ENV: &str = "KEYDEX_UPDATE_RELAUNCH_WITHOUT_FILE_INTENT";
 const TRAY_ID: &str = "keydex-tray";
 const TRAY_SHOW_ID: &str = "show_main_window";
 const TRAY_EXIT_ID: &str = "exit_app";
@@ -340,6 +341,12 @@ fn take_associated_file_open_paths(
     state.take_paths()
 }
 
+#[tauri::command]
+fn relaunch_after_app_update(app: tauri::AppHandle) {
+    std::env::set_var(UPDATE_RELAUNCH_ENV, "1");
+    app.request_restart();
+}
+
 #[cfg(windows)]
 fn resolve_existing_filesystem_path(path: &str) -> Result<PathBuf, String> {
     let cleaned = path.trim();
@@ -375,6 +382,25 @@ where
             )
         })
         .collect()
+}
+
+fn collect_startup_associated_markdown_paths<I>(args: I, update_relaunch: bool) -> Vec<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    if update_relaunch {
+        Vec::new()
+    } else {
+        collect_associated_markdown_paths(args)
+    }
+}
+
+fn take_update_relaunch_marker() -> bool {
+    let marked = std::env::var_os(UPDATE_RELAUNCH_ENV).is_some();
+    if marked {
+        std::env::remove_var(UPDATE_RELAUNCH_ENV);
+    }
+    marked
 }
 
 fn is_supported_markdown_path(path: &PathBuf) -> bool {
@@ -451,10 +477,11 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 pub fn run() {
-    let startup_associated_paths = collect_associated_markdown_paths(
+    let startup_associated_paths = collect_startup_associated_markdown_paths(
         std::env::args_os()
             .skip(1)
             .filter_map(|arg| arg.into_string().ok()),
+        take_update_relaunch_marker(),
     );
 
     tauri::Builder::default()
@@ -489,7 +516,8 @@ pub fn run() {
             read_text_file,
             write_text_file,
             copy_file_to_clipboard,
-            take_associated_file_open_paths
+            take_associated_file_open_paths,
+            relaunch_after_app_update
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -504,4 +532,31 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_startup_associated_markdown_paths;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn update_relaunch_drops_inherited_file_intent_but_normal_startup_keeps_it() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after the Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("keydex-update-relaunch-{unique}.md"));
+        fs::write(&path, "# update relaunch regression")
+            .expect("temporary Markdown file should be created");
+        let argument = path.to_string_lossy().to_string();
+
+        let normal_paths = collect_startup_associated_markdown_paths([argument.clone()], false);
+        let update_paths = collect_startup_associated_markdown_paths([argument], true);
+
+        assert_eq!(normal_paths.len(), 1);
+        assert!(update_paths.is_empty());
+
+        fs::remove_file(path).expect("temporary Markdown file should be removed");
+    }
 }
