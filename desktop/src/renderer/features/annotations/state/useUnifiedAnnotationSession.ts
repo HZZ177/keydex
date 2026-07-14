@@ -161,12 +161,15 @@ export function useUnifiedAnnotationSession({
 
   useEffect(() => () => {
     actions?.dispose();
+  }, [actions]);
+
+  useEffect(() => () => {
     navigator.dispose();
     registry.dispose();
     sourceAdapter.dispose();
     markdownAdapter.dispose();
     store.getState().dispose();
-  }, [actions, markdownAdapter, navigator, registry, sourceAdapter, store]);
+  }, [markdownAdapter, navigator, registry, sourceAdapter, store]);
 
   const persistentMarkers = useMemo<readonly AnnotationRenderMarker[]>(() => Object.freeze(
     state.resolutions.resolved.map((item) => Object.freeze({
