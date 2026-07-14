@@ -63,7 +63,12 @@ import {
 import type { MarkdownRuntimeAttachment } from "@/renderer/markdownRuntime/MarkdownRuntimeStore";
 import { MARKDOWN_WORKER_PROTOCOL_VERSION } from "@/renderer/markdownRuntime/worker/protocol";
 
-import { fileMarkdownRuntimeStore, fileMarkdownViewStateStore } from "./fileMarkdownRuntime";
+import {
+  fileMarkdownRuntimeStore,
+  fileMarkdownViewStateStore,
+  recordFileMarkdownRuntimeEntrySnapshot,
+  registerFileMarkdownRuntimeEntry,
+} from "./fileMarkdownRuntime";
 
 export interface FileMarkdownRuntimeHostHandle {
   revealSourceOffset(offset: number, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
@@ -396,6 +401,11 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         });
         host.dataset.markdownRuntimeViewId = props.viewDescriptor.viewId;
         host.dataset.markdownRuntimeEntryId = props.viewDescriptor.entryId;
+        registerFileMarkdownRuntimeEntry(props.viewDescriptor, {
+          surface: "file",
+          workspaceId: props.workspaceId,
+          path: props.path,
+        });
       }
       if (!props.snapshotLoader && !runtimeViewAttachment) {
         attachment = fileMarkdownRuntimeStore().attach({
@@ -487,6 +497,9 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         restoreScrollAnchor(state, true);
         syncRenderCount(host, state, props.onRender);
         lastGoodSnapshotRef.current = { key: documentKey, snapshot };
+        if (props.viewDescriptor) {
+          recordFileMarkdownRuntimeEntrySnapshot(props.viewDescriptor, snapshot.estimated_bytes);
+        }
         visiblePrefixAttachment?.detach();
         visiblePrefixAttachment = null;
         delete host.dataset.markdownRuntimeStale;
@@ -591,6 +604,12 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         restoreScrollAnchor(state);
         syncRenderCount(state.view.host, state, propsRef.current.onRender);
         lastGoodSnapshotRef.current = { key: state.documentId, snapshot };
+        if (propsRef.current.viewDescriptor) {
+          recordFileMarkdownRuntimeEntrySnapshot(
+            propsRef.current.viewDescriptor,
+            snapshot.estimated_bytes,
+          );
+        }
         delete state.view.host.dataset.markdownRuntimeStale;
         state.view.host.dataset.markdownRuntimeCompleteness = "canonical";
         setError(null);

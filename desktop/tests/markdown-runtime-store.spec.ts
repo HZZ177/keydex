@@ -247,6 +247,26 @@ describe("surface-neutral MarkdownRuntimeStore", () => {
     store.close();
   });
 
+  it("hard-evicts a retained file after its last attached view closes", async () => {
+    const harness = new WorkerHarness();
+    const store = new MarkdownRuntimeStore({ workerFactory: harness.factory });
+    const view = store.attach(fileIdentity, "large-file-preview");
+    await view.load({ revision: "large-r1", source: "Retained file content" });
+
+    expect(store.evictWhenDetached(fileIdentity)).toBe(true);
+    expect(store.diagnostics()).toMatchObject({ entryCount: 1, attachedEntryCount: 1 });
+
+    view.detach();
+    expect(store.diagnostics()).toMatchObject({
+      entryCount: 0,
+      attachedEntryCount: 0,
+      retainedBytes: 0,
+      workerCount: 0,
+    });
+    expect(harness.workers[0]?.terminated).toBe(true);
+    store.close();
+  });
+
   it("evicts only detached LRU entries under entry and byte budgets", async () => {
     const harness = new WorkerHarness();
     const store = new MarkdownRuntimeStore({
