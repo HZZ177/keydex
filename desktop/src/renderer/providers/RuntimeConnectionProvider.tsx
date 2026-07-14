@@ -85,6 +85,8 @@ export function RuntimeConnectionProvider({
   const [lifecycle, setLifecycle] = useState<LifecycleState>({ status: "idle", connection: null });
   const runSeqRef = useRef(0);
   const runningRef = useRef(false);
+  const mountedRef = useRef(true);
+  const autoStartRequestedRef = useRef(false);
 
   const visibleErrors = selectVisibleErrors(runtimeState);
   const error = visibleErrors.find((item) => item.source === "health") ?? visibleErrors[0] ?? null;
@@ -104,14 +106,14 @@ export function RuntimeConnectionProvider({
 
       try {
         const connection = await starter(runtime);
-        if (runSeqRef.current !== runSeq) {
+        if (runSeqRef.current !== runSeq || !mountedRef.current) {
           return;
         }
         setLifecycle({ status: "ready", connection });
         dispatchRuntime({ type: "connection/setStatus", source: "health", status: "connected" });
         void monitorAgentWarmup(runtime, dispatchRuntime, runSeqRef, runSeq);
       } catch (reason) {
-        if (runSeqRef.current !== runSeq) {
+        if (runSeqRef.current !== runSeq || !mountedRef.current) {
           return;
         }
         setLifecycle({ status: "error", connection: null });
@@ -131,14 +133,29 @@ export function RuntimeConnectionProvider({
   );
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      queueMicrotask(() => {
+        if (mountedRef.current) {
+          return;
+        }
+        runSeqRef.current += 1;
+        runningRef.current = false;
+      });
+    };
+  }, []);
+
+  useEffect(() => {
     if (!autoStart) {
+      autoStartRequestedRef.current = false;
       return;
     }
+    if (autoStartRequestedRef.current) {
+      return;
+    }
+    autoStartRequestedRef.current = true;
     void start("starting");
-    return () => {
-      runSeqRef.current += 1;
-      runningRef.current = false;
-    };
   }, [autoStart, start]);
 
   const retry = useCallback(() => {

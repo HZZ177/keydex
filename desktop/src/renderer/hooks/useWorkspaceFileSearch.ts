@@ -8,6 +8,7 @@ export type WorkspaceFileSearchFn = (
 ) => Promise<WorkspaceSearchResult[]>;
 
 export interface UseWorkspaceFileSearchOptions {
+  debounceMs?: number;
   enabled: boolean;
   query: string;
   refreshToken?: number;
@@ -21,6 +22,7 @@ export interface WorkspaceFileSearchState {
 }
 
 export function useWorkspaceFileSearch({
+  debounceMs = 0,
   enabled,
   query,
   refreshToken = 0,
@@ -44,37 +46,48 @@ export function useWorkspaceFileSearch({
     }
 
     let active = true;
-    const controller = new AbortController();
+    let controller: AbortController | null = null;
 
     hadSearchRef.current = true;
     setResults([]);
     setLoading(true);
     setError(null);
 
-    void search(normalizedQuery, { signal: controller.signal })
-      .then((nextResults) => {
-        if (active) {
-          setResults(nextResults);
-        }
-      })
-      .catch((reason: unknown) => {
-        if (!active || isAbortError(reason)) {
-          return;
-        }
-        setResults([]);
-        setError(errorMessage(reason));
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false);
-        }
-      });
+    const runSearch = () => {
+      controller = new AbortController();
+      void search(normalizedQuery, { signal: controller.signal })
+        .then((nextResults) => {
+          if (active) {
+            setResults(nextResults);
+          }
+        })
+        .catch((reason: unknown) => {
+          if (!active || isAbortError(reason)) {
+            return;
+          }
+          setResults([]);
+          setError(errorMessage(reason));
+        })
+        .finally(() => {
+          if (active) {
+            setLoading(false);
+          }
+        });
+    };
+    const delay = Math.max(0, debounceMs);
+    const timer = delay > 0 ? window.setTimeout(runSearch, delay) : null;
+    if (timer === null) {
+      runSearch();
+    }
 
     return () => {
       active = false;
-      controller.abort();
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+      controller?.abort();
     };
-  }, [enabled, normalizedQuery, refreshToken, search]);
+  }, [debounceMs, enabled, normalizedQuery, refreshToken, search]);
 
   return { error, loading, results };
 }

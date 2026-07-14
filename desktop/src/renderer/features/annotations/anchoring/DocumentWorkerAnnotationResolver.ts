@@ -38,7 +38,7 @@ export class DocumentWorkerAnnotationResolver implements AnnotationDocumentWorke
   }
 
   async resolve(input: AnnotationDocumentWorkerResolveInput): Promise<ResolvedAnnotationIndex> {
-    if (input.model.revision.documentRevision !== this.snapshot.revision) {
+    if (input.model.markdownSnapshotRevision !== this.snapshot.revision) {
       throw new Error("Annotation model revision does not match Markdown Snapshot");
     }
     let response: MarkdownWorkerResponse;

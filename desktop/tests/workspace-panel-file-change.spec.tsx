@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import { useEffect, type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge, WorkspaceEntry, WorkspaceTreeResponse } from "@/runtime";
@@ -10,6 +10,7 @@ import {
 } from "@/renderer/components/workspace/workspaceFileInvalidation";
 import {
   FileChangeProvider,
+  useFileChanges,
   type FileChangeTransport,
 } from "@/renderer/providers/FileChangeProvider";
 import type { AgentActionEnvelope, FileChangeEventItem } from "@/types/protocol";
@@ -284,6 +285,23 @@ describe("WorkspacePanel file changes", () => {
     expect(await screen.findByText("new.txt")).not.toBeNull();
     expect(directoryCallCount(fixture, "")).toBe(2);
   });
+
+  it("test-tree-013 当前页面的文档写入回声不刷新目录", async () => {
+    const fixture = createFixture({
+      "": [entry("src", "src", "directory")],
+      src: [entry("a.ts", "src/a.ts", "file")],
+    });
+    renderPanel(fixture, {}, "write-1");
+    await expand("src");
+
+    emitChanges(fixture, [
+      { kind: "modified", path: "src", write_id: "write-1" },
+      { kind: "modified", path: "src/a.ts", write_id: "write-1" },
+    ]);
+
+    expect(directoryCallCount(fixture, "")).toBe(1);
+    expect(directoryCallCount(fixture, "src")).toBe(1);
+  });
 });
 
 interface Fixture {
@@ -333,12 +351,20 @@ function createFixture(entries: Record<string, WorkspaceEntry[]>): Fixture {
 function renderPanel(
   fixture: Fixture,
   props: Partial<ComponentProps<typeof WorkspacePanel>> = {},
+  documentWriteId?: string,
 ) {
   return render(
     <FileChangeProvider transport={fixture.transport}>
+      {documentWriteId ? <DocumentWriteRegistration writeId={documentWriteId} /> : null}
       <WorkspacePanel runtime={fixture.runtime} workspaceId="ws-1" {...props} />
     </FileChangeProvider>,
   );
+}
+
+function DocumentWriteRegistration({ writeId }: { writeId: string }) {
+  const fileChanges = useFileChanges();
+  useEffect(() => fileChanges.registerDocumentWrite(writeId), [fileChanges, writeId]);
+  return null;
 }
 
 async function expand(path: string) {

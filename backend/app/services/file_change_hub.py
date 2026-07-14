@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
+import time
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
@@ -14,6 +16,7 @@ from backend.app.core.logger import logger
 WATCH_DEBOUNCE_MS = 200
 WATCH_STEP_MS = 50
 MAX_BATCH_PATHS = 256
+DOCUMENT_WRITE_ECHO_TTL_SECONDS = 5.0
 
 IGNORED_WORKSPACE_DIRECTORIES = frozenset(
     {
@@ -60,9 +63,13 @@ class FileChangeSubscriber(Protocol):
 class FileChange:
     kind: FileChangeKind
     path: str
+    write_id: str | None = None
 
     def to_payload(self) -> dict[str, str]:
-        return {"kind": self.kind, "path": self.path}
+        payload = {"kind": self.kind, "path": self.path}
+        if self.write_id:
+            payload["write_id"] = self.write_id
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +96,14 @@ class _LocalFileSubscription:
     path: Path
     root_key: str
     sequence: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentWriteEcho:
+    write_id: str
+    expected_revision: str
+    expected_bytes: int
+    expires_at: float
 
 
 WatchFactory = Any
@@ -188,6 +203,54 @@ def _normalize_unordered_watcher_batch(changes: list[FileChange]) -> list[FileCh
     return normalized
 
 
+def _tag_document_write_changes(
+    batch: FileChangeBatch,
+    write_ids_by_path: dict[str, str],
+) -> FileChangeBatch:
+    if not batch.changes or not write_ids_by_path:
+        return batch
+    return FileChangeBatch(
+        changes=tuple(
+            FileChange(
+                kind=change.kind,
+                path=change.path,
+                write_id=write_ids_by_path.get(change.path),
+            )
+            for change in batch.changes
+        ),
+        resync_required=batch.resync_required,
+    )
+
+
+def _matching_document_write_id(
+    target: Path,
+    echoes: tuple[_DocumentWriteEcho, ...],
+) -> str | None:
+    try:
+        size = target.stat().st_size
+    except OSError:
+        return None
+    candidates = [echo for echo in echoes if echo.expected_bytes == size]
+    if not candidates:
+        return None
+    digest = hashlib.sha256()
+    try:
+        with target.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+    except OSError:
+        return None
+    revision = f"sha256:{digest.hexdigest()}"
+    return next(
+        (
+            echo.write_id
+            for echo in reversed(candidates)
+            if echo.expected_revision == revision
+        ),
+        None,
+    )
+
+
 class FileChangeHub:
     def __init__(
         self,
@@ -207,8 +270,53 @@ class FileChangeHub:
             tuple[FileChangeSubscriber, str], _LocalFileSubscription
         ] = {}
         self._published_operation_phases: dict[tuple[str, str], None] = {}
+        self._document_write_echoes: dict[str, list[_DocumentWriteEcho]] = {}
         self._lock = asyncio.Lock()
         self._closed = False
+
+    async def register_document_write_echo(
+        self,
+        write_id: str,
+        path: str | Path,
+        *,
+        revision: str,
+        total_bytes: int,
+    ) -> None:
+        cleaned_write_id = write_id.strip()
+        if not cleaned_write_id:
+            raise ValueError("write_id 不能为空")
+        target = _resolve_path(path)
+        now = time.monotonic()
+        async with self._lock:
+            self._ensure_open()
+            self._purge_expired_document_write_echoes_locked(now)
+            self._document_write_echoes.setdefault(_path_key(target), []).append(
+                _DocumentWriteEcho(
+                    write_id=cleaned_write_id,
+                    expected_revision=revision,
+                    expected_bytes=total_bytes,
+                    expires_at=now + DOCUMENT_WRITE_ECHO_TTL_SECONDS,
+                )
+            )
+
+    async def discard_document_write_echo(
+        self,
+        write_id: str,
+        path: str | Path,
+    ) -> None:
+        cleaned_write_id = write_id.strip()
+        if not cleaned_write_id:
+            return
+        path_key = _path_key(_resolve_path(path))
+        async with self._lock:
+            echoes = self._document_write_echoes.get(path_key)
+            if not echoes:
+                return
+            remaining = [echo for echo in echoes if echo.write_id != cleaned_write_id]
+            if remaining:
+                self._document_write_echoes[path_key] = remaining
+            else:
+                self._document_write_echoes.pop(path_key, None)
 
     async def publish_operation_changes(
         self,
@@ -371,6 +479,7 @@ class FileChangeHub:
         root = _resolve_path(workspace_root)
         root_key = _path_key(root)
         raw = tuple(raw_changes)
+        document_write_ids = await self._consume_document_write_echoes(raw)
         async with self._lock:
             watched = self._roots.get(root_key)
             if watched is None:
@@ -381,6 +490,7 @@ class FileChangeHub:
         failed: set[FileChangeSubscriber] = set()
         for workspace_id in workspace_ids:
             normalized: list[FileChange] = []
+            write_ids_by_path: dict[str, str] = {}
             for raw_kind, raw_path in raw:
                 try:
                     relative = normalize_workspace_change_path(root, raw_path)
@@ -389,7 +499,11 @@ class FileChangeHub:
                     continue
                 if not should_ignore_workspace_path(relative):
                     normalized.append(FileChange(kind=kind, path=relative))
+                    write_id = document_write_ids.get(_path_key(_resolve_path(raw_path)))
+                    if write_id:
+                        write_ids_by_path[relative] = write_id
             batch = coalesce_file_changes(_normalize_unordered_watcher_batch(normalized))
+            batch = _tag_document_write_changes(batch, write_ids_by_path)
             if batch.changes or batch.resync_required:
                 failed.update(await self._broadcast_workspace(workspace_id, batch))
 
@@ -399,6 +513,7 @@ class FileChangeHub:
             if subscription is None:
                 continue
             normalized = []
+            local_write_id: str | None = None
             for raw_kind, raw_path in raw:
                 target = _resolve_path(raw_path)
                 if _path_key(target) == _path_key(subscription.path):
@@ -408,7 +523,12 @@ class FileChangeHub:
                             path=str(subscription.path),
                         )
                     )
+                    local_write_id = document_write_ids.get(_path_key(target)) or local_write_id
             batch = coalesce_file_changes(_normalize_unordered_watcher_batch(normalized))
+            batch = _tag_document_write_changes(
+                batch,
+                {str(subscription.path): local_write_id} if local_write_id else {},
+            )
             if batch.changes or batch.resync_required:
                 if not await self._broadcast_local(subscription, batch):
                     failed.add(subscription.subscriber)
@@ -456,6 +576,7 @@ class FileChangeHub:
             self._workspace_sequences.clear()
             self._local_subscriptions.clear()
             self._published_operation_phases.clear()
+            self._document_write_echoes.clear()
             for watched in roots:
                 watched.stop_event.set()
             tasks = [watched.task for watched in roots if watched.task is not None]
@@ -464,6 +585,60 @@ class FileChangeHub:
     def _ensure_open(self) -> None:
         if self._closed:
             raise RuntimeError("FileChangeHub 已关闭")
+
+    async def _consume_document_write_echoes(
+        self,
+        raw_changes: tuple[tuple[Any, str | Path], ...],
+    ) -> dict[str, str]:
+        targets = {
+            _path_key(target): target
+            for _, raw_path in raw_changes
+            if (target := _resolve_path(raw_path))
+        }
+        if not targets:
+            return {}
+        now = time.monotonic()
+        async with self._lock:
+            self._purge_expired_document_write_echoes_locked(now)
+            candidates = {
+                path_key: tuple(self._document_write_echoes.get(path_key, ()))
+                for path_key in targets
+                if path_key in self._document_write_echoes
+            }
+        if not candidates:
+            return {}
+
+        matched: dict[str, str] = {}
+        for path_key, echoes in candidates.items():
+            write_id = await asyncio.to_thread(
+                _matching_document_write_id,
+                targets[path_key],
+                echoes,
+            )
+            if write_id:
+                matched[path_key] = write_id
+
+        async with self._lock:
+            for path_key in matched:
+                echoes = candidates[path_key]
+                current = self._document_write_echoes.get(path_key)
+                if current is not None and tuple(current) == echoes:
+                    self._document_write_echoes.pop(path_key, None)
+
+        tagged_paths = dict(matched)
+        for path_key, write_id in matched.items():
+            parent_key = _path_key(targets[path_key].parent)
+            if parent_key in targets:
+                tagged_paths[parent_key] = write_id
+        return tagged_paths
+
+    def _purge_expired_document_write_echoes_locked(self, now: float) -> None:
+        for path_key, echoes in list(self._document_write_echoes.items()):
+            active = [echo for echo in echoes if echo.expires_at > now]
+            if active:
+                self._document_write_echoes[path_key] = active
+            else:
+                self._document_write_echoes.pop(path_key, None)
 
     def _ensure_root_locked(self, root: Path) -> tuple[str, _RootWatch]:
         root_key = _path_key(root)

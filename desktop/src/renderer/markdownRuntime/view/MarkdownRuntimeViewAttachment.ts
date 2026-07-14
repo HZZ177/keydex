@@ -55,14 +55,32 @@ export function attachMarkdownRuntimeView(options: {
     load: async (input: MarkdownRuntimeLoadInput) => {
       if (!active) throw new Error("Markdown Runtime view attachment is closed");
       const snapshot = await document.load(input);
-      view.reconcileRevision(snapshot.revision, {
-        sourceCharacters: snapshot.source_characters,
-        blockIds: new Set(snapshot.blocks.map((block) => block.id)),
-      });
+      reconcileMarkdownRuntimeViewRevision(view, snapshot);
       return snapshot;
     },
     current: () => active ? document.current() : null,
     detach: () => release(false),
     close: () => release(true),
+  });
+}
+
+export function reconcileMarkdownRuntimeViewRevision(
+  view: MarkdownViewStateAttachment,
+  snapshot: MarkdownSnapshot,
+): void {
+  const current = view.snapshot();
+  const candidates = new Set(current.foldedBlockIds);
+  if (current.scrollAnchor?.blockId) candidates.add(current.scrollAnchor.blockId);
+  const available = new Set<string>();
+  if (candidates.size > 0) {
+    for (const block of snapshot.blocks) {
+      if (!candidates.delete(block.id)) continue;
+      available.add(block.id);
+      if (candidates.size === 0) break;
+    }
+  }
+  view.reconcileRevision(snapshot.revision, {
+    sourceCharacters: snapshot.source_characters,
+    blockIds: available,
   });
 }

@@ -19,6 +19,7 @@ const APP_MODE_OPTIONS: Array<{ mode: AppMode; label: string }> = [
 
 export interface TitlebarProps {
   title: string;
+  brandLabel?: string;
   windowControls?: WindowControls;
   onBrandClick?: () => void;
   modeSwitch?: {
@@ -30,6 +31,7 @@ export interface TitlebarProps {
 
 export function Titlebar({
   title,
+  brandLabel,
   modeSwitch,
   workbenchWorkspaceSelector,
   windowControls,
@@ -116,6 +118,7 @@ export function Titlebar({
             <img alt="" draggable={false} src={APP_ICON_SRC} />
           </div>
         )}
+        {brandLabel ? <span className={styles.brandLabel}>{brandLabel}</span> : null}
         {modeSwitch ? <ModeSwitch modeSwitch={modeSwitch} /> : null}
         {titlebarWorkspaceSelector ? (
           <div

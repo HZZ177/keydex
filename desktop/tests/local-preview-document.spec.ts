@@ -38,6 +38,7 @@ describe("LocalPreviewRuntime document-read/v1", () => {
       expect(String(input)).toBe("http://127.0.0.1:8765/api/local-preview/write/document");
       expect(JSON.parse(String(init?.body))).toEqual({
         protocol_version: "document-write/v1",
+        write_id: "write-local-1",
         path,
         content: "after",
         expected_revision: "sha256:before",
@@ -57,6 +58,7 @@ describe("LocalPreviewRuntime document-read/v1", () => {
 
     await expect(runtime.writeDocument(path, "after", {
       expectedRevision: "sha256:before",
+      writeId: "write-local-1",
     })).resolves.toMatchObject({ revision: "sha256:after" });
   });
 

@@ -10,23 +10,23 @@ const EVIDENCE_ROOT =
   process.env.E2E_RUNTIME_FLOW_EVIDENCE_DIR ??
   path.resolve(__dirname, "../../.dev/e2e/evidence/2026-06-24_12-45-13-desktop-runtime-rendering-flow");
 
-test("desktop shell renders immediately while backend health is pending", async ({ page }) => {
+test("startup screen gates the desktop shell while backend health is pending", async ({ page }) => {
   const requests: string[] = [];
+  await page.setViewportSize({ width: 1440, height: 900 });
   await installWebSocketMock(page);
   await mockBackend(page, { healthDelayMs: 6_000, requests });
 
   await page.goto(`${APP_BASE}/#/`);
 
-  await expect(page.getByTestId("app-shell")).toBeVisible();
-  await expect(page.getByTestId("home-page")).toBeVisible();
-  await expect(page.getByTestId("connection-status")).toContainText("正在启动本地服务");
-  await expect(page.getByRole("button", { name: "选择工作区" })).toBeDisabled();
-  await expect(page.getByLabel("选择模型")).toBeDisabled();
-  await expect(page.getByLabel("输入需求")).toHaveAttribute("aria-disabled", "true");
-
-  await page.getByLabel("展开右侧栏").click();
-  await expect(page.getByRole("complementary", { name: "右侧栏" })).toBeVisible();
-  await expect(page.getByTestId("app-shell")).toHaveAttribute("data-right-sidebar", "open");
+  await expect(page.getByTestId("startup-screen")).toBeVisible();
+  await expect(page.getByTestId("startup-screen")).toHaveAttribute("data-phase", "pending");
+  await expect(page.getByTestId("titlebar")).toContainText("Keydex");
+  await expect(page.getByTestId("startup-canvas")).toBeVisible();
+  await expect(page.getByTestId("startup-canvas")).toHaveText("");
+  await expect(page.getByTestId("startup-canvas").getByRole("progressbar")).toHaveCount(0);
+  await expect(page.getByTestId("startup-canvas").getByRole("button")).toHaveCount(0);
+  await expect(page.getByTestId("app-shell")).toHaveCount(0);
+  await expect(page.getByTestId("home-page")).toHaveCount(0);
   expect(requests.some((url) => url.includes("/api/workspaces"))).toBe(false);
   expect(requests.some((url) => url.includes("/api/models"))).toBe(false);
   expect(requests.some((url) => url.includes("/api/settings"))).toBe(false);
@@ -36,11 +36,13 @@ test("desktop shell renders immediately while backend health is pending", async 
 
 test("backend dependent controls unlock after runtime becomes ready", async ({ page }) => {
   const requests: string[] = [];
+  await page.setViewportSize({ width: 1440, height: 900 });
   await installWebSocketMock(page);
   await mockBackend(page, { requests });
 
   await page.goto(`${APP_BASE}/#/`);
 
+  await expect(page.getByTestId("startup-screen")).toHaveCount(0);
   await expect(page.getByTestId("app-shell")).toBeVisible();
   await expect(page.getByRole("heading", { name: "我们应该在 keydex-e2e 中构建什么？" })).toBeVisible();
   await expect(page.getByRole("button", { name: "选择工作区" })).toContainText("keydex-e2e");
@@ -58,7 +60,7 @@ test("backend dependent controls unlock after runtime becomes ready", async ({ p
 
   expect(requests.some((url) => url.includes("/api/health"))).toBe(true);
   expect(requests.some((url) => url.includes("/api/workspaces"))).toBe(true);
-  expect(requests.some((url) => url.includes("/api/models"))).toBe(true);
+  expect(requests.some((url) => url.includes("/api/model-providers"))).toBe(true);
   expect(requests.some((url) => url.includes("/api/settings"))).toBe(true);
 
   await saveEvidence(page, "e2e-002");
@@ -81,6 +83,7 @@ async function mockBackend(page: Page, options: MockBackendOptions) {
       return fulfillJson(route, {
         status: "ok",
         version: "0.1.0",
+        agent_status: "ready",
       });
     }
 
@@ -96,6 +99,9 @@ async function mockBackend(page: Page, options: MockBackendOptions) {
         appearance: {
           font_family: "system",
         },
+        general: {
+          close_window_behavior: null,
+        },
         command: {
           selected_shell: "cmd",
           shell_path: "C:/Windows/System32/cmd.exe",
@@ -110,6 +116,51 @@ async function mockBackend(page: Page, options: MockBackendOptions) {
           tail_max_chars: 12000,
           output_file_max_bytes: 8388608,
           progress_interval_ms: 500,
+        },
+      });
+    }
+
+    if (url.pathname === "/api/model-providers") {
+      return fulfillJson(route, {
+        providers: [
+          {
+            id: "provider-e2e",
+            name: "E2E Provider",
+            base_url: "https://api.example/v1",
+            enabled: true,
+            api_key_set: true,
+            api_key_preview: "sk-***",
+            models: ["qwen-coder-e2e"],
+            model_enabled: { "qwen-coder-e2e": true },
+            health: {},
+          },
+        ],
+      });
+    }
+
+    if (url.pathname === "/api/settings/model-defaults") {
+      return fulfillJson(route, {
+        defaults: {
+          default_chat: {
+            scope: "default_chat",
+            configured: true,
+            provider_id: "provider-e2e",
+            provider_name: "E2E Provider",
+            model: "qwen-coder-e2e",
+            provider_enabled: true,
+            model_enabled: true,
+            missing_reason: null,
+          },
+          fast: {
+            scope: "fast",
+            configured: false,
+            provider_id: null,
+            provider_name: null,
+            model: null,
+            provider_enabled: null,
+            model_enabled: null,
+            missing_reason: "not_configured",
+          },
         },
       });
     }

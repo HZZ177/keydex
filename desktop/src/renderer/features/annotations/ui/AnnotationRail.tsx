@@ -31,6 +31,8 @@ export interface AnnotationRailAuxiliaryItem {
 }
 
 const DRAFT_PLACEMENT_ID = "__annotation_draft__";
+const RAIL_HEADER_HEIGHT = 52;
+const TOP_SECTION_LANE_GAP = 12;
 
 export function AnnotationRail({
   activeAnnotationId,
@@ -76,8 +78,31 @@ export function AnnotationRail({
   totalCount?: number;
 }) {
   const [heights, setHeights] = useState<Readonly<Record<string, number>>>({});
+  const [measuredTopHeight, setMeasuredTopHeight] = useState<number | null>(null);
   const pendingMeasurements = useRef(new Map<string, number>());
   const measurementScheduled = useRef(false);
+  const topSectionRef = useRef<HTMLDivElement>(null);
+  const hasTop = top !== null && top !== undefined;
+  useLayoutEffect(() => {
+    const element = topSectionRef.current;
+    if (!hasTop || !element) {
+      setMeasuredTopHeight(null);
+      return;
+    }
+    const commitHeight = (height: number) => {
+      const normalized = Number.isFinite(height) ? Math.max(0, Math.ceil(height)) : 0;
+      const measured = normalized > 0 || element.childElementCount === 0 ? normalized : null;
+      setMeasuredTopHeight((current) => current === measured ? current : measured);
+    };
+    commitHeight(element.getBoundingClientRect().height);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      commitHeight(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasTop]);
   const reportHeight = useCallback((id: string, height: number) => {
     pendingMeasurements.current.set(id, height);
     if (measurementScheduled.current) {
@@ -101,10 +126,16 @@ export function AnnotationRail({
       });
     });
   }, []);
+  const layoutReservedTop = measuredTopHeight === null
+    ? reservedTop
+    : Math.max(
+      RAIL_HEADER_HEIGHT + TOP_SECTION_LANE_GAP,
+      RAIL_HEADER_HEIGHT + measuredTopHeight + TOP_SECTION_LANE_GAP,
+    );
   const laneLayout = useMemo(() => layoutAnnotationLane({
     bottomPadding,
     documentHeight,
-    reservedTop,
+    reservedTop: layoutReservedTop,
     items: [
       ...items.map(({ anchorY, resolution }) => ({
       anchorY,
@@ -125,7 +156,7 @@ export function AnnotationRail({
         id: item.id,
       })),
     ],
-  }), [bottomPadding, documentHeight, draft, floatingItems, heights, items, reservedTop]);
+  }), [bottomPadding, documentHeight, draft, floatingItems, heights, items, layoutReservedTop]);
   const placements = laneLayout.placements;
   const resolutionById = useMemo(
     () => new Map(items.map((item) => [item.resolution.record.id, item.resolution])),
@@ -201,8 +232,8 @@ export function AnnotationRail({
           <button aria-label="收起批注栏" onClick={onClose} type="button"><X size={15} /></button>
         </div>
       </header>
-      {top ? <div className={styles.topSection}>{top}</div> : null}
-      <div className={styles.lane}>
+      {hasTop ? <div className={styles.topSection} data-annotation-top-section="true" ref={topSectionRef}>{top}</div> : null}
+      <div className={styles.lane} data-annotation-lane-reserved-top={layoutReservedTop}>
         {placements.map((placement) => {
           if (placement.id === DRAFT_PLACEMENT_ID && draft) {
             return (

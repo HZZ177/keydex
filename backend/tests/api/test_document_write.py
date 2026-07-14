@@ -7,9 +7,11 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+import backend.app.api.workspace as workspace_api
 from backend.app.api.document_write import DocumentWriteError, write_utf8_document
 from backend.app.core.config import AppSettings
 from backend.app.main import create_app
+from backend.app.services.file_change_hub import FileChangeHub
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -32,6 +34,7 @@ def _revision(data: bytes) -> str:
 def _payload(path: str, content: str, revision: str) -> dict[str, str]:
     return {
         "protocol_version": "document-write/v1",
+        "write_id": f"test-write:{path}",
         "path": path,
         "content": content,
         "expected_revision": revision,
@@ -65,6 +68,40 @@ def test_workspace_document_write_preserves_utf8_bom_crlf_and_returns_revision(
         "total_bytes": len(after),
     }
     assert target.read_bytes() == after
+
+
+def test_workspace_document_write_registers_echo_before_atomic_write(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    target = root / "note.md"
+    target.write_text("before", encoding="utf-8")
+    steps: list[str] = []
+    original_register = FileChangeHub.register_document_write_echo
+    original_write = workspace_api.write_utf8_document
+
+    async def record_register(self: FileChangeHub, *args: Any, **kwargs: Any) -> None:
+        steps.append("register")
+        await original_register(self, *args, **kwargs)
+
+    def record_write(*args: Any, **kwargs: Any):
+        steps.append("write")
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(FileChangeHub, "register_document_write_echo", record_register)
+    monkeypatch.setattr(workspace_api, "write_utf8_document", record_write)
+
+    with _client(tmp_path) as client:
+        workspace = _create_workspace(client, root)
+        response = client.post(
+            f"/api/workspaces/{workspace['id']}/write/document",
+            json=_payload("note.md", "after", _revision(b"before")),
+        )
+
+    assert response.status_code == 200
+    assert steps == ["register", "write"]
 
 
 def test_workspace_document_write_rejects_stale_revision_without_overwriting(

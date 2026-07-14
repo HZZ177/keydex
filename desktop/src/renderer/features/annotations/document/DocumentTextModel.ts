@@ -60,6 +60,7 @@ export interface DocumentTextModel {
   readonly rawSource: string;
   readonly logicalText: string;
   readonly revision: DocumentTextRevision;
+  readonly markdownSnapshotRevision?: string | null;
   readonly blocks: readonly DocumentBlock[];
 
   toSourceRanges(range: LogicalRange): readonly SourceRange[];

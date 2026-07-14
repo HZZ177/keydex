@@ -78,7 +78,7 @@ export interface MarkdownScrollAnchorDiagnostics {
 export class MarkdownScrollAnchorController {
   private heightIndex: MarkdownHeightIndex;
   private blockIds: readonly string[];
-  private blockIndexById = new Map<string, number>();
+  private blockIndexById: ReadonlyMap<string, number> = new Map();
   private readonly userScrollQuietMs: number;
   private readonly correctionEpsilon: number;
   private readonly now: () => number;
@@ -96,10 +96,11 @@ export class MarkdownScrollAnchorController {
     heightIndex: MarkdownHeightIndex,
     blockIds: readonly string[],
     options: MarkdownScrollAnchorControllerOptions = {},
+    blockIndexById?: ReadonlyMap<string, number>,
   ) {
     this.heightIndex = heightIndex;
     this.blockIds = validateBlockIds(blockIds, heightIndex.length);
-    this.blockIndexById = indexBlockIds(this.blockIds);
+    this.blockIndexById = blockIndexById ?? indexBlockIds(this.blockIds);
     this.userScrollQuietMs = finiteNonNegative(options.userScrollQuietMs ?? 120, "userScrollQuietMs");
     this.correctionEpsilon = finiteNonNegative(options.correctionEpsilon ?? 0.5, "correctionEpsilon");
     this.now = options.now ?? (() => performance.now());
@@ -202,10 +203,14 @@ export class MarkdownScrollAnchorController {
     return this.correct(anchor, anchorIndex, currentScrollTop, viewportHeight, 0, false, input.allowDuringUserScroll);
   }
 
-  reset(nextIndex: MarkdownHeightIndex, nextBlockIds: readonly string[]): void {
+  reset(
+    nextIndex: MarkdownHeightIndex,
+    nextBlockIds: readonly string[],
+    nextBlockIndexById?: ReadonlyMap<string, number>,
+  ): void {
     this.heightIndex = nextIndex;
     this.blockIds = validateBlockIds(nextBlockIds, nextIndex.length);
-    this.blockIndexById = indexBlockIds(this.blockIds);
+    this.blockIndexById = nextBlockIndexById ?? indexBlockIds(this.blockIds);
   }
 
   diagnostics(): MarkdownScrollAnchorDiagnostics {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -364,6 +365,124 @@ async def test_local_file_watch_coalesces_atomic_replace(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_document_write_echo_is_tagged_for_workspace_and_local_subscribers(
+    tmp_path: Path,
+) -> None:
+    target = _make_file(tmp_path / "target.md", "after")
+    subscriber = RecordingSubscriber()
+    hub = FileChangeHub(start_tasks=False)
+    await hub.subscribe_workspace("workspace-1", tmp_path, subscriber)
+    await hub.subscribe_local_file("local-1", target, subscriber)
+    await hub.register_document_write_echo(
+        "write-1",
+        target,
+        revision=_revision(b"after"),
+        total_bytes=len(b"after"),
+    )
+
+    await hub.handle_raw_changes(
+        tmp_path,
+        {(Change.deleted, target), (Change.added, target)},
+    )
+
+    assert [event[0] for event in subscriber.events] == [
+        "workspaceFilesChanged",
+        "localFileChanged",
+    ]
+    for _, payload in subscriber.events:
+        assert payload["changes"] == [
+            {
+                "kind": "modified",
+                "path": "target.md" if "workspace_id" in payload else str(target.resolve()),
+                "write_id": "write-1",
+            }
+        ]
+    await hub.close()
+
+
+@pytest.mark.asyncio
+async def test_document_write_echo_is_not_tagged_after_an_external_rewrite(tmp_path: Path) -> None:
+    target = _make_file(tmp_path / "target.md", "after")
+    subscriber = RecordingSubscriber()
+    hub = FileChangeHub(start_tasks=False)
+    await hub.subscribe_workspace("workspace-1", tmp_path, subscriber)
+    await hub.register_document_write_echo(
+        "write-1",
+        target,
+        revision=_revision(b"after"),
+        total_bytes=len(b"after"),
+    )
+    target.write_text("external", encoding="utf-8")
+
+    await hub.handle_raw_changes(tmp_path, {(Change.modified, target)})
+
+    assert subscriber.events[0][1]["changes"] == [
+        {"kind": "modified", "path": "target.md"}
+    ]
+    await hub.close()
+
+
+@pytest.mark.asyncio
+async def test_document_write_echo_tags_atomic_replace_parent_directory_event(
+    tmp_path: Path,
+) -> None:
+    target = _make_file(tmp_path / ".ktaicoding" / "des" / "target.md", "after")
+    temporary = target.parent / ".target.md.keydex-test.tmp"
+    subscriber = RecordingSubscriber()
+    hub = FileChangeHub(start_tasks=False)
+    await hub.subscribe_workspace("workspace-1", tmp_path, subscriber)
+    await hub.register_document_write_echo(
+        "write-1",
+        target,
+        revision=_revision(b"after"),
+        total_bytes=len(b"after"),
+    )
+
+    await hub.handle_raw_changes(
+        tmp_path,
+        {
+            (Change.deleted, temporary),
+            (Change.modified, target.parent),
+            (Change.added, temporary),
+            (Change.deleted, target),
+            (Change.added, target),
+        },
+    )
+
+    assert subscriber.events[0][1]["changes"] == [
+        {"kind": "modified", "path": ".ktaicoding/des", "write_id": "write-1"},
+        {
+            "kind": "modified",
+            "path": ".ktaicoding/des/target.md",
+            "write_id": "write-1",
+        },
+    ]
+    await hub.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_document_write_discards_registered_echo(tmp_path: Path) -> None:
+    target = _make_file(tmp_path / "target.md", "external")
+    subscriber = RecordingSubscriber()
+    hub = FileChangeHub(start_tasks=False)
+    await hub.subscribe_workspace("workspace-1", tmp_path, subscriber)
+    await hub.register_document_write_echo(
+        "write-1",
+        target,
+        revision=_revision(b"planned"),
+        total_bytes=len(b"planned"),
+    )
+
+    await hub.discard_document_write_echo("write-1", target)
+    await hub.handle_raw_changes(tmp_path, {(Change.modified, target)})
+
+    assert subscriber.events[0][1]["changes"] == [
+        {"kind": "modified", "path": "target.md"}
+    ]
+    await hub.close()
+
+
+@pytest.mark.asyncio
 async def test_explicit_local_file_watch_bypasses_workspace_ignore(tmp_path: Path) -> None:
     ignored_root = tmp_path / ".git"
     ignored_root.mkdir()
@@ -408,3 +527,7 @@ def _make_file(path: Path, content: str = "content") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path
+
+
+def _revision(content: bytes) -> str:
+    return f"sha256:{hashlib.sha256(content).hexdigest()}"

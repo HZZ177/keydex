@@ -33,6 +33,7 @@ from backend.app.api.document_write import (
     DocumentWriteErrorCode,
     DocumentWriteRequest,
     DocumentWriteResponse,
+    document_write_content_metadata,
     document_write_response,
     write_utf8_document,
 )
@@ -44,6 +45,7 @@ from backend.app.core.ripgrep import (
 )
 from backend.app.keydex.schemas import WorkspaceSkillsResponse, workspace_skills_response
 from backend.app.security.workspace import WorkspacePathError, resolve_workspace_path
+from backend.app.services.file_change_hub import FileChangeHub
 from backend.app.services.workspace_service import (
     WorkspaceRuntimeContext,
     WorkspaceService,
@@ -224,10 +226,11 @@ async def read_workspace_document(
 async def write_workspace_document(
     workspace_id: str,
     payload: DocumentWriteRequest,
+    request: Request,
     repositories: StorageRepositories = RepositoriesDep,
 ) -> DocumentWriteResponse:
     scope = _workspace_scope(repositories, workspace_id)
-    return await _document_write_response(scope, payload)
+    return await _document_write_response(scope, payload, request)
 
 
 @router.get("/api/workspaces/{workspace_id}/media", response_model=WorkspaceMediaResponse)
@@ -333,10 +336,11 @@ async def read_session_workspace_document(
 async def write_session_workspace_document(
     session_id: str,
     payload: DocumentWriteRequest,
+    request: Request,
     repositories: StorageRepositories = RepositoriesDep,
 ) -> DocumentWriteResponse:
     scope = _session_workspace_scope(repositories, session_id)
-    return await _document_write_response(scope, payload)
+    return await _document_write_response(scope, payload, request)
 
 
 @router.get("/api/sessions/{session_id}/workspace/media", response_model=WorkspaceMediaResponse)
@@ -621,8 +625,20 @@ async def _document_read_response(
 async def _document_write_response(
     scope: WorkspaceRuntimeContext,
     payload: DocumentWriteRequest,
+    request: Request,
 ) -> DocumentWriteResponse:
     target = _resolve(scope, payload.path)
+    hub = getattr(request.app.state, "file_change_hub", None)
+    write_echo_registered = bool(payload.write_id and isinstance(hub, FileChangeHub))
+    if write_echo_registered:
+        revision, total_bytes = document_write_content_metadata(payload.content)
+        await hub.register_document_write_echo(
+            payload.write_id,
+            target,
+            revision=revision,
+            total_bytes=total_bytes,
+        )
+    write_completed = False
     try:
         result = await asyncio.to_thread(
             write_utf8_document,
@@ -632,6 +648,7 @@ async def _document_write_response(
             expected_revision=payload.expected_revision,
             max_bytes=MAX_PREVIEW_DOCUMENT_BYTES,
         )
+        write_completed = True
     except DocumentWriteError as exc:
         status_code = {
             DocumentWriteErrorCode.NOT_FOUND: status.HTTP_404_NOT_FOUND,
@@ -651,6 +668,9 @@ async def _document_write_response(
             exc.message,
             {"retryable": exc.retryable, **exc.details},
         ) from exc
+    finally:
+        if write_echo_registered and not write_completed:
+            await hub.discard_document_write_echo(payload.write_id, target)
     logger.info(
         "[WorkspaceAPI] 保存文件 | "
         f"workspace_id={scope.workspace_id} | path={result.path} | size={result.total_bytes}"

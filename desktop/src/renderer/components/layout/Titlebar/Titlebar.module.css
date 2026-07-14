@@ -176,6 +176,15 @@ button.brandMark:active {
   -webkit-user-drag: none;
 }
 
+.brandLabel {
+  margin-left: calc(-1 * var(--titlebar-left-gap) + 2px);
+  color: var(--color-text-1);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: var(--ui-line-height-compact);
+  white-space: nowrap;
+}
+
 .windowControls {
   height: var(--titlebar-height);
   display: flex;

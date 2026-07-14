@@ -231,6 +231,22 @@ describe("FileMarkdownRuntimeHost", () => {
     expect(scroll.scrollTop).toBeGreaterThan(0);
   });
 
+  it("maps a split-view scroll position through source offsets instead of shared pixels", async () => {
+    const handle = { current: null } as MutableRefObject<FileMarkdownRuntimeHostHandle | null>;
+    const source = Array.from({ length: 160 }, (_, index) => `## Heading ${index}\n\nBody ${index}`).join("\n\n");
+    render(<RuntimeHarness source={source} revision="sync-r1" loader={snapshotLoader()} runtimeRef={handle} />);
+    await readyRuntimeCanvas();
+    const snapshot = handle.current?.currentSnapshot();
+    const targetBlock = snapshot?.blocks[Math.floor((snapshot?.blocks.length ?? 0) / 2)];
+    expect(targetBlock).toBeTruthy();
+    const targetOffset = Math.floor((targetBlock!.source_start + targetBlock!.source_end) / 2);
+
+    expect(handle.current?.syncViewportToSourceOffset(targetOffset)).toBe(true);
+
+    expect(screen.getByTestId("runtime-scroll").scrollTop).toBeGreaterThan(0);
+    expect(handle.current?.viewportSourceOffset()).toBe(targetOffset);
+  });
+
   it("persists Runtime folds across preview remounts and expands a folded section for reveal", async () => {
     const descriptor: MarkdownViewDescriptor = Object.freeze({
       scopeId: "scope-fold",
@@ -406,6 +422,41 @@ describe("FileMarkdownRuntimeHost", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("worker exploded");
     expect(document.querySelector("[data-markdown-runtime-error='true']")).not.toBeNull();
     expect(document.querySelector("[data-virtuoso-scroller='true']")).toBeNull();
+  });
+
+  it("publishes edited revisions without reconstructing the document runtime", async () => {
+    let resolveEdited: ((snapshot: MarkdownSnapshot) => void) | null = null;
+    const loader = vi.fn(({ source, revision }: Parameters<FileMarkdownRuntimeSnapshotLoader>[0]) => {
+      if (revision === "r2") {
+        return new Promise<MarkdownSnapshot>((resolve) => {
+          resolveEdited = resolve;
+        });
+      }
+      return Promise.resolve(parse(source, revision));
+    });
+    const rendered = render(
+      <RuntimeHarness source={"# Stable\n\nParagraph"} revision="r1" loader={loader} />,
+    );
+    expect(await screen.findByRole("heading", { name: "Stable" })).not.toBeNull();
+    const runtimeCanvas = document.querySelector<HTMLElement>("[data-file-markdown-runtime-canvas='true']")!;
+    const documentCanvas = runtimeCanvas.querySelector<HTMLElement>("[data-markdown-document-canvas='true']")!;
+
+    rendered.rerender(
+      <RuntimeHarness source={"# Updated\n\nParagraph"} revision="r2" loader={loader} />,
+    );
+    await waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("heading", { name: "Stable" })).not.toBeNull();
+    expect(document.querySelector("[data-file-markdown-runtime-canvas='true']")).toBe(runtimeCanvas);
+    expect(runtimeCanvas.querySelector("[data-markdown-document-canvas='true']")).toBe(documentCanvas);
+
+    await act(async () => {
+      resolveEdited?.(parse("# Updated\n\nParagraph", "r2"));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByRole("heading", { name: "Updated" })).not.toBeNull();
+    expect(document.querySelector("[data-file-markdown-runtime-canvas='true']")).toBe(runtimeCanvas);
+    expect(runtimeCanvas.querySelector("[data-markdown-document-canvas='true']")).toBe(documentCanvas);
   });
 
   it("keeps the last good Snapshot visible and recovers explicitly after a failed revision", async () => {

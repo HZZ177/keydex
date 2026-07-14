@@ -45,6 +45,7 @@ export interface LocalPreviewRuntime {
 
 export interface LocalPreviewDocumentWriteOptions {
   expectedRevision: string;
+  writeId: string;
   signal?: AbortSignal;
 }
 
@@ -99,7 +100,12 @@ export function createLocalPreviewRuntime(
         "/api/local-preview/write/document",
         {
           method: "POST",
-          body: createDocumentWriteRequest(path, content, writeOptions.expectedRevision),
+          body: createDocumentWriteRequest(
+            path,
+            content,
+            writeOptions.expectedRevision,
+            writeOptions.writeId,
+          ),
           signal: writeOptions.signal,
           silentStatuses: [409],
         },

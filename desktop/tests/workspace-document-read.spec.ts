@@ -37,6 +37,7 @@ describe("WorkspaceRuntime document read", () => {
       expect(init?.method).toBe("POST");
       expect(JSON.parse(String(init?.body))).toEqual({
         protocol_version: "document-write/v1",
+        write_id: "write-workspace-1",
         path: "docs/README.md",
         content: "# Updated\r\n",
         expected_revision: "sha256:before",
@@ -56,6 +57,7 @@ describe("WorkspaceRuntime document read", () => {
 
     await expect(runtime.writeDocument(scope, "docs/README.md", "# Updated\r\n", {
       expectedRevision: "sha256:before",
+      writeId: "write-workspace-1",
     })).resolves.toMatchObject({ revision: "sha256:after" });
   });
 

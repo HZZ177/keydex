@@ -6,7 +6,7 @@ export type TextAnchorResolution =
   | {
       readonly status: "resolved";
       readonly range: LogicalRange;
-      readonly strategy: "position" | "unique-quote" | "quote-context" | "document-context";
+      readonly strategy: "position" | "document-position" | "unique-quote" | "quote-context" | "document-context";
     }
   | {
       readonly status: "ambiguous";
@@ -31,46 +31,139 @@ export function resolveTextAnchor(
     return resolved(original, "position");
   }
 
+  const nearby = resolveSameDocumentProjectionDrift(model, selector);
+  if (nearby) {
+    return resolved(nearby, "document-position");
+  }
+
   const candidates = exactMatches(model.logicalText, exact);
-  if (candidates.length === 0) {
+  if (candidates.total === 0) {
     return Object.freeze({ status: "changed" });
   }
-  if (candidates.length === 1) {
-    return resolved(candidates[0], "unique-quote");
+  if (candidates.total === 1) {
+    return resolved(candidates.ranges[0]!, "unique-quote");
   }
 
-  const quoteContextMatches = candidates.filter((candidate) =>
-    prefixMatches(model.logicalText, candidate, selector.quote.prefix)
-    && suffixMatches(model.logicalText, candidate, selector.quote.suffix));
-  if (quoteContextMatches.length === 1) {
-    return resolved(quoteContextMatches[0], "quote-context");
+  const quoteContextMatches = exactMatches(
+    model.logicalText,
+    exact,
+    (candidate) => prefixMatches(model.logicalText, candidate, selector.quote.prefix)
+      && suffixMatches(model.logicalText, candidate, selector.quote.suffix),
+  );
+  if (quoteContextMatches.total === 1) {
+    return resolved(quoteContextMatches.ranges[0]!, "quote-context");
   }
 
-  const documentContextPool = quoteContextMatches.length > 0 ? quoteContextMatches : candidates;
-  const documentContextMatches = documentContextPool.filter((candidate) =>
-    contextMatches(model, candidate, selector));
-  if (documentContextMatches.length === 1) {
-    return resolved(documentContextMatches[0], "document-context");
+  const documentContextPool = quoteContextMatches.total > 0 ? quoteContextMatches : candidates;
+  if (!documentContextPool.truncated) {
+    const documentContextMatches = documentContextPool.ranges.filter((candidate) =>
+      contextMatches(model, candidate, selector));
+    if (documentContextMatches.length === 1) {
+      return resolved(documentContextMatches[0], "document-context");
+    }
   }
 
   return Object.freeze({
     status: "ambiguous",
-    candidates: Object.freeze(candidates.map(freezeRange)),
+    candidates: Object.freeze(candidates.ranges.map(freezeRange)),
   });
 }
 
-function exactMatches(text: string, exact: string): LogicalRange[] {
-  const matches: LogicalRange[] = [];
+const SAME_DOCUMENT_DRIFT_RADIUS = 4_096;
+const MAX_AMBIGUOUS_CANDIDATES = 16;
+
+interface ExactMatchSearch {
+  readonly ranges: readonly LogicalRange[];
+  readonly total: number;
+  readonly truncated: boolean;
+}
+
+function resolveSameDocumentProjectionDrift(
+  model: DocumentTextModel,
+  selector: TextSelector,
+): LogicalRange | null {
+  if (selector.documentRevision !== model.revision.documentRevision
+    || selector.textRevision === model.revision.textRevision) {
+    return null;
+  }
+  const origin = selector.position.start;
+  if (!Number.isSafeInteger(origin)) return null;
+  const start = Math.max(0, origin - SAME_DOCUMENT_DRIFT_RADIUS);
+  const end = Math.min(model.logicalText.length, origin + SAME_DOCUMENT_DRIFT_RADIUS);
+  const quoteMatch = nearestExactMatch(
+    model.logicalText,
+    selector.quote.exact,
+    origin,
+    start,
+    end,
+    (candidate) => prefixMatches(model.logicalText, candidate, selector.quote.prefix)
+      && suffixMatches(model.logicalText, candidate, selector.quote.suffix),
+  );
+  return quoteMatch ?? nearestExactMatch(
+    model.logicalText,
+    selector.quote.exact,
+    origin,
+    start,
+    end,
+  );
+}
+
+function nearestExactMatch(
+  text: string,
+  exact: string,
+  origin: number,
+  start: number,
+  end: number,
+  predicate: (candidate: LogicalRange) => boolean = () => true,
+): LogicalRange | null {
+  let best: LogicalRange | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let tied = false;
+  let cursor = start;
+  while (cursor <= end - exact.length) {
+    const matchStart = text.indexOf(exact, cursor);
+    if (matchStart < 0 || matchStart > end - exact.length) break;
+    const candidate = { start: matchStart, end: matchStart + exact.length };
+    if (predicate(candidate)) {
+      const distance = Math.abs(matchStart - origin);
+      if (distance < bestDistance) {
+        best = candidate;
+        bestDistance = distance;
+        tied = false;
+      } else if (distance === bestDistance) {
+        tied = true;
+      }
+    }
+    cursor = matchStart + 1;
+  }
+  return tied ? null : best;
+}
+
+function exactMatches(
+  text: string,
+  exact: string,
+  predicate: (candidate: LogicalRange) => boolean = () => true,
+): ExactMatchSearch {
+  const ranges: LogicalRange[] = [];
+  let total = 0;
   let cursor = 0;
   while (cursor <= text.length - exact.length) {
     const start = text.indexOf(exact, cursor);
     if (start < 0) {
       break;
     }
-    matches.push({ start, end: start + exact.length });
+    const candidate = { start, end: start + exact.length };
+    if (predicate(candidate)) {
+      total += 1;
+      if (ranges.length < MAX_AMBIGUOUS_CANDIDATES) ranges.push(candidate);
+    }
     cursor = start + 1;
   }
-  return matches;
+  return Object.freeze({
+    ranges: Object.freeze(ranges),
+    total,
+    truncated: total > ranges.length,
+  });
 }
 
 function prefixMatches(text: string, candidate: LogicalRange, prefix: string): boolean {

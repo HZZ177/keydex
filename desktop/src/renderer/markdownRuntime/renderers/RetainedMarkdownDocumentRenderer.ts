@@ -51,7 +51,6 @@ export class RetainedMarkdownDocumentRenderer {
   private readonly interactions: MarkdownRendererInteractionHandlers;
   private readonly resourceLifecycle?: MarkdownRendererResourceLifecycle;
   private blocks = new Map<string, RetainedBlock>();
-  private blockById = new Map<string, MarkdownSnapshotBlock>();
   private resourcesByBlock = new Map<string, MarkdownSnapshot["resources"][number][]>();
   private snapshot: MarkdownSnapshot | null = null;
   private disposed = false;
@@ -90,10 +89,12 @@ export class RetainedMarkdownDocumentRenderer {
     let failed = 0;
     let preserved = 0;
     for (const blockId of preserveBlockIds) {
-      const block = this.blockById.get(blockId);
       const retained = previous.get(blockId);
+      const block = retained && (sameSnapshot
+        ? retained.block
+        : snapshot.blocks.find((candidate) => candidate.id === blockId));
       if (!block || !retained) throw new Error(`Cannot preserve unmounted Markdown block ${blockId}`);
-      next.set(blockId, retained);
+      next.set(blockId, block === retained.block ? retained : { ...retained, block });
       preserved += 1;
     }
 
@@ -142,8 +143,8 @@ export class RetainedMarkdownDocumentRenderer {
       retained.instance.destroy();
       destroyed += 1;
     }
-    const renderedBlocks = [...next.keys()]
-      .map((blockId) => this.blockById.get(blockId)!)
+    const renderedBlocks = [...next.values()]
+      .map((retained) => retained.block)
       .sort((left, right) => left.index - right.index);
     let cursor = this.root.firstChild;
     for (const block of renderedBlocks) {
@@ -193,7 +194,6 @@ export class RetainedMarkdownDocumentRenderer {
     this.disposed = true;
     for (const retained of this.blocks.values()) retained.instance.destroy();
     this.blocks.clear();
-    this.blockById.clear();
     this.resourcesByBlock.clear();
     this.snapshot = null;
     if (options.clearRoot !== false) this.root.replaceChildren();
@@ -223,7 +223,6 @@ export class RetainedMarkdownDocumentRenderer {
     if (snapshot.surface !== this.profile.surface || snapshot.renderer_profile !== this.profile.id) {
       throw new Error(`Snapshot ${snapshot.surface}/${snapshot.renderer_profile} does not match ${this.profile.surface}/${this.profile.id}`);
     }
-    this.blockById = new Map(snapshot.blocks.map((block) => [block.id, block]));
     const resourcesByBlock = new Map<string, MarkdownSnapshot["resources"][number][]>();
     for (const resource of snapshot.resources) {
       const resources = resourcesByBlock.get(resource.block_id) ?? [];

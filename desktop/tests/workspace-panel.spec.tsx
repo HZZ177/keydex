@@ -400,6 +400,40 @@ describe("WorkspacePanel", () => {
     expect(screen.getByText("desktop")).not.toBeNull();
   });
 
+  it("debounces file filtering until the query is stable for 350ms", async () => {
+    vi.useFakeTimers();
+    const runtime = fakeRuntime({
+      "": [entry("README.md", "README.md", "file", 12)],
+    });
+
+    try {
+      render(<WorkspacePanel chrome="panel" sessionId="ses-1" label="D:/repo" runtime={runtime} />);
+
+      const filterInput = screen.getByRole("searchbox", { name: "筛选文件" });
+      fireEvent.change(filterInput, { target: { value: "1" } });
+      fireEvent.change(filterInput, { target: { value: "10" } });
+      fireEvent.change(filterInput, { target: { value: "10m" } });
+
+      expect(runtime.workspace.search).not.toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(349);
+      });
+      expect(runtime.workspace.search).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(runtime.workspace.search).toHaveBeenCalledTimes(1);
+      expect(runtime.workspace.search).toHaveBeenCalledWith(
+        { sessionId: "ses-1" },
+        "10m",
+        expect.objectContaining({ signal: expect.any(Object) }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("applies a bottom safe area to the file tree scroll container", async () => {
     const runtime = fakeRuntime({
       "": [entry("README.md", "README.md", "file", 12)],

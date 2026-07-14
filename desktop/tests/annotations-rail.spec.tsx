@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveDocumentAnnotations } from "@/renderer/features/annotations/anchoring/resolveDocumentAnnotations";
@@ -59,6 +59,24 @@ describe("AnnotationRail", () => {
     expect(first?.style.top).toBe("76px");
     expect(Number.parseFloat(second?.style.top ?? "0")).toBeGreaterThan(76);
     expect(document.querySelector("[data-annotation-card-id='b']")?.getAttribute("data-active")).toBe("true");
+  });
+
+  it("reserves the measured top-section height before positioning text annotations", async () => {
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    renderRail(resolvedItems(), {
+      reservedTop: 100,
+      top: <div data-testid="document-annotations">Document annotations</div>,
+    });
+    const topSection = document.querySelector<HTMLElement>("[data-annotation-top-section='true']")!;
+    const observer = resizeObservers.find((candidate) => candidate.observes(topSection));
+    expect(observer).toBeDefined();
+
+    act(() => observer!.emit(240));
+
+    await waitFor(() => {
+      expect(document.querySelector("[data-annotation-lane-reserved-top='304']")).not.toBeNull();
+      expect(document.querySelector<HTMLElement>("[data-annotation-placement-id='a']")?.style.top).toBe("304px");
+    });
   });
 
   it("reports card hover and reflects the shared hovered annotation", () => {
@@ -190,6 +208,10 @@ class FakeResizeObserver {
 
   disconnect() {}
   unobserve() {}
+
+  observes(target: Element): boolean {
+    return this.target === target;
+  }
 
   emit(height: number) {
     this.callback([{

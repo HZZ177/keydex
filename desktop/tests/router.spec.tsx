@@ -20,6 +20,7 @@ import { emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { LAYOUT_PREFERENCES_KEY } from "@/renderer/hooks/layout/layoutStore";
 import { AgentSessionProvider, useAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
+import { AppUpdateController } from "@/renderer/providers/AppUpdateController";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectionProvider";
@@ -42,19 +43,21 @@ function renderRouter(
     <ThemeProvider>
       <FontProvider>
         <NotificationProvider>
-          <LayoutStateProvider>
-            <RuntimeConnectionProvider runtime={runtime} starter={starter}>
-              <AgentSessionProvider runtime={runtime}>
-                <PreviewProvider>
-                  {extra}
-                  <MemoryRouter initialEntries={initialEntries}>
-                    {routeExtra}
-                    <AppRouter runtime={runtime} />
-                  </MemoryRouter>
-                </PreviewProvider>
-              </AgentSessionProvider>
-            </RuntimeConnectionProvider>
-          </LayoutStateProvider>
+          <AppUpdateController>
+            <LayoutStateProvider>
+              <RuntimeConnectionProvider runtime={runtime} starter={starter}>
+                <AgentSessionProvider runtime={runtime}>
+                  <PreviewProvider>
+                    {extra}
+                    <MemoryRouter initialEntries={initialEntries}>
+                      {routeExtra}
+                      <AppRouter runtime={runtime} />
+                    </MemoryRouter>
+                  </PreviewProvider>
+                </AgentSessionProvider>
+              </RuntimeConnectionProvider>
+            </LayoutStateProvider>
+          </AppUpdateController>
         </NotificationProvider>
       </FontProvider>
     </ThemeProvider>,
@@ -72,17 +75,19 @@ function renderRouterWithoutLayoutProvider(
     <ThemeProvider>
       <FontProvider>
         <NotificationProvider>
-          <RuntimeConnectionProvider runtime={runtime} starter={starter}>
-            <AgentSessionProvider runtime={runtime}>
-              <PreviewProvider>
-                {extra}
-                <MemoryRouter initialEntries={initialEntries}>
-                  {routeExtra}
-                  <AppRouter runtime={runtime} />
-                </MemoryRouter>
-              </PreviewProvider>
-            </AgentSessionProvider>
-          </RuntimeConnectionProvider>
+          <AppUpdateController>
+            <RuntimeConnectionProvider runtime={runtime} starter={starter}>
+              <AgentSessionProvider runtime={runtime}>
+                <PreviewProvider>
+                  {extra}
+                  <MemoryRouter initialEntries={initialEntries}>
+                    {routeExtra}
+                    <AppRouter runtime={runtime} />
+                  </MemoryRouter>
+                </PreviewProvider>
+              </AgentSessionProvider>
+            </RuntimeConnectionProvider>
+          </AppUpdateController>
         </NotificationProvider>
       </FontProvider>
     </ThemeProvider>,
@@ -491,8 +496,10 @@ describe("AppRouter", () => {
     const starter = vi.fn(() => connection.promise);
     const { runtime } = renderRouter([workbenchFilePreviewPath(filePath)], { starter });
 
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
     await waitFor(() => expect(starter).toHaveBeenCalledTimes(1));
     expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
     expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("");
     expect(screen.queryByTestId("workbench-workspace-picker")).toBeNull();
     expect(screen.queryByTestId("workbench-workspace-loading")).toBeNull();
@@ -524,6 +531,7 @@ describe("AppRouter", () => {
     await waitFor(() => {
       expect(runtime.workspaces.list).toHaveBeenCalled();
     });
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
     await waitFor(() => {
       expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("workspace A");
     });
@@ -545,8 +553,10 @@ describe("AppRouter", () => {
     const starter = vi.fn(() => connection.promise);
     const { runtime } = renderRouter([workbenchFilePreviewPath(filePath, "workspace A")], { starter });
 
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
     await waitFor(() => expect(starter).toHaveBeenCalledTimes(1));
     expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
     expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("workspace A");
     expect(screen.getByTestId("workbench-external-preview-pending-pane")).not.toBeNull();
     expect(screen.queryByTestId("workspace-file-browser")).toBeNull();
@@ -574,6 +584,7 @@ describe("AppRouter", () => {
     await waitFor(() => {
       expect(screen.getByTestId("workspace-file-browser")).not.toBeNull();
     });
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
     const tree = screen.getByTestId("workspace-file-browser-tree");
     expect((await within(tree).findByTestId("workspace-browser-outline-tab")).getAttribute("aria-pressed")).toBe(
       "true",
@@ -583,6 +594,30 @@ describe("AppRouter", () => {
     expect(screen.queryByTestId("workbench-external-preview-pending-pane")).toBeNull();
     expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ workspaceId: "workspace A" }, "");
     expect(runtime.localPreview.readDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an external preview visible while a failed runtime retries", async () => {
+    const filePath = "D:/docs/README.md";
+    const starter = vi
+      .fn<() => Promise<AgentConnection>>()
+      .mockRejectedValueOnce(new Error("health timeout"))
+      .mockResolvedValueOnce(agentConnection());
+    const { runtime } = renderRouter([workbenchFilePreviewPath(filePath)], { starter });
+
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    expect(await within(screen.getByTestId("workbench-external-preview-pending-pane")).findByText("Intro")).not.toBeNull();
+    await waitFor(() => expect(screen.getByTestId("connection-status").dataset.status).toBe("error"));
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
+    expect(screen.getByRole("tab", { name: "README.md" })).not.toBeNull();
+
+    fireEvent.click(within(screen.getByTestId("connection-status")).getByRole("button", { name: "重试" }));
+
+    await waitFor(() => expect(runtime.workspaces.list).toHaveBeenCalled());
+    expect(screen.getByRole("tab", { name: "README.md" })).not.toBeNull();
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
+    expect(runtime.localPreview.readDocument).toHaveBeenCalledTimes(1);
+    expect(starter).toHaveBeenCalledTimes(2);
   });
 
   it("closes an external workbench preview tab without reopening it from the file route", async () => {
@@ -645,10 +680,10 @@ describe("AppRouter", () => {
     });
 
     const pinned = await screen.findByRole("region", { name: "置顶" }, { timeout: 10000 });
-    const flatList = await screen.findByRole("region", { name: "keydex列表" }, { timeout: 10000 });
-    expect(within(pinned).getByRole("button", { name: "置顶工作台会话" })).not.toBeNull();
-    expect(within(flatList).getByRole("button", { name: "普通工作台会话" })).not.toBeNull();
-    expect(within(flatList).queryByRole("button", { name: "置顶工作台会话" })).toBeNull();
+    const flatList = await screen.findByRole("region", { name: /^keydex(?:列表)?$/u }, { timeout: 10000 });
+    expect(within(pinned).getByRole("button", { name: /置顶工作台会话$/u })).not.toBeNull();
+    expect(within(flatList).getByRole("button", { name: /普通工作台会话$/u })).not.toBeNull();
+    expect(within(flatList).queryByRole("button", { name: /置顶工作台会话$/u })).toBeNull();
 
     act(() => {
       emitSessionUpdated({
@@ -660,11 +695,15 @@ describe("AppRouter", () => {
     });
 
     await waitFor(() => {
-      expect(within(screen.getByRole("region", { name: "置顶" })).getByText("暂无置顶")).not.toBeNull();
+      expect(
+        within(screen.getByRole("region", { name: "置顶" })).queryByRole("button", {
+          name: /置顶工作台会话$/u,
+        }),
+      ).toBeNull();
     });
     expect(
-      within(screen.getByRole("region", { name: "keydex列表" })).getByRole("button", {
-        name: "置顶工作台会话",
+      within(screen.getByRole("region", { name: /^keydex(?:列表)?$/u })).getByRole("button", {
+        name: /置顶工作台会话$/u,
       }),
     ).not.toBeNull();
   });
@@ -717,13 +756,70 @@ describe("AppRouter", () => {
     expect(runtime.models.listProviders).toHaveBeenCalled();
   });
 
+  it("keeps a normal backend settings route behind the full startup boundary", async () => {
+    const connection = createDeferred<AgentConnection>();
+    const starter = vi.fn(() => connection.promise);
+    const { runtime } = renderRouter(["/settings/providers"], { starter });
+
+    await waitFor(() => expect(starter).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("startup-screen")).not.toBeNull();
+    expect(screen.queryByTestId("settings-shell")).toBeNull();
+    expect(runtime.models.listProviders).not.toHaveBeenCalled();
+
+    await act(async () => {
+      connection.resolve(agentConnection());
+      await connection.promise;
+    });
+
+    expect(await screen.findByRole("heading", { name: "供应商配置" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
+    expect(runtime.models.listProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses an inline gate for backend settings during an external-file startup", async () => {
+    const connection = createDeferred<AgentConnection>();
+    const starter = vi.fn(() => connection.promise);
+    const fileQuery = new URLSearchParams({ file: "D:/docs/README.md" }).toString();
+    const { runtime } = renderRouter([`/settings/providers?${fileQuery}`], { starter });
+
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
+    expect(await screen.findByTestId("settings-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("settings-runtime-gate").dataset.state).toBe("pending");
+    expect(screen.queryByRole("heading", { name: "供应商配置" })).toBeNull();
+    expect(runtime.models.listProviders).not.toHaveBeenCalled();
+
+    await act(async () => {
+      connection.resolve(agentConnection());
+      await connection.promise;
+    });
+
+    expect(await screen.findByRole("heading", { name: "供应商配置" }, { timeout: 10000 })).not.toBeNull();
+    expect(screen.queryByTestId("settings-runtime-gate")).toBeNull();
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
+    expect(runtime.models.listProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["appearance", "appearance-settings-page"],
+    ["about", "about-settings-page"],
+  ])("keeps the local %s settings route available during an external-file startup", async (section, testId) => {
+    const connection = createDeferred<AgentConnection>();
+    const fileQuery = new URLSearchParams({ file: "D:/docs/README.md" }).toString();
+    renderRouter([`/settings/${section}?${fileQuery}`], { starter: () => connection.promise });
+
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
+    expect(await screen.findByTestId(testId, undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.queryByTestId("settings-runtime-gate")).toBeNull();
+  });
+
   it("waits for the runtime connection before loading a direct workbench session route", async () => {
     const connection = createDeferred<AgentConnection>();
     const starter = vi.fn(() => connection.promise);
     const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"], { starter });
 
     await waitFor(() => expect(starter).toHaveBeenCalledTimes(1));
-    expect(await screen.findByTestId("workbench-workspace-loading", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("startup-screen")).not.toBeNull();
+    expect(screen.queryByTestId("workbench-workspace-loading")).toBeNull();
     await act(async () => {
       await Promise.resolve();
     });

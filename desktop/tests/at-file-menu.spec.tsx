@@ -442,6 +442,37 @@ describe("AtFileMenu", () => {
     });
     expect(screen.queryByRole("option", { name: "选择文件 src/old.ts" })).toBeNull();
   });
+
+  it("debounces file mention search until the query is stable for 350ms", async () => {
+    vi.useFakeTimers();
+    const onSearchWorkspace = vi.fn().mockResolvedValue([]);
+
+    try {
+      render(<StatefulSendBox initialValue="" onSearchWorkspace={onSearchWorkspace} />);
+
+      const input = screen.getByLabelText("继续输入");
+      input.textContent = "@1";
+      fireEvent.input(input);
+      input.textContent = "@10";
+      fireEvent.input(input);
+      input.textContent = "@10m";
+      fireEvent.input(input);
+
+      expect(onSearchWorkspace).not.toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(349);
+      });
+      expect(onSearchWorkspace).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(onSearchWorkspace).toHaveBeenCalledTimes(1);
+      expectWorkspaceSearch(onSearchWorkspace, "10m");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 function StatefulSendBox({

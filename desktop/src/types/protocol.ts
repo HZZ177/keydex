@@ -1837,6 +1837,7 @@ export type FileChangeKind = "added" | "modified" | "deleted";
 export interface FileChangeEventItem {
   kind: FileChangeKind;
   path: string;
+  write_id?: string;
 }
 
 export interface WorkspaceWatchBoundData {

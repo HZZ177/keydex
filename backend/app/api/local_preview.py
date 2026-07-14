@@ -6,7 +6,7 @@ import mimetypes
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -25,10 +25,12 @@ from backend.app.api.document_write import (
     DocumentWriteErrorCode,
     DocumentWriteRequest,
     DocumentWriteResponse,
+    document_write_content_metadata,
     document_write_response,
     write_utf8_document,
 )
 from backend.app.core.logger import logger
+from backend.app.services.file_change_hub import FileChangeHub
 
 router = APIRouter(tags=["local-preview"])
 
@@ -102,8 +104,22 @@ async def read_local_preview_document(payload: DocumentReadRequest) -> Streaming
 
 
 @router.post("/api/local-preview/write/document", response_model=DocumentWriteResponse)
-async def write_local_preview_document(payload: DocumentWriteRequest) -> DocumentWriteResponse:
+async def write_local_preview_document(
+    payload: DocumentWriteRequest,
+    request: Request,
+) -> DocumentWriteResponse:
     target = _resolve_preview_document(payload.path)
+    hub = getattr(request.app.state, "file_change_hub", None)
+    write_echo_registered = bool(payload.write_id and isinstance(hub, FileChangeHub))
+    if write_echo_registered:
+        revision, total_bytes = document_write_content_metadata(payload.content)
+        await hub.register_document_write_echo(
+            payload.write_id,
+            target,
+            revision=revision,
+            total_bytes=total_bytes,
+        )
+    write_completed = False
     try:
         result = await asyncio.to_thread(
             write_utf8_document,
@@ -113,6 +129,7 @@ async def write_local_preview_document(payload: DocumentWriteRequest) -> Documen
             expected_revision=payload.expected_revision,
             max_bytes=MAX_LOCAL_PREVIEW_DOCUMENT_BYTES,
         )
+        write_completed = True
     except DocumentWriteError as exc:
         status_code = {
             DocumentWriteErrorCode.NOT_FOUND: status.HTTP_404_NOT_FOUND,
@@ -132,6 +149,9 @@ async def write_local_preview_document(payload: DocumentWriteRequest) -> Documen
             exc.message,
             {"retryable": exc.retryable, **exc.details},
         ) from exc
+    finally:
+        if write_echo_registered and not write_completed:
+            await hub.discard_document_write_echo(payload.write_id, target)
     logger.info(f"[LocalPreviewAPI] 保存本地文件 | path={target} | size={result.total_bytes}")
     return document_write_response(result)
 

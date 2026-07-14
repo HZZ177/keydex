@@ -33,6 +33,7 @@ class DocumentWriteErrorCode(StrEnum):
 
 class DocumentWriteRequest(BaseModel):
     protocol_version: Literal["document-write/v1"] = DOCUMENT_WRITE_PROTOCOL_VERSION
+    write_id: str | None = Field(default=None, min_length=1, max_length=128)
     path: str = Field(min_length=1)
     content: str
     expected_revision: str = Field(min_length=1)
@@ -67,6 +68,11 @@ class DocumentWriteError(Exception):
         self.message = message
         self.retryable = retryable
         self.details = details or {}
+
+
+def document_write_content_metadata(content: str) -> tuple[str, int]:
+    data = content.encode("utf-8")
+    return f"sha256:{hashlib.sha256(data).hexdigest()}", len(data)
 
 
 def write_utf8_document(

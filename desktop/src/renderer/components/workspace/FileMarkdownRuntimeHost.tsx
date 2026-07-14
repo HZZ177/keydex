@@ -30,6 +30,11 @@ import {
 } from "@/renderer/markdownRuntime/mapping";
 import type { AnnotationRenderState } from "@/renderer/features/annotations/navigation/types";
 import type { MarkdownAnnotationBinding } from "@/renderer/features/annotations/adapters/MarkdownAnnotationAdapter";
+import {
+  DocumentWorkerAnnotationResolver,
+  type AnnotationDocumentWorkerResolveInput,
+} from "@/renderer/features/annotations/anchoring/DocumentWorkerAnnotationResolver";
+import type { ResolvedAnnotationIndex } from "@/renderer/features/annotations/domain/resolutions";
 import { smoothScrollElementTo } from "@/renderer/features/annotations/navigation/AnnotationNavigationEffects";
 import { markdownRuntimeDiagnostics } from "@/renderer/markdownRuntime/diagnostics";
 import { stableMarkdownIdentityHash } from "@/renderer/markdownRuntime/document/identity";
@@ -49,6 +54,7 @@ import {
   DocumentViewRuntime,
   MarkdownEnvironmentController,
   attachMarkdownRuntimeView,
+  reconcileMarkdownRuntimeViewRevision,
   type MarkdownRuntimeViewAttachment,
   type MarkdownViewDescriptor,
   type MarkdownViewScrollAnchor,
@@ -57,12 +63,7 @@ import {
 import type { MarkdownRuntimeAttachment } from "@/renderer/markdownRuntime/MarkdownRuntimeStore";
 import { MARKDOWN_WORKER_PROTOCOL_VERSION } from "@/renderer/markdownRuntime/worker/protocol";
 
-import {
-  fileMarkdownRuntimeStore,
-  fileMarkdownViewStateStore,
-  recordFileMarkdownRuntimeEntrySnapshot,
-  registerFileMarkdownRuntimeEntry,
-} from "./fileMarkdownRuntime";
+import { fileMarkdownRuntimeStore, fileMarkdownViewStateStore } from "./fileMarkdownRuntime";
 
 export interface FileMarkdownRuntimeHostHandle {
   revealSourceOffset(offset: number, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
@@ -75,10 +76,13 @@ export interface FileMarkdownRuntimeHostHandle {
   revealBlock(blockId: string, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
   getBlockElement(blockId: string): HTMLElement | null;
   currentSnapshot(): MarkdownSnapshot | null;
+  viewportSourceOffset(): number | null;
+  syncViewportToSourceOffset(offset: number): boolean;
   queryFind(
     query: string,
     options?: { caseSensitive?: boolean; wholeWord?: boolean; limit?: number; signal?: AbortSignal },
   ): Promise<MarkdownFindIndex>;
+  resolveAnnotations(input: AnnotationDocumentWorkerResolveInput): Promise<ResolvedAnnotationIndex>;
   diagnostics(): FileMarkdownRuntimeHostDiagnostics | null;
   retry(): void;
 }
@@ -138,6 +142,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
     const propsRef = useRef(props);
     propsRef.current = props;
     const lastGoodSnapshotRef = useRef<{ key: string; snapshot: MarkdownSnapshot } | null>(null);
+    const lastRequestedLoadRef = useRef<string | null>(null);
     const [error, setError] = useState<Error | null>(null);
     const [retryToken, setRetryToken] = useState(0);
 
@@ -151,7 +156,10 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
       revealBlock: (blockId, options) => revealBlock(stateRef.current, blockId, options),
       getBlockElement: (blockId) => stateRef.current?.view.getBlockElement(blockId) ?? null,
       currentSnapshot: () => stateRef.current?.snapshot ?? null,
+      viewportSourceOffset: () => viewportSourceOffset(stateRef.current),
+      syncViewportToSourceOffset: (offset) => syncViewportToSourceOffset(stateRef.current, offset),
       queryFind: (query, options) => queryRuntimeFind(stateRef.current, query, options),
+      resolveAnnotations: (input) => resolveRuntimeAnnotations(stateRef.current, input),
       diagnostics: () => {
         const state = stateRef.current;
         if (!state?.snapshot) return null;
@@ -196,22 +204,41 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
       let runtimeViewAttachment: MarkdownRuntimeViewAttachment | null = null;
       let viewStateAttachment: MarkdownViewStateAttachment | null = null;
       const imageRuntime = new ImageResourceRuntime({
-        sourcePathFor: () => props.path,
-        workspaceKeyFor: () => workspaceScopeKey(props.workspaceScope) ?? props.workspaceId,
-        resourceRevisionFor: () => props.revision,
+        sourcePathFor: () => propsRef.current.path,
+        workspaceKeyFor: () => workspaceScopeKey(propsRef.current.workspaceScope) ?? propsRef.current.workspaceId,
+        resourceRevisionFor: () => propsRef.current.revision,
         readWorkspaceImage: props.runtime && props.workspaceScope
           ? async (path, _context, signal) => {
               if (signal.aborted) throw signal.reason;
               const result = await props.runtime!.workspace.readMedia(props.workspaceScope!, path);
               if (signal.aborted) throw signal.reason;
-              return { dataUrl: result.data_url, mediaType: result.media_type, bytes: result.size, revision: props.revision };
+              return {
+                dataUrl: result.data_url,
+                mediaType: result.media_type,
+                bytes: result.size,
+                revision: propsRef.current.revision,
+              };
             }
           : undefined,
-        onStateChange: (event) => recordResourceDiagnostic(documentKey, props.revision, "image", event.resourceId, event.state, event.error),
+        onStateChange: (event) => recordResourceDiagnostic(
+          documentKey,
+          propsRef.current.revision,
+          "image",
+          event.resourceId,
+          event.state,
+          event.error,
+        ),
         onDimensions: scheduleResourceReflow,
       });
       const mermaidRuntime = new MermaidResourceRuntime({
-        onStateChange: (event) => recordResourceDiagnostic(documentKey, props.revision, "mermaid", event.resourceId, event.state, event.error),
+        onStateChange: (event) => recordResourceDiagnostic(
+          documentKey,
+          propsRef.current.revision,
+          "mermaid",
+          event.resourceId,
+          event.state,
+          event.error,
+        ),
         onDimensions: scheduleResourceReflow,
       });
       const resources: MarkdownRendererResourceLifecycle = {
@@ -267,9 +294,14 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         viewStateUnsubscribe: null,
         documentId: documentKey,
         revision: props.revision,
+        loadSequence: 0,
+        loadSnapshot: null,
+        managesViewRevision: false,
+        scheduleFeatureInstall: null,
         snapshot: null,
         renderCount: 0,
         attachment: null,
+        annotationResolver: null,
         mapper: null,
         selection: null,
         annotationOverlay: null,
@@ -312,6 +344,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
           safeMeasureAndAnchor(state);
         }, 50);
       };
+      state.scheduleFeatureInstall = scheduleFeatureInstall;
       let viewportFrame: number | null = null;
       const updateViewport = () => {
         viewportFrame = null;
@@ -363,11 +396,6 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         });
         host.dataset.markdownRuntimeViewId = props.viewDescriptor.viewId;
         host.dataset.markdownRuntimeEntryId = props.viewDescriptor.entryId;
-        registerFileMarkdownRuntimeEntry(props.viewDescriptor, {
-          surface: "file",
-          workspaceId: props.workspaceId,
-          path: props.path,
-        });
       }
       if (!props.snapshotLoader && !runtimeViewAttachment) {
         attachment = fileMarkdownRuntimeStore().attach({
@@ -377,6 +405,12 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         }, `file-host:runtime:${stableMarkdownIdentityHash(`${props.workspaceId}:${props.path}:${nextFileRuntimeViewId++}`)}`);
       }
       state.attachment = runtimeViewAttachment?.document ?? attachment;
+      state.managesViewRevision = Boolean(runtimeViewAttachment);
+      state.loadSnapshot = props.snapshotLoader
+        ? (input) => props.snapshotLoader!(input)
+        : runtimeViewAttachment
+          ? (input) => runtimeViewAttachment!.load(input)
+          : (input) => attachment!.load(input);
       const retainedSnapshot = runtimeViewAttachment?.current()?.snapshot
         ?? attachment?.current()?.snapshot
         ?? (lastGoodSnapshotRef.current?.key === documentKey ? lastGoodSnapshotRef.current.snapshot : null);
@@ -392,6 +426,8 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
       } else {
         host.dataset.markdownRuntimeStatus = "loading";
       }
+      const loadSequence = ++state.loadSequence;
+      lastRequestedLoadRef.current = runtimeLoadKey(props.source, props.revision, retryToken);
       if (!immediateRetainedSnapshot && !props.snapshotLoader && props.source.length > FILE_VISIBLE_PREFIX_CHARACTERS) {
         const prefixSource = visibleMarkdownPrefix(props.source, FILE_VISIBLE_PREFIX_CHARACTERS);
         visiblePrefixAttachment = fileMarkdownRuntimeStore().attach({
@@ -405,7 +441,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
           retention: "transient",
           signal: controller.signal,
         }).then((snapshot) => {
-          if (!active || state.snapshot) return;
+          if (!active || state.loadSequence !== loadSequence || state.snapshot) return;
           publishSnapshot(state, snapshot, "ready");
           host.dataset.markdownRuntimeCompleteness = "visible-prefix";
           syncRenderCount(host, state, props.onRender);
@@ -426,37 +462,31 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
       }
       const loadStartedAt = performance.now();
       state.stages.setupMs = Math.max(0, loadStartedAt - effectStartedAt);
-      const load = props.snapshotLoader
-        ? props.snapshotLoader({ source: props.source, revision: props.revision, signal: controller.signal })
-        : runtimeViewAttachment
-          ? runtimeViewAttachment.load({ revision: props.revision, source: props.source, signal: controller.signal })
-          : attachment!.load({ revision: props.revision, source: props.source, signal: controller.signal });
+      const load = state.loadSnapshot({
+        source: props.source,
+        revision: props.revision,
+        signal: controller.signal,
+      });
       void load.then(async (snapshot) => {
-        if (!active) return;
+        if (!active || state.loadSequence !== loadSequence) return;
         state.stages.loadMs = Math.max(0, performance.now() - loadStartedAt);
         const preparedHeights = snapshot.estimated_bytes >= INCREMENTAL_SNAPSHOT_PREPARATION_BYTES
           ? await prepareSnapshotHeights(state, snapshot)
           : null;
-        if (!active) return;
+        if (!active || state.loadSequence !== loadSequence) return;
         if (preparedHeights) await yieldMainThread();
-        if (!active) return;
+        if (!active || state.loadSequence !== loadSequence) return;
         persistCurrentScrollAnchor(state);
         state.snapshot = snapshot;
-        if (!runtimeViewAttachment && viewStateAttachment) {
-          viewStateAttachment.reconcileRevision(snapshot.revision, {
-            sourceCharacters: snapshot.source_characters,
-            blockIds: new Set(snapshot.blocks.map((block) => block.id)),
-          });
+        if (!state.managesViewRevision && viewStateAttachment) {
+          reconcileMarkdownRuntimeViewRevision(viewStateAttachment, snapshot);
         }
         const publishStartedAt = performance.now();
         publishSnapshot(state, snapshot, "ready", preparedHeights ?? undefined);
         state.stages.publishMs = Math.max(0, performance.now() - publishStartedAt);
-        restoreScrollAnchor(state);
+        restoreScrollAnchor(state, true);
         syncRenderCount(host, state, props.onRender);
         lastGoodSnapshotRef.current = { key: documentKey, snapshot };
-        if (props.viewDescriptor) {
-          recordFileMarkdownRuntimeEntrySnapshot(props.viewDescriptor, snapshot.estimated_bytes);
-        }
         visiblePrefixAttachment?.detach();
         visiblePrefixAttachment = null;
         delete host.dataset.markdownRuntimeStale;
@@ -467,7 +497,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         props.onOutlineChange?.(snapshot.outline);
         scheduleFeatureInstall();
       }).catch((reason) => {
-        if (!active || controller.signal.aborted) return;
+        if (!active || controller.signal.aborted || state.loadSequence !== loadSequence) return;
         const next = reason instanceof Error ? reason : new Error(String(reason));
         host.dataset.markdownRuntimeStatus = state.snapshot ? "stale-error" : "error";
         if (state.snapshot) host.dataset.markdownRuntimeStale = "true";
@@ -515,16 +545,83 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
     }, [
       props.interactions,
       props.path,
-      props.revision,
       props.runtime,
       props.scrollElement,
       props.snapshotLoader,
-      props.source,
       props.workspaceId,
       props.workspaceScope,
       props.viewDescriptor,
-      retryToken,
     ]);
+
+    useEffect(() => {
+      const loadKey = runtimeLoadKey(props.source, props.revision, retryToken);
+      if (lastRequestedLoadRef.current === loadKey) return;
+      const state = stateRef.current;
+      const loadSnapshot = state?.loadSnapshot;
+      if (!state || !loadSnapshot) return;
+      lastRequestedLoadRef.current = loadKey;
+      state.revision = props.revision;
+      const loadSequence = ++state.loadSequence;
+      const controller = new AbortController();
+      let active = true;
+      const loadStartedAt = performance.now();
+
+      void loadSnapshot({
+        source: props.source,
+        revision: props.revision,
+        signal: controller.signal,
+      }).then(async (snapshot) => {
+        if (!active || state.loadSequence !== loadSequence) return;
+        state.stages.loadMs = Math.max(0, performance.now() - loadStartedAt);
+        const preparedHeights = snapshot.estimated_bytes >= INCREMENTAL_SNAPSHOT_PREPARATION_BYTES
+          ? await prepareSnapshotHeights(state, snapshot)
+          : null;
+        if (!active || state.loadSequence !== loadSequence) return;
+        if (preparedHeights) await yieldMainThread();
+        if (!active || state.loadSequence !== loadSequence) return;
+        persistCurrentScrollAnchor(state);
+        if (!state.managesViewRevision && state.viewState) {
+          reconcileMarkdownRuntimeViewRevision(state.viewState, snapshot);
+        }
+        destroyRuntimeFeatures(state);
+        const publishStartedAt = performance.now();
+        publishSnapshot(state, snapshot, "ready", preparedHeights ?? undefined);
+        state.stages.publishMs = Math.max(0, performance.now() - publishStartedAt);
+        restoreScrollAnchor(state);
+        syncRenderCount(state.view.host, state, propsRef.current.onRender);
+        lastGoodSnapshotRef.current = { key: state.documentId, snapshot };
+        delete state.view.host.dataset.markdownRuntimeStale;
+        state.view.host.dataset.markdownRuntimeCompleteness = "canonical";
+        setError(null);
+        propsRef.current.onError?.(null);
+        propsRef.current.onSnapshot?.(snapshot);
+        propsRef.current.onOutlineChange?.(snapshot.outline);
+        state.scheduleFeatureInstall?.();
+      }).catch((reason) => {
+        if (!active || controller.signal.aborted || state.loadSequence !== loadSequence) return;
+        const next = reason instanceof Error ? reason : new Error(String(reason));
+        state.view.host.dataset.markdownRuntimeStatus = state.snapshot ? "stale-error" : "error";
+        if (state.snapshot) state.view.host.dataset.markdownRuntimeStale = "true";
+        setError(next);
+        propsRef.current.onError?.(next);
+        markdownRuntimeDiagnostics.record({
+          stage: "host",
+          severity: state.snapshot ? "error" : "fatal",
+          code: state.snapshot ? "load-failed-retained" : "load-failed",
+          documentId: state.documentId,
+          revision: props.revision,
+          recovery: state.snapshot ? "retain-snapshot" : "retry",
+          detail: next,
+          blockId: null,
+          resourceId: null,
+        });
+      });
+
+      return () => {
+        active = false;
+        controller.abort();
+      };
+    }, [props.path, props.revision, props.source, props.workspaceId, retryToken]);
 
     return (
       <div
@@ -555,10 +652,15 @@ interface HostState {
   viewState: MarkdownViewStateAttachment | null;
   viewStateUnsubscribe: (() => void) | null;
   readonly documentId: string;
-  readonly revision: string;
+  revision: string;
+  loadSequence: number;
+  loadSnapshot: ((input: RuntimeLoadInput) => Promise<MarkdownSnapshot>) | null;
+  managesViewRevision: boolean;
+  scheduleFeatureInstall: (() => void) | null;
   snapshot: MarkdownSnapshot | null;
   renderCount: number;
   attachment: MarkdownRuntimeAttachment | null;
+  annotationResolver: DocumentWorkerAnnotationResolver | null;
   mapper: MarkdownPositionMapper | null;
   selection: MarkdownSelectionController | null;
   annotationOverlay: MarkdownAnnotationOverlayController | null;
@@ -576,6 +678,16 @@ interface HostState {
   publishedSourceReveal: SourceRevealState | null;
   sourceReveal: SourceRevealState | null;
   readonly stages: { setupMs: number; loadMs: number; publishMs: number; featureInstallMs: number };
+}
+
+interface RuntimeLoadInput {
+  readonly source: string;
+  readonly revision: string;
+  readonly signal: AbortSignal;
+}
+
+function runtimeLoadKey(source: string, revision: string, retryToken: number): string {
+  return `${retryToken}\u0000${revision}\u0000${stableMarkdownIdentityHash(source)}`;
 }
 
 interface SourceRevealState {
@@ -852,6 +964,26 @@ async function queryRuntimeFind(
   });
 }
 
+function resolveRuntimeAnnotations(
+  state: HostState | null,
+  input: AnnotationDocumentWorkerResolveInput,
+): Promise<ResolvedAnnotationIndex> {
+  const snapshot = state?.snapshot;
+  const attachment = state?.attachment;
+  if (!state || !snapshot || !attachment) {
+    return Promise.reject(new Error("Markdown Document Worker is not attached"));
+  }
+  try {
+    const resolver = state.annotationResolver
+      ?? new DocumentWorkerAnnotationResolver(attachment, snapshot);
+    resolver.updateSnapshot(snapshot);
+    state.annotationResolver = resolver;
+    return resolver.resolve(input);
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+
 function measureAndAnchor(state: HostState | null): void {
   if (!state?.snapshot) return;
   const updates = state.view.mountedBlockIds().flatMap((blockId) => {
@@ -981,7 +1113,7 @@ function publishSnapshot(
   const patch = state.view.publish(snapshot, heights, {
     scrollTop: state.scrollElement.scrollTop,
     viewportHeight: state.scrollElement.clientHeight,
-  });
+  }, { preserveRevisionGeometry: true });
   restoreScrollAnchor(state);
   syncMeasurementTargets(state);
   host.dataset.markdownRuntimeStatus = status;
@@ -1062,11 +1194,21 @@ function persistCurrentScrollAnchor(state: HostState): void {
   if (current) persistScrollAnchor(state, current.index);
 }
 
-function restoreScrollAnchor(state: HostState): void {
+function restoreScrollAnchor(state: HostState, resetToStartWhenMissing = false): void {
   const anchor = state.viewState?.snapshot().scrollAnchor;
   const index = state.view.getHeightIndex();
   const snapshot = state.snapshot;
-  if (!anchor || !index || !snapshot) return;
+  if (!index || !snapshot) return;
+  if (!anchor) {
+    if (resetToStartWhenMissing) {
+      state.scrollElement.scrollTop = 0;
+      state.view.updateViewport(
+        { scrollTop: 0, viewportHeight: state.scrollElement.clientHeight },
+        { origin: "automatic" },
+      );
+    }
+    return;
+  }
   const blockIndex = resolveFileMarkdownScrollAnchorBlockIndex(
     snapshot,
     anchor,
@@ -1087,6 +1229,44 @@ function revealOffset(
   const blockIndex = state?.snapshot ? markdownBlockIndexAtSourceOffset(state.snapshot, offset) : null;
   const block = blockIndex === null ? null : state?.snapshot?.blocks[blockIndex];
   return block ? revealBlock(state, block.id, options) : false;
+}
+
+function viewportSourceOffset(state: HostState | null): number | null {
+  const snapshot = state?.snapshot;
+  const heightIndex = state?.view.getHeightIndex();
+  if (!state || !snapshot || !heightIndex) return null;
+  const position = heightIndex.queryY(state.scrollElement.scrollTop);
+  const block = position ? snapshot.blocks[position.index] : null;
+  if (!position || !block) return null;
+  const progress = position.blockHeight > 0
+    ? Math.max(0, Math.min(1, position.offsetWithinBlock / position.blockHeight))
+    : 0;
+  return Math.round(block.source_start + (block.source_end - block.source_start) * progress);
+}
+
+function syncViewportToSourceOffset(state: HostState | null, offset: number): boolean {
+  const snapshot = state?.snapshot;
+  const heightIndex = state?.view.getHeightIndex();
+  if (!state || !snapshot || !heightIndex || !Number.isFinite(offset)) return false;
+  const boundedOffset = Math.max(0, Math.min(Math.round(offset), snapshot.source_characters));
+  const blockIndex = markdownBlockIndexAtSourceOffset(snapshot, boundedOffset)
+    ?? markdownBlockIndexNearestSourceOffset(snapshot, boundedOffset);
+  const block = blockIndex === null ? null : snapshot.blocks[blockIndex];
+  if (!block) return false;
+  const sourceSpan = Math.max(1, block.source_end - block.source_start);
+  const progress = Math.max(0, Math.min(1, (boundedOffset - block.source_start) / sourceSpan));
+  const unclampedTarget = heightIndex.offsetOf(block.index) + heightIndex.heightAt(block.index) * progress;
+  const target = Math.max(0, Math.min(
+    unclampedTarget,
+    Math.max(0, heightIndex.totalHeight - state.scrollElement.clientHeight),
+  ));
+  state.scrollElement.scrollTo({ top: target, behavior: "auto" });
+  state.view.updateViewport(
+    { scrollTop: target, viewportHeight: state.scrollElement.clientHeight },
+    { origin: "programmatic" },
+  );
+  persistScrollAnchor(state, block.index);
+  return true;
 }
 
 function revealSourceLines(
@@ -1314,6 +1494,19 @@ function markdownBlockIndexAtSourceOffset(snapshot: MarkdownSnapshot, offset: nu
   if (candidate < 0) return null;
   const block = snapshot.blocks[candidate]!;
   return offset <= block.source_end ? candidate : null;
+}
+
+function markdownBlockIndexNearestSourceOffset(snapshot: MarkdownSnapshot, offset: number): number | null {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > snapshot.source_characters
+    || snapshot.blocks.length === 0) {
+    return null;
+  }
+  const nextIndex = snapshot.blocks.findIndex((block) => block.source_start >= offset);
+  if (nextIndex === 0) return 0;
+  if (nextIndex < 0) return snapshot.blocks.length - 1;
+  const previous = snapshot.blocks[nextIndex - 1]!;
+  const next = snapshot.blocks[nextIndex]!;
+  return offset - previous.source_end <= next.source_start - offset ? previous.index : next.index;
 }
 
 export function resolveFileMarkdownScrollAnchorBlockIndex(

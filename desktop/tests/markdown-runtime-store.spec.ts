@@ -222,6 +222,31 @@ describe("surface-neutral MarkdownRuntimeStore", () => {
     store.close();
   });
 
+  it("keeps the file Worker attached for post-parse find and annotation queries", async () => {
+    const harness = new WorkerHarness();
+    const store = new MarkdownRuntimeStore({ workerFactory: harness.factory });
+    const view = store.attach(fileIdentity, "large-file-preview");
+    const snapshot = await view.load({ revision: "large-r1", source: "# Large file" });
+
+    expect(view.current()?.snapshot).toBe(snapshot);
+    expect(store.diagnostics().workerCount).toBe(1);
+    expect(harness.workers[0]?.terminated).toBe(false);
+    expect([...harness.snapshots.values()]).toContain(snapshot);
+
+    const pendingFind = view.request({
+      protocol_version: MARKDOWN_WORKER_PROTOCOL_VERSION,
+      surface: "file",
+      document_id: view.documentId,
+      revision: "large-r1",
+      request_id: "large-file-lazy-find",
+      type: "query-find",
+      payload: { query: "Large", case_sensitive: false, whole_word: false, limit: 10 },
+    });
+    void pendingFind.catch(() => undefined);
+    view.detach();
+    store.close();
+  });
+
   it("evicts only detached LRU entries under entry and byte budgets", async () => {
     const harness = new WorkerHarness();
     const store = new MarkdownRuntimeStore({
@@ -252,25 +277,6 @@ describe("surface-neutral MarkdownRuntimeStore", () => {
     expect(tinyStore.diagnostics()).toMatchObject({ entryCount: 0, retainedBytes: 0, overBudget: false });
     store.close();
     tinyStore.close();
-  });
-
-  it("hard-evicts a retained document after its last attached view closes", async () => {
-    const harness = new WorkerHarness();
-    const store = new MarkdownRuntimeStore({ workerFactory: harness.factory });
-    const view = store.attach(fileIdentity, "large-file-preview");
-    await view.load({ revision: "large-r1", source: "Retained file content" });
-
-    expect(store.evictWhenDetached(fileIdentity)).toBe(true);
-    expect(store.diagnostics()).toMatchObject({ entryCount: 1, attachedEntryCount: 1 });
-
-    view.detach();
-    expect(store.diagnostics()).toMatchObject({
-      entryCount: 0,
-      attachedEntryCount: 0,
-      retainedBytes: 0,
-      workerCount: 0,
-    });
-    store.close();
   });
 
   it("preserves the current bundle through Worker crash and recovers on the next revision", async () => {

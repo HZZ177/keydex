@@ -145,7 +145,13 @@ describe("FileChangeProvider", () => {
 
     transport.emit({
       action: "workspaceWatchBound",
-      data: { workspace_id: "ws-1", sequence: 20, resync_required: false },
+      data: { workspace_id: "ws-1", sequence: 10, resync_required: true },
+    });
+    expect(listener).not.toHaveBeenCalled();
+
+    transport.emit({
+      action: "workspaceWatchBound",
+      data: { workspace_id: "ws-1", sequence: 20, resync_required: true },
     });
 
     expect(listener).toHaveBeenCalledWith({
@@ -175,6 +181,57 @@ describe("FileChangeProvider", () => {
 
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).not.toHaveBeenCalled();
+  });
+
+  it("filters document-write echoes for every listener while preserving external changes", () => {
+    const { api, transport } = renderProvider();
+    const workspaceListener = vi.fn();
+    const localListener = vi.fn();
+    api.subscribeWorkspace("ws-1", workspaceListener);
+    api.subscribeLocalFile("local-1", "D:/tmp/a.md", localListener);
+    api.registerDocumentWrite("write-1");
+
+    transport.emit({
+      action: "workspaceFilesChanged",
+      data: {
+        workspace_id: "ws-1",
+        sequence: 1,
+        resync_required: false,
+        changes: [
+          { kind: "modified", path: "docs", write_id: "write-1" },
+          { kind: "modified", path: "docs/a.md", write_id: "write-1" },
+        ],
+      },
+    });
+    transport.emit({
+      action: "localFileChanged",
+      data: {
+        watch_id: "local-1",
+        path: "D:/tmp/a.md",
+        sequence: 1,
+        resync_required: false,
+        changes: [{ kind: "modified", path: "D:/tmp/a.md", write_id: "write-1" }],
+      },
+    });
+
+    expect(workspaceListener).not.toHaveBeenCalled();
+    expect(localListener).not.toHaveBeenCalled();
+
+    transport.emit({
+      action: "workspaceFilesChanged",
+      data: {
+        workspace_id: "ws-1",
+        sequence: 2,
+        resync_required: false,
+        changes: [{ kind: "modified", path: "external.md" }],
+      },
+    });
+    expect(workspaceListener).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      sequence: 2,
+      resyncRequired: false,
+      changes: [{ kind: "modified", path: "external.md" }],
+    });
   });
 
   it("keeps file watch events outside agent session store", () => {

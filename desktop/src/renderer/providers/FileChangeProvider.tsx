@@ -45,6 +45,7 @@ export interface FileChangeTransport {
 }
 
 export interface FileChangeContextValue {
+  registerDocumentWrite(writeId: string): () => void;
   subscribeWorkspace(workspaceId: string, listener: WorkspaceListener): () => void;
   subscribeLocalFile(watchId: string, path: string, listener: LocalFileListener): () => void;
 }
@@ -55,6 +56,7 @@ interface LocalSubscription {
 }
 
 const FileChangeContext = createContext<FileChangeContextValue | null>(null);
+const DOCUMENT_WRITE_TRACKING_TTL_MS = 10_000;
 
 export function FileChangeProvider({
   children,
@@ -89,6 +91,25 @@ export function FileChangeProvider({
   const localListenersRef = useRef(new Map<string, LocalSubscription>());
   const workspaceSequencesRef = useRef(new Map<string, number>());
   const localSequencesRef = useRef(new Map<string, number>());
+  const documentWriteTimersRef = useRef(new Map<string, number>());
+
+  const registerDocumentWrite = useCallback<FileChangeContextValue["registerDocumentWrite"]>((writeId) => {
+    const cleaned = writeId.trim();
+    if (!cleaned) return () => undefined;
+    const previousTimer = documentWriteTimersRef.current.get(cleaned);
+    if (previousTimer !== undefined) window.clearTimeout(previousTimer);
+    const timer = window.setTimeout(() => {
+      if (documentWriteTimersRef.current.get(cleaned) === timer) {
+        documentWriteTimersRef.current.delete(cleaned);
+      }
+    }, DOCUMENT_WRITE_TRACKING_TTL_MS);
+    documentWriteTimersRef.current.set(cleaned, timer);
+    return () => {
+      if (documentWriteTimersRef.current.get(cleaned) !== timer) return;
+      window.clearTimeout(timer);
+      documentWriteTimersRef.current.delete(cleaned);
+    };
+  }, []);
 
   const subscribeWorkspace = useCallback<FileChangeContextValue["subscribeWorkspace"]>(
     (workspaceId, listener) => {
@@ -157,7 +178,11 @@ export function FileChangeProvider({
       resolvedTransport.subscribeEvent((event) => {
         if (event.action === "workspaceWatchBound") {
           const data = event.data as unknown as WorkspaceWatchBoundData;
+          const rebound = workspaceSequencesRef.current.has(data.workspace_id);
           workspaceSequencesRef.current.set(data.workspace_id, data.sequence);
+          if (!rebound) {
+            return;
+          }
           notifyWorkspace(workspaceListenersRef.current, {
             workspaceId: data.workspace_id,
             sequence: data.sequence,
@@ -171,11 +196,15 @@ export function FileChangeProvider({
           const previous = workspaceSequencesRef.current.get(data.workspace_id);
           const gap = previous !== undefined && data.sequence !== previous + 1;
           workspaceSequencesRef.current.set(data.workspace_id, data.sequence);
+          const changes = filterDocumentWriteEchoes(data.changes, documentWriteTimersRef.current);
+          if (!gap && !data.resync_required && data.changes.length > 0 && changes.length === 0) {
+            return;
+          }
           notifyWorkspace(workspaceListenersRef.current, {
             workspaceId: data.workspace_id,
             sequence: data.sequence,
             resyncRequired: gap || data.resync_required,
-            changes: gap || data.resync_required ? [] : data.changes,
+            changes: gap || data.resync_required ? [] : changes,
           });
           return;
         }
@@ -186,7 +215,11 @@ export function FileChangeProvider({
         }
         if (event.action === "localFileWatchBound") {
           const data = event.data as unknown as LocalFileWatchBoundData;
+          const rebound = localSequencesRef.current.has(data.watch_id);
           localSequencesRef.current.set(data.watch_id, data.sequence);
+          if (!rebound) {
+            return;
+          }
           notifyLocal(localListenersRef.current, {
             watchId: data.watch_id,
             path: data.path,
@@ -201,12 +234,16 @@ export function FileChangeProvider({
           const previous = localSequencesRef.current.get(data.watch_id);
           const gap = previous !== undefined && data.sequence !== previous + 1;
           localSequencesRef.current.set(data.watch_id, data.sequence);
+          const changes = filterDocumentWriteEchoes(data.changes, documentWriteTimersRef.current);
+          if (!gap && !data.resync_required && data.changes.length > 0 && changes.length === 0) {
+            return;
+          }
           notifyLocal(localListenersRef.current, {
             watchId: data.watch_id,
             path: data.path,
             sequence: data.sequence,
             resyncRequired: gap || data.resync_required,
-            changes: gap || data.resync_required ? [] : data.changes,
+            changes: gap || data.resync_required ? [] : changes,
           });
           return;
         }
@@ -229,13 +266,17 @@ export function FileChangeProvider({
       localListenersRef.current.clear();
       workspaceSequencesRef.current.clear();
       localSequencesRef.current.clear();
+      for (const timer of documentWriteTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      documentWriteTimersRef.current.clear();
     },
     [resolvedTransport],
   );
 
   const value = useMemo<FileChangeContextValue>(
-    () => ({ subscribeWorkspace, subscribeLocalFile }),
-    [subscribeLocalFile, subscribeWorkspace],
+    () => ({ registerDocumentWrite, subscribeWorkspace, subscribeLocalFile }),
+    [registerDocumentWrite, subscribeLocalFile, subscribeWorkspace],
   );
   return <FileChangeContext.Provider value={value}>{children}</FileChangeContext.Provider>;
 }
@@ -279,4 +320,11 @@ function notifyLocal(
   for (const listener of subscriptions.get(notification.watchId)?.listeners ?? []) {
     listener(notification);
   }
+}
+
+function filterDocumentWriteEchoes(
+  changes: readonly FileChangeEventItem[],
+  documentWriteTimers: ReadonlyMap<string, number>,
+): FileChangeEventItem[] {
+  return changes.filter((change) => !change.write_id || !documentWriteTimers.has(change.write_id));
 }

@@ -6,6 +6,8 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
+  useRef,
   useState,
   type PropsWithChildren,
 } from "react";
@@ -39,6 +41,13 @@ import {
 import { Layout } from "./Layout";
 import type { SiderEntry } from "./Sider";
 import type { WorkbenchWorkspaceSelectorProps } from "./workbenchWorkspaceSelector";
+import {
+  initialLaunchIntent,
+  launchIntentReducer,
+  selectAssociatedFilePath,
+} from "@/renderer/components/startup/launchIntent";
+import { NormalStartupBoundary } from "@/renderer/components/startup/NormalStartupBoundary";
+import { SettingsRuntimeGate } from "@/renderer/pages/settings/SettingsRuntimeGate";
 
 const EventReplayHarness = lazy(() =>
   import("@/renderer/devtools/EventReplayHarness").then((module) => ({ default: module.EventReplayHarness })),
@@ -122,59 +131,119 @@ export function AppRouter({ runtime = runtimeBridge }: AppRouterProps = {}) {
 }
 
 function AppRoutes({ runtime }: { runtime: RuntimeBridge }) {
+  const location = useLocation();
+  const runtimeConnection = useOptionalRuntimeConnection();
+  const [launchIntent, dispatchLaunchIntent] = useReducer(
+    launchIntentReducer,
+    location.search,
+    initialLaunchIntent,
+  );
+  const markExternalFileLaunch = useCallback(() => {
+    dispatchLaunchIntent({ type: "external-file-detected" });
+  }, []);
+  const completeInitialLaunchResolution = useCallback(() => {
+    dispatchLaunchIntent({ type: "initial-resolution-complete" });
+  }, []);
+
   return (
     <Suspense fallback={null}>
-      <AssociatedFileOpenController />
-      <Routes>
-        <Route path="/" element={<Navigate to={HOME_PATH} replace />} />
-        <Route path="/guid" element={<HomeRoute runtime={runtime} />} />
-        <Route path="/workbench" element={<WorkbenchRoute runtime={runtime} />} />
-        <Route path="/workbench/:workspaceId" element={<WorkbenchRoute runtime={runtime} />} />
-        <Route path="/workbench/:workspaceId/session/:sessionId" element={<WorkbenchRoute runtime={runtime} />} />
-        <Route path={PROJECT_PATH} element={<ProjectRoute />} />
-        <Route path="/conversation/:threadId" element={<ConversationRoute runtime={runtime} />} />
-        <Route path="/mcp" element={<Navigate to="/settings/mcp" replace />} />
-        <Route path="/__dev/event-replay" element={<EventReplayRoute />} />
-        <Route path="/settings/providers" element={<ProviderSettingsRoute runtime={runtime} />} />
-        <Route path="/settings/model-defaults" element={<ModelDefaultSettingsRoute runtime={runtime} />} />
-        <Route path="/settings/extensions" element={<ExtensionSettingsRoute runtime={runtime} />} />
-        <Route path="/settings/policy-config" element={<ConfigSettingsRoute runtime={runtime} />} />
-        <Route path="/settings/usage" element={<UsageSettingsRoute runtime={runtime} />} />
-        <Route path="/settings/mcp" element={<McpSettingsRoute runtime={runtime} />} />
-        <Route path="/settings/general" element={<GeneralSettingsRoute runtime={runtime} />} />
-        <Route path="/settings/appearance" element={<AppearanceSettingsRoute />} />
-        <Route path="/settings/about" element={<AboutSettingsRoute />} />
-        <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
-      </Routes>
+      <AssociatedFileOpenController
+        onExternalFileDetected={markExternalFileLaunch}
+        onInitialResolutionComplete={completeInitialLaunchResolution}
+      />
+      <NormalStartupBoundary
+        launchIntent={launchIntent}
+        onRetry={runtimeConnection?.retry}
+        runtimeStatus={runtimeConnection?.status ?? "ready"}
+      >
+        <Routes>
+          <Route path="/" element={<Navigate to={HOME_PATH} replace />} />
+          <Route path="/guid" element={<HomeRoute runtime={runtime} />} />
+          <Route path="/workbench" element={<WorkbenchRoute runtime={runtime} />} />
+          <Route path="/workbench/:workspaceId" element={<WorkbenchRoute runtime={runtime} />} />
+          <Route path="/workbench/:workspaceId/session/:sessionId" element={<WorkbenchRoute runtime={runtime} />} />
+          <Route path={PROJECT_PATH} element={<ProjectRoute />} />
+          <Route path="/conversation/:threadId" element={<ConversationRoute runtime={runtime} />} />
+          <Route path="/mcp" element={<Navigate to="/settings/mcp" replace />} />
+          <Route path="/__dev/event-replay" element={<EventReplayRoute />} />
+          <Route path="/settings/providers" element={<ProviderSettingsRoute runtime={runtime} />} />
+          <Route path="/settings/model-defaults" element={<ModelDefaultSettingsRoute runtime={runtime} />} />
+          <Route path="/settings/extensions" element={<ExtensionSettingsRoute runtime={runtime} />} />
+          <Route path="/settings/policy-config" element={<ConfigSettingsRoute runtime={runtime} />} />
+          <Route path="/settings/usage" element={<UsageSettingsRoute runtime={runtime} />} />
+          <Route path="/settings/mcp" element={<McpSettingsRoute runtime={runtime} />} />
+          <Route path="/settings/general" element={<GeneralSettingsRoute runtime={runtime} />} />
+          <Route path="/settings/appearance" element={<AppearanceSettingsRoute />} />
+          <Route path="/settings/about" element={<AboutSettingsRoute />} />
+          <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
+        </Routes>
+      </NormalStartupBoundary>
     </Suspense>
   );
 }
 
-function AssociatedFileOpenController() {
+export interface AssociatedFileOpenControllerProps {
+  onExternalFileDetected: () => void;
+  onInitialResolutionComplete: () => void;
+  takePaths?: () => Promise<string[]>;
+  listen?: (handler: () => void) => Promise<() => void>;
+}
+
+export function AssociatedFileOpenController({
+  onExternalFileDetected,
+  onInitialResolutionComplete,
+  takePaths = takeAssociatedFileOpenPaths,
+  listen = listenForAssociatedFileOpenRequested,
+}: AssociatedFileOpenControllerProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const layout = useLayoutState();
+  const routeStateRef = useRef({
+    pathname: location.pathname,
+    lastWorkbenchWorkspaceId: layout.state.lastWorkbenchWorkspaceId,
+  });
+  const initialTakeStartedRef = useRef(false);
 
-  const openAssociatedFiles = useCallback(async () => {
-    const paths = await takeAssociatedFileOpenPaths();
-    const path = paths.map((item) => item.trim()).filter(Boolean).at(-1);
-    if (path) {
+  routeStateRef.current = {
+    pathname: location.pathname,
+    lastWorkbenchWorkspaceId: layout.state.lastWorkbenchWorkspaceId,
+  };
+
+  const openAssociatedFiles = useCallback(async (settleInitialResolution: boolean) => {
+    try {
+      const path = selectAssociatedFilePath(await takePaths());
+      if (!path) {
+        if (settleInitialResolution) {
+          onInitialResolutionComplete();
+        }
+        return;
+      }
+      onExternalFileDetected();
+      const { pathname, lastWorkbenchWorkspaceId } = routeStateRef.current;
       const activeWorkspaceId =
-        parseWorkbenchPath(location.pathname)?.workspaceId ?? layout.state.lastWorkbenchWorkspaceId ?? undefined;
+        parseWorkbenchPath(pathname)?.workspaceId ?? lastWorkbenchWorkspaceId ?? undefined;
       void navigate(workbenchFilePreviewPath(path, activeWorkspaceId));
+    } catch {
+      if (settleInitialResolution) {
+        onInitialResolutionComplete();
+      }
     }
-  }, [layout.state.lastWorkbenchWorkspaceId, location.pathname, navigate]);
+  }, [navigate, onExternalFileDetected, onInitialResolutionComplete, takePaths]);
 
   useEffect(() => {
-    void openAssociatedFiles();
+    if (initialTakeStartedRef.current) {
+      return;
+    }
+    initialTakeStartedRef.current = true;
+    void openAssociatedFiles(true);
   }, [openAssociatedFiles]);
 
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
-    void listenForAssociatedFileOpenRequested(() => {
+    void listen(() => {
       if (!disposed) {
-        void openAssociatedFiles();
+        void openAssociatedFiles(false);
       }
     }).then((nextUnlisten) => {
       if (disposed) {
@@ -187,7 +256,7 @@ function AssociatedFileOpenController() {
       disposed = true;
       unlisten?.();
     };
-  }, [openAssociatedFiles]);
+  }, [listen, openAssociatedFiles]);
 
   return null;
 }
@@ -590,6 +659,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
         selectedSessionId={decodedSessionId}
         externalPreviewPath={externalPreviewPath ?? undefined}
         externalPreviewIntentPath={externalPreviewIntentPath}
+        externalPreviewIntentKey={externalPreviewIntentPath ? location.key : undefined}
         selectedWorkspace={selectedWorkspace}
         workspaces={workspaces}
         workspaceLoading={workspaceLoading}
@@ -732,7 +802,9 @@ function ConversationRoute({ runtime }: { runtime: RuntimeBridge }) {
 function GeneralSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
   return (
     <SettingsShell activeSection="general">
-      <GeneralSettingsPage runtime={runtime} />
+      <SettingsRuntimeGate>
+        <GeneralSettingsPage runtime={runtime} />
+      </SettingsRuntimeGate>
     </SettingsShell>
   );
 }
@@ -756,7 +828,9 @@ function AboutSettingsRoute() {
 function ProviderSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
   return (
     <SettingsShell activeSection="providers">
-      <ModelSettingsPage runtime={runtime} />
+      <SettingsRuntimeGate>
+        <ModelSettingsPage runtime={runtime} />
+      </SettingsRuntimeGate>
     </SettingsShell>
   );
 }
@@ -766,10 +840,12 @@ function ModelDefaultSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
   const location = useLocation();
   return (
     <SettingsShell activeSection="modelDefaults">
-      <ModelDefaultSettingsPage
-        runtime={runtime}
-        onOpenProviderSettings={() => void navigate("/settings/providers", { state: { from: location.pathname } })}
-      />
+      <SettingsRuntimeGate>
+        <ModelDefaultSettingsPage
+          runtime={runtime}
+          onOpenProviderSettings={() => void navigate("/settings/providers", { state: { from: location.pathname } })}
+        />
+      </SettingsRuntimeGate>
     </SettingsShell>
   );
 }
@@ -779,10 +855,12 @@ function ExtensionSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
   const location = useLocation();
   return (
     <SettingsShell activeSection="extensions">
-      <ExtensionSettingsPage
-        runtime={runtime}
-        onOpenModelConfig={() => void navigate("/settings/model-defaults", { state: { from: location.pathname } })}
-      />
+      <SettingsRuntimeGate>
+        <ExtensionSettingsPage
+          runtime={runtime}
+          onOpenModelConfig={() => void navigate("/settings/model-defaults", { state: { from: location.pathname } })}
+        />
+      </SettingsRuntimeGate>
     </SettingsShell>
   );
 }
@@ -800,7 +878,9 @@ function UsageSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
   );
   return (
     <SettingsShell activeSection="usage">
-      <UsageStatsPage runtime={runtime} onNavigateToConversationTurn={navigateToConversationTurn} />
+      <SettingsRuntimeGate>
+        <UsageStatsPage runtime={runtime} onNavigateToConversationTurn={navigateToConversationTurn} />
+      </SettingsRuntimeGate>
     </SettingsShell>
   );
 }
@@ -808,7 +888,9 @@ function UsageSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
 function McpSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
   return (
     <SettingsShell activeSection="mcp">
-      <McpConsolePage runtime={runtime} />
+      <SettingsRuntimeGate>
+        <McpConsolePage runtime={runtime} />
+      </SettingsRuntimeGate>
     </SettingsShell>
   );
 }
@@ -816,7 +898,9 @@ function McpSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
 function ConfigSettingsRoute({ runtime }: { runtime: RuntimeBridge }) {
   return (
     <SettingsShell activeSection="config">
-      <ConfigSettingsPage runtime={runtime} />
+      <SettingsRuntimeGate>
+        <ConfigSettingsPage runtime={runtime} />
+      </SettingsRuntimeGate>
     </SettingsShell>
   );
 }

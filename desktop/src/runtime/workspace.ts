@@ -82,6 +82,7 @@ export interface WorkspaceDocumentReadOptions {
 
 export interface WorkspaceDocumentWriteOptions {
   expectedRevision: string;
+  writeId: string;
   signal?: AbortSignal;
 }
 
@@ -198,7 +199,7 @@ export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
         `${workspaceBasePath(scope)}/write/document`,
         {
           method: "POST",
-          body: createDocumentWriteRequest(path, content, options.expectedRevision),
+          body: createDocumentWriteRequest(path, content, options.expectedRevision, options.writeId),
           signal: options.signal,
           silentStatuses: [409],
         },

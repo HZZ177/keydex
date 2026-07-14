@@ -1013,7 +1013,10 @@ describe("FilePreview", () => {
         { sessionId: "ses-1" },
         "src/App.ts",
         "const value = 2;\r\n",
-        { expectedRevision: "sha256:before" },
+        expect.objectContaining({
+          expectedRevision: "sha256:before",
+          writeId: expect.stringMatching(/^document-write:/u),
+        }),
       );
     });
     await waitFor(() => {
@@ -1021,7 +1024,44 @@ describe("FilePreview", () => {
       expect(root?.getAttribute("data-file-preview-auto-save-state")).toBe("saved");
       expect(root?.getAttribute("data-document-revision")).toBe("sha256:after");
     });
-    expect(screen.getByText("已自动保存")).not.toBeNull();
+    expect(screen.queryByText("等待自动保存")).toBeNull();
+    expect(screen.queryByText("正在自动保存")).toBeNull();
+    expect(screen.queryByText("已自动保存")).toBeNull();
+  });
+
+  it("reports auto-save failures through the top notification without inline status", async () => {
+    const writeDocument = vi.fn().mockRejectedValue(new Error("disk full"));
+    const runtime = fakeRuntime({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:src/App.ts",
+        source: "workspace",
+        path: "src/App.ts",
+        content: "const value = 1;",
+        encoding: "utf-8",
+        revision: "sha256:before",
+        total_bytes: 16,
+      }),
+      writeDocument,
+    });
+
+    render(
+      <NotificationProvider>
+        <FilePreview request={{ type: "file", path: "src/App.ts" }} sessionId="ses-1" runtime={runtime} />
+      </NotificationProvider>,
+    );
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    const view = EditorView.findFromDOM(sourceViewer);
+    act(() => {
+      view?.dispatch({ changes: { from: 14, to: 15, insert: "2" }, userEvent: "input" });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("notification-viewport").textContent)
+        .toContain("自动保存失败：disk full");
+    });
+    expect(screen.queryByText("自动保存失败，点击重试")).toBeNull();
+    expect(document.querySelector("[data-file-preview-root='true']")?.getAttribute("data-file-preview-auto-save-state"))
+      .toBe("error");
   });
 
   it("flushes a dirty draft when the preview closes before the auto-save delay", async () => {
@@ -1060,7 +1100,10 @@ describe("FilePreview", () => {
         { sessionId: "ses-1" },
         "src/App.ts",
         "const value = 2;",
-        { expectedRevision: "sha256:before" },
+        expect.objectContaining({
+          expectedRevision: "sha256:before",
+          writeId: expect.stringMatching(/^document-write:/u),
+        }),
       );
     });
   });
@@ -1100,7 +1143,11 @@ describe("FilePreview", () => {
       writeDocument,
     });
 
-    render(<FilePreview request={{ type: "file", path: "src/App.ts" }} sessionId="ses-1" runtime={runtime} />);
+    render(
+      <NotificationProvider>
+        <FilePreview request={{ type: "file", path: "src/App.ts" }} sessionId="ses-1" runtime={runtime} />
+      </NotificationProvider>,
+    );
     const sourceViewer = await screen.findByTestId("file-source-viewer");
     const view = EditorView.findFromDOM(sourceViewer);
     act(() => {
@@ -1111,7 +1158,9 @@ describe("FilePreview", () => {
     });
 
     expect(await screen.findByRole("dialog", { name: "文件保存冲突" })).not.toBeNull();
-    expect(screen.getByText("文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。")).not.toBeNull();
+    expect(within(screen.getByTestId("notification-viewport")).getByText(
+      "文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。",
+    )).not.toBeNull();
     expect(EditorView.findFromDOM(sourceViewer)?.state.doc.toString()).toBe("const value = 2;");
     expect(document.querySelector("[data-file-preview-root='true']")?.getAttribute("data-file-preview-auto-save-state"))
       .toBe("conflict");
@@ -1178,7 +1227,10 @@ describe("FilePreview", () => {
       { sessionId: "ses-1" },
       "src/App.ts",
       "const value = 3;",
-      { expectedRevision: "sha256:second" },
+      expect.objectContaining({
+        expectedRevision: "sha256:second",
+        writeId: expect.stringMatching(/^document-write:/u),
+      }),
     );
   });
 
@@ -1236,6 +1288,152 @@ describe("FilePreview", () => {
     expect(screen.getByLabelText("源码内容").textContent).toContain("# Guide");
     await waitFor(() => expect(screen.getByLabelText("渲染预览").textContent).toContain("正文"));
     expect(screen.getByRole("button", { name: "分屏" }).getAttribute("aria-pressed")).toBe("true");
+    const outerViewport = screen.getByLabelText("预览内容");
+    const sourceViewport = outerViewport.querySelector<HTMLElement>("[data-split-scroll-pane='source']");
+    const previewViewport = outerViewport.querySelector<HTMLElement>("[data-split-scroll-pane='preview']");
+    expect(outerViewport.getAttribute("data-split-mode")).toBe("true");
+    expect(sourceViewport).not.toBeNull();
+    expect(previewViewport).not.toBeNull();
+    expect(sourceViewport).not.toBe(previewViewport);
+    expect(screen.queryByTestId("preview-scroll-rail")).toBeNull();
+  });
+
+  it("keeps the source viewport stable when preview reflow scrolls after auto-save", async () => {
+    const source = Array.from({ length: 80 }, (_, index) => `## Heading ${index}\n\nBody ${index}`).join("\n\n");
+    let writeSequence = 0;
+    const writeDocument = vi.fn().mockImplementation(async () => {
+      writeSequence += 1;
+      return {
+        protocol_version: "document-write/v1",
+        path: "guide.md",
+        revision: `sha256:after-${writeSequence}`,
+        encoding: "utf-8",
+        total_bytes: source.length + 1,
+      };
+    });
+    const runtime = fakeRuntime({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:guide.md",
+        source: "workspace",
+        path: "guide.md",
+        content: source,
+        encoding: "utf-8",
+        revision: "sha256:before",
+        total_bytes: source.length,
+      }),
+      writeDocument,
+    });
+
+    render(<FilePreview request={{ type: "file", path: "guide.md" }} sessionId="ses-1" runtime={runtime} />);
+    expect(await screen.findByRole("heading", { name: "Heading 0" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "分屏" }));
+    const sourcePanel = screen.getByLabelText("源码内容");
+    const sourceViewer = await within(sourcePanel).findByTestId("file-source-viewer");
+    const sourceViewport = sourcePanel.querySelector<HTMLElement>("[data-split-scroll-pane='source']")!;
+    const previewViewport = screen
+      .getByLabelText("渲染预览")
+      .querySelector<HTMLElement>("[data-split-scroll-pane='preview']")!;
+    const view = EditorView.findFromDOM(sourceViewer)!;
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 50)));
+    sourceViewport.scrollTop = 320;
+    const editPosition = source.indexOf("Body 40") + "Body 40".length;
+
+    act(() => {
+      view.dispatch({ changes: { from: editPosition, to: editPosition, insert: "X" }, userEvent: "input" });
+    });
+    await waitFor(() => expect(writeDocument).toHaveBeenCalledTimes(1));
+    act(() => {
+      previewViewport.scrollTop = 900;
+      fireEvent.scroll(previewViewport);
+    });
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 50)));
+    expect(sourceViewport.scrollTop).toBe(320);
+
+    act(() => {
+      view.dispatch({ changes: { from: editPosition, to: editPosition + 1, insert: "" }, userEvent: "input" });
+    });
+    await waitFor(() => expect(writeDocument).toHaveBeenCalledTimes(2));
+    act(() => {
+      previewViewport.scrollTop = 120;
+      fireEvent.scroll(previewViewport);
+    });
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 50)));
+    expect(sourceViewport.scrollTop).toBe(320);
+
+    fireEvent.pointerDown(previewViewport);
+    act(() => {
+      previewViewport.scrollTop = 700;
+      fireEvent.scroll(previewViewport);
+    });
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 50)));
+    expect(sourceViewport.scrollTop).toBe(0);
+  });
+
+  it("batches split-preview rendering while keeping source edits immediate", async () => {
+    const writeDocument = vi.fn().mockResolvedValue({
+      protocol_version: "document-write/v1",
+      path: "guide.md",
+      revision: "sha256:after",
+      encoding: "utf-8",
+      total_bytes: 10,
+    });
+    const runtime = fakeRuntime({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:guide.md",
+        source: "workspace",
+        path: "guide.md",
+        content: "# Guide",
+        encoding: "utf-8",
+        revision: "sha256:before",
+        total_bytes: 7,
+      }),
+      writeDocument,
+    });
+    const snapshotLoader = vi.fn(globalThis.__KEYDEX_TEST_FILE_MARKDOWN_SNAPSHOT_LOADER__!);
+
+    render(
+      <FilePreview
+        markdownRuntimeSnapshotLoader={snapshotLoader}
+        request={{ type: "file", path: "guide.md" }}
+        sessionId="ses-1"
+        runtime={runtime}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Guide" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "分屏" }));
+    const sourceViewer = await within(screen.getByLabelText("源码内容")).findByTestId("file-source-viewer");
+    const previewPanel = screen.getByLabelText("渲染预览");
+    const previewViewport = previewPanel.querySelector<HTMLElement>("[data-split-scroll-pane='preview']")!;
+    const runtimeCanvas = previewPanel.querySelector<HTMLElement>("[data-file-markdown-runtime-canvas='true']")!;
+    const documentCanvas = runtimeCanvas.querySelector<HTMLElement>("[data-markdown-document-canvas='true']")!;
+    const view = EditorView.findFromDOM(sourceViewer);
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 50)));
+    const previewScrollTo = vi.spyOn(previewViewport, "scrollTo");
+    snapshotLoader.mockClear();
+
+    act(() => {
+      view?.dispatch({ changes: { from: 7, to: 7, insert: " A" }, userEvent: "input" });
+    });
+    expect(view?.state.doc.toString()).toBe("# Guide A");
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 80)));
+    expect(within(previewPanel).getByRole("heading", { name: "Guide" })).not.toBeNull();
+    expect(snapshotLoader).not.toHaveBeenCalled();
+
+    act(() => {
+      view?.dispatch({ changes: { from: 9, to: 9, insert: "B" }, userEvent: "input" });
+    });
+    expect(view?.state.doc.toString()).toBe("# Guide AB");
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 100)));
+    expect(within(previewPanel).getByRole("heading", { name: "Guide" })).not.toBeNull();
+    expect(snapshotLoader).not.toHaveBeenCalled();
+
+    expect(await within(previewPanel).findByRole("heading", { name: "Guide AB" })).not.toBeNull();
+    await waitFor(() => expect(writeDocument).toHaveBeenCalledTimes(1));
+    expect(snapshotLoader).toHaveBeenCalledTimes(1);
+    expect(previewPanel.querySelector("[data-file-markdown-runtime-canvas='true']")).toBe(runtimeCanvas);
+    expect(runtimeCanvas.querySelector("[data-markdown-document-canvas='true']")).toBe(documentCanvas);
+    expect(previewScrollTo).not.toHaveBeenCalled();
   });
 
   it("keeps one virtualized line gutter in the right preview pane while split", async () => {

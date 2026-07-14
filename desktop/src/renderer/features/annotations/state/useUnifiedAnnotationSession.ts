@@ -9,6 +9,8 @@ import { markdownLogicalRangeFromDomRange } from "@/renderer/markdownShared/sele
 import { MarkdownAnnotationAdapter, type MarkdownAnnotationBinding } from "../adapters/MarkdownAnnotationAdapter";
 import { SourceAnnotationAdapter } from "../adapters/SourceAnnotationAdapter";
 import { createTextSelector } from "../anchoring/createTextSelector";
+import { AnnotationResolver } from "../anchoring/AnnotationResolver";
+import type { AnnotationDocumentWorkerResolver } from "../anchoring/DocumentWorkerAnnotationResolver";
 import { createMarkdownTextModel, type MarkdownTextModel } from "../document/MarkdownTextModel";
 import { createPlainTextModel } from "../document/PlainTextModel";
 import type { DocumentSelection, DocumentTextModel, LogicalRange } from "../document/DocumentTextModel";
@@ -33,6 +35,7 @@ export const DRAFT_ANNOTATION_ID = "__annotation_draft__";
 export const RETARGET_ANNOTATION_ID = "__annotation_retarget__";
 
 export function useUnifiedAnnotationSession({
+  documentWorker,
   documentRevision,
   kind,
   markdownModel,
@@ -42,6 +45,7 @@ export function useUnifiedAnnotationSession({
   source,
   workspaceId,
 }: {
+  documentWorker?: AnnotationDocumentWorkerResolver | null;
   documentRevision: string | null;
   kind: string;
   markdownModel: MarkdownDocumentModel | MarkdownSnapshot | null;
@@ -64,9 +68,13 @@ export function useUnifiedAnnotationSession({
   const markdownAdapter = useMemo(() => new MarkdownAnnotationAdapter(), []);
   const registry = useMemo(() => new AnnotationViewRegistry(), []);
   const navigator = useMemo(() => new AnnotationNavigator(registry, store), [registry, store]);
+  const resolver = useMemo(
+    () => new AnnotationResolver({ documentWorker }),
+    [documentWorker],
+  );
   const actions = useMemo(
-    () => runtime ? createAnnotationActions({ runtime, store }) : null,
-    [runtime, store],
+    () => runtime ? createAnnotationActions({ resolver, runtime, store }) : null,
+    [resolver, runtime, store],
   );
   const [geometry, setGeometry] = useState<Partial<Record<AnnotationViewId, DocumentGeometrySnapshot>>>({});
   const [selections, setSelections] = useState<Partial<Record<AnnotationViewId, DocumentSelection | null>>>({});

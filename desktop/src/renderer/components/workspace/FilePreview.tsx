@@ -7,7 +7,6 @@ import {
   Columns2,
   Copy,
   Eye,
-  LoaderCircle,
   Maximize2,
   Search,
   MessageSquarePlus,
@@ -68,6 +67,7 @@ import {
 import { createPortal } from "react-dom";
 
 import {
+  createDocumentWriteId,
   isRuntimeHttpError,
   type DocumentWriteResult,
   type RuntimeBridge,
@@ -130,6 +130,10 @@ import {
 } from "@/renderer/features/annotations/state/useUnifiedAnnotationSession";
 import type { SourceAnnotationAdapter } from "@/renderer/features/annotations/adapters/SourceAnnotationAdapter";
 import type { DocumentSelection } from "@/renderer/features/annotations/document/DocumentTextModel";
+import type {
+  AnnotationDocumentWorkerResolveInput,
+  AnnotationDocumentWorkerResolver,
+} from "@/renderer/features/annotations/anchoring/DocumentWorkerAnnotationResolver";
 import { ImagePreviewSurface } from "./ImagePreviewSurface";
 import {
   FileMarkdownRuntimeHost,
@@ -159,6 +163,8 @@ interface ResourceAnnotationVisualState {
 }
 
 type FileAutoSaveState = "idle" | "dirty" | "saving" | "saved" | "conflict" | "error";
+
+const FILE_SAVE_CONFLICT_MESSAGE = "文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。";
 
 interface FileDraft {
   readonly baseRevision: string;
@@ -242,6 +248,10 @@ export function FilePreview({
   const bodyRef = useRef<HTMLDivElement>(null);
   const [documentViewport, setDocumentViewport] = useState<HTMLDivElement | null>(null);
   const documentViewportRef = useRef<HTMLDivElement | null>(null);
+  const [splitSourceViewport, setSplitSourceViewport] = useState<HTMLDivElement | null>(null);
+  const [splitPreviewViewport, setSplitPreviewViewport] = useState<HTMLDivElement | null>(null);
+  const [annotationRailElement, setAnnotationRailElement] = useState<HTMLElement | null>(null);
+  const splitScrollOwnerRef = useRef<"source" | "preview">("source");
   const pendingScrollRestoreRef = useRef<number | null>(null);
   const setDocumentViewportElement = useCallback((element: HTMLDivElement | null) => {
     documentViewportRef.current = element;
@@ -260,8 +270,8 @@ export function FilePreview({
   const activeRequestIdentityRef = useRef("");
   const hasUnsavedChangesRef = useRef(false);
   const saveInFlightRef = useRef(false);
+  const lastAutoSaveNotificationKeyRef = useRef<string | null>(null);
   const [autoSaveState, setAutoSaveState] = useState<FileAutoSaveState>("idle");
-  const [autoSaveError, setAutoSaveError] = useState<string | null>(null);
   const [conflictRevision, setConflictRevision] = useState<string | null>(null);
   const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
   const [saveQueueVersion, setSaveQueueVersion] = useState(0);
@@ -279,7 +289,6 @@ export function FilePreview({
   const previewContent = immediateContent ?? content;
   const previewLoading = immediateContent === null ? loading : false;
   const [error, setError] = useState<string | null>(null);
-  const renderedPreviewContent = previewContent;
   const [markdownRuntimeSnapshot, setMarkdownRuntimeSnapshot] = useState<MarkdownSnapshot | null>(null);
   const [markdownRuntimeError, setMarkdownRuntimeError] = useState<Error | null>(null);
   const [markdownRuntimeFindIndex, setMarkdownRuntimeFindIndex] = useState<RuntimeMarkdownFindIndex | null>(null);
@@ -311,6 +320,52 @@ export function FilePreview({
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const fileLoadScope = request.type === "file" ? scope : null;
   const requestIdentity = previewRequestIdentity(request, workspaceId, sessionId);
+  const livePreviewRevision = documentRevision ?? `inline:${stableMarkdownIdentityHash(previewContent)}`;
+  const [splitPreviewSnapshot, setSplitPreviewSnapshot] = useState(() => ({
+    content: previewContent,
+    requestIdentity,
+    revision: livePreviewRevision,
+  }));
+  const renderedPreviewContent = splitMode && splitPreviewSnapshot.requestIdentity === requestIdentity
+    ? splitPreviewSnapshot.content
+    : previewContent;
+  const renderedPreviewRevision = splitMode && splitPreviewSnapshot.requestIdentity === requestIdentity
+    ? splitPreviewSnapshot.revision
+    : livePreviewRevision;
+  useEffect(() => {
+    const revision = previewContent === persistedContent
+      ? livePreviewRevision
+      : `draft:${stableMarkdownIdentityHash(previewContent)}`;
+    const updateSnapshot = () => {
+      setSplitPreviewSnapshot((current) => {
+        if (
+          current.requestIdentity === requestIdentity
+          && current.content === previewContent
+          && current.revision === revision
+        ) {
+          return current;
+        }
+        return { content: previewContent, requestIdentity, revision };
+      });
+    };
+    if (!splitMode || splitPreviewSnapshot.requestIdentity !== requestIdentity) {
+      updateSnapshot();
+      return;
+    }
+    if (splitPreviewSnapshot.content === previewContent) {
+      return;
+    }
+    const timer = window.setTimeout(updateSnapshot, FILE_PREVIEW_SPLIT_RENDER_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    livePreviewRevision,
+    persistedContent,
+    previewContent,
+    requestIdentity,
+    splitMode,
+    splitPreviewSnapshot.content,
+    splitPreviewSnapshot.requestIdentity,
+  ]);
   activeRequestIdentityRef.current = requestIdentity;
   const editable = Boolean(
     isPathPreviewRequest(request)
@@ -322,6 +377,12 @@ export function FilePreview({
   );
   const hasUnsavedChanges = editable && content !== persistedContent;
   hasUnsavedChangesRef.current = hasUnsavedChanges;
+  const notifyAutoSaveError = useCallback((key: string, message: string) => {
+    const notificationKey = `${requestIdentity}:${key}`;
+    if (lastAutoSaveNotificationKeyRef.current === notificationKey) return;
+    lastAutoSaveNotificationKeyRef.current = notificationKey;
+    notifications.error(message);
+  }, [notifications, requestIdentity]);
   const annotationPathCandidate = workspaceAnnotationPath === undefined
     ? request.type === "file" ? request.path : null
     : workspaceAnnotationPath;
@@ -367,8 +428,11 @@ export function FilePreview({
 
   const updateDraftContent = useCallback((nextContent: string) => {
     if (!editable || !documentRevision) return;
+    splitScrollOwnerRef.current = "source";
     setContent(nextContent);
-    setAutoSaveError(null);
+    if (autoSaveState === "error") {
+      lastAutoSaveNotificationKeyRef.current = null;
+    }
     const existing = draftsRef.current.get(requestIdentity);
     if (nextContent === persistedContent) {
       draftsRef.current.delete(requestIdentity);
@@ -392,18 +456,25 @@ export function FilePreview({
     if (autoSaveState === "conflict" && !expectedRevisionOverride) return;
 
     const expectedRevision = expectedRevisionOverride ?? draft.baseRevision;
+    const writeId = createDocumentWriteId();
+    const unregisterDocumentWrite = fileChanges?.registerDocumentWrite(writeId);
+    let writeSucceeded = false;
     saveInFlightRef.current = true;
     if (activeRequestIdentityRef.current === identity) {
+      if (autoSaveState === "error") {
+        lastAutoSaveNotificationKeyRef.current = null;
+      }
       setAutoSaveState("saving");
-      setAutoSaveError(null);
     }
     let result: DocumentWriteResult;
     try {
       result = request.type === "local-file"
-        ? await runtime.localPreview.writeDocument(request.path, draft.content, { expectedRevision })
+        ? await runtime.localPreview.writeDocument(request.path, draft.content, { expectedRevision, writeId })
         : await runtime.workspace.writeDocument(fileLoadScope as WorkspaceScope, request.path, draft.content, {
             expectedRevision,
+            writeId,
           });
+      writeSucceeded = true;
       const latest = draftsRef.current.get(identity);
       if (!latest || latest.content === draft.content) {
         draftsRef.current.delete(identity);
@@ -411,6 +482,7 @@ export function FilePreview({
         draftsRef.current.set(identity, { ...latest, baseRevision: result.revision });
       }
       if (activeRequestIdentityRef.current === identity) {
+        lastAutoSaveNotificationKeyRef.current = null;
         setPersistedContent(draft.content);
         setDocumentRevision(result.revision);
         setConflictRevision(null);
@@ -418,25 +490,42 @@ export function FilePreview({
         setAutoSaveState(latest && latest.content !== draft.content ? "dirty" : "saved");
       }
     } catch (reason) {
-      if (activeRequestIdentityRef.current !== identity) return;
+      const activeIdentity = activeRequestIdentityRef.current === identity;
       if (isRuntimeHttpError(reason) && reason.code === "revision_conflict") {
         const actualRevision = typeof reason.details?.actual_revision === "string"
           ? reason.details.actual_revision
           : null;
-        setConflictRevision(actualRevision);
-        setConflictDialogOpen(true);
-        setAutoSaveState("conflict");
-        setAutoSaveError("文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。");
-        reloadCurrentFile();
+        if (activeIdentity) {
+          setConflictRevision(actualRevision);
+          setConflictDialogOpen(true);
+          setAutoSaveState("conflict");
+          reloadCurrentFile();
+        }
+        notifyAutoSaveError("conflict", FILE_SAVE_CONFLICT_MESSAGE);
         return;
       }
-      setAutoSaveState("error");
-      setAutoSaveError(`自动保存失败：${errorMessage(reason)}`);
+      const message = `自动保存失败：${errorMessage(reason)}`;
+      if (activeIdentity) {
+        setAutoSaveState("error");
+      }
+      notifyAutoSaveError(`write:${message}`, message);
     } finally {
+      if (!writeSucceeded) unregisterDocumentWrite?.();
       saveInFlightRef.current = false;
       setSaveQueueVersion((version) => version + 1);
     }
-  }, [autoSaveState, editable, fileLoadScope, fileUnavailable, reloadCurrentFile, request, requestIdentity, runtime]);
+  }, [
+    autoSaveState,
+    editable,
+    fileChanges,
+    fileLoadScope,
+    fileUnavailable,
+    notifyAutoSaveError,
+    reloadCurrentFile,
+    request,
+    requestIdentity,
+    runtime,
+  ]);
 
   useEffect(() => () => {
     void saveDraft();
@@ -457,7 +546,7 @@ export function FilePreview({
     draftsRef.current.delete(requestIdentity);
     setConflictDialogOpen(false);
     setConflictRevision(null);
-    setAutoSaveError(null);
+    lastAutoSaveNotificationKeyRef.current = null;
     setAutoSaveState("idle");
     reloadCurrentFile();
   }, [reloadCurrentFile, requestIdentity]);
@@ -505,7 +594,7 @@ export function FilePreview({
           setConflictDialogOpen(true);
           setConflictRevision(null);
           setAutoSaveState("conflict");
-          setAutoSaveError("文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。");
+          notifyAutoSaveError("conflict", FILE_SAVE_CONFLICT_MESSAGE);
           reloadCurrentFile();
           return;
         }
@@ -516,7 +605,7 @@ export function FilePreview({
       setFileUnavailable(true);
       setReloadError("文件已删除，仍显示上次内容；同路径重建后将自动恢复。");
     });
-  }, [fileChanges, reloadCurrentFile, requestIdentity, workspaceId]);
+  }, [fileChanges, notifyAutoSaveError, reloadCurrentFile, requestIdentity, workspaceId]);
 
   useEffect(() => {
     if (!fileChanges || request.type !== "local-file") {
@@ -539,7 +628,7 @@ export function FilePreview({
           setConflictDialogOpen(true);
           setConflictRevision(null);
           setAutoSaveState("conflict");
-          setAutoSaveError("文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。");
+          notifyAutoSaveError("conflict", FILE_SAVE_CONFLICT_MESSAGE);
           reloadCurrentFile();
           return;
         }
@@ -550,7 +639,7 @@ export function FilePreview({
       setFileUnavailable(true);
       setReloadError("文件已删除，仍显示上次内容；同路径重建后将自动恢复。");
     });
-  }, [fileChanges, reloadCurrentFile, requestIdentity]);
+  }, [fileChanges, notifyAutoSaveError, reloadCurrentFile, requestIdentity]);
 
   useEffect(() => {
     const themeObserver = new MutationObserver(() => setTheme(getTheme()));
@@ -566,7 +655,7 @@ export function FilePreview({
     if (identityChanged) {
       setError(null);
       setReloadError(null);
-      setAutoSaveError(null);
+      lastAutoSaveNotificationKeyRef.current = null;
       setAutoSaveState("idle");
       setConflictDialogOpen(false);
       setConflictRevision(null);
@@ -645,7 +734,7 @@ export function FilePreview({
           setConflictRevision(revision);
           setConflictDialogOpen(true);
           setAutoSaveState("conflict");
-          setAutoSaveError("文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。");
+          notifyAutoSaveError("conflict", FILE_SAVE_CONFLICT_MESSAGE);
         } else {
           setAutoSaveState("dirty");
         }
@@ -725,7 +814,15 @@ export function FilePreview({
       runtime.localPreview?.releaseDocumentConsumer?.(documentReadConsumerIdRef.current);
       runtime.workspace?.releaseDocumentConsumer?.(documentReadConsumerIdRef.current);
     };
-  }, [fileLoadScope, kind, reloadVersion, requestIdentity, resetCopyFeedback, runtime]);
+  }, [
+    fileLoadScope,
+    kind,
+    notifyAutoSaveError,
+    reloadVersion,
+    requestIdentity,
+    resetCopyFeedback,
+    runtime,
+  ]);
 
   useLayoutEffect(() => {
     const scrollTop = pendingScrollRestoreRef.current;
@@ -765,12 +862,121 @@ export function FilePreview({
   const canRenderPreview = canPreview || kind === "diff";
   const canSplit = kind === "markdown" || kind === "html";
   const sourceLabel = previewSourceLabel(request);
-  const formattedSource = renderedPreviewContent;
+  const formattedSource = previewContent;
   const markdownRuntimeWorkspaceId = workspaceId ?? (sessionId ? `session:${sessionId}` : "local");
   const markdownRuntimePath = revealPath ?? sourceLabel;
-  const markdownRuntimeRevision = hasUnsavedChanges
-    ? `draft:${stableMarkdownIdentityHash(renderedPreviewContent)}`
-    : documentRevision ?? `inline:${stableMarkdownIdentityHash(renderedPreviewContent)}`;
+  const markdownRuntimeRevision = renderedPreviewRevision;
+  const splitViewActive = splitMode && canSplit;
+  const sourcePaneScrollElement = splitViewActive ? splitSourceViewport : documentViewport;
+  const previewPaneScrollElement = splitViewActive ? splitPreviewViewport : documentViewport;
+  useLayoutEffect(() => {
+    if (!splitViewActive || !documentViewport) return;
+    documentViewport.scrollTop = 0;
+  }, [documentViewport, splitViewActive]);
+
+  useEffect(() => {
+    if (!splitViewActive || !splitSourceViewport || !splitPreviewViewport || !sourceEditorView) return;
+    let active = true;
+    let sourceFrame: number | null = null;
+    let previewFrame: number | null = null;
+    let sourceReleaseFrame: number | null = null;
+    let previewReleaseFrame: number | null = null;
+    let suppressSource = false;
+    let suppressPreview = false;
+
+    const releaseSourceSuppression = () => {
+      if (sourceReleaseFrame !== null) window.cancelAnimationFrame(sourceReleaseFrame);
+      sourceReleaseFrame = window.requestAnimationFrame(() => {
+        sourceReleaseFrame = window.requestAnimationFrame(() => {
+          sourceReleaseFrame = null;
+          suppressSource = false;
+        });
+      });
+    };
+    const releasePreviewSuppression = () => {
+      if (previewReleaseFrame !== null) window.cancelAnimationFrame(previewReleaseFrame);
+      previewReleaseFrame = window.requestAnimationFrame(() => {
+        previewReleaseFrame = window.requestAnimationFrame(() => {
+          previewReleaseFrame = null;
+          suppressPreview = false;
+        });
+      });
+    };
+    const syncPreviewFromSource = () => {
+      sourceFrame = null;
+      if (!active || splitScrollOwnerRef.current !== "source") return;
+      const sourceOffset = codeMirrorViewportSourceOffset(sourceEditorView, splitSourceViewport);
+      if (sourceOffset === null) return;
+      suppressPreview = true;
+      const handled = kind === "markdown"
+        ? markdownRuntimeHostRef.current?.syncViewportToSourceOffset(sourceOffset) === true
+        : syncScrollProgress(splitSourceViewport, splitPreviewViewport);
+      if (handled) releasePreviewSuppression();
+      else suppressPreview = false;
+    };
+    const syncSourceFromPreview = () => {
+      previewFrame = null;
+      if (!active || splitScrollOwnerRef.current !== "preview") return;
+      const sourceOffset = kind === "markdown"
+        ? markdownRuntimeHostRef.current?.viewportSourceOffset() ?? null
+        : null;
+      suppressSource = true;
+      const handled = sourceOffset !== null
+        ? syncCodeMirrorViewportToSourceOffset(sourceEditorView, splitSourceViewport, sourceOffset)
+        : syncScrollProgress(splitPreviewViewport, splitSourceViewport);
+      if (handled) releaseSourceSuppression();
+      else suppressSource = false;
+    };
+    const handleSourceScroll = () => {
+      if (splitScrollOwnerRef.current !== "source" || suppressSource || sourceFrame !== null) return;
+      if (previewFrame !== null) {
+        window.cancelAnimationFrame(previewFrame);
+        previewFrame = null;
+      }
+      sourceFrame = window.requestAnimationFrame(syncPreviewFromSource);
+    };
+    const handlePreviewScroll = () => {
+      if (splitScrollOwnerRef.current !== "preview" || suppressPreview || previewFrame !== null) return;
+      if (sourceFrame !== null) {
+        window.cancelAnimationFrame(sourceFrame);
+        sourceFrame = null;
+      }
+      previewFrame = window.requestAnimationFrame(syncSourceFromPreview);
+    };
+    const markSourceInteraction = () => {
+      splitScrollOwnerRef.current = "source";
+      suppressSource = false;
+    };
+    const markPreviewInteraction = () => {
+      splitScrollOwnerRef.current = "preview";
+      suppressPreview = false;
+    };
+
+    splitSourceViewport.addEventListener("scroll", handleSourceScroll, { passive: true });
+    splitPreviewViewport.addEventListener("scroll", handlePreviewScroll, { passive: true });
+    for (const eventName of ["pointerdown", "wheel", "touchstart", "keydown", "focusin"] as const) {
+      splitSourceViewport.addEventListener(eventName, markSourceInteraction, { passive: true });
+      splitPreviewViewport.addEventListener(eventName, markPreviewInteraction, { passive: true });
+    }
+    const initialFrame = window.requestAnimationFrame(() => {
+      if (splitScrollOwnerRef.current === "preview") handlePreviewScroll();
+      else handleSourceScroll();
+    });
+    return () => {
+      active = false;
+      splitSourceViewport.removeEventListener("scroll", handleSourceScroll);
+      splitPreviewViewport.removeEventListener("scroll", handlePreviewScroll);
+      for (const eventName of ["pointerdown", "wheel", "touchstart", "keydown", "focusin"] as const) {
+        splitSourceViewport.removeEventListener(eventName, markSourceInteraction);
+        splitPreviewViewport.removeEventListener(eventName, markPreviewInteraction);
+      }
+      window.cancelAnimationFrame(initialFrame);
+      if (sourceFrame !== null) window.cancelAnimationFrame(sourceFrame);
+      if (previewFrame !== null) window.cancelAnimationFrame(previewFrame);
+      if (sourceReleaseFrame !== null) window.cancelAnimationFrame(sourceReleaseFrame);
+      if (previewReleaseFrame !== null) window.cancelAnimationFrame(previewReleaseFrame);
+    };
+  }, [kind, sourceEditorView, splitPreviewViewport, splitSourceViewport, splitViewActive]);
   const providerMarkdownViewDescriptor = previewContext?.activeEntry?.request === request
     ? previewContext.activeEntry.markdownView
     : null;
@@ -811,7 +1017,19 @@ export function FilePreview({
   }, [error, kind, markdownOutline, onMarkdownOutlineChange, previewBusy]);
 
   const annotationMode = kind === "markdown" ? (splitMode ? "split" : viewMode) : "source";
+  const annotationDocumentWorker = useMemo<AnnotationDocumentWorkerResolver | null>(() => {
+    if (kind !== "markdown" || effectiveMarkdownRuntimeSnapshotLoader) return null;
+    return Object.freeze({
+      resolve: (input: AnnotationDocumentWorkerResolveInput) => {
+        const host = markdownRuntimeHostRef.current;
+        return host
+          ? host.resolveAnnotations(input)
+          : Promise.reject(new Error("Markdown Document Worker is not ready"));
+      },
+    });
+  }, [effectiveMarkdownRuntimeSnapshotLoader, kind]);
   const annotationSession = useUnifiedAnnotationSession({
+    documentWorker: annotationDocumentWorker,
     documentRevision,
     kind,
     markdownModel: markdownRuntimeSnapshot,
@@ -831,6 +1049,18 @@ export function FilePreview({
   const annotationPanelOpen = annotationSession.state.panelOpen;
   const activeAnnotationId = annotationSession.state.activeAnnotationId;
   const flashAnnotationId = annotationSession.state.flashAnnotationId;
+  useLayoutEffect(() => {
+    if (!splitViewActive || !annotationPanelOpen || !splitPreviewViewport || !annotationRailElement) {
+      return;
+    }
+    const syncRailScroll = () => {
+      annotationRailElement.scrollTop = splitPreviewViewport.scrollTop;
+      annotationRailElement.scrollLeft = 0;
+    };
+    syncRailScroll();
+    splitPreviewViewport.addEventListener("scroll", syncRailScroll, { passive: true });
+    return () => splitPreviewViewport.removeEventListener("scroll", syncRailScroll);
+  }, [annotationPanelOpen, annotationRailElement, splitPreviewViewport, splitViewActive]);
   const closeAnnotationPanel = useCallback(() => annotationSession.store.getState().closePanel(), [annotationSession.store]);
   const toggleAnnotationPanel = useCallback(() => annotationSession.store.getState().togglePanel(), [annotationSession.store]);
   const draftingRange = annotationSession.state.interaction.type === "drafting"
@@ -873,6 +1103,10 @@ export function FilePreview({
       if (!card) {
         return;
       }
+      if (splitViewActive) {
+        restartAnnotationNavigationFlash(card);
+        return;
+      }
       void centerElementInScrollViewport(documentViewport, card, controller.signal)
         .then(() => restartAnnotationNavigationFlash(card))
         .catch(() => undefined);
@@ -887,6 +1121,7 @@ export function FilePreview({
     documentViewport,
     railRevealLayoutReady,
     railRevealRequest,
+    splitViewActive,
   ]);
 
   useEffect(() => {
@@ -920,6 +1155,7 @@ export function FilePreview({
       );
       if (!editor) return;
       editor.focus({ preventScroll: true });
+      if (splitViewActive) return;
       scrollFrame = window.requestAnimationFrame(() => {
         void centerElementInScrollViewport(documentViewport, editor, controller.signal).catch(() => undefined);
       });
@@ -935,6 +1171,7 @@ export function FilePreview({
     draftLayoutReady,
     draftingRange?.end,
     draftingRange?.start,
+    splitViewActive,
   ]);
 
   useEffect(() => {
@@ -1442,7 +1679,7 @@ export function FilePreview({
           sourceEditorView,
           activeCodeMirrorMatch.from,
           "center",
-          documentViewport,
+          sourcePaneScrollElement,
         );
       }
     }
@@ -1450,7 +1687,6 @@ export function FilePreview({
       scrollFindMatchIntoView(activeMatch, markdownRuntimeHostRef.current);
     }
   }, [
-    documentViewport,
     findMatchIndex,
     findMode,
     findOpen,
@@ -1458,6 +1694,7 @@ export function FilePreview({
     kind,
     markdownFindMatches,
     renderedPreviewContent,
+    sourcePaneScrollElement,
     sourceEditorView,
   ]);
 
@@ -1493,7 +1730,7 @@ export function FilePreview({
       onSourceChange={updateDraftContent}
       sourceFindState={sourceFindState}
       onSelectionChange={updateSourceSelection}
-      scrollElement={documentViewport}
+      scrollElement={sourcePaneScrollElement}
     />
   );
 
@@ -1515,7 +1752,7 @@ export function FilePreview({
           className={styles.markdownPane}
           data-file-markdown-engine="runtime"
           data-file-preview-selectable-content="preview"
-          scrollElement={documentViewport}
+          scrollElement={previewPaneScrollElement}
         >
           {(scrollElement) => scrollElement ? (
             <FileMarkdownRuntimeHost
@@ -1559,7 +1796,7 @@ export function FilePreview({
           data-resource-annotation-active={wholeResourceAnnotationState.active ? "true" : undefined}
           data-resource-annotation-highlight={wholeResourceAnnotationState.highlighted ? "true" : undefined}
           data-resource-annotation-hovered={wholeResourceAnnotationState.hovered ? "true" : undefined}
-          scrollElement={documentViewport}
+          scrollElement={previewPaneScrollElement}
         >
           {annotationAvailable ? (
             <ResourceAnnotationButton label="批注整个 HTML 预览" onClick={startWholeResourceAnnotation} />
@@ -1595,14 +1832,30 @@ export function FilePreview({
               <Code2 size={13} />
               <span>源码</span>
             </div>
-            <div className={styles.splitPanelBody}>{renderSourcePane()}</div>
+            <div className={styles.splitPanelBody}>
+              <div
+                ref={setSplitSourceViewport}
+                className={styles.splitScrollViewport}
+                data-split-scroll-pane="source"
+              >
+                {renderSourcePane()}
+              </div>
+            </div>
           </section>
           <section className={styles.splitPanel} aria-label="渲染预览">
             <div className={styles.splitPanelHeader}>
               <Eye size={13} />
               <span>预览</span>
             </div>
-            <div className={styles.splitPanelBody}>{renderPreviewPane()}</div>
+            <div className={styles.splitPanelBody}>
+              <div
+                ref={setSplitPreviewViewport}
+                className={styles.splitScrollViewport}
+                data-split-scroll-pane="preview"
+              >
+                {renderPreviewPane()}
+              </div>
+            </div>
           </section>
         </div>
       );
@@ -1623,6 +1876,7 @@ export function FilePreview({
             type="button"
             aria-pressed={viewMode === "preview" && !splitMode}
             onClick={() => {
+              splitScrollOwnerRef.current = "preview";
               setViewMode("preview");
               setSplitMode(false);
             }}
@@ -1634,6 +1888,7 @@ export function FilePreview({
             type="button"
             aria-pressed={viewMode === "source" && !splitMode}
             onClick={() => {
+              splitScrollOwnerRef.current = "source";
               setViewMode("source");
               setSplitMode(false);
             }}
@@ -1647,6 +1902,9 @@ export function FilePreview({
               aria-pressed={splitMode}
               title="分屏预览"
               onClick={() => {
+                if (!splitMode) {
+                  splitScrollOwnerRef.current = viewMode === "source" ? "source" : "preview";
+                }
                 setViewMode("preview");
                 setSplitMode((current) => !current);
               }}
@@ -1786,24 +2044,6 @@ export function FilePreview({
       {reloading ? (
           <span className={styles.reloadStatus} role="status">正在刷新，当前仍显示上次内容</span>
       ) : null}
-        {editable && autoSaveState !== "idle" ? (
-          <button
-            className={styles.autoSaveStatus}
-            data-state={autoSaveState}
-            type="button"
-            title={autoSaveError ?? fileAutoSaveLabel(autoSaveState)}
-            onClick={() => {
-              if (autoSaveState === "conflict") setConflictDialogOpen(true);
-              if (autoSaveState === "error") {
-                setAutoSaveState("dirty");
-                void saveDraft();
-              }
-            }}
-          >
-            {autoSaveState === "saving" ? <LoaderCircle size={12} aria-hidden="true" /> : null}
-            <span>{fileAutoSaveLabel(autoSaveState)}</span>
-          </button>
-        ) : null}
         {reloadError ? (
           <span className={styles.reloadError} role="alert">{reloadError}</span>
         ) : null}
@@ -1835,7 +2075,7 @@ export function FilePreview({
             </div>
           )}
         >
-          <p className={styles.saveConflictMessage}>{autoSaveError}</p>
+          <p className={styles.saveConflictMessage}>{FILE_SAVE_CONFLICT_MESSAGE}</p>
         </AppDialog>
       ) : null}
       {!previewBusy && !error ? (
@@ -1860,6 +2100,7 @@ export function FilePreview({
             data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
             data-custom-scrollbar="true"
             data-document-scroll-viewport="true"
+            data-split-mode={splitViewActive ? "true" : undefined}
             data-workspace-document-context={isPathPreviewRequest(request) ? "true" : undefined}
             data-workspace-document-name={isPathPreviewRequest(request) ? fileName(request.path) : undefined}
             data-workspace-document-path={isPathPreviewRequest(request) ? request.path : undefined}
@@ -1885,12 +2126,19 @@ export function FilePreview({
                 />
               ) : null}
             </div>
-            <UnifiedAnnotationConnectors layoutRef={annotationLayoutRef} open={annotationPanelOpen} session={annotationSession} />
+            <UnifiedAnnotationConnectors
+              layoutRef={annotationLayoutRef}
+              open={annotationPanelOpen}
+              session={annotationSession}
+              splitViewport={splitViewActive ? splitPreviewViewport : null}
+            />
               <aside
               aria-label="批注栏"
               className={styles.annotationRail}
               data-annotation-rail="true"
+              data-split-mode={splitViewActive ? "true" : undefined}
               hidden={!annotationPanelOpen}
+              ref={setAnnotationRailElement}
               style={{
                 "--annotation-bottom-actions-reserved": `${ANNOTATION_BOTTOM_ACTIONS_RESERVED}px`,
                 "--annotation-card-inline-inset": `${ANNOTATION_RAIL_CARD_INSET}px`,
@@ -1920,13 +2168,15 @@ export function FilePreview({
               ref={setAnnotationActionsHost}
             />
           ) : null}
-          <FilePreviewScrollRail
-            observeSelector={`.${styles.documentCanvas}`}
-            railTestId="preview-scroll-rail"
-            scrollElement={documentViewport}
-            surface="preview"
-            thumbTestId="preview-scroll-thumb"
-          />
+          {!splitViewActive ? (
+            <FilePreviewScrollRail
+              observeSelector={`.${styles.documentCanvas}`}
+              railTestId="preview-scroll-rail"
+              scrollElement={documentViewport}
+              surface="preview"
+              thumbTestId="preview-scroll-thumb"
+            />
+          ) : null}
         </div>
       ) : null}
       {copyState === "failed" && !panelChrome ? <span className={styles.copyError}>复制失败</span> : null}
@@ -2110,12 +2360,21 @@ function UnifiedAnnotationConnectors({
   layoutRef,
   open,
   session,
+  splitViewport,
 }: {
   layoutRef: RefObject<HTMLDivElement | null>;
   open: boolean;
   session: UnifiedAnnotationSession;
+  splitViewport: HTMLElement | null;
 }) {
-  const [size, setSize] = useState({ documentWidth: 0, height: 0, width: 0 });
+  const [size, setSize] = useState({
+    cardOffsetY: 0,
+    documentWidth: 0,
+    height: 0,
+    markerOffsetX: 0,
+    markerOffsetY: 0,
+    width: 0,
+  });
   useLayoutEffect(() => {
     if (!open) {
       return;
@@ -2124,40 +2383,71 @@ function UnifiedAnnotationConnectors({
     if (!layout) return;
     const documentColumn = layout.querySelector<HTMLElement>(`.${styles.documentColumn}`);
     const update = () => {
+      const layoutRect = layout.getBoundingClientRect();
+      const splitRect = splitViewport?.getBoundingClientRect() ?? null;
       const next = {
+        cardOffsetY: splitViewport ? -splitViewport.scrollTop : 0,
         documentWidth: documentColumn?.clientWidth ?? 0,
-        height: layout.scrollHeight,
+        height: splitViewport ? layout.clientHeight : layout.scrollHeight,
+        markerOffsetX: splitRect && splitViewport
+          ? splitRect.left - layoutRect.left - splitViewport.scrollLeft
+          : 0,
+        markerOffsetY: splitRect && splitViewport
+          ? splitRect.top - layoutRect.top - splitViewport.scrollTop
+          : 0,
         width: layout.clientWidth,
       };
       setSize((current) => current.documentWidth === next.documentWidth
         && current.height === next.height
+        && current.cardOffsetY === next.cardOffsetY
+        && current.markerOffsetX === next.markerOffsetX
+        && current.markerOffsetY === next.markerOffsetY
         && current.width === next.width
         ? current
         : next);
     };
     update();
-    if (typeof ResizeObserver === "undefined") return;
+    splitViewport?.addEventListener("scroll", update, { passive: true });
+    if (typeof ResizeObserver === "undefined") {
+      return () => splitViewport?.removeEventListener("scroll", update);
+    }
     const observer = new ResizeObserver(update);
     observer.observe(layout);
     if (documentColumn) {
       observer.observe(documentColumn);
     }
+    if (splitViewport) {
+      observer.observe(splitViewport);
+    }
     const railContent = layout.querySelector<HTMLElement>("[data-annotation-rail-content='true']");
     if (railContent) {
       observer.observe(railContent);
     }
-    return () => observer.disconnect();
-  }, [layoutRef, open]);
+    return () => {
+      observer.disconnect();
+      splitViewport?.removeEventListener("scroll", update);
+    };
+  }, [layoutRef, open, splitViewport]);
   const snapshot = session.connectorGeometry;
   const placementById = new Map(session.lanePlacements.map((placement) => [placement.id, placement]));
   const routes = snapshot ? Object.entries(snapshot.markers).flatMap(([annotationId, fragments]) => {
     const placement = placementById.get(annotationId);
     if (!placement || fragments.length === 0) return [];
+    const renderedFragments = splitViewport
+      ? fragments.map((fragment) => ({
+        bottom: fragment.bottom + size.markerOffsetY,
+        left: fragment.left + size.markerOffsetX,
+        right: fragment.right + size.markerOffsetX,
+        top: fragment.top + size.markerOffsetY,
+      }))
+      : fragments;
     return [{
       annotationId,
-      fragments,
-      placement,
-      preferredY: connectorPreferredEdgeY(fragments),
+      fragments: renderedFragments,
+      placement: splitViewport
+        ? { ...placement, connectorY: placement.connectorY + size.cardOffsetY }
+        : placement,
+      preferredY: connectorPreferredEdgeY(renderedFragments),
     }];
   }) : [];
   const edgePorts = spreadConnectorEdgePorts(routes.map((route) => ({
@@ -2181,7 +2471,7 @@ function UnifiedAnnotationConnectors({
   return (
     <AnnotationConnectorLayer
       activeAnnotationId={session.state.activeAnnotationId}
-      documentHeight={Math.max(size.height, snapshot?.documentHeight ?? 0)}
+      documentHeight={splitViewport ? size.height : Math.max(size.height, snapshot?.documentHeight ?? 0)}
       hoveredAnnotationId={session.state.hoveredAnnotationId}
       items={items}
       open={open}
@@ -2395,6 +2685,7 @@ interface FilePreviewFindScrollLine {
 }
 
 const FILE_PREVIEW_OPEN_SETTLE_MS = 260;
+const FILE_PREVIEW_SPLIT_RENDER_DELAY_MS = 250;
 const FILE_PREVIEW_AUTO_SAVE_DELAY_MS = 350;
 const ANNOTATION_PANEL_EXIT_MS = 160;
 const ANNOTATION_FLASH_ITERATIONS = 1;
@@ -3316,23 +3607,6 @@ function isSaveShortcut(event: KeyboardEvent): boolean {
   );
 }
 
-function fileAutoSaveLabel(state: FileAutoSaveState): string {
-  switch (state) {
-    case "dirty":
-      return "等待自动保存";
-    case "saving":
-      return "正在自动保存";
-    case "saved":
-      return "已自动保存";
-    case "conflict":
-      return "自动保存已暂停";
-    case "error":
-      return "自动保存失败，点击重试";
-    default:
-      return "";
-  }
-}
-
 function sourceLineNumbers(source: string, start: number, end: number): { lineStart: number; lineEnd: number } {
   const boundedStart = Math.max(0, Math.min(start, source.length));
   const boundedEnd = Math.max(boundedStart, Math.min(end, source.length));
@@ -3985,6 +4259,49 @@ function FilePreviewScrollRail({
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max));
+}
+
+function codeMirrorViewportSourceOffset(view: EditorView, scrollElement: HTMLElement): number | null {
+  if (!view.dom.isConnected || !scrollElement.isConnected) return null;
+  const viewportRect = scrollElement.getBoundingClientRect();
+  const contentRect = view.contentDOM.getBoundingClientRect();
+  const documentY = Math.max(0, viewportRect.top - contentRect.top);
+  const line = view.lineBlockAtHeight(documentY);
+  const sourceSpan = Math.max(0, line.to - line.from);
+  const progress = line.height > 0
+    ? clampNumber((documentY - line.top) / line.height, 0, 1)
+    : 0;
+  return Math.round(line.from + sourceSpan * progress);
+}
+
+function syncCodeMirrorViewportToSourceOffset(
+  view: EditorView,
+  scrollElement: HTMLElement,
+  sourceOffset: number,
+): boolean {
+  if (!view.dom.isConnected || !scrollElement.isConnected || !Number.isFinite(sourceOffset)) return false;
+  const position = clampNumber(Math.round(sourceOffset), 0, view.state.doc.length);
+  const line = view.lineBlockAt(position);
+  const sourceSpan = Math.max(1, line.to - line.from);
+  const progress = clampNumber((position - line.from) / sourceSpan, 0, 1);
+  const viewportRect = scrollElement.getBoundingClientRect();
+  const contentRect = view.contentDOM.getBoundingClientRect();
+  const documentY = line.top + line.height * progress;
+  const target = clampNumber(
+    scrollElement.scrollTop + contentRect.top - viewportRect.top + documentY,
+    0,
+    Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight),
+  );
+  scrollElement.scrollTo({ top: target, behavior: "auto" });
+  return true;
+}
+
+function syncScrollProgress(source: HTMLElement, target: HTMLElement): boolean {
+  const sourceRange = Math.max(0, source.scrollHeight - source.clientHeight);
+  const targetRange = Math.max(0, target.scrollHeight - target.clientHeight);
+  const progress = sourceRange > 0 ? clampNumber(source.scrollTop / sourceRange, 0, 1) : 0;
+  target.scrollTo({ top: targetRange * progress, behavior: "auto" });
+  return true;
 }
 
 function centerElementInScrollViewport(

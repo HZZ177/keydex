@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { StrictMode } from "react";
 import type { AgentConnection, RuntimeBridge } from "@/runtime";
 import {
   RuntimeConnectionProvider,
@@ -9,6 +10,26 @@ import {
 } from "@/renderer/providers/RuntimeConnectionProvider";
 
 describe("RuntimeConnectionProvider", () => {
+  it("starts the backend once in StrictMode", async () => {
+    const starter = vi.fn<() => Promise<AgentConnection>>().mockResolvedValue({
+      host: "127.0.0.1",
+      port: 9234,
+      base_url: "http://127.0.0.1:9234",
+      data_dir: "D:/Keydex",
+    });
+
+    render(
+      <StrictMode>
+        <RuntimeConnectionProvider runtime={{} as RuntimeBridge} starter={starter} isDesktopRuntime={() => true}>
+          <RuntimeProbe />
+        </RuntimeConnectionProvider>
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("connection-status-value").textContent).toBe("ready"));
+    expect(starter).toHaveBeenCalledTimes(1);
+  });
+
   it("renders shell consumers immediately while the backend is starting", async () => {
     const deferred = createDeferred<AgentConnection>();
     const starter = vi.fn(() => deferred.promise);

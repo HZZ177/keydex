@@ -46,6 +46,26 @@ describe("resolveTextAnchor", () => {
     });
   });
 
+  it("uses nearest quote evidence when only the logical projection changed for the same document", () => {
+    const model = createPlainTextModel(
+      "target / left target right / target",
+      "sha256:same-document",
+    );
+    const exactStart = model.logicalText.indexOf("target", 10);
+    const selector = selectorFor("target", {
+      prefix: "left ",
+      suffix: " right",
+    });
+    selector.documentRevision = model.revision.documentRevision;
+    selector.position = { start: exactStart - 4, end: exactStart - 4 + 6 };
+
+    expect(resolveTextAnchor(model, selector)).toEqual({
+      status: "resolved",
+      range: { start: exactStart, end: exactStart + 6 },
+      strategy: "document-position",
+    });
+  });
+
   it("uses container and heading path as exact context, never fuzzy similarity", () => {
     const model = createMarkdownTextModel(
       "# First\n\ntarget\n\n# Second\n\ntarget",
@@ -87,6 +107,16 @@ describe("resolveTextAnchor", () => {
       status: "ambiguous",
       candidates: [{ start: 0, end: 2 }, { start: 1, end: 3 }],
     });
+  });
+
+  it("bounds ambiguous candidates for highly repeated text", () => {
+    const model = createPlainTextModel("target ".repeat(1_000), "sha256:repeated");
+    const resolution = resolveTextAnchor(model, selectorFor("target"));
+
+    expect(resolution.status).toBe("ambiguous");
+    if (resolution.status === "ambiguous") {
+      expect(resolution.candidates).toHaveLength(16);
+    }
   });
 });
 

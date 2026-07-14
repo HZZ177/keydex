@@ -53,6 +53,10 @@ export interface DocumentViewportUpdateOptions {
   readonly origin?: "user" | "programmatic" | "automatic";
 }
 
+export interface DocumentViewPublishOptions {
+  readonly preserveRevisionGeometry?: boolean;
+}
+
 export class DocumentViewRuntime {
   readonly canvas: HTMLDivElement;
   readonly topSpacer: HTMLDivElement;
@@ -66,7 +70,7 @@ export class DocumentViewRuntime {
   private readonly scrollAnchorOptions: MarkdownScrollAnchorControllerOptions;
   private readonly onFoldChange?: DocumentViewRuntimeOptions["onFoldChange"];
   private heightIndex: MarkdownHeightIndex | null = null;
-  private baseHeights = new Float64Array(0);
+  private baseHeights: Float64Array<ArrayBufferLike> = new Float64Array(0);
   private viewport: MarkdownViewportController | null = null;
   private scrollAnchor: MarkdownScrollAnchorController | null = null;
   private snapshot: MarkdownSnapshot | null = null;
@@ -139,11 +143,15 @@ export class DocumentViewRuntime {
     snapshot: MarkdownSnapshot,
     heights: ArrayLike<number>,
     viewportInput: MarkdownViewportInput,
+    options: DocumentViewPublishOptions = {},
   ): DocumentViewPatchResult {
     this.assertActive();
     if (heights.length !== snapshot.blocks.length) {
       throw new Error(`Height count ${heights.length} does not match ${snapshot.blocks.length} blocks`);
     }
+    const stabilizedHeights = options.preserveRevisionGeometry
+      ? this.stabilizeRevisionHeights(snapshot, heights)
+      : Float64Array.from(heights, (height) => normalizedHeight(height));
     this.snapshot = snapshot;
     const blockIds = new Array<string>(snapshot.blocks.length);
     this.blockIndexById = new Map();
@@ -151,9 +159,7 @@ export class DocumentViewRuntime {
       this.blockIndexById.set(block.id, block.index);
       blockIds[block.index] = block.id;
     }
-    this.baseHeights = heights instanceof Float64Array
-      ? heights.slice()
-      : Float64Array.from(heights, (height) => normalizedHeight(height));
+    this.baseHeights = stabilizedHeights;
     this.foldDescriptors = buildFoldDescriptors(snapshot.blocks);
     this.foldedBlockIds = new Set(
       [...this.foldedBlockIds].filter((blockId) => this.foldDescriptors.has(blockId)),
@@ -169,16 +175,40 @@ export class DocumentViewRuntime {
     if (this.viewport) this.viewport.reset(nextHeightIndex);
     else this.viewport = new MarkdownViewportController(nextHeightIndex, this.viewportOptions);
     this.heightIndex = nextHeightIndex;
-    if (this.scrollAnchor) this.scrollAnchor.reset(nextHeightIndex, blockIds);
+    if (this.scrollAnchor) this.scrollAnchor.reset(nextHeightIndex, blockIds, this.blockIndexById);
     else this.scrollAnchor = new MarkdownScrollAnchorController(
       nextHeightIndex,
       blockIds,
       this.scrollAnchorOptions,
+      this.blockIndexById,
     );
     return this.updateViewport(
       { ...viewportInput, revision: snapshot.revision },
       { origin: "programmatic" },
     );
+  }
+
+  private stabilizeRevisionHeights(snapshot: MarkdownSnapshot, heights: ArrayLike<number>): Float64Array {
+    const next = new Float64Array(heights.length);
+    for (let index = 0; index < heights.length; index += 1) {
+      next[index] = normalizedHeight(heights[index]);
+    }
+    const previousSnapshot = this.snapshot;
+    if (!previousSnapshot || this.baseHeights.length !== previousSnapshot.blocks.length) return next;
+    const previousById = new Map(previousSnapshot.blocks.map((block) => [block.id, block]));
+    const nextIds = new Set(snapshot.blocks.map((block) => block.id));
+    for (const block of snapshot.blocks) {
+      const exact = previousById.get(block.id);
+      if (exact) {
+        next[block.index] = this.baseHeights[exact.index]!;
+        continue;
+      }
+      const positional = previousSnapshot.blocks[block.index];
+      if (positional && positional.kind === block.kind && !nextIds.has(positional.id)) {
+        next[block.index] = this.baseHeights[positional.index]!;
+      }
+    }
+    return next;
   }
 
   updateViewport(

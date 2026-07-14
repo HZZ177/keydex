@@ -23,6 +23,7 @@ export {
 } from "./documentRead";
 export {
   DOCUMENT_WRITE_PROTOCOL_VERSION,
+  createDocumentWriteId,
   createDocumentWriteRequest,
 } from "./documentWrite";
 export type {

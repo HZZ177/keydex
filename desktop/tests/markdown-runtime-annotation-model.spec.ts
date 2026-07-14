@@ -28,6 +28,25 @@ function snapshot(source: string, revision = "r1", previousSnapshot?: MarkdownSn
 }
 
 describe("Snapshot-backed annotation MarkdownTextModel", () => {
+  it("does not traverse Snapshot blocks until a detailed projection is requested", () => {
+    const source = "# Guide\n\nUse **target** and [link](README.md).";
+    const runtimeSnapshot = snapshot(source);
+    let blockReads = 0;
+    const observedSnapshot = new Proxy(runtimeSnapshot, {
+      get(target, property, receiver) {
+        if (property === "blocks") blockReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const model = createMarkdownTextModel(source, "r1", observedSnapshot);
+
+    expect(model.logicalText).toBe(runtimeSnapshot.logical_text);
+    expect(blockReads).toBe(0);
+    expect(model.logicalDocument().blocks).toHaveLength(runtimeSnapshot.blocks.length);
+    expect(blockReads).toBeGreaterThan(0);
+  });
+
   it("keeps the Snapshot-backed logical/source projection internally consistent", () => {
     const source = markdownPreviewRendererParityFixture;
     const runtimeSnapshot = snapshot(source);

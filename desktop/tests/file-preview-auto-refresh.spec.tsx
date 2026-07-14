@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactElement } from "react";
+import { useEffect, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { DocumentReadResult, RuntimeBridge, WorkspaceMediaResponse } from "@/runtime";
 import { FilePreview } from "@/renderer/components/workspace/FilePreview";
 import {
   FileChangeProvider,
+  useFileChanges,
   type FileChangeTransport,
 } from "@/renderer/providers/FileChangeProvider";
 import type { AgentActionEnvelope, FileChangeEventItem } from "@/types/protocol";
@@ -34,6 +35,22 @@ describe("FilePreview auto refresh", () => {
     emitChanges(fixture, [{ kind: "modified", path: "other.txt" }]);
 
     await waitFor(() => expect(fixture.readDocument).toHaveBeenCalledTimes(1));
+  });
+
+  it("test-preview-002a 当前页面的文档写入回声不重载", async () => {
+    const fixture = createFixture();
+    fixture.readDocument.mockResolvedValue(snapshot("notes.txt", "before", "r1"));
+    renderPreview(
+      fixture,
+      <FilePreview request={{ type: "file", path: "notes.txt" }} runtime={fixture.runtime} workspaceId="ws-1" />,
+      "write-1",
+    );
+    await screen.findByText("before");
+
+    emitChanges(fixture, [{ kind: "modified", path: "notes.txt", write_id: "write-1" }]);
+
+    expect(fixture.readDocument).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("正在刷新，当前仍显示上次内容")).toBeNull();
   });
 
   it("test-preview-003 pending 保留旧内容", async () => {
@@ -293,12 +310,23 @@ function createFixture({ annotations = false }: { annotations?: boolean } = {}):
   };
 }
 
-function renderPreview(fixture: Fixture, preview: ReactElement) {
-  return render(wrap(fixture, preview));
+function renderPreview(fixture: Fixture, preview: ReactElement, documentWriteId?: string) {
+  return render(wrap(fixture, preview, documentWriteId));
 }
 
-function wrap(fixture: Fixture, preview: ReactElement) {
-  return <FileChangeProvider transport={fixture.transport}>{preview}</FileChangeProvider>;
+function wrap(fixture: Fixture, preview: ReactElement, documentWriteId?: string) {
+  return (
+    <FileChangeProvider transport={fixture.transport}>
+      {documentWriteId ? <DocumentWriteRegistration writeId={documentWriteId} /> : null}
+      {preview}
+    </FileChangeProvider>
+  );
+}
+
+function DocumentWriteRegistration({ writeId }: { writeId: string }) {
+  const fileChanges = useFileChanges();
+  useEffect(() => fileChanges.registerDocumentWrite(writeId), [fileChanges, writeId]);
+  return null;
 }
 
 function emitChanges(fixture: Fixture, changes: FileChangeEventItem[]) {

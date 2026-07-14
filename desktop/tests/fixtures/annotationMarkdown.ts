@@ -12,8 +12,8 @@ export function annotationMarkdownSnapshot(source: string, revision = "snapshot:
   });
 }
 
-export function createMarkdownTextModel(source: string, revision: string) {
-  return createRuntimeMarkdownTextModel(source, revision, annotationMarkdownSnapshot(source, revision));
+export function createMarkdownTextModel(source: string, revision: string, snapshotRevision = revision) {
+  return createRuntimeMarkdownTextModel(source, revision, annotationMarkdownSnapshot(source, snapshotRevision));
 }
 
 export function serializeMarkdownLogicalText(source: string) {

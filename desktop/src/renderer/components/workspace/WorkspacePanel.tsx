@@ -24,7 +24,10 @@ import { APP_FIND_SHORTCUT_EVENT, type AppFindShortcutDetail } from "@/renderer/
 import { subscribeExpandWorkspaceDirectory } from "@/renderer/events/workspaceFileContext";
 import { useWorkspaceFileSearch } from "@/renderer/hooks/useWorkspaceFileSearch";
 import { useOptionalFileChanges } from "@/renderer/providers/FileChangeProvider";
-import { WORKSPACE_FILE_SEARCH_BUDGET_HINT } from "@/renderer/utils/workspaceFileSearchBudget";
+import {
+  WORKSPACE_FILE_SEARCH_BUDGET_HINT,
+  WORKSPACE_FILE_SEARCH_DEBOUNCE_MS,
+} from "@/renderer/utils/workspaceFileSearchBudget";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import type { FileChangeEventItem } from "@/types/protocol";
 
@@ -247,6 +250,7 @@ export function WorkspacePanel({
   const normalizedFilter = filterQuery.trim().toLowerCase();
   const searchActive = normalizedFilter.length > 0;
   const searchState = useWorkspaceFileSearch({
+    debounceMs: WORKSPACE_FILE_SEARCH_DEBOUNCE_MS,
     enabled: searchActive && Boolean(scope),
     query: filterQuery,
     refreshToken: searchRefreshToken,

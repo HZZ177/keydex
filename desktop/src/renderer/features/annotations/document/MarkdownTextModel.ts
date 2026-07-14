@@ -18,16 +18,19 @@ import {
   type MarkdownLogicalDocument,
   type MarkdownLogicalSegment,
 } from "./markdownLogicalText";
+import { markdownPreviewContentHash } from "@/renderer/markdownShared/identity";
+import type { MarkdownSnapshot } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
 
 export class MarkdownTextModel implements DocumentTextModel {
   readonly kind = "markdown" as const;
   readonly rawSource: string;
   readonly logicalText: string;
   readonly revision: Readonly<{ documentRevision: string; textRevision: string }>;
-  readonly blocks: readonly DocumentBlock[];
-  readonly segments: readonly MarkdownLogicalSegment[];
+  readonly markdownSnapshotRevision: string | null;
 
-  private readonly serialized: MarkdownLogicalDocument;
+  private readonly snapshot: MarkdownSnapshot | null;
+  private serialized: MarkdownLogicalDocument | null;
+  private projectedBlocks: readonly DocumentBlock[] | null = null;
 
   constructor(
     rawSource: string,
@@ -37,28 +40,47 @@ export class MarkdownTextModel implements DocumentTextModel {
     if (!documentRevision.trim()) {
       throw new Error("MarkdownTextModel requires a document revision");
     }
-    const serialized = isLogicalDocument(sourceDocument)
-      ? sourceDocument
-      : serializeMarkdownLogicalText(rawSource, sourceDocument);
+    const snapshot = isMarkdownSnapshot(sourceDocument) ? sourceDocument : null;
+    const serialized = snapshot
+      ? null
+      : isLogicalDocument(sourceDocument)
+        ? sourceDocument
+        : serializeMarkdownLogicalText(rawSource, sourceDocument);
+    this.snapshot = snapshot;
     this.serialized = serialized;
     this.rawSource = rawSource;
-    this.logicalText = serialized.logicalText;
-    this.segments = serialized.segments;
+    this.logicalText = snapshot?.logical_text ?? serialized!.logicalText;
+    this.markdownSnapshotRevision = snapshot?.revision ?? null;
     this.revision = Object.freeze({
       documentRevision,
-      textRevision: serialized.textRevision,
+      textRevision: serialized?.textRevision
+        ?? `md-logical:${markdownPreviewContentHash(this.logicalText)}`,
     });
+  }
+
+  get blocks(): readonly DocumentBlock[] {
+    if (this.projectedBlocks) {
+      return this.projectedBlocks;
+    }
+    const serialized = this.logicalDocument();
     const sourceRangesByBlock = sourceRangesByBlockKey(serialized);
-    this.blocks = Object.freeze(serialized.blocks.map((block) => Object.freeze({
+    this.projectedBlocks = Object.freeze(serialized.blocks.map((block) => Object.freeze({
       key: block.key,
       logicalRange: freezeRange({ start: block.logicalStart, end: block.logicalEnd }),
       sourceRanges: sourceRangesByBlock.get(block.key) ?? Object.freeze([]),
       context: block.context,
     })));
-    Object.freeze(this);
+    return this.projectedBlocks;
+  }
+
+  get segments(): readonly MarkdownLogicalSegment[] {
+    return this.logicalDocument().segments;
   }
 
   logicalDocument(): MarkdownLogicalDocument {
+    if (!this.serialized) {
+      this.serialized = serializeMarkdownLogicalText(this.rawSource, this.snapshot!);
+    }
     return this.serialized;
   }
 
@@ -68,7 +90,11 @@ export class MarkdownTextModel implements DocumentTextModel {
       return Object.freeze([]);
     }
     const ranges: SourceRange[] = [];
-    for (const segment of this.segments) {
+    const segments = this.segments;
+    const first = firstLogicalOverlap(segments, range.start);
+    for (let index = first; index < segments.length; index += 1) {
+      const segment = segments[index]!;
+      if (segment.logicalStart >= range.end) break;
       if (segment.sourceStart === null || segment.sourceEnd === null) {
         continue;
       }
@@ -113,15 +139,16 @@ export class MarkdownTextModel implements DocumentTextModel {
 
   blockAt(offset: number): DocumentBlock | null {
     assertUtf16Offset(offset, this.logicalText.length, "logical offset");
-    const containing = this.blocks.find((block) =>
-      offset >= block.logicalRange.start && offset < block.logicalRange.end);
-    if (containing) {
-      return containing;
-    }
+    const blocks = this.blocks;
     if (offset === this.logicalText.length) {
-      return this.blocks.at(-1) ?? null;
+      return blocks.at(-1) ?? null;
     }
-    return this.blocks.find((block) => block.logicalRange.start > offset) ?? null;
+    const index = firstLogicalOverlap(blocks, offset);
+    const candidate = blocks[index];
+    if (!candidate) return null;
+    return offset >= candidate.logicalRange.start && offset < candidate.logicalRange.end
+      ? candidate
+      : candidate.logicalRange.start > offset ? candidate : null;
   }
 
   contextAt(range: LogicalRange): DocumentContext {
@@ -170,7 +197,11 @@ export class MarkdownTextModel implements DocumentTextModel {
 
   private toBlockRanges(range: LogicalRange): readonly BlockRangeProjection[] {
     const projections: BlockRangeProjection[] = [];
-    for (const block of this.blocks) {
+    const blocks = this.blocks;
+    const first = firstLogicalOverlap(blocks, range.start);
+    for (let index = first; index < blocks.length; index += 1) {
+      const block = blocks[index]!;
+      if (block.logicalRange.start >= range.end) break;
       const start = Math.max(range.start, block.logicalRange.start);
       const end = Math.min(range.end, block.logicalRange.end);
       if (end <= start) {
@@ -187,6 +218,22 @@ export class MarkdownTextModel implements DocumentTextModel {
     return Object.freeze(projections);
   }
 
+}
+
+function firstLogicalOverlap<T extends {
+  readonly logicalEnd?: number;
+  readonly logicalRange?: LogicalRange;
+}>(items: readonly T[], offset: number): number {
+  let low = 0;
+  let high = items.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const item = items[middle]!;
+    const end = item.logicalEnd ?? item.logicalRange!.end;
+    if (end <= offset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
 }
 
 export function createMarkdownTextModel(
@@ -209,6 +256,12 @@ function isLogicalDocument(
   value: MarkdownLogicalSourceDocument | MarkdownLogicalDocument,
 ): value is MarkdownLogicalDocument {
   return "logicalText" in value && "segments" in value && "textRevision" in value;
+}
+
+function isMarkdownSnapshot(
+  value: MarkdownLogicalSourceDocument | MarkdownLogicalDocument,
+): value is MarkdownSnapshot {
+  return "schema_version" in value;
 }
 
 function appendSourceRange(ranges: SourceRange[], next: SourceRange): void {

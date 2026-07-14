@@ -39,6 +39,7 @@ import {
 } from "@/renderer/components/chat/SlashCommandMenu";
 import { ContextChipIcon } from "@/renderer/components/chat/ContextChipIcon";
 import { useWorkspaceFileSearch, type WorkspaceFileSearchFn } from "@/renderer/hooks/useWorkspaceFileSearch";
+import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from "@/renderer/utils/workspaceFileSearchBudget";
 import { ImagePreviewDialog } from "@/renderer/components/workspace/ImagePreviewSurface";
 
 import styles from "./SendBox.module.css";
@@ -436,6 +437,7 @@ export function SendBox({
       : null;
   const atSearchQuery = atDirectoryPath === null ? atQuery ?? "" : "";
   const atSearchState = useWorkspaceFileSearch({
+    debounceMs: WORKSPACE_FILE_SEARCH_DEBOUNCE_MS,
     enabled: atOpen && canUseFileContext && atDirectoryPath === null && Boolean(onSearchWorkspace),
     query: atSearchQuery,
     search: onSearchWorkspace,

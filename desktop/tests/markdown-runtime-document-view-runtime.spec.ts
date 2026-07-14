@@ -73,6 +73,37 @@ describe("DocumentViewRuntime keyed DOM patch", () => {
     element.remove();
   });
 
+  it("keeps measured block geometry stable while publishing an edited revision", () => {
+    const firstSnapshot = parse("Alpha\n\nBeta\n\nGamma", "r1");
+    const secondSnapshot = parse("Alpha\n\nBeta edited\n\nGamma", "r2", firstSnapshot);
+    const element = host();
+    const runtime = new DocumentViewRuntime(element, {
+      profile: FILE_MARKDOWN_RENDERER_PROFILE,
+      viewport: { defaultOverscanPx: 0 },
+    });
+    runtime.publish(firstSnapshot, [30, 80, 40], { scrollTop: 0, viewportHeight: 200 });
+    const alpha = runtime.getBlockElement(firstSnapshot.blocks[0]!.id);
+    const oldBeta = runtime.getBlockElement(firstSnapshot.blocks[1]!.id);
+    const gamma = runtime.getBlockElement(firstSnapshot.blocks[2]!.id);
+
+    const result = runtime.publish(
+      secondSnapshot,
+      [12, 12, 12],
+      { scrollTop: 0, viewportHeight: 200 },
+      { preserveRevisionGeometry: true },
+    );
+
+    expect(result.render).toMatchObject({ created: 1, reused: 2, destroyed: 1 });
+    expect(runtime.getBlockElement(secondSnapshot.blocks[0]!.id)).toBe(alpha);
+    expect(runtime.getBlockElement(secondSnapshot.blocks[1]!.id)).not.toBe(oldBeta);
+    expect(runtime.getBlockElement(secondSnapshot.blocks[2]!.id)).toBe(gamma);
+    expect(runtime.getBlockElement(secondSnapshot.blocks[1]!.id)?.style.top).toBe("30px");
+    expect(runtime.getBlockElement(secondSnapshot.blocks[2]!.id)?.style.top).toBe("110px");
+    expect(runtime.canvas.style.height).toBe("150px");
+    runtime.destroy();
+    element.remove();
+  });
+
   it("pins the focused block outside overscan and releases it after focus moves", () => {
     const snapshot = parse([
       "```ts",

@@ -205,7 +205,38 @@ describe("AnnotationResolver shared Document Worker and cache", () => {
     expect(payload).not.toHaveProperty("markdown_projection");
   });
 
-  it("rejects stale model revisions and attachment/snapshot identity drift", async () => {
+  it("keeps resolving against a retained draft Snapshot after the same content is auto-saved", async () => {
+    const snapshot = annotationMarkdownSnapshot("alpha", "draft:alpha");
+    const model = createMarkdownTextModel("alpha", "sha256:saved", "draft:alpha");
+    const expected = resolveDocumentAnnotations(model, []);
+    const request = vi.fn(async (value: MarkdownWorkerRequest) => ({
+      protocol_version: value.protocol_version,
+      surface: value.surface,
+      document_id: value.document_id,
+      revision: value.revision,
+      request_id: value.request_id,
+      type: "annotations-result" as const,
+      payload: { result: expected },
+    }));
+    const bridge = new DocumentWorkerAnnotationResolver({
+      documentId: snapshot.document_id,
+      surface: snapshot.surface,
+      request,
+    }, snapshot);
+
+    await expect(bridge.resolve({
+      model,
+      path: "README.md",
+      records: [],
+      workspaceId: "ws-1",
+    })).resolves.toEqual(expected);
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
+      revision: "draft:alpha",
+      type: "resolve-annotations",
+    }), { signal: undefined });
+  });
+
+  it("rejects stale model Snapshot revisions and attachment/snapshot identity drift", async () => {
     const snapshot = annotationMarkdownSnapshot("alpha", "sha256:current");
     const request = vi.fn();
     const bridge = new DocumentWorkerAnnotationResolver({

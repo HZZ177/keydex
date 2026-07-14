@@ -397,6 +397,59 @@ describe("unified FilePreview annotations", () => {
     }
   });
 
+  it("keeps the split canvas fixed when a deep body marker opens the annotation rail", async () => {
+    render(
+      <FilePreview
+        markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader}
+        request={{ type: "file", path: "README.md" }}
+        runtime={runtime()}
+        workspaceId="ws-1"
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Title" })).not.toBeNull();
+    const modeButtons = document.querySelectorAll<HTMLButtonElement>("[class*='segmented'] button");
+    fireEvent.click(modeButtons[2]!);
+    const marker = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>(
+        "[data-markdown-annotation-overlay-marker='true'][data-annotation-id='ann-alpha']",
+      );
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    const outerViewport = document.querySelector<HTMLElement>("[data-document-scroll-viewport='true']")!;
+    const previewViewport = document.querySelector<HTMLElement>("[data-split-scroll-pane='preview']")!;
+    const outerScrollTo = vi.fn();
+    Object.defineProperties(outerViewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 4_000 },
+      scrollTo: { configurable: true, value: outerScrollTo },
+      scrollTop: { configurable: true, value: 0, writable: true },
+    });
+    Object.defineProperties(previewViewport, {
+      clientHeight: { configurable: true, value: 370 },
+      scrollHeight: { configurable: true, value: 4_000 },
+      scrollTop: { configurable: true, value: 720, writable: true },
+    });
+    fireEvent.scroll(previewViewport);
+
+    fireEvent.click(marker);
+
+    const rail = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>("[data-annotation-rail='true']");
+      expect(element?.hidden).toBe(false);
+      expect(element?.scrollTop).toBe(720);
+      return element as HTMLElement;
+    });
+    await waitFor(() => {
+      expect(document.querySelector("[data-annotation-card-id='ann-alpha']")
+        ?.getAttribute("data-annotation-navigation-flash")).toBe("true");
+    });
+    expect(rail.getAttribute("data-split-mode")).toBe("true");
+    expect(outerViewport.scrollTop).toBe(0);
+    expect(outerScrollTo).not.toHaveBeenCalled();
+  });
+
   it("keeps unified annotations active on the retained Runtime across preview, source, and split", async () => {
     const rangeRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
     const rangeRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
