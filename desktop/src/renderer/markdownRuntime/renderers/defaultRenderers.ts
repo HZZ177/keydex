@@ -399,7 +399,12 @@ function renderList(element: HTMLElement, context: MarkdownBlockRendererContext)
   const items = ranges.slice(0, Math.max(expected, 1));
   for (const range of items) {
     const item = context.ownerDocument.createElement("li");
-    const marker = listMarker(context.ownerDocument, element.tagName === "OL", null);
+    const marker = listMarker(
+      context.ownerDocument,
+      element.tagName === "OL",
+      null,
+      context.block.logical_start + range.start,
+    );
     const content = context.ownerDocument.createElement("span");
     content.dataset.markdownListContent = "true";
     renderInlineRange(content, context, range.start, range.end);
@@ -432,7 +437,12 @@ function renderStructuredList(
     const item = context.ownerDocument.createElement("li");
     item.dataset.markdownListDepth = String(itemModel.depth);
     if (itemModel.checked !== null) item.dataset.markdownTaskItem = "true";
-    const marker = listMarker(context.ownerDocument, itemModel.ordered, itemModel.ordinal);
+    const marker = listMarker(
+      context.ownerDocument,
+      itemModel.ordered,
+      itemModel.ordinal,
+      context.block.logical_start + itemModel.logical_start,
+    );
     const content = context.ownerDocument.createElement("span");
     content.dataset.markdownListContent = "true";
     if (itemModel.checked !== null) {
@@ -455,9 +465,16 @@ function renderStructuredList(
   }
 }
 
-function listMarker(owner: Document, ordered: boolean, ordinal: number | null): HTMLSpanElement {
+function listMarker(
+  owner: Document,
+  ordered: boolean,
+  ordinal: number | null,
+  logicalOffset: number,
+): HTMLSpanElement {
   const marker = owner.createElement("span");
   marker.dataset.markdownListMarker = "true";
+  marker.dataset.markdownLogicalStart = String(logicalOffset);
+  marker.dataset.markdownLogicalEnd = String(logicalOffset);
   marker.dataset.markdownSelectionExclude = "true";
   marker.setAttribute("aria-hidden", "true");
   marker.textContent = ordered ? `${ordinal ?? 1}. ` : "• ";
@@ -542,6 +559,20 @@ function renderCode(element: HTMLElement, context: MarkdownBlockRendererContext)
       block: context.block,
     }));
     header.append(open);
+  }
+  if (context.block.kind === "mermaid" && context.interactions.onResourceAnnotate) {
+    const annotate = context.ownerDocument.createElement("button");
+    annotate.type = "button";
+    annotate.setAttribute("aria-label", "批注整个 Mermaid 图表");
+    annotate.title = "批注整个 Mermaid 图表";
+    annotate.dataset.markdownResourceAnnotate = "true";
+    annotate.dataset.markdownSelectionExclude = "true";
+    annotate.style.userSelect = "none";
+    replaceMarkdownActionIcon(annotate, "annotation");
+    annotate.addEventListener("click", () => context.interactions.onResourceAnnotate?.({
+      block: context.block,
+    }));
+    header.append(annotate);
   }
 }
 

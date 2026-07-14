@@ -103,6 +103,37 @@ describe("MarkdownAnnotationOverlayController", () => {
     harness.destroy();
   });
 
+  it("renders a whole Mermaid annotation on the resource frame and keeps header actions clickable", () => {
+    const activate = vi.fn();
+    const source = "```mermaid\ngraph TD\nA[Start] --> B[Finish]\n```";
+    const harness = setup(source, [0], { onActivate: activate });
+    const block = harness.snapshot.blocks[0]!;
+    const root = harness.renderer.getBlockElement(block.id)!;
+    vi.spyOn(root, "getBoundingClientRect").mockReturnValue(rect(10, 20, 320, 180) as DOMRect);
+    const marker = markerForBlock(block, "diagram", 0, block.logical_end - block.logical_start);
+    harness.controller.publish(overlayState(harness, [marker]));
+    harness.controller.syncMountedBlocks([block.id]);
+
+    const resourceMarker = root.querySelector<HTMLElement>("[data-markdown-annotation-resource-block='true']")!;
+    expect(resourceMarker).not.toBeNull();
+    expect(resourceMarker.style.width).toBe("320px");
+    expect(resourceMarker.style.height).toBe("180px");
+    expect(resourceMarker.style.pointerEvents).toBe("none");
+
+    const renderedLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    renderedLabel.textContent = "Start";
+    root.append(renderedLabel);
+    renderedLabel.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(activate).toHaveBeenCalledWith("diagram");
+
+    const action = document.createElement("button");
+    action.dataset.markdownSelectionExclude = "true";
+    root.append(action);
+    action.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(activate).toHaveBeenCalledTimes(1);
+    harness.destroy();
+  });
+
   it("uses block-local event delegation and can reveal an unmounted active annotation", async () => {
     const activate = vi.fn();
     const hover = vi.fn();

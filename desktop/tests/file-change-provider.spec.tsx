@@ -1,4 +1,5 @@
 import { act, cleanup, render } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -217,5 +218,69 @@ describe("FileChangeProvider", () => {
     });
 
     expect(stateReference).toBe(before);
+  });
+
+  it("keeps workspace and local file watches bound when unrelated agent runtime state changes", () => {
+    let setRuntimeDetail: ((detail: string | null) => void) | null = null;
+    const bindLocalFileWatch = vi.fn();
+    const bindWorkspaceWatch = vi.fn();
+    const unbindLocalFileWatch = vi.fn();
+    const unbindWorkspaceWatch = vi.fn();
+    const channel = {
+      bindLocalFileWatch,
+      bindWorkspaceWatch,
+      close: vi.fn(),
+      getStatus: () => "open",
+      getSessionId: () => null,
+      requestStatus: vi.fn(),
+      unbindLocalFileWatch,
+      unbindWorkspaceWatch,
+    } as unknown as ChatChannel;
+    const runtime = {
+      conversation: {
+        openChatChannel() {
+          return channel;
+        },
+      },
+    } as unknown as RuntimeBridge;
+    const listener = vi.fn();
+
+    function Probe() {
+      const agentRuntime = useAgentSessionRuntime();
+      const fileChanges = useFileChanges();
+      setRuntimeDetail = agentRuntime.setRuntimeDetail;
+      useEffect(() => {
+        const unsubscribeWorkspace = fileChanges.subscribeWorkspace("ws-1", listener);
+        const unsubscribeLocal = fileChanges.subscribeLocalFile(
+          "local-1",
+          "D:/tmp/a.md",
+          listener,
+        );
+        return () => {
+          unsubscribeLocal();
+          unsubscribeWorkspace();
+        };
+      }, [fileChanges]);
+      return null;
+    }
+
+    render(
+      <AgentSessionProvider runtime={runtime}>
+        <FileChangeProvider>
+          <Probe />
+        </FileChangeProvider>
+      </AgentSessionProvider>,
+    );
+    expect(bindLocalFileWatch).toHaveBeenCalledTimes(1);
+    expect(bindWorkspaceWatch).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      setRuntimeDetail?.("agent stream updated");
+    });
+
+    expect(bindLocalFileWatch).toHaveBeenCalledTimes(1);
+    expect(bindWorkspaceWatch).toHaveBeenCalledTimes(1);
+    expect(unbindLocalFileWatch).not.toHaveBeenCalled();
+    expect(unbindWorkspaceWatch).not.toHaveBeenCalled();
   });
 });

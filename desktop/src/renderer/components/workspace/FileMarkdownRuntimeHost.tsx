@@ -51,12 +51,18 @@ import {
   attachMarkdownRuntimeView,
   type MarkdownRuntimeViewAttachment,
   type MarkdownViewDescriptor,
+  type MarkdownViewScrollAnchor,
   type MarkdownViewStateAttachment,
 } from "@/renderer/markdownRuntime/view";
 import type { MarkdownRuntimeAttachment } from "@/renderer/markdownRuntime/MarkdownRuntimeStore";
 import { MARKDOWN_WORKER_PROTOCOL_VERSION } from "@/renderer/markdownRuntime/worker/protocol";
 
-import { fileMarkdownRuntimeStore, fileMarkdownViewStateStore } from "./fileMarkdownRuntime";
+import {
+  fileMarkdownRuntimeStore,
+  fileMarkdownViewStateStore,
+  recordFileMarkdownRuntimeEntrySnapshot,
+  registerFileMarkdownRuntimeEntry,
+} from "./fileMarkdownRuntime";
 
 export interface FileMarkdownRuntimeHostHandle {
   revealSourceOffset(offset: number, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
@@ -357,6 +363,11 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         });
         host.dataset.markdownRuntimeViewId = props.viewDescriptor.viewId;
         host.dataset.markdownRuntimeEntryId = props.viewDescriptor.entryId;
+        registerFileMarkdownRuntimeEntry(props.viewDescriptor, {
+          surface: "file",
+          workspaceId: props.workspaceId,
+          path: props.path,
+        });
       }
       if (!props.snapshotLoader && !runtimeViewAttachment) {
         attachment = fileMarkdownRuntimeStore().attach({
@@ -429,6 +440,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         if (!active) return;
         if (preparedHeights) await yieldMainThread();
         if (!active) return;
+        persistCurrentScrollAnchor(state);
         state.snapshot = snapshot;
         if (!runtimeViewAttachment && viewStateAttachment) {
           viewStateAttachment.reconcileRevision(snapshot.revision, {
@@ -442,6 +454,9 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
         restoreScrollAnchor(state);
         syncRenderCount(host, state, props.onRender);
         lastGoodSnapshotRef.current = { key: documentKey, snapshot };
+        if (props.viewDescriptor) {
+          recordFileMarkdownRuntimeEntrySnapshot(props.viewDescriptor, snapshot.estimated_bytes);
+        }
         visiblePrefixAttachment?.detach();
         visiblePrefixAttachment = null;
         delete host.dataset.markdownRuntimeStale;
@@ -963,10 +978,8 @@ function publishSnapshot(
   const host = state.view.host;
   const width = Math.max(1, state.scrollElement.clientWidth || host.clientWidth || 800);
   const heights = preparedHeights ?? estimateMarkdownSnapshotHeights(snapshot, { viewportWidth: width });
-  const initialScrollTop = state.viewState ? 0 : state.scrollElement.scrollTop;
-  if (state.viewState) state.scrollElement.scrollTop = 0;
   const patch = state.view.publish(snapshot, heights, {
-    scrollTop: initialScrollTop,
+    scrollTop: state.scrollElement.scrollTop,
     viewportHeight: state.scrollElement.clientHeight,
   });
   restoreScrollAnchor(state);
@@ -1043,14 +1056,22 @@ function persistScrollAnchor(state: HostState, visibleBlockIndex: number): void 
   });
 }
 
+function persistCurrentScrollAnchor(state: HostState): void {
+  if (!state.snapshot || !state.viewState) return;
+  const current = state.view.getHeightIndex()?.queryY(state.scrollElement.scrollTop);
+  if (current) persistScrollAnchor(state, current.index);
+}
+
 function restoreScrollAnchor(state: HostState): void {
   const anchor = state.viewState?.snapshot().scrollAnchor;
   const index = state.view.getHeightIndex();
   const snapshot = state.snapshot;
   if (!anchor || !index || !snapshot) return;
-  const blockIndex = anchor.blockId
-    ? state.view.getBlockIndex(anchor.blockId)
-    : markdownBlockIndexAtSourceOffset(snapshot, anchor.sourceOffset);
+  const blockIndex = resolveFileMarkdownScrollAnchorBlockIndex(
+    snapshot,
+    anchor,
+    (blockId) => state.view.getBlockIndex(blockId),
+  );
   const block = blockIndex === null ? null : snapshot.blocks[blockIndex];
   if (!block) return;
   const scrollTop = Math.max(0, index.offsetOf(block.index) + anchor.offsetPx);
@@ -1293,6 +1314,15 @@ function markdownBlockIndexAtSourceOffset(snapshot: MarkdownSnapshot, offset: nu
   if (candidate < 0) return null;
   const block = snapshot.blocks[candidate]!;
   return offset <= block.source_end ? candidate : null;
+}
+
+export function resolveFileMarkdownScrollAnchorBlockIndex(
+  snapshot: MarkdownSnapshot,
+  anchor: Pick<MarkdownViewScrollAnchor, "blockId" | "sourceOffset">,
+  blockIndexForId: (blockId: string) => number | null,
+): number | null {
+  const blockIdIndex = anchor.blockId ? blockIndexForId(anchor.blockId) : null;
+  return blockIdIndex ?? markdownBlockIndexAtSourceOffset(snapshot, anchor.sourceOffset);
 }
 
 function markdownBlockIndexAtSourceLine(snapshot: MarkdownSnapshot, zeroBasedLine: number): number | null {

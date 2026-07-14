@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   FileMarkdownRuntimeHost,
+  resolveFileMarkdownScrollAnchorBlockIndex,
   type FileMarkdownRuntimeHostHandle,
   type FileMarkdownRuntimeSnapshotLoader,
 } from "@/renderer/components/workspace/FileMarkdownRuntimeHost";
@@ -168,6 +169,26 @@ describe("FileMarkdownRuntimeHost", () => {
     expect(renderCount.current).toBe(beforeReactRenders);
     expect(Number(canvas.dataset.markdownRuntimeRenderCount) - beforeRuntimePatches).toBe(1);
     expect(canvas.querySelectorAll("[data-markdown-block-id]").length).toBeLessThan(80);
+  });
+
+  it("falls back to the source offset when a visible-prefix block id is absent from the canonical snapshot", () => {
+    const source = ["# Title", "", "First paragraph", "", "Second paragraph", "", "Third paragraph"].join("\n");
+    const visiblePrefixSnapshot = parseCanonicalMarkdownSnapshot({
+      surface: "file",
+      documentId: "file:workspace-1:README.md#visible-prefix",
+      revision: "visible-r1",
+      source,
+      rendererProfile: "file-preview",
+    });
+    const canonicalSnapshot = parse(source, "canonical-r1");
+    const anchorBlock = visiblePrefixSnapshot.blocks[2]!;
+
+    expect(canonicalSnapshot.blocks[anchorBlock.index]?.id).not.toBe(anchorBlock.id);
+    expect(resolveFileMarkdownScrollAnchorBlockIndex(
+      canonicalSnapshot,
+      { blockId: anchorBlock.id, sourceOffset: anchorBlock.source_start },
+      (blockId) => canonicalSnapshot.blocks.find((block) => block.id === blockId)?.index ?? null,
+    )).toBe(anchorBlock.index);
   });
 
   it("reveals source lines and blocks through the height index", async () => {

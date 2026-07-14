@@ -324,6 +324,36 @@ def test_websocket_terminate_command_does_not_cancel_turn(tmp_path) -> None:
     }
 
 
+def test_websocket_cancel_reconciles_missing_run_after_backend_restart(tmp_path) -> None:
+    client = _client(tmp_path)
+
+    with client.websocket_connect("/agent-base/ws/chat") as ws:
+        ws.send_json({"action": "create_session"})
+        session_id = ws.receive_json()["data"]["session_id"]
+        client.app.state.repositories.sessions.update(session_id, status="running")
+
+        ws.send_json({"action": "cancel", "session_id": session_id})
+        status = ws.receive_json()
+
+    assert status["action"] == "status"
+    assert status["data"]["session_id"] == session_id
+    assert status["data"]["status"] == "idle"
+    assert client.app.state.repositories.sessions.get(session_id).status == "active"
+
+
+def test_app_startup_recovers_running_session_left_by_previous_process(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path))
+    app.state.repositories.sessions.create(
+        session_id="ses-restart",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        status="running",
+    )
+
+    with TestClient(app):
+        assert app.state.repositories.sessions.get("ses-restart").status == "active"
+
+
 def test_websocket_approval_decision_resolves_mcp_tool_call(tmp_path) -> None:
     client = _client(tmp_path)
     repositories = client.app.state.repositories

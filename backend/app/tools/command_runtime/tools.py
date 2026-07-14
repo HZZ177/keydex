@@ -25,6 +25,7 @@ from backend.app.tools.command_runtime.models import (
     CommandRunResult,
     CommandRuntime,
     CommandSettings,
+    CommandTimeoutSource,
     CommandToolArgs,
 )
 from backend.app.tools.command_runtime.output_store import CommandOutputStore
@@ -91,11 +92,17 @@ async def run_configured_command_tool(
     settings = _command_settings(context)
     runtime = CommandRuntime.from_settings(settings)
     tool_name = _tool_name(context)
+    timeout_seconds = _effective_timeout(tool_args.timeout_seconds, settings)
+    timeout_source: CommandTimeoutSource = (
+        "default" if tool_args.timeout_seconds is None else "model"
+    )
     if runtime is None or tool_name not in SHELL_BY_TOOL or runtime.tool_name != tool_name:
         return _unavailable_result(
             tool_name=tool_name,
             command=tool_args.command,
             settings=settings,
+            timeout_seconds=timeout_seconds,
+            timeout_source=timeout_source,
         )
     validation = validate_shell_executable(runtime.shell, runtime.shell_path)
     if not validation.found:
@@ -103,12 +110,13 @@ async def run_configured_command_tool(
             tool_name=tool_name,
             command=tool_args.command,
             settings=settings,
+            timeout_seconds=timeout_seconds,
+            timeout_source=timeout_source,
             error=validation.error or "当前命令环境不可用",
         )
 
     cwd = _resolve_cwd(tool_args.cwd, context)
     cwd_label = _relative(cwd, context)
-    timeout_seconds = _effective_timeout(tool_args.timeout_seconds, settings)
     command_id = new_id()
     run_id = _metadata_text(context, "run_id")
     tool_call_id = _metadata_text(context, "tool_call_id")
@@ -120,6 +128,7 @@ async def run_configured_command_tool(
         cwd=cwd,
         cwd_label=cwd_label,
         timeout_seconds=timeout_seconds,
+        timeout_source=timeout_source,
         session_id=context.session_id,
         user_id=context.user_id,
         turn_index=context.turn_index,
@@ -240,6 +249,7 @@ async def _approval_before_spawn(
         "shell_path": runtime.shell_path,
         "description": request.description,
         "timeout_seconds": request.timeout_seconds,
+        "timeout_source": request.timeout_source,
         "workspace_root": str(context.workspace_root),
     }
     approval_service = ApprovalService(
@@ -312,6 +322,7 @@ async def _emit_progress_until_done(
                 "description": request.description,
                 "cwd": request.cwd_label,
                 "timeout_seconds": request.timeout_seconds,
+                "timeout_source": request.timeout_source,
                 "status": status,
                 "cancel_reason": cancel_reason,
                 "elapsed_ms": int((time.perf_counter() - started_at) * 1000),
@@ -366,6 +377,8 @@ def _unavailable_result(
     tool_name: str,
     command: str,
     settings: CommandSettings,
+    timeout_seconds: float,
+    timeout_source: CommandTimeoutSource,
     error: str | None = None,
 ) -> dict[str, Any]:
     shell = settings.selected_shell
@@ -381,6 +394,8 @@ def _unavailable_result(
         "shell_path": settings.shell_path,
         "command": command,
         "status": "shell_not_available",
+        "timeout_seconds": timeout_seconds,
+        "timeout_source": timeout_source,
         "exit_code": None,
         "stdout": "",
         "stderr": message,
@@ -415,6 +430,7 @@ def _rejected_result(
         exit_code=None,
         duration_ms=0,
         timeout_seconds=request.timeout_seconds,
+        timeout_source=request.timeout_source,
         output_path=None,
         output_bytes=0,
         output_truncated=False,

@@ -407,6 +407,13 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
     const blockRect = root.getBoundingClientRect();
     let fragmentCount = 0;
     for (const marker of markers) {
+      if (this.isWholeResourceBlockMarker(root, marker)) {
+        if (blockRect.width > 0 && blockRect.height > 0) {
+          fragment.append(this.markerElement(root.ownerDocument, marker, 0, blockRect, blockRect, true));
+          fragmentCount += 1;
+        }
+        continue;
+      }
       const start = this.mapper.blockLocal(blockId, marker.blockLocalStart);
       const end = this.mapper.blockLocal(blockId, marker.blockLocalEnd);
       if (!start.dom || !end.dom) continue;
@@ -485,6 +492,7 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
     fragmentIndex: number,
     rect: DOMRectReadOnly,
     blockRect: DOMRectReadOnly,
+    resourceBlock = false,
   ): HTMLSpanElement {
     const element = ownerDocument.createElement("span");
     const active = marker.annotationId === this.state.activeAnnotationId;
@@ -502,6 +510,7 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
       element.dataset.markdownAnnotationBlockLocalStart = String(marker.blockLocalStart);
       element.dataset.markdownAnnotationBlockLocalEnd = String(marker.blockLocalEnd);
       element.dataset.markdownAnnotationFragment = String(fragmentIndex);
+      if (resourceBlock) element.dataset.markdownAnnotationResourceBlock = "true";
     } else if (this.variant === "find") {
       element.classList.add("findMark");
       element.dataset.filePreviewFindMatch = "true";
@@ -526,7 +535,7 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
     element.style.top = `${rect.top - blockRect.top + this.mountedScrollTop(marker.blockId)}px`;
     element.style.width = `${rect.width}px`;
     element.style.height = `${rect.height}px`;
-    element.style.borderRadius = "3px";
+    element.style.borderRadius = resourceBlock ? "6px" : "3px";
     if (this.variant !== "annotation") {
       element.style.background = active
         ? "color-mix(in srgb, var(--warning, #f0a020) 58%, transparent)"
@@ -535,16 +544,24 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
         ? "inset 0 -2px 0 color-mix(in srgb, var(--warning, #f0a020) 95%, transparent)"
         : "inset 0 -1px 0 color-mix(in srgb, var(--warning, #f0a020) 60%, transparent)";
     } else {
-      element.style.background = active
-        ? "color-mix(in srgb, var(--annotation-accent, #d4a72c) 42%, transparent)"
-        : hovered
-          ? "color-mix(in srgb, var(--annotation-accent, #d4a72c) 34%, transparent)"
-          : "color-mix(in srgb, var(--annotation-accent, #d4a72c) 20%, transparent)";
-      element.style.boxShadow = active
-        ? "inset 0 -2px 0 color-mix(in srgb, var(--annotation-accent, #d4a72c) 95%, transparent)"
-        : "inset 0 -1px 0 color-mix(in srgb, var(--annotation-accent, #d4a72c) 68%, transparent)";
+      element.style.background = resourceBlock
+        ? active
+          ? "color-mix(in srgb, var(--annotation-accent, #d4a72c) 12%, transparent)"
+          : hovered
+            ? "color-mix(in srgb, var(--annotation-accent, #d4a72c) 9%, transparent)"
+            : "color-mix(in srgb, var(--annotation-accent, #d4a72c) 5%, transparent)"
+        : active
+          ? "color-mix(in srgb, var(--annotation-accent, #d4a72c) 42%, transparent)"
+          : hovered
+            ? "color-mix(in srgb, var(--annotation-accent, #d4a72c) 34%, transparent)"
+            : "color-mix(in srgb, var(--annotation-accent, #d4a72c) 20%, transparent)";
+      element.style.boxShadow = resourceBlock
+        ? `inset 0 0 0 ${active ? 2 : 1}px color-mix(in srgb, var(--annotation-accent, #d4a72c) ${active ? 95 : hovered ? 82 : 68}%, transparent)`
+        : active
+          ? "inset 0 -2px 0 color-mix(in srgb, var(--annotation-accent, #d4a72c) 95%, transparent)"
+          : "inset 0 -1px 0 color-mix(in srgb, var(--annotation-accent, #d4a72c) 68%, transparent)";
     }
-    if (this.variant === "annotation") {
+    if (this.variant === "annotation" && !resourceBlock) {
       // The highlight is the interaction target. Keeping every fragment
       // pointer-transparent makes the browser show a text caret and forces
       // hit-testing through a stale caret position after a responsive reflow.
@@ -555,6 +572,17 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
     }
     element.style.zIndex = String(active ? 3 : hovered ? 2 : 1);
     return element;
+  }
+
+  private isWholeResourceBlockMarker(
+    root: HTMLElement,
+    marker: MarkdownAnnotationOverlayMarker,
+  ): boolean {
+    if (this.variant !== "annotation" || root.dataset.markdownMermaidBlock !== "true") return false;
+    const block = this.snapshot.blocks[marker.blockIndex];
+    if (!block) return false;
+    return marker.blockLocalStart === 0
+      && marker.blockLocalEnd === block.logical_end - block.logical_start;
   }
 
   private mountedScrollLeft(blockId: string): number {
@@ -579,15 +607,19 @@ export class MarkdownAnnotationOverlayController implements MarkdownAnnotationOv
   }
 
   private annotationAtEvent(blockId: string, event: MouseEvent): string | null {
+    if (eventTargetExcludesBlockAnnotation(event.target)) return null;
     const direct = eventTargetMarker(event.target)?.dataset.annotationId;
     if (direct) return direct;
     const point = caretPointFromClient(event.currentTarget as HTMLElement, event.clientX, event.clientY);
-    if (!point) return null;
-    const mapped = this.mapper.domPosition(point.node, point.offset);
-    if (mapped.blockId !== blockId || mapped.blockLocalLogicalOffset === null) return null;
-    const candidates = (this.markersByBlock.get(blockId) ?? EMPTY_MARKERS).filter((marker) =>
-      mapped.blockLocalLogicalOffset! >= marker.blockLocalStart
-      && mapped.blockLocalLogicalOffset! <= marker.blockLocalEnd);
+    const mapped = point ? this.mapper.domPosition(point.node, point.offset) : null;
+    const candidates = mapped?.blockId === blockId && mapped.blockLocalLogicalOffset !== null
+      ? (this.markersByBlock.get(blockId) ?? EMPTY_MARKERS).filter((marker) =>
+          mapped.blockLocalLogicalOffset! >= marker.blockLocalStart
+          && mapped.blockLocalLogicalOffset! <= marker.blockLocalEnd)
+      : (this.markersByBlock.get(blockId) ?? EMPTY_MARKERS).filter((marker) => {
+          const root = this.mountedRoots.get(blockId);
+          return Boolean(root) && this.isWholeResourceBlockMarker(root!, marker);
+        });
     if (!candidates.length) return null;
     return [...candidates].sort((left, right) =>
       Number(right.annotationId === this.state.activeAnnotationId)
@@ -787,6 +819,11 @@ function eventTargetMarker(target: EventTarget | null): HTMLElement | null {
   return target instanceof Element
     ? target.closest<HTMLElement>("[data-markdown-annotation-overlay-marker]")
     : null;
+}
+
+function eventTargetExcludesBlockAnnotation(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && target.closest("[data-markdown-selection-exclude='true']") !== null;
 }
 
 function caretPointFromClient(

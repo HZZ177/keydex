@@ -178,6 +178,9 @@ export function useUnifiedAnnotationSession({
   const navigate = useCallback((item: ResolvedTextAnnotation) => {
     void navigator.navigate({ annotationId: item.record.id, mode, projection: item.projection }).catch(() => undefined);
   }, [mode, navigator]);
+  const deactivate = useCallback((annotationId: string) => {
+    navigator.deactivate(annotationId);
+  }, [navigator]);
   const beginDraft = useCallback((selection: DocumentSelection | null) => {
     if (!model || !selection) return false;
     const projection = model.projectSelection(selection);
@@ -254,6 +257,7 @@ export function useUnifiedAnnotationSession({
     beginDraftFromRuntimeSelection,
     bindMarkdown,
     connectorGeometry: connectorGeometrySnapshot,
+    deactivate,
     draftAnchorY,
     lanePlacements,
     markdownAdapter,

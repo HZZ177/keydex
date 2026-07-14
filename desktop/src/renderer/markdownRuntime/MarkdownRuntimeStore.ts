@@ -113,6 +113,7 @@ interface DocumentState {
   bundle: MarkdownRuntimeDocumentBundle | null;
   pending: PendingDocument | null;
   workerAttachment: DocumentWorkerAttachment | null;
+  evictOnDetach: boolean;
   epoch: number;
   lastAccess: number;
 }
@@ -220,6 +221,16 @@ export class MarkdownRuntimeStore {
     this.states.delete(key);
     this.emit(state, "evicted", state.bundle?.revision ?? null, "explicit-cache-eviction");
     return true;
+  }
+
+  evictWhenDetached(identity: MarkdownDocumentIdentityInput): boolean {
+    this.assertOpen();
+    const documentId = createMarkdownDocumentIdentity(identity);
+    const key = `${identity.surface}\u0000${documentId}`;
+    const state = this.states.get(key);
+    if (!state) return false;
+    state.evictOnDetach = true;
+    return state.viewIds.size > 0 ? true : this.evict(identity);
   }
 
   evictDetachedMessageSession(sessionId: string): number {
@@ -396,6 +407,11 @@ export class MarkdownRuntimeStore {
     }
     state.workerAttachment?.detach();
     state.workerAttachment = null;
+    if (state.evictOnDetach) {
+      this.states.delete(state.key);
+      this.emit(state, "evicted", state.bundle?.revision ?? null, "explicit-close");
+      return;
+    }
     if (!state.bundle) {
       this.states.delete(state.key);
       return;
@@ -439,6 +455,7 @@ export class MarkdownRuntimeStore {
       bundle: null,
       pending: null,
       workerAttachment: null,
+      evictOnDetach: false,
       epoch: 0,
       lastAccess: Date.now(),
     };

@@ -49,6 +49,9 @@ export interface MarkdownRendererInteractionHandlers {
     readonly code: string;
     readonly block: MarkdownSnapshotBlock;
   }) => void;
+  readonly onResourceAnnotate?: (input: {
+    readonly block: MarkdownSnapshotBlock;
+  }) => void;
 }
 
 export interface MarkdownRendererResourceLifecycle {

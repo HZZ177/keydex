@@ -372,16 +372,20 @@ class ChatStreamManager:
         async with self._lock:
             run = self._runs.get(cleaned)
             if run is None or run.task.done():
-                return False
-            repositories = getattr(self._chat_service, "repositories", None)
-            if repositories is not None and hasattr(repositories, "pending_inputs"):
-                paused_records = repositories.pending_inputs.pause_active_for_session(
-                    cleaned,
-                    reason="user_stopped",
-                )
-            killed = command_process_manager.terminate_session(cleaned, reason="turn_cancelled")
-            run.cancellation.cancel()
-            run.task.cancel()
+                run = None
+            else:
+                repositories = getattr(self._chat_service, "repositories", None)
+                if repositories is not None and hasattr(repositories, "pending_inputs"):
+                    paused_records = repositories.pending_inputs.pause_active_for_session(
+                        cleaned,
+                        reason="user_stopped",
+                    )
+                killed = command_process_manager.terminate_session(cleaned, reason="turn_cancelled")
+                run.cancellation.cancel()
+                run.task.cancel()
+        if run is None:
+            await self.recover_interrupted_sessions(session_id=cleaned)
+            return False
         for record in paused_records:
             await self._emit_pending_input_event(
                 cleaned,
@@ -393,6 +397,52 @@ class ChatStreamManager:
             f"session_id={cleaned} | killed_commands={killed}"
         )
         return True
+
+    async def recover_interrupted_sessions(
+        self,
+        *,
+        session_id: str | None = None,
+    ) -> list[str]:
+        """Reconcile persisted running sessions whose owning process no longer exists."""
+        repositories = getattr(self._chat_service, "repositories", None)
+        if repositories is None or not hasattr(repositories, "sessions"):
+            return []
+
+        cleaned = (session_id or "").strip()
+        recovered: list[str] = []
+        async with self._lock:
+            if cleaned:
+                record = repositories.sessions.get(cleaned)
+                candidates = [record] if record is not None and record.status == "running" else []
+            else:
+                candidates = repositories.sessions.list(
+                    status="running",
+                    include_internal=True,
+                    limit=500,
+                )
+
+            for record in candidates:
+                run = self._runs.get(record.id)
+                if run is not None and not run.task.done():
+                    continue
+                updated = repositories.sessions.update(record.id, status="active")
+                if updated is None:
+                    continue
+                if hasattr(repositories, "pending_inputs"):
+                    repositories.pending_inputs.pause_active_for_session(
+                        record.id,
+                        reason="backend_restarted",
+                    )
+                if hasattr(repositories, "command_approvals"):
+                    repositories.command_approvals.cancel_pending_for_session(record.id)
+                recovered.append(record.id)
+
+        if recovered:
+            logger.warning(
+                "[ChatStreamManager] 已恢复后端重启遗留的运行中会话 | "
+                f"count={len(recovered)} | session_ids={','.join(recovered)}"
+            )
+        return recovered
 
     async def broadcast(self, *, session_id: str, action: str, data: dict[str, Any]) -> bool:
         cleaned = session_id.strip()

@@ -16,6 +16,7 @@ describe("AnnotationDraftCard", () => {
     const onSubmit = vi.fn();
     render(<ControlledDraft onSubmit={onSubmit} />);
     const editor = screen.getByLabelText("批注内容");
+    expect(editor.hasAttribute("autofocus")).toBe(false);
     fireEvent.change(editor, { target: { value: "first" } });
     fireEvent.keyDown(editor, { key: "Enter", shiftKey: true });
     expect(onSubmit).not.toHaveBeenCalled();

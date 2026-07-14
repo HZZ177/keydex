@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type SyntheticEvent } from "react";
 import { Check, MessageSquare, Pencil, Trash2, X } from "lucide-react";
 
 import type { ResolvedTextAnnotation } from "../domain/resolutions";
@@ -27,7 +27,7 @@ export function AnnotationCard({
   const [body, setBody] = useState(item.record.body);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const stop = (event: MouseEvent) => event.stopPropagation();
+  const stop = (event: SyntheticEvent) => event.stopPropagation();
 
   const save = async () => {
     if (!body.trim() || pending) {
@@ -64,6 +64,22 @@ export function AnnotationCard({
     }
   };
 
+  const handlePointerDown = (event: PointerEvent<HTMLElement>) => {
+    const button = Number.isFinite(event.button) ? event.button : 0;
+    if (!editing && button === 0) {
+      onNavigate(item);
+    }
+  };
+
+  const handleClick = (event: MouseEvent<HTMLElement>) => {
+    // Primary pointer navigation starts on pointerdown so a moving annotation
+    // rail cannot lose the click between press and release. detail === 0 keeps
+    // synthesized/assistive clicks working without navigating twice.
+    if (!editing && event.detail === 0) {
+      onNavigate(item);
+    }
+  };
+
   return (
     <article
       aria-label={`批注：${item.record.body}`}
@@ -71,8 +87,9 @@ export function AnnotationCard({
       data-active={active ? "true" : "false"}
       data-annotation-card-id={item.record.id}
       data-hovered={hovered ? "true" : "false"}
-      onClick={() => !editing && onNavigate(item)}
+      onClick={handleClick}
       onKeyDown={handleKeyDown}
+      onPointerDown={handlePointerDown}
       onPointerEnter={() => onHoverChange(item.record.id)}
       onPointerLeave={() => onHoverChange(null)}
       tabIndex={0}
@@ -89,6 +106,7 @@ export function AnnotationCard({
           disabled={pending}
           onChange={(event) => setBody(event.target.value)}
           onClick={stop}
+          onPointerDown={stop}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.preventDefault();
@@ -106,7 +124,7 @@ export function AnnotationCard({
         <p className={styles.cardBody}>{item.record.body}</p>
       )}
       {error ? <div className={styles.cardError} role="alert">{error}</div> : null}
-      <div className={styles.cardActions} onClick={stop}>
+      <div className={styles.cardActions} onClick={stop} onPointerDown={stop}>
         {editing ? (
           <>
             <span className={styles.editorHint}>Ctrl/⌘ + Enter 保存 · Esc 取消</span>

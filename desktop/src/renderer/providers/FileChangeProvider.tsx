@@ -61,7 +61,26 @@ export function FileChangeProvider({
   transport,
 }: PropsWithChildren<{ transport?: FileChangeTransport }>) {
   const agentRuntime = useOptionalAgentSessionRuntime();
-  const resolvedTransport = transport ?? agentRuntime ?? null;
+  const agentTransport = useMemo<FileChangeTransport | null>(
+    () =>
+      agentRuntime
+        ? {
+            bindWorkspaceWatch: agentRuntime.bindWorkspaceWatch,
+            unbindWorkspaceWatch: agentRuntime.unbindWorkspaceWatch,
+            bindLocalFileWatch: agentRuntime.bindLocalFileWatch,
+            unbindLocalFileWatch: agentRuntime.unbindLocalFileWatch,
+            subscribeEvent: agentRuntime.subscribeEvent,
+          }
+        : null,
+    [
+      agentRuntime?.bindLocalFileWatch,
+      agentRuntime?.bindWorkspaceWatch,
+      agentRuntime?.subscribeEvent,
+      agentRuntime?.unbindLocalFileWatch,
+      agentRuntime?.unbindWorkspaceWatch,
+    ],
+  );
+  const resolvedTransport = transport ?? agentTransport;
   if (!resolvedTransport) {
     throw new Error("FileChangeProvider 需要 AgentSessionProvider 或显式 transport");
   }

@@ -414,6 +414,59 @@ async def test_chat_stream_manager_cancel_interrupts_running_task() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_manager_recovers_persisted_run_after_backend_restart(tmp_path) -> None:
+    repositories = StorageRepositories(init_database(tmp_path / "app.db"))
+    repositories.sessions.create(
+        session_id="ses-orphaned",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        status="running",
+    )
+    queued, _ = repositories.pending_inputs.create_or_get(
+        session_id="ses-orphaned",
+        message="重启后保留",
+        mode="queue",
+        client_input_id="restart-queue",
+    )
+    service = BlockingChatService()
+    service.repositories = repositories
+    manager = ChatStreamManager(service)  # type: ignore[arg-type]
+
+    recovered = await manager.recover_interrupted_sessions()
+
+    assert recovered == ["ses-orphaned"]
+    assert repositories.sessions.get("ses-orphaned").status == "active"
+    retained = repositories.pending_inputs.get(queued.id)
+    assert retained is not None
+    assert retained.paused_at is not None
+    assert retained.pause_reason == "backend_restarted"
+    assert (await manager.status("ses-orphaned"))["status"] == "idle"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_manager_does_not_recover_live_in_memory_run(tmp_path) -> None:
+    repositories = StorageRepositories(init_database(tmp_path / "app.db"))
+    repositories.sessions.create(
+        session_id="ses-live",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        status="running",
+    )
+    service = BlockingChatService()
+    service.repositories = repositories
+    service.prepare("ses-live")
+    manager = ChatStreamManager(service)  # type: ignore[arg-type]
+    await manager.start_chat(ChatRequest(session_id="ses-live", message="hello", model="fake"))
+    await asyncio.wait_for(service.after_first_send["ses-live"].wait(), timeout=1)
+
+    assert await manager.recover_interrupted_sessions() == []
+    assert repositories.sessions.get("ses-live").status == "running"
+
+    service.release["ses-live"].set()
+    await asyncio.wait_for(service.finished["ses-live"].wait(), timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_manager_reports_waiting_input_sessions(tmp_path) -> None:
     repositories = StorageRepositories(init_database(tmp_path / "app.db"))
     repositories.sessions.create(

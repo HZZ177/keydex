@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from backend.app.tools.command_runtime.models import CommandRuntime, CommandSettings
+from backend.app.tools.command_runtime.tools import _effective_timeout
 
 
 def test_command_settings_defaults_are_single_runtime_shape() -> None:
@@ -13,6 +14,26 @@ def test_command_settings_defaults_are_single_runtime_shape() -> None:
     assert settings.selected_shell == "git_bash"
     assert settings.configured is False
     assert settings.tool_name == "run_git_bash"
+    assert settings.default_timeout_seconds == 300
+    assert settings.max_timeout_seconds == 3600
+
+
+def test_command_settings_migrates_previous_timeout_defaults() -> None:
+    settings = CommandSettings(
+        default_timeout_seconds=120,
+        max_timeout_seconds=600,
+    )
+
+    assert settings.default_timeout_seconds == 300
+    assert settings.max_timeout_seconds == 3600
+
+
+def test_effective_timeout_uses_five_minute_default_and_one_hour_cap() -> None:
+    settings = CommandSettings()
+
+    assert _effective_timeout(None, settings) == 300
+    assert _effective_timeout(30, settings) == 30
+    assert _effective_timeout(7200, settings) == 3600
 
 
 def test_command_settings_rejects_invalid_shell() -> None:

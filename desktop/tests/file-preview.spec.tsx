@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
 import { useEffect, useMemo, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import mermaid, { type ParseResult, type RenderResult } from "mermaid";
 
-import type { DocumentReadResult, RuntimeBridge } from "@/runtime";
+import { RuntimeHttpError, type DocumentReadResult, type RuntimeBridge } from "@/runtime";
 import { FilePreview, type MarkdownOutlineItem, type MarkdownOutlineRevealRequest } from "@/renderer/components/workspace";
 import { APP_FIND_SHORTCUT_EVENT } from "@/renderer/events/findShortcut";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
@@ -972,6 +973,215 @@ describe("FilePreview", () => {
     expect(screen.getByTestId("preview-scroll-rail")).not.toBeNull();
   });
 
+  it("edits real source files and automatically saves them with the loaded revision", async () => {
+    const writeDocument = vi.fn().mockResolvedValue({
+      protocol_version: "document-write/v1",
+      path: "src/App.ts",
+      revision: "sha256:after",
+      encoding: "utf-8",
+      total_bytes: 18,
+    });
+    const readDocument = vi.fn().mockResolvedValue({
+      document_id: "workspace:session:ses-1:src/App.ts",
+      source: "workspace",
+      path: "src/App.ts",
+      content: "const value = 1;\r\n",
+      encoding: "utf-8",
+      revision: "sha256:before",
+      total_bytes: 18,
+    });
+    const runtime = fakeRuntime({
+      readDocument,
+      writeDocument,
+    });
+
+    render(<FilePreview request={{ type: "file", path: "src/App.ts" }} sessionId="ses-1" runtime={runtime} />);
+
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    expect(sourceViewer.getAttribute("data-editable")).toBe("true");
+    const view = EditorView.findFromDOM(sourceViewer);
+    expect(view).not.toBeNull();
+    act(() => {
+      view?.dispatch({
+        changes: { from: 14, to: 15, insert: "2" },
+        userEvent: "input",
+      });
+    });
+
+    await waitFor(() => {
+      expect(writeDocument).toHaveBeenCalledWith(
+        { sessionId: "ses-1" },
+        "src/App.ts",
+        "const value = 2;\r\n",
+        { expectedRevision: "sha256:before" },
+      );
+    });
+    await waitFor(() => {
+      const root = document.querySelector("[data-file-preview-root='true']");
+      expect(root?.getAttribute("data-file-preview-auto-save-state")).toBe("saved");
+      expect(root?.getAttribute("data-document-revision")).toBe("sha256:after");
+    });
+    expect(screen.getByText("已自动保存")).not.toBeNull();
+  });
+
+  it("flushes a dirty draft when the preview closes before the auto-save delay", async () => {
+    const writeDocument = vi.fn().mockResolvedValue({
+      protocol_version: "document-write/v1",
+      path: "src/App.ts",
+      revision: "sha256:after",
+      encoding: "utf-8",
+      total_bytes: 16,
+    });
+    const runtime = fakeRuntime({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:src/App.ts",
+        source: "workspace",
+        path: "src/App.ts",
+        content: "const value = 1;",
+        encoding: "utf-8",
+        revision: "sha256:before",
+        total_bytes: 16,
+      }),
+      writeDocument,
+    });
+
+    const { unmount } = render(
+      <FilePreview request={{ type: "file", path: "src/App.ts" }} sessionId="ses-1" runtime={runtime} />,
+    );
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    const view = EditorView.findFromDOM(sourceViewer);
+    act(() => {
+      view?.dispatch({ changes: { from: 14, to: 15, insert: "2" }, userEvent: "input" });
+    });
+    unmount();
+
+    await waitFor(() => {
+      expect(writeDocument).toHaveBeenCalledWith(
+        { sessionId: "ses-1" },
+        "src/App.ts",
+        "const value = 2;",
+        { expectedRevision: "sha256:before" },
+      );
+    });
+  });
+
+  it("keeps an edited draft visible and pauses auto-save on a revision conflict", async () => {
+    const writeDocument = vi.fn().mockRejectedValue(new RuntimeHttpError({
+      code: "revision_conflict",
+      message: "Document revision no longer matches the edited revision",
+      details: { actual_revision: "sha256:external" },
+      status: 409,
+      method: "POST",
+      path: "/write/document",
+      body: {},
+      rawText: "",
+    }));
+    const readDocument = vi.fn()
+      .mockResolvedValueOnce({
+        document_id: "workspace:session:ses-1:src/App.ts",
+        source: "workspace",
+        path: "src/App.ts",
+        content: "const value = 1;",
+        encoding: "utf-8",
+        revision: "sha256:before",
+        total_bytes: 16,
+      })
+      .mockResolvedValue({
+        document_id: "workspace:session:ses-1:src/App.ts",
+        source: "workspace",
+        path: "src/App.ts",
+        content: "const value = 3;",
+        encoding: "utf-8",
+        revision: "sha256:external",
+        total_bytes: 16,
+      });
+    const runtime = fakeRuntime({
+      readDocument,
+      writeDocument,
+    });
+
+    render(<FilePreview request={{ type: "file", path: "src/App.ts" }} sessionId="ses-1" runtime={runtime} />);
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    const view = EditorView.findFromDOM(sourceViewer);
+    act(() => {
+      view?.dispatch({
+        changes: { from: 14, to: 15, insert: "2" },
+        userEvent: "input",
+      });
+    });
+
+    expect(await screen.findByRole("dialog", { name: "文件保存冲突" })).not.toBeNull();
+    expect(screen.getByText("文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。")).not.toBeNull();
+    expect(EditorView.findFromDOM(sourceViewer)?.state.doc.toString()).toBe("const value = 2;");
+    expect(document.querySelector("[data-file-preview-root='true']")?.getAttribute("data-file-preview-auto-save-state"))
+      .toBe("conflict");
+  });
+
+  it("serializes continuous edits and advances the expected revision after each auto-save", async () => {
+    let resolveFirstSave!: (value: {
+      protocol_version: "document-write/v1";
+      path: string;
+      revision: string;
+      encoding: "utf-8";
+      total_bytes: number;
+    }) => void;
+    const firstSave = new Promise<Parameters<typeof resolveFirstSave>[0]>((resolve) => {
+      resolveFirstSave = resolve;
+    });
+    const writeDocument = vi.fn()
+      .mockImplementationOnce(() => firstSave)
+      .mockResolvedValue({
+        protocol_version: "document-write/v1",
+        path: "src/App.ts",
+        revision: "sha256:third",
+        encoding: "utf-8",
+        total_bytes: 16,
+      });
+    const runtime = fakeRuntime({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:src/App.ts",
+        source: "workspace",
+        path: "src/App.ts",
+        content: "const value = 1;",
+        encoding: "utf-8",
+        revision: "sha256:first",
+        total_bytes: 16,
+      }),
+      writeDocument,
+    });
+
+    render(<FilePreview request={{ type: "file", path: "src/App.ts" }} sessionId="ses-1" runtime={runtime} />);
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    const view = EditorView.findFromDOM(sourceViewer);
+    act(() => {
+      view?.dispatch({ changes: { from: 14, to: 15, insert: "2" }, userEvent: "input" });
+    });
+    await waitFor(() => expect(writeDocument).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      view?.dispatch({ changes: { from: 14, to: 15, insert: "3" }, userEvent: "input" });
+    });
+    await act(async () => {
+      resolveFirstSave({
+        protocol_version: "document-write/v1",
+        path: "src/App.ts",
+        revision: "sha256:second",
+        encoding: "utf-8",
+        total_bytes: 16,
+      });
+      await firstSave;
+    });
+
+    await waitFor(() => expect(writeDocument).toHaveBeenCalledTimes(2));
+    expect(writeDocument).toHaveBeenNthCalledWith(
+      2,
+      { sessionId: "ses-1" },
+      "src/App.ts",
+      "const value = 3;",
+      { expectedRevision: "sha256:second" },
+    );
+  });
+
   it("renders enlarged centered fold controls in CodeMirror source viewer", async () => {
     const runtime = fakeRuntime({
       readFile: vi.fn().mockResolvedValue({
@@ -1311,6 +1521,7 @@ describe("FilePreview", () => {
 
     const sourceViewer = screen.getByTestId("file-source-viewer");
     expect(sourceViewer.getAttribute("data-renderer")).toBe("codemirror");
+    expect(sourceViewer.getAttribute("data-editable")).toBe("false");
     expect(sourceViewer.textContent).toContain("users");
     expect(sourceViewer.textContent).toContain("Ada");
     expect(sourceViewer.textContent).toContain("enabled");
@@ -1620,7 +1831,7 @@ describe("FilePreview", () => {
     selection.restore();
   });
 
-  it("shows an unsupported rendered selection as a global warning", async () => {
+  it("uses a whole-resource action instead of selected-text annotation inside rendered Mermaid", async () => {
     const message = "当前选区无法投影到文档文字模型。";
     vi.mocked(mermaid.render).mockResolvedValueOnce({
       ...mermaidRenderResult,
@@ -1653,12 +1864,12 @@ describe("FilePreview", () => {
 
     const renderedNode = await screen.findByText("Rendered node");
     const selection = await showSelectionToolbar(renderedNode, "Rendered node");
-    fireEvent.click(await screen.findByRole("button", { name: "为选中文本添加批注" }));
+    expect(renderedNode.closest("[data-file-preview-selection-excluded='true']")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "为选中文本添加批注" })).toBeNull();
 
-    const notificationViewport = screen.getByTestId("notification-viewport");
-    await waitFor(() => expect(within(notificationViewport).getByText(message)).not.toBeNull());
-    expect(within(notificationViewport).getByTestId("notification-item").getAttribute("data-type")).toBe("warning");
-    expect(within(screen.getByLabelText("文件预览")).queryByText(message)).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "批注整个 Mermaid 图表" }));
+    expect(await screen.findByLabelText("批注内容")).not.toBeNull();
+    expect(within(screen.getByTestId("notification-viewport")).queryByText(message)).toBeNull();
     selection.restore();
   });
 

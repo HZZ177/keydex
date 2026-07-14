@@ -19,7 +19,10 @@ describe("CommandExecutionBlock", () => {
     expect(screen.getByText("正在执行 pytest backend/tests")).not.toBeNull();
     expect(screen.getByText("D:/repo")).not.toBeNull();
     expect(screen.getByText("2.3s")).not.toBeNull();
-    expect(screen.getByTestId("command-execution-block").textContent).toMatch(/正在执行 pytest backend\/tests.*2\.3s/);
+    expect(screen.getByText("超时 5 分钟（默认）")).not.toBeNull();
+    expect(screen.getByTestId("command-execution-block").textContent).toMatch(
+      /正在执行 pytest backend\/tests.*2\.3s.*超时 5 分钟（默认）/,
+    );
     expect(screen.queryByText("line 1")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
@@ -346,11 +349,13 @@ describe("CommandExecutionBlock", () => {
           stdout: "",
           stderr: "",
           timeout_seconds: 45,
+          timeout_source: "model",
         })}
       />,
     );
 
     expect(screen.getByText("正在执行 运行长命令")).not.toBeNull();
+    expect(screen.getByText("超时 45 秒（模型设置）")).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "展开命令详情" }));
     const inputText = screen.getByLabelText("命令入参").textContent ?? "";
@@ -388,6 +393,8 @@ function commandMessage(
       command: "pytest backend/tests",
       cwd: "D:/repo",
       duration_ms: 2300,
+      timeout_seconds: 300,
+      timeout_source: "default",
       ...payload,
     },
     createdAt: "2026-06-17T10:00:00Z",

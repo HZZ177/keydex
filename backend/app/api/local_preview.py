@@ -20,6 +20,14 @@ from backend.app.api.document_read import (
     create_document_read_response,
     read_stable_utf8_document_snapshot,
 )
+from backend.app.api.document_write import (
+    DocumentWriteError,
+    DocumentWriteErrorCode,
+    DocumentWriteRequest,
+    DocumentWriteResponse,
+    document_write_response,
+    write_utf8_document,
+)
 from backend.app.core.logger import logger
 
 router = APIRouter(tags=["local-preview"])
@@ -91,6 +99,41 @@ async def read_local_preview_document(payload: DocumentReadRequest) -> Streaming
             },
         )
     return create_document_read_response(payload, snapshot)
+
+
+@router.post("/api/local-preview/write/document", response_model=DocumentWriteResponse)
+async def write_local_preview_document(payload: DocumentWriteRequest) -> DocumentWriteResponse:
+    target = _resolve_preview_document(payload.path)
+    try:
+        result = await asyncio.to_thread(
+            write_utf8_document,
+            target,
+            public_path=str(target),
+            content=payload.content,
+            expected_revision=payload.expected_revision,
+            max_bytes=MAX_LOCAL_PREVIEW_DOCUMENT_BYTES,
+        )
+    except DocumentWriteError as exc:
+        status_code = {
+            DocumentWriteErrorCode.NOT_FOUND: status.HTTP_404_NOT_FOUND,
+            DocumentWriteErrorCode.TOO_LARGE: status.HTTP_413_CONTENT_TOO_LARGE,
+            DocumentWriteErrorCode.UNSUPPORTED_ENCODING: status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            DocumentWriteErrorCode.REVISION_CONFLICT: status.HTTP_409_CONFLICT,
+            DocumentWriteErrorCode.INVALID_REQUEST: status.HTTP_400_BAD_REQUEST,
+            DocumentWriteErrorCode.IO_ERROR: (
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+                if exc.retryable
+                else status.HTTP_403_FORBIDDEN
+            ),
+        }[exc.code]
+        raise _local_preview_error(
+            status_code,
+            exc.code.value,
+            exc.message,
+            {"retryable": exc.retryable, **exc.details},
+        ) from exc
+    logger.info(f"[LocalPreviewAPI] 保存本地文件 | path={target} | size={result.total_bytes}")
+    return document_write_response(result)
 
 
 @router.get("/api/local-preview/media", response_model=LocalPreviewMediaResponse)

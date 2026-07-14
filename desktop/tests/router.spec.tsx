@@ -345,6 +345,49 @@ describe("AppRouter", () => {
     });
   });
 
+  it("collapses the sidebar only on the first workbench entry for the current app runtime", async () => {
+    localStorage.setItem(LAYOUT_PREFERENCES_KEY, JSON.stringify({ sidebarCollapsed: false }));
+    renderRouter(["/workbench"]);
+
+    expect(await screen.findByTestId("workbench-mode-page", undefined, { timeout: 10000 })).not.toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId("app-shell").dataset.sidebar).toBe("collapsed");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "展开侧边栏" }));
+    expect(screen.getByTestId("app-shell").dataset.sidebar).toBe("expanded");
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(within(screen.getByTestId("app-mode-switch")).getAllByRole("button")[0]);
+      await act(async () => {
+        vi.advanceTimersByTime(180);
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("workbench-mode-page")).toBeNull();
+    });
+    expect(screen.getByTestId("app-shell").dataset.sidebar).toBe("expanded");
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(within(screen.getByTestId("app-mode-switch")).getAllByRole("button")[1]);
+      await act(async () => {
+        vi.advanceTimersByTime(180);
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(await screen.findByTestId("workbench-mode-page", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("app-shell").dataset.sidebar).toBe("expanded");
+  });
+
   it("opens a markdown file as an external workbench preview inside the selected workspace", async () => {
     const filePath = "D:/docs/README.md";
     localStorage.setItem(LAYOUT_PREFERENCES_KEY, JSON.stringify({ sidebarCollapsed: false }));

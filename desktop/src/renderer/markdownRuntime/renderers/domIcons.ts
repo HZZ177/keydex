@@ -1,6 +1,6 @@
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
-export type MarkdownDomIcon = "check" | "copy" | "maximize";
+export type MarkdownDomIcon = "annotation" | "check" | "copy" | "maximize";
 
 /**
  * Runtime blocks are retained DOM rather than React trees. Keep their action
@@ -20,7 +20,11 @@ export function replaceMarkdownActionIcon(button: HTMLButtonElement, icon: Markd
   svg.setAttribute("width", "14");
   svg.dataset.markdownActionIcon = icon;
 
-  if (icon === "copy") {
+  if (icon === "annotation") {
+    appendSvgElement(svg, "path", { d: "M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h6" });
+    appendSvgElement(svg, "path", { d: "M19 5v6" });
+    appendSvgElement(svg, "path", { d: "M16 8h6" });
+  } else if (icon === "copy") {
     appendSvgElement(svg, "rect", { x: "8", y: "8", width: "12", height: "12", rx: "2", ry: "2" });
     appendSvgElement(svg, "path", { d: "M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" });
   } else if (icon === "check") {

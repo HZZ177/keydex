@@ -13,6 +13,10 @@ import {
   readDocumentNdjsonResponse,
   type DocumentReadTransportDiagnostics,
 } from "@/renderer/components/workspace/fileMarkdownAdapter/transport";
+import {
+  createDocumentWriteRequest,
+  type DocumentWriteResult,
+} from "./documentWrite";
 
 export interface LocalPreviewFileResponse {
   path: string;
@@ -31,7 +35,17 @@ export interface LocalPreviewRuntime {
   readFile(path: string): Promise<LocalPreviewFileResponse>;
   readDocument(path: string, options?: LocalPreviewDocumentReadOptions): Promise<DocumentReadResult>;
   readMedia(path: string): Promise<LocalPreviewMediaResponse>;
+  writeDocument(
+    path: string,
+    content: string,
+    options: LocalPreviewDocumentWriteOptions,
+  ): Promise<DocumentWriteResult>;
   releaseDocumentConsumer(consumerId: string): void;
+}
+
+export interface LocalPreviewDocumentWriteOptions {
+  expectedRevision: string;
+  signal?: AbortSignal;
 }
 
 export interface LocalPreviewDocumentReadOptions {
@@ -78,6 +92,17 @@ export function createLocalPreviewRuntime(
     readMedia(path) {
       return http.request<LocalPreviewMediaResponse>(
         `/api/local-preview/media?path=${encodeURIComponent(path)}`,
+      );
+    },
+    writeDocument(path, content, writeOptions) {
+      return http.request<DocumentWriteResult>(
+        "/api/local-preview/write/document",
+        {
+          method: "POST",
+          body: createDocumentWriteRequest(path, content, writeOptions.expectedRevision),
+          signal: writeOptions.signal,
+          silentStatuses: [409],
+        },
       );
     },
     releaseDocumentConsumer(consumerId) {

@@ -10,7 +10,10 @@ import type {
   DocumentCoordinateRect,
 } from "../navigation/types";
 import { AnnotationGeometryScheduler } from "./AnnotationGeometryScheduler";
-import { restartAnnotationNavigationFlash } from "../navigation/AnnotationNavigationEffects";
+import {
+  restartAnnotationNavigationFlash,
+  smoothScrollElementTo,
+} from "../navigation/AnnotationNavigationEffects";
 
 export interface MarkdownAnnotationMarkerRange {
   readonly active: boolean;
@@ -184,9 +187,9 @@ export class MarkdownAnnotationAdapter implements AnnotationViewAdapter {
       throw abortError("Markdown annotation reveal aborted");
     }
     const binding = this.binding;
-    const sourceRange = request.sourceRanges[0];
+    const sourceRange = encompassingSourceRange(request.sourceRanges);
     const block = binding && sourceRange
-      ? blocksForSourceRange(binding, sourceRange)[0] ?? null
+      ? centeredBlockForSourceRange(binding, sourceRange)
       : null;
     if (!binding || !block) {
       throw new Error("Markdown annotation target is unavailable");
@@ -194,11 +197,19 @@ export class MarkdownAnnotationAdapter implements AnnotationViewAdapter {
     if (!request.scroll) {
       return;
     }
+    const mountedTarget = mountedAnnotationCenterScrollTop(binding, request.annotationId);
+    if (mountedTarget !== null) {
+      await smoothScrollElementTo(binding.scrollElement, mountedTarget, request.signal);
+      return;
+    }
     await binding.revealBlock(block.id, request.signal);
     if (request.signal.aborted) {
       throw abortError("Markdown annotation reveal aborted");
     }
-    centerMountedAnnotationMarker(binding, request.annotationId);
+    const refinedTarget = mountedAnnotationCenterScrollTop(binding, request.annotationId);
+    if (refinedTarget !== null) {
+      binding.scrollElement.scrollTo({ behavior: "auto", top: refinedTarget });
+    }
   }
 
   geometry(): AnnotationViewGeometrySnapshot {
@@ -326,26 +337,60 @@ export class MarkdownAnnotationAdapter implements AnnotationViewAdapter {
   }
 }
 
-function centerMountedAnnotationMarker(
+function mountedAnnotationCenterScrollTop(
   binding: MarkdownAnnotationBinding,
   annotationId: string,
-): void {
-  const marker = Array.from(
+): number | null {
+  const markers = Array.from(
     binding.root.querySelectorAll<HTMLElement>("[data-annotation-id]"),
-  ).find((element) => element.dataset.annotationId === annotationId);
-  if (!marker || typeof binding.scrollElement.scrollTo !== "function") {
-    return;
-  }
+  ).filter((element) => element.dataset.annotationId === annotationId);
+  if (!markers.length) return null;
   const scroll = binding.scrollElement;
   const viewportRect = scroll.getBoundingClientRect();
-  const markerRect = marker.getBoundingClientRect();
-  const markerDocumentTop = scroll.scrollTop + markerRect.top - viewportRect.top;
-  const target = markerDocumentTop - scroll.clientHeight / 2 + markerRect.height / 2;
+  const markerRects = markers.map((marker) => marker.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 || rect.height > 0);
+  if (!markerRects.length) return null;
+  const markerDocumentTop = scroll.scrollTop
+    + Math.min(...markerRects.map((rect) => rect.top))
+    - viewportRect.top;
+  const markerDocumentBottom = scroll.scrollTop
+    + Math.max(...markerRects.map((rect) => rect.bottom))
+    - viewportRect.top;
+  const target = (markerDocumentTop + markerDocumentBottom) / 2 - scroll.clientHeight / 2;
   const maxScrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
-  scroll.scrollTo({
-    behavior: "auto",
-    top: Math.max(0, Math.min(target, maxScrollTop)),
+  return Math.max(0, Math.min(target, maxScrollTop));
+}
+
+function encompassingSourceRange(ranges: readonly SourceRange[]): SourceRange | null {
+  if (!ranges.length) return null;
+  return ranges.reduce<SourceRange>((result, range) => ({
+    start: Math.min(result.start, range.start),
+    end: Math.max(result.end, range.end),
+  }), ranges[0]!);
+}
+
+function centeredBlockForSourceRange(
+  binding: MarkdownAnnotationBinding,
+  range: SourceRange,
+): Pick<MarkdownBlock, "id" | "sourceEnd" | "sourceStart"> | null {
+  const center = (range.start + range.end) / 2;
+  const candidates = [...blocksForSourceRange(binding, range)];
+  candidates.sort((left, right) => {
+    const leftContains = center >= left.sourceStart && center < left.sourceEnd;
+    const rightContains = center >= right.sourceStart && center < right.sourceEnd;
+    return Number(rightContains) - Number(leftContains)
+      || distanceToSourceBlockCenter(left, center) - distanceToSourceBlockCenter(right, center)
+      || left.sourceStart - right.sourceStart
+      || left.id.localeCompare(right.id);
   });
+  return candidates[0] ?? null;
+}
+
+function distanceToSourceBlockCenter(
+  block: Pick<MarkdownBlock, "sourceEnd" | "sourceStart">,
+  position: number,
+): number {
+  return Math.abs((block.sourceStart + block.sourceEnd) / 2 - position);
 }
 
 function blocksForSourceRange(

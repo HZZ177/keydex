@@ -32,6 +32,34 @@ function sha256(content: string): string {
 }
 
 describe("LocalPreviewRuntime document-read/v1", () => {
+  it("writes Tauri-opened local files through the guarded backend endpoint", async () => {
+    const path = "D:/notes/local.md";
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("http://127.0.0.1:8765/api/local-preview/write/document");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        protocol_version: "document-write/v1",
+        path,
+        content: "after",
+        expected_revision: "sha256:before",
+      });
+      return Response.json({
+        protocol_version: "document-write/v1",
+        path,
+        revision: "sha256:after",
+        encoding: "utf-8",
+        total_bytes: 5,
+      });
+    });
+    const runtime = createLocalPreviewRuntime(
+      createHttpClient({ baseUrl: "http://127.0.0.1:8765", fetcher }),
+      { isTauriRuntime: () => true },
+    );
+
+    await expect(runtime.writeDocument(path, "after", {
+      expectedRevision: "sha256:before",
+    })).resolves.toMatchObject({ revision: "sha256:after" });
+  });
+
   it.each([1024 * 1024, 5 * 1024 * 1024, 10 * 1024 * 1024])(
     "adapts a %i-byte Tauri response through the shared snapshot pipeline",
     async (size) => {

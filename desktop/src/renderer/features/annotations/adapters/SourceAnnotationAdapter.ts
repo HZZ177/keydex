@@ -200,7 +200,7 @@ export class SourceAnnotationAdapter implements AnnotationViewAdapter {
       throw abortError("Source annotation reveal aborted");
     }
     const view = this.view;
-    const target = request.sourceRanges[0];
+    const target = encompassingSourceRange(request.sourceRanges);
     if (!view || !target) {
       throw new Error("Source annotation target is unavailable");
     }
@@ -211,12 +211,15 @@ export class SourceAnnotationAdapter implements AnnotationViewAdapter {
       return;
     }
     const scrollElement = this.scrollElement ?? view.scrollDOM;
-    const coordinates = view.coordsAtPos(start);
-    if (!coordinates) {
+    const startCoordinates = view.coordsAtPos(start);
+    const endCoordinates = view.coordsAtPos(end);
+    if (!startCoordinates || !endCoordinates) {
       throw new Error("Source annotation target geometry is unavailable");
     }
     const scrollRect = scrollElement.getBoundingClientRect();
-    const targetY = coordinates.top - scrollRect.top + scrollElement.scrollTop;
+    const targetY = (
+      startCoordinates.top + endCoordinates.bottom
+    ) / 2 - scrollRect.top + scrollElement.scrollTop;
     const maxScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
     const top = Math.max(0, Math.min(targetY - scrollElement.clientHeight / 2, maxScrollTop));
     await smoothScrollElementTo(scrollElement, top, request.signal);
@@ -318,6 +321,14 @@ export class SourceAnnotationAdapter implements AnnotationViewAdapter {
       listener(event);
     }
   }
+}
+
+function encompassingSourceRange(ranges: readonly SourceRange[]): SourceRange | null {
+  if (!ranges.length) return null;
+  return ranges.reduce<SourceRange>((result, range) => ({
+    start: Math.min(result.start, range.start),
+    end: Math.max(result.end, range.end),
+  }), ranges[0]!);
 }
 
 function renderedMarkerRects(

@@ -67,11 +67,13 @@ describe("MarkdownAnnotationAdapter", () => {
   });
 
   it("refines a coarse block reveal by centering the mounted annotation marker", async () => {
-    const revealBlock = vi.fn().mockResolvedValue(undefined);
-    const resolvedBinding = binding(revealBlock);
     const marker = document.createElement("mark");
     marker.dataset.annotationId = "single";
-    resolvedBinding.root.append(marker);
+    let resolvedBinding!: ReturnType<typeof binding>;
+    const revealBlock = vi.fn().mockImplementation(async () => {
+      resolvedBinding.root.append(marker);
+    });
+    resolvedBinding = binding(revealBlock);
     Object.defineProperties(resolvedBinding.scrollElement, {
       clientHeight: { configurable: true, value: 200 },
       scrollHeight: { configurable: true, value: 2_000 },
@@ -96,8 +98,80 @@ describe("MarkdownAnnotationAdapter", () => {
       sourceRanges: [{ start: 2, end: 6 }],
     });
 
+    expect(revealBlock).toHaveBeenCalledWith("paragraph", expect.any(AbortSignal));
     expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 1_140 });
     expect(resolvedBinding.scrollElement.scrollTop).toBe(1_140);
+  });
+
+  it("reveals the block nearest a cross-block annotation center when markers are unmounted", async () => {
+    const revealBlock = vi.fn().mockResolvedValue(undefined);
+    const adapter = new MarkdownAnnotationAdapter();
+    adapter.attach(binding(revealBlock));
+
+    await adapter.reveal({
+      annotationId: "cross",
+      blockRanges: [
+        { blockKey: "logical-paragraph", range: { start: 8, end: 10 } },
+        { blockKey: "logical-code", range: { start: 0, end: 3 } },
+      ],
+      logicalRange: { start: 8, end: 13 },
+      requestId: 1,
+      scroll: true,
+      signal: new AbortController().signal,
+      sourceRanges: [{ start: 8, end: 13 }],
+    });
+
+    expect(revealBlock).toHaveBeenCalledWith("code", expect.any(AbortSignal));
+  });
+
+  it("centers the complete multi-line marker range without drifting on repeated reveals", async () => {
+    const revealBlock = vi.fn().mockResolvedValue(undefined);
+    const resolvedBinding = binding(revealBlock);
+    const upper = document.createElement("mark");
+    const lower = document.createElement("mark");
+    upper.dataset.annotationId = "cross";
+    lower.dataset.annotationId = "cross";
+    resolvedBinding.root.append(upper, lower);
+    Object.defineProperties(resolvedBinding.scrollElement, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 2_000 },
+      scrollTop: { configurable: true, value: 1_000, writable: true },
+    });
+    vi.spyOn(resolvedBinding.scrollElement, "getBoundingClientRect").mockReturnValue(rect(0, 0, 300, 200));
+    vi.spyOn(upper, "getBoundingClientRect").mockImplementation(() => (
+      rect(20, 1_120 - resolvedBinding.scrollElement.scrollTop, 80, 20)
+    ));
+    vi.spyOn(lower, "getBoundingClientRect").mockImplementation(() => (
+      rect(20, 1_200 - resolvedBinding.scrollElement.scrollTop, 100, 20)
+    ));
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      resolvedBinding.scrollElement.scrollTop = top ?? resolvedBinding.scrollElement.scrollTop;
+    });
+    Object.defineProperty(resolvedBinding.scrollElement, "scrollTo", { configurable: true, value: scrollTo });
+    const adapter = new MarkdownAnnotationAdapter();
+    adapter.attach(resolvedBinding);
+    const request = {
+      annotationId: "cross",
+      blockRanges: [
+        { blockKey: "logical-paragraph", range: { start: 8, end: 10 } },
+        { blockKey: "logical-code", range: { start: 0, end: 3 } },
+      ],
+      logicalRange: { start: 8, end: 13 },
+      requestId: 1,
+      scroll: true,
+      signal: new AbortController().signal,
+      sourceRanges: [{ start: 8, end: 13 }],
+    };
+
+    await adapter.reveal(request);
+    expect(resolvedBinding.scrollElement.scrollTop).toBe(1_070);
+    scrollTo.mockClear();
+
+    await adapter.reveal({ ...request, requestId: 2 });
+
+    expect(revealBlock).not.toHaveBeenCalled();
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 1_070 });
+    expect(resolvedBinding.scrollElement.scrollTop).toBe(1_070);
   });
 
   it("uses the runtime range resolver without scanning a full block array", async () => {

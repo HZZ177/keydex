@@ -145,6 +145,79 @@
   background: color-mix(in srgb, var(--color-danger) 12%, transparent);
 }
 
+.autoSaveStatus {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+.autoSaveStatus[data-state="conflict"],
+.autoSaveStatus[data-state="error"] {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  color: var(--color-text-primary);
+}
+
+.autoSaveStatus[data-state="saving"] svg {
+  animation: filePreviewAutoSaveSpin 760ms linear infinite;
+}
+
+.autoSaveStatus:hover,
+.autoSaveStatus:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.saveConflictMessage {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.saveConflictActions {
+  display: flex;
+  width: 100%;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.saveConflictActions button {
+  min-height: 32px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font: inherit;
+  padding: 0 12px;
+}
+
+.saveConflictActions button[data-primary="true"] {
+  border-color: color-mix(in srgb, var(--color-accent) 64%, var(--color-border-subtle));
+  background: var(--color-accent);
+  color: var(--color-on-accent, #fff);
+}
+
+.saveConflictActions button:hover:not(:disabled) {
+  filter: brightness(0.98);
+}
+
+.saveConflictActions button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .pathBreadcrumbs {
   --breadcrumb-segment-max: 168px;
   --breadcrumb-final-segment-max: 260px;
@@ -770,8 +843,14 @@
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
+}
+
+@keyframes filePreviewAutoSaveSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .sourceViewer[data-renderer="codemirror"] {
@@ -1508,7 +1587,40 @@
 }
 
 .htmlPane {
+  position: relative;
   background: var(--color-bg-elevated);
+}
+
+.resourceAnnotationControl {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  display: inline-flex;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 76%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  box-shadow: var(--shadow-popover);
+  padding: 3px;
+  backdrop-filter: blur(14px);
+}
+
+.resourceAnnotationControl button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.resourceAnnotationControl button:hover,
+.resourceAnnotationControl button:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
 }
 
 .htmlFrame {
@@ -1533,6 +1645,29 @@
   place-items: stretch;
   background: var(--color-bg-elevated);
   padding: 16px;
+}
+
+.htmlPane[data-resource-annotation-highlight="true"],
+.mermaidPane[data-resource-annotation-highlight="true"] {
+  outline: 1px solid color-mix(in srgb, var(--annotation-accent, #d4a72c) 68%, transparent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--annotation-accent, #d4a72c) 5%, var(--color-bg-elevated));
+}
+
+.htmlPane[data-resource-annotation-hovered="true"],
+.mermaidPane[data-resource-annotation-hovered="true"] {
+  outline-color: color-mix(in srgb, var(--annotation-accent, #d4a72c) 82%, transparent);
+}
+
+.htmlPane[data-resource-annotation-active="true"],
+.mermaidPane[data-resource-annotation-active="true"] {
+  outline-width: 2px;
+  outline-color: color-mix(in srgb, var(--annotation-accent, #d4a72c) 95%, transparent);
+  outline-offset: -2px;
+}
+
+.preview[data-file-preview-new-annotations-enabled="false"] [data-markdown-resource-annotate="true"] {
+  display: none;
 }
 
 .mermaidPane[data-layout="document"] {

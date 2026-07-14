@@ -115,6 +115,8 @@ async def test_command_waits_for_approval_before_execution(tmp_path, monkeypatch
     approval = await _wait_for_pending(repositories)
     assert approval.tool_name == "run_cmd"
     assert approval.details["shell_path"].endswith("cmd.exe")
+    assert approval.details["timeout_seconds"] == 300
+    assert approval.details["timeout_source"] == "default"
     assert not (tmp_path / "approved.txt").exists()
 
     await ApprovalService(repositories=repositories).resolve(
@@ -125,6 +127,8 @@ async def test_command_waits_for_approval_before_execution(tmp_path, monkeypatch
 
     assert result.ok is True
     assert result.result["status"] == "completed"
+    assert result.result["timeout_seconds"] == 300
+    assert result.result["timeout_source"] == "default"
     assert result.result["approval"]["decision"] == "approved"
     assert (tmp_path / "approved.txt").read_text(encoding="utf-8") == "ok"
 
@@ -278,10 +282,12 @@ async def test_command_runtime_unavailable_returns_clear_result(tmp_path, monkey
     )
 
     result = await _registry(repositories).require("run_cmd").run(
-        {"command": "print('x')"},
+        {"command": "print('x')", "timeout_seconds": 30},
         _context(tmp_path, repositories),
     )
 
     assert result.ok is True
     assert result.result["status"] == "shell_not_available"
+    assert result.result["timeout_seconds"] == 30
+    assert result.result["timeout_source"] == "model"
     assert "missing cmd" in result.result["stderr"]

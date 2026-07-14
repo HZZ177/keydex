@@ -96,12 +96,18 @@ describe("AnnotationNavigator", () => {
     });
   });
 
-  it("activates marker clicks and opens the embedded rail without revealing either view directly", () => {
+  it("re-activates repeated marker clicks without revealing either view directly", () => {
     const registry = new AnnotationViewRegistry();
     const source = adapter("source");
     registry.register(source);
     const store = createAnnotationStore();
     const navigator = new AnnotationNavigator(registry, store);
+
+    navigator.activateFromMarker("ann-marker");
+
+    expect(store.getState().activeAnnotationId).toBe("ann-marker");
+    expect(store.getState().panelOpen).toBe(true);
+    expect(source.reveal).not.toHaveBeenCalled();
 
     navigator.activateFromMarker("ann-marker");
 

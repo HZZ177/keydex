@@ -7,6 +7,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 CommandShell = Literal["git_bash", "powershell", "cmd"]
+CommandTimeoutSource = Literal["default", "model"]
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 5 * 60
+MAX_COMMAND_TIMEOUT_SECONDS = 60 * 60
+LEGACY_DEFAULT_COMMAND_TIMEOUT_SECONDS = 2 * 60
+LEGACY_MAX_COMMAND_TIMEOUT_SECONDS = 10 * 60
 FileAccessMode = Literal[
     "no_file_access",
     "workspace_read_only",
@@ -64,8 +69,16 @@ class CommandSettings(BaseModel):
     require_approval_for_untrusted: bool = True
     allow_persistent_trust: bool = True
     file_access_mode: FileAccessMode = "workspace_trusted"
-    default_timeout_seconds: float = Field(default=120, ge=0.1, le=600)
-    max_timeout_seconds: float = Field(default=600, ge=0.1, le=3600)
+    default_timeout_seconds: float = Field(
+        default=DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        ge=0.1,
+        le=MAX_COMMAND_TIMEOUT_SECONDS,
+    )
+    max_timeout_seconds: float = Field(
+        default=MAX_COMMAND_TIMEOUT_SECONDS,
+        ge=0.1,
+        le=MAX_COMMAND_TIMEOUT_SECONDS,
+    )
     inline_output_max_chars: int = Field(default=12000, ge=256, le=512 * 1024)
     tail_max_chars: int = Field(default=12000, ge=256, le=256 * 1024)
     output_file_max_bytes: int = Field(default=8 * 1024 * 1024, ge=64 * 1024, le=256 * 1024 * 1024)
@@ -77,6 +90,12 @@ class CommandSettings(BaseModel):
         if not isinstance(value, dict):
             return value
         data = dict(value)
+        if (
+            data.get("default_timeout_seconds") == LEGACY_DEFAULT_COMMAND_TIMEOUT_SECONDS
+            and data.get("max_timeout_seconds") == LEGACY_MAX_COMMAND_TIMEOUT_SECONDS
+        ):
+            data["default_timeout_seconds"] = DEFAULT_COMMAND_TIMEOUT_SECONDS
+            data["max_timeout_seconds"] = MAX_COMMAND_TIMEOUT_SECONDS
         legacy_selected_shell = data.get("selected_shell")
         if legacy_selected_shell == "bash":
             data["selected_shell"] = "git_bash"
@@ -235,6 +254,7 @@ class CommandRequest:
     cwd: Path
     cwd_label: str
     timeout_seconds: float
+    timeout_source: CommandTimeoutSource
     session_id: str
     user_id: str
     turn_index: int
@@ -275,6 +295,7 @@ class CommandRunResult:
     exit_code: int | None
     duration_ms: int
     timeout_seconds: float
+    timeout_source: CommandTimeoutSource
     output_path: str | None
     output_bytes: int
     output_truncated: bool
@@ -305,6 +326,7 @@ class CommandRunResult:
             "exit_code": self.exit_code,
             "duration_ms": self.duration_ms,
             "timeout_seconds": self.timeout_seconds,
+            "timeout_source": self.timeout_source,
             "output_path": self.output_path,
             "output_bytes": self.output_bytes,
             "output_truncated": self.output_truncated,

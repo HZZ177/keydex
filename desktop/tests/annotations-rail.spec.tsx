@@ -113,6 +113,29 @@ describe("AnnotationRail", () => {
     expect(onNavigate).toHaveBeenCalledWith(expect.objectContaining({ record: expect.objectContaining({ id: "a" }) }));
   });
 
+  it("starts each primary-pointer navigation immediately so rapid card switches can interrupt", () => {
+    const onNavigate = vi.fn();
+    renderRail(resolvedItems(), { onNavigate });
+    const first = document.querySelector<HTMLElement>("[data-annotation-card-id='a']")!;
+    const second = document.querySelector<HTMLElement>("[data-annotation-card-id='b']")!;
+
+    fireEvent.pointerDown(first, { button: 0, pointerType: "mouse" });
+    fireEvent.pointerDown(second, { button: 0, pointerType: "mouse" });
+
+    expect(onNavigate.mock.calls.map(([item]) => item.record.id)).toEqual(["a", "b"]);
+  });
+
+  it("re-navigates an active card so the body flash can replay", () => {
+    const onNavigate = vi.fn();
+    renderRail(resolvedItems(), { activeAnnotationId: "a", onNavigate });
+
+    fireEvent.click(screen.getByLabelText("批注：Body a"));
+
+    expect(onNavigate).toHaveBeenCalledWith(expect.objectContaining({
+      record: expect.objectContaining({ id: "a" }),
+    }));
+  });
+
   it("supports inline edit success and visible failure", async () => {
     const onSave = vi.fn()
       .mockResolvedValueOnce(true)
@@ -136,13 +159,19 @@ describe("AnnotationRail", () => {
 
   it("routes delete and chat actions through callbacks", async () => {
     const onDelete = vi.fn().mockResolvedValue(true);
+    const onNavigate = vi.fn();
     const onStartChat = vi.fn();
-    renderRail(resolvedItems(), { onDelete, onStartChat });
+    renderRail(resolvedItems(), { onDelete, onNavigate, onStartChat });
     const card = screen.getByLabelText("批注：Body a");
+    const chat = card.querySelector("[aria-label='将批注加入对话']") as Element;
+    const remove = card.querySelector("[aria-label='删除批注']") as Element;
 
-    fireEvent.click(card.querySelector("[aria-label='将批注加入对话']") as Element);
-    fireEvent.click(card.querySelector("[aria-label='删除批注']") as Element);
+    fireEvent.pointerDown(chat, { button: 0, pointerType: "mouse" });
+    fireEvent.click(chat);
+    fireEvent.pointerDown(remove, { button: 0, pointerType: "mouse" });
+    fireEvent.click(remove);
 
+    expect(onNavigate).not.toHaveBeenCalled();
     expect(onStartChat).toHaveBeenCalledWith(expect.objectContaining({ record: expect.objectContaining({ id: "a" }) }));
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith("a"));
   });

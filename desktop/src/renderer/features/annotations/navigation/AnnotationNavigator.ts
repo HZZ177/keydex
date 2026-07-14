@@ -66,7 +66,18 @@ export class AnnotationNavigator {
   }
 
   activateFromMarker(annotationId: string): void {
+    this.cancel();
     this.store.getState().activate(annotationId, true);
+  }
+
+  deactivate(annotationId: string): boolean {
+    if (this.store.getState().activeAnnotationId !== annotationId) {
+      return false;
+    }
+    this.cancel();
+    this.store.getState().activate(null);
+    this.store.getState().hover(null);
+    return true;
   }
 
   cancel(): void {

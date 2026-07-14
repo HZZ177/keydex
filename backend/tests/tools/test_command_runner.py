@@ -43,6 +43,7 @@ def _request(tmp_path, command: str, *, timeout_seconds: float = 5) -> CommandRe
         cwd=tmp_path,
         cwd_label=".",
         timeout_seconds=timeout_seconds,
+        timeout_source="model",
         session_id="ses-command",
         user_id="local-user",
         turn_index=1,

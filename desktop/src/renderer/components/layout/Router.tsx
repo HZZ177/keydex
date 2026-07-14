@@ -1,5 +1,14 @@
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type PropsWithChildren } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  type PropsWithChildren,
+} from "react";
 
 import {
   listenForAssociatedFileOpenRequested,
@@ -98,6 +107,7 @@ const McpConsolePage = lazy(() =>
     default: module.McpConsolePage,
   })),
 );
+const workbenchSidebarInitializedByRuntime = new WeakSet<RuntimeBridge>();
 
 export interface AppRouterProps {
   runtime?: RuntimeBridge;
@@ -296,6 +306,14 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaceSessions, setWorkspaceSessions] = useState<AgentSession[]>([]);
+
+  useLayoutEffect(() => {
+    if (workbenchSidebarInitializedByRuntime.has(runtime)) {
+      return;
+    }
+    workbenchSidebarInitializedByRuntime.add(runtime);
+    layout.actions.setSidebarCollapsed(true);
+  }, [layout.actions, runtime]);
 
   useEffect(() => {
     if (externalPreviewIntentPath) {

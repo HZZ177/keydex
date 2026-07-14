@@ -526,6 +526,8 @@ async def chat_websocket(websocket: WebSocket) -> None:
                 if action == "cancel":
                     session_id = str(payload.get("session_id") or bound_session_id or "").strip()
                     cancelled = await stream_manager.cancel(session_id)
+                    if not cancelled:
+                        await send("status", await stream_manager.status(session_id))
                     logger.info(
                         f"[WebSocket] 收到取消请求 | trace_id={connection_trace_id} | "
                         f"session_id={session_id or '-'} | cancelled={cancelled}"

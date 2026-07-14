@@ -84,7 +84,7 @@ describe("SourceAnnotationAdapter", () => {
 
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(view.state.selection.main).toMatchObject({ from: 6, to: 10 });
-    expect(viewport.scrollTop).toBe(190);
+    expect(viewport.scrollTop).toBe(200);
     controller.abort();
     await expect(adapter.reveal({
       annotationId: "beta",
@@ -95,6 +95,46 @@ describe("SourceAnnotationAdapter", () => {
       signal: controller.signal,
       sourceRanges: [{ start: 6, end: 10 }],
     })).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("centers the complete multi-line source range without drifting on repeated reveals", async () => {
+    const adapter = new SourceAnnotationAdapter();
+    const view = editor("alpha\nbeta\ngamma", adapter);
+    const viewport = document.createElement("div");
+    document.body.append(viewport);
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, value: 40, writable: true },
+    });
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      viewport.scrollTop = top ?? viewport.scrollTop;
+    });
+    Object.defineProperty(viewport, "scrollTo", { configurable: true, value: scrollTo });
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(rect(0, 0, 300, 100));
+    adapter.attach(view, viewport);
+    vi.spyOn(view, "coordsAtPos").mockImplementation((position) => position === 0
+      ? { left: 10, right: 40, top: 120 - viewport.scrollTop, bottom: 140 - viewport.scrollTop }
+      : { left: 10, right: 60, top: 220 - viewport.scrollTop, bottom: 240 - viewport.scrollTop });
+    const request = {
+      annotationId: "multi",
+      blockRanges: [],
+      logicalRange: { start: 0, end: 16 },
+      requestId: 1,
+      scroll: true,
+      signal: new AbortController().signal,
+      sourceRanges: [{ start: 0, end: 5 }, { start: 11, end: 16 }],
+    };
+
+    await adapter.reveal(request);
+    expect(view.state.selection.main).toMatchObject({ from: 0, to: 16 });
+    expect(viewport.scrollTop).toBe(130);
+    scrollTo.mockClear();
+
+    await adapter.reveal({ ...request, requestId: 2 });
+
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 130 });
+    expect(viewport.scrollTop).toBe(130);
   });
 
   it("converts marker fragments into complete-document geometry", () => {

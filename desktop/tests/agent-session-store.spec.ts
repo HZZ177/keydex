@@ -509,6 +509,9 @@ describe("agentSessionStore reducer", () => {
     state = reduceAgentWsEvent(state, { action: "status", data: { session_id: "ses-1", status: "running" } });
     expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
 
+    state = reduceAgentWsEvent(state, { action: "status", data: { session_id: "ses-1", status: "idle" } });
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({ status: "active", runtimeState: "idle" });
+
     state = reduceAgentWsEvent(state, { action: "pong", data: { timestamp: 1 } });
     state = reduceAgentWsEvent(state, { action: "task_result", data: { session_id: "ses-1" } });
     expect(selectAgentMessages(state, "ses-1")).toEqual([]);
@@ -889,6 +892,38 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentRuntimeState(state, "ses-a")).toBe("idle");
     expect(selectAgentSessionState(state, "ses-b")).toMatchObject({ runtimeState: "running", isStreaming: true });
     expect(selectAgentSessionState(state, "ses-c")).toMatchObject({ runtimeState: "running", isStreaming: true });
+  });
+
+  it("settles stale running sessions omitted from the reconnect status snapshot", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [
+        session("ses-stale", "2026-06-18T08:00:00Z", "running"),
+        session("ses-live", "2026-06-18T09:00:00Z", "running"),
+      ],
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "status",
+      data: {
+        status: "idle",
+        running_sessions: [{ session_id: "ses-live" }],
+        waiting_approval_sessions: [],
+        waiting_input_sessions: [],
+      },
+    });
+
+    expect(selectAgentSessionState(state, "ses-stale")).toMatchObject({
+      status: "active",
+      runtimeState: "idle",
+      isStreaming: false,
+      isCancelling: false,
+    });
+    expect(selectAgentSessionState(state, "ses-live")).toMatchObject({
+      status: "running",
+      runtimeState: "running",
+      isStreaming: true,
+    });
   });
 
   it("tracks command approval request and resumes after approval resolution", () => {
@@ -1306,6 +1341,8 @@ describe("agentSessionStore reducer", () => {
       status: "running",
       uiPayload: {
         status: "approval_pending",
+        timeout_seconds: 300,
+        timeout_source: "default",
         approval: {
           approval_id: "approval-1",
           status: "pending",
@@ -1321,6 +1358,8 @@ describe("agentSessionStore reducer", () => {
       role: "tool",
       uiPayload: {
         status: "running",
+        timeout_seconds: 300,
+        timeout_source: "default",
         approval: {
           approval_id: "approval-1",
           status: "approved",
@@ -4037,6 +4076,8 @@ function commandApproval(id: string, status: CommandApprovalRequest["status"] = 
       shell: "cmd",
       shell_label: "CMD",
       shell_path: "C:/Windows/System32/cmd.exe",
+      timeout_seconds: 300,
+      timeout_source: "default",
     },
     status,
     created_at: "2026-06-18T08:00:01Z",

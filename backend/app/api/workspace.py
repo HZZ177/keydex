@@ -28,6 +28,14 @@ from backend.app.api.document_read import (
 from backend.app.api.document_read import (
     DocumentReadSnapshot as WorkspaceDocumentSnapshot,
 )
+from backend.app.api.document_write import (
+    DocumentWriteError,
+    DocumentWriteErrorCode,
+    DocumentWriteRequest,
+    DocumentWriteResponse,
+    document_write_response,
+    write_utf8_document,
+)
 from backend.app.core.logger import logger
 from backend.app.core.ripgrep import (
     BUNDLED_RIPGREP_BINARY_NAME,
@@ -209,6 +217,19 @@ async def read_workspace_document(
     return await _document_read_response(scope, payload)
 
 
+@router.post(
+    "/api/workspaces/{workspace_id}/write/document",
+    response_model=DocumentWriteResponse,
+)
+async def write_workspace_document(
+    workspace_id: str,
+    payload: DocumentWriteRequest,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> DocumentWriteResponse:
+    scope = _workspace_scope(repositories, workspace_id)
+    return await _document_write_response(scope, payload)
+
+
 @router.get("/api/workspaces/{workspace_id}/media", response_model=WorkspaceMediaResponse)
 async def read_workspace_media(
     workspace_id: str,
@@ -303,6 +324,19 @@ async def read_session_workspace_document(
 ) -> StreamingResponse:
     scope = _session_workspace_scope(repositories, session_id)
     return await _document_read_response(scope, payload)
+
+
+@router.post(
+    "/api/sessions/{session_id}/workspace/write/document",
+    response_model=DocumentWriteResponse,
+)
+async def write_session_workspace_document(
+    session_id: str,
+    payload: DocumentWriteRequest,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> DocumentWriteResponse:
+    scope = _session_workspace_scope(repositories, session_id)
+    return await _document_write_response(scope, payload)
 
 
 @router.get("/api/sessions/{session_id}/workspace/media", response_model=WorkspaceMediaResponse)
@@ -582,6 +616,46 @@ async def _document_read_response(
         )
 
     return create_document_read_response(payload, snapshot)
+
+
+async def _document_write_response(
+    scope: WorkspaceRuntimeContext,
+    payload: DocumentWriteRequest,
+) -> DocumentWriteResponse:
+    target = _resolve(scope, payload.path)
+    try:
+        result = await asyncio.to_thread(
+            write_utf8_document,
+            target,
+            public_path=_relative_path(scope, target),
+            content=payload.content,
+            expected_revision=payload.expected_revision,
+            max_bytes=MAX_PREVIEW_DOCUMENT_BYTES,
+        )
+    except DocumentWriteError as exc:
+        status_code = {
+            DocumentWriteErrorCode.NOT_FOUND: status.HTTP_404_NOT_FOUND,
+            DocumentWriteErrorCode.TOO_LARGE: status.HTTP_413_CONTENT_TOO_LARGE,
+            DocumentWriteErrorCode.UNSUPPORTED_ENCODING: status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            DocumentWriteErrorCode.REVISION_CONFLICT: status.HTTP_409_CONFLICT,
+            DocumentWriteErrorCode.INVALID_REQUEST: status.HTTP_400_BAD_REQUEST,
+            DocumentWriteErrorCode.IO_ERROR: (
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+                if exc.retryable
+                else status.HTTP_403_FORBIDDEN
+            ),
+        }[exc.code]
+        raise _workspace_error(
+            status_code,
+            exc.code.value,
+            exc.message,
+            {"retryable": exc.retryable, **exc.details},
+        ) from exc
+    logger.info(
+        "[WorkspaceAPI] 保存文件 | "
+        f"workspace_id={scope.workspace_id} | path={result.path} | size={result.total_bytes}"
+    )
+    return document_write_response(result)
 
 
 def _read_document_snapshot(

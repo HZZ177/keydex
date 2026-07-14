@@ -168,6 +168,19 @@ describe("AnnotationStore", () => {
     expect(store.getState().hoveredAnnotationId).toBeNull();
   });
 
+  it("clears active and flash state when the current annotation is dismissed", () => {
+    const store = createAnnotationStore();
+    store.getState().activate("ann");
+    store.getState().flash("ann");
+    store.getState().hover("ann");
+
+    store.getState().activate(null);
+
+    expect(store.getState().activeAnnotationId).toBeNull();
+    expect(store.getState().flashAnnotationId).toBeNull();
+    expect(store.getState().hoveredAnnotationId).toBeNull();
+  });
+
   it("provides per-provider state and disposes it on unmount", () => {
     const store = createAnnotationStore();
     store.getState().openPanel();

@@ -29,6 +29,37 @@ function streamingResponse(request: DocumentReadRequest, content: string, revisi
 
 describe("WorkspaceRuntime document read", () => {
   it.each([
+    [{ sessionId: "session-1" } as const, "/api/sessions/session-1/workspace/write/document"],
+    [{ workspaceId: "workspace-1" } as const, "/api/workspaces/workspace-1/write/document"],
+  ])("writes %o through %s with an expected revision", async (scope, expectedPath) => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`http://127.0.0.1:8765${expectedPath}`);
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        protocol_version: "document-write/v1",
+        path: "docs/README.md",
+        content: "# Updated\r\n",
+        expected_revision: "sha256:before",
+      });
+      return Response.json({
+        protocol_version: "document-write/v1",
+        path: "docs/README.md",
+        revision: "sha256:after",
+        encoding: "utf-8",
+        total_bytes: 11,
+      });
+    });
+    const runtime = createWorkspaceRuntime(createHttpClient({
+      baseUrl: "http://127.0.0.1:8765",
+      fetcher,
+    }));
+
+    await expect(runtime.writeDocument(scope, "docs/README.md", "# Updated\r\n", {
+      expectedRevision: "sha256:before",
+    })).resolves.toMatchObject({ revision: "sha256:after" });
+  });
+
+  it.each([
     [{ sessionId: "session-1" } as const, "/api/sessions/session-1/workspace/read/document"],
     [{ workspaceId: "workspace-1" } as const, "/api/workspaces/workspace-1/read/document"],
   ])("streams %o through %s", async (scope, expectedPath) => {

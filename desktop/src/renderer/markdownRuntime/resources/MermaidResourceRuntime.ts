@@ -158,6 +158,7 @@ export class MermaidResourceRuntime implements MarkdownRendererResourceLifecycle
     this.assertActive();
     const output = context.ownerDocument.createElement("div");
     output.dataset.markdownMermaidOutput = "true";
+    output.dataset.filePreviewSelectionExcluded = "true";
     output.setAttribute("role", "img");
     output.setAttribute("aria-label", "Mermaid 图表");
     const status = context.ownerDocument.createElement("div");

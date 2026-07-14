@@ -419,7 +419,8 @@ function domPointForLogicalOffset(
   )].find((element) => {
     const start = numericDataset(element, "markdownLogicalStart");
     const end = numericDataset(element, "markdownLogicalEnd");
-    return start !== null && end !== null && logicalOffset >= start && logicalOffset <= end;
+    return start !== null && end !== null && end > start
+      && logicalOffset >= start && logicalOffset <= end;
   });
   if (rangedElement) {
     const start = numericDataset(rangedElement, "markdownLogicalStart")!;
@@ -448,16 +449,18 @@ function logicalOffsetForDomPoint(
 ): number | null {
   if (!Number.isSafeInteger(offset) || offset < 0 || !root.contains(node)) return null;
   const element = node instanceof Element ? node : node.parentElement;
-  if (element?.closest("[data-markdown-selection-exclude]")) return null;
+  const excluded = element?.closest<HTMLElement>("[data-markdown-selection-exclude]") ?? null;
+  if (excluded && !isZeroWidthListMarkerBoundary(excluded)) return null;
   const blockText = logicalText.slice(block.logical_start, block.logical_end);
   if (node instanceof Text) {
     const rangedElement = node.parentElement?.closest<HTMLElement>(
       "[data-markdown-logical-start][data-markdown-logical-end]",
     );
-    if (rangedElement && root.contains(rangedElement)) {
+    if (rangedElement && rangedElement !== root && root.contains(rangedElement)) {
       const start = numericDataset(rangedElement, "markdownLogicalStart");
       const end = numericDataset(rangedElement, "markdownLogicalEnd");
       if (start !== null && end !== null) {
+        if (start === end) return start;
         const local = textOffsetAtPoint(rangedElement, node, offset);
         if (local !== null) return Math.min(end, start + local);
       }
@@ -525,6 +528,13 @@ function numericDataset(node: HTMLElement | undefined, key: "markdownLogicalStar
   if (value === undefined) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isZeroWidthListMarkerBoundary(element: HTMLElement): boolean {
+  if (element.dataset.markdownListMarker !== "true") return false;
+  const start = numericDataset(element, "markdownLogicalStart");
+  const end = numericDataset(element, "markdownLogicalEnd");
+  return start !== null && start === end;
 }
 
 function sourceLineStarts(source: string): readonly number[] {

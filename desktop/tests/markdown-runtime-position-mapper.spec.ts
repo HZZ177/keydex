@@ -163,6 +163,24 @@ describe("Markdown mounted DOM-local mapping", () => {
     run.host.remove();
   });
 
+  it("maps a rendered list marker to the zero-width start of its list item", () => {
+    const run = mounted();
+    const listBlock = run.snapshot.blocks.find((block) => block.kind === "list")!;
+    const firstItem = listBlock.metadata.list?.items?.[0]!;
+    const root = run.runtime.getBlockElement(listBlock.id)!;
+    const markerText = root.querySelector<HTMLElement>("[data-markdown-list-marker]")!.firstChild as Text;
+
+    const mapped = run.mapper.domPosition(markerText, 1);
+
+    expect(mapped).toMatchObject({
+      status: "exact",
+      blockId: listBlock.id,
+      logicalOffset: listBlock.logical_start + firstItem.logical_start,
+    });
+    run.runtime.destroy();
+    run.host.remove();
+  });
+
   it("creates an exact cross-block selection Range when both endpoints are mounted", () => {
     const run = mounted();
     const start = SOURCE.indexOf("标题");

@@ -9,6 +9,10 @@ import {
   readDocumentNdjsonResponse,
   type DocumentReadTransportDiagnostics,
 } from "@/renderer/components/workspace/fileMarkdownAdapter/transport";
+import {
+  createDocumentWriteRequest,
+  type DocumentWriteResult,
+} from "./documentWrite";
 
 export interface WorkspaceEntry {
   name: string;
@@ -76,6 +80,11 @@ export interface WorkspaceDocumentReadOptions {
   onDiagnostics?: (diagnostics: DocumentReadTransportDiagnostics) => void;
 }
 
+export interface WorkspaceDocumentWriteOptions {
+  expectedRevision: string;
+  signal?: AbortSignal;
+}
+
 export interface KeydexDiagnostic {
   code: string;
   reason: string;
@@ -124,6 +133,12 @@ export interface WorkspaceRuntime {
     path: string,
     options?: WorkspaceDocumentReadOptions,
   ): Promise<DocumentReadResult>;
+  writeDocument(
+    scope: WorkspaceScope,
+    path: string,
+    content: string,
+    options: WorkspaceDocumentWriteOptions,
+  ): Promise<DocumentWriteResult>;
   readMedia(scope: WorkspaceScope, path: string): Promise<WorkspaceMediaResponse>;
   search(scope: WorkspaceScope, query: string, options?: WorkspaceSearchOptions): Promise<WorkspaceSearchResult[]>;
   listSkills(scope: WorkspaceScope, options?: WorkspaceSkillListOptions): Promise<WorkspaceSkillsResponse>;
@@ -177,6 +192,17 @@ export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
           });
         },
       });
+    },
+    writeDocument(scope, path, content, options) {
+      return http.request<DocumentWriteResult>(
+        `${workspaceBasePath(scope)}/write/document`,
+        {
+          method: "POST",
+          body: createDocumentWriteRequest(path, content, options.expectedRevision),
+          signal: options.signal,
+          silentStatuses: [409],
+        },
+      );
     },
     readMedia(scope, path) {
       return http.request<WorkspaceMediaResponse>(

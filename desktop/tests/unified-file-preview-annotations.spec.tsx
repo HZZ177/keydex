@@ -498,6 +498,159 @@ describe("unified FilePreview annotations", () => {
     }
   });
 
+  it("waits for the measured end-of-document card placement before scrolling on first open", async () => {
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
+
+    const marker = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>("[data-annotation-id='ann-alpha']");
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    const markdownRoot = marker.closest<HTMLElement>("[data-markdown-runtime-features='ready']")!;
+    const viewport = document.querySelector<HTMLElement>("[data-document-scroll-viewport='true']")!;
+    const scrollTo = vi.fn();
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 12_000 },
+      scrollTo: { configurable: true, value: scrollTo },
+      scrollTop: { configurable: true, value: 10_000, writable: true },
+    });
+    Object.defineProperty(markdownRoot, "scrollHeight", { configurable: true, value: 12_000 });
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const elementRect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function getBoundingClientRect(this: HTMLElement) {
+      if (this === viewport) return domRect(0, 0, 1000, 400);
+      if (this === markdownRoot) return domRect(-10_000, 0, 700, 12_000);
+      if (this.dataset.annotationId === "ann-alpha") return domRect(320, 120, 48, 18);
+      if (this.dataset.annotationCardId === "ann-alpha") {
+        const placement = this.closest<HTMLElement>("[data-annotation-placement-id='ann-alpha']");
+        const documentTop = Number.parseFloat(placement?.style.top ?? "0");
+        return domRect(documentTop - viewport.scrollTop, 720, 280, 80);
+      }
+      return originalGetBoundingClientRect.call(this);
+    });
+
+    try {
+      fireEvent.click(marker);
+
+      await waitFor(() => {
+        expect(document.querySelector("[data-annotation-card-id='ann-alpha']")
+          ?.getAttribute("data-annotation-navigation-flash")).toBe("true");
+      });
+      const requestedTops = scrollTo.mock.calls.map(([options]) => (options as ScrollToOptions).top ?? 0);
+      expect(requestedTops.length).toBeGreaterThan(0);
+      expect(Math.min(...requestedTops)).toBeGreaterThan(9_000);
+    } finally {
+      elementRect.mockRestore();
+    }
+  });
+
+  it("replays counterpart flashes on repeated clicks and clears the highlight outside", async () => {
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
+    fireEvent.click(await screen.findByLabelText("文件批注 1"));
+    const card = await screen.findByLabelText("批注：Explain alpha");
+    const marker = () => document.querySelector<HTMLElement>("[data-annotation-id='ann-alpha']");
+    const viewport = screen.getByLabelText("预览内容");
+    await waitFor(() => expect(marker()).not.toBeNull());
+
+    fireEvent.click(marker() as HTMLElement);
+    await waitFor(() => {
+      expect(marker()?.getAttribute("data-active")).toBe("true");
+      expect(card.getAttribute("data-active")).toBe("true");
+      expect(card.getAttribute("data-annotation-navigation-flash")).toBe("true");
+    });
+    fireEvent.animationEnd(card);
+    expect(card.getAttribute("data-annotation-navigation-flash")).toBeNull();
+
+    fireEvent.click(marker() as HTMLElement);
+    await waitFor(() => {
+      expect(marker()?.getAttribute("data-active")).toBe("true");
+      expect(card.getAttribute("data-active")).toBe("true");
+      expect(card.getAttribute("data-annotation-navigation-flash")).toBe("true");
+    });
+
+    fireEvent.click(viewport);
+    await waitFor(() => {
+      expect(marker()?.getAttribute("data-active")).toBe("false");
+      expect(card.getAttribute("data-active")).toBe("false");
+      expect(card.getAttribute("data-annotation-navigation-flash")).toBeNull();
+    });
+
+    fireEvent.click(card);
+    await waitFor(() => {
+      expect(marker()?.getAttribute("data-active")).toBe("true");
+      expect(card.getAttribute("data-active")).toBe("true");
+      expect(marker()?.getAttribute("data-annotation-navigation-flash")).toBe("true");
+    });
+    fireEvent.animationEnd(marker() as HTMLElement);
+    expect(marker()?.getAttribute("data-annotation-navigation-flash")).toBeNull();
+
+    fireEvent.click(card);
+    await waitFor(() => {
+      expect(marker()?.getAttribute("data-active")).toBe("true");
+      expect(card.getAttribute("data-active")).toBe("true");
+      expect(marker()?.getAttribute("data-annotation-navigation-flash")).toBe("true");
+    });
+
+    fireEvent.click(viewport);
+    await waitFor(() => {
+      expect(marker()?.getAttribute("data-active")).toBe("false");
+      expect(card.getAttribute("data-active")).toBe("false");
+      expect(marker()?.getAttribute("data-annotation-navigation-flash")).toBeNull();
+    });
+  });
+
+  it("lets a rapid second card press interrupt the first card navigation", async () => {
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime([record, paragraphRecord])} workspaceId="ws-1" />);
+    fireEvent.click(await screen.findByLabelText("文件批注 2"));
+    const firstCard = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>("[data-annotation-card-id='ann-alpha']");
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    const secondCard = document.querySelector<HTMLElement>("[data-annotation-card-id='ann-paragraph']")!;
+
+    fireEvent.pointerDown(firstCard, { button: 0, pointerType: "mouse" });
+    fireEvent.pointerDown(secondCard, { button: 0, pointerType: "mouse" });
+
+    await waitFor(() => {
+      expect(firstCard.getAttribute("data-active")).toBe("false");
+      expect(secondCard.getAttribute("data-active")).toBe("true");
+      expect(document.querySelector("[data-annotation-id='ann-alpha']")?.getAttribute("data-active")).toBe("false");
+      expect(document.querySelector("[data-annotation-id='ann-paragraph']")?.getAttribute("data-active")).toBe("true");
+      expect(document.querySelector("[data-annotation-id='ann-paragraph']")
+        ?.getAttribute("data-annotation-navigation-flash")).toBe("true");
+    });
+  });
+
+  it("keeps the active item while the rail header switches to adjacent annotations", async () => {
+    render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime([record, paragraphRecord])} workspaceId="ws-1" />);
+    fireEvent.click(await screen.findByLabelText("文件批注 2"));
+    const firstCard = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>("[data-annotation-card-id='ann-alpha']");
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    const railNavigation = document.querySelector<HTMLElement>("[data-annotation-rail='true'] [role='group']")!;
+    const [previous, next] = Array.from(railNavigation.querySelectorAll<HTMLButtonElement>("button"));
+
+    fireEvent.pointerDown(firstCard, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(firstCard.getAttribute("data-active")).toBe("true"));
+
+    fireEvent.click(next!);
+    await waitFor(() => {
+      expect(document.querySelector("[data-annotation-navigation-position='true']")?.textContent).toBe("2 / 2");
+      expect(document.querySelector("[data-annotation-card-id='ann-paragraph']")?.getAttribute("data-active")).toBe("true");
+      expect(document.querySelector("[data-annotation-id='ann-paragraph']")?.getAttribute("data-active")).toBe("true");
+    });
+
+    fireEvent.click(previous!);
+    await waitFor(() => {
+      expect(document.querySelector("[data-annotation-navigation-position='true']")?.textContent).toBe("1 / 2");
+      expect(document.querySelector("[data-annotation-card-id='ann-alpha']")?.getAttribute("data-active")).toBe("true");
+      expect(document.querySelector("[data-annotation-id='ann-alpha']")?.getAttribute("data-active")).toBe("true");
+    });
+  });
+
   it("deepens the complete annotation chain from either marker or card hover", async () => {
     render(<FilePreview markdownRuntimeSnapshotLoader={markdownRuntimeSnapshotLoader} request={{ type: "file", path: "README.md" }} runtime={runtime()} workspaceId="ws-1" />);
     fireEvent.click(await screen.findByLabelText("文件批注 1"));
@@ -605,6 +758,21 @@ describe("unified FilePreview annotations", () => {
       expect(document.querySelector("[data-file-annotation-model-ready='true']")).not.toBeNull();
     });
     const body = await screen.findByLabelText("预览内容");
+    const viewport = document.querySelector<HTMLElement>("[data-document-scroll-viewport='true']")!;
+    const scrollTo = vi.fn();
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1600 },
+      scrollTo: { configurable: true, value: scrollTo },
+      scrollTop: { configurable: true, value: 0, writable: true },
+    });
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const elementRect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function getBoundingClientRect(this: HTMLElement) {
+      if (this === viewport) return domRect(0, 0, 1000, 400);
+      if (this.dataset.annotationDraftEditor === "true") return domRect(720, 720, 280, 86);
+      return originalGetBoundingClientRect.call(this);
+    });
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, "focus");
     const selection = mockTextSelection(body, "Alpha");
     try {
       await act(async () => {
@@ -618,14 +786,44 @@ describe("unified FilePreview annotations", () => {
       fireEvent.click(await screen.findByRole("button", { name: "为选中文本添加批注" }));
 
       const editor = await screen.findByLabelText("批注内容");
-      expect(document.activeElement).toBe(editor);
+      await waitFor(() => expect(document.activeElement).toBe(editor));
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+      await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 563 }));
       expect(screen.getByLabelText("文件批注 0").getAttribute("aria-pressed")).toBe("true");
       await waitFor(() => {
         expect(document.querySelector(`[data-annotation-id="__annotation_draft__"]`)).not.toBeNull();
       });
     } finally {
       selection.restore();
+      elementRect.mockRestore();
+      focus.mockRestore();
     }
+  });
+
+  it("starts a whole-file annotation from the rendered HTML frame action", async () => {
+    const html = "<main><h1>页面预览</h1></main>";
+    const localRuntime = runtime([]);
+    vi.mocked(localRuntime.workspace.readFile).mockResolvedValue({
+      path: "index.html",
+      content: html,
+      encoding: "utf-8",
+      revision: "sha256:html",
+    });
+
+    render(
+      <FilePreview
+        request={{ type: "file", path: "index.html" }}
+        runtime={localRuntime}
+        workspaceId="ws-1"
+      />,
+    );
+
+    expect(await screen.findByTitle("HTML 文件预览")).not.toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "批注整个 HTML 预览" }));
+
+    const editor = await screen.findByLabelText("批注内容");
+    await waitFor(() => expect(document.activeElement).toBe(editor));
+    expect(document.querySelector("[data-resource-annotation-highlight='true']")).not.toBeNull();
   });
 
   it("emits reference-only payloads for single and bulk chat actions", async () => {

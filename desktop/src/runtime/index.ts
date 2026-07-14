@@ -21,6 +21,10 @@ export {
   createDocumentReadRequest,
   createWholeDocumentReadResult,
 } from "./documentRead";
+export {
+  DOCUMENT_WRITE_PROTOCOL_VERSION,
+  createDocumentWriteRequest,
+} from "./documentWrite";
 export type {
   DocumentReadChunkMessage,
   DocumentReadCompleteMessage,
@@ -33,6 +37,7 @@ export type {
   DocumentReadStartMessage,
   DocumentReadTransport,
 } from "./documentRead";
+export type { DocumentWriteRequest, DocumentWriteResult } from "./documentWrite";
 export { createModelsRuntime } from "./models";
 export { createConversationRuntime } from "./conversation";
 export { createUsageRuntime } from "./usage";
@@ -67,6 +72,7 @@ export type { HealthResponse, SettingsRuntime } from "./settings";
 export type {
   LocalPreviewFileResponse,
   LocalPreviewDocumentReadOptions,
+  LocalPreviewDocumentWriteOptions,
   LocalPreviewMediaResponse,
   LocalPreviewRuntimeOptions,
   LocalPreviewRuntime,
@@ -115,6 +121,7 @@ export type {
   WorkspaceMediaResponse,
   WorkspaceRuntime,
   WorkspaceDocumentReadOptions,
+  WorkspaceDocumentWriteOptions,
   WorkspaceScope,
   WorkspaceSearchOptions,
   WorkspaceSearchResult,

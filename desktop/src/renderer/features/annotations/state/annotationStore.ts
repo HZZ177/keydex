@@ -95,6 +95,8 @@ export function createAnnotationStore(): AnnotationStore {
     activate(annotationId, openPanel = false) {
       set((state) => ({
         activeAnnotationId: annotationId,
+        flashAnnotationId: annotationId === null ? null : state.flashAnnotationId,
+        hoveredAnnotationId: annotationId === null ? null : state.hoveredAnnotationId,
         panelOpen: openPanel ? true : state.panelOpen,
       }));
     },

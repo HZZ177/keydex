@@ -7,6 +7,7 @@ import {
   Columns2,
   Copy,
   Eye,
+  LoaderCircle,
   Maximize2,
   Search,
   MessageSquarePlus,
@@ -16,6 +17,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { css as cssLanguage } from "@codemirror/lang-css";
 import { html as htmlLanguage } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
@@ -65,10 +67,12 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import type {
-  RuntimeBridge,
-  WorkspaceMediaResponse,
-  WorkspaceScope,
+import {
+  isRuntimeHttpError,
+  type DocumentWriteResult,
+  type RuntimeBridge,
+  type WorkspaceMediaResponse,
+  type WorkspaceScope,
 } from "@/runtime";
 import { AppDialog } from "@/renderer/components/dialog";
 import { SelectionToolbar } from "@/renderer/pages/conversation/messages/SelectionToolbar";
@@ -117,8 +121,15 @@ import {
   connectorPreferredEdgeY,
   spreadConnectorEdgePorts,
 } from "@/renderer/features/annotations/layout/ConnectorGeometry";
-import { useUnifiedAnnotationSession, RETARGET_ANNOTATION_ID, type UnifiedAnnotationSession } from "@/renderer/features/annotations/state/useUnifiedAnnotationSession";
+import { markerAnchorPoint } from "@/renderer/features/annotations/layout/DocumentGeometry";
+import {
+  DRAFT_ANNOTATION_ID,
+  RETARGET_ANNOTATION_ID,
+  useUnifiedAnnotationSession,
+  type UnifiedAnnotationSession,
+} from "@/renderer/features/annotations/state/useUnifiedAnnotationSession";
 import type { SourceAnnotationAdapter } from "@/renderer/features/annotations/adapters/SourceAnnotationAdapter";
+import type { DocumentSelection } from "@/renderer/features/annotations/document/DocumentTextModel";
 import { ImagePreviewSurface } from "./ImagePreviewSurface";
 import {
   FileMarkdownRuntimeHost,
@@ -140,6 +151,25 @@ const EMPTY_ANNOTATION_FLOATING_ITEMS = Object.freeze([]);
 const ANNOTATION_RAIL_CARD_INSET = 32;
 const ANNOTATION_CONNECTOR_FAN_OUT = 8;
 const ANNOTATION_BOTTOM_ACTIONS_RESERVED = 68;
+
+interface ResourceAnnotationVisualState {
+  readonly active: boolean;
+  readonly highlighted: boolean;
+  readonly hovered: boolean;
+}
+
+type FileAutoSaveState = "idle" | "dirty" | "saving" | "saved" | "conflict" | "error";
+
+interface FileDraft {
+  readonly baseRevision: string;
+  readonly content: string;
+}
+
+const EMPTY_RESOURCE_ANNOTATION_VISUAL_STATE: ResourceAnnotationVisualState = Object.freeze({
+  active: false,
+  highlighted: false,
+  hovered: false,
+});
 
 export interface MarkdownOutlineItem {
   id: string;
@@ -225,6 +255,16 @@ export function FilePreview({
   const kind = useMemo(() => detectPreviewKind(request), [request]);
   const immediateContent = useMemo(() => immediatePreviewContent(request), [request]);
   const [content, setContent] = useState(() => immediatePreviewContent(request) ?? "");
+  const [persistedContent, setPersistedContent] = useState(() => immediatePreviewContent(request) ?? "");
+  const draftsRef = useRef(new Map<string, FileDraft>());
+  const activeRequestIdentityRef = useRef("");
+  const hasUnsavedChangesRef = useRef(false);
+  const saveInFlightRef = useRef(false);
+  const [autoSaveState, setAutoSaveState] = useState<FileAutoSaveState>("idle");
+  const [autoSaveError, setAutoSaveError] = useState<string | null>(null);
+  const [conflictRevision, setConflictRevision] = useState<string | null>(null);
+  const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
+  const [saveQueueVersion, setSaveQueueVersion] = useState(0);
   const [documentRevision, setDocumentRevision] = useState<string | null>(null);
   const [media, setMedia] = useState<WorkspaceMediaResponse | null>(null);
   const [loading, setLoading] = useState(isPathPreviewRequest(request));
@@ -271,6 +311,17 @@ export function FilePreview({
   const scope = useMemo(() => workspaceScope({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const fileLoadScope = request.type === "file" ? scope : null;
   const requestIdentity = previewRequestIdentity(request, workspaceId, sessionId);
+  activeRequestIdentityRef.current = requestIdentity;
+  const editable = Boolean(
+    isPathPreviewRequest(request)
+    && kind !== "image"
+    && runtime
+    && (request.type === "local-file"
+      ? typeof runtime.localPreview?.writeDocument === "function"
+      : Boolean(fileLoadScope && typeof runtime.workspace?.writeDocument === "function")),
+  );
+  const hasUnsavedChanges = editable && content !== persistedContent;
+  hasUnsavedChangesRef.current = hasUnsavedChanges;
   const annotationPathCandidate = workspaceAnnotationPath === undefined
     ? request.type === "file" ? request.path : null
     : workspaceAnnotationPath;
@@ -314,6 +365,114 @@ export function FilePreview({
     setReloadVersion((version) => version + 1);
   }, [requestIdentity]);
 
+  const updateDraftContent = useCallback((nextContent: string) => {
+    if (!editable || !documentRevision) return;
+    setContent(nextContent);
+    setAutoSaveError(null);
+    const existing = draftsRef.current.get(requestIdentity);
+    if (nextContent === persistedContent) {
+      draftsRef.current.delete(requestIdentity);
+      setAutoSaveState("saved");
+      return;
+    }
+    draftsRef.current.set(requestIdentity, {
+      baseRevision: existing?.baseRevision ?? documentRevision,
+      content: nextContent,
+    });
+    if (autoSaveState !== "conflict") {
+      setAutoSaveState("dirty");
+    }
+  }, [autoSaveState, documentRevision, editable, persistedContent, requestIdentity]);
+
+  const saveDraft = useCallback(async (expectedRevisionOverride?: string) => {
+    if (!editable || !runtime || !isPathPreviewRequest(request) || saveInFlightRef.current || fileUnavailable) return;
+    const identity = requestIdentity;
+    const draft = draftsRef.current.get(identity);
+    if (!draft) return;
+    if (autoSaveState === "conflict" && !expectedRevisionOverride) return;
+
+    const expectedRevision = expectedRevisionOverride ?? draft.baseRevision;
+    saveInFlightRef.current = true;
+    if (activeRequestIdentityRef.current === identity) {
+      setAutoSaveState("saving");
+      setAutoSaveError(null);
+    }
+    let result: DocumentWriteResult;
+    try {
+      result = request.type === "local-file"
+        ? await runtime.localPreview.writeDocument(request.path, draft.content, { expectedRevision })
+        : await runtime.workspace.writeDocument(fileLoadScope as WorkspaceScope, request.path, draft.content, {
+            expectedRevision,
+          });
+      const latest = draftsRef.current.get(identity);
+      if (!latest || latest.content === draft.content) {
+        draftsRef.current.delete(identity);
+      } else {
+        draftsRef.current.set(identity, { ...latest, baseRevision: result.revision });
+      }
+      if (activeRequestIdentityRef.current === identity) {
+        setPersistedContent(draft.content);
+        setDocumentRevision(result.revision);
+        setConflictRevision(null);
+        setConflictDialogOpen(false);
+        setAutoSaveState(latest && latest.content !== draft.content ? "dirty" : "saved");
+      }
+    } catch (reason) {
+      if (activeRequestIdentityRef.current !== identity) return;
+      if (isRuntimeHttpError(reason) && reason.code === "revision_conflict") {
+        const actualRevision = typeof reason.details?.actual_revision === "string"
+          ? reason.details.actual_revision
+          : null;
+        setConflictRevision(actualRevision);
+        setConflictDialogOpen(true);
+        setAutoSaveState("conflict");
+        setAutoSaveError("文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。");
+        reloadCurrentFile();
+        return;
+      }
+      setAutoSaveState("error");
+      setAutoSaveError(`自动保存失败：${errorMessage(reason)}`);
+    } finally {
+      saveInFlightRef.current = false;
+      setSaveQueueVersion((version) => version + 1);
+    }
+  }, [autoSaveState, editable, fileLoadScope, fileUnavailable, reloadCurrentFile, request, requestIdentity, runtime]);
+
+  useEffect(() => () => {
+    void saveDraft();
+  }, [requestIdentity]);
+
+  useEffect(() => {
+    if (
+      !hasUnsavedChanges
+      || autoSaveState === "saving"
+      || autoSaveState === "conflict"
+      || autoSaveState === "error"
+    ) return;
+    const timer = window.setTimeout(() => void saveDraft(), FILE_PREVIEW_AUTO_SAVE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [autoSaveState, content, hasUnsavedChanges, saveDraft, saveQueueVersion]);
+
+  const discardDraftAndReload = useCallback(() => {
+    draftsRef.current.delete(requestIdentity);
+    setConflictDialogOpen(false);
+    setConflictRevision(null);
+    setAutoSaveError(null);
+    setAutoSaveState("idle");
+    reloadCurrentFile();
+  }, [reloadCurrentFile, requestIdentity]);
+
+  const overwriteConflictingDocument = useCallback(() => {
+    if (!conflictRevision) return;
+    const current = draftsRef.current.get(requestIdentity);
+    if (current) {
+      draftsRef.current.set(requestIdentity, { ...current, baseRevision: conflictRevision });
+    }
+    setConflictDialogOpen(false);
+    setAutoSaveState("dirty");
+    void saveDraft(conflictRevision);
+  }, [conflictRevision, requestIdentity, saveDraft]);
+
   useEffect(() => {
     if (refreshRequestId === handledRefreshRequestIdRef.current) {
       return;
@@ -338,7 +497,18 @@ export function FilePreview({
       if (!relevant.length) {
         return;
       }
+      if (saveInFlightRef.current) {
+        return;
+      }
       if (relevant.some((change) => change.kind !== "deleted")) {
+        if (hasUnsavedChangesRef.current) {
+          setConflictDialogOpen(true);
+          setConflictRevision(null);
+          setAutoSaveState("conflict");
+          setAutoSaveError("文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。");
+          reloadCurrentFile();
+          return;
+        }
         setFileUnavailable(false);
         reloadCurrentFile();
         return;
@@ -361,7 +531,18 @@ export function FilePreview({
       if (!notification.changes.length) {
         return;
       }
+      if (saveInFlightRef.current) {
+        return;
+      }
       if (notification.changes.some((change) => change.kind !== "deleted")) {
+        if (hasUnsavedChangesRef.current) {
+          setConflictDialogOpen(true);
+          setConflictRevision(null);
+          setAutoSaveState("conflict");
+          setAutoSaveError("文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。");
+          reloadCurrentFile();
+          return;
+        }
         setFileUnavailable(false);
         reloadCurrentFile();
         return;
@@ -385,6 +566,10 @@ export function FilePreview({
     if (identityChanged) {
       setError(null);
       setReloadError(null);
+      setAutoSaveError(null);
+      setAutoSaveState("idle");
+      setConflictDialogOpen(false);
+      setConflictRevision(null);
       setFileUnavailable(false);
       setMedia(null);
       setDocumentRevision(null);
@@ -396,6 +581,8 @@ export function FilePreview({
 
     if (request.type === "content") {
       const nextContent = request.content || "";
+      setPersistedContent(nextContent);
+      draftsRef.current.delete(requestIdentity);
       setContent(nextContent);
       setLoading(false);
       setReloading(false);
@@ -406,6 +593,8 @@ export function FilePreview({
 
     if (request.type === "diff") {
       const nextContent = request.diff || "暂无 diff";
+      setPersistedContent(nextContent);
+      draftsRef.current.delete(requestIdentity);
       setContent(nextContent);
       setLoading(false);
       setReloading(false);
@@ -415,6 +604,7 @@ export function FilePreview({
     }
 
     if (identityChanged) {
+      setPersistedContent("");
       setContent("");
     }
     if (!runtime || (request.type === "file" && !fileLoadScope)) {
@@ -443,6 +633,31 @@ export function FilePreview({
       consumerId: documentReadConsumerIdRef.current,
       signal: documentReadController.signal,
     };
+    const applyDocumentSnapshot = (response: { content: string; revision?: string | null }) => {
+      if (!active) return;
+      const revision = typeof response.revision === "string" ? response.revision : null;
+      const draft = draftsRef.current.get(requestIdentity);
+      setPersistedContent(response.content);
+      setDocumentRevision(revision);
+      if (draft) {
+        setContent(draft.content);
+        if (revision && draft.baseRevision !== revision) {
+          setConflictRevision(revision);
+          setConflictDialogOpen(true);
+          setAutoSaveState("conflict");
+          setAutoSaveError("文件已被外部修改，自动保存已暂停。你的编辑仍保留在当前视图中。");
+        } else {
+          setAutoSaveState("dirty");
+        }
+      } else {
+        setContent(response.content);
+        if (identityChanged) {
+          setAutoSaveState("idle");
+        }
+      }
+      hasLoadedRef.current = true;
+      setFileUnavailable(false);
+    };
     const loader =
       request.type === "local-file"
         ? kind === "image"
@@ -454,12 +669,7 @@ export function FilePreview({
               }
             })
           : runtime.localPreview.readDocument(request.path, documentReadOptions).then((response) => {
-              if (active) {
-                setContent(response.content);
-                setDocumentRevision(response.revision);
-                hasLoadedRef.current = true;
-                setFileUnavailable(false);
-              }
+              applyDocumentSnapshot(response);
             })
         : kind === "image"
           ? runtime.workspace.readMedia(fileLoadScope as WorkspaceScope, request.path).then((response) => {
@@ -477,12 +687,7 @@ export function FilePreview({
                 )
               : runtime.workspace.readFile(fileLoadScope as WorkspaceScope, request.path)
             ).then((response) => {
-              if (active) {
-                setContent(response.content);
-                setDocumentRevision(response.revision);
-                hasLoadedRef.current = true;
-                setFileUnavailable(false);
-              }
+              applyDocumentSnapshot(response);
             });
 
     void loader
@@ -563,8 +768,9 @@ export function FilePreview({
   const formattedSource = renderedPreviewContent;
   const markdownRuntimeWorkspaceId = workspaceId ?? (sessionId ? `session:${sessionId}` : "local");
   const markdownRuntimePath = revealPath ?? sourceLabel;
-  const markdownRuntimeRevision = documentRevision
-    ?? `inline:${stableMarkdownIdentityHash(renderedPreviewContent)}`;
+  const markdownRuntimeRevision = hasUnsavedChanges
+    ? `draft:${stableMarkdownIdentityHash(renderedPreviewContent)}`
+    : documentRevision ?? `inline:${stableMarkdownIdentityHash(renderedPreviewContent)}`;
   const providerMarkdownViewDescriptor = previewContext?.activeEntry?.request === request
     ? previewContext.activeEntry.markdownView
     : null;
@@ -621,15 +827,42 @@ export function FilePreview({
       notifications.error(annotationNotificationError);
     }
   }, [annotationNotificationError, notifications]);
-  const annotationAvailable = annotationSession.available && !fileUnavailable;
+  const annotationAvailable = annotationSession.available && !fileUnavailable && !hasUnsavedChanges;
   const annotationPanelOpen = annotationSession.state.panelOpen;
   const activeAnnotationId = annotationSession.state.activeAnnotationId;
   const flashAnnotationId = annotationSession.state.flashAnnotationId;
   const closeAnnotationPanel = useCallback(() => annotationSession.store.getState().closePanel(), [annotationSession.store]);
   const toggleAnnotationPanel = useCallback(() => annotationSession.store.getState().togglePanel(), [annotationSession.store]);
+  const draftingRange = annotationSession.state.interaction.type === "drafting"
+    ? annotationSession.state.interaction.range
+    : null;
+  const draftPlacement = annotationSession.lanePlacements.find(
+    (placement) => placement.id === DRAFT_ANNOTATION_ID,
+  ) ?? null;
+  const draftAnchorPoint = annotationSession.connectorGeometry
+    ? markerAnchorPoint(annotationSession.connectorGeometry, DRAFT_ANNOTATION_ID)
+    : null;
+  const draftLayoutReady = kind !== "markdown"
+    ? draftPlacement !== null
+    : Boolean(draftPlacement && draftAnchorPoint
+      && Math.abs(draftPlacement.anchorY - draftAnchorPoint.y) < 0.5);
+  const railRevealRequest = annotationSession.railRevealRequest;
+  const railRevealResolution = railRevealRequest
+    ? annotationSession.state.resolutions.byId[railRevealRequest.annotationId]
+    : null;
+  const railRevealPlacement = railRevealRequest
+    ? annotationSession.lanePlacements.find((placement) => placement.id === railRevealRequest.annotationId) ?? null
+    : null;
+  const railRevealAnchorPoint = railRevealRequest && annotationSession.connectorGeometry
+    ? markerAnchorPoint(annotationSession.connectorGeometry, railRevealRequest.annotationId)
+    : null;
+  const railRevealLayoutReady = railRevealResolution?.status !== "resolved"
+    || Boolean(railRevealPlacement && railRevealAnchorPoint
+      && Math.abs(railRevealPlacement.anchorY - railRevealAnchorPoint.y) < 0.5);
   useEffect(() => {
-    const request = annotationSession.railRevealRequest;
-    if (!request || !annotationPanelOpen || !documentViewport) {
+    const request = railRevealRequest;
+    if (!request || !annotationPanelOpen || !documentViewport
+      || activeAnnotationId !== request.annotationId || !railRevealLayoutReady) {
       return;
     }
     const controller = new AbortController();
@@ -648,7 +881,61 @@ export function FilePreview({
       controller.abort();
       window.cancelAnimationFrame(frame);
     };
-  }, [annotationPanelOpen, annotationSession.railRevealRequest, documentViewport]);
+  }, [
+    activeAnnotationId,
+    annotationPanelOpen,
+    documentViewport,
+    railRevealLayoutReady,
+    railRevealRequest,
+  ]);
+
+  useEffect(() => {
+    if (!activeAnnotationId) return;
+    const root = previewRootRef.current;
+    const ownerDocument = root?.ownerDocument;
+    if (!root || !ownerDocument) return;
+    const handleDocumentClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("[data-annotation-id], [data-annotation-card-id], [data-annotation-rail='true']")) return;
+      const markdownBlock = target.closest<HTMLElement>("[data-markdown-block-id]");
+      if (markdownBlock?.querySelector("[data-markdown-annotation-resource-block='true'][data-annotation-id]")) {
+        return;
+      }
+      annotationSession.deactivate(activeAnnotationId);
+      root.querySelectorAll<HTMLElement>("[data-annotation-navigation-flash='true']")
+        .forEach((element) => element.removeAttribute("data-annotation-navigation-flash"));
+    };
+    ownerDocument.addEventListener("click", handleDocumentClick, true);
+    return () => ownerDocument.removeEventListener("click", handleDocumentClick, true);
+  }, [activeAnnotationId, annotationSession.deactivate]);
+
+  useEffect(() => {
+    if (!annotationPanelOpen || !draftingRange || !draftLayoutReady || !documentViewport) return;
+    const controller = new AbortController();
+    let scrollFrame = 0;
+    const focusFrame = window.requestAnimationFrame(() => {
+      const editor = annotationLayoutRef.current?.querySelector<HTMLTextAreaElement>(
+        "[data-annotation-draft-editor='true']",
+      );
+      if (!editor) return;
+      editor.focus({ preventScroll: true });
+      scrollFrame = window.requestAnimationFrame(() => {
+        void centerElementInScrollViewport(documentViewport, editor, controller.signal).catch(() => undefined);
+      });
+    });
+    return () => {
+      controller.abort();
+      window.cancelAnimationFrame(focusFrame);
+      if (scrollFrame) window.cancelAnimationFrame(scrollFrame);
+    };
+  }, [
+    annotationPanelOpen,
+    documentViewport,
+    draftLayoutReady,
+    draftingRange?.end,
+    draftingRange?.start,
+  ]);
 
   useEffect(() => {
     if (!annotationPath || fileUnavailable) return;
@@ -657,6 +944,37 @@ export function FilePreview({
       annotationSession.store.getState().openPanel();
     });
   }, [annotationPath, annotationSession.store, fileUnavailable, workspaceId]);
+
+  const applyResourceAnnotationSelection = useCallback((selection: DocumentSelection | null) => {
+    if (!annotationAvailable || !selection) return false;
+    const interaction = annotationSession.store.getState().interaction;
+    const applied = interaction.type === "retargeting"
+      ? annotationSession.setRetargetSelection(selection)
+      : annotationSession.beginDraft(selection);
+    if (!applied) {
+      notifications.warning("当前资源块无法建立批注锚点。");
+      return false;
+    }
+    window.getSelection()?.removeAllRanges();
+    return true;
+  }, [
+    annotationAvailable,
+    annotationSession.beginDraft,
+    annotationSession.setRetargetSelection,
+    annotationSession.store,
+    notifications,
+  ]);
+
+  const startWholeResourceAnnotation = useCallback(() => {
+    const logicalLength = annotationSession.model?.logicalText.length ?? 0;
+    if (logicalLength <= 0) return;
+    applyResourceAnnotationSelection({
+      coordinateSpace: "logical",
+      range: { start: 0, end: logicalLength },
+    });
+  }, [annotationSession.model, applyResourceAnnotationSelection]);
+  const applyResourceAnnotationSelectionRef = useRef(applyResourceAnnotationSelection);
+  applyResourceAnnotationSelectionRef.current = applyResourceAnnotationSelection;
 
   const startSelectionAnnotation = useCallback(
     (selectionSnapshot: FilePreviewSelectionSnapshot) => {
@@ -718,6 +1036,10 @@ export function FilePreview({
       }
     },
     onMermaidPreview: ({ code }) => setRuntimeMermaidPreviewCode(code),
+    onResourceAnnotate: ({ block }) => applyResourceAnnotationSelectionRef.current({
+      coordinateSpace: "logical",
+      range: { start: block.logical_start, end: block.logical_end },
+    }),
   }), [openRuntimeLinkedPreview, showCopyFeedback]);
 
   const quotePreviewSelection = useCallback(
@@ -984,6 +1306,12 @@ export function FilePreview({
 
   const handlePreviewKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent<HTMLElement>) => {
+      if (isSaveShortcut(event.nativeEvent) && editable) {
+        event.preventDefault();
+        event.stopPropagation();
+        void saveDraft();
+        return;
+      }
       if (!isFindShortcutEvent(event.nativeEvent)) {
         return;
       }
@@ -991,7 +1319,7 @@ export function FilePreview({
       event.stopPropagation();
       openFind(event.target);
     },
-    [openFind],
+    [editable, openFind, saveDraft],
   );
 
   useEffect(() => {
@@ -1135,15 +1463,34 @@ export function FilePreview({
 
   useEffect(() => () => clearDomFindHighlights(bodyRef.current, { includeControlledMarks: true }), []);
 
+  const wholeResourceAnnotationState = useMemo<ResourceAnnotationVisualState>(() => {
+    const logicalLength = annotationSession.model?.logicalText.length ?? 0;
+    if (logicalLength <= 0) return EMPTY_RESOURCE_ANNOTATION_VISUAL_STATE;
+    const ids = annotationSession.renderState.markers
+      .filter((marker) => marker.logicalRange.start === 0 && marker.logicalRange.end === logicalLength)
+      .map((marker) => marker.annotationId);
+    if (!ids.length) return EMPTY_RESOURCE_ANNOTATION_VISUAL_STATE;
+    return Object.freeze({
+      active: Boolean(annotationSession.renderState.activeAnnotationId
+        && ids.includes(annotationSession.renderState.activeAnnotationId)),
+      highlighted: true,
+      hovered: Boolean(annotationSession.renderState.hoveredAnnotationId
+        && ids.includes(annotationSession.renderState.hoveredAnnotationId)),
+    });
+  }, [annotationSession.model?.logicalText.length, annotationSession.renderState]);
+
   const renderSourcePane = () => (
     <SourceViewer
       content={formattedSource}
+      editable={editable && !fileUnavailable}
       kind={kind}
       language={sourceLanguage(request, kind)}
       theme={theme}
       annotationAdapter={annotationSession.sourceAdapter}
       revealLineRequest={lineRevealRequest}
       onEditorViewChange={setSourceEditorView}
+      onSourceBlur={() => void saveDraft()}
+      onSourceChange={updateDraftContent}
       sourceFindState={sourceFindState}
       onSelectionChange={updateSourceSelection}
       scrollElement={documentViewport}
@@ -1152,7 +1499,14 @@ export function FilePreview({
 
   const renderPreviewPane = () => {
     if (kind === "mermaid") {
-      return <NativeMermaidPreview code={renderedPreviewContent || ""} selectable />;
+      return (
+        <NativeMermaidPreview
+          annotationState={wholeResourceAnnotationState}
+          code={renderedPreviewContent || ""}
+          onAnnotateResource={annotationAvailable ? startWholeResourceAnnotation : undefined}
+          selectable
+        />
+      );
     }
 
     if (kind === "markdown") {
@@ -1199,7 +1553,17 @@ export function FilePreview({
     if (kind === "html") {
       const htmlDocument = renderedPreviewContent || "<p>文件为空</p>";
       return (
-        <PreviewScrollPane className={styles.htmlPane} data-file-preview-selectable-content="preview" scrollElement={documentViewport}>
+        <PreviewScrollPane
+          className={styles.htmlPane}
+          data-file-preview-selectable-content="preview"
+          data-resource-annotation-active={wholeResourceAnnotationState.active ? "true" : undefined}
+          data-resource-annotation-highlight={wholeResourceAnnotationState.highlighted ? "true" : undefined}
+          data-resource-annotation-hovered={wholeResourceAnnotationState.hovered ? "true" : undefined}
+          scrollElement={documentViewport}
+        >
+          {annotationAvailable ? (
+            <ResourceAnnotationButton label="批注整个 HTML 预览" onClick={startWholeResourceAnnotation} />
+          ) : null}
           <iframe
             key={hashText(htmlDocument)}
             className={styles.htmlFrame}
@@ -1359,6 +1723,7 @@ export function FilePreview({
       data-chrome={chrome}
       data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
       data-file-preview-root="true"
+      data-file-preview-auto-save-state={editable ? autoSaveState : undefined}
       data-file-preview-reloading={reloading ? "true" : "false"}
       data-file-preview-unavailable={fileUnavailable ? "true" : "false"}
       data-file-preview-new-annotations-enabled={annotationAvailable ? "true" : "false"}
@@ -1418,8 +1783,26 @@ export function FilePreview({
             <PathBreadcrumbs path={sourceLabel} rootLabel={breadcrumbRootLabel} />
           </div>
         ) : null}
-        {reloading ? (
+      {reloading ? (
           <span className={styles.reloadStatus} role="status">正在刷新，当前仍显示上次内容</span>
+      ) : null}
+        {editable && autoSaveState !== "idle" ? (
+          <button
+            className={styles.autoSaveStatus}
+            data-state={autoSaveState}
+            type="button"
+            title={autoSaveError ?? fileAutoSaveLabel(autoSaveState)}
+            onClick={() => {
+              if (autoSaveState === "conflict") setConflictDialogOpen(true);
+              if (autoSaveState === "error") {
+                setAutoSaveState("dirty");
+                void saveDraft();
+              }
+            }}
+          >
+            {autoSaveState === "saving" ? <LoaderCircle size={12} aria-hidden="true" /> : null}
+            <span>{fileAutoSaveLabel(autoSaveState)}</span>
+          </button>
         ) : null}
         {reloadError ? (
           <span className={styles.reloadError} role="alert">{reloadError}</span>
@@ -1429,6 +1812,32 @@ export function FilePreview({
 
       {previewBusy ? <FilePreviewLoading label="正在读取文件" /> : null}
       {error ? <div className={styles.error} role="alert">{error}</div> : null}
+      {conflictDialogOpen ? (
+        <AppDialog
+          title="文件保存冲突"
+          description="磁盘文件在你编辑期间发生了变化。当前草稿没有丢失，自动保存已暂停。"
+          size="confirm"
+          backdrop="preview"
+          closeLabel="继续保留草稿"
+          onClose={() => setConflictDialogOpen(false)}
+          footer={(
+            <div className={styles.saveConflictActions}>
+              <button type="button" onClick={() => setConflictDialogOpen(false)}>继续保留草稿</button>
+              <button type="button" onClick={discardDraftAndReload}>加载磁盘版本</button>
+              <button
+                type="button"
+                data-primary="true"
+                disabled={!conflictRevision}
+                onClick={overwriteConflictingDocument}
+              >
+                覆盖磁盘版本
+              </button>
+            </div>
+          )}
+        >
+          <p className={styles.saveConflictMessage}>{autoSaveError}</p>
+        </AppDialog>
+      ) : null}
       {!previewBusy && !error ? (
         <div className={styles.documentViewportShell}>
           {findOpen ? (
@@ -1908,6 +2317,22 @@ function FilePreviewSelectionLayer({
   );
 }
 
+function ResourceAnnotationButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick(): void;
+}) {
+  return (
+    <div className={styles.resourceAnnotationControl} data-file-preview-selection-excluded="true">
+      <button aria-label={label} title={label} type="button" onClick={onClick}>
+        <MessageSquarePlus size={14} />
+      </button>
+    </div>
+  );
+}
+
 type PreviewKind = "markdown" | "html" | "diff" | "json" | "code" | "text" | "mermaid" | "image";
 type FilePreviewFindMode = "preview" | "source" | "split";
 
@@ -1970,6 +2395,7 @@ interface FilePreviewFindScrollLine {
 }
 
 const FILE_PREVIEW_OPEN_SETTLE_MS = 260;
+const FILE_PREVIEW_AUTO_SAVE_DELAY_MS = 350;
 const ANNOTATION_PANEL_EXIT_MS = 160;
 const ANNOTATION_FLASH_ITERATIONS = 1;
 const ANNOTATION_FLASH_INTERVAL_MS = 700;
@@ -2881,6 +3307,32 @@ function scrollFindMatchIntoView(
   }
 }
 
+function isSaveShortcut(event: KeyboardEvent): boolean {
+  return (
+    event.key.toLowerCase() === "s"
+    && (event.ctrlKey || event.metaKey)
+    && !event.altKey
+    && !event.shiftKey
+  );
+}
+
+function fileAutoSaveLabel(state: FileAutoSaveState): string {
+  switch (state) {
+    case "dirty":
+      return "等待自动保存";
+    case "saving":
+      return "正在自动保存";
+    case "saved":
+      return "已自动保存";
+    case "conflict":
+      return "自动保存已暂停";
+    case "error":
+      return "自动保存失败，点击重试";
+    default:
+      return "";
+  }
+}
+
 function sourceLineNumbers(source: string, start: number, end: number): { lineStart: number; lineEnd: number } {
   const boundedStart = Math.max(0, Math.min(start, source.length));
   const boundedEnd = Math.max(boundedStart, Math.min(end, source.length));
@@ -2897,16 +3349,20 @@ function sourceLineNumbers(source: string, start: number, end: number): { lineSt
 
 const SourceViewer = memo(function SourceViewer({
   content,
+  editable,
   language,
   theme,
   annotationAdapter,
   revealLineRequest,
   scrollElement,
   onEditorViewChange,
+  onSourceBlur,
+  onSourceChange,
   sourceFindState,
   onSelectionChange,
 }: {
   content: string;
+  editable: boolean;
   kind: PreviewKind;
   language: string;
   theme: "light" | "dark";
@@ -2914,20 +3370,30 @@ const SourceViewer = memo(function SourceViewer({
   revealLineRequest?: SourceLineRevealRequest | null;
   scrollElement: HTMLElement | null;
   onEditorViewChange?: (view: EditorView | null) => void;
+  onSourceBlur?: () => void;
+  onSourceChange?: (content: string) => void;
   sourceFindState?: CodeMirrorFindState | null;
   onSelectionChange?: (selection: SourceSelection | null) => void;
 }) {
-  const source = content || "文件为空";
+  const source = editable ? content : content || "文件为空";
   return (
-    <div className={styles.sourceViewer} data-renderer="codemirror" data-testid="file-source-viewer">
+    <div
+      className={styles.sourceViewer}
+      data-editable={editable ? "true" : "false"}
+      data-renderer="codemirror"
+      data-testid="file-source-viewer"
+    >
       <CodeMirrorSourceView
         annotationAdapter={annotationAdapter}
+        editable={editable}
         language={language}
         source={source}
         theme={theme}
         revealLineRequest={revealLineRequest}
         scrollElement={scrollElement}
         onEditorViewChange={onEditorViewChange}
+        onSourceBlur={onSourceBlur}
+        onSourceChange={onSourceChange}
         sourceFindState={sourceFindState}
         onSelectionChange={onSelectionChange}
       />
@@ -2950,33 +3416,44 @@ function PlainSourceView({ source, lineCount }: { source: string; lineCount: num
 
 function CodeMirrorSourceView({
   annotationAdapter,
+  editable,
   language,
   source,
   theme,
   revealLineRequest,
   scrollElement,
   onEditorViewChange,
+  onSourceBlur,
+  onSourceChange,
   sourceFindState,
   onSelectionChange,
   onCreateError,
 }: {
   annotationAdapter: SourceAnnotationAdapter;
+  editable: boolean;
   language: string;
   source: string;
   theme: "light" | "dark";
   revealLineRequest?: SourceLineRevealRequest | null;
   scrollElement: HTMLElement | null;
   onEditorViewChange?: (view: EditorView | null) => void;
+  onSourceBlur?: () => void;
+  onSourceChange?: (content: string) => void;
   sourceFindState?: CodeMirrorFindState | null;
   onSelectionChange?: (selection: SourceSelection | null) => void;
   onCreateError?: (error: unknown) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const applyingSourceRef = useRef(false);
   const onSelectionChangeRef = useRef(onSelectionChange);
+  const onSourceBlurRef = useRef(onSourceBlur);
+  const onSourceChangeRef = useRef(onSourceChange);
   const themeCompartmentRef = useRef<Compartment | null>(null);
   const languageCompartmentRef = useRef<Compartment | null>(null);
   const findCompartmentRef = useRef<Compartment | null>(null);
+  const editableCompartmentRef = useRef<Compartment | null>(null);
+  const lineSeparatorCompartmentRef = useRef<Compartment | null>(null);
   if (themeCompartmentRef.current === null) {
     themeCompartmentRef.current = new Compartment();
   }
@@ -2986,17 +3463,33 @@ function CodeMirrorSourceView({
   if (findCompartmentRef.current === null) {
     findCompartmentRef.current = new Compartment();
   }
+  if (editableCompartmentRef.current === null) {
+    editableCompartmentRef.current = new Compartment();
+  }
+  if (lineSeparatorCompartmentRef.current === null) {
+    lineSeparatorCompartmentRef.current = new Compartment();
+  }
   const themeCompartment = themeCompartmentRef.current;
   const languageCompartment = languageCompartmentRef.current;
   const findCompartment = findCompartmentRef.current;
+  const editableCompartment = editableCompartmentRef.current;
+  const lineSeparatorCompartment = lineSeparatorCompartmentRef.current;
 
   useEffect(() => {
     onSelectionChangeRef.current = onSelectionChange;
   }, [onSelectionChange]);
 
+  useEffect(() => {
+    onSourceBlurRef.current = onSourceBlur;
+    onSourceChangeRef.current = onSourceChange;
+  }, [onSourceBlur, onSourceChange]);
+
   const selectionExtension = useMemo(
     () =>
       EditorView.updateListener.of((update) => {
+        if (update.docChanged && !applyingSourceRef.current) {
+          onSourceChangeRef.current?.(update.state.sliceDoc());
+        }
         if (!update.selectionSet) {
           return;
         }
@@ -3046,6 +3539,14 @@ function CodeMirrorSourceView({
             themeCompartment.of(codeMirrorTheme(theme)),
             languageCompartment.of(codeMirrorLanguage(language) ?? []),
             findCompartment.of(codeMirrorFindExtension(source, sourceFindState ?? null)),
+            editableCompartment.of(codeMirrorEditableExtension(editable)),
+            lineSeparatorCompartment.of(EditorState.lineSeparator.of(sourceLineSeparator(source))),
+            EditorView.domEventHandlers({
+              blur: () => {
+                onSourceBlurRef.current?.();
+                return false;
+              },
+            }),
           ],
         }),
       });
@@ -3076,14 +3577,33 @@ function CodeMirrorSourceView({
     if (!view) {
       return;
     }
-    const currentSource = view.state.doc.toString();
+    const currentSource = view.state.sliceDoc();
     if (currentSource === source) {
       return;
     }
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: source },
-    });
+    applyingSourceRef.current = true;
+    try {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: source },
+      });
+    } finally {
+      applyingSourceRef.current = false;
+    }
   }, [source]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: editableCompartment.reconfigure(codeMirrorEditableExtension(editable)),
+    });
+  }, [editable, editableCompartment]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: lineSeparatorCompartment.reconfigure(
+        EditorState.lineSeparator.of(sourceLineSeparator(source)),
+      ),
+    });
+  }, [lineSeparatorCompartment, source]);
 
   useEffect(() => {
     viewRef.current?.dispatch({
@@ -3576,9 +4096,9 @@ function codeMirrorBaseExtensions(): Extension[] {
     highlightActiveLine(),
     search({ top: true }),
     highlightSelectionMatches(),
-    EditorState.readOnly.of(true),
+    history(),
     EditorView.lineWrapping,
-    keymap.of(foldKeymap),
+    keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap]),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     syntaxHighlighting(codeMirrorHighlightStyle, { fallback: true }),
   ].filter(Boolean) as Extension[];
@@ -3646,7 +4166,7 @@ function codeMirrorTheme(theme: "light" | "dark"): Extension {
         minHeight: "180px",
         backgroundColor: "var(--color-bg-elevated)",
         color: "var(--color-text-primary)",
-        fontSize: "12px",
+        fontSize: "13px",
       },
       "&.cm-focused": {
         outline: "none",
@@ -3904,12 +4424,16 @@ interface MermaidDragState {
 }
 
 function NativeMermaidPreview({
+  annotationState = EMPTY_RESOURCE_ANNOTATION_VISUAL_STATE,
   code,
   layout = "panel",
+  onAnnotateResource,
   selectable = false,
 }: {
+  annotationState?: ResourceAnnotationVisualState;
   code: string;
   layout?: "panel" | "document" | "fullscreen";
+  onAnnotateResource?: () => void;
   selectable?: boolean;
 }) {
   const [theme, setTheme] = useState<"light" | "dark">(() => getTheme());
@@ -4244,6 +4768,16 @@ function NativeMermaidPreview({
         aria-label="Mermaid 视图控制"
         data-file-preview-selection-excluded="true"
       >
+        {onAnnotateResource ? (
+          <button
+            type="button"
+            aria-label="批注整个 Mermaid 图表"
+            title="批注整个 Mermaid 图表"
+            onClick={onAnnotateResource}
+          >
+            <MessageSquarePlus size={15} />
+          </button>
+        ) : null}
         <button
           type="button"
           aria-label="缩小 Mermaid"
@@ -4277,6 +4811,9 @@ function NativeMermaidPreview({
         data-markdown-code-language={documentLayout ? "mermaid" : undefined}
         data-file-preview-selectable-content={selectable ? "preview" : undefined}
         data-layout={layout}
+        data-resource-annotation-active={annotationState.active ? "true" : undefined}
+        data-resource-annotation-highlight={annotationState.highlighted ? "true" : undefined}
+        data-resource-annotation-hovered={annotationState.hovered ? "true" : undefined}
         data-testid="preview-mermaid-pane"
       >
         {documentLayout ? documentControls : null}
@@ -4290,6 +4827,7 @@ function NativeMermaidPreview({
                 : styles.mermaidSvg
             }
             aria-label="Mermaid 图表"
+            data-file-preview-selection-excluded={selectable ? "true" : undefined}
             data-interactive={documentLayout ? "false" : "true"}
             style={
               {
@@ -4615,6 +5153,17 @@ function ImagePreview({
       unavailableText="图片未加载"
     />
   );
+}
+
+function codeMirrorEditableExtension(editable: boolean): Extension {
+  return [
+    EditorState.readOnly.of(!editable),
+    EditorView.editable.of(editable),
+  ];
+}
+
+function sourceLineSeparator(source: string): "\n" | "\r\n" {
+  return source.includes("\r\n") ? "\r\n" : "\n";
 }
 
 function previewRequestIdentity(

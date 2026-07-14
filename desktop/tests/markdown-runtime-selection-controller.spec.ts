@@ -166,6 +166,36 @@ describe("native Markdown Selection pinning and projection", () => {
     run.destroy();
   });
 
+  it("projects a selection that starts on a rendered list marker onto the item text", () => {
+    const source = "- Workbench mode\n- workspace resources\n- Agent mode";
+    const run = harness(source);
+    const listBlock = run.snapshot.blocks.find((block) => block.kind === "list")!;
+    const root = run.runtime.getBlockElement(listBlock.id)!;
+    const secondItem = root.querySelectorAll("li")[1]!;
+    const markerText = secondItem.querySelector<HTMLElement>("[data-markdown-list-marker]")!.firstChild as Text;
+    const contentRoot = secondItem.querySelector<HTMLElement>("[data-markdown-list-content]")!;
+    const contentWalker = document.createTreeWalker(contentRoot, NodeFilter.SHOW_TEXT);
+    let contentText = contentWalker.nextNode() as Text;
+    for (let next = contentWalker.nextNode() as Text | null; next; next = contentWalker.nextNode() as Text | null) {
+      contentText = next;
+    }
+    select(run.selection, markerText, 0, contentText, contentText.data.length);
+    const controller = new MarkdownSelectionController({ mapper: run.mapper, boundary: run.host });
+
+    const result = controller.update();
+
+    expect(result.reason).toBeNull();
+    expect(result.selection?.logicalText).toBe("workspace resources");
+    expect(result.selection?.annotationSelection).toEqual({
+      coordinateSpace: "logical",
+      range: {
+        start: listBlock.logical_start + listBlock.metadata.list!.items![1]!.logical_start,
+        end: listBlock.logical_start + listBlock.metadata.list!.items![1]!.logical_end,
+      },
+    });
+    run.destroy();
+  });
+
   it("restores a safe selection after same-content revision publication", () => {
     const run = harness();
     select(run.selection, run.text(0), 2, run.text(1), 4);

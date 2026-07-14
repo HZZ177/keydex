@@ -73,6 +73,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             except Exception:
                 pass
 
+        await app.state.chat_stream_manager.recover_interrupted_sessions()
         await app.state.mcp_manager.start()
         if app.state.file_history_service.enabled:
             recovered = await asyncio.to_thread(

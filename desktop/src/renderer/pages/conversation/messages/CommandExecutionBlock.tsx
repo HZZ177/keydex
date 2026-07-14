@@ -119,6 +119,7 @@ export function CommandExecutionBlock({
             </span>
             {command.shellLabel ? <span>{command.shellLabel}</span> : null}
             {command.duration ? <span>{command.duration}</span> : null}
+            {command.timeout ? <span>{command.timeout}</span> : null}
             {command.cwd ? <span>{command.cwd}</span> : null}
             {typeof command.exitCode === "number" ? <span>退出码 {command.exitCode}</span> : null}
             {command.statusLabel ? <span>{command.statusLabel}</span> : null}
@@ -257,6 +258,7 @@ interface ParsedCommandPayload {
   outputText: string;
   exitCode: number | null;
   duration: string;
+  timeout: string;
   status: string;
   statusLabel: string;
   outputTruncated: boolean;
@@ -290,6 +292,9 @@ function parseCommandPayload(message: ConversationMessage): ParsedCommandPayload
     [stringValue(merged.stdout_tail), stringValue(merged.stderr_tail)].filter(Boolean).join("\n");
   const outputText = [stdout, stderr].filter(Boolean).join(stdout && stderr ? "\n" : "") || combinedTail;
   const errorPreview = commandErrorPreview(message, status, exitCode, stderr);
+  const inputTimeout = numberValue(input.timeout_seconds ?? input.timeoutSeconds);
+  const timeoutSeconds = numberValue(merged.timeout_seconds ?? merged.timeoutSeconds) ?? inputTimeout;
+  const timeoutSource = commandTimeoutSource(merged, inputTimeout);
   return {
     name,
     commandId: stringValue(merged.command_id),
@@ -304,6 +309,7 @@ function parseCommandPayload(message: ConversationMessage): ParsedCommandPayload
     outputText,
     exitCode,
     duration: formatDuration(merged.duration_ms ?? merged.durationMs),
+    timeout: formatCommandTimeout(timeoutSeconds, timeoutSource),
     status,
     statusLabel: commandStatusLabel(status),
     outputTruncated: Boolean(merged.output_truncated ?? merged.outputTruncated),
@@ -584,6 +590,42 @@ function formatDuration(value: unknown): string {
   }
   const seconds = ms / 1000;
   return `${seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1)}s`;
+}
+
+function commandTimeoutSource(
+  payload: Record<string, unknown>,
+  inputTimeout: number | null,
+): "default" | "model" | "" {
+  const source = stringValue(payload.timeout_source ?? payload.timeoutSource);
+  if (source === "default" || source === "model") {
+    return source;
+  }
+  return inputTimeout === null ? "" : "model";
+}
+
+function formatCommandTimeout(
+  value: number | null,
+  source: "default" | "model" | "",
+): string {
+  if (value === null || value <= 0) {
+    return "";
+  }
+  const duration = formatTimeoutSeconds(value);
+  const sourceLabel = source === "default" ? "（默认）" : source === "model" ? "（模型设置）" : "";
+  return `超时 ${duration}${sourceLabel}`;
+}
+
+function formatTimeoutSeconds(value: number): string {
+  if (value < 60) {
+    return `${Number.isInteger(value) ? value : Number(value.toFixed(1))} 秒`;
+  }
+  const minutes = Math.floor(value / 60);
+  const seconds = value - minutes * 60;
+  if (seconds === 0) {
+    return `${minutes} 分钟`;
+  }
+  const secondsText = Number.isInteger(seconds) ? seconds : Number(seconds.toFixed(1));
+  return `${minutes} 分 ${secondsText} 秒`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

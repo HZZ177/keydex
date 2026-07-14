@@ -47,8 +47,8 @@ export function AnnotationDraftCard({
       <div className={styles.cardMeta}><strong>新批注</strong><span>已连接当前选区</span></div>
       <textarea
         aria-label="批注内容"
-        autoFocus
         className={styles.editor}
+        data-annotation-draft-editor="true"
         disabled={pending}
         onChange={(event) => onBodyChange(event.target.value)}
         onCompositionEnd={handleComposition}

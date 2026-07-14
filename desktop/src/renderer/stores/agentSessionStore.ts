@@ -2216,9 +2216,17 @@ function threadTaskMetadata(
 }
 
 function handleStatus(state: AgentConversationState, data: Record<string, unknown>): AgentConversationState {
-  const sessionId = sessionIdFromData(data) || state.selectedSessionId || "";
+  const explicitSessionId = sessionIdFromData(data);
+  const sessionId = explicitSessionId;
   const next = cloneState(state);
   const runningSessionIds = runningSessionIdsFromStatus(data);
+  const waitingApprovalSessionIds = waitingApprovalSessionIdsFromStatus(data);
+  const waitingInputSessionIds = waitingInputSessionIdsFromStatus(data);
+  const liveSessionIds = new Set([
+    ...runningSessionIds,
+    ...waitingApprovalSessionIds,
+    ...waitingInputSessionIds,
+  ]);
   for (const runningSessionId of runningSessionIds) {
     const runningView = ensureSessionState(next, runningSessionId);
     if (!runningView.pendingApproval) {
@@ -2227,21 +2235,29 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
     }
     runningView.isCancelling = false;
   }
-  for (const waitingSessionId of waitingApprovalSessionIdsFromStatus(data)) {
+  for (const waitingSessionId of waitingApprovalSessionIds) {
     const waitingView = ensureSessionState(next, waitingSessionId);
     waitingView.runtimeState = "waiting_approval";
     waitingView.isStreaming = false;
     waitingView.isCancelling = false;
     updateSessionStatus(next, waitingSessionId, "waiting_approval");
   }
-  for (const waitingSessionId of waitingInputSessionIdsFromStatus(data)) {
+  for (const waitingSessionId of waitingInputSessionIds) {
     const waitingView = ensureSessionState(next, waitingSessionId);
     waitingView.runtimeState = "waiting_input";
     waitingView.isStreaming = false;
     waitingView.isCancelling = false;
     updateSessionStatus(next, waitingSessionId, "waiting_input");
   }
-  if (!sessionId) {
+  if (!explicitSessionId) {
+    for (const [knownSessionId, knownView] of Object.entries(next.sessionStateById)) {
+      if (
+        !liveSessionIds.has(knownSessionId)
+        && (knownView.runtimeState === "running" || knownView.runtimeState === "cancelling")
+      ) {
+        settleMissingRunRuntimeState(next, knownView, knownSessionId);
+      }
+    }
     return next;
   }
   const view = ensureSessionState(next, sessionId);
@@ -2256,10 +2272,44 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
   } else if (isRuntimeState(status)) {
     view.runtimeState = status;
   }
-  if (view.runtimeState !== "running") {
+  if (view.runtimeState === "idle") {
+    settleMissingRunRuntimeState(next, view, sessionId);
+  } else if (view.runtimeState !== "running") {
     view.isStreaming = false;
   }
   return next;
+}
+
+function settleMissingRunRuntimeState(
+  state: AgentConversationState,
+  view: AgentSessionViewState,
+  sessionId: string,
+): void {
+  closeAllMessageStreams(view);
+  for (const message of view.messages) {
+    if (message.role === "tool" && message.status === "running") {
+      message.status = "cancelled";
+    }
+    if (message.role === "subagent") {
+      for (const tool of message.subagentToolCalls ?? []) {
+        if (tool.status === "running") {
+          tool.status = "cancelled";
+        }
+      }
+      for (const item of message.subagentItems ?? []) {
+        if (item.type === "tool" && item.status === "running") {
+          item.status = "cancelled";
+        }
+      }
+    }
+  }
+  view.runtimeState = "idle";
+  view.isStreaming = false;
+  view.isCancelling = false;
+  view.pendingApproval = null;
+  view.pendingElicitation = null;
+  view.firstTokenAtMs = null;
+  updateSessionStatus(state, sessionId, "active");
 }
 
 function applyWaitingInputRuntimeState(
@@ -3092,6 +3142,14 @@ function applyApprovalStateToCommandMessage(
     ...existingUiPayload,
     approval: commandApprovalPayload(approval),
   };
+  const timeoutSeconds = approval.details.timeout_seconds ?? approval.details.timeoutSeconds;
+  const timeoutSource = approval.details.timeout_source ?? approval.details.timeoutSource;
+  if (timeoutSeconds !== undefined) {
+    nextUiPayload.timeout_seconds = timeoutSeconds;
+  }
+  if (timeoutSource !== undefined) {
+    nextUiPayload.timeout_source = timeoutSource;
+  }
   if (!shouldPreserveTerminalCommandUiStatus(existingUiPayload, commandStatus)) {
     nextUiPayload.status = commandStatus;
   }
