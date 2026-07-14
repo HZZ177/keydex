@@ -203,6 +203,7 @@ export function AssociatedFileOpenController({
     lastWorkbenchWorkspaceId: layout.state.lastWorkbenchWorkspaceId,
   });
   const initialTakeStartedRef = useRef(false);
+  const [associatedFileListenerReady, setAssociatedFileListenerReady] = useState(false);
 
   routeStateRef.current = {
     pathname: location.pathname,
@@ -231,14 +232,6 @@ export function AssociatedFileOpenController({
   }, [navigate, onExternalFileDetected, onInitialResolutionComplete, takePaths]);
 
   useEffect(() => {
-    if (initialTakeStartedRef.current) {
-      return;
-    }
-    initialTakeStartedRef.current = true;
-    void openAssociatedFiles(true);
-  }, [openAssociatedFiles]);
-
-  useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     void listen(() => {
@@ -251,12 +244,26 @@ export function AssociatedFileOpenController({
         return;
       }
       unlisten = nextUnlisten;
+      setAssociatedFileListenerReady(true);
+    }).catch(() => {
+      if (!disposed) {
+        // Do not keep normal startup blocked if the desktop event bridge is unavailable.
+        setAssociatedFileListenerReady(true);
+      }
     });
     return () => {
       disposed = true;
       unlisten?.();
     };
   }, [listen, openAssociatedFiles]);
+
+  useEffect(() => {
+    if (!associatedFileListenerReady || initialTakeStartedRef.current) {
+      return;
+    }
+    initialTakeStartedRef.current = true;
+    void openAssociatedFiles(true);
+  }, [associatedFileListenerReady, openAssociatedFiles]);
 
   return null;
 }

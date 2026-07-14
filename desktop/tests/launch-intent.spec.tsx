@@ -53,6 +53,45 @@ describe("launch intent", () => {
     expect(onInitialResolutionComplete).not.toHaveBeenCalled();
   });
 
+  it("installs the listener before the initial take so a cold-start file event cannot be lost", async () => {
+    let pendingPaths: string[] = [];
+    let resolveListen: ((unlisten: () => void) => void) | undefined;
+    const takePaths = vi.fn(async () => {
+      const paths = pendingPaths;
+      pendingPaths = [];
+      return paths;
+    });
+    const listen = vi.fn(
+      () => new Promise<() => void>((resolve) => {
+        resolveListen = resolve;
+      }),
+    );
+    const onExternalFileDetected = vi.fn();
+    const onInitialResolutionComplete = vi.fn();
+
+    render(
+      <ControllerHarness
+        takePaths={takePaths}
+        listen={listen}
+        onExternalFileDetected={onExternalFileDetected}
+        onInitialResolutionComplete={onInitialResolutionComplete}
+      />,
+    );
+
+    await waitFor(() => expect(listen).toHaveBeenCalledTimes(1));
+    expect(takePaths).not.toHaveBeenCalled();
+
+    pendingPaths = ["D:/docs/from-cold-start.md"];
+    await act(async () => {
+      resolveListen?.(() => undefined);
+    });
+
+    await waitFor(() => expect(screen.getByTestId("current-location").textContent).toContain("from-cold-start.md"));
+    expect(takePaths).toHaveBeenCalledTimes(1);
+    expect(onExternalFileDetected).toHaveBeenCalledTimes(1);
+    expect(onInitialResolutionComplete).not.toHaveBeenCalled();
+  });
+
   it("settles normal once, then switches an active splash to the newest event path", async () => {
     const handlers: Array<() => void> = [];
     const takePaths = vi

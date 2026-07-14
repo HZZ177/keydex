@@ -20,11 +20,14 @@ export function NormalStartupBoundary({
   onRetry,
   runtimeStatus,
 }: NormalStartupBoundaryProps) {
-  const startedAtRef = useRef(Date.now());
+  const normalStartupStartedAtRef = useRef<number | null>(null);
   const hasBootedOnceRef = useRef(false);
   const [displayState, setDisplayState] = useState<StartupDisplayState>("screen");
 
   useEffect(() => {
+    if (launchIntent === "normal" && normalStartupStartedAtRef.current === null) {
+      normalStartupStartedAtRef.current = Date.now();
+    }
     if (runtimeStatus === "ready") {
       hasBootedOnceRef.current = true;
     }
@@ -37,7 +40,7 @@ export function NormalStartupBoundary({
     }
     const timer = window.setTimeout(
       () => setDisplayState("exiting"),
-      remainingStartupVisibleMs(startedAtRef.current, Date.now()),
+      remainingStartupVisibleMs(normalStartupStartedAtRef.current ?? Date.now(), Date.now()),
     );
     return () => window.clearTimeout(timer);
   }, [displayState, launchIntent, runtimeStatus]);

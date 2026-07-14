@@ -107,6 +107,31 @@ describe("StartupScreen", () => {
     expect(screen.queryByTestId("startup-screen")).toBeNull();
   });
 
+  it("starts the minimum visibility window when normal launch intent resolves", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const { rerender } = render(
+      <NormalStartupBoundary launchIntent="resolving" runtimeStatus="starting">
+        <div>route-content</div>
+      </NormalStartupBoundary>,
+    );
+
+    act(() => vi.advanceTimersByTime(STARTUP_MIN_VISIBLE_MS * 2));
+    rerender(
+      <NormalStartupBoundary launchIntent="normal" runtimeStatus="ready">
+        <div>route-content</div>
+      </NormalStartupBoundary>,
+    );
+
+    expect(screen.getByTestId("startup-screen").dataset.phase).toBe("pending");
+    act(() => vi.advanceTimersByTime(STARTUP_MIN_VISIBLE_MS - 1));
+    expect(screen.getByTestId("startup-screen").dataset.phase).toBe("pending");
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByTestId("startup-screen").dataset.phase).toBe("exiting");
+    act(() => vi.advanceTimersByTime(STARTUP_EXIT_MS));
+    expect(screen.getByText("route-content")).not.toBeNull();
+  });
+
   it("keeps resolving visually static and bypasses external files immediately", () => {
     const { rerender } = render(
       <NormalStartupBoundary launchIntent="resolving" runtimeStatus="starting">
