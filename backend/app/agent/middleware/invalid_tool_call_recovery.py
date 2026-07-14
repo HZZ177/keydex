@@ -12,7 +12,11 @@ from backend.app.core.logger import logger
 
 
 class InvalidToolCallRecoveryMiddleware(AgentMiddleware):
-    """把模型输出的 invalid_tool_calls 修补为失败工具结果并触发重试。"""
+    """把 invalid_tool_calls 修补为失败工具结果并保持工具消息批次闭合。
+
+    abefore_model 负责混合 valid/invalid 调用在下一次模型请求前的修复；
+    aafter_agent 保留用于全部调用均 invalid、Agent 原本准备结束的场景。
+    """
 
     RECOVERY_MESSAGE_PREFIX = "[invalid_tool_call_recovery]"
 
@@ -80,39 +84,40 @@ class InvalidToolCallRecoveryMiddleware(AgentMiddleware):
             status="error",
         )
 
-    @hook_config(can_jump_to=["model"])
-    async def aafter_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        messages = list((state or {}).get("messages") or [])
-        if not messages:
-            return None
-
-        recent_retry_count = self._count_recent_recovery_messages(messages)
+    def _repair_invalid_tool_calls(
+        self,
+        messages: list[Any],
+    ) -> tuple[list[Any], list[dict[str, Any]], bool]:
         patched_messages: list[Any] = []
         recovered_calls: list[dict[str, Any]] = []
-        should_retry = False
         messages_updated = False
+        index = 0
 
-        for index, message in enumerate(messages):
-            patched_messages.append(message)
+        while index < len(messages):
+            message = messages[index]
             if not isinstance(message, AIMessage):
+                patched_messages.append(message)
+                index += 1
                 continue
 
             invalid_tool_calls = list(getattr(message, "invalid_tool_calls", None) or [])
             if not invalid_tool_calls:
+                patched_messages.append(message)
+                index += 1
                 continue
 
-            ai_message_index = len(patched_messages) - 1
-            tool_calls = list(getattr(message, "tool_calls", None) or [])
+            promoted_tool_calls: list[dict[str, Any]] = []
+            recovery_messages_by_id: dict[str, ToolMessage] = {}
             for invalid_tool_call in invalid_tool_calls:
                 tool_name = self._normalize_tool_name(invalid_tool_call.get("name"))
                 tool_call_id = self._normalize_tool_call_id(invalid_tool_call.get("id"))
                 parsed_args, parse_error = self._parse_invalid_args(
                     invalid_tool_call.get("args")
                 )
-                tool_calls.append(
+                promoted_tool_calls.append(
                     create_tool_call(name=tool_name, args=parsed_args, id=tool_call_id)
                 )
-                recovery_tool_message = self._build_recovery_tool_message(
+                recovery_messages_by_id[tool_call_id] = self._build_recovery_tool_message(
                     tool_name=tool_name,
                     tool_call_id=tool_call_id,
                     parse_error=parse_error,
@@ -125,24 +130,78 @@ class InvalidToolCallRecoveryMiddleware(AgentMiddleware):
                     }
                 )
 
-                corresponding_tool_message = next(
+            tool_calls = [
+                *list(getattr(message, "tool_calls", None) or []),
+                *promoted_tool_calls,
+            ]
+            patched_messages.append(
+                message.model_copy(
+                    update={"tool_calls": tool_calls, "invalid_tool_calls": []}
+                )
+            )
+            messages_updated = True
+            index += 1
+
+            following_tool_messages: list[ToolMessage] = []
+            while index < len(messages) and isinstance(messages[index], ToolMessage):
+                following_tool_messages.append(messages[index])
+                index += 1
+
+            # OpenAI 兼容接口会按 tool_calls + invalid_tool_calls 的顺序重新序列化，
+            # 因此对应 ToolMessage 也按修补后的 tool_calls 顺序重建，兼容严格校验模型。
+            remaining_tool_messages = list(following_tool_messages)
+            for tool_call in tool_calls:
+                tool_call_id = str(tool_call.get("id") or "")
+                matching_index = next(
                     (
-                        later_message
-                        for later_message in messages[index + 1 :]
-                        if isinstance(later_message, ToolMessage)
-                        and getattr(later_message, "tool_call_id", None) == tool_call_id
+                        position
+                        for position, tool_message in enumerate(remaining_tool_messages)
+                        if str(getattr(tool_message, "tool_call_id", "") or "")
+                        == tool_call_id
                     ),
                     None,
                 )
-                if corresponding_tool_message is None:
-                    patched_messages.append(recovery_tool_message)
+                if matching_index is not None:
+                    patched_messages.append(remaining_tool_messages.pop(matching_index))
+                    continue
+                recovery_message = recovery_messages_by_id.get(tool_call_id)
+                if recovery_message is not None:
+                    patched_messages.append(recovery_message)
 
-                should_retry = True
+            patched_messages.extend(remaining_tool_messages)
 
-            patched_messages[ai_message_index] = message.model_copy(
-                update={"tool_calls": tool_calls, "invalid_tool_calls": []}
-            )
-            messages_updated = True
+        return patched_messages, recovered_calls, messages_updated
+
+    async def abefore_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        messages = list((state or {}).get("messages") or [])
+        if not messages:
+            return None
+
+        patched_messages, recovered_calls, messages_updated = (
+            self._repair_invalid_tool_calls(messages)
+        )
+        if not messages_updated:
+            return None
+
+        logger.warning(
+            "[InvalidToolCallRecoveryMiddleware] 模型调用前补齐 invalid_tool_calls "
+            "对应的失败 ToolMessage | "
+            f"recovered_calls={recovered_calls}"
+        )
+        return {
+            "messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *patched_messages],
+        }
+
+    @hook_config(can_jump_to=["model"])
+    async def aafter_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        messages = list((state or {}).get("messages") or [])
+        if not messages:
+            return None
+
+        recent_retry_count = self._count_recent_recovery_messages(messages)
+        patched_messages, recovered_calls, messages_updated = (
+            self._repair_invalid_tool_calls(messages)
+        )
 
         if not messages_updated:
             return None
@@ -150,7 +209,7 @@ class InvalidToolCallRecoveryMiddleware(AgentMiddleware):
         result: dict[str, Any] = {
             "messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *patched_messages],
         }
-        if should_retry and recent_retry_count < self._max_retries_per_turn:
+        if recovered_calls and recent_retry_count < self._max_retries_per_turn:
             result["jump_to"] = "model"
             logger.warning(
                 "[InvalidToolCallRecoveryMiddleware] invalid_tool_calls 已补失败 "

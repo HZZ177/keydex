@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallRequest
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -10,9 +14,12 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.messages.tool import invalid_tool_call
+from langchain_core.tools import tool
 from langgraph.errors import GraphInterrupt
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.types import Interrupt
+from pydantic import Field
 
 from backend.app.agent.context_compression_utils import (
     build_context_compression_replacement_messages,
@@ -54,6 +61,34 @@ def _request() -> ToolCallRequest:
         state={},
         runtime=None,
     )
+
+
+class RecordingToolFriendlyFakeModel(FakeMessagesListChatModel):
+    recorded_messages: list[list[Any]] = Field(default_factory=list)
+
+    def bind_tools(
+        self,
+        tools: list[Any],
+        *,
+        tool_choice: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        return self
+
+    def _generate(
+        self,
+        messages: list[Any],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        self.recorded_messages.append(list(messages))
+        return super()._generate(
+            messages,
+            stop=stop,
+            run_manager=run_manager,
+            **kwargs,
+        )
 
 
 @pytest.mark.asyncio
@@ -104,6 +139,129 @@ async def test_invalid_tool_call_recovery_patches_tool_message_and_retries() -> 
         InvalidToolCallRecoveryMiddleware.RECOVERY_MESSAGE_PREFIX
     )
     assert "请修正参数后重新发起工具调用" in tool_message.content
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_call_recovery_closes_mixed_batch_before_model() -> None:
+    middleware = InvalidToolCallRecoveryMiddleware()
+    ai_message = AIMessage(
+        content="继续搜索",
+        tool_calls=[
+            {
+                "name": "search_files",
+                "args": {"query": "RevenueService"},
+                "id": "call_valid",
+                "type": "tool_call",
+            }
+        ],
+        invalid_tool_calls=[
+            invalid_tool_call(
+                name="grep_files",
+                args='{"query":"分摊","include":*.java}',
+                id="call_invalid",
+                error="invalid JSON",
+            )
+        ],
+    )
+    valid_result = ToolMessage(
+        content="matched",
+        name="search_files",
+        tool_call_id="call_valid",
+    )
+
+    result = await middleware.abefore_model(
+        {
+            "messages": [
+                HumanMessage(content="查找分摊逻辑"),
+                ai_message,
+                valid_result,
+            ]
+        },
+        None,
+    )
+
+    assert result is not None
+    assert "jump_to" not in result
+    messages = result["messages"]
+    assert isinstance(messages[0], RemoveMessage)
+    patched_ai = messages[2]
+    assert isinstance(patched_ai, AIMessage)
+    assert [call["id"] for call in patched_ai.tool_calls] == [
+        "call_valid",
+        "call_invalid",
+    ]
+    assert patched_ai.invalid_tool_calls == []
+    assert [message.tool_call_id for message in messages[3:]] == [
+        "call_valid",
+        "call_invalid",
+    ]
+    assert messages[4].status == "error"
+    assert messages[4].content.startswith(
+        InvalidToolCallRecoveryMiddleware.RECOVERY_MESSAGE_PREFIX
+    )
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_call_recovery_repairs_mixed_batch_before_next_llm_call() -> None:
+    @tool
+    def search_files(query: str) -> str:
+        """Search file names for a query."""
+
+        return f"matched:{query}"
+
+    first_response = AIMessage(
+        content="继续搜索",
+        tool_calls=[
+            {
+                "name": "search_files",
+                "args": {"query": "RevenueService"},
+                "id": "call_valid",
+                "type": "tool_call",
+            }
+        ],
+        invalid_tool_calls=[
+            invalid_tool_call(
+                name="grep_files",
+                args='{"query":"分摊","include":*.java}',
+                id="call_invalid",
+                error="invalid JSON",
+            )
+        ],
+    )
+    model = RecordingToolFriendlyFakeModel(
+        responses=[first_response, AIMessage(content="完成")]
+    )
+    agent = create_agent(
+        model=model,
+        tools=[search_files],
+        middleware=[InvalidToolCallRecoveryMiddleware()],
+    )
+
+    await agent.ainvoke({"messages": [HumanMessage(content="查找分摊逻辑")]})
+
+    assert len(model.recorded_messages) == 2
+    second_request_messages = model.recorded_messages[1]
+    assistant_index = next(
+        index
+        for index, message in enumerate(second_request_messages)
+        if isinstance(message, AIMessage) and message.tool_calls
+    )
+    assistant_message = second_request_messages[assistant_index]
+    assert [call["id"] for call in assistant_message.tool_calls] == [
+        "call_valid",
+        "call_invalid",
+    ]
+    assert assistant_message.invalid_tool_calls == []
+    tool_messages = [
+        message
+        for message in second_request_messages[assistant_index + 1 :]
+        if isinstance(message, ToolMessage)
+    ]
+    assert [message.tool_call_id for message in tool_messages] == [
+        "call_valid",
+        "call_invalid",
+    ]
+    assert tool_messages[1].status == "error"
 
 
 @pytest.mark.asyncio
