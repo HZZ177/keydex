@@ -845,7 +845,7 @@ export function ConversationSessionSurface({
         contextWindowUsage={panelModel.contextWindowUsage}
         contextCompressionEnabled={contextCompressionEnabled}
         modelSelectorPlacement={isSidecar ? "bottom" : "top"}
-        autoFocusKey={isSidecar ? `sidecar:${threadId}` : undefined}
+        autoFocusKey={isSidecar ? `sidecar:${threadId}` : quickSendId || undefined}
         leftAccessory={goalModeAccessory}
         placeholder={goalComposerOpen ? "Keydex 应继续朝哪个目标努力？" : undefined}
       />

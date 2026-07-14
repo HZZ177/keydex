@@ -1954,6 +1954,7 @@ describe("ConversationPage", () => {
     });
     expect(onQuickSendConsumed).toHaveBeenCalledTimes(1);
     expect(screen.getByText("从快速对话发送")).not.toBeNull();
+    expect(document.activeElement).toBe(screen.getByLabelText("继续输入"));
   });
 
   it("shows the queued quick chat message before initial history resolves", async () => {
