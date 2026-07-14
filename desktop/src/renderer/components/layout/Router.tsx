@@ -120,17 +120,24 @@ const workbenchSidebarInitializedByRuntime = new WeakSet<RuntimeBridge>();
 
 export interface AppRouterProps {
   runtime?: RuntimeBridge;
+  associatedFileOpen?: Pick<AssociatedFileOpenControllerProps, "listen" | "takePaths">;
 }
 
-export function AppRouter({ runtime = runtimeBridge }: AppRouterProps = {}) {
+export function AppRouter({ runtime = runtimeBridge, associatedFileOpen }: AppRouterProps = {}) {
   return (
     <LayoutStateProvider>
-      <AppRoutes runtime={runtime} />
+      <AppRoutes runtime={runtime} associatedFileOpen={associatedFileOpen} />
     </LayoutStateProvider>
   );
 }
 
-function AppRoutes({ runtime }: { runtime: RuntimeBridge }) {
+function AppRoutes({
+  runtime,
+  associatedFileOpen,
+}: {
+  runtime: RuntimeBridge;
+  associatedFileOpen?: Pick<AssociatedFileOpenControllerProps, "listen" | "takePaths">;
+}) {
   const location = useLocation();
   const runtimeConnection = useOptionalRuntimeConnection();
   const [launchIntent, dispatchLaunchIntent] = useReducer(
@@ -146,39 +153,45 @@ function AppRoutes({ runtime }: { runtime: RuntimeBridge }) {
   }, []);
 
   return (
-    <Suspense fallback={null}>
+    <>
       <AssociatedFileOpenController
+        {...associatedFileOpen}
         onExternalFileDetected={markExternalFileLaunch}
         onInitialResolutionComplete={completeInitialLaunchResolution}
       />
-      <NormalStartupBoundary
-        launchIntent={launchIntent}
-        onRetry={runtimeConnection?.retry}
-        runtimeStatus={runtimeConnection?.status ?? "ready"}
-      >
-        <Routes>
-          <Route path="/" element={<Navigate to={HOME_PATH} replace />} />
-          <Route path="/guid" element={<HomeRoute runtime={runtime} />} />
-          <Route path="/workbench" element={<WorkbenchRoute runtime={runtime} />} />
-          <Route path="/workbench/:workspaceId" element={<WorkbenchRoute runtime={runtime} />} />
-          <Route path="/workbench/:workspaceId/session/:sessionId" element={<WorkbenchRoute runtime={runtime} />} />
-          <Route path={PROJECT_PATH} element={<ProjectRoute />} />
-          <Route path="/conversation/:threadId" element={<ConversationRoute runtime={runtime} />} />
-          <Route path="/mcp" element={<Navigate to="/settings/mcp" replace />} />
-          <Route path="/__dev/event-replay" element={<EventReplayRoute />} />
-          <Route path="/settings/providers" element={<ProviderSettingsRoute runtime={runtime} />} />
-          <Route path="/settings/model-defaults" element={<ModelDefaultSettingsRoute runtime={runtime} />} />
-          <Route path="/settings/extensions" element={<ExtensionSettingsRoute runtime={runtime} />} />
-          <Route path="/settings/policy-config" element={<ConfigSettingsRoute runtime={runtime} />} />
-          <Route path="/settings/usage" element={<UsageSettingsRoute runtime={runtime} />} />
-          <Route path="/settings/mcp" element={<McpSettingsRoute runtime={runtime} />} />
-          <Route path="/settings/general" element={<GeneralSettingsRoute runtime={runtime} />} />
-          <Route path="/settings/appearance" element={<AppearanceSettingsRoute />} />
-          <Route path="/settings/about" element={<AboutSettingsRoute />} />
-          <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
-        </Routes>
-      </NormalStartupBoundary>
-    </Suspense>
+      <Suspense fallback={null}>
+        <NormalStartupBoundary
+          launchIntent={launchIntent}
+          onRetry={runtimeConnection?.retry}
+          runtimeStatus={runtimeConnection?.status ?? "ready"}
+        >
+          <Routes>
+            <Route
+              path="/"
+              element={launchIntent === "normal" ? <Navigate to={HOME_PATH} replace /> : null}
+            />
+            <Route path="/guid" element={<HomeRoute runtime={runtime} />} />
+            <Route path="/workbench" element={<WorkbenchRoute runtime={runtime} />} />
+            <Route path="/workbench/:workspaceId" element={<WorkbenchRoute runtime={runtime} />} />
+            <Route path="/workbench/:workspaceId/session/:sessionId" element={<WorkbenchRoute runtime={runtime} />} />
+            <Route path={PROJECT_PATH} element={<ProjectRoute />} />
+            <Route path="/conversation/:threadId" element={<ConversationRoute runtime={runtime} />} />
+            <Route path="/mcp" element={<Navigate to="/settings/mcp" replace />} />
+            <Route path="/__dev/event-replay" element={<EventReplayRoute />} />
+            <Route path="/settings/providers" element={<ProviderSettingsRoute runtime={runtime} />} />
+            <Route path="/settings/model-defaults" element={<ModelDefaultSettingsRoute runtime={runtime} />} />
+            <Route path="/settings/extensions" element={<ExtensionSettingsRoute runtime={runtime} />} />
+            <Route path="/settings/policy-config" element={<ConfigSettingsRoute runtime={runtime} />} />
+            <Route path="/settings/usage" element={<UsageSettingsRoute runtime={runtime} />} />
+            <Route path="/settings/mcp" element={<McpSettingsRoute runtime={runtime} />} />
+            <Route path="/settings/general" element={<GeneralSettingsRoute runtime={runtime} />} />
+            <Route path="/settings/appearance" element={<AppearanceSettingsRoute />} />
+            <Route path="/settings/about" element={<AboutSettingsRoute />} />
+            <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
+          </Routes>
+        </NormalStartupBoundary>
+      </Suspense>
+    </>
   );
 }
 
@@ -219,11 +232,11 @@ export function AssociatedFileOpenController({
         }
         return;
       }
-      onExternalFileDetected();
       const { pathname, lastWorkbenchWorkspaceId } = routeStateRef.current;
       const activeWorkspaceId =
         parseWorkbenchPath(pathname)?.workspaceId ?? lastWorkbenchWorkspaceId ?? undefined;
       void navigate(workbenchFilePreviewPath(path, activeWorkspaceId));
+      onExternalFileDetected();
     } catch {
       if (settleInitialResolution) {
         onInitialResolutionComplete();

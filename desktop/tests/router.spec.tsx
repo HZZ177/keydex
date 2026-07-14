@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, useNavigate } from "react-router-dom";
-import type { ReactNode } from "react";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentActionEnvelope } from "@/types/protocol";
@@ -37,7 +37,13 @@ function renderRouter(
   initialEntries: Array<string | { pathname: string; state?: unknown }>,
   options: RenderRouterOptions = {},
 ) {
-  const { extra, routeExtra, starter = () => Promise.resolve(agentConnection()), ...runtimeOptions } = options;
+  const {
+    associatedFileOpen,
+    extra,
+    routeExtra,
+    starter = () => Promise.resolve(agentConnection()),
+    ...runtimeOptions
+  } = options;
   const runtime = fakeRuntime(runtimeOptions);
   const result = render(
     <ThemeProvider>
@@ -51,7 +57,7 @@ function renderRouter(
                     {extra}
                     <MemoryRouter initialEntries={initialEntries}>
                       {routeExtra}
-                      <AppRouter runtime={runtime} />
+                      <AppRouter runtime={runtime} associatedFileOpen={associatedFileOpen} />
                     </MemoryRouter>
                   </PreviewProvider>
                 </AgentSessionProvider>
@@ -69,7 +75,13 @@ function renderRouterWithoutLayoutProvider(
   initialEntries: Array<string | { pathname: string; state?: unknown }>,
   options: RenderRouterOptions = {},
 ) {
-  const { extra, routeExtra, starter = () => Promise.resolve(agentConnection()), ...runtimeOptions } = options;
+  const {
+    associatedFileOpen,
+    extra,
+    routeExtra,
+    starter = () => Promise.resolve(agentConnection()),
+    ...runtimeOptions
+  } = options;
   const runtime = fakeRuntime(runtimeOptions);
   const result = render(
     <ThemeProvider>
@@ -82,7 +94,7 @@ function renderRouterWithoutLayoutProvider(
                   {extra}
                   <MemoryRouter initialEntries={initialEntries}>
                     {routeExtra}
-                    <AppRouter runtime={runtime} />
+                    <AppRouter runtime={runtime} associatedFileOpen={associatedFileOpen} />
                   </MemoryRouter>
                 </PreviewProvider>
               </AgentSessionProvider>
@@ -435,6 +447,30 @@ describe("AppRouter", () => {
     expect(runtime.localPreview.readDocument).toHaveBeenCalledTimes(1);
   });
 
+  it("opens a cold-start associated file from the root route before the backend is ready", async () => {
+    const filePath = "C:/Users/test/Desktop/cold-start.md";
+    const connection = createDeferred<AgentConnection>();
+    const takePaths = vi.fn().mockResolvedValue([filePath]);
+    const listen = vi.fn(async () => () => undefined);
+    const onLocation = vi.fn();
+
+    renderRouter(["/"], {
+      associatedFileOpen: { listen, takePaths },
+      routeExtra: <RouterLocationProbe onLocation={onLocation} />,
+      starter: () => connection.promise,
+    });
+
+    expect(screen.queryByTestId("startup-screen")).toBeNull();
+    await waitFor(() => expect(takePaths).toHaveBeenCalledTimes(1));
+    await waitFor(
+      () => expect(onLocation).toHaveBeenCalledWith(expect.stringContaining("/workbench?file=")),
+      { timeout: 10000 },
+    );
+    expect(await screen.findByTestId("workbench-mode-page", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("");
+    expect(await screen.findByRole("tab", { name: "cold-start.md" }, { timeout: 10000 })).not.toBeNull();
+  });
+
   it("loads annotations for an externally opened workspace file with a relative path", async () => {
     const filePath = "D:/Pycharm Projects/keydex/README.md";
     const annotationsList = vi.fn().mockResolvedValue([]);
@@ -762,7 +798,7 @@ describe("AppRouter", () => {
     const { runtime } = renderRouter(["/settings/providers"], { starter });
 
     await waitFor(() => expect(starter).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("startup-screen")).not.toBeNull();
+    expect(await screen.findByTestId("startup-screen")).not.toBeNull();
     expect(screen.queryByTestId("settings-shell")).toBeNull();
     expect(runtime.models.listProviders).not.toHaveBeenCalled();
 
@@ -818,7 +854,7 @@ describe("AppRouter", () => {
     const { runtime } = renderRouter(["/workbench/workspace%20A/session/session%201"], { starter });
 
     await waitFor(() => expect(starter).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("startup-screen")).not.toBeNull();
+    expect(await screen.findByTestId("startup-screen")).not.toBeNull();
     expect(screen.queryByTestId("workbench-workspace-loading")).toBeNull();
     await act(async () => {
       await Promise.resolve();
@@ -1596,9 +1632,22 @@ describe("AppRouter", () => {
 });
 
 interface RenderRouterOptions extends FakeRuntimeOptions {
+  associatedFileOpen?: {
+    listen: (handler: () => void) => Promise<() => void>;
+    takePaths: () => Promise<string[]>;
+  };
   extra?: ReactNode;
   routeExtra?: ReactNode;
   starter?: () => Promise<AgentConnection>;
+}
+
+function RouterLocationProbe({ onLocation }: { onLocation?: (location: string) => void }) {
+  const location = useLocation();
+  const value = `${location.pathname}${location.search}`;
+  useEffect(() => {
+    onLocation?.(value);
+  }, [onLocation, value]);
+  return <span data-testid="router-location">{value}</span>;
 }
 
 interface FakeRuntimeOptions {

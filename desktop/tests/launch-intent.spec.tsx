@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { AssociatedFileOpenController } from "@/renderer/components/layout/Router";
@@ -92,6 +92,28 @@ describe("launch intent", () => {
     expect(onInitialResolutionComplete).not.toHaveBeenCalled();
   });
 
+  it("keeps a cold-start file route ahead of the root Agent redirect", async () => {
+    const takePaths = vi.fn().mockResolvedValue(["C:/Users/test/Desktop/cold-start.md"]);
+    const listen = vi.fn(async () => () => undefined);
+    const onExternalFileDetected = vi.fn();
+    const onInitialResolutionComplete = vi.fn();
+
+    render(
+      <ControllerHarness
+        initialEntry="/"
+        includeRootRedirect
+        takePaths={takePaths}
+        listen={listen}
+        onExternalFileDetected={onExternalFileDetected}
+        onInitialResolutionComplete={onInitialResolutionComplete}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("current-location").textContent).toContain("cold-start.md"));
+    expect(screen.getByTestId("current-location").textContent).toContain("/workbench?file=");
+    expect(onExternalFileDetected).toHaveBeenCalledTimes(1);
+  });
+
   it("settles normal once, then switches an active splash to the newest event path", async () => {
     const handlers: Array<() => void> = [];
     const takePaths = vi
@@ -129,21 +151,31 @@ function ControllerHarness({
   listen,
   onExternalFileDetected,
   onInitialResolutionComplete,
+  initialEntry = "/guid",
+  includeRootRedirect = false,
 }: {
   takePaths: () => Promise<string[]>;
   listen: (handler: () => void) => Promise<() => void>;
   onExternalFileDetected: () => void;
   onInitialResolutionComplete: () => void;
+  initialEntry?: string;
+  includeRootRedirect?: boolean;
 }) {
   return (
     <LayoutStateProvider>
-      <MemoryRouter initialEntries={["/guid"]}>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <AssociatedFileOpenController
           takePaths={takePaths}
           listen={listen}
           onExternalFileDetected={onExternalFileDetected}
           onInitialResolutionComplete={onInitialResolutionComplete}
         />
+        {includeRootRedirect ? (
+          <Routes>
+            <Route path="/" element={<Navigate to="/guid" replace />} />
+            <Route path="*" element={null} />
+          </Routes>
+        ) : null}
         <LocationProbe />
       </MemoryRouter>
     </LayoutStateProvider>
