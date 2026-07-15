@@ -381,7 +381,7 @@ describe("AppRouter", () => {
       if ("workspaceId" in scope && scope.workspaceId === "workspace B") {
         return workspaceBTree.promise;
       }
-      return Promise.resolve({
+      return Promise.resolve<WorkspaceTreeResponse>({
         root: "D:/Pycharm Projects/keydex",
         entries: [{ name: "workspace-a-only.md", path: "workspace-a-only.md", type: "file" }],
       });

@@ -16,7 +16,11 @@ use tauri::{
 };
 
 #[cfg(windows)]
+use std::ffi::OsString;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use std::path::Path;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -252,8 +256,17 @@ fn open_path_in_file_manager(path: String) -> Result<(), String> {
     {
         let resolved = resolve_existing_filesystem_path(&path)?;
         let mut command = Command::new("explorer.exe");
+        match windows_file_manager_target(&resolved) {
+            WindowsFileManagerTarget::OpenDirectory(directory) => {
+                command.arg(directory);
+            }
+            WindowsFileManagerTarget::SelectEntry(entry) => {
+                let mut argument = OsString::from("/select,");
+                argument.push(entry);
+                command.arg(argument);
+            }
+        }
         command
-            .arg(format!("/select,{}", resolved.to_string_lossy()))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -358,6 +371,35 @@ fn resolve_existing_filesystem_path(path: &str) -> Result<PathBuf, String> {
         return Err("文件不存在".to_string());
     }
     path.canonicalize().map_err(|err| err.to_string())
+}
+
+#[cfg(windows)]
+#[derive(Debug, PartialEq, Eq)]
+enum WindowsFileManagerTarget {
+    OpenDirectory(PathBuf),
+    SelectEntry(PathBuf),
+}
+
+#[cfg(windows)]
+fn windows_file_manager_target(path: &Path) -> WindowsFileManagerTarget {
+    let shell_path = windows_shell_compatible_path(path);
+    if path.is_dir() {
+        WindowsFileManagerTarget::OpenDirectory(shell_path)
+    } else {
+        WindowsFileManagerTarget::SelectEntry(shell_path)
+    }
+}
+
+#[cfg(windows)]
+fn windows_shell_compatible_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(unc_path) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{unc_path}"));
+    }
+    if let Some(local_path) = text.strip_prefix(r"\\?\") {
+        return PathBuf::from(local_path);
+    }
+    path.to_path_buf()
 }
 
 fn collect_associated_markdown_paths<I>(args: I) -> Vec<String>
@@ -537,8 +579,61 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::collect_startup_associated_markdown_paths;
+    #[cfg(windows)]
+    use super::{
+        windows_file_manager_target, windows_shell_compatible_path, WindowsFileManagerTarget,
+    };
     use std::fs;
+    #[cfg(windows)]
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(windows)]
+    #[test]
+    fn file_manager_opens_directory_itself_and_only_selects_files() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after the Unix epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("keydex-file-manager-{unique}"));
+        let file = directory.join("README.md");
+        fs::create_dir(&directory).expect("temporary directory should be created");
+        fs::write(&file, "# file manager regression").expect("temporary file should be created");
+
+        let resolved_directory = directory
+            .canonicalize()
+            .expect("temporary directory should be canonicalized");
+        let resolved_file = file
+            .canonicalize()
+            .expect("temporary file should be canonicalized");
+
+        assert_eq!(
+            windows_file_manager_target(&resolved_directory),
+            WindowsFileManagerTarget::OpenDirectory(windows_shell_compatible_path(
+                &resolved_directory
+            )),
+        );
+        assert_eq!(
+            windows_file_manager_target(&resolved_file),
+            WindowsFileManagerTarget::SelectEntry(windows_shell_compatible_path(&resolved_file)),
+        );
+
+        fs::remove_file(file).expect("temporary file should be removed");
+        fs::remove_dir(directory).expect("temporary directory should be removed");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn file_manager_strips_windows_verbatim_prefixes_for_explorer() {
+        assert_eq!(
+            windows_shell_compatible_path(Path::new(r"\\?\C:\repo\keydex")),
+            PathBuf::from(r"C:\repo\keydex"),
+        );
+        assert_eq!(
+            windows_shell_compatible_path(Path::new(r"\\?\UNC\server\share\keydex")),
+            PathBuf::from(r"\\server\share\keydex"),
+        );
+    }
 
     #[test]
     fn update_relaunch_drops_inherited_file_intent_but_normal_startup_keeps_it() {

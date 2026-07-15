@@ -263,7 +263,7 @@ describe("FileMarkdownRuntimeHost", () => {
     ].join("\n");
     const targetLine = source.split("\n").findIndex((line) => line.startsWith("TARGET ")) + 1;
     let measuredBlockId: string | null = null;
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function rect() {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function rect(this: HTMLElement) {
       return this.dataset.markdownBlockId === measuredBlockId
         ? new DOMRect(0, 0, 900, 600)
         : new DOMRect(0, 0, 900, 0);
