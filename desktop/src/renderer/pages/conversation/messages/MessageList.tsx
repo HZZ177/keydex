@@ -617,11 +617,9 @@ export function MessageList({
     conversationPinRegistry.attach(virtualScrollerRef.current, conversationTimelineRef.current);
     conversationPinRegistry.sync(virtualRuntimeUnits);
     updateConversationHydrationWindow();
-    autoScroll.notifyContentMutation("timeline-publish");
     scheduleTailReadinessCheck();
     if (autoScroll.snapshot.bootstrapCommitted) updateVisibleVirtualTurns(virtualScrollerRef.current);
   }, [
-    autoScroll.notifyContentMutation,
     autoScroll.snapshot.bootstrapCommitted,
     conversationNavigation,
     conversationPinRegistry,
@@ -990,6 +988,7 @@ export function MessageList({
       onScroll={handleVirtualScroll}
       onWheel={handleNativeWheel}
       onPublished={handleConversationTimelinePublished}
+      onScrollRequest={autoScroll.applyScrollRequest}
       followBottom={autoScroll.shouldFollowTail}
       renderUnit={renderTimelineUnit}
     />

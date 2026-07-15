@@ -14,6 +14,9 @@ describe("ConversationNativeTimelineSurface", () => {
         units={units}
         runtimeRef={runtimeRef}
         renderUnit={(entry) => <div>{entry.id}</div>}
+        onScrollRequest={(request) => {
+          screen.getByTestId("message-list-scroll").scrollTop = request.scrollTop;
+        }}
       />,
     );
 
@@ -48,6 +51,52 @@ describe("ConversationNativeTimelineSurface", () => {
     expect(runtimeRef.current?.restoreAnchor(anchor!)).toBe(true);
     expect(root.scrollTop).toBe(180);
   });
+
+  it("delegates follow-bottom movement to the shared scroll owner", () => {
+    const scrollRequests = vi.fn();
+    const directScrollWrites: number[] = [];
+    let scrollTop = 25;
+    const first = streamingUnit("assistant-1", "streaming");
+    const { rerender } = render(
+      <ConversationNativeTimelineSurface
+        units={[first]}
+        renderUnit={(entry) => <span>{entry.renderVersion}</span>}
+        followBottom
+        onScrollRequest={scrollRequests}
+        scrollerRef={(element) => {
+          if (!element) return;
+          Object.defineProperties(element, {
+            clientHeight: { configurable: true, get: () => 200 },
+            scrollHeight: { configurable: true, get: () => 1_000 },
+            scrollTop: {
+              configurable: true,
+              get: () => scrollTop,
+              set: (value: number) => {
+                scrollTop = value;
+                directScrollWrites.push(value);
+              },
+            },
+          });
+        }}
+      />,
+    );
+
+    expect(scrollRequests).toHaveBeenLastCalledWith({ scrollTop: 800, reason: "follow-bottom" });
+    expect(directScrollWrites).toEqual([]);
+    expect(scrollTop).toBe(25);
+
+    rerender(
+      <ConversationNativeTimelineSurface
+        units={[{ ...first, renderVersion: "streaming-more" }]}
+        renderUnit={(entry) => <span>{entry.renderVersion}</span>}
+        followBottom
+        onScrollRequest={scrollRequests}
+      />,
+    );
+
+    expect(scrollRequests).toHaveBeenLastCalledWith({ scrollTop: 800, reason: "follow-bottom" });
+    expect(directScrollWrites).toEqual([]);
+  });
 });
 
 function unit(index: number): ConversationRenderUnit {
@@ -67,6 +116,26 @@ function unit(index: number): ConversationRenderUnit {
     measurementPolicy: "estimate-once",
     estimatedHeight: 100,
     renderVersion: `version-${index}`,
+  };
+}
+
+function streamingUnit(id: string, renderVersion: string): ConversationRenderUnit {
+  return {
+    id,
+    kind: "assistant-markdown",
+    owner: "markdown-runtime",
+    turnId: "turn-1",
+    turnIndex: 0,
+    businessTurnIndex: 0,
+    sourceMessageIds: [id],
+    item: null,
+    parentUnitId: null,
+    dynamic: true,
+    interactive: false,
+    pinPolicy: "never",
+    measurementPolicy: "observe-until-settled",
+    estimatedHeight: 120,
+    renderVersion,
   };
 }
 

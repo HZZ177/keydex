@@ -12,6 +12,7 @@ import type { ConversationRenderUnit } from "./ConversationRenderUnit";
 import type {
   ConversationTimelineAnchor,
   ConversationTimelineDiagnostics,
+  ConversationTimelineScrollRequest,
 } from "./ConversationTimelineRuntime";
 import type { ConversationTimelineSurfaceHandle } from "./ConversationTimelineSurface";
 
@@ -27,6 +28,7 @@ export interface ConversationNativeTimelineSurfaceProps {
   readonly onWheel?: (event: WheelEvent<HTMLDivElement>) => void;
   readonly onScroll?: (event: UIEvent<HTMLDivElement>) => void;
   readonly onPublished?: (diagnostics: ConversationTimelineDiagnostics) => void;
+  readonly onScrollRequest?: (request: ConversationTimelineScrollRequest) => void;
   readonly followBottom?: boolean;
   readonly variant?: string;
 }
@@ -50,6 +52,7 @@ export function ConversationNativeTimelineSurface({
   onWheel,
   onScroll,
   onPublished,
+  onScrollRequest,
   followBottom = false,
   variant,
 }: ConversationNativeTimelineSurfaceProps) {
@@ -60,13 +63,19 @@ export function ConversationNativeTimelineSurface({
   const renderRevisionRef = useRef(0);
   const followBottomRef = useRef(followBottom);
   const onPublishedRef = useRef(onPublished);
+  const onScrollRequestRef = useRef(onScrollRequest);
   const scrollerRefRef = useRef(scrollerRef);
   const lastPublishedHeightRef = useRef<number | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   unitsRef.current = units;
   followBottomRef.current = followBottom;
   onPublishedRef.current = onPublished;
+  onScrollRequestRef.current = onScrollRequest;
   scrollerRefRef.current = scrollerRef;
+
+  const requestScroll = (scrollTop: number, reason: ConversationTimelineScrollRequest["reason"]) => {
+    onScrollRequestRef.current?.(Object.freeze({ scrollTop, reason }));
+  };
 
   const diagnostics = (): ConversationTimelineDiagnostics => {
     const root = rootRef.current;
@@ -100,7 +109,7 @@ export function ConversationNativeTimelineSurface({
     root.dataset.conversationTimelineMountedUnits = String(elementsByIdRef.current.size);
     root.dataset.conversationTimelineLayoutMode = "native";
     content.dataset.conversationTimelineTotalHeight = String(root.scrollHeight);
-    if (followBottomRef.current) root.scrollTop = nativeBottom(root);
+    if (followBottomRef.current) requestScroll(nativeBottom(root), "follow-bottom");
     onPublishedRef.current?.(diagnostics());
   };
 
@@ -111,12 +120,12 @@ export function ConversationNativeTimelineSurface({
       revealUnit(unitId, align = "center") {
         const element = elementsByIdRef.current.get(unitId);
         if (!element) return false;
-        root.scrollTop = nativeRevealTop(root, element, align);
+        requestScroll(nativeRevealTop(root, element, align), "reveal-unit");
         return true;
       },
       setFollowBottom(enabled) {
         followBottomRef.current = enabled;
-        if (enabled) root.scrollTop = nativeBottom(root);
+        if (enabled) requestScroll(nativeBottom(root), "follow-bottom");
       },
       setUserScrollInteraction() {},
       captureAnchor(viewportOffset = 0) {
@@ -126,10 +135,13 @@ export function ConversationNativeTimelineSurface({
         const element = elementsByIdRef.current.get(anchor.unitId);
         if (!element) return false;
         const elementTop = nativeElementTop(root, element);
-        root.scrollTop = clamp(
-          elementTop + anchor.offsetWithinUnit - anchor.viewportOffset,
-          0,
-          nativeBottom(root),
+        requestScroll(
+          clamp(
+            elementTop + anchor.offsetWithinUnit - anchor.viewportOffset,
+            0,
+            nativeBottom(root),
+          ),
+          "restore-anchor",
         );
         return true;
       },

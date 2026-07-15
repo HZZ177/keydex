@@ -104,16 +104,28 @@
   scrollbar-width: auto;
 }
 
-/* Ordinary histories use the browser's real document flow. Let Chromium keep
- * the visible content anchored while images/Markdown/tool blocks finish their
- * native layout; no estimated-height correction participates in this mode. */
-.root[data-list-mode="native"],
-.root[data-list-mode="native"] .scroller,
-.root[data-list-mode="native"] .list,
-.root[data-list-mode="native"] [data-conversation-unit-id],
-.root[data-list-mode="native"] .item,
-.root[data-list-mode="native"] .runtimeTurnFooter,
-.root[data-list-mode="native"] .turnGroup {
+/* Ordinary histories use browser anchoring only while follow ownership is
+ * detached. During auto-follow the controller is the single scroll writer;
+ * enabling native anchoring there makes Chromium compensate against it. */
+.root[data-list-mode="native"]:is(
+  [data-follow-mode="user-detached"],
+  [data-follow-mode="navigating-turn"],
+  [data-follow-mode="restoring-history"],
+  [data-follow-mode="suspended"]
+),
+.root[data-list-mode="native"]:is(
+  [data-follow-mode="user-detached"],
+  [data-follow-mode="navigating-turn"],
+  [data-follow-mode="restoring-history"],
+  [data-follow-mode="suspended"]
+) :is(
+  .scroller,
+  .list,
+  [data-conversation-unit-id],
+  .item,
+  .runtimeTurnFooter,
+  .turnGroup
+) {
   overflow-anchor: auto;
 }
 
