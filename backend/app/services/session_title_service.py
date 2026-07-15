@@ -24,7 +24,8 @@ _TITLE_PROMPT = (
     "4. 语义具体，避免使用“问题咨询”“对话记录”这类空泛表达。"
 )
 _TITLE_FALLBACK_MAX_LENGTH = 50
-_TITLE_GENERATION_MAX_TOKENS = 80
+SESSION_TITLE_LLM_TEMPERATURE = 0.3
+SESSION_TITLE_LLM_MAX_TOKENS = 80
 _TITLE_TRAILING_PUNCTUATION = "。．.！!？?；;：:、，,~～-—_"
 _TITLE_RETRY_DELAYS_SECONDS = (1.0, 2.0)
 
@@ -105,8 +106,8 @@ class SessionTitleService:
                 self._repositories,
                 factory=self._factory,
                 http_transport=self._http_transport,
-                temperature=0.3,
-                max_tokens=_TITLE_GENERATION_MAX_TOKENS,
+                temperature=SESSION_TITLE_LLM_TEMPERATURE,
+                max_tokens=SESSION_TITLE_LLM_MAX_TOKENS,
             )
         except SideTaskModelError as exc:
             logger.warning(

@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 import json
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from backend.app.keydex.models import KeydexDiagnostic, KeydexLayerProfile
-from backend.app.keydex.presets import (
-    PresetValidationError,
-    deterministic_tree_sha256,
-)
 from backend.app.keydex.skills.frontmatter import parse_skill_frontmatter, validate_skill_name
 from backend.app.keydex.skills.model import SkillDefinitionError, canonical_skill_name
 
-BUILTIN_SKILL_CATALOG_SCHEMA_VERSION = 1
+BUILTIN_SKILL_CATALOG_SCHEMA_VERSION = 2
 BUILTIN_SKILLS_ROOT = Path(__file__).resolve().parent
 
 
@@ -22,7 +19,6 @@ class BuiltinSkill:
     id: str
     skill_name: str
     version: int
-    content_sha256: str
     source_dir: Path
 
 
@@ -151,11 +147,10 @@ def _parse_builtin_skill(
         "id",
         "skill_name",
         "version",
-        "content_sha256",
     }:
         raise BuiltinSkillValidationError(
             "builtin_skill_catalog_item_invalid",
-            "builtin Skill item fields must be id, skill_name, version, and content_sha256",
+            "builtin Skill item fields must be id, skill_name, and version",
             path=logical_path,
         )
     skill_id = item["id"]
@@ -176,27 +171,8 @@ def _parse_builtin_skill(
             "builtin Skill version must be a positive integer",
             path=logical_path,
         )
-    content_sha256 = item["content_sha256"]
-    if (
-        not isinstance(content_sha256, str)
-        or len(content_sha256) != 64
-        or any(character not in "0123456789abcdef" for character in content_sha256)
-    ):
-        raise BuiltinSkillValidationError(
-            "builtin_skill_hash_invalid",
-            "builtin Skill content_sha256 must be a lowercase SHA-256 digest",
-            path=logical_path,
-        )
-
     source_dir = root / "skills" / skill_name
-    try:
-        actual_hash = deterministic_tree_sha256(source_dir)
-    except PresetValidationError as exc:
-        raise BuiltinSkillValidationError(
-            "builtin_skill_tree_invalid",
-            "builtin Skill tree must contain only readable regular files and directories",
-            path=f"skills/{skill_name}",
-        ) from exc
+    _validate_skill_tree(source_dir, skill_name=skill_name)
     entry_file = source_dir / "SKILL.md"
     try:
         metadata = parse_skill_frontmatter(entry_file)
@@ -212,19 +188,41 @@ def _parse_builtin_skill(
             "catalog, directory, and SKILL.md names must match exactly",
             path=f"skills/{skill_name}/SKILL.md",
         )
-    if actual_hash != content_sha256:
-        raise BuiltinSkillValidationError(
-            "builtin_skill_hash_mismatch",
-            "builtin Skill tree does not match its catalog hash",
-            path=f"skills/{skill_name}",
-        )
     return BuiltinSkill(
         id=skill_id.strip(),
         skill_name=skill_name,
         version=version,
-        content_sha256=content_sha256,
         source_dir=source_dir,
     )
+
+
+def _validate_skill_tree(source_dir: Path, *, skill_name: str) -> None:
+    try:
+        if source_dir.is_symlink() or _is_junction(source_dir):
+            raise OSError("symbolic links and junctions are not allowed")
+        if not source_dir.is_dir():
+            raise OSError("Skill tree root must be a directory")
+        _validate_skill_tree_directory(source_dir)
+    except OSError as exc:
+        raise BuiltinSkillValidationError(
+            "builtin_skill_tree_invalid",
+            "builtin Skill tree must contain only readable regular files and directories",
+            path=f"skills/{skill_name}",
+        ) from exc
+
+
+def _validate_skill_tree_directory(directory: Path) -> None:
+    for path in sorted(directory.iterdir(), key=lambda item: item.name):
+        if path.is_symlink() or _is_junction(path):
+            raise OSError("symbolic links and junctions are not allowed")
+        mode = path.stat(follow_symlinks=False).st_mode
+        if stat.S_ISDIR(mode):
+            _validate_skill_tree_directory(path)
+            continue
+        if not stat.S_ISREG(mode):
+            raise OSError("Skill tree contains a non-regular entry")
+        with path.open("rb") as stream:
+            stream.read(1)
 
 
 def _validate_skills_directory(skills_root: Path, catalog_names: set[str]) -> None:

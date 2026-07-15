@@ -1619,10 +1619,7 @@ function previewTitle(request: PreviewRequest): string {
 
 function previewSourceLabel(request: PreviewRequest): string {
   if (request.type === "skill-resource") {
-    const sourceLabel = request.skillSource === "builtin"
-      ? "内置"
-      : request.skillSource === "system" ? "系统级" : "项目级";
-    return `${sourceLabel} Skill · ${request.skillName}/${request.resourcePath}`;
+    return `Skill · ${request.skillName}/${request.resourcePath}`;
   }
   if (request.type === "content") {
     return request.sourcePath ?? "消息内容";

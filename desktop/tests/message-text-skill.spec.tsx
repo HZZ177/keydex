@@ -26,7 +26,7 @@ describe("MessageText skill context items", () => {
     );
 
     expect(screen.getByText("dev-plan")).not.toBeNull();
-    expect(screen.getByText("项目级")).not.toBeNull();
+    expect(screen.queryByText("项目级")).toBeNull();
     expect(screen.queryByRole("button", { name: /dev-plan/ })).toBeNull();
 
     const wrapper = screen.getByText("dev-plan").closest("[data-preview-open]");
@@ -106,7 +106,7 @@ describe("MessageText skill context items", () => {
     expect(document.querySelector('[data-context-chip-icon="skill"]')).not.toBeNull();
   });
 
-  it("shows a historical system skill source without treating its locator as a workspace file", async () => {
+  it("routes a historical system skill source without displaying its hierarchy", async () => {
     const runtime = skillRuntime("system");
     render(
       <PreviewProvider>
@@ -134,7 +134,7 @@ describe("MessageText skill context items", () => {
       </PreviewProvider>,
     );
 
-    expect(screen.getByText("系统级")).not.toBeNull();
+    expect(screen.queryByText("系统级")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "打开 Skill dev-plan" }));
     await waitFor(() => {
       expect(screen.getByTestId("preview-request").textContent).toBe(
@@ -152,7 +152,7 @@ describe("MessageText skill context items", () => {
     );
   });
 
-  it("restores the builtin source badge from historical context metadata", () => {
+  it("keeps a historical builtin source for routing without displaying it", () => {
     render(
       <MessageText
         message={message("user", "", "completed", {
@@ -173,7 +173,7 @@ describe("MessageText skill context items", () => {
       />,
     );
 
-    expect(screen.getByText("内置")).not.toBeNull();
+    expect(screen.queryByText("内置")).toBeNull();
     expect(
       screen.getByText("keydex-guide").closest("[data-skill-source]")?.getAttribute(
         "data-skill-source",

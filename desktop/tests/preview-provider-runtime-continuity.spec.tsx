@@ -200,6 +200,8 @@ describe("PreviewProvider Markdown Runtime continuity", () => {
     }));
     await waitFor(() => expect(previewRef.current!.activeEntry?.request.type).toBe("skill-resource"));
     const skillEntry = previewRef.current!.activeEntry!;
+    expect(skillEntry.sourceLabel).toBe("Skill · dev-plan/SKILL.md");
+    expect(skillEntry.sourceLabel).not.toContain("系统级");
     expect(previewRef.current!.targetPath).toBeNull();
     expect(previewRef.current!.entries).toHaveLength(2);
 

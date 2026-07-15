@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import threading
+import time
 
 from fastapi.testclient import TestClient
 
@@ -8,6 +10,7 @@ from backend.app.core.config import AppSettings
 from backend.app.main import create_app
 from backend.app.mcp.manager import McpManager
 from backend.app.runtime import DesktopAgentRuntime
+from backend.app.services.default_model_warmup import DefaultModelWarmupResult
 
 
 def test_create_app_mounts_desktop_runtime_and_keeps_health(tmp_path) -> None:
@@ -50,6 +53,40 @@ def test_application_lifespan_closes_file_change_hub(tmp_path) -> None:
         assert client.get("/api/health").status_code == 200
 
     assert close_calls == 1
+
+
+def test_default_model_warmup_runs_inside_background_agent_warmup(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import backend.app.services.default_model_warmup as warmup_module
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_warmup(*_args, **_kwargs) -> DefaultModelWarmupResult:
+        started.set()
+        release.wait(timeout=5)
+        return DefaultModelWarmupResult(warmed_scopes=(), skipped_scopes=())
+
+    monkeypatch.setattr(warmup_module, "warmup_default_models", blocking_warmup)
+
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+    assert started.is_set() is False
+
+    with TestClient(app) as client:
+        assert started.wait(timeout=2)
+        try:
+            response = client.get("/api/health")
+            assert response.status_code == 200
+            assert response.json()["agent_status"] == "warming"
+        finally:
+            release.set()
+
+        deadline = time.monotonic() + 2
+        while client.get("/api/health").json()["agent_status"] != "ready":
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
 
 
 def test_create_app_exposes_disabled_mcp_manager_without_client_startup(tmp_path) -> None:

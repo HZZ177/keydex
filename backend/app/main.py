@@ -237,6 +237,7 @@ def create_app(
         from backend.app.agent.checkpoint import SQLiteCheckpointSaver
         from backend.app.agent.runtime_settings import load_agent_runtime_settings
         from backend.app.services.chat_service import ChatService
+        from backend.app.services.default_model_warmup import warmup_default_models
 
         checkpointer = SQLiteCheckpointSaver(app.state.database)
         agent_runner = AgentRunner(
@@ -248,6 +249,11 @@ def create_app(
         )
         app.state.checkpointer = checkpointer
         app.state.agent_runner = agent_runner
+        warmup_default_models(
+            app.state.repositories,
+            factory=agent_runner.factory,
+            http_transport=agent_runner.model_http_transport(),
+        )
         return ChatService(
             settings=resolved_settings,
             repositories=app.state.repositories,

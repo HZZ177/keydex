@@ -151,6 +151,7 @@ describe("FilePreview", () => {
     const root = document.querySelector("[data-file-preview-root='true']");
     expect(root?.getAttribute("data-preview-source")).toBe("skill-resource");
     expect(root?.getAttribute("data-skill-source")).toBe("system");
+    expect(root?.textContent).not.toContain("系统级");
     expect(root?.getAttribute("data-file-preview-auto-save-state")).toBeNull();
     expect(root?.getAttribute("data-file-preview-new-annotations-enabled")).toBe("false");
     expect(root?.getAttribute("data-file-preview-file-allows-annotations")).toBe("false");

@@ -61,7 +61,7 @@ describe("WebSettingsSection", () => {
   });
 
   it("opens the provider-driven credential page and explains the free quota", async () => {
-    const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    const openWindow = vi.spyOn(window, "open").mockImplementation(() => window);
     renderSection(fakeRuntime());
 
     try {
@@ -84,6 +84,18 @@ describe("WebSettingsSection", () => {
       await chooseProvider("Beta");
       expect(screen.queryByRole("button", { name: "获取 Alpha 密钥" })).toBeNull();
       expect(screen.queryByRole("button", { name: "获取 Alpha 密钥额度说明" })).toBeNull();
+    } finally {
+      openWindow.mockRestore();
+    }
+  });
+
+  it("shows a top notification when the credential page cannot be opened", async () => {
+    const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    renderSection(fakeRuntime());
+
+    try {
+      fireEvent.click(await screen.findByRole("button", { name: "获取 Alpha 密钥" }));
+      expect(await screen.findByText("浏览器阻止了新窗口，请允许 Keydex 打开外部链接")).not.toBeNull();
     } finally {
       openWindow.mockRestore();
     }

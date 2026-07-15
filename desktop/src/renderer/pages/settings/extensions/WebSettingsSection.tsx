@@ -14,6 +14,7 @@ import {
 import { SettingsSelect, SettingsToggle } from "@/renderer/pages/settings/components";
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import { openExternalUrl } from "@/runtime/externalLinks";
 import type { RuntimeBridge } from "@/runtime";
 import type {
   UpdateWebSettingsPayload,
@@ -238,6 +239,11 @@ function WebSettingsSectionImpl(
     : { status: "idle" as const };
   const connectionFieldKey = activeProvider?.config_fields.find((field) => field.field_type === "secret")?.key;
   const credentialSetup = activeProvider?.credential_setup ?? null;
+  const openCredentialSetup = useCallback((url: string) => {
+    void openExternalUrl(url).catch((reason: unknown) => {
+      notifications.error(errorMessage(reason, "无法打开系统浏览器"));
+    });
+  }, [notifications]);
 
   return (
     <section
@@ -294,7 +300,7 @@ function WebSettingsSectionImpl(
                   <div className={styles.providerSetup}>
                     <button
                       className={styles.providerSetupButton}
-                      onClick={() => openProviderSetup(credentialSetup.url)}
+                      onClick={() => openCredentialSetup(credentialSetup.url)}
                       type="button"
                     >
                       {credentialSetup.label}
@@ -349,18 +355,6 @@ function WebSettingsSectionImpl(
       </div>
     </section>
   );
-}
-
-function openProviderSetup(url: string) {
-  try {
-    const target = new URL(url);
-    if (target.protocol !== "https:") {
-      return;
-    }
-    window.open(target.toString(), "_blank", "noopener,noreferrer");
-  } catch {
-    // Provider metadata is validated by the backend; ignore malformed stale responses defensively.
-  }
 }
 
 function ProviderField({

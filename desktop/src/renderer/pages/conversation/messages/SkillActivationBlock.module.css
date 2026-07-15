@@ -79,14 +79,6 @@
   white-space: nowrap;
 }
 
-.source {
-  flex: 0 0 auto;
-  color: var(--color-text-tertiary);
-  font-size: 10px;
-  font-weight: 520;
-  line-height: var(--ui-line-height-compact);
-}
-
 .status {
   display: inline-flex;
   min-height: var(--ghost-row-height);

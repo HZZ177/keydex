@@ -619,14 +619,6 @@
   white-space: nowrap;
 }
 
-.contextSkillSource {
-  flex: 0 0 auto;
-  color: var(--color-text-tertiary);
-  font-size: 10px;
-  font-weight: 520;
-  line-height: 15px;
-}
-
 .contextItemChip[data-clickable="true"] {
   cursor: pointer;
 }

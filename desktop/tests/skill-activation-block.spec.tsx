@@ -25,7 +25,7 @@ describe("SkillActivationBlock", () => {
     expect(screen.queryByTestId("tool-call-block")).toBeNull();
     expect(screen.getByTestId("skill-activation-block").querySelector("svg.lucide-sparkles")).not.toBeNull();
     expect(screen.getByText("dev-plan")).not.toBeNull();
-    expect(screen.getByText("项目级")).not.toBeNull();
+    expect(screen.queryByText("项目级")).toBeNull();
     expect(screen.queryByText("已激活")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "打开 Skill dev-plan" }));
@@ -83,7 +83,7 @@ describe("SkillActivationBlock", () => {
     });
   });
 
-  it("shows a system activation source without opening it through the workspace file preview", async () => {
+  it("routes a system activation source without displaying its hierarchy", async () => {
     const runtime = skillRuntime("system", "references/detail.md");
     render(
       <PreviewProvider>
@@ -114,7 +114,7 @@ describe("SkillActivationBlock", () => {
 
     const block = screen.getByTestId("skill-activation-block");
     expect(block.getAttribute("data-skill-source")).toBe("system");
-    expect(screen.getByText("系统级")).not.toBeNull();
+    expect(screen.queryByText("系统级")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "打开 Skill dev-plan" }));
     await waitFor(() => {
       expect(screen.getByTestId("preview-request").textContent).toBe(
@@ -124,7 +124,7 @@ describe("SkillActivationBlock", () => {
     expect(screen.getByTestId("file-panel-request").textContent).toBe("");
   });
 
-  it("preserves a builtin activation source and opens its packaged resource", async () => {
+  it("preserves a builtin activation source without a label and opens its packaged resource", async () => {
     const runtime = skillRuntime("builtin", "references/manual-index.md");
     render(
       <PreviewProvider>
@@ -147,7 +147,7 @@ describe("SkillActivationBlock", () => {
 
     const block = screen.getByTestId("skill-activation-block");
     expect(block.getAttribute("data-skill-source")).toBe("builtin");
-    expect(screen.getByText("内置")).not.toBeNull();
+    expect(screen.queryByText("内置")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "打开 Skill dev-plan" }));
     await waitFor(() => {
       expect(screen.getByTestId("preview-request").textContent).toBe(
@@ -182,7 +182,7 @@ describe("SkillActivationBlock", () => {
 
     const block = screen.getByTestId("skill-activation-block");
     expect(block.getAttribute("data-skill-source")).toBe("system");
-    expect(screen.getByText("系统级")).not.toBeNull();
+    expect(screen.queryByText("系统级")).toBeNull();
   });
 });
 

@@ -196,6 +196,7 @@ export function MessageList({
   const navigationRequestSequenceRef = useRef(0);
   const conversationPinRegistryRef = useRef<ConversationPinRegistry | null>(null);
   const conversationHydrationRef = useRef<ConversationHydrationScheduler | null>(null);
+  const hoveredAgentTurnFooterRef = useRef<HTMLElement | null>(null);
   if (!conversationNavigationRef.current) conversationNavigationRef.current = new ConversationNavigationController();
   if (!conversationPinRegistryRef.current) conversationPinRegistryRef.current = new ConversationPinRegistry();
   const conversationNavigation = conversationNavigationRef.current;
@@ -657,6 +658,40 @@ export function MessageList({
     if (event.deltaY !== 0) conversationNavigation.recordUserScroll();
   }, [conversationNavigation]);
 
+  const setHoveredAgentTurnFooter = useCallback((footer: HTMLElement | null) => {
+    const current = hoveredAgentTurnFooterRef.current;
+    if (current === footer) return;
+    current?.removeAttribute("data-agent-turn-hover");
+    footer?.setAttribute("data-agent-turn-hover", "true");
+    hoveredAgentTurnFooterRef.current = footer;
+  }, []);
+
+  const handleAgentTurnPointerOver = useCallback((event: PointerEvent<HTMLElement>) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      setHoveredAgentTurnFooter(null);
+      return;
+    }
+    const unit = target.closest<HTMLElement>("[data-conversation-unit-id][data-turn-index]");
+    const unitKind = unit?.dataset.conversationUnitKind;
+    if (
+      !unit
+      || !event.currentTarget.contains(unit)
+      || unitKind === "user-markdown"
+      || unitKind === "turn-shell"
+    ) {
+      setHoveredAgentTurnFooter(null);
+      return;
+    }
+    const turnIndex = unit.dataset.turnIndex;
+    const footerHost = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+      '[data-conversation-unit-kind="footer"][data-turn-index]',
+    )).find((candidate) => candidate.dataset.turnIndex === turnIndex);
+    setHoveredAgentTurnFooter(
+      footerHost?.querySelector<HTMLElement>('[data-testid="message-turn-footer"]') ?? null,
+    );
+  }, [setHoveredAgentTurnFooter]);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -993,6 +1028,8 @@ export function MessageList({
       data-performance-profile={performanceProfile}
       data-turn-navigator={showTurnNavigator ? "true" : "false"}
       data-testid="message-list"
+      onPointerLeave={() => setHoveredAgentTurnFooter(null)}
+      onPointerOver={handleAgentTurnPointerOver}
     >
       {loading && !visibleMessages.length ? (
         <div className={styles.scroller} data-message-list-variant={variant} data-testid="message-list-scroll">

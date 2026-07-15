@@ -1525,7 +1525,6 @@ function SkillContextChip({
       hoverAnchor="skill"
       title={displayName}
       description={skill.description}
-      meta={[skillSourceLabel(skill.source), skill.locator].filter(Boolean).join(" · ")}
     >
       <span
         className={styles.skillChip}
@@ -1569,10 +1568,6 @@ function skillDisplayName(skill: SkillSummary): string {
   const raw = skill.name || skill.label;
   const normalized = raw.replace(/^\//, "").trim();
   return normalized || "Skill";
-}
-
-function skillSourceLabel(source: SkillSummary["source"]): string {
-  return source === "builtin" ? "内置" : source === "system" ? "系统级" : "项目级";
 }
 
 function selectedFileFromSkill(skill: SkillSummary): SelectedFile | null {
@@ -2098,11 +2093,26 @@ function readEditorValue(root: Node): string {
   if (!hasMeaningfulEditorContent(root)) {
     return "";
   }
+  // Chromium may represent Shift+Enter as root text followed by a DIV. Its
+  // textContent is flattened, while innerText retains the visible line break.
+  if (root instanceof HTMLElement && typeof root.innerText === "string") {
+    return normalizeEditorText(root.innerText);
+  }
+  return normalizeEditorText(readEditorChildValues(root));
+}
+
+function readEditorChildValues(root: Node): string {
   let value = "";
-  root.childNodes.forEach((node) => {
+  let previousWasBlock = false;
+  root.childNodes.forEach((node, index) => {
+    const currentIsBlock = node instanceof HTMLElement && isBlockEditorNode(node);
+    if (index > 0 && (previousWasBlock || currentIsBlock)) {
+      value += "\n";
+    }
     value += readEditorNodeValue(node);
+    previousWasBlock = currentIsBlock;
   });
-  return normalizeEditorText(value);
+  return value;
 }
 
 function readEditorNodeValue(node: Node): string {
@@ -2115,8 +2125,7 @@ function readEditorNodeValue(node: Node): string {
   if (node.tagName === "BR") {
     return "\n";
   }
-  const childValue = readEditorValue(node);
-  return isBlockEditorNode(node) && childValue ? `${childValue}\n` : childValue;
+  return readEditorChildValues(node);
 }
 
 function isBlockEditorNode(node: HTMLElement): boolean {

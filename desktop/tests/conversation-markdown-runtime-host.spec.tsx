@@ -161,7 +161,7 @@ describe("ConversationMarkdownRuntimeHost", () => {
     conversationBaselineDiagnostics.reset();
   });
 
-  it("publishes append-only tails, preserves prefix DOM, corrects by epoch, and canonically completes", async () => {
+  it("publishes append-only tails including lists, preserves prefix DOM, corrects by epoch, and canonically completes", async () => {
     const registry = createConversationMarkdownRendererRegistry();
     const running = message("assistant-stream", "Alpha\n\nBeta", "running");
     const { container, rerender } = render(
@@ -189,6 +189,20 @@ describe("ConversationMarkdownRuntimeHost", () => {
     await ready(container, "Gamma");
     expect(findBlock(container, "Alpha")).toBe(alpha);
     expect(harness.tailParses).toBeGreaterThanOrEqual(2);
+
+    const listSource = `${appendedSource}\n\n- First streamed item\n- Second streamed item`;
+    rerender(
+      <ConversationMarkdownRuntimeHost
+        message={{ ...running, content: listSource }}
+        registry={registry}
+        showCursor
+        source={listSource}
+      />,
+    );
+    await ready(container, "Second streamed item");
+    expect([...container.querySelectorAll<HTMLElement>("[data-markdown-list-content]")]
+      .map((element) => element.textContent))
+      .toEqual(["First streamed item", "Second streamed item"]);
 
     const correctedSource = "Alpha\n\nCorrected";
     rerender(

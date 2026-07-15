@@ -3,7 +3,6 @@ import {
   createMarkdownSnapshotFromImmutableParts,
   type MarkdownSnapshot,
   type MarkdownSnapshotBlock,
-  type MarkdownSnapshotBlockMetadata,
   type MarkdownSnapshotResource,
   type MarkdownSnapshotSurface,
 } from "../document/MarkdownSnapshot";
@@ -263,7 +262,10 @@ function composeStreamingSnapshot(input: {
         logical_start: span.logical_start + logicalDelta,
         logical_end: span.logical_end + logicalDelta,
       })),
-      metadata: shiftMetadata(candidate.block.metadata, logicalDelta),
+      // Block metadata uses block-local logical offsets. Moving a parsed tail
+      // block into the document shifts the block and inline-span coordinates,
+      // but list item ranges must remain relative to their owning block.
+      metadata: candidate.block.metadata,
     };
     blocks.push(block);
     for (const resource of candidate.resources) {
@@ -341,21 +343,6 @@ function tailBoundary(snapshot: MarkdownSnapshot): { readonly blockCount: number
   return {
     blockCount: snapshot.blocks.length - 1,
     sourceStart: snapshot.blocks.at(-1)!.source_start,
-  };
-}
-
-function shiftMetadata(metadata: MarkdownSnapshotBlockMetadata, logicalDelta: number): MarkdownSnapshotBlockMetadata {
-  if (!metadata.list?.items) return metadata;
-  return {
-    ...metadata,
-    list: {
-      ...metadata.list,
-      items: metadata.list.items.map((item) => ({
-        ...item,
-        logical_start: item.logical_start + logicalDelta,
-        logical_end: item.logical_end + logicalDelta,
-      })),
-    },
   };
 }
 

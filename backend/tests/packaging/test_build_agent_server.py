@@ -84,7 +84,7 @@ def test_sidecar_fingerprint_includes_builtin_catalog_and_nested_resources(
     resource.parent.mkdir(parents=True)
     resource.write_bytes(b"builtin-resource")
     catalog = bundle_root / "catalog.json"
-    catalog.write_text('{"schema_version":1,"skills":[]}', encoding="utf-8")
+    catalog.write_text('{"schema_version":2,"skills":[]}', encoding="utf-8")
     monkeypatch.setattr(build_agent_server, "BUILTIN_SKILLS_ROOT", bundle_root)
 
     inputs = build_agent_server.iter_sidecar_inputs()

@@ -80,7 +80,6 @@ export function SkillActivationBlock({
         <span className={styles.content}>
           <span className={styles.header}>
             <span className={styles.title}>{model.title}</span>
-            <span className={styles.source}>{skillSourceLabel(model.source)}</span>
           </span>
         </span>
       </button>
@@ -129,10 +128,6 @@ function skillActivationViewModel(message: ConversationMessage): SkillActivation
 
 function skillSource(value: string): SkillSource {
   return value === "builtin" ? "builtin" : value === "system" ? "system" : "workspace";
-}
-
-function skillSourceLabel(source: SkillSource): string {
-  return source === "builtin" ? "内置" : source === "system" ? "系统级" : "项目级";
 }
 
 function parseToolResultPayload(

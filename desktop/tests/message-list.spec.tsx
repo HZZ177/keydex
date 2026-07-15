@@ -1301,6 +1301,49 @@ describe("MessageList", () => {
     expect(footerDetails?.querySelector("time")).not.toBeNull();
   });
 
+  it("reveals the matching footer details while hovering anywhere in the agent turn", () => {
+    render(
+      <MessageList
+        messages={[
+          message("m1", "user", "第一轮问题"),
+          message("m2", "assistant", "第一轮回答"),
+          message("m3", "user", "第二轮问题"),
+          message("m4", "assistant", "第二轮回答"),
+        ]}
+      />,
+    );
+
+    const root = screen.getByTestId("message-list");
+    const textMessages = screen.getAllByTestId("message-text");
+    const turnFooters = screen.getAllByTestId("message-turn-footer");
+    const firstAssistantUnit = textMessages[1].closest<HTMLElement>("[data-conversation-unit-id]");
+    const secondUserUnit = textMessages[2].closest<HTMLElement>("[data-conversation-unit-id]");
+    const secondAssistantUnit = textMessages[3].closest<HTMLElement>("[data-conversation-unit-id]");
+    const firstFooter = turnFooters.find((footer) => turnIndexFor(footer) === turnIndexFor(firstAssistantUnit));
+    const secondFooter = turnFooters.find((footer) => turnIndexFor(footer) === turnIndexFor(secondAssistantUnit));
+
+    expect(firstAssistantUnit).not.toBeNull();
+    expect(secondUserUnit).not.toBeNull();
+    expect(secondAssistantUnit).not.toBeNull();
+    expect(firstFooter).toBeDefined();
+    expect(secondFooter).toBeDefined();
+
+    fireEvent.pointerOver(firstAssistantUnit as HTMLElement);
+    expect(firstFooter?.getAttribute("data-agent-turn-hover")).toBe("true");
+    expect(secondFooter?.getAttribute("data-agent-turn-hover")).toBeNull();
+
+    fireEvent.pointerOver(secondUserUnit as HTMLElement);
+    expect(firstFooter?.getAttribute("data-agent-turn-hover")).toBeNull();
+    expect(secondFooter?.getAttribute("data-agent-turn-hover")).toBeNull();
+
+    fireEvent.pointerOver(secondAssistantUnit as HTMLElement);
+    expect(firstFooter?.getAttribute("data-agent-turn-hover")).toBeNull();
+    expect(secondFooter?.getAttribute("data-agent-turn-hover")).toBe("true");
+
+    fireEvent.pointerLeave(root);
+    expect(secondFooter?.getAttribute("data-agent-turn-hover")).toBeNull();
+  });
+
   it("shows sub-second frozen turn durations in milliseconds", async () => {
     const assistant = {
       ...message("m2", "assistant", "你好"),

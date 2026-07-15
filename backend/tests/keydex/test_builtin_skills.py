@@ -14,7 +14,6 @@ from backend.app.keydex.builtin_skills import (
 from backend.app.keydex.runtime import build_keydex_layer_fingerprint
 from backend.app.main import create_app
 
-
 EXPECTED_KEYDEX_GUIDE_REFERENCES = {
     "a2ui-chart.md",
     "a2ui-choice.md",
@@ -72,7 +71,11 @@ def test_production_builtin_catalog_is_valid_and_contains_keydex_guide() -> None
     assert (
         guide.source_dir / "references" / "start-navigation-and-modes.md"
     ).is_file()
-    assert len(guide.content_sha256) == 64
+    catalog_payload = json.loads(
+        (BUILTIN_SKILLS_ROOT / "catalog.json").read_text(encoding="utf-8")
+    )
+    assert catalog_payload["schema_version"] == 2
+    assert set(catalog_payload["skills"][0]) == {"id", "skill_name", "version"}
 
 
 def test_builtin_keydex_guide_entry_and_references_are_chinese() -> None:
@@ -91,17 +94,32 @@ def test_builtin_keydex_guide_entry_and_references_are_chinese() -> None:
         assert f"(references/{reference_name})" in entry_content
 
 
-def test_builtin_catalog_hash_rejects_modified_release_content(tmp_path: Path) -> None:
+def test_builtin_catalog_accepts_release_content_changes_without_hash_contract(
+    tmp_path: Path,
+) -> None:
     bundle = _copy_production_bundle(tmp_path)
     entry = bundle / "skills" / "keydex-guide" / "SKILL.md"
     entry.write_text(entry.read_text(encoding="utf-8") + "\nmodified\n", encoding="utf-8")
 
     profile = load_builtin_skill_layer_profile(bundle)
 
-    assert profile.available is False
-    assert profile.enabled is False
-    assert profile.diagnostics[0].code == "builtin_skill_hash_mismatch"
-    assert str(bundle) not in str(profile.diagnostics[0].to_dict())
+    assert profile.available is True
+    assert profile.enabled is True
+    assert profile.diagnostics == ()
+
+
+def test_builtin_catalog_accepts_crlf_packaged_skill_content(tmp_path: Path) -> None:
+    bundle = _copy_production_bundle(tmp_path)
+    guide_root = bundle / "skills" / "keydex-guide"
+    for path in guide_root.rglob("*.md"):
+        content = path.read_bytes().replace(b"\r\n", b"\n")
+        path.write_bytes(content.replace(b"\n", b"\r\n"))
+
+    profile = load_builtin_skill_layer_profile(bundle)
+
+    assert profile.available is True
+    assert profile.enabled is True
+    assert profile.diagnostics == ()
 
 
 def test_builtin_catalog_rejects_unlisted_skill_directory(tmp_path: Path) -> None:
@@ -120,7 +138,7 @@ def test_builtin_catalog_fingerprint_includes_catalog_and_all_resources(tmp_path
 
     catalog_path = bundle / "catalog.json"
     payload = json.loads(catalog_path.read_text(encoding="utf-8"))
-    payload["skills"][0]["version"] = 2
+    payload["skills"][0]["version"] += 1
     catalog_path.write_text(json.dumps(payload), encoding="utf-8")
     after = build_keydex_layer_fingerprint("builtin", bundle)
 
@@ -133,10 +151,12 @@ def test_builtin_catalog_fingerprint_includes_catalog_and_all_resources(tmp_path
     )
 
 
-def test_tampered_builtin_fails_closed_without_disabling_system_layer(tmp_path: Path) -> None:
+def test_structurally_invalid_builtin_fails_closed_without_disabling_system_layer(
+    tmp_path: Path,
+) -> None:
     bundle = _copy_production_bundle(tmp_path)
     entry = bundle / "skills" / "keydex-guide" / "SKILL.md"
-    entry.write_text(entry.read_text(encoding="utf-8") + "\ntampered\n", encoding="utf-8")
+    entry.unlink()
     system_root = tmp_path / "system"
     _write_skill(system_root / "skills", "global", "system")
 
@@ -148,7 +168,7 @@ def test_tampered_builtin_fails_closed_without_disabling_system_layer(tmp_path: 
     assert list(snapshot.skill_catalog.skills) == ["global"]
     assert snapshot.skill_catalog.skills["global"].source == "system"
     assert any(
-        diagnostic.code == "builtin_skill_hash_mismatch"
+        diagnostic.code == "skill_frontmatter_unreadable"
         for diagnostic in snapshot.diagnostics
     )
 

@@ -179,6 +179,7 @@ describe("SendBox skill capsule", () => {
       (screen.getByRole("button", { name: "打开 Skill dev-plan" }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(document.querySelector('[data-skill-source="system"]')).not.toBeNull();
+    expect(screen.queryByText("系统级")).toBeNull();
     expect(onOpenFileReference).not.toHaveBeenCalled();
   });
 
@@ -208,7 +209,9 @@ describe("SendBox skill capsule", () => {
     const capsule = document.querySelector('[data-skill-source="builtin"]');
     expect(capsule).not.toBeNull();
     fireEvent.mouseEnter(capsule?.closest('[data-sendbox-hover-anchor="skill"]') as Element);
-    await waitFor(() => expect(screen.getByText(/^内置 · /u)).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("Use Keydex")).not.toBeNull());
+    expect(screen.queryByText("内置")).toBeNull();
+    expect(screen.queryByText("builtin/skills/keydex-guide/SKILL.md")).toBeNull();
     expect(
       (screen.getByRole("button", { name: "打开 Skill keydex-guide" }) as HTMLButtonElement).disabled,
     ).toBe(true);

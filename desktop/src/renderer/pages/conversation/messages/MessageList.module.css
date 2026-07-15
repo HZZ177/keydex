@@ -513,6 +513,7 @@
 
 .turnGroup:hover .turnActionRow [data-turn-footer-details="true"],
 .turnGroup:focus-within .turnActionRow [data-turn-footer-details="true"],
+.runtimeTurnFooter[data-agent-turn-hover="true"] .turnActionRow [data-turn-footer-details="true"],
 .runtimeTurnFooter:hover .turnActionRow [data-turn-footer-details="true"],
 .runtimeTurnFooter:focus-within .turnActionRow [data-turn-footer-details="true"] {
   opacity: 1;

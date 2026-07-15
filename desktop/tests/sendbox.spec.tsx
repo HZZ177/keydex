@@ -607,6 +607,36 @@ describe("SendBox", () => {
     expect(onChange).toHaveBeenCalledWith("普通输入");
   });
 
+  it("preserves a visual newline when Chromium wraps the next line in a block node", () => {
+    const onChange = vi.fn();
+    render(
+      <SendBox
+        value=""
+        runtimeState="idle"
+        canSend={false}
+        canStop={false}
+        onChange={onChange}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByLabelText("继续输入");
+    const secondLine = document.createElement("div");
+    secondLine.textContent = "第二行";
+    input.replaceChildren(document.createTextNode("第一行"), secondLine);
+
+    fireEvent.input(input);
+    expect(onChange).toHaveBeenLastCalledWith("第一行\n第二行");
+
+    Object.defineProperty(input, "innerText", {
+      configurable: true,
+      value: "第一行\n第二行",
+    });
+    fireEvent.input(input);
+    expect(onChange).toHaveBeenLastCalledWith("第一行\n第二行");
+  });
+
   it("restores the placeholder state after contenteditable content is cleared", () => {
     const onChange = vi.fn();
     render(

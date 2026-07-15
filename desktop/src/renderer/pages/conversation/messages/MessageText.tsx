@@ -877,7 +877,6 @@ function MessageSkillContextChip({
         <ContextChipIcon kind="skill" />
       </span>
       <span className={styles.contextItemLabel}>{label}</span>
-      <span className={styles.contextSkillSource}>{skillSourceLabel(source)}</span>
     </FloatingQuotePreview>
   );
 }
@@ -968,10 +967,6 @@ function skillContextResourcePath(item: AgentContextItem): string {
 function skillContextSource(item: AgentContextItem): SkillSource {
   const source = stringValue(item.source) || stringValue(item.metadata?.source);
   return source === "builtin" ? "builtin" : source === "system" ? "system" : "workspace";
-}
-
-function skillSourceLabel(source: SkillSource): string {
-  return source === "builtin" ? "内置" : source === "system" ? "系统级" : "项目级";
 }
 
 function contextItemLineLabel(item: AgentContextItem): string | null {
