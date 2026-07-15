@@ -64,6 +64,8 @@ type ActionBadgePhase = {
   stage: Exclude<ActionBadgeStage, "idle">;
 };
 type ChoiceCarouselDragState = {
+  allowClick: boolean;
+  dragThroughElement: HTMLElement | null;
   lastTime: number;
   lastX: number;
   moved: boolean;
@@ -297,16 +299,19 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
   }, [centeredOptionValue, model.options.length]);
 
   const handleCarouselPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || !optionTrackRef.current) {
+    if (event.button > 0 || !optionTrackRef.current) {
       return;
     }
     const target = event.target instanceof HTMLElement ? event.target : null;
-    if (target?.closest("button, input, textarea, select, a")) {
+    const dragThroughTarget = target?.closest<HTMLElement>('[data-a2ui-choice-drag-through="true"]') ?? null;
+    if (target?.closest("button, input, textarea, select, a") && !dragThroughTarget) {
       return;
     }
     const optionElement = target?.closest<HTMLElement>("[data-option-value]") ?? null;
     suppressCarouselClickRef.current = false;
     carouselDragRef.current = {
+      allowClick: Boolean(dragThroughTarget),
+      dragThroughElement: dragThroughTarget,
       lastTime: performance.now(),
       lastX: event.clientX,
       moved: false,
@@ -319,7 +324,7 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
     };
     event.currentTarget.dataset.dragging = "true";
     setCarouselTrackX(event.currentTarget, optionTrackRef.current, carouselTrackXRef.current, false, carouselTrackXRef);
-    if (typeof event.currentTarget.setPointerCapture === "function") {
+    if (!dragThroughTarget && typeof event.currentTarget.setPointerCapture === "function") {
       event.currentTarget.setPointerCapture(event.pointerId);
     }
   };
@@ -334,9 +339,14 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
       return;
     }
     const deltaX = event.clientX - drag.startX;
-    if (Math.abs(deltaX) > 4) {
+    if (!drag.moved && Math.abs(deltaX) > 4) {
       drag.moved = true;
-      suppressCarouselClickRef.current = true;
+      if (
+        typeof event.currentTarget.setPointerCapture === "function" &&
+        (typeof event.currentTarget.hasPointerCapture !== "function" || !event.currentTarget.hasPointerCapture(event.pointerId))
+      ) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
     }
     if (!drag.moved) {
       return;
@@ -367,6 +377,8 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
     }
     if (drag.moved) {
       event.preventDefault();
+      suppressCarouselClickRef.current = true;
+      drag.dragThroughElement?.blur();
       const track = optionTrackRef.current;
       const projectedX = track
         ? clampCarouselTrackX(event.currentTarget, track, carouselTrackXRef.current + drag.velocityX * 280)
@@ -376,18 +388,15 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
         setCarouselOptionValue(closestValue);
         alignCarouselOption(event.currentTarget, track, closestValue, true, carouselTrackXRef);
       }
-      globalThis.setTimeout(() => {
-        suppressCarouselClickRef.current = false;
-      }, 0);
+      return;
+    }
+    if (drag.allowClick) {
       return;
     }
     if (drag.optionValue && drag.optionElement) {
       event.preventDefault();
       suppressCarouselClickRef.current = true;
       focusCarouselOption(drag.optionValue, drag.optionElement);
-      globalThis.setTimeout(() => {
-        suppressCarouselClickRef.current = false;
-      }, 0);
     }
   };
 
@@ -649,7 +658,7 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
                           motionKind="choice-option"
                           onClick={(event) => {
                             event.preventDefault();
-                            if (suppressCarouselClickRef.current) {
+                            if (consumeSuppressedCarouselClick(suppressCarouselClickRef)) {
                               event.stopPropagation();
                               return;
                             }
@@ -688,11 +697,15 @@ export function A2ChoiceBlock({ message, parsed, onSubmit, onCancel }: A2ChoiceB
                                     className={styles.optionDescriptionShell}
                                     type="button"
                                     aria-label={`展开 ${option.label} 完整内容`}
+                                    data-a2ui-choice-drag-through="true"
                                     data-detail-expanded="false"
                                     data-detail-expandable="true"
                                     onClick={(event) => {
                                       event.preventDefault();
                                       event.stopPropagation();
+                                      if (consumeSuppressedCarouselClick(suppressCarouselClickRef)) {
+                                        return;
+                                      }
                                       expandOptionDetail(option, event.currentTarget);
                                     }}
                                   >
@@ -1300,6 +1313,7 @@ function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: Choice
   const optionTrackRef = useRef<HTMLDivElement | null>(null);
   const carouselTrackXRef = useRef(0);
   const carouselDragRef = useRef<ChoiceCarouselDragState | null>(null);
+  const suppressCarouselClickRef = useRef(false);
   const initializedRef = useRef(false);
   const centerValue = readonlyChoiceCenterValue(model, selectedValues, carouselOptionValue);
 
@@ -1357,11 +1371,15 @@ function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: Choice
       return;
     }
     const target = event.target instanceof HTMLElement ? event.target : null;
-    if (target?.closest("button, input, textarea, select, a")) {
+    const dragThroughTarget = target?.closest<HTMLElement>('[data-a2ui-choice-drag-through="true"]') ?? null;
+    if (target?.closest("button, input, textarea, select, a") && !dragThroughTarget) {
       return;
     }
     const optionElement = target?.closest<HTMLElement>("[data-option-value]") ?? null;
+    suppressCarouselClickRef.current = false;
     carouselDragRef.current = {
+      allowClick: Boolean(dragThroughTarget),
+      dragThroughElement: dragThroughTarget,
       lastTime: performance.now(),
       lastX: event.clientX,
       moved: false,
@@ -1374,7 +1392,7 @@ function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: Choice
     };
     event.currentTarget.dataset.dragging = "true";
     setCarouselTrackX(event.currentTarget, optionTrackRef.current, carouselTrackXRef.current, false, carouselTrackXRef);
-    if (typeof event.currentTarget.setPointerCapture === "function") {
+    if (!dragThroughTarget && typeof event.currentTarget.setPointerCapture === "function") {
       event.currentTarget.setPointerCapture(event.pointerId);
     }
   };
@@ -1385,8 +1403,14 @@ function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: Choice
       return;
     }
     const deltaX = event.clientX - drag.startX;
-    if (Math.abs(deltaX) > 4) {
+    if (!drag.moved && Math.abs(deltaX) > 4) {
       drag.moved = true;
+      if (
+        typeof event.currentTarget.setPointerCapture === "function" &&
+        (typeof event.currentTarget.hasPointerCapture !== "function" || !event.currentTarget.hasPointerCapture(event.pointerId))
+      ) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
     }
     if (!drag.moved) {
       return;
@@ -1417,6 +1441,8 @@ function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: Choice
     }
     if (drag.moved) {
       event.preventDefault();
+      suppressCarouselClickRef.current = true;
+      drag.dragThroughElement?.blur();
       const projectedX = optionTrackRef.current
         ? clampCarouselTrackX(event.currentTarget, optionTrackRef.current, carouselTrackXRef.current + drag.velocityX * 280)
         : carouselTrackXRef.current;
@@ -1425,6 +1451,9 @@ function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: Choice
         alignCarouselOption(event.currentTarget, optionTrackRef.current, closestValue, true, carouselTrackXRef);
         setCarouselOptionValue(closestValue);
       }
+      return;
+    }
+    if (drag.allowClick) {
       return;
     }
     if (drag.optionValue && drag.optionElement) {
@@ -1510,11 +1539,15 @@ function ReadonlyChoiceGalleryOptions({ model, selectedValues }: { model: Choice
                           className={styles.optionDescriptionShell}
                           type="button"
                           aria-label={`展开 ${option.label} 完整内容`}
+                          data-a2ui-choice-drag-through="true"
                           data-detail-expanded="false"
                           data-detail-expandable="true"
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
+                            if (consumeSuppressedCarouselClick(suppressCarouselClickRef)) {
+                              return;
+                            }
                             expandReadonlyOptionDetail(option);
                           }}
                         >
@@ -1889,6 +1922,14 @@ function choiceInitialCenterValue(options: ChoiceOption[]): string | null {
 
 function choiceOptionExpandable(option: ChoiceOption): boolean {
   return optionSummary(option.description) !== option.description.replace(/\s+/g, " ").trim();
+}
+
+function consumeSuppressedCarouselClick(
+  suppressionRef: { current: boolean },
+): boolean {
+  const suppressed = suppressionRef.current;
+  suppressionRef.current = false;
+  return suppressed;
 }
 
 function clampNumber(value: number, min: number, max: number): number {

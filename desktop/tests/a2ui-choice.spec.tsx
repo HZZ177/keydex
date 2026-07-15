@@ -22,6 +22,14 @@ function clickChoiceButton(label: string) {
   fireEvent.click(screen.getByRole("button", { name: `选择 ${label}` }));
 }
 
+function dispatchPointer(target: Element, type: string, props: Record<string, number>) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  for (const [key, value] of Object.entries(props)) {
+    Object.defineProperty(event, key, { configurable: true, value });
+  }
+  fireEvent(target, event);
+}
+
 function mockNotificationDescriptionOverflow(overflowFragments: string[]): () => void {
   const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
   const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
@@ -185,6 +193,8 @@ describe("A2ChoiceBlock", () => {
     );
 
     const options = screen.getByRole("radiogroup", { name: "选项" });
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(options, "setPointerCapture", { configurable: true, value: setPointerCapture });
     expect(options.getAttribute("data-choice-density")).toBe("dense");
     expect(options.getAttribute("data-a2ui-choice-layout")).toBe("coverflow");
     expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
@@ -194,7 +204,12 @@ describe("A2ChoiceBlock", () => {
     expect(option?.getAttribute("data-detail-expanded")).toBe("false");
     expect(option?.textContent).not.toContain(longDescription);
 
-    fireEvent.click(within(option as HTMLElement).getByRole("button", { name: "展开 选项 1 完整内容" }));
+    const firstExpandButton = within(option as HTMLElement).getByRole("button", { name: "展开 选项 1 完整内容" });
+    dispatchPointer(firstExpandButton, "pointerdown", { button: 0, clientX: 180, pointerId: 1 });
+    expect(options.getAttribute("data-dragging")).toBe("true");
+    expect(setPointerCapture).not.toHaveBeenCalled();
+    dispatchPointer(options, "pointerup", { clientX: 180, pointerId: 1 });
+    fireEvent.click(firstExpandButton);
 
     await waitFor(() => {
       expect(option?.getAttribute("data-detail-expanded")).toBe("true");
@@ -210,7 +225,23 @@ describe("A2ChoiceBlock", () => {
     });
     expect(option?.textContent).not.toContain(longDescription);
 
-    fireEvent.click(within(option as HTMLElement).getByRole("button", { name: "展开 选项 1 完整内容" }));
+    const dragExpandButton = within(option as HTMLElement).getByRole("button", { name: "展开 选项 1 完整内容" });
+    dragExpandButton.focus();
+    expect(document.activeElement).toBe(dragExpandButton);
+    dispatchPointer(dragExpandButton, "pointerdown", { button: 0, clientX: 180, pointerId: 2 });
+    dispatchPointer(options, "pointermove", { clientX: 120, pointerId: 2 });
+    expect(setPointerCapture).toHaveBeenCalledWith(2);
+    dispatchPointer(options, "pointerup", { clientX: 120, pointerId: 2 });
+    fireEvent.click(dragExpandButton);
+
+    expect(options.hasAttribute("data-dragging")).toBe(false);
+    expect(document.activeElement).not.toBe(dragExpandButton);
+    expect(option?.getAttribute("data-detail-expanded")).toBe("false");
+    expect(option?.textContent).not.toContain(longDescription);
+
+    dispatchPointer(dragExpandButton, "pointerdown", { button: 0, clientX: 120, pointerId: 3 });
+    dispatchPointer(options, "pointerup", { clientX: 120, pointerId: 3 });
+    fireEvent.click(dragExpandButton);
 
     await waitFor(() => {
       expect(option?.getAttribute("data-detail-expanded")).toBe("true");
@@ -249,10 +280,13 @@ describe("A2ChoiceBlock", () => {
     expect(option?.textContent).not.toContain(longDescription);
 
     const gallery = screen.getByTestId("a2ui-choice-result").querySelector<HTMLElement>('[data-a2ui-choice-layout="coverflow"]');
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(gallery as HTMLElement, "setPointerCapture", { configurable: true, value: setPointerCapture });
     const expandButton = within(option as HTMLElement).getByRole("button", { name: "展开 历史长选项 完整内容" });
-    fireEvent.pointerDown(expandButton, { button: 0, clientX: 120, pointerId: 1 });
-    expect(gallery?.dataset.dragging).toBeUndefined();
-
+    dispatchPointer(expandButton, "pointerdown", { button: 0, clientX: 120, pointerId: 1 });
+    expect(gallery?.dataset.dragging).toBe("true");
+    expect(setPointerCapture).not.toHaveBeenCalled();
+    dispatchPointer(gallery as HTMLElement, "pointerup", { clientX: 120, pointerId: 1 });
     fireEvent.click(expandButton);
 
     await waitFor(() => {
@@ -260,6 +294,34 @@ describe("A2ChoiceBlock", () => {
     });
     expect(option?.textContent).toContain(longDescription);
     expect(screen.queryByTestId("a2ui-choice-detail")).toBeNull();
+
+    fireEvent.click(within(option as HTMLElement).getByRole("button", { name: "收起 历史长选项 完整内容" }));
+    await waitFor(() => {
+      expect(option?.getAttribute("data-detail-expanded")).toBe("false");
+    });
+
+    const dragExpandButton = within(option as HTMLElement).getByRole("button", { name: "展开 历史长选项 完整内容" });
+    dragExpandButton.focus();
+    expect(document.activeElement).toBe(dragExpandButton);
+    dispatchPointer(dragExpandButton, "pointerdown", { button: 0, clientX: 120, pointerId: 2 });
+    dispatchPointer(gallery as HTMLElement, "pointermove", { clientX: 60, pointerId: 2 });
+    expect(setPointerCapture).toHaveBeenCalledWith(2);
+    dispatchPointer(gallery as HTMLElement, "pointerup", { clientX: 60, pointerId: 2 });
+    fireEvent.click(dragExpandButton);
+
+    expect(gallery?.hasAttribute("data-dragging")).toBe(false);
+    expect(document.activeElement).not.toBe(dragExpandButton);
+    expect(option?.getAttribute("data-detail-expanded")).toBe("false");
+    expect(option?.textContent).not.toContain(longDescription);
+
+    dispatchPointer(dragExpandButton, "pointerdown", { button: 0, clientX: 60, pointerId: 3 });
+    dispatchPointer(gallery as HTMLElement, "pointerup", { clientX: 60, pointerId: 3 });
+    fireEvent.click(dragExpandButton);
+
+    await waitFor(() => {
+      expect(option?.getAttribute("data-detail-expanded")).toBe("true");
+    });
+    expect(option?.textContent).toContain(longDescription);
   });
 
   it("hides the top slider for choice galleries with ten or fewer options", () => {
