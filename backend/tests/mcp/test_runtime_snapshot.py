@@ -131,7 +131,6 @@ def test_snapshot_keeps_all_tools_on_demand_when_over_budget_without_activation(
         McpRuntimeSnapshotContext(
             session_id="session-a",
             recent_model_names=["mcp__srv_snapshot__three"],
-            priority_model_names=["mcp__srv_snapshot__two"],
         )
     )
 
@@ -172,19 +171,25 @@ def test_snapshot_does_not_preload_session_recent_success_when_over_budget(tmp_p
     }
 
 
-def test_snapshot_does_not_preload_priority_policy_when_over_budget(tmp_path) -> None:
+def test_snapshot_preloads_priority_policy_when_over_budget(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _create_server(repositories)
     _tool(repositories, "one")
     _tool(repositories, "two")
     _tool(repositories, "three")
+    _tool(repositories, "four")
+    repositories.mcp_tool_policies.upsert(
+        server_id="srv_snapshot",
+        raw_tool_name="two",
+        priority_available=True,
+    )
     repositories.mcp_tool_policies.upsert(
         server_id="srv_snapshot",
         raw_tool_name="three",
         priority_available=True,
     )
 
-    snapshot = McpRuntimeSnapshotBuilder(repositories, direct_tool_budget=2).build_snapshot(
+    snapshot = McpRuntimeSnapshotBuilder(repositories, direct_tool_budget=1).build_snapshot(
         McpRuntimeSnapshotContext(session_id="session-a")
     )
 
@@ -192,9 +197,13 @@ def test_snapshot_does_not_preload_priority_policy_when_over_budget(tmp_path) ->
         (tool["raw_name"], tool["exposure"]) for tool in snapshot.visible_tools
     } == {
         ("one", "on_demand"),
-        ("two", "on_demand"),
-        ("three", "on_demand"),
+        ("two", "direct"),
+        ("three", "direct"),
+        ("four", "on_demand"),
     }
+    assert snapshot.direct_available_tools == 2
+    assert snapshot.on_demand_tools == 2
+    assert snapshot.policy_summary["priority_available_tools"] == 2
 
 
 def test_snapshot_does_not_expose_disabled_priority_tool(tmp_path) -> None:

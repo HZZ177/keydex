@@ -844,6 +844,71 @@ async def test_chat_service_deferred_mcp_tools_activate_for_next_turn(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_chat_service_injects_priority_mcp_tool_when_over_budget(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="已完成")])
+    service, repositories, _checkpointer, factory = _service(
+        tmp_path,
+        model,
+        settings=AppSettings(
+            data_dir=tmp_path / "data",
+            workspace_root=tmp_path,
+            mcp_direct_tool_budget=1,
+        ),
+        mcp_manager=FakeMcpManager(),
+    )
+    _configure_mcp_tool(
+        repositories,
+        raw_names=(
+            "priority_report",
+            "priority_summary",
+            "other_report",
+            "other_summary",
+        ),
+    )
+    for raw_tool_name in ("priority_report", "priority_summary"):
+        repositories.mcp_tool_policies.upsert(
+            server_id="srv_chat_mcp",
+            raw_tool_name=raw_tool_name,
+            priority_available=True,
+        )
+    workspace = repositories.workspaces.create(
+        workspace_id="ws_mcp_priority",
+        root_path=project,
+    )
+    session = repositories.sessions.create(
+        session_id="ses_mcp_priority",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="使用优先 MCP 工具",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    assert result.status == "completed"
+    assert "mcp__srv_chat_mcp__priority_report" in factory.created_tool_names[-1]
+    assert "mcp__srv_chat_mcp__priority_summary" in factory.created_tool_names[-1]
+    assert "mcp__srv_chat_mcp__other_report" not in factory.created_tool_names[-1]
+    assert "mcp__srv_chat_mcp__other_summary" not in factory.created_tool_names[-1]
+    assert MCP_CAPABILITY_DISCOVERY_TOOL_NAME in factory.created_tool_names[-1]
+    snapshot = repositories.mcp_runtime_snapshots.list_by_session(session.id)[0]
+    assert snapshot.direct_available_tools == 2
+    assert snapshot.on_demand_tools == 2
+    assert snapshot.policy_summary["priority_available_tools"] == 2
+
+
+@pytest.mark.asyncio
 async def test_chat_service_mcp_discovery_rebuilds_tools_in_same_run(tmp_path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -872,7 +937,15 @@ async def test_chat_service_mcp_discovery_rebuilds_tools_in_same_run(tmp_path) -
         ),
         mcp_manager=FakeMcpManager(),
     )
-    _configure_mcp_tool(repositories, raw_names=("target_report", "other_report"))
+    _configure_mcp_tool(
+        repositories,
+        raw_names=("target_report", "other_report", "unused_report"),
+    )
+    repositories.mcp_tool_policies.upsert(
+        server_id="srv_chat_mcp",
+        raw_tool_name="other_report",
+        priority_available=True,
+    )
     workspace = repositories.workspaces.create(workspace_id="ws_mcp_same_run", root_path=project)
     session = repositories.sessions.create(
         session_id="ses_mcp_same_run",
@@ -897,12 +970,13 @@ async def test_chat_service_mcp_discovery_rebuilds_tools_in_same_run(tmp_path) -
     assert len(factory.created_tool_names) >= 2
     assert MCP_CAPABILITY_DISCOVERY_TOOL_NAME in factory.created_tool_names[0]
     assert "mcp__srv_chat_mcp__target_report" not in factory.created_tool_names[0]
+    assert "mcp__srv_chat_mcp__other_report" in factory.created_tool_names[0]
     assert "mcp__srv_chat_mcp__target_report" in factory.created_tool_names[1]
-    assert "mcp__srv_chat_mcp__other_report" not in factory.created_tool_names[1]
+    assert "mcp__srv_chat_mcp__other_report" in factory.created_tool_names[1]
     snapshots = repositories.mcp_runtime_snapshots.list_by_session(session.id)
-    assert snapshots[0].direct_available_tools == 1
+    assert snapshots[0].direct_available_tools == 2
     assert snapshots[0].on_demand_tools == 1
-    assert snapshots[1].direct_available_tools == 0
+    assert snapshots[1].direct_available_tools == 1
     assert snapshots[1].on_demand_tools == 2
 
 

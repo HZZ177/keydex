@@ -431,6 +431,8 @@ export interface McpToolListResponse {
   list: McpToolSummary[];
   total: number;
   limit: number;
+  priority_available_count: number;
+  direct_tool_budget: number;
 }
 
 export interface McpToolPolicyUpdatePayload {

@@ -22,6 +22,7 @@ def _visible_tool(
     model_name: str | None = None,
     description: str | None = None,
     input_schema: dict | None = None,
+    priority_available: bool = False,
 ) -> McpVisibleTool:
     return McpVisibleTool(
         server_id=server_id,
@@ -31,6 +32,7 @@ def _visible_tool(
         input_schema=input_schema or {"type": "object"},
         approval_mode="auto",
         server_name=server_name,
+        priority_available=priority_available,
     )
 
 
@@ -46,6 +48,29 @@ def test_direct_injection_planner_uses_direct_mode_within_budget() -> None:
     assert [tool.raw_name for tool in plan.direct_tools] == ["one", "two"]
     assert plan.on_demand_tools == []
     assert plan.has_on_demand_catalog is False
+
+
+def test_direct_injection_planner_excludes_priority_tools_from_threshold_count() -> None:
+    exposure = McpExposureResult(
+        visible_tools=[
+            _visible_tool("priority_one", priority_available=True),
+            _visible_tool("priority_two", priority_available=True),
+            _visible_tool("regular_one"),
+            _visible_tool("regular_two"),
+        ],
+        hidden_tools=[],
+    )
+
+    plan = McpDirectInjectionPlanner(direct_tool_budget=2).plan(exposure)
+
+    assert plan.availability == "direct"
+    assert [tool.raw_name for tool in plan.direct_tools] == [
+        "priority_one",
+        "priority_two",
+        "regular_one",
+        "regular_two",
+    ]
+    assert plan.on_demand_tools == []
 
 
 def test_direct_injection_planner_can_force_on_demand_catalog_within_budget() -> None:
@@ -103,37 +128,72 @@ def test_direct_injection_planner_does_not_preload_recent_success_when_over_budg
     ]
 
 
-def test_direct_injection_planner_does_not_preload_priority_tools_when_over_budget() -> None:
-    tools = [_visible_tool("one"), _visible_tool("two"), _visible_tool("three")]
-    exposure = McpExposureResult(visible_tools=tools, hidden_tools=[])
-
-    plan = McpDirectInjectionPlanner(direct_tool_budget=2).plan(
-        exposure,
-        priority_model_names=["mcp__srv__three"],
-    )
-
-    assert plan.direct_tools == []
-    assert [tool.raw_name for tool in plan.on_demand_tools] == ["one", "two", "three"]
-
-
-def test_direct_injection_planner_only_uses_active_window_when_over_budget() -> None:
+def test_direct_injection_planner_preloads_priority_tools_when_over_budget() -> None:
     tools = [
         _visible_tool("one"),
         _visible_tool("two"),
+        _visible_tool("three", priority_available=True),
+    ]
+    exposure = McpExposureResult(visible_tools=tools, hidden_tools=[])
+
+    plan = McpDirectInjectionPlanner(direct_tool_budget=1).plan(exposure)
+
+    assert [tool.raw_name for tool in plan.direct_tools] == ["three"]
+    assert [tool.raw_name for tool in plan.on_demand_tools] == ["one", "two"]
+
+
+def test_direct_injection_planner_puts_priority_tools_before_active_tools() -> None:
+    tools = [
+        _visible_tool("one"),
+        _visible_tool("two", priority_available=True),
         _visible_tool("three"),
         _visible_tool("four"),
     ]
     exposure = McpExposureResult(visible_tools=tools, hidden_tools=[])
 
-    plan = McpDirectInjectionPlanner(direct_tool_budget=3).plan(
+    plan = McpDirectInjectionPlanner(direct_tool_budget=2).plan(
         exposure,
         active_model_names={"mcp__srv__four"},
         recent_model_names=["mcp__srv__three"],
         priority_model_names=["mcp__srv__two"],
     )
 
-    assert [tool.raw_name for tool in plan.direct_tools] == ["four"]
-    assert [tool.raw_name for tool in plan.on_demand_tools] == ["one", "two", "three"]
+    assert [tool.raw_name for tool in plan.direct_tools] == ["two", "four"]
+    assert [tool.raw_name for tool in plan.on_demand_tools] == ["one", "three"]
+
+
+def test_direct_injection_planner_does_not_count_priority_tools_against_budget() -> None:
+    tools = [
+        _visible_tool("one", priority_available=True),
+        _visible_tool("two", priority_available=True),
+        _visible_tool("three"),
+        _visible_tool("four"),
+    ]
+    exposure = McpExposureResult(visible_tools=tools, hidden_tools=[])
+
+    plan = McpDirectInjectionPlanner(direct_tool_budget=1).plan(
+        exposure,
+        active_model_names={"mcp__srv__three", "mcp__srv__four"},
+    )
+
+    assert [tool.raw_name for tool in plan.direct_tools] == ["one", "two", "three"]
+    assert [tool.raw_name for tool in plan.on_demand_tools] == ["four"]
+
+
+def test_direct_injection_planner_keeps_priority_tools_when_forcing_on_demand() -> None:
+    tools = [
+        _visible_tool("one", priority_available=True),
+        _visible_tool("two"),
+    ]
+    exposure = McpExposureResult(visible_tools=tools, hidden_tools=[])
+
+    plan = McpDirectInjectionPlanner(
+        direct_tool_budget=1,
+        force_on_demand=True,
+    ).plan(exposure)
+
+    assert [tool.raw_name for tool in plan.direct_tools] == ["one"]
+    assert [tool.raw_name for tool in plan.on_demand_tools] == ["two"]
 
 
 def test_direct_injection_planner_caps_active_tools_by_budget() -> None:

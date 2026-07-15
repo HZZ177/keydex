@@ -8,6 +8,7 @@ from backend.app.command_approval import (
     CommandApprovalDecision,
     CommandApprovalError,
     find_trusted_command_rule,
+    load_command_settings,
 )
 from backend.app.storage import StorageRepositories, init_database
 from backend.app.tools import ToolExecutionContext, ToolRegistry
@@ -50,6 +51,46 @@ def _repositories(tmp_path) -> StorageRepositories:
         ).model_dump(mode="json"),
     )
     return repositories
+
+
+def test_first_load_enables_and_selects_first_available_command_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    repositories = StorageRepositories(init_database(tmp_path / "fresh.db"))
+    calls: list[str] = []
+
+    def fake_discover(shell):
+        calls.append(shell)
+        if shell == "git_bash":
+            return ShellDiscoveryResult(shell=shell, found=False, error="missing Git Bash")
+        if shell == "powershell":
+            return ShellDiscoveryResult(
+                shell=shell,
+                found=True,
+                path=r"C:\Program Files\PowerShell\7\pwsh.exe",
+                label="PowerShell 7+",
+                edition="Core",
+                version="7.5.0",
+            )
+        raise AssertionError("找到 PowerShell 后不应继续探测 CMD")
+
+    monkeypatch.setattr("backend.app.command_approval.discover_shell", fake_discover)
+
+    settings = load_command_settings(repositories)
+
+    assert calls == ["git_bash", "powershell"]
+    assert settings.command_enabled is True
+    assert settings.selected_shell == "powershell"
+    assert settings.shell_path == r"C:\Program Files\PowerShell\7\pwsh.exe"
+    assert settings.shell_label == "PowerShell 7+"
+    assert settings.configured is True
+    assert repositories.settings.get("command_settings")["selected_shell"] == "powershell"
+
+    loaded_again = load_command_settings(repositories)
+
+    assert loaded_again == settings
+    assert calls == ["git_bash", "powershell"]
 
 
 def _context(tmp_path, repositories: StorageRepositories) -> ToolExecutionContext:

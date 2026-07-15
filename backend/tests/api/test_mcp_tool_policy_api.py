@@ -37,6 +37,8 @@ def test_tool_list_filters_and_single_policy_patch(tmp_path) -> None:
     assert patched.json()["approval_mode"] == "prompt"
     assert patched.json()["schema_change_action"] == "disable"
     assert searched.status_code == 200
+    assert searched.json()["priority_available_count"] == 1
+    assert searched.json()["direct_tool_budget"] == 10
     assert {item["raw_name"] for item in searched.json()["list"]} == {
         "read_file",
         "write_file",
@@ -55,6 +57,54 @@ def test_tool_list_filters_and_single_policy_patch(tmp_path) -> None:
     assert audits[0].detail["changes"]["priority_available"] is True
     assert audits[0].detail["policy"]["priority_available"] is True
     assert audits[0].detail["policy"]["approval_mode"] == "prompt"
+
+
+def test_priority_available_policy_does_not_consume_direct_budget(tmp_path) -> None:
+    client = TestClient(
+        create_app(
+            AppSettings(
+                data_dir=tmp_path / "data",
+                mcp_direct_tool_budget=1,
+            )
+        )
+    )
+    server_id = _create_http_server(client, "Priority MCP")
+    tools = _seed_tools(client.app.state.repositories, server_id)
+    client.app.state.repositories.mcp_tools.upsert_many(
+        server_id,
+        [
+            {
+                "raw_name": "list_projects",
+                "model_name": f"mcp__{server_id}__list_projects",
+                "callable_namespace": f"mcp__{server_id}",
+                "callable_name": "list_projects",
+                "description": "List projects",
+                "input_schema": {"type": "object"},
+                "schema_hash": "hash-projects",
+            }
+        ],
+    )
+    client.app.state.repositories.mcp_server_status.upsert(server_id, status="online")
+
+    first = client.patch(
+        f"/api/mcp/servers/{server_id}/tools/{tools['read_file'].id}/policy",
+        json={"priority_available": True},
+    )
+    second = client.patch(
+        f"/api/mcp/servers/{server_id}/tools/{tools['write_file'].id}/policy",
+        json={"priority_available": True},
+    )
+    listed = client.get(f"/api/mcp/servers/{server_id}/tools")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert listed.json()["priority_available_count"] == 2
+    assert listed.json()["direct_tool_budget"] == 1
+    assert _tool_by_name(listed.json()["list"], "read_file")["availability_mode"] == "direct"
+    assert _tool_by_name(listed.json()["list"], "write_file")["availability_mode"] == "direct"
+    assert _tool_by_name(listed.json()["list"], "search_docs")["availability_mode"] == "on_demand"
+    assert _tool_by_name(listed.json()["list"], "list_projects")["availability_mode"] == "on_demand"
+    assert _tool_by_name(listed.json()["list"], "write_file")["priority_available"] is True
 
 
 def test_tool_bulk_policy_actions(tmp_path) -> None:

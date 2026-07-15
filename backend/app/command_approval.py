@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, field_validator
 
 from backend.app.core.ids import new_id
+from backend.app.core.logger import logger
 from backend.app.events import DomainEventType, EventDispatcher
 from backend.app.security import normalize_workspace_root_for_storage
 from backend.app.storage import (
@@ -17,7 +18,9 @@ from backend.app.storage import (
     StorageRepositories,
     TrustedCommandRuleRecord,
 )
+from backend.app.tools.command_runtime.discovery import discover_shell
 from backend.app.tools.command_runtime.models import (
+    COMMAND_SHELL_PRIORITY,
     CommandSettings,
 )
 from backend.app.tools.command_runtime.models import (
@@ -25,6 +28,7 @@ from backend.app.tools.command_runtime.models import (
 )
 
 COMMAND_SETTINGS_KEY = "command_settings"
+_MISSING_COMMAND_SETTINGS = object()
 DEFAULT_APPROVAL_WAIT_SECONDS = 24 * 60 * 60
 BROAD_PREFIX_COMMANDS = {"powershell", "pwsh", "cmd", "python", "node", "npm", "pnpm", "git"}
 
@@ -58,7 +62,9 @@ class CommandApprovalError(ValueError):
 
 
 def load_command_settings(repositories: StorageRepositories) -> CommandSettings:
-    raw = repositories.settings.get(COMMAND_SETTINGS_KEY, default={})
+    raw = repositories.settings.get(COMMAND_SETTINGS_KEY, default=_MISSING_COMMAND_SETTINGS)
+    if raw is _MISSING_COMMAND_SETTINGS or raw == {}:
+        return save_command_settings(repositories, _default_command_settings())
     return CommandSettings(**(raw if isinstance(raw, dict) else {}))
 
 
@@ -67,6 +73,32 @@ def save_command_settings(
     settings: CommandSettings,
 ) -> CommandSettings:
     repositories.settings.set(COMMAND_SETTINGS_KEY, settings.model_dump(mode="json"))
+    return settings
+
+
+def _default_command_settings() -> CommandSettings:
+    settings = CommandSettings()
+    for shell in COMMAND_SHELL_PRIORITY:
+        try:
+            result = discover_shell(shell)
+        except Exception:
+            logger.exception(f"[CommandRuntime] 默认运行环境探测异常 | shell={shell}")
+            continue
+        if not result.found or not result.path or not result.label:
+            continue
+        logger.info(
+            "[CommandRuntime] 已选择默认运行环境 | "
+            f"shell={shell} | path={result.path} | label={result.label}"
+        )
+        return CommandSettings(
+            command_enabled=True,
+            selected_shell=shell,
+            shell_path=result.path,
+            shell_label=result.label,
+            shell_edition=result.edition,
+            shell_version=result.version,
+        )
+    logger.warning("[CommandRuntime] 未找到可用默认运行环境，命令行工具保持开启但暂不可用")
     return settings
 
 

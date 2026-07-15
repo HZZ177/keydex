@@ -76,7 +76,10 @@ def test_agent_runner_registers_only_selected_command_tool_and_prompt(tmp_path) 
 
 def test_agent_runner_omits_command_tool_when_runtime_not_configured(tmp_path) -> None:
     repositories = StorageRepositories(init_database(tmp_path / "app.db"))
-    repositories.settings.set("command_settings", CommandSettings().model_dump(mode="json"))
+    repositories.settings.set(
+        "command_settings",
+        CommandSettings(command_enabled=False).model_dump(mode="json"),
+    )
     factory = CapturingFactory()
 
     _runner(factory, repositories).create_agent(

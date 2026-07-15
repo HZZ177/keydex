@@ -22,7 +22,7 @@ const APPROVAL_HISTORY_PAGE_SIZE = 10;
 const TRUSTED_COMMAND_RULE_PAGE_SIZE = 10;
 
 const DEFAULT_COMMAND_SETTINGS: CommandSettings = {
-  command_enabled: false,
+  command_enabled: true,
   selected_shell: "git_bash",
   shell_path: "",
   shell_label: "",

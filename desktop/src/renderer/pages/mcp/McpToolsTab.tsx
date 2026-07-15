@@ -78,6 +78,8 @@ export function McpToolsTab({
   const [bulkAction, setBulkAction] = useState<McpToolBulkPolicyAction>("disable_selected");
   const [busyKey, setBusyKey] = useState("");
   const [schemaTool, setSchemaTool] = useState<McpToolSummary | null>(null);
+  const [priorityAvailableCount, setPriorityAvailableCount] = useState(0);
+  const [directToolBudget, setDirectToolBudget] = useState(0);
 
   const loadTools = useCallback(async () => {
     setLoading(true);
@@ -98,6 +100,8 @@ export function McpToolsTab({
         }
         return next;
       });
+      setPriorityAvailableCount(response.priority_available_count);
+      setDirectToolBudget(response.direct_tool_budget);
       setSchemaTool((current) => {
         if (!current) {
           return null;
@@ -194,7 +198,12 @@ export function McpToolsTab({
         priority_available,
       });
       replaceTool(updated);
-      onNotice(priority_available ? "已设为优先可用" : "已取消优先可用");
+      setPriorityAvailableCount((current) => Math.max(0, current + (priority_available ? 1 : -1)));
+      onNotice(
+        priority_available
+          ? "已设为优先可用：始终直接提供给智能体，不占懒加载额度"
+          : "已取消优先可用",
+      );
     } catch (reason) {
       setError(mcpErrorMessage(reason, "更新 MCP 工具优先可用失败"));
     } finally {
@@ -287,6 +296,10 @@ export function McpToolsTab({
       </div>
 
       <div className={styles.bulkBar}>
+        <div className={styles.priorityBudget}>
+          <strong>优先可用 {priorityAvailableCount}</strong>
+          <span>始终直接可用，不占 {directToolBudget} 个按需激活名额</span>
+        </div>
         <button
           className={styles.selectAllButton}
           type="button"

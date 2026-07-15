@@ -110,6 +110,9 @@ class McpRuntimeSnapshotBuilder:
                 "direct_tool_budget": self.direct_tool_budget,
                 "direct_available_tools": len(plan.direct_tools),
                 "on_demand_tools": len(plan.on_demand_tools),
+                "priority_available_tools": sum(
+                    1 for tool in exposure.visible_tools if tool.priority_available
+                ),
                 "unavailable_tools": len(exposure.hidden_tools),
                 "has_on_demand_catalog": plan.has_on_demand_catalog,
                 "capability_directory": capability_directory,

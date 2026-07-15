@@ -736,6 +736,21 @@
   padding: 8px;
 }
 
+.priorityBudget {
+  display: grid;
+  gap: 2px;
+  min-width: 220px;
+  margin-right: auto;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.priorityBudget strong {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .selectAllButton {
   color: var(--color-text-primary);
 }

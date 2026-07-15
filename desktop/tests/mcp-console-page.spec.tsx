@@ -722,12 +722,15 @@ describe("McpConsolePage", () => {
 
     await selectMcpServer("Filesystem");
     fireEvent.click(await screen.findByRole("button", { name: "工具授权" }));
+    expect(await screen.findByText("优先可用 0")).not.toBeNull();
+    expect(screen.getByText("始终直接可用，不占 10 个按需激活名额")).not.toBeNull();
     fireEvent.click(await screen.findByRole("switch", { name: "优先可用 read_file" }));
 
     await waitFor(() =>
       expect(updateToolPolicy).toHaveBeenCalledWith("srv_1", "tool_read", { priority_available: true }),
     );
-    expect(await screen.findByText("已设为优先可用")).not.toBeNull();
+    expect(await screen.findByText("已设为优先可用：始终直接提供给智能体，不占懒加载额度")).not.toBeNull();
+    expect(await screen.findByText("优先可用 1")).not.toBeNull();
     await waitFor(() => expect(screen.getAllByText("优先可用").length).toBeGreaterThan(0));
 
     fireEvent.click(await screen.findByRole("switch", { name: "启用工具 read_file" }));
@@ -743,6 +746,41 @@ describe("McpConsolePage", () => {
       expect(updateToolPolicy).toHaveBeenLastCalledWith("srv_1", "tool_read", { approval_mode: "prompt" }),
     );
     expect(await screen.findByText("工具确认方式已更新")).not.toBeNull();
+  });
+
+  it("keeps priority switches available beyond the direct budget", async () => {
+    let tools: McpToolSummary[] = toolFixtures().slice(0, 3).map((item, index) => ({
+      ...item,
+      priority_available: index < 2,
+    }));
+    const updateToolPolicy = vi.fn((_serverId: string, toolId: string, payload: Partial<McpToolSummary>) => {
+      const updated = applyToolPolicyPatch(tools.find((tool) => tool.id === toolId)!, payload);
+      tools = tools.map((tool) => (tool.id === toolId ? updated : tool));
+      return Promise.resolve(updated);
+    });
+    const listTools = vi.fn(() =>
+      Promise.resolve(toolListResponse(tools, { priorityCount: 2, directBudget: 1 })),
+    );
+    render(<McpConsolePage runtime={runtimeWithServers(serverFixtures(), { listTools, updateToolPolicy })} />);
+
+    await selectMcpServer("Filesystem");
+    fireEvent.click(await screen.findByRole("button", { name: "工具授权" }));
+
+    expect(await screen.findByText("优先可用 2")).not.toBeNull();
+    expect(screen.getByText("始终直接可用，不占 1 个按需激活名额")).not.toBeNull();
+    const unselectedPrioritySwitch = screen.getByRole("switch", {
+      name: `优先可用 ${tools[2].raw_name}`,
+    });
+    expect(unselectedPrioritySwitch.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(unselectedPrioritySwitch);
+
+    await waitFor(() =>
+      expect(updateToolPolicy).toHaveBeenCalledWith("srv_1", tools[2].id, {
+        priority_available: true,
+      }),
+    );
+    expect(await screen.findByText("优先可用 3")).not.toBeNull();
   });
 
   it("applies bulk tool policy with the selected tool ids", async () => {
@@ -1523,8 +1561,18 @@ function tool(id: string, rawName: string, patch: Partial<McpToolSummary> = {}):
   };
 }
 
-function toolListResponse(tools: McpToolSummary[]): McpToolListResponse {
-  return { list: tools, total: tools.length, limit: 500 };
+function toolListResponse(
+  tools: McpToolSummary[],
+  options: { priorityCount?: number; directBudget?: number } = {},
+): McpToolListResponse {
+  return {
+    list: tools,
+    total: tools.length,
+    limit: 500,
+    priority_available_count:
+      options.priorityCount ?? tools.filter((tool) => tool.priority_available).length,
+    direct_tool_budget: options.directBudget ?? 10,
+  };
 }
 
 function filterTools(tools: McpToolSummary[], options: Record<string, unknown>): McpToolSummary[] {

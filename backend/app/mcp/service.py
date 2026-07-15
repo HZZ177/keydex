@@ -122,6 +122,7 @@ def list_mcp_tools(
     enabled: bool | None = None,
     search: str | None = None,
     limit: int = 500,
+    direct_tool_budget: int | None = None,
 ) -> dict[str, Any]:
     server = require_mcp_server(repositories, server_id)
     tools = repositories.mcp_tools.list_by_server(
@@ -137,6 +138,7 @@ def list_mcp_tools(
     availability_by_raw_name = _mcp_tool_availability_by_raw_name(
         repositories,
         server_id,
+        direct_tool_budget=direct_tool_budget,
     )
     filtered: list[dict[str, Any]] = []
     for tool in tools:
@@ -156,7 +158,13 @@ def list_mcp_tools(
             continue
         filtered.append(payload)
     resolved_limit = max(1, min(limit, 1000))
-    return {"list": filtered[:resolved_limit], "total": len(filtered), "limit": resolved_limit}
+    return {
+        "list": filtered[:resolved_limit],
+        "total": len(filtered),
+        "limit": resolved_limit,
+        "priority_available_count": _priority_available_policy_count(repositories),
+        "direct_tool_budget": _resolved_direct_tool_budget(direct_tool_budget),
+    }
 
 
 def update_mcp_tool_policy(
@@ -164,12 +172,13 @@ def update_mcp_tool_policy(
     server_id: str,
     tool_id: str,
     changes: dict[str, Any],
+    *,
+    direct_tool_budget: int | None = None,
 ) -> dict[str, Any]:
     server = require_mcp_server(repositories, server_id)
     tool = require_mcp_tool(repositories, server_id, tool_id)
-    values = _tool_policy_values(
-        repositories.mcp_tool_policies.get(server_id, tool.raw_name)
-    )
+    current_policy = repositories.mcp_tool_policies.get(server_id, tool.raw_name)
+    values = _tool_policy_values(current_policy)
     values.update({key: value for key, value in changes.items() if value is not None})
     policy = repositories.mcp_tool_policies.upsert(
         server_id=server_id,
@@ -192,6 +201,7 @@ def update_mcp_tool_policy(
     availability_by_raw_name = _mcp_tool_availability_by_raw_name(
         repositories,
         server_id,
+        direct_tool_budget=direct_tool_budget,
     )
     return tool_payload(
         server,
@@ -749,6 +759,8 @@ def _mcp_availability_stats_by_server(
 def _mcp_tool_availability_by_raw_name(
     repositories: StorageRepositories,
     server_id: str,
+    *,
+    direct_tool_budget: int | None = None,
 ) -> dict[str, str]:
     servers, _total = repositories.mcp_servers.list(limit=500)
     if not servers:
@@ -769,7 +781,7 @@ def _mcp_tool_availability_by_raw_name(
         policies=policies,
     )
     plan = McpDirectInjectionPlanner(
-        direct_tool_budget=AppSettings().mcp_direct_tool_budget,
+        direct_tool_budget=_resolved_direct_tool_budget(direct_tool_budget),
     ).plan(exposure)
     availability: dict[str, str] = {}
     for tool in plan.direct_tools:
@@ -804,6 +816,22 @@ def _tool_policy_values(policy: McpToolPolicyRecord | None) -> dict[str, Any]:
             policy.schema_change_action if policy is not None else "require_review"
         ),
     }
+
+
+def _priority_available_policy_count(repositories: StorageRepositories) -> int:
+    servers, _total = repositories.mcp_servers.list(limit=500)
+    return sum(
+        1
+        for server in servers
+        for policy in repositories.mcp_tool_policies.list_by_server(server.id)
+        if policy.priority_available
+    )
+
+
+def _resolved_direct_tool_budget(value: int | None) -> int:
+    if value is None:
+        value = AppSettings().mcp_direct_tool_budget
+    return max(1, value)
 
 
 def _resolve_tool_identifiers(

@@ -80,32 +80,46 @@ class McpDirectInjectionPlanner:
         recent_model_names: Sequence[str] | None = None,
         priority_model_names: Sequence[str] | None = None,
     ) -> McpExposurePlan:
-        if not self.force_on_demand and len(exposure.visible_tools) <= self.direct_tool_budget:
+        priority_names = set(priority_model_names or ())
+        priority_tools = [
+            tool
+            for tool in exposure.visible_tools
+            if tool.priority_available or tool.model_name in priority_names
+        ]
+        priority_tool_names = {tool.model_name for tool in priority_tools}
+        regular_tools = [
+            tool
+            for tool in exposure.visible_tools
+            if tool.model_name not in priority_tool_names
+        ]
+        if not self.force_on_demand and len(regular_tools) <= self.direct_tool_budget:
             return McpExposurePlan(
                 availability="direct",
-                direct_tools=list(exposure.visible_tools),
+                direct_tools=[*priority_tools, *regular_tools],
                 on_demand_tools=[],
                 has_on_demand_catalog=False,
             )
         if self.force_on_demand:
             return McpExposurePlan(
                 availability="with_on_demand_catalog",
-                direct_tools=[],
-                on_demand_tools=list(exposure.visible_tools),
-                has_on_demand_catalog=bool(exposure.visible_tools),
+                direct_tools=priority_tools,
+                on_demand_tools=regular_tools,
+                has_on_demand_catalog=bool(regular_tools),
             )
-        # Over-budget servers do not prefill the direct list. Only tools explicitly
-        # activated by the discovery entry become directly callable, capped by the
-        # same direct-tool budget.
+        # Priority tools express explicit user intent. They are always injected and
+        # never consume the budget reserved for activated on-demand tools.
         active = active_model_names or set()
-        direct_tools: list[McpVisibleTool] = []
+        direct_tools = list(priority_tools)
+        direct_model_names = set(priority_tool_names)
+        active_tools_count = 0
         for tool in exposure.visible_tools:
-            if tool.model_name not in active:
+            if tool.model_name not in active or tool.model_name in direct_model_names:
                 continue
             direct_tools.append(tool)
-            if len(direct_tools) >= self.direct_tool_budget:
+            direct_model_names.add(tool.model_name)
+            active_tools_count += 1
+            if active_tools_count >= self.direct_tool_budget:
                 break
-        direct_model_names = {tool.model_name for tool in direct_tools}
         on_demand_tools = [
             tool
             for tool in exposure.visible_tools

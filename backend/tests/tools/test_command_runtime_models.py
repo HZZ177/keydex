@@ -10,12 +10,18 @@ from backend.app.tools.command_runtime.tools import _effective_timeout
 def test_command_settings_defaults_are_single_runtime_shape() -> None:
     settings = CommandSettings()
 
-    assert settings.command_enabled is False
+    assert settings.command_enabled is True
     assert settings.selected_shell == "git_bash"
     assert settings.configured is False
     assert settings.tool_name == "run_git_bash"
     assert settings.default_timeout_seconds == 300
     assert settings.max_timeout_seconds == 3600
+
+
+def test_command_settings_preserves_disabled_legacy_runtime_without_executable() -> None:
+    settings = CommandSettings(selected_shell="cmd", shell_path="", shell_label="")
+
+    assert settings.command_enabled is False
 
 
 def test_command_settings_migrates_previous_timeout_defaults() -> None:

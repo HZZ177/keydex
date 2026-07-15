@@ -102,7 +102,11 @@ describe("StreamingTailView", () => {
     expect(view.cursor.style.display).toBe("");
     expect(view.cursor.querySelectorAll('[data-streaming-cursor-dot="true"]')).toHaveLength(3);
     expect(view.cursor.dataset.streamingMarkdownActiveFenceBlockId).toBe(fence.id);
-    expect(view.cursor.previousElementSibling).toBe(view.getBlockElement(fence.id));
+    const canvas = root.querySelector<HTMLElement>('[data-markdown-document-canvas="true"]');
+    expect(canvas).not.toBeNull();
+    expect(canvas?.contains(view.cursor)).toBe(false);
+    expect(view.cursor.parentElement).toBe(root);
+    expect(view.cursor.previousElementSibling).toBe(root.querySelector('[data-markdown-bottom-spacer="true"]'));
 
     const closedSource = `${openSource}\n\`\`\`\n\nAfter`;
     const closed = parser.update({ source: closedSource, revision: "f2", epoch: 1 }).snapshot;

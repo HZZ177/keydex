@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 CommandShell = Literal["git_bash", "powershell", "cmd"]
+COMMAND_SHELL_PRIORITY: tuple[CommandShell, ...] = ("git_bash", "powershell", "cmd")
 CommandTimeoutSource = Literal["default", "model"]
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 5 * 60
 MAX_COMMAND_TIMEOUT_SECONDS = 60 * 60
@@ -59,7 +60,7 @@ SHELL_BY_TOOL: dict[str, CommandShell] = {tool: shell for shell, tool in TOOL_BY
 
 
 class CommandSettings(BaseModel):
-    command_enabled: bool = False
+    command_enabled: bool = True
     selected_shell: CommandShell = "git_bash"
     shell_path: str = ""
     shell_label: str = ""
@@ -113,7 +114,9 @@ class CommandSettings(BaseModel):
             migrated_shells["git_bash"] = migrated_shells.pop("bash")
             data["shells"] = migrated_shells
 
-        if "command_enabled" not in data:
+        if "command_enabled" not in data and (
+            "shell_path" in data or "shell_label" in data
+        ):
             data["command_enabled"] = bool(
                 str(data.get("shell_path") or "").strip()
                 and str(data.get("shell_label") or "").strip()

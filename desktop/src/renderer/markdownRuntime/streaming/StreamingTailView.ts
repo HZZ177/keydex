@@ -214,9 +214,12 @@ export class StreamingTailView {
     if (!snapshot) return null;
     const displayCursor = Math.max(0, Math.min(snapshot.source_characters, options.displayCursor ?? snapshot.source_characters));
     const block = blockAtOrBefore(snapshot.blocks, displayCursor);
-    const element = block ? this.renderer.getBlockElement(block.id) : null;
-    if (element) element.after(this.cursor);
-    else this.root.append(this.cursor);
+    // DocumentViewRuntime positions Markdown blocks absolutely inside its
+    // height-owning canvas. Inserting an in-flow cursor after one of those
+    // blocks leaves the cursor at the canvas origin, where it overlaps the
+    // first line. Keep the cursor after the canvas so its flow position is
+    // anchored by the canvas's explicit total height.
+    this.root.append(this.cursor);
     const activeFenceBlockId = options.activeFenceBlockId === undefined
       ? inferredActiveFence(snapshot)
       : options.activeFenceBlockId;

@@ -126,7 +126,15 @@ export function createMcpRuntimeMock(options: McpRuntimeMockOptions = {}): McpRu
       resources_reserved_count: 0,
     })),
     refreshServers: vi.fn(() => resolve<McpRefreshAllResponse>({ ok: true, list: [], total: 0 })),
-    listTools: vi.fn(() => resolve<McpToolListResponse>({ list: tools, total: tools.length, limit: 500 })),
+    listTools: vi.fn(() =>
+      resolve<McpToolListResponse>({
+        list: tools,
+        total: tools.length,
+        limit: 500,
+        priority_available_count: tools.filter((tool) => tool.priority_available).length,
+        direct_tool_budget: 10,
+      }),
+    ),
     updateToolPolicy: vi.fn((_serverId: string, _toolId: string, payload: Partial<McpToolSummary>) => resolve({ ...tools[0], ...payload })),
     applyToolBulkPolicy: vi.fn((_serverId: string, payload: { action: string }) => resolve({
       server_id: detail.id,

@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from backend.app.api.dependencies import get_repositories
+from backend.app.api.dependencies import get_app_settings, get_repositories
 from backend.app.command_approval import (
     ApprovalService,
     CommandApprovalDecision,
@@ -13,7 +13,7 @@ from backend.app.command_approval import (
     approval_to_payload,
     load_command_settings,
 )
-from backend.app.core.config import AppSettings, get_settings
+from backend.app.core.config import AppSettings
 from backend.app.core.ids import new_id
 from backend.app.mcp.audit import McpAuditWriter, redact_sensitive_data, redact_sensitive_text
 from backend.app.mcp.errors import McpClientAuthError, McpRuntimeError
@@ -56,7 +56,7 @@ from backend.app.storage import StorageRepositories
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 RepositoriesDep = Depends(get_repositories)
-SettingsDep = Depends(get_settings)
+SettingsDep = Depends(get_app_settings)
 
 
 class McpOAuthStartRequest(BaseModel):
@@ -286,6 +286,7 @@ def list_tools(
     search: str | None = None,
     limit: int = 500,
     repositories: StorageRepositories = RepositoriesDep,
+    settings: AppSettings = SettingsDep,
 ) -> dict[str, Any]:
     try:
         return list_mcp_tools(
@@ -295,6 +296,7 @@ def list_tools(
             enabled=enabled,
             search=search,
             limit=limit,
+            direct_tool_budget=settings.mcp_direct_tool_budget,
         )
     except (McpServiceError, ValueError) as exc:
         error = exc if isinstance(exc, McpServiceError) else McpServiceError(str(exc))
@@ -326,6 +328,7 @@ def patch_tool_policy(
     tool_id: str,
     payload: UpdateMcpToolPolicyRequest,
     repositories: StorageRepositories = RepositoriesDep,
+    settings: AppSettings = SettingsDep,
 ) -> dict[str, Any]:
     try:
         return update_mcp_tool_policy(
@@ -333,6 +336,7 @@ def patch_tool_policy(
             server_id,
             tool_id,
             payload.model_dump(mode="json", exclude_unset=True),
+            direct_tool_budget=settings.mcp_direct_tool_budget,
         )
     except (McpServiceError, ValueError) as exc:
         error = exc if isinstance(exc, McpServiceError) else McpServiceError(str(exc))
