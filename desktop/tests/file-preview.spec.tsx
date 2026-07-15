@@ -9,6 +9,7 @@ import { FilePreview, type MarkdownOutlineItem, type MarkdownOutlineRevealReques
 import { APP_FIND_SHORTCUT_EVENT } from "@/renderer/events/findShortcut";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
+import type { PreviewRequest } from "@/renderer/providers/previewTypes";
 
 const mermaidParseResult: ParseResult = { diagramType: "flowchart-v2", config: {} };
 const mermaidRenderResult: RenderResult = {
@@ -158,6 +159,88 @@ describe("FilePreview", () => {
     expect(screen.queryByLabelText(/文件批注/u)).toBeNull();
     expect(readDocument).not.toHaveBeenCalled();
     expect(writeDocument).not.toHaveBeenCalled();
+  });
+
+  it("opens relative markdown links from the current workspace document directory", async () => {
+    const readDocument = vi.fn().mockImplementation(async (_scope, path: string) => ({
+      document_id: `workspace:session:ses-1:${path}`,
+      source: "workspace",
+      path,
+      content: path === "docs/guide/SKILL.md"
+        ? "[打开子文档](references/details.md)"
+        : "# 子文档",
+      encoding: "utf-8",
+      revision: `sha256:${path}`,
+      total_bytes: 32,
+    }));
+    const runtime = fakeRuntime({ readDocument });
+
+    render(
+      <PreviewProvider>
+        <LinkedPreviewHarness
+          initialRequest={{ type: "file", path: "docs/guide/SKILL.md" }}
+          runtime={runtime}
+        />
+      </PreviewProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("link", { name: "打开子文档" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("linked-preview-request").textContent)
+        .toBe("file:docs/guide/references/details.md");
+    });
+    expect(readDocument).toHaveBeenLastCalledWith(
+      { sessionId: "ses-1" },
+      "docs/guide/references/details.md",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("opens relative links inside skill previews as resources of the same skill", async () => {
+    const readSessionResource = vi.fn().mockResolvedValue({
+      skill_name: "keydex-guide",
+      source: "system",
+      resource_path: "references/details.md",
+      content: "# Skill 子文档",
+      locator: "system:keydex-guide/references/details.md",
+      revision: "sha256:skill-details",
+    });
+    const runtime = {
+      workspace: { readFile: vi.fn(), readMedia: vi.fn() },
+      skills: { readSessionResource },
+    } as unknown as RuntimeBridge;
+
+    render(
+      <PreviewProvider>
+        <LinkedPreviewHarness
+          initialRequest={{
+            type: "skill-resource",
+            title: "keydex-guide",
+            content: "[打开 Skill 子文档](references/details.md)",
+            contentType: "markdown",
+            skillName: "keydex-guide",
+            skillSource: "system",
+            resourcePath: "SKILL.md",
+            locator: "system:keydex-guide/SKILL.md",
+            revision: "sha256:skill-root",
+          }}
+          runtime={runtime}
+        />
+      </PreviewProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("link", { name: "打开 Skill 子文档" }));
+
+    await waitFor(() => expect(readSessionResource).toHaveBeenCalledWith("ses-1", {
+      skill_name: "keydex-guide",
+      source: "system",
+      resource_path: "references/details.md",
+    }));
+    await waitFor(() => {
+      expect(screen.getByTestId("linked-preview-request").textContent)
+        .toBe("skill-resource:references/details.md");
+    });
   });
 
   it("loads a local file through the shared document snapshot pipeline", async () => {
@@ -1561,6 +1644,38 @@ describe("FilePreview", () => {
     }
   });
 
+  it("smoothly reveals unicode markdown heading anchors inside the current preview", async () => {
+    const scrollToDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTo");
+    const scrollTo = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "guide.md",
+        content: "[开发者指南](#开发者指南)\n\n正文\n\n## 开发者指南\n\n构建说明。",
+        encoding: "utf-8",
+      }),
+    });
+
+    try {
+      render(<FilePreview request={{ type: "file", path: "guide.md" }} sessionId="ses-1" runtime={runtime} />);
+
+      fireEvent.click(await screen.findByRole("link", { name: "开发者指南" }));
+
+      await waitFor(() => {
+        expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+      });
+    } finally {
+      if (scrollToDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, "scrollTo", scrollToDescriptor);
+      } else {
+        delete (HTMLElement.prototype as { scrollTo?: HTMLElement["scrollTo"] }).scrollTo;
+      }
+    }
+  });
+
   it("renders html files in a sandboxed preview frame", async () => {
     const runtime = fakeRuntime({
       readFile: vi.fn().mockResolvedValue({
@@ -2416,6 +2531,42 @@ function PreviewTabsHarness() {
         打开 Markdown
       </button>
       {preview.request ? <FilePreview request={preview.request} /> : null}
+    </>
+  );
+}
+
+function LinkedPreviewHarness({
+  initialRequest,
+  runtime,
+}: {
+  initialRequest: PreviewRequest;
+  runtime: RuntimeBridge;
+}) {
+  const preview = usePreview();
+  const openPreview = preview.openPreview;
+  const entry = preview.activeEntry;
+
+  useEffect(() => {
+    openPreview(initialRequest, { runtime, sessionId: "ses-1" });
+  }, [initialRequest, openPreview, runtime]);
+
+  const requestLabel = entry?.request.type === "skill-resource"
+    ? `${entry.request.type}:${entry.request.resourcePath}`
+    : entry?.request.type === "file" || entry?.request.type === "local-file"
+      ? `${entry.request.type}:${entry.request.path}`
+      : entry?.request.type ?? "";
+
+  return (
+    <>
+      <output data-testid="linked-preview-request">{requestLabel}</output>
+      {entry ? (
+        <FilePreview
+          request={entry.request}
+          runtime={runtime}
+          sessionId="ses-1"
+          sourceRevealRequest={entry.revealTarget ? { requestId: entry.openedAt, ...entry.revealTarget } : null}
+        />
+      ) : null}
     </>
   );
 }

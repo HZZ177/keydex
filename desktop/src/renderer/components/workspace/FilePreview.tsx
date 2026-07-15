@@ -104,7 +104,8 @@ import {
   type SvgDimensions,
 } from "@/renderer/utils/mermaidSvg";
 import { getMermaidConfig } from "@/renderer/utils/mermaidConfig";
-import { isAbsoluteFilePath } from "@/renderer/utils/fileLinks";
+import { isAbsoluteFilePath, resolveRelativeFileLinkPath } from "@/renderer/utils/fileLinks";
+import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
 import { parseUnifiedDiffDisplayLines } from "@/renderer/utils/unifiedDiff";
 
 import { AnnotationRail } from "@/renderer/features/annotations/ui/AnnotationRail";
@@ -144,10 +145,16 @@ import {
   codeMirrorViewportSourceAnchor,
   syncCodeMirrorViewportToSourceAnchor,
 } from "./splitViewScrollSync";
-import type { MarkdownSnapshot } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
+import type {
+  MarkdownSnapshot,
+  MarkdownSnapshotOutlineEntry,
+} from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
 import type { MarkdownFindIndex as RuntimeMarkdownFindIndex } from "@/renderer/markdownRuntime/find";
 import type { MarkdownProjectedSelection } from "@/renderer/markdownRuntime/interaction";
-import { resolveMarkdownLinkTarget } from "@/renderer/markdownRuntime/interaction/InteractionController";
+import {
+  resolveMarkdownLinkTarget,
+  type MarkdownResolvedLinkTarget,
+} from "@/renderer/markdownRuntime/interaction/InteractionController";
 import type { MarkdownRendererInteractionHandlers } from "@/renderer/markdownRuntime/renderers";
 import { stableMarkdownIdentityHash } from "@/renderer/markdownRuntime/document/identity";
 import { markdownRuntimeDiagnostics } from "@/renderer/markdownRuntime/diagnostics";
@@ -1255,17 +1262,39 @@ export function FilePreview({
       if (target.kind === "file") {
         event.preventDefault();
         event.stopPropagation();
+        const revealTarget = target.line ? { lineStart: target.line, lineEnd: target.line } : null;
+        if (request.type === "skill-resource" && !target.absolute) {
+          const resourcePath = resolveRelativeFileLinkPath(target.path, request.resourcePath);
+          if (!resourcePath || !previewContext || !runtime) return;
+          void openSkillResourcePreview({
+            preview: previewContext,
+            revealTarget,
+            runtime,
+            scope,
+            target: {
+              skillName: request.skillName,
+              source: request.skillSource,
+              resourcePath,
+            },
+          }).catch((reason) => notifications.error(skillResourcePreviewError(reason)));
+          return;
+        }
+        const linkedRequest = runtimeLinkedFilePreviewRequest(request, target);
+        if (!linkedRequest) return;
         openRuntimeLinkedPreview?.(
-          { type: target.absolute ? "local-file" : "file", path: target.path },
+          linkedRequest,
           undefined,
-          target.line ? { lineStart: target.line, lineEnd: target.line } : null,
+          revealTarget,
         );
         return;
       }
       if (target.kind === "anchor") {
         event.preventDefault();
         event.stopPropagation();
-        const outline = markdownRuntimeHostRef.current?.currentSnapshot()?.outline.find((item) => item.id === target.fragment);
+        const outline = findMarkdownOutlineTarget(
+          markdownRuntimeHostRef.current?.currentSnapshot()?.outline ?? [],
+          target.fragment,
+        );
         if (outline) markdownRuntimeHostRef.current?.revealBlock(outline.block_id, { align: "start", behavior: "smooth" });
         return;
       }
@@ -1288,7 +1317,7 @@ export function FilePreview({
       coordinateSpace: "logical",
       range: { start: block.logical_start, end: block.logical_end },
     }),
-  }), [openRuntimeLinkedPreview, showCopyFeedback]);
+  }), [notifications, openRuntimeLinkedPreview, previewContext, request, runtime, scope, showCopyFeedback]);
 
   const quotePreviewSelection = useCallback(
     (selectionSnapshot: FilePreviewSelectionSnapshot, comment?: string) => {
@@ -5269,6 +5298,68 @@ function workspaceScope({
     return { workspaceId };
   }
   return null;
+}
+
+function runtimeLinkedFilePreviewRequest(
+  sourceRequest: FilePreviewRequest,
+  target: Extract<MarkdownResolvedLinkTarget, { kind: "file" }>,
+): Extract<PreviewRequest, { type: "file" | "local-file" }> | null {
+  if (target.absolute) {
+    return { type: "local-file", path: target.path };
+  }
+
+  let sourcePath: string | null = null;
+  let type: "file" | "local-file" = "file";
+  if (sourceRequest.type === "file") {
+    sourcePath = sourceRequest.path;
+  } else if (sourceRequest.type === "local-file") {
+    sourcePath = sourceRequest.path;
+    type = "local-file";
+  } else if (sourceRequest.type === "content" && sourceRequest.sourcePath) {
+    sourcePath = sourceRequest.sourcePath;
+    type = isAbsoluteFilePath(sourcePath) ? "local-file" : "file";
+  }
+
+  const path = sourcePath
+    ? resolveRelativeFileLinkPath(target.path, sourcePath)
+    : target.path;
+  return path ? { type, path } : null;
+}
+
+function findMarkdownOutlineTarget(
+  outline: readonly MarkdownSnapshotOutlineEntry[],
+  fragment: string,
+): MarkdownSnapshotOutlineEntry | null {
+  let decodedFragment = fragment;
+  try {
+    decodedFragment = decodeURIComponent(fragment);
+  } catch {
+    // Keep the literal fragment so malformed encoding cannot break link activation.
+  }
+  const normalizedFragment = decodedFragment.trim();
+  if (!normalizedFragment) return null;
+
+  const direct = outline.find((item) => item.id === fragment || item.id === normalizedFragment);
+  if (direct) return direct;
+
+  const duplicateCounts = new Map<string, number>();
+  for (const item of outline) {
+    if (item.title.trim() === normalizedFragment) return item;
+    const baseSlug = markdownHeadingSlug(item.title);
+    const duplicateIndex = duplicateCounts.get(baseSlug) ?? 0;
+    duplicateCounts.set(baseSlug, duplicateIndex + 1);
+    const slug = duplicateIndex === 0 ? baseSlug : `${baseSlug}-${duplicateIndex}`;
+    if (slug === normalizedFragment) return item;
+  }
+  return null;
+}
+
+function markdownHeadingSlug(title: string): string {
+  return title
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, "")
+    .replace(/\s+/gu, "-");
 }
 
 function DiffPreview({ diff }: { diff: string }) {

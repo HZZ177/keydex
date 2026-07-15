@@ -4,6 +4,7 @@ import {
   isAbsoluteFilePath,
   parseFileLinkTarget,
   parseMarkdownFileLinkExpression,
+  resolveRelativeFileLinkPath,
   workspaceRelativeFilePath,
 } from "@/renderer/utils/fileLinks";
 
@@ -22,6 +23,23 @@ describe("file link target parsing", () => {
       line: 8,
       path: "desktop/src/renderer/App.tsx",
     });
+  });
+
+  it("resolves encoded relative links from the current document directory", () => {
+    expect(
+      resolveRelativeFileLinkPath(
+        "references/start%20here.md",
+        "backend/app/keydex-guide/SKILL.md",
+      ),
+    ).toBe("backend/app/keydex-guide/references/start here.md");
+    expect(resolveRelativeFileLinkPath("../shared/guide.md", "docs/topic/readme.md"))
+      .toBe("docs/shared/guide.md");
+  });
+
+  it("keeps local absolute source roots and rejects links that escape them", () => {
+    expect(resolveRelativeFileLinkPath("../shared/guide.md", "D:/notes/topic/readme.md"))
+      .toBe("D:/notes/shared/guide.md");
+    expect(resolveRelativeFileLinkPath("../escape.md", "README.md")).toBeNull();
   });
 
   it("rejects external urls and fragments", () => {

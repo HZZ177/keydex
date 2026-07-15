@@ -7,6 +7,7 @@ import {
 } from "@/runtime";
 import type {
   PreviewContextValue,
+  PreviewFileRevealTarget,
   PreviewRenderContext,
 } from "@/renderer/providers/PreviewProvider";
 import type {
@@ -23,18 +24,20 @@ export interface SkillResourcePreviewTarget {
 export async function openSkillResourcePreview({
   preview,
   renderContext,
+  revealTarget,
   runtime,
   scope,
   target,
 }: {
   preview: Pick<PreviewContextValue, "openPreview">;
   renderContext?: PreviewRenderContext;
+  revealTarget?: PreviewFileRevealTarget | null;
   runtime: RuntimeBridge;
   scope?: WorkspaceScope | null;
   target: SkillResourcePreviewTarget;
 }): Promise<SkillResourceReadResponse> {
   const response = await readSkillResource(runtime, scope, target);
-  preview.openPreview(skillResourcePreviewRequest(response), renderContext);
+  preview.openPreview(skillResourcePreviewRequest(response), renderContext, revealTarget);
   return response;
 }
 

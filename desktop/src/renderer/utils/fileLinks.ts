@@ -57,6 +57,47 @@ export function parseFileLinkTarget(value: string | undefined): ParsedFileLinkTa
   return { path: cleanPath, line, absolute };
 }
 
+export function resolveRelativeFileLinkPath(path: string, sourcePath: string): string | null {
+  const rawPath = path.trim();
+  const rawSourcePath = sourcePath.trim();
+  if (!rawPath || !rawSourcePath || isAbsoluteFilePath(rawPath)) {
+    return null;
+  }
+
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(rawPath);
+  } catch {
+    return null;
+  }
+  if (!decodedPath || /[\u0000-\u001f]/u.test(decodedPath)) {
+    return null;
+  }
+
+  const source = splitPathRoot(normalizePathSeparators(rawSourcePath));
+  const segments = source.rest.split("/").filter(Boolean);
+  if (segments.length > 0) {
+    segments.pop();
+  }
+  for (const segment of normalizePathSeparators(decodedPath).split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      if (!segments.length) {
+        return null;
+      }
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  if (!segments.length) {
+    return null;
+  }
+  return `${source.root}${segments.join("/")}`;
+}
+
 export function isAbsoluteFilePath(path: string): boolean {
   const value = path.trim();
   return isWindowsAbsoluteFilePath(value) || value.startsWith("/") || value.startsWith("\\\\") || value.startsWith("//");
@@ -104,6 +145,21 @@ function isWindowsAbsoluteFilePath(value: string): boolean {
 
 function normalizePathSeparators(value: string): string {
   return value.trim().replace(/\\/g, "/");
+}
+
+function splitPathRoot(path: string): { root: string; rest: string } {
+  const windowsDrive = /^([a-zA-Z]:\/)/u.exec(path);
+  if (windowsDrive) {
+    return { root: windowsDrive[1], rest: path.slice(windowsDrive[1].length) };
+  }
+  const uncRoot = /^(\/\/[^/]+\/[^/]+\/)/u.exec(path);
+  if (uncRoot) {
+    return { root: uncRoot[1], rest: path.slice(uncRoot[1].length) };
+  }
+  if (path.startsWith("/")) {
+    return { root: "/", rest: path.slice(1) };
+  }
+  return { root: "", rest: path };
 }
 
 function splitTrailingLineNumber(value: string): { path: string; line: number | null } {
