@@ -238,6 +238,8 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
     ]["enum"]
     assert "failed" in status_enum
     assert specs["list_dir"].parameters["properties"]["depth"]["maximum"] == 5
+    assert specs["list_dir"].parameters["properties"]["limit"]["default"] == 100
+    assert specs["list_dir"].parameters["properties"]["limit"]["maximum"] == 200
     assert "mode" not in specs["create_file"].parameters["properties"]
     assert "append" not in specs["create_file"].parameters["properties"]
     assert "offset" not in specs["read_file"].parameters["properties"]

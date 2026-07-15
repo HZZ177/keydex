@@ -56,8 +56,8 @@ async def test_workspace_tools_are_isolated_by_session_cwd(tmp_path) -> None:
         "ses_a",
     )
 
-    assert [entry["name"] for entry in list_a.result["entries"]] == ["shared.txt"]
-    assert [entry["name"] for entry in list_b.result["entries"]] == ["shared.txt"]
+    assert list_a.result["tree"] == "./\nshared.txt"
+    assert list_b.result["tree"] == "./\nshared.txt"
     assert read_a.result["content"] == "A_ONLY\n"
     assert read_b.result["content"] == "B_ONLY\n"
     assert search_a.result["results"][0]["path"] == "shared.txt"

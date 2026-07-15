@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,9 +25,10 @@ MAX_READ_BYTES = 512 * 1024
 DEFAULT_MAX_LINES = 400
 MAX_MAX_LINES = 5000
 MAX_NUMBERED_LINE_CHARS = 2000
-DEFAULT_LIST_LIMIT = 200
-MAX_LIST_LIMIT = 1000
+DEFAULT_LIST_LIMIT = 100
+MAX_LIST_LIMIT = 200
 MAX_LIST_DEPTH = 5
+MAX_LIST_RESULT_BYTES = 10_000
 
 IGNORED_DIRS = {
     ".git",
@@ -36,6 +38,12 @@ IGNORED_DIRS = {
     ".mypy_cache",
     ".pytest_cache",
     ".npm-cache",
+    ".next",
+    ".nuxt",
+    "build",
+    "coverage",
+    "dist",
+    "target",
 }
 
 READ_FILE_DESCRIPTION = (
@@ -52,7 +60,10 @@ CREATE_FILE_DESCRIPTION = (
 
 LIST_DIR_DESCRIPTION = (
     "以有界目录树形式列出文件访问权限允许范围内的目录。适合了解陌生目录、项目布局或目录下有哪些资源。"
-    "支持 depth、offset、limit，返回结构化 entries 和便于模型阅读的 tree 文本。"
+    "优先从 depth=1 或 2 的小范围开始；已知名称时改用 search_files，"
+    "已知内容时改用 grep_files 或 search_text。支持 depth、offset、limit，"
+    "返回不超过 10KB 的紧凑 tree 文本；若 truncated=true，使用 next_offset 继续，"
+    "不要并行发起多个宽范围目录查询。"
 )
 
 
@@ -63,17 +74,6 @@ class DirectoryEntry:
     type: str
     depth: int
     size: int | None
-
-    def to_result(self, *, include_depth: bool = True) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "name": self.name,
-            "path": self.path,
-            "type": self.type,
-            "size": self.size,
-        }
-        if include_depth:
-            result["depth"] = self.depth
-        return result
 
 
 @dataclass(frozen=True)
@@ -167,13 +167,16 @@ def create_filesystem_tools() -> list[FunctionTool]:
                         "minimum": 1,
                         "maximum": MAX_LIST_LIMIT,
                         "default": DEFAULT_LIST_LIMIT,
-                        "description": "应用 offset 后最多返回的条目数。",
+                        "description": (
+                            "应用 offset 后的条目上限；"
+                            "实际可能因 10KB 返回预算提前截断。"
+                        ),
                     },
                     "offset": {
                         "type": "integer",
                         "minimum": 0,
                         "default": 0,
-                        "description": "分页时跳过的扁平条目数量。",
+                        "description": "分页时跳过的扁平条目数量；优先使用上次返回的 next_offset。",
                     },
                     "include_hidden": {
                         "type": "boolean",
@@ -353,27 +356,23 @@ async def list_dir_tool(
     )
     all_entries = collected.entries
     selected = all_entries[offset : offset + limit]
-    has_more = collected.truncated or offset + len(selected) < len(all_entries)
-    next_offset = offset + len(selected) if selected and has_more else None
-    result_entries = [entry.to_result() for entry in selected]
     relative = _relative(path, context)
-    result = {
-        "path": relative or ".",
-        "entries": result_entries,
-        "tree": _tree_text(relative or ".", selected),
-        "depth": depth,
-        "offset": offset,
-        "limit": limit,
-        "total_entries": len(all_entries),
-        "total_entries_exact": not collected.truncated,
-        "truncated": next_offset is not None,
-        "next_offset": next_offset,
-    }
+    root_label = relative or "."
+    has_more_after_limit = collected.truncated or offset + len(selected) < len(all_entries)
+    result = _budgeted_list_dir_result(
+        root_label=root_label,
+        selected=selected,
+        depth=depth,
+        offset=offset,
+        limit=limit,
+        has_more_after_limit=has_more_after_limit,
+    )
+    result_bytes = _serialized_json_bytes(result)
     logger.info(
         "[FilesystemTool] 列出目录树 | "
-        f"path={relative or '.'} | depth={depth} | entries={len(result_entries)} | "
-        f"collected_entries={len(all_entries)} | total_entries_exact={not collected.truncated} | "
-        f"truncated={result['truncated']}"
+        f"path={root_label} | depth={depth} | returned_entries={result['returned_entries']} | "
+        f"collected_entries={len(all_entries)} | result_bytes={result_bytes} | "
+        f"truncated={result['truncated']} | truncation_reason={result['truncation_reason']}"
     )
     return result
 
@@ -560,6 +559,128 @@ def _tree_text(root_label: str, entries: list[DirectoryEntry]) -> str:
         suffix = "/" if entry.type == "directory" else ""
         lines.append(f"{indent}{entry.name}{suffix}")
     return "\n".join(lines)
+
+
+def _budgeted_list_dir_result(
+    *,
+    root_label: str,
+    selected: list[DirectoryEntry],
+    depth: int,
+    offset: int,
+    limit: int,
+    has_more_after_limit: bool,
+) -> dict[str, Any]:
+    if not selected:
+        result = _list_dir_result(
+            root_label=root_label,
+            entries=[],
+            depth=depth,
+            offset=offset,
+            limit=limit,
+            truncated=False,
+            truncation_reason=None,
+        )
+        _ensure_list_dir_result_fits(result)
+        return result
+
+    accepted: list[DirectoryEntry] = []
+    budget_limited = False
+    for index, entry in enumerate(selected):
+        candidate_entries = [*accepted, entry]
+        candidate_has_more = index + 1 < len(selected) or has_more_after_limit
+        candidate_reason = (
+            "max_result_bytes"
+            if index + 1 < len(selected)
+            else ("max_entries" if has_more_after_limit else None)
+        )
+        candidate = _list_dir_result(
+            root_label=root_label,
+            entries=candidate_entries,
+            depth=depth,
+            offset=offset,
+            limit=limit,
+            truncated=candidate_has_more,
+            truncation_reason=candidate_reason,
+        )
+        if _serialized_json_bytes(candidate) > MAX_LIST_RESULT_BYTES:
+            budget_limited = True
+            break
+        accepted = candidate_entries
+
+    if budget_limited:
+        if not accepted:
+            raise ToolExecutionError(
+                "目录路径或单个条目超过 list_dir 的 10KB 返回预算，请改用更具体的目录路径",
+                code="list_dir_result_too_large",
+            )
+        result = _list_dir_result(
+            root_label=root_label,
+            entries=accepted,
+            depth=depth,
+            offset=offset,
+            limit=limit,
+            truncated=True,
+            truncation_reason="max_result_bytes",
+        )
+    else:
+        result = _list_dir_result(
+            root_label=root_label,
+            entries=accepted,
+            depth=depth,
+            offset=offset,
+            limit=limit,
+            truncated=has_more_after_limit,
+            truncation_reason="max_entries" if has_more_after_limit else None,
+        )
+
+    _ensure_list_dir_result_fits(result)
+    return result
+
+
+def _list_dir_result(
+    *,
+    root_label: str,
+    entries: list[DirectoryEntry],
+    depth: int,
+    offset: int,
+    limit: int,
+    truncated: bool,
+    truncation_reason: str | None,
+) -> dict[str, Any]:
+    returned_entries = len(entries)
+    next_offset = offset + returned_entries if returned_entries and truncated else None
+    tree = _tree_text(root_label, entries)
+    if next_offset is not None:
+        path_argument = json.dumps(root_label, ensure_ascii=False)
+        tree = (
+            f"{tree}\n... [目录结果已截断，继续调用 "
+            f"list_dir(path={path_argument}, offset={next_offset})]"
+        )
+    return {
+        "path": root_label,
+        "tree": tree,
+        "depth": depth,
+        "offset": offset,
+        "limit": limit,
+        "returned_entries": returned_entries,
+        "truncated": truncated,
+        "next_offset": next_offset,
+        "truncation_reason": truncation_reason,
+    }
+
+
+def _serialized_json_bytes(value: Any) -> int:
+    serialized = json.dumps(value, ensure_ascii=False, default=str)
+    return len(serialized.encode("utf-8"))
+
+
+def _ensure_list_dir_result_fits(result: dict[str, Any]) -> None:
+    if _serialized_json_bytes(result) <= MAX_LIST_RESULT_BYTES:
+        return
+    raise ToolExecutionError(
+        "目录结果超过 list_dir 的 10KB 返回预算，请改用更具体的目录路径",
+        code="list_dir_result_too_large",
+    )
 
 
 def _write_file_change(

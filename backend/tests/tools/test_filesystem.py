@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
+
 from backend.app.tools import ToolExecutionContext, ToolRegistry
-from backend.app.tools.filesystem import register_filesystem_tools
+from backend.app.tools.filesystem import MAX_LIST_RESULT_BYTES, register_filesystem_tools
 
 
 def _context(tmp_path, *, file_access_mode: str | None = None) -> ToolExecutionContext:
@@ -58,8 +60,12 @@ async def test_list_dir_tool_lists_direct_children_sorted(tmp_path) -> None:
     result = await _run("list_dir", {"path": ".", "depth": 1}, tmp_path)
 
     assert result.ok is True
-    assert [entry["name"] for entry in result.result["entries"]] == ["src", "README.md"]
-    assert result.result["entries"][0]["type"] == "directory"
+    assert result.result["tree"] == "./\nsrc/\nREADME.md"
+    assert result.result["returned_entries"] == 2
+    assert result.result["truncated"] is False
+    assert result.result["next_offset"] is None
+    assert result.result["truncation_reason"] is None
+    assert "entries" not in result.result
 
 
 async def test_read_file_tool_supports_line_window_and_indentation_mode(tmp_path) -> None:
@@ -105,11 +111,13 @@ async def test_list_dir_tool_returns_depth_limited_tree_and_pagination(tmp_path)
 
     assert result.ok is True
     assert result.result["path"] == "."
-    assert result.result["entries"][0]["path"] == "src"
-    assert result.result["entries"][1]["path"] == "src/pkg"
+    assert result.result["returned_entries"] == 2
     assert result.result["truncated"] is True
     assert result.result["next_offset"] == 2
+    assert result.result["truncation_reason"] == "max_entries"
     assert "src/" in result.result["tree"]
+    assert "  pkg/" in result.result["tree"]
+    assert 'list_dir(path=".", offset=2)' in result.result["tree"]
 
 
 async def test_list_dir_tool_stops_collecting_after_page_budget(tmp_path) -> None:
@@ -119,11 +127,87 @@ async def test_list_dir_tool_stops_collecting_after_page_budget(tmp_path) -> Non
     result = await _run("list_dir", {"path": ".", "depth": 1, "limit": 2}, tmp_path)
 
     assert result.ok is True
-    assert len(result.result["entries"]) == 2
+    assert result.result["returned_entries"] == 2
     assert result.result["truncated"] is True
     assert result.result["next_offset"] == 2
-    assert result.result["total_entries"] == 3
-    assert result.result["total_entries_exact"] is False
+    assert result.result["truncation_reason"] == "max_entries"
+
+
+async def test_list_dir_tool_caps_serialized_result_and_paginates_without_gaps(tmp_path) -> None:
+    expected_names = []
+    for index in range(180):
+        name = f"{index:03d}-{'x' * 120}.txt"
+        expected_names.append(name)
+        (tmp_path / name).write_text("", encoding="utf-8")
+
+    returned_names: list[str] = []
+    offset = 0
+    saw_byte_truncation = False
+    while True:
+        result = await _run(
+            "list_dir",
+            {"path": ".", "depth": 1, "limit": 200, "offset": offset},
+            tmp_path,
+        )
+
+        assert result.ok is True
+        serialized_bytes = len(
+            json.dumps(result.result, ensure_ascii=False, default=str).encode("utf-8")
+        )
+        assert serialized_bytes <= MAX_LIST_RESULT_BYTES
+        page_names = _tree_entry_names(result.result["tree"])
+        assert len(page_names) == result.result["returned_entries"]
+        returned_names.extend(page_names)
+        saw_byte_truncation = saw_byte_truncation or (
+            result.result["truncation_reason"] == "max_result_bytes"
+        )
+
+        if not result.result["truncated"]:
+            break
+        assert result.result["next_offset"] == offset + result.result["returned_entries"]
+        offset = result.result["next_offset"]
+
+    assert saw_byte_truncation is True
+    assert returned_names == expected_names
+    assert len(returned_names) == len(set(returned_names))
+
+
+async def test_list_dir_tool_counts_multibyte_names_against_utf8_budget(tmp_path) -> None:
+    for index in range(80):
+        name = f"{index:03d}-{'目录' * 40}.txt"
+        (tmp_path / name).write_text("", encoding="utf-8")
+
+    result = await _run(
+        "list_dir",
+        {"path": ".", "depth": 1, "limit": 200},
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert result.result["truncation_reason"] == "max_result_bytes"
+    assert result.result["returned_entries"] < 80
+    result_bytes = len(json.dumps(result.result, ensure_ascii=False).encode("utf-8"))
+    assert result_bytes <= MAX_LIST_RESULT_BYTES
+
+
+async def test_list_dir_tool_ignores_generated_directories_even_when_hidden_enabled(
+    tmp_path,
+) -> None:
+    ignored = ["build", "dist", "target", "coverage", ".next", ".nuxt"]
+    for directory_name in ignored:
+        directory = tmp_path / directory_name
+        directory.mkdir()
+        (directory / "generated.txt").write_text("", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+
+    result = await _run(
+        "list_dir",
+        {"path": ".", "depth": 2, "include_hidden": True},
+        tmp_path,
+    )
+
+    assert result.ok is True
+    assert _tree_entry_names(result.result["tree"]) == ["src"]
 
 
 async def test_create_file_tool_creates_new_file_inside_workspace(tmp_path) -> None:
@@ -146,6 +230,14 @@ async def test_create_file_tool_creates_new_file_inside_workspace(tmp_path) -> N
         "--- /dev/null\n+++ b/out/result.txt\n@@ -0,0 +1 @@\n+hello"
     )
     assert (tmp_path / "out" / "result.txt").read_text(encoding="utf-8") == "hello"
+
+
+def _tree_entry_names(tree: str) -> list[str]:
+    return [
+        line.strip().removesuffix("/")
+        for line in tree.splitlines()[1:]
+        if not line.startswith("... [目录结果已截断")
+    ]
 
 
 async def test_create_file_tool_rejects_existing_file(tmp_path) -> None:
