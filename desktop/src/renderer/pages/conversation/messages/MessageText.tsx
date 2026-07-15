@@ -1026,11 +1026,13 @@ export function formatProcessingDuration(durationMs: number): string {
 
 export function MessageActionFooter({
   message,
+  copyContent,
   placement = "inline",
   onForkFromMessage,
   onReverseFromMessage,
 }: {
   message: ConversationMessage;
+  copyContent?: string;
   placement?: "inline" | "turn";
   onForkFromMessage?: (message: ConversationMessage) => void;
   onReverseFromMessage?: (message: ConversationMessage) => void;
@@ -1044,7 +1046,7 @@ export function MessageActionFooter({
 
   const handleCopy = async () => {
     try {
-      await copyText(normalizeMessageContent(message.content));
+      await copyText(copyContent ?? normalizeMessageContent(message.content));
       showCopyFeedback("copied");
     } catch {
       showCopyFeedback("failed");

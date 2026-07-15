@@ -1248,7 +1248,7 @@ function renderConversationRuntimeUnit({
 
   if (unit.kind === "footer") {
     const anchorItemId = lastFooterAnchorItemId(turn.items);
-    const footerMessage = anchorItemId ? assistantTurnFooters.footerByItemId.get(anchorItemId) : undefined;
+    const turnFooter = anchorItemId ? assistantTurnFooters.footerByItemId.get(anchorItemId) : undefined;
     const processingStartedAt = anchorItemId
       ? assistantTurnFooters.processingStartByItemId.get(anchorItemId)
       : undefined;
@@ -1259,7 +1259,7 @@ function renderConversationRuntimeUnit({
           withTurnEndStreamingCursor(
             withTurnActionFooter(
               null,
-              footerMessage,
+              turnFooter,
               onForkFromMessage,
               onReverseFromMessage,
               onNavigateToForkSource,
@@ -1394,7 +1394,7 @@ function renderMessageTurn({
       {renderMessageItem({
         item,
         renderMessage,
-        footerMessage: assistantTurnFooters.footerByItemId.get(item.id),
+        turnFooter: assistantTurnFooters.footerByItemId.get(item.id),
         processingStartedAt: assistantTurnFooters.processingStartByItemId.get(item.id),
         showTurnEndStreamingCursor: turnEndStreamingCursor.cursorAfterItemIds.has(item.id),
         suppressStreamingCursorMessageIds: turnEndStreamingCursor.suppressedMessageIds,
@@ -1452,7 +1452,7 @@ function renderMessageTurn({
 function renderMessageItem({
   item,
   renderMessage,
-  footerMessage,
+  turnFooter,
   processingStartedAt,
   showTurnEndStreamingCursor,
   suppressStreamingCursorMessageIds,
@@ -1477,7 +1477,7 @@ function renderMessageItem({
 }: {
   item: ProcessedMessageItem;
   renderMessage?: (message: ConversationMessage) => ReactNode;
-  footerMessage?: ConversationMessage;
+  turnFooter?: AssistantTurnFooter;
   processingStartedAt?: string;
   showTurnEndStreamingCursor: boolean;
   suppressStreamingCursorMessageIds: Set<string>;
@@ -1529,7 +1529,7 @@ function renderMessageItem({
       withTurnEndStreamingCursor(
         withTurnActionFooter(
           renderedMessage,
-          footerMessage,
+          turnFooter,
           onForkFromMessage,
           onReverseFromMessage,
           onNavigateToForkSource,
@@ -1574,7 +1574,7 @@ function renderMessageItem({
     withTurnEndStreamingCursor(
       withTurnActionFooter(
         renderedGroup,
-        footerMessage,
+        turnFooter,
         onForkFromMessage,
         onReverseFromMessage,
         onNavigateToForkSource,
@@ -1588,22 +1588,24 @@ function renderMessageItem({
 
 function withTurnActionFooter(
   content: ReactNode,
-  footerMessage?: ConversationMessage,
+  turnFooter?: AssistantTurnFooter,
   onForkFromMessage?: (message: ConversationMessage) => void,
   onReverseFromMessage?: (message: ConversationMessage) => void,
   onNavigateToForkSource?: (fork: AgentSessionFork) => void,
   showForkSourceMarkers = true,
 ) {
-  if (!footerMessage) {
+  if (!turnFooter) {
     return content;
   }
-  const forkSource = forkSourceFromMessage(footerMessage);
+  const { message, copyContent } = turnFooter;
+  const forkSource = forkSourceFromMessage(message);
   return (
     <>
       {content}
       <div className={styles.turnActionRow}>
         <MessageActionFooter
-          message={footerMessage}
+          message={message}
+          copyContent={copyContent}
           placement="turn"
           onForkFromMessage={onForkFromMessage}
           onReverseFromMessage={onReverseFromMessage}
@@ -2190,8 +2192,13 @@ type TimelineBlock =
     };
 
 interface AssistantTurnFooters {
-  footerByItemId: Map<string, ConversationMessage>;
+  footerByItemId: Map<string, AssistantTurnFooter>;
   processingStartByItemId: Map<string, string>;
+}
+
+interface AssistantTurnFooter {
+  message: ConversationMessage;
+  copyContent: string;
 }
 
 interface TurnEndStreamingCursor {
@@ -2629,7 +2636,7 @@ function collectAssistantTurnFooters(
   turnRuntimeActive: boolean,
   turnFirstTokenAtMs: number | null,
 ): AssistantTurnFooters {
-  const footerByItemId = new Map<string, ConversationMessage>();
+  const footerByItemId = new Map<string, AssistantTurnFooter>();
   const processingStartByItemId = new Map<string, string>();
 
   turns.forEach((turn, turnIndex) => {
@@ -2650,11 +2657,16 @@ function collectAssistantTurnFooters(
       }
       return;
     }
-    const assistantMessage = assistantMessages.at(-1);
-    if (!assistantMessage) {
+    const message = assistantMessages.at(-1);
+    if (!message) {
       return;
     }
-    footerByItemId.set(lastItemId, assistantMessage);
+    footerByItemId.set(lastItemId, {
+      message,
+      copyContent: assistantMessages
+        .map((assistantMessage) => normalizeMessageContent(assistantMessage.content))
+        .join("\n\n"),
+    });
   });
 
   return { footerByItemId, processingStartByItemId };

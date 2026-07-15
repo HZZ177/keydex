@@ -1134,12 +1134,15 @@ describe("MessageList", () => {
     expect(readMedia).not.toHaveBeenCalled();
   });
 
-  it("shows assistant copy row only on the last assistant text in a turn", () => {
+  it("copies every assistant text segment from the completed turn", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
     render(
       <MessageList
         messages={[
           message("m1", "user", "开始"),
           message("m2", "assistant", "第一段"),
+          message("m-thinking", "thinking", "中间思考"),
           message("m3", "assistant", "第二段"),
         ]}
       />,
@@ -1152,6 +1155,11 @@ describe("MessageList", () => {
     expect(turnIndexFor(assistantFooter)).toBe(turnIndexFor(textMessages[2]));
     expect(within(assistantFooter).getByRole("button", { name: "复制消息" })).not.toBeNull();
     expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(2);
+
+    fireEvent.click(within(assistantFooter).getByRole("button", { name: "复制消息" }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("第一段\n\n第二段");
+    });
   });
 
   it("shows the assistant copy row at the bottom of a trailing tool activity group", () => {
