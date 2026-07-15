@@ -78,45 +78,26 @@
 }
 
 :global(.keydex-markdown a[data-keydex-web-source-citation="true"]) {
-  display: inline-flex;
-  min-width: 16px;
-  height: 14px;
-  box-sizing: border-box;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--color-border-3) 58%, transparent);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--surface-hover) 82%, var(--color-bg-elevated));
-  color: color-mix(in srgb, var(--color-text-primary) 62%, var(--color-text-secondary));
-  box-shadow: 0 1px 1px color-mix(in srgb, var(--color-text-primary) 7%, transparent);
-  font-size: 9px;
-  font-weight: 650;
-  line-height: 1;
-  padding: 0 3px;
+  display: inline;
+  color: var(--color-primary-6);
+  font-size: 0.78em;
+  font-weight: 500;
+  line-height: inherit;
+  padding: 0 1px;
   text-decoration: none;
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease,
-    box-shadow 120ms ease;
-  vertical-align: 0.1em;
+  transition: color 120ms ease;
+  vertical-align: 0.08em;
 }
 
 :global(.keydex-markdown a[data-keydex-web-source-citation="true"]:hover) {
-  border-color: color-mix(in srgb, var(--color-border-3) 76%, var(--color-border-default));
-  background: color-mix(in srgb, var(--surface-active) 72%, var(--surface-hover));
-  color: var(--color-text-primary);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+  color: var(--color-primary-7);
+  text-decoration: underline;
 }
 
 :global(.keydex-markdown a[data-keydex-web-source-citation="true"]:focus-visible) {
-  border-color: color-mix(in srgb, var(--color-border-3) 82%, var(--color-border-default));
-  background: color-mix(in srgb, var(--surface-active) 78%, var(--surface-hover));
-  color: var(--color-text-primary);
-  outline: none;
-  box-shadow:
-    0 1px 2px color-mix(in srgb, var(--color-text-primary) 10%, transparent),
-    0 0 0 2px color-mix(in srgb, var(--color-border-3) 24%, transparent);
+  color: var(--color-primary-7);
+  outline: 2px solid color-mix(in srgb, var(--color-primary-6) 32%, transparent);
+  outline-offset: 2px;
 }
 
 .webAnswerSources {

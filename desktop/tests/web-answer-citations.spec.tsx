@@ -40,6 +40,7 @@ describe("assistant web source citations", () => {
     expect(screen.getByRole("link", { name: "查看来源 2" })).not.toBeNull();
     const inlineCitations = screen.getAllByRole("link", { name: "查看来源 1" });
     expect(inlineCitations).toHaveLength(2);
+    expect(inlineCitations.every((citation) => citation.textContent === "[1]")).toBe(true);
     expect(inlineCitations.every((citation) => citation.getAttribute("title") === null)).toBe(true);
     expect(inlineCitations.every((citation) => citation.dataset.tooltipLabel === "查看对应来源")).toBe(true);
     const sources = screen.getByTestId("web-answer-sources");
