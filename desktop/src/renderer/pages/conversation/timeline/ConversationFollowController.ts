@@ -165,9 +165,12 @@ export class ConversationFollowController {
   applyScrollRequest(request: ConversationTimelineScrollRequest): void {
     this.assertActive();
     if (!this.element) return;
-    if (request.reason === "follow-bottom" && !this.shouldFollowTail()) return;
+    if (
+      isFollowBottomRequest(request.reason)
+      && (!this.shouldFollowTail() || this.element.hasAttribute(EXPANSION_SCROLL_LOCK_ATTR))
+    ) return;
     this.writeScrollTop(request.scrollTop);
-    if (request.reason === "follow-bottom" && this.mode === "bootstrapping-tail" && this.tailReady) {
+    if (isFollowBottomRequest(request.reason) && this.mode === "bootstrapping-tail" && this.tailReady) {
       this.scheduleBootstrapCommit();
     }
   }
@@ -416,6 +419,10 @@ export class ConversationFollowController {
   private assertActive(): void {
     if (this.disposed) throw new Error("ConversationFollowController is destroyed");
   }
+}
+
+function isFollowBottomRequest(reason: ConversationTimelineScrollRequest["reason"]): boolean {
+  return reason === "follow-bottom" || reason === "follow-bottom-geometry";
 }
 
 function bottomScrollTop(element: HTMLElement): number {

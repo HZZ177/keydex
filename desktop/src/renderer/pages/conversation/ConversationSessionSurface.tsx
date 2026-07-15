@@ -36,6 +36,7 @@ import {
 } from "@/renderer/utils/sessionMarkdownExport";
 import type {
   AgentActionEnvelope,
+  AgentChatMessage,
   AgentSession,
   AgentSessionFork,
   PendingInputMode,
@@ -765,14 +766,14 @@ export function ConversationSessionSurface({
         onQuickSendConsumed?.();
         return;
       }
-      if (agentMessages.length === 0) {
+      if (!hasQuickSendUserMessage(agentMessages, pending)) {
         controller.dispatch({
           type: "message/addUser",
           sessionId: threadId,
           content: pending.message,
           contextItems: pending.contextItems,
           attachments: pending.attachments,
-          id: `${pending.id}:user`,
+          id: quickSendUserMessageId(pending),
         });
         controller.dispatch({ type: "runtime/setState", sessionId: threadId, runtimeState: "running" });
       }
@@ -781,7 +782,7 @@ export function ConversationSessionSurface({
     if (loading) {
       return;
     }
-    if (agentMessages.some(isPersistedAgentMessage)) {
+    if (agentMessages.some((message) => isPersistedQuickSendUserMessage(message, pending))) {
       pendingQuickSendRef.current = null;
       quickSendConsumedRef.current = quickSendId;
       onQuickSendConsumed?.();
@@ -1141,6 +1142,23 @@ function isTaskAlreadyOpenError(reason: unknown): boolean {
   return typeof message === "string" && message.includes("task_already_open");
 }
 
-function isPersistedAgentMessage(message: { id: string; messageEventId?: string }): boolean {
-  return Boolean(message.messageEventId || message.id.startsWith("hist:"));
+function hasQuickSendUserMessage(messages: AgentChatMessage[], pending: QueuedQuickChatSend): boolean {
+  return messages.some((message) => (
+    message.role === "user"
+    && (message.id === quickSendUserMessageId(pending) || message.content === pending.message)
+  ));
+}
+
+function isPersistedQuickSendUserMessage(
+  message: AgentChatMessage,
+  pending: QueuedQuickChatSend,
+): boolean {
+  if (message.role !== "user" || message.content !== pending.message) {
+    return false;
+  }
+  return message.id !== quickSendUserMessageId(pending);
+}
+
+function quickSendUserMessageId(pending: QueuedQuickChatSend): string {
+  return `${pending.id}:user`;
 }

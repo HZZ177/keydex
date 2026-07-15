@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { StreamingTailParser, StreamingTailView } from "@/renderer/markdownRuntime/streaming";
+import {
+  StreamingTailParser,
+  StreamingTailView,
+  type StreamingTailGeometryCommit,
+} from "@/renderer/markdownRuntime/streaming";
 import {
   SemanticMarkdownRendererRegistry,
   createCodeBlockRenderer,
@@ -17,6 +21,94 @@ const parserOptions = {
 };
 
 describe("StreamingTailView", () => {
+  it("preserves measured tail geometry across revisions and emits only real height deltas", () => {
+    let resizeCallback: ResizeObserverCallback | null = null;
+    class TestResizeObserver implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    const parser = new StreamingTailParser(parserOptions);
+    const root = document.createElement("div");
+    const commits: StreamingTailGeometryCommit[] = [];
+    const view = new StreamingTailView(root, { onGeometryCommit: (commit) => commits.push(commit) });
+
+    try {
+      const first = parser.update({ source: "Tail", revision: "geometry-1", epoch: 1 }).snapshot;
+      view.publish(first);
+      const firstBlock = view.getBlockElement(first.blocks[0].id)!;
+      (resizeCallback as ResizeObserverCallback | null)?.(
+        [resizeEntry(firstBlock, 120)],
+        {} as ResizeObserver,
+      );
+      expect(root.querySelector<HTMLElement>('[data-markdown-document-canvas="true"]')?.style.height).toBe("120px");
+      expect(commits.at(-1)).toMatchObject({
+        revision: "geometry-1",
+        phase: "measurement",
+        height: 120,
+      });
+
+      const commitsBeforeAppend = commits.length;
+      const second = parser.update({ source: "Tail grows", revision: "geometry-2", epoch: 1 }).snapshot;
+      view.publish(second);
+      expect(root.querySelector<HTMLElement>('[data-markdown-document-canvas="true"]')?.style.height).toBe("120px");
+      expect(commits).toHaveLength(commitsBeforeAppend);
+
+      const secondBlock = view.getBlockElement(second.blocks[0].id)!;
+      (resizeCallback as ResizeObserverCallback | null)?.(
+        [resizeEntry(secondBlock, 150)],
+        {} as ResizeObserver,
+      );
+      expect(commits.at(-1)).toMatchObject({
+        revision: "geometry-2",
+        phase: "measurement",
+        previousHeight: 120,
+        height: 150,
+        delta: 30,
+      });
+    } finally {
+      view.destroy();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reports the in-flow streaming cursor height when typing catches up and falls behind", () => {
+    const parser = new StreamingTailParser(parserOptions);
+    const root = document.createElement("div");
+    vi.spyOn(root, "getBoundingClientRect").mockImplementation(() => {
+      const cursor = root.querySelector<HTMLElement>('[data-streaming-markdown-cursor="true"]');
+      return testRect(cursor && !cursor.hidden && cursor.style.display !== "none" ? 114 : 100);
+    });
+    const commits: StreamingTailGeometryCommit[] = [];
+    const view = new StreamingTailView(root, { onGeometryCommit: (commit) => commits.push(commit) });
+    const snapshot = parser.update({ source: "Tail", revision: "cursor-1", epoch: 1 }).snapshot;
+
+    try {
+      view.publish(snapshot, { showCursor: false });
+      commits.length = 0;
+      view.updateDisplay({ showCursor: true });
+      expect(commits.at(-1)).toMatchObject({
+        phase: "cursor",
+        previousHeight: 100,
+        height: 114,
+        delta: 14,
+      });
+      view.updateDisplay({ showCursor: false });
+      expect(commits.at(-1)).toMatchObject({
+        phase: "cursor",
+        previousHeight: 114,
+        height: 100,
+        delta: -14,
+      });
+    } finally {
+      view.destroy();
+    }
+  });
+
   it("keeps committed prefix DOM identity and patches only mutable/new tail blocks", () => {
     const parser = new StreamingTailParser(parserOptions);
     const root = document.createElement("div");
@@ -265,6 +357,40 @@ describe("StreamingTailView", () => {
     expect(() => view.publish(message)).toThrow(/destroyed/u);
   });
 });
+
+function resizeEntry(target: Element, blockSize: number): ResizeObserverEntry {
+  return {
+    target,
+    borderBoxSize: [{ blockSize, inlineSize: 800 }],
+    contentBoxSize: [{ blockSize, inlineSize: 800 }],
+    devicePixelContentBoxSize: [{ blockSize, inlineSize: 800 }],
+    contentRect: {
+      x: 0,
+      y: 0,
+      top: 0,
+      right: 800,
+      bottom: blockSize,
+      left: 0,
+      width: 800,
+      height: blockSize,
+      toJSON: () => ({}),
+    },
+  };
+}
+
+function testRect(height: number): DOMRect {
+  return {
+    x: 0,
+    y: 0,
+    top: 0,
+    right: 800,
+    bottom: height,
+    left: 0,
+    width: 800,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
 
 function result(block: MarkdownSnapshotBlock): MarkdownCodeHighlightResult {
   return {

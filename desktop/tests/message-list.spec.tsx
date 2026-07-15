@@ -1281,6 +1281,32 @@ describe("MessageList", () => {
     }
   });
 
+  it("keeps the live turn footer mounted when output switches from a tool to assistant text", () => {
+    const user = message("m1", "user", "读取并总结");
+    const runningTool = { ...toolMessage("t1", "read_file", { path: "README.md" }), status: "running" as const };
+    const { rerender } = render(
+      <MessageList messages={[user, runningTool]} isProcessing />,
+    );
+    const initialFooter = screen.getByTestId("message-turn-footer");
+    const initialFooterUnit = initialFooter.closest<HTMLElement>("[data-conversation-unit-id]");
+
+    rerender(
+      <MessageList
+        messages={[
+          user,
+          { ...runningTool, status: "completed" as const },
+          { ...message("m2", "assistant", "总结内容"), status: "running" as const },
+        ]}
+        isProcessing
+      />,
+    );
+
+    const updatedFooter = screen.getByTestId("message-turn-footer");
+    expect(updatedFooter).toBe(initialFooter);
+    expect(updatedFooter.closest<HTMLElement>("[data-conversation-unit-id]")?.dataset.conversationUnitId)
+      .toBe(initialFooterUnit?.dataset.conversationUnitId);
+  });
+
   it("keeps the frozen turn duration first and separates the hover-only footer details", () => {
     const assistant = {
       ...message("m2", "assistant", "处理完成"),
@@ -1991,7 +2017,7 @@ describe("MessageList", () => {
       expect(screen.queryByTestId("conversation-scroll-rail")).toBeNull();
       expect(scroller.scrollTop).toBe(timelineBottom(scroller));
       expect(scroller.querySelector(`[data-turn-index="${turnCount - 1}"]`)).not.toBeNull();
-      expect(scroller.querySelector(`[data-conversation-unit-id="unit:footer:history-assistant-${turnCount - 1}"]`))
+      expect(scroller.querySelector(`[data-conversation-unit-id="unit:footer:turn:history-user-${turnCount - 1}"]`))
         .not.toBeNull();
     } finally {
       restorePrototypeDescriptor("scrollHeight", scrollHeightDescriptor);

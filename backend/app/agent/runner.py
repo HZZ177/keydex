@@ -24,6 +24,7 @@ from backend.app.agent.system_prompt import (
     PLAN_PROGRESS_PROMPT,
     build_file_edit_prompt_section,
     build_web_source_prompt_section,
+    build_workspace_context_prompt,
 )
 from backend.app.agent.tool_capabilities import (
     ToolCapability,
@@ -193,6 +194,29 @@ class AgentRunner:
             system_prompt if system_prompt is not None else self.default_system_prompt
         )
         prompt = resolved_system_prompt.strip() if resolved_system_prompt else ""
+        if workspace_tools_enabled:
+            raw_workspace_roots = tool_context.metadata.get("workspace_roots")
+            workspace_roots = (
+                [str(root) for root in raw_workspace_roots]
+                if isinstance(raw_workspace_roots, (list, tuple))
+                else [str(tool_context.workspace_root)]
+            )
+            project_root = str(
+                tool_context.metadata.get("workspace_primary_root")
+                or (workspace_roots[0] if workspace_roots else tool_context.workspace_root)
+            )
+            file_access_mode = str(
+                tool_context.metadata.get("file_access_mode")
+                or getattr(command_settings, "file_access_mode", "")
+            ).strip()
+            workspace_prompt = build_workspace_context_prompt(
+                workspace_name=str(tool_context.metadata.get("workspace_name") or ""),
+                project_root=project_root,
+                cwd=str(tool_context.workspace_root),
+                workspace_roots=workspace_roots,
+                full_access=file_access_mode == "full_access",
+            )
+            prompt = f"{prompt}\n\n{workspace_prompt}" if prompt else workspace_prompt
         available_tool_names = {
             str(getattr(tool, "name", "") or "")
             for tool in tools

@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactElement } from "react";
+import { useLayoutEffect, type ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, RuntimeBridge, WsConnectionStatus } from "@/runtime";
@@ -8,7 +8,7 @@ import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/l
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { ConversationPage } from "@/renderer/pages/conversation";
 import { clearQuickChatSendQueue, queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
-import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider";
+import { AgentSessionProvider, useAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
@@ -2031,7 +2031,34 @@ describe("ConversationPage", () => {
     expect(screen.getByText("冷启动快速对话")).not.toBeNull();
   });
 
-  it("does not resend the queued quick chat message when history already has messages", async () => {
+  it("keeps the queued user message when a non-user turn event arrives first", async () => {
+    const { runtime, channel } = fakeRuntime({
+      history: [historyMessage("system", "任务上下文已创建", { messageEventId: "evt-task-ready" })],
+    });
+    const queued = queueQuickChatSend({
+      sessionId: "ses-1",
+      model: { providerId: "provider-1", model: "deepseek-coder" },
+      message: "先显示这条用户消息",
+    });
+
+    render(
+      <AgentSessionProvider runtime={runtime}>
+        <PreviewProvider>
+          <ConversationWithPreloadedTurn runtime={runtime} quickSendId={queued.id} />
+        </PreviewProvider>
+      </AgentSessionProvider>,
+    );
+
+    await waitFor(() => {
+      expect(channel.chat).toHaveBeenCalledWith(expect.objectContaining({
+        session_id: "ses-1",
+        message: "先显示这条用户消息",
+      }));
+    });
+    expect(screen.getByText("先显示这条用户消息")).not.toBeNull();
+  });
+
+  it("does not resend the queued quick chat message when history already has the matching user message", async () => {
     const { runtime, channel } = fakeRuntime({
       history: [historyMessage("user", "从快速对话发送")],
     });
@@ -3210,6 +3237,31 @@ describe("ConversationPage", () => {
 
 function renderConversation(ui: ReactElement) {
   return render(<PreviewProvider>{ui}</PreviewProvider>);
+}
+
+function ConversationWithPreloadedTurn({ runtime, quickSendId }: { runtime: RuntimeBridge; quickSendId: string }) {
+  const { dispatch } = useAgentSessionRuntime();
+  useLayoutEffect(() => {
+    dispatch({
+      type: "event/receive",
+      event: {
+        action: "turn_started",
+        data: {
+          session_id: "ses-1",
+          turn_index: 1,
+          source: "thread_task",
+        },
+      },
+    });
+  }, [dispatch]);
+  return (
+    <ConversationPage
+      threadId="ses-1"
+      runtime={runtime}
+      initialModel={{ providerId: "provider-1", model: "deepseek-coder" }}
+      quickSendId={quickSendId}
+    />
+  );
 }
 
 function renderConversationWithNotifications(ui: ReactElement) {

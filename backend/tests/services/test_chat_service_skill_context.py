@@ -123,6 +123,8 @@ def test_tool_context_uses_validated_keydex_snapshot(tmp_path: Path) -> None:
     assert tool_context.metadata["keydex_snapshot"] is snapshot
     assert tool_context.metadata["skill_catalog"] is snapshot.skill_catalog
     assert tool_context.metadata["keydex_mode"] == "workspace_effective"
+    assert tool_context.metadata["workspace_name"] == "repo"
+    assert tool_context.metadata["workspace_primary_root"] == str(workspace_root.resolve())
     assert tool_context.metadata["enable_workspace_tools"] is True
     assert tool_context.metadata["enable_skill_tools"] is True
 

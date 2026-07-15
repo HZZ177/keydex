@@ -224,7 +224,10 @@ function footerUnit(
   businessTurnIndex: number | null,
 ): ConversationRenderUnit {
   return Object.freeze({
-    id: `unit:footer:${message.id}`,
+    // The active footer must survive reasoning/tool/assistant segment changes
+    // within the same turn. Keying it by the current tail message remounts the
+    // footer while streaming and makes the bottom anchor jump between frames.
+    id: `unit:footer:${turnId}`,
     kind: "footer",
     owner: "react",
     turnId,

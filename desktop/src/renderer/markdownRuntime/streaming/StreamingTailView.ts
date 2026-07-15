@@ -12,12 +12,21 @@ import {
 } from "../renderers";
 import { DocumentViewRuntime } from "../view/DocumentViewRuntime";
 
+export interface StreamingTailGeometryCommit {
+  readonly revision: string;
+  readonly phase: "snapshot" | "measurement" | "cursor";
+  readonly previousHeight: number;
+  readonly height: number;
+  readonly delta: number;
+}
+
 export interface StreamingTailViewOptions {
   readonly registry?: SemanticMarkdownRendererRegistry;
   readonly interactions?: MarkdownRendererInteractionHandlers;
   readonly resourceLifecycle?: MarkdownRendererResourceLifecycle;
   readonly cursorClassName?: string;
   readonly cursorDotClassName?: string;
+  readonly onGeometryCommit?: (commit: StreamingTailGeometryCommit) => void;
 }
 
 export interface StreamingTailViewPublishOptions {
@@ -83,6 +92,7 @@ export class StreamingTailView {
   private measureTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly resizeObserver: ResizeObserver | null;
   private readonly observedBlocks = new Set<HTMLElement>();
+  private readonly onGeometryCommit?: (commit: StreamingTailGeometryCommit) => void;
   private disposed = false;
 
   constructor(readonly root: HTMLElement, options: StreamingTailViewOptions = {}) {
@@ -93,13 +103,12 @@ export class StreamingTailView {
       resourceLifecycle: options.resourceLifecycle,
       viewport: { defaultOverscanPx: 1400, maxPinnedBlocks: 128 },
     });
+    this.onGeometryCommit = options.onGeometryCommit;
     this.scrollElement = root.closest<HTMLElement>('[data-message-list-scroll="true"]');
     this.scrollElement?.addEventListener("scroll", this.handleScroll, { passive: true });
     this.resizeObserver = typeof ResizeObserver === "undefined"
       ? null
-      : new ResizeObserver(() => {
-          if (this.snapshot) this.scheduleMeasurement(this.snapshot.revision);
-        });
+      : new ResizeObserver((entries) => this.commitResizeMeasurements(entries));
     this.cursor = createStreamingCursorElement(root.ownerDocument, options);
     root.append(this.cursor);
     root.dataset.streamingMarkdownTailView = "true";
@@ -146,7 +155,14 @@ export class StreamingTailView {
         this.measuredHeights.delete(block.id);
       }
     });
-    const patch = this.renderer.publish(snapshot, heights, this.viewportInput());
+    const previousHeight = this.currentTotalHeight();
+    const patch = this.renderer.publish(
+      snapshot,
+      heights,
+      this.viewportInput(),
+      { preserveRevisionGeometry: true },
+    );
+    this.publishGeometryCommit(snapshot.revision, "snapshot", previousHeight, patch.viewport.totalHeight);
     this.syncMeasurementObservers();
     const patchIndices = patch.viewport.items
       .map((item) => item.index)
@@ -212,6 +228,11 @@ export class StreamingTailView {
   private updateCursor(options: StreamingTailViewPublishOptions): string | null {
     const snapshot = this.snapshot;
     if (!snapshot) return null;
+    const shouldShowCursor = options.showCursor !== false;
+    const cursorVisibilityChanged = shouldShowCursor === this.cursor.hidden;
+    const previousHeight = cursorVisibilityChanged && this.onGeometryCommit
+      ? this.root.getBoundingClientRect().height
+      : 0;
     const displayCursor = Math.max(0, Math.min(snapshot.source_characters, options.displayCursor ?? snapshot.source_characters));
     const block = blockAtOrBefore(snapshot.blocks, displayCursor);
     // DocumentViewRuntime positions Markdown blocks absolutely inside its
@@ -223,7 +244,15 @@ export class StreamingTailView {
     const activeFenceBlockId = options.activeFenceBlockId === undefined
       ? inferredActiveFence(snapshot)
       : options.activeFenceBlockId;
-    setStreamingCursorVisible(this.cursor, options.showCursor !== false);
+    setStreamingCursorVisible(this.cursor, shouldShowCursor);
+    if (cursorVisibilityChanged && this.onGeometryCommit) {
+      this.publishGeometryCommit(
+        snapshot.revision,
+        "cursor",
+        previousHeight,
+        this.root.getBoundingClientRect().height,
+      );
+    }
     this.cursor.dataset.streamingMarkdownDisplayCursor = String(displayCursor);
     if (block) this.cursor.dataset.streamingMarkdownCursorBlockId = block.id;
     else delete this.cursor.dataset.streamingMarkdownCursorBlockId;
@@ -274,32 +303,92 @@ export class StreamingTailView {
         const block = this.snapshot?.blocks.find((candidate) => candidate.id === blockId);
         const element = this.renderer.getBlockElement(blockId);
         const borderBoxHeight = element?.getBoundingClientRect().height ?? 0;
-        const height = block && borderBoxHeight > 0
-          ? measuredMarkdownBlockOccupiedHeight(
-              borderBoxHeight,
-              block.index,
-              this.snapshot?.blocks.length ?? 0,
-            )
-          : 0;
-        const measured = this.measuredHeights.get(blockId);
-        if (!block
-          || !Number.isFinite(height)
-          || height <= 0
-          || measured?.height === height
-            && measured.contentHash === block.content_hash
-            && measured.logicalEnd === block.logical_end) return [];
-        this.measuredHeights.set(blockId, {
-          height,
-          contentHash: block.content_hash,
-          logicalEnd: block.logical_end,
-        });
-        return [{ index: block.index, height, kind: "measured" as const }];
+        return this.measurementUpdate(block, borderBoxHeight);
       });
-      if (updates.length) {
-        this.renderer.updateMeasuredHeights(updates, revision);
-        this.syncMeasurementObservers();
-      }
+      this.commitMeasuredHeights(updates, revision);
     });
+  }
+
+  private commitResizeMeasurements(entries: readonly ResizeObserverEntry[]): void {
+    const snapshot = this.snapshot;
+    if (this.disposed || !snapshot) return;
+    const blocksById = new Map(snapshot.blocks.map((block) => [block.id, block]));
+    const updatesByIndex = new Map<number, {
+      readonly index: number;
+      readonly height: number;
+      readonly kind: "measured";
+    }>();
+    for (const entry of entries) {
+      const element = entry.target as HTMLElement;
+      const blockId = element.dataset.markdownBlockId;
+      const block = blockId ? blocksById.get(blockId) : undefined;
+      if (!block || this.renderer.getBlockElement(block.id) !== element) continue;
+      const updates = this.measurementUpdate(block, resizeObserverBorderBoxHeight(entry));
+      if (updates[0]) updatesByIndex.set(block.index, updates[0]);
+    }
+    this.commitMeasuredHeights([...updatesByIndex.values()], snapshot.revision);
+  }
+
+  private measurementUpdate(
+    block: MarkdownSnapshotBlock | undefined,
+    borderBoxHeight: number,
+  ): Array<{ index: number; height: number; kind: "measured" }> {
+    const snapshot = this.snapshot;
+    if (!snapshot || !block || !Number.isFinite(borderBoxHeight) || borderBoxHeight <= 0) return [];
+    const height = measuredMarkdownBlockOccupiedHeight(
+      borderBoxHeight,
+      block.index,
+      snapshot.blocks.length,
+    );
+    const measured = this.measuredHeights.get(block.id);
+    if (
+      !Number.isFinite(height)
+      || height <= 0
+      || measured
+        && Math.abs(measured.height - height) <= 0.5
+        && measured.contentHash === block.content_hash
+        && measured.logicalEnd === block.logical_end
+    ) return [];
+    this.measuredHeights.set(block.id, {
+      height,
+      contentHash: block.content_hash,
+      logicalEnd: block.logical_end,
+    });
+    return [{ index: block.index, height, kind: "measured" }];
+  }
+
+  private commitMeasuredHeights(
+    updates: readonly { index: number; height: number; kind: "measured" }[],
+    revision: string,
+  ): void {
+    if (!updates.length || this.disposed || this.snapshot?.revision !== revision) return;
+    const previousHeight = this.currentTotalHeight();
+    const patch = this.renderer.updateMeasuredHeights(updates, revision);
+    if (patch) {
+      this.publishGeometryCommit(revision, "measurement", previousHeight, patch.viewport.totalHeight);
+      this.syncMeasurementObservers();
+    }
+  }
+
+  private currentTotalHeight(): number {
+    return this.renderer.getHeightIndex()?.totalHeight ?? 0;
+  }
+
+  private publishGeometryCommit(
+    revision: string,
+    phase: StreamingTailGeometryCommit["phase"],
+    previousHeight: number,
+    height: number,
+  ): void {
+    const delta = height - previousHeight;
+    if (!Number.isFinite(delta) || Math.abs(delta) <= 0.5) return;
+    this.onGeometryCommit?.(Object.freeze({
+      revision,
+      phase,
+      previousHeight,
+      height,
+      delta,
+    }));
   }
 
   private syncMeasurementObservers(): void {
@@ -334,6 +423,14 @@ export class StreamingTailView {
   private assertActive(): void {
     if (this.disposed) throw new Error("StreamingTailView is destroyed");
   }
+}
+
+function resizeObserverBorderBoxHeight(entry: ResizeObserverEntry): number {
+  const size = entry.borderBoxSize[0];
+  const blockSize = size?.blockSize;
+  if (typeof blockSize === "number" && Number.isFinite(blockSize) && blockSize > 0) return blockSize;
+  const height = (entry.target as HTMLElement).getBoundingClientRect().height;
+  return Number.isFinite(height) ? height : 0;
 }
 
 function reusableStablePrefixIds(

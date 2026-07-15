@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConversationRenderUnit } from "@/renderer/pages/conversation/timeline/ConversationRenderUnit";
+import { dispatchConversationGeometryCommit } from "@/renderer/pages/conversation/timeline/ConversationGeometryCommit";
 import { ConversationNativeTimelineSurface } from "@/renderer/pages/conversation/timeline/ConversationNativeTimelineSurface";
 import type { ConversationTimelineSurfaceHandle } from "@/renderer/pages/conversation/timeline/ConversationTimelineSurface";
 
@@ -96,6 +97,159 @@ describe("ConversationNativeTimelineSurface", () => {
 
     expect(scrollRequests).toHaveBeenLastCalledWith({ scrollTop: 800, reason: "follow-bottom" });
     expect(directScrollWrites).toEqual([]);
+  });
+
+  it("coalesces streamed content resizes into one follow-bottom correction per frame", () => {
+    let resizeCallback: ResizeObserverCallback | null = null;
+    let scheduledFrame: FrameRequestCallback | null = null;
+    class TestResizeObserver implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    const animationFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      scheduledFrame = callback;
+      return 1;
+    });
+    const scrollRequests = vi.fn();
+    let scrollHeight = 1_000;
+
+    try {
+      render(
+        <ConversationNativeTimelineSurface
+          units={[streamingUnit("assistant-1", "streaming")]}
+          renderUnit={(entry) => <span>{entry.renderVersion}</span>}
+          followBottom
+          onScrollRequest={scrollRequests}
+          scrollerRef={(element) => {
+            if (!element) return;
+            Object.defineProperties(element, {
+              clientHeight: { configurable: true, get: () => 200 },
+              scrollHeight: { configurable: true, get: () => scrollHeight },
+              scrollTop: { configurable: true, writable: true, value: 800 },
+            });
+          }}
+        />,
+      );
+      const content = screen.getByTestId("message-list-scroll")
+        .querySelector<HTMLElement>("[data-conversation-native-timeline-content]")!;
+      vi.spyOn(content, "getBoundingClientRect").mockImplementation(() => rect(0, scrollHeight));
+      scrollRequests.mockClear();
+      animationFrame.mockClear();
+      scrollHeight = 1_040;
+
+      act(() => {
+        resizeCallback?.([], {} as ResizeObserver);
+        resizeCallback?.([], {} as ResizeObserver);
+      });
+
+      expect(scrollRequests).not.toHaveBeenCalled();
+      expect(animationFrame).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        scheduledFrame?.(0);
+      });
+
+      expect(scrollRequests).toHaveBeenLastCalledWith({ scrollTop: 840, reason: "follow-bottom" });
+      expect(scrollRequests).toHaveBeenCalledTimes(1);
+    } finally {
+      animationFrame.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("targets the exact native bottom for Markdown geometry before the ResizeObserver fallback frame", () => {
+    const scrollRequests = vi.fn();
+    let scrollTop = 800;
+    let scrollHeight = 1_040;
+    const { rerender } = render(
+      <ConversationNativeTimelineSurface
+        units={[streamingUnit("assistant-1", "streaming")]}
+        renderUnit={(entry) => <span>{entry.renderVersion}</span>}
+        followBottom
+        onScrollRequest={scrollRequests}
+        scrollerRef={(element) => {
+          if (!element) return;
+          Object.defineProperties(element, {
+            clientHeight: { configurable: true, value: 200 },
+            scrollHeight: { configurable: true, get: () => scrollHeight },
+            scrollTop: {
+              configurable: true,
+              get: () => scrollTop,
+              set: (value: number) => {
+                scrollTop = value;
+              },
+            },
+          });
+        }}
+      />,
+    );
+    const root = screen.getByTestId("message-list-scroll");
+    const source = root.querySelector<HTMLElement>("[data-conversation-unit-id]")!;
+    scrollRequests.mockClear();
+
+    act(() => {
+      dispatchConversationGeometryCommit(source, {
+        messageId: "assistant-1",
+        revision: "geometry-2",
+        phase: "measurement",
+        previousHeight: 120,
+        height: 160,
+        delta: 40,
+      });
+    });
+
+    expect(scrollRequests).toHaveBeenCalledTimes(1);
+    expect(scrollRequests).toHaveBeenLastCalledWith({
+      scrollTop: 840,
+      reason: "follow-bottom-geometry",
+    });
+
+    // Browser range clamping happens as soon as scrollHeight shrinks. The
+    // geometry handler must keep that new bottom instead of subtracting the
+    // same delta a second time (809 - 31 = 778).
+    scrollHeight = 1_009;
+    scrollTop = 809;
+    scrollRequests.mockClear();
+    act(() => {
+      dispatchConversationGeometryCommit(source, {
+        messageId: "assistant-1",
+        revision: "geometry-shrink",
+        phase: "measurement",
+        previousHeight: 160,
+        height: 129,
+        delta: -31,
+      });
+    });
+    expect(scrollRequests).toHaveBeenLastCalledWith({
+      scrollTop: 809,
+      reason: "follow-bottom-geometry",
+    });
+
+    rerender(
+      <ConversationNativeTimelineSurface
+        units={[streamingUnit("assistant-1", "streaming-more")]}
+        renderUnit={(entry) => <span>{entry.renderVersion}</span>}
+        followBottom={false}
+        onScrollRequest={scrollRequests}
+      />,
+    );
+    scrollRequests.mockClear();
+    act(() => {
+      dispatchConversationGeometryCommit(source, {
+        messageId: "assistant-1",
+        revision: "geometry-3",
+        phase: "measurement",
+        previousHeight: 160,
+        height: 200,
+        delta: 40,
+      });
+    });
+    expect(scrollRequests).not.toHaveBeenCalled();
   });
 });
 

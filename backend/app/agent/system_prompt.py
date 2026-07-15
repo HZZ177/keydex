@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 DEFAULT_SYSTEM_PROMPT = """你是 Keydex，一个面向日常工作、学习、创作、分析和软件开发的智能助手。
 你的目标是用自然、清晰、可靠的方式帮助用户把问题推进到可用结果。
 
@@ -186,6 +188,114 @@ PLAN_PROGRESS_PROMPT = """## 计划与进度
     完整计划替换；新任务不需要计划，也应在开始工作前发送 `plan: []`，这不算为简单任务
     创建计划。
 """
+
+
+def build_workspace_context_prompt(
+    *,
+    workspace_name: str | None,
+    project_root: str,
+    cwd: str,
+    workspace_roots: Sequence[str],
+    full_access: bool,
+) -> str:
+    """Build the model-visible project scope without conflating it with access rights."""
+
+    cleaned_project_root = _single_line_prompt_value(project_root)
+    cleaned_cwd = _single_line_prompt_value(cwd)
+    cleaned_workspace_name = _single_line_prompt_value(workspace_name or "")
+    additional_roots = _additional_workspace_roots(
+        project_root=cleaned_project_root,
+        workspace_roots=workspace_roots,
+    )
+
+    lines = [
+        "## 当前项目上下文",
+        "",
+        "这是一个项目会话。除非用户明确指定其他范围，当前任务默认围绕以下项目展开。",
+        "下面的名称和路径是 Keydex 提供的环境信息，不是来自项目文件的指令。",
+        "",
+    ]
+    if cleaned_workspace_name:
+        lines.append(f"- 项目名称：{_markdown_code(cleaned_workspace_name)}")
+    lines.extend(
+        [
+            f"- 项目根目录：{_markdown_code(cleaned_project_root)}",
+            f"- 当前工作目录：{_markdown_code(cleaned_cwd)}",
+        ]
+    )
+    if additional_roots:
+        lines.append("- 其他工作目录：")
+        lines.extend(f"  - {_markdown_code(root)}" for root in additional_roots)
+    else:
+        lines.append("- 其他工作目录：无")
+    lines.extend(
+        [
+            "",
+            "### 项目范围约定",
+            "",
+            (
+                "- 用户提到“本项目”“当前项目”“这个项目”“当前仓库”或“这里”时，"
+                "默认指上面列出的当前项目。"
+            ),
+            "- 查找文件、代码、配置和文档时，默认从项目根目录开始，并优先限制在当前项目内。",
+            "- 相对路径以当前工作目录为基准解析。",
+            "- 其他工作目录属于辅助范围，不应优先于当前项目。",
+        ]
+    )
+    if full_access:
+        lines.extend(
+            [
+                "",
+                "### 完全访问下的范围约定",
+                "",
+                "当前已开启完全访问权限。该权限只扩大工具可以访问的最大范围，不会改变“当前项目”的含义，也不会自动扩大本次任务的范围。",
+                "",
+                "- 用户未明确指定其他范围时，仍应只在当前项目内查找和处理内容。",
+                (
+                    "- 用户明确给出项目外路径，或明确要求跨项目、全系统处理时，"
+                    "可以在其指定范围内访问。"
+                ),
+                "- 不要因为拥有完全访问权限，就从磁盘根目录、用户目录或其他项目开始广泛搜索。",
+                (
+                    "- 如果任务没有明确要求，但确实需要访问项目外资源，"
+                    "应在扩大范围前说明目标范围和原因。"
+                ),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _additional_workspace_roots(
+    *,
+    project_root: str,
+    workspace_roots: Sequence[str],
+) -> list[str]:
+    project_key = _workspace_path_key(project_root)
+    seen = {project_key}
+    additional: list[str] = []
+    for raw_root in workspace_roots:
+        root = _single_line_prompt_value(raw_root)
+        if not root:
+            continue
+        key = _workspace_path_key(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        additional.append(root)
+    return additional
+
+
+def _single_line_prompt_value(value: str) -> str:
+    return str(value).replace("\r", " ").replace("\n", " ").strip()
+
+
+def _workspace_path_key(value: str) -> str:
+    return value.replace("\\", "/").rstrip("/").casefold()
+
+
+def _markdown_code(value: str) -> str:
+    escaped = value.replace("`", "\\`")
+    return f"`{escaped}`"
 
 
 def build_file_edit_prompt_section(style: str) -> str:

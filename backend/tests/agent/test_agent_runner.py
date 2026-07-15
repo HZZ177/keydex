@@ -11,10 +11,10 @@ from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.factory import AgentFactory
 from backend.app.agent.middleware.duplicate_tool_call_guard import DuplicateToolCallGuardMiddleware
 from backend.app.agent.runtime_settings import AgentRuntimeSettings
-from backend.app.tools.factory import create_default_tool_registry
 from backend.app.model import ModelSettings
 from backend.app.storage import init_database
 from backend.app.tools import FunctionTool, ToolExecutionContext, ToolRegistry
+from backend.app.tools.factory import create_default_tool_registry
 
 
 class RecordingAgentFactory(AgentFactory):
@@ -54,7 +54,9 @@ class RecordingAgentFactory(AgentFactory):
         self.created_tool_counts.append(len(tools))
         self.created_tool_names.append([str(getattr(tool, "name", "")) for tool in tools])
         self.created_middleware.append(middleware)
-        self.created_system_prompts.append(str(getattr(system_prompt, "content", system_prompt) or ""))
+        self.created_system_prompts.append(
+            str(getattr(system_prompt, "content", system_prompt) or "")
+        )
         return super().create_agent(
             model=model,
             tools=tools,
@@ -344,6 +346,74 @@ def test_agent_runner_omits_plan_prompt_when_tools_are_disabled(tmp_path) -> Non
     prompt = factory.created_system_prompts[-1]
     assert prompt.startswith("自定义提示")
     assert "## 计划与进度" not in prompt
+    assert "## 当前项目上下文" not in prompt
+
+
+def test_agent_runner_injects_readable_workspace_context_without_full_access_guidance(
+    tmp_path,
+) -> None:
+    runner, factory = _runner(tmp_path, registry=_tool_registry())
+    project_root = tmp_path / "keydex"
+    cwd = project_root / "backend"
+    additional_root = tmp_path / "shared-docs"
+
+    runner.create_agent(
+        model="qwen-coder",
+        system_prompt="自定义提示",
+        tool_context=ToolExecutionContext(
+            session_id="ses_1",
+            user_id="user_1",
+            workspace_root=cwd,
+            turn_index=1,
+            trace_id="trace_1",
+            metadata={
+                "workspace_name": "Keydex",
+                "workspace_primary_root": str(project_root),
+                "workspace_roots": [str(project_root), str(additional_root)],
+                "file_access_mode": "workspace_trusted",
+            },
+        ),
+    )
+
+    prompt = factory.created_system_prompts[-1]
+    assert "## 当前项目上下文" in prompt
+    assert "项目名称：`Keydex`" in prompt
+    assert f"项目根目录：`{project_root}`" in prompt
+    assert f"当前工作目录：`{cwd}`" in prompt
+    assert f"  - `{additional_root}`" in prompt
+    assert "本项目" in prompt
+    assert "### 完全访问下的范围约定" not in prompt
+    assert "当前已开启完全访问权限" not in prompt
+
+
+def test_agent_runner_appends_scope_guidance_only_for_full_access(tmp_path) -> None:
+    runner, factory = _runner(tmp_path, registry=_tool_registry())
+    project_root = tmp_path / "keydex"
+
+    runner.create_agent(
+        model="qwen-coder",
+        system_prompt="自定义提示",
+        tool_context=ToolExecutionContext(
+            session_id="ses_1",
+            user_id="user_1",
+            workspace_root=project_root,
+            turn_index=1,
+            trace_id="trace_1",
+            metadata={
+                "workspace_name": "Keydex",
+                "workspace_primary_root": str(project_root),
+                "workspace_roots": [str(project_root)],
+                "file_access_mode": "full_access",
+            },
+        ),
+    )
+
+    prompt = factory.created_system_prompts[-1]
+    assert "## 当前项目上下文" in prompt
+    assert "### 完全访问下的范围约定" in prompt
+    assert "该权限只扩大工具可以访问的最大范围" in prompt
+    assert "不会改变“当前项目”的含义" in prompt
+    assert "不要因为拥有完全访问权限" in prompt
 
 
 def test_agent_runner_keeps_file_tools_visible_when_file_access_disabled(tmp_path) -> None:

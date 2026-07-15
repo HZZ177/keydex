@@ -1624,6 +1624,8 @@ class ChatService:
                     file_history_tracking=True,
                     metadata={
                         "workspace_id": workspace_context.workspace_id,
+                        "workspace_name": workspace_context.workspace.name,
+                        "workspace_primary_root": workspace_context.workspace.root_path,
                         "workspace_roots": [
                             str(root) for root in workspace_context.workspace_roots
                         ],

@@ -23,7 +23,12 @@ export interface ConversationTimelineRuntimeOptions {
 
 export interface ConversationTimelineScrollRequest {
   readonly scrollTop: number;
-  readonly reason: "follow-bottom" | "preserve-top" | "reveal-unit" | "restore-anchor";
+  readonly reason:
+    | "follow-bottom"
+    | "follow-bottom-geometry"
+    | "preserve-top"
+    | "reveal-unit"
+    | "restore-anchor";
 }
 
 export interface ConversationTimelinePatch {

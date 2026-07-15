@@ -28,6 +28,7 @@ import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { parseCanonicalMarkdownSnapshot } from "@/renderer/markdownRuntime/worker/parser";
 
 import { conversationMarkdownAdapter, conversationMarkdownRuntimeStore } from "./conversationMarkdownRuntime";
+import { dispatchConversationGeometryCommit } from "../timeline/ConversationGeometryCommit";
 import styles from "./MessageText.module.css";
 
 export interface ConversationMarkdownRuntimeHostProps {
@@ -210,6 +211,10 @@ function AsynchronousConversationMarkdownRuntimeHost(props: ConversationMarkdown
       resourceLifecycle: props.resourceLifecycle,
       cursorClassName: styles.streamingCursor,
       cursorDotClassName: styles.streamingDot,
+      onGeometryCommit: (commit) => dispatchConversationGeometryCommit(root, {
+        ...commit,
+        messageId: propsRef.current.message.id,
+      }),
     });
     const state: RuntimeState = {
       active: true,

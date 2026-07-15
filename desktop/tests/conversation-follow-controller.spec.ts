@@ -69,6 +69,7 @@ describe("ConversationFollowController", () => {
     harness.metrics.scrollHeight = 1_400;
     harness.controller.notifyContentMutation("token-append");
     harness.controller.notifyContentMutation("resource-resize");
+    harness.controller.applyScrollRequest({ scrollTop: 1_200, reason: "follow-bottom-geometry" });
     expect(harness.element.scrollTop).toBe(800);
     expect(harness.controller.snapshot().showScrollToBottom).toBe(true);
   });
@@ -139,6 +140,7 @@ describe("ConversationFollowController", () => {
     harness.element.setAttribute(EXPANSION_SCROLL_LOCK_ATTR, "true");
     harness.metrics.scrollHeight = 1_300;
     harness.controller.notifyContentMutation("resource-resize");
+    harness.controller.applyScrollRequest({ scrollTop: 1_100, reason: "follow-bottom-geometry" });
     expect(harness.element.scrollTop).toBe(800);
     expect(harness.controller.snapshot().reason).toContain("expansion-lock");
     harness.element.removeAttribute(EXPANSION_SCROLL_LOCK_ATTR);

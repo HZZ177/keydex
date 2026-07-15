@@ -14,6 +14,10 @@ import type {
   ConversationTimelineDiagnostics,
   ConversationTimelineScrollRequest,
 } from "./ConversationTimelineRuntime";
+import {
+  CONVERSATION_GEOMETRY_COMMIT_EVENT,
+  conversationGeometryCommitDetail,
+} from "./ConversationGeometryCommit";
 import type { ConversationTimelineSurfaceHandle } from "./ConversationTimelineSurface";
 
 export interface ConversationNativeTimelineSurfaceProps {
@@ -167,6 +171,9 @@ export function ConversationNativeTimelineSurface({
   useLayoutEffect(() => {
     const content = contentRef.current;
     if (!content || typeof ResizeObserver === "undefined") return;
+    // ResizeObserver can report several intermediate sizes while streamed
+    // Markdown is settling. Coalesce them into one scroll correction per frame
+    // so layout feedback cannot repeatedly rewrite scrollTop in the same frame.
     const observer = new ResizeObserver(() => {
       if (resizeFrameRef.current !== null) return;
       resizeFrameRef.current = window.requestAnimationFrame(() => {
@@ -180,6 +187,23 @@ export function ConversationNativeTimelineSurface({
       if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current);
       resizeFrameRef.current = null;
     };
+  }, []);
+
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const handleGeometryCommit = (event: Event) => {
+      const detail = conversationGeometryCommitDetail(event);
+      if (!detail || !followBottomRef.current || Math.abs(detail.delta) <= 0.5) return;
+      // When content shrinks Chromium clamps scrollTop to the new maximum
+      // before this event is handled. Applying the negative height delta to
+      // that already-clamped value moves the viewport one delta above the
+      // bottom for a frame, until the ResizeObserver fallback repairs it.
+      // The follow contract is the bottom itself, not a relative delta.
+      requestScroll(nativeBottom(root), "follow-bottom-geometry");
+    };
+    root.addEventListener(CONVERSATION_GEOMETRY_COMMIT_EVENT, handleGeometryCommit);
+    return () => root.removeEventListener(CONVERSATION_GEOMETRY_COMMIT_EVENT, handleGeometryCommit);
   }, []);
 
   return (

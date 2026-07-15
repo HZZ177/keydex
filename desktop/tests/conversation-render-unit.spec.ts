@@ -130,6 +130,7 @@ describe("Conversation RenderUnit projection", () => {
     expect(original.units.filter((entry) => entry.kind === "footer")).toHaveLength(1);
     expect(unit(original, "footer").sourceMessageIds).toEqual(["assistant-2"]);
     expect(unit(reordered, "footer").sourceMessageIds).toEqual(["assistant-1"]);
+    expect(unit(reordered, "footer").id).toBe(unit(original, "footer").id);
   });
 
   it("freezes projection collections and provides every turn a unit index", () => {
