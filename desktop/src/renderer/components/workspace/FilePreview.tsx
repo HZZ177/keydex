@@ -140,6 +140,10 @@ import {
   type FileMarkdownRuntimeHostHandle,
   type FileMarkdownRuntimeSnapshotLoader,
 } from "./FileMarkdownRuntimeHost";
+import {
+  codeMirrorViewportSourceAnchor,
+  syncCodeMirrorViewportToSourceAnchor,
+} from "./splitViewScrollSync";
 import type { MarkdownSnapshot } from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
 import type { MarkdownFindIndex as RuntimeMarkdownFindIndex } from "@/renderer/markdownRuntime/find";
 import type { MarkdownProjectedSelection } from "@/renderer/markdownRuntime/interaction";
@@ -907,11 +911,11 @@ export function FilePreview({
     const syncPreviewFromSource = () => {
       sourceFrame = null;
       if (!active || splitScrollOwnerRef.current !== "source") return;
-      const sourceOffset = codeMirrorViewportSourceOffset(sourceEditorView, splitSourceViewport);
-      if (sourceOffset === null) return;
+      const sourceAnchor = codeMirrorViewportSourceAnchor(sourceEditorView, splitSourceViewport);
+      if (sourceAnchor === null) return;
       suppressPreview = true;
       const handled = kind === "markdown"
-        ? markdownRuntimeHostRef.current?.syncViewportToSourceOffset(sourceOffset) === true
+        ? markdownRuntimeHostRef.current?.syncViewportToSourceAnchor(sourceAnchor) === true
         : syncScrollProgress(splitSourceViewport, splitPreviewViewport);
       if (handled) releasePreviewSuppression();
       else suppressPreview = false;
@@ -919,12 +923,12 @@ export function FilePreview({
     const syncSourceFromPreview = () => {
       previewFrame = null;
       if (!active || splitScrollOwnerRef.current !== "preview") return;
-      const sourceOffset = kind === "markdown"
-        ? markdownRuntimeHostRef.current?.viewportSourceOffset() ?? null
+      const sourceAnchor = kind === "markdown"
+        ? markdownRuntimeHostRef.current?.viewportSourceAnchor() ?? null
         : null;
       suppressSource = true;
-      const handled = sourceOffset !== null
-        ? syncCodeMirrorViewportToSourceOffset(sourceEditorView, splitSourceViewport, sourceOffset)
+      const handled = sourceAnchor !== null
+        ? syncCodeMirrorViewportToSourceAnchor(sourceEditorView, splitSourceViewport, sourceAnchor)
         : syncScrollProgress(splitPreviewViewport, splitSourceViewport);
       if (handled) releaseSourceSuppression();
       else suppressSource = false;
@@ -4270,41 +4274,6 @@ function FilePreviewScrollRail({
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max));
-}
-
-function codeMirrorViewportSourceOffset(view: EditorView, scrollElement: HTMLElement): number | null {
-  if (!view.dom.isConnected || !scrollElement.isConnected) return null;
-  const viewportRect = scrollElement.getBoundingClientRect();
-  const contentRect = view.contentDOM.getBoundingClientRect();
-  const documentY = Math.max(0, viewportRect.top - contentRect.top);
-  const line = view.lineBlockAtHeight(documentY);
-  const sourceSpan = Math.max(0, line.to - line.from);
-  const progress = line.height > 0
-    ? clampNumber((documentY - line.top) / line.height, 0, 1)
-    : 0;
-  return Math.round(line.from + sourceSpan * progress);
-}
-
-function syncCodeMirrorViewportToSourceOffset(
-  view: EditorView,
-  scrollElement: HTMLElement,
-  sourceOffset: number,
-): boolean {
-  if (!view.dom.isConnected || !scrollElement.isConnected || !Number.isFinite(sourceOffset)) return false;
-  const position = clampNumber(Math.round(sourceOffset), 0, view.state.doc.length);
-  const line = view.lineBlockAt(position);
-  const sourceSpan = Math.max(1, line.to - line.from);
-  const progress = clampNumber((position - line.from) / sourceSpan, 0, 1);
-  const viewportRect = scrollElement.getBoundingClientRect();
-  const contentRect = view.contentDOM.getBoundingClientRect();
-  const documentY = line.top + line.height * progress;
-  const target = clampNumber(
-    scrollElement.scrollTop + contentRect.top - viewportRect.top + documentY,
-    0,
-    Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight),
-  );
-  scrollElement.scrollTo({ top: target, behavior: "auto" });
-  return true;
 }
 
 function syncScrollProgress(source: HTMLElement, target: HTMLElement): boolean {

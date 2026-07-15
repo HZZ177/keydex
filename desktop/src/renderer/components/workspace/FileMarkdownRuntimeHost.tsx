@@ -69,6 +69,7 @@ import {
   recordFileMarkdownRuntimeEntrySnapshot,
   registerFileMarkdownRuntimeEntry,
 } from "./fileMarkdownRuntime";
+import type { SourceLineScrollAnchor } from "./splitViewScrollSync";
 
 export interface FileMarkdownRuntimeHostHandle {
   revealSourceOffset(offset: number, options?: { align?: "start" | "center"; behavior?: ScrollBehavior }): boolean;
@@ -83,6 +84,8 @@ export interface FileMarkdownRuntimeHostHandle {
   currentSnapshot(): MarkdownSnapshot | null;
   viewportSourceOffset(): number | null;
   syncViewportToSourceOffset(offset: number): boolean;
+  viewportSourceAnchor(): SourceLineScrollAnchor | null;
+  syncViewportToSourceAnchor(anchor: SourceLineScrollAnchor): boolean;
   queryFind(
     query: string,
     options?: { caseSensitive?: boolean; wholeWord?: boolean; limit?: number; signal?: AbortSignal },
@@ -163,6 +166,8 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
       currentSnapshot: () => stateRef.current?.snapshot ?? null,
       viewportSourceOffset: () => viewportSourceOffset(stateRef.current),
       syncViewportToSourceOffset: (offset) => syncViewportToSourceOffset(stateRef.current, offset),
+      viewportSourceAnchor: () => viewportSourceAnchor(stateRef.current),
+      syncViewportToSourceAnchor: (anchor) => syncViewportToSourceAnchor(stateRef.current, anchor),
       queryFind: (query, options) => queryRuntimeFind(stateRef.current, query, options),
       resolveAnnotations: (input) => resolveRuntimeAnnotations(stateRef.current, input),
       diagnostics: () => {
@@ -1287,6 +1292,96 @@ function syncViewportToSourceOffset(state: HostState | null, offset: number): bo
   );
   persistScrollAnchor(state, block.index);
   return true;
+}
+
+function viewportSourceAnchor(state: HostState | null): SourceLineScrollAnchor | null {
+  const snapshot = state?.snapshot;
+  const heightIndex = state?.view.getHeightIndex();
+  if (!state || !snapshot || !heightIndex) return null;
+  const position = heightIndex.queryY(state.scrollElement.scrollTop);
+  const block = position ? snapshot.blocks[position.index] : null;
+  if (!position || !block) return null;
+  const blockProgress = position.blockHeight > 0
+    ? Math.max(0, Math.min(1, position.offsetWithinBlock / position.blockHeight))
+    : 0;
+  const lineSpan = Math.max(1, block.line_end - block.line_start);
+  const localLinePosition = blockProgress * lineSpan;
+  const localLine = Math.min(lineSpan - 1, Math.floor(localLinePosition));
+  const lineProgress = localLinePosition >= lineSpan
+    ? 1
+    : Math.max(0, Math.min(1, localLinePosition - localLine));
+  return Object.freeze({
+    line: block.line_start + localLine + 1,
+    lineProgress,
+  });
+}
+
+function syncViewportToSourceAnchor(state: HostState | null, anchor: SourceLineScrollAnchor): boolean {
+  const snapshot = state?.snapshot;
+  const heightIndex = state?.view.getHeightIndex();
+  if (!state || !snapshot || !heightIndex
+    || !Number.isSafeInteger(anchor.line) || anchor.line < 1 || anchor.line > snapshot.line_count
+    || !Number.isFinite(anchor.lineProgress)) {
+    return false;
+  }
+  const zeroBasedLine = anchor.line - 1;
+  const blockIndex = markdownBlockIndexAtSourceLine(snapshot, zeroBasedLine)
+    ?? markdownBlockIndexNearestSourceLine(snapshot, zeroBasedLine);
+  const block = blockIndex === null ? null : snapshot.blocks[blockIndex];
+  if (!block) return false;
+  const lineSpan = Math.max(1, block.line_end - block.line_start);
+  const localLine = Math.max(0, Math.min(lineSpan - 1, zeroBasedLine - block.line_start));
+  const blockProgress = (localLine + Math.max(0, Math.min(1, anchor.lineProgress))) / lineSpan;
+  const targetForCurrentHeights = () => Math.max(0, Math.min(
+    heightIndex.offsetOf(block.index) + heightIndex.heightAt(block.index) * blockProgress,
+    Math.max(0, heightIndex.totalHeight - state.scrollElement.clientHeight),
+  ));
+  const coarseTarget = targetForCurrentHeights();
+  state.scrollElement.scrollTo({ top: coarseTarget, behavior: "auto" });
+  state.view.updateViewport(
+    { scrollTop: coarseTarget, viewportHeight: state.scrollElement.clientHeight },
+    { origin: "programmatic" },
+  );
+  measureSplitSyncBlock(state, block.index, block.id);
+  const refinedTarget = targetForCurrentHeights();
+  if (Math.abs(state.scrollElement.scrollTop - refinedTarget) > 0.5) {
+    state.scrollElement.scrollTo({ top: refinedTarget, behavior: "auto" });
+    state.view.updateViewport(
+      { scrollTop: refinedTarget, viewportHeight: state.scrollElement.clientHeight },
+      { origin: "programmatic" },
+    );
+  }
+  persistScrollAnchor(state, block.index);
+  return true;
+}
+
+function measureSplitSyncBlock(state: HostState, blockIndex: number, blockId: string): void {
+  const heightIndex = state.view.getHeightIndex();
+  const snapshot = state.snapshot;
+  if (!heightIndex || !snapshot || heightIndex.kindAt(blockIndex) === "measured"
+    || !state.view.isBlockContentMeasurable(blockId)) {
+    return;
+  }
+  const element = state.view.getBlockElement(blockId);
+  const borderBoxHeight = element?.getBoundingClientRect().height ?? 0;
+  if (!element || borderBoxHeight <= 0) return;
+  state.measurement?.synchronize(element, borderBoxHeight);
+  const measuredHeight = measuredMarkdownBlockOccupiedHeight(
+    borderBoxHeight,
+    blockIndex,
+    snapshot.blocks.length,
+  );
+  const patch = state.view.updateMeasuredHeights(
+    [{ index: blockIndex, height: measuredHeight, kind: "measured" }],
+    snapshot.revision,
+  );
+  if (patch && Math.abs(state.scrollElement.scrollTop - patch.viewport.scrollTop) > 0.5) {
+    state.scrollElement.scrollTop = patch.viewport.scrollTop;
+  }
+  if (patch) {
+    syncMeasurementTargets(state);
+    syncRuntimeFeatureState(state, state.featureProps);
+  }
 }
 
 function revealSourceLines(

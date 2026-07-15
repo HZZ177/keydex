@@ -277,7 +277,7 @@ def _directory_status_label(status: str) -> str:
         "auth_required": "需要认证",
         "error": "异常",
         "disabled": "已停用",
-        "refreshing": "刷新中",
+        "refreshing": "未知",
         "unknown": "未知",
     }.get(status, "未知")
 

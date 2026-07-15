@@ -4,7 +4,14 @@ import { useEffect, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentActionEnvelope } from "@/types/protocol";
-import type { AgentConnection, ChatChannel, ChatChannelOptions, RuntimeBridge, WsConnectionStatus } from "@/runtime";
+import type {
+  AgentConnection,
+  ChatChannel,
+  ChatChannelOptions,
+  RuntimeBridge,
+  WorkspaceTreeResponse,
+  WsConnectionStatus,
+} from "@/runtime";
 import {
   appModeFromPath,
   conversationPath,
@@ -366,6 +373,42 @@ describe("AppRouter", () => {
     expect(
       within(screen.getByRole("main", { name: "工作台" })).queryByRole("button", { name: "选择工作区" }),
     ).toBeNull();
+  });
+
+  it("clears the previous workspace tree while the selected workbench project is loading", async () => {
+    const workspaceBTree = createDeferred<WorkspaceTreeResponse>();
+    const workspaceListDirectory: RuntimeBridge["workspace"]["listDirectory"] = vi.fn((scope) => {
+      if ("workspaceId" in scope && scope.workspaceId === "workspace B") {
+        return workspaceBTree.promise;
+      }
+      return Promise.resolve({
+        root: "D:/Pycharm Projects/keydex",
+        entries: [{ name: "workspace-a-only.md", path: "workspace-a-only.md", type: "file" }],
+      });
+    });
+
+    renderRouter(["/workbench/workspace%20A"], {
+      workspaces: [workspace("workspace A", "keydex"), workspace("workspace B", "other")],
+      workspaceListDirectory,
+    });
+
+    expect(await screen.findByText("workspace-a-only.md", undefined, { timeout: 10000 })).not.toBeNull();
+    fireEvent.click(screen.getByLabelText("选择工作区"));
+    fireEvent.click(await screen.findByRole("option", { name: /other/ }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workbench-mode-page").getAttribute("data-workspace-id")).toBe("workspace B");
+    });
+    expect(screen.queryByText("workspace-a-only.md")).toBeNull();
+
+    await act(async () => {
+      workspaceBTree.resolve({
+        root: "D:/Pycharm Projects/other",
+        entries: [{ name: "workspace-b-only.md", path: "workspace-b-only.md", type: "file" }],
+      });
+      await workspaceBTree.promise;
+    });
+    expect(await screen.findByText("workspace-b-only.md")).not.toBeNull();
   });
 
   it("opens a workbench workspace session route", async () => {
@@ -1718,6 +1761,8 @@ interface FakeRuntimeOptions {
   localPreviewReadDocument?: ReturnType<typeof vi.fn>;
   sessionWorkspaceId?: string;
   sessions?: AgentSession[];
+  workspaces?: Workspace[];
+  workspaceListDirectory?: RuntimeBridge["workspace"]["listDirectory"];
   workspaceSearch?: ReturnType<typeof vi.fn>;
 }
 
@@ -1730,6 +1775,7 @@ type TestRuntimeBridge = RuntimeBridge & {
 
 function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
   const sessionWorkspaceId = options.sessionWorkspaceId ?? "workspace A";
+  const workspaces = options.workspaces ?? [workspace("workspace A", "keydex")];
   const workspaceSearch = options.workspaceSearch ?? vi.fn().mockResolvedValue([]);
   let emit: (event: AgentActionEnvelope) => void = () => undefined;
   const chat = vi.fn();
@@ -1768,12 +1814,14 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
     sessions = [updated, ...sessions.filter((session) => session.id !== sessionId)];
     return Promise.resolve(updated);
   });
-  const listDirectory = vi.fn(() =>
-    Promise.resolve({
-      root: "",
-      entries: [{ name: "README.md", path: "README.md", type: "file", size: 12, modified_at: null }],
-    }),
-  );
+  const listDirectory =
+    options.workspaceListDirectory ??
+    vi.fn(() =>
+      Promise.resolve({
+        root: "",
+        entries: [{ name: "README.md", path: "README.md", type: "file", size: 12, modified_at: null }],
+      }),
+    );
   const createSession = vi.fn(() =>
     Promise.resolve(
       agentSession({
@@ -1910,7 +1958,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
         ])),
     },
     workspaces: {
-      list: vi.fn(() => Promise.resolve({ list: [workspace("workspace A", "keydex")], total: 1 })),
+      list: vi.fn(() => Promise.resolve({ list: workspaces, total: workspaces.length })),
       create: () => Promise.reject(new Error("not implemented")),
       get: vi.fn((workspaceId: string) => Promise.resolve(workspace(workspaceId, workspaceId))),
       archive: vi.fn(),

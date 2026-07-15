@@ -159,6 +159,8 @@ export function WorkbenchModePage({
   const layout = useLayoutState();
   const workbenchUiScopeKey = workbenchModeUiScopeKey({ workspaceId, selectedSessionId, externalPreviewPath });
   const workbenchUiStateCache = workbenchModeUiStateCacheForRuntime(runtime);
+  const cachedWorkspaceBrowserState =
+    workbenchUiStateCache.get(workbenchUiScopeKey)?.workspaceBrowserState ?? null;
   const initialWorkbenchUiStateRef = useRef<WorkbenchModeUiState | null | undefined>(undefined);
   if (initialWorkbenchUiStateRef.current === undefined) {
     initialWorkbenchUiStateRef.current = workbenchUiStateCache.get(workbenchUiScopeKey) ?? null;
@@ -894,7 +896,7 @@ export function WorkbenchModePage({
               <div className={styles.browserPane} data-main-preview-open={activeWorkbenchPreviewTab ? "true" : "false"}>
                 {workspaceId && selectedWorkspace ? (
                   <WorkspaceFileBrowser
-                    key={workspaceId}
+                    key={workbenchUiScopeKey}
                     runtime={runtime}
                     workspaceId={workspaceId}
                     label={workspaceLabel}
@@ -916,7 +918,7 @@ export function WorkbenchModePage({
                     previewPlacement="external"
                     previewOutline={activeMainPreviewOutline}
                     previewOutlineReady={activeMainPreviewOutlineReady}
-                    initialState={workspaceBrowserState}
+                    initialState={cachedWorkspaceBrowserState}
                     onPreviewPathChange={openWorkspaceBrowserFilePreview}
                     onPreviewOutlineReveal={revealMainPreviewMarkdownOutlineItem}
                     onQuoteSelection={activeAssistantController.quoteSelection}

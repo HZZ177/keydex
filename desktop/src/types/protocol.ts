@@ -140,8 +140,7 @@ export type McpServerStatus =
   | "offline"
   | "auth_required"
   | "error"
-  | "disabled"
-  | "refreshing";
+  | "disabled";
 export type McpApprovalMode = "auto" | "prompt" | "approve" | "deny" | "inherit";
 export type McpToolExposureMode =
   | "allow_all_except_disabled"

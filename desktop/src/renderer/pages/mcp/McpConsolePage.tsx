@@ -64,6 +64,8 @@ const DETAIL_TABS = [
   { id: "logs", label: "日志" },
 ] as const;
 
+const SERVER_STATUS_SYNC_INTERVAL_MS = 1_000;
+
 type DetailTab = (typeof DETAIL_TABS)[number]["id"];
 type ServerFormState = { mode: "create" } | { mode: "edit"; serverId: string } | null;
 type LoadServersOptions = { showLoading?: boolean };
@@ -127,6 +129,23 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
 
   useEffect(() => {
     void loadServers();
+  }, [loadServers]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timerId = window.setTimeout(syncServerStatus, SERVER_STATUS_SYNC_INTERVAL_MS);
+
+    async function syncServerStatus() {
+      await loadServers(undefined, { showLoading: false });
+      if (!cancelled) {
+        timerId = window.setTimeout(syncServerStatus, SERVER_STATUS_SYNC_INTERVAL_MS);
+      }
+    }
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
   }, [loadServers]);
 
   const displayedServers = useMemo(
@@ -234,13 +253,6 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
     options: RefreshServerOptions = {},
   ) => {
     setRefreshingServerId(serverId);
-    setServerListOverrides((current) => ({
-      ...current,
-      [serverId]: {
-        ...current[serverId],
-        status: "refreshing",
-      },
-    }));
     setError("");
     try {
       const result = await runtime.mcp.refreshServer(serverId);
@@ -293,7 +305,7 @@ export function McpConsolePage({ runtime }: { runtime: RuntimeBridge }) {
       ...current,
       [server.id]: {
         enabled: nextEnabled,
-        status: nextEnabled ? "refreshing" : "disabled",
+        ...(nextEnabled ? {} : { status: "disabled" as const }),
       },
     }));
     if (nextEnabled) {

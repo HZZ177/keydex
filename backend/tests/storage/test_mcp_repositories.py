@@ -115,18 +115,20 @@ def test_mcp_server_status_repository_upserts_errors_and_refresh_counts(tmp_path
         command="node",
     )
 
-    refreshing = repositories.mcp_server_status.upsert(
+    initial = repositories.mcp_server_status.upsert(
         "mcp-server-a",
-        status="refreshing",
+        status="unknown",
         capabilities={"tools": True},
         server_info={"name": "mock"},
         tools_count=1,
     )
 
-    assert refreshing.status == "refreshing"
-    assert refreshing.capabilities == {"tools": True}
-    assert refreshing.server_info == {"name": "mock"}
-    assert refreshing.tools_count == 1
+    assert initial.status == "unknown"
+    assert initial.capabilities == {"tools": True}
+    assert initial.server_info == {"name": "mock"}
+    assert initial.tools_count == 1
+    with pytest.raises(ValueError, match="refreshing"):
+        repositories.mcp_server_status.upsert("mcp-server-a", status="refreshing")
 
     first_refresh = repositories.mcp_server_status.update_refresh_counts(
         "mcp-server-a",

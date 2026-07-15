@@ -495,7 +495,7 @@ def _capability_empty_state(
             "reason": "auth_required",
             "message": "MCP 服务器需要认证后才会提供可用工具。",
         }
-    if statuses <= {"offline", "disabled", "error", "unknown", "refreshing"}:
+    if statuses <= {"offline", "disabled", "error", "unknown"}:
         return {
             "reason": "no_online_servers",
             "message": "当前没有在线可用的 MCP 服务器工具。",
@@ -513,12 +513,18 @@ def _snapshot_capability_directory(snapshot: McpRuntimeSnapshotRecord) -> list[d
     directory: list[dict[str, Any]] = []
     for item in raw_directory:
         if isinstance(item, dict):
+            raw_status = _optional_str(item.get("status")) or "unknown"
+            status = "unknown" if raw_status == "refreshing" else raw_status
             directory.append(
                 {
                     "server_id": _optional_str(item.get("server_id")),
                     "server_name": _optional_str(item.get("server_name")),
-                    "status": _optional_str(item.get("status")) or "unknown",
-                    "status_label": _optional_str(item.get("status_label")) or "未知",
+                    "status": status,
+                    "status_label": (
+                        "未知"
+                        if raw_status == "refreshing"
+                        else _optional_str(item.get("status_label")) or "未知"
+                    ),
                     "available_tool_count": _non_negative_int(
                         item.get("available_tool_count")
                     ),

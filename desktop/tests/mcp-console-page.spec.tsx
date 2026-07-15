@@ -174,6 +174,22 @@ describe("McpConsolePage", () => {
     expect(refreshServers).not.toHaveBeenCalled();
   });
 
+  it("updates the visible server status after a background refresh settles", async () => {
+    const onlineServer = server("srv_1", "Filesystem", { status: "online" });
+    const offlineServer = server("srv_1", "Filesystem", { status: "offline" });
+    const listServers = vi.fn()
+      .mockResolvedValueOnce({ list: [onlineServer], total: 1, limit: 500, offset: 0 })
+      .mockResolvedValue({ list: [offlineServer], total: 1, limit: 500, offset: 0 });
+    render(<McpConsolePage runtime={runtimeWithServers([], { listServers })} />);
+
+    const list = await screen.findByTestId("mcp-server-list");
+    expect(within(list).getByText("在线")).not.toBeNull();
+
+    await waitFor(() => expect(listServers).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+    await waitFor(() => expect(within(list).getByText("离线")).not.toBeNull());
+    expect(within(list).queryByText("在线")).toBeNull();
+  });
+
   it("refreshes the selected MCP server only from the detail refresh action", async () => {
     const refreshServer = vi.fn().mockResolvedValue({ ok: true, server_id: "srv_1", status: "online" });
     const listTools = vi.fn(() => Promise.resolve(toolListResponse(toolFixtures())));
@@ -283,7 +299,8 @@ describe("McpConsolePage", () => {
     const enableSwitch = await screen.findByRole("switch", { name: "启用 MCP 服务器 Disabled MCP" });
     fireEvent.click(enableSwitch);
     await waitFor(() => expect(enableSwitch.getAttribute("aria-checked")).toBe("true"));
-    expect(await screen.findByText("刷新中")).not.toBeNull();
+    expect(screen.getByText("已停用")).not.toBeNull();
+    expect(screen.queryByText("刷新中")).toBeNull();
 
     await waitFor(() => expect(toggleServer).toHaveBeenCalledWith("srv_disabled", true));
     await waitFor(() => expect(refreshServer).toHaveBeenCalledWith("srv_disabled"));

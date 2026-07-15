@@ -83,6 +83,7 @@ afterEach(() => {
   restoreRangeMetrics?.();
   restoreRangeMetrics = null;
   resetFileMarkdownRuntimeStoreForTests();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -245,6 +246,43 @@ describe("FileMarkdownRuntimeHost", () => {
 
     expect(screen.getByTestId("runtime-scroll").scrollTop).toBeGreaterThan(0);
     expect(handle.current?.viewportSourceOffset()).toBe(targetOffset);
+  });
+
+  it("round-trips an uneven multiline block through a source-line anchor", async () => {
+    const handle = { current: null } as MutableRefObject<FileMarkdownRuntimeHostHandle | null>;
+    const prefix = Array.from({ length: 80 }, (_, index) => `## Heading ${index}\n\nBody ${index}`).join("\n\n");
+    const suffix = Array.from({ length: 40 }, (_, index) => `## Tail ${index}\n\nTail body ${index}`).join("\n\n");
+    const source = [
+      prefix,
+      "```text",
+      "short",
+      `TARGET ${"wide ".repeat(120)}`,
+      "tail",
+      "```",
+      suffix,
+    ].join("\n");
+    const targetLine = source.split("\n").findIndex((line) => line.startsWith("TARGET ")) + 1;
+    let measuredBlockId: string | null = null;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function rect() {
+      return this.dataset.markdownBlockId === measuredBlockId
+        ? new DOMRect(0, 0, 900, 600)
+        : new DOMRect(0, 0, 900, 0);
+    });
+    render(<RuntimeHarness source={source} revision="line-sync-r1" loader={snapshotLoader()} runtimeRef={handle} />);
+    await readyRuntimeCanvas();
+    const zeroBasedTargetLine = targetLine - 1;
+    measuredBlockId = handle.current?.currentSnapshot()?.blocks.find((block) => (
+      block.line_start <= zeroBasedTargetLine && zeroBasedTargetLine < block.line_end
+    ))?.id ?? null;
+    expect(measuredBlockId).not.toBeNull();
+    const scroll = screen.getByTestId("runtime-scroll") as HTMLElement;
+
+    expect(handle.current?.syncViewportToSourceAnchor({ line: targetLine, lineProgress: 0.35 })).toBe(true);
+
+    expect(vi.mocked(scroll.scrollTo).mock.calls.length).toBeGreaterThanOrEqual(2);
+    const roundTripped = handle.current?.viewportSourceAnchor();
+    expect(roundTripped?.line).toBe(targetLine);
+    expect(roundTripped?.lineProgress).toBeCloseTo(0.35, 8);
   });
 
   it("persists Runtime folds across preview remounts and expands a folded section for reveal", async () => {

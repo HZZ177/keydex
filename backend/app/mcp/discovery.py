@@ -60,7 +60,6 @@ class McpDiscoveryService:
         cancellation: McpCancellationToken | None = None,
     ) -> McpRefreshReport:
         started = time.perf_counter()
-        self.repositories.mcp_server_status.upsert(server.id, status="refreshing")
         try:
             init_result = await client.initialize(
                 timeout_sec=server.startup_timeout_sec,

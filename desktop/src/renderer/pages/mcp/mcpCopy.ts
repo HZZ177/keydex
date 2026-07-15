@@ -7,7 +7,6 @@ export const MCP_SERVER_STATUS_LABELS: Record<McpServerStatus | "disabled", stri
   auth_required: "需要认证",
   error: "异常",
   disabled: "已停用",
-  refreshing: "刷新中",
 };
 
 export const MCP_ERROR_MESSAGES: Record<McpErrorCode, string> = {
@@ -48,6 +47,9 @@ const SENSITIVE_VALUE_PATTERN =
 export function mcpServerStatusLabel(status: string, enabled = true): string {
   if (!enabled) {
     return MCP_SERVER_STATUS_LABELS.disabled;
+  }
+  if (status === "refreshing") {
+    return MCP_SERVER_STATUS_LABELS.unknown;
   }
   return MCP_SERVER_STATUS_LABELS[status as McpServerStatus] ?? status;
 }

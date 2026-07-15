@@ -84,7 +84,9 @@ def test_builtin_keydex_guide_entry_and_references_are_chinese() -> None:
     reference_pages = sorted((guide_root / "references").glob("*.md"))
     entry_content = skill_entry.read_text(encoding="utf-8")
 
-    assert "Keydex 中文产品使用指南" in entry_content
+    assert "当用户询问 Keydex 产品本身时必须使用" in entry_content
+    assert "即使用户没有点名 keydex-guide" in entry_content
+    assert "源码、内部架构、协议、数据库或开发实现时不使用" in entry_content
     assert {page.name for page in reference_pages} == EXPECTED_KEYDEX_GUIDE_REFERENCES
     for page in [skill_entry, *reference_pages]:
         content = page.read_text(encoding="utf-8")

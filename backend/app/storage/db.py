@@ -1378,6 +1378,7 @@ class Database:
             self._remove_mcp_prompt_schema(conn)
             self._remove_mcp_risk_schema(conn)
             self._migrate_mcp_refresh_interval_default(conn)
+            self._normalize_legacy_mcp_refreshing_status(conn)
             if should_migrate_legacy_sessions:
                 self._migrate_legacy_sessions_to_default_workspace(
                     conn,
@@ -1707,6 +1708,18 @@ class Database:
                set refresh_interval_sec = 60
              where refresh_interval_sec = 1800
             """
+        )
+
+    @staticmethod
+    def _normalize_legacy_mcp_refreshing_status(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            update mcp_server_status
+               set status = 'unknown',
+                   updated_at = ?
+             where status = 'refreshing'
+            """,
+            (to_iso_z(utc_now()),),
         )
 
     @classmethod

@@ -1375,7 +1375,6 @@ class McpServerStatusRepository:
         "auth_required",
         "error",
         "disabled",
-        "refreshing",
     }
 
     def __init__(self, db: Database) -> None:
@@ -1560,9 +1559,12 @@ class McpServerStatusRepository:
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> McpServerStatusRecord:
+        status = str(row["status"])
+        if status == "refreshing":
+            status = "unknown"
         return McpServerStatusRecord(
             server_id=row["server_id"],
-            status=row["status"],
+            status=status,
             capabilities=_json_loads(row["capabilities_json"], None),
             server_info=_json_loads(row["server_info_json"], None),
             last_connected_at=row["last_connected_at"],

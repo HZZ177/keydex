@@ -512,6 +512,36 @@ def test_init_database_removes_legacy_mcp_prompt_schema(tmp_path) -> None:
     assert "prompt_name" not in audit_columns
 
 
+def test_init_database_normalizes_legacy_mcp_refreshing_status(tmp_path) -> None:
+    db_path = tmp_path / "app.db"
+    db = init_database(db_path)
+    with db.connect() as conn:
+        conn.execute(
+            """
+            insert into mcp_servers (id, name, transport, url, created_at, updated_at)
+            values ('mcp-legacy-refreshing', 'Legacy MCP', 'streamable_http',
+                    'https://mcp.example.test/mcp', '2026-07-15T00:00:00Z',
+                    '2026-07-15T00:00:00Z')
+            """
+        )
+        conn.execute(
+            """
+            insert into mcp_server_status (server_id, status, updated_at)
+            values ('mcp-legacy-refreshing', 'refreshing', '2026-07-15T00:00:00Z')
+            """
+        )
+
+    migrated = init_database(db_path)
+
+    with migrated.connect() as conn:
+        row = conn.execute(
+            "select status from mcp_server_status where server_id = ?",
+            ("mcp-legacy-refreshing",),
+        ).fetchone()
+    assert row is not None
+    assert row["status"] == "unknown"
+
+
 def test_init_database_removes_legacy_mcp_risk_schema(tmp_path) -> None:
     db_path = tmp_path / "app.db"
     init_database(db_path)

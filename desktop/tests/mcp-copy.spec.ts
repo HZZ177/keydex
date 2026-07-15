@@ -28,6 +28,7 @@ describe("MCP copy helpers", () => {
   it("maps server status and tool effective state labels", () => {
     expect(mcpServerStatusLabel("online")).toBe("在线");
     expect(mcpServerStatusLabel("auth_required")).toBe("需要认证");
+    expect(mcpServerStatusLabel("refreshing")).toBe("未知");
     expect(mcpServerStatusLabel("online", false)).toBe("已停用");
     expect(mcpToolEffectiveStateLabel("schema_changed")).toBe("参数已变化");
     expect(mcpToolEffectiveStateLabel("approval_required")).toBe("需要确认");

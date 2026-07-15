@@ -16,6 +16,7 @@ from backend.app.mcp.client import (
 )
 from backend.app.mcp.errors import McpRuntimeError
 from backend.app.mcp.manager import McpManager
+from backend.app.mcp.runtime import McpRuntimeSnapshotBuilder, McpRuntimeSnapshotContext
 from backend.app.mcp.types import McpErrorCode, McpServerStatus
 from backend.app.storage import McpServerRecord, StorageRepositories, init_database
 
@@ -88,8 +89,47 @@ async def test_refresh_capabilities_uses_short_lived_client_without_cache(tmp_pa
     assert first_client.initialize_task is first_client.shutdown_task
     assert second_client.initialize_task is second_client.shutdown_task
     assert manager.active_client_count == 0
-    assert repositories.mcp_tools.get_by_raw_name("srv_refresh", "first").discovery_status == "removed"
-    assert repositories.mcp_tools.get_by_raw_name("srv_refresh", "second").discovery_status == "new"
+    assert (
+        repositories.mcp_tools.get_by_raw_name("srv_refresh", "first").discovery_status
+        == "removed"
+    )
+    assert (
+        repositories.mcp_tools.get_by_raw_name("srv_refresh", "second").discovery_status
+        == "new"
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_keeps_last_published_status_and_tools_available(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    _create_server(repositories)
+    first_client = FakeDiscoveryClient(tools=[_tool("existing", {"type": "object"})])
+    refresh_release = asyncio.Event()
+    second_client = FakeDiscoveryClient(
+        tools=[_tool("existing", {"type": "object"})],
+        initialize_release=refresh_release,
+    )
+    manager = _manager(tmp_path, repositories, first_client, second_client)
+    await manager.refresh_capabilities("srv_refresh")
+
+    refresh_task = asyncio.create_task(manager.refresh_capabilities("srv_refresh"))
+    await second_client.initialize_started.wait()
+    try:
+        status = repositories.mcp_server_status.get("srv_refresh")
+        snapshot = McpRuntimeSnapshotBuilder(
+            repositories,
+            direct_tool_budget=10,
+        ).build_snapshot(
+            McpRuntimeSnapshotContext(session_id="session-during-refresh")
+        )
+
+        assert status is not None
+        assert status.status == "online"
+        assert snapshot.server_status["srv_refresh"]["status"] == "online"
+        assert [tool["raw_name"] for tool in snapshot.visible_tools] == ["existing"]
+    finally:
+        refresh_release.set()
+        await refresh_task
 
 
 @pytest.mark.asyncio
@@ -338,18 +378,21 @@ class FakeDiscoveryClient(McpClientBase):
         tools: list[McpClientToolSpec] | None = None,
         capabilities: McpClientCapabilities | None = None,
         initialize_error: BaseException | None = None,
+        initialize_release: asyncio.Event | None = None,
         list_tools_error: BaseException | None = None,
     ) -> None:
         super().__init__(server_id="srv_refresh")
         self.tools = tools or []
         self.capabilities = capabilities or McpClientCapabilities()
         self.initialize_error = initialize_error
+        self.initialize_release = initialize_release
         self.list_tools_error = list_tools_error
         self.initialize_calls = 0
         self.list_tools_calls = 0
         self.list_resources_calls = 0
         self.shutdown_calls = 0
         self.initialize_task: asyncio.Task[Any] | None = None
+        self.initialize_started = asyncio.Event()
         self.shutdown_task: asyncio.Task[Any] | None = None
 
     async def initialize(
@@ -360,6 +403,9 @@ class FakeDiscoveryClient(McpClientBase):
     ) -> McpClientInitializeResult:
         self.initialize_calls += 1
         self.initialize_task = asyncio.current_task()
+        self.initialize_started.set()
+        if self.initialize_release is not None:
+            await self.initialize_release.wait()
         if self.initialize_error is not None:
             raise self.initialize_error
         self.transition_status(McpServerStatus.ONLINE, reason="test_initialized")
