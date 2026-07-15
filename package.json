@@ -29,6 +29,11 @@
     "test:e2e:runtime:context-compression": "node .dev/e2e/runtime-context-compression.mjs",
     "test:e2e:mcp:harness": "node .dev/e2e/mcp-harness-selftest.mjs",
     "test:e2e:mcp:smoke": "node .dev/e2e/mcp-smoke.mjs",
+    "test:e2e:web": "pnpm run test:e2e:web:settings && pnpm run test:e2e:web:activity",
+    "test:e2e:web:settings": "node .dev/e2e/web-settings.mjs",
+    "test:e2e:web:activity": "node .dev/e2e/web-native.mjs",
+    "test:e2e:web:real": "node .dev/e2e/web-tavily-smoke.mjs",
+    "test:e2e:web:tavily": "pnpm run test:e2e:web:real",
     "build:frontend": "pnpm --dir desktop run build",
     "test": "pnpm run lint:backend && pnpm run test:backend && pnpm run test:frontend",
     "verify": "pnpm run test"

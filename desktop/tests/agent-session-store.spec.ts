@@ -79,7 +79,7 @@ describe("agentSessionStore reducer", () => {
       "pending_input_paused",
       "pending_input_resumed",
       "pending_input_failed",
-      "workspaceSkillsChanged",
+      "keydexSkillsChanged",
       "approval_requested",
       "approval_resolved",
       "mcp_server_status_changed",
@@ -91,6 +91,21 @@ describe("agentSessionStore reducer", () => {
     ]);
 
     expect([...coveredActions].sort()).toEqual([...AGENT_CHAT_ACTIONS].sort());
+  });
+
+  it("keeps keydex skill refresh notifications out of session state", () => {
+    const state = createInitialAgentConversationState();
+
+    const next = reduceAgentWsEvent(state, {
+      action: "keydexSkillsChanged",
+      data: {
+        session_id: "ses-1",
+        session_scope: "system",
+        fingerprint: "fp-2",
+      },
+    });
+
+    expect(next).toBe(state);
   });
 
   it("normalizes session lists and selects session_created sessions", () => {

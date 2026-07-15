@@ -1,11 +1,17 @@
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnostics";
+import {
+  buildWebTurnSourceRegistries,
+  webSourceRegistryForMessage,
+  type WebTurnSourceRegistry,
+} from "./webSourceRegistry";
 
 export type ProcessedMessageItem =
   | {
       type: "message";
       id: string;
       message: ConversationMessage;
+      webSourceRegistry?: WebTurnSourceRegistry;
     }
   | {
       type: "group";
@@ -15,6 +21,7 @@ export type ProcessedMessageItem =
       sourceMessageIds: string[];
       createdAt: string;
       updatedAt: string;
+      webSourceRegistry?: WebTurnSourceRegistry;
     };
 
 export type MessageGroupKind = "tool_activity" | "file_changes";
@@ -24,6 +31,7 @@ export function processMessages(messages: ConversationMessage[]): ProcessedMessa
     ? performance.now()
     : null;
   const items: ProcessedMessageItem[] = [];
+  const webSourceRegistries = buildWebTurnSourceRegistries(messages);
   let group: ConversationMessage[] = [];
   let groupKind: MessageGroupKind | null = null;
   let groupTurnIndex: number | null = null;
@@ -36,7 +44,13 @@ export function processMessages(messages: ConversationMessage[]): ProcessedMessa
       return;
     }
     if (group.length === 1) {
-      items.push({ type: "message", id: group[0].id, message: group[0] });
+      const webSourceRegistry = webSourceRegistryForMessage(webSourceRegistries, group[0]);
+      items.push({
+        type: "message",
+        id: group[0].id,
+        message: group[0],
+        ...(webSourceRegistry ? { webSourceRegistry } : {}),
+      });
     } else {
       items.push({
         type: "group",
@@ -46,6 +60,9 @@ export function processMessages(messages: ConversationMessage[]): ProcessedMessa
         sourceMessageIds: group.map((message) => message.id),
         createdAt: group[0].createdAt,
         updatedAt: group[group.length - 1].updatedAt,
+        ...(webSourceRegistryForMessage(webSourceRegistries, group[0])
+          ? { webSourceRegistry: webSourceRegistryForMessage(webSourceRegistries, group[0]) ?? undefined }
+          : {}),
       });
     }
     group = [];
@@ -58,7 +75,13 @@ export function processMessages(messages: ConversationMessage[]): ProcessedMessa
     const nextTurnIndex = messageBusinessTurnIndex(message);
     if (!nextKind) {
       flush();
-      items.push({ type: "message", id: message.id, message });
+      const webSourceRegistry = webSourceRegistryForMessage(webSourceRegistries, message);
+      items.push({
+        type: "message",
+        id: message.id,
+        message,
+        ...(webSourceRegistry ? { webSourceRegistry } : {}),
+      });
       continue;
     }
 

@@ -1,6 +1,7 @@
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import type { AgentChatMessage, TurnError } from "@/types/protocol";
+import { normalizeWebActivityPayload } from "./webActivity";
 
 export function agentMessageToConversationMessage(message: AgentChatMessage, index: number): ConversationMessage {
   const kind = conversationKindFromAgent(message);
@@ -39,6 +40,9 @@ export function conversationKindFromAgent(message: AgentChatMessage): Conversati
     return "context_compression";
   }
   if (message.role === "tool") {
+    if (normalizeWebActivityPayload(message.uiPayload)) {
+      return "web_activity";
+    }
     if (message.toolName === "update_plan") {
       return "plan";
     }
@@ -169,6 +173,10 @@ export function payloadFromAgentMessage(message: AgentChatMessage): Record<strin
   }
 
   if (message.role === "tool") {
+    const webActivity = normalizeWebActivityPayload(message.uiPayload);
+    const uiPayload: Record<string, unknown> | undefined = webActivity
+      ? { ...webActivity }
+      : message.uiPayload;
     return {
       ...base,
       call: {
@@ -188,10 +196,11 @@ export function payloadFromAgentMessage(message: AgentChatMessage): Record<strin
         model_content: message.toolResult ?? "",
         duration_ms: message.toolDurationMs,
         error: message.toolError,
-        ui_payload: message.uiPayload,
-        files: message.fileChanges ?? fileChangesFromUiPayload(message.uiPayload),
+        ui_payload: uiPayload,
+        files: message.fileChanges ?? fileChangesFromUiPayload(uiPayload),
       },
-      files: message.fileChanges ?? fileChangesFromUiPayload(message.uiPayload),
+      files: message.fileChanges ?? fileChangesFromUiPayload(uiPayload),
+      ...(webActivity ? { web_activity: webActivity } : {}),
       duration_ms: message.toolDurationMs,
       metadata: message.metadata,
       messageEventId: message.messageEventId,

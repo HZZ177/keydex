@@ -843,7 +843,8 @@ export function ConversationSessionSurface({
         canStop={canStop}
         connectionReady={connectionReady}
         modelSelection={{ ...modelSelection, setSelectedModel: changeModel }}
-        workspaceSkills={panelModel.workspaceSkills}
+        skills={panelModel.effectiveSkills}
+        skillDiagnostics={panelModel.effectiveSkillDiagnostics}
         allowBypassConversationSlashCommand={!isSidecar}
         allowGoalSlashCommand={!isSidecar}
         allowContextCompressionSlashCommand={!isSidecar}
@@ -860,8 +861,9 @@ export function ConversationSessionSurface({
         onSend={sendFromComposer}
         onStop={controller.stop}
         onOpenFileReference={panelModel.openFileReference}
+        onOpenSkill={panelModel.openSkillResource}
         onSlashCommand={handleSlashCommand}
-        onRefreshWorkspaceSkills={() => panelModel.refreshWorkspaceSkills({ forceReload: true })}
+        onRefreshSkills={() => panelModel.refreshEffectiveSkills({ forceReload: true })}
         externalContextRequest={composerContextRequest}
         externalFileRequest={fileChipRequest}
         externalQuoteRequest={sidecarExternalQuoteRequest ?? quoteChipRequest}

@@ -280,7 +280,7 @@ export function reduceAgentWsEvent(
     case "task_run_finished":
       next = handleTaskRunFinished(state, event.data as unknown as ThreadTaskRunEventData);
       break;
-    case "workspaceSkillsChanged":
+    case "keydexSkillsChanged":
       next = state;
       break;
     case "pong":

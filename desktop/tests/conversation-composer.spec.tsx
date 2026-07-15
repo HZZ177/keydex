@@ -19,7 +19,7 @@ describe("ConversationComposer", () => {
         canStop={false}
         connectionReady
         modelSelection={modelSelection()}
-        workspaceSkills={[]}
+        skills={[]}
         selectedSkill={null}
         externalFileRequest={null}
         externalQuoteRequest={null}
@@ -55,7 +55,7 @@ describe("ConversationComposer", () => {
         canStop={false}
         connectionReady
         modelSelection={modelSelection()}
-        workspaceSkills={[]}
+        skills={[]}
         selectedSkill={null}
         externalFileRequest={null}
         externalQuoteRequest={null}
@@ -86,7 +86,7 @@ describe("ConversationComposer", () => {
         canStop={false}
         connectionReady
         modelSelection={modelSelection()}
-        workspaceSkills={[]}
+        skills={[]}
         selectedSkill={null}
         externalFileRequest={null}
         externalQuoteRequest={null}
@@ -113,7 +113,7 @@ describe("ConversationComposer", () => {
         canStop={false}
         connectionReady
         modelSelection={modelSelection()}
-        workspaceSkills={[]}
+        skills={[]}
         selectedSkill={null}
         externalFileRequest={null}
         externalQuoteRequest={null}
@@ -151,7 +151,7 @@ describe("ConversationComposer", () => {
         canStop={false}
         connectionReady
         modelSelection={modelSelection()}
-        workspaceSkills={[]}
+        skills={[]}
         selectedSkill={null}
         externalFileRequest={null}
         externalQuoteRequest={null}
@@ -173,7 +173,7 @@ describe("ConversationComposer", () => {
         canStop={false}
         connectionReady
         modelSelection={modelSelection()}
-        workspaceSkills={[]}
+        skills={[]}
         selectedSkill={null}
         externalFileRequest={null}
         externalQuoteRequest={null}
@@ -220,7 +220,7 @@ describe("ConversationComposer", () => {
         canStop={false}
         connectionReady
         modelSelection={modelSelection()}
-        workspaceSkills={[]}
+        skills={[]}
         selectedSkill={null}
         externalFileRequest={null}
         externalQuoteRequest={null}
@@ -269,7 +269,7 @@ describe("ConversationComposer", () => {
         canStop={false}
         connectionReady
         modelSelection={modelSelection()}
-        workspaceSkills={[]}
+        skills={[]}
         selectedSkill={null}
         externalFileRequest={null}
         externalQuoteRequest={null}
@@ -311,7 +311,7 @@ describe("ConversationComposer", () => {
         canStop={false}
         connectionReady
         modelSelection={modelSelection()}
-        workspaceSkills={[]}
+        skills={[]}
         selectedSkill={null}
         externalFileRequest={null}
         externalQuoteRequest={null}
@@ -347,7 +347,7 @@ describe("ConversationComposer", () => {
         canStop={false}
         connectionReady
         modelSelection={modelSelection()}
-        workspaceSkills={[]}
+        skills={[]}
         selectedSkill={null}
         externalFileRequest={{
           requestId: 1,

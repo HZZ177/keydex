@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "skills": [
+    {
+      "id": "keydex-guide",
+      "skill_name": "keydex-guide",
+      "version": 2,
+      "content_sha256": "adfa32360c792611dd3cea82155b43a0c2850d1846d42e8f2266cc03165f811e"
+    }
+  ]
+}

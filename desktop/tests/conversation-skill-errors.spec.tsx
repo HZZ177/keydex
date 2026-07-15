@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ChatChannel, RuntimeBridge, WorkspaceSkillsResponse, WsConnectionStatus } from "@/runtime";
+import type { ChatChannel, EffectiveSkillsResponse, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import { ConversationPage } from "@/renderer/pages/conversation";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider } from "@/renderer/providers/PreviewProvider";
@@ -12,7 +12,7 @@ describe("ConversationPage skill errors", () => {
   it("force reloads workspace skills and clears the skill capsule when skill_not_found arrives", async () => {
     let forceReloadCount = 0;
     const workspaceListSkills = vi.fn().mockImplementation(
-      (_params: { sessionId: string }, options?: { forceReload?: boolean }) => {
+      (_sessionId: string, options?: { forceReload?: boolean }) => {
         if (options?.forceReload) {
           forceReloadCount += 1;
           return Promise.resolve(forceReloadCount >= 2 ? skillsResponse({ skills: [] }) : skillsResponse());
@@ -25,7 +25,10 @@ describe("ConversationPage skill errors", () => {
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     await waitFor(() => {
-      expect(workspaceListSkills).toHaveBeenCalledWith({ sessionId: "ses-1" }, { forceReload: false });
+      expect(workspaceListSkills).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+      );
     });
     typeComposer("/");
     fireEvent.mouseDown(await screen.findByRole("option", { name: /^Skill\b/ }));
@@ -43,10 +46,148 @@ describe("ConversationPage skill errors", () => {
     });
 
     await waitFor(() => {
-      expect(workspaceListSkills).toHaveBeenCalledWith({ sessionId: "ses-1" }, { forceReload: true });
+      expect(workspaceListSkills).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: true, signal: expect.any(AbortSignal) }),
+      );
     });
     expect(screen.queryByText("dev-plan")).toBeNull();
     expect((await screen.findByTestId("notification-item")).textContent).toContain("已刷新 Skill 列表");
+  });
+
+  it("force reloads and clears a stale selected source when skill_source_stale arrives", async () => {
+    const listSession = vi.fn().mockImplementation(
+      (_sessionId: string, options?: { forceReload?: boolean }) => Promise.resolve(
+        skillsResponse({
+          skills: options?.forceReload
+            ? [{
+              name: "dev-plan",
+              description: "Workspace winner",
+              source: "workspace",
+              label: "/dev-plan",
+              locator: ".keydex/skills/dev-plan/SKILL.md",
+            }]
+            : [{
+              name: "dev-plan",
+              description: "System fallback",
+              source: "system",
+              label: "/dev-plan",
+              locator: "system:skills/dev-plan/SKILL.md",
+            }],
+        }),
+      ),
+    );
+    const { runtime, emit } = fakeRuntime({ workspaceListSkills: listSession });
+
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+    await waitFor(() => expect(listSession).toHaveBeenCalled());
+    typeComposer("/");
+    fireEvent.mouseDown(await screen.findByRole("option", { name: /^Skill\b/ }));
+    const input = screen.getByLabelText("继续输入");
+    await screen.findByRole("option", { name: /dev-plan/ });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByText("dev-plan")).not.toBeNull();
+
+    act(() => {
+      emit(agentEvent("error", {
+        session_id: "ses-1",
+        code: "skill_source_stale",
+        message: "Selected skill source is stale",
+      }));
+    });
+
+    await waitFor(() => {
+      expect(listSession).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: true, signal: expect.any(AbortSignal) }),
+      );
+    });
+    expect(screen.queryByText("dev-plan")).toBeNull();
+    expect((await screen.findByTestId("notification-item")).textContent).toContain(
+      "Skill 的有效来源已变化，已刷新列表，请重新选择",
+    );
+  });
+
+  it("maps skill_activation_invalid without reloading the effective catalog", async () => {
+    const listSession = vi.fn().mockResolvedValue(skillsResponse());
+    const { runtime, emit } = fakeRuntime({ workspaceListSkills: listSession });
+
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+    await waitFor(() => expect(listSession).toHaveBeenCalled());
+
+    act(() => {
+      emit(agentEvent("error", {
+        session_id: "ses-1",
+        code: "skill_activation_invalid",
+        message: "Invalid skill activation payload",
+      }));
+    });
+
+    expect((await screen.findByTestId("notification-item")).textContent).toContain(
+      "Skill 选择参数无效，请重新选择 Skill",
+    );
+    expect(listSession).not.toHaveBeenCalledWith(
+      "ses-1",
+      expect.objectContaining({ forceReload: true }),
+    );
+  });
+
+  it.each(["skill_layer_unavailable", "skill_shadow_barrier"])(
+    "maps %s to a project-layer warning and force reload",
+    async (code) => {
+      const listSession = vi.fn().mockResolvedValue(skillsResponse());
+      const { runtime, emit } = fakeRuntime({ workspaceListSkills: listSession });
+
+      renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+      await waitFor(() => expect(listSession).toHaveBeenCalled());
+
+      act(() => {
+        emit(agentEvent("error", {
+          session_id: "ses-1",
+          code,
+          message: "Workspace skill layer is unavailable",
+        }));
+      });
+
+      await waitFor(() => {
+        expect(listSession).toHaveBeenCalledWith(
+          "ses-1",
+          expect.objectContaining({ forceReload: true, signal: expect.any(AbortSignal) }),
+        );
+      });
+      expect((await screen.findByTestId("notification-item")).textContent).toContain(
+        "当前项目 Skill 配置不可用，请修复后重新选择",
+      );
+    },
+  );
+
+  it("maps a Chat layer failure to the system-layer warning", async () => {
+    const listSession = vi.fn().mockResolvedValue(skillsResponse({ skills: [] }));
+    const { runtime, emit } = fakeRuntime({
+      workspaceListSkills: listSession,
+      session: agentSession(),
+    });
+
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+    await waitFor(() => expect(listSession).toHaveBeenCalled());
+
+    act(() => {
+      emit(agentEvent("error", {
+        session_id: "ses-1",
+        code: "skill_layer_unavailable",
+        message: "System skill layer is unavailable",
+      }));
+    });
+
+    await waitFor(() => {
+      expect(listSession).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: true, signal: expect.any(AbortSignal) }),
+      );
+    });
+    expect((await screen.findByTestId("notification-item")).textContent).toContain(
+      "系统级 Skill 配置不可用，请修复后重新选择",
+    );
   });
 });
 
@@ -68,18 +209,19 @@ function typeComposer(value: string) {
 function fakeRuntime({
   workspaceListSkills = vi.fn().mockResolvedValue(skillsResponse()),
   wsStatus = "open",
-}: {
-  workspaceListSkills?: ReturnType<typeof vi.fn>;
-  wsStatus?: WsConnectionStatus;
-} = {}) {
-  let handler: ((event: AgentActionEnvelope) => void) | null = null;
-  const session = agentSession({
+  session = agentSession({
     session_type: "workspace",
     workspace_id: "ws-1",
     cwd: "D:/repo",
     workspace_roots: ["D:/repo"],
     workspace: workspace("ws-1", "repo", "D:/repo"),
-  });
+  }),
+}: {
+  workspaceListSkills?: ReturnType<typeof vi.fn>;
+  wsStatus?: WsConnectionStatus;
+  session?: AgentSession;
+} = {}) {
+  let handler: ((event: AgentActionEnvelope) => void) | null = null;
   const channel: ChatChannel = {
     close: vi.fn(),
     getStatus: vi.fn(() => wsStatus),
@@ -121,8 +263,11 @@ function fakeRuntime({
     models: {
       listProviders: vi.fn().mockResolvedValue([modelProvider()]),
     },
+    skills: {
+      listSession: workspaceListSkills,
+      listWorkspace: workspaceListSkills,
+    },
     workspace: {
-      listSkills: workspaceListSkills,
       listDirectory: vi.fn().mockResolvedValue({ root: "D:/repo", entries: [] }),
       readFile: vi.fn(),
       readMedia: vi.fn(),
@@ -255,9 +400,10 @@ function skillsResponse({
     },
   ],
 }: {
-  skills?: WorkspaceSkillsResponse["skills"];
-} = {}): WorkspaceSkillsResponse {
+  skills?: EffectiveSkillsResponse["skills"];
+} = {}): EffectiveSkillsResponse {
   return {
+    mode: "workspace_effective",
     workspace_root: "D:/repo",
     fingerprint: "fp-1",
     loaded_at: "2026-06-25T12:00:00Z",

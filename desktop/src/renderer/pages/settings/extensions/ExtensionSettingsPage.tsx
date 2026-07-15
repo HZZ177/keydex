@@ -2,6 +2,7 @@ import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent, R
 import { useEffect, useRef, useState } from "react";
 
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
+import { SettingsToggle } from "@/renderer/pages/settings/components";
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import type {
   A2UIRuntimeSettings,
@@ -13,6 +14,7 @@ import type {
 } from "@/types/protocol";
 
 import styles from "./ExtensionSettingsPage.module.css";
+import { WebSettingsSection, type WebSettingsSectionHandle } from "./WebSettingsSection";
 
 export interface ExtensionSettingsPageProps {
   runtime?: RuntimeBridge;
@@ -40,6 +42,8 @@ export function ExtensionSettingsPage({
   const [defaults, setDefaults] = useState<ModelDefaultsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [webSettingsReady, setWebSettingsReady] = useState(false);
+  const webSettingsRef = useRef<WebSettingsSectionHandle | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -89,6 +93,7 @@ export function ExtensionSettingsPage({
   const canSave =
     Boolean(drafts) &&
     !saving &&
+    webSettingsReady &&
     !titleDependencyMissing &&
     !compressionDependencyMissing &&
     !titleLengthInvalid &&
@@ -123,13 +128,21 @@ export function ExtensionSettingsPage({
     if (!drafts || !canSave) {
       return;
     }
+    const webValidationMessage = webSettingsRef.current?.validationMessage() ?? null;
+    if (webValidationMessage) {
+      notifications.error(webValidationMessage);
+      return;
+    }
     setSaving(true);
     try {
-      const nextSettings = await runtime.settings.saveExtensionSettings(settingsFromDrafts(drafts));
+      const [nextSettings] = await Promise.all([
+        runtime.settings.saveExtensionSettings(settingsFromDrafts(drafts)),
+        webSettingsRef.current?.save() ?? Promise.resolve(),
+      ]);
       setDrafts(draftsFromSettings(nextSettings));
       notifications.success("扩展功能配置已保存");
     } catch (reason) {
-      notifications.error(errorMessage(reason));
+      notifications.error(errorMessage(reason, "保存扩展功能配置失败"));
     } finally {
       setSaving(false);
     }
@@ -168,7 +181,7 @@ export function ExtensionSettingsPage({
                 </InlineNumberControl>
               }
               switchControl={
-                <ToggleSwitch
+                <SettingsToggle
                   checked={titleDraft.enabled}
                   label="启用标题生成"
                   onChange={(enabled) => updateTitleDraft({ enabled })}
@@ -199,7 +212,7 @@ export function ExtensionSettingsPage({
                 </InlineNumberControl>
               }
               switchControl={
-                <ToggleSwitch
+                <SettingsToggle
                   checked={duplicateGuardDraft.enabled}
                   label="启用重复保护"
                   onChange={(enabled) => updateDuplicateGuardDraft({ enabled })}
@@ -216,7 +229,7 @@ export function ExtensionSettingsPage({
               title="上下文压缩"
               description="在上下文接近窗口上限时压缩历史内容"
               control={
-                <ToggleSwitch
+                <SettingsToggle
                   checked={compressionDraft.enabled}
                   label="启用上下文压缩"
                   onChange={(enabled) => updateCompressionDraft({ enabled })}
@@ -245,7 +258,7 @@ export function ExtensionSettingsPage({
               title="A2UI 交互组件"
               description="允许智能体在对话中生成图表、选择、表单、可编辑表格四类内置 A2UI；关闭后只影响后续新对话能力"
               control={
-                <ToggleSwitch
+                <SettingsToggle
                   checked={a2uiDraft.enabled}
                   label="启用 A2UI"
                   onChange={(enabled) => updateA2UIDraft({ enabled })}
@@ -256,7 +269,7 @@ export function ExtensionSettingsPage({
               title="调试入口"
               description="在 A2UI 组件右上角显示调试感叹号入口，用于查看流式缓冲、事件块和渲染状态"
               control={
-                <ToggleSwitch
+                <SettingsToggle
                   checked={a2uiDraft.debug_info_enabled}
                   label="显示 A2UI 调试入口"
                   onChange={(debug_info_enabled) => updateA2UIDraft({ debug_info_enabled })}
@@ -271,12 +284,19 @@ export function ExtensionSettingsPage({
             </div>
           </div>
 
-          <div className={styles.actions}>
-            <button data-settings-primary disabled={!canSave} onClick={() => void saveExtensionPage()} type="button">
-              {saving ? "保存中" : "保存"}
-            </button>
-          </div>
         </section>
+      ) : null}
+      <WebSettingsSection
+        onReadyChange={setWebSettingsReady}
+        ref={webSettingsRef}
+        runtime={runtime}
+      />
+      {!loading && drafts ? (
+        <div className={styles.actions}>
+          <button data-settings-primary disabled={!canSave} onClick={() => void saveExtensionPage()} type="button">
+            {saving ? "保存中" : "保存"}
+          </button>
+        </div>
       ) : null}
     </main>
   );
@@ -343,31 +363,6 @@ function InlineNumberControl({
       <span>{label}</span>
       {children}
     </label>
-  );
-}
-
-function ToggleSwitch({
-  checked,
-  label,
-  onChange,
-}: {
-  checked: boolean;
-  label: string;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <button
-      aria-checked={checked}
-      aria-label={label}
-      className={styles.toggle}
-      onClick={() => onChange(!checked)}
-      role="switch"
-      type="button"
-    >
-      <span aria-hidden="true" className={styles.toggleTrack} data-checked={checked ? "true" : "false"}>
-        <span className={styles.toggleThumb} />
-      </span>
-    </button>
   );
 }
 
@@ -660,12 +655,12 @@ function decimalPlaces(value: number): number {
   return decimals.length;
 }
 
-function errorMessage(reason: unknown): string {
+function errorMessage(reason: unknown, fallback = "读取扩展功能配置失败"): string {
   if (reason instanceof Error && reason.message) {
     return reason.message;
   }
   if (reason && typeof reason === "object" && typeof (reason as { message?: unknown }).message === "string") {
     return (reason as { message: string }).message;
   }
-  return "读取扩展功能配置失败";
+  return fallback;
 }

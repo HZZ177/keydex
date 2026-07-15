@@ -79,7 +79,7 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
         dispatcher = self._dispatcher or get_event_dispatcher()
         steering_messages: list[BaseMessage] = []
         slot_injected = False
-        skill_names: list[str] = []
+        skill_activations: list[dict[str, str]] = []
 
         for record in records:
             record_messages, attachment_payloads = self._messages_for_record(
@@ -89,9 +89,9 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
             if any(getattr(message, "id", None) == _SLOT_MESSAGE_ID for message in record_messages):
                 slot_injected = True
             steering_messages.extend(record_messages)
-            skill_name = _pending_skill_name(record)
-            if skill_name and skill_name not in skill_names:
-                skill_names.append(skill_name)
+            skill_activation = _pending_skill_activation(record)
+            if skill_activation and skill_activation not in skill_activations:
+                skill_activations.append(skill_activation)
             await self._emit_user_message_event(
                 dispatcher,
                 record=record,
@@ -141,15 +141,24 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
                 *steering_messages,
             ],
         }
-        if skill_names:
+        if skill_activations:
             preset = ToolCallPreset(
                 type="force",
                 producer="skill_activation",
                 calls=[
-                    ToolCallPresetItem(name="load_skill", args={"skill_name": skill_name})
-                    for skill_name in skill_names
+                    ToolCallPresetItem(
+                        name="load_skill",
+                        args={
+                            "skill_name": activation["skill_name"],
+                            "source": activation["source"],
+                        },
+                    )
+                    for activation in skill_activations
                 ],
-                metadata={"source": "pending_user_input"},
+                metadata={
+                    "source": "pending_user_input",
+                    "skill_activations": skill_activations,
+                },
             )
             update.update(build_pending_tool_call_preset_update(preset.to_dict()))
         return update
@@ -292,11 +301,17 @@ def _pending_context_items(record: PendingInputRecord) -> list[dict[str, Any]]:
     return [dict(item) for item in raw_items if isinstance(item, dict)]
 
 
-def _pending_skill_name(record: PendingInputRecord) -> str:
+def _pending_skill_activation(record: PendingInputRecord) -> dict[str, str] | None:
     runtime_params = record.runtime_params if isinstance(record.runtime_params, dict) else {}
     activation = runtime_params.get("skill_activation")
     if activation is None:
         activation = runtime_params.get("skillActivation")
     if not isinstance(activation, dict):
-        return ""
-    return str(activation.get("skill_name") or activation.get("skillName") or "").strip()
+        return None
+    skill_name = str(
+        activation.get("skill_name") or activation.get("skillName") or ""
+    ).strip()
+    if not skill_name:
+        return None
+    source = str(activation.get("source") or "workspace").strip() or "workspace"
+    return {"skill_name": skill_name, "source": source}

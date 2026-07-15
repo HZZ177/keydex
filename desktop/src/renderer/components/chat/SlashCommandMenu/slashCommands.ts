@@ -1,4 +1,4 @@
-import type { WorkspaceSkillSummary } from "@/runtime";
+import type { SkillSummary } from "@/runtime";
 
 const SLASH_QUERY_PATTERN = /(?:^|\s)\/([^\s/]*)$/;
 const SLASH_QUERY_REPLACE_PATTERN = /(?:^|\s)\/[^\s/]*$/;
@@ -9,7 +9,7 @@ export interface SlashCommand {
   label: string;
   title: string;
   description: string;
-  skill?: WorkspaceSkillSummary;
+  skill?: SkillSummary;
   childCount?: number;
   searchText?: string;
 }
@@ -53,13 +53,13 @@ export function contextCompressionSlashCommand(): SlashCommand {
   };
 }
 
-export function skillGroupSlashCommand(skills: WorkspaceSkillSummary[] = []): SlashCommand {
+export function skillGroupSlashCommand(skills: SkillSummary[] = []): SlashCommand {
   return {
     id: "skill",
     kind: "skill_group",
     label: "Skill",
     title: "Skill",
-    description: skills.length ? `选择 ${skills.length} 个工作区 Skill` : "选择工作区 Skill",
+    description: skills.length ? `选择 ${skills.length} 个可用 Skill` : "选择可用 Skill",
     childCount: skills.length,
     searchText: skills
       .map((skill) => `${skill.label} ${skill.name} ${skill.description} ${skill.source}`)
@@ -67,9 +67,9 @@ export function skillGroupSlashCommand(skills: WorkspaceSkillSummary[] = []): Sl
   };
 }
 
-export function skillToSlashCommand(skill: WorkspaceSkillSummary): SlashCommand {
+export function skillToSlashCommand(skill: SkillSummary): SlashCommand {
   return {
-    id: `skill:${skill.name}`,
+    id: `skill:${skill.source}:${skill.name}`,
     kind: "skill",
     label: skill.label || `/${skill.name}`,
     title: skill.name,
@@ -79,7 +79,7 @@ export function skillToSlashCommand(skill: WorkspaceSkillSummary): SlashCommand 
 }
 
 export function buildSlashCommands(
-  skills: WorkspaceSkillSummary[] = [],
+  skills: SkillSummary[] = [],
   options: BuildSlashCommandsOptions = {},
 ): SlashCommand[] {
   const commands: SlashCommand[] = [];
@@ -115,7 +115,7 @@ export function filterSlashCommands(commands: SlashCommand[], query: string): Sl
   });
 }
 
-export function filterSlashSkills(skills: WorkspaceSkillSummary[], query: string): WorkspaceSkillSummary[] {
+export function filterSlashSkills(skills: SkillSummary[], query: string): SkillSummary[] {
   if (!query) {
     return skills;
   }

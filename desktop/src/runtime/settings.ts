@@ -28,6 +28,99 @@ export interface HealthResponse {
   file_history_enabled?: boolean;
 }
 
+export type WebCapability = "search" | "fetch";
+export type WebProviderFieldType = "text" | "secret" | "select" | "boolean";
+export type WebProviderConfigStatus = "ready" | "incomplete" | "invalid";
+
+export interface WebProviderSelectOption {
+  value: string;
+  label: string;
+}
+
+export interface WebProviderConfigField {
+  key: string;
+  field_type: WebProviderFieldType;
+  label: string;
+  required: boolean;
+  placeholder: string | null;
+  help_text: string | null;
+  default: string | boolean | null;
+  options: WebProviderSelectOption[];
+}
+
+export interface WebSecretState {
+  configured: boolean;
+  preview: string | null;
+}
+
+export interface WebProviderSetupLink {
+  label: string;
+  url: string;
+  help_text: string | null;
+}
+
+export interface WebProviderSettings {
+  provider_id: string;
+  display_name: string;
+  description: string;
+  capabilities: WebCapability[];
+  config_fields: WebProviderConfigField[];
+  credential_setup: WebProviderSetupLink | null;
+  config: Record<string, string | boolean>;
+  secrets: Record<string, WebSecretState>;
+  configured: boolean;
+  config_status: WebProviderConfigStatus;
+  connection_status: "unchecked";
+}
+
+export interface WebSettingsResponse {
+  enabled: boolean;
+  active_provider_id: string;
+  active_provider_known: boolean;
+  providers: WebProviderSettings[];
+}
+
+export type WebSecretUpdate =
+  | { action: "keep" | "clear"; value?: never }
+  | { action: "set"; value: string };
+
+export interface WebProviderSettingsUpdate {
+  config: Record<string, string | boolean>;
+  secrets: Record<string, WebSecretUpdate>;
+}
+
+export interface UpdateWebSettingsPayload {
+  enabled: boolean;
+  active_provider_id: string;
+  providers: Record<string, WebProviderSettingsUpdate>;
+}
+
+export interface WebConnectionCheckDraft {
+  config?: Record<string, string | boolean>;
+  secrets?: Record<string, WebSecretUpdate>;
+}
+
+export interface WebConnectionCheckError {
+  code: string;
+  message: string;
+  retryable: boolean;
+  provider_id: string | null;
+  retry_after_seconds: number | null;
+}
+
+export interface WebConnectionCheckResponse {
+  provider_id: string;
+  ok: boolean;
+  duration_ms: number | null;
+  error: WebConnectionCheckError | null;
+}
+
+export interface WebSecretRevealResponse {
+  provider_id: string;
+  field_key: string;
+  value: string;
+}
+
 export interface SettingsRuntime {
   health(): Promise<HealthResponse>;
   getSettings(): Promise<SettingsResponse>;
@@ -35,6 +128,10 @@ export interface SettingsRuntime {
   saveModelDefaults(payload: UpdateModelDefaultsPayload): Promise<ModelDefaultsResponse>;
   getExtensionSettings(): Promise<AgentRuntimeSettings>;
   saveExtensionSettings(payload: AgentRuntimeSettings): Promise<AgentRuntimeSettings>;
+  getWebSettings(): Promise<WebSettingsResponse>;
+  saveWebSettings(payload: UpdateWebSettingsPayload): Promise<WebSettingsResponse>;
+  revealWebProviderSecret(providerId: string, fieldKey: string): Promise<WebSecretRevealResponse>;
+  checkWebProvider(providerId: string, draft?: WebConnectionCheckDraft): Promise<WebConnectionCheckResponse>;
   saveSettings(model: ModelSettings): Promise<SettingsResponse>;
   saveGeneralSettings(general: GeneralSettings): Promise<SettingsResponse>;
   saveAppearanceSettings(appearance: AppearanceSettings): Promise<SettingsResponse>;
@@ -78,6 +175,30 @@ export function createSettingsRuntime(http: HttpClient): SettingsRuntime {
         method: "PUT",
         body: payload,
       });
+    },
+    getWebSettings() {
+      return http.request<WebSettingsResponse>("/api/settings/web");
+    },
+    saveWebSettings(payload) {
+      return http.request<WebSettingsResponse>("/api/settings/web", {
+        method: "PUT",
+        body: payload,
+      });
+    },
+    revealWebProviderSecret(providerId, fieldKey) {
+      return http.request<WebSecretRevealResponse>(
+        `/api/settings/web/providers/${encodeURIComponent(providerId)}/secrets/${encodeURIComponent(fieldKey)}/reveal`,
+        { method: "POST" },
+      );
+    },
+    checkWebProvider(providerId, draft = {}) {
+      return http.request<WebConnectionCheckResponse>(
+        `/api/settings/web/providers/${encodeURIComponent(providerId)}/check`,
+        {
+          method: "POST",
+          body: draft,
+        },
+      );
     },
     saveSettings(model) {
       return http.request<SettingsResponse>("/api/settings", {

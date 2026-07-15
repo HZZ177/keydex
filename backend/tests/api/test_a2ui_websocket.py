@@ -165,7 +165,10 @@ def test_websocket_chat_is_blocked_while_a2ui_is_waiting(tmp_path) -> None:
 
 
 def _client(tmp_path) -> TestClient:
-    app = create_app(AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path))
+    app = create_app(
+        AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path),
+        keydex_system_root_for_testing=tmp_path / "system-keydex",
+    )
     return TestClient(app)
 
 

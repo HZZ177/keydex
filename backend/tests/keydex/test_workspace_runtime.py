@@ -80,7 +80,7 @@ def test_fingerprint_changes_for_same_size_skill_entry_content_change(tmp_path: 
     assert second != first
 
 
-def test_fingerprint_ignores_skill_resource_changes(tmp_path: Path) -> None:
+def test_t53_fingerprint_changes_for_skill_resource_changes(tmp_path: Path) -> None:
     workspace_root = tmp_path / "repo"
     skill_dir = workspace_root / ".keydex" / "skills" / "dev-plan"
     _write_skill(skill_dir, name="dev-plan")
@@ -91,4 +91,4 @@ def test_fingerprint_ignores_skill_resource_changes(tmp_path: Path) -> None:
     resource.write_text("guide", encoding="utf-8")
     after = _digest(workspace_root)
 
-    assert after == before
+    assert after != before

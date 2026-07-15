@@ -12,6 +12,7 @@ from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.factory import AgentFactory
 from backend.app.core.config import AppSettings
 from backend.app.core.time import to_iso_z, utc_now
+from backend.app.keydex import KeydexRuntimeCache
 from backend.app.model import ModelSettings
 from backend.app.services import ChatRequest, ChatService
 from backend.app.services.chat_service import (
@@ -94,7 +95,14 @@ def _service(
         factory=factory,
     )
     return (
-        ChatService(settings=settings, repositories=repositories, agent_runner=runner),
+        ChatService(
+            settings=settings,
+            repositories=repositories,
+            agent_runner=runner,
+            keydex_runtime_cache=KeydexRuntimeCache(
+                system_root=tmp_path / "system-keydex"
+            ),
+        ),
         repositories,
         checkpointer,
         factory,
@@ -103,6 +111,79 @@ def _service(
 
 def _chat_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [message for message in history if message.get("role") != "turn"]
+
+
+@pytest.mark.asyncio
+async def test_t45_thread_task_continuation_revalidates_stale_skill_source(
+    tmp_path: Path,
+) -> None:
+    system_skill = tmp_path / "system-keydex" / "skills" / "shared"
+    workspace_root = tmp_path / "workspace"
+    workspace_skill = workspace_root / ".keydex" / "skills" / "shared"
+    for skill_root, description in (
+        (system_skill, "System shared"),
+        (workspace_skill, "Workspace shared"),
+    ):
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text(
+            f"---\nname: shared\ndescription: {description}\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="must not run")])
+    service, repositories, _checkpointer, factory = _service(tmp_path, model)
+    workspace = repositories.workspaces.create(
+        workspace_id="ws-project", root_path=workspace_root
+    )
+    session = repositories.sessions.create(
+        session_id="ses-project",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(workspace_root),
+        workspace_roots=[str(workspace_root)],
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="",
+            provider_id="provider-1",
+            model="qwen-coder",
+            runtime_params={
+                "thread_task": {
+                    "task_id": "task-1",
+                    "run_id": "run-1",
+                    "trigger": "task_continue",
+                    "type": "goal",
+                },
+                "message_injection": [
+                    {
+                        "type": "follow",
+                        "role": "HumanMessage",
+                        "content": "继续执行目标",
+                        "hidden_for_transcript": True,
+                    }
+                ],
+                "skill_activation": {
+                    "skill_name": "shared",
+                    "source": "system",
+                    "origin": "thread_task_seed_context",
+                },
+            },
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.error == "Skill 来源已变化，请刷新列表后重试"
+    assert factory.requested_models == []
+    error = repositories.message_events.list_by_session(session.id)[-1]
+    assert error.data["code"] == "skill_source_stale"
+    assert error.data["details"] == {
+        "skill_name": "shared",
+        "requested_source": "system",
+        "winner_source": "workspace",
+    }
 
 
 def test_message_injection_parser_accepts_hidden_for_transcript() -> None:

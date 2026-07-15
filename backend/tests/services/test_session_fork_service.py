@@ -83,6 +83,22 @@ def _prepare_source(tmp_path):
 
 def test_session_fork_service_clones_checkpoint_and_copies_history_until_source(tmp_path) -> None:
     repositories, saver = _prepare_source(tmp_path)
+    repositories.message_events.append(
+        event_id="evt_skill_system_1",
+        session_id="ses_source",
+        trace_record_id="trace_1",
+        turn_index=1,
+        action="system_message",
+        data={
+            "session_id": "ses_source",
+            "source": "skill_activation",
+            "id": "skill:system:shared",
+            "skill_name": "shared",
+            "skill_source": "system",
+            "locator": ".keydex/skills/shared/SKILL.md",
+            "origin": "slash",
+        },
+    )
     service = SessionForkService(repositories, checkpointer=saver)
 
     result = service.fork_session(
@@ -115,8 +131,18 @@ def test_session_fork_service_clones_checkpoint_and_copies_history_until_source(
     assert fork_record.source_checkpoint_ns == ""
 
     copied_events = repositories.message_events.list_by_session(forked.id)
-    assert [event.turn_index for event in copied_events] == [1, 1]
-    assert [event.data["session_id"] for event in copied_events] == [forked.id, forked.id]
+    assert [event.turn_index for event in copied_events] == [1, 1, 1]
+    assert [event.data["session_id"] for event in copied_events] == [
+        forked.id,
+        forked.id,
+        forked.id,
+    ]
+    skill_event = next(
+        event for event in copied_events if event.data.get("source") == "skill_activation"
+    )
+    assert skill_event.data["id"] == "skill:system:shared"
+    assert skill_event.data["skill_source"] == "system"
+    assert skill_event.data["locator"] == ".keydex/skills/shared/SKILL.md"
     cloned_checkpoint = saver.get_tuple(
         {"configurable": {"thread_id": forked.id, "checkpoint_ns": ""}}
     )

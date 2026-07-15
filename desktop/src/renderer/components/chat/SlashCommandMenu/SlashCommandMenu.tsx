@@ -1,7 +1,7 @@
 import { Box, ChevronLeft, ChevronRight, Command, MessagesSquare, Search, Sparkles, Target } from "lucide-react";
 import { useEffect, useRef } from "react";
 
-import type { WorkspaceSkillSummary } from "@/runtime";
+import type { KeydexDiagnostic, SkillSummary } from "@/runtime";
 
 import styles from "../ComposerPopupMenu/ComposerPopupMenu.module.css";
 import {
@@ -13,11 +13,12 @@ export interface SlashCommandMenuProps {
   mode: "root" | "skills";
   query: string;
   commands: SlashCommand[];
-  skills: WorkspaceSkillSummary[];
+  skills: SkillSummary[];
+  diagnostics?: KeydexDiagnostic[];
   activeIndex: number;
   onBack?: () => void;
   onSelectCommand: (command: SlashCommand) => void;
-  onSelectSkill: (skill: WorkspaceSkillSummary) => void;
+  onSelectSkill: (skill: SkillSummary) => void;
 }
 
 export function SlashCommandMenu({
@@ -25,6 +26,7 @@ export function SlashCommandMenu({
   query,
   commands,
   skills,
+  diagnostics = [],
   activeIndex,
   onBack,
   onSelectCommand,
@@ -34,8 +36,9 @@ export function SlashCommandMenu({
   const showingSkills = mode === "skills";
   const rootItemCount = commands.length + skills.length;
   const itemCount = showingSkills ? skills.length : rootItemCount;
-  const emptyText = showingSkills ? (query ? "没有匹配的 Skill" : "当前项目无 Skill") : "没有匹配的命令";
+  const emptyText = showingSkills ? (query ? "没有匹配的 Skill" : "当前范围无 Skill") : "没有匹配的命令";
   const filterLabel = showingSkills ? "筛选 Skill" : "筛选命令";
+  const diagnostic = showingSkills ? primarySkillDiagnostic(diagnostics) : null;
 
   useEffect(() => {
     const activeOption = bodyRef.current?.querySelector<HTMLElement>('[data-active="true"]');
@@ -81,6 +84,16 @@ export function SlashCommandMenu({
       </div>
 
       <div ref={bodyRef} className={styles.body}>
+        {diagnostic ? (
+          <div
+            className={styles.error}
+            data-diagnostic-code={diagnostic.code}
+            data-testid="skill-diagnostic"
+            role="alert"
+          >
+            {diagnostic.severity === "error" ? "Skill 配置错误" : "Skill 配置提醒"}：{diagnostic.reason}
+          </div>
+        ) : null}
         {itemCount ? (
           showingSkills ? (
             skills.map((skill, index) => (
@@ -122,6 +135,10 @@ export function SlashCommandMenu({
       </div>
     </div>
   );
+}
+
+function primarySkillDiagnostic(diagnostics: KeydexDiagnostic[]): KeydexDiagnostic | null {
+  return diagnostics.find((item) => item.severity === "error") ?? diagnostics[0] ?? null;
 }
 
 function SkillSectionDivider() {
@@ -214,9 +231,9 @@ function SkillItem({
   active,
   onSelect,
 }: {
-  skill: WorkspaceSkillSummary;
+  skill: SkillSummary;
   active: boolean;
-  onSelect: (skill: WorkspaceSkillSummary) => void;
+  onSelect: (skill: SkillSummary) => void;
 }) {
   const label = skill.label || `/${skill.name}`;
   const displayName = skillDisplayName(skill);
@@ -246,12 +263,12 @@ function SkillItem({
   );
 }
 
-function skillDisplayName(skill: WorkspaceSkillSummary): string {
+function skillDisplayName(skill: SkillSummary): string {
   const raw = skill.name || skill.label;
   const normalized = raw.replace(/^\//, "").trim();
   return normalized || "Skill";
 }
 
-function skillSourceLabel(source: WorkspaceSkillSummary["source"]): string {
-  return source === "system" ? "系统" : "keydex";
+function skillSourceLabel(source: SkillSummary["source"]): string {
+  return source === "builtin" ? "内置" : source === "system" ? "系统级" : "项目级";
 }

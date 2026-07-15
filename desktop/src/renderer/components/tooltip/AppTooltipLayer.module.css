@@ -37,6 +37,16 @@
   transform: translate(calc(-100% - 8px), -50%);
 }
 
+.tooltip[data-multiline="true"] {
+  max-width: min(320px, calc(100vw - 24px));
+  overflow: visible;
+  font-weight: 450;
+  line-height: 1.55;
+  padding: 8px 10px;
+  text-overflow: clip;
+  white-space: normal;
+}
+
 @keyframes tooltipIn {
   from {
     opacity: 0;

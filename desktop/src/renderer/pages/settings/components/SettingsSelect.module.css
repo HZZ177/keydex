@@ -167,14 +167,20 @@
 
 .dropdown[data-density="compact"] .options {
   max-height: min(var(--floating-max-height, 238px), 34vh);
-  gap: 0;
+  gap: 2px;
+  padding: 3px;
 }
 
 .dropdown[data-density="compact"] .option {
-  min-height: 32px;
+  min-height: 36px;
   gap: 8px;
   border-radius: 7px;
-  padding: 0 7px;
+  padding: 5px 10px;
+}
+
+.dropdown[data-density="compact"] .option[data-has-description="true"] {
+  min-height: 44px;
+  padding-block: 6px;
 }
 
 .dropdown[data-density="compact"] .option strong {

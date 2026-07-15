@@ -2,10 +2,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
+  EffectiveSkillsResponse,
   RuntimeBridge,
-  WorkspaceSkillsResponse,
+  SkillSummary,
 } from "@/runtime";
 import { HomePage } from "@/renderer/pages/home";
+import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import type { AgentSession, ModelInfo, Workspace } from "@/types/protocol";
 
 describe("HomePage skill activation", () => {
@@ -23,7 +25,10 @@ describe("HomePage skill activation", () => {
     );
 
     await waitFor(() => {
-      expect(workspaceListSkills).toHaveBeenCalledWith({ workspaceId: "ws-1" }, { forceReload: false });
+      expect(workspaceListSkills).toHaveBeenCalledWith(
+        "ws-1",
+        expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+      );
     });
     typePrompt("/");
     await screen.findByRole("option", { name: /^Skill\b/ });
@@ -70,7 +75,155 @@ describe("HomePage skill activation", () => {
       }),
     );
   });
+
+  it("loads system winners for project-free chat without creating a hidden session", async () => {
+    const systemListSkills = vi.fn().mockResolvedValue(
+      skillsResponse([skill("review", "system")], "system_only"),
+    );
+    const workspaceListSkills = vi.fn().mockResolvedValue(skillsResponse());
+    const runtime = fakeRuntime({
+      model: "qwen-coder",
+      systemListSkills,
+      workspaceListSkills,
+    });
+    const onNavigateToConversation = vi.fn();
+
+    render(
+      <HomePage
+        runtime={runtime}
+        initialSessionType="chat"
+        onNavigateToConversation={onNavigateToConversation}
+        onOpenModelSettings={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(systemListSkills).toHaveBeenCalledWith(
+        expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+      );
+    });
+    expect(workspaceListSkills).not.toHaveBeenCalled();
+    expect(runtime.conversation.createSession).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("添加附件")).toBeNull();
+
+    selectFirstSkill("review");
+    typePrompt("review the proposal");
+    const sendButton = screen.getByLabelText("发送") as HTMLButtonElement;
+    await waitFor(() => expect(sendButton.disabled).toBe(false));
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(runtime.conversation.createSession).toHaveBeenCalledWith({
+        title: "review the proposal",
+        session_tag: "chat",
+        sessionType: "chat",
+        currentModelProviderId: "provider-1",
+        currentModel: "qwen-coder",
+      });
+    });
+    expect(onNavigateToConversation).toHaveBeenCalledWith(
+      "ses-1",
+      { providerId: "provider-1", model: "qwen-coder" },
+      "review the proposal",
+      expect.objectContaining({
+        runtimeParams: {
+          skill_activation: {
+            skill_name: "review",
+            source: "system",
+            origin: "slash",
+          },
+        },
+      }),
+    );
+  });
+
+  it("keeps ordinary chat usable when the system skill bootstrap fails", async () => {
+    const systemListSkills = vi.fn().mockRejectedValue(new Error("system catalog unavailable"));
+    const runtime = fakeRuntime({ model: "qwen-coder", systemListSkills });
+
+    render(
+      <HomePage
+        runtime={runtime}
+        initialSessionType="chat"
+        onNavigateToConversation={vi.fn()}
+        onOpenModelSettings={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(systemListSkills).toHaveBeenCalled());
+    expect(runtime.conversation.createSession).not.toHaveBeenCalled();
+    typePrompt("chat without skills");
+    fireEvent.click(screen.getByLabelText("发送"));
+
+    await waitFor(() => expect(runtime.conversation.createSession).toHaveBeenCalled());
+  });
+
+  it("ignores a late system response after the default project scope wins", async () => {
+    const pendingSystem = deferred<EffectiveSkillsResponse>();
+    const systemListSkills = vi.fn().mockReturnValue(pendingSystem.promise);
+    const workspaceListSkills = vi.fn().mockResolvedValue(
+      skillsResponse([skill("project-review", "workspace")]),
+    );
+    const runtime = fakeRuntime({ model: "qwen-coder", systemListSkills, workspaceListSkills });
+
+    render(
+      <HomePage
+        runtime={runtime}
+        onNavigateToConversation={vi.fn()}
+        onOpenModelSettings={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(workspaceListSkills).toHaveBeenCalled());
+    typePrompt("/project");
+    expect(await screen.findByRole("option", { name: /project-review/u })).not.toBeNull();
+
+    pendingSystem.resolve(skillsResponse([skill("system-late", "system")], "system_only"));
+    await Promise.resolve();
+
+    expect(screen.queryByRole("option", { name: /system-late/u })).toBeNull();
+    expect(screen.getByRole("option", { name: /project-review/u })).not.toBeNull();
+  });
+
+  it("clears a selected project winner when chat resolves the same name from system", async () => {
+    const systemListSkills = vi.fn().mockResolvedValue(
+      skillsResponse([skill("shared", "system")], "system_only"),
+    );
+    const workspaceListSkills = vi.fn().mockResolvedValue(
+      skillsResponse([skill("shared", "workspace")]),
+    );
+    const runtime = fakeRuntime({ model: "qwen-coder", systemListSkills, workspaceListSkills });
+
+    render(
+      <NotificationProvider>
+        <HomePage
+          runtime={runtime}
+          onNavigateToConversation={vi.fn()}
+          onOpenModelSettings={vi.fn()}
+        />
+      </NotificationProvider>,
+    );
+
+    await waitFor(() => expect(workspaceListSkills).toHaveBeenCalled());
+    selectFirstSkill("shared");
+    expect(screen.getByLabelText("删除 Skill /shared")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "选择工作区" }));
+    fireEvent.click(screen.getByRole("button", { name: /无项目聊天/u }));
+
+    await waitFor(() => expect(systemListSkills).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByLabelText("删除 Skill /shared")).toBeNull());
+    expect(screen.getByTestId("notification-item").textContent).toContain(
+      "同名 Skill 的有效来源已变化",
+    );
+  });
 });
+
+function selectFirstSkill(name: string) {
+  typePrompt("/");
+  fireEvent.mouseDown(screen.getByRole("option", { name: /^Skill\b/u }));
+  fireEvent.mouseDown(screen.getByRole("option", { name: new RegExp(name, "u") }));
+}
 
 function typePrompt(value: string) {
   const input = screen.getByLabelText("输入需求");
@@ -83,11 +236,13 @@ function fakeRuntime({
   model,
   models = model ? [{ id: model }] : [],
   workspaces = [workspace("ws-1", "keydex")],
+  systemListSkills = vi.fn().mockResolvedValue(skillsResponse([], "system_only")),
   workspaceListSkills = vi.fn().mockResolvedValue(skillsResponse()),
 }: {
   model: string;
   models?: ModelInfo[];
   workspaces?: Workspace[];
+  systemListSkills?: ReturnType<typeof vi.fn>;
   workspaceListSkills?: ReturnType<typeof vi.fn>;
 }): RuntimeBridge {
   const session: AgentSession = {
@@ -176,8 +331,12 @@ function fakeRuntime({
       list: vi.fn().mockResolvedValue({ list: workspaces, total: workspaces.length }),
       create: vi.fn(),
     },
+    skills: {
+      listSystem: systemListSkills,
+      listSession: workspaceListSkills,
+      listWorkspace: workspaceListSkills,
+    },
     workspace: {
-      listSkills: workspaceListSkills,
       listDirectory: vi.fn().mockResolvedValue({ root: "D:/repo", entries: [] }),
       readFile: vi.fn(),
       readMedia: vi.fn(),
@@ -207,20 +366,34 @@ function workspace(id: string, name: string, rootPath = `D:\\Pycharm Projects\\$
   };
 }
 
-function skillsResponse(): WorkspaceSkillsResponse {
+function skillsResponse(
+  skills: SkillSummary[] = [skill("dev-plan", "workspace")],
+  mode: EffectiveSkillsResponse["mode"] = "workspace_effective",
+): EffectiveSkillsResponse {
   return {
-    workspace_root: "D:/repo",
+    mode,
+    workspace_root: mode === "system_only" ? null : "D:/repo",
     fingerprint: "fp-1",
     loaded_at: "2026-06-25T12:00:00Z",
-    skills: [
-      {
-        name: "dev-plan",
-        description: "Plan work from a design doc",
-        source: "workspace",
-        label: "/dev-plan",
-        locator: ".keydex/skills/dev-plan/SKILL.md",
-      },
-    ],
+    skills,
     diagnostics: [],
   };
+}
+
+function skill(name: string, source: SkillSummary["source"]): SkillSummary {
+  return {
+    name,
+    description: `${source} ${name}`,
+    source,
+    label: `/${name}`,
+    locator: `.keydex/skills/${name}/SKILL.md`,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
 }

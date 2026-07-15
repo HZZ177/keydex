@@ -166,7 +166,9 @@ def test_agent_runner_appends_native_load_skill_for_workspace_skill_catalog(
     assert factory.created_state_schema == [KeydexAgentState]
 
 
-def test_agent_runner_does_not_append_load_skill_when_tools_disabled(tmp_path: Path) -> None:
+def test_agent_runner_can_enable_only_load_skill_when_workspace_tools_disabled(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "repo"
     _write_skill(workspace)
     snapshot = KeydexWorkspaceRuntimeCache().get_snapshot(workspace)
@@ -184,9 +186,10 @@ def test_agent_runner_does_not_append_load_skill_when_tools_disabled(tmp_path: P
             metadata={"skill_catalog": snapshot.skill_catalog},
         ),
         enable_tools=False,
+        enable_skill_tools=True,
     )
 
-    assert factory.created_tools == [[]]
+    assert [[tool.name for tool in tools] for tools in factory.created_tools] == [["load_skill"]]
     assert factory.created_state_schema == [KeydexAgentState]
 
 
@@ -220,7 +223,7 @@ def test_agent_runner_merges_local_registry_and_runtime_mcp_tools_without_regist
     assert registry.get("mcp__srv_agent_mcp__search", include_disabled=True) is None
 
 
-def test_default_middleware_order_matches_skill_design() -> None:
+def test_t40_default_middleware_order_matches_skill_design() -> None:
     middleware = build_default_middleware()
 
     assert [type(item) for item in middleware] == [

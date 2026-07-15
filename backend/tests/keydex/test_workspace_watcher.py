@@ -37,6 +37,9 @@ async def test_watcher_invalidates_and_notifies_registered_workspace_session(
         debounce_seconds=0,
     )
     await watcher.register_session("session-1", workspace_root)
+    keydex_root = workspace_root / ".keydex"
+    keydex_root.mkdir()
+    (keydex_root / "keydex.json").write_text("{}", encoding="utf-8")
 
     changed = await watcher.handle_path_change(workspace_root, ".keydex/keydex.json")
 
@@ -49,7 +52,9 @@ async def test_watcher_invalidates_and_notifies_registered_workspace_session(
 
 
 @pytest.mark.asyncio
-async def test_watcher_handles_create_modify_delete_targets(tmp_path: Path) -> None:
+async def test_t54_workspace_watcher_keeps_create_modify_delete_refresh(
+    tmp_path: Path,
+) -> None:
     cache = RecordingRuntimeCache()
     events: list[tuple[str, dict[str, Any]]] = []
 
@@ -67,20 +72,30 @@ async def test_watcher_handles_create_modify_delete_targets(tmp_path: Path) -> N
     )
     await watcher.register_session("session-1", workspace_root)
 
+    keydex_root = workspace_root / ".keydex"
+    keydex_root.mkdir()
+    manifest = keydex_root / "keydex.json"
+    manifest.write_text("{}", encoding="utf-8")
     await watcher.handle_path_change(workspace_root, ".keydex/keydex.json")
+    skill_entry = keydex_root / "skills" / "dev-plan" / "SKILL.md"
+    skill_entry.parent.mkdir(parents=True)
+    skill_entry.write_text(
+        "---\nname: dev-plan\ndescription: Dev plan\n---\n", encoding="utf-8"
+    )
     await watcher.handle_path_change(workspace_root, ".keydex/skills/dev-plan/SKILL.md")
-    await watcher.handle_path_change(workspace_root, workspace_root / ".keydex/skills/old/SKILL.md")
+    skill_entry.unlink()
+    await watcher.handle_path_change(workspace_root, skill_entry)
 
     assert len(cache.invalidated) == 3
     assert [event[1]["changed_path"] for event in events] == [
         ".keydex/keydex.json",
         ".keydex/skills/dev-plan/SKILL.md",
-        ".keydex/skills/old/SKILL.md",
+        ".keydex/skills/dev-plan/SKILL.md",
     ]
 
 
 @pytest.mark.asyncio
-async def test_watcher_debounces_duplicate_events(tmp_path: Path) -> None:
+async def test_t56_workspace_watcher_debounces_duplicate_events(tmp_path: Path) -> None:
     cache = RecordingRuntimeCache()
     events: list[tuple[str, dict[str, Any]]] = []
 
@@ -97,6 +112,9 @@ async def test_watcher_debounces_duplicate_events(tmp_path: Path) -> None:
         debounce_seconds=60,
     )
     await watcher.register_session("session-1", workspace_root)
+    keydex_root = workspace_root / ".keydex"
+    keydex_root.mkdir()
+    (keydex_root / "keydex.json").write_text("{}", encoding="utf-8")
 
     first = await watcher.handle_path_change(workspace_root, ".keydex/keydex.json")
     second = await watcher.handle_path_change(workspace_root, ".keydex/keydex.json")
@@ -126,6 +144,9 @@ async def test_watcher_unregisters_session_notifications(tmp_path: Path) -> None
     )
     await watcher.register_session("session-1", workspace_root)
     await watcher.unregister_session("session-1")
+    keydex_root = workspace_root / ".keydex"
+    keydex_root.mkdir()
+    (keydex_root / "keydex.json").write_text("{}", encoding="utf-8")
 
     changed = await watcher.handle_path_change(workspace_root, ".keydex/keydex.json")
 
@@ -134,7 +155,7 @@ async def test_watcher_unregisters_session_notifications(tmp_path: Path) -> None
     assert events == []
 
 
-def test_is_keydex_watch_target_matches_only_manifest_and_skill_entry(
+def test_is_keydex_watch_target_matches_manifest_skill_tree_and_resources(
     tmp_path: Path,
 ) -> None:
     workspace_root = tmp_path / "repo"
@@ -144,6 +165,6 @@ def test_is_keydex_watch_target_matches_only_manifest_and_skill_entry(
     assert is_keydex_watch_target(workspace_root, ".keydex/skills/dev-plan/SKILL.md") is True
     assert (
         is_keydex_watch_target(workspace_root, ".keydex/skills/dev-plan/references/guide.md")
-        is False
+        is True
     )
     assert is_keydex_watch_target(workspace_root, ".agents/skills/dev-plan/SKILL.md") is False

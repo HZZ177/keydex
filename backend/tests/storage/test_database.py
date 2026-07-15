@@ -25,6 +25,8 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
 
     expected = {
         "settings",
+        "web_settings",
+        "web_provider_configs",
         "model_providers",
         "model_defaults",
         "mcp_servers",
@@ -61,6 +63,74 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
     }
     assert expected.issubset(first)
     assert expected.issubset(second)
+
+
+def test_init_database_creates_default_web_settings_idempotently(tmp_path) -> None:
+    db_path = tmp_path / "app.db"
+    db = init_database(db_path)
+    with db.connect() as conn:
+        default_row = conn.execute("select * from web_settings where id = 1").fetchone()
+        conn.execute(
+            "update web_settings set enabled = 1, active_provider_id = 'provider-b' where id = 1"
+        )
+
+    db.init_schema()
+    with db.connect() as conn:
+        preserved = conn.execute("select * from web_settings where id = 1").fetchone()
+
+    assert default_row is not None
+    assert default_row["enabled"] == 0
+    assert default_row["active_provider_id"] == "tavily"
+    assert preserved["enabled"] == 1
+    assert preserved["active_provider_id"] == "provider-b"
+
+
+def test_init_database_adds_web_tables_to_existing_database(tmp_path) -> None:
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "create table settings ("
+            "key text primary key, value_json text not null, updated_at text not null)"
+        )
+        conn.execute(
+            "insert into settings values ('legacy', '{\"kept\":true}', '2026-07-15T00:00:00Z')"
+        )
+
+    db = init_database(db_path)
+    with db.connect() as conn:
+        web_tables = {
+            row["name"]
+            for row in conn.execute(
+                "select name from sqlite_master where type = 'table' and name like 'web_%'"
+            ).fetchall()
+        }
+        legacy = conn.execute("select value_json from settings where key = 'legacy'").fetchone()
+
+    assert web_tables == {"web_settings", "web_provider_configs"}
+    assert legacy["value_json"] == '{"kept":true}'
+
+
+def test_web_provider_config_schema_enforces_unique_provider_and_default_json(tmp_path) -> None:
+    db = init_database(tmp_path / "app.db")
+    with db.connect() as conn:
+        conn.execute(
+            "insert into web_provider_configs "
+            "(provider_id, created_at, updated_at) values (?, ?, ?)",
+            ("tavily", "2026-07-15T00:00:00Z", "2026-07-15T00:00:00Z"),
+        )
+        row = conn.execute(
+            "select config_json, secrets_json from web_provider_configs "
+            "where provider_id = 'tavily'"
+        ).fetchone()
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "insert into web_provider_configs "
+                "(provider_id, created_at, updated_at) values (?, ?, ?)",
+                ("tavily", "2026-07-15T00:00:00Z", "2026-07-15T00:00:00Z"),
+            )
+
+    assert row["config_json"] == "{}"
+    assert row["secrets_json"] == "{}"
 
 
 def test_init_database_replaces_legacy_workspace_annotations_schema(tmp_path) -> None:

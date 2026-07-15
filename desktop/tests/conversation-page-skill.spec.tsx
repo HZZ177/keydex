@@ -2,9 +2,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ChatChannel, RuntimeBridge, WorkspaceSkillsResponse, WsConnectionStatus } from "@/runtime";
+import type { ChatChannel, EffectiveSkillsResponse, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import { ConversationPage } from "@/renderer/pages/conversation";
-import { PreviewProvider } from "@/renderer/providers/PreviewProvider";
+import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import type { AgentActionEnvelope, AgentHistoryResponse, AgentSession, Workspace } from "@/types/protocol";
 
 describe("ConversationPage skill activation", () => {
@@ -16,7 +16,10 @@ describe("ConversationPage skill activation", () => {
     renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
 
     await waitFor(() => {
-      expect(workspaceListSkills).toHaveBeenCalledWith({ sessionId: "ses-1" }, { forceReload: false });
+      expect(workspaceListSkills).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+      );
     });
     typeComposer("/");
     fireEvent.mouseDown(await screen.findByRole("option", { name: /^Skill\b/ }));
@@ -40,7 +43,7 @@ describe("ConversationPage skill activation", () => {
         runtime_params: {
           message_context_items: [
             expect.objectContaining({
-              id: "skill:dev-plan",
+              id: "skill:workspace:dev-plan",
               skill_name: "dev-plan",
               source: "workspace",
               type: "skill",
@@ -55,10 +58,82 @@ describe("ConversationPage skill activation", () => {
       });
     });
   });
+
+  it("loads and sends a system skill in a pure Chat session without workspace capabilities", async () => {
+    const chat = vi.fn();
+    const listSession = vi.fn().mockResolvedValue(skillsResponse({ source: "system" }));
+    const { runtime } = fakeRuntime({
+      chat,
+      workspaceListSkills: listSession,
+      session: agentSession({ session_type: "chat", workspace_id: null, cwd: null, workspace_roots: [], workspace: null }),
+    });
+
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await waitFor(() => {
+      expect(listSession).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+      );
+    });
+    typeComposer("/");
+    fireEvent.mouseDown(await screen.findByRole("option", { name: /^Skill\b/ }));
+    const input = screen.getByLabelText("继续输入");
+    await screen.findByRole("option", { name: /dev-plan/ });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(screen.getByText("dev-plan")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "打开 Skill dev-plan" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("skill-preview-request").textContent).toBe(
+        "skill-resource:system:dev-plan:SKILL.md",
+      );
+    });
+    typeComposer("plan this chat");
+    fireEvent.click(screen.getByLabelText("发送"));
+
+    await waitFor(() => {
+      expect(chat).toHaveBeenCalledWith(expect.objectContaining({
+        session_id: "ses-1",
+        message: "plan this chat",
+        runtime_params: {
+          message_context_items: [expect.objectContaining({
+            id: "skill:system:dev-plan",
+            skill_name: "dev-plan",
+            source: "system",
+            type: "skill",
+          })],
+          skill_activation: {
+            skill_name: "dev-plan",
+            source: "system",
+            origin: "slash",
+          },
+        },
+      }));
+    });
+    expect(runtime.workspace.search).not.toHaveBeenCalled();
+  });
 });
 
 function renderConversation(ui: ReactElement) {
-  return render(<PreviewProvider>{ui}</PreviewProvider>);
+  return render(
+    <PreviewProvider>
+      {ui}
+      <PreviewRequestProbe />
+    </PreviewProvider>,
+  );
+}
+
+function PreviewRequestProbe() {
+  const preview = usePreview();
+  const request = preview.activeEntry?.request;
+  return (
+    <output data-testid="skill-preview-request">
+      {request?.type === "skill-resource"
+        ? `${request.type}:${request.skillSource}:${request.skillName}:${request.resourcePath}`
+        : request?.type ?? ""}
+    </output>
+  );
 }
 
 function typeComposer(value: string) {
@@ -72,13 +147,15 @@ function fakeRuntime({
   chat = vi.fn(),
   workspaceListSkills = vi.fn().mockResolvedValue(skillsResponse()),
   wsStatus = "open",
+  session,
 }: {
   chat?: ReturnType<typeof vi.fn>;
   workspaceListSkills?: ReturnType<typeof vi.fn>;
   wsStatus?: WsConnectionStatus;
+  session?: AgentSession;
 } = {}) {
   let handler: ((event: AgentActionEnvelope) => void) | null = null;
-  const session = agentSession({
+  const activeSession = session ?? agentSession({
     session_type: "workspace",
     workspace_id: "ws-1",
     cwd: "D:/repo",
@@ -88,7 +165,7 @@ function fakeRuntime({
   const channel: ChatChannel = {
     close: vi.fn(),
     getStatus: vi.fn(() => wsStatus),
-    getSessionId: vi.fn(() => session.id),
+    getSessionId: vi.fn(() => activeSession.id),
     createSession: vi.fn(),
     bindSession: vi.fn(),
     unbindSession: vi.fn(),
@@ -103,7 +180,7 @@ function fakeRuntime({
   };
   const runtime = {
     conversation: {
-      loadHistory: vi.fn().mockResolvedValue(historyResponse(session)),
+      loadHistory: vi.fn().mockResolvedValue(historyResponse(activeSession)),
       openChatChannel: vi.fn((onEvent: (event: AgentActionEnvelope) => void, options?: { onStatus?: (status: WsConnectionStatus) => void }) => {
         handler = onEvent;
         options?.onStatus?.(wsStatus);
@@ -126,8 +203,21 @@ function fakeRuntime({
     models: {
       listProviders: vi.fn().mockResolvedValue([modelProvider()]),
     },
+    skills: {
+      listSession: workspaceListSkills,
+      listWorkspace: workspaceListSkills,
+      readSessionResource: vi.fn((_sessionId, request) => Promise.resolve({
+        skill_name: request.skill_name,
+        source: request.source,
+        resource_path: request.resource_path,
+        locator: `${request.source}:skills/${request.skill_name}/${request.resource_path}`,
+        content: "# Skill resource",
+        encoding: "utf-8",
+        revision: `sha256:${request.source}:${request.resource_path}`,
+        fingerprint: "sha256:catalog",
+      })),
+    },
     workspace: {
-      listSkills: workspaceListSkills,
       listDirectory: vi.fn().mockResolvedValue({ root: "D:/repo", entries: [] }),
       readFile: vi.fn(),
       readMedia: vi.fn(),
@@ -250,18 +340,19 @@ function workspace(id: string, name: string, rootPath: string): Workspace {
   };
 }
 
-function skillsResponse(): WorkspaceSkillsResponse {
+function skillsResponse({ source = "workspace" }: { source?: "system" | "workspace" } = {}): EffectiveSkillsResponse {
   return {
-    workspace_root: "D:/repo",
+    mode: source === "system" ? "system_only" : "workspace_effective",
+    workspace_root: source === "system" ? null : "D:/repo",
     fingerprint: "fp-1",
     loaded_at: "2026-06-25T12:00:00Z",
     skills: [
       {
         name: "dev-plan",
         description: "Plan work from a design doc",
-        source: "workspace",
+        source,
         label: "/dev-plan",
-        locator: ".keydex/skills/dev-plan/SKILL.md",
+        locator: source === "system" ? "system:skills/dev-plan/SKILL.md" : ".keydex/skills/dev-plan/SKILL.md",
       },
     ],
     diagnostics: [],

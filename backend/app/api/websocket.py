@@ -36,12 +36,12 @@ from backend.app.services.chat_stream_manager import (
     ChatStreamAlreadyRunningError,
     ChatStreamMissingSessionError,
 )
-from backend.app.services.file_change_hub import normalize_local_file_path
 from backend.app.services.chat_types import (
     PENDING_INPUT_MODE_STEER,
     PENDING_INPUT_MODES,
     ChatRequest,
 )
+from backend.app.services.file_change_hub import normalize_local_file_path
 from backend.app.services.session_service import (
     SessionNotFoundError,
     SessionService,
@@ -78,7 +78,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
     connection_trace_id = websocket.headers.get("x-trace-id") or new_id()
     trace_token = trace_id_var.set(connection_trace_id)
     runtime = websocket.app.state.runtime
-    keydex_watcher = getattr(websocket.app.state, "keydex_workspace_watcher", None)
+    keydex_watcher = getattr(websocket.app.state, "keydex_skills_watcher", None)
     file_change_hub = getattr(websocket.app.state, "file_change_hub", None)
     settings = runtime.settings
     repositories = runtime.repositories
@@ -94,6 +94,13 @@ async def chat_websocket(websocket: WebSocket) -> None:
     if bound_session_id:
         bound_session_ids.add(bound_session_id)
         await stream_manager.subscribe(bound_session_id, adapter)
+        try:
+            await _register_keydex_watcher(
+                keydex_watcher,
+                session_service.get_session_detail(bound_session_id),
+            )
+        except SessionNotFoundError:
+            pass
     logger.info(
         f"[WebSocket] 连接建立 | trace_id={connection_trace_id} | "
         f"bound_session_id={bound_session_id or '-'}"
@@ -263,7 +270,8 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     if session_id:
                         bound_session_ids.discard(session_id)
                         await stream_manager.unsubscribe(session_id, adapter)
-                        await _unregister_keydex_watcher(keydex_watcher, session_id)
+                        if not await stream_manager.has_subscribers(session_id):
+                            await _unregister_keydex_watcher(keydex_watcher, session_id)
                     await send("unbind_ok", {"session_id": session_id})
                     continue
 
@@ -669,7 +677,8 @@ async def chat_websocket(websocket: WebSocket) -> None:
         if file_change_hub is not None:
             await file_change_hub.unsubscribe_all(adapter)
         for session_id in list(bound_session_ids):
-            await _unregister_keydex_watcher(keydex_watcher, session_id)
+            if not await stream_manager.has_subscribers(session_id):
+                await _unregister_keydex_watcher(keydex_watcher, session_id)
         trace_id_var.reset(trace_token)
         logger.info(
             f"[WebSocket] 连接清理完成 | trace_id={connection_trace_id} | "
@@ -851,11 +860,14 @@ def _attachments(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
 
 
 async def _register_keydex_watcher(watcher: Any, session: dict[str, Any]) -> None:
-    if watcher is None or session.get("session_type") != "workspace":
+    if watcher is None:
         return
     session_id = str(session.get("id") or "").strip()
-    workspace_root = _workspace_root_for_session(session)
-    if session_id and workspace_root:
+    session_type = str(session.get("session_type") or "").strip()
+    if not session_id or session_type not in {"chat", "workspace"}:
+        return
+    workspace_root = _workspace_root_for_session(session) if session_type == "workspace" else None
+    if session_type == "chat" or workspace_root:
         await watcher.register_session(session_id, workspace_root)
 
 

@@ -25,6 +25,11 @@ from backend.app.agent.tool_call_progress import (
 )
 from backend.app.core.logger import logger
 from backend.app.events import DomainEventType, EventDispatcher
+from backend.app.web.ui_payload import (
+    build_web_activity_cancelled,
+    build_web_activity_finished,
+    build_web_activity_started,
+)
 
 
 @dataclass
@@ -55,6 +60,7 @@ async def process_agent_events(
 ) -> AgentEventResult:
     result = AgentEventResult()
     tool_start_times: dict[str, float] = {}
+    web_tool_runs: dict[str, dict[str, Any]] = {}
     reasoning_parts_by_run_id: dict[str, list[str]] = {}
     reasoning_started_at_by_run_id: dict[str, int] = {}
     first_token_received_at_ms: int | None = None
@@ -200,6 +206,7 @@ async def process_agent_events(
 
             if event_type == "on_tool_start":
                 tool_start_times[run_id] = time.perf_counter()
+                started_at_ms = int(time.time() * 1000)
                 tool_call_count += 1
                 mcp_metadata = _mcp_metadata_from_event(event=event, data=data)
                 if a2ui_stream_bridge.registry.is_a2ui_tool(name):
@@ -224,6 +231,18 @@ async def process_agent_events(
                     tool_name=name,
                     params=_make_json_serializable(data.get("input")),
                 )
+                web_ui_payload = build_web_activity_started(
+                    name,
+                    data.get("input"),
+                    started_at_ms=started_at_ms,
+                )
+                if web_ui_payload is not None:
+                    web_tool_runs[run_id] = {
+                        "tool": name,
+                        "params": _make_json_serializable(data.get("input")),
+                        "tool_call_id": tool_call_id,
+                        "started_at_ms": started_at_ms,
+                    }
                 logger.info(
                     f"[AgentEvents] 工具开始 | session_id={session_id} | "
                     f"turn_index={turn_index} | trace_id={trace_id} | "
@@ -239,8 +258,13 @@ async def process_agent_events(
                         "params": _make_json_serializable(data.get("input")),
                         "session_id": session_id,
                         "trace_id": trace_id,
-                        "start_time": int(time.time() * 1000),
+                        "start_time": started_at_ms,
                         "status": "running",
+                        **(
+                            {"ui_payload": web_ui_payload}
+                            if web_ui_payload is not None
+                            else {}
+                        ),
                         **_mcp_event_fields(mcp_metadata),
                     },
                     trace_id=trace_id,
@@ -263,7 +287,8 @@ async def process_agent_events(
                         error_text = _stringify_tool_output(output)
                         logger.warning(
                             f"[AgentEvents] A2UI 工具返回错误 | session_id={session_id} | "
-                            f"turn_index={turn_index} | trace_id={trace_id} | tool={resolved_tool_name} | "
+                            f"turn_index={turn_index} | trace_id={trace_id} | "
+                            f"tool={resolved_tool_name} | "
                             f"run_id={run_id} | duration_ms={duration_ms} | error={error_text}"
                         )
                         await _fail_a2ui_stream_for_tool_error(
@@ -289,7 +314,41 @@ async def process_agent_events(
                     output=output,
                     structured_output=structured_output,
                 )
-                ui_payload = structured_output if isinstance(structured_output, dict) else None
+                web_run = web_tool_runs.pop(run_id, None)
+                ended_at_ms = int(time.time() * 1000)
+                web_ui_payload = build_web_activity_finished(
+                    resolved_tool_name,
+                    structured_output,
+                    started_at_ms=(
+                        int(web_run["started_at_ms"])
+                        if isinstance(web_run, dict)
+                        else None
+                    ),
+                    ended_at_ms=ended_at_ms,
+                    duration_ms=duration_ms,
+                )
+                ui_payload = (
+                    web_ui_payload
+                    if web_ui_payload is not None
+                    else structured_output
+                    if isinstance(structured_output, dict)
+                    else None
+                )
+                event_failed = is_error or bool(
+                    web_ui_payload and web_ui_payload.get("status") == "failed"
+                )
+                public_result = (
+                    json.dumps(web_ui_payload, ensure_ascii=False)
+                    if web_ui_payload is not None
+                    else result_text
+                )
+                public_error = (
+                    _web_activity_error_message(web_ui_payload)
+                    if web_ui_payload is not None
+                    else result_text
+                    if is_error
+                    else None
+                )
                 files = _tool_files_from_structured_output(structured_output)
                 tool_call_id = tool_chunk_pipeline.tool_call_id_for_run(
                     run_id
@@ -309,7 +368,7 @@ async def process_agent_events(
                 await dispatcher.emit_event(
                     event_type=(
                         DomainEventType.LLM_TOOL_FAILED.value
-                        if is_error
+                        if event_failed
                         else DomainEventType.LLM_TOOL_FINISHED.value
                     ),
                     source="langchain_event_handler",
@@ -317,16 +376,18 @@ async def process_agent_events(
                         "tool": name,
                         "run_id": run_id,
                         **({"tool_call_id": tool_call_id} if tool_call_id else {}),
-                        "result": result_text,
+                        "result": public_result,
                         "duration_ms": duration_ms,
                         "session_id": session_id,
                         "trace_id": trace_id,
-                        "end_time": int(time.time() * 1000),
-                        "status": "failed" if is_error else "completed",
-                        "error": result_text if is_error else None,
-                        "error_type": "ToolMessageError" if is_error else None,
+                        "end_time": ended_at_ms,
+                        "status": "failed" if event_failed else "completed",
+                        "error": public_error,
+                        "error_type": "ToolMessageError" if event_failed else None,
                         "output_data": {
-                            "result": structured_output
+                            "result": web_ui_payload
+                            if web_ui_payload is not None
+                            else structured_output
                             if structured_output is not None
                             else result_text
                         },
@@ -370,6 +431,24 @@ async def process_agent_events(
                     continue
                 mcp_metadata = _mcp_metadata_from_event(event=event, data=data)
                 tool_call_id = tool_chunk_pipeline.tool_call_id_for_run(run_id)
+                web_run = web_tool_runs.pop(run_id, None)
+                ended_at_ms = int(time.time() * 1000)
+                web_ui_payload = build_web_activity_finished(
+                    name,
+                    {
+                        "ok": False,
+                        "code": "web_failed",
+                        "message": "网络操作失败",
+                        "details": {"retryable": False},
+                    },
+                    started_at_ms=(
+                        int(web_run["started_at_ms"])
+                        if isinstance(web_run, dict)
+                        else None
+                    ),
+                    ended_at_ms=ended_at_ms,
+                    duration_ms=duration_ms,
+                )
                 logger.warning(
                     f"[AgentEvents] 工具异常 | session_id={session_id} | "
                     f"turn_index={turn_index} | trace_id={trace_id} | tool={name} | "
@@ -388,9 +467,22 @@ async def process_agent_events(
                         "trace_id": trace_id,
                         "end_time": int(time.time() * 1000),
                         "status": "failed",
-                        "error": error_text,
+                        "error": (
+                            _web_activity_error_message(web_ui_payload)
+                            if web_ui_payload is not None
+                            else error_text
+                        ),
                         "error_type": "ToolError",
-                        "output_data": {"result": ""},
+                        "output_data": {
+                            "result": web_ui_payload
+                            if web_ui_payload is not None
+                            else ""
+                        },
+                        **(
+                            {"ui_payload": web_ui_payload}
+                            if web_ui_payload is not None
+                            else {}
+                        ),
                         **_mcp_event_fields(mcp_metadata),
                     },
                     trace_id=trace_id,
@@ -439,6 +531,16 @@ async def process_agent_events(
             f"turn_index={turn_index} | trace_id={trace_id}"
         )
     finally:
+        if cancellation.is_cancelled() and web_tool_runs:
+            await _emit_cancelled_web_activities(
+                web_tool_runs=web_tool_runs,
+                dispatcher=dispatcher,
+                session_id=session_id,
+                trace_id=trace_id,
+                user_id=user_id,
+                active_session_id=active_session_id,
+                turn_index=turn_index,
+            )
         await dispatcher.flush()
         logger.info(
             f"[AgentEvents] 事件流汇总 | session_id={session_id} | turn_index={turn_index} | "
@@ -449,6 +551,73 @@ async def process_agent_events(
         )
 
     return result
+
+
+async def _emit_cancelled_web_activities(
+    *,
+    web_tool_runs: dict[str, dict[str, Any]],
+    dispatcher: EventDispatcher,
+    session_id: str,
+    trace_id: str,
+    user_id: str,
+    active_session_id: str,
+    turn_index: int,
+) -> None:
+    ended_at_ms = int(time.time() * 1000)
+    for run_id, run in list(web_tool_runs.items()):
+        ui_payload = build_web_activity_cancelled(
+            str(run.get("tool") or ""),
+            run.get("params"),
+            started_at_ms=(
+                int(run["started_at_ms"])
+                if isinstance(run.get("started_at_ms"), int)
+                else None
+            ),
+            ended_at_ms=ended_at_ms,
+        )
+        if ui_payload is None:
+            continue
+        await dispatcher.emit_event(
+            event_type=DomainEventType.LLM_TOOL_FINISHED.value,
+            source="langchain_event_handler",
+            payload={
+                "tool": run.get("tool"),
+                "run_id": run_id,
+                **(
+                    {"tool_call_id": run["tool_call_id"]}
+                    if run.get("tool_call_id")
+                    else {}
+                ),
+                "result": json.dumps(ui_payload, ensure_ascii=False),
+                "duration_ms": ui_payload.get("duration_ms", 0),
+                "session_id": session_id,
+                "trace_id": trace_id,
+                "end_time": ended_at_ms,
+                "status": "cancelled",
+                "error": None,
+                "error_type": None,
+                "output_data": {"result": ui_payload},
+                "ui_payload": ui_payload,
+                "files": [],
+            },
+            trace_id=trace_id,
+            user_id=user_id,
+            original_session_id=session_id,
+            active_session_id=active_session_id,
+            run_id=run_id,
+            turn_index=turn_index,
+        )
+    web_tool_runs.clear()
+
+
+def _web_activity_error_message(payload: dict[str, Any] | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    message = error.get("message")
+    return message if isinstance(message, str) and message else None
 
 
 async def _handle_chat_model_stream(

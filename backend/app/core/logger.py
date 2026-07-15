@@ -22,6 +22,14 @@ SENSITIVE_KEYS = {
     "password",
     "secret",
 }
+SENSITIVE_KEY_SUFFIXES = (
+    "_api_key",
+    "_apikey",
+    "_authorization",
+    "_password",
+    "_secret",
+    "_token",
+)
 
 REDACTED = "***REDACTED***"
 DEFAULT_APP_LOG_NAME = "keydex_agent"
@@ -52,7 +60,7 @@ def redact_sensitive(value: Any) -> Any:
     if isinstance(value, Mapping):
         redacted: dict[str, Any] = {}
         for key, nested in value.items():
-            if str(key).lower() in SENSITIVE_KEYS:
+            if _is_sensitive_key(key):
                 redacted[str(key)] = REDACTED
             else:
                 redacted[str(key)] = redact_sensitive(nested)
@@ -62,6 +70,11 @@ def redact_sensitive(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(redact_sensitive(item) for item in value)
     return value
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    normalized = str(key).strip().lower().replace("-", "_")
+    return normalized in SENSITIVE_KEYS or normalized.endswith(SENSITIVE_KEY_SUFFIXES)
 
 
 def configure_logging(

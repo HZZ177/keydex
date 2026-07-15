@@ -12,7 +12,7 @@ from backend.app.core.request_context import (
     reset_request_context,
 )
 from backend.app.core.time import to_iso_z, utc_now
-from backend.app.keydex import KeydexWorkspaceRuntimeCache
+from backend.app.keydex import KeydexRuntimeCache
 from backend.app.services import ChatRequest, ChatService
 from backend.app.services.chat_service import (
     SkillActivationRequest,
@@ -33,7 +33,7 @@ def _service(tmp_path: Path) -> tuple[ChatService, StorageRepositories]:
         settings=AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path),
         repositories=repositories,
         agent_runner=object(),
-        keydex_runtime_cache=KeydexWorkspaceRuntimeCache(),
+        keydex_runtime_cache=KeydexRuntimeCache(system_root=tmp_path / "system-keydex"),
     )
     return service, repositories
 
@@ -101,13 +101,13 @@ def test_skill_activation_preset_maps_only_to_load_skill() -> None:
     assert preset.type == "force"
     assert preset.producer == "skill_activation"
     assert preset.calls[0].name == "load_skill"
-    assert preset.calls[0].args == {"skill_name": "dev-plan"}
+    assert preset.calls[0].args == {"skill_name": "dev-plan", "source": "workspace"}
     assert preset.metadata == {"source": "workspace", "origin": "slash"}
 
 
 def test_tool_context_uses_validated_keydex_snapshot(tmp_path: Path) -> None:
     service, session, workspace_root = _workspace_session(tmp_path)
-    snapshot = service.keydex_runtime_cache.get_snapshot(workspace_root)
+    snapshot = service.keydex_runtime_cache.get_workspace_snapshot(workspace_root)
 
     tool_context, enable_tools = service._build_tool_context(
         request=ChatRequest(
@@ -122,11 +122,14 @@ def test_tool_context_uses_validated_keydex_snapshot(tmp_path: Path) -> None:
     assert enable_tools is True
     assert tool_context.metadata["keydex_snapshot"] is snapshot
     assert tool_context.metadata["skill_catalog"] is snapshot.skill_catalog
+    assert tool_context.metadata["keydex_mode"] == "workspace_effective"
+    assert tool_context.metadata["enable_workspace_tools"] is True
+    assert tool_context.metadata["enable_skill_tools"] is True
 
 
 def test_agent_runtime_context_sets_snapshot_catalog_and_force_preset(tmp_path: Path) -> None:
     service, session, workspace_root = _workspace_session(tmp_path)
-    snapshot = service.keydex_runtime_cache.get_snapshot(workspace_root)
+    snapshot = service.keydex_runtime_cache.get_workspace_snapshot(workspace_root)
     tool_context, _enable_tools = service._build_tool_context(
         request=ChatRequest(
             session_id=session.id, message="use skill", provider_id="provider-1", model="qwen-coder"
@@ -147,13 +150,46 @@ def test_agent_runtime_context_sets_snapshot_catalog_and_force_preset(tmp_path: 
         preset = get_tool_call_preset()
         assert preset is not None
         assert preset.calls[0].name == "load_skill"
-        assert preset.calls[0].args == {"skill_name": "dev-plan"}
+        assert preset.calls[0].args == {"skill_name": "dev-plan", "source": "workspace"}
     finally:
         reset_request_context(token)
 
     assert get_keydex_snapshot() is None
     assert get_skill_catalog() is None
     assert get_tool_call_preset() is None
+
+
+def test_chat_tool_context_uses_system_snapshot_without_enabling_workspace_tools(
+    tmp_path: Path,
+) -> None:
+    service, repositories = _service(tmp_path)
+    skill_root = tmp_path / "system-keydex" / "skills" / "global"
+    skill_root.mkdir(parents=True)
+    (skill_root / "SKILL.md").write_text(
+        "---\nname: global\ndescription: Global skill\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+    session = repositories.sessions.create(
+        session_id="ses-chat",
+        user_id="local-user",
+        scene_id="desktop-agent",
+    )
+    snapshot = service._resolve_session_keydex_snapshot(session)
+
+    tool_context, enable_tools = service._build_tool_context(
+        request=ChatRequest(session_id=session.id, message="use global"),
+        session=session,
+        trace_id="trace-chat",
+        turn_index=1,
+        keydex_snapshot=snapshot,
+    )
+
+    assert enable_tools is False
+    assert tool_context.metadata["keydex_snapshot"] is snapshot
+    assert tool_context.metadata["skill_catalog"].skills["global"].source == "system"
+    assert tool_context.metadata["enable_workspace_tools"] is False
+    assert tool_context.metadata["enable_skill_tools"] is True
+    assert tool_context.workspace_root == service.settings.data_dir
 
 
 @pytest.mark.asyncio

@@ -740,6 +740,54 @@ export interface A2UIRuntimeSettings {
   debug_info_enabled: boolean;
 }
 
+export type WebActivityStatus =
+  | "running"
+  | "completed"
+  | "empty"
+  | "partial_failure"
+  | "failed"
+  | "cancelled";
+
+export interface WebActivitySource {
+  source_id: string;
+  url: string;
+  domain: string;
+  title?: string | null;
+  snippet?: string | null;
+  favicon?: string | null;
+  published_at?: string | null;
+  truncated: boolean;
+}
+
+export interface WebActivityError {
+  code: string;
+  message: string;
+  retryable: boolean;
+  retry_after_seconds?: number | null;
+}
+
+export interface WebFetchActivityItem {
+  requested_url: string;
+  status: "success" | "failed";
+  source?: WebActivitySource | null;
+  error?: WebActivityError | null;
+}
+
+export interface WebActivityPayload {
+  kind: "web_activity";
+  schema_version: 1;
+  activity_type: "search" | "fetch";
+  status: WebActivityStatus;
+  query?: string | null;
+  requested_urls: string[];
+  sources: WebActivitySource[];
+  items: WebFetchActivityItem[];
+  error?: WebActivityError | null;
+  started_at_ms?: number | null;
+  ended_at_ms?: number | null;
+  duration_ms?: number | null;
+}
+
 export type FileEditToolStyle = "claude_code" | "codex";
 
 export interface AgentRuntimeSettings {
@@ -1064,7 +1112,7 @@ export const AGENT_CHAT_ACTIONS = [
   "pending_input_paused",
   "pending_input_resumed",
   "pending_input_failed",
-  "workspaceSkillsChanged",
+  "keydexSkillsChanged",
   "workspaceWatchBound",
   "workspaceWatchUnbound",
   "workspaceFilesChanged",

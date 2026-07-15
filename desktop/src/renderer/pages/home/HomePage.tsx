@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   runtimeBridge,
   type RuntimeBridge,
+  type SkillSummary,
   type WorkspaceEntry,
   type WorkspaceSearchResult,
-  type WorkspaceSkillSummary,
 } from "@/runtime";
 import {
   SendBox,
@@ -20,7 +20,10 @@ import type { SlashCommand } from "@/renderer/components/chat/SlashCommandMenu";
 import { RuntimeModelSelector, useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
 import { WorkspaceSelector, type WorkspaceSelection } from "@/renderer/components/workspace/WorkspaceSelector";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
-import { useWorkspaceSkills } from "@/renderer/hooks/useWorkspaceSkills";
+import {
+  skillSelectionStatus,
+  useEffectiveSkills,
+} from "@/renderer/hooks/useEffectiveSkills";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useWorkspaceFileWatchScope } from "@/renderer/providers/FileChangeProvider";
 import {
@@ -77,7 +80,7 @@ export function HomePage({
   const [quoteChipRequest, setQuoteChipRequest] = useState<{ requestId: number; quote: SelectedQuote } | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceSelection, setWorkspaceSelection] = useState<WorkspaceSelection>({ type: "chat" });
-  const [selectedSkill, setSelectedSkill] = useState<WorkspaceSkillSummary | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>("workspace_trusted");
   const selectionTouchedRef = useRef(false);
@@ -91,16 +94,25 @@ export function HomePage({
   const setPreviewHostContext = previewContext?.setPreviewHostContext;
   const selectedWorkspaceId = workspaceSelection.type === "workspace" ? workspaceSelection.workspace.id : "";
   useWorkspaceFileWatchScope(selectedWorkspaceId);
-  const workspaceSkillScope = useMemo(
-    () => (selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : null),
-    [selectedWorkspaceId],
-  );
-  const { state: workspaceSkillsState, refresh: refreshWorkspaceSkills } = useWorkspaceSkills({
+  const effectiveSkillScope = useMemo(() => {
+    if (workspaceSelection.type === "chat") {
+      return { type: "system" as const };
+    }
+    if (workspaceSelection.type === "workspace") {
+      return {
+          type: "workspace" as const,
+          workspaceId: workspaceSelection.workspace.id,
+          workspaceRoot: workspaceSelection.workspace.root_path,
+      };
+    }
+    return null;
+  }, [workspaceSelection]);
+  const { state: effectiveSkillsState, refresh: refreshEffectiveSkills } = useEffectiveSkills({
     runtime,
-    scope: workspaceSkillScope,
-    enabled: backendReady && Boolean(selectedWorkspaceId),
+    scope: effectiveSkillScope,
+    enabled: backendReady && effectiveSkillScope !== null,
   });
-  const workspaceSkills = selectedWorkspaceId ? workspaceSkillsState.skills : [];
+  const effectiveSkills = effectiveSkillsState.skills;
 
   useEffect(() => {
     if (!backendReady) {
@@ -201,15 +213,20 @@ export function HomePage({
   );
 
   useEffect(() => {
-    setSelectedSkill((current) => {
-      if (!current || !selectedWorkspaceId) {
-        return null;
-      }
-      return workspaceSkills.some((skill) => skill.name === current.name && skill.source === current.source)
-        ? current
-        : null;
-    });
-  }, [selectedWorkspaceId, workspaceSkills]);
+    if (!selectedSkill || effectiveSkillsState.status !== "ready") {
+      return;
+    }
+    const status = skillSelectionStatus(selectedSkill, effectiveSkills);
+    if (status === "valid") {
+      return;
+    }
+    setSelectedSkill(null);
+    notifications.warning(
+      status === "source_changed"
+        ? "同名 Skill 的有效来源已变化，请重新选择"
+        : "所选 Skill 已不可用，请重新选择",
+    );
+  }, [effectiveSkills, effectiveSkillsState.status, notifications, selectedSkill]);
 
   useEffect(() => {
     if (!backendReady) {
@@ -289,7 +306,11 @@ export function HomePage({
     backendReady &&
     draft.trim().length > 0 &&
     !submitting &&
-    modelSelection.modelLoadState !== "loading";
+    modelSelection.modelLoadState !== "loading" &&
+    (!selectedSkill || (
+      effectiveSkillsState.status === "ready" &&
+      skillSelectionStatus(selectedSkill, effectiveSkills) === "valid"
+    ));
   const sendLoading =
     !backendError && (!backendReady || workspaceSelection.type === "pending" || modelSelection.modelLoadState === "loading");
   const title =
@@ -376,6 +397,16 @@ export function HomePage({
     quotes: SelectedQuote[] = [],
     imageAttachments: SelectedImageAttachment[] = [],
   ) => {
+    if (
+      selectedSkill &&
+      (
+        effectiveSkillsState.status !== "ready" ||
+        skillSelectionStatus(selectedSkill, effectiveSkills) !== "valid"
+      )
+    ) {
+      notifications.warning("所选 Skill 正在刷新或已不可用，请重新选择");
+      return false;
+    }
     const prepared = prepareComposerMessage(draft, files, { quotes, selectedSkill });
     const attachments = imageAttachments.map(agentAttachmentFromSelected);
     const text = prepared.message;
@@ -501,7 +532,8 @@ export function HomePage({
           allowFileSelection={workspaceSelection.type === "workspace"}
           fileAccessMode={fileAccessMode}
           workspaceRoots={workspaceSelection.type === "workspace" ? [workspaceSelection.workspace.root_path] : []}
-          workspaceSkills={workspaceSkills}
+          skills={effectiveSkills}
+          skillDiagnostics={effectiveSkillsState.diagnostics}
           selectedSkill={selectedSkill}
           allowBypassConversationSlashCommand={false}
           allowContextCompressionSlashCommand={false}
@@ -515,17 +547,14 @@ export function HomePage({
               disabled={submitting}
               onSelectChat={() => {
                 selectionTouchedRef.current = true;
-                setSelectedSkill(null);
                 setWorkspaceSelection({ type: "chat" });
               }}
               onSelectWorkspace={(workspace) => {
                 selectionTouchedRef.current = true;
-                setSelectedSkill(null);
                 setWorkspaceSelection({ type: "workspace", workspace });
               }}
               onAddWorkspace={async (rootPath) => {
                 selectionTouchedRef.current = true;
-                setSelectedSkill(null);
                 if (!backendReady) {
                   setWorkspaceSelection({
                     type: "pending",
@@ -555,7 +584,7 @@ export function HomePage({
           leftAccessory={goalModeAccessory}
           onChange={handleDraftChange}
           onSkillChange={setSelectedSkill}
-          onRefreshWorkspaceSkills={() => refreshWorkspaceSkills({ forceReload: true })}
+          onRefreshSkills={() => refreshEffectiveSkills({ forceReload: true })}
           onSend={submit}
           onStop={() => undefined}
           onSlashCommand={handleSlashCommand}

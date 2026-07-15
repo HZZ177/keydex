@@ -15,10 +15,11 @@ import {
 } from "react";
 
 import {
+  type KeydexDiagnostic,
   type RuntimeBridge,
+  type SkillSummary,
   type WorkspaceEntry,
   type WorkspaceSearchResult,
-  type WorkspaceSkillSummary,
 } from "@/runtime";
 import {
   agentAttachmentFromSelected,
@@ -35,7 +36,6 @@ import { LoadingSkeleton } from "@/renderer/components/loading";
 import { useRafPanelResize } from "@/renderer/components/layout/useRafPanelResize";
 import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
 import { FileReviewPanel } from "@/renderer/components/review/FileReviewDiff";
-import { useWorkspaceSkills } from "@/renderer/hooks/useWorkspaceSkills";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { useHeldActiveFlag } from "@/renderer/hooks/useHeldActiveFlag";
 import {
@@ -242,13 +242,6 @@ export function WorkbenchAssistantSurface({
   const [goalError, setGoalError] = useState<string | null>(null);
   const [contextCompressionRunning, setContextCompressionRunning] = useState(false);
   const modelSelection = useRuntimeModelSelection(runtime, null, { enabled: backendReady });
-  const workspaceSkillScope = useMemo(() => ({ workspaceId }), [workspaceId]);
-  const { state: workspaceSkillsState, refresh: refreshWorkspaceSkills } = useWorkspaceSkills({
-    runtime,
-    scope: workspaceSkillScope,
-    enabled: backendReady && Boolean(workspaceId),
-  });
-  const workspaceSkills = Array.isArray(workspaceSkillsState.skills) ? workspaceSkillsState.skills : [];
   const previewContext = usePreview();
   const workbenchWorkspaceLabel = workspace?.root_path ?? workspace?.name ?? workspaceId;
   const handledReviewPanelRequestIdRef = useRef(previewContext.reviewPanelRequest?.requestId ?? 0);
@@ -279,8 +272,8 @@ export function WorkbenchAssistantSurface({
     sessionId: panelSessionId,
     controller,
     previewPanelScopeKey: workbenchPreviewScopeKey,
-    validateSelectedSkill: false,
   });
+  const effectiveSkills = panelModel.effectiveSkills;
   useEffect(() => {
     if (!btwActive && btwHistorySnapshot !== null) {
       setBtwHistorySnapshot(null);
@@ -342,6 +335,7 @@ export function WorkbenchAssistantSurface({
       workspaceId,
       workspaceAvailable: Boolean(workspaceId),
       workspaceLabel: workbenchWorkspaceLabel,
+      sessionId: panelSessionId || undefined,
       runtime,
       onQuoteSelection: controller.quoteSelection,
       onStartChatFromAnnotation: controller.startChatFromAnnotation,
@@ -351,6 +345,7 @@ export function WorkbenchAssistantSurface({
       controller.startChatFromAnnotation,
       workbenchPreviewScopeKey,
       runtime,
+      panelSessionId,
       workbenchWorkspaceLabel,
       workspaceId,
     ],
@@ -968,18 +963,6 @@ export function WorkbenchAssistantSurface({
     return () => document.removeEventListener("pointerdown", collapseOnOutsidePointer);
   }, [beginComposeCollapse, hasComposerContent, surfaceMode]);
 
-  useEffect(() => {
-    if (
-      workspaceSkillsState.status === "ready" &&
-      controller.selectedSkill &&
-      !workspaceSkills.some(
-        (skill) => skill.name === controller.selectedSkill?.name && skill.source === controller.selectedSkill?.source,
-      )
-    ) {
-      controller.setSelectedSkill(null);
-    }
-  }, [controller, workspaceSkills, workspaceSkillsState.status]);
-
   const searchWorkspace = useCallback(
     (query: string, options?: { signal?: AbortSignal }) => runtime.workspace.search({ workspaceId }, query, options),
     [runtime, workspaceId],
@@ -1481,7 +1464,8 @@ export function WorkbenchAssistantSurface({
       canStop={canStop}
       connectionReady={connectionReady}
       modelSelection={{ ...modelSelection, setSelectedModel: changeModel }}
-      workspaceSkills={workspaceSkills}
+      skills={effectiveSkills}
+      skillDiagnostics={panelModel.effectiveSkillDiagnostics}
       selectedFiles={composerFiles}
       selectedQuotes={composerQuotes}
       selectedSkill={controller.selectedSkill}
@@ -1516,8 +1500,9 @@ export function WorkbenchAssistantSurface({
       onSearchWorkspace={searchWorkspace}
       onListWorkspaceDirectory={listWorkspaceDirectory}
       onOpenFileReference={openWorkbenchFileReference}
+      onOpenSkill={panelModel.openSkillResource}
       onSlashCommand={handleSlashCommand}
-      onRefreshWorkspaceSkills={() => refreshWorkspaceSkills({ forceReload: true })}
+      onRefreshSkills={() => panelModel.refreshEffectiveSkills({ forceReload: true })}
       onExternalFileRequestHandled={markComposerFileRequestHandled}
       onExternalQuoteRequestHandled={markComposerQuoteRequestHandled}
       leftAccessory={goalModeAccessory}
@@ -2801,7 +2786,8 @@ function WorkbenchComposer({
   canStop,
   connectionReady,
   modelSelection,
-  workspaceSkills,
+  skills,
+  skillDiagnostics,
   selectedFiles,
   selectedQuotes,
   selectedSkill,
@@ -2834,8 +2820,9 @@ function WorkbenchComposer({
   onSearchWorkspace,
   onListWorkspaceDirectory,
   onOpenFileReference,
+  onOpenSkill,
   onSlashCommand,
-  onRefreshWorkspaceSkills,
+  onRefreshSkills,
   onExternalFileRequestHandled,
   onExternalQuoteRequestHandled,
 }: {
@@ -2845,10 +2832,11 @@ function WorkbenchComposer({
   canStop: boolean;
   connectionReady: boolean;
   modelSelection: ReturnType<typeof useRuntimeModelSelection>;
-  workspaceSkills: WorkspaceSkillSummary[];
+  skills: SkillSummary[];
+  skillDiagnostics?: KeydexDiagnostic[];
   selectedFiles: SelectedFile[];
   selectedQuotes: SelectedQuote[];
-  selectedSkill: WorkspaceSkillSummary | null;
+  selectedSkill: SkillSummary | null;
   runtime: RuntimeBridge;
   sessionId?: string | null;
   pendingApproval: CommandApprovalRequest | null;
@@ -2870,7 +2858,7 @@ function WorkbenchComposer({
   onSelectedFilesChange: (files: SelectedFile[]) => void;
   onSelectedQuotesChange: (quotes: SelectedQuote[]) => void;
   onChange: (value: string) => void;
-  onSkillChange: (skill: WorkspaceSkillSummary | null) => void;
+  onSkillChange: (skill: SkillSummary | null) => void;
   onSubmitApproval: AgentSessionController["submitApproval"];
   onSend: (
     files?: SelectedFile[],
@@ -2883,8 +2871,9 @@ function WorkbenchComposer({
   onSearchWorkspace: (query: string, options?: { signal?: AbortSignal }) => Promise<WorkspaceSearchResult[]>;
   onListWorkspaceDirectory: (path: string) => Promise<WorkspaceSearchResult[]>;
   onOpenFileReference: (file: SelectedFile) => void;
+  onOpenSkill: (skill: SkillSummary) => void | Promise<void>;
   onSlashCommand?: (command: SlashCommand) => void;
-  onRefreshWorkspaceSkills?: () => void | Promise<void>;
+  onRefreshSkills?: () => void | Promise<void>;
   onExternalFileRequestHandled?: (requestId: number) => void;
   onExternalQuoteRequestHandled?: (requestId: number) => void;
 }) {
@@ -2910,7 +2899,8 @@ function WorkbenchComposer({
       canStop={canStop}
       connectionReady={connectionReady}
       modelSelection={modelSelection}
-      workspaceSkills={workspaceSkills}
+      skills={skills}
+      skillDiagnostics={skillDiagnostics}
       selectedFiles={selectedFiles}
       selectedQuotes={selectedQuotes}
       selectedSkill={selectedSkill}
@@ -2942,8 +2932,9 @@ function WorkbenchComposer({
       onSearchWorkspace={onSearchWorkspace}
       onListWorkspaceDirectory={onListWorkspaceDirectory}
       onOpenFileReference={onOpenFileReference}
+      onOpenSkill={onOpenSkill}
       onSlashCommand={onSlashCommand}
-      onRefreshWorkspaceSkills={onRefreshWorkspaceSkills}
+      onRefreshSkills={onRefreshSkills}
       onExternalFileRequestHandled={onExternalFileRequestHandled}
       onExternalQuoteRequestHandled={onExternalQuoteRequestHandled}
     />

@@ -1,7 +1,9 @@
+import tomllib
+
 from backend.packaging import build_agent_server
 
 
-def test_build_with_pyinstaller_embeds_system_prompt_in_code(monkeypatch, tmp_path) -> None:
+def test_t117_build_with_pyinstaller_embeds_bundled_preset_data(monkeypatch, tmp_path) -> None:
     calls: list[tuple[list[str], bool]] = []
 
     def fake_run(command: list[str], check: bool) -> None:
@@ -17,15 +19,106 @@ def test_build_with_pyinstaller_embeds_system_prompt_in_code(monkeypatch, tmp_pa
     command, check = calls[0]
     assert check is True
     assert "--clean" not in command
-    assert "--add-data" not in command
+    assert "--add-data" in command
     assert "--add-binary" in command
     assert "--onedir" in command
     assert "--onefile" not in command
     add_binary_index = command.index("--add-binary")
     assert command[add_binary_index + 1].startswith(str(build_agent_server.BUNDLED_RIPGREP_BINARY))
+    add_data_values = [
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "--add-data"
+    ]
+    assert (
+        f"{build_agent_server.BUNDLED_PRESETS_ROOT}"
+        f"{build_agent_server.os.pathsep}"
+        f"{build_agent_server.BUNDLED_PRESETS_DESTINATION}"
+    ) in add_data_values
+    assert (
+        f"{build_agent_server.BUILTIN_SKILLS_ROOT}"
+        f"{build_agent_server.os.pathsep}"
+        f"{build_agent_server.BUILTIN_SKILLS_DESTINATION}"
+    ) in add_data_values
     for package_name in build_agent_server.PYINSTALLER_COLLECT_SUBMODULES:
         assert_collect_submodules(command, package_name)
     assert str(build_agent_server.ENTRY_POINT) in command
+
+
+def test_t116_sidecar_fingerprint_includes_all_bundled_preset_resources(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    bundle_root = tmp_path / "bundled_presets"
+    resource = bundle_root / "skills" / "future" / "assets" / "opaque.bin"
+    resource.parent.mkdir(parents=True)
+    resource.write_bytes(b"preset-resource")
+    catalog = bundle_root / "catalog.json"
+    catalog.write_text('{"schema_version":1,"presets":[]}', encoding="utf-8")
+    monkeypatch.setattr(build_agent_server, "BUNDLED_PRESETS_ROOT", bundle_root)
+
+    inputs = build_agent_server.iter_sidecar_inputs()
+    monkeypatch.setattr(build_agent_server, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        build_agent_server,
+        "iter_sidecar_inputs",
+        lambda: sorted([catalog, resource]),
+    )
+    before, fingerprint_inputs = build_agent_server.sidecar_fingerprint()
+    resource.write_bytes(b"preset-resource-updated")
+    after, _ = build_agent_server.sidecar_fingerprint()
+
+    assert catalog in inputs
+    assert resource in inputs
+    assert "bundled_presets/catalog.json" in fingerprint_inputs
+    assert "bundled_presets/skills/future/assets/opaque.bin" in fingerprint_inputs
+    assert before != after
+
+
+def test_sidecar_fingerprint_includes_builtin_catalog_and_nested_resources(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    bundle_root = tmp_path / "builtin_skills"
+    resource = bundle_root / "skills" / "guide" / "references" / "manual.md"
+    resource.parent.mkdir(parents=True)
+    resource.write_bytes(b"builtin-resource")
+    catalog = bundle_root / "catalog.json"
+    catalog.write_text('{"schema_version":1,"skills":[]}', encoding="utf-8")
+    monkeypatch.setattr(build_agent_server, "BUILTIN_SKILLS_ROOT", bundle_root)
+
+    inputs = build_agent_server.iter_sidecar_inputs()
+    monkeypatch.setattr(build_agent_server, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        build_agent_server,
+        "iter_sidecar_inputs",
+        lambda: sorted([catalog, resource]),
+    )
+    before, fingerprint_inputs = build_agent_server.sidecar_fingerprint()
+    resource.write_bytes(b"builtin-resource-updated")
+    after, _ = build_agent_server.sidecar_fingerprint()
+
+    assert catalog in inputs
+    assert resource in inputs
+    assert "builtin_skills/catalog.json" in fingerprint_inputs
+    assert "builtin_skills/skills/guide/references/manual.md" in fingerprint_inputs
+    assert before != after
+
+
+def test_t117_setuptools_package_data_includes_catalog_and_future_skill_resources() -> None:
+    pyproject = tomllib.loads(
+        (build_agent_server.ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+
+    package_data = pyproject["tool"]["setuptools"]["package-data"]
+    assert package_data["backend.app.keydex.bundled_presets"] == [
+        "catalog.json",
+        "skills/**/*",
+    ]
+    assert package_data["backend.app.keydex.builtin_skills"] == [
+        "catalog.json",
+        "skills/**/*",
+    ]
 
 
 def test_build_with_pyinstaller_can_clean(monkeypatch, tmp_path) -> None:

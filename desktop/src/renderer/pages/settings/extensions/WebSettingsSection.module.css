@@ -1,0 +1,334 @@
+.group {
+  width: 100%;
+  margin-top: 34px;
+}
+
+.headingRow,
+.providerRow,
+.providerSummary,
+.fieldBoolean {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.headingRow h2,
+.providerCopy strong,
+.providerSummary strong,
+.fieldLabel {
+  color: var(--color-text-primary);
+}
+
+.headingRow h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.headingRow p,
+.providerCopy span,
+.providerSummary p,
+.helpText,
+.loading {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.headingRow p,
+.providerSummary p,
+.loading {
+  margin: 4px 0 0;
+}
+
+.panel {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-bg-elevated) 94%, transparent);
+}
+
+.headingRow,
+.providerRow,
+.providerSummary,
+.fields,
+.loading {
+  padding: 12px 14px;
+}
+
+.providerRow,
+.providerSummary,
+.fields,
+.loading {
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 88%, transparent);
+}
+
+.providerCopy,
+.providerSummary > div:first-child,
+.field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.providerSummary p {
+  max-width: 560px;
+  line-height: 1.5;
+}
+
+.capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.providerSummaryActions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.providerSetup {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+}
+
+.providerSetupButton {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 22%, var(--color-border-default));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+  color: color-mix(in srgb, var(--color-accent) 88%, var(--color-text-primary));
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 520;
+  padding: 0 10px;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.providerSetupButton:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 38%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-accent) 11%, transparent);
+}
+
+.providerSetupButton:focus-visible,
+.providerSetupInfo:focus-visible {
+  outline: 0;
+  box-shadow: var(--settings-focus-ring, 0 0 0 2px color-mix(in srgb, var(--color-border-3) 24%, transparent));
+}
+
+.providerSetupInfo {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: help;
+  padding: 0;
+}
+
+.providerSetupInfo:hover,
+.providerSetupInfo:focus-visible {
+  background: color-mix(in srgb, var(--surface-hover) 76%, transparent);
+  color: var(--color-text-primary);
+}
+
+.capabilities span,
+.fieldLabel em {
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-muted) 78%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.capabilities span {
+  padding: 4px 8px;
+}
+
+.fields {
+  display: grid;
+  gap: 14px;
+}
+
+.fieldLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 580;
+}
+
+.fieldLabel em {
+  padding: 2px 6px;
+  font-weight: 500;
+}
+
+.field input,
+.secretControl input {
+  min-width: 0;
+  height: 34px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 76%, transparent);
+  border-radius: var(--radius-md);
+  outline: 0;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 0 10px;
+}
+
+.field input:focus,
+.secretControl input:focus {
+  border-color: var(--color-border-3);
+  box-shadow: var(--settings-focus-ring, 0 0 0 2px color-mix(in srgb, var(--color-border-3) 20%, transparent));
+}
+
+.secretControl {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.secretInputShell {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+
+.secretInputShell input {
+  width: 100%;
+  padding-right: 38px;
+}
+
+.secretActions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.secretActions button,
+.secondaryButton {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 78%, transparent);
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 12px;
+}
+
+.secretActions button:focus-visible,
+.secondaryButton:focus-visible {
+  outline: 0;
+  box-shadow: var(--settings-focus-ring, 0 0 0 2px color-mix(in srgb, var(--color-border-3) 24%, transparent));
+}
+
+.secretActions button:disabled,
+.secondaryButton:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.visibilityButton {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.visibilityButton:hover,
+.visibilityButton:focus-visible {
+  background: color-mix(in srgb, var(--surface-hover) 76%, transparent);
+  color: var(--color-text-primary);
+}
+
+.visibilityButton:focus-visible {
+  box-shadow: var(--settings-focus-ring, 0 0 0 2px color-mix(in srgb, var(--color-border-3) 24%, transparent));
+}
+
+.visibilityButton:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.visibilityButton:disabled:hover {
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.loadingSpinner {
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid currentcolor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: web-connection-spin 720ms linear infinite;
+}
+
+@keyframes web-connection-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 760px) {
+  .providerRow,
+  .providerSummary,
+  .fieldBoolean {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .capabilities {
+    justify-content: flex-start;
+  }
+
+  .providerSummaryActions {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loadingSpinner {
+    animation-duration: 1.6s;
+  }
+}

@@ -89,6 +89,8 @@ class DelayedSSEStream(httpx.AsyncByteStream):
 
 def _chat_chunks(payload: dict[str, Any]) -> list[str]:
     user_message = _last_user_message(payload)
+    if "WebE2E" in user_message:
+        return _web_e2e_chunks(payload, user_message)
     if "e2e-rewind-" in user_message.lower():
         return _rewind_fixture_chunks(payload, user_message)
     if "PendingInputEcho" in user_message:
@@ -178,6 +180,299 @@ def _chat_chunks(payload: dict[str, Any]) -> list[str]:
         "最终检查点：Markdown、代码块和长文本已经完整显示。"
     )
     return _content_chunks(payload, markdown, usage={"prompt_tokens": 11, "completion_tokens": 38})
+
+
+def _web_e2e_chunks(payload: dict[str, Any], user_message: str) -> list[str]:
+    lowered = user_message.lower()
+    results = _web_tool_results(payload)
+    has_tool_messages = _has_tool_message(payload)
+    tool_message_count = _tool_message_count_since_last_user(payload)
+    search_results = [result for result in results if result.get("kind") == "web_search"]
+    fetch_results = [result for result in results if result.get("kind") == "web_fetch"]
+
+    if "searchfetch" in lowered and not search_results:
+        return _web_tool_call_chunks(
+            payload,
+            [("web_search", {"query": "e2e selected source"})],
+            "先搜索候选来源，再读取选中的网页。",
+        )
+    if "searchfetch" in lowered and not fetch_results:
+        selected_url = _first_web_source_url(search_results) or "https://e2e.web.test/articles/e2e-selected-source"
+        return _web_tool_call_chunks(
+            payload,
+            [("web_fetch", {"urls": [selected_url], "query": "E2E 引用依据"})],
+            "搜索已经完成，继续读取第一个候选来源。",
+        )
+    if "timeline" in lowered and tool_message_count == 0:
+        return _web_tool_call_chunks(
+            payload,
+            [("read_file", {"path": "README.md", "max_lines": 8})],
+            "先读取本地文件，再继续验证网络搜索和本地命令活动。",
+        )
+    if "timeline" in lowered and tool_message_count == 1 and not search_results:
+        return _web_tool_call_chunks(
+            payload,
+            [("web_search", {"query": "e2e timeline source"})],
+            "本地文件读取完成，继续验证网络搜索活动。",
+        )
+    if "timeline" in lowered and search_results and tool_message_count == 2:
+        return _web_tool_call_chunks(
+            payload,
+            [
+                (
+                    "run_cmd",
+                    {
+                        "command": "echo e2e-web-timeline-ok",
+                        "cwd": ".",
+                        "timeout_seconds": 5,
+                    },
+                )
+            ],
+            "网络搜索完成，继续验证本地命令活动。",
+        )
+    if not results and not has_tool_messages:
+        if "chatisolation" in lowered:
+            calls: list[tuple[str, dict[str, Any]]] = [
+                ("web_search", {"query": "e2e chat isolation"})
+            ]
+            if "read_file" in _payload_tool_names(payload):
+                calls.insert(0, ("read_file", {"path": "README.md", "max_lines": 8}))
+            return _web_tool_call_chunks(
+                payload,
+                calls,
+                "验证纯 Chat 只有 Web 能力而没有本地文件能力。",
+            )
+        if "tavilyfetch" in lowered:
+            return _web_tool_call_chunks(
+                payload,
+                [("web_fetch", {"urls": ["https://docs.tavily.com/"]})],
+                "读取 Tavily 官方文档首页作为真实 Extract 冒烟。",
+            )
+        if "tavilysearch" in lowered:
+            return _web_tool_call_chunks(
+                payload,
+                [("web_search", {"query": "Tavily official documentation"})],
+                "执行一次真实 Tavily Search 冒烟。",
+            )
+        if "fetchpartial" in lowered:
+            return _web_tool_call_chunks(
+                payload,
+                [
+                    (
+                        "web_fetch",
+                        {
+                            "urls": [
+                                "https://one.e2e.web.test/article",
+                                "https://fail.e2e.web.test/article",
+                                "https://two.e2e.web.test/article",
+                            ]
+                        },
+                    )
+                ],
+                "读取三个网页并保留部分成功结果。",
+            )
+        if "fetchmulti" in lowered:
+            return _web_tool_call_chunks(
+                payload,
+                [
+                    (
+                        "web_fetch",
+                        {
+                            "urls": [
+                                "https://one.e2e.web.test/article",
+                                "https://two.e2e.web.test/article",
+                                "https://three.e2e.web.test/article",
+                            ]
+                        },
+                    )
+                ],
+                "批量读取三个确定性网页。",
+            )
+        if "fetchone" in lowered:
+            return _web_tool_call_chunks(
+                payload,
+                [("web_fetch", {"urls": ["https://example.test/article"]})],
+                "读取一个确定性网页。",
+            )
+        if "unsafefetch" in lowered:
+            return _web_tool_call_chunks(
+                payload,
+                [("web_fetch", {"urls": ["http://127.0.0.1/private"]})],
+                "验证不安全地址在 Provider 调用前被拒绝。",
+            )
+        if "multisearch" in lowered:
+            return _web_tool_call_chunks(
+                payload,
+                [
+                    ("web_search", {"query": "e2e multi-first"}),
+                    ("web_search", {"query": "e2e multi-second"}),
+                ],
+                "并行执行两次网络搜索并合并重复来源。",
+            )
+        if "workspacecombo" in lowered:
+            return _web_tool_call_chunks(
+                payload,
+                [
+                    ("read_file", {"path": "README.md", "max_lines": 8}),
+                    ("web_search", {"query": "e2e workspace combo"}),
+                ],
+                "验证 Workspace 同时保留本地文件与网络搜索能力。",
+            )
+        if "localsearch" in lowered:
+            return _web_tool_call_chunks(
+                payload,
+                [("search_text", {"query": "e2e-local-search-marker", "path": "."})],
+                "只执行本地文件内容搜索。",
+            )
+        query = (
+            "e2e empty fixture"
+            if "searchempty" in lowered
+            else "e2e error-rate"
+            if "searcherror" in lowered
+            else "e2e error-quota"
+            if "searchquota" in lowered
+            else "e2e error-canary"
+            if "searchcanary" in lowered
+            else "e2e cancel-delay fixture"
+            if "searchcancel" in lowered
+            else "e2e delay fixture"
+            if "searchdelay" in lowered
+            else "e2e citation source"
+        )
+        return _web_tool_call_chunks(
+            payload,
+            [("web_search", {"query": query})],
+            "执行确定性网络搜索。",
+        )
+
+    source_ids = _web_source_ids(results)
+    if "citationunknown" in lowered:
+        answer = "未知来源标记不会生成引用：[[source:src_not_registered]]"
+    elif "citationrepeat" in lowered and source_ids:
+        marker = f"[[source:{source_ids[0]}]]"
+        answer = f"Web E2E 重复引用保持同一编号。{marker} {marker} {marker}"
+    elif source_ids:
+        markers = " ".join(f"[[source:{source_id}]]" for source_id in source_ids[:3])
+        answer = f"Web E2E 已完成，并已基于可追溯来源回答。{markers}"
+    elif any(
+        token in lowered
+        for token in ("searcherror", "searchquota", "searchcanary", "unsafefetch")
+    ):
+        answer = "Web E2E 已安全处理网络错误，会话仍可继续。"
+    else:
+        answer = "Web E2E 已完成，本次没有可引用的网络来源。"
+    return _content_chunks(
+        payload,
+        answer,
+        usage={"prompt_tokens": 20, "completion_tokens": 16},
+    )
+
+
+def _web_tool_call_chunks(
+    payload: dict[str, Any],
+    calls: list[tuple[str, dict[str, Any]]],
+    reasoning: str,
+) -> list[str]:
+    available = set(_payload_tool_names(payload))
+    missing = [name for name, _args in calls if name not in available]
+    if missing:
+        return _content_chunks(
+            payload,
+            f"Web E2E 工具不可用：{', '.join(missing)}。",
+            usage={"prompt_tokens": 12, "completion_tokens": 8},
+        )
+    tool_calls = [
+        {
+            "index": index,
+            "id": f"call_e2e_web_{index}_{name}",
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": json.dumps(args, ensure_ascii=False, separators=(",", ":")),
+            },
+        }
+        for index, (name, args) in enumerate(calls)
+    ]
+    return [
+        _chat_sse(payload, delta={"reasoning_content": reasoning}),
+        _chat_sse(
+            payload,
+            delta={"tool_calls": tool_calls},
+            finish_reason="tool_calls",
+        ),
+        _sse_done(),
+    ]
+
+
+def _web_tool_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return []
+    last_user_index = max(
+        (
+            index
+            for index, message in enumerate(messages)
+            if isinstance(message, dict) and message.get("role") == "user"
+        ),
+        default=-1,
+    )
+    results: list[dict[str, Any]] = []
+    for message in messages[last_user_index + 1 :]:
+        if not isinstance(message, dict) or message.get("role") != "tool":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        results.extend(_find_web_result_objects(parsed))
+    return results
+
+
+def _find_web_result_objects(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        found = [value] if value.get("kind") in {"web_search", "web_fetch"} else []
+        for nested in value.values():
+            found.extend(_find_web_result_objects(nested))
+        return found
+    if isinstance(value, list):
+        return [item for nested in value for item in _find_web_result_objects(nested)]
+    return []
+
+
+def _first_web_source_url(results: list[dict[str, Any]]) -> str | None:
+    for result in results:
+        sources = result.get("sources")
+        if isinstance(sources, list):
+            for source in sources:
+                if isinstance(source, dict) and isinstance(source.get("url"), str):
+                    return source["url"]
+    return None
+
+
+def _web_source_ids(results: list[dict[str, Any]]) -> list[str]:
+    source_ids: list[str] = []
+    for result in results:
+        candidates: list[Any] = []
+        sources = result.get("sources")
+        if isinstance(sources, list):
+            candidates.extend(sources)
+        items = result.get("items")
+        if isinstance(items, list):
+            candidates.extend(
+                item.get("source")
+                for item in items
+                if isinstance(item, dict) and isinstance(item.get("source"), dict)
+            )
+        for source in candidates:
+            if not isinstance(source, dict):
+                continue
+            source_id = source.get("source_id")
+            if isinstance(source_id, str) and source_id and source_id not in source_ids:
+                source_ids.append(source_id)
+    return source_ids
 
 
 def _rewind_fixture_chunks(payload: dict[str, Any], user_message: str) -> list[str]:

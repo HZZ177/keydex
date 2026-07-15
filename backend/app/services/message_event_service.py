@@ -4,9 +4,12 @@ import json
 from datetime import datetime
 from typing import Any
 
+from pydantic import ValidationError
+
 from backend.app.a2ui.schemas import a2ui_object_from_record
 from backend.app.events.actions import CompletedEventItemAction, ReplayAction
 from backend.app.storage import A2UIInteractionsRepository, MessageEventRecord
+from backend.app.web.ui_payload import WebActivityPayload
 
 _TOOL_PREVIEW_TEXT_LIMIT = 1000
 
@@ -124,8 +127,8 @@ class MessageEventService:
                 if delivery_mode in {"steer", "queue"}:
                     message["deliveryMode"] = delivery_mode
                 context_items = self._merge_context_items(
-                    self._context_items_from_user_message(data),
                     pending_context_items,
+                    self._context_items_from_user_message(data),
                 )
                 if context_items:
                     message["contextItems"] = context_items
@@ -660,14 +663,38 @@ class MessageEventService:
         ).strip()
         label = str(data.get("label") or metadata.get("label") or f"/{skill_name}").strip()
         description = str(data.get("description") or metadata.get("description") or "").strip()
-        skill_source = str(
+        raw_skill_source = str(
             data.get("skill_source")
             or data.get("skillSource")
             or metadata.get("source")
             or "workspace"
+        ).strip()
+        skill_source = (
+            raw_skill_source
+            if raw_skill_source in {"builtin", "system", "workspace"}
+            else "workspace"
         )
+        locator = str(data.get("locator") or metadata.get("locator") or "").strip()
+        origin = str(data.get("origin") or metadata.get("origin") or "").strip() or None
+        item_id = (
+            f"skill:{skill_source}:{skill_name}"
+            if skill_name
+            else str(data.get("id") or metadata.get("id") or f"skill:{event.id}")
+        )
+        normalized_metadata = {
+            **dict(metadata),
+            "id": item_id,
+            "type": "skill",
+            "label": label,
+            "skill_name": skill_name,
+            "skillName": skill_name,
+            "source": skill_source,
+            "description": description,
+            "locator": locator,
+            "origin": origin,
+        }
         return {
-            "id": str(data.get("id") or metadata.get("id") or f"skill:{skill_name or event.id}"),
+            "id": item_id,
             "type": "skill",
             "label": label,
             "content": description,
@@ -675,8 +702,10 @@ class MessageEventService:
             "skillName": skill_name,
             "source": skill_source,
             "description": description,
+            "locator": locator,
+            "origin": origin,
             "timestamp": MessageEventService._event_timestamp_ms(event),
-            "metadata": dict(metadata),
+            "metadata": normalized_metadata,
         }
 
     @staticmethod
@@ -805,6 +834,11 @@ class MessageEventService:
             if summary_params:
                 tool_call["toolParams"] = summary_params
             tool_call["toolDetailsDeferred"] = True
+        start_ui_payload = MessageEventService._tool_web_activity_summary(
+            MessageEventService._tool_ui_payload(data)
+        )
+        if start_ui_payload:
+            tool_call["uiPayload"] = start_ui_payload
         subagent_id = str(data.get("subagent_id") or "")
         if data.get("is_subagent") and subagent_id in active_subagents:
             msg_idx = active_subagents[subagent_id]
@@ -854,8 +888,18 @@ class MessageEventService:
     ) -> None:
         target["toolDurationMs"] = data.get("duration_ms")
         ui_payload = MessageEventService._tool_ui_payload(data)
+        tool_name = str(target.get("toolName") or data.get("tool") or data.get("tool_name") or "")
+        if tool_name in {"web_search", "web_fetch"}:
+            ui_payload = MessageEventService._tool_web_activity_summary(ui_payload)
         error = MessageEventService._tool_error_summary(data, ui_payload)
-        target["status"] = "error" if error else "completed"
+        web_status = str(ui_payload.get("status") or "") if ui_payload else ""
+        target["status"] = (
+            "cancelled"
+            if web_status == "cancelled"
+            else "error"
+            if error or web_status == "failed"
+            else "completed"
+        )
         metadata = MessageEventService._tool_metadata(data)
         if metadata:
             target["metadata"] = MessageEventService._merge_metadata(
@@ -874,7 +918,6 @@ class MessageEventService:
             return
 
         target["toolDetailsDeferred"] = True
-        tool_name = str(target.get("toolName") or data.get("tool") or data.get("tool_name") or "")
         if tool_name == "update_plan" and ui_payload:
             target["uiPayload"] = MessageEventService._tool_plan_summary(ui_payload)
         elif tool_name == "load_skill" and ui_payload:
@@ -885,6 +928,8 @@ class MessageEventService:
             command_summary = MessageEventService._tool_command_summary(ui_payload)
             if command_summary:
                 target["uiPayload"] = command_summary
+        elif tool_name in {"web_search", "web_fetch"} and ui_payload:
+            target["uiPayload"] = ui_payload
         files = MessageEventService._tool_file_summaries(
             MessageEventService._tool_files(data, ui_payload)
         )
@@ -961,6 +1006,20 @@ class MessageEventService:
                 return None
             return parsed if isinstance(parsed, dict) else None
         return None
+
+    @staticmethod
+    def _tool_web_activity_summary(
+        ui_payload: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not isinstance(ui_payload, dict):
+            return None
+        if ui_payload.get("kind") != "web_activity":
+            return None
+        try:
+            payload = WebActivityPayload.model_validate(ui_payload)
+        except ValidationError:
+            return None
+        return payload.model_dump(mode="json")
 
     @staticmethod
     def _tool_metadata(data: dict[str, Any]) -> dict[str, Any] | None:
@@ -1047,11 +1106,12 @@ class MessageEventService:
     @staticmethod
     def _tool_start_summary(data: dict[str, Any]) -> dict[str, Any]:
         params = MessageEventService._params_record(data)
+        tool_name = str(data.get("tool") or data.get("tool_name") or "")
         target = _tool_target(params)
         summary: dict[str, Any] = {}
         if target:
             summary["target"] = target
-        for key in (
+        summary_keys = (
             "path",
             "file",
             "query",
@@ -1062,7 +1122,10 @@ class MessageEventService:
             "skillName",
             "resource_path",
             "resourcePath",
-        ):
+        )
+        if tool_name == "load_skill":
+            summary_keys += ("source",)
+        for key in summary_keys:
             value = params.get(key)
             if isinstance(value, str) and value.strip():
                 summary[key] = value
@@ -1079,7 +1142,7 @@ class MessageEventService:
         if tool_name == "update_thread_task":
             return MessageEventService._tool_thread_task_params_summary(params)
         summary: dict[str, Any] = {}
-        for key in (
+        summary_keys = (
             "path",
             "file",
             "query",
@@ -1093,7 +1156,10 @@ class MessageEventService:
             "timeout_seconds",
             "timeoutSeconds",
             "regex",
-        ):
+        )
+        if tool_name == "load_skill":
+            summary_keys += ("source",)
+        for key in summary_keys:
             if key in params and _is_summary_value(params[key]):
                 summary[key] = params[key]
         target = _tool_target(params)
@@ -1141,6 +1207,7 @@ class MessageEventService:
             "locator",
             "skill_root",
             "skillRoot",
+            "source",
             "loaded",
             "injected",
             "message",
@@ -1326,6 +1393,9 @@ class MessageEventService:
         end_data = MessageEventService._visible_data(end_event) if end_event else {}
         data = {**start_data, **end_data}
         ui_payload = MessageEventService._tool_ui_payload(end_data)
+        tool_name = str(data.get("tool") or data.get("tool_name") or "")
+        if tool_name in {"web_search", "web_fetch"}:
+            ui_payload = MessageEventService._tool_web_activity_summary(ui_payload)
         files = MessageEventService._tool_files(end_data, ui_payload)
         error = MessageEventService._tool_error_summary(end_data, ui_payload)
         detail_ref = {
@@ -1341,13 +1411,19 @@ class MessageEventService:
             "detailRef": detail_ref,
             "runId": data.get("run_id"),
             "toolCallId": data.get("tool_call_id"),
-            "toolName": data.get("tool", data.get("tool_name", "")),
+            "toolName": tool_name,
             "toolParams": start_data.get("params", start_data.get("input_data")),
             "toolResult": end_data.get("result", ""),
             "toolDurationMs": end_data.get("duration_ms"),
             "toolError": error or None,
             "toolErrorType": end_data.get("error_type"),
-            "status": "error" if error else status,
+            "status": (
+                "cancelled"
+                if ui_payload and ui_payload.get("status") == "cancelled"
+                else "error"
+                if error or (ui_payload and ui_payload.get("status") == "failed")
+                else status
+            ),
             "uiPayload": ui_payload,
             "fileChanges": files,
             "metadata": MessageEventService._tool_metadata(data),

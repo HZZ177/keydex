@@ -26,6 +26,7 @@ export type ConversationMessageKind =
   | "plan"
   | "skill"
   | "tool"
+  | "web_activity"
   | "command"
   | "file_change"
   | "approval"

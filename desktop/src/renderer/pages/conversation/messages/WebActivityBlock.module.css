@@ -1,0 +1,330 @@
+.block {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(720px, 100%);
+  color: var(--color-text-primary);
+}
+
+.summaryRow {
+  --ghost-row-height: 20px;
+  --ghost-icon-slot: 18px;
+  --ghost-icon-size: 16px;
+  --ghost-text-offset-y: 1px;
+
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  gap: 6px;
+  padding: 2px 0;
+  text-align: left;
+  transition: color 150ms ease;
+}
+
+.summaryRow:is(button) {
+  cursor: pointer;
+}
+
+.summaryRow:is(button):hover {
+  color: var(--color-text-secondary);
+}
+
+.summaryRow:is(button):focus-visible {
+  outline: none;
+}
+
+.leadingIcon,
+.trailingIcon {
+  display: inline-flex;
+  width: var(--ghost-icon-slot);
+  height: var(--ghost-row-height);
+  flex: 0 0 var(--ghost-icon-slot);
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.trailingIcon {
+  width: 16px;
+  flex-basis: 16px;
+}
+
+.icon {
+  display: inline-flex;
+  width: var(--ghost-icon-size);
+  height: var(--ghost-icon-size);
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+  line-height: 0;
+}
+
+.block[data-state="running"] .icon {
+  animation: web-activity-spin 900ms linear infinite;
+}
+
+.titleGroup {
+  display: inline-flex;
+  min-height: var(--ghost-row-height);
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.summary {
+  display: inline-flex;
+  min-height: var(--ghost-row-height);
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  align-items: center;
+  overflow: hidden;
+  color: currentColor;
+  font-size: 13px;
+  line-height: var(--ui-line-height-compact);
+  text-overflow: ellipsis;
+  transform: translateY(var(--ghost-text-offset-y));
+  white-space: nowrap;
+}
+
+.badge {
+  display: inline-flex;
+  min-height: var(--ghost-row-height);
+  flex: 0 0 auto;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-muted) 76%, transparent);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: var(--ui-line-height-compact);
+  padding: 0 6px;
+  transform: translateY(var(--ghost-text-offset-y));
+  white-space: nowrap;
+}
+
+.copyButton:focus-visible,
+.sourceCopy a:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 0;
+  box-shadow: var(--settings-focus-ring, 0 0 0 2px color-mix(in srgb, var(--color-border-3) 24%, transparent));
+}
+
+.chevron {
+  display: block;
+  color: currentColor;
+  transition: transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.summaryRow[aria-expanded="true"] .chevron {
+  transform: rotate(180deg);
+}
+
+.detailsMotion {
+  display: grid;
+  overflow: hidden;
+  margin-left: 24px;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--collapse-open-duration, 250ms) var(--motion-ease-out),
+    opacity var(--motion-fast) var(--motion-ease-out);
+}
+
+.detailsMotion[data-motion="closed"],
+.detailsMotion[data-motion="opening"],
+.detailsMotion[data-motion="closing"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.details {
+  display: grid;
+  min-height: 0;
+  gap: 8px;
+  padding: 4px 0 8px;
+  overflow: hidden;
+}
+
+.sourceList {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sourceRow,
+.failedItem {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 7px;
+  padding: 5px 0;
+}
+
+.favicon {
+  position: relative;
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 4px;
+  color: var(--color-text-tertiary);
+}
+
+.favicon img {
+  position: absolute;
+  inset: 1px;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  background: var(--color-bg-elevated);
+}
+
+.sourceCopy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.sourceCopy > a {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+}
+
+.sourceCopy > a:hover {
+  color: var(--color-text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sourceCopy strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 570;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sourceMeta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.sourceMeta em {
+  color: var(--color-warning);
+  font-style: normal;
+}
+
+.sourceCopy small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.failedItem {
+  grid-template-columns: 18px minmax(90px, auto) minmax(0, 1fr);
+  align-items: center;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.failedItem small {
+  overflow: hidden;
+  color: var(--color-danger);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.errorDetail {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+.errorDetail small,
+.errorDetail code {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.errorDetail code {
+  font-family: var(--font-mono);
+}
+
+.copyButton {
+  display: inline-flex;
+  width: fit-content;
+  height: 24px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.copyButton:hover {
+  color: var(--color-text-secondary);
+}
+
+@keyframes web-activity-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 600px) {
+  .summaryRow {
+    max-width: 100%;
+  }
+
+  .failedItem {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .failedItem small {
+    grid-column: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .block[data-state="running"] .icon {
+    animation: none;
+  }
+
+  .chevron,
+  .detailsMotion {
+    transition: none;
+  }
+}

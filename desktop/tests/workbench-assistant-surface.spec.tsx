@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { useMemo, useState, type ComponentProps, type PropsWithChildren } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ChatChannel, RuntimeBridge, WorkspaceSkillSummary, WsConnectionStatus } from "@/runtime";
+import type { ChatChannel, RuntimeBridge, SkillSummary, WsConnectionStatus } from "@/runtime";
 import { selectedQuoteFromText } from "@/renderer/components/chat/SendBox";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import type { AgentSessionController } from "@/renderer/hooks/useAgentSessionController";
@@ -854,6 +854,48 @@ describe("WorkbenchAssistantSurface", () => {
     expect(screen.getByTestId("message-list").getAttribute("data-turn-navigator")).toBe("true");
     expect(screen.getByTestId("conversation-turn-navigator")).not.toBeNull();
     expect(screen.getByTestId("conversation-turn-navigator-count").textContent).toBe("2 turn");
+  });
+
+  it("refreshes the shared session effective catalog on a matching Keydex event", async () => {
+    const { runtime, emit } = fakeRuntimeWithEvents({ skills: [workspaceSkill()] });
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <AgentSessionProvider runtime={runtime}>
+          <WorkbenchAssistantSurface
+            runtime={runtime}
+            workspaceId="ws-1"
+            workspace={workspace()}
+            controller={fakeController({ session: session("ses-live") })}
+          />
+        </AgentSessionProvider>
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(runtime.skills.listSession).toHaveBeenCalledWith(
+        "ses-live",
+        expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+      );
+    });
+
+    await act(async () => {
+      emit({
+        action: "keydexSkillsChanged",
+        data: {
+          session_id: "ses-live",
+          session_scope: "workspace",
+          effective_fingerprint: "sha256:changed",
+        },
+      } as AgentActionEnvelope);
+    });
+
+    await waitFor(() => {
+      expect(runtime.skills.listSession).toHaveBeenCalledWith(
+        "ses-live",
+        expect.objectContaining({ forceReload: true, signal: expect.any(AbortSignal) }),
+      );
+    });
+    expect(runtime.skills.listWorkspace).not.toHaveBeenCalled();
   });
 
   it("keeps a 10,000-turn capsule navigator bounded and preserves first middle last targets", async () => {
@@ -1925,7 +1967,7 @@ describe("WorkbenchAssistantSurface", () => {
     });
   });
 
-  it("opens workbench composer context chips through the shared preview panel", async () => {
+  it("opens file/quote chips through the file panel and Skill through the controlled read preview", async () => {
     const quote = selectedQuoteFromText("引用文件里的片段", {
       source: "selection",
       file: {
@@ -1999,8 +2041,56 @@ describe("WorkbenchAssistantSurface", () => {
 
     fireEvent.click(skillChip);
     await waitFor(() => {
-      expect(screen.getByTestId("preview-file-panel-path").textContent).toBe(".keydex/skills/dev-plan/SKILL.md");
+      expect(screen.getByTestId("preview-active-request").textContent).toBe(
+        "skill-resource:workspace:dev-plan:SKILL.md",
+      );
     });
+    expect(screen.getByTestId("preview-file-panel-path").textContent).toBe("docs/guide.md");
+    expect(runtime.skills.readSessionResource).toHaveBeenCalledWith("ses-1", {
+      skill_name: "dev-plan",
+      source: "workspace",
+      resource_path: "SKILL.md",
+    });
+  });
+
+  it("uses the session effective catalog and opens an inherited system Skill without mounting system files", async () => {
+    const skill = systemSkill();
+    const runtime = fakeRuntime({ skills: [skill] });
+
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <PreviewFilePanelProbe />
+        <WorkbenchAssistantSurface
+          runtime={runtime}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={fakeController({ selectedSkill: skill })}
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    openWorkbenchComposerIfCollapsed();
+    await waitFor(() => {
+      expect(runtime.skills.listSession).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+      );
+    });
+    expect(runtime.skills.listWorkspace).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开 Skill dev-plan" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("preview-active-request").textContent).toBe(
+        "skill-resource:system:dev-plan:SKILL.md",
+      );
+    });
+    expect(screen.getByTestId("preview-file-panel-path").textContent).toBe("");
+    expect(runtime.skills.readSessionResource).toHaveBeenCalledWith("ses-1", {
+      skill_name: "dev-plan",
+      source: "system",
+      resource_path: "SKILL.md",
+    });
+    expect(screen.getByLabelText("已添加上下文").textContent).not.toContain("C:\\Users");
   });
 
   it("keeps a selected skill chip while workspace skills are still loading", async () => {
@@ -2194,11 +2284,17 @@ function WorkbenchSurfaceTestProviders({ children }: PropsWithChildren) {
 
 function PreviewFilePanelProbe() {
   const preview = usePreview();
+  const activeRequest = preview.activeEntry?.request;
   return (
     <div aria-hidden="true">
       <output data-testid="preview-file-panel-path">{preview.filePanelRequest?.path ?? ""}</output>
       <output data-testid="preview-file-panel-reveal">
         {JSON.stringify(preview.filePanelRequest?.revealTarget ?? null)}
+      </output>
+      <output data-testid="preview-active-request">
+        {activeRequest?.type === "skill-resource"
+          ? `${activeRequest.type}:${activeRequest.skillSource}:${activeRequest.skillName}:${activeRequest.resourcePath}`
+          : activeRequest?.type ?? ""}
       </output>
     </div>
   );
@@ -2316,14 +2412,14 @@ function WorkbenchDraftHarness({ initialDraft = "" }: { initialDraft?: string })
 }
 
 function WorkbenchSkillLoadingHarness() {
-  const [selectedSkill, setSelectedSkill] = useState<WorkspaceSkillSummary | null>(workspaceSkill());
+  const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(workspaceSkill());
   const runtime = useMemo(() => {
     const base = fakeRuntime();
     return {
       ...base,
-      workspace: {
-        ...base.workspace,
-        listSkills: vi.fn(() => new Promise(() => undefined)) as RuntimeBridge["workspace"]["listSkills"],
+      skills: {
+        ...base.skills,
+        listSession: vi.fn(() => new Promise(() => undefined)) as RuntimeBridge["skills"]["listSession"],
       },
     } as RuntimeBridge;
   }, []);
@@ -2421,7 +2517,7 @@ function WorkbenchGoalHarness({
   sessionValue?: AgentSession | null;
 }) {
   const [draft, setDraft] = useState("");
-  const [selectedSkill, setSelectedSkill] = useState<WorkspaceSkillSummary | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(null);
   const controller = fakeController({
     activeTask,
     draft,
@@ -2531,7 +2627,7 @@ function fakeRuntime({
   createThreadTask?: ReturnType<typeof vi.fn>;
   deleteThreadTask?: ReturnType<typeof vi.fn>;
   listThreadTasks?: ReturnType<typeof vi.fn>;
-  skills?: WorkspaceSkillSummary[];
+  skills?: SkillSummary[];
 } = {}): RuntimeBridge {
   return {
     settings: {
@@ -2609,15 +2705,37 @@ function fakeRuntime({
           },
         ]),
     },
-    workspace: {
-      listSkills: () =>
+    skills: {
+      listSession: vi.fn(() =>
         Promise.resolve({
+          mode: "workspace_effective",
           workspace_root: "D:/repo/keydex",
           skills,
           diagnostics: [],
           fingerprint: "empty",
           loaded_at: "2026-06-26T00:00:00Z",
-        }),
+        })),
+      listWorkspace: vi.fn(() =>
+        Promise.resolve({
+          mode: "workspace_effective",
+          workspace_root: "D:/repo/keydex",
+          skills,
+          diagnostics: [],
+          fingerprint: "empty",
+          loaded_at: "2026-06-26T00:00:00Z",
+        })),
+      readSessionResource: vi.fn((_sessionId, request) => Promise.resolve({
+        skill_name: request.skill_name,
+        source: request.source,
+        resource_path: request.resource_path,
+        locator: `${request.source}:skills/${request.skill_name}/${request.resource_path}`,
+        content: "# Skill resource",
+        encoding: "utf-8",
+        revision: `sha256:${request.source}:${request.resource_path}`,
+        fingerprint: "sha256:catalog",
+      })),
+    },
+    workspace: {
       search: vi.fn().mockResolvedValue([]),
       listDirectory: vi.fn().mockResolvedValue({ root: "", entries: [] }),
     },
@@ -2668,7 +2786,7 @@ function mcpRuntimeStatus() {
   };
 }
 
-function fakeRuntimeWithEvents({ skills = [] }: { skills?: WorkspaceSkillSummary[] } = {}) {
+function fakeRuntimeWithEvents({ skills = [] }: { skills?: SkillSummary[] } = {}) {
   let handler: ((event: AgentActionEnvelope) => void) | null = null;
   const base = fakeRuntime({ skills });
   const channel: ChatChannel = {
@@ -2715,13 +2833,21 @@ function dispatchPointer(target: EventTarget, type: string, props: Record<string
   target.dispatchEvent(event);
 }
 
-function workspaceSkill(): WorkspaceSkillSummary {
+function workspaceSkill(): SkillSummary {
   return {
     name: "dev-plan",
     label: "/dev-plan",
     description: "Plan work from a design doc",
     source: "workspace",
     locator: ".keydex/skills/dev-plan/SKILL.md",
+  };
+}
+
+function systemSkill(): SkillSummary {
+  return {
+    ...workspaceSkill(),
+    source: "system",
+    locator: "system:skills/dev-plan/SKILL.md",
   };
 }
 

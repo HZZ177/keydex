@@ -106,6 +106,13 @@ class ChatStreamManager:
                 self._subscribers.pop(session_id, None)
         logger.debug("[ChatStreamManager] 退订连接的全部会话流")
 
+    async def has_subscribers(self, session_id: str) -> bool:
+        cleaned = session_id.strip()
+        if not cleaned:
+            return False
+        async with self._lock:
+            return bool(self._subscribers.get(cleaned))
+
     async def start_chat(self, request: ChatRequest) -> str:
         session_id = (request.session_id or "").strip()
         if not session_id:

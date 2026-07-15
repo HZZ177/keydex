@@ -164,6 +164,7 @@ export function SettingsSelect<T extends string>({
                   aria-selected={active}
                   className={styles.option}
                   data-active={active ? "true" : "false"}
+                  data-has-description={option.description ? "true" : "false"}
                   key={option.value}
                   role="option"
                   type="button"

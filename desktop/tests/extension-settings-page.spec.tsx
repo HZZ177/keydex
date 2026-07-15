@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ExtensionSettingsPage } from "@/renderer/pages/settings/extensions";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import type { RuntimeBridge } from "@/runtime";
+import type { UpdateWebSettingsPayload, WebSettingsResponse } from "@/runtime/settings";
 import type { AgentRuntimeSettings, ModelDefaultsResponse } from "@/types/protocol";
 
 describe("ExtensionSettingsPage", () => {
@@ -85,6 +86,60 @@ describe("ExtensionSettingsPage", () => {
       });
     });
     expect(await screen.findByText("扩展功能配置已保存")).not.toBeNull();
+  });
+
+  it("uses the one page-level save action for extension and Web settings", async () => {
+    const saveExtensionSettings = vi.fn((payload: AgentRuntimeSettings) => Promise.resolve(payload));
+    const saveWebSettings = vi.fn(async (_payload: UpdateWebSettingsPayload) => webSettingsResponse());
+    const runtime = fakeRuntime({
+      saveExtensionSettings,
+      saveWebSettings,
+      webResponse: webSettingsResponse(),
+    });
+
+    renderWithNotifications(<ExtensionSettingsPage runtime={runtime} />);
+
+    await screen.findByRole("heading", { name: "网络搜索" });
+    fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "new-secret" } });
+    expect(screen.queryByRole("button", { name: "保存网络设置" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(saveExtensionSettings).toHaveBeenCalledTimes(1);
+      expect(saveWebSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providers: expect.objectContaining({
+            tavily: expect.objectContaining({
+              secrets: { api_key: { action: "set", value: "new-secret" } },
+            }),
+          }),
+        }),
+      );
+    });
+    expect(await screen.findByText("扩展功能配置已保存")).not.toBeNull();
+  });
+
+  it("shows missing Web credentials in the top notification before saving anything", async () => {
+    const saveExtensionSettings = vi.fn((payload: AgentRuntimeSettings) => Promise.resolve(payload));
+    const saveWebSettings = vi.fn(async (_payload: UpdateWebSettingsPayload) => webSettingsResponse());
+    const runtime = fakeRuntime({
+      saveExtensionSettings,
+      saveWebSettings,
+      webResponse: webSettingsResponse(),
+    });
+
+    renderWithNotifications(<ExtensionSettingsPage runtime={runtime} />);
+
+    await screen.findByRole("heading", { name: "网络搜索" });
+    fireEvent.click(screen.getByRole("switch", { name: "启用网络搜索" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText("配置会从下一轮对话开始生效，不会中断当前回答。")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("请先填写 API Key 后再保存")).not.toBeNull();
+    expect(screen.getByTestId("notification-viewport").textContent).toContain("请先填写 API Key 后再保存");
+    expect(saveExtensionSettings).not.toHaveBeenCalled();
+    expect(saveWebSettings).not.toHaveBeenCalled();
   });
 
   it("saves and restores the built-in A2UI switch without custom configuration fields", async () => {
@@ -253,12 +308,16 @@ function fakeRuntime({
   fastConfigured = true,
   defaultChatConfigured = true,
   saveExtensionSettings = vi.fn((payload: AgentRuntimeSettings) => Promise.resolve(payload)),
+  saveWebSettings = vi.fn(async (_payload: UpdateWebSettingsPayload) => webSettingsResponse()),
   settings = {},
+  webResponse,
 }: {
   fastConfigured?: boolean;
   defaultChatConfigured?: boolean;
   saveExtensionSettings?: (payload: AgentRuntimeSettings) => Promise<AgentRuntimeSettings>;
+  saveWebSettings?: (payload: UpdateWebSettingsPayload) => Promise<WebSettingsResponse>;
   settings?: Partial<AgentRuntimeSettings>;
+  webResponse?: WebSettingsResponse;
 } = {}): RuntimeBridge {
   const extensionSettings = mergeSettings(defaultExtensionSettings(), settings);
   return {
@@ -266,8 +325,49 @@ function fakeRuntime({
       getExtensionSettings: vi.fn().mockResolvedValue(extensionSettings),
       saveExtensionSettings,
       getModelDefaults: vi.fn().mockResolvedValue(modelDefaultsResponse(fastConfigured, defaultChatConfigured)),
+      ...(webResponse
+        ? {
+            checkWebProvider: vi.fn(),
+            getWebSettings: vi.fn().mockResolvedValue(webResponse),
+            saveWebSettings,
+          }
+        : {}),
     },
   } as unknown as RuntimeBridge;
+}
+
+function webSettingsResponse(): WebSettingsResponse {
+  return {
+    enabled: false,
+    active_provider_id: "tavily",
+    active_provider_known: true,
+    providers: [
+      {
+        provider_id: "tavily",
+        display_name: "Tavily",
+        description: "网络搜索与网页读取",
+        capabilities: ["search", "fetch"],
+        config_fields: [
+          {
+            key: "api_key",
+            field_type: "secret",
+            label: "API Key",
+            required: true,
+            placeholder: "请输入 Tavily API Key",
+            help_text: "仅保存在当前 Keydex 本地数据库中。",
+            default: null,
+            options: [],
+          },
+        ],
+        credential_setup: null,
+        config: {},
+        secrets: { api_key: { configured: false, preview: null } },
+        configured: false,
+        config_status: "incomplete",
+        connection_status: "unchecked",
+      },
+    ],
+  };
 }
 
 function mergeSettings(

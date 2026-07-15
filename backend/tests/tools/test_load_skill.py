@@ -71,27 +71,32 @@ async def test_load_skill_activation_writes_pending_skill_activation(tmp_path: P
     payload = _tool_payload(command)
     assert payload == {
         "skill_name": "dev-plan",
+        "source": "workspace",
+        "locator": ".keydex/skills/dev-plan/SKILL.md",
         "found": True,
         "loaded": True,
         "injected": True,
         "message": "skill 已激活。",
     }
     pending = command.update["pending_skill_activations"]
+    assert pending[0]["id"] == "skill:workspace:dev-plan"
     assert pending[0]["skill_name"] == "dev-plan"
+    assert pending[0]["source"] == "workspace"
+    assert pending[0]["locator"] == ".keydex/skills/dev-plan/SKILL.md"
     assert "# Dev Plan" in pending[0]["content"]
-    assert "你现在已进入工作区 Skill 模式：dev-plan。" in pending[0]["content"]
+    assert "你现在已激活 Keydex Skill：dev-plan（来源：workspace）。" in pending[0]["content"]
     assert "技能上下文：" in pending[0]["content"]
     assert "资源访问说明：" in pending[0]["content"]
-    assert '"workspace_path_mode": "workspace_relative"' in pending[0]["content"]
-    assert '"skill_root": ".keydex/skills/dev-plan"' in pending[0]["content"]
+    assert '"id": "skill:workspace:dev-plan"' in pending[0]["content"]
+    assert '"locator": ".keydex/skills/dev-plan/SKILL.md"' in pending[0]["content"]
     assert (
         '"resources": [\n    "references/guide.md",\n    "scripts/run.ps1"\n  ]'
         in pending[0]["content"]
     )
-    assert "本 Skill 位于当前工作区内，Skill 资源按普通工作区文件处理。" in pending[0]["content"]
-    assert "不要把 `load_skill(resource_path=...)` 作为默认资源访问方式。" in pending[0]["content"]
+    assert '"mode": "keydex_read_only"' in pending[0]["content"]
+    assert "scripts/ 下资源也只能作为文本读取，禁止执行" in pending[0]["content"]
     assert "以下是 Skill 的正文内容，请结合该 Skill 完成用户需求：" in pending[0]["content"]
-    assert '"compatibility_fallback":' in pending[0]["content"]
+    assert '"read_text":' in pending[0]["content"]
     assert "<相对路径>" in pending[0]["content"]
     assert "如需读取 Skill 附录文件，调用" not in pending[0]["content"]
     assert "You are now using the workspace skill" not in pending[0]["content"]
@@ -152,6 +157,8 @@ async def test_load_skill_activation_failure_returns_loaded_not_injected(
     payload = _tool_payload(command)
     assert payload == {
         "skill_name": "dev-plan",
+        "source": "workspace",
+        "locator": ".keydex/skills/dev-plan/SKILL.md",
         "found": True,
         "loaded": True,
         "injected": False,

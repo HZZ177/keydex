@@ -3,7 +3,7 @@ import * as path from "node:path";
 
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 
-import type { WorkspaceSkillSummary } from "@/runtime";
+import type { SkillSummary } from "@/runtime";
 
 const API_BASE = "http://127.0.0.1:8765";
 const APP_BASE = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173";
@@ -547,7 +547,7 @@ interface MockBackendState {
   workspaceSearchRequests: Array<{ workspaceId: string; query: string }>;
   workspaceReadRequests: Array<{ workspaceId: string; path: string }>;
   approvalDecisions: Array<{ approvalId: string; body: Record<string, unknown> }>;
-  skills: WorkspaceSkillSummary[];
+  skills: SkillSummary[];
 }
 
 interface E2ESession {
@@ -564,7 +564,7 @@ interface E2EWorkspace {
   root_path: string;
 }
 
-function createWorkbenchBackend({ skills = [] }: { skills?: WorkspaceSkillSummary[] } = {}): MockBackendState {
+function createWorkbenchBackend({ skills = [] }: { skills?: SkillSummary[] } = {}): MockBackendState {
   return {
     sessions: {
       [SESSION_A]: session(SESSION_A, "工作台 A 会话", WORKSPACE_A),

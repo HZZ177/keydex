@@ -5,6 +5,67 @@ import { createRuntimeBridge } from "@/runtime/bridge";
 import { RuntimeWsClient, type WsClientOptions } from "@/runtime/wsClient";
 
 describe("RuntimeBridge", () => {
+  it("exposes the unified skill runtime and decodes resource errors", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
+      const url = requestUrl(input);
+      if (url.endsWith("/api/keydex/skills") && init.method === "GET") {
+        return jsonResponse(200, {
+          mode: "system_only",
+          workspace_root: null,
+          fingerprint: "system-fingerprint",
+          loaded_at: "2026-07-15T00:00:00Z",
+          skills: [
+            {
+              name: "review",
+              description: "Review changes",
+              source: "system",
+              label: "/review",
+              locator: ".keydex/skills/review/SKILL.md",
+            },
+          ],
+          diagnostics: [],
+        });
+      }
+      if (url.endsWith("/api/sessions/ses%201/skills/read") && init.method === "POST") {
+        return jsonResponse(409, {
+          detail: {
+            code: "skill_source_stale",
+            message: "Skill source changed",
+            details: {},
+          },
+        });
+      }
+      return jsonResponse(404, { detail: "not found" });
+    });
+    const runtime = createRuntimeBridge({ baseUrl: "http://127.0.0.1:8765", fetcher });
+
+    await expect(runtime.skills.listSystem()).resolves.toMatchObject({
+      mode: "system_only",
+      workspace_root: null,
+      skills: [{ source: "system", locator: ".keydex/skills/review/SKILL.md" }],
+    });
+    await expect(
+      runtime.skills.readSessionResource("ses 1", {
+        skill_name: "review",
+        source: "system",
+        resource_path: "guide.md",
+      }),
+    ).rejects.toMatchObject({ code: "skill_source_stale", status: 409 });
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:8765/api/sessions/ses%201/skills/read",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          skill_name: "review",
+          source: "system",
+          resource_path: "guide.md",
+        }),
+      }),
+    );
+  });
+
   it("routes settings and model calls through the backend HTTP facade", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
       const url = requestUrl(input);

@@ -12,7 +12,7 @@ from typing import Any, BinaryIO, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.app.annotations.service import document_revision_bytes
 from backend.app.api.dependencies import get_repositories
@@ -43,7 +43,8 @@ from backend.app.core.ripgrep import (
     open_ripgrep_process,
     resolve_ripgrep_binary,
 )
-from backend.app.keydex.schemas import WorkspaceSkillsResponse, workspace_skills_response
+from backend.app.keydex.schemas import EffectiveSkillsResponse, effective_skills_response
+from backend.app.keydex.skills import SkillResourcePathError
 from backend.app.security.workspace import WorkspacePathError, resolve_workspace_path
 from backend.app.services.file_change_hub import FileChangeHub
 from backend.app.services.workspace_service import (
@@ -142,6 +143,23 @@ class WorkspaceSubtreeResponse(BaseModel):
     truncated_reason: Literal["max_depth", "max_dirs", "max_entries", "timeout"] | None = None
     visited_dirs: int
     entry_count: int
+
+
+class SkillResourceReadRequest(BaseModel):
+    skill_name: str = Field(..., min_length=1, max_length=64)
+    source: Literal["builtin", "system", "workspace"]
+    resource_path: str = Field(..., min_length=1, max_length=1024)
+
+
+class SkillResourceReadResponse(BaseModel):
+    skill_name: str
+    source: Literal["builtin", "system", "workspace"]
+    resource_path: str
+    locator: str
+    content: str
+    encoding: Literal["utf-8"]
+    revision: str
+    fingerprint: str
 
 
 class WorkspaceFileResponse(BaseModel):
@@ -259,17 +277,64 @@ async def search_workspace(
 
 
 @router.get(
+    "/api/keydex/skills",
+    response_model=EffectiveSkillsResponse,
+)
+async def list_system_skills(
+    request: Request,
+    force_reload: bool = False,
+) -> EffectiveSkillsResponse:
+    snapshot = await asyncio.to_thread(
+        request.app.state.keydex_runtime_cache.get_system_snapshot,
+        force_reload=force_reload,
+    )
+    return effective_skills_response(snapshot)
+
+
+@router.post(
+    "/api/keydex/skills/read",
+    response_model=SkillResourceReadResponse,
+)
+async def read_system_skill_resource(
+    payload: SkillResourceReadRequest,
+    request: Request,
+) -> SkillResourceReadResponse:
+    snapshot = await asyncio.to_thread(
+        request.app.state.keydex_runtime_cache.get_system_snapshot
+    )
+    return _read_skill_resource(snapshot, payload)
+
+
+@router.get(
     "/api/workspaces/{workspace_id}/skills",
-    response_model=WorkspaceSkillsResponse,
+    response_model=EffectiveSkillsResponse,
 )
 async def list_workspace_skills(
     workspace_id: str,
     request: Request,
     force_reload: bool = False,
     repositories: StorageRepositories = RepositoriesDep,
-) -> WorkspaceSkillsResponse:
+) -> EffectiveSkillsResponse:
     scope = _workspace_scope(repositories, workspace_id)
     return await _workspace_skills_response(request, scope, force_reload=force_reload)
+
+
+@router.post(
+    "/api/workspaces/{workspace_id}/skills/read",
+    response_model=SkillResourceReadResponse,
+)
+async def read_workspace_skill_resource(
+    workspace_id: str,
+    payload: SkillResourceReadRequest,
+    request: Request,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> SkillResourceReadResponse:
+    scope = _workspace_scope(repositories, workspace_id)
+    snapshot = await asyncio.to_thread(
+        request.app.state.keydex_runtime_cache.get_workspace_snapshot,
+        scope.workspace.root_path,
+    )
+    return _read_skill_resource(snapshot, payload)
 
 
 @router.get("/api/sessions/{session_id}/workspace/tree", response_model=WorkspaceTreeResponse)
@@ -369,17 +434,70 @@ async def search_session_workspace(
 
 
 @router.get(
-    "/api/sessions/{session_id}/workspace/skills",
-    response_model=WorkspaceSkillsResponse,
+    "/api/sessions/{session_id}/skills",
+    response_model=EffectiveSkillsResponse,
 )
-async def list_session_workspace_skills(
+async def list_session_skills(
     session_id: str,
     request: Request,
     force_reload: bool = False,
     repositories: StorageRepositories = RepositoriesDep,
-) -> WorkspaceSkillsResponse:
+) -> EffectiveSkillsResponse:
+    session = repositories.sessions.get(session_id)
+    if session is None:
+        raise _workspace_error(
+            status.HTTP_404_NOT_FOUND,
+            "session_not_found",
+            f"会话不存在: {session_id}",
+        )
+    if session.session_type == "chat":
+        snapshot = await asyncio.to_thread(
+            request.app.state.keydex_runtime_cache.get_system_snapshot,
+            force_reload=force_reload,
+        )
+        return effective_skills_response(snapshot)
+    if session.session_type != "workspace":
+        raise _workspace_error(
+            status.HTTP_400_BAD_REQUEST,
+            "session_type_unsupported",
+            f"不支持的会话类型: {session.session_type}",
+        )
     scope = _session_workspace_scope(repositories, session_id)
     return await _workspace_skills_response(request, scope, force_reload=force_reload)
+
+
+@router.post(
+    "/api/sessions/{session_id}/skills/read",
+    response_model=SkillResourceReadResponse,
+)
+async def read_session_skill_resource(
+    session_id: str,
+    payload: SkillResourceReadRequest,
+    request: Request,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> SkillResourceReadResponse:
+    session = repositories.sessions.get(session_id)
+    if session is None:
+        raise _workspace_error(
+            status.HTTP_404_NOT_FOUND, "session_not_found", f"会话不存在: {session_id}"
+        )
+    if session.session_type == "chat":
+        snapshot = await asyncio.to_thread(
+            request.app.state.keydex_runtime_cache.get_system_snapshot
+        )
+    elif session.session_type == "workspace":
+        scope = _session_workspace_scope(repositories, session_id)
+        snapshot = await asyncio.to_thread(
+            request.app.state.keydex_runtime_cache.get_workspace_snapshot,
+            scope.workspace.root_path,
+        )
+    else:
+        raise _workspace_error(
+            status.HTTP_400_BAD_REQUEST,
+            "session_type_unsupported",
+            f"不支持的会话类型: {session.session_type}",
+        )
+    return _read_skill_resource(snapshot, payload)
 
 
 async def _workspace_skills_response(
@@ -387,14 +505,51 @@ async def _workspace_skills_response(
     scope: WorkspaceRuntimeContext,
     *,
     force_reload: bool,
-) -> WorkspaceSkillsResponse:
+) -> EffectiveSkillsResponse:
     runtime_cache = request.app.state.keydex_runtime_cache
     snapshot = await asyncio.to_thread(
-        runtime_cache.get_snapshot,
+        runtime_cache.get_workspace_snapshot,
         scope.workspace.root_path,
         force_reload=force_reload,
     )
-    return workspace_skills_response(snapshot)
+    return effective_skills_response(snapshot)
+
+
+def _read_skill_resource(snapshot, payload: SkillResourceReadRequest) -> SkillResourceReadResponse:
+    skill = snapshot.skill_catalog.skills.get(payload.skill_name)
+    if skill is None:
+        raise _workspace_error(
+            status.HTTP_404_NOT_FOUND,
+            "skill_not_found",
+            f"Skill 不存在: {payload.skill_name}",
+        )
+    if skill.source != payload.source:
+        raise _workspace_error(
+            status.HTTP_409_CONFLICT,
+            "skill_source_stale",
+            "Skill 来源已变化，请刷新后重试",
+        )
+    try:
+        resource = snapshot.read_skill_text_resource(skill, payload.resource_path)
+    except SkillResourcePathError as exc:
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.code == "skill_resource_not_found"
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise _workspace_error(status_code, exc.code, exc.reason) from exc
+    entry_parent = Path(skill.relative_entry).parent
+    locator = (entry_parent / resource.logical_path).as_posix()
+    return SkillResourceReadResponse(
+        skill_name=skill.name,
+        source=skill.source,
+        resource_path=resource.logical_path,
+        locator=locator,
+        content=resource.content,
+        encoding="utf-8",
+        revision=resource.revision,
+        fingerprint=snapshot.fingerprint,
+    )
 
 
 def _workspace_scope(

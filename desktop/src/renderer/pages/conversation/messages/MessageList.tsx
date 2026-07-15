@@ -35,6 +35,7 @@ import { MessageActionFooter, MessageText, ProcessingDuration, StreamingCursor }
 import { SkillActivationBlock } from "./SkillActivationBlock";
 import { ThreadTaskStatusBlock } from "./ThreadTaskStatusBlock";
 import { ToolCallBlock } from "./ToolCallBlock";
+import { WebActivityBlock, webActivityFromMessage } from "./WebActivityBlock";
 import { processMessages, type ProcessedMessageItem } from "./processMessages";
 import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnostics";
 import {
@@ -1469,6 +1470,7 @@ function renderMessageItem({
     ) : (
       <DefaultMessage
         message={item.message}
+        webSourceRegistry={item.webSourceRegistry}
         suppressStreamingCursor={suppressStreamingCursorMessageIds.has(item.message.id)}
         workspaceRuntime={workspaceRuntime}
         workspaceScope={workspaceScope}
@@ -1513,6 +1515,7 @@ function renderMessageItem({
       {item.messages.map((message) => (
         <DefaultMessage
           message={message}
+          webSourceRegistry={item.webSourceRegistry}
           workspaceRuntime={workspaceRuntime}
           workspaceScope={workspaceScope}
           previewContext={previewContext}
@@ -1678,6 +1681,7 @@ function DefaultMessage({
   onQuoteSelection,
   onAskSelectionInBtwConversation,
   onReverseFromMessage,
+  webSourceRegistry,
 }: {
   message: ConversationMessage;
   suppressStreamingCursor?: boolean;
@@ -1696,12 +1700,20 @@ function DefaultMessage({
   onQuoteSelection?: (text: string, comment?: string) => void;
   onAskSelectionInBtwConversation?: (text: string) => void;
   onReverseFromMessage?: (message: ConversationMessage) => void;
+  webSourceRegistry?: import("./webSourceRegistry").WebTurnSourceRegistry;
 }) {
   if (message.kind === "thinking") {
     return <MessageThinking message={message} />;
   }
   if (message.kind === "tool") {
     return <ToolCallBlock message={message} onPreviewFile={onFilePreview} onLoadDetails={onLoadToolDetails} />;
+  }
+  if (message.kind === "web_activity") {
+    return webActivityFromMessage(message) ? (
+      <WebActivityBlock message={message} />
+    ) : (
+      <ToolCallBlock message={message} onPreviewFile={onFilePreview} onLoadDetails={onLoadToolDetails} />
+    );
   }
   if (message.kind === "skill") {
     return (
@@ -1771,6 +1783,7 @@ function DefaultMessage({
       onQuoteSelection={onQuoteSelection}
       onAskSelectionInBtwConversation={onAskSelectionInBtwConversation}
       onReverseFromMessage={onReverseFromMessage}
+      webSourceRegistry={webSourceRegistry}
     />
   );
 }

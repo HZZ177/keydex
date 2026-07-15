@@ -86,35 +86,6 @@ export interface WorkspaceDocumentWriteOptions {
   signal?: AbortSignal;
 }
 
-export interface KeydexDiagnostic {
-  code: string;
-  reason: string;
-  path?: string | null;
-  severity: "warning" | "error";
-  details: Record<string, unknown>;
-}
-
-export interface WorkspaceSkillSummary {
-  name: string;
-  description: string;
-  source: "workspace" | "system";
-  label: string;
-  locator: string;
-}
-
-export interface WorkspaceSkillsResponse {
-  workspace_root: string;
-  fingerprint: string;
-  loaded_at: string;
-  skills: WorkspaceSkillSummary[];
-  diagnostics: KeydexDiagnostic[];
-}
-
-export interface WorkspaceSkillListOptions {
-  forceReload?: boolean;
-  signal?: AbortSignal;
-}
-
 export type WorkspaceScope =
   | { workspaceId: string; sessionId?: never }
   | { sessionId: string; workspaceId?: never };
@@ -142,7 +113,6 @@ export interface WorkspaceRuntime {
   ): Promise<DocumentWriteResult>;
   readMedia(scope: WorkspaceScope, path: string): Promise<WorkspaceMediaResponse>;
   search(scope: WorkspaceScope, query: string, options?: WorkspaceSearchOptions): Promise<WorkspaceSearchResult[]>;
-  listSkills(scope: WorkspaceScope, options?: WorkspaceSkillListOptions): Promise<WorkspaceSkillsResponse>;
   releaseDocumentConsumer(consumerId: string): void;
 }
 
@@ -216,12 +186,6 @@ export function createWorkspaceRuntime(http: HttpClient): WorkspaceRuntime {
         { signal: options.signal },
       );
     },
-    listSkills(scope, options = {}) {
-      return http.request<WorkspaceSkillsResponse>(
-        `${workspaceBasePath(scope)}/skills${workspaceSkillsQuery(options)}`,
-        { signal: options.signal },
-      );
-    },
     releaseDocumentConsumer(consumerId) {
       coordinator.release(consumerId);
     },
@@ -245,10 +209,6 @@ function workspaceBasePath(scope: WorkspaceScope): string {
     return `/api/workspaces/${encodeURIComponent(scope.workspaceId)}`;
   }
   throw new Error("workspace scope requires sessionId or workspaceId");
-}
-
-function workspaceSkillsQuery(options: WorkspaceSkillListOptions): string {
-  return options.forceReload ? "?force_reload=true" : "";
 }
 
 function workspaceSubtreeQuery(path: string, options: WorkspaceSubtreeOptions): string {

@@ -80,6 +80,13 @@ function enhanceConversationElement(element: HTMLElement): void {
     code.replaceWith(anchor);
   });
   element.querySelectorAll<HTMLAnchorElement>('a[data-markdown-link-navigation="host"]').forEach((anchor) => {
+    if ((anchor.getAttribute("href") ?? "").startsWith("#keydex-web-source=")) {
+      anchor.dataset.keydexWebSourceCitation = "true";
+      anchor.dataset.tooltipLabel = "查看对应来源";
+      anchor.setAttribute("aria-label", `查看来源 ${anchor.textContent ?? ""}`.trim());
+      anchor.removeAttribute("title");
+      return;
+    }
     if (anchor.dataset.keydexFileLink === "true") return;
     if (isAutoLinkedBareFileName(anchor)) {
       anchor.replaceWith(anchor.ownerDocument.createTextNode(anchor.textContent ?? ""));

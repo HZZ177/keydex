@@ -3,22 +3,25 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from backend.app.core.config import AppSettings
-from backend.app.keydex import KeydexWorkspaceRuntimeCache
+from backend.app.keydex import KeydexRuntimeCache
 from backend.app.main import create_app
 
 
-class RecordingRuntimeCache(KeydexWorkspaceRuntimeCache):
-    def __init__(self) -> None:
-        super().__init__()
+class RecordingRuntimeCache(KeydexRuntimeCache):
+    def __init__(self, system_root: Path) -> None:
+        super().__init__(system_root=system_root)
         self.force_reload_values: list[bool] = []
 
-    def get_snapshot(self, workspace_root, *, force_reload: bool = False):
+    def get_workspace_snapshot(self, workspace_root, *, force_reload: bool = False):
         self.force_reload_values.append(force_reload)
-        return super().get_snapshot(workspace_root, force_reload=force_reload)
+        return super().get_workspace_snapshot(workspace_root, force_reload=force_reload)
 
 
 def _app(tmp_path, *, runtime_cache=None):
-    app = create_app(AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path))
+    app = create_app(
+        AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path),
+        keydex_system_root_for_testing=tmp_path / "system-keydex",
+    )
     if runtime_cache is not None:
         app.state.keydex_runtime_cache = runtime_cache
     return app
@@ -60,13 +63,14 @@ def test_workspace_skills_api_returns_snapshot_skills(tmp_path) -> None:
 
     with TestClient(_app(tmp_path)) as client:
         session = _create_workspace_session(client, root)
-        response = client.get(f"/api/sessions/{session['id']}/workspace/skills")
+        response = client.get(f"/api/sessions/{session['id']}/skills")
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["mode"] == "workspace_effective"
     assert payload["workspace_root"] == root.resolve().as_posix()
     assert len(payload["fingerprint"]) == 64
-    assert payload["skills"] == [
+    assert payload["skills"][0] == (
         {
             "name": "dev-plan",
             "description": "Use this skill.",
@@ -74,6 +78,10 @@ def test_workspace_skills_api_returns_snapshot_skills(tmp_path) -> None:
             "label": "/dev-plan",
             "locator": ".keydex/skills/dev-plan/SKILL.md",
         }
+    )
+    assert [(item["name"], item["source"]) for item in payload["skills"]] == [
+        ("dev-plan", "workspace"),
+        ("keydex-guide", "builtin"),
     ]
     assert payload["diagnostics"] == []
 
@@ -96,12 +104,12 @@ def test_workspace_skills_api_returns_snapshot_skills_by_workspace_id(tmp_path) 
 def test_workspace_skills_api_passes_force_reload_to_cache(tmp_path) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
-    cache = RecordingRuntimeCache()
+    cache = RecordingRuntimeCache(tmp_path / "system-keydex")
 
     with TestClient(_app(tmp_path, runtime_cache=cache)) as client:
         session = _create_workspace_session(client, root)
         response = client.get(
-            f"/api/sessions/{session['id']}/workspace/skills",
+            f"/api/sessions/{session['id']}/skills",
             params={"force_reload": "true"},
         )
 
@@ -109,13 +117,17 @@ def test_workspace_skills_api_passes_force_reload_to_cache(tmp_path) -> None:
     assert cache.force_reload_values == [True]
 
 
-def test_workspace_skills_api_rejects_chat_session(tmp_path) -> None:
+def test_session_skills_api_returns_system_only_for_chat_session(tmp_path) -> None:
     with TestClient(_app(tmp_path)) as client:
         session = client.post("/api/sessions", json={"session_type": "chat"}).json()["session"]
-        response = client.get(f"/api/sessions/{session['id']}/workspace/skills")
+        response = client.get(f"/api/sessions/{session['id']}/skills")
 
-    assert response.status_code == 400
-    assert response.json()["detail"]["code"] == "session_not_workspace"
+    assert response.status_code == 200
+    assert response.json()["mode"] == "system_only"
+    assert response.json()["workspace_root"] is None
+    assert [(item["name"], item["source"]) for item in response.json()["skills"]] == [
+        ("keydex-guide", "builtin")
+    ]
 
 
 def test_workspace_skills_api_returns_diagnostics(tmp_path) -> None:
@@ -126,10 +138,12 @@ def test_workspace_skills_api_returns_diagnostics(tmp_path) -> None:
 
     with TestClient(_app(tmp_path)) as client:
         session = _create_workspace_session(client, root)
-        response = client.get(f"/api/sessions/{session['id']}/workspace/skills")
+        response = client.get(f"/api/sessions/{session['id']}/skills")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["skills"] == []
+    assert [(item["name"], item["source"]) for item in payload["skills"]] == [
+        ("keydex-guide", "builtin")
+    ]
     assert payload["diagnostics"][0]["code"] == "skill_frontmatter_missing_description"
     assert payload["diagnostics"][0]["path"] == ".keydex/skills/broken/SKILL.md"

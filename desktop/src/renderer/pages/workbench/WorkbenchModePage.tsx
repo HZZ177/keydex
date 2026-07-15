@@ -449,6 +449,7 @@ export function WorkbenchModePage({
             tabs: current.tabs.map((item) => item.id === tabId
               ? {
                   ...item,
+                  request: request.type === "skill-resource" ? request : item.request,
                   requestId: nextRequestId,
                   refreshRequestId: refreshExisting ? (item.refreshRequestId ?? 0) + 1 : (item.refreshRequestId ?? 0),
                   revealTarget,
@@ -1603,17 +1604,26 @@ function workbenchPreviewTabId(request: PreviewRequest): string {
   if (request.type === "diff") {
     return `diff:${request.path}:${hashText(request.diff)}`;
   }
+  if (request.type === "skill-resource") {
+    return `skill-resource:${request.skillSource}:${request.skillName}:${request.resourcePath}`;
+  }
   return `content:${request.contentType}:${request.title}:${hashText(request.content)}`;
 }
 
 function previewTitle(request: PreviewRequest): string {
-  if (request.type === "content") {
+  if (request.type === "content" || request.type === "skill-resource") {
     return request.title;
   }
   return fileName(request.path);
 }
 
 function previewSourceLabel(request: PreviewRequest): string {
+  if (request.type === "skill-resource") {
+    const sourceLabel = request.skillSource === "builtin"
+      ? "内置"
+      : request.skillSource === "system" ? "系统级" : "项目级";
+    return `${sourceLabel} Skill · ${request.skillName}/${request.resourcePath}`;
+  }
   if (request.type === "content") {
     return request.sourcePath ?? "消息内容";
   }
@@ -1624,7 +1634,7 @@ function targetPathForPreviewRequest(request: PreviewRequest): string | null {
   if ("path" in request) {
     return request.path;
   }
-  return request.sourcePath ?? null;
+  return request.type === "content" ? request.sourcePath ?? null : null;
 }
 
 function fileName(path: string): string {

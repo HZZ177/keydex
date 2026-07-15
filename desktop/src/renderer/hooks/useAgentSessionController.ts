@@ -4,7 +4,7 @@ import {
   type ChatChannel,
   type ChatPayload,
   type RuntimeBridge,
-  type WorkspaceSkillSummary,
+  type SkillSummary,
   type WsConnectionStatus,
 } from "@/runtime";
 import {
@@ -110,8 +110,8 @@ export interface AgentSessionController {
   pendingApproval: CommandApprovalRequest | null;
   draft: string;
   setDraft: (value: string | ((current: string) => string)) => void;
-  selectedSkill: WorkspaceSkillSummary | null;
-  setSelectedSkill: (skill: WorkspaceSkillSummary | null) => void;
+  selectedSkill: SkillSummary | null;
+  setSelectedSkill: (skill: SkillSummary | null) => void;
   restoreComposerDraft: (draft: AgentSessionControllerComposerDraft) => void;
   composerContextRequest: SendBoxExternalContextRequest | null;
   fileChipRequest: SendBoxExternalFileRequest | null;
@@ -179,7 +179,7 @@ export interface AgentSessionControllerComposerDraft {
   files?: SelectedFile[];
   quotes?: SelectedQuote[];
   attachments?: SelectedImageAttachment[];
-  selectedSkill?: WorkspaceSkillSummary | null;
+  selectedSkill?: SkillSummary | null;
 }
 
 export function useAgentSessionController({
@@ -204,7 +204,7 @@ export function useAgentSessionController({
   const [fileChipRequest, setFileChipRequest] = useState<SendBoxExternalFileRequest | null>(null);
   const [quoteChipRequest, setQuoteChipRequest] = useState<SendBoxExternalQuoteRequest | null>(null);
   const [composerContextRequest, setComposerContextRequest] = useState<SendBoxExternalContextRequest | null>(null);
-  const [selectedSkill, setSelectedSkill] = useState<WorkspaceSkillSummary | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(null);
   const [requestState, setRequestState] = useState<AgentSessionRuntimeState | null>(null);
   const [localRuntimeDetail, setLocalRuntimeDetail] = useState<string | null>(null);
   const [localWsStatus, setLocalWsStatus] = useState<WsConnectionStatus>("idle");

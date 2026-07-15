@@ -18,6 +18,24 @@ create table if not exists settings (
   updated_at text not null
 );
 
+create table if not exists web_settings (
+  id integer primary key check (id = 1),
+  enabled integer not null default 0 check (enabled in (0, 1)),
+  active_provider_id text not null default 'tavily',
+  updated_at text not null
+);
+
+insert or ignore into web_settings (id, enabled, active_provider_id, updated_at)
+values (1, 0, 'tavily', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+create table if not exists web_provider_configs (
+  provider_id text primary key,
+  config_json text not null default '{}',
+  secrets_json text not null default '{}',
+  created_at text not null,
+  updated_at text not null
+);
+
 create table if not exists model_providers (
   id text primary key,
   name text not null,

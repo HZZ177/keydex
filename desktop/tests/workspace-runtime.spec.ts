@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { HttpClient } from "@/runtime/httpClient";
-import { createWorkspaceRuntime, type WorkspaceSkillsResponse } from "@/runtime/workspace";
+import {
+  createSkillRuntime,
+  type EffectiveSkillsResponse,
+  type SkillResourceReadResponse,
+} from "@/runtime/skills";
 
-describe("workspace runtime", () => {
-  it("loads workspace skills through the session workspace endpoint", async () => {
-    const response: WorkspaceSkillsResponse = {
+describe("skill runtime", () => {
+  it("loads effective skills through the session endpoint", async () => {
+    const response: EffectiveSkillsResponse = {
+      mode: "workspace_effective",
       workspace_root: "D:/repo",
       fingerprint: "abc123",
       loaded_at: "2026-06-25T12:00:00Z",
@@ -21,17 +26,18 @@ describe("workspace runtime", () => {
       diagnostics: [],
     };
     const request = vi.fn(async () => response);
-    const runtime = createWorkspaceRuntime({ request } as unknown as HttpClient);
+    const runtime = createSkillRuntime({ request } as unknown as HttpClient);
 
-    await expect(runtime.listSkills({ sessionId: "ses 1" })).resolves.toBe(response);
+    await expect(runtime.listSession("ses 1")).resolves.toBe(response);
 
-    expect(request).toHaveBeenCalledWith("/api/sessions/ses%201/workspace/skills", {
+    expect(request).toHaveBeenCalledWith("/api/sessions/ses%201/skills", {
       signal: undefined,
     });
   });
 
   it("loads workspace skills through the workspace endpoint before a session exists", async () => {
-    const response: WorkspaceSkillsResponse = {
+    const response: EffectiveSkillsResponse = {
+      mode: "workspace_effective",
       workspace_root: "D:/repo",
       fingerprint: "abc123",
       loaded_at: "2026-06-25T12:00:00Z",
@@ -39,17 +45,35 @@ describe("workspace runtime", () => {
       diagnostics: [],
     };
     const request = vi.fn(async () => response);
-    const runtime = createWorkspaceRuntime({ request } as unknown as HttpClient);
+    const runtime = createSkillRuntime({ request } as unknown as HttpClient);
 
-    await expect(runtime.listSkills({ workspaceId: "ws 1" })).resolves.toBe(response);
+    await expect(runtime.listWorkspace("ws 1")).resolves.toBe(response);
 
     expect(request).toHaveBeenCalledWith("/api/workspaces/ws%201/skills", {
       signal: undefined,
     });
   });
 
-  it("passes force reload and abort signal when loading workspace skills", async () => {
-    const response: WorkspaceSkillsResponse = {
+  it("loads system-only bootstrap without a workspace root", async () => {
+    const response: EffectiveSkillsResponse = {
+      mode: "system_only",
+      workspace_root: null,
+      fingerprint: "system-fingerprint",
+      loaded_at: "2026-07-15T00:00:00Z",
+      skills: [],
+      diagnostics: [],
+    };
+    const request = vi.fn(async () => response);
+    const runtime = createSkillRuntime({ request } as unknown as HttpClient);
+
+    await expect(runtime.listSystem()).resolves.toBe(response);
+
+    expect(request).toHaveBeenCalledWith("/api/keydex/skills", { signal: undefined });
+  });
+
+  it("passes force reload and abort signal when loading effective skills", async () => {
+    const response: EffectiveSkillsResponse = {
+      mode: "workspace_effective",
       workspace_root: "D:/repo",
       fingerprint: "abc123",
       loaded_at: "2026-06-25T12:00:00Z",
@@ -66,15 +90,58 @@ describe("workspace runtime", () => {
     };
     const signal = new AbortController().signal;
     const request = vi.fn(async () => response);
-    const runtime = createWorkspaceRuntime({ request } as unknown as HttpClient);
+    const runtime = createSkillRuntime({ request } as unknown as HttpClient);
 
     await expect(
-      runtime.listSkills({ sessionId: "ses 1" }, { forceReload: true, signal }),
+      runtime.listSession("ses 1", { forceReload: true, signal }),
     ).resolves.toBe(response);
 
     expect(request).toHaveBeenCalledWith(
-      "/api/sessions/ses%201/workspace/skills?force_reload=true",
+      "/api/sessions/ses%201/skills?force_reload=true",
       { signal },
     );
+  });
+
+  it("reads resources through all three scopes without workspace file paths", async () => {
+    const response: SkillResourceReadResponse = {
+      skill_name: "review",
+      source: "system",
+      resource_path: "references/guide.md",
+      locator: ".keydex/skills/review/references/guide.md",
+      content: "guide",
+      encoding: "utf-8",
+      revision: "sha256",
+      fingerprint: "system-fingerprint",
+    };
+    const signal = new AbortController().signal;
+    const request = vi.fn(async () => response);
+    const runtime = createSkillRuntime({ request } as unknown as HttpClient);
+    const body = {
+      skill_name: "review",
+      source: "system" as const,
+      resource_path: "references/guide.md",
+    };
+
+    await expect(runtime.readSystemResource(body, { signal })).resolves.toBe(response);
+    await expect(runtime.readWorkspaceResource("ws 1", body)).resolves.toBe(response);
+    await expect(runtime.readSessionResource("ses 1", body)).resolves.toBe(response);
+
+    expect(response.locator).toBe(".keydex/skills/review/references/guide.md");
+    expect(response).not.toHaveProperty("path");
+    expect(request).toHaveBeenNthCalledWith(1, "/api/keydex/skills/read", {
+      method: "POST",
+      body,
+      signal,
+    });
+    expect(request).toHaveBeenNthCalledWith(2, "/api/workspaces/ws%201/skills/read", {
+      method: "POST",
+      body,
+      signal: undefined,
+    });
+    expect(request).toHaveBeenNthCalledWith(3, "/api/sessions/ses%201/skills/read", {
+      method: "POST",
+      body,
+      signal: undefined,
+    });
   });
 });

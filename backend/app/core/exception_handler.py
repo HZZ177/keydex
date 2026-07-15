@@ -36,7 +36,7 @@ async def validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
-    errors = exc.errors()
+    errors = _safe_validation_errors(exc.errors())
     logger.warning(
         "[ExceptionHandler] 请求校验失败 | "
         f"method={request.method} | path={request.url.path} | errors={len(errors)}"
@@ -70,3 +70,14 @@ def _normalize_detail(detail: Any) -> dict[str, Any]:
     if isinstance(detail, dict):
         return detail
     return {"code": "http_error", "message": str(detail), "details": {}}
+
+
+def _safe_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    safe_errors: list[dict[str, Any]] = []
+    for error in errors:
+        safe = {key: value for key, value in error.items() if key not in {"input", "url"}}
+        context = safe.get("ctx")
+        if isinstance(context, dict):
+            safe["ctx"] = {key: str(value) for key, value in context.items()}
+        safe_errors.append(safe)
+    return safe_errors

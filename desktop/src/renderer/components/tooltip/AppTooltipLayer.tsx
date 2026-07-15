@@ -4,12 +4,14 @@ import { createPortal } from "react-dom";
 import styles from "./AppTooltipLayer.module.css";
 
 type TooltipPlacement = "top" | "right" | "bottom" | "left";
+type TooltipTargetMode = "explicit" | "native-interactive-title";
 
 interface TooltipState {
   label: string;
   left: number;
   top: number;
   placement: TooltipPlacement;
+  multiline: boolean;
 }
 
 interface NativeTitleSnapshot {
@@ -21,11 +23,21 @@ export interface AppTooltipLayerProps {
   scopeSelector: string;
   defaultPlacement?: TooltipPlacement;
   delayMs?: number;
+  targetMode?: TooltipTargetMode;
 }
 
-const TOOLTIP_TARGET_SELECTOR = [
+const EXPLICIT_TOOLTIP_TARGET_SELECTOR = [
   "[data-tooltip-label]",
   "[data-tooltip='true']",
+].join(",");
+const NATIVE_INTERACTIVE_TITLE_TARGET_SELECTOR = [
+  "button[title]:not([data-tooltip-label]):not([data-tooltip='true'])",
+  "[role='button'][title]:not([data-tooltip-label]):not([data-tooltip='true'])",
+  "a[href][title]:not([data-tooltip-label]):not([data-tooltip='true'])",
+  "[role='link'][title]:not([data-tooltip-label]):not([data-tooltip='true'])",
+  "input[type='button'][title]:not([data-tooltip-label]):not([data-tooltip='true'])",
+  "input[type='submit'][title]:not([data-tooltip-label]):not([data-tooltip='true'])",
+  "input[type='reset'][title]:not([data-tooltip-label]):not([data-tooltip='true'])",
 ].join(",");
 
 const DEFAULT_DELAY_MS = 420;
@@ -35,6 +47,7 @@ export function AppTooltipLayer({
   scopeSelector,
   defaultPlacement = "top",
   delayMs = DEFAULT_DELAY_MS,
+  targetMode = "explicit",
 }: AppTooltipLayerProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const targetRef = useRef<HTMLElement | null>(null);
@@ -67,7 +80,7 @@ export function AppTooltipLayer({
 
   const showTooltip = useCallback(
     (target: HTMLElement) => {
-      const label = tooltipLabel(target);
+      const label = tooltipLabel(target, targetMode);
       if (!label) {
         hideTooltip();
         return;
@@ -87,19 +100,31 @@ export function AppTooltipLayer({
         if (targetRef.current !== target) {
           return;
         }
-        setTooltip(positionTooltip(target, label, tooltipPlacement(target, defaultPlacement)));
+        setTooltip(
+          positionTooltip(
+            target,
+            label,
+            tooltipPlacement(target, defaultPlacement),
+            target.dataset.tooltipMultiline === "true",
+          ),
+        );
         showTimerRef.current = null;
       }, delayMs);
     },
-    [clearShowTimer, defaultPlacement, delayMs, hideTooltip, restoreNativeTitle],
+    [clearShowTimer, defaultPlacement, delayMs, hideTooltip, restoreNativeTitle, targetMode],
   );
 
   useEffect(() => {
+    const targetSelector =
+      targetMode === "native-interactive-title"
+        ? NATIVE_INTERACTIVE_TITLE_TARGET_SELECTOR
+        : EXPLICIT_TOOLTIP_TARGET_SELECTOR;
+
     const targetFromEvent = (eventTarget: EventTarget | null): HTMLElement | null => {
       if (!(eventTarget instanceof Element)) {
         return null;
       }
-      const target = eventTarget.closest(TOOLTIP_TARGET_SELECTOR);
+      const target = eventTarget.closest(targetSelector);
       if (!(target instanceof HTMLElement)) {
         return null;
       }
@@ -157,7 +182,7 @@ export function AppTooltipLayer({
       window.removeEventListener("resize", hideTooltip);
       hideTooltip();
     };
-  }, [hideTooltip, scopeSelector, showTooltip]);
+  }, [hideTooltip, scopeSelector, showTooltip, targetMode]);
 
   useLayoutEffect(() => {
     if (!tooltip) {
@@ -210,6 +235,7 @@ export function AppTooltipLayer({
       ref={tooltipRef}
       className={styles.tooltip}
       role="tooltip"
+      data-multiline={tooltip.multiline ? "true" : "false"}
       data-placement={tooltip.placement}
       style={{ left: tooltip.left, top: tooltip.top }}
     >
@@ -219,7 +245,11 @@ export function AppTooltipLayer({
   );
 }
 
-function tooltipLabel(target: HTMLElement) {
+function tooltipLabel(target: HTMLElement, targetMode: TooltipTargetMode) {
+  if (targetMode === "native-interactive-title") {
+    return target.getAttribute("title")?.trim() || target.getAttribute("aria-label")?.trim() || "";
+  }
+
   const explicitLabel = target.dataset.tooltipLabel?.trim();
   if (explicitLabel) {
     return explicitLabel;
@@ -241,18 +271,23 @@ function tooltipPlacement(target: HTMLElement, fallback: TooltipPlacement): Tool
     : fallback;
 }
 
-function positionTooltip(target: HTMLElement, label: string, placement: TooltipPlacement): TooltipState {
+function positionTooltip(
+  target: HTMLElement,
+  label: string,
+  placement: TooltipPlacement,
+  multiline: boolean,
+): TooltipState {
   const rect = target.getBoundingClientRect();
   const horizontalCenter = Math.round(rect.left + rect.width / 2);
   const verticalCenter = Math.round(rect.top + rect.height / 2);
   if (placement === "right") {
-    return { label, left: Math.round(rect.right), top: verticalCenter, placement };
+    return { label, left: Math.round(rect.right), top: verticalCenter, placement, multiline };
   }
   if (placement === "left") {
-    return { label, left: Math.round(rect.left), top: verticalCenter, placement };
+    return { label, left: Math.round(rect.left), top: verticalCenter, placement, multiline };
   }
   if (placement === "bottom") {
-    return { label, left: horizontalCenter, top: Math.round(rect.bottom), placement };
+    return { label, left: horizontalCenter, top: Math.round(rect.bottom), placement, multiline };
   }
-  return { label, left: horizontalCenter, top: Math.round(rect.top), placement };
+  return { label, left: horizontalCenter, top: Math.round(rect.top), placement, multiline };
 }

@@ -13,7 +13,7 @@ def parse_skill_frontmatter(entry_file: str | Path) -> dict[str, str]:
     path = Path(entry_file)
     try:
         content = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         raise SkillDefinitionError(
             "skill_frontmatter_unreadable",
             str(exc),

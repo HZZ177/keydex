@@ -2,9 +2,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SendBox } from "@/renderer/components/chat/SendBox";
-import type { WorkspaceSkillSummary } from "@/runtime";
+import type { SkillSummary } from "@/runtime";
 
-const skills: WorkspaceSkillSummary[] = [
+const skills: SkillSummary[] = [
   {
     name: "dev-plan",
     label: "/dev-plan",
@@ -32,7 +32,7 @@ describe("SendBox skill capsule", () => {
         runtimeState="idle"
         canSend
         canStop={false}
-        workspaceSkills={skills}
+        skills={skills}
         onChange={onChange}
         onSend={onSend}
         onStop={vi.fn()}
@@ -57,7 +57,7 @@ describe("SendBox skill capsule", () => {
         runtimeState="running"
         canSend
         canStop
-        workspaceSkills={skills}
+        skills={skills}
         onChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
@@ -76,7 +76,7 @@ describe("SendBox skill capsule", () => {
         runtimeState="idle"
         canSend
         canStop={false}
-        workspaceSkills={skills}
+        skills={skills}
         onChange={onChange}
         onSend={vi.fn()}
         onStop={vi.fn()}
@@ -93,7 +93,7 @@ describe("SendBox skill capsule", () => {
         runtimeState="idle"
         canSend
         canStop={false}
-        workspaceSkills={skills}
+        skills={skills}
         onChange={onChange}
         onSend={vi.fn()}
         onStop={vi.fn()}
@@ -155,8 +155,68 @@ describe("SendBox skill capsule", () => {
     expect(document.querySelector('[data-context-chip-icon="skill"]')).not.toBeNull();
   });
 
-  it("refreshes workspace skills when a new slash menu session opens", async () => {
-    const onRefreshWorkspaceSkills = vi.fn();
+  it("keeps a system skill capsule out of the workspace file preview path", () => {
+    const onOpenFileReference = vi.fn();
+    const systemSkill: SkillSummary = {
+      ...skills[0],
+      source: "system",
+    };
+    render(
+      <SendBox
+        value=""
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        selectedSkill={systemSkill}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onOpenFileReference={onOpenFileReference}
+      />,
+    );
+
+    expect(
+      (screen.getByRole("button", { name: "打开 Skill dev-plan" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(document.querySelector('[data-skill-source="system"]')).not.toBeNull();
+    expect(onOpenFileReference).not.toHaveBeenCalled();
+  });
+
+  it("keeps a builtin skill capsule source-aware and outside workspace files", async () => {
+    const onOpenFileReference = vi.fn();
+    const builtinSkill: SkillSummary = {
+      name: "keydex-guide",
+      label: "/keydex-guide",
+      description: "Use Keydex",
+      source: "builtin",
+      locator: "builtin/skills/keydex-guide/SKILL.md",
+    };
+    render(
+      <SendBox
+        value=""
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        selectedSkill={builtinSkill}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onOpenFileReference={onOpenFileReference}
+      />,
+    );
+
+    const capsule = document.querySelector('[data-skill-source="builtin"]');
+    expect(capsule).not.toBeNull();
+    fireEvent.mouseEnter(capsule?.closest('[data-sendbox-hover-anchor="skill"]') as Element);
+    await waitFor(() => expect(screen.getByText(/^内置 · /u)).not.toBeNull());
+    expect(
+      (screen.getByRole("button", { name: "打开 Skill keydex-guide" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(onOpenFileReference).not.toHaveBeenCalled();
+  });
+
+  it("refreshes effective skills when a new slash menu session opens", async () => {
+    const onRefreshSkills = vi.fn();
     const baseProps = {
       runtimeState: "idle" as const,
       canSend: true,
@@ -164,18 +224,18 @@ describe("SendBox skill capsule", () => {
       onChange: vi.fn(),
       onSend: vi.fn(),
       onStop: vi.fn(),
-      onRefreshWorkspaceSkills,
+      onRefreshSkills,
     };
     const { rerender } = render(<SendBox value="" {...baseProps} />);
 
     rerender(<SendBox value="/" {...baseProps} />);
-    await waitFor(() => expect(onRefreshWorkspaceSkills).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onRefreshSkills).toHaveBeenCalledTimes(1));
 
     rerender(<SendBox value="/dev" {...baseProps} />);
-    expect(onRefreshWorkspaceSkills).toHaveBeenCalledTimes(1);
+    expect(onRefreshSkills).toHaveBeenCalledTimes(1);
 
     rerender(<SendBox value="" {...baseProps} />);
     rerender(<SendBox value="/" {...baseProps} />);
-    await waitFor(() => expect(onRefreshWorkspaceSkills).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(onRefreshSkills).toHaveBeenCalledTimes(2));
   });
 });

@@ -20,7 +20,13 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { runtimeBridge, type RuntimeBridge, type WorkspaceSearchResult, type WorkspaceSkillSummary } from "@/runtime";
+import {
+  runtimeBridge,
+  type KeydexDiagnostic,
+  type RuntimeBridge,
+  type SkillSummary,
+  type WorkspaceSearchResult,
+} from "@/runtime";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
 import type { FileAccessMode } from "@/types/protocol";
@@ -109,11 +115,12 @@ export interface SendBoxProps {
   allowBypassConversationSlashCommand?: boolean;
   allowGoalSlashCommand?: boolean;
   allowContextCompressionSlashCommand?: boolean;
-  workspaceSkills?: WorkspaceSkillSummary[];
-  selectedSkill?: WorkspaceSkillSummary | null;
+  skills?: SkillSummary[];
+  skillDiagnostics?: KeydexDiagnostic[];
+  selectedSkill?: SkillSummary | null;
   onSelectedFilesChange?: (files: SelectedFile[]) => void;
   onSelectedQuotesChange?: (quotes: SelectedQuote[]) => void;
-  onSkillChange?: (skill: WorkspaceSkillSummary | null) => void;
+  onSkillChange?: (skill: SkillSummary | null) => void;
   onChange: (value: string) => void;
   onSend: (
     files: SelectedFile[],
@@ -126,8 +133,9 @@ export interface SendBoxProps {
   sessionId?: string | null;
   onEscape?: () => void;
   onOpenFileReference?: (file: SelectedFile) => void;
+  onOpenSkill?: (skill: SkillSummary) => void | Promise<void>;
   onSlashCommand?: (command: SlashCommand) => void;
-  onRefreshWorkspaceSkills?: () => void | Promise<void>;
+  onRefreshSkills?: () => void | Promise<void>;
   onExternalFileRequestHandled?: (requestId: number) => void;
   onExternalQuoteRequestHandled?: (requestId: number) => void;
   onExternalContextRequestHandled?: (requestId: number) => void;
@@ -156,7 +164,7 @@ export interface SendBoxExternalContextRequest {
 
 type SlashMenuItem =
   | { type: "command"; command: SlashCommand }
-  | { type: "skill"; skill: WorkspaceSkillSummary };
+  | { type: "skill"; skill: SkillSummary };
 
 export function SendBox({
   value,
@@ -188,7 +196,8 @@ export function SendBox({
   allowBypassConversationSlashCommand = true,
   allowGoalSlashCommand = true,
   allowContextCompressionSlashCommand = true,
-  workspaceSkills = [],
+  skills = [],
+  skillDiagnostics = [],
   selectedSkill: controlledSelectedSkill,
   onSelectedFilesChange,
   onSelectedQuotesChange,
@@ -200,8 +209,9 @@ export function SendBox({
   sessionId = null,
   onEscape,
   onOpenFileReference,
+  onOpenSkill,
   onSlashCommand,
-  onRefreshWorkspaceSkills,
+  onRefreshSkills,
   onExternalFileRequestHandled,
   onExternalQuoteRequestHandled,
   onExternalContextRequestHandled,
@@ -233,7 +243,7 @@ export function SendBox({
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [activeImagePreview, setActiveImagePreview] = useState<SelectedImageAttachment | null>(null);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
-  const [uncontrolledSelectedSkill, setUncontrolledSelectedSkill] = useState<WorkspaceSkillSummary | null>(null);
+  const [uncontrolledSelectedSkill, setUncontrolledSelectedSkill] = useState<SkillSummary | null>(null);
   const [uncontrolledFileSelection, dispatchUncontrolledFileSelection] = useReducer(
     fileSelectionReducer,
     initialFileSelectionState,
@@ -287,7 +297,7 @@ export function SendBox({
     [controlledSelectedQuotes, onSelectedQuotesChange, quoteSelection],
   );
   const setSelectedSkill = useCallback(
-    (skill: WorkspaceSkillSummary | null) => {
+    (skill: SkillSummary | null) => {
       if (controlledSelectedSkill === undefined) {
         setUncontrolledSelectedSkill(skill);
       }
@@ -392,7 +402,7 @@ export function SendBox({
   const slashQuery = getSlashQuery(editorValue);
   const availableSlashCommands = useMemo(
     () =>
-      buildSlashCommands(workspaceSkills, {
+      buildSlashCommands(skills, {
         includeBypassConversation: allowBypassConversationSlashCommand,
         includeGoal: allowGoalSlashCommand,
         includeContextCompression: allowContextCompressionSlashCommand,
@@ -401,7 +411,7 @@ export function SendBox({
       allowBypassConversationSlashCommand,
       allowContextCompressionSlashCommand,
       allowGoalSlashCommand,
-      workspaceSkills,
+      skills,
     ],
   );
   const slashCommands = useMemo(
@@ -409,8 +419,8 @@ export function SendBox({
     [availableSlashCommands, slashQuery],
   );
   const slashSkills = useMemo(
-    () => (slashQuery === null ? [] : filterSlashSkills(workspaceSkills, slashQuery)),
-    [slashQuery, workspaceSkills],
+    () => (slashQuery === null ? [] : filterSlashSkills(skills, slashQuery)),
+    [slashQuery, skills],
   );
   const slashRootItems = useMemo<SlashMenuItem[]>(
     () => [
@@ -510,12 +520,12 @@ export function SendBox({
       refreshedSlashSessionRef.current = false;
       return;
     }
-    if (refreshedSlashSessionRef.current || !onRefreshWorkspaceSkills) {
+    if (refreshedSlashSessionRef.current || !onRefreshSkills) {
       return;
     }
     refreshedSlashSessionRef.current = true;
-    void onRefreshWorkspaceSkills();
-  }, [onRefreshWorkspaceSkills, slashOpen]);
+    void onRefreshSkills();
+  }, [onRefreshSkills, slashOpen]);
 
   useEffect(() => {
     setAtActiveIndex(0);
@@ -709,7 +719,7 @@ export function SendBox({
     onChange(replaceSlashQuery(editorValue, `${command.label} `));
   };
 
-  const selectSlashSkill = (skill: WorkspaceSkillSummary) => {
+  const selectSlashSkill = (skill: SkillSummary) => {
     const command = skillToSlashCommand(skill);
     onSlashCommand?.(command);
     setSelectedSkill(skill);
@@ -1208,6 +1218,7 @@ export function SendBox({
             <SkillContextChip
               skill={selectedSkill}
               onOpen={onOpenFileReference}
+              onOpenSkill={onOpenSkill}
               onRemove={() => setSelectedSkill(null)}
             />
           ) : null}
@@ -1255,6 +1266,7 @@ export function SendBox({
           query={slashQuery ?? ""}
           commands={slashCommands}
           skills={slashSkills}
+          diagnostics={skillDiagnostics}
           activeIndex={visibleSlashActiveIndex}
           onBack={navigateSlashRoot}
           onSelectCommand={selectSlashCommand}
@@ -1495,25 +1507,32 @@ function nextMenuIndex(index: number, length: number, delta: 1 | -1): number {
 function SkillContextChip({
   skill,
   onOpen,
+  onOpenSkill,
   onRemove,
 }: {
-  skill: WorkspaceSkillSummary;
+  skill: SkillSummary;
   onOpen?: (file: SelectedFile) => void;
+  onOpenSkill?: (skill: SkillSummary) => void | Promise<void>;
   onRemove: () => void;
 }) {
   const label = skill.label || `/${skill.name}`;
   const displayName = skillDisplayName(skill);
   const skillFile = selectedFileFromSkill(skill);
-  const canOpen = Boolean(skillFile && onOpen);
+  const canOpen = Boolean(onOpenSkill || (skillFile && onOpen));
   return (
     <ComposerContextHover
       className={styles.skillChipWrapper}
       hoverAnchor="skill"
       title={displayName}
       description={skill.description}
-      meta={skill.locator || null}
+      meta={[skillSourceLabel(skill.source), skill.locator].filter(Boolean).join(" · ")}
     >
-      <span className={styles.skillChip} data-context-type="skill" data-openable={canOpen ? "true" : "false"}>
+      <span
+        className={styles.skillChip}
+        data-context-type="skill"
+        data-openable={canOpen ? "true" : "false"}
+        data-skill-source={skill.source}
+      >
         <button
           className={styles.contextChipMain}
           type="button"
@@ -1521,7 +1540,9 @@ function SkillContextChip({
           data-clickable={canOpen ? "true" : "false"}
           disabled={!canOpen}
           onClick={() => {
-            if (skillFile) {
+            if (onOpenSkill) {
+              void onOpenSkill(skill);
+            } else if (skillFile) {
               onOpen?.(skillFile);
             }
           }}
@@ -1544,13 +1565,20 @@ function SkillContextChip({
   );
 }
 
-function skillDisplayName(skill: WorkspaceSkillSummary): string {
+function skillDisplayName(skill: SkillSummary): string {
   const raw = skill.name || skill.label;
   const normalized = raw.replace(/^\//, "").trim();
   return normalized || "Skill";
 }
 
-function selectedFileFromSkill(skill: WorkspaceSkillSummary): SelectedFile | null {
+function skillSourceLabel(source: SkillSummary["source"]): string {
+  return source === "builtin" ? "内置" : source === "system" ? "系统级" : "项目级";
+}
+
+function selectedFileFromSkill(skill: SkillSummary): SelectedFile | null {
+  if (skill.source !== "workspace") {
+    return null;
+  }
   const path = skill.locator?.trim();
   if (!path) {
     return null;

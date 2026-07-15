@@ -194,6 +194,24 @@ def build_file_edit_prompt_section(style: str) -> str:
     return CLAUDE_CODE_FILE_EDIT_PROMPT
 
 
+def build_web_source_prompt_section(*, fetch_available: bool) -> str:
+    fetch_rule = (
+        "需要核对来源原文、补充上下文或提高回答依据时，可继续使用 `web_fetch` "
+        "读取已找到的公开网页。"
+        if fetch_available
+        else "当前只提供网络搜索；不要声称已读取搜索摘要之外的网页正文。"
+    )
+    return f"""## 本轮网络来源协议
+
+1. `web_search` 和 `web_fetch` 返回的 `source_id` 是本轮唯一可用的来源标识。
+2. 当回答中的事实确实来自某个网络来源时，在相关陈述后写 `[[source:source_id]]`；同一来源可重复引用。
+3. 只能逐字使用当前轮工具结果中真实存在的 `source_id`，不得猜测、改写、拼接或伪造来源标识。
+4. 不要引用失败的读取项，也不要为了让回答看起来有依据而引用未使用的来源。
+5. 来源标记必须保留为普通文本协议，不要放进代码块、链接地址或自行转换为脚注语法。
+6. {fetch_rule}
+"""
+
+
 CLAUDE_CODE_FILE_EDIT_PROMPT = """## 本轮文件编辑工具风格：Claude Code 风格
 
 1. 创建新文件优先使用 `create_file(path, content)`；目标已存在会失败。
@@ -201,8 +219,10 @@ CLAUDE_CODE_FILE_EDIT_PROMPT = """## 本轮文件编辑工具风格：Claude Cod
 3. 删除已有文件使用 `delete_file(path)`。
 4. 移动或重命名已有文件使用 `move_file(path, new_path)`。
 5. 这些工具都可直接操作已有文件；建议先用 `read_file` 确认上下文，但不是硬性要求。
-6. `old_string` 非空时必须逐字匹配当前文件内容；默认只能匹配一次，多处匹配时提供更长上下文，或确认全部替换后设置 `replace_all=true`。
-7. `old_string` 为空时仅用于创建不存在文件，或写入已有空文件/纯空白文件；目标非空会失败；`old_string` 和 `new_string` 不能完全相同。
+6. `old_string` 非空时必须逐字匹配当前文件内容；默认只能匹配一次，
+   多处匹配时提供更长上下文，或确认全部替换后设置 `replace_all=true`。
+7. `old_string` 为空时仅用于创建不存在文件，或写入已有空文件/纯空白文件；
+   目标非空会失败；`old_string` 和 `new_string` 不能完全相同。
 8. 不要使用 `apply_patch` 或 `patch` 参数。"""
 
 
@@ -211,7 +231,8 @@ CODEX_FILE_EDIT_PROMPT = """## 本轮文件编辑工具风格：Codex 风格
 1. 创建、修改、删除或移动文件统一使用 `apply_patch(patch)`。
 2. `patch` 必须用 `*** Begin Patch` 和 `*** End Patch` 包裹。
 3. 新增文件写 `*** Add File: <path>`，正文每一行以 `+` 开头。
-4. 修改已有文件写 `*** Update File: <path>`，正文使用 `@@` hunk；上下文行以空格开头，新增行以 `+` 开头，删除行以 `-` 开头。
+4. 修改已有文件写 `*** Update File: <path>`，正文使用 `@@` hunk；上下文行以空格开头，
+   新增行以 `+` 开头，删除行以 `-` 开头。
 5. 删除已有文件写 `*** Delete File: <path>`。
 6. 移动或重命名文件时，在 `*** Update File: <path>` 的下一行写 `*** Move to: <new-path>`。
 7. 不要写普通 unified diff 文件头，例如 `--- a/file` 或 `+++ b/file`。

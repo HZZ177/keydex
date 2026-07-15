@@ -15,7 +15,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { runtimeBridge, type RuntimeBridge, type WorkspaceScope } from "@/runtime";
+import { runtimeBridge, type RuntimeBridge, type SkillSource, type WorkspaceScope } from "@/runtime";
 import { ContextChipIcon } from "@/renderer/components/chat/ContextChipIcon";
 import { ImagePreviewDialog } from "@/renderer/components/workspace/ImagePreviewSurface";
 import {
@@ -25,10 +25,12 @@ import {
   type PreviewRenderContext,
 } from "@/renderer/providers/PreviewProvider";
 import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { ImageResourceRuntime } from "@/renderer/markdownRuntime/resources";
 import { isAbsoluteFilePath, parseFileLinkTarget } from "@/renderer/utils/fileLinks";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
+import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
 import type { AgentContextItem, AgentFileAttachment, TurnError } from "@/types/protocol";
 
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
@@ -49,6 +51,9 @@ import { useTypingAnimation } from "./useTypingAnimation";
 import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnostics";
 import { ConversationMarkdownRuntimeHost } from "./ConversationMarkdownRuntimeHost";
 import { createConversationMarkdownRendererRegistry } from "./ConversationMarkdownRendererProfile";
+import { WebAnswerSources, type WebSourceActivation } from "./WebAnswerSources";
+import { projectWebSourceMarkers, webSourceIdFromCitationHref } from "./webSourceMarkers";
+import type { WebTurnSourceRegistry } from "./webSourceRegistry";
 import styles from "./MessageText.module.css";
 
 export interface MessageTextProps {
@@ -61,6 +66,7 @@ export interface MessageTextProps {
   onQuoteSelection?: (text: string, comment?: string) => void;
   onAskSelectionInBtwConversation?: (text: string) => void;
   onReverseFromMessage?: (message: ConversationMessage) => void;
+  webSourceRegistry?: WebTurnSourceRegistry;
 }
 
 function MessageTextComponent({
@@ -73,6 +79,7 @@ function MessageTextComponent({
   onQuoteSelection,
   onAskSelectionInBtwConversation,
   onReverseFromMessage,
+  webSourceRegistry,
 }: MessageTextProps) {
   conversationBaselineDiagnostics.record({
     stage: "message-text-render",
@@ -80,11 +87,13 @@ function MessageTextComponent({
     status: message.status,
     characters: message.content.length,
   });
+  const messageRootRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const inheritedPreviewContext = useOptionalPreview();
   const previewContext = previewContextOverride === undefined ? inheritedPreviewContext : previewContextOverride;
   const previewContextRef = useRef(previewContext);
   previewContextRef.current = previewContext;
+  const notifications = useNotifications();
   const previewAvailable = previewContext !== null;
   const previewScopeKey = previewContext?.activeScopeKey ?? null;
   const isUser = message.kind === "user";
@@ -168,6 +177,64 @@ function MessageTextComponent({
     () => normalizeMarkdownContent(displayedContent, { streaming: isStreaming, repairFence: false }),
     [displayedContent, isStreaming],
   );
+  const webSourceProjection = useMemo(
+    () => message.kind === "assistant" && webSourceRegistry
+      ? projectWebSourceMarkers(renderedContent, webSourceRegistry)
+      : null,
+    [message.kind, renderedContent, webSourceRegistry],
+  );
+  const webSourceRegistryRef = useRef(webSourceRegistry);
+  const webSourceProjectionRef = useRef(webSourceProjection);
+  webSourceRegistryRef.current = webSourceRegistry;
+  webSourceProjectionRef.current = webSourceProjection;
+  const markdownContent = webSourceProjection?.markdown ?? renderedContent;
+  const [webSourceActivation, setWebSourceActivation] = useState<WebSourceActivation | null>(null);
+  const activateWebSource = useCallback((sourceId: string) => {
+    if (!webSourceRegistryRef.current?.bySourceId.has(sourceId)) return false;
+    const representativeSourceId = webSourceProjectionRef.current?.citations
+      .find((citation) => citation.sourceIds.includes(sourceId))?.sourceId ?? sourceId;
+    setWebSourceActivation((current) => ({
+      sourceId: representativeSourceId,
+      sequence: (current?.sequence ?? 0) + 1,
+    }));
+    return true;
+  }, []);
+  useEffect(() => {
+    if (!webSourceActivation) return;
+
+    const dismissWebSourceActivation = () => {
+      setWebSourceActivation(null);
+      const focused = document.activeElement;
+      if (
+        focused instanceof HTMLElement
+        && messageRootRef.current?.contains(focused)
+        && focused.matches("[data-source-id]")
+      ) {
+        focused.blur();
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element
+        && messageRootRef.current?.contains(target)
+        && target.closest("a[data-keydex-web-source-citation='true']")
+      ) {
+        return;
+      }
+      dismissWebSourceActivation();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dismissWebSourceActivation();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [webSourceActivation]);
   const showStreamingCursor =
     !suppressStreamingCursor && !isUser && isStreaming && !isAnimating && !hasPendingDisplayBacklog && !cancelled;
   const conversationRuntimeRegistry = useMemo(
@@ -201,10 +268,6 @@ function MessageTextComponent({
   );
   const openContextFile = useCallback(
     (item: AgentContextItem) => {
-      const path = contextItemOpenPath(item);
-      if (!path) {
-        return;
-      }
       if (!previewContext) {
         return;
       }
@@ -214,13 +277,35 @@ function MessageTextComponent({
         onQuoteSelection,
         previewContext.hostContext,
       );
+      if (item.type === "skill") {
+        const skillName = skillContextName(item);
+        if (!skillName) {
+          return;
+        }
+        void openSkillResourcePreview({
+          preview: previewContext,
+          renderContext,
+          runtime: workspaceRuntime ?? runtimeBridge,
+          scope: workspaceScope,
+          target: {
+            skillName,
+            source: skillContextSource(item),
+            resourcePath: skillContextResourcePath(item),
+          },
+        }).catch((reason) => notifications.error(skillResourcePreviewError(reason)));
+        return;
+      }
+      const path = contextItemOpenPath(item);
+      if (!path) {
+        return;
+      }
       if (item.fileType === "directory") {
         previewContext.openDirectoryPanel(path, renderContext);
         return;
       }
       previewContext.openFilePanel(path, renderContext);
     },
-    [onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
+    [notifications, onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],
   );
   const openMarkdownFileTarget = useCallback(
     (path: string, line: number | null) => {
@@ -241,11 +326,20 @@ function MessageTextComponent({
     },
     [onQuoteSelection, workspaceRuntime, workspaceScope],
   );
-  const handleMarkdownFileLinkClick = useCallback(
+  const handleMarkdownLinkClick = useCallback(
     (event: MouseEvent<HTMLElement>) => {
       const target = event.target;
       if (!(target instanceof Element)) {
         return;
+      }
+      const sourceLink = target.closest<HTMLAnchorElement>("a[data-keydex-web-source-citation='true']");
+      if (sourceLink && event.currentTarget.contains(sourceLink)) {
+        const sourceId = webSourceIdFromCitationHref(sourceLink.getAttribute("href") ?? "");
+        if (sourceId && activateWebSource(sourceId)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
       }
       const link = target.closest<HTMLAnchorElement>("a[data-keydex-file-link='true']");
       if (!link || !event.currentTarget.contains(link)) {
@@ -260,11 +354,13 @@ function MessageTextComponent({
       const line = positiveIntegerOrNull(link.dataset.keydexFileLine);
       openMarkdownFileTarget(path, line);
     },
-    [openMarkdownFileTarget],
+    [activateWebSource, openMarkdownFileTarget],
   );
   const conversationRuntimeInteractions = useMemo(
     () => ({
       onLinkActivate: (_event: globalThis.MouseEvent, input: { href: string }) => {
+        const sourceId = webSourceIdFromCitationHref(input.href);
+        if (sourceId && activateWebSource(sourceId)) return;
         const fileTarget = parseFileLinkTarget(input.href);
         if (fileTarget) {
           openMarkdownFileTarget(decodeFileLinkPath(fileTarget.path), fileTarget.line);
@@ -273,7 +369,7 @@ function MessageTextComponent({
         if (/^https?:\/\//iu.test(input.href)) window.open(input.href, "_blank", "noopener,noreferrer");
       },
     }),
-    [openMarkdownFileTarget],
+    [activateWebSource, openMarkdownFileTarget],
   );
 
   const userContextItems = isUser && regularContextItems.length > 0;
@@ -282,13 +378,14 @@ function MessageTextComponent({
 
   return (
     <article
+      ref={messageRootRef}
       className={isUser ? styles.userMessage : styles.assistantMessage}
       data-testid="message-text"
-      onClickCapture={handleMarkdownFileLinkClick}
+      onClickCapture={handleMarkdownLinkClick}
     >
       {userContextItems ? (
         <div className={styles.userContextItems}>
-          <MessageContextItems items={regularContextItems} onOpenFile={openContextFile} />
+          <MessageContextItems items={regularContextItems} onOpenFile={previewAvailable ? openContextFile : undefined} />
         </div>
       ) : null}
       {imageAttachments.length ? (
@@ -308,7 +405,9 @@ function MessageTextComponent({
               {textualToolProtocolNotice}
             </div>
           ) : null}
-          {inlineContextItems ? <MessageContextItems items={regularContextItems} onOpenFile={openContextFile} /> : null}
+          {inlineContextItems ? (
+            <MessageContextItems items={regularContextItems} onOpenFile={previewAvailable ? openContextFile : undefined} />
+          ) : null}
           {isUser && useConversationRuntime && renderedContent ? (
             <span
               aria-hidden="true"
@@ -317,7 +416,7 @@ function MessageTextComponent({
               data-runtime-user-bubble-sizer-text={userBubbleIntrinsicSizerText(displayedContent)}
             />
           ) : null}
-          {renderedContent || !userContextItems ? (
+          {markdownContent || !userContextItems ? (
             <ConversationMarkdownRuntimeHost
                 interactions={conversationRuntimeInteractions}
                 message={message}
@@ -325,7 +424,7 @@ function MessageTextComponent({
                 resourceLifecycle={conversationResourceLifecycle}
                 rootRef={contentRef}
                 showCursor={showStreamingCursor}
-                source={renderedContent}
+                source={markdownContent}
                 testSynchronous={import.meta.env.MODE === "test" && typeof Worker === "undefined"}
               />
           ) : null}
@@ -342,6 +441,9 @@ function MessageTextComponent({
             />
           ) : null}
         </div>
+      ) : null}
+      {!isUser && webSourceProjection?.citations.length ? (
+        <WebAnswerSources citations={webSourceProjection.citations} activation={webSourceActivation} />
       ) : null}
       {isUser && goalContextItems.length ? <MessageGoalContextItems items={goalContextItems} /> : null}
       {deliveredAsSteer ? <MessageSteerDeliveryBadge /> : null}
@@ -741,7 +843,8 @@ function MessageSkillContextChip({
       stringValue(item.metadata?.skill_name) ||
       stringValue(item.metadata?.skillName);
   const label = skillContextLabel(item.label, skillName);
-  const canOpen = Boolean(contextItemOpenPath(item) && onOpenFile);
+  const source = skillContextSource(item);
+  const canOpen = Boolean(skillName && onOpenFile);
   const description =
     stringValue(item.metadata?.description) ||
     item.description ||
@@ -766,6 +869,7 @@ function MessageSkillContextChip({
       chipProps={{
         "data-context-type": item.type,
         "data-clickable": canOpen ? "true" : "false",
+        "data-skill-source": source,
       }}
       showCopyAction={false}
     >
@@ -773,6 +877,7 @@ function MessageSkillContextChip({
         <ContextChipIcon kind="skill" />
       </span>
       <span className={styles.contextItemLabel}>{label}</span>
+      <span className={styles.contextSkillSource}>{skillSourceLabel(source)}</span>
     </FloatingQuotePreview>
   );
 }
@@ -841,6 +946,32 @@ function contextItemDescription(item: AgentContextItem, fallback: string): strin
 
 function contextItemOpenPath(item: AgentContextItem): string {
   return item.path || item.locator || stringValue(item.metadata?.locator);
+}
+
+function skillContextName(item: AgentContextItem): string {
+  return (
+    item.skill_name
+    || item.skillName
+    || stringValue(item.metadata?.skill_name)
+    || stringValue(item.metadata?.skillName)
+  ).trim();
+}
+
+function skillContextResourcePath(item: AgentContextItem): string {
+  return (
+    stringValue(item.metadata?.resource_path)
+    || stringValue(item.metadata?.resourcePath)
+    || "SKILL.md"
+  ).trim();
+}
+
+function skillContextSource(item: AgentContextItem): SkillSource {
+  const source = stringValue(item.source) || stringValue(item.metadata?.source);
+  return source === "builtin" ? "builtin" : source === "system" ? "system" : "workspace";
+}
+
+function skillSourceLabel(source: SkillSource): string {
+  return source === "builtin" ? "内置" : source === "system" ? "系统级" : "项目级";
 }
 
 function contextItemLineLabel(item: AgentContextItem): string | null {

@@ -2,11 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Literal
 
-from backend.app.keydex.models import KeydexDiagnostic, KeydexWorkspaceProfile
+from backend.app.keydex.models import (
+    KeydexDiagnostic,
+    KeydexLayerProfile,
+    KeydexRuntimeMode,
+    KeydexWorkspaceProfile,
+)
 
-SkillSource = Literal["workspace", "system"]
+SkillSource = Literal["builtin", "system", "workspace"]
+
+
+def canonical_skill_name(name: str) -> str:
+    return str(name).casefold()
 
 
 class SkillDefinitionError(ValueError):
@@ -73,6 +83,49 @@ class SkillCatalog:
     keydex_profile: KeydexWorkspaceProfile
     skills: dict[str, SkillDefinition] = field(default_factory=dict)
     diagnostics: list[KeydexDiagnostic] = field(default_factory=list)
+    blocked_names: frozenset[str] = field(default_factory=frozenset)
+    available: bool = True
 
     def sorted_skills(self) -> list[SkillDefinition]:
         return [self.skills[name] for name in sorted(self.skills, key=str.lower)]
+
+
+@dataclass(frozen=True)
+class SkillLayerCatalog:
+    profile: KeydexLayerProfile
+    skills: dict[str, SkillDefinition] = field(default_factory=dict)
+    blocked_names: frozenset[str] = field(default_factory=frozenset)
+    diagnostics: tuple[KeydexDiagnostic, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "skills", MappingProxyType(dict(self.skills)))
+        object.__setattr__(self, "blocked_names", frozenset(self.blocked_names))
+        object.__setattr__(self, "diagnostics", tuple(self.diagnostics))
+
+    @property
+    def available(self) -> bool:
+        return self.profile.available
+
+    def sorted_skills(self) -> list[SkillDefinition]:
+        return [self.skills[name] for name in sorted(self.skills, key=str.casefold)]
+
+
+@dataclass(frozen=True)
+class EffectiveSkillCatalog:
+    mode: KeydexRuntimeMode
+    skills: dict[str, SkillDefinition] = field(default_factory=dict)
+    diagnostics: tuple[KeydexDiagnostic, ...] = field(default_factory=tuple)
+    available: bool = True
+    inherit_system: bool = True
+    shadowed_names: frozenset[str] = field(default_factory=frozenset)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "skills", MappingProxyType(dict(self.skills)))
+        object.__setattr__(self, "diagnostics", tuple(self.diagnostics))
+        object.__setattr__(self, "shadowed_names", frozenset(self.shadowed_names))
+
+    def sorted_skills(self) -> list[SkillDefinition]:
+        return [
+            self.skills[name]
+            for name in sorted(self.skills, key=lambda value: (value.casefold(), value))
+        ]

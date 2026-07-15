@@ -280,8 +280,9 @@ describe("ConversationPage", () => {
     expect(screen.queryByLabelText("选择工作区")).toBeNull();
   });
 
-  it("force reloads workspace skills when the websocket reports workspace changes", async () => {
+  it("force reloads only effective skills when the websocket reports a matching Keydex change", async () => {
     const workspaceListSkills = vi.fn().mockResolvedValue({
+      mode: "workspace_effective",
       workspace_root: "D:/repo",
       fingerprint: "test-fingerprint",
       loaded_at: "2026-06-25T12:00:00Z",
@@ -303,16 +304,27 @@ describe("ConversationPage", () => {
 
     await readyComposer();
     await waitFor(() => {
-      expect(workspaceListSkills).toHaveBeenCalledWith({ sessionId: "ses-1" }, { forceReload: false });
+      expect(workspaceListSkills).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: false }),
+      );
     });
 
     act(() => {
-      emit(agentEvent("workspaceSkillsChanged", { session_id: "ses-1" }));
+      emit(agentEvent("keydexSkillsChanged", {
+        session_id: "ses-1",
+        fingerprint: "changed-fingerprint",
+      }));
     });
 
     await waitFor(() => {
-      expect(workspaceListSkills).toHaveBeenNthCalledWith(2, { sessionId: "ses-1" }, { forceReload: true });
+      expect(workspaceListSkills).toHaveBeenNthCalledWith(
+        2,
+        "ses-1",
+        expect.objectContaining({ forceReload: true }),
+      );
     });
+    expect(runtime.conversation.loadHistory).toHaveBeenCalledTimes(1);
   });
 
   it("does not show project-free workspace picker in the bottom composer for a pure chat session", async () => {
@@ -3323,6 +3335,7 @@ function fakeRuntime({
   loadHistory,
   workspaceSearch = vi.fn().mockResolvedValue([]),
   workspaceListSkills = vi.fn().mockResolvedValue({
+    mode: "workspace_effective",
     workspace_root: "D:/repo",
     fingerprint: "test-fingerprint",
     loaded_at: "2026-06-25T12:00:00Z",
@@ -3483,8 +3496,12 @@ function fakeRuntime({
           : [],
       ),
     },
+    skills: {
+      listSession: workspaceListSkills,
+      listWorkspace: workspaceListSkills,
+      listSystem: workspaceListSkills,
+    },
     workspace: {
-      listSkills: workspaceListSkills,
       listDirectory: vi.fn((_scope: unknown, path = ""): Promise<WorkspaceTreeResponse> => {
         const entries = workspaceEntriesByPath[path];
         if (!entries) {

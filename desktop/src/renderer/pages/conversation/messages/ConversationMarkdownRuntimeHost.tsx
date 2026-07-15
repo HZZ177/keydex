@@ -21,6 +21,7 @@ import {
 } from "@/renderer/markdownRuntime/streaming";
 import {
   MARKDOWN_WORKER_PROTOCOL_VERSION,
+  MarkdownWorkerProtocolError,
   type MarkdownWorkerResponse,
 } from "@/renderer/markdownRuntime/worker/protocol";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
@@ -233,7 +234,18 @@ function AsynchronousConversationMarkdownRuntimeHost(props: ConversationMarkdown
       void drain(state, propsRef, desiredRef);
     }).catch((error: unknown) => {
       state.syncing = false;
-      if (state.active) publishError(state, propsRef.current, error);
+      if (!state.active) return;
+      if (isCancellation(error)) {
+        // The first canonical load can be superseded while React replaces a
+        // streaming host with its settled projection. Nothing has been
+        // published in this view yet, so force drain() to request the desired
+        // revision instead of mistaking the optimistic baseSource bookkeeping
+        // for a rendered snapshot.
+        state.appliedStatus = "retry-after-cancel";
+        void drain(state, propsRef, desiredRef);
+        return;
+      }
+      publishError(state, propsRef.current, error);
     });
     return () => {
       state.active = false;
@@ -396,7 +408,8 @@ function snapshotResponse(response: MarkdownWorkerResponse): MarkdownSnapshot {
 
 function isCancellation(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError"
-    || error instanceof Error && error.name === "AbortError";
+    || error instanceof Error && error.name === "AbortError"
+    || error instanceof MarkdownWorkerProtocolError && error.code === "cancelled";
 }
 
 function isAppendOnlySnapshot(previous: string, next: string): boolean {

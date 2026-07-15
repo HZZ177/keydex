@@ -44,7 +44,29 @@ class FakeAgentFactory(AgentFactory):
         return self.model
 
 
-def _receive_until_action(websocket: Any, terminal_action: str, *, limit: int = 32) -> list[dict[str, Any]]:
+class RecordingKeydexWatcher:
+    def __init__(self) -> None:
+        self.registered: list[tuple[str, str | None]] = []
+        self.unregistered: list[str] = []
+
+    async def register_session(self, session_id: str, workspace_root=None) -> None:
+        self.registered.append(
+            (session_id, str(workspace_root) if workspace_root is not None else None)
+        )
+
+    async def unregister_session(self, session_id: str) -> None:
+        self.unregistered.append(session_id)
+
+    async def close(self) -> None:
+        return None
+
+
+def _receive_until_action(
+    websocket: Any,
+    terminal_action: str,
+    *,
+    limit: int = 32,
+) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for _ in range(limit):
         event = websocket.receive_json()
@@ -59,7 +81,10 @@ def _client(
     model: Any | None = None,
     registry: ToolRegistry | None = None,
 ) -> TestClient:
-    app = create_app(AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path))
+    app = create_app(
+        AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path),
+        keydex_system_root_for_testing=tmp_path / "system-keydex",
+    )
     if model is not None:
         _configure_model_default(app.state.repositories)
         runner = AgentRunner(
@@ -125,6 +150,144 @@ def test_websocket_create_bind_and_ping(tmp_path) -> None:
     assert bound == {"action": "bind_ok", "data": {"session_id": session_id}}
     assert pong["action"] == "pong"
     assert isinstance(pong["data"]["timestamp"], int)
+
+
+def test_websocket_registers_chat_scope_and_cleans_last_connection_only(tmp_path) -> None:
+    client = _client(tmp_path)
+    watcher = RecordingKeydexWatcher()
+    client.app.state.keydex_skills_watcher = watcher
+    created = client.post("/api/sessions", json={}).json()["session"]
+    session_id = created["id"]
+
+    with client.websocket_connect(f"/agent-base/ws/chat?session_id={session_id}"):
+        with client.websocket_connect(f"/agent-base/ws/chat?session_id={session_id}"):
+            assert watcher.unregistered == []
+        assert watcher.unregistered == []
+
+    assert watcher.registered == [(session_id, None), (session_id, None)]
+    assert watcher.unregistered == [session_id]
+
+
+def test_websocket_registers_workspace_scope_and_unbinds_dependency(tmp_path) -> None:
+    client = _client(tmp_path)
+    watcher = RecordingKeydexWatcher()
+    client.app.state.keydex_skills_watcher = watcher
+    project = tmp_path / "watch-project"
+    project.mkdir()
+    workspace = client.post(
+        "/api/workspaces", json={"root_path": str(project), "name": "Watcher"}
+    ).json()["workspace"]
+
+    with client.websocket_connect("/agent-base/ws/chat") as ws:
+        ws.send_json(
+            {
+                "action": "create_session",
+                "session_type": "workspace",
+                "workspace_id": workspace["id"],
+            }
+        )
+        session_id = ws.receive_json()["data"]["session_id"]
+        ws.send_json({"action": "unbind_session", "session_id": session_id})
+        assert ws.receive_json()["action"] == "unbind_ok"
+
+    assert watcher.registered == [(session_id, str(project.resolve()))]
+    assert watcher.unregistered == [session_id]
+
+
+def test_t60_t61_websocket_delivers_exact_system_and_workspace_skill_refresh(
+    tmp_path,
+) -> None:
+    system_root = tmp_path / "system-keydex"
+    system_entry = system_root / "skills" / "global" / "SKILL.md"
+    system_entry.parent.mkdir(parents=True)
+    system_entry.write_text(
+        "---\nname: global\ndescription: Global\n---\n\nv1\n",
+        encoding="utf-8",
+    )
+    project = tmp_path / "project"
+    project.mkdir()
+
+    with _client(tmp_path) as client:
+        workspace = client.post(
+            "/api/workspaces", json={"root_path": str(project), "name": "Project"}
+        ).json()["workspace"]
+        chat = client.post("/api/sessions", json={}).json()["session"]
+        project_session = client.post(
+            "/api/sessions",
+            json={"session_type": "workspace", "workspace_id": workspace["id"]},
+        ).json()["session"]
+
+        with client.websocket_connect(
+            f"/agent-base/ws/chat?session_id={chat['id']}"
+        ) as chat_ws, client.websocket_connect(
+            f"/agent-base/ws/chat?session_id={project_session['id']}"
+        ) as project_ws:
+            system_entry.write_text(
+                "---\nname: global\ndescription: Global\n---\n\nv2\n",
+                encoding="utf-8",
+            )
+            assert client.portal is not None
+            assert client.portal.call(
+                client.app.state.keydex_skills_watcher.handle_system_path_change,
+                system_entry,
+            ) is True
+            chat_event = chat_ws.receive_json()
+            project_system_event = project_ws.receive_json()
+
+            workspace_entry = project / ".keydex" / "skills" / "local" / "SKILL.md"
+            workspace_entry.parent.mkdir(parents=True)
+            workspace_entry.write_text(
+                "---\nname: local\ndescription: Local\n---\n\nbody\n",
+                encoding="utf-8",
+            )
+            assert client.portal.call(
+                client.app.state.keydex_skills_watcher.handle_workspace_path_change,
+                project,
+                workspace_entry,
+            ) is True
+            project_workspace_event = project_ws.receive_json()
+
+    assert chat_event["action"] == "keydexSkillsChanged"
+    chat_data = chat_event["data"]
+    assert chat_data == {
+        "session_id": chat["id"],
+        "sessionId": chat["id"],
+        "session_scope": "system",
+        "sessionScope": "system",
+        "workspace_root": None,
+        "workspaceRoot": None,
+        "changed_scope": "system",
+        "changedScope": "system",
+        "changed_path": "skills/global/SKILL.md",
+        "changedPath": "skills/global/SKILL.md",
+        "effective_fingerprint": chat_data["effective_fingerprint"],
+        "effectiveFingerprint": chat_data["effective_fingerprint"],
+        "fingerprint": chat_data["effective_fingerprint"],
+    }
+    assert len(chat_data["effective_fingerprint"]) == 64
+    assert project_system_event["action"] == "keydexSkillsChanged"
+    assert project_system_event["data"]["changed_scope"] == "system"
+    assert project_system_event["data"]["session_id"] == project_session["id"]
+    assert project_workspace_event["action"] == "keydexSkillsChanged"
+    workspace_data = project_workspace_event["data"]
+    assert workspace_data == {
+        "session_id": project_session["id"],
+        "sessionId": project_session["id"],
+        "session_scope": "workspace",
+        "sessionScope": "workspace",
+        "workspace_root": project.resolve().as_posix(),
+        "workspaceRoot": project.resolve().as_posix(),
+        "changed_scope": "workspace",
+        "changedScope": "workspace",
+        "changed_path": ".keydex/skills/local/SKILL.md",
+        "changedPath": ".keydex/skills/local/SKILL.md",
+        "effective_fingerprint": workspace_data["effective_fingerprint"],
+        "effectiveFingerprint": workspace_data["effective_fingerprint"],
+        "fingerprint": workspace_data["effective_fingerprint"],
+    }
+    assert str(system_root.resolve()) not in str(
+        [chat_event, project_system_event, project_workspace_event]
+    )
 
 
 def test_websocket_create_workspace_session(tmp_path) -> None:

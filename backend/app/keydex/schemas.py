@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from backend.app.core.time import to_iso_z
-from backend.app.keydex.runtime import KeydexWorkspaceRuntimeSnapshot
+from backend.app.keydex.runtime import KeydexEffectiveRuntimeSnapshot
 
 
 class KeydexDiagnosticPayload(BaseModel):
@@ -16,29 +16,37 @@ class KeydexDiagnosticPayload(BaseModel):
     details: dict = Field(default_factory=dict)
 
 
-class WorkspaceSkillSummary(BaseModel):
+class SkillSummary(BaseModel):
     name: str
     description: str
-    source: Literal["workspace", "system"]
+    source: Literal["builtin", "system", "workspace"]
     label: str
     locator: str
 
 
-class WorkspaceSkillsResponse(BaseModel):
-    workspace_root: str
+class EffectiveSkillsResponse(BaseModel):
+    mode: Literal["system_only", "workspace_effective"]
+    workspace_root: str | None = None
     fingerprint: str
     loaded_at: str
-    skills: list[WorkspaceSkillSummary]
+    skills: list[SkillSummary]
     diagnostics: list[KeydexDiagnosticPayload]
 
 
-def workspace_skills_response(snapshot: KeydexWorkspaceRuntimeSnapshot) -> WorkspaceSkillsResponse:
-    return WorkspaceSkillsResponse(
-        workspace_root=snapshot.workspace_root.as_posix(),
+def effective_skills_response(
+    snapshot: KeydexEffectiveRuntimeSnapshot,
+) -> EffectiveSkillsResponse:
+    return EffectiveSkillsResponse(
+        mode=snapshot.mode,
+        workspace_root=(
+            snapshot.workspace_root.as_posix()
+            if snapshot.workspace_root is not None
+            else None
+        ),
         fingerprint=snapshot.fingerprint,
         loaded_at=to_iso_z(snapshot.loaded_at),
         skills=[
-            WorkspaceSkillSummary(
+            SkillSummary(
                 name=skill.name,
                 description=skill.description,
                 source=skill.source,

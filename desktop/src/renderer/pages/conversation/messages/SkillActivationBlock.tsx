@@ -1,9 +1,11 @@
 import { useMemo } from "react";
 import { Sparkles } from "lucide-react";
 
-import type { RuntimeBridge, WorkspaceScope } from "@/runtime";
+import { runtimeBridge, type RuntimeBridge, type SkillSource, type WorkspaceScope } from "@/runtime";
 import { useOptionalPreview } from "@/renderer/providers/PreviewProvider";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
+import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
 
 import { previewRenderContextFromWorkspaceScope } from "./previewRenderContext";
 import styles from "./SkillActivationBlock.module.css";
@@ -17,8 +19,8 @@ export interface SkillActivationBlockProps {
 
 interface SkillActivationViewModel {
   skillName: string;
+  source: SkillSource;
   resourcePath: string;
-  openPath: string;
   title: string;
   status: "running" | "success" | "failed";
   canOpen: boolean;
@@ -31,27 +33,37 @@ export function SkillActivationBlock({
   onQuoteSelection,
 }: SkillActivationBlockProps) {
   const previewContext = useOptionalPreview();
+  const notifications = useNotifications();
   const model = useMemo(() => skillActivationViewModel(message), [message]);
 
   const handleOpen = () => {
     if (!model.canOpen || !previewContext) {
       return;
     }
-    previewContext.openFilePanel(
-      model.openPath,
-      previewRenderContextFromWorkspaceScope(
-        workspaceScope,
-        workspaceRuntime,
-        onQuoteSelection,
-        previewContext.hostContext,
-      ),
+    const renderContext = previewRenderContextFromWorkspaceScope(
+      workspaceScope,
+      workspaceRuntime,
+      onQuoteSelection,
+      previewContext.hostContext,
     );
+    void openSkillResourcePreview({
+      preview: previewContext,
+      renderContext,
+      runtime: workspaceRuntime ?? runtimeBridge,
+      scope: workspaceScope,
+      target: {
+        skillName: model.skillName,
+        source: model.source,
+        resourcePath: model.resourcePath || "SKILL.md",
+      },
+    }).catch((reason) => notifications.error(skillResourcePreviewError(reason)));
   };
 
   return (
     <article
       className={styles.block}
       data-clickable={model.canOpen ? "true" : "false"}
+      data-skill-source={model.source}
       data-status={model.status}
       data-testid="skill-activation-block"
     >
@@ -68,6 +80,7 @@ export function SkillActivationBlock({
         <span className={styles.content}>
           <span className={styles.header}>
             <span className={styles.title}>{model.title}</span>
+            <span className={styles.source}>{skillSourceLabel(model.source)}</span>
           </span>
         </span>
       </button>
@@ -78,7 +91,12 @@ export function SkillActivationBlock({
 function skillActivationViewModel(message: ConversationMessage): SkillActivationViewModel {
   const call = asRecord(message.payload.call);
   const result = asRecord(message.payload.result);
-  const args = asRecord(call?.arguments) ?? asRecord(message.payload.arguments) ?? {};
+  const args =
+    asRecord(call?.arguments) ??
+    parseJsonRecord(stringValue(call?.arguments)) ??
+    asRecord(message.payload.arguments) ??
+    parseJsonRecord(stringValue(message.payload.arguments)) ??
+    {};
   const resultPayload = parseToolResultPayload(result, message.payload);
   const skillName =
     stringValue(args.skill_name) ||
@@ -91,18 +109,30 @@ function skillActivationViewModel(message: ConversationMessage): SkillActivation
     stringValue(args.resourcePath) ||
     stringValue(resultPayload?.resource_path) ||
     stringValue(resultPayload?.resourcePath);
-  const openPath = skillOpenPath(skillName, resourcePath, resultPayload);
+  const source = skillSource(
+    stringValue(args.source) ||
+      stringValue(resultPayload?.source) ||
+      stringValue(asRecord(resultPayload?.metadata)?.source),
+  );
   const status = activationStatus(message, result, resultPayload, Boolean(resourcePath));
   const resourceName = resourcePath ? fileName(resourcePath) : "";
   const title = resourcePath ? `${skillName} / ${resourceName || resourcePath}` : skillName;
   return {
     skillName,
+    source,
     resourcePath,
-    openPath,
     title,
     status,
-    canOpen: Boolean(openPath),
+    canOpen: Boolean(skillName),
   };
+}
+
+function skillSource(value: string): SkillSource {
+  return value === "builtin" ? "builtin" : value === "system" ? "system" : "workspace";
+}
+
+function skillSourceLabel(source: SkillSource): string {
+  return source === "builtin" ? "内置" : source === "system" ? "系统级" : "项目级";
 }
 
 function parseToolResultPayload(
@@ -116,48 +146,33 @@ function parseToolResultPayload(
     stringValue(payload.result_text);
   const parsed = parseJsonRecord(text);
   if (parsed) {
-    return parsed;
+    return nestedSkillPayload(parsed);
   }
-  const uiPayload = asRecord(result?.ui_payload) ?? asRecord(payload.ui_payload);
-  return uiPayload;
+  return nestedSkillPayload(result) ?? nestedSkillPayload(asRecord(payload.ui_payload));
 }
 
-function skillOpenPath(
-  skillName: string,
-  resourcePath: string,
-  resultPayload: Record<string, unknown> | null,
-): string {
-  const explicitPath =
-    stringValue(resultPayload?.entry_file) ||
-    stringValue(resultPayload?.entryFile) ||
-    stringValue(resultPayload?.locator) ||
-    stringValue(asRecord(resultPayload?.metadata)?.locator);
-  if (explicitPath && isWorkspaceRelativePath(explicitPath)) {
-    return normalizeWorkspacePath(explicitPath);
+function nestedSkillPayload(
+  value: Record<string, unknown> | null,
+  depth = 0,
+): Record<string, unknown> | null {
+  if (!value || depth > 4) {
+    return null;
   }
-  const root =
-    stringValue(resultPayload?.skill_root) ||
-    stringValue(resultPayload?.skillRoot) ||
-    fallbackSkillRoot(skillName);
-  if (!root) {
-    return "";
+  if (
+    stringValue(value.skill_name) ||
+    stringValue(value.skillName) ||
+    typeof value.loaded === "boolean" ||
+    typeof value.injected === "boolean"
+  ) {
+    return value;
   }
-  if (resourcePath) {
-    const normalizedResource = normalizeWorkspacePath(resourcePath);
-    if (!normalizedResource || normalizedResource.startsWith("../") || normalizedResource.includes("/../")) {
-      return "";
+  for (const key of ["result", "ui_payload", "uiPayload", "output_data", "outputData"]) {
+    const nested = nestedSkillPayload(asRecord(value[key]), depth + 1);
+    if (nested) {
+      return nested;
     }
-    return `${normalizeWorkspacePath(root).replace(/\/$/, "")}/${normalizedResource}`;
   }
-  return `${normalizeWorkspacePath(root).replace(/\/$/, "")}/SKILL.md`;
-}
-
-function fallbackSkillRoot(skillName: string): string {
-  const normalized = skillName.trim().replace(/^\/+/, "");
-  if (!normalized || normalized.includes("/") || normalized.includes("\\") || normalized.includes("..")) {
-    return "";
-  }
-  return `.keydex/skills/${normalized}`;
+  return null;
 }
 
 function activationStatus(
@@ -181,15 +196,6 @@ function activationStatus(
     return "failed";
   }
   return "success";
-}
-
-function isWorkspaceRelativePath(path: string): boolean {
-  const normalized = normalizeWorkspacePath(path);
-  return Boolean(normalized) && !/^[a-zA-Z]:\//.test(normalized) && !normalized.startsWith("/");
-}
-
-function normalizeWorkspacePath(path: string): string {
-  return path.trim().replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
 function fileName(path: string): string {

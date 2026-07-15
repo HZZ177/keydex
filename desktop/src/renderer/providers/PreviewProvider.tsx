@@ -461,7 +461,7 @@ function openPreviewInStore(
       ...entry,
       openedAt: Math.max(entry.openedAt, existingEntry.openedAt + 1),
       markdownView: existingEntry.markdownView,
-      request: existingEntry.request,
+      request: entry.request.type === "skill-resource" ? entry.request : existingEntry.request,
     };
     return {
       ...current,
@@ -565,17 +565,26 @@ function previewEntryId(request: PreviewRequest): string {
   if (request.type === "diff") {
     return `diff:${request.path}:${hashText(request.diff)}`;
   }
+  if (request.type === "skill-resource") {
+    return `skill-resource:${request.skillSource}:${request.skillName}:${request.resourcePath}`;
+  }
   return `content:${request.contentType}:${request.title}:${hashText(request.content)}`;
 }
 
 function previewTitle(request: PreviewRequest): string {
-  if (request.type === "content") {
+  if (request.type === "content" || request.type === "skill-resource") {
     return request.title;
   }
   return fileName(request.path);
 }
 
 function previewSourceLabel(request: PreviewRequest): string {
+  if (request.type === "skill-resource") {
+    const sourceLabel = request.skillSource === "builtin"
+      ? "内置"
+      : request.skillSource === "system" ? "系统级" : "项目级";
+    return `${sourceLabel} Skill · ${request.skillName}/${request.resourcePath}`;
+  }
   if (request.type === "content") {
     return request.sourcePath ?? "消息内容";
   }
@@ -586,7 +595,7 @@ function targetPathForRequest(request: PreviewRequest): string | null {
   if ("path" in request) {
     return request.path;
   }
-  return request.sourcePath ?? null;
+  return request.type === "content" ? request.sourcePath ?? null : null;
 }
 
 function reviewPanelKey(

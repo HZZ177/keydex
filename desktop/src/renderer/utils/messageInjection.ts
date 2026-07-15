@@ -1,4 +1,4 @@
-import type { WorkspaceSkillSummary } from "@/runtime";
+import type { SkillSummary } from "@/runtime";
 import type { SelectedFile } from "@/renderer/components/chat/SendBox/fileSelection";
 import { selectedQuotePreview, type SelectedQuote } from "@/renderer/components/chat/SendBox/quoteSelection";
 import type { AgentContextItem } from "@/types/protocol";
@@ -13,7 +13,7 @@ export interface RuntimeMessageInjectionItem {
 
 export interface RuntimeSkillActivation {
   skill_name: string;
-  source: "workspace";
+  source: SkillSummary["source"];
   origin: "slash";
 }
 
@@ -32,7 +32,7 @@ export interface PreparedComposerMessage {
 export interface PrepareComposerMessageOptions {
   annotationContexts?: readonly AssembledAnnotationContext[];
   quotes?: SelectedQuote[];
-  selectedSkill?: WorkspaceSkillSummary | null;
+  selectedSkill?: SkillSummary | null;
 }
 
 export function prepareComposerMessage(
@@ -55,7 +55,7 @@ export function prepareComposerMessage(
   if (options.selectedSkill) {
     runtimeParams.skill_activation = {
       skill_name: options.selectedSkill.name,
-      source: "workspace",
+      source: options.selectedSkill.source,
       origin: "slash",
     };
   }
@@ -91,9 +91,9 @@ function annotationContextItem(context: AssembledAnnotationContext): AgentContex
   };
 }
 
-function skillContextItem(skill: WorkspaceSkillSummary): AgentContextItem {
+function skillContextItem(skill: SkillSummary): AgentContextItem {
   const label = skill.label || `/${skill.name}`;
-  const id = `skill:${skill.name}`;
+  const id = `skill:${skill.source}:${skill.name}`;
   return {
     id,
     type: "skill",

@@ -32,6 +32,190 @@ async def test_e2e_transport_supports_health_check() -> None:
 
 
 @pytest.mark.asyncio
+async def test_e2e_transport_drives_web_search_then_fetch_and_controlled_citation() -> None:
+    transport = create_e2e_model_transport(delay_ms=0)
+    base_payload = {
+        "model": E2E_MODEL_ID,
+        "stream": True,
+        "tools": [
+            {"type": "function", "function": {"name": "web_search"}},
+            {"type": "function", "function": {"name": "web_fetch"}},
+        ],
+    }
+    async with httpx.AsyncClient(base_url="http://e2e-model.test", transport=transport) as client:
+        search = await client.post(
+            "/v1/chat/completions",
+            json={**base_payload, "messages": [{"role": "user", "content": "WebE2E SearchFetch"}]},
+        )
+        fetch = await client.post(
+            "/v1/chat/completions",
+            json={
+                **base_payload,
+                "messages": [
+                    {"role": "user", "content": "WebE2E SearchFetch"},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-search",
+                        "content": '{"kind":"web_search","sources":[{"source_id":"src_search","url":"https://e2e.web.test/article"}]}',
+                    },
+                ],
+            },
+        )
+        answer = await client.post(
+            "/v1/chat/completions",
+            json={
+                **base_payload,
+                "messages": [
+                    {"role": "user", "content": "WebE2E SearchFetch"},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-search",
+                        "content": '{"kind":"web_search","sources":[{"source_id":"src_search","url":"https://e2e.web.test/article"}]}',
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-fetch",
+                        "content": '{"kind":"web_fetch","items":[{"source":{"source_id":"src_fetch","url":"https://e2e.web.test/article"}}]}',
+                    },
+                ],
+            },
+        )
+
+    assert '"name": "web_search"' in search.text
+    assert '"name": "web_fetch"' in fetch.text
+    assert "https://e2e.web.test/article" in fetch.text
+    answer_content = _sse_content(answer.text)
+    assert "[[source:src_search]]" in answer_content
+    assert "[[source:src_fetch]]" in answer_content
+
+
+@pytest.mark.asyncio
+async def test_e2e_transport_covers_web_error_partial_unknown_and_multi_search_calls() -> None:
+    transport = create_e2e_model_transport(delay_ms=0)
+    tools = [
+        {"type": "function", "function": {"name": "web_search"}},
+        {"type": "function", "function": {"name": "web_fetch"}},
+    ]
+    async with httpx.AsyncClient(base_url="http://e2e-model.test", transport=transport) as client:
+        partial = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "tools": tools,
+                "messages": [{"role": "user", "content": "WebE2E FetchPartial"}],
+            },
+        )
+        multi = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "tools": tools,
+                "messages": [{"role": "user", "content": "WebE2E MultiSearch"}],
+            },
+        )
+        unknown = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "tools": tools,
+                "messages": [
+                    {"role": "user", "content": "WebE2E CitationUnknown"},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-search",
+                        "content": '{"kind":"web_search","sources":[]}',
+                    },
+                ],
+            },
+        )
+
+    assert partial.text.count('"name": "web_fetch"') == 1
+    assert "fail.e2e.web.test" in partial.text
+    assert multi.text.count('"name": "web_search"') == 2
+    assert "[[source:src_not_registered]]" in _sse_content(unknown.text)
+
+
+@pytest.mark.asyncio
+async def test_e2e_transport_sequences_web_and_local_timeline_tools() -> None:
+    transport = create_e2e_model_transport(delay_ms=0)
+    tools = [
+        {"type": "function", "function": {"name": "web_search"}},
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "run_cmd"}},
+    ]
+    search_result = '{"kind":"web_search","sources":[{"source_id":"src_timeline"}]}'
+    async with httpx.AsyncClient(base_url="http://e2e-model.test", transport=transport) as client:
+        read_file = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "tools": tools,
+                "messages": [{"role": "user", "content": "WebE2E Timeline"}],
+            },
+        )
+        search = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "tools": tools,
+                "messages": [
+                    {"role": "user", "content": "WebE2E Timeline"},
+                    {"role": "tool", "tool_call_id": "call-read", "content": "README"},
+                ],
+            },
+        )
+        command = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "tools": tools,
+                "messages": [
+                    {"role": "user", "content": "WebE2E Timeline"},
+                    {"role": "tool", "tool_call_id": "call-read", "content": "README"},
+                    {"role": "tool", "tool_call_id": "call-search", "content": search_result},
+                ],
+            },
+        )
+        answer = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": E2E_MODEL_ID,
+                "stream": True,
+                "tools": tools,
+                "messages": [
+                    {"role": "user", "content": "WebE2E Timeline"},
+                    {"role": "tool", "tool_call_id": "call-read", "content": "README"},
+                    {"role": "tool", "tool_call_id": "call-search", "content": search_result},
+                    {"role": "tool", "tool_call_id": "call-command", "content": "ok"},
+                ],
+            },
+        )
+
+    assert read_file.text.count('"name": "read_file"') == 1
+    assert search.text.count('"name": "web_search"') == 1
+    assert command.text.count('"name": "run_cmd"') == 1
+    assert "[[source:src_timeline]]" in _sse_content(answer.text)
+
+
+def _sse_content(body: str) -> str:
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in body.splitlines()
+        if line.startswith("data: {")
+    ]
+    return "".join(
+        str(event["choices"][0]["delta"].get("content") or "")
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
 async def test_e2e_transport_can_drive_langchain_chat_completions_stream() -> None:
     llm = AgentFactory().get_or_create_llm(
         ModelSettings(

@@ -1,540 +1,298 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
-const API_BASE = "http://127.0.0.1:8765";
-const APP_BASE = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173";
-const SESSION_ID = "ses-e2e-keydex-skill";
+import { startKeydexE2EFixture, type KeydexE2EFixture, type KeydexSession } from "./keydex-e2e-fixtures";
 
-test("skill list and capsule selection", async ({ page }) => {
-  const state = mockState({ skills: [demoSkill()] });
-  await installWebSocketMock(page);
-  await mockBackend(page, state);
+test.describe.configure({ mode: "serial" });
 
-  await page.goto(`${APP_BASE}/#/conversation/${SESSION_ID}`);
+let fixture: KeydexE2EFixture;
 
-  const input = page.getByLabel("继续输入");
-  await expect(input).toBeVisible();
-  await input.click();
-  await page.keyboard.type("/demo");
-
-  await expect(page.getByTestId("slash-command-menu")).toBeVisible();
-  await expect(page.getByRole("option", { name: /\/demo/ })).toBeVisible();
-  await page.getByRole("option", { name: /\/demo/ }).click();
-
-  await expect(input).toHaveText("");
-  await expect(page.getByLabel("删除 Skill /demo")).toBeVisible();
-
-  await page.getByLabel("删除 Skill /demo").click();
-  await expect(page.getByLabel("删除 Skill /demo")).toHaveCount(0);
+test.beforeAll(async () => {
+  fixture = await startKeydexE2EFixture("project-hierarchy");
+  await fixture.writeSystemManifest();
+  await fixture.writeSkill(
+    "system",
+    "shared",
+    "Shared system V1",
+    "SYSTEM-SHARED-V1",
+    { "references/system-secret.txt": "SYSTEM-SECRET-OUTSIDE-WORKSPACE\n" },
+  );
+  await fixture.writeSkill("system", "system-only", "System only V1", "SYSTEM-ONLY-V1");
+  await fixture.writeWorkspaceManifest(true);
+  await fixture.writeSkill("workspace", "local", "Workspace local", "WORKSPACE-LOCAL");
 });
 
-test("slash root search can select a concrete skill directly", async ({ page }) => {
-  const state = mockState({ skills: [demoSkill(), reviewSkill()] });
-  await installWebSocketMock(page);
-  await mockBackend(page, state);
-
-  await page.goto(`${APP_BASE}/#/conversation/${SESSION_ID}`);
-
-  const input = page.getByLabel("继续输入");
-  await expect(input).toBeVisible();
-  await input.click();
-  await page.keyboard.type("/review");
-
-  const menu = page.getByTestId("slash-command-menu");
-  await expect(menu).toBeVisible();
-  await expect(menu.getByTestId("slash-skill-section")).toContainText("Skill");
-  const reviewOption = page.getByRole("option", { name: /选择 Skill \/review/ });
-  await expect(reviewOption).toBeVisible();
-  await expect(reviewOption).toHaveAttribute("data-active", "true");
-
-  await page.keyboard.press("Enter");
-
-  await expect(input).toHaveText("");
-  await expect(page.getByLabel("删除 Skill /review")).toBeVisible();
+test.afterAll(async () => {
+  await fixture?.stop();
 });
 
-test("skill activation payload keeps skill out of message injection", async ({ page }) => {
-  const state = mockState({ skills: [demoSkill()] });
-  await installWebSocketMock(page);
-  await mockBackend(page, state);
-
-  await page.goto(`${APP_BASE}/#/conversation/${SESSION_ID}`);
-
-  const input = page.getByLabel("继续输入");
-  await expect(input).toBeVisible();
-  await input.click();
-  await page.keyboard.type("@");
-  await page.getByRole("option", { name: /README\.md/ }).click();
-  await expect(page.getByRole("button", { name: "打开文件引用 README.md" })).toBeVisible();
-
-  await input.click();
-  await page.keyboard.type("拆 issues /demo");
-  await page.getByRole("option", { name: /\/demo/ }).click();
-  await expect(input).toHaveText("拆 issues");
-  await expect(page.getByLabel("删除 Skill /demo")).toBeVisible();
-
-  await page.getByLabel("发送").click();
-  const skillFrame = await chatFrameAt(page, 0);
-
-  expect(skillFrame.data?.message).toBe("拆 issues");
-  expect(skillFrame.data?.runtime_params?.skill_activation).toEqual({
-    skill_name: "demo",
-    source: "workspace",
-    origin: "slash",
-  });
-  expect(skillFrame.data?.runtime_params?.message_injection).toHaveLength(1);
-  expect(skillFrame.data?.runtime_params?.message_injection?.[0]).toMatchObject({
-    type: "follow",
-    role: "HumanMessage",
-    metadata: {
-      kind: "file",
-      path: "README.md",
-      fileType: "file",
-    },
-  });
-  expect(JSON.stringify(skillFrame.data?.runtime_params?.message_injection)).not.toContain("skill");
-
-  await input.click();
-  await page.keyboard.type("普通消息");
-  await page.getByLabel("发送").click();
-  const plainFrame = await chatFrameAt(page, 1);
-
-  expect(plainFrame.data?.message).toBe("普通消息");
-  expect(plainFrame.data?.runtime_params?.skill_activation).toBeUndefined();
-});
-
-test("skill capsule history rendering", async ({ page }) => {
-  const state = mockState({
-    skills: [demoSkill()],
-    history: [
-      {
-        role: "user",
-        content: "历史里继续拆 issues",
-        contextItems: [
-          {
-            id: "skill:demo",
-            type: "skill",
-            label: "/demo",
-            content: "Demo workspace skill",
-            source: "workspace",
-            skill_name: "demo",
-            description: "Demo workspace skill",
-          },
-          {
-            id: "file:README.md",
-            type: "file",
-            label: "README.md",
-            content: "workspace file: README.md",
-            role: "HumanMessage",
-            source: "follow",
-            path: "README.md",
-            fileType: "file",
-          },
-          {
-            id: "quote:1",
-            type: "quote",
-            label: "引用片段",
-            content: "quoted text",
-            role: "HumanMessage",
-            source: "follow",
-          },
-        ],
-      },
-    ],
-  });
-  await installWebSocketMock(page);
-  await mockBackend(page, state);
-
-  await page.goto(`${APP_BASE}/#/conversation/${SESSION_ID}`);
-
-  const message = page.getByTestId("message-text").first();
-  await expect(message).toContainText("历史里继续拆 issues");
-  await expect(message).toContainText("demo");
-  await expect(message).toContainText("@README.md");
-  await expect(message).toContainText("引用片段");
-  await expect(page.getByRole("button", { name: "打开文件引用 /demo" })).toHaveCount(0);
-  await expect(message).not.toContainText("SKILL.md");
-});
-
-test("workspace skills refreshes after change event and skill_not_found", async ({ page }) => {
-  const state = mockState({ skills: [demoSkill()] });
-  await installWebSocketMock(page);
-  await mockBackend(page, state);
-
-  await page.goto(`${APP_BASE}/#/conversation/${SESSION_ID}`);
-
-  const input = page.getByLabel("继续输入");
-  await expect(input).toBeVisible();
-  await input.click();
-  await page.keyboard.type("/demo");
-  await expect(page.getByRole("option", { name: /\/demo/ })).toBeVisible();
-
-  state.skills = [reviewSkill()];
-  await dispatchAgentEvent(page, "workspaceSkillsChanged", { session_id: SESSION_ID });
-  await expect.poll(() => state.skillRequestUrls.length).toBeGreaterThanOrEqual(2);
-  expect(state.skillRequestUrls.at(-1)).toContain("force_reload=true");
-
-  await clearComposer(page);
-  await input.click();
-  await page.keyboard.type("/review");
-  await expect(page.getByRole("option", { name: /\/review/ })).toBeVisible();
-  await expect(page.getByRole("option", { name: /\/demo/ })).toHaveCount(0);
-  await page.getByRole("option", { name: /\/review/ }).click();
-  await expect(page.getByLabel("删除 Skill /review")).toBeVisible();
-
-  state.skills = [];
-  await dispatchAgentEvent(page, "error", {
-    session_id: SESSION_ID,
-    code: "skill_not_found",
-    message: "Skill does not exist or has been deleted",
-    details: { skill_name: "review" },
+test("project hierarchy, watcher, security preview and affected pages use one effective catalog", async ({ page }) => {
+  test.setTimeout(180_000);
+  await fixture.configurePage(page);
+  const session = await fixture.createWorkspaceSession();
+  const workspaceId = requiredWorkspaceId(session);
+  let skillRequestCount = 0;
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === `/api/sessions/${session.id}/skills`) skillRequestCount += 1;
   });
 
-  await expect.poll(() => state.skillRequestUrls.length).toBeGreaterThanOrEqual(3);
-  expect(state.skillRequestUrls.at(-1)).toContain("force_reload=true");
-  await expect(page.getByText("已刷新 Skill 列表")).toBeVisible();
-  await expect(page.getByLabel("删除 Skill /review")).toHaveCount(0);
-});
+  await page.goto(`${fixture.appBaseUrl}/#/conversation/${session.id}`);
+  const input = page.getByLabel("继续输入");
+  await expect(input).toBeVisible();
 
-async function installWebSocketMock(page: Page) {
-  await page.addInitScript(() => {
-    const NativeWebSocket = window.WebSocket;
-    const sockets: Array<Record<string, unknown>> = [];
-    Object.assign(window, {
-      __keydexDispatchAgentEvent: (event: unknown) => {
-        const socket = sockets.at(-1);
-        if (socket && typeof socket.onmessage === "function") {
-          socket.onmessage(new MessageEvent("message", { data: JSON.stringify(event) }));
-        }
-      },
-      __wsSentMessages: [],
+  await test.step("P01 a project inherits one system winner", async () => {
+    await expectSkillWinner(page, input, "shared", "Shared system V1", "系统级");
+    await selectAndSend(page, input, "shared", "KeydexSkillE2E shared system");
+    await expect(page.getByText("KeydexSkillE2E activated SYSTEM-SHARED-V1")).toBeVisible({
+      timeout: 30_000,
+    });
+    const activation = page.getByTestId("skill-activation-block").filter({ hasText: "shared" }).last();
+    await expect(activation).toHaveAttribute("data-skill-source", "system");
+    await expect(activation).toContainText("系统级");
+    await fixture.evidence(page, "p01-project-inherits-system-winner", {
+      session_id: session.id,
+      expected_source: "system",
+    });
+  });
+
+  await test.step("P02 workspace add, modify, rename and delete switch the winner without reload", async () => {
+    await fixture.writeSkill("workspace", "shared", "Shared workspace V1", "WORKSPACE-SHARED-V1");
+    await expectSkillWinner(page, input, "shared", "Shared workspace V1", "项目级");
+    await selectAndSend(page, input, "shared", "KeydexSkillE2E shared workspace");
+    await expect(page.getByText("KeydexSkillE2E activated WORKSPACE-SHARED-V1")).toBeVisible({
+      timeout: 30_000,
     });
 
-    const MockWebSocket = function MockWebSocket(this: Record<string, unknown>, url: string) {
-      if (!String(url).includes("/agent-base/ws/chat")) {
-        return new NativeWebSocket(url);
-      }
-      this.url = url;
-      this.readyState = MockWebSocket.CONNECTING;
-      this.onopen = null;
-      this.onclose = null;
-      this.onerror = null;
-      this.onmessage = null;
-      sockets.push(this);
-      window.setTimeout(() => {
-        this.readyState = MockWebSocket.OPEN;
-        if (typeof this.onopen === "function") {
-          this.onopen(new Event("open"));
-        }
-      }, 0);
-      return this;
-    } as unknown as typeof WebSocket & {
-      prototype: WebSocket;
-      CONNECTING: number;
-      OPEN: number;
-      CLOSING: number;
-      CLOSED: number;
-    };
+    await fixture.writeSkill("workspace", "shared", "Shared workspace V2", "WORKSPACE-SHARED-V2");
+    await expectSkillWinner(page, input, "shared", "Shared workspace V2", "项目级");
+    await selectAndSend(page, input, "shared", "KeydexSkillE2E shared workspace");
+    await expect(page.getByText("KeydexSkillE2E activated WORKSPACE-SHARED-V2")).toBeVisible({
+      timeout: 30_000,
+    });
 
-    MockWebSocket.CONNECTING = 0;
-    MockWebSocket.OPEN = 1;
-    MockWebSocket.CLOSING = 2;
-    MockWebSocket.CLOSED = 3;
-    MockWebSocket.prototype.send = function send(this: Record<string, unknown>, message: string) {
-      const frame = JSON.parse(message) as ChatFrame;
-      const sentMessages = (window as Window & { __wsSentMessages?: unknown[] }).__wsSentMessages ?? [];
-      sentMessages.push(frame);
-      (window as Window & { __wsSentMessages?: unknown[] }).__wsSentMessages = sentMessages;
-      if (frame.action === "chat") {
-        const sessionId = frame.data?.session_id;
-        window.setTimeout(() => {
-          if (typeof this.onmessage === "function") {
-            this.onmessage(
-              new MessageEvent("message", {
-                data: JSON.stringify({
-                  action: "completed",
-                  data: {
-                    session_id: sessionId,
-                    content: "ok",
-                    final_content: "ok",
-                  },
-                }),
-              }),
-            );
-          }
-        }, 0);
-      }
-    };
-    MockWebSocket.prototype.close = function close(this: Record<string, unknown>) {
-      this.readyState = MockWebSocket.CLOSED;
-      if (typeof this.onclose === "function") {
-        this.onclose(new CloseEvent("close", { code: 1000 }));
-      }
-    };
+    await fixture.writeSkill("workspace", "rename-old", "Rename old", "RENAME-OLD");
+    await expectSkillWinner(page, input, "rename-old", "Rename old", "项目级");
+    await fixture.renameSkill("workspace", "rename-old", "rename-new", "Rename new", "RENAME-NEW");
+    await expectSkillWinner(page, input, "rename-new", "Rename new", "项目级");
+    await expectSkillMissing(page, input, "rename-old");
+    await fixture.removeSkill("workspace", "rename-new");
+    await expectSkillMissing(page, input, "rename-new");
 
-    Object.assign(window, { WebSocket: MockWebSocket as unknown as typeof WebSocket });
+    await fixture.removeSkill("workspace", "shared");
+    await expectSkillWinner(page, input, "shared", "Shared system V1", "系统级");
+    await selectAndSend(page, input, "shared", "KeydexSkillE2E shared system");
+    await expect(page.getByText("KeydexSkillE2E activated SYSTEM-SHARED-V1").last()).toBeVisible({
+      timeout: 30_000,
+    });
+    await fixture.evidence(page, "p02-workspace-winner-and-system-fallback", {
+      add_marker: "WORKSPACE-SHARED-V1",
+      modify_marker: "WORKSPACE-SHARED-V2",
+      fallback_marker: "SYSTEM-SHARED-V1",
+    });
+  });
+
+  await test.step("P03 inherit_system false keeps builtin, removes system, and ignores system changes", async () => {
+    await fixture.writeWorkspaceManifest(false);
+    await expectSkillMissing(page, input, "shared");
+    await expectSkillWinner(page, input, "local", "Workspace local", "项目级");
+
+    const before = await effectiveSkills(session.id, true);
+    const settledRequestCount = skillRequestCount;
+    await fixture.writeSkill("system", "system-only", "System only V2", "SYSTEM-ONLY-V2");
+    await page.waitForTimeout(1_200);
+    expect(skillRequestCount).toBe(settledRequestCount);
+    const after = await effectiveSkills(session.id, true);
+    expect(after.fingerprint).toBe(before.fingerprint);
+    expect(after.skills.map((skill) => skill.name)).toEqual(["keydex-guide", "local"]);
+    expect(after.skills.find((skill) => skill.name === "keydex-guide")?.source).toBe("builtin");
+    await expectSkillWinner(page, input, "local", "Workspace local", "项目级");
+
+    await fixture.writeWorkspaceManifest(true);
+    await expectSkillWinner(page, input, "shared", "Shared system V1", "系统级");
+    await fixture.evidence(page, "p03-inheritance-disabled-and-restored", {
+      disabled_fingerprint: before.fingerprint,
+      unchanged_after_system_update: after.fingerprint,
+    });
+  });
+
+  await test.step("P04 an invalid workspace candidate blocks system fallback and repair recovers", async () => {
+    await fixture.writeInvalidSkill("workspace", "shared");
+    await openSkillGroup(page, input);
+    const diagnostic = page.getByTestId("skill-diagnostic");
+    await expect(diagnostic).toBeVisible({ timeout: 15_000 });
+    await expect(diagnostic).toContainText("Skill 配置错误");
+    await expect(diagnostic).toHaveAttribute("data-diagnostic-code", /skill_/);
+    await expect(page.getByRole("option", { name: "选择 Skill /shared" })).toHaveCount(0);
+    const blocked = await effectiveSkills(session.id, true);
+    expect(blocked.skills.some((skill) => skill.name === "shared")).toBe(false);
+    expect(blocked.diagnostics.some((item) => item.code === "skill_shadow_barrier")).toBe(true);
+
+    await fixture.writeSkill("workspace", "shared", "Shared workspace repaired", "WORKSPACE-REPAIRED");
+    await expectSkillWinner(page, input, "shared", "Shared workspace repaired", "项目级");
+    await selectAndSend(page, input, "shared", "KeydexSkillE2E shared workspace");
+    await expect(page.getByText("KeydexSkillE2E activated WORKSPACE-REPAIRED")).toBeVisible({
+      timeout: 30_000,
+    });
+    await fixture.evidence(page, "p04-shadow-barrier-repaired", {
+      barrier_code: "skill_shadow_barrier",
+      repaired_source: "workspace",
+    });
+  });
+
+  await test.step("P05 Conversation and Workbench agree; system preview is controlled and read-only", async () => {
+    await fixture.removeSkill("workspace", "shared");
+    await expectSkillWinner(page, input, "shared", "Shared system V1", "系统级");
+
+    await page.goto(`${fixture.appBaseUrl}/#/workbench/${workspaceId}/session/${session.id}`);
+    const workbenchInput = await openWorkbenchComposer(page);
+    await expectSkillWinner(page, workbenchInput, "shared", "Shared system V1", "系统级");
+    await page.getByRole("option", { name: "选择 Skill /shared" }).click();
+    await page.getByLabel("打开 Skill shared").click();
+
+    const systemPreview = page.locator(
+      '[data-file-preview-root="true"][data-preview-source="skill-resource"][data-skill-source="system"]',
+    );
+    await expect(systemPreview).toBeVisible({ timeout: 20_000 });
+    await expect(systemPreview).toContainText("SYSTEM-SHARED-V1");
+    await expect(systemPreview).toHaveAttribute("data-file-preview-new-annotations-enabled", "false");
+    await expect(systemPreview).toHaveAttribute("data-file-preview-file-allows-annotations", "false");
+    await expect(systemPreview).not.toHaveAttribute("data-file-preview-auto-save-state", /.+/);
+
+    const tree = await fixture.api<unknown>(`/api/workspaces/${workspaceId}/tree`);
+    expect(JSON.stringify(tree)).not.toContain("system-keydex");
+    expect(JSON.stringify(tree)).not.toContain("system-secret");
+    const search = await fixture.api<Array<{ path: string }>>(
+      `/api/workspaces/${workspaceId}/search?q=${encodeURIComponent("system-secret")}`,
+    );
+    expect(search).toEqual([]);
+    await expectWorkspaceEscapeRejected(workspaceId);
+
+    await page.getByRole("button", { name: "选择文件 README.md" }).click();
+    const workspacePreview = page.locator(
+      '[data-file-preview-root="true"][data-preview-source="file"]',
+    );
+    await expect(workspacePreview).toBeVisible({ timeout: 20_000 });
+    await expect(workspacePreview).toContainText("Keydex E2E workspace");
+    await expect(workspacePreview).toHaveAttribute("data-file-preview-file-allows-annotations", "true");
+    await fixture.evidence(page, "p05-system-preview-and-workspace-file-isolation", {
+      system_preview_source: "skill-resource",
+      workspace_preview_source: "file",
+      outside_read_write_status: 403,
+    });
+  });
+
+  await test.step("P06 Home, Conversation, Workbench and project history retain the same winner semantics", async () => {
+    await page.goto(`${fixture.appBaseUrl}/#/conversation/${session.id}`);
+    await page.reload();
+    await expect(page.locator('[data-skill-source="system"]')).not.toHaveCount(0);
+    await expect(page.locator('[data-skill-source="workspace"]')).not.toHaveCount(0);
+    await expect(page.getByText("KeydexSkillE2E activated WORKSPACE-REPAIRED")).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await page.goto(`${fixture.appBaseUrl}/#/guid`);
+    await page.getByLabel("选择工作区").click();
+    await page.getByRole("button", { name: /keydex-e2e/ }).click();
+    await expect(page.getByRole("heading", { name: "我们应该在 keydex-e2e 中构建什么？" })).toBeVisible();
+    const homeInput = page.getByLabel("输入需求");
+    await expectSkillWinner(page, homeInput, "shared", "Shared system V1", "系统级");
+    await fixture.evidence(page, "p06-home-conversation-workbench-history", {
+      project_home_winner: "system:shared",
+      historical_sources: ["system", "workspace"],
+    });
+  });
+
+  async function effectiveSkills(sessionId: string, forceReload: boolean): Promise<EffectiveSkills> {
+    return fixture.api<EffectiveSkills>(
+      `/api/sessions/${sessionId}/skills${forceReload ? "?force_reload=true" : ""}`,
+    );
+  }
+
+  async function expectWorkspaceEscapeRejected(id: string) {
+    const escapePath = "../system-keydex/skills/shared/SKILL.md";
+    const readResponse = await fetch(
+      `${fixture.baseUrl}/api/workspaces/${id}/read?path=${encodeURIComponent(escapePath)}`,
+    );
+    expect(readResponse.status).toBe(403);
+    expect((await readResponse.json()).detail.code).toBe("workspace_path_forbidden");
+
+    const writeResponse = await fetch(`${fixture.baseUrl}/api/workspaces/${id}/write/document`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        protocol_version: "document-write/v1",
+        write_id: "keydex-e2e-system-escape",
+        path: escapePath,
+        content: "must not write",
+        expected_revision: `sha256:${"0".repeat(64)}`,
+      }),
+    });
+    expect(writeResponse.status).toBe(403);
+    expect((await writeResponse.json()).detail.code).toBe("workspace_path_forbidden");
+  }
+});
+
+async function expectSkillWinner(
+  page: Page,
+  input: Locator,
+  name: string,
+  description: string,
+  sourceLabel: "系统级" | "项目级",
+) {
+  await replaceComposer(input, `/${name}`);
+  const option = page.getByRole("option", { name: `选择 Skill /${name}` });
+  await expect(option).toHaveCount(1, { timeout: 15_000 });
+  await expect(option).toContainText(description, { timeout: 15_000 });
+  await expect(option).toContainText(sourceLabel);
+}
+
+async function expectSkillMissing(page: Page, input: Locator, name: string) {
+  await replaceComposer(input, `/${name}`);
+  await expect(page.getByTestId("slash-command-menu")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("option", { name: `选择 Skill /${name}` })).toHaveCount(0, {
+    timeout: 15_000,
   });
 }
 
-async function mockBackend(page: Page, state: MockBackendState) {
-  await page.route(`${API_BASE}/api/**`, async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    const method = request.method();
-
-    if (method === "OPTIONS") {
-      return route.fulfill({ status: 204, headers: corsHeaders() });
-    }
-    if (url.pathname === "/api/settings") {
-      return fulfillJson(route, {
-        model: {
-          base_url: "https://api.example/v1",
-          model: "qwen-coder",
-          timeout_seconds: 60,
-          api_key_set: true,
-          api_key_preview: "sk-***",
-        },
-      });
-    }
-    if (url.pathname === "/api/settings/model-defaults") {
-      return fulfillJson(route, modelDefaultsResponse());
-    }
-    if (url.pathname === "/api/models") {
-      return fulfillJson(route, { models: [{ id: "qwen-coder" }], cached: true });
-    }
-    if (url.pathname === "/api/model-providers") {
-      return fulfillJson(route, modelProvidersResponse());
-    }
-    if (url.pathname === "/api/sessions") {
-      return fulfillJson(route, {
-        list: [workspaceSession()],
-        total: 1,
-        page: 1,
-        page_size: 50,
-      });
-    }
-    if (url.pathname === `/api/sessions/${SESSION_ID}/history`) {
-      return fulfillJson(route, {
-        list: state.history,
-        total: state.history.length,
-        page: 1,
-        page_size: 50,
-        session: workspaceSession(),
-        event_total: state.history.length,
-        turn_indexes: state.history.length ? [1] : [],
-        next_cursor: null,
-        prev_cursor: null,
-        has_more_older: false,
-      });
-    }
-    if (url.pathname === `/api/sessions/${SESSION_ID}/workspace/skills`) {
-      state.skillRequestUrls.push(url.toString());
-      return fulfillJson(route, skillsResponse(state.skills, state.skillRequestUrls.length));
-    }
-    if (url.pathname === `/api/sessions/${SESSION_ID}/workspace/tree`) {
-      return fulfillJson(route, {
-        root: "D:/repo/e2e",
-        entries: [
-          { name: "README.md", path: "README.md", type: "file", size: 35, modified_at: null },
-          { name: "src", path: "src", type: "directory", size: null, modified_at: null },
-        ],
-      });
-    }
-
-    return fulfillJson(route, {});
-  });
+async function selectAndSend(page: Page, input: Locator, name: string, message: string) {
+  await replaceComposer(input, `${message} /${name}`);
+  const option = page.getByRole("option", { name: `选择 Skill /${name}` });
+  await expect(option).toBeVisible({ timeout: 15_000 });
+  await option.click();
+  await expect(input).toHaveText(message);
+  await page.getByLabel("发送").click();
 }
 
-async function chatFrameAt(page: Page, index: number): Promise<ChatFrame> {
-  const handle = await page.waitForFunction((frameIndex) => {
-    const sentMessages = (window as Window & { __wsSentMessages?: ChatFrame[] }).__wsSentMessages ?? [];
-    return sentMessages.filter((message) => message?.action === "chat")[frameIndex] ?? null;
-  }, index);
-  return (await handle.jsonValue()) as ChatFrame;
+async function openSkillGroup(page: Page, input: Locator) {
+  await replaceComposer(input, "/");
+  const group = page.getByRole("option").filter({ hasText: /^Skill/ });
+  await expect(group).toBeVisible({ timeout: 15_000 });
+  await group.click();
 }
 
-async function dispatchAgentEvent(page: Page, action: string, data: Record<string, unknown>) {
-  await page.evaluate(
-    ({ action: eventAction, data: eventData }) => {
-      (window as Window & { __keydexDispatchAgentEvent: (event: unknown) => void }).__keydexDispatchAgentEvent({
-        action: eventAction,
-        data: eventData,
-      });
-    },
-    { action, data },
-  );
+async function openWorkbenchComposer(page: Page): Promise<Locator> {
+  const input = page.getByLabel("工作台助手输入");
+  if ((await input.count()) === 0) {
+    await page.getByRole("button", { name: "展开工作台输入框" }).click();
+  }
+  await expect(input).toBeVisible();
+  return input;
 }
 
-async function clearComposer(page: Page) {
-  const input = page.getByLabel("继续输入");
+async function replaceComposer(input: Locator, value: string) {
   await input.click();
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-  await page.keyboard.press("Backspace");
+  await input.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await input.press("Backspace");
+  if (value) await input.pressSequentially(value);
 }
 
-function mockState({
-  skills = [],
-  history = [],
-}: {
-  skills?: WorkspaceSkillSummary[];
-  history?: Array<Record<string, unknown>>;
-} = {}): MockBackendState {
-  return {
-    skills,
-    history,
-    skillRequestUrls: [],
-  };
+function requiredWorkspaceId(session: KeydexSession): string {
+  if (!session.workspace_id) throw new Error("Expected a workspace-bound E2E session");
+  return session.workspace_id;
 }
 
-function skillsResponse(skills: WorkspaceSkillSummary[], sequence: number) {
-  return {
-    workspace_root: "D:/repo/e2e",
-    fingerprint: `fp-${sequence}`,
-    loaded_at: "2026-06-25T00:00:00Z",
-    skills,
-    diagnostics: [],
-  };
-}
-
-function modelDefaultsResponse() {
-  return {
-    defaults: {
-      default_chat: {
-        scope: "default_chat",
-        configured: true,
-        provider_id: "provider-1",
-        provider_name: "默认模型服务",
-        model: "qwen-coder",
-        provider_enabled: true,
-        model_enabled: true,
-        missing_reason: null,
-      },
-      fast: {
-        scope: "fast",
-        configured: false,
-        provider_id: null,
-        provider_name: null,
-        model: null,
-        provider_enabled: null,
-        model_enabled: null,
-        missing_reason: "not_configured",
-      },
-    },
-  };
-}
-
-function modelProvidersResponse() {
-  return {
-    providers: [
-      {
-        id: "provider-1",
-        name: "默认模型服务",
-        base_url: "https://api.example/v1",
-        enabled: true,
-        api_key_set: true,
-        api_key_preview: "sk-***",
-        models: ["qwen-coder"],
-        model_enabled: { "qwen-coder": true },
-        health: {},
-      },
-    ],
-  };
-}
-
-function demoSkill(): WorkspaceSkillSummary {
-  return {
-    name: "demo",
-    label: "/demo",
-    description: "Demo workspace skill",
-    source: "workspace",
-    locator: ".keydex/skills/demo/SKILL.md",
-  };
-}
-
-function reviewSkill(): WorkspaceSkillSummary {
-  return {
-    name: "review",
-    label: "/review",
-    description: "Review workspace skill",
-    source: "workspace",
-    locator: ".keydex/skills/review/SKILL.md",
-  };
-}
-
-function workspaceSession() {
-  return {
-    id: SESSION_ID,
-    title: "Skill E2E",
-    user_id: "local-user",
-    scene_id: "desktop-agent",
-    session_type: "workspace",
-    workspace_id: "ws-e2e",
-    workspace: {
-      id: "ws-e2e",
-      name: "keydex-e2e",
-      root_path: "D:/repo/e2e",
-      normalized_root_path: "d:/repo/e2e",
-      type: "project",
-      created_at: "2026-06-25T00:00:00Z",
-      updated_at: "2026-06-25T00:00:00Z",
-      last_opened_at: "2026-06-25T00:00:00Z",
-    },
-    cwd: "D:/repo/e2e",
-    workspace_roots: ["D:/repo/e2e"],
-    status: "active",
-    created_at: "2026-06-25T00:00:00Z",
-    updated_at: "2026-06-25T00:00:00Z",
-    last_active_at: "2026-06-25T00:00:00Z",
-  };
-}
-
-function fulfillJson(route: Route, body: unknown, status = 200) {
-  return route.fulfill({
-    status,
-    contentType: "application/json",
-    headers: corsHeaders(),
-    body: JSON.stringify(body),
-  });
-}
-
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
-  };
-}
-
-interface MockBackendState {
-  skills: WorkspaceSkillSummary[];
-  history: Array<Record<string, unknown>>;
-  skillRequestUrls: string[];
-}
-
-interface WorkspaceSkillSummary {
-  name: string;
-  label: string;
-  description: string;
-  source: "workspace";
-  locator: string;
-}
-
-interface ChatFrame {
-  action?: string;
-  data?: {
-    session_id?: string;
-    message?: string;
-    runtime_params?: {
-      skill_activation?: {
-        skill_name?: string;
-        source?: string;
-        origin?: string;
-      };
-      message_injection?: Array<{
-        type?: string;
-        role?: string;
-        content?: string;
-        metadata?: Record<string, unknown>;
-      }>;
-    };
-  };
+interface EffectiveSkills {
+  fingerprint: string;
+  skills: Array<{ name: string; source: "system" | "workspace" }>;
+  diagnostics: Array<{ code: string }>;
 }

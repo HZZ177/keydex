@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
+from datetime import date
 from typing import Any
 
 import httpx
@@ -22,10 +23,16 @@ from backend.app.agent.system_prompt import (
     DEFAULT_SYSTEM_PROMPT,
     PLAN_PROGRESS_PROMPT,
     build_file_edit_prompt_section,
+    build_web_source_prompt_section,
+)
+from backend.app.agent.tool_capabilities import (
+    ToolCapability,
+    capability_for_runtime_tool,
+    resolve_tool_capabilities,
 )
 from backend.app.command_approval import load_command_settings
 from backend.app.core.logger import logger
-from backend.app.keydex.skills import SkillCatalog, build_skill_index
+from backend.app.keydex.skills import EffectiveSkillCatalog, SkillCatalog, build_skill_index
 from backend.app.model import ModelSettings
 from backend.app.tools import LocalTool, ToolExecutionContext, ToolRegistry
 from backend.app.tools.command_runtime.descriptions import command_system_prompt_section
@@ -83,6 +90,9 @@ class AgentRunner:
         system_prompt: str | None,
         tool_context: ToolExecutionContext,
         enable_tools: bool = True,
+        tool_capabilities: Collection[ToolCapability | str] | None = None,
+        enable_workspace_tools: bool | None = None,
+        enable_skill_tools: bool | None = None,
         runtime_tools: Sequence[LocalTool] | None = None,
     ) -> Any:
         if self.checkpointer is None:
@@ -103,7 +113,17 @@ class AgentRunner:
         runtime_settings = self._runtime_settings_provider()
         a2ui_registry = None
         tools = []
-        if enable_tools:
+        capabilities = resolve_tool_capabilities(
+            explicit=tool_capabilities,
+            metadata=tool_context.metadata,
+            enable_tools=enable_tools,
+            legacy_workspace_override=enable_workspace_tools,
+            legacy_skill_override=enable_skill_tools,
+        )
+        workspace_tools_enabled = ToolCapability.WORKSPACE in capabilities
+        catalog = tool_context.metadata.get("skill_catalog")
+        skill_tools_enabled = ToolCapability.SKILL in capabilities
+        if workspace_tools_enabled:
             visible_local_tools = visible_tools_for_file_edit_style(
                 self.tool_registry,
                 runtime_settings.file_edit_tool_style,
@@ -124,15 +144,12 @@ class AgentRunner:
                         context_factory=lambda: tool_context,
                     )
                 )
-            if runtime_tools:
-                tools.extend(
-                    tools_to_langchain_tools(
-                        runtime_tools,
-                        context_factory=lambda: tool_context,
-                    )
-                )
             dispatcher = tool_context.metadata.get("dispatcher")
-            if runtime_settings.a2ui.enabled and repositories is not None and dispatcher is not None:
+            if (
+                runtime_settings.a2ui.enabled
+                and repositories is not None
+                and dispatcher is not None
+            ):
                 reserved_tool_names = {
                     str(getattr(tool, "name", "") or "")
                     for tool in tools
@@ -156,7 +173,21 @@ class AgentRunner:
                         handler=a2ui_runtime.handle_tool_call,
                     )
                 )
-        if enable_tools and isinstance(tool_context.metadata.get("skill_catalog"), SkillCatalog):
+        if runtime_tools:
+            visible_runtime_tools = [
+                tool
+                for tool in runtime_tools
+                if capability_for_runtime_tool(tool.name) in capabilities
+            ]
+            tools.extend(
+                tools_to_langchain_tools(
+                    visible_runtime_tools,
+                    context_factory=lambda: tool_context,
+                )
+            )
+        if skill_tools_enabled and isinstance(
+            catalog, (EffectiveSkillCatalog, SkillCatalog)
+        ):
             tools.append(load_skill)
         resolved_system_prompt = (
             system_prompt if system_prompt is not None else self.default_system_prompt
@@ -173,28 +204,40 @@ class AgentRunner:
                 if prompt
                 else PLAN_PROGRESS_PROMPT
             )
-        if enable_tools:
+        if workspace_tools_enabled:
             file_edit_prompt = build_file_edit_prompt_section(
                 runtime_settings.file_edit_tool_style
             )
             prompt = f"{prompt}\n\n{file_edit_prompt}" if prompt else file_edit_prompt
-        skill_index = self._skill_index_from_context(tool_context)
+        skill_index = (
+            self._skill_index_from_context(tool_context) if skill_tools_enabled else ""
+        )
         if skill_index:
             prompt = f"{prompt}\n\n{skill_index}" if prompt else skill_index
+        if "web_search" in available_tool_names:
+            web_prompt = build_web_source_prompt_section(
+                fetch_available="web_fetch" in available_tool_names,
+            )
+            prompt = f"{prompt}\n\n{web_prompt}" if prompt else web_prompt
         command_prompt = command_system_prompt_section(
-            command_runtime if enable_tools else None,
-            command_settings if enable_tools else None,
+            command_runtime if workspace_tools_enabled else None,
+            command_settings if workspace_tools_enabled else None,
         )
         prompt = f"{prompt}\n\n{command_prompt}" if prompt else command_prompt
         a2ui_prompt = build_a2ui_prompt_section(
-            enabled=bool(enable_tools and runtime_settings.a2ui.enabled and a2ui_registry),
+            enabled=bool(
+                workspace_tools_enabled and runtime_settings.a2ui.enabled and a2ui_registry
+            ),
             registry=a2ui_registry,
         )
         if a2ui_prompt:
             prompt = f"{prompt}\n\n{a2ui_prompt}" if prompt else a2ui_prompt
+        current_date_line = f"当前时间：{date.today().isoformat()}"
+        prompt = f"{prompt}\n\n{current_date_line}" if prompt else current_date_line
         logger.info(
             f"[AgentRunner] 组装 agent | model={model} | tools={len(tools)} | "
-            f"tools_enabled={enable_tools} | prompt_len={len(prompt)} | "
+            f"capabilities={','.join(sorted(capabilities)) or '-'} | "
+            f"prompt_len={len(prompt)} | "
             f"skill_index_len={len(skill_index)} | "
             f"file_edit_tool_style={runtime_settings.file_edit_tool_style} | "
             f"workspace_root={tool_context.workspace_root}"
@@ -218,7 +261,7 @@ class AgentRunner:
     @staticmethod
     def _skill_index_from_context(tool_context: ToolExecutionContext) -> str:
         catalog = tool_context.metadata.get("skill_catalog")
-        if not isinstance(catalog, SkillCatalog):
+        if not isinstance(catalog, (EffectiveSkillCatalog, SkillCatalog)):
             return ""
         return build_skill_index(catalog)
 

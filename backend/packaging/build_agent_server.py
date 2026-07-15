@@ -18,6 +18,10 @@ ENTRY_POINT = ROOT / "backend" / "packaging" / "agent_server_entry.py"
 BUNDLED_RIPGREP_BINARY = (
     ROOT / "desktop" / "src-tauri" / "binaries" / f"rg-{WINDOWS_TAURI_TRIPLE}.exe"
 )
+BUNDLED_PRESETS_ROOT = ROOT / "backend" / "app" / "keydex" / "bundled_presets"
+BUNDLED_PRESETS_DESTINATION = "backend/app/keydex/bundled_presets"
+BUILTIN_SKILLS_ROOT = ROOT / "backend" / "app" / "keydex" / "builtin_skills"
+BUILTIN_SKILLS_DESTINATION = "backend/app/keydex/builtin_skills"
 SIDECAR_INPUT_ROOTS = (
     ROOT / "backend" / "app",
     ROOT / "backend" / "packaging",
@@ -58,6 +62,10 @@ def iter_sidecar_inputs() -> list[Path]:
             if path.suffix.lower() not in SIDECAR_INPUT_SUFFIXES:
                 continue
             files.append(path)
+    if BUNDLED_PRESETS_ROOT.is_dir():
+        files.extend(path for path in BUNDLED_PRESETS_ROOT.rglob("*") if path.is_file())
+    if BUILTIN_SKILLS_ROOT.is_dir():
+        files.extend(path for path in BUILTIN_SKILLS_ROOT.rglob("*") if path.is_file())
     return sorted(set(files))
 
 
@@ -146,6 +154,18 @@ def build_with_pyinstaller(
         [
             "--add-binary",
             f"{BUNDLED_RIPGREP_BINARY}{os.pathsep}.",
+        ]
+    )
+    command.extend(
+        [
+            "--add-data",
+            f"{BUNDLED_PRESETS_ROOT}{os.pathsep}{BUNDLED_PRESETS_DESTINATION}",
+        ]
+    )
+    command.extend(
+        [
+            "--add-data",
+            f"{BUILTIN_SKILLS_ROOT}{os.pathsep}{BUILTIN_SKILLS_DESTINATION}",
         ]
     )
     command.extend(

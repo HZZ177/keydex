@@ -122,6 +122,43 @@ describe("FilePreview", () => {
     );
   });
 
+  it("renders a system skill resource as an explicit read-only document without workspace side effects", async () => {
+    const readDocument = vi.fn();
+    const writeDocument = vi.fn();
+    const runtime = fakeRuntime({ readDocument, writeDocument });
+
+    render(
+      <FilePreview
+        request={{
+          type: "skill-resource",
+          title: "dev-plan",
+          content: "# System skill\n\n```mermaid\ngraph TD\n  A --> B\n```",
+          contentType: "markdown",
+          skillName: "dev-plan",
+          skillSource: "system",
+          resourcePath: "SKILL.md",
+          locator: "system:skills/dev-plan/SKILL.md",
+          revision: "sha256:system-skill",
+        }}
+        workspaceId="ws-1"
+        sessionId="ses-1"
+        runtime={runtime}
+        onQuoteSelection={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "System skill" })).not.toBeNull();
+    const root = document.querySelector("[data-file-preview-root='true']");
+    expect(root?.getAttribute("data-preview-source")).toBe("skill-resource");
+    expect(root?.getAttribute("data-skill-source")).toBe("system");
+    expect(root?.getAttribute("data-file-preview-auto-save-state")).toBeNull();
+    expect(root?.getAttribute("data-file-preview-new-annotations-enabled")).toBe("false");
+    expect(root?.getAttribute("data-file-preview-file-allows-annotations")).toBe("false");
+    expect(screen.queryByLabelText(/文件批注/u)).toBeNull();
+    expect(readDocument).not.toHaveBeenCalled();
+    expect(writeDocument).not.toHaveBeenCalled();
+  });
+
   it("loads a local file through the shared document snapshot pipeline", async () => {
     const readDocument = vi.fn().mockResolvedValue({
       document_id: "tauri:D:/notes/local.md",

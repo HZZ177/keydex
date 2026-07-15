@@ -49,6 +49,7 @@ export { createDesktopPickerRuntime } from "./desktopPicker";
 export { createAttachmentsRuntime } from "./attachments";
 export { createAnnotationsRuntime } from "./annotations";
 export { createMcpRuntime } from "./mcp";
+export { createSkillRuntime } from "./skills";
 export {
   canUseAppUpdater,
   checkForAppUpdate,
@@ -70,7 +71,25 @@ export type {
   AgentConnectionRuntime,
   TauriInvoke,
 } from "./agentConnection";
-export type { HealthResponse, SettingsRuntime } from "./settings";
+export type {
+  HealthResponse,
+  SettingsRuntime,
+  UpdateWebSettingsPayload,
+  WebCapability,
+  WebConnectionCheckDraft,
+  WebConnectionCheckError,
+  WebConnectionCheckResponse,
+  WebProviderConfigField,
+  WebProviderConfigStatus,
+  WebProviderFieldType,
+  WebProviderSelectOption,
+  WebProviderSettings,
+  WebProviderSettingsUpdate,
+  WebSecretState,
+  WebSecretRevealResponse,
+  WebSecretUpdate,
+  WebSettingsResponse,
+} from "./settings";
 export type {
   LocalPreviewFileResponse,
   LocalPreviewDocumentReadOptions,
@@ -117,7 +136,6 @@ export type {
   UpdateSessionPayload,
 } from "./conversation";
 export type {
-  KeydexDiagnostic,
   WorkspaceEntry,
   WorkspaceFileResponse,
   WorkspaceMediaResponse,
@@ -128,13 +146,22 @@ export type {
   WorkspaceSearchOptions,
   WorkspaceSearchResult,
   WorkspaceSessionScope,
-  WorkspaceSkillListOptions,
-  WorkspaceSkillsResponse,
-  WorkspaceSkillSummary,
   WorkspaceSubtreeOptions,
   WorkspaceSubtreeResponse,
   WorkspaceTreeResponse,
 } from "./workspace";
+export type {
+  EffectiveSkillsMode,
+  EffectiveSkillsResponse,
+  KeydexDiagnostic,
+  SkillListOptions,
+  SkillResourceReadOptions,
+  SkillResourceReadRequest,
+  SkillResourceReadResponse,
+  SkillRuntime,
+  SkillSource,
+  SkillSummary,
+} from "./skills";
 export type {
   CreateWorkspacePayload,
   UpdateWorkspacePayload,

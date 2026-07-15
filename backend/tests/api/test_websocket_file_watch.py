@@ -43,7 +43,8 @@ class FakeFileChangeHub:
 
 def _client(tmp_path: Path) -> tuple[TestClient, FakeFileChangeHub]:
     app = create_app(
-        AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path)
+        AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path),
+        keydex_system_root_for_testing=tmp_path / "system-keydex",
     )
     hub = FakeFileChangeHub()
     app.state.file_change_hub = hub

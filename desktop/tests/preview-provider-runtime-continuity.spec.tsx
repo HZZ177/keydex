@@ -169,6 +169,49 @@ describe("PreviewProvider Markdown Runtime continuity", () => {
     act(() => previewRef.current!.setPreviewHostContext({ workspaceId: "ws-a" }));
     await waitFor(() => expect(previewRef.current!.activeEntry?.id).toBe(workspaceA.id));
   });
+
+  it("keeps workspace file reveal state isolated while a system Skill resource is opened and closed", async () => {
+    const previewRef = { current: null } as MutableRefObject<PreviewContextValue | null>;
+    render(
+      <PreviewProvider>
+        <PreviewProbe previewRef={previewRef} />
+      </PreviewProvider>,
+    );
+
+    act(() => previewRef.current!.setPreviewHostContext({ workspaceId: "ws-a", sessionId: "ses-a" }));
+    act(() => previewRef.current!.openPreview(
+      { type: "file", path: "docs/guide.md" },
+      undefined,
+      { lineStart: 12, lineEnd: 12 },
+    ));
+    await waitFor(() => expect(previewRef.current!.activeEntry?.request.type).toBe("file"));
+    const fileEntry = previewRef.current!.activeEntry!;
+
+    act(() => previewRef.current!.openPreview({
+      type: "skill-resource",
+      title: "dev-plan",
+      content: "# System Skill",
+      contentType: "markdown",
+      skillName: "dev-plan",
+      skillSource: "system",
+      resourcePath: "SKILL.md",
+      locator: "system:skills/dev-plan/SKILL.md",
+      revision: "sha256:system-skill",
+    }));
+    await waitFor(() => expect(previewRef.current!.activeEntry?.request.type).toBe("skill-resource"));
+    const skillEntry = previewRef.current!.activeEntry!;
+    expect(previewRef.current!.targetPath).toBeNull();
+    expect(previewRef.current!.entries).toHaveLength(2);
+
+    act(() => previewRef.current!.switchPreview(fileEntry.id));
+    await waitFor(() => expect(previewRef.current!.activeEntry?.id).toBe(fileEntry.id));
+    expect(previewRef.current!.activeEntry?.revealTarget).toEqual({ lineStart: 12, lineEnd: 12 });
+    expect(previewRef.current!.activeEntry?.markdownView).toBe(fileEntry.markdownView);
+
+    act(() => previewRef.current!.closePreviewEntry(skillEntry.id));
+    expect(previewRef.current!.entries).toHaveLength(1);
+    expect(previewRef.current!.activeEntry?.id).toBe(fileEntry.id);
+  });
 });
 
 function RuntimePreviewProbe({

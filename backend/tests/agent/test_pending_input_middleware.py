@@ -202,8 +202,18 @@ async def test_pending_input_middleware_keeps_images_and_skill_activation(tmp_pa
     assert result["pending_tool_call_preset"] == {
         "type": "force",
         "producer": "skill_activation",
-        "calls": [{"name": "load_skill", "args": {"skill_name": "review-skill"}}],
-        "metadata": {"source": "pending_user_input"},
+        "calls": [
+            {
+                "name": "load_skill",
+                "args": {"skill_name": "review-skill", "source": "workspace"},
+            }
+        ],
+        "metadata": {
+            "source": "pending_user_input",
+            "skill_activations": [
+                {"skill_name": "review-skill", "source": "workspace"}
+            ],
+        },
     }
     user_event = next(
         event for event in events if event.event_type == DomainEventType.MESSAGE_USER_CREATED.value

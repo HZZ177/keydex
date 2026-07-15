@@ -12,7 +12,13 @@ import {
 } from "@/renderer/components/chat/SendBox";
 import type { SlashCommand } from "@/renderer/components/chat/SlashCommandMenu";
 import { RuntimeModelSelector, type RuntimeModelSelection } from "@/renderer/components/model";
-import { runtimeBridge, type RuntimeBridge, type WorkspaceSearchResult, type WorkspaceSkillSummary } from "@/runtime";
+import {
+  runtimeBridge,
+  type KeydexDiagnostic,
+  type RuntimeBridge,
+  type SkillSummary,
+  type WorkspaceSearchResult,
+} from "@/runtime";
 import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
 import type { FileAccessMode } from "@/types/protocol";
 import type { ContextWindowUsageStatus } from "./useConversationPanelModel";
@@ -26,8 +32,9 @@ export interface ConversationComposerProps {
   canStop: boolean;
   connectionReady: boolean;
   modelSelection: RuntimeModelSelection;
-  workspaceSkills: WorkspaceSkillSummary[];
-  selectedSkill: WorkspaceSkillSummary | null;
+  skills: SkillSummary[];
+  skillDiagnostics?: KeydexDiagnostic[];
+  selectedSkill: SkillSummary | null;
   runtime?: RuntimeBridge;
   sessionId?: string | null;
   fileAccessMode?: FileAccessMode;
@@ -43,7 +50,7 @@ export interface ConversationComposerProps {
   onSelectedFilesChange?: (files: SelectedFile[]) => void;
   onSelectedQuotesChange?: (quotes: SelectedQuote[]) => void;
   onChange: (value: string) => void;
-  onSkillChange: (skill: WorkspaceSkillSummary | null) => void;
+  onSkillChange: (skill: SkillSummary | null) => void;
   onSend: (
     files?: SelectedFile[],
     quotes?: SelectedQuote[],
@@ -53,8 +60,9 @@ export interface ConversationComposerProps {
   onStop: () => void;
   onEscape?: () => void;
   onOpenFileReference?: (file: SelectedFile) => void;
+  onOpenSkill?: (skill: SkillSummary) => void | Promise<void>;
   onSlashCommand?: (command: SlashCommand) => void;
-  onRefreshWorkspaceSkills?: () => void | Promise<void>;
+  onRefreshSkills?: () => void | Promise<void>;
   onExternalFileRequestHandled?: (requestId: number) => void;
   onExternalQuoteRequestHandled?: (requestId: number) => void;
   onExternalContextRequestHandled?: (requestId: number) => void;
@@ -80,7 +88,8 @@ export function ConversationComposer({
   canStop,
   connectionReady,
   modelSelection,
-  workspaceSkills,
+  skills,
+  skillDiagnostics = [],
   selectedSkill,
   runtime = runtimeBridge,
   sessionId,
@@ -102,8 +111,9 @@ export function ConversationComposer({
   onStop,
   onEscape,
   onOpenFileReference,
+  onOpenSkill,
   onSlashCommand,
-  onRefreshWorkspaceSkills,
+  onRefreshSkills,
   onExternalFileRequestHandled,
   onExternalQuoteRequestHandled,
   onExternalContextRequestHandled,
@@ -152,7 +162,8 @@ export function ConversationComposer({
         </>
       }
       onChange={onChange}
-      workspaceSkills={workspaceSkills}
+      skills={skills}
+      skillDiagnostics={skillDiagnostics}
       allowBypassConversationSlashCommand={allowBypassConversationSlashCommand}
       allowGoalSlashCommand={allowGoalSlashCommand}
       allowContextCompressionSlashCommand={allowContextCompressionSlashCommand}
@@ -170,8 +181,9 @@ export function ConversationComposer({
       workspaceRoots={workspaceRoots}
       onEscape={onEscape}
       onOpenFileReference={onOpenFileReference}
+      onOpenSkill={onOpenSkill}
       onSlashCommand={onSlashCommand}
-      onRefreshWorkspaceSkills={onRefreshWorkspaceSkills}
+      onRefreshSkills={onRefreshSkills}
       onExternalFileRequestHandled={onExternalFileRequestHandled}
       onExternalQuoteRequestHandled={onExternalQuoteRequestHandled}
       onExternalContextRequestHandled={onExternalContextRequestHandled}

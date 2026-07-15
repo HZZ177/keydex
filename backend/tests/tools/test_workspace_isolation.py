@@ -94,3 +94,26 @@ async def test_edit_file_cannot_modify_another_workspace(tmp_path) -> None:
     assert result.ok is False
     assert result.error["code"] == "workspace_path_forbidden"
     assert target_b.read_text(encoding="utf-8") == "B_ONLY\n"
+
+
+async def test_t79_generic_file_tools_cannot_read_system_keydex_root(tmp_path) -> None:
+    chat_data_root = tmp_path / "data"
+    system_root = tmp_path / "system-keydex"
+    chat_data_root.mkdir()
+    skill_entry = system_root / "skills" / "global" / "SKILL.md"
+    skill_entry.parent.mkdir(parents=True)
+    skill_entry.write_text(
+        "---\nname: global\ndescription: Global\n---\n\nSYSTEM SECRET",
+        encoding="utf-8",
+    )
+
+    result = await _run(
+        "read_file",
+        {"path": str(skill_entry.resolve())},
+        chat_data_root,
+        "ses-chat",
+    )
+
+    assert result.ok is False
+    assert result.error["code"] == "workspace_path_forbidden"
+    assert "SYSTEM SECRET" not in str(result.error)

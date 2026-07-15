@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { MessageText } from "@/renderer/pages/conversation/messages";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
-import type { RuntimeBridge } from "@/runtime";
+import type { RuntimeBridge, SkillResourceReadResponse, SkillSource } from "@/runtime";
 
 describe("MessageText skill context items", () => {
   it("renders a selected skill context item as a non-file chip with description preview", async () => {
@@ -26,6 +26,7 @@ describe("MessageText skill context items", () => {
     );
 
     expect(screen.getByText("dev-plan")).not.toBeNull();
+    expect(screen.getByText("项目级")).not.toBeNull();
     expect(screen.queryByRole("button", { name: /dev-plan/ })).toBeNull();
 
     const wrapper = screen.getByText("dev-plan").closest("[data-preview-open]");
@@ -63,7 +64,8 @@ describe("MessageText skill context items", () => {
     expect(screen.getByText("dev-plan")).not.toBeNull();
   });
 
-  it("opens a historical skill definition when locator metadata is available", () => {
+  it("opens a historical skill definition when locator metadata is available", async () => {
+    const runtime = skillRuntime("workspace");
     render(
       <PreviewProvider>
         <MessageText
@@ -82,19 +84,101 @@ describe("MessageText skill context items", () => {
               },
             ],
           })}
-          workspaceRuntime={{} as RuntimeBridge}
+          workspaceRuntime={runtime}
           workspaceScope={{ sessionId: "ses-1" }}
         />
-        <FilePanelProbe />
+        <PreviewRequestProbe />
       </PreviewProvider>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "打开 Skill dev-plan" }));
 
-    expect(screen.getByTestId("file-panel-request").textContent).toBe(
-      "session:ses-1:.keydex/skills/dev-plan/SKILL.md",
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("preview-request").textContent).toBe(
+        "skill-resource:workspace:dev-plan:SKILL.md",
+      );
+    });
+    expect(runtime.skills.readSessionResource).toHaveBeenCalledWith("ses-1", {
+      skill_name: "dev-plan",
+      source: "workspace",
+      resource_path: "SKILL.md",
+    });
     expect(document.querySelector('[data-context-chip-icon="skill"]')).not.toBeNull();
+  });
+
+  it("shows a historical system skill source without treating its locator as a workspace file", async () => {
+    const runtime = skillRuntime("system");
+    render(
+      <PreviewProvider>
+        <MessageText
+          message={message("user", "", "completed", {
+            contextItems: [
+              {
+                id: "skill:system:dev-plan",
+                type: "skill",
+                label: "dev-plan",
+                metadata: {
+                  skill_name: "dev-plan",
+                  description: "Historical system skill",
+                  locator: "system:skills/dev-plan/SKILL.md",
+                  source: "system",
+                },
+              },
+            ],
+          })}
+          workspaceRuntime={runtime}
+          workspaceScope={{ sessionId: "ses-1" }}
+        />
+        <FilePanelProbe />
+        <PreviewRequestProbe />
+      </PreviewProvider>,
+    );
+
+    expect(screen.getByText("系统级")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "打开 Skill dev-plan" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("preview-request").textContent).toBe(
+        "skill-resource:system:dev-plan:SKILL.md",
+      );
+    });
+    expect(runtime.skills.readSessionResource).toHaveBeenCalledWith("ses-1", {
+      skill_name: "dev-plan",
+      source: "system",
+      resource_path: "SKILL.md",
+    });
+    expect(screen.getByTestId("file-panel-request").textContent).toBe("");
+    expect(screen.getByText("dev-plan").closest("[data-skill-source]")?.getAttribute("data-skill-source")).toBe(
+      "system",
+    );
+  });
+
+  it("restores the builtin source badge from historical context metadata", () => {
+    render(
+      <MessageText
+        message={message("user", "", "completed", {
+          contextItems: [
+            {
+              id: "skill:builtin:keydex-guide",
+              type: "skill",
+              label: "keydex-guide",
+              metadata: {
+                skill_name: "keydex-guide",
+                description: "Use Keydex",
+                locator: "builtin/skills/keydex-guide/SKILL.md",
+                source: "builtin",
+              },
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("内置")).not.toBeNull();
+    expect(
+      screen.getByText("keydex-guide").closest("[data-skill-source]")?.getAttribute(
+        "data-skill-source",
+      ),
+    ).toBe("builtin");
   });
 });
 
@@ -122,4 +206,34 @@ function FilePanelProbe() {
   const preview = usePreview();
   const request = preview.filePanelRequest;
   return <output data-testid="file-panel-request">{request ? `${request.scopeKey}:${request.path}` : ""}</output>;
+}
+
+function PreviewRequestProbe() {
+  const preview = usePreview();
+  const request = preview.activeEntry?.request;
+  return (
+    <output data-testid="preview-request">
+      {request?.type === "skill-resource"
+        ? `${request.type}:${request.skillSource}:${request.skillName}:${request.resourcePath}`
+        : request?.type ?? ""}
+    </output>
+  );
+}
+
+function skillRuntime(source: SkillSource, resourcePath = "SKILL.md"): RuntimeBridge {
+  const response: SkillResourceReadResponse = {
+    skill_name: "dev-plan",
+    source,
+    resource_path: resourcePath,
+    locator: `${source}:skills/dev-plan/${resourcePath}`,
+    content: "# Dev plan",
+    encoding: "utf-8",
+    revision: "sha256:skill",
+    fingerprint: "sha256:catalog",
+  };
+  return {
+    skills: {
+      readSessionResource: vi.fn().mockResolvedValue(response),
+    },
+  } as unknown as RuntimeBridge;
 }

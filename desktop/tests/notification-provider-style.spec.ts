@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 
 describe("NotificationProvider styles", () => {
-  it("keeps top notifications borderless while retaining elevation", () => {
+  it("uses a type-tinted background while retaining borderless elevation", () => {
     const css = readFileSync(
       resolve(srcDir, "renderer/providers/NotificationProvider.module.css"),
       "utf8",
@@ -15,6 +15,9 @@ describe("NotificationProvider styles", () => {
 
     const toastRule = css.match(/\.toast\s*{([^}]*)}/s)?.[1] ?? "";
 
+    expect(toastRule).toContain(
+      "background: color-mix(in srgb, var(--notification-accent) 12%, var(--color-bg-elevated))",
+    );
     expect(toastRule).not.toMatch(/(?:^|\s)border\s*:/);
     expect(toastRule).not.toContain("0 0 0 1px");
     expect(toastRule).toContain("0 12px 34px");

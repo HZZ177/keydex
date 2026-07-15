@@ -214,7 +214,7 @@ describe("message injection composer helpers", () => {
 
     expect(prepared.contextItems).toHaveLength(1);
     expect(prepared.contextItems[0]).toMatchObject({
-      id: "skill:dev-plan",
+      id: "skill:workspace:dev-plan",
       type: "skill",
       label: "/dev-plan",
       content: "Plan work from a design doc",
@@ -231,7 +231,30 @@ describe("message injection composer helpers", () => {
     });
   });
 
-  it("keeps skill out of message_injection when files or quotes are also attached", () => {
+  it("preserves a system winner source in context history and runtime activation", () => {
+    const prepared = prepareComposerMessage("使用系统规范", [], {
+      selectedSkill: {
+        name: "review",
+        label: "/review",
+        description: "Review with system policy",
+        source: "system",
+        locator: ".keydex/skills/review/SKILL.md",
+      },
+    });
+
+    expect(prepared.contextItems[0]).toMatchObject({
+      id: "skill:system:review",
+      source: "system",
+      skill_name: "review",
+    });
+    expect(prepared.runtimeParams?.skill_activation).toEqual({
+      skill_name: "review",
+      source: "system",
+      origin: "slash",
+    });
+  });
+
+  it("keeps system skill source separate from workspace file references", () => {
     const quote = selectedQuoteFromText("selected text");
     if (!quote) {
       throw new Error("quote not created");
@@ -245,14 +268,21 @@ describe("message injection composer helpers", () => {
           name: "dev-plan",
           label: "/dev-plan",
           description: "Plan work from a design doc",
-          source: "workspace",
-          locator: ".keydex/skills/dev-plan/SKILL.md",
+          source: "system",
+          locator: "~/.keydex/skills/dev-plan/SKILL.md",
         },
       },
     );
 
     expect(prepared.contextItems.map((item) => item.type)).toEqual(["skill", "quote", "file"]);
-    expect(prepared.runtimeParams?.skill_activation?.skill_name).toBe("dev-plan");
+    expect(prepared.runtimeParams?.skill_activation).toMatchObject({
+      skill_name: "dev-plan",
+      source: "system",
+    });
+    expect(prepared.contextItems[2]).toMatchObject({
+      type: "file",
+      metadata: { source: "workspace" },
+    });
     expect(prepared.runtimeParams?.message_injection).toHaveLength(2);
     expect(prepared.runtimeParams?.message_injection?.map((item) => item.metadata?.kind)).toEqual([
       "quote",

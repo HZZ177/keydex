@@ -33,6 +33,7 @@ from backend.app.api.settings import (
 from backend.app.api.settings import router as settings_router
 from backend.app.api.thread_tasks import router as thread_tasks_router
 from backend.app.api.usage import router as usage_router
+from backend.app.api.web_settings import router as web_settings_router
 from backend.app.api.websocket import router as websocket_router
 from backend.app.api.workspace import router as workspace_router
 from backend.app.api.workspaces import router as workspaces_router
@@ -40,8 +41,11 @@ from backend.app.core.config import AppSettings, get_settings
 from backend.app.core.exception_handler import register_exception_handlers
 from backend.app.core.logger import configure_logging, logger
 from backend.app.core.middleware import RequestLoggingMiddleware
-from backend.app.keydex import KeydexWorkspaceRuntimeCache
-from backend.app.keydex.watcher import KeydexWorkspaceWatcher
+from backend.app.keydex import (
+    KeydexRuntimeCache,
+    provision_bundled_presets,
+)
+from backend.app.keydex.watcher import KeydexSkillsWatcher
 from backend.app.mcp.elicitation import McpElicitationService
 from backend.app.mcp.manager import McpManager
 from backend.app.mcp.sampling import McpOpenAICompatibleSamplingBridge, McpSamplingService
@@ -60,9 +64,16 @@ from backend.app.services.thread_task_service import ThreadTaskService
 from backend.app.storage import StorageRepositories, init_database
 from backend.app.tools import create_default_tool_registry
 from backend.app.tools.command_runtime import command_process_manager
+from backend.app.web.registry import build_default_web_provider_registry
+from backend.app.web.service import WebService
 
 
-def create_app(settings: AppSettings | None = None) -> FastAPI:
+def create_app(
+    settings: AppSettings | None = None,
+    *,
+    keydex_system_root_for_testing: str | Path | None = None,
+    keydex_builtin_root_for_testing: str | Path | None = None,
+) -> FastAPI:
     create_started = time.perf_counter()
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level, log_dir=resolved_settings.data_dir / "logs")
@@ -97,6 +108,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            try:
+                await app.state.keydex_skills_watcher.close()
+            except Exception as exc:
+                logger.opt(exception=True).error(
+                    f"[App] KeydexSkillsWatcher 关闭失败 | error={exc}"
+                )
             try:
                 await app.state.file_change_hub.close()
             except Exception as exc:
@@ -139,6 +156,14 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         default_workspace_root=resolved_settings.workspace_root,
     )
     app.state.repositories = StorageRepositories(app.state.database)
+    e2e_web_providers = ()
+    if resolved_settings.e2e_model_transport:
+        from backend.app.web.testing import E2EWebProvider
+
+        e2e_web_providers = (E2EWebProvider(),)
+    app.state.web_provider_registry = build_default_web_provider_registry(
+        extra_providers=e2e_web_providers
+    )
     stored_general = app.state.repositories.settings.get("general_settings", default={})
     general_settings = load_general_settings(app.state.repositories)
     stored_general = stored_general if isinstance(stored_general, dict) else {}
@@ -197,7 +222,15 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     )
     app.state.mcp_manager.sampling_service = app.state.mcp_sampling_service
     app.state.tool_registry = create_default_tool_registry()
-    app.state.keydex_runtime_cache = KeydexWorkspaceRuntimeCache()
+    app.state.keydex_preset_provision_result = provision_bundled_presets(
+        system_root=keydex_system_root_for_testing
+    )
+    if app.state.keydex_preset_provision_result.status == "failed":
+        logger.warning("[KeydexPreset] 预置初始化失败，应用将继续启动")
+    app.state.keydex_runtime_cache = KeydexRuntimeCache(
+        system_root=keydex_system_root_for_testing,
+        builtin_root=keydex_builtin_root_for_testing,
+    )
 
     def build_chat_service():
         from backend.app.agent import AgentRunner
@@ -223,6 +256,10 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             thread_task_service=app.state.thread_task_service,
             mcp_manager=app.state.mcp_manager,
             file_history_service=app.state.file_history_service,
+            web_service=WebService(
+                app.state.repositories,
+                app.state.web_provider_registry,
+            ),
         )
 
     app.state.agent_runtime_provider = AgentRuntimeProvider(build_chat_service)
@@ -258,11 +295,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         chat_stream_manager=app.state.chat_stream_manager,
     )
     app.state.chat_stream_manager.set_thread_task_runtime(app.state.thread_task_runtime)
-    app.state.keydex_workspace_watcher = KeydexWorkspaceWatcher(
+    app.state.keydex_skills_watcher = KeydexSkillsWatcher(
         runtime_cache=app.state.keydex_runtime_cache,
         notifier=lambda session_id, data: app.state.chat_stream_manager.broadcast(
             session_id=session_id,
-            action="workspaceSkillsChanged",
+            action="keydexSkillsChanged",
             data=data,
         ),
     )
@@ -292,6 +329,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(local_preview_router)
     app.include_router(mcp_router)
     app.include_router(settings_router)
+    app.include_router(web_settings_router)
     app.include_router(model_providers_router)
     app.include_router(models_router)
     app.include_router(sessions_router)

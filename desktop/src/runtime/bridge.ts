@@ -11,6 +11,7 @@ import { createAttachmentsRuntime, type AttachmentsRuntime } from "./attachments
 import { createAnnotationsRuntime, type AnnotationsRuntime } from "./annotations";
 import { createArchiveRuntime, type ArchiveRuntime } from "./archive";
 import { createMcpRuntime, type McpRuntime } from "./mcp";
+import { createSkillRuntime, type SkillRuntime } from "./skills";
 
 export interface RuntimeBridgeOptions extends HttpClientOptions, ConversationRuntimeOptions {
   httpClient?: HttpClient;
@@ -30,6 +31,7 @@ export interface RuntimeBridge {
   annotations: AnnotationsRuntime;
   archive: ArchiveRuntime;
   mcp: McpRuntime;
+  skills: SkillRuntime;
   getBaseUrl(): string;
   setBaseUrl(baseUrl: string): void;
   health(): Promise<HealthResponse>;
@@ -53,6 +55,7 @@ export function createRuntimeBridge(options: RuntimeBridgeOptions = {}): Runtime
     annotations: createAnnotationsRuntime(http),
     archive: createArchiveRuntime(http),
     mcp: createMcpRuntime(http),
+    skills: createSkillRuntime(http),
     getBaseUrl() {
       return http.getBaseUrl();
     },

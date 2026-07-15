@@ -35,6 +35,10 @@ dev = [
 where = ["."]
 include = ["backend*"]
 
+[tool.setuptools.package-data]
+"backend.app.keydex.bundled_presets" = ["catalog.json", "skills/**/*"]
+"backend.app.keydex.builtin_skills" = ["catalog.json", "skills/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 asyncio_mode = "auto"

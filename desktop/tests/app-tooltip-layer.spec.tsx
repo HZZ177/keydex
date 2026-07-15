@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
+import { AppProviders } from "@/renderer/providers/AppProviders";
 
 describe("AppTooltipLayer", () => {
   afterEach(() => {
@@ -48,6 +49,77 @@ describe("AppTooltipLayer", () => {
     expect(button.getAttribute("title")).toBe("定位当前文件");
   });
 
+  it("converts native button titles into the custom tooltip without per-button opt-in", () => {
+    vi.useFakeTimers();
+    render(
+      <div data-tooltip-scope="true">
+        <AppTooltipLayer
+          scopeSelector="[data-tooltip-scope='true']"
+          delayMs={20}
+          targetMode="native-interactive-title"
+        />
+        <button type="button" title="关闭预览">
+          关闭
+        </button>
+      </div>,
+    );
+
+    const button = screen.getByRole("button", { name: "关闭" });
+    fireEvent.pointerOver(button);
+    expect(button.getAttribute("title")).toBeNull();
+
+    act(() => vi.advanceTimersByTime(20));
+    expect(screen.getByRole("tooltip").textContent).toBe("关闭预览");
+
+    fireEvent.pointerOut(button);
+    expect(button.getAttribute("title")).toBe("关闭预览");
+  });
+
+  it("converts titled interactive links that are visually used as controls", () => {
+    vi.useFakeTimers();
+    render(
+      <div data-tooltip-scope="true">
+        <AppTooltipLayer
+          scopeSelector="[data-tooltip-scope='true']"
+          delayMs={20}
+          targetMode="native-interactive-title"
+        />
+        <a href="#source" aria-label="查看来源 1" title="查看对应来源">
+          1
+        </a>
+      </div>,
+    );
+
+    const link = screen.getByRole("link", { name: "查看来源 1" });
+    fireEvent.pointerOver(link);
+    expect(link.getAttribute("title")).toBeNull();
+
+    act(() => vi.advanceTimersByTime(20));
+    expect(screen.getByRole("tooltip").textContent).toBe("查看对应来源");
+
+    fireEvent.pointerOut(link);
+    expect(link.getAttribute("title")).toBe("查看对应来源");
+  });
+
+  it("mounts the native button title fallback for the whole application", () => {
+    vi.useFakeTimers();
+    const starter = vi.fn(() => new Promise<never>(() => undefined));
+    render(
+      <AppProviders runtimeConnection={{ starter }}>
+        <button type="button" title="应用级操作">
+          操作
+        </button>
+      </AppProviders>,
+    );
+
+    const button = screen.getByRole("button", { name: "操作" });
+    fireEvent.pointerOver(button);
+    expect(button.getAttribute("title")).toBeNull();
+
+    act(() => vi.advanceTimersByTime(420));
+    expect(screen.getByRole("tooltip").textContent).toBe("应用级操作");
+  });
+
   it("prefers explicit functional labels over contextual accessible names", () => {
     vi.useFakeTimers();
     render(
@@ -63,6 +135,31 @@ describe("AppTooltipLayer", () => {
     act(() => vi.advanceTimersByTime(20));
 
     expect(screen.getByRole("tooltip").textContent).toBe("置顶");
+  });
+
+  it("supports multiline explanatory tooltips without truncating their content", () => {
+    vi.useFakeTimers();
+    const explanation = "免费计划每月提供 1,000 API Credits，基础搜索每次消耗 1 Credit。";
+    render(
+      <div data-tooltip-scope="true">
+        <AppTooltipLayer scopeSelector="[data-tooltip-scope='true']" delayMs={20} />
+        <button
+          type="button"
+          aria-label="额度说明"
+          data-tooltip-label={explanation}
+          data-tooltip-multiline="true"
+        >
+          info
+        </button>
+      </div>,
+    );
+
+    fireEvent.pointerOver(screen.getByRole("button", { name: "额度说明" }));
+    act(() => vi.advanceTimersByTime(20));
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toBe(explanation);
+    expect(tooltip.getAttribute("data-multiline")).toBe("true");
   });
 
   it("does not infer contextual labels for visible text buttons without an explicit tooltip", () => {

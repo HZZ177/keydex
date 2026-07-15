@@ -83,14 +83,14 @@ describe("SlashCommandMenu", () => {
     ).toEqual(["skill"]);
   });
 
-  it("keeps Skill visible without workspace skills and shows the project empty state inside it", () => {
+  it("keeps Skill visible without effective skills and shows the scope empty state inside it", () => {
     render(
       <SendBox
         value="/"
         runtimeState="idle"
         canSend
         canStop={false}
-        workspaceSkills={[]}
+        skills={[]}
         onChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
@@ -108,8 +108,43 @@ describe("SlashCommandMenu", () => {
     fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "ArrowDown" });
     fireEvent.keyDown(screen.getByLabelText("继续输入"), { key: "Enter" });
 
-    expect(screen.getByText("当前项目无 Skill")).not.toBeNull();
+    expect(screen.getByText("当前范围无 Skill")).not.toBeNull();
     expect(screen.queryByText("没有匹配的命令")).toBeNull();
+  });
+
+  it("shows effective catalog diagnostics inside the Skill view", () => {
+    render(
+      <SendBox
+        value="/"
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        skills={[]}
+        skillDiagnostics={[{
+          code: "keydex_manifest_invalid",
+          reason: "keydex.json is not valid JSON",
+          path: "keydex.json",
+          severity: "error",
+          details: {},
+        }]}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByLabelText("继续输入");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Skill 配置错误：keydex.json is not valid JSON",
+    );
+    expect(screen.getByTestId("skill-diagnostic").getAttribute("data-diagnostic-code")).toBe(
+      "keydex_manifest_invalid",
+    );
   });
 
   it("opens again after the dismissed slash query is removed and typed again", () => {
@@ -174,7 +209,7 @@ describe("SlashCommandMenu", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("shows workspace skills behind the top-level Skill command and reports the selected command", () => {
+  it("shows effective skills behind the top-level Skill command and reports the selected command", () => {
     const onChange = vi.fn();
     const onSlashCommand = vi.fn();
     render(
@@ -183,7 +218,7 @@ describe("SlashCommandMenu", () => {
         runtimeState="idle"
         canSend
         canStop={false}
-        workspaceSkills={[
+        skills={[
           {
             name: "dev-plan",
             label: "/dev-plan",
@@ -212,12 +247,93 @@ describe("SlashCommandMenu", () => {
 
     expect(onSlashCommand).toHaveBeenCalledWith(
       expect.objectContaining({
-        id: "skill:dev-plan",
+        id: "skill:workspace:dev-plan",
         kind: "skill",
         label: "/dev-plan",
       }),
     );
     expect(onChange).toHaveBeenCalledWith("");
+  });
+
+  it("renders only the effective winner and labels its source without a version submenu", () => {
+    render(
+      <SendBox
+        value="/shared"
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        skills={[
+          {
+            name: "shared",
+            label: "/shared",
+            description: "Workspace winner",
+            source: "workspace",
+            locator: ".keydex/skills/shared/SKILL.md",
+          },
+        ]}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole("option", { name: "选择 Skill /shared" })).toHaveLength(1);
+    expect(screen.getByText("项目级")).not.toBeNull();
+    expect(screen.queryByText("系统级")).toBeNull();
+  });
+
+  it("labels a system effective winner as system-level", () => {
+    render(
+      <SendBox
+        value="/review"
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        skills={[
+          {
+            name: "review",
+            label: "/review",
+            description: "System review policy",
+            source: "system",
+            locator: ".keydex/skills/review/SKILL.md",
+          },
+        ]}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole("option", { name: "选择 Skill /review" })).toHaveLength(1);
+    expect(screen.getByText("系统级")).not.toBeNull();
+  });
+
+  it("renders one builtin winner with the builtin source badge", () => {
+    render(
+      <SendBox
+        value="/keydex-guide"
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        skills={[
+          {
+            name: "keydex-guide",
+            label: "/keydex-guide",
+            description: "Use Keydex",
+            source: "builtin",
+            locator: "builtin/skills/keydex-guide/SKILL.md",
+          },
+        ]}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole("option", { name: "选择 Skill /keydex-guide" })).toHaveLength(1);
+    expect(screen.getByText("内置")).not.toBeNull();
+    expect(screen.queryByText("系统级")).toBeNull();
+    expect(screen.queryByText("项目级")).toBeNull();
   });
 
   it("selects the goal command without sending the current slash query", () => {
@@ -230,7 +346,7 @@ describe("SlashCommandMenu", () => {
         runtimeState="idle"
         canSend
         canStop={false}
-        workspaceSkills={[]}
+        skills={[]}
         onChange={onChange}
         onSend={onSend}
         onStop={vi.fn()}
@@ -261,7 +377,7 @@ describe("SlashCommandMenu", () => {
         runtimeState="idle"
         canSend
         canStop={false}
-        workspaceSkills={[]}
+        skills={[]}
         onChange={onChange}
         onSend={onSend}
         onStop={vi.fn()}
@@ -292,7 +408,7 @@ describe("SlashCommandMenu", () => {
         allowBypassConversationSlashCommand={false}
         allowGoalSlashCommand={false}
         allowContextCompressionSlashCommand={false}
-        workspaceSkills={[]}
+        skills={[]}
         onChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}

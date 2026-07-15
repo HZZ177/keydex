@@ -1,4 +1,5 @@
 import type { MarkdownViewDescriptor, MarkdownViewKind } from "@/renderer/markdownRuntime/view";
+import type { SkillSource } from "@/runtime";
 
 export type PreviewContentKind = "markdown" | "html" | "diff" | "json" | "code" | "text" | "mermaid";
 
@@ -21,4 +22,15 @@ export type PreviewRequest =
       content: string;
       contentType: PreviewContentKind;
       sourcePath?: string;
+    }
+  | {
+      type: "skill-resource";
+      title: string;
+      content: string;
+      contentType: PreviewContentKind;
+      skillName: string;
+      skillSource: SkillSource;
+      resourcePath: string;
+      locator: string;
+      revision: string;
     };

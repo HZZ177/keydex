@@ -7,8 +7,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from backend.app.agent.tool_call_preset import ToolCallPreset
     from backend.app.events import EventDispatcher
-    from backend.app.keydex.runtime import KeydexWorkspaceRuntimeSnapshot
-    from backend.app.keydex.skills import SkillCatalog
+    from backend.app.keydex.runtime import (
+        KeydexEffectiveRuntimeSnapshot,
+        KeydexWorkspaceRuntimeSnapshot,
+    )
+    from backend.app.keydex.skills import EffectiveSkillCatalog, SkillCatalog
 
 trace_id_var: ContextVar[str] = ContextVar("trace_id", default="")
 session_id_var: ContextVar[str] = ContextVar("session_id", default="")
@@ -20,9 +23,9 @@ tool_call_preset_var: ContextVar[Any | None] = ContextVar("tool_call_preset", de
 skill_catalog_var: ContextVar[Any | None] = ContextVar("skill_catalog", default=None)
 keydex_snapshot_var: ContextVar[Any | None] = ContextVar("keydex_snapshot", default=None)
 event_dispatcher_var: ContextVar[Any | None] = ContextVar("event_dispatcher", default=None)
-a2ui_stream_context_var: ContextVar[dict[str, list[dict[str, Any]]]] = ContextVar(
+a2ui_stream_context_var: ContextVar[dict[str, list[dict[str, Any]]] | None] = ContextVar(
     "a2ui_stream_context",
-    default={},
+    default=None,
 )
 a2ui_resume_context_var: ContextVar[Any | None] = ContextVar(
     "a2ui_resume_context",
@@ -42,7 +45,7 @@ class RequestContextToken:
     skill_catalog: Token[Any | None] | None = None
     keydex_snapshot: Token[Any | None] | None = None
     event_dispatcher: Token[Any | None] | None = None
-    a2ui_stream_context: Token[dict[str, list[dict[str, Any]]]] | None = None
+    a2ui_stream_context: Token[dict[str, list[dict[str, Any]]] | None] | None = None
     a2ui_resume_context: Token[Any | None] | None = None
 
 
@@ -61,8 +64,8 @@ def set_request_context(
     turn_index: int | None = None,
     user_message: str | None = None,
     tool_call_preset: ToolCallPreset | None = None,
-    skill_catalog: SkillCatalog | None = None,
-    keydex_snapshot: KeydexWorkspaceRuntimeSnapshot | None = None,
+    skill_catalog: EffectiveSkillCatalog | SkillCatalog | None = None,
+    keydex_snapshot: KeydexEffectiveRuntimeSnapshot | KeydexWorkspaceRuntimeSnapshot | None = None,
     event_dispatcher: EventDispatcher | None = None,
 ) -> RequestContextToken:
     should_reset_a2ui_context = trace_id is not None or session_id is not None
@@ -171,11 +174,11 @@ def consume_tool_call_preset() -> ToolCallPreset | None:
     return value
 
 
-def get_skill_catalog() -> SkillCatalog | None:
+def get_skill_catalog() -> EffectiveSkillCatalog | SkillCatalog | None:
     return skill_catalog_var.get()
 
 
-def get_keydex_snapshot() -> KeydexWorkspaceRuntimeSnapshot | None:
+def get_keydex_snapshot() -> KeydexEffectiveRuntimeSnapshot | KeydexWorkspaceRuntimeSnapshot | None:
     return keydex_snapshot_var.get()
 
 

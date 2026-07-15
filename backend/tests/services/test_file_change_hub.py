@@ -266,6 +266,43 @@ async def test_isolates_watchers_and_events_between_roots(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_t57_workspace_tree_and_preview_watchers_keep_modify_delete_contract(
+    tmp_path: Path,
+) -> None:
+    target = _make_file(tmp_path / "docs" / "guide.md")
+    workspace_subscriber = RecordingSubscriber()
+    preview_subscriber = RecordingSubscriber()
+    hub = FileChangeHub(start_tasks=False)
+    await hub.subscribe_workspace("workspace-1", tmp_path, workspace_subscriber)
+    await hub.subscribe_local_file("preview-1", target, preview_subscriber)
+
+    await hub.handle_raw_changes(tmp_path, {(Change.modified, target)})
+    await hub.handle_raw_changes(target.parent, {(Change.modified, target)})
+    target.unlink()
+    await hub.handle_raw_changes(tmp_path, {(Change.deleted, target)})
+    await hub.handle_raw_changes(target.parent, {(Change.deleted, target)})
+
+    assert [event[0] for event in workspace_subscriber.events] == [
+        "workspaceFilesChanged",
+        "workspaceFilesChanged",
+    ]
+    assert [event[1]["sequence"] for event in workspace_subscriber.events] == [1, 2]
+    assert [event[1]["changes"] for event in workspace_subscriber.events] == [
+        [{"kind": "modified", "path": "docs/guide.md"}],
+        [{"kind": "deleted", "path": "docs/guide.md"}],
+    ]
+    assert [event[0] for event in preview_subscriber.events] == [
+        "localFileChanged",
+        "localFileChanged",
+    ]
+    assert [event[1]["changes"] for event in preview_subscriber.events] == [
+        [{"kind": "modified", "path": str(target.resolve())}],
+        [{"kind": "deleted", "path": str(target.resolve())}],
+    ]
+    await hub.close()
+
+
+@pytest.mark.asyncio
 async def test_removes_subscriber_when_event_send_fails(tmp_path: Path) -> None:
     failing = RecordingSubscriber(succeeds=False)
     healthy = RecordingSubscriber()

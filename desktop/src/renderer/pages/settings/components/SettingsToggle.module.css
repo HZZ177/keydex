@@ -1,0 +1,74 @@
+.toggle {
+  display: inline-flex;
+  width: 42px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.track {
+  display: inline-flex;
+  width: 34px;
+  height: 20px;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-3);
+  padding: 2px;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
+}
+
+.toggle:hover:not(:disabled),
+.toggle:focus-visible {
+  outline: 0;
+  background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
+}
+
+.thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 1px 4px rgb(15 23 42 / 18%);
+  transition: transform 140ms ease;
+}
+
+.track[data-checked="true"] {
+  background: var(--color-accent);
+}
+
+.track[data-checked="true"] .thumb {
+  transform: translateX(14px);
+}
+
+.toggle:hover:not(:disabled) .track,
+.toggle:focus-visible .track {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--surface-hover) 72%, transparent);
+}
+
+.toggle:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.toggle:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle,
+  .track,
+  .thumb {
+    transition: none;
+  }
+}

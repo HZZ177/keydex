@@ -79,6 +79,57 @@ describe("conversation message adapter", () => {
     );
   });
 
+  it("classifies only valid web_activity v1 payloads as native web messages", () => {
+    const webActivity = {
+      kind: "web_activity",
+      schema_version: 1,
+      activity_type: "search",
+      status: "completed",
+      query: "latest",
+      requested_urls: [],
+      sources: [
+        {
+          source_id: "src_1",
+          url: "https://example.com/a",
+          domain: "example.com",
+          title: "Example",
+          snippet: "Summary",
+          favicon: null,
+          published_at: null,
+          truncated: false,
+          provider_raw: "discarded",
+        },
+      ],
+      items: [],
+      error: null,
+      api_key: "discarded",
+    };
+    const converted = agentMessageToConversationMessage(
+      agentMessage({ role: "tool", toolName: "web_search", uiPayload: webActivity }),
+      0,
+    );
+
+    expect(converted.kind).toBe("web_activity");
+    expect(converted.payload.web_activity).toMatchObject({
+      kind: "web_activity",
+      schema_version: 1,
+      activity_type: "search",
+      sources: [{ source_id: "src_1" }],
+    });
+    expect(JSON.stringify(converted.payload.web_activity)).not.toContain("api_key");
+    expect(JSON.stringify(converted.payload.web_activity)).not.toContain("provider_raw");
+    expect(
+      conversationKindFromAgent(
+        agentMessage({
+          role: "tool",
+          toolName: "web_search",
+          uiPayload: { ...webActivity, schema_version: 2 },
+        }),
+      ),
+    ).toBe("tool");
+    expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "search_text" }))).toBe("tool");
+  });
+
   it("preserves tool payload data for shared drawer and overlay rendering", () => {
     const payload = payloadFromAgentMessage(
       agentMessage({

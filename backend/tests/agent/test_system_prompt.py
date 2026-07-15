@@ -3,7 +3,17 @@ from backend.app.agent.system_prompt import (
     DEFAULT_SYSTEM_PROMPT,
     PLAN_PROGRESS_PROMPT,
     build_file_edit_prompt_section,
+    build_web_source_prompt_section,
 )
+
+
+def test_web_source_prompt_uses_provider_neutral_controlled_markers() -> None:
+    prompt = build_web_source_prompt_section(fetch_available=True)
+
+    assert "[[source:source_id]]" in prompt
+    assert "不得猜测、改写、拼接或伪造" in prompt
+    assert "web_fetch" in prompt
+    assert "Tavily" not in prompt
 
 
 def test_default_prompt_does_not_hardcode_patch_edit_file_contract() -> None:

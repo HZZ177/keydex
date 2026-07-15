@@ -1012,14 +1012,33 @@ function fakeRuntime({
         Promise.resolve(workspace("ws-new", payload.rootPath.split(/[\\/]/).pop() || "project", payload.rootPath)),
       ),
     },
-    workspace: {
-      listSkills: vi.fn().mockResolvedValue({
-        workspace_root: "D:/repo",
-        fingerprint: "test-fingerprint",
-        loaded_at: "2026-06-25T12:00:00Z",
+    skills: {
+      listSystem: vi.fn().mockResolvedValue({
+        mode: "system_only",
+        workspace_root: null,
+        fingerprint: "system-fingerprint",
+        loaded_at: "2026-07-15T00:00:00Z",
         skills: [],
         diagnostics: [],
       }),
+      listWorkspace: vi.fn().mockResolvedValue({
+        mode: "workspace_effective",
+        workspace_root: "D:/repo",
+        fingerprint: "workspace-fingerprint",
+        loaded_at: "2026-07-15T00:00:00Z",
+        skills: [],
+        diagnostics: [],
+      }),
+      listSession: vi.fn().mockResolvedValue({
+        mode: "workspace_effective",
+        workspace_root: "D:/repo",
+        fingerprint: "session-fingerprint",
+        loaded_at: "2026-07-15T00:00:00Z",
+        skills: [],
+        diagnostics: [],
+      }),
+    },
+    workspace: {
       listDirectory: vi.fn((_scope: unknown, path = ""): Promise<WorkspaceTreeResponse> => {
         const entries = workspaceEntriesByPath[path];
         if (!entries) {

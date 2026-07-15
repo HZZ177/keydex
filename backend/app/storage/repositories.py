@@ -2864,6 +2864,185 @@ class SettingsRepository:
         return _json_loads(row["value_json"], default) if row else default
 
 
+class WebSettingsDataError(ValueError):
+    """Raised when persisted Web settings cannot be decoded safely."""
+
+    def __init__(self, *, provider_id: str, field: str) -> None:
+        self.provider_id = provider_id
+        self.field = field
+        super().__init__(f"Web Provider 配置损坏: provider={provider_id}, field={field}")
+
+
+@dataclass(frozen=True, slots=True)
+class WebSettingsRecord:
+    enabled: bool
+    active_provider_id: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class WebProviderConfigRecord:
+    provider_id: str
+    config: dict[str, Any]
+    secrets: dict[str, Any]
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class WebProviderConfigWrite:
+    config: dict[str, Any] = field(default_factory=dict)
+    secrets: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class WebSettingsSnapshot:
+    settings: WebSettingsRecord
+    providers: tuple[WebProviderConfigRecord, ...]
+
+
+class WebSettingsRepository:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def get_settings(self) -> WebSettingsRecord:
+        with self.db.connect() as conn:
+            row = conn.execute("select * from web_settings where id = 1").fetchone()
+        if row is None:
+            raise RuntimeError("Web 设置尚未初始化")
+        return self._settings_from_row(row)
+
+    def get_provider(self, provider_id: str) -> WebProviderConfigRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "select * from web_provider_configs where provider_id = ?",
+                (provider_id,),
+            ).fetchone()
+        return self._provider_from_row(row) if row else None
+
+    def list_providers(self) -> list[WebProviderConfigRecord]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "select * from web_provider_configs order by provider_id"
+            ).fetchall()
+        return [self._provider_from_row(row) for row in rows]
+
+    def get_snapshot(self) -> WebSettingsSnapshot:
+        return WebSettingsSnapshot(
+            settings=self.get_settings(),
+            providers=tuple(self.list_providers()),
+        )
+
+    def upsert_provider(
+        self,
+        provider_id: str,
+        *,
+        config: dict[str, Any],
+        secrets: dict[str, Any],
+    ) -> WebProviderConfigRecord:
+        provider_id = self._normalize_provider_id(provider_id)
+        with self.db.transaction(immediate=True) as conn:
+            self._upsert_provider(
+                conn,
+                provider_id=provider_id,
+                config=config,
+                secrets=secrets,
+                now=to_iso_z(utc_now()),
+            )
+        provider = self.get_provider(provider_id)
+        if provider is None:  # pragma: no cover - guarded by the upsert above
+            raise RuntimeError("Web Provider 配置保存失败")
+        return provider
+
+    def save(
+        self,
+        *,
+        enabled: bool,
+        active_provider_id: str,
+        providers: dict[str, WebProviderConfigWrite],
+    ) -> WebSettingsSnapshot:
+        active_provider_id = self._normalize_provider_id(active_provider_id)
+        now = to_iso_z(utc_now())
+        with self.db.transaction(immediate=True) as conn:
+            for provider_id, write in providers.items():
+                self._upsert_provider(
+                    conn,
+                    provider_id=self._normalize_provider_id(provider_id),
+                    config=write.config,
+                    secrets=write.secrets,
+                    now=now,
+                )
+            conn.execute(
+                """
+                update web_settings
+                set enabled = ?, active_provider_id = ?, updated_at = ?
+                where id = 1
+                """,
+                (int(enabled), active_provider_id, now),
+            )
+        return self.get_snapshot()
+
+    @staticmethod
+    def _normalize_provider_id(provider_id: str) -> str:
+        normalized = provider_id.strip()
+        if not normalized:
+            raise ValueError("provider_id 不能为空")
+        return normalized
+
+    @staticmethod
+    def _upsert_provider(
+        conn: sqlite3.Connection,
+        *,
+        provider_id: str,
+        config: dict[str, Any],
+        secrets: dict[str, Any],
+        now: str,
+    ) -> None:
+        config_json = _json_dumps(config)
+        secrets_json = _json_dumps(secrets)
+        conn.execute(
+            """
+            insert into web_provider_configs (
+              provider_id, config_json, secrets_json, created_at, updated_at
+            ) values (?, ?, ?, ?, ?)
+            on conflict(provider_id) do update set
+              config_json = excluded.config_json,
+              secrets_json = excluded.secrets_json,
+              updated_at = excluded.updated_at
+            """,
+            (provider_id, config_json, secrets_json, now, now),
+        )
+
+    @staticmethod
+    def _settings_from_row(row: sqlite3.Row) -> WebSettingsRecord:
+        return WebSettingsRecord(
+            enabled=bool(row["enabled"]),
+            active_provider_id=row["active_provider_id"],
+            updated_at=row["updated_at"],
+        )
+
+    @classmethod
+    def _provider_from_row(cls, row: sqlite3.Row) -> WebProviderConfigRecord:
+        provider_id = row["provider_id"]
+        return WebProviderConfigRecord(
+            provider_id=provider_id,
+            config=cls._load_mapping(row["config_json"], provider_id, "config_json"),
+            secrets=cls._load_mapping(row["secrets_json"], provider_id, "secrets_json"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _load_mapping(raw: str, provider_id: str, field_name: str) -> dict[str, Any]:
+        try:
+            value = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise WebSettingsDataError(provider_id=provider_id, field=field_name) from exc
+        if not isinstance(value, dict):
+            raise WebSettingsDataError(provider_id=provider_id, field=field_name)
+        return value
+
+
 class ModelProvidersRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -7848,6 +8027,7 @@ class StorageRepositories:
         self.mcp_trust_rules = McpTrustRulesRepository(db)
         self.mcp_audit_log = McpAuditLogRepository(db)
         self.settings = SettingsRepository(db)
+        self.web_settings = WebSettingsRepository(db)
         self.model_providers = ModelProvidersRepository(db)
         self.lifecycle_operations = LifecycleOperationsRepository(db)
         self.workspaces = WorkspacesRepository(db)

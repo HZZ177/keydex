@@ -670,7 +670,7 @@ export function FilePreview({
       hasLoadedRef.current = immediatePreviewContent(request) !== null;
     }
 
-    if (request.type === "content") {
+    if (request.type === "content" || request.type === "skill-resource") {
       const nextContent = request.content || "";
       setPersistedContent(nextContent);
       draftsRef.current.delete(requestIdentity);
@@ -1989,11 +1989,13 @@ export function FilePreview({
       data-chrome={chrome}
       data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
       data-file-preview-root="true"
+      data-preview-source={request.type}
+      data-skill-source={request.type === "skill-resource" ? request.skillSource : undefined}
       data-file-preview-auto-save-state={editable ? autoSaveState : undefined}
       data-file-preview-reloading={reloading ? "true" : "false"}
       data-file-preview-unavailable={fileUnavailable ? "true" : "false"}
       data-file-preview-new-annotations-enabled={annotationAvailable ? "true" : "false"}
-      data-file-preview-file-allows-annotations={fileUnavailable ? "false" : "true"}
+      data-file-preview-file-allows-annotations={request.type === "skill-resource" || fileUnavailable ? "false" : "true"}
       data-document-revision={documentRevision ?? undefined}
       data-file-markdown-runtime-mode={kind === "markdown" ? "runtime" : undefined}
       data-file-markdown-runtime-error={markdownRuntimeError ? "true" : undefined}
@@ -5318,7 +5320,7 @@ function DiffPreview({ diff }: { diff: string }) {
 }
 
 function immediatePreviewContent(request: FilePreviewRequest): string | null {
-  if (request.type === "content") {
+  if (request.type === "content" || request.type === "skill-resource") {
     return request.content || "";
   }
   if (request.type === "diff") {
@@ -5339,7 +5341,7 @@ function defaultViewMode(request: FilePreviewRequest): "preview" | "source" {
 }
 
 function detectPreviewKind(request: FilePreviewRequest): PreviewKind {
-  if (request.type === "content") {
+  if (request.type === "content" || request.type === "skill-resource") {
     return contentKindToPreviewKind(request.contentType);
   }
   if (request.type === "diff") {
@@ -5409,10 +5411,18 @@ function sourceLanguage(request: FilePreviewRequest, kind: PreviewKind): string 
   if (request.type === "content") {
     return kind === "mermaid" ? "mermaid" : kind;
   }
+  if (request.type === "skill-resource") {
+    const ext = request.resourcePath.split(".").pop()?.toLowerCase() ?? "";
+    return languageFromExtension(ext, kind);
+  }
   if (request.type === "diff") {
     return "diff";
   }
   const ext = isPathPreviewRequest(request) ? request.path.split(".").pop()?.toLowerCase() ?? "" : "";
+  return languageFromExtension(ext, kind);
+}
+
+function languageFromExtension(ext: string, kind: PreviewKind): string {
   const languageByExtension: Record<string, string> = {
     cjs: "javascript",
     css: "css",
@@ -5506,6 +5516,15 @@ function previewRequestIdentity(
   if (request.type === "diff") {
     return `diff:${request.path}:${stableMarkdownIdentityHash(request.diff)}`;
   }
+  if (request.type === "skill-resource") {
+    return [
+      "skill-resource",
+      request.skillSource,
+      request.skillName,
+      request.resourcePath,
+      request.revision,
+    ].join(":");
+  }
   return [
     "content",
     request.title,
@@ -5520,13 +5539,19 @@ function normalizePreviewEventPath(path: string): string {
 }
 
 function previewTitle(request: FilePreviewRequest): string {
-  if (request.type === "content") {
+  if (request.type === "content" || request.type === "skill-resource") {
     return request.title;
   }
   return fileName(request.path);
 }
 
 function previewSourceLabel(request: FilePreviewRequest): string {
+  if (request.type === "skill-resource") {
+    const sourceLabel = request.skillSource === "builtin"
+      ? "内置"
+      : request.skillSource === "system" ? "系统级" : "项目级";
+    return `${sourceLabel} Skill · ${request.skillName}/${request.resourcePath}`;
+  }
   if (request.type === "content") {
     return request.sourcePath ?? "消息内容";
   }

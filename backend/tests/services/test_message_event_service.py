@@ -735,13 +735,13 @@ def test_message_event_service_deduplicates_context_items_across_event_sources(t
         "metadata": {"id": "file:readme", "kind": "file", "path": "README.md"},
     }
     explicit_skill = {
-        "id": "skill:test-skill",
+        "id": "skill:workspace:test-skill",
         "type": "skill",
         "label": "/test-skill",
         "content": "Test skill",
         "source": "workspace",
         "skill_name": "test-skill",
-        "metadata": {"id": "skill:test-skill", "kind": "skill"},
+        "metadata": {"id": "skill:workspace:test-skill", "kind": "skill"},
     }
 
     _append(
@@ -781,8 +781,9 @@ def test_message_event_service_deduplicates_context_items_across_event_sources(t
         {
             "source": "skill_activation",
             "skill_name": "test-skill",
+            "skill_source": "workspace",
             "label": "/test-skill",
-            "metadata": {"id": "skill:test-skill", "kind": "skill"},
+            "metadata": {"id": "skill:workspace:test-skill", "kind": "skill"},
         },
     )
     _append(
@@ -790,12 +791,12 @@ def test_message_event_service_deduplicates_context_items_across_event_sources(t
         "evt_context_skill",
         "system_message",
         {
-            "id": "skill:test-skill",
+            "id": "skill:workspace:test-skill",
             "source": "message_context_item",
             "context_type": "skill",
             "label": "/test-skill",
             "skill_name": "test-skill",
-            "metadata": {"id": "skill:test-skill", "kind": "skill"},
+            "metadata": {"id": "skill:workspace:test-skill", "kind": "skill"},
         },
     )
     _append(
@@ -813,11 +814,15 @@ def test_message_event_service_deduplicates_context_items_across_event_sources(t
 
     assert len(messages) == 1
     assert messages[0]["content"] == "检查上下文"
-    assert [item["id"] for item in messages[0]["contextItems"]] == [
-        "skill:test-skill",
+    assert {item["id"] for item in messages[0]["contextItems"]} == {
+        "skill:workspace:test-skill",
         "file:readme",
-    ]
-    assert messages[0]["contextItems"][1]["content"] == "工作区文件：README.md"
+    }
+    assert len(messages[0]["contextItems"]) == 2
+    file_item = next(
+        item for item in messages[0]["contextItems"] if item["id"] == "file:readme"
+    )
+    assert file_item["content"] == "用户通过 @ 引用了工作区文件：README.md"
 
 
 def test_message_event_service_restores_context_items_from_user_message_payload(tmp_path) -> None:

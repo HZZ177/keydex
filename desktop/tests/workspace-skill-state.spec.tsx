@@ -1,110 +1,128 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { useWorkspaceSkills } from "@/renderer/hooks/useWorkspaceSkills";
-import type { RuntimeBridge, WorkspaceSkillsResponse } from "@/runtime";
+import {
+  matchesEffectiveSkillScope,
+  skillSelectionStatus,
+  useEffectiveSkills,
+} from "@/renderer/hooks/useEffectiveSkills";
+import type { EffectiveSkillsResponse, RuntimeBridge, SkillSummary } from "@/runtime";
 
-describe("useWorkspaceSkills", () => {
-  it("stays idle when workspace skills are disabled for the current session", () => {
-    const listSkills = vi.fn();
-    const runtime = runtimeWithListSkills(listSkills);
-
+describe("useEffectiveSkills", () => {
+  it("stays idle while disabled", () => {
+    const runtime = runtimeWithSkills();
     const { result } = renderHook(() =>
-      useWorkspaceSkills({
-        runtime,
-        scope: { sessionId: "ses-1" },
-        enabled: false,
-      }),
+      useEffectiveSkills({ runtime, scope: { type: "system" }, enabled: false }),
     );
 
     expect(result.current.state.status).toBe("idle");
-    expect(result.current.state.skills).toEqual([]);
-    expect(listSkills).not.toHaveBeenCalled();
+    expect(runtime.skills.listSystem).not.toHaveBeenCalled();
   });
 
-  it("loads workspace skills for a workspace session", async () => {
-    const response = skillsResponse({
-      fingerprint: "fp-1",
-      skills: [{ name: "dev-plan", description: "Plan work" }],
-    });
-    const listSkills = vi.fn().mockResolvedValue(response);
-    const runtime = runtimeWithListSkills(listSkills);
-
-    const { result } = renderHook(() =>
-      useWorkspaceSkills({
-        runtime,
-        scope: { sessionId: "ses-1" },
-        enabled: true,
-      }),
+  it("loads system, workspace and session scopes through one runtime", async () => {
+    const runtime = runtimeWithSkills();
+    const { result, rerender } = renderHook(
+      ({ scope }) => useEffectiveSkills({ runtime, scope, enabled: true }),
+      { initialProps: { scope: { type: "system" } as constScope } },
+    );
+    await waitFor(() => expect(result.current.state.status).toBe("ready"));
+    expect(runtime.skills.listSystem).toHaveBeenCalledWith(
+      expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
     );
 
-    await waitFor(() => expect(result.current.state.status).toBe("ready"));
+    rerender({ scope: { type: "workspace", workspaceId: "ws-1" } });
+    await waitFor(() => expect(runtime.skills.listWorkspace).toHaveBeenCalled());
+    expect(runtime.skills.listWorkspace).toHaveBeenCalledWith(
+      "ws-1",
+      expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+    );
 
-    expect(listSkills).toHaveBeenCalledWith({ sessionId: "ses-1" }, { forceReload: false });
-    expect(result.current.state.skills).toEqual(response.skills);
-    expect(result.current.state.fingerprint).toBe("fp-1");
-    expect(result.current.state.loadedAt).toBe(Date.parse(response.loaded_at));
+    rerender({ scope: { type: "session", sessionId: "ses-1" } });
+    await waitFor(() => expect(runtime.skills.listSession).toHaveBeenCalled());
+    expect(runtime.skills.listSession).toHaveBeenCalledWith(
+      "ses-1",
+      expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+    );
   });
 
-  it("reloads when the session id changes", async () => {
-    const listSkills = vi
-      .fn()
-      .mockResolvedValueOnce(skillsResponse({ fingerprint: "fp-1" }))
-      .mockResolvedValueOnce(skillsResponse({ fingerprint: "fp-2" }));
-    const runtime = runtimeWithListSkills(listSkills);
-
+  it("aborts and ignores a late response after a fast scope switch", async () => {
+    let resolveFirst!: (value: EffectiveSkillsResponse) => void;
+    let firstSignal: AbortSignal | undefined;
+    const first = new Promise<EffectiveSkillsResponse>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const runtime = runtimeWithSkills({
+      listSession: vi.fn((_id, options) => {
+        firstSignal = options?.signal;
+        return first;
+      }),
+      listWorkspace: vi.fn().mockResolvedValue(response("workspace-new", [skill("new", "workspace")])),
+    });
     const { result, rerender } = renderHook(
-      ({ sessionId }) =>
-        useWorkspaceSkills({
+      ({ scope }) => useEffectiveSkills({ runtime, scope, enabled: true }),
+      { initialProps: { scope: { type: "session", sessionId: "ses-old" } as constScope } },
+    );
+    await waitFor(() => expect(runtime.skills.listSession).toHaveBeenCalled());
+
+    rerender({ scope: { type: "workspace", workspaceId: "ws-new" } });
+    await waitFor(() => expect(result.current.state.fingerprint).toBe("workspace-new"));
+    expect(firstSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      resolveFirst(response("late-old", [skill("old", "system")]));
+      await first;
+    });
+    expect(result.current.state.fingerprint).toBe("workspace-new");
+    expect(result.current.state.skills.map((item) => item.name)).toEqual(["new"]);
+  });
+
+  it("reloads when the workspace root changes without changing the workspace id", async () => {
+    const runtime = runtimeWithSkills();
+    const { rerender } = renderHook(
+      ({ workspaceRoot }) =>
+        useEffectiveSkills({
           runtime,
-          scope: { sessionId },
+          scope: { type: "workspace", workspaceId: "ws-1", workspaceRoot },
           enabled: true,
         }),
-      { initialProps: { sessionId: "ses-1" } },
+      { initialProps: { workspaceRoot: "D:/repo-a" } },
+    );
+    await waitFor(() => expect(runtime.skills.listWorkspace).toHaveBeenCalledTimes(1));
+
+    rerender({ workspaceRoot: "D:/repo-b" });
+
+    await waitFor(() => expect(runtime.skills.listWorkspace).toHaveBeenCalledTimes(2));
+  });
+
+  it("atomically replaces winners instead of merging layer arrays", async () => {
+    const listSystem = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response("fp-1", [skill("shared", "system"), skill("global", "system")]),
+      )
+      .mockResolvedValueOnce(response("fp-2", [skill("shared", "workspace")]));
+    const runtime = runtimeWithSkills({ listSystem });
+    const { result } = renderHook(() =>
+      useEffectiveSkills({ runtime, scope: { type: "system" }, enabled: true }),
     );
     await waitFor(() => expect(result.current.state.fingerprint).toBe("fp-1"));
 
-    rerender({ sessionId: "ses-2" });
+    await act(async () => {
+      await result.current.refresh({ forceReload: true });
+    });
 
-    await waitFor(() => expect(result.current.state.fingerprint).toBe("fp-2"));
-    expect(listSkills).toHaveBeenNthCalledWith(2, { sessionId: "ses-2" }, { forceReload: false });
+    expect(result.current.state.fingerprint).toBe("fp-2");
+    expect(result.current.state.skills).toEqual([skill("shared", "workspace")]);
   });
 
-  it("loads workspace skills for a workspace id before a session exists", async () => {
-    const response = skillsResponse({
-      fingerprint: "fp-workspace",
-      skills: [{ name: "dev-plan", description: "Plan work" }],
-    });
-    const listSkills = vi.fn().mockResolvedValue(response);
-    const runtime = runtimeWithListSkills(listSkills);
-
+  it("preserves the last complete response when a refresh fails", async () => {
+    const listSystem = vi
+      .fn()
+      .mockResolvedValueOnce(response("fp-1", [skill("review", "system")]))
+      .mockRejectedValueOnce(new Error("offline"));
+    const runtime = runtimeWithSkills({ listSystem });
     const { result } = renderHook(() =>
-      useWorkspaceSkills({
-        runtime,
-        scope: { workspaceId: "ws-1" },
-        enabled: true,
-      }),
-    );
-
-    await waitFor(() => expect(result.current.state.status).toBe("ready"));
-
-    expect(listSkills).toHaveBeenCalledWith({ workspaceId: "ws-1" }, { forceReload: false });
-    expect(result.current.state.skills).toEqual(response.skills);
-  });
-
-  it("force reload preserves old skills when the refresh fails", async () => {
-    const initial = skillsResponse({
-      fingerprint: "fp-1",
-      skills: [{ name: "dev-plan", description: "Plan work" }],
-    });
-    const listSkills = vi.fn().mockResolvedValueOnce(initial).mockRejectedValueOnce(new Error("gone"));
-    const runtime = runtimeWithListSkills(listSkills);
-    const { result } = renderHook(() =>
-      useWorkspaceSkills({
-        runtime,
-        scope: { sessionId: "ses-1" },
-        enabled: true,
-      }),
+      useEffectiveSkills({ runtime, scope: { type: "system" }, enabled: true }),
     );
     await waitFor(() => expect(result.current.state.status).toBe("ready"));
 
@@ -112,38 +130,115 @@ describe("useWorkspaceSkills", () => {
       await result.current.refresh({ forceReload: true });
     });
 
-    expect(listSkills).toHaveBeenNthCalledWith(2, { sessionId: "ses-1" }, { forceReload: true });
     expect(result.current.state.status).toBe("error");
-    expect(result.current.state.skills).toEqual(initial.skills);
-    expect(result.current.state.error).toBe("gone");
+    expect(result.current.state.fingerprint).toBe("fp-1");
+    expect(result.current.state.skills).toEqual([skill("review", "system")]);
+  });
+
+  it("refreshes only matching watcher events and ignores duplicate fingerprints", async () => {
+    const listSession = vi
+      .fn()
+      .mockResolvedValueOnce(response("fp-1"))
+      .mockResolvedValue(response("fp-2"));
+    const runtime = runtimeWithSkills({ listSession });
+    const { result } = renderHook(() =>
+      useEffectiveSkills({
+        runtime,
+        scope: { type: "session", sessionId: "ses-1" },
+        enabled: true,
+      }),
+    );
+    await waitFor(() => expect(result.current.state.fingerprint).toBe("fp-1"));
+
+    act(() => {
+      expect(result.current.handleSkillsChanged({
+        session_id: "ses-other",
+        fingerprint: "fp-other",
+      })).toBe(false);
+      expect(result.current.handleSkillsChanged({
+        session_id: "ses-1",
+        fingerprint: "fp-2",
+      })).toBe(true);
+      expect(result.current.handleSkillsChanged({
+        session_id: "ses-1",
+        fingerprint: "fp-2",
+      })).toBe(false);
+    });
+    await waitFor(() => expect(result.current.state.fingerprint).toBe("fp-2"));
+    expect(listSession).toHaveBeenCalledTimes(2);
+    expect(listSession).toHaveBeenLastCalledWith(
+      "ses-1",
+      expect.objectContaining({ forceReload: true }),
+    );
   });
 });
 
-function runtimeWithListSkills(listSkills: ReturnType<typeof vi.fn>) {
+describe("effective skill helpers", () => {
+  it("matches system and workspace watcher scopes without cross-refresh", () => {
+    expect(matchesEffectiveSkillScope(
+      { type: "system" },
+      { session_scope: "system", workspace_root: null },
+    )).toBe(true);
+    expect(matchesEffectiveSkillScope(
+      { type: "workspace", workspaceId: "ws-1", workspaceRoot: "D:/Repo" },
+      { session_scope: "workspace", workspace_root: "d:\\repo" },
+    )).toBe(true);
+    expect(matchesEffectiveSkillScope(
+      { type: "workspace", workspaceId: "ws-1", workspaceRoot: "D:/Repo" },
+      { session_scope: "workspace", workspace_root: "D:/Other" },
+    )).toBe(false);
+  });
+
+  it("validates selected skills by both name and source", () => {
+    const selected = skill("shared", "system");
+    expect(skillSelectionStatus(selected, [selected])).toBe("valid");
+    expect(skillSelectionStatus(selected, [skill("shared", "workspace")])).toBe(
+      "source_changed",
+    );
+    expect(skillSelectionStatus(selected, [])).toBe("missing");
+  });
+});
+
+type constScope =
+  | { readonly type: "system" }
+  | { readonly type: "workspace"; readonly workspaceId: string }
+  | { readonly type: "session"; readonly sessionId: string };
+
+function runtimeWithSkills(overrides: {
+  listSystem?: ReturnType<typeof vi.fn>;
+  listWorkspace?: ReturnType<typeof vi.fn>;
+  listSession?: ReturnType<typeof vi.fn>;
+} = {}) {
+  const defaultResponse = response("fp");
   return {
-    workspace: {
-      listSkills,
+    skills: {
+      listSystem: overrides.listSystem ?? vi.fn().mockResolvedValue(defaultResponse),
+      listWorkspace: overrides.listWorkspace ?? vi.fn().mockResolvedValue(defaultResponse),
+      listSession: overrides.listSession ?? vi.fn().mockResolvedValue(defaultResponse),
     },
-  } as unknown as Pick<RuntimeBridge, "workspace">;
+  } as unknown as Pick<RuntimeBridge, "skills">;
 }
 
-function skillsResponse({
-  fingerprint = "fp",
-  skills = [],
-}: {
-  fingerprint?: string;
-  skills?: Array<{ name: string; description: string }>;
-} = {}): WorkspaceSkillsResponse {
+function response(
+  fingerprint: string,
+  skills: SkillSummary[] = [],
+): EffectiveSkillsResponse {
   return {
+    mode: "workspace_effective",
     workspace_root: "D:/repo",
     fingerprint,
-    loaded_at: "2026-06-25T12:00:00Z",
-    skills: skills.map((skill) => ({
-      ...skill,
-      source: "workspace",
-      label: `/${skill.name}`,
-      locator: `.keydex/skills/${skill.name}/SKILL.md`,
-    })),
+    loaded_at: "2026-07-15T00:00:00Z",
+    skills,
     diagnostics: [],
+  };
+}
+
+function skill(name: string, source: SkillSummary["source"]): SkillSummary {
+  return {
+    name,
+    source,
+    description: `${source} ${name}`,
+    label: `/${name}`,
+    locator: `.keydex/skills/${name}/SKILL.md`,
   };
 }

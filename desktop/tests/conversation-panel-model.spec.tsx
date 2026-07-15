@@ -69,18 +69,28 @@ describe("useConversationPanelModel", () => {
 
     expect(result.current.previewRenderContext.sessionId).toBe("ses-1");
     expect(result.current.previewRenderContext.workspaceId).toBe("ws-1");
-    await waitFor(() => expect(runtime.workspace.listSkills).toHaveBeenCalled());
+    await waitFor(() => expect(runtime.skills.listSession).toHaveBeenCalled());
   });
 
-  it("keeps pure chat and unavailable workspace sessions out of workspace file search", () => {
+  it("keeps pure chat and unavailable workspace sessions out of workspace file search without disabling session skills", async () => {
     const runtime = fakeRuntime();
     const pureChat = renderHook(
-      () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller: fakeController() }),
+      () => useConversationPanelModel({
+        runtime,
+        sessionId: "ses-1",
+        controller: fakeController({ session: agentSession({ session_type: "chat" }) }),
+      }),
       { wrapper: Providers },
     );
     expect(pureChat.result.current.workspaceAvailable).toBe(false);
     expect(pureChat.result.current.searchWorkspace).toBeUndefined();
     expect(pureChat.result.current.listWorkspaceDirectory).toBeUndefined();
+    await waitFor(() => {
+      expect(runtime.skills.listSession).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+      );
+    });
 
     const missingWorkspace = renderHook(
       () =>
@@ -101,6 +111,13 @@ describe("useConversationPanelModel", () => {
     expect(missingWorkspace.result.current.workspaceAvailable).toBe(false);
     expect(missingWorkspace.result.current.workspaceUnavailable).toBe(true);
     expect(missingWorkspace.result.current.searchWorkspace).toBeUndefined();
+    expect(missingWorkspace.result.current.listWorkspaceDirectory).toBeUndefined();
+    await waitFor(() => {
+      expect(runtime.skills.listSession).toHaveBeenCalledWith(
+        "ses-2",
+        expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+      );
+    });
     expect(runtime.workspace.search).not.toHaveBeenCalled();
   });
 
@@ -324,7 +341,10 @@ describe("useConversationPanelModel", () => {
 
     expect(setSelectedSkill).toHaveBeenCalledWith(null);
     await waitFor(() => {
-      expect(runtime.workspace.listSkills).toHaveBeenCalledWith({ sessionId: "ses-1" }, { forceReload: true });
+      expect(runtime.skills.listSession).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: true, signal: expect.any(AbortSignal) }),
+      );
     });
   });
 
@@ -609,18 +629,21 @@ function fakeRuntime(): RuntimeBridge {
       }),
       getSession: vi.fn().mockResolvedValue(agentSession()),
     },
-    workspace: {
-      search: vi.fn().mockResolvedValue([]),
-      listDirectory: vi.fn().mockResolvedValue({
-        root: "/",
-        entries: [{ path: "README.md", name: "README.md", type: "file" }],
-      }),
-      listSkills: vi.fn().mockResolvedValue({
+    skills: {
+      listSession: vi.fn().mockResolvedValue({
+        mode: "workspace_effective",
         workspace_root: "D:/repo/keydex",
         skills: [],
         diagnostics: [],
         fingerprint: "empty",
         loaded_at: "2026-06-27T00:00:00Z",
+      }),
+    },
+    workspace: {
+      search: vi.fn().mockResolvedValue([]),
+      listDirectory: vi.fn().mockResolvedValue({
+        root: "/",
+        entries: [{ path: "README.md", name: "README.md", type: "file" }],
       }),
     },
   } as unknown as RuntimeBridge;

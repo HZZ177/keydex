@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { RuntimeBridge, WorkspaceEntry, WorkspaceSearchResult, WorkspaceSkillSummary } from "@/runtime";
+import type { RuntimeBridge, SkillSummary, WorkspaceEntry, WorkspaceSearchResult } from "@/runtime";
+import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
 import type {
   SessionReverseDecision,
   SessionReverseMode,
@@ -15,7 +16,10 @@ import {
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
-import { useWorkspaceSkills } from "@/renderer/hooks/useWorkspaceSkills";
+import {
+  skillSelectionStatus,
+  useEffectiveSkills,
+} from "@/renderer/hooks/useEffectiveSkills";
 import type {
   AgentSessionController,
   AgentSessionControllerComposerDraft,
@@ -131,13 +135,14 @@ export function useConversationPanelModel({
     new Map<string, Promise<Partial<ConversationMessage>> | Partial<ConversationMessage>>(),
   );
   const a2uiMessageCacheRef = useRef(new Map<string, A2UIConversationMessageCacheEntry>());
+  const previewContext = usePreview();
   const {
     openDirectoryPanel,
     openFilePanel,
     openPreview: openPreviewRequest,
     openReviewPanel,
     setPreviewHostContext,
-  } = usePreview();
+  } = previewContext;
   const notifications = useNotifications();
   const runtimeConnection = useOptionalRuntimeConnection();
   const backendReady = runtimeConnection?.ready ?? true;
@@ -154,16 +159,20 @@ export function useConversationPanelModel({
   const workspaceAvailable = Boolean(session?.session_type === "workspace" && session.workspace && !workspaceUnavailable);
   const workspaceLabel = session?.workspace?.root_path ?? session?.workspace?.name ?? session?.cwd ?? undefined;
   const workspaceId = workspaceAvailable ? (session?.workspace?.id ?? session?.workspace_id ?? undefined) : undefined;
-  const workspaceSkillScope = useMemo(
-    () => (workspaceAvailable ? { sessionId } : null),
-    [sessionId, workspaceAvailable],
+  const effectiveSkillScope = useMemo(
+    () => (session ? { type: "session" as const, sessionId } : null),
+    [session, sessionId],
   );
-  const { state: workspaceSkillsState, refresh: refreshWorkspaceSkills } = useWorkspaceSkills({
+  const {
+    state: effectiveSkillsState,
+    refresh: refreshEffectiveSkills,
+    handleSkillsChanged,
+  } = useEffectiveSkills({
     runtime,
-    scope: workspaceSkillScope,
-    enabled: backendReady && workspaceAvailable,
+    scope: effectiveSkillScope,
+    enabled: backendReady && Boolean(session),
   });
-  const workspaceSkills = workspaceAvailable ? workspaceSkillsState.skills : [];
+  const effectiveSkills = effectiveSkillsState.skills;
 
   useEffect(() => {
     if (contextWindowSessionIdRef.current !== sessionId) {
@@ -247,7 +256,7 @@ export function useConversationPanelModel({
       }
       if (code === "skill_not_found") {
         controller.setSelectedSkill(null);
-        void refreshWorkspaceSkills({ forceReload: true });
+        void refreshEffectiveSkills({ forceReload: true });
         notifications.warning("Skill 不存在或已被删除，已刷新 Skill 列表");
         return true;
       }
@@ -256,19 +265,25 @@ export function useConversationPanelModel({
         notifications.warning("Skill 选择参数无效，请重新选择 Skill");
         return true;
       }
-      if (code === "skill_source_unsupported") {
+      if (code === "skill_source_stale") {
         controller.setSelectedSkill(null);
-        notifications.warning("系统级 Skill 暂未启用");
+        void refreshEffectiveSkills({ forceReload: true });
+        notifications.warning("Skill 的有效来源已变化，已刷新列表，请重新选择");
         return true;
       }
-      if (code === "skill_session_unsupported") {
+      if (code === "skill_layer_unavailable" || code === "skill_shadow_barrier") {
         controller.setSelectedSkill(null);
-        notifications.warning("请切换到工作空间会话后再使用 Skill");
+        void refreshEffectiveSkills({ forceReload: true });
+        notifications.warning(
+          session?.session_type === "chat"
+            ? "系统级 Skill 配置不可用，请修复后重新选择"
+            : "当前项目 Skill 配置不可用，请修复后重新选择",
+        );
         return true;
       }
       return false;
     },
-    [controller, notifications, refreshWorkspaceSkills],
+    [controller, notifications, refreshEffectiveSkills, session?.session_type],
   );
 
   const handleRuntimeEventSideEffects = useCallback(
@@ -287,8 +302,8 @@ export function useConversationPanelModel({
           }
         }
       }
-      if (event.action === "workspaceSkillsChanged") {
-        void refreshWorkspaceSkills({ forceReload: true });
+      if (event.action === "keydexSkillsChanged") {
+        handleSkillsChanged(event.data);
       }
       if (event.action === "error") {
         handleRuntimeError(event.data as AgentErrorData);
@@ -305,7 +320,7 @@ export function useConversationPanelModel({
         }
       }
     },
-    [handleRuntimeError, notifications, refreshWorkspaceSkills, sessionId],
+    [handleRuntimeError, handleSkillsChanged, notifications, sessionId],
   );
 
   useEffect(() => {
@@ -322,19 +337,24 @@ export function useConversationPanelModel({
     if (!controller.selectedSkill) {
       return;
     }
-    if (!workspaceAvailable) {
+    if (!effectiveSkillScope) {
       controller.setSelectedSkill(null);
       return;
     }
-    if (
-      workspaceSkillsState.status === "ready" &&
-      !workspaceSkills.some(
-        (skill) => skill.name === controller.selectedSkill?.name && skill.source === controller.selectedSkill?.source,
-      )
-    ) {
-      controller.setSelectedSkill(null);
+    if (effectiveSkillsState.status !== "ready") {
+      return;
     }
-  }, [controller, validateSelectedSkill, workspaceAvailable, workspaceSkills, workspaceSkillsState.status]);
+    const status = skillSelectionStatus(controller.selectedSkill, effectiveSkills);
+    if (status === "valid") {
+      return;
+    }
+    controller.setSelectedSkill(null);
+    notifications.warning(
+      status === "source_changed"
+        ? "同名 Skill 的有效来源已变化，请重新选择"
+        : "所选 Skill 已不可用，请重新选择",
+    );
+  }, [controller, effectiveSkillScope, effectiveSkills, effectiveSkillsState.status, notifications, validateSelectedSkill]);
 
   useEffect(() => {
     return () => {
@@ -401,6 +421,26 @@ export function useConversationPanelModel({
       openFilePanel(file.path, previewRenderContext, selectedFileRevealTarget(file));
     },
     [openDirectoryPanel, openFilePanel, previewRenderContext, workspaceAvailable],
+  );
+  const openSkillResource = useCallback(
+    async (skill: SkillSummary, resourcePath = "SKILL.md") => {
+      try {
+        await openSkillResourcePreview({
+          preview: previewContext,
+          renderContext: previewRenderContext,
+          runtime,
+          scope: messageWorkspaceScope,
+          target: {
+            skillName: skill.name,
+            source: skill.source,
+            resourcePath,
+          },
+        });
+      } catch (reason) {
+        notifications.error(skillResourcePreviewError(reason));
+      }
+    },
+    [messageWorkspaceScope, notifications, previewContext, previewRenderContext, runtime],
   );
 
   useEffect(() => {
@@ -891,8 +931,9 @@ export function useConversationPanelModel({
     workspaceAvailable,
     workspaceUnavailable,
     workspaceLabel,
-    workspaceSkills,
-    refreshWorkspaceSkills,
+    effectiveSkills,
+    effectiveSkillDiagnostics: effectiveSkillsState.diagnostics,
+    refreshEffectiveSkills,
     searchWorkspace,
     listWorkspaceDirectory,
     showScrollToBottom,
@@ -906,6 +947,7 @@ export function useConversationPanelModel({
     previewRenderContext,
     openPreview,
     openFileReference,
+    openSkillResource,
     openFileChangePreview,
     loadToolDetails,
     contextWindowUsage,
@@ -1135,7 +1177,7 @@ function composerDraftContextFromItems(
 ): Pick<AgentSessionControllerComposerDraft, "files" | "quotes" | "selectedSkill"> {
   const files: SelectedFile[] = [];
   const quotes: SelectedQuote[] = [];
-  let selectedSkill: WorkspaceSkillSummary | null = null;
+  let selectedSkill: SkillSummary | null = null;
 
   items.forEach((item, index) => {
     const metadata = objectRecord(item.metadata);
@@ -1169,7 +1211,7 @@ function contextItemType(item: AgentContextItem, metadata: Record<string, unknow
 function selectedSkillFromContextItem(
   item: AgentContextItem,
   metadata: Record<string, unknown> | null,
-): WorkspaceSkillSummary | null {
+): SkillSummary | null {
   const name =
     trimmedString(item.skill_name) ||
     trimmedString(item.skillName) ||
@@ -1179,7 +1221,7 @@ function selectedSkillFromContextItem(
   if (!name) {
     return null;
   }
-  const source = workspaceSkillSource(trimmedString(item.source) || trimmedString(metadata?.source));
+  const source = skillSource(trimmedString(item.source) || trimmedString(metadata?.source));
   const label = trimmedString(item.label) || `/${name}`;
   const locator = trimmedString(item.locator) || trimmedString(metadata?.locator) || `.keydex/skills/${name}/SKILL.md`;
   return {
@@ -1261,8 +1303,8 @@ function imageAttachmentsFromMessagePayload(payload: Record<string, unknown>): S
   });
 }
 
-function workspaceSkillSource(value: string): WorkspaceSkillSummary["source"] {
-  return value === "system" ? "system" : "workspace";
+function skillSource(value: string): SkillSummary["source"] {
+  return value === "builtin" ? "builtin" : value === "system" ? "system" : "workspace";
 }
 
 function selectedFileType(value: string): SelectedFile["type"] {

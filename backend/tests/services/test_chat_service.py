@@ -1224,14 +1224,18 @@ async def test_chat_service_runs_skill_activation_chain_with_message_injection(
                         "metadata": {"id": "file:des", "kind": "file"},
                     },
                     {
-                        "id": "skill:dev-plan",
+                        "id": "skill:workspace:dev-plan",
                         "type": "skill",
                         "label": "/dev-plan",
                         "content": "Build a structured development plan.",
                         "source": "workspace",
                         "skill_name": "dev-plan",
                         "description": "Build a structured development plan.",
-                        "metadata": {"id": "skill:dev-plan", "kind": "skill"},
+                        "metadata": {
+                            "id": "skill:workspace:dev-plan",
+                            "kind": "skill",
+                            "source": "workspace",
+                        },
                     },
                 ],
             },
@@ -1456,7 +1460,8 @@ async def test_chat_service_disables_project_tools_for_chat_session(tmp_path) ->
     )
 
     assert result.status == "completed"
-    assert factory.created_tool_counts == [0]
+    assert factory.created_tool_counts == [1]
+    assert factory.created_tool_names == [["load_skill"]]
     assert [
         item["action"]
         for item in chat_adapter.sent
