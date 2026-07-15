@@ -159,10 +159,37 @@ test("workbench slash skill selection creates a composer capsule", async ({ page
   await page.getByLabel("打开 Skill dev-plan").click();
 
   await expect(page.getByRole("heading", { name: "E2E Workbench File" })).toBeVisible();
-  expect(backend.workspaceReadRequests.at(-1)).toMatchObject({
-    workspaceId: WORKSPACE_A,
-    path: ".keydex/skills/dev-plan/SKILL.md",
+  expect(backend.skillReadRequests.at(-1)).toMatchObject({
+    sessionId: SESSION_A,
+    skillName: "dev-plan",
+    resourcePath: "SKILL.md",
   });
+});
+
+test("workbench new-session capsule keeps workspace skills available", async ({ page }) => {
+  const backend = createWorkbenchBackend({
+    skills: [
+      {
+        name: "dev-plan",
+        label: "/dev-plan",
+        source: "workspace",
+        description: "计划拆分",
+        locator: ".keydex/skills/dev-plan/SKILL.md",
+      },
+    ],
+  });
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
+  await page.getByRole("button", { name: "新会话" }).click();
+  await expect(page).toHaveURL(new RegExp(`/workbench/${WORKSPACE_A}$`));
+
+  const input = await openWorkbenchComposer(page);
+  await input.click();
+  await page.keyboard.type("/dev-plan");
+
+  await expect(page.getByRole("option", { name: /选择 Skill \/dev-plan/ })).toBeVisible();
 });
 
 test("workbench composer preserves context chips after collapsing to capsule", async ({ page }) => {
@@ -546,6 +573,7 @@ interface MockBackendState {
   createdSessionPayloads: Array<Record<string, unknown>>;
   workspaceSearchRequests: Array<{ workspaceId: string; query: string }>;
   workspaceReadRequests: Array<{ workspaceId: string; path: string }>;
+  skillReadRequests: Array<{ sessionId: string; skillName: string; resourcePath: string }>;
   approvalDecisions: Array<{ approvalId: string; body: Record<string, unknown> }>;
   skills: SkillSummary[];
 }
@@ -562,6 +590,7 @@ interface E2EWorkspace {
   id: string;
   name: string;
   root_path: string;
+  archived_at: null;
 }
 
 function createWorkbenchBackend({ skills = [] }: { skills?: SkillSummary[] } = {}): MockBackendState {
@@ -574,6 +603,7 @@ function createWorkbenchBackend({ skills = [] }: { skills?: SkillSummary[] } = {
     createdSessionPayloads: [],
     workspaceSearchRequests: [],
     workspaceReadRequests: [],
+    skillReadRequests: [],
     approvalDecisions: [],
     skills,
   };
@@ -657,6 +687,43 @@ async function mockWorkbenchBackend(page: Page, backend: MockBackendState) {
       const id = decodeURIComponent(sessionMatch[1]);
       return fulfillJson(route, { session: sessionResponse(backend.sessions[id] ?? backend.sessions[SESSION_A]) });
     }
+    const sessionSkillsMatch = path.match(/^\/api\/sessions\/([^/]+)\/skills$/);
+    if (sessionSkillsMatch && method === "GET") {
+      const id = decodeURIComponent(sessionSkillsMatch[1]);
+      const target = backend.sessions[id] ?? backend.sessions[SESSION_A];
+      return fulfillJson(route, {
+        mode: target.workspace ? "workspace_effective" : "system_only",
+        workspace_root: target.workspace?.root_path ?? null,
+        fingerprint: "e2e",
+        loaded_at: "2026-06-25T00:00:00Z",
+        skills: backend.skills,
+        diagnostics: [],
+      });
+    }
+    const sessionSkillReadMatch = path.match(/^\/api\/sessions\/([^/]+)\/skills\/read$/);
+    if (sessionSkillReadMatch && method === "POST") {
+      const sessionId = decodeURIComponent(sessionSkillReadMatch[1]);
+      const payload = request.postDataJSON() as {
+        skill_name: string;
+        source: SkillSummary["source"];
+        resource_path: string;
+      };
+      backend.skillReadRequests.push({
+        sessionId,
+        skillName: payload.skill_name,
+        resourcePath: payload.resource_path,
+      });
+      return fulfillJson(route, {
+        skill_name: payload.skill_name,
+        source: payload.source,
+        resource_path: payload.resource_path,
+        locator: `.keydex/skills/${payload.skill_name}/${payload.resource_path}`,
+        content: README_CONTENT,
+        encoding: "utf-8",
+        revision: "e2e-revision",
+        fingerprint: "e2e",
+      });
+    }
     const sessionTasksMatch = path.match(/^\/api\/sessions\/([^/]+)\/tasks$/);
     if (sessionTasksMatch && method === "GET") {
       return fulfillJson(route, { list: [] });
@@ -709,6 +776,7 @@ async function mockWorkbenchBackend(page: Page, backend: MockBackendState) {
       }
       if (suffix === "/skills") {
         return fulfillJson(route, {
+          mode: "workspace_effective",
           workspace_root: workspace(workspaceId, workspaceId).root_path,
           fingerprint: "e2e",
           loaded_at: "2026-06-25T00:00:00Z",
@@ -858,6 +926,7 @@ function workspace(id: string, name: string): E2EWorkspace {
     id,
     name,
     root_path: `D:/repo/${name}`,
+    archived_at: null,
   };
 }
 

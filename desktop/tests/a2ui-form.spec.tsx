@@ -91,10 +91,13 @@ describe("A2FormBlock", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "以上信息不对！我来告诉 Keydex 应该怎么做" }));
 
-    fireEvent.change(screen.getByLabelText("我来告诉 Keydex 应该怎么做"), {
+    const correctionInput = screen.getByLabelText("我来告诉 Keydex 应该怎么做");
+    fireEvent.change(correctionInput, {
       target: { value: "字段不对，请先问我活动时间和负责人" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "提交参数" }));
+    expect(fireEvent.keyDown(correctionInput, { key: "Enter", shiftKey: true })).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(correctionInput, { key: "Enter" })).toBe(false);
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith("int-form-1", {

@@ -271,6 +271,10 @@ export function WorkbenchAssistantSurface({
     runtime,
     sessionId: panelSessionId,
     controller,
+    fallbackWorkspaceScope: {
+      workspaceId,
+      workspaceRoot: workspace?.root_path,
+    },
     previewPanelScopeKey: workbenchPreviewScopeKey,
   });
   const effectiveSkills = panelModel.effectiveSkills;

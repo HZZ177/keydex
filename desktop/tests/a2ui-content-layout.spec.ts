@@ -17,6 +17,125 @@ describe("A2UI content layout contract", () => {
     expect(chartSource).not.toContain("truncate(");
   });
 
+  it("wraps long table cell content and lets AG Grid measure the resulting row height", () => {
+    const tableCss = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.module.css");
+    const tableSource = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.tsx");
+    const cellTextRule = tableCss.match(/\.cellText\s*{(?<body>[^}]*)}/s)?.groups?.body ?? "";
+
+    expect(tableSource).toMatch(/autoHeight:\s*true[\s\S]*wrapText:\s*true/);
+    expect(cellTextRule).toContain("flex: 1 1 auto");
+    expect(cellTextRule).toContain("overflow-wrap: anywhere");
+    expect(cellTextRule).toContain("white-space: pre-wrap");
+    expect(cellTextRule).not.toContain("text-overflow: ellipsis");
+    expect(cellTextRule).not.toContain("white-space: nowrap");
+    expect(tableCss).toMatch(/\.gridShell :global\(\.ag-cell\)\s*{[^}]*align-items:\s*flex-start/s);
+  });
+
+  it("grows from measured AG Grid row heights until the table reaches three quarters of the window", () => {
+    const tableCss = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.module.css");
+    const tableSource = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.tsx");
+
+    expect(tableCss).toMatch(/\.surface\s*{[^}]*max-height:\s*75vh/s);
+    expect(tableCss).toMatch(/\.gridShell\s*{[^}]*max-height:\s*calc\(75vh - 37px\)/s);
+    expect(tableSource).toContain("measuredTableGridHeight(api)");
+    expect(tableSource).toContain("api.forEachNodeAfterFilterAndSort");
+    expect(tableSource).toContain("rowNode.rowTop ?? accumulatedHeight");
+    expect(tableSource).toContain("onModelUpdated={scheduleNaturalGridHeightMeasure}");
+    expect(tableSource).toContain("Math.max(naturalGridHeight, tableGridFallbackHeight(rows.length))");
+    expect(tableSource).toContain("`min(calc(75vh - 37px), ${gridHeight}px)`");
+    expect(tableSource).not.toContain('domLayout="autoHeight"');
+  });
+
+  it("keeps semantic column widths independent from streamed cell text", () => {
+    const tableSource = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.tsx");
+
+    expect(tableSource).toContain("tableColumnLayout(column)");
+    expect(tableSource).not.toContain("tableColumnLayout(column, model.rows)");
+    expect(tableSource).toContain("return { minWidth: 360, flex: 1.8 }");
+    expect(tableSource).toContain("return { minWidth: 140, flex: 0.55 }");
+    expect(tableSource).toContain("return { minWidth: 104, flex: 0.55 }");
+    expect(tableSource).not.toContain("flex: column.width ? undefined : 1");
+  });
+
+  it("suppresses row and root position animation while table content is streaming", () => {
+    const motionSource = readSource("renderer/pages/conversation/messages/a2ui/A2UIMotion.tsx");
+    const tableSource = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.tsx");
+
+    expect(motionSource).toContain('layout = "position"');
+    expect(motionSource).toContain("layout={layout}");
+    expect(tableSource).toContain("animateRows={!tableStreaming}");
+    expect(tableSource).toContain('layout={tableStreaming ? false : "position"}');
+    expect(tableSource).toContain("Math.max(current, measuredHeight)");
+  });
+
+  it("uses a multiline editor for text cells", () => {
+    const tableCss = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.module.css");
+    const tableSource = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.tsx");
+
+    expect(tableSource).toContain("<textarea");
+    expect(tableSource).toContain("event.ctrlKey || event.metaKey");
+    expect(tableCss).toMatch(/\.textareaEditor\s*{[^}]*white-space:\s*pre-wrap/s);
+  });
+
+  it("does not cover the table with full-value tooltips on cell hover", () => {
+    const tableSource = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.tsx");
+
+    expect(tableSource).not.toContain("tooltipValueGetter");
+    expect(tableSource).not.toContain("tooltipShowDelay");
+  });
+
+  it("expands the existing table surface instead of mounting a second grid", () => {
+    const tableCss = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.module.css");
+    const tableSource = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.tsx");
+
+    expect(tableSource).toContain('aria-label={expanded ? "还原表格" : "放大表格"}');
+    expect(tableSource.match(/<AgGridReact/g)).toHaveLength(1);
+    expect(tableSource).not.toContain("<AppDialog");
+    expect(tableSource).toContain("<dialog");
+    expect(tableSource).toContain("surface.showModal");
+    expect(tableSource).toContain("surfaceSlotRef");
+    expect(tableSource).toContain("surfaceRef");
+    expect(tableCss).toMatch(/\.expandedSurface\s*{[^}]*position:\s*fixed/s);
+    expect(tableCss).toMatch(/\.expandedSurface\s*{[^}]*inset:\s*24px/s);
+    expect(tableCss).toMatch(/\.expandedSurface\s*{[^}]*width:\s*min\(1320px, calc\(100vw - 48px\)\)/s);
+    expect(tableCss).toMatch(/\.expandedSurface\s*{[^}]*height:\s*min\(860px, calc\(100vh - 350px\)\)/s);
+    expect(tableCss).toMatch(/\.expandedSurface::backdrop\s*{[^}]*background:\s*rgb\(255 255 255 \/ 58%\)/s);
+    expect(tableCss).toMatch(/\.expandedSurface::backdrop\s*{[^}]*backdrop-filter:\s*blur\(10px\)/s);
+    expect(tableSource).toContain("{expanded ? model.title");
+    expect(tableSource).not.toContain("data-a2ui-table-expanded");
+  });
+
+  it("animates the same table surface with live layout geometry in both directions", () => {
+    const tableCss = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.module.css");
+    const tableSource = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.tsx");
+
+    expect(tableSource).toContain("expandedClosing");
+    expect(tableSource).toContain("tableSurfaceGeometryKeyframes(start, end)");
+    expect(tableSource).toContain("tableSurfaceGeometryKeyframes(start, target)");
+    expect(tableSource).toContain('left: `${rect.left}px`');
+    expect(tableSource).toContain('width: `${Math.max(rect.width, 1)}px`');
+    expect(tableSource).not.toContain("tableSurfaceFlipTransform");
+    expect(tableSource).not.toContain("scale(");
+    expect(tableSource).toContain("duration: TABLE_EXPAND_MS");
+    expect(tableSource).toContain("duration: TABLE_COLLAPSE_MS");
+    expect(tableCss).toMatch(/\.expandedSurface\s*{[^}]*will-change:\s*left, top, width, height/s);
+    expect(tableCss).toMatch(/\.expandedSurface\[data-closing="true"\]::backdrop\s*{[^}]*animation:\s*table-dialog-backdrop-out 220ms/s);
+    expect(tableCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.expandedSurface\[data-closing="true"\]::backdrop[\s\S]*animation:\s*none/s);
+  });
+
+  it("uses more relaxed row spacing only in the expanded table", () => {
+    const tableCss = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.module.css");
+    const tableSource = readSource("renderer/pages/conversation/messages/a2ui/A2TableBlock.tsx");
+
+    expect(tableSource).toContain("rowHeight={40}");
+    expect(tableCss).toMatch(/\.expandedSurface \.gridShell :global\(\.ag-cell\)\s*{[^}]*line-height:\s*1\.55/s);
+    expect(tableCss).toMatch(/\.expandedSurface \.cellValue\s*{[^}]*padding-block:\s*5px/s);
+    expect(tableCss).toMatch(/\.expandedSurface\[data-closing="true"\] \.gridShell :global\(\.ag-cell\)\s*{[^}]*line-height:\s*1\.45/s);
+    expect(tableCss).toMatch(/\.expandedSurface\[data-closing="true"\] \.cellValue\s*{[^}]*padding-block:\s*0/s);
+    expect(tableCss).toMatch(/\.gridShell :global\(\.ag-cell\)\s*{[^}]*transition:\s*line-height 220ms ease/s);
+    expect(tableCss).toMatch(/\.cellValue\s*{[^}]*transition:\s*padding-block 220ms ease/s);
+  });
+
   it("renders chart captions as centered text below the chart surface", () => {
     const chartCss = readSource("renderer/pages/conversation/messages/a2ui/A2ChartBlock.module.css");
 

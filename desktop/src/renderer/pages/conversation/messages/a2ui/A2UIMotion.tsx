@@ -331,6 +331,7 @@ export function A2UIMotionRoot({
 export function A2InteractiveMotionRoot({
   children,
   className,
+  layout = "position",
   live = false,
   motionScope,
   motionState = "active",
@@ -374,7 +375,7 @@ export function A2InteractiveMotionRoot({
           initial={live ? "hidden" : false}
           animate="visible"
           variants={sceneVariants}
-          layout="position"
+          layout={layout}
           onKeyDownCapture={handleKeyDownCapture}
           onPointerDownCapture={handlePointerDownCapture}
         >

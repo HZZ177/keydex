@@ -4,6 +4,8 @@ import {
   themeQuartz,
   type CellValueChangedEvent,
   type ColDef,
+  type GridApi,
+  type GridReadyEvent,
 } from "ag-grid-community";
 import {
   AgGridReact,
@@ -15,17 +17,20 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Maximize2,
   PencilLine,
   Plus,
   Trash2,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
+import { prefersReducedMotion } from "@/renderer/utils/motionPreference";
 
 import type { A2UICancelHandler, A2UISubmitHandler, ParsedA2UIMessage } from "./A2UIBlock";
-import { A2CorrectionToggle } from "./A2CorrectionToggle";
+import { A2CorrectionTextarea, A2CorrectionToggle } from "./A2CorrectionToggle";
 import styles from "./A2TableBlock.module.css";
 import { A2UIStateLine } from "./A2UIStateLine";
 import {
@@ -62,6 +67,12 @@ interface TableColumn {
 interface TableRow {
   id: string;
   values: Record<string, TableCellValue>;
+}
+
+interface TableColumnLayout {
+  minWidth: number;
+  width?: number;
+  flex?: number;
 }
 
 interface TableChanges {
@@ -142,6 +153,11 @@ export interface A2TableBlockProps {
 
 const ACTION_LOADING_MS = 120;
 const ACTION_DONE_MS = 420;
+const TABLE_EXPAND_MS = 260;
+const TABLE_COLLAPSE_MS = 220;
+const TABLE_GRID_MIN_HEIGHT = 152;
+const TABLE_GRID_HEADER_HEIGHT = 38;
+const TABLE_GRID_HORIZONTAL_SCROLL_ALLOWANCE = 18;
 
 export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlockProps) {
   const semanticStream = useA2UISemanticStream(parsed, tableSemanticAdapter, {
@@ -155,7 +171,9 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
   );
   const model = useMemo(() => tableModel(semanticParsed), [semanticParsed]);
   const modelSignature = useMemo(() => snapshotSignature(model.columns, model.rows), [model.columns, model.rows]);
+  const columnSignature = useMemo(() => snapshotSignature(model.columns, []), [model.columns]);
   const initialSnapshot = useMemo(() => tableSnapshot(model), [modelSignature]);
+  const tableStreaming = semanticStream.running || isStreamingStatus(model.status);
   const [rows, setRows] = useState<TableRow[]>(() => cloneRows(model.rows));
   const [labels, setLabels] = useState<Record<string, string>>(() => columnLabels(model.columns));
   const [invalidCells, setInvalidCells] = useState<Set<string>>(() => new Set());
@@ -164,12 +182,29 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
   const [localSubmitting, setLocalSubmitting] = useState<TableActionKind | null>(null);
   const [actionPhase, setActionPhase] = useState<TableActionPhase | null>(null);
   const [localSubmitted, setLocalSubmitted] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [expandedClosing, setExpandedClosing] = useState(false);
+  const [naturalGridHeight, setNaturalGridHeight] = useState(() => tableGridFallbackHeight(model.rows.length));
   const [error, setError] = useState<string | null>(null);
   const baselineRef = useRef<TableSnapshot>(initialSnapshot);
   const editedCellKeysRef = useRef(new Set<string>());
   const renamedColumnKeysRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
   const actionTokenRef = useRef(0);
+  const expandedClosingRef = useRef(false);
+  const expandedFallbackTimerRef = useRef<number | null>(null);
+  const surfaceAnimationRef = useRef<Animation | null>(null);
+  const surfaceRef = useRef<HTMLDialogElement>(null);
+  const surfaceSlotRef = useRef<HTMLDivElement>(null);
+  const gridApiRef = useRef<GridApi<GridRow> | null>(null);
+  const gridMeasureFrameRef = useRef<number | null>(null);
+  const tableStreamingRef = useRef(tableStreaming);
+  const definitionColumnsRef = useRef({ signature: columnSignature, columns: model.columns });
+  tableStreamingRef.current = tableStreaming;
+  if (definitionColumnsRef.current.signature !== columnSignature) {
+    definitionColumnsRef.current = { signature: columnSignature, columns: model.columns };
+  }
+  const definitionColumns = definitionColumnsRef.current.columns;
 
   const actionable =
     model.status === "waiting_input" &&
@@ -199,13 +234,175 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
   const cancelStage = actionStage(actionPhase, "cancel");
   const submitStage = actionStage(actionPhase, "submit");
   const gridRows = useMemo(() => toGridRows(rows, model.columns), [model.columns, rows]);
+  const columnLayouts = useMemo(
+    () => Object.fromEntries(definitionColumns.map((column) => [
+      column.key,
+      tableColumnLayout(column),
+    ])) as Record<string, TableColumnLayout>,
+    [definitionColumns],
+  );
+  const measureNaturalGridHeight = useCallback(() => {
+    gridMeasureFrameRef.current = null;
+    const api = gridApiRef.current;
+    if (!api || surfaceRef.current?.dataset.expanded === "true") {
+      return;
+    }
+    const measuredHeight = measuredTableGridHeight(api);
+    if (measuredHeight === null) {
+      return;
+    }
+    setNaturalGridHeight((current) => {
+      const next = tableStreamingRef.current
+        ? Math.max(current, measuredHeight)
+        : measuredHeight;
+      return Math.abs(next - current) < 1 ? current : next;
+    });
+  }, []);
+  const scheduleNaturalGridHeightMeasure = useCallback(() => {
+    if (gridMeasureFrameRef.current !== null) {
+      return;
+    }
+    gridMeasureFrameRef.current = window.requestAnimationFrame(measureNaturalGridHeight);
+  }, [measureNaturalGridHeight]);
+  const handleGridReady = useCallback((event: GridReadyEvent<GridRow>) => {
+    gridApiRef.current = event.api;
+    scheduleNaturalGridHeightMeasure();
+  }, [scheduleNaturalGridHeightMeasure]);
+  const finishExpandedClose = useCallback(() => {
+    if (expandedFallbackTimerRef.current !== null) {
+      window.clearTimeout(expandedFallbackTimerRef.current);
+      expandedFallbackTimerRef.current = null;
+    }
+    const animation = surfaceAnimationRef.current;
+    surfaceAnimationRef.current = null;
+    animation?.cancel();
+    clearTableSurfaceGeometry(surfaceRef.current);
+    flushSync(() => {
+      setExpanded(false);
+      setExpandedClosing(false);
+    });
+    expandedClosingRef.current = false;
+    surfaceSlotRef.current?.style.removeProperty("height");
+  }, []);
+  const openExpanded = useCallback(() => {
+    const surface = surfaceRef.current;
+    const slot = surfaceSlotRef.current;
+    if (!surface || !slot) {
+      return;
+    }
+    surfaceAnimationRef.current?.cancel();
+    surfaceAnimationRef.current = null;
+    clearTableSurfaceGeometry(surface);
+    const start = surface.getBoundingClientRect();
+    slot.style.height = `${start.height}px`;
+    expandedClosingRef.current = false;
+    flushSync(() => {
+      setExpandedClosing(false);
+      setExpanded(true);
+    });
+    if (prefersReducedMotion() || typeof surface.animate !== "function") {
+      return;
+    }
+    const end = surface.getBoundingClientRect();
+    pinTableSurfaceGeometry(surface, end);
+    const animation = surface.animate(tableSurfaceGeometryKeyframes(start, end), {
+      duration: TABLE_EXPAND_MS,
+      easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+      fill: "both",
+    });
+    surfaceAnimationRef.current = animation;
+    void animation.finished.then(() => {
+      if (surfaceAnimationRef.current !== animation) {
+        return;
+      }
+      surfaceAnimationRef.current = null;
+      clearTableSurfaceGeometry(surface);
+      animation.cancel();
+    }).catch(() => undefined);
+  }, []);
+  const closeExpanded = useCallback(() => {
+    if (expandedClosingRef.current) {
+      return;
+    }
+    const surface = surfaceRef.current;
+    const slot = surfaceSlotRef.current;
+    if (!surface || !slot) {
+      finishExpandedClose();
+      return;
+    }
+    const runningAnimation = surfaceAnimationRef.current;
+    if (runningAnimation) {
+      const current = surface.getBoundingClientRect();
+      pinTableSurfaceGeometry(surface, current);
+      runningAnimation.cancel();
+    }
+    surfaceAnimationRef.current = null;
+    expandedClosingRef.current = true;
+    setExpandedClosing(true);
+    if (prefersReducedMotion()) {
+      finishExpandedClose();
+      return;
+    }
+    const start = surface.getBoundingClientRect();
+    const target = slot.getBoundingClientRect();
+    if (typeof surface.animate !== "function") {
+      expandedFallbackTimerRef.current = window.setTimeout(finishExpandedClose, TABLE_COLLAPSE_MS);
+      return;
+    }
+    pinTableSurfaceGeometry(surface, target);
+    const animation = surface.animate(tableSurfaceGeometryKeyframes(start, target), {
+      duration: TABLE_COLLAPSE_MS,
+      easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+      fill: "both",
+    });
+    surfaceAnimationRef.current = animation;
+    void animation.finished.then(() => {
+      if (surfaceAnimationRef.current === animation) {
+        finishExpandedClose();
+      }
+    }).catch(() => undefined);
+  }, [finishExpandedClose]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (expandedFallbackTimerRef.current !== null) {
+        window.clearTimeout(expandedFallbackTimerRef.current);
+        expandedFallbackTimerRef.current = null;
+      }
+      surfaceAnimationRef.current?.cancel();
+      surfaceAnimationRef.current = null;
+      clearTableSurfaceGeometry(surfaceRef.current);
+      if (gridMeasureFrameRef.current !== null) {
+        window.cancelAnimationFrame(gridMeasureFrameRef.current);
+        gridMeasureFrameRef.current = null;
+      }
+      gridApiRef.current = null;
+      closeTableSurfaceDialog(surfaceRef.current);
     };
   }, []);
+
+  useLayoutEffect(() => {
+    syncTableSurfaceDialogMode(surfaceRef.current, expanded);
+  }, [expanded]);
+
+  useLayoutEffect(() => {
+    if (!expanded) {
+      scheduleNaturalGridHeightMeasure();
+    }
+  }, [expanded, gridRows, scheduleNaturalGridHeightMeasure, tableStreaming]);
+
+  useEffect(() => {
+    if (!expanded) {
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [expanded]);
 
   useEffect(() => {
     actionTokenRef.current += 1;
@@ -219,6 +416,22 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
     setLocalSubmitting(null);
     setActionPhase(null);
     setLocalSubmitted(false);
+    if (expandedFallbackTimerRef.current !== null) {
+      window.clearTimeout(expandedFallbackTimerRef.current);
+      expandedFallbackTimerRef.current = null;
+    }
+    surfaceAnimationRef.current?.cancel();
+    surfaceAnimationRef.current = null;
+    clearTableSurfaceGeometry(surfaceRef.current);
+    expandedClosingRef.current = false;
+    setExpanded(false);
+    setExpandedClosing(false);
+    surfaceSlotRef.current?.style.removeProperty("height");
+    if (gridMeasureFrameRef.current !== null) {
+      window.cancelAnimationFrame(gridMeasureFrameRef.current);
+      gridMeasureFrameRef.current = null;
+    }
+    setNaturalGridHeight(tableGridFallbackHeight(next.rows.length));
     setError(null);
     editedCellKeysRef.current.clear();
     renamedColumnKeysRef.current.clear();
@@ -295,31 +508,35 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
   }, [model.allowDeleteRows, structureEditingReady]);
 
   const columnDefs = useMemo<ColDef<GridRow>[]>(() => {
-    const definitions = model.columns.map((column): ColDef<GridRow> => ({
-      colId: column.key,
-      field: column.key,
-      headerName: labels[column.key] || column.label,
-      editable: editingReady,
-      sortable: sortableReady && !correctionMode,
-      resizable: true,
-      minWidth: Math.min(column.width ?? 132, 180),
-      width: column.width ?? undefined,
-      flex: column.width ? undefined : 1,
-      singleClickEdit: true,
-      cellDataType: false,
-      cellClass: editingReady ? styles.editableCell : undefined,
-      cellClassRules: {
-        [styles.invalidCell]: (params) => invalidCells.has(tableCellKey(params.data?.id || "", column.key)),
-      },
-      headerComponent: EditableTableHeader,
-      headerComponentParams: {
-        columnKey: column.key,
-        renameable: editingReady,
-        onRename: renameColumn,
-      } satisfies Pick<EditableHeaderProps, "columnKey" | "renameable" | "onRename">,
-      tooltipValueGetter: (params) => formattedCellValue(params.value, column),
-      ...columnEditorDefinition(column, editingReady),
-    }));
+    const definitions = definitionColumns.map((column): ColDef<GridRow> => {
+      const layout = columnLayouts[column.key];
+      return {
+        colId: column.key,
+        field: column.key,
+        headerName: labels[column.key] || column.label,
+        editable: editingReady,
+        sortable: sortableReady && !correctionMode,
+        resizable: true,
+        minWidth: layout.minWidth,
+        width: layout.width,
+        flex: layout.flex,
+        singleClickEdit: true,
+        cellDataType: false,
+        autoHeight: true,
+        wrapText: true,
+        cellClass: editingReady ? styles.editableCell : undefined,
+        cellClassRules: {
+          [styles.invalidCell]: (params) => invalidCells.has(tableCellKey(params.data?.id || "", column.key)),
+        },
+        headerComponent: EditableTableHeader,
+        headerComponentParams: {
+          columnKey: column.key,
+          renameable: editingReady,
+          onRename: renameColumn,
+        } satisfies Pick<EditableHeaderProps, "columnKey" | "renameable" | "onRename">,
+        ...columnEditorDefinition(column, editingReady),
+      };
+    });
     if (structureEditingReady && model.allowDeleteRows) {
       definitions.push({
         colId: "__actions",
@@ -338,7 +555,7 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
       });
     }
     return definitions;
-  }, [correctionMode, deleteRow, editingReady, invalidCells, labels, model.allowDeleteRows, model.columns, renameColumn, sortableReady, structureEditingReady]);
+  }, [columnLayouts, correctionMode, definitionColumns, deleteRow, editingReady, invalidCells, labels, model.allowDeleteRows, renameColumn, sortableReady, structureEditingReady]);
 
   const toggleCorrection = () => {
     if (!actionable || localSubmitting) {
@@ -473,10 +690,90 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
     columns: model.columns.length,
     correctionMode,
     rows: rows.length,
-    running: semanticStream.running || isStreamingStatus(model.status),
+    running: tableStreaming,
     status: model.status,
   });
-  const gridHeight = tableGridHeight(rows.length);
+  const gridHeight = Math.max(naturalGridHeight, tableGridFallbackHeight(rows.length));
+  const tableSurface = (
+    <dialog
+      ref={surfaceRef}
+      aria-label={expanded ? model.title : undefined}
+      aria-modal={expanded ? "true" : undefined}
+      className={[styles.surface, expanded ? styles.expandedSurface : ""].filter(Boolean).join(" ")}
+      data-closing={expandedClosing ? "true" : "false"}
+      data-disabled={gridDisabled ? "true" : "false"}
+      data-expanded={expanded ? "true" : "false"}
+      data-testid="a2ui-table-surface"
+      role={expanded ? "dialog" : "group"}
+      onCancel={(event) => {
+        event.preventDefault();
+        closeExpanded();
+      }}
+      onMouseDown={(event) => {
+        if (expanded && event.target === event.currentTarget) {
+          closeExpanded();
+        }
+      }}
+    >
+      <div className={styles.toolbar}>
+        <span className={styles.toolbarTitle}>
+          {expanded ? model.title : `${model.columns.length} 列 · ${rows.length} 行`}
+        </span>
+        <div className={styles.toolbarActions}>
+          {model.allowAddRows && !terminal ? (
+            <button aria-label="新增一行" disabled={!structureEditingReady} type="button" title="新增一行" onClick={addRow}>
+              <Plus aria-hidden="true" size={14} />
+              <span>新增行</span>
+            </button>
+          ) : null}
+          <button
+            className={styles.expandButton}
+            aria-label={expanded ? "还原表格" : "放大表格"}
+            type="button"
+            title={expanded ? "还原表格" : "放大表格"}
+            onClick={expanded ? closeExpanded : openExpanded}
+          >
+            {expanded
+              ? <X aria-hidden="true" size={16} />
+              : <Maximize2 aria-hidden="true" size={14} />}
+            <span>{expanded ? "还原" : "放大"}</span>
+          </button>
+        </div>
+      </div>
+      {model.columns.length ? (
+        <div
+          className={styles.gridShell}
+          style={expanded ? undefined : { height: `min(calc(75vh - 37px), ${gridHeight}px)` }}
+        >
+          <AgGridReact<GridRow>
+            animateRows={!tableStreaming}
+            columnDefs={columnDefs}
+            defaultColDef={{
+              suppressHeaderMenuButton: true,
+              suppressHeaderKeyboardEvent: () => correctionMode,
+            }}
+            enableCellTextSelection
+            getRowId={(params) => params.data.id}
+            headerHeight={38}
+            maintainColumnOrder
+            noRowsOverlayComponent={TableEmptyOverlay}
+            rowData={gridRows}
+            rowHeight={40}
+            stopEditingWhenCellsLoseFocus
+            suppressDragLeaveHidesColumns
+            suppressMovableColumns
+            theme={themeQuartz}
+            onCellValueChanged={updateCell}
+            onGridReady={handleGridReady}
+            onModelUpdated={scheduleNaturalGridHeightMeasure}
+          />
+          {gridDisabled && !terminal ? <div className={styles.gridBlocker} aria-hidden="true" /> : null}
+        </div>
+      ) : (
+        <div className={styles.generating}>正在生成表格结构</div>
+      )}
+    </dialog>
+  );
 
   return (
     <A2InteractiveMotionRoot
@@ -485,6 +782,7 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
       data-grid-disabled={gridDisabled ? "true" : "false"}
       data-correction-mode={correctionMode ? "true" : "false"}
       live={!parsed.historyHydrated}
+      layout={tableStreaming ? false : "position"}
       motionScope={tableMotionScope(message.id, parsed)}
       motionState={tableMotionState(model.status, correctionMode, changeCount, localSubmitting, error)}
       {...semanticStream.rootProps}
@@ -500,44 +798,8 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
         </span>
       </div>
 
-      <div className={styles.surface} data-disabled={gridDisabled ? "true" : "false"}>
-        <div className={styles.toolbar}>
-          <span>{model.columns.length} 列 · {rows.length} 行</span>
-          {model.allowAddRows && !terminal ? (
-            <button aria-label="新增一行" disabled={!structureEditingReady} type="button" title="新增一行" onClick={addRow}>
-              <Plus aria-hidden="true" size={14} />
-              <span>新增行</span>
-            </button>
-          ) : null}
-        </div>
-        {model.columns.length ? (
-          <div className={styles.gridShell} style={{ height: gridHeight }}>
-            <AgGridReact<GridRow>
-              animateRows
-              columnDefs={columnDefs}
-              defaultColDef={{
-                suppressHeaderMenuButton: true,
-                suppressHeaderKeyboardEvent: () => correctionMode,
-              }}
-              enableCellTextSelection
-              getRowId={(params) => params.data.id}
-              headerHeight={38}
-              maintainColumnOrder
-              noRowsOverlayComponent={TableEmptyOverlay}
-              rowData={gridRows}
-              rowHeight={40}
-              stopEditingWhenCellsLoseFocus
-              suppressDragLeaveHidesColumns
-              suppressMovableColumns
-              theme={themeQuartz}
-              tooltipShowDelay={450}
-              onCellValueChanged={updateCell}
-            />
-            {gridDisabled && !terminal ? <div className={styles.gridBlocker} aria-hidden="true" /> : null}
-          </div>
-        ) : (
-          <div className={styles.generating}>正在生成表格结构</div>
-        )}
+      <div ref={surfaceSlotRef} className={styles.surfaceSlot}>
+        {tableSurface}
       </div>
 
       {terminal ? (
@@ -561,7 +823,7 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
               onToggle={toggleCorrection}
             />
             {correctionMode ? (
-              <textarea
+              <A2CorrectionTextarea
                 aria-label="我来告诉 Keydex 应该怎么做"
                 autoFocus
                 disabled={!actionable || Boolean(localSubmitting)}
@@ -570,6 +832,7 @@ export function A2TableBlock({ message, parsed, onSubmit, onCancel }: A2TableBlo
                 placeholder="例如：列结构不对、需要换一种分组方式，或者还缺少关键数据..."
                 value={correctionNote}
                 onChange={(event) => setCorrectionNote(event.currentTarget.value)}
+                onConfirm={submit}
               />
             ) : null}
           </A2InteractiveMotionItem>
@@ -750,13 +1013,43 @@ function TableSelectCellEditor({ api, onValueChange, options, value }: SelectCel
 
 function TableInputCellEditor({ api, colDef, inputType, onValueChange, value }: InputCellEditorProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorValue = value === null || value === undefined ? "" : String(value);
 
   useLayoutEffect(() => {
-    inputRef.current?.focus();
-    if (inputType === "text") {
-      inputRef.current?.select();
+    const editor = inputType === "text" ? textareaRef.current : inputRef.current;
+    editor?.focus();
+    if (editor instanceof HTMLTextAreaElement) {
+      editor.setSelectionRange(editor.value.length, editor.value.length);
     }
   }, [inputType]);
+
+  if (inputType === "text") {
+    return (
+      <textarea
+        ref={textareaRef}
+        aria-label={`编辑${colDef.headerName || "单元格"}`}
+        className={[styles.inputEditor, styles.textareaEditor].join(" ")}
+        title="Ctrl/⌘ + Enter 完成编辑"
+        value={editorValue}
+        onChange={(event) => onValueChange(event.currentTarget.value || null)}
+        onKeyDown={(event) => {
+          if (event.key === "Tab") {
+            return;
+          }
+          event.stopPropagation();
+          if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault();
+            flushSync(() => onValueChange(event.currentTarget.value || null));
+            api.stopEditing();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            api.stopEditing(true);
+          }
+        }}
+      />
+    );
+  }
 
   return (
     <input
@@ -765,7 +1058,7 @@ function TableInputCellEditor({ api, colDef, inputType, onValueChange, value }: 
       className={styles.inputEditor}
       step={inputType === "number" ? "any" : undefined}
       type={inputType}
-      value={value === null || value === undefined ? "" : String(value)}
+      value={editorValue}
       onChange={(event) => onValueChange(event.currentTarget.value || null)}
       onKeyDown={(event) => {
         if (event.key === "Enter") {
@@ -1237,8 +1530,129 @@ function tableStatusText({
   return changeCount ? `已修改 ${changeCount} 项` : `${columns} 列 ${rows} 行`;
 }
 
-function tableGridHeight(rowCount: number): number {
-  return Math.max(152, Math.min(458, 39 + Math.max(1, rowCount) * 40 + 2));
+function tableGridFallbackHeight(rowCount: number): number {
+  if (!rowCount) {
+    return TABLE_GRID_MIN_HEIGHT;
+  }
+  return Math.max(
+    240,
+    TABLE_GRID_HEADER_HEIGHT + rowCount * 96 + TABLE_GRID_HORIZONTAL_SCROLL_ALLOWANCE,
+  );
+}
+
+function measuredTableGridHeight(api: GridApi<GridRow>): number | null {
+  let accumulatedHeight = 0;
+  let contentBottom = 0;
+  let rowCount = 0;
+  api.forEachNodeAfterFilterAndSort((rowNode) => {
+    const rowHeight = rowNode.rowHeight ?? 40;
+    const rowTop = rowNode.rowTop ?? accumulatedHeight;
+    contentBottom = Math.max(contentBottom, rowTop + rowHeight);
+    accumulatedHeight += rowHeight;
+    rowCount += 1;
+  });
+  if (!rowCount) {
+    return null;
+  }
+  return Math.max(
+    TABLE_GRID_MIN_HEIGHT,
+    Math.ceil(TABLE_GRID_HEADER_HEIGHT + contentBottom + TABLE_GRID_HORIZONTAL_SCROLL_ALLOWANCE),
+  );
+}
+
+function syncTableSurfaceDialogMode(surface: HTMLDialogElement | null, modal: boolean): void {
+  if (!surface) {
+    return;
+  }
+  closeTableSurfaceDialog(surface);
+  const show = modal ? surface.showModal : surface.show;
+  if (typeof show === "function") {
+    try {
+      show.call(surface);
+      return;
+    } catch {
+      // Test DOMs may expose the method without implementing the dialog top layer.
+    }
+  }
+  surface.setAttribute("open", "");
+}
+
+function closeTableSurfaceDialog(surface: HTMLDialogElement | null): void {
+  if (!surface) {
+    return;
+  }
+  if (surface.open && typeof surface.close === "function") {
+    try {
+      surface.close();
+      return;
+    } catch {
+      // Fall through to the attribute fallback for partial dialog implementations.
+    }
+  }
+  surface.removeAttribute("open");
+}
+
+function tableSurfaceGeometryKeyframes(from: DOMRect, to: DOMRect): Keyframe[] {
+  return [tableSurfaceGeometryKeyframe(from), tableSurfaceGeometryKeyframe(to)];
+}
+
+function tableSurfaceGeometryKeyframe(rect: DOMRect): Keyframe {
+  return {
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${Math.max(rect.width, 1)}px`,
+    height: `${Math.max(rect.height, 1)}px`,
+  };
+}
+
+function pinTableSurfaceGeometry(surface: HTMLElement, rect: DOMRect): void {
+  surface.style.inset = "auto";
+  surface.style.margin = "0";
+  surface.style.left = `${rect.left}px`;
+  surface.style.top = `${rect.top}px`;
+  surface.style.width = `${Math.max(rect.width, 1)}px`;
+  surface.style.height = `${Math.max(rect.height, 1)}px`;
+}
+
+function clearTableSurfaceGeometry(surface: HTMLElement | null): void {
+  if (!surface) {
+    return;
+  }
+  surface.style.removeProperty("inset");
+  surface.style.removeProperty("margin");
+  surface.style.removeProperty("left");
+  surface.style.removeProperty("top");
+  surface.style.removeProperty("width");
+  surface.style.removeProperty("height");
+}
+
+function tableColumnLayout(column: TableColumn): TableColumnLayout {
+  if (column.width !== null) {
+    return {
+      minWidth: Math.min(column.width, 180),
+      width: column.width,
+    };
+  }
+  if (column.type === "number") {
+    return { minWidth: 104, flex: 0.55 };
+  }
+  if (column.type === "boolean") {
+    return { minWidth: 112, flex: 0.6 };
+  }
+  if (column.type === "date") {
+    return { minWidth: 156, flex: 0.8 };
+  }
+  if (column.type === "select") {
+    return { minWidth: 160, flex: 0.9 };
+  }
+  const semanticLabel = `${column.key} ${column.label}`.toLowerCase();
+  if (/(^|[_\s-])(id|uuid|code)($|[_\s-])/.test(semanticLabel) || /(编号|序号|编码)/.test(column.label)) {
+    return { minWidth: 140, flex: 0.55 };
+  }
+  if (/(description|detail|summary|content|remark|note|requirement|acceptance|详情|详细|描述|说明|摘要|备注|内容|需求|验收|条件)/.test(semanticLabel)) {
+    return { minWidth: 360, flex: 1.8 };
+  }
+  return { minWidth: 220, flex: 1 };
 }
 
 function tableChangesFromValue(value: unknown): TableChanges {

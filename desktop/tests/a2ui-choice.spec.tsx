@@ -91,8 +91,12 @@ describe("A2ChoiceBlock", () => {
     expect(screen.queryByText("请输入说明")).toBeNull();
     expect((screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.change(screen.getByLabelText(CORRECTION_LABEL), { target: { value: "换一组更稳妥的方案" } });
-    fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
+    const correctionInput = screen.getByLabelText(CORRECTION_LABEL);
+    fireEvent.change(correctionInput, { target: { value: "换一组更稳妥的方案" } });
+    expect(fireEvent.keyDown(correctionInput, { key: "Enter", shiftKey: true })).toBe(true);
+    expect(fireEvent.keyDown(correctionInput, { key: "Enter", isComposing: true })).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(correctionInput, { key: "Enter" })).toBe(false);
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith("int-choice-1", {

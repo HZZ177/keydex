@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronUp, CircleAlert, PencilLine } from "lucide-react";
+import type { TextareaHTMLAttributes } from "react";
 
 import styles from "./A2CorrectionToggle.module.css";
 
@@ -10,6 +11,39 @@ interface A2CorrectionToggleProps {
   idleTitle: string;
   returnLabel: string;
   onToggle: () => void;
+}
+
+interface A2CorrectionTextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+  onConfirm: () => void | Promise<void>;
+}
+
+export function A2CorrectionTextarea({
+  onConfirm,
+  onKeyDown,
+  title = "Enter 提交，Shift+Enter 换行",
+  ...textareaProps
+}: A2CorrectionTextareaProps) {
+  return (
+    <textarea
+      {...textareaProps}
+      title={title}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (
+          event.defaultPrevented ||
+          event.key !== "Enter" ||
+          event.shiftKey ||
+          event.nativeEvent.isComposing ||
+          event.nativeEvent.keyCode === 229
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        void onConfirm();
+      }}
+    />
+  );
 }
 
 export function A2CorrectionToggle({

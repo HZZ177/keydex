@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { RuntimeBridge, SkillSummary, WorkspaceEntry, WorkspaceSearchResult } from "@/runtime";
+import type {
+  RuntimeBridge,
+  SkillSummary,
+  WorkspaceEntry,
+  WorkspaceScope,
+  WorkspaceSearchResult,
+} from "@/runtime";
 import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
 import type {
   SessionReverseDecision,
@@ -67,6 +73,10 @@ export interface UseConversationPanelModelOptions {
   runtime: RuntimeBridge;
   sessionId: string;
   controller: AgentSessionController;
+  fallbackWorkspaceScope?: {
+    workspaceId: string;
+    workspaceRoot?: string | null;
+  } | null;
   registerPreviewHost?: boolean;
   previewPanelScopeKey?: string | null;
   emitForkSessionCreated?: boolean;
@@ -112,6 +122,7 @@ export function useConversationPanelModel({
   runtime,
   sessionId,
   controller,
+  fallbackWorkspaceScope = null,
   registerPreviewHost = false,
   previewPanelScopeKey = null,
   emitForkSessionCreated = true,
@@ -154,14 +165,29 @@ export function useConversationPanelModel({
     () => adaptConversationMessages(controller.agentMessages, a2uiMessageCacheRef.current),
     [controller.agentMessages],
   );
-  const messageWorkspaceScope = useMemo(() => ({ sessionId }), [sessionId]);
+  const messageWorkspaceScope = useMemo<WorkspaceScope>(
+    () => session
+      ? { sessionId }
+      : fallbackWorkspaceScope?.workspaceId
+        ? { workspaceId: fallbackWorkspaceScope.workspaceId }
+        : { sessionId },
+    [fallbackWorkspaceScope?.workspaceId, session, sessionId],
+  );
   const workspaceUnavailable = Boolean(session && session.session_type === "workspace" && !session.workspace);
   const workspaceAvailable = Boolean(session?.session_type === "workspace" && session.workspace && !workspaceUnavailable);
   const workspaceLabel = session?.workspace?.root_path ?? session?.workspace?.name ?? session?.cwd ?? undefined;
   const workspaceId = workspaceAvailable ? (session?.workspace?.id ?? session?.workspace_id ?? undefined) : undefined;
   const effectiveSkillScope = useMemo(
-    () => (session ? { type: "session" as const, sessionId } : null),
-    [session, sessionId],
+    () => session
+      ? { type: "session" as const, sessionId }
+      : fallbackWorkspaceScope?.workspaceId
+        ? {
+            type: "workspace" as const,
+            workspaceId: fallbackWorkspaceScope.workspaceId,
+            workspaceRoot: fallbackWorkspaceScope.workspaceRoot,
+          }
+        : null,
+    [fallbackWorkspaceScope?.workspaceId, fallbackWorkspaceScope?.workspaceRoot, session, sessionId],
   );
   const {
     state: effectiveSkillsState,
@@ -170,7 +196,7 @@ export function useConversationPanelModel({
   } = useEffectiveSkills({
     runtime,
     scope: effectiveSkillScope,
-    enabled: backendReady && Boolean(session),
+    enabled: backendReady && effectiveSkillScope !== null,
   });
   const effectiveSkills = effectiveSkillsState.skills;
 

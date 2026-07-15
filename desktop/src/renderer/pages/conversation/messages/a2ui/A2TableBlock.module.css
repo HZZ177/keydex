@@ -64,12 +64,46 @@
 .surface {
   position: relative;
   display: grid;
+  width: 100%;
   min-width: 0;
+  max-width: none;
+  max-height: 75vh;
+  box-sizing: border-box;
   overflow: hidden;
+  margin: 0;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 82%, transparent);
   border-radius: 10px;
   background: var(--color-bg-elevated);
+  color: inherit;
+  padding: 0;
   box-shadow: 0 8px 24px -24px color-mix(in srgb, var(--color-text-primary) 58%, transparent);
+  transition: border-radius 220ms ease;
+}
+
+.surfaceSlot {
+  min-width: 0;
+}
+
+.expandedSurface {
+  position: fixed;
+  z-index: 2;
+  inset: 24px;
+  width: min(1320px, calc(100vw - 48px));
+  height: min(860px, calc(100vh - 350px));
+  max-height: none;
+  box-sizing: border-box;
+  grid-template-rows: auto minmax(0, 1fr);
+  margin: auto;
+  border-color: color-mix(in srgb, var(--color-border-default) 92%, transparent);
+  border-radius: 12px;
+  box-shadow:
+    0 24px 70px rgb(15 23 42 / 22%),
+    0 6px 20px rgb(15 23 42 / 12%);
+  will-change: left, top, width, height;
+}
+
+.expandedSurface[data-closing="true"] {
+  border-radius: 10px;
 }
 
 .toolbar {
@@ -85,6 +119,7 @@
   color: var(--color-text-tertiary);
   font-size: 11px;
   padding: 0 10px 0 12px;
+  transition: min-height 220ms ease, padding 220ms ease, background-color 180ms ease;
 }
 
 .toolbar button {
@@ -119,9 +154,61 @@
   opacity: 0.42;
 }
 
+.toolbarActions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.toolbarTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expandedSurface .toolbar {
+  min-height: 42px;
+  border-bottom-color: var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-bg-elevated) 92%, var(--surface-muted));
+  padding: 0 10px 0 14px;
+}
+
+.expandedSurface .toolbarTitle {
+  color: var(--color-text-1);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: var(--ui-line-height-compact);
+}
+
+.expandedSurface .expandButton {
+  display: inline-grid;
+  width: 28px;
+  min-height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  padding: 0;
+}
+
+.expandedSurface .expandButton:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.expandedSurface .expandButton > span {
+  display: none;
+}
+
 .gridShell {
   position: relative;
   min-width: 0;
+  min-height: 152px;
+  max-height: calc(75vh - 37px);
   background: var(--color-bg-elevated);
   color: var(--color-text-primary);
   contain: layout paint style;
@@ -144,6 +231,42 @@
   --ag-wrapper-border-radius: 0;
 }
 
+.expandedSurface .gridShell {
+  height: auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.expandedSurface .gridShell :global(.ag-cell) {
+  line-height: 1.55;
+}
+
+.expandedSurface .cellValue {
+  padding-block: 5px;
+}
+
+.expandedSurface[data-closing="true"] .gridShell :global(.ag-cell) {
+  line-height: 1.45;
+}
+
+.expandedSurface[data-closing="true"] .cellValue {
+  padding-block: 0;
+}
+
+.expandedSurface::backdrop {
+  background: rgb(255 255 255 / 58%);
+  backdrop-filter: blur(10px);
+  animation: table-dialog-backdrop-in 180ms ease-out both;
+}
+
+:global(html[data-theme="dark"]) .expandedSurface::backdrop {
+  background: rgb(0 0 0 / 56%);
+}
+
+.expandedSurface[data-closing="true"]::backdrop {
+  animation: table-dialog-backdrop-out 220ms ease-in both;
+}
+
 .surface[data-disabled="true"] .gridShell {
   opacity: 0.5;
   filter: saturate(0.62);
@@ -152,6 +275,10 @@
 .gridShell :global(.ag-root-wrapper) {
   border: 0;
   border-radius: 0;
+}
+
+.gridShell :global(.ag-body-viewport) {
+  scrollbar-gutter: stable;
 }
 
 .gridShell :global(.ag-header) {
@@ -169,8 +296,10 @@
 
 .gridShell :global(.ag-cell) {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   line-height: 1.45;
+  padding-block: 9px;
+  transition: line-height 220ms ease;
 }
 
 .gridShell :global(.ag-cell-focus) {
@@ -205,6 +334,15 @@
   padding: 0 11px;
 }
 
+.textareaEditor {
+  min-height: 100%;
+  resize: none;
+  overflow: auto;
+  line-height: 1.45;
+  padding-block: 8px;
+  white-space: pre-wrap;
+}
+
 .editableCell {
   cursor: text;
   transition: background-color 120ms ease, box-shadow 120ms ease;
@@ -223,13 +361,16 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding-block: 0;
+  transition: padding-block 220ms ease;
 }
 
 .cellText {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .cellEditHint {
@@ -573,6 +714,24 @@
   }
 }
 
+@keyframes table-dialog-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes table-dialog-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 @media (max-width: 620px) {
   .heading {
     display: grid;
@@ -586,12 +745,22 @@
   .toolbar {
     padding-left: 9px;
   }
+
+  .expandedSurface {
+    inset: 12px;
+    width: min(1320px, calc(100vw - 24px));
+    height: min(860px, calc(100vh - 350px));
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .gridShell,
+  .gridShell :global(.ag-cell),
+  .surface,
   .toolbar button,
+  .toolbar,
   .editableCell,
+  .cellValue,
   .cellEditHint,
   .headerRename,
   .deleteButton,
@@ -601,6 +770,11 @@
   }
 
   .actionButton[data-badge-state="loading"] .buttonSignal {
+    animation: none;
+  }
+
+  .expandedSurface::backdrop,
+  .expandedSurface[data-closing="true"]::backdrop {
     animation: none;
   }
 }

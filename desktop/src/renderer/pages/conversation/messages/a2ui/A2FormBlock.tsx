@@ -18,7 +18,7 @@ import type {
   A2UISubmitHandler,
   ParsedA2UIMessage,
 } from "./A2UIBlock";
-import { A2CorrectionToggle } from "./A2CorrectionToggle";
+import { A2CorrectionTextarea, A2CorrectionToggle } from "./A2CorrectionToggle";
 import { formSemanticAdapter } from "./adapters/formSemanticAdapter";
 import styles from "./A2FormBlock.module.css";
 import type { A2UIRenderState } from "./A2UIState";
@@ -400,7 +400,7 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
                   onToggle={toggleCorrectionMode}
                 />
                 {correctionMode ? (
-                  <textarea
+                  <A2CorrectionTextarea
                     aria-label="我来告诉 Keydex 应该怎么做"
                     autoFocus
                     id={`${message.id}:a2ui-form-correction`}
@@ -409,6 +409,7 @@ export function A2FormBlock({ message, parsed, onSubmit, onCancel }: A2FormBlock
                     disabled={!actionable || Boolean(localSubmitting)}
                     placeholder="例如：字段不对、还需要补充其他信息，或者换一种提问方式..."
                     onChange={(event) => setNote(event.currentTarget.value)}
+                    onConfirm={submit}
                   />
                 ) : null}
               </A2InteractiveMotionItem>

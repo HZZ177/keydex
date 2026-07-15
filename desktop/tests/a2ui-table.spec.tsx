@@ -7,7 +7,7 @@ import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { A2UIDebugBlockState, A2UIInteractionState, A2UIObject } from "@/types/protocol";
 
 describe("A2TableBlock", () => {
-  it("renders an editable virtualized table with Keydex interaction controls", async () => {
+  it("renders an editable table with Keydex interaction controls", async () => {
     render(<A2UIBlock message={tableMessage()} onSubmit={vi.fn()} onCancel={vi.fn()} />);
 
     const table = screen.getByTestId("a2ui-table");
@@ -22,6 +22,38 @@ describe("A2TableBlock", () => {
     expect(within(table).getByRole("button", { name: "以上表格不对！我来告诉 Keydex 应该怎么做" })).not.toBeNull();
     expect(within(table).getByRole("button", { name: "提交修改" })).not.toBeNull();
     expect(table.getAttribute("data-a2ui-player-enabled")).toBe("false");
+  });
+
+  it("expands and restores the same table instance without remounting its grid", async () => {
+    render(<A2UIBlock message={tableMessage()} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+
+    const surfaceBefore = screen.getByTestId("a2ui-table-surface");
+    const gridBefore = surfaceBefore.querySelector(".ag-root-wrapper");
+    expect(gridBefore).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "放大表格" }));
+
+    const dialog = screen.getByRole("dialog", { name: "项目计划审阅" });
+    expect(dialog.tagName).toBe("DIALOG");
+    expect(dialog).toBe(surfaceBefore);
+    expect(dialog.querySelector(".ag-root-wrapper")).toBe(gridBefore);
+    expect(document.body.style.overflow).toBe("hidden");
+    const taskCell = await within(dialog).findByText("需求分析");
+    fireEvent.click(taskCell.closest("[role=gridcell]")!, { detail: 1 });
+    const editor = await within(dialog).findByDisplayValue("需求分析");
+    fireEvent.change(editor, { target: { value: "放大视图中编辑" } });
+    fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+
+    await waitFor(() => expect(within(dialog).getByText("放大视图中编辑")).not.toBeNull());
+    fireEvent.click(within(dialog).getByRole("button", { name: "还原表格" }));
+    expect(screen.getByRole("dialog", { name: "项目计划审阅" })).not.toBeNull();
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "项目计划审阅" })).toBeNull();
+      expect(within(screen.getByTestId("a2ui-table")).getByText("放大视图中编辑")).not.toBeNull();
+    });
+    expect(screen.getByTestId("a2ui-table-surface")).toBe(surfaceBefore);
+    expect(surfaceBefore.querySelector(".ag-root-wrapper")).toBe(gridBefore);
+    expect(document.body.style.overflow).toBe("");
   });
 
   it("submits edited cells, renamed headers and row mutations as a stable snapshot and diff", async () => {
@@ -40,9 +72,10 @@ describe("A2TableBlock", () => {
     fireEvent.click(taskCell!, { detail: 1 });
     const editor = await screen.findByDisplayValue("需求分析");
     expect(document.activeElement).toBe(editor);
+    expect(editor.tagName).toBe("TEXTAREA");
     expect(taskCell!.classList.contains("ag-cell-inline-editing")).toBe(true);
     fireEvent.change(editor, { target: { value: "需求澄清" } });
-    fireEvent.keyDown(editor, { key: "Enter" });
+    fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
     await waitFor(() => expect(screen.getByText("需求澄清")).not.toBeNull());
 
     fireEvent.click(screen.getAllByRole("button", { name: "删除该行" })[1]);
@@ -117,10 +150,13 @@ describe("A2TableBlock", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "以上表格不对！我来告诉 Keydex 应该怎么做" }));
 
-    fireEvent.change(screen.getByLabelText("我来告诉 Keydex 应该怎么做"), {
+    const correctionInput = screen.getByLabelText("我来告诉 Keydex 应该怎么做");
+    fireEvent.change(correctionInput, {
       target: { value: "请改成按负责人分组的表格" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "提交修改" }));
+    expect(fireEvent.keyDown(correctionInput, { key: "Enter", shiftKey: true })).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(correctionInput, { key: "Enter" })).toBe(false);
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith("interaction-table", {
@@ -270,8 +306,9 @@ describe("A2TableBlock", () => {
     expect(firstTaskCell).not.toBeNull();
     fireEvent.click(firstTaskCell!, { detail: 1 });
     const editor = await screen.findByDisplayValue("需求分析");
+    expect(editor.tagName).toBe("TEXTAREA");
     fireEvent.change(editor, { target: { value: "需求澄清" } });
-    fireEvent.keyDown(editor, { key: "Enter" });
+    fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
 
     await waitFor(() => {
       expect(screen.getByText("需求澄清")).not.toBeNull();
