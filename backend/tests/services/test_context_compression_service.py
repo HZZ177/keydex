@@ -13,7 +13,10 @@ from backend.app.services.context_compression_prompt_builder import (
     build_compaction_prompt,
     extract_summary_text,
 )
-from backend.app.services.context_compression_service import ContextCompressionService
+from backend.app.services.context_compression_service import (
+    CONTEXT_COMPRESSION_REQUEST_TIMEOUT_SECONDS,
+    ContextCompressionService,
+)
 from backend.app.storage import (
     MODEL_DEFAULT_CHAT,
     MODEL_DEFAULT_FAST,
@@ -113,6 +116,7 @@ async def test_context_compression_service_uses_current_chat_model(tmp_path) -> 
             "model": "chat-model",
             "streaming": False,
             "provider_id": "provider-chat",
+            "timeout_seconds": CONTEXT_COMPRESSION_REQUEST_TIMEOUT_SECONDS,
         }
     ]
     assert llm.calls
@@ -202,6 +206,7 @@ class FakeFactory:
                 "model": kwargs.get("model"),
                 "streaming": kwargs.get("streaming"),
                 "provider_id": kwargs.get("provider_id"),
+                "timeout_seconds": _settings.timeout_seconds,
             }
         )
         return self.llm

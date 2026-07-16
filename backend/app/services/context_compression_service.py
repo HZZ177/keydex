@@ -27,6 +27,8 @@ from backend.app.services.context_compression_prompt_builder import (
 )
 from backend.app.storage import MODEL_DEFAULT_CHAT, SessionRecord, StorageRepositories
 
+CONTEXT_COMPRESSION_REQUEST_TIMEOUT_SECONDS = 5 * 60
+
 
 @dataclass(frozen=True, slots=True)
 class CompressionGenerationResult:
@@ -84,9 +86,12 @@ class ContextCompressionService:
             )
         try:
             resolved = self._resolve_session_model(session)
+            compression_settings = resolved.settings.model_copy(
+                update={"timeout_seconds": CONTEXT_COMPRESSION_REQUEST_TIMEOUT_SECONDS}
+            )
             llm = self.factory.get_or_create_llm(
-                resolved.settings,
-                model=resolved.settings.model,
+                compression_settings,
+                model=compression_settings.model,
                 temperature=0,
                 streaming=False,
                 http_transport=self.http_transport,
