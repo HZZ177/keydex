@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ReverseDialog } from "../src/renderer/pages/conversation/ReverseDialog";
 import type { ReverseDialogState } from "../src/renderer/pages/conversation/useConversationPanelModel";
+import type { SessionReverseFilePreview } from "../src/runtime/conversation";
 
 describe("ReverseDialog", () => {
   it("shows all three modes and disables code modes for legacy messages", () => {
@@ -183,26 +184,12 @@ describe("ReverseDialog", () => {
             ...preview(),
             files: [
               ...preview().files,
-              {
-                path: "binary.bin",
-                current_state: "file",
-                target_state: "file",
-                classification: "ready",
+              workspaceFilePreview("binary.bin", {
                 binary: true,
-                truncated: false,
-                insertions: 0,
-                deletions: 0,
-              },
-              {
-                path: "large.txt",
-                current_state: "file",
-                target_state: "file",
-                classification: "ready",
-                binary: false,
+              }),
+              workspaceFilePreview("large.txt", {
                 truncated: true,
-                insertions: 0,
-                deletions: 0,
-              },
+              }),
             ],
           },
         })}
@@ -251,17 +238,10 @@ describe("ReverseDialog", () => {
         phase: "decision",
         preview: {
           ...preview(),
-          files: [{
-            path: "lost.txt",
-            current_state: "file",
-            target_state: "file",
+          files: [workspaceFilePreview("lost.txt", {
             classification: "unrecoverable",
             reason_code: "file_backup_missing",
-            binary: false,
-            truncated: false,
-            insertions: 0,
-            deletions: 0,
-          }],
+          })],
         },
       },
       { onDecision, onSelectMode },
@@ -443,5 +423,29 @@ function preview() {
         diff: "-other-session\n+target-version",
       },
     ],
+  };
+}
+
+function workspaceFilePreview(
+  path: string,
+  overrides: Partial<SessionReverseFilePreview> = {},
+): SessionReverseFilePreview {
+  return {
+    resource_id: `resource-${path}`,
+    scope_kind: "workspace",
+    scope_identity: "workspace-current",
+    scope_label: "褰撳墠椤圭洰",
+    display_path: path,
+    absolute_path: `D:/repo/${path}`,
+    requires_full_access: false,
+    path,
+    current_state: "file",
+    target_state: "file",
+    classification: "ready",
+    binary: false,
+    truncated: false,
+    insertions: 0,
+    deletions: 0,
+    ...overrides,
   };
 }
