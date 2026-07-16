@@ -69,11 +69,11 @@
 
 .treeItem { min-width: 0; }
 
-.treeRow {
+.root .fileTree .treeRow {
   position: relative;
   display: grid;
   width: 100%;
-  min-height: 28px;
+  min-height: 24px;
   grid-template-columns: 16px 16px minmax(0, 1fr);
   align-items: center;
   gap: 6px;
@@ -91,14 +91,14 @@
     color var(--motion-fast) var(--motion-ease-standard);
 }
 
-.treeRow:hover,
-.treeRow:focus-visible,
-.treeRow[data-selected="true"] {
+.root .fileTree .treeRow:hover,
+.root .fileTree .treeRow:focus-visible,
+.root .fileTree .treeRow[data-selected="true"] {
   outline: 0;
   background: var(--surface-hover);
 }
 
-.treeRow[data-selected="true"] {
+.root .fileTree .treeRow[data-selected="true"] {
   background: var(--surface-active);
 }
 
@@ -268,10 +268,7 @@
 .secondaryText { color: var(--color-text-tertiary); }
 
 .commitHash {
-  display: flex;
   min-width: 0;
-  align-items: center;
-  gap: 5px;
 }
 
 .commitHash code {
@@ -282,27 +279,6 @@
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.commitHash button {
-  display: inline-grid;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-  padding: 0;
-  place-items: center;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-}
-
-.commitHash button:hover,
-.commitHash button:focus-visible {
-  outline: 0;
-  background: var(--surface-hover);
-  color: var(--color-text-primary);
 }
 
 .signature {

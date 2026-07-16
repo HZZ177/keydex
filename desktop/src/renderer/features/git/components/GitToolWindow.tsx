@@ -2922,9 +2922,6 @@ export function GitToolWindow({
               loading={historyDetailLoading}
               selectedFileIndex={historyFileIndex}
               onSelectFile={setHistoryFileIndex}
-              onCopyHash={(objectId) => navigator.clipboard.writeText(objectId).catch((error) => {
-                setActionError(gitUiErrorMessage(error));
-              })}
             />
           ) : (
             <div className={styles.placeholder}>选择条目查看详情</div>

@@ -35,10 +35,7 @@ test("history filters, merge details, compare, blame and reflog match a real DAG
     const details = page.getByLabel("Commit details");
     await expect(details).toContainText("merge: history fixture", { timeout: 10_000 });
     await expect(details.getByRole("button", { name: /^P[12] / })).toHaveCount(2);
-    await expect(details.getByRole("button", { name: "Copy commit hash" })).toBeVisible();
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-    await details.getByRole("button", { name: "Copy commit hash" }).click();
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(mergeHash);
+    await expect(details.getByText(mergeHash)).toBeVisible();
     await expect(details.getByRole("button", { name: /main/ })).toBeVisible();
 
     const filters = history.getByRole("form", { name: "History filters" });
@@ -140,7 +137,7 @@ test("history combines message, author, branch, date and path filters and reject
   }
 });
 
-test("commit details distinguish valid, invalid and unsigned signatures and keep refs aligned with the copied oid", async ({ page }) => {
+test("commit details distinguish valid, invalid and unsigned signatures and keep refs aligned with the selected oid", async ({ page }) => {
   test.setTimeout(120_000);
   const fixture = await startGitE2EFixture("history-signature-states");
   try {
@@ -169,9 +166,7 @@ test("commit details distinguish valid, invalid and unsigned signatures and keep
     const details = page.getByLabel("Commit details");
     await history.getByRole("option", { name: /test: valid signed commit/ }).click();
     await expect(details).toContainText("Signaturevalid", { timeout: 15_000 });
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-    await details.getByRole("button", { name: "Copy commit hash" }).click();
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(validOid);
+    await expect(details.getByText(validOid)).toBeVisible();
     await expect(details.getByRole("button", { name: /main/ })).toBeVisible();
 
     await history.getByRole("option", { name: /test: invalid signed commit/ }).click();

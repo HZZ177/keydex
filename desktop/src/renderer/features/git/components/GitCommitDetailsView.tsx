@@ -1,6 +1,5 @@
 import {
   ChevronRight,
-  Copy,
   GitCommitHorizontal,
   ShieldCheck,
   ShieldQuestion,
@@ -14,7 +13,7 @@ import {
 } from "react";
 
 import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
-import type { GitCommitDetail, GitFileDiff, GitFileStatusCode, GitObjectId } from "@/runtime/gitTypes";
+import type { GitCommitDetail, GitFileDiff, GitFileStatusCode } from "@/runtime/gitTypes";
 
 import styles from "./GitCommitDetailsView.module.css";
 
@@ -39,13 +38,11 @@ export function GitCommitDetailsView({
   loading,
   selectedFileIndex,
   onSelectFile,
-  onCopyHash,
 }: {
   detail: GitCommitDetail | null;
   loading: boolean;
   selectedFileIndex: number;
   onSelectFile: (index: number) => void;
-  onCopyHash: (objectId: GitObjectId) => void | Promise<void>;
 }) {
   const [filesPanePercent, setFilesPanePercent] = useState(DEFAULT_FILES_PANE_PERCENT);
   const [resizing, setResizing] = useState(false);
@@ -171,9 +168,6 @@ export function GitCommitDetailsView({
             <dt>提交</dt>
             <dd className={styles.commitHash}>
               <code title={commit.objectId}>{commit.objectId}</code>
-              <button type="button" aria-label="复制提交哈希" onClick={() => void onCopyHash(commit.objectId)}>
-                <Copy size={13} />
-              </button>
             </dd>
           </div>
           <div>
@@ -270,7 +264,6 @@ function FileTreeNode({
       <button
         className={styles.treeRow}
         type="button"
-        title={node.path}
         data-kind={node.kind}
         data-status={node.status}
         data-selected={selected ? "true" : undefined}

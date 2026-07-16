@@ -40,7 +40,6 @@ describe("Git commit details", () => {
 
   it("renders an independently scrollable file tree and commit information without comparison or diff controls", () => {
     const onSelectFile = vi.fn();
-    const onCopyHash = vi.fn();
     const detail = normalizedDetail();
     render(
       <GitCommitDetailsView
@@ -48,7 +47,6 @@ describe("Git commit details", () => {
         loading={false}
         selectedFileIndex={0}
         onSelectFile={onSelectFile}
-        onCopyHash={onCopyHash}
       />,
     );
 
@@ -62,14 +60,16 @@ describe("Git commit details", () => {
     expect(screen.queryByRole("region", { name: "与父提交比较" })).toBeNull();
     expect(screen.queryByText("与父提交比较")).toBeNull();
     expect(screen.queryByText("比较")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "复制提交哈希" }));
-    expect(onCopyHash).toHaveBeenCalledWith("a".repeat(40));
+    expect(screen.queryByRole("button", { name: "复制提交哈希" })).toBeNull();
 
     const tree = screen.getByRole("tree", { name: "变更文件树" });
     expect(within(tree).getByText("src")).toBeTruthy();
-    fireEvent.click(within(tree).getByRole("button", { name: "new.ts" }));
+    const selectedFileRow = within(tree).getByRole("button", { name: "new.ts" });
+    expect(selectedFileRow.dataset.selected).toBe("true");
+    expect(selectedFileRow.hasAttribute("title")).toBe(false);
+    fireEvent.click(selectedFileRow);
     expect(onSelectFile).toHaveBeenCalledWith(0);
-    expect(within(tree).getByRole("button", { name: "new.ts" }).dataset.status).toBe("modified");
+    expect(selectedFileRow.dataset.status).toBe("modified");
     expect(within(tree).getByRole("button", { name: "readme.md" }).dataset.status).toBe("added");
     expect(within(tree).getByRole("button", { name: "legacy.txt" }).dataset.status).toBe("deleted");
     expect(tree.querySelectorAll("[data-icon-id]").length).toBeGreaterThan(0);
@@ -83,7 +83,6 @@ describe("Git commit details", () => {
         loading
         selectedFileIndex={0}
         onSelectFile={vi.fn()}
-        onCopyHash={vi.fn()}
       />,
     );
 
@@ -98,7 +97,6 @@ describe("Git commit details", () => {
         loading={false}
         selectedFileIndex={0}
         onSelectFile={vi.fn()}
-        onCopyHash={vi.fn()}
       />,
     );
 
