@@ -206,6 +206,68 @@ describe("Sider", () => {
     expect(screen.getByText("keydex").getAttribute("role")).toBeNull();
   });
 
+  it("keeps Git as the only selected sidebar entry without discarding the current route", () => {
+    const view = renderSider(
+      <Sider
+        activePath="/conversation/thread-1"
+        conversations={[{ id: "thread-1", title: "会话 A" }]}
+        gitActive
+        gitEnabled
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Git" }).getAttribute("data-active")).toBe("true");
+    expect(screen.getByRole("button", { name: "会话 A" }).getAttribute("data-active")).toBe("false");
+    expect(screen.getByRole("button", { name: "会话 A" }).getAttribute("aria-current")).toBeNull();
+
+    view.rerender(
+      <ThemeProvider>
+        <NotificationProvider>
+          <Sider
+            activePath="/guid"
+            conversations={[{ id: "thread-1", title: "会话 A" }]}
+            gitActive
+            gitEnabled
+          />
+        </NotificationProvider>
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "新对话" }).getAttribute("data-active")).toBe("false");
+    expect(screen.getByRole("button", { name: "Git" }).getAttribute("data-active")).toBe("true");
+
+    view.rerender(
+      <ThemeProvider>
+        <NotificationProvider>
+          <Sider
+            activePath="/settings/general"
+            conversations={[{ id: "thread-1", title: "会话 A" }]}
+            gitActive
+            gitEnabled
+          />
+        </NotificationProvider>
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "设置" }).getAttribute("data-active")).toBe("false");
+
+    view.rerender(
+      <ThemeProvider>
+        <NotificationProvider>
+          <Sider
+            activePath="/conversation/thread-1"
+            conversations={[{ id: "thread-1", title: "会话 A" }]}
+            gitEnabled
+          />
+        </NotificationProvider>
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Git" }).getAttribute("data-active")).toBe("false");
+    expect(screen.getByRole("button", { name: "会话 A" }).getAttribute("data-active")).toBe("true");
+    expect(screen.getByRole("button", { name: "会话 A" }).getAttribute("aria-current")).toBe("page");
+  });
+
   it("keeps history rows quiet with weak time metadata and no native title popup", () => {
     renderSider(
       <Sider
@@ -229,6 +291,27 @@ describe("Sider", () => {
     expect(screen.getByTitle("Git")).not.toBeNull();
     expect(screen.getByTitle("切换主题")).not.toBeNull();
     expect(screen.getByTitle("设置")).not.toBeNull();
+  });
+
+  it("shows collapsed rail action tooltips consistently on the right", () => {
+    vi.useFakeTimers();
+    try {
+      renderSider(<Sider collapsed conversations={[]} onToggleSidebar={() => undefined} />);
+
+      for (const label of ["展开侧边栏", "新对话", "切换主题", "设置"]) {
+        const button = screen.getByRole("button", { name: label });
+        fireEvent.pointerOver(button);
+        act(() => vi.advanceTimersByTime(420));
+
+        const tooltip = screen.getByRole("tooltip");
+        expect(tooltip.textContent).toBe(label);
+        expect(tooltip.getAttribute("data-placement")).toBe("right");
+
+        fireEvent.pointerOut(button);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders the sidebar collapse control in the main navigation list", () => {

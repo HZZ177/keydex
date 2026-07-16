@@ -81,6 +81,33 @@ describe("Conversation Markdown renderer profile", () => {
     }));
   });
 
+  it("adds real color swatches after inline hexadecimal color values without duplicating them", () => {
+    const parser = new StreamingTailParser(parserOptions);
+    const root = document.createElement("div");
+    const view = new StreamingTailView(root, { registry: createConversationMarkdownRendererRegistry() });
+    const source = "绿色 `#63A665`，紫色 `#8B63A6`，短色值 `#abc`，透明色 `#11223380`，黑色 `#000000`，白色 `#FFFFFF`，无效值 `#12345`";
+    const first = parser.update({ source, revision: "colors-1", epoch: 1 }).snapshot;
+    view.publish(first, { showCursor: false });
+
+    const swatches = root.querySelectorAll<HTMLElement>('[data-keydex-color-swatch="true"]');
+    expect(Array.from(swatches, (swatch) => swatch.dataset.keydexColorValue)).toEqual([
+      "#63A665",
+      "#8B63A6",
+      "#abc",
+      "#11223380",
+      "#000000",
+      "#FFFFFF",
+    ]);
+    expect(Array.from(swatches).every((swatch) => swatch.style.backgroundColor !== "")).toBe(true);
+    expect(root.querySelector<HTMLElement>('[data-keydex-color-value="#000000"]')?.dataset.keydexColorSwatchOutline).toBeUndefined();
+    expect(root.querySelector<HTMLElement>('[data-keydex-color-value="#FFFFFF"]')?.dataset.keydexColorSwatchOutline).toBe("true");
+    expect(root.querySelector('code[data-markdown-inline-kind="code"]:last-of-type')?.nextSibling).toBeNull();
+
+    const second = parser.update({ source, revision: "colors-2", epoch: 1, final: true }).snapshot;
+    view.publish(second, { showCursor: false });
+    expect(root.querySelectorAll('[data-keydex-color-swatch="true"]')).toHaveLength(6);
+  });
+
   it("keeps table overflow and remote image metadata in the conversation profile", () => {
     const source = [
       "| A | B |",

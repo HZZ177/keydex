@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsShell, type SettingsSection } from "@/renderer/pages/settings/SettingsShell";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
@@ -23,6 +23,10 @@ function renderShell(
 }
 
 describe("SettingsShell", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders only supported settings menu entries", () => {
     renderShell("providers");
 
@@ -146,5 +150,44 @@ describe("SettingsShell", () => {
     expect(shell.dataset.sidebar).toBe("collapsed");
     expect(shell.dataset.sidebarMotion).toBe("true");
     expect(screen.getByTitle("切换主题")).not.toBeNull();
+  });
+
+  it("shows custom menu labels on the right only when the settings sidebar is collapsed", () => {
+    vi.useFakeTimers();
+    renderShell("providers");
+
+    const shell = screen.getByTestId("settings-shell");
+    if (shell.dataset.sidebar === "collapsed") {
+      fireEvent.click(screen.getByLabelText("展开侧边栏"));
+    }
+
+    const generalButton = screen.getByRole("button", { name: "常规" });
+    expect(generalButton.getAttribute("data-tooltip-label")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("折叠侧边栏"));
+
+    const menuLabels = [
+      "常规",
+      "外观",
+      "供应商配置",
+      "模型配置",
+      "扩展功能",
+      "MCP服务器",
+      "策略配置",
+      "用量统计",
+      "项目管理",
+      "归档管理",
+      "关于",
+    ];
+    for (const label of menuLabels) {
+      expect(screen.getByRole("button", { name: label }).getAttribute("data-tooltip-label")).toBe(label);
+    }
+
+    fireEvent.pointerOver(generalButton);
+    act(() => vi.advanceTimersByTime(420));
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toBe("常规");
+    expect(tooltip.getAttribute("data-placement")).toBe("right");
   });
 });

@@ -89,7 +89,10 @@ def create_app(
     async def lifespan(app: FastAPI):
         async def run_warmup() -> None:
             try:
-                await app.state.agent_runtime_provider.warmup_async()
+                await asyncio.gather(
+                    app.state.agent_runtime_provider.warmup_async(),
+                    asyncio.to_thread(app.state.git_query_service.capabilities),
+                )
             except Exception:
                 pass
 

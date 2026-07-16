@@ -1,4 +1,4 @@
-import { Check, GitCommitHorizontal } from "lucide-react";
+import { Check } from "lucide-react";
 
 import type { GitStatusSnapshot } from "@/runtime/gitTypes";
 import type { GitIdentity } from "@/runtime/git";
@@ -47,28 +47,38 @@ export function GitCommitEditor({
   const completesMerge = status?.operation?.kind === "merge" && status.operation.state === "continuable";
   const needsSelectedFiles = selectedFileCount === 0 && !completesMerge;
   const canCommit = validation.valid && identityReady && !needsSelectedFiles && !committing;
-  const readinessMessage = validation.valid && needsSelectedFiles
-    ? "请至少选择一个要提交的文件"
-    : validation.message;
 
   return (
     <section className={styles.root} aria-label="提交编辑器">
       <header>
-        <GitCommitHorizontal size={14} />
         <strong>提交</strong>
-        <span>{selectedFileCount} 个已选择文件</span>
+        {identity !== undefined ? (
+          <span
+            className={styles.identity}
+            data-ready={identityReady ? "true" : "false"}
+            title={identityLoading
+              ? "正在读取 Git 提交身份…"
+              : identityReady
+                ? `${identity?.name} <${identity?.email}>`
+                : "尚未配置 Git 提交身份"}
+          >
+            {identityLoading
+              ? "正在读取 Git 提交身份…"
+              : identityReady
+                ? `${identity?.name} <${identity?.email}>`
+                : "尚未配置 Git 提交身份"}
+          </span>
+        ) : null}
+        <span className={styles.selectionSummary}>{selectedFileCount} 个已选择文件</span>
       </header>
-      <div className={styles.body}>
-        <textarea
-          value={draft}
-          aria-label="提交说明"
-          placeholder="提交说明（第一行建议不超过 72 个字符）"
-          onChange={(event) => onDraftChange(event.currentTarget.value.replaceAll("\r\n", "\n"))}
-        />
-        <div className={styles.meta}>
-          <span data-valid={validation.valid && !needsSelectedFiles ? "true" : "false"}>{readinessMessage}</span>
-          <span>{draft.length} 字符</span>
-        </div>
+      <textarea
+        value={draft}
+        aria-label="提交说明"
+        aria-invalid={draft.trim() && !validation.valid ? "true" : undefined}
+        placeholder="输入提交说明（第一行建议不超过 72 个字符）"
+        onChange={(event) => onDraftChange(event.currentTarget.value.replaceAll("\r\n", "\n"))}
+      />
+      <footer>
         {outcome ? (
           <output className={styles.outcome} aria-label="提交结果">
             <Check size={13} />
@@ -76,26 +86,13 @@ export function GitCommitEditor({
             {outcome.oid ? <code>{outcome.oid.slice(0, 12)}</code> : null}
           </output>
         ) : null}
-        {identity !== undefined ? (
-          <div className={styles.identity} data-ready={identityReady ? "true" : "false"}>
-            <span>
-              {identityLoading
-                ? "正在读取 Git 提交身份…"
-                : identityReady
-                  ? `${identity?.name} <${identity?.email}>`
-                  : "尚未配置 Git 提交身份"}
-            </span>
-          </div>
-        ) : null}
-      </div>
-      <footer>
         <div className={styles.actions}>
           <button
             type="button"
             disabled={!canCommit}
             onClick={() => void onCommit({ message: draft.trim(), amend: false, sign: false })}
           >
-            {committing ? "正在提交…" : <><Check size={13} />提交</>}
+            {committing ? "正在提交…" : "提交"}
           </button>
           {onCommitAndPush ? (
             <button

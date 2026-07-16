@@ -33,6 +33,7 @@ import {
   type GitShortcutCommand,
 } from "@/renderer/features/git/gitShortcuts";
 import { gitOperationErrorMessage, gitUiErrorMessage } from "@/renderer/features/git/errorPresentation";
+import { GitDivergenceIndicator } from "@/renderer/features/git/components/GitDivergenceIndicator";
 
 import styles from "./ProjectGitMenu.module.css";
 import { GitHelpDialog } from "./GitHelpDialog";
@@ -638,9 +639,7 @@ function GitRefTree({
                     {ref.kind === "local" && ref.upstream ? (
                       <span className={styles.refUpstream}>{ref.upstream}</span>
                     ) : null}
-                    {ref.ahead || ref.behind ? (
-                      <small>{ref.ahead ? `↗ ${ref.ahead}` : ""}{ref.behind ? `↙ ${ref.behind}` : ""}</small>
-                    ) : null}
+                    <GitDivergenceIndicator ahead={ref.ahead} behind={ref.behind} />
                     <ChevronRight className={styles.refChevron} size={12} aria-hidden="true" />
                   </button>
                 ))}

@@ -13,32 +13,50 @@ import type { AgentSession, Workspace } from "@/types/protocol";
 import { ActiveProjectProvider } from "./ActiveProjectProvider";
 
 interface ActiveProjectPublisher {
-  publish(sourceId: string, discovery: ActiveProjectDiscovery): void;
+  publish(sourceId: string, discovery: ActiveProjectDiscovery, priority?: number): void;
   clear(sourceId: string): void;
 }
 
 const ActiveProjectPublisherContext = createContext<ActiveProjectPublisher | null>(null);
 const NO_PROJECT: ActiveProjectDiscovery = { project: null };
 
+interface ActiveProjectPublication {
+  discovery: ActiveProjectDiscovery;
+  priority: number;
+  order: number;
+}
+
 export function ActiveProjectCoordinatorProvider({ children }: PropsWithChildren) {
-  const [published, setPublished] = useState<{ sourceId: string; discovery: ActiveProjectDiscovery }>({
-    sourceId: "",
-    discovery: NO_PROJECT,
-  });
+  const [publications, setPublications] = useState<ReadonlyMap<string, ActiveProjectPublication>>(
+    () => new Map(),
+  );
   const publisher = useMemo<ActiveProjectPublisher>(
     () => ({
-      publish: (sourceId, discovery) => setPublished({ sourceId, discovery }),
+      publish: (sourceId, discovery, priority = 0) =>
+        setPublications((current) => {
+          const next = new Map(current);
+          next.set(sourceId, {
+            discovery,
+            priority,
+            order: nextPublicationOrder(),
+          });
+          return next;
+        }),
       clear: (sourceId) =>
-        setPublished((current) =>
-          current.sourceId === sourceId ? { sourceId: "", discovery: NO_PROJECT } : current,
-        ),
+        setPublications((current) => {
+          if (!current.has(sourceId)) return current;
+          const next = new Map(current);
+          next.delete(sourceId);
+          return next;
+        }),
     }),
     [],
   );
+  const activeDiscovery = useMemo(() => selectActiveDiscovery(publications), [publications]);
 
   return (
     <ActiveProjectPublisherContext.Provider value={publisher}>
-      <ActiveProjectProvider discovery={published.discovery}>{children}</ActiveProjectProvider>
+      <ActiveProjectProvider discovery={activeDiscovery}>{children}</ActiveProjectProvider>
     </ActiveProjectPublisherContext.Provider>
   );
 }
@@ -47,14 +65,38 @@ export function usePublishActiveProjectDiscovery(
   sourceId: string,
   discovery: ActiveProjectDiscovery,
   enabled = true,
+  priority = 0,
 ): void {
   const publisher = useContext(ActiveProjectPublisherContext);
-  if (!publisher) throw new Error("ActiveProjectCoordinatorProvider is missing");
   useLayoutEffect(() => {
     if (!enabled) return;
-    publisher.publish(sourceId, discovery);
+    if (!publisher) throw new Error("ActiveProjectCoordinatorProvider is missing");
+    publisher.publish(sourceId, discovery, priority);
     return () => publisher.clear(sourceId);
-  }, [discovery, enabled, publisher, sourceId]);
+  }, [discovery, enabled, priority, publisher, sourceId]);
+}
+
+let publicationOrder = 0;
+
+function nextPublicationOrder(): number {
+  publicationOrder += 1;
+  return publicationOrder;
+}
+
+function selectActiveDiscovery(
+  publications: ReadonlyMap<string, ActiveProjectPublication>,
+): ActiveProjectDiscovery {
+  let selected: ActiveProjectPublication | null = null;
+  for (const publication of publications.values()) {
+    if (
+      !selected
+      || publication.priority > selected.priority
+      || (publication.priority === selected.priority && publication.order > selected.order)
+    ) {
+      selected = publication;
+    }
+  }
+  return selected?.discovery ?? NO_PROJECT;
 }
 
 export function activeProjectDiscoveryFromWorkspace(

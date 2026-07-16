@@ -1,18 +1,138 @@
-.root { display: grid; min-height: 0; height: 100%; grid-template-rows: auto minmax(0, 1fr) auto; gap: 5px; padding: 7px 9px 8px; overflow: hidden; border-top: 1px solid var(--color-border-2); background: var(--color-bg-1); }
-.root header, .root footer, .meta { display: flex; align-items: center; gap: 7px; }
-.root header strong { font-size: 11px; }
-.root header span { margin-left: auto; color: var(--color-text-3); font-size: 10px; }
-.body { display: grid; min-height: 0; align-content: start; gap: 5px; overflow-y: auto; scrollbar-width: auto; }
-.root textarea { min-height: 62px; max-height: 160px; resize: vertical; padding: 7px 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); outline: 0; background: var(--color-bg-1); color: var(--color-text-1); font-family: var(--font-sans); font-size: 11px; line-height: 1.5; }
-.root textarea:focus { border-color: var(--color-accent-1); }
-.meta { justify-content: space-between; color: var(--color-text-3); font-size: 9px; }
-.meta [data-valid="false"] { color: var(--color-danger, #d14343); }
-.outcome { display: flex; align-items: center; gap: 6px; color: var(--color-success, #2f9e64); font-size: 10px; }
-.outcome code { color: var(--color-text-3); }
-.root footer { min-height: 31px; flex: 0 0 auto; justify-content: flex-end; padding-top: 5px; border-top: 1px solid var(--color-border-2); background: var(--color-bg-1); }
-.actions { display: flex; align-items: center; gap: 7px; }
-.actions { margin-left: auto; }
-.root footer button { display: inline-flex; min-height: 27px; flex: 0 0 auto; align-items: center; gap: 4px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: var(--color-accent-1); color: var(--git-emphasis-contrast); cursor: pointer; font-size: 10px; white-space: nowrap; }
-.root footer button:disabled { cursor: default; opacity: 0.45; }
-.identity { display: flex; align-items: center; gap: 6px; color: var(--color-text-3); font-size: 10px; }
-.identity[data-ready="false"] { color: var(--color-danger, #d14343); }
+.root {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--color-bg-1);
+}
+
+.root header,
+.root footer,
+.outcome,
+.actions {
+  display: flex;
+  align-items: center;
+}
+
+.root header {
+  min-width: 0;
+  min-height: 34px;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--color-text-3);
+}
+
+.root header strong {
+  flex: 0 0 auto;
+  color: var(--color-text-1);
+  font-size: 11px;
+}
+
+.identity {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-3);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity[data-ready="false"] {
+  color: var(--color-danger, #d14343);
+}
+
+.selectionSummary {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.root textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  resize: none;
+  padding: 7px 10px 10px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-1);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.root textarea::placeholder {
+  color: var(--color-text-3);
+}
+
+.root footer {
+  min-width: 0;
+  min-height: 39px;
+  gap: 10px;
+  padding: 5px 8px 7px 10px;
+  background: var(--color-bg-1);
+}
+
+.outcome {
+  min-width: 0;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--color-success, #2f9e64);
+  font-size: 10px;
+}
+
+.outcome span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outcome code {
+  flex: 0 0 auto;
+  color: var(--color-text-3);
+}
+
+.actions {
+  margin-left: auto;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.root footer button {
+  display: inline-flex;
+  min-height: 27px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 11px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-1);
+  box-shadow: 0 1px 1px color-mix(in srgb, var(--color-text-1) 7%, transparent);
+  color: var(--color-text-1);
+  cursor: pointer;
+  font-size: 10px;
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-standard),
+    border-color var(--motion-fast) var(--motion-ease-standard);
+}
+
+.root footer button:hover:not(:disabled),
+.root footer button:focus-visible {
+  border-color: color-mix(in srgb, var(--color-text-3) 60%, var(--color-border-2));
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.root footer button:disabled {
+  background: color-mix(in srgb, var(--color-bg-1) 86%, var(--surface-muted));
+  box-shadow: none;
+  color: var(--color-text-3);
+  cursor: default;
+  opacity: 0.62;
+}

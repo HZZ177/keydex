@@ -1,7 +1,11 @@
 import { Check, ChevronDown } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 
-import { FloatingLayer, type FloatingPlacement } from "@/renderer/components/floating";
+import {
+  FloatingLayer,
+  type FloatingAlignment,
+  type FloatingPlacement,
+} from "@/renderer/components/floating";
 
 import styles from "./SettingsSelect.module.css";
 
@@ -14,9 +18,11 @@ export interface SettingsSelectOption<T extends string> {
 }
 
 export interface SettingsSelectProps<T extends string> {
+  alignment?: FloatingAlignment;
   ariaLabel: string;
   density?: "regular" | "compact";
   disabled?: boolean;
+  dropdownWidth?: CSSProperties["width"];
   onChange: (value: T) => void;
   options: Array<SettingsSelectOption<T>>;
   placeholder?: string;
@@ -25,9 +31,11 @@ export interface SettingsSelectProps<T extends string> {
 }
 
 export function SettingsSelect<T extends string>({
+  alignment = "end",
   ariaLabel,
   density = "regular",
   disabled = false,
+  dropdownWidth,
   onChange,
   options,
   placeholder = "请选择",
@@ -146,15 +154,17 @@ export function SettingsSelect<T extends string>({
 
       {menuVisible ? (
         <FloatingLayer
-          alignment="end"
+          alignment={alignment}
           aria-hidden={closing ? "true" : undefined}
           anchorRef={rootRef}
           className={styles.dropdown}
+          data-alignment={alignment}
           data-density={density}
           data-state={closing ? "closing" : "open"}
           floatingRef={menuRef}
-          matchAnchorWidth
+          matchAnchorWidth={!dropdownWidth}
           placement={placement}
+          style={dropdownWidth ? { width: dropdownWidth } : undefined}
         >
           <div className={styles.options} id={menuId} role="listbox" aria-label={`${ariaLabel}选项`}>
             {options.map((option) => {

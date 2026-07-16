@@ -114,18 +114,6 @@ test("special paths, rename, binary, executable mode and ignored policy render a
     await expect(page.getByLabel("Mode change")).toContainText("100644 → 100755", { timeout: 10_000 });
 
     await expect(changes).not.toContainText("ignored.log");
-    const ignoredToggle = page.getByRole("checkbox", { name: "显示已忽略文件" });
-    await ignoredToggle.check();
-    await expect(changes).toContainText("ignored.log", { timeout: 15_000 });
-    await expect(changes.getByRole("treeitem", { name: /ignored\.log ignored/ })).toBeVisible();
-    await page.reload();
-    if (await page.getByRole("checkbox", { name: "显示已忽略文件" }).count() === 0) {
-      await openGitToolWindow(page);
-    }
-    await expect(page.getByRole("checkbox", { name: "显示已忽略文件" })).toBeChecked({ timeout: 20_000 });
-    await expect(page.getByRole("tree", { name: "本地改动" })).toContainText("ignored.log");
-    await page.getByRole("checkbox", { name: "显示已忽略文件" }).uncheck();
-    await expect(page.getByRole("tree", { name: "本地改动" })).not.toContainText("ignored.log");
     await fixture.screenshot(page, "e2e-013-016-017-special-paths-status");
   } finally {
     await fixture.cleanup();
@@ -292,7 +280,11 @@ async function openGitToolWindow(page: Page): Promise<void> {
 }
 
 async function selectChange(page: Page, name: RegExp): Promise<void> {
-  const checkbox = page.getByRole("checkbox", { name });
+  const tree = page.getByRole("tree", { name: "本地改动" });
+  const row = tree.getByRole("treeitem", { name });
+  await expect(row).toBeVisible({ timeout: 20_000 });
+  await row.click();
+  const checkbox = tree.getByRole("checkbox", { name });
   await expect(checkbox).toBeVisible({ timeout: 20_000 });
   await checkbox.check();
   await expect(checkbox).toBeChecked();
@@ -300,6 +292,9 @@ async function selectChange(page: Page, name: RegExp): Promise<void> {
 
 async function selectOnlyChange(page: Page, name: RegExp): Promise<void> {
   const tree = page.getByRole("tree", { name: "本地改动" });
+  const row = tree.getByRole("treeitem", { name });
+  await expect(row).toBeVisible({ timeout: 20_000 });
+  await row.click();
   const target = tree.getByRole("checkbox", { name });
   await expect(target).toBeVisible({ timeout: 20_000 });
   for (let attempt = 0; attempt < 20; attempt += 1) {

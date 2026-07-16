@@ -54,7 +54,7 @@ def parse_porcelain_v2_status(
         for item in token.splitlines():
             if item.startswith("# "):
                 _parse_branch_header(item, branch)
-            elif item.startswith(("1 ", "u ", "? ", "! ")):
+            elif item.startswith(("1 ", "u ", "? ")):
                 files.append(_parse_file_record(item))
             elif item.startswith("2 "):
                 if index >= len(tokens):
@@ -112,8 +112,6 @@ def _parse_file_record(record: str, *, original_path: str | None = None) -> GitC
         return GitChangedFileResponse(
             path=record[2:], worktree_status=GitFileStatusCode.UNTRACKED
         )
-    if kind == "!":
-        return GitChangedFileResponse(path=record[2:], worktree_status=GitFileStatusCode.IGNORED)
     if kind == "1":
         parts = record.split(" ", 8)
         if len(parts) != 9:

@@ -38,11 +38,9 @@ describe("Git commit details", () => {
     expect(url.searchParams.get("parent")).toBe(parentId);
   });
 
-  it("renders metadata, signature, parent switching, stats, and a selectable file tree", () => {
-    const onSelectParent = vi.fn();
+  it("renders an independently scrollable file tree and commit information without comparison or diff controls", () => {
     const onSelectFile = vi.fn();
     const onCopyHash = vi.fn();
-    const onSelectDecoration = vi.fn();
     const detail = normalizedDetail();
     render(
       <GitCommitDetailsView
@@ -50,27 +48,66 @@ describe("Git commit details", () => {
         loading={false}
         selectedFileIndex={0}
         onSelectFile={onSelectFile}
-        onSelectParent={onSelectParent}
         onCopyHash={onCopyHash}
-        onSelectDecoration={onSelectDecoration}
       />,
     );
 
     expect(screen.getByText("merge topic")).toBeTruthy();
-    expect(screen.getByText("valid")).toBeTruthy();
+    expect(screen.getByText("Detailed body")).toBeTruthy();
+    expect(screen.getByText("有效")).toBeTruthy();
     expect(screen.getByText("+3")).toBeTruthy();
     expect(screen.getByText("−1")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Copy commit hash" }));
+    expect(screen.getByTestId("git-commit-files-scroll").classList.contains("keydex-scrollable")).toBe(true);
+    expect(screen.getByTestId("git-commit-metadata-scroll").classList.contains("keydex-scrollable")).toBe(true);
+    expect(screen.queryByRole("region", { name: "与父提交比较" })).toBeNull();
+    expect(screen.queryByText("与父提交比较")).toBeNull();
+    expect(screen.queryByText("比较")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "复制提交哈希" }));
     expect(onCopyHash).toHaveBeenCalledWith("a".repeat(40));
-    fireEvent.click(screen.getByRole("button", { name: "tag: v1" }));
-    expect(onSelectDecoration).toHaveBeenCalledWith("tag: v1");
-    fireEvent.click(screen.getByRole("button", { name: `P2 · ${"b".repeat(8)}` }));
-    expect(onSelectParent).toHaveBeenCalledWith("b".repeat(40));
 
-    const tree = screen.getByRole("tree", { name: "Commit files" });
+    const tree = screen.getByRole("tree", { name: "变更文件树" });
     expect(within(tree).getByText("src")).toBeTruthy();
     fireEvent.click(within(tree).getByRole("button", { name: "new.ts" }));
     expect(onSelectFile).toHaveBeenCalledWith(0);
+    expect(within(tree).getByRole("button", { name: "new.ts" }).dataset.status).toBe("modified");
+    expect(within(tree).getByRole("button", { name: "readme.md" }).dataset.status).toBe("added");
+    expect(within(tree).getByRole("button", { name: "legacy.txt" }).dataset.status).toBe("deleted");
+    expect(tree.querySelectorAll("[data-icon-id]").length).toBeGreaterThan(0);
+  });
+
+  it("keeps commit metadata visible while the file detail is still loading", () => {
+    const detail = { ...normalizedDetail(), files: [] };
+    render(
+      <GitCommitDetailsView
+        detail={detail}
+        loading
+        selectedFileIndex={0}
+        onSelectFile={vi.fn()}
+        onCopyHash={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("merge topic")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("正在加载变更文件…");
+  });
+
+  it("resizes the two scroll regions from the horizontal separator", () => {
+    render(
+      <GitCommitDetailsView
+        detail={normalizedDetail()}
+        loading={false}
+        selectedFileIndex={0}
+        onSelectFile={vi.fn()}
+        onCopyHash={vi.fn()}
+      />,
+    );
+
+    const separator = screen.getByRole("separator", { name: "调整变更文件与提交信息区域高度" });
+    expect(separator.getAttribute("aria-valuenow")).toBe("48");
+    fireEvent.keyDown(separator, { key: "ArrowDown" });
+    expect(separator.getAttribute("aria-valuenow")).toBe("52");
+    fireEvent.keyDown(separator, { key: "End" });
+    expect(separator.getAttribute("aria-valuenow")).toBe("76");
   });
 
   it("builds deterministic nested paths with directories before root files", () => {
@@ -85,6 +122,7 @@ describe("Git commit details", () => {
     expect(tree.map((node) => node.name)).toEqual(["docs", "src", "z.txt"]);
     expect(tree[1].children.map((node) => node.name)).toEqual(["a.ts", "z.ts"]);
     expect(tree[1].children.map((node) => node.fileIndex)).toEqual([2, 1]);
+    expect(tree[1].status).toBe("modified");
   });
 });
 
@@ -107,7 +145,11 @@ function normalizedDetail(): GitCommitDetail {
       signature: "valid",
     },
     selectedParentId: "c".repeat(40) as never,
-    files: [file("src/new.ts", { oldPath: "src/old.ts", status: "renamed", additions: 3, deletions: 1 })],
+    files: [
+      file("src/new.ts", { oldPath: "src/old.ts", status: "renamed", additions: 3, deletions: 1 }),
+      file("docs/readme.md", { status: "added", additions: 0 }),
+      file("legacy.txt", { newPath: null, status: "deleted", additions: 0 }),
+    ],
   };
 }
 

@@ -1,11 +1,11 @@
 import {
-  ChevronDown,
   ChevronRight,
   GitBranch,
   GitCompareArrows,
   GitPullRequest,
   Pencil,
   Plus,
+  Search,
   Star,
   Tag,
   Trash2,
@@ -19,6 +19,7 @@ import {
 } from "@/renderer/providers/AppContextMenuProvider";
 import type { GitRef } from "@/runtime/gitTypes";
 
+import { GitDivergenceIndicator } from "./GitDivergenceIndicator";
 import styles from "./GitRefsTree.module.css";
 
 export type GitRefAction = "checkout" | "create_branch" | "compare" | "rename" | "delete";
@@ -43,10 +44,12 @@ const GROUPS: readonly { kind: GitRef["kind"]; label: string; icon: typeof GitBr
 ];
 
 export function GitRefsTree({ refs, selectedRef, onSelect, onAction }: GitRefsTreeProps) {
-  const groups = useMemo(() => buildGitRefTree(refs), [refs]);
+  const [query, setQuery] = useState("");
+  const visibleRefs = useMemo(() => filterGitRefs(refs, query), [query, refs]);
+  const groups = useMemo(() => buildGitRefTree(visibleRefs), [visibleRefs]);
   const [collapsed, setCollapsed] = useState<Set<GitRef["kind"]>>(() => new Set(["tag"]));
-  const head = refs.find((ref) => ref.current) ?? null;
-  const currentUpstream = head?.upstream ?? null;
+  const head = visibleRefs.find((ref) => ref.current) ?? null;
+  const currentUpstream = refs.find((ref) => ref.current)?.upstream ?? null;
   const [focusedKey, setFocusedKey] = useState(head ? "head" : `group:${groups[0]?.kind ?? "local"}`);
   const appContextMenu = useOptionalAppContextMenu();
 
@@ -82,97 +85,133 @@ export function GitRefsTree({ refs, selectedRef, onSelect, onAction }: GitRefsTr
     openRefContextMenu(ref, event.currentTarget, bounds.left + 18, bounds.bottom + 4);
   };
 
-  if (refs.length === 0) return <div className={styles.empty}>暂无引用</div>;
   return (
-    <div
-      className={styles.root}
-      role="tree"
-      aria-label="仓库引用"
-      onKeyDown={(event) => {
-        if (moveGitTreeFocus(event)) event.preventDefault();
-      }}
-    >
-      {head ? (
-        <button
-          type="button"
-          role="treeitem"
-          className={styles.head}
-          aria-label={`当前分支 ${head.shortName}`}
-          aria-selected={selectedRef === head.fullName}
-          aria-haspopup="menu"
-          data-app-context-menu="local"
-          data-tree-key="head"
-          tabIndex={focusedKey === "head" ? 0 : -1}
-          onFocus={() => setFocusedKey("head")}
-          onClick={() => onSelect(head)}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            openRefContextMenu(head, event.currentTarget, event.clientX, event.clientY);
-          }}
-          onKeyDown={(event) => openKeyboardContextMenu(event, head)}
-        >
-          <GitRefIcon refValue={head} currentUpstream={currentUpstream} />
-          <strong>当前</strong>
-          <span className={styles.headName}>{head.shortName}</span>
-        </button>
-      ) : null}
-      {groups.map((group) => {
-        const definition = GROUPS.find((candidate) => candidate.kind === group.kind)!;
-        const Icon = definition.icon;
-        const isCollapsed = collapsed.has(group.kind);
-        return (
-          <div className={styles.group} role="group" aria-label={group.label} key={group.kind}>
-            <button
-              type="button"
-              role="treeitem"
-              className={styles.groupHeader}
-              aria-expanded={!isCollapsed}
-              data-tree-key={`group:${group.kind}`}
-              tabIndex={focusedKey === `group:${group.kind}` ? 0 : -1}
-              onFocus={() => setFocusedKey(`group:${group.kind}`)}
-              onClick={() => setCollapsed((current) => toggle(current, group.kind))}
-            >
-              {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-              <Icon size={13} />
-              <span>{group.label}</span>
-              <small>{group.refs.length}</small>
-            </button>
-            {!isCollapsed ? group.refs.map((ref) => (
-              <div className={styles.refRow} key={ref.fullName}>
-                <button
-                  type="button"
-                  role="treeitem"
-                  className={styles.ref}
-                  aria-label={ref.shortName}
-                  aria-selected={selectedRef === ref.fullName}
-                  aria-current={ref.current ? "true" : undefined}
-                  aria-haspopup="menu"
-                  data-app-context-menu="local"
-                  data-tree-key={`ref:${ref.fullName}`}
-                  tabIndex={focusedKey === `ref:${ref.fullName}` ? 0 : -1}
-                  onFocus={() => setFocusedKey(`ref:${ref.fullName}`)}
-                  onClick={() => onSelect(ref)}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openRefContextMenu(ref, event.currentTarget, event.clientX, event.clientY);
-                  }}
-                  onKeyDown={(event) => openKeyboardContextMenu(event, ref)}
-                >
-                  <GitRefIcon refValue={ref} currentUpstream={currentUpstream} />
-                  <span className={styles.refName} title={ref.fullName}>{ref.shortName}</span>
-                  {ref.ahead || ref.behind ? (
-                    <small>{ref.ahead ? `↑${ref.ahead}` : ""}{ref.behind ? `↓${ref.behind}` : ""}</small>
-                  ) : null}
-                </button>
-              </div>
-            )) : null}
+    <div className={styles.root}>
+      <label className={styles.searchField}>
+        <Search size={13} aria-hidden="true" />
+        <input
+          aria-label="筛选分支"
+          placeholder="筛选分支"
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+        />
+      </label>
+      <div className={styles.scroller}>
+        {visibleRefs.length === 0 ? (
+          <div className={styles.empty}>{refs.length === 0 ? "暂无引用" : "没有匹配的分支"}</div>
+        ) : (
+          <div
+            className={styles.tree}
+            role="tree"
+            aria-label="仓库引用"
+            onKeyDown={(event) => {
+              if (moveGitTreeFocus(event)) event.preventDefault();
+            }}
+          >
+            {head ? (
+              <button
+                type="button"
+                role="treeitem"
+                className={styles.head}
+                aria-label={`当前分支 ${head.shortName}`}
+                aria-selected={selectedRef === head.fullName}
+                aria-haspopup="menu"
+                data-app-context-menu="local"
+                data-tree-key="head"
+                tabIndex={focusedKey === "head" ? 0 : -1}
+                onFocus={() => setFocusedKey("head")}
+                onClick={() => onSelect(head)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openRefContextMenu(head, event.currentTarget, event.clientX, event.clientY);
+                }}
+                onKeyDown={(event) => openKeyboardContextMenu(event, head)}
+              >
+                <GitRefIcon refValue={head} currentUpstream={currentUpstream} />
+                <strong>当前</strong>
+                <span className={styles.headName}>{head.shortName}</span>
+              </button>
+            ) : null}
+            {groups.map((group) => {
+              const definition = GROUPS.find((candidate) => candidate.kind === group.kind)!;
+              const Icon = definition.icon;
+              const isCollapsed = collapsed.has(group.kind);
+              return (
+                <div className={styles.group} role="group" aria-label={group.label} key={group.kind}>
+                  <button
+                    type="button"
+                    role="treeitem"
+                    className={styles.groupHeader}
+                    aria-expanded={!isCollapsed}
+                    data-tree-key={`group:${group.kind}`}
+                    tabIndex={focusedKey === `group:${group.kind}` ? 0 : -1}
+                    onFocus={() => setFocusedKey(`group:${group.kind}`)}
+                    onClick={() => setCollapsed((current) => toggle(current, group.kind))}
+                  >
+                    <ChevronRight
+                      className={styles.groupChevron}
+                      data-expanded={!isCollapsed ? "true" : "false"}
+                      size={12}
+                    />
+                    <Icon size={13} />
+                    <span>{group.label}</span>
+                    <small>{group.refs.length}</small>
+                  </button>
+                  <div
+                    className={styles.refItems}
+                    data-ref-items={group.kind}
+                    data-expanded={!isCollapsed ? "true" : "false"}
+                    aria-hidden={isCollapsed ? "true" : undefined}
+                  >
+                    <div className={styles.refItemsInner}>
+                      {group.refs.map((ref) => (
+                        <div className={styles.refRow} key={ref.fullName}>
+                          <button
+                            type="button"
+                            role="treeitem"
+                            className={styles.ref}
+                            aria-label={ref.shortName}
+                            aria-selected={selectedRef === ref.fullName}
+                            aria-current={ref.current ? "true" : undefined}
+                            aria-haspopup="menu"
+                            data-app-context-menu="local"
+                            data-tree-key={`ref:${ref.fullName}`}
+                            tabIndex={!isCollapsed && focusedKey === `ref:${ref.fullName}` ? 0 : -1}
+                            onFocus={() => setFocusedKey(`ref:${ref.fullName}`)}
+                            onClick={() => onSelect(ref)}
+                            onContextMenu={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              openRefContextMenu(ref, event.currentTarget, event.clientX, event.clientY);
+                            }}
+                            onKeyDown={(event) => openKeyboardContextMenu(event, ref)}
+                          >
+                            <GitRefIcon refValue={ref} currentUpstream={currentUpstream} />
+                            <span className={styles.refName} title={ref.fullName}>{ref.shortName}</span>
+                            <GitDivergenceIndicator ahead={ref.ahead} behind={ref.behind} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        )}
+      </div>
     </div>
   );
+}
+
+export function filterGitRefs(refs: readonly GitRef[], query: string): readonly GitRef[] {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return refs;
+  return refs.filter((ref) =>
+    ref.shortName.toLocaleLowerCase().includes(normalized)
+    || ref.fullName.toLocaleLowerCase().includes(normalized));
 }
 
 function GitRefIcon({ refValue, currentUpstream }: { refValue: GitRef; currentUpstream: string | null }) {
@@ -254,7 +293,8 @@ function moveGitTreeFocus(event: ReactKeyboardEvent<HTMLDivElement>): boolean {
       return true;
     }
   }
-  const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button[role=treeitem]"));
+  const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button[role=treeitem]"))
+    .filter((item) => !item.closest('[aria-hidden="true"]'));
   const current = items.indexOf(active);
   if (current < 0) return false;
   const target = event.key === "Home"

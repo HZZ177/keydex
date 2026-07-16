@@ -28,9 +28,9 @@ function Reader() {
   return <output>{state.status === "none" ? "none" : `${state.workspaceId}:${state.status}`}</output>;
 }
 
-function Publisher({ id, children }: PropsWithChildren<{ id: string }>) {
+function Publisher({ id, priority = 0, children }: PropsWithChildren<{ id: string; priority?: number }>) {
   const discovery = useMemo(() => activeProjectDiscoveryFromWorkspace(workspace(id), true), [id]);
-  usePublishActiveProjectDiscovery(`route:${id}`, discovery);
+  usePublishActiveProjectDiscovery(`route:${id}`, discovery, true, priority);
   return children;
 }
 
@@ -51,6 +51,47 @@ describe("ActiveProject route coordination", () => {
       );
     });
     expect(screen.getByText("b:loading")).not.toBeNull();
+  });
+
+  it("keeps a temporary higher-priority project active and restores the mounted route afterward", () => {
+    function Sources({ routeId, override }: { routeId: string; override: boolean }) {
+      return (
+        <Publisher id={routeId}>
+          {override ? (
+            <Publisher id="git-override" priority={100}>
+              <Reader />
+            </Publisher>
+          ) : (
+            <Reader />
+          )}
+        </Publisher>
+      );
+    }
+
+    const view = render(
+      <ActiveProjectCoordinatorProvider>
+        <Sources routeId="route-a" override />
+      </ActiveProjectCoordinatorProvider>,
+    );
+    expect(screen.getByText("git-override:loading")).not.toBeNull();
+
+    act(() => {
+      view.rerender(
+        <ActiveProjectCoordinatorProvider>
+          <Sources routeId="route-b" override />
+        </ActiveProjectCoordinatorProvider>,
+      );
+    });
+    expect(screen.getByText("git-override:loading")).not.toBeNull();
+
+    act(() => {
+      view.rerender(
+        <ActiveProjectCoordinatorProvider>
+          <Sources routeId="route-b" override={false} />
+        </ActiveProjectCoordinatorProvider>,
+      );
+    });
+    expect(screen.getByText("route-b:loading")).not.toBeNull();
   });
 
   it("maps workspace and session ownership without inventing a project", () => {

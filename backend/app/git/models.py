@@ -34,7 +34,6 @@ class GitFileStatusCode(StrEnum):
     RENAMED = "renamed"
     COPIED = "copied"
     UNTRACKED = "untracked"
-    IGNORED = "ignored"
     CONFLICTED = "conflicted"
     TYPE_CHANGED = "type_changed"
 
@@ -103,6 +102,22 @@ class GitRepositoryRequest(GitModel):
     workspace_id: str = Field(min_length=1)
     project_root: str = Field(min_length=1)
     repository_id: str = Field(min_length=1)
+
+
+class GitWorktreePathsRequest(GitRepositoryRequest):
+    paths: list[str] = Field(min_length=1, max_length=1000)
+
+    @field_validator("paths")
+    @classmethod
+    def validate_paths(cls, value: list[str]) -> list[str]:
+        from .security import validate_repo_relative_path
+
+        return list(dict.fromkeys(validate_repo_relative_path(path) for path in value))
+
+
+class GitWorktreePathsResponse(GitModel):
+    repository_id: str = Field(min_length=1)
+    paths: list[str] = Field(default_factory=list)
 
 
 class GitWorktreeGrantRequest(GitRepositoryRequest):

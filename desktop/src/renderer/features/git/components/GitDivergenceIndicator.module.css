@@ -1,0 +1,33 @@
+.root {
+  display: inline-flex;
+  min-width: max-content;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.incoming,
+.outgoing {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.incoming {
+  color: color-mix(in srgb, #4d8dff 88%, var(--color-text-1));
+}
+
+.outgoing {
+  color: color-mix(in srgb, #43a56b 88%, var(--color-text-1));
+}
+
+.incoming svg,
+.outgoing svg {
+  flex: 0 0 auto;
+}

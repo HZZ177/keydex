@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   GitToolWindow,
@@ -9,6 +9,7 @@ import {
 } from "@/renderer/features/git/components/GitToolWindow";
 import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@/runtime/gitTypes";
 import type { ActiveProjectState } from "@/renderer/features/git/activeProject";
+import type { Workspace } from "@/types/protocol";
 
 afterEach(cleanup);
 
@@ -96,12 +97,17 @@ describe("GitToolWindow", () => {
     expect(screen.queryByText(".")).toBeNull();
     const changesTab = screen.getByRole("tab", { name: "提交" });
     expect(changesTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.queryByTestId("git-pane-header")).toBeNull();
     expect(screen.queryByRole("complementary", { name: "Git 仓库导航" })).toBeNull();
     expect(screen.queryByRole("separator", { name: "调整 Git 仓库导航宽度" })).toBeNull();
     const commitPaneSplitter = screen.getByRole("separator", { name: "调整提交面板宽度" });
     expect(commitPaneSplitter.getAttribute("aria-valuenow")).toBe("28");
     fireEvent.keyDown(commitPaneSplitter, { key: "ArrowRight" });
     expect(commitPaneSplitter.getAttribute("aria-valuenow")).toBe("30");
+    const commitEditorSplitter = screen.getByRole("separator", { name: "调整提交说明区域高度" });
+    expect(commitEditorSplitter.getAttribute("aria-valuenow")).toBe("34");
+    fireEvent.keyDown(commitEditorSplitter, { key: "ArrowUp" });
+    expect(commitEditorSplitter.getAttribute("aria-valuenow")).toBe("36");
     expect(screen.queryByText("Git 数据加载后显示在这里")).toBeNull();
     expect(screen.queryByRole("button", { name: "查看逐行历史" })).toBeNull();
     expect(screen.getAllByRole("tab")).toHaveLength(3);
@@ -120,6 +126,7 @@ describe("GitToolWindow", () => {
     expect(document.activeElement).toBe(historyTab);
     const panel = screen.getByRole("tabpanel", { name: "Git 日志" });
     expect(historyTab.getAttribute("aria-controls")).toBe(panel.id);
+    expect(screen.queryByTestId("git-pane-header")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "更多 Git 视图" }));
     expect(screen.getByRole("menuitem", { name: /暂存的改动/ })).not.toBeNull();
@@ -128,6 +135,28 @@ describe("GitToolWindow", () => {
     fireEvent.click(advanced);
     expect(screen.queryByRole("menu", { name: "更多 Git 视图" })).toBeNull();
     expect(screen.getByRole("tabpanel", { name: "高级 Git 工具" }).getAttribute("data-view")).toBe("operations");
+  });
+
+  it("uses the shared workspace selector to switch the Git project", () => {
+    const current = workspace("workspace-1", "repo");
+    const target = workspace("workspace-2", "other-repo");
+    const onSelectWorkspace = vi.fn();
+    render(
+      <GitToolWindow
+        project={readyProject}
+        maximized
+        projectSelector={{
+          value: { type: "workspace", workspace: current },
+          workspaces: [current, target],
+          onSelectWorkspace,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("git-project-name").textContent).toContain("repo");
+    fireEvent.click(screen.getByRole("button", { name: "选择工作区" }));
+    fireEvent.click(screen.getByRole("option", { name: /other-repo/ }));
+    expect(onSelectWorkspace).toHaveBeenCalledWith(target);
   });
 
   it("exposes bounded keyboard-adjustable navigation and detail splitters", () => {
@@ -145,7 +174,8 @@ describe("GitToolWindow", () => {
     fireEvent.keyDown(details, { key: "ArrowLeft" });
     expect(details.getAttribute("aria-valuenow")).toBe("30");
     fireEvent.keyDown(details, { key: "End" });
-    expect(details.getAttribute("aria-valuenow")).toBe("42");
+    expect(details.getAttribute("aria-valuemax")).toBe("60");
+    expect(details.getAttribute("aria-valuenow")).toBe("60");
   });
 
   it("resizes both visible panes from pointer movement instead of only changing hover state", () => {
@@ -170,6 +200,35 @@ describe("GitToolWindow", () => {
     expect(details.getAttribute("aria-valuenow")).toBe("34");
   });
 
+  it("lets the commit pane extend to eighty percent of the Git workspace", () => {
+    render(<GitToolWindow project={readyProject} maximized />);
+
+    const splitter = screen.getByRole("separator", { name: "调整提交面板宽度" });
+    expect(splitter.getAttribute("aria-valuemax")).toBe("80");
+
+    fireEvent.keyDown(splitter, { key: "End" });
+    expect(splitter.getAttribute("aria-valuenow")).toBe("80");
+
+    fireEvent.keyDown(splitter, { key: "Home" });
+    expect(splitter.getAttribute("aria-valuenow")).toBe("18");
+  });
+
+  it("resizes the commit editor from vertical pointer movement", () => {
+    render(<GitToolWindow project={readyProject} maximized />);
+
+    const workspace = screen.getByTestId("git-changes-workspace");
+    Object.defineProperty(workspace, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, right: 800, top: 100, bottom: 700, width: 800, height: 600, x: 0, y: 100, toJSON: () => ({}) }),
+    });
+    const splitter = screen.getByRole("separator", { name: "调整提交说明区域高度" });
+
+    fireEvent(splitter, new MouseEvent("pointerdown", { bubbles: true, button: 0, clientY: 496 }));
+    fireEvent(window, new MouseEvent("pointermove", { bubbles: true, clientY: 400 }));
+    fireEvent(window, new MouseEvent("pointerup", { bubbles: true, clientY: 400 }));
+    expect(splitter.getAttribute("aria-valuenow")).toBe("50");
+  });
+
   it.each([
     [{ status: "loading", workspaceId: "w", projectPath: "D:/repo", name: "repo", selectedRepoId: null }, "正在读取 Git 仓库"],
     [{ status: "non_repo", workspaceId: "w", projectPath: "D:/repo", name: "repo", selectedRepoId: null }, "当前项目不是 Git 仓库"],
@@ -187,5 +246,19 @@ function statusWithUpstream(ahead: number): GitStatusSnapshot {
     branch: { head: "main", detachedAt: null, upstream: "origin/main", ahead, behind: 0, unborn: false },
     operation: null,
     files: [],
+  };
+}
+
+function workspace(id: string, name: string): Workspace {
+  return {
+    id,
+    name,
+    root_path: `D:/work/${name}`,
+    normalized_root_path: `D:/work/${name}`,
+    type: "local",
+    created_at: "2026-01-01",
+    updated_at: "2026-01-01",
+    last_opened_at: null,
+    archived_at: null,
   };
 }

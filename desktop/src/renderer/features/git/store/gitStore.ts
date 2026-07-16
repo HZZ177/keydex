@@ -33,7 +33,6 @@ export interface GitProjectUiState {
   activeTab: GitToolWindowTab;
   selectedRef: string | null;
   selectedPath: string | null;
-  showIgnored: boolean;
   commitDraft: string;
   historyFilters: GitHistoryFilters;
   selectedHistoryObjectId: string | null;
@@ -89,17 +88,12 @@ const DEFAULT_UI: GitProjectUiState = {
   activeTab: "changes",
   selectedRef: null,
   selectedPath: null,
-  showIgnored: false,
   commitDraft: "",
   historyFilters: {
     search: "",
     revision: "",
     author: "",
     since: "",
-    until: "",
-    path: "",
-    firstParent: false,
-    mergesOnly: false,
   },
   selectedHistoryObjectId: null,
   navigationPanePercent: 19,
@@ -459,17 +453,12 @@ function normalizePersistedUi(value: unknown): GitProjectUiState {
     activeTab,
     selectedRef: typeof raw.selectedRef === "string" ? raw.selectedRef.slice(0, 4096) : null,
     selectedPath: typeof raw.selectedPath === "string" ? raw.selectedPath.slice(0, 4096) : null,
-    showIgnored: raw.showIgnored === true,
     commitDraft: typeof raw.commitDraft === "string" ? raw.commitDraft.slice(0, 20_000) : "",
     historyFilters: {
       search: textFilter(filtersRaw.search),
       revision: textFilter(filtersRaw.revision),
       author: textFilter(filtersRaw.author),
-      since: textFilter(filtersRaw.since),
-      until: textFilter(filtersRaw.until),
-      path: textFilter(filtersRaw.path),
-      firstParent: filtersRaw.firstParent === true,
-      mergesOnly: filtersRaw.mergesOnly === true,
+      since: historyDateFilter(filtersRaw.since),
     },
     selectedHistoryObjectId: typeof raw.selectedHistoryObjectId === "string"
       ? raw.selectedHistoryObjectId.slice(0, 128)
@@ -482,6 +471,10 @@ function normalizePersistedUi(value: unknown): GitProjectUiState {
 
 function textFilter(value: unknown): string {
   return typeof value === "string" ? value.slice(0, 4096) : "";
+}
+
+function historyDateFilter(value: unknown): string {
+  return value === "24h" || value === "7d" ? value : "";
 }
 
 function panePercent(value: unknown, fallback: number, minimum: number, maximum: number): number {

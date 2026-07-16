@@ -5,7 +5,7 @@ import pytest
 from backend.app.git.status import GitStatusParseError, parse_porcelain_v2_status
 
 
-def test_parses_branch_tracking_unicode_rename_untracked_ignored_and_conflict() -> None:
+def test_parses_branch_tracking_unicode_rename_untracked_and_conflict() -> None:
     payload = (
         "# branch.oid abcdef1234567890\n"
         "# branch.head main\n"
@@ -14,7 +14,6 @@ def test_parses_branch_tracking_unicode_rename_untracked_ignored_and_conflict() 
         "1 M. N... 100644 100644 100644 aaa bbb 中文 文件.txt\x00"
         "2 R. N... 100644 100644 100644 aaa bbb R100 新名字.txt\x00旧名字.txt\x00"
         "? emoji-😀.md\x00"
-        "! build/output.bin\x00"
         "u UU N... 100644 100644 100644 100644 aaa bbb ccc conflict.txt\x00"
     )
     status = parse_porcelain_v2_status(
@@ -32,13 +31,11 @@ def test_parses_branch_tracking_unicode_rename_untracked_ignored_and_conflict() 
         ("中文 文件.txt", None),
         ("新名字.txt", "旧名字.txt"),
         ("emoji-😀.md", None),
-        ("build/output.bin", None),
         ("conflict.txt", None),
     ]
     assert status.files[1].index_status == "renamed"
     assert status.files[2].worktree_status == "untracked"
-    assert status.files[3].worktree_status == "ignored"
-    assert status.files[4].conflicted is True
+    assert status.files[3].conflicted is True
 
 
 def test_rejects_unknown_branch_head_from_damaged_reference() -> None:
@@ -66,7 +63,6 @@ def test_parses_real_porcelain_v2_zero_terminated_output(git_repo_factory) -> No
         "--porcelain=v2",
         "--branch",
         "--untracked-files=all",
-        "--ignored=matching",
         "-z",
     ).stdout
     status = parse_porcelain_v2_status(raw, repository_id="repo", repository_version="v1")
@@ -74,7 +70,7 @@ def test_parses_real_porcelain_v2_zero_terminated_output(git_repo_factory) -> No
     assert by_path["tracked.txt"].worktree_status == "modified"
     assert by_path[".gitignore"].index_status == "added"
     assert by_path["untracked 中文.txt"].worktree_status == "untracked"
-    assert by_path["ignored.log"].worktree_status == "ignored"
+    assert "ignored.log" not in by_path
 
 
 def test_parses_unborn_and_detached_branch_headers() -> None:

@@ -42,6 +42,7 @@ import {
   PROJECT_PATH,
   rememberableModePath,
   workbenchFilePreviewPath,
+  workbenchGitPath,
   workbenchPath,
   WORKBENCH_PATH,
 } from "./appMode";
@@ -192,8 +193,10 @@ function AppRoutes({
               element={launchIntent === "normal" ? <Navigate to={HOME_PATH} replace /> : null}
             />
             <Route path="/guid" element={<HomeRoute runtime={runtime} />} />
+            <Route path="/git/:workspaceId" element={<GitRoute runtime={runtime} />} />
             <Route path="/workbench" element={<WorkbenchRoute runtime={runtime} />} />
             <Route path="/workbench/:workspaceId" element={<WorkbenchRoute runtime={runtime} />} />
+            <Route path="/workbench/:workspaceId/git" element={<WorkbenchRoute runtime={runtime} />} />
             <Route path="/workbench/:workspaceId/session/:sessionId" element={<WorkbenchRoute runtime={runtime} />} />
             <Route path={PROJECT_PATH} element={<ProjectRoute />} />
             <Route path="/conversation/:threadId" element={<ConversationRoute runtime={runtime} />} />
@@ -324,6 +327,7 @@ function RoutedLayout({
   getSessionPath,
   getWorkspaceNewConversationPath,
   workbenchWorkspaceSelector,
+  primarySurface = "content",
   resetRightSidebarOnEnter = false,
   children,
 }: PropsWithChildren<{
@@ -338,6 +342,7 @@ function RoutedLayout({
   getSessionPath?: (sessionId: string) => string;
   getWorkspaceNewConversationPath?: (workspaceId?: string) => string;
   workbenchWorkspaceSelector?: WorkbenchWorkspaceSelectorProps;
+  primarySurface?: "content" | "git";
   resetRightSidebarOnEnter?: boolean;
 }>) {
   const navigate = useNavigate();
@@ -384,6 +389,8 @@ function RoutedLayout({
       getSessionPath={getSessionPath}
       getWorkspaceNewConversationPath={getWorkspaceNewConversationPath}
       workbenchWorkspaceSelector={workbenchWorkspaceSelector}
+      routePrimarySurface={primarySurface}
+      routeGitNavigation
       modeSwitchTargets={modeSwitchTargets}
       resetRightSidebarKey={resetRightSidebarOnEnter ? location.key : undefined}
       onNavigate={handleNavigate}
@@ -401,6 +408,52 @@ function ProjectRoute() {
   );
 }
 
+function GitRoute({ runtime }: { runtime: RuntimeBridge }) {
+  const { workspaceId } = useParams();
+  const decodedWorkspaceId = safeDecodeParam(workspaceId);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(Boolean(decodedWorkspaceId));
+
+  useEffect(() => {
+    if (!decodedWorkspaceId) {
+      setWorkspace(null);
+      setWorkspaceLoading(false);
+      return;
+    }
+    let active = true;
+    setWorkspace(null);
+    setWorkspaceLoading(true);
+    void runtime.workspaces
+      .get(decodedWorkspaceId)
+      .then((nextWorkspace) => {
+        if (active) {
+          setWorkspace(nextWorkspace);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setWorkspace(null);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setWorkspaceLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [decodedWorkspaceId, runtime]);
+
+  const activeProjectDiscovery = useMemo(
+    () => activeProjectDiscoveryFromWorkspace(workspace, workspaceLoading),
+    [workspace, workspaceLoading],
+  );
+  usePublishActiveProjectDiscovery("git-route", activeProjectDiscovery);
+
+  return <RoutedLayout title="" contentMode="full" primarySurface="git" />;
+}
+
 function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const { workspaceId, sessionId } = useParams();
   const navigate = useNavigate();
@@ -413,6 +466,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const backendErrorMessage = runtimeConnection?.error?.message ?? "本地服务连接失败";
   const decodedWorkspaceId = safeDecodeParam(workspaceId);
   const decodedSessionId = safeDecodeParam(sessionId);
+  const gitRouteActive = parseWorkbenchPath(location.pathname)?.surface === "git";
   const externalPreviewIntentPath = searchParams.get("file")?.trim() || undefined;
   const [externalPreviewPath, setExternalPreviewPath] = useState<string | null>(
     () => externalPreviewIntentPath ?? null,
@@ -671,9 +725,9 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
   const navigateToWorkspace = useCallback(
     (workspace: Workspace) => {
       layout.actions.setLastWorkbenchWorkspaceId(workspace.id);
-      void navigate(workbenchPath(workspace.id));
+      void navigate(gitRouteActive ? workbenchGitPath(workspace.id) : workbenchPath(workspace.id));
     },
-    [layout.actions, navigate],
+    [gitRouteActive, layout.actions, navigate],
   );
   const addWorkspace = useCallback(
     async (rootPath: string) => {
@@ -747,6 +801,7 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
       workspaceArchiveFallbackPath={WORKBENCH_PATH}
       getSessionPath={getWorkbenchSessionPath}
       getWorkspaceNewConversationPath={getWorkbenchNewPath}
+      primarySurface={gitRouteActive ? "git" : "content"}
       workbenchWorkspaceSelector={
         decodedWorkspaceId || externalPreviewPath
           ? {
@@ -761,27 +816,29 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
           : undefined
       }
     >
-      <WorkbenchModePage
-        runtime={runtime}
-        workspaceId={decodedWorkspaceId}
-        selectedSessionId={decodedSessionId}
-        externalPreviewPath={externalPreviewPath ?? undefined}
-        externalPreviewIntentPath={externalPreviewIntentPath}
-        externalPreviewIntentKey={externalPreviewIntentPath ? location.key : undefined}
-        selectedWorkspace={selectedWorkspace}
-        workspaces={workspaces}
-        workspaceLoading={workspaceLoading}
-        workspaceError={workspaceError}
-        onSelectWorkspace={navigateToWorkspace}
-        onAddWorkspace={addWorkspace}
-        onPickWorkspacePath={pickWorkspacePath}
-        onSessionSelected={handleWorkbenchSessionSelected}
-        onSessionCreated={handleWorkbenchSessionCreated}
-        onRequestNewSession={handleWorkbenchNewSessionRequested}
-        onExternalPreviewIntentConsumed={handleExternalPreviewIntentConsumed}
-        onExternalPreviewClosed={handleExternalPreviewClosed}
-        onOpenMcpSettings={() => void navigate("/settings/mcp", { state: { from: location.pathname } })}
-      />
+      {gitRouteActive ? null : (
+        <WorkbenchModePage
+          runtime={runtime}
+          workspaceId={decodedWorkspaceId}
+          selectedSessionId={decodedSessionId}
+          externalPreviewPath={externalPreviewPath ?? undefined}
+          externalPreviewIntentPath={externalPreviewIntentPath}
+          externalPreviewIntentKey={externalPreviewIntentPath ? location.key : undefined}
+          selectedWorkspace={selectedWorkspace}
+          workspaces={workspaces}
+          workspaceLoading={workspaceLoading}
+          workspaceError={workspaceError}
+          onSelectWorkspace={navigateToWorkspace}
+          onAddWorkspace={addWorkspace}
+          onPickWorkspacePath={pickWorkspacePath}
+          onSessionSelected={handleWorkbenchSessionSelected}
+          onSessionCreated={handleWorkbenchSessionCreated}
+          onRequestNewSession={handleWorkbenchNewSessionRequested}
+          onExternalPreviewIntentConsumed={handleExternalPreviewIntentConsumed}
+          onExternalPreviewClosed={handleExternalPreviewClosed}
+          onOpenMcpSettings={() => void navigate("/settings/mcp", { state: { from: location.pathname } })}
+        />
+      )}
     </RoutedLayout>
   );
 }

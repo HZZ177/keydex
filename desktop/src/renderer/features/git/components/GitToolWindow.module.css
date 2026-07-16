@@ -47,6 +47,11 @@
   white-space: nowrap;
 }
 
+.projectSelector {
+  width: min(220px, 100%);
+  min-width: 0;
+}
+
 .tabCenter {
   display: flex;
   min-width: 0;
@@ -165,13 +170,29 @@
 
 .workspace[data-navigation="hidden"] {
   grid-template-columns:
-    clamp(280px, var(--git-detail-pane-width, 28%), 42%)
+    clamp(min(280px, 80%), var(--git-detail-pane-width, 28%), 80%)
     5px
     minmax(0, 1fr);
 }
 
+.workspace[data-view="history"] {
+  grid-template-columns:
+    clamp(112px, var(--git-navigation-pane-width, 19%), 35%)
+    5px
+    minmax(360px, 1fr)
+    5px
+    clamp(140px, var(--git-detail-pane-width, 28%), 60%);
+}
+
 .root[data-layout="split"] .workspace {
   grid-template-columns: clamp(92px, var(--git-navigation-pane-width, 19%), 35%) 5px minmax(180px, 1fr);
+}
+
+.root[data-layout="split"] .workspace[data-view="history"] {
+  grid-template-columns:
+    clamp(92px, var(--git-navigation-pane-width, 19%), 35%)
+    5px
+    minmax(360px, 1fr);
 }
 
 .root[data-layout="split"] .workspace[data-navigation="hidden"] {
@@ -188,9 +209,18 @@
 .details {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
   scrollbar-width: auto;
 }
+
+.navigation {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+}
+
+.primary,
+.details { overflow: auto; }
 
 .navigation,
 .details {
@@ -198,9 +228,20 @@
   background: color-mix(in srgb, var(--surface-muted) 20%, var(--surface-bg));
 }
 
-.navigation > * + * {
-  margin-top: 8px;
+.details[data-view="history"] {
+  padding: 0;
+  overflow: hidden;
 }
+
+.repositorySection { min-width: 0; }
+.repositorySection > * + * { margin-top: 8px; }
+.refsPane {
+  min-height: 0;
+  padding-top: 10px;
+  overflow: hidden;
+  border-top: 1px solid var(--color-border-2);
+}
+.refsPane > * { height: 100%; }
 
 .separator {
   position: relative;
@@ -257,19 +298,52 @@
   white-space: nowrap;
 }
 
-.repository + [role="tree"] {
-  margin-top: 7px;
-  padding-top: 7px;
-  border-top: 1px solid var(--color-border-2);
-}
-
 .primary {
   display: flex;
   flex-direction: column;
 }
 
 .primary[data-view="changes"] { overflow: hidden; }
-.changesWorkspace { display: grid; min-width: 0; min-height: 0; height: 0; flex: 1 1 0; grid-template-rows: minmax(120px, 1fr) clamp(176px, 30%, 260px); overflow: hidden; }
+.primary[data-view="history"] { overflow: hidden; }
+.changesWorkspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 0;
+  flex: 1 1 0;
+  grid-template-rows:
+    minmax(120px, 1fr)
+    5px
+    minmax(140px, var(--git-commit-editor-height, 34%));
+  overflow: hidden;
+}
+
+.commitSeparator {
+  position: relative;
+  z-index: 4;
+  min-height: 5px;
+  cursor: row-resize;
+  touch-action: none;
+  background: transparent;
+  outline: none;
+}
+
+.commitSeparator::before {
+  position: absolute;
+  inset: 2px 0;
+  background: var(--color-border-2);
+  content: "";
+  transition:
+    inset var(--motion-fast) var(--motion-ease-out),
+    background-color var(--motion-fast) var(--motion-ease-out);
+}
+
+.commitSeparator:hover::before,
+.commitSeparator:focus-visible::before,
+.commitSeparator[data-dragging="true"]::before {
+  inset: 2px 0;
+  background: color-mix(in srgb, var(--color-text-3) 42%, var(--color-border-2));
+}
 .branchWorkspace { min-width: 0; min-height: 0; flex: 1; overflow: auto; }
 
 .paneHeader {

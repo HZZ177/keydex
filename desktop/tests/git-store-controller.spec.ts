@@ -146,7 +146,7 @@ describe("Git store controller", () => {
     controller.dispose();
   });
 
-  it("coalesces external worktree changes into status and diff only", async () => {
+  it("coalesces external worktree changes into a lightweight status refresh", async () => {
     vi.useFakeTimers();
     const runtime = {
       subscribe: vi.fn(() => () => undefined),
@@ -161,9 +161,55 @@ describe("Git store controller", () => {
     await vi.advanceTimersByTimeAsync(25);
 
     expect(runtime.status).toHaveBeenCalledTimes(1);
-    expect(runtime.diff).toHaveBeenCalledTimes(1);
+    expect(runtime.diff).not.toHaveBeenCalled();
     expect(runtime.refs).not.toHaveBeenCalled();
     expect(runtime.history).not.toHaveBeenCalled();
+    controller.dispose();
+    vi.useRealTimers();
+  });
+
+  it("does not refresh Git when every external worktree path is ignored", async () => {
+    vi.useFakeTimers();
+    const runtime = {
+      subscribe: vi.fn(() => () => undefined),
+      worktreePaths: vi.fn().mockResolvedValue([]),
+      status: vi.fn(),
+      diff: vi.fn(),
+    } as unknown as GitRuntime;
+    const controller = new GitStoreController(preparedStore(), runtime, { debounceMs: 20 });
+
+    controller.handleExternalWorktreePaths([{ repositoryId, path: ".dev/cache.db" }]);
+    controller.handleExternalWorktreePaths([{ repositoryId, path: ".dev/cache.db" }]);
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(runtime.worktreePaths).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId }),
+      [".dev/cache.db"],
+    );
+    expect(runtime.status).not.toHaveBeenCalled();
+    expect(runtime.diff).not.toHaveBeenCalled();
+    controller.dispose();
+    vi.useRealTimers();
+  });
+
+  it("refreshes Git when an external worktree batch contains a relevant path", async () => {
+    vi.useFakeTimers();
+    const runtime = {
+      subscribe: vi.fn(() => () => undefined),
+      worktreePaths: vi.fn().mockResolvedValue(["src/a.ts"]),
+      status: vi.fn().mockResolvedValue(status("external-filtered")),
+      diff: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion: version("external-filtered"), files: [] }),
+    } as unknown as GitRuntime;
+    const controller = new GitStoreController(preparedStore(), runtime, { debounceMs: 20 });
+
+    controller.handleExternalWorktreePaths([
+      { repositoryId, path: ".dev/cache.db" },
+      { repositoryId, path: "src/a.ts" },
+    ]);
+    await vi.advanceTimersByTimeAsync(45);
+
+    expect(runtime.status).toHaveBeenCalledTimes(1);
+    expect(runtime.diff).not.toHaveBeenCalled();
     controller.dispose();
     vi.useRealTimers();
   });
@@ -187,7 +233,7 @@ describe("Git store controller", () => {
     expect(runtime.status).not.toHaveBeenCalled();
     expect(runtime.diff).not.toHaveBeenCalled();
     expect(runtime.refs).toHaveBeenCalledTimes(2);
-    expect(runtime.history).toHaveBeenCalledTimes(2);
+    expect(runtime.history).toHaveBeenCalledTimes(1);
     controller.dispose();
     vi.useRealTimers();
   });
@@ -226,7 +272,6 @@ describe("Git store controller", () => {
     expect(runtime.diff).not.toHaveBeenCalled();
     expect(store.getState().invalidatedDomainsByRepository[backgroundRepositoryId]).toEqual([
       "status",
-      "diff",
     ]);
     controller.dispose();
     vi.useRealTimers();
@@ -269,6 +314,38 @@ describe("Git store controller", () => {
 
     expect(store.getState().projects["workspace-a"]).toMatchObject({ loading: false, error: null });
     expect(store.getState().refsByRepository[repositoryId]).toEqual([]);
+    expect(runtime.discover).toHaveBeenNthCalledWith(1, {
+      workspaceId: "workspace-a",
+      projectRoot: "C:/project",
+    }, { includeNested: false });
+    expect(runtime.discover).toHaveBeenNthCalledWith(2, {
+      workspaceId: "workspace-a",
+      projectRoot: "C:/project",
+    }, { includeNested: true });
+    expect(runtime.history).not.toHaveBeenCalled();
+    controller.dispose();
+  });
+
+  it("reuses a discovered project and refreshes only the selected repository summary", async () => {
+    const runtime = {
+      subscribe: vi.fn(() => () => undefined),
+      discover: vi.fn(),
+      status: vi.fn().mockResolvedValue(status("cached")),
+      refs: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion: version("cached"), refs: [] }),
+      history: vi.fn(),
+      diff: vi.fn(),
+    } as unknown as GitRuntime;
+    const store = preparedStore();
+    const controller = new GitStoreController(store, runtime);
+
+    await controller.activateProject({ workspaceId: "workspace-a", projectRoot: "C:/project" });
+
+    expect(runtime.discover).not.toHaveBeenCalled();
+    expect(runtime.status).toHaveBeenCalledTimes(1);
+    expect(runtime.refs).toHaveBeenCalledTimes(1);
+    expect(runtime.history).not.toHaveBeenCalled();
+    expect(runtime.diff).not.toHaveBeenCalled();
+    expect(store.getState().projects["workspace-a"].loading).toBe(false);
     controller.dispose();
   });
 

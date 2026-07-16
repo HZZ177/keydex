@@ -100,6 +100,21 @@
   outline-offset: 2px;
 }
 
+:global(.keydex-markdown [data-keydex-color-swatch="true"]) {
+  display: inline-block;
+  width: 0.82em;
+  height: 0.82em;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 3px;
+  margin: 0 1px 0 4px;
+  vertical-align: -0.08em;
+}
+
+:global(.keydex-markdown [data-keydex-color-swatch-outline="true"]) {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
+}
+
 .webAnswerSources {
   display: grid;
   width: min(680px, 100%);

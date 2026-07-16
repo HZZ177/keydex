@@ -8,7 +8,7 @@ import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@
 afterEach(cleanup);
 
 describe("Git changes tree", () => {
-  it("flattens changed files into 更改 and 未跟踪 groups without ignored files", () => {
+  it("flattens changed files into 更改 and 未跟踪 groups", () => {
     const groups = groupGitChanges(status().files);
     expect(groups.map((group) => [group.id, group.entries.length])).toEqual([
       ["changes", 5],
@@ -19,10 +19,9 @@ describe("Git changes tree", () => {
     expect(entries.some((entry) => entry.displayPath.includes("old.ts → src/new.ts"))).toBe(true);
     expect(entries.some((entry) => entry.binary)).toBe(true);
     expect(entries.some((entry) => entry.submodule)).toBe(true);
-    expect(entries.some((entry) => entry.path === "ignored.log")).toBe(false);
   });
 
-  it("builds a direct commit scope from selected files and excludes conflicts and ignored files", () => {
+  it("builds a direct commit scope from selected files and excludes conflicts", () => {
     const entries = groupGitChanges(status().files).flatMap((group) => group.entries);
     const selection = commitSelectionFromEntries(entries);
 
@@ -30,7 +29,6 @@ describe("Git changes tree", () => {
     expect(selection.paths).toContain("src/new.ts");
     expect(selection.untrackedPaths).toEqual(["new.txt"]);
     expect(selection.paths).not.toContain("both.ts");
-    expect(selection.paths).not.toContain("ignored.log");
     expect(selection.fileCount).toBe(5);
   });
 
@@ -40,8 +38,11 @@ describe("Git changes tree", () => {
 
     expect(screen.getByRole("group", { name: "更改" })).not.toBeNull();
     expect(screen.getByRole("group", { name: "未跟踪" })).not.toBeNull();
-    expect(screen.queryByText("ignored.log")).toBeNull();
-    fireEvent.click(screen.getByRole("checkbox", { name: "选择更改" }));
+    const groupCheckbox = screen.getByRole<HTMLInputElement>("checkbox", { name: "选择更改" });
+    fireEvent.click(groupCheckbox);
+    expect(groupCheckbox.checked).toBe(true);
+    expect(groupCheckbox.indeterminate).toBe(false);
+    expect(groupCheckbox.getAttribute("data-selection-state")).toBe("all");
     expect(onSelectionChange).toHaveBeenLastCalledWith(
       ["asset.bin", "both.ts", "modules/core", "src/edit.ts", "src/new.ts"],
       expect.arrayContaining([expect.objectContaining({ group: "changes" })]),
@@ -52,6 +53,82 @@ describe("Git changes tree", () => {
     expect(screen.getByRole("treeitem", { name: /asset.bin modified/ }).textContent).toContain("二进制");
     expect(screen.getByRole("treeitem", { name: /modules\/core added/ }).textContent).toContain("子模块");
     expect(screen.queryByRole("button", { name: "查看逐行历史" })).toBeNull();
+  });
+
+  it("renders the file refresh action and exposes its active animation state", () => {
+    const onRefresh = vi.fn();
+    const { rerender } = render(<GitChangesView status={status()} onRefresh={onRefresh} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新本地改动" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    rerender(<GitChangesView status={status()} onRefresh={onRefresh} refreshing />);
+    const refreshing = screen.getByRole("button", { name: "正在刷新本地改动" });
+    expect(refreshing.getAttribute("data-loading")).toBe("true");
+    expect(refreshing.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("reflects child selection as a mixed group and promotes mixed selection to select all", () => {
+    render(<GitChangesView status={status()} />);
+
+    const groupCheckbox = screen.getByRole<HTMLInputElement>("checkbox", { name: "选择更改" });
+    const fileCheckbox = screen.getByRole<HTMLInputElement>("checkbox", { name: /src\/edit\.ts modified/ });
+    expect(screen.getByText("5 个文件")).not.toBeNull();
+
+    fireEvent.click(fileCheckbox);
+    expect(fileCheckbox.checked).toBe(true);
+    expect(groupCheckbox.checked).toBe(false);
+    expect(groupCheckbox.indeterminate).toBe(true);
+    expect(groupCheckbox.getAttribute("aria-checked")).toBe("mixed");
+    expect(groupCheckbox.getAttribute("data-selection-state")).toBe("mixed");
+
+    fireEvent.click(groupCheckbox);
+    expect(groupCheckbox.checked).toBe(true);
+    expect(groupCheckbox.indeterminate).toBe(false);
+    expect(groupCheckbox.getAttribute("aria-checked")).toBe("true");
+    expect(groupCheckbox.getAttribute("data-selection-state")).toBe("all");
+
+    fireEvent.click(fileCheckbox);
+    expect(groupCheckbox.checked).toBe(false);
+    expect(groupCheckbox.indeterminate).toBe(true);
+  });
+
+  it("previews a row without selecting it and only changes selection from its checkbox", () => {
+    const onPreviewChange = vi.fn();
+    const onSelectionChange = vi.fn();
+    render(
+      <GitChangesView
+        status={status()}
+        onPreviewChange={onPreviewChange}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+
+    const row = screen.getByRole("treeitem", { name: /src\/edit\.ts modified/ });
+    fireEvent.click(row);
+    expect(onPreviewChange).toHaveBeenCalledWith(expect.objectContaining({ path: "src/edit.ts" }));
+    expect(onSelectionChange).not.toHaveBeenCalled();
+    expect(row.getAttribute("data-previewed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /src\/edit\.ts modified/ }));
+    expect(onSelectionChange).toHaveBeenLastCalledWith(
+      ["src/edit.ts"],
+      [expect.objectContaining({ path: "src/edit.ts" })],
+    );
+    expect(onPreviewChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("collapses and expands a change group from the disclosure button", () => {
+    render(<GitChangesView status={status()} />);
+
+    const group = screen.getByRole("group", { name: "更改" });
+    const collapse = screen.getByRole("button", { name: "折叠更改" });
+    fireEvent.click(collapse);
+    expect(group.getAttribute("data-collapsed")).toBe("true");
+    expect(screen.getByRole("button", { name: "展开更改" }).getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开更改" }));
+    expect(group.getAttribute("data-collapsed")).toBe("false");
   });
 
   it("keeps a 5k change tree within its DOM and interaction budget", () => {
@@ -93,7 +170,6 @@ function status(): GitStatusSnapshot {
       { path: "both.ts", originalPath: null, indexStatus: null, worktreeStatus: "modified", conflicted: true, binary: false, submodule: false },
       { path: "new.txt", originalPath: null, indexStatus: null, worktreeStatus: "untracked", conflicted: false, binary: false, submodule: false },
       { path: "src/edit.ts", originalPath: null, indexStatus: null, worktreeStatus: "modified", conflicted: false, binary: false, submodule: false },
-      { path: "ignored.log", originalPath: null, indexStatus: null, worktreeStatus: "ignored", conflicted: false, binary: false, submodule: false },
     ],
   };
 }

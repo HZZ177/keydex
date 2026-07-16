@@ -122,6 +122,32 @@ def test_git_read_api_maps_scope_and_validation_errors(tmp_path: Path) -> None:
     assert invalid_limit.status_code == 422
 
 
+def test_git_worktree_path_filter_hides_ignored_paths_from_refreshes(tmp_path: Path) -> None:
+    repo = GitRepoFactory(tmp_path).create("api-worktree-paths")
+    repo.write(".gitignore", "*.log\n")
+    repo.run("add", "--", ".gitignore")
+    repo.run("commit", "-m", "add ignore rule")
+    repo.write("ignored.log", "ignored\n")
+    client = client_for(tmp_path)
+    repository_id = client.post(
+        "/api/git/repositories/discover",
+        json={"workspace_id": "workspace-api", "project_root": str(repo.path)},
+    ).json()["repositories"][0]["id"]
+
+    response = client.post(
+        f"/api/git/repositories/{repository_id}/worktree-paths",
+        json={
+            "workspace_id": "workspace-api",
+            "project_root": str(repo.path),
+            "repository_id": repository_id,
+            "paths": ["README.md", "ignored.log"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"repository_id": repository_id, "paths": ["README.md"]}
+
+
 def test_git_status_returns_a_diagnostic_error_for_a_damaged_head(tmp_path: Path) -> None:
     repo = GitRepoFactory(tmp_path).create("api-damaged-head")
     client = client_for(tmp_path)

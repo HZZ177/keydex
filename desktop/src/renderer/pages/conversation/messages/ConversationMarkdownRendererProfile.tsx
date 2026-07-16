@@ -66,6 +66,7 @@ function enhanceConversationElement(element: HTMLElement): void {
     image.setAttribute("decoding", "async");
     image.setAttribute("referrerpolicy", "no-referrer");
   });
+  enhanceInlineColorSwatches(element);
   element.querySelectorAll<HTMLElement>("code[data-markdown-inline-kind='code']").forEach((code) => {
     const match = /^\[([^\]]+)\]\(\s*<?([^)>]+)>?\s*\)$/u.exec(code.textContent ?? "");
     if (!match) return;
@@ -142,6 +143,49 @@ function enhanceConversationElement(element: HTMLElement): void {
       anchor.append(badge);
     }
   });
+}
+
+const INLINE_HEX_COLOR_PATTERN = /^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/iu;
+
+function enhanceInlineColorSwatches(element: HTMLElement): void {
+  element.querySelectorAll<HTMLElement>("code[data-markdown-inline-kind='code']").forEach((code) => {
+    const color = inlineHexColor((code.textContent ?? "").trim());
+    const sibling = code.nextSibling;
+    const adjacentSwatch = sibling instanceof HTMLElement
+      && sibling.dataset.keydexColorSwatch === "true"
+      ? sibling
+      : null;
+    if (!color) {
+      adjacentSwatch?.remove();
+      return;
+    }
+
+    const swatch = adjacentSwatch ?? code.ownerDocument.createElement("span");
+    swatch.dataset.keydexColorSwatch = "true";
+    swatch.dataset.keydexColorValue = color.value;
+    if (color.needsOutline) swatch.dataset.keydexColorSwatchOutline = "true";
+    else delete swatch.dataset.keydexColorSwatchOutline;
+    swatch.setAttribute("aria-hidden", "true");
+    swatch.style.backgroundColor = color.value;
+    if (!adjacentSwatch) code.insertAdjacentElement("afterend", swatch);
+  });
+}
+
+function inlineHexColor(value: string): { value: string; needsOutline: boolean } | null {
+  if (!INLINE_HEX_COLOR_PATTERN.test(value)) return null;
+  const source = value.slice(1);
+  const expanded = source.length <= 4
+    ? Array.from(source, (character) => character.repeat(2)).join("")
+    : source;
+  const red = Number.parseInt(expanded.slice(0, 2), 16) / 255;
+  const green = Number.parseInt(expanded.slice(2, 4), 16) / 255;
+  const blue = Number.parseInt(expanded.slice(4, 6), 16) / 255;
+  const alpha = expanded.length === 8 ? Number.parseInt(expanded.slice(6, 8), 16) / 255 : 1;
+  const linear = (channel: number) => channel <= 0.04045
+    ? channel / 12.92
+    : ((channel + 0.055) / 1.055) ** 2.4;
+  const luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
+  return { value, needsOutline: luminance >= 0.88 || alpha < 0.5 };
 }
 
 function isAutoLinkedBareFileName(anchor: HTMLAnchorElement): boolean {

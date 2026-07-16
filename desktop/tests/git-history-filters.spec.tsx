@@ -1,27 +1,26 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { GitHistoryView, type GitHistoryRevisionOption, validateHistoryRevision } from "@/renderer/features/git/components/GitHistoryView";
+import { GitHistoryView, type GitHistoryRevisionOption } from "@/renderer/features/git/components/GitHistoryView";
 import { createGitRuntime, type GitHistoryFilters } from "@/runtime/git";
 import { HttpClient } from "@/runtime/httpClient";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 const emptyFilters: GitHistoryFilters = {
   search: "",
   revision: "",
   author: "",
   since: "",
-  until: "",
-  path: "",
-  firstParent: false,
-  mergesOnly: false,
 };
 
 describe("Git history filters", () => {
-  it("combines message, branch, author, date, path, and topology controls and clears them", () => {
+  it("debounces text searches without requiring an extra apply button", async () => {
+    vi.useFakeTimers();
     const onApplyFilters = vi.fn();
-    const revisions: GitHistoryRevisionOption[] = [{ value: "refs/heads/main", label: "main" }];
     render(
       <GitHistoryView
         commits={[]}
@@ -32,40 +31,22 @@ describe("Git history filters", () => {
         onLoadMore={vi.fn()}
         onRefresh={vi.fn()}
         filters={emptyFilters}
-        revisionOptions={revisions}
         onApplyFilters={onApplyFilters}
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Message or commit hash"), { target: { value: "release note" } });
-    fireEvent.change(screen.getByLabelText("Revision"), { target: { value: "refs/heads/main" } });
-    fireEvent.change(screen.getByLabelText("Author"), { target: { value: "Alice" } });
-    fireEvent.change(screen.getByLabelText("Since"), { target: { value: "2026-01-01" } });
-    fireEvent.change(screen.getByLabelText("Until"), { target: { value: "2026-07-16" } });
-    fireEvent.change(screen.getByLabelText("Path"), { target: { value: "src/history.ts" } });
-    fireEvent.click(screen.getByLabelText("First parent"));
-    fireEvent.click(screen.getByLabelText("Merges"));
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-
-    expect(onApplyFilters).toHaveBeenLastCalledWith({
-      search: "release note",
-      revision: "refs/heads/main",
-      author: "Alice",
-      since: "2026-01-01",
-      until: "2026-07-16",
-      path: "src/history.ts",
-      firstParent: true,
-      mergesOnly: true,
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-    expect(onApplyFilters).toHaveBeenLastCalledWith(emptyFilters);
-    expect((screen.getByLabelText("Message or commit hash") as HTMLInputElement).value).toBe("");
+    fireEvent.change(screen.getByLabelText("提交说明或哈希"), { target: { value: "release" } });
+    await act(() => vi.advanceTimersByTimeAsync(299));
+    expect(onApplyFilters).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(onApplyFilters).toHaveBeenCalledWith({ ...emptyFilters, search: "release" });
   });
 
-  it("accepts arbitrary safe revisions and rejects option-like or malformed ranges", () => {
+  it("keeps only search, branch, user, date, and the right-side refresh action", () => {
     const onApplyFilters = vi.fn();
-    render(
+    const onRefresh = vi.fn();
+    const revisions: GitHistoryRevisionOption[] = [{ value: "refs/heads/main", label: "main" }];
+    const view = render(
       <GitHistoryView
         commits={[]}
         selectedObjectId={null}
@@ -73,23 +54,64 @@ describe("Git history filters", () => {
         hasMore={false}
         onSelect={vi.fn()}
         onLoadMore={vi.fn()}
-        onRefresh={vi.fn()}
+        onRefresh={onRefresh}
+        filters={emptyFilters}
+        revisionOptions={revisions}
+        authorOptions={["Alice", "Bob"]}
         onApplyFilters={onApplyFilters}
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Revision"), { target: { value: "release/1.0~2..HEAD" } });
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    expect(onApplyFilters).toHaveBeenCalledWith(expect.objectContaining({ revision: "release/1.0~2..HEAD" }));
+    const search = screen.getByLabelText("提交说明或哈希");
+    fireEvent.change(search, { target: { value: "release note" } });
+    fireEvent.blur(search);
+    fireEvent.click(screen.getByRole("button", { name: "分支筛选：全部分支" }));
+    const branchOptions = screen.getByRole("listbox", { name: "分支筛选选项" });
+    expect(branchOptions.parentElement?.dataset.alignment).toBe("start");
+    expect(branchOptions.parentElement?.style.width).toContain("620px");
+    expect(branchOptions.parentElement?.style.width).toContain("100vw");
+    fireEvent.click(screen.getByRole("option", { name: "main" }));
+    fireEvent.click(screen.getByRole("button", { name: "用户筛选：全部用户" }));
+    fireEvent.click(screen.getByRole("option", { name: "Alice" }));
+    fireEvent.click(screen.getByRole("button", { name: "日期筛选：全部日期" }));
+    fireEvent.click(screen.getByRole("option", { name: "过去 7 天" }));
 
-    fireEvent.change(screen.getByLabelText("Revision"), { target: { value: "main..--all" } });
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    expect(screen.getByRole("alert").textContent).toContain("valid Git revision");
-    expect(onApplyFilters).toHaveBeenCalledTimes(1);
-    expect(validateHistoryRevision("HEAD...feature/topic").valid).toBe(true);
+    expect(onApplyFilters).toHaveBeenLastCalledWith({
+      search: "release note",
+      revision: "refs/heads/main",
+      author: "Alice",
+      since: "7d",
+    });
+    expect(screen.queryByLabelText("路径")).toBeNull();
+    expect(screen.queryByLabelText("仅第一父提交")).toBeNull();
+    expect(screen.queryByLabelText("仅合并提交")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "刷新提交日志" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <GitHistoryView
+        commits={[]}
+        selectedObjectId={null}
+        loading
+        hasMore={false}
+        onSelect={vi.fn()}
+        onLoadMore={vi.fn()}
+        onRefresh={onRefresh}
+        filters={emptyFilters}
+        revisionOptions={revisions}
+        authorOptions={["Alice", "Bob"]}
+        onApplyFilters={onApplyFilters}
+      />,
+    );
+    const refreshing = screen.getByRole("button", { name: "刷新提交日志" });
+    expect(refreshing.getAttribute("data-loading")).toBe("true");
+    expect(refreshing.getAttribute("aria-busy")).toBe("true");
+    expect(refreshing.querySelector(".lucide-refresh-cw")).not.toBeNull();
   });
 
-  it("encodes text and hash searches without confusing them with Git revisions", async () => {
+  it("encodes the compact filters and resolves the relative date preset", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-17T00:00:00.000Z"));
     const fetcher = vi.fn().mockImplementation(async () => jsonResponse({
       repository_id: "git-history",
       repository_version: "version-1",
@@ -107,11 +129,7 @@ describe("Git history filters", () => {
       search: "release note",
       revision: "refs/heads/main",
       author: "Alice",
-      since: "2026-01-01",
-      until: "2026-07-16",
-      path: "src/history.ts",
-      firstParent: true,
-      mergesOnly: true,
+      since: "7d",
       cursor: "next page",
       limit: 50,
     });
@@ -124,14 +142,14 @@ describe("Git history filters", () => {
       query: "release note",
       revision: "refs/heads/main",
       author: "Alice",
-      since: "2026-01-01",
-      until: "2026-07-16",
-      path: "src/history.ts",
-      first_parent: "true",
-      merges_only: "true",
+      since: "2026-07-10T00:00:00.000Z",
       cursor: "next page",
       limit: "50",
     });
+    expect(firstUrl.searchParams.has("until")).toBe(false);
+    expect(firstUrl.searchParams.has("path")).toBe(false);
+    expect(firstUrl.searchParams.has("first_parent")).toBe(false);
+    expect(firstUrl.searchParams.has("merges_only")).toBe(false);
     expect(firstUrl.searchParams.has("hash_prefix")).toBe(false);
 
     const secondUrl = new URL(String(fetcher.mock.calls[1][0]));

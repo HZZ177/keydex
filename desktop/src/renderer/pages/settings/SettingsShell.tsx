@@ -24,6 +24,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { SidebarResizeHandle } from "@/renderer/components/layout/SidebarResizeHandle";
 import { Titlebar } from "@/renderer/components/layout/Titlebar";
+import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { useSidebarCollapseMotion } from "@/renderer/hooks/layout/useSidebarCollapseMotion";
 import { useTheme } from "@/renderer/providers/ThemeProvider";
@@ -91,10 +92,15 @@ export function SettingsShell({
       ref={shellRef}
       className={styles.shell}
       data-testid="settings-shell"
+      data-settings-shell-tooltips="true"
       data-sidebar={state.sidebarCollapsed ? "collapsed" : "expanded"}
       data-sidebar-motion={sidebarMotion ? "true" : "false"}
       style={{ "--sidebar-width": `${state.sidebarWidth}px` } as CSSProperties}
     >
+      <AppTooltipLayer
+        scopeSelector="[data-settings-shell-tooltips='true']"
+        defaultPlacement="right"
+      />
       <Titlebar title="" />
       <main className={styles.body}>
         <aside className={styles.sidebar} aria-label="设置菜单" data-testid="settings-sidebar">
@@ -103,6 +109,7 @@ export function SettingsShell({
               className={styles.sidebarToggle}
               data-state={state.sidebarCollapsed ? "collapsed" : "expanded"}
               data-icon={state.sidebarCollapsed ? "panel-left-open" : "panel-left-close"}
+              data-tooltip-label={state.sidebarCollapsed ? "展开侧边栏" : undefined}
               type="button"
               aria-label={state.sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
               title={state.sidebarCollapsed ? "展开侧边栏" : ""}
@@ -115,7 +122,12 @@ export function SettingsShell({
               )}
               <span>{state.sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}</span>
             </button>
-            <button className={styles.backButton} type="button" onClick={() => void navigate(from)}>
+            <button
+              className={styles.backButton}
+              data-tooltip-label={state.sidebarCollapsed ? "返回应用" : undefined}
+              type="button"
+              onClick={() => void navigate(from)}
+            >
               <ArrowLeft size={17} strokeWidth={2} />
               <span>返回应用</span>
             </button>
@@ -141,6 +153,7 @@ export function SettingsShell({
                     className={styles.menuItem}
                     data-active={activeSection === item.id ? "true" : "false"}
                     data-icon={item.iconName}
+                    data-tooltip-label={state.sidebarCollapsed ? item.label : undefined}
                     aria-current={activeSection === item.id ? "page" : undefined}
                     key={item.id}
                     onClick={() => navigateSettings(item.path)}
@@ -159,6 +172,7 @@ export function SettingsShell({
             <button
               aria-label="切换主题"
               className={styles.themeButton}
+              data-tooltip-label={state.sidebarCollapsed ? "切换主题" : undefined}
               title={state.sidebarCollapsed ? "切换主题" : ""}
               type="button"
               onClick={toggleTheme}
@@ -169,6 +183,7 @@ export function SettingsShell({
             <button
               aria-label="返回应用"
               className={styles.themeButton}
+              data-tooltip-label={state.sidebarCollapsed ? "返回应用" : undefined}
               title={state.sidebarCollapsed ? "返回应用" : ""}
               type="button"
               onClick={() => void navigate(from)}

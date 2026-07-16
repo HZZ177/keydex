@@ -19,11 +19,13 @@ async def test_commit_detail_exposes_metadata_files_stats_and_root_diff(
     root_oid = repo.run("rev-parse", "HEAD").stdout.strip()
 
     root = await service.commit_detail(request, root_oid)
+    cached_root = await service.commit_detail(request, root_oid)
 
     assert root.commit.object_id == root_oid
     assert root.commit.signature == "unsigned"
     assert root.commit.author_name == "Keydex E2E"
     assert root.selected_parent_id is None
+    assert cached_root is root
     assert [(item.new_path, item.additions, item.deletions) for item in root.files] == [
         ("README.md", 1, 0)
     ]

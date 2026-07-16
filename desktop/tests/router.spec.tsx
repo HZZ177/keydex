@@ -15,11 +15,13 @@ import type {
 import {
   appModeFromPath,
   conversationPath,
+  gitPath,
   modeSwitchTargetsForPath,
   parseWorkbenchPath,
   PROJECT_PATH,
   rememberableModePath,
   workbenchFilePreviewPath,
+  workbenchGitPath,
   workbenchPath,
 } from "@/renderer/components/layout/appMode";
 import { AppRouter } from "@/renderer/components/layout/Router";
@@ -118,9 +120,11 @@ function renderRouterWithoutLayoutProvider(
 describe("AppRouter", () => {
   it("builds and detects mode-aware route helpers", () => {
     expect(conversationPath("thread 1")).toBe("/conversation/thread%201");
+    expect(gitPath("workspace A")).toBe("/git/workspace%20A");
     expect(workbenchPath()).toBe("/workbench");
     expect(workbenchPath("workspace A")).toBe("/workbench/workspace%20A");
     expect(workbenchPath("workspace A", "session 1")).toBe("/workbench/workspace%20A/session/session%201");
+    expect(workbenchGitPath("workspace A")).toBe("/workbench/workspace%20A/git");
     expect(workbenchFilePreviewPath("D:/docs/read me.md")).toBe("/workbench?file=D%3A%2Fdocs%2Fread+me.md");
     expect(workbenchFilePreviewPath("D:/docs/read me.md", "workspace A")).toBe(
       "/workbench/workspace%20A?file=D%3A%2Fdocs%2Fread+me.md",
@@ -130,10 +134,15 @@ describe("AppRouter", () => {
       workspaceId: "workspace A",
       sessionId: "session 1",
     });
+    expect(parseWorkbenchPath("/workbench/workspace%20A/git")).toEqual({
+      workspaceId: "workspace A",
+      surface: "git",
+    });
     expect(parseWorkbenchPath("/conversation/thread-1")).toBeNull();
     expect(appModeFromPath("/workbench/workspace-a")).toBe("workbench");
     expect(appModeFromPath(PROJECT_PATH)).toBe("project");
     expect(appModeFromPath("/conversation/thread-1")).toBe("agent");
+    expect(appModeFromPath("/git/workspace-a")).toBe("agent");
     expect(appModeFromPath("/settings/general")).toBe("agent");
     expect(modeSwitchTargetsForPath("/conversation/session%201", "workspace A")).toEqual({
       agent: "/conversation/session%201",
@@ -179,6 +188,7 @@ describe("AppRouter", () => {
     });
     expect(modeSwitchTargetsForPath("/guid", null).workbench).toBe("/workbench");
     expect(rememberableModePath("agent", "/conversation/thread-2")).toBe("/conversation/thread-2");
+    expect(rememberableModePath("agent", "/git/workspace%20A")).toBe("/git/workspace%20A");
     expect(rememberableModePath("agent", "/settings/general")).toBeNull();
     expect(rememberableModePath("workbench", "/workbench/workspace%20A", "?file=D%3A%2FREADME.md")).toBe(
       "/workbench/workspace%20A?file=D%3A%2FREADME.md",
@@ -190,6 +200,42 @@ describe("AppRouter", () => {
 
     expect(await screen.findByTestId("home-page", undefined, { timeout: 10000 })).not.toBeNull();
     expect(screen.getByLabelText("输入需求")).not.toBeNull();
+  });
+
+  it("restores the Agent Git page directly from its first-level route", async () => {
+    const { runtime } = renderRouter([gitPath("workspace A")], {
+      routeExtra: <RouterLocationProbe />,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-shell").dataset.primarySurface).toBe("git");
+    });
+    expect(screen.getByTestId("router-location").textContent).toBe("/git/workspace%20A");
+    expect(await screen.findByTestId("git-tool-window", undefined, { timeout: 10000 })).not.toBeNull();
+    expect(runtime.workspaces.get).toHaveBeenCalledWith("workspace A");
+    expect(screen.getByRole("button", { name: "Git" }).getAttribute("data-active")).toBe("true");
+  });
+
+  it("keeps the workbench Git route while switching its synchronized project selector", async () => {
+    renderRouter([workbenchGitPath("workspace A")], {
+      routeExtra: <RouterLocationProbe />,
+      workspaces: [workspace("workspace A", "keydex"), workspace("workspace B", "other")],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-shell").dataset.primarySurface).toBe("git");
+    });
+    expect(screen.getByTestId("router-location").textContent).toBe("/workbench/workspace%20A/git");
+    expect(screen.queryByTestId("workbench-mode-page")).toBeNull();
+
+    const gitProjectSelector = screen.getByTestId("git-project-name");
+    fireEvent.click(within(gitProjectSelector).getByRole("button", { name: "选择工作区" }));
+    fireEvent.click(await screen.findByRole("option", { name: /other/ }, { timeout: 10000 }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("router-location").textContent).toBe("/workbench/workspace%20B/git");
+    });
+    expect(screen.getByTestId("app-shell").dataset.primarySurface).toBe("git");
   });
 
   it("mounts routed layouts even when the outer provider tree does not include layout state", async () => {
@@ -1772,6 +1818,58 @@ type TestRuntimeBridge = RuntimeBridge & {
   };
 };
 
+function fakeGitRuntime() {
+  const repositoryId = "git-router" as never;
+  const repositoryVersion = "router-version-1" as never;
+  const capability = {
+    available: true,
+    executable: "git",
+    version: "2.50.0",
+    supportsSwitch: true,
+    supportsRestore: true,
+    supportsPathspecFromFile: true,
+    lfsAvailable: false,
+  };
+  const discovery = (scope: { workspaceId: string; projectRoot: string }) => ({
+    capability,
+    repositories: [{
+      id: repositoryId,
+      workspaceId: scope.workspaceId,
+      rootPath: scope.projectRoot,
+      displayPath: ".",
+      gitDirPath: `${scope.projectRoot}/.git`,
+      kind: "workspace" as const,
+      parentRepoId: null,
+      bare: false,
+      ancestorAuthorization: "not_required" as const,
+    }],
+    ancestorCandidate: null,
+  });
+  return {
+    capabilities: vi.fn().mockResolvedValue(capability),
+    discover: vi.fn((scope: { workspaceId: string; projectRoot: string }) => Promise.resolve(discovery(scope))),
+    initialize: vi.fn((scope: { workspaceId: string; projectRoot: string }) => Promise.resolve(discovery(scope))),
+    status: vi.fn().mockResolvedValue({
+      repositoryId,
+      repositoryVersion,
+      branch: { head: "main", detachedAt: null, upstream: "origin/main", ahead: 0, behind: 0, unborn: false },
+      files: [],
+      operation: null,
+    }),
+    refs: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, refs: [] }),
+    history: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, commits: [], nextCursor: null }),
+    diff: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, files: [] }),
+    identity: vi.fn().mockResolvedValue({
+      repositoryId,
+      name: "Keydex User",
+      email: "keydex@example.com",
+      signByDefault: false,
+    }),
+    subscribe: vi.fn(() => () => undefined),
+    acceptEvent: vi.fn(() => false),
+  };
+}
+
 function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
   const sessionWorkspaceId = options.sessionWorkspaceId ?? "workspace A";
   const workspaces = options.workspaces ?? [workspace("workspace A", "keydex")];
@@ -1835,6 +1933,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}): TestRuntimeBridge {
 
   return {
     __spies: { chat, emit: (event: AgentActionEnvelope) => emit(event) },
+    git: fakeGitRuntime(),
     mcp: {
       listServers: vi.fn(() =>
         Promise.resolve({

@@ -54,7 +54,6 @@ export function groupGitChanges(files: readonly GitChangedFile[]): readonly GitC
   };
 
   files.forEach((file) => {
-    if (file.worktreeStatus === "ignored") return;
     const group: GitChangeGroupId = file.worktreeStatus === "untracked" ? "untracked" : "changes";
     append(group, file, displayStatus(file));
   });
@@ -104,8 +103,8 @@ function displayStatus(file: GitChangedFile): GitFileStatusCode {
   }
   if (file.worktreeStatus === "untracked") return "untracked";
   const statuses: GitFileStatusCode[] = [];
-  if (file.worktreeStatus && file.worktreeStatus !== "ignored") statuses.push(file.worktreeStatus);
-  if (file.indexStatus && file.indexStatus !== "ignored") statuses.push(file.indexStatus);
+  if (file.worktreeStatus) statuses.push(file.worktreeStatus);
+  if (file.indexStatus) statuses.push(file.indexStatus);
   return statuses.find((status) => status === "deleted")
     ?? statuses.find((status) => status === "added")
     ?? statuses[0]

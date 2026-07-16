@@ -290,12 +290,6 @@
   white-space: nowrap;
 }
 
-.refItem small {
-  color: var(--color-text-3);
-  font-size: 10px;
-  white-space: nowrap;
-}
-
 .refIcon {
   display: inline-grid;
   width: 16px;

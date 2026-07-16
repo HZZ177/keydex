@@ -1,79 +1,81 @@
 .root {
+  --git-history-pane-min-width: 360px;
+  --git-history-subject-min-width: 58px;
+  --git-history-author-width: 94px;
+  --git-history-date-width: 132px;
+
   display: grid;
-  min-width: 0;
+  container-type: inline-size;
+  min-width: var(--git-history-pane-min-width);
   min-height: 0;
   flex: 1;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
-.root > header {
-  display: flex;
-  min-height: 30px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 9px;
-  border-bottom: 1px solid var(--color-border-2);
-  color: var(--color-text-3);
-  font-size: 10px;
+.tableTop {
+  display: grid;
+  min-width: 0;
 }
 
-.root > header button,
 .more,
-.filters button {
+.refreshButton {
   display: inline-flex;
-  min-height: 24px;
+  min-height: var(--git-control-height, 30px);
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 0 7px;
+  padding: 0 9px;
   border: 1px solid var(--color-border-2);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-2);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .filters {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 6px;
-  padding: 7px 9px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--color-border-2);
   background: color-mix(in srgb, var(--surface-1) 88%, transparent);
 }
 
-.filters label {
-  display: grid;
-  gap: 3px;
+.filters label,
+.filterControl {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   color: var(--color-text-3);
-  font-size: 9px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
-.filters input,
-.filters select {
+.filters input {
   box-sizing: border-box;
-  height: 25px;
-  min-width: 86px;
-  max-width: 150px;
+  height: var(--git-control-height, 30px);
+  min-width: 94px;
+  max-width: 170px;
+  padding: 0 8px;
   border: 1px solid var(--color-border-2);
   border-radius: var(--radius-sm);
   outline: 0;
   background: var(--surface-1);
   color: var(--color-text-2);
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
 }
 
-.filters input:focus,
-.filters select:focus {
+.filters input:focus {
   border-color: var(--color-accent-1);
 }
 
-.filters button:disabled {
+.refreshButton:disabled,
+.more:disabled {
   cursor: default;
   opacity: .45;
 }
@@ -81,9 +83,9 @@
 .filters .searchField {
   position: relative;
   display: flex;
-  min-width: 160px;
+  width: min(280px, 34%);
+  min-width: 190px;
   align-items: center;
-  align-self: end;
 }
 
 .searchField > svg {
@@ -95,22 +97,44 @@
 .filters .searchField input {
   width: 100%;
   max-width: none;
-  padding-left: 24px;
+  padding-left: 28px;
 }
 
-.filters .check {
-  display: flex;
-  height: 25px;
-  align-items: center;
-  gap: 4px;
-  white-space: nowrap;
+.filterControl > :last-child {
+  --settings-select-width: 148px;
+  --settings-select-trigger-height: var(--git-control-height, 30px);
+  width: 148px;
 }
 
-.filters .check input {
-  width: 13px;
-  min-width: 13px;
-  height: 13px;
-  margin: 0;
+.filterControl :global(button[aria-haspopup="listbox"]) strong {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.filters .refreshButton {
+  width: var(--git-control-height, 30px);
+  min-width: var(--git-control-height, 30px);
+  margin-left: auto;
+  padding: 0;
+  border-color: transparent;
+}
+
+.filters .refreshButton:hover:not(:disabled) {
+  border-color: var(--color-border-2);
+  background: var(--surface-2);
+}
+
+.filters .refreshButton[data-loading="true"] {
+  cursor: wait;
+  opacity: 1;
+}
+
+.refreshIcon {
+  transform-origin: center;
+}
+
+.refreshButton[data-loading="true"] .refreshIcon {
+  animation: git-history-refresh 720ms linear infinite;
 }
 
 .visuallyHidden {
@@ -125,26 +149,61 @@
 .scroller {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   scrollbar-width: auto;
 }
 
 .canvas {
   position: relative;
-  min-width: 720px;
+  width: 100%;
+  min-width: 0;
 }
+
+.columnHeader {
+  display: grid;
+  min-width: 0;
+  height: 26px;
+  grid-template-columns:
+    var(--git-history-graph-width, 30px)
+    minmax(var(--git-history-subject-min-width), 1fr)
+    max-content
+    minmax(var(--git-history-author-width), max-content)
+    minmax(var(--git-history-date-width), max-content);
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 9px;
+  border-bottom: 1px solid var(--color-border-2);
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.columnHeader > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.columnHeader > span:nth-child(n + 3) { text-align: right; }
 
 .row {
   position: absolute;
   top: 0;
   left: 0;
   display: grid;
+  box-sizing: border-box;
   width: 100%;
   height: 36px;
-  grid-template-columns: minmax(30px, auto) minmax(180px, 1fr) minmax(70px, .45fr) 110px 145px 72px;
+  grid-template-columns:
+    var(--git-history-graph-width, 30px)
+    minmax(var(--git-history-subject-min-width), 1fr)
+    max-content
+    minmax(var(--git-history-author-width), max-content)
+    minmax(var(--git-history-date-width), max-content);
   align-items: center;
-  gap: 6px;
-  padding: 0 9px;
+  gap: 4px;
+  padding: 0 4px 0 9px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -162,27 +221,103 @@
 
 .row > * {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .graph { display: block; overflow: visible; }
-.graph path { fill: none; stroke-width: 1.5; }
-.graph circle { stroke-width: 2; }
-.filterError { align-self: center; color: var(--color-danger-1); font-size: 10px; }
+.graph path {
+  fill: none;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
-.subject { color: inherit; }
-.refs { color: var(--color-accent-1); }
+.subject {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.author,
-.row time,
-.row code {
-  color: var(--color-text-3);
+.refsSlot {
+  display: flex;
+  min-width: max-content;
+  justify-self: end;
+  overflow: visible;
+}
+
+.refs {
+  display: flex;
+  min-width: max-content;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  overflow: visible;
+  color: var(--color-text-2);
   font-size: 10px;
 }
 
-.more { margin: 5px 8px; }
+.refToken {
+  display: inline-flex;
+  min-width: max-content;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.refToken > span:last-child {
+  min-width: max-content;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.refIcon {
+  flex: 0 0 auto;
+  color: var(--color-text-3);
+}
+
+.refIconStack {
+  display: inline-flex;
+  width: 17px;
+  flex: 0 0 17px;
+  align-items: center;
+}
+
+.refIconStack svg + svg { margin-left: -5px; }
+.refIcon[data-tone="current"], .refIconStack[data-tone="current"] { color: color-mix(in srgb, #d99b21 82%, var(--color-text-1)); }
+.refIcon[data-tone="local"], .refIconStack[data-tone="local"] { color: color-mix(in srgb, #8b7cf6 84%, var(--color-text-1)); }
+.refIcon[data-tone="remote"], .refIconStack[data-tone="remote"] { color: color-mix(in srgb, #35a66f 84%, var(--color-text-1)); }
+.refIcon[data-tone="tag"], .refIconStack[data-tone="tag"] { color: color-mix(in srgb, #b36bd4 82%, var(--color-text-1)); }
+
+.refMore {
+  flex: 0 0 auto;
+  color: var(--color-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.author,
+.row time {
+  min-width: max-content;
+  overflow: visible;
+  padding-left: 6px;
+  color: var(--color-text-3);
+  font-size: 10px;
+  text-align: right;
+}
+
+.more {
+  margin: 6px 10px;
+  color: var(--color-text-3);
+}
+
+.more:hover:not(:disabled) {
+  border-color: var(--color-border-1);
+  background: var(--surface-2);
+  color: var(--color-text-1);
+}
 
 .empty {
   display: grid;
@@ -190,4 +325,38 @@
   place-items: center;
   color: var(--color-text-3);
   font-size: 11px;
+}
+
+@container (max-width: 520px) {
+  .filters {
+    gap: 4px;
+    padding-inline: 6px;
+  }
+
+  .filters .searchField {
+    width: auto;
+    min-width: 76px;
+    flex: 1 1 92px;
+  }
+
+  .filterControl {
+    min-width: 0;
+    flex: 0 1 74px;
+    gap: 2px;
+  }
+
+  .filterControl > span:first-child { display: none; }
+
+  .filterControl > :last-child {
+    --settings-select-width: 74px;
+    width: 74px;
+  }
+}
+
+@keyframes git-history-refresh {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refreshButton[data-loading="true"] .refreshIcon { animation: none; }
 }

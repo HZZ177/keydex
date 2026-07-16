@@ -93,6 +93,9 @@ describe("ProjectGitMenu", () => {
     expect(upstreamBranch.querySelector(".lucide-star")).not.toBeNull();
     expect(currentBranch.getAttribute("data-ref-state")).toBe("current");
     expect(currentBranch.querySelector('[data-tone="mainline"]')).not.toBeNull();
+    const divergence = currentBranch.querySelector('[aria-label="传入 1 个提交，传出 2 个提交"]');
+    expect(divergence?.querySelector('[data-direction="incoming"] .lucide-arrow-down-left')).not.toBeNull();
+    expect(divergence?.querySelector('[data-direction="outgoing"] .lucide-arrow-up-right')).not.toBeNull();
     expect(upstreamBranch.getAttribute("data-ref-state")).toBe("upstream");
     expect(upstreamBranch.querySelector('[data-tone="mainline"]')).not.toBeNull();
 

@@ -22,6 +22,7 @@ class _RecordingManager:
         ("workspace_archived", "workspace_id"),
         ("workspace_restored", "workspace_id"),
         ("workspace_purged", "workspace_id"),
+        ("workspace_sessions_purged", "workspace_id"),
     ],
 )
 def test_lifecycle_publisher_broadcasts_each_safe_typed_event(

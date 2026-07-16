@@ -5,10 +5,11 @@ import type { ActiveProjectState, GitRepositoryRoot } from "@/renderer/features/
 import type { GitProjectStoreState, GitStoreState } from "@/renderer/features/git/store/gitStore";
 import { useOptionalGitController, useOptionalGitRuntime, useOptionalGitStoreSelector } from "@/renderer/providers/GitProvider";
 import { useOptionalGitStore } from "@/renderer/providers/GitProvider";
-import type { GitBisectSnapshot, GitBlamePage, GitCommandResult, GitCommitDetail, GitCommitSummary, GitCompareMode, GitCompareResult, GitConflictFile, GitConflictsSnapshot, GitLfsSnapshot, GitMergePreview, GitMergeStrategy, GitObjectId, GitRebasePreview, GitRebaseTodoItem, GitReflogPage, GitRepositoryDescriptor, GitRepositoryId, GitResetMode, GitResetPreview, GitStatusSnapshot, GitSubmodulesSnapshot, GitWorktree, GitWorktreesSnapshot } from "@/runtime/gitTypes";
+import type { GitBisectSnapshot, GitBlamePage, GitCommandResult, GitCommitDetail, GitCommitSummary, GitConflictFile, GitConflictsSnapshot, GitLfsSnapshot, GitMergePreview, GitMergeStrategy, GitObjectId, GitRebasePreview, GitRebaseTodoItem, GitReflogPage, GitRepositoryDescriptor, GitRepositoryId, GitResetMode, GitResetPreview, GitStatusSnapshot, GitSubmodulesSnapshot, GitWorktree, GitWorktreesSnapshot } from "@/runtime/gitTypes";
 import type { GitCommitCommand, GitConflictActionCommand, GitConflictFileAction, GitHistoryFilters, GitIdentity, GitPatchExport, GitPatchExportMode, GitPushCommand, GitRemoteInfo, GitStashDetail, GitStashEntry, GitStashEntryCommand } from "@/runtime/git";
 import { GIT_HISTORY_PAGE_SIZE } from "@/renderer/features/git/performancePolicy";
 import { gitOperationErrorMessage, gitUiErrorMessage } from "@/renderer/features/git/errorPresentation";
+import { WorkspaceSelector, type WorkspaceSelectorProps } from "@/renderer/components/workspace";
 
 import styles from "./GitToolWindow.module.css";
 import { GitChangesView } from "./GitChangesView";
@@ -21,7 +22,6 @@ import { GitSyncActions, type GitFetchOptions, type GitPushOptions, type GitUpda
 import { GitStashView } from "./GitStashView";
 import { EMPTY_GIT_HISTORY_FILTERS, GitHistoryView, mergeHistoryPages } from "./GitHistoryView";
 import { GitCommitDetailsView } from "./GitCommitDetailsView";
-import { GitCompareView } from "./GitCompareView";
 import { GitBlameView, type GitBlameRequest } from "./GitBlameView";
 import { GitReflogView } from "./GitReflogView";
 import { GitMergeView } from "./GitMergeView";
@@ -43,6 +43,9 @@ import { GitOperationLog } from "./GitOperationLog";
 import { commitSelectionFromEntries, type GitChangeEntry } from "../changesTree";
 
 export type GitToolWindowView = "changes" | "history" | "blame" | "reflog" | "branches" | "stash" | "operations";
+
+const COMMIT_PANE_MIN_PERCENT = 18;
+const COMMIT_PANE_MAX_PERCENT = 80;
 
 const PRIMARY_VIEWS: readonly { id: GitToolWindowView; label: string; icon: typeof GitBranch }[] = [
   { id: "changes", label: "提交", icon: GitPullRequest },
@@ -70,9 +73,25 @@ export interface GitToolWindowProps {
   project: ActiveProjectState | null;
   maximized: boolean;
   initialView?: GitToolWindowView;
+  projectSelector?: GitProjectSelectorProps;
 }
 
-export function GitToolWindow({ project, maximized, initialView = "changes" }: GitToolWindowProps) {
+export type GitProjectSelectorProps = Pick<
+  WorkspaceSelectorProps,
+  | "value"
+  | "workspaces"
+  | "loading"
+  | "onSelectWorkspace"
+  | "onAddWorkspace"
+  | "onPickWorkspacePath"
+>;
+
+export function GitToolWindow({
+  project,
+  maximized,
+  initialView = "changes",
+  projectSelector,
+}: GitToolWindowProps) {
   const storeSnapshot = useOptionalGitStoreSelector(selectToolWindowSnapshot);
   const resolvedProject = resolveGitToolWindowProject(project, storeSnapshot);
   const controller = useOptionalGitController();
@@ -90,6 +109,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   const [selectedUntrackedCommitPaths, setSelectedUntrackedCommitPaths] = useState<readonly string[]>([]);
   const [selectedCommitFileCount, setSelectedCommitFileCount] = useState(0);
   const [changeSelectionResetKey, setChangeSelectionResetKey] = useState(0);
+  const [changesRefreshing, setChangesRefreshing] = useState(false);
   const [selectedChangePatchAction, setSelectedChangePatchAction] = useState<"stage" | "unstage">("stage");
   const [remotes, setRemotes] = useState<readonly GitRemoteInfo[]>([]);
   const [syncProgress, setSyncProgress] = useState<readonly string[]>([]);
@@ -104,20 +124,19 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   const [stashFileIndex, setStashFileIndex] = useState(0);
   const [stashLoading, setStashLoading] = useState(false);
   const [historyCommits, setHistoryCommits] = useState<readonly GitCommitSummary[]>([]);
+  const [historyAuthors, setHistoryAuthors] = useState<readonly string[]>([]);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [selectedHistoryObjectId, setSelectedHistoryObjectId] = useState<GitObjectId | null>(null);
   const [navigationPanePercent, setNavigationPanePercent] = useState(19);
   const [detailPanePercent, setDetailPanePercent] = useState(28);
   const [commitPanePercent, setCommitPanePercent] = useState(28);
-  const [draggingSplitter, setDraggingSplitter] = useState<"navigation" | "details" | null>(null);
+  const [commitEditorPercent, setCommitEditorPercent] = useState(34);
+  const [draggingSplitter, setDraggingSplitter] = useState<"navigation" | "details" | "commit" | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyFilters, setHistoryFilters] = useState<GitHistoryFilters>({ ...EMPTY_GIT_HISTORY_FILTERS });
   const [historyDetail, setHistoryDetail] = useState<GitCommitDetail | null>(null);
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
   const [historyFileIndex, setHistoryFileIndex] = useState(0);
-  const [compareResult, setCompareResult] = useState<GitCompareResult | null>(null);
-  const [compareLoading, setCompareLoading] = useState(false);
-  const [compareFileIndex, setCompareFileIndex] = useState(0);
   const [blamePage, setBlamePage] = useState<GitBlamePage | null>(null);
   const [blameLoading, setBlameLoading] = useState(false);
   const [reflogPage, setReflogPage] = useState<GitReflogPage | null>(null);
@@ -157,6 +176,11 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   const moreRootRef = useRef<HTMLDivElement | null>(null);
   const moreTriggerRef = useRef<HTMLButtonElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const changesWorkspaceRef = useRef<HTMLDivElement | null>(null);
+  const changeDiffAbortRef = useRef<AbortController | null>(null);
+  const historyDetailCacheRef = useRef(new Map<string, GitCommitDetail>());
+
+  useEffect(() => () => changeDiffAbortRef.current?.abort(), []);
 
   const activateView = (nextView: GitToolWindowView): boolean => {
     if (nextView === view) return true;
@@ -196,14 +220,32 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     }
   };
 
+  const selectRepositoryRef = (ref: GitRefsSnapshotRef) => {
+    if (!storeSnapshot?.project) return;
+    const update = gitUiUpdateForRefSelection(view, historyFilters, ref);
+    if (update.historyFilters) setHistoryFilters(update.historyFilters);
+    gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, update);
+  };
+
+  const applyHistoryFilters = (next: GitHistoryFilters) => {
+    setHistoryFilters(next);
+    if (!storeSnapshot?.project) return;
+    const selectedRef = selectedRefForHistoryRevision(next.revision, storeSnapshot.refs ?? []);
+    gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, {
+      historyFilters: next,
+      ...(selectedRef !== undefined ? { selectedRef } : {}),
+    });
+  };
+
   const updatePanePercent = (pane: "navigation" | "details", requestedPercent: number) => {
     if (pane === "details" && view === "changes") {
-      setCommitPanePercent(Math.min(42, Math.max(18, requestedPercent)));
+      setCommitPanePercent(Math.min(COMMIT_PANE_MAX_PERCENT, Math.max(COMMIT_PANE_MIN_PERCENT, requestedPercent)));
       return;
     }
+    const detailPaneMaximum = 72 - navigationPanePercent;
     const next = pane === "navigation"
       ? Math.min(35, Math.max(12, Math.min(requestedPercent, 72 - detailPanePercent)))
-      : Math.min(42, Math.max(18, Math.min(requestedPercent, 72 - navigationPanePercent)));
+      : Math.min(detailPaneMaximum, Math.max(18, requestedPercent));
     if (pane === "navigation") setNavigationPanePercent(next);
     else setDetailPanePercent(next);
     if (storeSnapshot?.project) {
@@ -258,11 +300,58 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     let next: number | null = null;
     if (event.key === "ArrowLeft") next = current - (2 * direction);
     if (event.key === "ArrowRight") next = current + (2 * direction);
-    if (event.key === "Home") next = pane === "navigation" ? 12 : 18;
-    if (event.key === "End") next = pane === "navigation" ? 35 : 42;
+    if (event.key === "Home") next = pane === "navigation" ? 12 : COMMIT_PANE_MIN_PERCENT;
+    if (event.key === "End") {
+      next = pane === "navigation"
+        ? 35
+        : view === "changes"
+          ? COMMIT_PANE_MAX_PERCENT
+          : 72 - navigationPanePercent;
+    }
     if (next === null) return;
     event.preventDefault();
     updatePanePercent(pane, next);
+  };
+
+  const updateCommitEditorPercent = (requestedPercent: number) => {
+    setCommitEditorPercent(Math.min(65, Math.max(22, requestedPercent)));
+  };
+
+  const handleCommitSplitterPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const splitter = event.currentTarget;
+    const pointerId = event.pointerId;
+    splitter.setPointerCapture?.(pointerId);
+    setDraggingSplitter("commit");
+    const updateFromClientY = (clientY: number) => {
+      const bounds = changesWorkspaceRef.current?.getBoundingClientRect();
+      if (!bounds || bounds.height <= 0) return;
+      updateCommitEditorPercent(((bounds.bottom - clientY) / bounds.height) * 100);
+    };
+    const handleMove = (moveEvent: PointerEvent) => updateFromClientY(moveEvent.clientY);
+    const handleEnd = () => {
+      if (splitter.hasPointerCapture?.(pointerId)) splitter.releasePointerCapture(pointerId);
+      setDraggingSplitter(null);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleEnd);
+      window.removeEventListener("pointercancel", handleEnd);
+    };
+    updateFromClientY(event.clientY);
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleEnd);
+    window.addEventListener("pointercancel", handleEnd);
+  };
+
+  const handleCommitSplitterKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    let next: number | null = null;
+    if (event.key === "ArrowUp") next = commitEditorPercent + 2;
+    if (event.key === "ArrowDown") next = commitEditorPercent - 2;
+    if (event.key === "Home") next = 22;
+    if (event.key === "End") next = 65;
+    if (next === null) return;
+    event.preventDefault();
+    updateCommitEditorPercent(next);
   };
 
   const retryLoggedOperation = async (operationId: string) => {
@@ -285,6 +374,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   useEffect(() => {
     setView(storeSnapshot?.ui?.activeTab ?? initialView);
     setHistoryFilters(storeSnapshot?.ui?.historyFilters ?? { ...EMPTY_GIT_HISTORY_FILTERS });
+    setHistoryAuthors([]);
     setSelectedHistoryObjectId((storeSnapshot?.ui?.selectedHistoryObjectId as GitObjectId | null | undefined) ?? null);
     setNavigationPanePercent(storeSnapshot?.ui?.navigationPanePercent ?? 19);
     setDetailPanePercent(storeSnapshot?.ui?.detailPanePercent ?? 28);
@@ -326,20 +416,6 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     });
     return () => { active = false; };
   }, [runtime, storeSnapshot?.project, storeSnapshot?.status?.repositoryVersion]);
-
-  useEffect(() => {
-    if (
-      view !== "changes"
-      || !controller
-      || !storeSnapshot?.project
-      || !storeSnapshot.project.selectedRepositoryId
-    ) return;
-    void controller.refreshRepository({
-      workspaceId: storeSnapshot.project.workspaceId,
-      projectRoot: storeSnapshot.project.projectRoot,
-      repositoryId: storeSnapshot.project.selectedRepositoryId,
-    }, ["diff"]);
-  }, [controller, storeSnapshot?.project, view]);
 
   useEffect(() => {
     const selectedRepositoryId = storeSnapshot?.project?.selectedRepositoryId;
@@ -501,32 +577,31 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   ]);
 
   useEffect(() => {
-    if (view !== "history" || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
-    let disposed = false;
+    const project = storeSnapshot?.project;
+    if (view !== "history" || !runtime || !project?.selectedRepositoryId) return;
+    const abortController = new AbortController();
     setHistoryLoading(true);
     void runtime.history({
-      workspaceId: storeSnapshot.project.workspaceId,
-      projectRoot: storeSnapshot.project.projectRoot,
-      repositoryId: storeSnapshot.project.selectedRepositoryId,
-    }, { limit: GIT_HISTORY_PAGE_SIZE, ...historyFilters }).then((page) => {
-      if (disposed) return;
+      workspaceId: project.workspaceId,
+      projectRoot: project.projectRoot,
+      repositoryId: project.selectedRepositoryId,
+    }, { limit: GIT_HISTORY_PAGE_SIZE, ...historyFilters, signal: abortController.signal }).then((page) => {
+      if (abortController.signal.aborted) return;
       setHistoryCommits(page.commits);
+      setHistoryAuthors((current) => mergeHistoryAuthors(current, page.commits));
       setHistoryCursor(page.nextCursor);
-      setSelectedHistoryObjectId((selected) => {
-        const next = page.commits.some((commit) => commit.objectId === selected)
-          ? selected
-          : page.commits[0]?.objectId ?? null;
-        if (storeSnapshot.project) {
-          gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { selectedHistoryObjectId: next });
-        }
-        return next;
-      });
+      const selected = gitStore?.getState().uiByProject[project.workspaceId]?.selectedHistoryObjectId as GitObjectId | null | undefined;
+      const next = page.commits.some((commit) => commit.objectId === selected)
+        ? selected ?? null
+        : page.commits[0]?.objectId ?? null;
+      setSelectedHistoryObjectId(next);
+      gitStore?.getState().updateProjectUi(project.workspaceId, { selectedHistoryObjectId: next });
     }).catch((error) => {
-      if (!disposed) setActionError(gitUiErrorMessage(error));
+      if (!isAbortError(error)) setActionError(gitUiErrorMessage(error));
     }).finally(() => {
-      if (!disposed) setHistoryLoading(false);
+      if (!abortController.signal.aborted) setHistoryLoading(false);
     });
-    return () => { disposed = true; };
+    return () => abortController.abort();
   }, [gitStore, historyFilters, runtime, storeSnapshot?.project?.projectRoot, storeSnapshot?.project?.selectedRepositoryId, storeSnapshot?.project?.workspaceId, view]);
 
   useEffect(() => {
@@ -570,25 +645,42 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
       setHistoryDetail(null);
       return;
     }
-    let disposed = false;
-    setHistoryDetail(null);
+    const abortController = new AbortController();
+    const repositoryId = storeSnapshot.project.selectedRepositoryId;
+    const cacheKey = `${repositoryId}:${selectedHistoryObjectId}`;
+    const cachedDetail = historyDetailCacheRef.current.get(cacheKey) ?? null;
+    const summary = historyCommits.find((commit) => commit.objectId === selectedHistoryObjectId) ?? null;
+    const previewDetail = summary && storeSnapshot.status
+      ? {
+          repositoryId,
+          repositoryVersion: storeSnapshot.status.repositoryVersion,
+          commit: summary,
+          selectedParentId: summary.parentIds[0] ?? null,
+          files: [],
+        } satisfies GitCommitDetail
+      : null;
+    setHistoryDetail(cachedDetail ?? previewDetail);
+    if (cachedDetail) {
+      setHistoryDetailLoading(false);
+      return () => abortController.abort();
+    }
     setHistoryDetailLoading(true);
     setHistoryFileIndex(0);
-    setCompareResult(null);
-    setCompareFileIndex(0);
     void runtime.commit({
       workspaceId: storeSnapshot.project.workspaceId,
       projectRoot: storeSnapshot.project.projectRoot,
       repositoryId: storeSnapshot.project.selectedRepositoryId,
-    }, selectedHistoryObjectId).then((detail) => {
-      if (!disposed) setHistoryDetail(detail);
+    }, selectedHistoryObjectId, { signal: abortController.signal }).then((detail) => {
+      historyDetailCacheRef.current.set(cacheKey, detail);
+      trimMap(historyDetailCacheRef.current, 100);
+      if (!abortController.signal.aborted) setHistoryDetail(detail);
     }).catch((error) => {
-      if (!disposed) setActionError(gitUiErrorMessage(error));
+      if (!isAbortError(error)) setActionError(gitUiErrorMessage(error));
     }).finally(() => {
-      if (!disposed) setHistoryDetailLoading(false);
+      if (!abortController.signal.aborted) setHistoryDetailLoading(false);
     });
-    return () => { disposed = true; };
-  }, [runtime, selectedHistoryObjectId, storeSnapshot?.project, view]);
+    return () => abortController.abort();
+  }, [historyCommits, runtime, selectedHistoryObjectId, storeSnapshot?.project, storeSnapshot?.status, view]);
 
   const runProjectAction = async (action: "init" | "grant" | "retry") => {
     if (!resolvedProject || resolvedProject.status === "none" || !runtime || !controller) return;
@@ -680,7 +772,6 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     setResetPreview(null);
     selectHistoryObjectId(null);
     setHistoryDetail(null);
-    setCompareResult(null);
     setBlamePage(null);
     setReflogPage(null);
     setSelectedCommitPaths([]);
@@ -692,32 +783,56 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
       workspaceId: storeSnapshot.project.workspaceId,
       projectRoot: storeSnapshot.project.projectRoot,
       repositoryId,
-    }, ["status", "refs", "history", "diff"]);
+    }, ["status", "refs"]);
   };
-  const loadSelectedChangeDiff = async (
-    paths: readonly string[],
+  const updateCommitSelection = (
+    _paths: readonly string[],
     entries: readonly GitChangeEntry[] = [],
   ) => {
     const commitSelection = commitSelectionFromEntries(entries);
     setSelectedCommitPaths(commitSelection.paths);
     setSelectedUntrackedCommitPaths(commitSelection.untrackedPaths);
     setSelectedCommitFileCount(commitSelection.fileCount);
-    const selectedPath = paths[0];
-    if (!runtime || !gitStore || !selectedPath || !storeSnapshot?.project?.selectedRepositoryId) return;
-    const file = storeSnapshot.status?.files.find((candidate) => candidate.path === selectedPath || candidate.originalPath === selectedPath);
+  };
+  const refreshChanges = async () => {
+    if (!controller || !storeSnapshot?.project?.selectedRepositoryId || changesRefreshing) return;
+    setChangesRefreshing(true);
     try {
-      const cached = Boolean(entries[0]?.indexStatus && !entries[0]?.worktreeStatus)
+      await controller.refreshRepository({
+        workspaceId: storeSnapshot.project.workspaceId,
+        projectRoot: storeSnapshot.project.projectRoot,
+        repositoryId: storeSnapshot.project.selectedRepositoryId,
+      }, ["status"]);
+    } catch (error) {
+      setActionError(gitUiErrorMessage(error));
+    } finally {
+      setChangesRefreshing(false);
+    }
+  };
+  const loadChangeDiff = async (entry: GitChangeEntry) => {
+    const selectedPath = entry.path;
+    if (!runtime || !gitStore || !storeSnapshot?.project?.selectedRepositoryId) return;
+    gitStore.getState().updateProjectUi(storeSnapshot.project.workspaceId, { selectedPath });
+    const file = storeSnapshot.status?.files.find((candidate) => candidate.path === selectedPath || candidate.originalPath === selectedPath);
+    changeDiffAbortRef.current?.abort();
+    const abortController = new AbortController();
+    changeDiffAbortRef.current = abortController;
+    try {
+      const cached = Boolean(entry.indexStatus && !entry.worktreeStatus)
         || Boolean(file?.indexStatus && !file.worktreeStatus);
       setSelectedChangePatchAction(cached ? "unstage" : "stage");
       const diff = await runtime.diff({
         workspaceId: storeSnapshot.project.workspaceId,
         projectRoot: storeSnapshot.project.projectRoot,
         repositoryId: storeSnapshot.project.selectedRepositoryId,
-      }, { cached });
+      }, { cached, path: selectedPath, signal: abortController.signal });
+      if (abortController.signal.aborted) return;
       const selected = diff.files.find((candidate) => candidate.newPath === selectedPath || candidate.oldPath === selectedPath);
       gitStore.getState().setDiff(selected ? { ...diff, files: [selected] } : diff);
     } catch (error) {
-      setActionError(gitUiErrorMessage(error));
+      if (!isAbortError(error)) setActionError(gitUiErrorMessage(error));
+    } finally {
+      if (changeDiffAbortRef.current === abortController) changeDiffAbortRef.current = null;
     }
   };
   const runStagePatches = async (patches: readonly string[]) => {
@@ -1459,6 +1574,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
         repositoryId: storeSnapshot.project.selectedRepositoryId,
       }, { cursor: historyCursor, limit: GIT_HISTORY_PAGE_SIZE, ...historyFilters });
       setHistoryCommits((current) => mergeHistoryPages(current, page.commits, "append"));
+      setHistoryAuthors((current) => mergeHistoryAuthors(current, page.commits));
       setHistoryCursor(page.nextCursor);
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
@@ -1477,6 +1593,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
       }, { limit: GIT_HISTORY_PAGE_SIZE, ...historyFilters });
       const merged = mergeHistoryPages(historyCommits, page.commits, "prepend");
       setHistoryCommits(merged);
+      setHistoryAuthors((current) => mergeHistoryAuthors(current, page.commits));
       setHistoryCursor(page.nextCursor);
       selectHistoryObjectId(selectedHistoryObjectId && merged.some((commit) => commit.objectId === selectedHistoryObjectId)
         ? selectedHistoryObjectId
@@ -1485,41 +1602,6 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
       setActionError(gitUiErrorMessage(error));
     } finally {
       setHistoryLoading(false);
-    }
-  };
-  const selectHistoryParent = async (parentId: GitObjectId) => {
-    if (!runtime || !selectedHistoryObjectId || !storeSnapshot?.project?.selectedRepositoryId) return;
-    setHistoryDetailLoading(true);
-    setHistoryFileIndex(0);
-    setCompareResult(null);
-    setActionError(null);
-    try {
-      setHistoryDetail(await runtime.commit({
-        workspaceId: storeSnapshot.project.workspaceId,
-        projectRoot: storeSnapshot.project.projectRoot,
-        repositoryId: storeSnapshot.project.selectedRepositoryId,
-      }, selectedHistoryObjectId, { parentId }));
-    } catch (error) {
-      setActionError(gitUiErrorMessage(error));
-    } finally {
-      setHistoryDetailLoading(false);
-    }
-  };
-  const runCompare = async (mode: GitCompareMode, left: string, right: string | null) => {
-    if (!runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
-    setCompareLoading(true);
-    setCompareFileIndex(0);
-    setActionError(null);
-    try {
-      setCompareResult(await runtime.compare({
-        workspaceId: storeSnapshot.project.workspaceId,
-        projectRoot: storeSnapshot.project.projectRoot,
-        repositoryId: storeSnapshot.project.selectedRepositoryId,
-      }, { mode, left, right }));
-    } catch (error) {
-      setActionError(gitUiErrorMessage(error));
-    } finally {
-      setCompareLoading(false);
     }
   };
   const runBlame = async (request: GitBlameRequest) => {
@@ -2349,9 +2431,20 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   return (
     <section className={styles.root} data-layout={maximized ? "maximized" : "split"} data-testid="git-tool-window">
       <div className={styles.tabs} data-testid="git-tool-tabs">
-        <strong className={styles.projectName} data-testid="git-project-name" title={resolvedProject.name}>
-          {resolvedProject.name}
-        </strong>
+        {projectSelector ? (
+          <div className={styles.projectSelector} data-testid="git-project-name">
+            <WorkspaceSelector
+              {...projectSelector}
+              allowProjectFreeChat={false}
+              placement="bottom"
+              variant="titlebar"
+            />
+          </div>
+        ) : (
+          <strong className={styles.projectName} data-testid="git-project-name" title={resolvedProject.name}>
+            {resolvedProject.name}
+          </strong>
+        )}
         <div className={styles.tabCenter}>
           <nav className={styles.primaryTabs} role="tablist" aria-label="Git 面板视图">
             {PRIMARY_VIEWS.map((candidate) => {
@@ -2436,6 +2529,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
       <div
         className={styles.workspace}
         data-navigation={view === "changes" ? "hidden" : "visible"}
+        data-view={view}
         data-testid="git-workspace"
         ref={workspaceRef}
         style={{
@@ -2446,22 +2540,22 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
         {view !== "changes" ? (
           <>
             <aside className={styles.navigation} aria-label="Git 仓库导航">
-              <span className={styles.paneTitle}>仓库</span>
-              <GitRepositoryList
-                items={storeSnapshot?.repositoryItems ?? []}
-                selectedRepositoryId={storeSnapshot?.project?.selectedRepositoryId ?? null}
-                onSelect={selectRepository}
-              />
-              <GitRefsTree
-                refs={storeSnapshot?.refs ?? []}
-                selectedRef={storeSnapshot?.ui?.selectedRef ?? null}
-                onSelect={(ref) => {
-                  if (storeSnapshot?.project) {
-                    gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { selectedRef: ref.fullName });
-                  }
-                }}
-                onAction={(action, ref) => void runRefAction(action, ref)}
-              />
+              <div className={styles.repositorySection}>
+                <span className={styles.paneTitle}>仓库</span>
+                <GitRepositoryList
+                  items={storeSnapshot?.repositoryItems ?? []}
+                  selectedRepositoryId={storeSnapshot?.project?.selectedRepositoryId ?? null}
+                  onSelect={selectRepository}
+                />
+              </div>
+              <div className={styles.refsPane}>
+                <GitRefsTree
+                  refs={storeSnapshot?.refs ?? []}
+                  selectedRef={storeSnapshot?.ui?.selectedRef ?? null}
+                  onSelect={selectRepositoryRef}
+                  onAction={(action, ref) => void runRefAction(action, ref)}
+                />
+              </div>
             </aside>
             <div
               className={styles.separator}
@@ -2486,16 +2580,39 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
           aria-label={activeViewLabel}
           tabIndex={0}
         >
-          <div className={styles.paneHeader}>
-            <strong>{activeViewLabel}</strong>
-          </div>
+          {view !== "history" && view !== "changes" ? (
+            <div className={styles.paneHeader} data-testid="git-pane-header">
+              <strong>{activeViewLabel}</strong>
+            </div>
+          ) : null}
           {actionError ? <div className={styles.actionError} role="alert">{actionError}</div> : null}
           {view === "changes" ? (
-            <div className={styles.changesWorkspace}>
+            <div
+              className={styles.changesWorkspace}
+              data-testid="git-changes-workspace"
+              ref={changesWorkspaceRef}
+              style={{ "--git-commit-editor-height": `${commitEditorPercent}%` } as CSSProperties}
+            >
               <GitChangesView
                 status={storeSnapshot?.status ?? null}
-                onSelectionChange={(paths, entries) => void loadSelectedChangeDiff(paths, entries)}
+                onSelectionChange={updateCommitSelection}
+                onPreviewChange={(entry) => void loadChangeDiff(entry)}
+                onRefresh={() => void refreshChanges()}
+                refreshing={changesRefreshing}
                 selectionResetKey={changeSelectionResetKey}
+              />
+              <div
+                className={styles.commitSeparator}
+                role="separator"
+                aria-label="调整提交说明区域高度"
+                aria-orientation="horizontal"
+                aria-valuemin={22}
+                aria-valuemax={65}
+                aria-valuenow={Math.round(commitEditorPercent)}
+                data-dragging={draggingSplitter === "commit" ? "true" : undefined}
+                tabIndex={0}
+                onKeyDown={handleCommitSplitterKeyDown}
+                onPointerDown={handleCommitSplitterPointerDown}
               />
               <GitCommitEditor
                 status={storeSnapshot?.status ?? null}
@@ -2525,11 +2642,8 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
               revisionOptions={(storeSnapshot?.refs ?? [])
                 .filter((ref) => ref.kind === "local" || ref.kind === "remote")
                 .map((ref) => ({ value: ref.fullName, label: ref.shortName }))}
-              onApplyFilters={(filters) => {
-                const next = { ...filters };
-                setHistoryFilters(next);
-                if (storeSnapshot?.project) gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { historyFilters: next });
-              }}
+              authorOptions={historyAuthors}
+              onApplyFilters={(filters) => applyHistoryFilters({ ...filters })}
             />
           ) : view === "blame" ? (
             <GitBlameView
@@ -2753,16 +2867,16 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
           role="separator"
           aria-label={view === "changes" ? "调整提交面板宽度" : "调整 Git 详情宽度"}
           aria-orientation="vertical"
-          aria-valuemin={18}
-          aria-valuemax={42}
+          aria-valuemin={COMMIT_PANE_MIN_PERCENT}
+          aria-valuemax={view === "changes" ? COMMIT_PANE_MAX_PERCENT : Math.round(72 - navigationPanePercent)}
           aria-valuenow={Math.round(view === "changes" ? commitPanePercent : detailPanePercent)}
           data-dragging={draggingSplitter === "details" ? "true" : undefined}
           tabIndex={0}
           onKeyDown={(event) => handleSplitterKeyDown("details", event)}
           onPointerDown={(event) => handleSplitterPointerDown("details", event)}
         />
-        <aside className={styles.details} aria-label="Git 详情">
-          <span className={styles.paneTitle}>详情</span>
+        <aside className={styles.details} data-view={view} aria-label="Git 详情">
+          {view === "history" ? null : <span className={styles.paneTitle}>详情</span>}
           {view === "changes" ? (
             <>
               <GitConflictOverview
@@ -2803,48 +2917,15 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
           ) : view === "stash" ? (
             <GitDiffViewer diff={stashDetail?.files[stashFileIndex] ?? null} />
           ) : view === "history" ? (
-            <>
-              <GitCommitDetailsView
-                detail={historyDetail}
-                loading={historyDetailLoading}
-                selectedFileIndex={historyFileIndex}
-                onSelectFile={(index) => {
-                  setCompareResult(null);
-                  setHistoryFileIndex(index);
-                }}
-                onSelectParent={(parentId) => void selectHistoryParent(parentId)}
-                onCopyHash={(objectId) => navigator.clipboard.writeText(objectId).catch((error) => {
-                  setActionError(gitUiErrorMessage(error));
-                })}
-                onSelectDecoration={(decoration) => {
-                  const refName = decoration.replace(/^HEAD -> /u, "").replace(/^tag: /u, "").trim();
-                  const ref = (storeSnapshot?.refs ?? []).find((candidate) => candidate.shortName === refName || candidate.fullName === refName);
-                  if (ref && storeSnapshot?.project) {
-                    gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { selectedRef: ref.fullName });
-                    activateView("branches");
-                    return;
-                  }
-                  setHistoryFilters((current) => ({ ...current, revision: refName }));
-                }}
-              />
-              <GitCompareView
-                result={compareResult}
-                loading={compareLoading}
-                revisions={(storeSnapshot?.refs ?? []).map((ref) => ref.fullName)}
-                defaultLeft={historyDetail?.selectedParentId ?? "HEAD"}
-                defaultRight={historyDetail?.commit.objectId ?? ""}
-                selectedFileIndex={compareFileIndex}
-                onCompare={(mode, left, right) => void runCompare(mode, left, right)}
-                onSelectFile={setCompareFileIndex}
-              />
-              {compareResult ? (
-                compareResult.files[compareFileIndex]
-                  ? <GitDiffViewer diff={compareResult.files[compareFileIndex]} />
-                  : null
-              ) : historyDetail?.files[historyFileIndex] ? (
-                <GitDiffViewer diff={historyDetail.files[historyFileIndex]} />
-              ) : null}
-            </>
+            <GitCommitDetailsView
+              detail={historyDetail}
+              loading={historyDetailLoading}
+              selectedFileIndex={historyFileIndex}
+              onSelectFile={setHistoryFileIndex}
+              onCopyHash={(objectId) => navigator.clipboard.writeText(objectId).catch((error) => {
+                setActionError(gitUiErrorMessage(error));
+              })}
+            />
           ) : (
             <div className={styles.placeholder}>选择条目查看详情</div>
           )}
@@ -2943,6 +3024,30 @@ export function adjacentGitToolView(
 
 type GitRefsSnapshotRef = NonNullable<GitToolWindowStoreSnapshot["refs"]>[number];
 
+export function gitUiUpdateForRefSelection(
+  view: GitToolWindowView,
+  historyFilters: GitHistoryFilters,
+  ref: Pick<GitRefsSnapshotRef, "fullName" | "kind">,
+): { selectedRef: string; historyFilters?: GitHistoryFilters } {
+  if (view !== "history" || (ref.kind !== "local" && ref.kind !== "remote")) {
+    return { selectedRef: ref.fullName };
+  }
+  return {
+    selectedRef: ref.fullName,
+    historyFilters: { ...historyFilters, revision: ref.fullName },
+  };
+}
+
+export function selectedRefForHistoryRevision(
+  revision: string,
+  refs: readonly Pick<GitRefsSnapshotRef, "fullName" | "kind">[],
+): string | null | undefined {
+  if (!revision) return null;
+  return refs.find((ref) =>
+    (ref.kind === "local" || ref.kind === "remote") && ref.fullName === revision
+  )?.fullName;
+}
+
 export function resolveGitToolWindowProject(
   active: ActiveProjectState | null,
   snapshot: GitToolWindowStoreSnapshot | null,
@@ -2993,6 +3098,28 @@ function descriptorRoot(repository: GitRepositoryDescriptor): GitRepositoryRoot 
     kind: repository.kind,
     parentRepoId: repository.parentRepoId ?? undefined,
   };
+}
+
+function mergeHistoryAuthors(
+  current: readonly string[],
+  commits: readonly GitCommitSummary[],
+): readonly string[] {
+  return Array.from(new Set([
+    ...current,
+    ...commits.map((commit) => commit.authorName.trim()).filter(Boolean),
+  ])).sort((left, right) => left.localeCompare(right));
+}
+
+function trimMap<Key, Value>(map: Map<Key, Value>, limit: number): void {
+  while (map.size > limit) {
+    const oldest = map.keys().next().value as Key | undefined;
+    if (oldest === undefined) return;
+    map.delete(oldest);
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "name" in error && error.name === "AbortError");
 }
 
 export function gitOperationFailureMessage(result: { summary: string; result: Record<string, unknown> }): string {

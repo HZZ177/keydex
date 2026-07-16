@@ -1,6 +1,17 @@
-.root { position: relative; display: grid; min-width: 0; gap: 4px; font-size: 11px; }
+.root { position: relative; display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); gap: 7px; font-size: 11px; }
+.searchField { position: relative; display: flex; min-width: 0; align-items: center; }
+.searchField > svg { position: absolute; left: 8px; z-index: 1; color: var(--color-text-3); pointer-events: none; }
+.searchField input { box-sizing: border-box; width: 100%; min-width: 0; min-height: var(--git-control-height, 30px); padding: 0 9px 0 28px; border: 1px solid var(--color-border-2); border-radius: var(--radius-md); outline: none; background: var(--surface-1); color: var(--color-text-2); font-size: 11px; }
+.searchField input:focus { border-color: color-mix(in srgb, var(--color-text-2) 42%, var(--color-border-2)); background: var(--surface-bg); }
+.scroller { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; padding-right: 2px; scrollbar-width: auto; }
+.tree { position: relative; display: grid; min-width: 0; gap: 4px; }
 .empty { padding: 8px; color: var(--color-text-3); font-size: 11px; }
 .group { display: grid; min-width: 0; gap: 3px; }
+.groupChevron { flex: 0 0 auto; transform: rotate(0deg); transition: transform 180ms var(--motion-ease-standard); }
+.groupChevron[data-expanded="true"] { transform: rotate(90deg); }
+.refItems { display: grid; min-width: 0; grid-template-rows: 0fr; opacity: 0; pointer-events: none; transform: translateY(-3px); transition: grid-template-rows 180ms var(--motion-ease-standard), opacity var(--motion-fast) var(--motion-ease-standard), transform 180ms var(--motion-ease-standard); }
+.refItems[data-expanded="true"] { grid-template-rows: 1fr; opacity: 1; pointer-events: auto; transform: translateY(0); }
+.refItemsInner { display: grid; min-width: 0; min-height: 0; gap: 3px; overflow: hidden; }
 .head, .groupHeader, .ref { display: flex; min-width: 0; width: 100%; align-items: center; gap: 5px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-2); cursor: pointer; text-align: left; }
 .head { min-height: 28px; padding: 0 6px; }
 .groupHeader { min-height: 27px; padding: 0 5px; font-weight: 600; }
@@ -9,9 +20,11 @@
 .ref { min-height: 28px; padding: 0 6px 0 22px; }
 .headName { margin-left: auto; overflow: hidden; color: var(--color-text-3); text-overflow: ellipsis; white-space: nowrap; }
 .refName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ref small { margin-left: auto; color: var(--color-text-3); font-size: 9px; }
 .head:hover, .groupHeader:hover, .ref:hover, .head:focus-visible, .groupHeader:focus-visible, .ref:focus-visible, .ref[aria-selected="true"] { background: var(--surface-hover); color: var(--color-text-1); }
 .refIcon { display: inline-grid; width: 16px; height: 18px; flex: 0 0 auto; place-items: center; color: var(--color-text-3); }
 .refIcon[data-tone="mainline"], .refIcon[data-tone="current"], .refIcon[data-tone="upstream"] { color: color-mix(in srgb, #d99b21 78%, var(--color-text-1)); }
 .refIcon[data-tone="tag"] { color: color-mix(in srgb, #8b7cf6 78%, var(--color-text-1)); }
 .refIcon[data-tone="remote"] { color: color-mix(in srgb, var(--color-accent-1) 76%, var(--color-text-2)); }
+@media (prefers-reduced-motion: reduce) {
+  .groupChevron, .refItems { transition-duration: 1ms; }
+}

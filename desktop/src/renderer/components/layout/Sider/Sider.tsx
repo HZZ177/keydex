@@ -22,7 +22,15 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, SetStateAction } from "react";
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 
 import {
@@ -792,7 +800,10 @@ export function Sider({
       data-collapsed={collapsed ? "true" : "false"}
       data-footer-feather={showFooterFeather ? "true" : "false"}
     >
-      <AppTooltipLayer scopeSelector="[data-layout-sidebar='true']" defaultPlacement="top" />
+      <AppTooltipLayer
+        scopeSelector="[data-layout-sidebar='true']"
+        defaultPlacement={collapsed ? "right" : "top"}
+      />
       <nav className={styles.nav} aria-label="主导航">
         {onToggleSidebar ? (
           <button
@@ -822,7 +833,7 @@ export function Sider({
               key={item.key}
               title={collapsed ? item.label : ""}
               data-tooltip-label={collapsed ? item.label : undefined}
-              data-active={isActivePath(activePath, item.path) ? "true" : "false"}
+              data-active={!gitActive && isActivePath(activePath, item.path) ? "true" : "false"}
               onClick={() => (item.key === "search" ? setSearchOpen(true) : navigateTo(item.path))}
             >
               <Icon size={17} strokeWidth={2} />
@@ -867,6 +878,7 @@ export function Sider({
                   kind="pinned"
                   items={pinnedItems}
                   collapsed={collapsed}
+                  routeSelectionEnabled={!gitActive}
                   emptyText="暂无置顶"
                   emptyLoading={false}
                   activePath={activePath}
@@ -893,6 +905,7 @@ export function Sider({
                   kind="workspace"
                   items={workbenchGroup.items}
                   collapsed={collapsed}
+                  routeSelectionEnabled={!gitActive}
                   emptyText={historyEmptyText}
                   emptyLoading={historyEmptyLoading}
                   activePath={activePath}
@@ -941,6 +954,7 @@ export function Sider({
                 kind="pinned"
                 items={pinnedItems}
                 collapsed={collapsed}
+                routeSelectionEnabled={!gitActive}
                 emptyText="暂无置顶"
                 emptyLoading={false}
                 activePath={activePath}
@@ -966,6 +980,7 @@ export function Sider({
                   title="对话"
                   items={[]}
                   collapsed={collapsed}
+                  routeSelectionEnabled={!gitActive}
                   emptyText={historyEmptyText}
                   emptyLoading={historyEmptyLoading}
                 />
@@ -976,6 +991,7 @@ export function Sider({
                   kind={group.kind}
                   items={group.items}
                   collapsed={collapsed}
+                  routeSelectionEnabled={!gitActive}
                   emptyText={historyEmptyText}
                   emptyLoading={historyEmptyLoading}
                   activePath={activePath}
@@ -1013,6 +1029,7 @@ export function Sider({
                 kind="pinned"
                 items={pinnedItems}
                 collapsed={collapsed}
+                routeSelectionEnabled={!gitActive}
                 emptyText="暂无置顶"
                 emptyLoading={false}
                 activePath={activePath}
@@ -1050,6 +1067,7 @@ export function Sider({
                     kind={group.kind}
                     items={group.items}
                     collapsed={collapsed}
+                    routeSelectionEnabled={!gitActive}
                     emptyText={historyEmptyText}
                     emptyLoading={false}
                     activePath={activePath}
@@ -1106,6 +1124,7 @@ export function Sider({
                     kind="chat"
                     items={chatItems}
                     collapsed={collapsed}
+                    routeSelectionEnabled={!gitActive}
                     emptyText={historyEmptyText}
                     emptyLoading={historyEmptyLoading}
                     activePath={activePath}
@@ -1152,7 +1171,7 @@ export function Sider({
           title={collapsed ? "设置" : ""}
           aria-label="设置"
           data-tooltip-label={collapsed ? "设置" : undefined}
-          data-active={activePath.startsWith("/settings") ? "true" : "false"}
+          data-active={!gitActive && activePath.startsWith("/settings") ? "true" : "false"}
           onClick={() => onNavigate?.("/settings/general")}
         >
           <Settings size={17} strokeWidth={2} />
@@ -1420,6 +1439,7 @@ interface SiderSectionProps {
   disableSectionToggle?: boolean;
   flat?: boolean;
   activePath?: string;
+  routeSelectionEnabled?: boolean;
   editing?: { id: string; title: string } | null;
   archivingSessionId?: string | null;
   canMutate?: boolean;
@@ -1526,6 +1546,7 @@ function SiderSection({
   disableSectionToggle = false,
   flat = false,
   activePath = "",
+  routeSelectionEnabled = true,
   editing,
   archivingSessionId,
   canMutate = false,
@@ -1769,7 +1790,7 @@ function SiderSection({
 
   const renderHistoryRow = (item: SiderEntry) => {
     const path = getSessionPath(item.id);
-    const active = isActivePath(activePath, path);
+    const active = routeSelectionEnabled && isActivePath(activePath, path);
     const indicator = sessionIndicators[item.id] ?? EMPTY_SESSION_INDICATOR;
     const showUpdatedTime = Boolean(
       item.updatedAt
@@ -1969,7 +1990,9 @@ function SiderSection({
 
   if (collapsed) {
     const collapsedProjectActive =
-      canToggleSection && items.some((item) => isActivePath(activePath, getSessionPath(item.id)));
+      routeSelectionEnabled
+      && canToggleSection
+      && items.some((item) => isActivePath(activePath, getSessionPath(item.id)));
     const CollapsedSectionIcon = sectionExpanded ? FolderOpen : Folder;
     return (
       <section className={styles.collapsedSection} aria-label={title} data-kind={kind}>
@@ -2004,7 +2027,7 @@ function SiderSection({
           <div className={styles.collapsedSectionItemsInner}>
             {items.map((item) => {
               const path = getSessionPath(item.id);
-              const active = isActivePath(activePath, path);
+              const active = routeSelectionEnabled && isActivePath(activePath, path);
               const indicator = sessionIndicators[item.id] ?? EMPTY_SESSION_INDICATOR;
               return (
                 <button

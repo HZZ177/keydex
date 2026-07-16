@@ -30,6 +30,69 @@ describe("Git runtime", () => {
     );
   });
 
+  it("supports a fast root-only discovery pass before nested repository enrichment", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({
+      capability: { available: false, reason: "test" },
+      repositories: [],
+      ancestor_candidate: null,
+    }));
+    const runtime = createGitRuntime(new HttpClient({ baseUrl: "http://127.0.0.1:8765", fetcher }));
+
+    await runtime.discover(
+      { workspaceId: "workspace-a", projectRoot: "C:/project" },
+      { includeNested: false },
+    );
+
+    const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:8765/api/git/repositories/discover");
+    expect(JSON.parse(String(init.body))).toEqual({
+      workspace_id: "workspace-a",
+      project_root: "C:/project",
+      include_nested: false,
+    });
+  });
+
+  it("scopes a working-tree diff to the selected path", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({
+      repository_id: repositoryId,
+      repository_version: "v1",
+      files: [],
+    }));
+    const runtime = createGitRuntime(new HttpClient({ baseUrl: "http://127.0.0.1:8765", fetcher }));
+    const controller = new AbortController();
+
+    await runtime.diff(scope, {
+      cached: true,
+      path: "src/selected file.ts",
+      signal: controller.signal,
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://127.0.0.1:8765/api/git/repositories/git-test/diff?workspace_id=workspace-a&project_root=C%3A%2Fproject&cached=true&path=src%2Fselected+file.ts",
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
+  it("filters worktree event paths through the repository ignore rules", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({
+      repository_id: repositoryId,
+      paths: ["src/a.ts"],
+    }));
+    const runtime = createGitRuntime(new HttpClient({ baseUrl: "http://127.0.0.1:8765", fetcher }));
+
+    await expect(runtime.worktreePaths?.(scope, ["src/a.ts", ".dev/cache.db"])).resolves.toEqual(["src/a.ts"]);
+
+    const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:8765/api/git/repositories/git-test/worktree-paths");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      workspace_id: "workspace-a",
+      project_root: "C:/project",
+      repository_id: repositoryId,
+      paths: ["src/a.ts", ".dev/cache.db"],
+    });
+  });
+
   it("maps typed mutation bodies without accepting raw argv", async () => {
     const fetcher = vi.fn().mockImplementation(async () => jsonResponse({
       operation_id: "op-1",

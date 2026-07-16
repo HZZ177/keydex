@@ -135,11 +135,13 @@ export function GitProvider({ children, runtime }: PropsWithChildren<{ runtime: 
           kind: repository.kind,
           parentRepoId: repository.parentRepoId ?? undefined,
         }));
-      const changedRepositories = notification.changes.flatMap((change) => {
-        const owner = repositoryOwningPath(roots, absoluteWorkspacePath(projectRoot, change.path));
-        return owner ? [owner.id as GitRepositoryId] : [];
+      const worktreePathChanges = notification.changes.flatMap((change) => {
+        const absolutePath = absoluteWorkspacePath(projectRoot, change.path);
+        const owner = repositoryOwningPath(roots, absolutePath);
+        const path = owner ? repositoryRelativePath(owner.rootPath, absolutePath) : null;
+        return owner && path ? [{ repositoryId: owner.id as GitRepositoryId, path }] : [];
       });
-      value.controller.handleExternalWorktreeChanges(changedRepositories);
+      void value.controller.handleExternalWorktreePaths(worktreePathChanges);
     });
   }, [fileChanges, projectRoot, value, workspaceId]);
 
@@ -192,4 +194,14 @@ function emptySubscribe(): () => void {
 function absoluteWorkspacePath(projectRoot: string, path: string): string {
   if (/^[A-Za-z]:[\\/]/.test(path) || path.startsWith("/")) return path;
   return `${projectRoot.replace(/[\\/]+$/, "")}/${path.replace(/^[\\/]+/, "")}`;
+}
+
+function repositoryRelativePath(repositoryRoot: string, path: string): string | null {
+  const root = repositoryRoot.trim().replaceAll("\\", "/").replace(/\/+$/, "");
+  const candidate = path.trim().replaceAll("\\", "/");
+  const caseInsensitive = /^[A-Za-z]:\//.test(root);
+  const comparableRoot = caseInsensitive ? root.toLocaleLowerCase() : root;
+  const comparableCandidate = caseInsensitive ? candidate.toLocaleLowerCase() : candidate;
+  if (!comparableCandidate.startsWith(`${comparableRoot}/`)) return null;
+  return candidate.slice(root.length + 1).replace(/^\/+/, "") || null;
 }

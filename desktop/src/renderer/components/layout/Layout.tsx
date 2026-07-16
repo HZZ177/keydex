@@ -52,16 +52,28 @@ import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { ConnectionStatus } from "@/renderer/components/runtime";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import { FileReviewPanel } from "@/renderer/components/review/FileReviewDiff";
-import { GitToolWindow } from "@/renderer/features/git/components/GitToolWindow";
+import {
+  GitToolWindow,
+  type GitProjectSelectorProps,
+} from "@/renderer/features/git/components/GitToolWindow";
+import type { WorkspaceSelection } from "@/renderer/components/workspace";
+import {
+  activeProjectDiscoveryFromWorkspace,
+  usePublishActiveProjectDiscovery,
+} from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { A2UIRenderSuspensionProvider } from "@/renderer/pages/conversation/messages/a2ui/A2UIRenderSuspensionContext";
 import type { SelectedQuote } from "@/renderer/components/chat/SendBox";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
-import type { AppMode } from "@/renderer/components/layout/appMode";
+import {
+  gitPath,
+  workbenchGitPath,
+  type AppMode,
+} from "@/renderer/components/layout/appMode";
 import {
   BTW_CONVERSATION_TITLE,
   createBtwConversationFromSession,
 } from "@/renderer/pages/conversation/conversationForkSource";
-import type { AgentSession } from "@/types/protocol";
+import type { AgentSession, Workspace } from "@/types/protocol";
 
 import { RightSidebarResizeHandle } from "./RightSidebarResizeHandle";
 import { RightSidebarInitialPage } from "./RightSidebarInitialPage";
@@ -105,6 +117,7 @@ const RATIO_PRECISION = 1000;
 const RIGHT_SIDEBAR_TAB_MENU_WIDTH = 148;
 const RIGHT_SIDEBAR_TAB_MENU_HEIGHT = 136;
 const RIGHT_SIDEBAR_TAB_MENU_EDGE = 8;
+const AGENT_GIT_PROJECT_PRIORITY = 100;
 
 interface LayoutUiState {
   rightSidebarMode: "split" | "maximized";
@@ -256,6 +269,8 @@ export interface LayoutProps extends PropsWithChildren {
   getSessionPath?: (sessionId: string) => string;
   getWorkspaceNewConversationPath?: (workspaceId?: string) => string;
   workbenchWorkspaceSelector?: WorkbenchWorkspaceSelectorProps;
+  routePrimarySurface?: "content" | "git";
+  routeGitNavigation?: boolean;
   resetRightSidebarKey?: string;
   onNavigate?: (path: string) => void;
 }
@@ -277,6 +292,8 @@ export function Layout({
   getSessionPath,
   getWorkspaceNewConversationPath,
   workbenchWorkspaceSelector,
+  routePrimarySurface,
+  routeGitNavigation = false,
   resetRightSidebarKey,
   onNavigate,
 }: LayoutProps) {
@@ -304,7 +321,12 @@ export function Layout({
   );
   const [sidebarResizeActive, setSidebarResizeActive] = useState(false);
   const [rightSidebarResizeActive, setRightSidebarResizeActive] = useState(false);
-  const [primarySurface, setPrimarySurface] = useState<"content" | "git">("content");
+  const [localPrimarySurface, setLocalPrimarySurface] = useState<"content" | "git">("content");
+  const primarySurface = routePrimarySurface ?? localPrimarySurface;
+  const [agentGitWorkspaces, setAgentGitWorkspaces] = useState<Workspace[]>([]);
+  const [agentGitWorkspacesLoading, setAgentGitWorkspacesLoading] = useState(false);
+  const [agentGitWorkspaceCatalogLoaded, setAgentGitWorkspaceCatalogLoaded] = useState(false);
+  const [agentGitOverrideWorkspace, setAgentGitOverrideWorkspace] = useState<Workspace | null>(null);
   const [rightSidebarPanelStateByScope, setRightSidebarPanelStateByScope] = useState<
     Record<string, RightSidebarScopePanelState>
   >(initialLayoutUiState?.rightSidebarPanelStateByScope ?? {});
@@ -313,6 +335,19 @@ export function Layout({
   const runtimeConnection = useOptionalRuntimeConnection();
   const activeProjectState = useOptionalActiveProjectState();
   const notifications = useNotifications();
+  const agentGitOverrideDiscovery = useMemo(
+    () => activeProjectDiscoveryFromWorkspace(agentGitOverrideWorkspace, false),
+    [agentGitOverrideWorkspace],
+  );
+  usePublishActiveProjectDiscovery(
+    "git-panel-agent-selector",
+    agentGitOverrideDiscovery,
+    !routeGitNavigation
+      && appMode === "agent"
+      && primarySurface === "git"
+      && agentGitOverrideWorkspace !== null,
+    AGENT_GIT_PROJECT_PRIORITY,
+  );
   const collapsed = state.sidebarCollapsed;
   const sidebarEnabled = appMode !== "project";
   const globalRightSidebarEnabled = appMode === "agent";
@@ -616,8 +651,106 @@ export function Layout({
       return;
     }
     closeRightSidebar();
-    setPrimarySurface("git");
-  }, [closeRightSidebar, gitEnabled]);
+    if (routeGitNavigation && activeProjectState && activeProjectState.status !== "none") {
+      onNavigate?.(
+        appMode === "workbench"
+          ? workbenchGitPath(activeProjectState.workspaceId)
+          : gitPath(activeProjectState.workspaceId),
+      );
+      return;
+    }
+    setLocalPrimarySurface("git");
+  }, [activeProjectState, appMode, closeRightSidebar, gitEnabled, onNavigate, routeGitNavigation]);
+
+  useEffect(() => {
+    if (
+      appMode !== "agent"
+      || primarySurface !== "git"
+      || agentGitWorkspaceCatalogLoaded
+    ) {
+      return;
+    }
+    let active = true;
+    setAgentGitWorkspacesLoading(true);
+    void runtime.workspaces
+      .list()
+      .then((response) => {
+        if (!active) return;
+        setAgentGitWorkspaces(response.list.filter((workspace) => workspace.archived_at === null));
+        setAgentGitWorkspaceCatalogLoaded(true);
+        setAgentGitWorkspacesLoading(false);
+      })
+      .catch((reason) => {
+        if (!active) return;
+        notifications.error(errorMessage(reason));
+        setAgentGitWorkspacesLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    agentGitWorkspaceCatalogLoaded,
+    appMode,
+    notifications,
+    primarySurface,
+    runtime,
+  ]);
+
+  useEffect(() => {
+    if (appMode !== "agent" || primarySurface !== "git") {
+      setAgentGitOverrideWorkspace(null);
+    }
+  }, [appMode, primarySurface]);
+
+  const agentGitProjectSelection = useMemo<WorkspaceSelection>(() => {
+    if (agentGitOverrideWorkspace) {
+      return { type: "workspace", workspace: agentGitOverrideWorkspace };
+    }
+    if (activeProjectState && activeProjectState.status !== "none") {
+      const activeWorkspace = agentGitWorkspaces.find(
+        (workspace) => workspace.id === activeProjectState.workspaceId,
+      );
+      if (activeWorkspace) {
+        return { type: "workspace", workspace: activeWorkspace };
+      }
+      return {
+        type: "pending",
+        rootPath: activeProjectState.projectPath,
+        name: activeProjectState.name,
+      };
+    }
+    return { type: "chat" };
+  }, [activeProjectState, agentGitOverrideWorkspace, agentGitWorkspaces]);
+
+  const selectAgentGitWorkspace = useCallback((workspace: Workspace) => {
+    if (routeGitNavigation) {
+      onNavigate?.(gitPath(workspace.id));
+      return;
+    }
+    setAgentGitOverrideWorkspace(workspace);
+  }, [onNavigate, routeGitNavigation]);
+
+  const gitProjectSelector = useMemo<GitProjectSelectorProps | undefined>(() => {
+    if (appMode === "workbench") {
+      return workbenchWorkspaceSelector;
+    }
+    if (appMode !== "agent") {
+      return undefined;
+    }
+    return {
+      value: agentGitProjectSelection,
+      workspaces: agentGitWorkspaces,
+      loading: agentGitWorkspacesLoading,
+      onSelectWorkspace: selectAgentGitWorkspace,
+    };
+  }, [
+    agentGitProjectSelection,
+    agentGitWorkspaces,
+    agentGitWorkspacesLoading,
+    appMode,
+    selectAgentGitWorkspace,
+    workbenchWorkspaceSelector,
+  ]);
 
   const openConversationPanel = useCallback(
     (request: OpenRightSidebarConversationRequest) => {
@@ -775,7 +908,7 @@ export function Layout({
 
   const navigateFromShell = useCallback(
     (path: string) => {
-      setPrimarySurface("content");
+      setLocalPrimarySurface("content");
       if (path === "/guid" || path.startsWith("/guid?")) {
         closeRightSidebar();
       }
@@ -803,7 +936,7 @@ export function Layout({
       if (!target || target === activePath) {
         return;
       }
-      setPrimarySurface("content");
+      setLocalPrimarySurface("content");
       if (typeof window === "undefined" || prefersReducedMotion()) {
         onNavigate?.(target);
         return;
@@ -831,10 +964,10 @@ export function Layout({
   useEffect(() => () => clearAppModeNavigationTimer(), [clearAppModeNavigationTimer]);
 
   useEffect(() => {
-    if (!gitEnabled) {
-      setPrimarySurface("content");
+    if (!gitEnabled && routePrimarySurface === undefined) {
+      setLocalPrimarySurface("content");
     }
-  }, [gitEnabled]);
+  }, [gitEnabled, routePrimarySurface]);
 
   useEffect(() => {
     if (!resetRightSidebarKey || lastRightSidebarResetKeyRef.current === resetRightSidebarKey) {
@@ -947,7 +1080,11 @@ export function Layout({
               </div>
               {primarySurface === "git" ? (
                 <div className={styles.gitPrimarySurface}>
-                  <GitToolWindow project={activeProjectState} maximized />
+                  <GitToolWindow
+                    project={activeProjectState}
+                    maximized
+                    projectSelector={gitProjectSelector}
+                  />
                 </div>
               ) : null}
             </section>

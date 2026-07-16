@@ -10,7 +10,6 @@ export type GitFileStatusCode =
   | "renamed"
   | "copied"
   | "untracked"
-  | "ignored"
   | "conflicted"
   | "type_changed";
 export type GitOperationKind =
@@ -494,7 +493,7 @@ function positiveCount(value: unknown, label: string): number {
 }
 
 const FILE_STATUSES = new Set<GitFileStatusCode>([
-  "added", "modified", "deleted", "renamed", "copied", "untracked", "ignored", "conflicted", "type_changed",
+  "added", "modified", "deleted", "renamed", "copied", "untracked", "conflicted", "type_changed",
 ]);
 
 function fileStatus(value: unknown, label: string): GitFileStatusCode | null {
@@ -545,9 +544,12 @@ export function normalizeGitStatus(value: unknown): GitStatusSnapshot {
       behind: count(branch.behind, "status.branch.behind"),
       unborn: Boolean(branch.unborn),
     },
-    files: raw.files.map((item, index) => {
+    files: raw.files.flatMap((item, index) => {
       const file = record(item, `status.files[${index}]`);
-      return {
+      // Version-skew defense: older backends may still include ignored entries.
+      // They are not part of Keydex's Git status contract and must not reach the store.
+      if (file.worktree_status === "ignored") return [];
+      return [{
         path: text(file.path, `status.files[${index}].path`),
         originalPath: optionalText(file.original_path, `status.files[${index}].original_path`),
         indexStatus: fileStatus(file.index_status, `status.files[${index}].index_status`),
@@ -555,7 +557,7 @@ export function normalizeGitStatus(value: unknown): GitStatusSnapshot {
         conflicted: Boolean(file.conflicted),
         binary: file.binary === null || file.binary === undefined ? null : Boolean(file.binary),
         submodule: Boolean(file.submodule),
-      };
+      }];
     }),
     operation: raw.operation ? normalizeGitInProgressOperation(raw.operation) : null,
   };

@@ -368,10 +368,6 @@ export interface GitHistoryFilters {
   revision: string;
   author: string;
   since: string;
-  until: string;
-  path: string;
-  firstParent: boolean;
-  mergesOnly: boolean;
 }
 
 export interface GitHistoryQueryOptions extends GitQueryOptions, Partial<GitHistoryFilters> {
@@ -383,12 +379,20 @@ export type GitMetadataListener = (event: GitMetadataChangedEvent) => void;
 
 export interface GitRuntime {
   capabilities(options?: GitQueryOptions): Promise<GitCapabilitySet>;
-  discover(scope: GitProjectScope, options?: GitQueryOptions): Promise<GitDiscoverySnapshot>;
+  discover(
+    scope: GitProjectScope,
+    options?: GitQueryOptions & { includeNested?: boolean },
+  ): Promise<GitDiscoverySnapshot>;
   initialize(scope: GitProjectScope, options?: GitQueryOptions): Promise<GitDiscoverySnapshot>;
   authorizeAncestor(command: GitAncestorGrantCommand, options?: GitQueryOptions): Promise<void>;
   revokeAncestor(scope: GitProjectScope, options?: GitQueryOptions): Promise<boolean>;
   authorizeWorktree(command: GitWorktreeGrantCommand, options?: GitQueryOptions): Promise<GitWorktreeGrant>;
   revokeWorktree(command: GitWorktreeGrantCommand, options?: GitQueryOptions): Promise<boolean>;
+  worktreePaths?(
+    scope: GitRepositoryScope,
+    paths: readonly string[],
+    options?: GitQueryOptions,
+  ): Promise<readonly string[]>;
   status(scope: GitRepositoryScope, options?: GitQueryOptions): Promise<GitStatusSnapshot>;
   refs(scope: GitRepositoryScope, options?: GitQueryOptions): Promise<GitRefsSnapshot>;
   remotes(scope: GitRepositoryScope, options?: GitQueryOptions): Promise<readonly GitRemoteInfo[]>;
@@ -461,7 +465,10 @@ export interface GitRuntime {
     mode: GitPatchExportMode,
     options?: GitQueryOptions & { left?: string | null; right?: string | null; paths?: readonly string[] },
   ): Promise<GitPatchExport>;
-  diff(scope: GitRepositoryScope, options?: GitQueryOptions & { cached?: boolean }): Promise<GitDiffSnapshot>;
+  diff(
+    scope: GitRepositoryScope,
+    options?: GitQueryOptions & { cached?: boolean; path?: string },
+  ): Promise<GitDiffSnapshot>;
   identity(scope: GitRepositoryScope, options?: GitQueryOptions): Promise<GitIdentity>;
   updateIdentity(command: GitIdentityUpdate, options?: GitQueryOptions): Promise<GitIdentity>;
   stage(command: GitPathsCommand, options?: GitQueryOptions): Promise<GitCommandResult>;
@@ -533,7 +540,11 @@ export function createGitRuntime(http: HttpClient): GitRuntime {
     async discover(scope, options = {}) {
       return normalizeGitDiscovery(await http.request("/api/git/repositories/discover", {
         method: "POST",
-        body: { workspace_id: scope.workspaceId, project_root: scope.projectRoot },
+        body: {
+          workspace_id: scope.workspaceId,
+          project_root: scope.projectRoot,
+          ...(options.includeNested === undefined ? {} : { include_nested: options.includeNested }),
+        },
         signal: options.signal,
       }));
     },
@@ -599,6 +610,23 @@ export function createGitRuntime(http: HttpClient): GitRuntime {
     async status(scope, options = {}) {
       return normalizeGitStatus(await http.request(`${repositoryPath(scope, "/status")}?${query(scope)}`, { signal: options.signal }));
     },
+    async worktreePaths(scope, paths, options = {}) {
+      if (paths.length === 0) return [];
+      const raw = await http.request<{ paths?: unknown }>(repositoryPath(scope, "/worktree-paths"), {
+        method: "POST",
+        body: {
+          workspace_id: scope.workspaceId,
+          project_root: scope.projectRoot,
+          repository_id: scope.repositoryId,
+          paths: [...paths],
+        },
+        signal: options.signal,
+      });
+      if (!Array.isArray(raw.paths) || !raw.paths.every((path) => typeof path === "string")) {
+        throw new Error("Git worktree path response is invalid");
+      }
+      return raw.paths;
+    },
     async refs(scope, options = {}) {
       return normalizeGitRefs(await http.request(`${repositoryPath(scope, "/refs")}?${query(scope)}`, { signal: options.signal }));
     },
@@ -633,11 +661,8 @@ export function createGitRuntime(http: HttpClient): GitRuntime {
       }
       if (options.revision?.trim()) params.set("revision", options.revision.trim());
       if (options.author?.trim()) params.set("author", options.author.trim());
-      if (options.since?.trim()) params.set("since", options.since.trim());
-      if (options.until?.trim()) params.set("until", options.until.trim());
-      if (options.path?.trim()) params.set("path", options.path.trim());
-      if (options.firstParent) params.set("first_parent", "true");
-      if (options.mergesOnly) params.set("merges_only", "true");
+      const since = historySinceValue(options.since);
+      if (since) params.set("since", since);
       return normalizeGitHistory(await http.request(`${repositoryPath(scope, "/history")}?${params}`, { signal: options.signal }));
     },
     async commit(scope, revision, options = {}) {
@@ -774,6 +799,7 @@ export function createGitRuntime(http: HttpClient): GitRuntime {
     async diff(scope, options = {}) {
       const params = query(scope);
       if (options.cached) params.set("cached", "true");
+      if (options.path?.trim()) params.set("path", options.path.trim());
       return normalizeGitDiff(await http.request(`${repositoryPath(scope, "/diff")}?${params}`, { signal: options.signal }));
     },
     async identity(scope, options = {}) {
@@ -873,6 +899,16 @@ export function createGitRuntime(http: HttpClient): GitRuntime {
       return true;
     },
   };
+}
+
+function historySinceValue(value: string | undefined): string {
+  const normalized = value?.trim() ?? "";
+  const duration = normalized === "24h"
+    ? 24 * 60 * 60 * 1000
+    : normalized === "7d"
+      ? 7 * 24 * 60 * 60 * 1000
+      : 0;
+  return duration > 0 ? new Date(Date.now() - duration).toISOString() : normalized;
 }
 
 function normalizeGitIdentity(raw: Record<string, unknown>): GitIdentity {

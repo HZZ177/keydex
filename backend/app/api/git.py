@@ -9,7 +9,6 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 
 from backend.app.git.access import GitAncestorGrantStore, GitWorktreeGrantStore
-from backend.app.git.capabilities import probe_git_capabilities
 from backend.app.git.command_service import GitCommandRegistry, GitCommandRisk, GitCommandService
 from backend.app.git.confirmations import GitConfirmationService
 from backend.app.git.default_commands import create_default_git_command_registry
@@ -88,6 +87,8 @@ from backend.app.git.models import (
     GitWorktreeCommandRequest,
     GitWorktreeGrantRequest,
     GitWorktreeGrantResponse,
+    GitWorktreePathsRequest,
+    GitWorktreePathsResponse,
     GitWorktreesSnapshotResponse,
 )
 from backend.app.git.query_service import GitQueryService, repository_version
@@ -180,8 +181,8 @@ GitRepositoryRequestDep = Annotated[GitRepositoryRequest, Depends(_repository_re
 
 
 @router.get("/capabilities", response_model=GitCapabilityResponse)
-async def git_capabilities() -> GitCapabilityResponse:
-    return probe_git_capabilities()
+async def git_capabilities(service: GitQueries) -> GitCapabilityResponse:
+    return await asyncio.to_thread(service.capabilities)
 
 
 @router.post(
@@ -267,6 +268,20 @@ async def repository_status(
         "status",
         lambda: service.status(request),
     )
+
+
+@router.post(
+    "/repositories/{repository_id}/worktree-paths",
+    response_model=GitWorktreePathsResponse,
+)
+async def repository_worktree_paths(
+    repository_id: str,
+    payload: GitWorktreePathsRequest,
+    service: GitQueries,
+) -> GitWorktreePathsResponse:
+    if payload.repository_id != repository_id:
+        raise HTTPException(status_code=422, detail="Repository id does not match route")
+    return await _await(service.worktree_paths, payload)
 
 
 @router.get(
@@ -410,14 +425,15 @@ async def repository_diff(
     service: GitQueries,
     request: GitRepositoryRequestDep,
     cached: bool = False,
+    path: str | None = Query(default=None, min_length=1, max_length=4096),
 ) -> GitDiffResponse:
     request.repository_id = repository_id
     return await _await(
         service.coalesced_query,
         request,
         "diff",
-        lambda: service.diff(request, cached=cached),
-        variant=(cached,),
+        lambda: service.diff(request, cached=cached, path=path),
+        variant=(cached, path),
     )
 
 

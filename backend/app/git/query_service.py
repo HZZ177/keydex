@@ -7,6 +7,8 @@ import json
 import os
 import re
 import tempfile
+import threading
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -25,6 +27,7 @@ from .advanced import (
     parse_submodule_status,
     parse_worktree_porcelain,
 )
+from .capabilities import probe_git_capabilities
 from .conflicts import (
     classify_conflict,
     decode_conflict_content,
@@ -46,6 +49,7 @@ from .models import (
     GitApiError,
     GitBisectSnapshotResponse,
     GitBlameResponse,
+    GitCapabilityResponse,
     GitCommitDetailResponse,
     GitCompareResponse,
     GitConflictFileResponse,
@@ -78,6 +82,8 @@ from .models import (
     GitWorktreeCommandRequest,
     GitWorktreeGrantRequest,
     GitWorktreeGrantResponse,
+    GitWorktreePathsRequest,
+    GitWorktreePathsResponse,
     GitWorktreesSnapshotResponse,
 )
 from .refs import REF_FORMAT, parse_for_each_ref
@@ -113,7 +119,7 @@ class GitQueryService:
         grants: GitAncestorGrantStore,
         worktree_grants: GitWorktreeGrantStore | None = None,
         runner: GitCliRunner | None = None,
-        max_concurrent_queries: int = 2,
+        max_concurrent_queries: int = 4,
     ) -> None:
         if max_concurrent_queries < 1:
             raise ValueError("Git query concurrency limit must be positive")
@@ -122,10 +128,16 @@ class GitQueryService:
         self._runner = runner or GitCliRunner(max_concurrency=max_concurrent_queries)
         self._repositories: dict[tuple[str, str], _RegisteredRepository] = {}
         self._cache: dict[tuple[str, str, str], BaseModel] = {}
+        self._repository_versions: dict[str, str] = {}
+        self._commit_detail_cache: OrderedDict[
+            tuple[str, str, str | None], GitCommitDetailResponse
+        ] = OrderedDict()
+        self._capability: GitCapabilityResponse | None = None
+        self._capability_lock = threading.Lock()
         self._lock = asyncio.Lock()
         self._query_semaphore = asyncio.Semaphore(max_concurrent_queries)
-        self._repository_query_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
         self._inflight_queries: dict[tuple[object, ...], asyncio.Task[object]] = {}
+        self._inflight_query_waiters: dict[tuple[object, ...], int] = {}
 
     async def coalesced_query(
         self,
@@ -135,7 +147,7 @@ class GitQueryService:
         *,
         variant: tuple[object, ...] = (),
     ) -> _QueryT:
-        """Share identical reads and serialize expensive reads for one repository."""
+        """Share identical reads while allowing independent repository reads to overlap."""
         repository_key = (
             request.workspace_id,
             str(Path(request.project_root).expanduser().resolve()),
@@ -145,12 +157,7 @@ class GitQueryService:
         async with self._lock:
             existing = self._inflight_queries.get(query_key)
             if existing is None:
-                repository_lock = self._repository_query_locks.setdefault(
-                    repository_key, asyncio.Lock()
-                )
-                task = asyncio.create_task(
-                    self._run_coalesced_query(repository_lock, factory)
-                )
+                task = asyncio.create_task(self._run_coalesced_query(factory))
                 self._inflight_queries[query_key] = task
                 task.add_done_callback(
                     lambda completed, key=query_key: self._forget_inflight_query(
@@ -159,16 +166,27 @@ class GitQueryService:
                 )
             else:
                 task = existing
-        return await asyncio.shield(task)  # type: ignore[return-value]
+            self._inflight_query_waiters[query_key] = (
+                self._inflight_query_waiters.get(query_key, 0) + 1
+            )
+        try:
+            return await asyncio.shield(task)  # type: ignore[return-value]
+        finally:
+            async with self._lock:
+                remaining = self._inflight_query_waiters.get(query_key, 1) - 1
+                if remaining > 0:
+                    self._inflight_query_waiters[query_key] = remaining
+                else:
+                    self._inflight_query_waiters.pop(query_key, None)
+                    if not task.done():
+                        task.cancel()
 
     async def _run_coalesced_query(
         self,
-        repository_lock: asyncio.Lock,
         factory: Callable[[], Awaitable[_QueryT]],
     ) -> _QueryT:
-        async with repository_lock:
-            async with self._query_semaphore:
-                return await factory()
+        async with self._query_semaphore:
+            return await factory()
 
     def _forget_inflight_query(
         self,
@@ -182,7 +200,11 @@ class GitQueryService:
         task.exception()
 
     def discover(self, request: GitDiscoveryRequest) -> GitDiscoveryResponse:
-        response = discover_git_repositories(request, grants=self._grants)
+        response = discover_git_repositories(
+            request,
+            grants=self._grants,
+            capability=self._capability_snapshot(),
+        )
         project_root = Path(request.project_root).expanduser().resolve()
         for repository in [*response.repositories, response.ancestor_candidate]:
             if repository is not None:
@@ -191,6 +213,18 @@ class GitQueryService:
                     project_root=project_root,
                 )
         return response
+
+    def _capability_snapshot(self) -> GitCapabilityResponse:
+        capability = self._capability
+        if capability is not None:
+            return capability
+        with self._capability_lock:
+            if self._capability is None:
+                self._capability = probe_git_capabilities()
+            return self._capability
+
+    def capabilities(self) -> GitCapabilityResponse:
+        return self._capability_snapshot()
 
     def authorize_ancestor(self, request: GitAncestorGrantRequest) -> GitAncestorGrantResponse:
         discovery = self.discover(
@@ -278,10 +312,6 @@ class GitQueryService:
                 "Git status is unavailable for a bare repository",
                 repository_id=registered.response.id,
             )
-        version = repository_version(registered.response)
-        cached = self._cached(registered.response.id, version, "status", GitStatusResponse)
-        if cached is not None:
-            return cached
         result = await self._run(
             registered,
             [
@@ -290,13 +320,12 @@ class GitQueryService:
                 "-z",
                 "--branch",
                 "--untracked-files=all",
-                "--ignored=matching",
             ],
             cancel_event=cancel_event,
         )
-        # Read the version again so an external mutation that races the query
-        # cannot leave the response carrying a stale pre-query token.
-        version = repository_version(registered.response)
+        # Refresh after Git returns so a metadata mutation racing this query
+        # cannot leave the response carrying a stale token.
+        version = self.version(registered.response, refresh=True)
         try:
             status = parse_porcelain_v2_status(
                 result.stdout,
@@ -319,7 +348,41 @@ class GitQueryService:
             registered.response.git_dir_path,
             has_unmerged_files=any(item.conflicted for item in status.files),
         )
-        return self._store(registered.response.id, version, "status", status)
+        return status
+
+    async def worktree_paths(
+        self,
+        request: GitWorktreePathsRequest,
+        *,
+        cancel_event: asyncio.Event | None = None,
+    ) -> GitWorktreePathsResponse:
+        registered = self._resolve(request)
+        if registered.response.bare:
+            return GitWorktreePathsResponse(repository_id=registered.response.id, paths=[])
+        result = await self._runner.run(
+            ["check-ignore", "-z", "--stdin"],
+            cwd=registered.response.root_path,
+            env=_READ_ONLY_GIT_ENV,
+            input_text="\0".join(request.paths) + "\0",
+            cancel_event=cancel_event,
+            timeout_seconds=10,
+        )
+        if result.cancelled:
+            raise GitApiError("git_cancelled", "Git path filtering was cancelled")
+        if result.timed_out:
+            raise GitApiError("git_timeout", "Git path filtering timed out", retryable=True)
+        # git check-ignore returns 1 when none of the paths are ignored.
+        if result.returncode not in {0, 1}:
+            raise GitApiError(
+                "git_failed",
+                result.safe_stderr.strip() or "Git path filtering failed",
+                repository_id=registered.response.id,
+            )
+        ignored = {path for path in result.stdout.split("\0") if path}
+        return GitWorktreePathsResponse(
+            repository_id=registered.response.id,
+            paths=[path for path in request.paths if path not in ignored],
+        )
 
     async def bisect(
         self,
@@ -328,7 +391,7 @@ class GitQueryService:
         cancel_event: asyncio.Event | None = None,
     ) -> GitBisectSnapshotResponse:
         registered = self._resolve(request)
-        version = repository_version(registered.response)
+        version = self.version(registered.response)
         cached = self._cached(
             registered.response.id, version, "bisect", GitBisectSnapshotResponse
         )
@@ -400,7 +463,7 @@ class GitQueryService:
         cancel_event: asyncio.Event | None = None,
     ) -> GitSubmodulesSnapshotResponse:
         registered = self._resolve(request)
-        version = repository_version(registered.response)
+        version = self.version(registered.response)
         cached = self._cached(
             registered.response.id,
             version,
@@ -468,7 +531,7 @@ class GitQueryService:
         cancel_event: asyncio.Event | None = None,
     ) -> GitWorktreesSnapshotResponse:
         registered = self._resolve(request)
-        version = repository_version(registered.response)
+        version = self.version(registered.response)
         cached = self._cached(
             registered.response.id, version, "worktrees", GitWorktreesSnapshotResponse
         )
@@ -520,7 +583,7 @@ class GitQueryService:
         cancel_event: asyncio.Event | None = None,
     ) -> GitLfsSnapshotResponse:
         registered = self._resolve(request)
-        version = repository_version(registered.response)
+        version = self.version(registered.response)
         cached = self._cached(
             registered.response.id, version, "lfs", GitLfsSnapshotResponse
         )
@@ -635,7 +698,7 @@ class GitQueryService:
         cancel_event: asyncio.Event | None = None,
     ) -> GitRefsResponse:
         registered = self._resolve(request)
-        version = repository_version(registered.response)
+        version = self.version(registered.response)
         cached = self._cached(registered.response.id, version, "refs", GitRefsResponse)
         if cached is not None:
             return cached
@@ -657,7 +720,7 @@ class GitQueryService:
 
     async def remotes(self, request: GitRepositoryRequest) -> GitRemotesResponse:
         registered = self._resolve(request)
-        version = repository_version(registered.response)
+        version = self.version(registered.response)
         result, refs = await asyncio.gather(
             self._run(registered, ["remote", "--verbose"], cancel_event=None),
             self.refs(request),
@@ -689,7 +752,7 @@ class GitQueryService:
         if limit < 1 or limit > 500:
             raise GitApiError("git_validation_failed", "History limit must be between 1 and 500")
         registered = self._resolve(request)
-        version = repository_version(registered.response)
+        version = self.version(registered.response, refresh=cursor is not None)
         offset = decode_cursor(cursor, registered.response.id, version) if cursor else 0
         try:
             normalized_query = normalize_history_query(query or GitHistoryQuery())
@@ -791,6 +854,7 @@ class GitQueryService:
         request: GitRepositoryRequest,
         *,
         cached: bool = False,
+        path: str | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> GitDiffResponse:
         registered = self._resolve(request)
@@ -800,12 +864,19 @@ class GitQueryService:
                 "Git diff is unavailable for a bare repository",
                 repository_id=registered.response.id,
             )
-        version = repository_version(registered.response)
+        version = self.version(registered.response)
         base = ["diff", "--no-ext-diff", "--binary", "--find-renames"]
         numstat_args = ["diff", "--no-ext-diff", "--find-renames", "--numstat", "-z"]
         if cached:
             base.append("--cached")
             numstat_args.append("--cached")
+        if path is not None:
+            try:
+                normalized_path = validate_repo_relative_path(path)
+            except GitParameterError as exc:
+                raise GitApiError("git_validation_failed", str(exc)) from exc
+            base.extend(["--", normalized_path])
+            numstat_args.extend(["--", normalized_path])
         patch, numstat = await asyncio.gather(
             self._run(registered, base, cancel_event=cancel_event),
             self._run(registered, numstat_args, cancel_event=cancel_event),
@@ -887,7 +958,7 @@ class GitQueryService:
         )
         return GitCompareResponse(
             repository_id=registered.response.id,
-            repository_version=repository_version(registered.response),
+            repository_version=self.version(registered.response),
             mode=mode,
             left_label=left_revision,
             right_label=right_revision or "Working tree",
@@ -941,7 +1012,7 @@ class GitQueryService:
         merge_base_object_id = merge_base.stdout.strip().splitlines()[0]
         return GitMergePreviewResponse(
             repository_id=registered.response.id,
-            repository_version=repository_version(registered.response),
+            repository_version=self.version(registered.response),
             source=normalized_source,
             head_object_id=head_object_id,
             source_object_id=source_object_id,
@@ -1009,7 +1080,7 @@ class GitQueryService:
         ]
         return GitRebasePreviewResponse(
             repository_id=registered.response.id,
-            repository_version=repository_version(registered.response),
+            repository_version=self.version(registered.response),
             upstream=normalized_upstream,
             onto=normalized_onto,
             head_object_id=head_object_id,
@@ -1105,6 +1176,22 @@ class GitQueryService:
             normalized_parent = validate_revision(parent) if parent else None
         except GitParameterError as exc:
             raise GitApiError("git_validation_failed", str(exc)) from exc
+        cache_key = (
+            registered.response.id,
+            normalized_revision.casefold(),
+            normalized_parent.casefold() if normalized_parent else None,
+        ) if (
+            re.fullmatch(r"[0-9a-fA-F]{40,64}", normalized_revision)
+            and (
+                normalized_parent is None
+                or re.fullmatch(r"[0-9a-fA-F]{40,64}", normalized_parent)
+            )
+        ) else None
+        if cache_key is not None:
+            cached_detail = self._commit_detail_cache.get(cache_key)
+            if cached_detail is not None:
+                self._commit_detail_cache.move_to_end(cache_key)
+                return cached_detail
         result = await self._run(
             registered,
             ["show", "--no-patch", f"--format={LOG_FORMAT}", normalized_revision],
@@ -1166,13 +1253,19 @@ class GitQueryService:
             parse_git_diff(patch.stdout, truncated=patch.stdout_truncated),
             parse_numstat_z(numstat.stdout),
         )
-        return GitCommitDetailResponse(
+        detail = GitCommitDetailResponse(
             repository_id=registered.response.id,
-            repository_version=repository_version(registered.response),
+            repository_version=self.version(registered.response),
             commit=commit,
             selected_parent_id=selected_parent,
             files=files,
         )
+        if cache_key is not None:
+            self._commit_detail_cache[cache_key] = detail
+            self._commit_detail_cache.move_to_end(cache_key)
+            while len(self._commit_detail_cache) > 128:
+                self._commit_detail_cache.popitem(last=False)
+        return detail
 
     async def blame(
         self,
@@ -1205,7 +1298,7 @@ class GitQueryService:
                 )
         except (GitParameterError, OSError) as exc:
             raise GitApiError("git_validation_failed", str(exc)) from exc
-        version = repository_version(registered.response)
+        version = self.version(registered.response)
         args = [
             "blame",
             "--line-porcelain",
@@ -1252,7 +1345,7 @@ class GitQueryService:
             normalized_ref = validate_revision(ref) if ref else None
         except GitParameterError as exc:
             raise GitApiError("git_validation_failed", str(exc)) from exc
-        version = repository_version(registered.response)
+        version = self.version(registered.response, refresh=cursor is not None)
         offset = decode_cursor(cursor, registered.response.id, version) if cursor else 0
         args = [
             "reflog",
@@ -1290,7 +1383,7 @@ class GitQueryService:
         if limit < 1 or limit > 200:
             raise GitApiError("git_validation_failed", "Stash limit must be between 1 and 200")
         registered = self._resolve(request)
-        version = repository_version(registered.response)
+        version = self.version(registered.response, refresh=cursor is not None)
         offset = decode_cursor(cursor, registered.response.id, version) if cursor else 0
         result = await self._run(
             registered,
@@ -1372,7 +1465,7 @@ class GitQueryService:
         )
         return GitStashDetailResponse(
             repository_id=registered.response.id,
-            repository_version=repository_version(registered.response),
+            repository_version=self.version(registered.response),
             entry=entries[0],
             files=files,
         )
@@ -1442,7 +1535,7 @@ class GitQueryService:
         )
         return GitResetPreviewResponse(
             repository_id=registered.response.id,
-            repository_version=repository_version(registered.response),
+            repository_version=self.version(registered.response),
             target=revision,
             target_object_id=target_object_id,
             head_object_id=head_object_id,
@@ -1493,7 +1586,7 @@ class GitQueryService:
             )
         return GitPatchExportResponse(
             repository_id=registered.response.id,
-            repository_version=repository_version(registered.response),
+            repository_version=self.version(registered.response),
             mode=mode,
             left=normalized_left,
             right=normalized_right,
@@ -1569,7 +1662,7 @@ class GitQueryService:
             )
         return GitConflictsResponse(
             repository_id=registered.response.id,
-            repository_version=repository_version(registered.response),
+            repository_version=self.version(registered.response),
             max_editable_bytes=_MAX_EDITABLE_CONFLICT_BYTES,
             files=files,
         )
@@ -1631,7 +1724,7 @@ class GitQueryService:
         _atomic_write_conflict_result(target, payload)
         return GitConflictResultSaveResponse(
             repository_id=registered.response.id,
-            repository_version=repository_version(registered.response),
+            repository_version=self.version(registered.response),
             path=path,
             result_revision=hashlib.sha256(payload).hexdigest(),
             bytes_written=len(payload),
@@ -1682,6 +1775,17 @@ class GitQueryService:
 
     def invalidate(self, repository_id: str) -> None:
         self._cache = {key: value for key, value in self._cache.items() if key[0] != repository_id}
+        self._repository_versions.pop(repository_id, None)
+
+    def version(self, repository: GitRepositoryResponse, *, refresh: bool = False) -> str:
+        if refresh:
+            self._repository_versions.pop(repository.id, None)
+        cached = self._repository_versions.get(repository.id)
+        if cached is not None:
+            return cached
+        version = repository_version(repository)
+        self._repository_versions[repository.id] = version
+        return version
 
     def repository(self, request: GitRepositoryRequest) -> GitRepositoryResponse:
         return self._resolve(request).response

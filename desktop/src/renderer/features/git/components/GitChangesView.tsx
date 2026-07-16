@@ -1,5 +1,5 @@
-import { ChevronDown } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
 import { groupGitChanges, uniqueSelectedChangePaths, type GitChangeEntry, type GitChangeGroup } from "@/renderer/features/git/changesTree";
@@ -13,6 +13,9 @@ export interface GitChangesViewProps {
   virtualizationThreshold?: number;
   viewportHeight?: number;
   onSelectionChange?: (paths: readonly string[], entries: readonly GitChangeEntry[]) => void;
+  onPreviewChange?: (entry: GitChangeEntry) => void;
+  onRefresh?: () => void;
+  refreshing?: boolean;
   selectionResetKey?: number;
 }
 
@@ -21,10 +24,15 @@ export function GitChangesView({
   virtualizationThreshold = GIT_CHANGES_VIRTUALIZATION_THRESHOLD,
   viewportHeight = 520,
   onSelectionChange,
+  onPreviewChange,
+  onRefresh,
+  refreshing = false,
   selectionResetKey = 0,
 }: GitChangesViewProps) {
   const groups = useMemo(() => groupGitChanges(status?.files ?? []), [status?.files]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
+  const [previewedId, setPreviewedId] = useState<string | null>(null);
   const totalEntries = groups.reduce((total, group) => total + group.entries.length, 0);
   const virtualized = totalEntries > virtualizationThreshold;
   const selectedPaths = uniqueSelectedChangePaths(groups, selectedIds);
@@ -41,6 +49,20 @@ export function GitChangesView({
     );
   };
 
+  const toggleGroup = (groupId: string) => {
+    setCollapsedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
+
+  const previewEntry = (entry: GitChangeEntry) => {
+    setPreviewedId(entry.id);
+    onPreviewChange?.(entry);
+  };
+
   if (!status) return <div className={styles.state} role="status">正在读取本地改动…</div>;
 
   return (
@@ -48,6 +70,19 @@ export function GitChangesView({
       <div className={styles.summary}>
         <span>{totalEntries} 个文件</span>
         <span>{selectedPaths.length} 个已选择</span>
+        {onRefresh ? (
+          <button
+            type="button"
+            className={styles.refreshButton}
+            aria-label={refreshing ? "正在刷新本地改动" : "刷新本地改动"}
+            title={refreshing ? "正在刷新本地改动" : "刷新本地改动"}
+            data-loading={refreshing ? "true" : "false"}
+            disabled={refreshing}
+            onClick={onRefresh}
+          >
+            <RefreshCw className={styles.refreshIcon} size={14} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
       <div className={styles.groups} role="tree" aria-label="本地改动" data-virtualized={virtualized ? "true" : "false"}>
         {groups.length === 0 ? (
@@ -56,41 +91,54 @@ export function GitChangesView({
           <VirtualizedChangesTree
             groups={groups}
             selectedIds={selectedIds}
+            collapsedGroupIds={collapsedGroupIds}
+            previewedId={previewedId}
             viewportHeight={viewportHeight}
             onSelectionChange={updateSelection}
+            onToggleGroup={toggleGroup}
+            onPreview={previewEntry}
           />
         ) : groups.map((group) => {
-          const groupSelected = group.entries.every((entry) => selectedIds.has(entry.id));
+          const collapsed = collapsedGroupIds.has(group.id);
           return (
-            <section className={styles.group} key={group.id} role="group" aria-label={group.label}>
+            <section className={styles.group} data-collapsed={collapsed ? "true" : "false"} key={group.id} role="group" aria-label={group.label}>
               <div className={styles.groupHeader}>
-                <ChevronDown size={13} aria-hidden="true" />
-                <input
-                  type="checkbox"
-                  aria-label={`选择${group.label}`}
-                  checked={groupSelected}
-                  onChange={(event) => {
-                    const next = new Set(selectedIds);
-                    group.entries.forEach((entry) => event.currentTarget.checked ? next.add(entry.id) : next.delete(entry.id));
-                    updateSelection(next);
-                  }}
+                <button
+                  type="button"
+                  className={styles.groupToggle}
+                  aria-label={`${collapsed ? "展开" : "折叠"}${group.label}`}
+                  aria-expanded={!collapsed}
+                  onClick={() => toggleGroup(group.id)}
+                >
+                  <ChevronDown className={styles.groupChevron} data-collapsed={collapsed ? "true" : "false"} size={15} aria-hidden="true" />
+                </button>
+                <GroupSelectionCheckbox
+                  group={group}
+                  selectedIds={selectedIds}
+                  onSelectionChange={updateSelection}
                 />
                 <strong>{group.label}</strong>
-                <span>{group.entries.length}</span>
+                <span>{group.entries.length} 个文件</span>
               </div>
-              {group.entries.map((entry) => (
-                <GitChangeRow
-                  entry={entry}
-                  selected={selectedIds.has(entry.id)}
-                  key={entry.id}
-                  onSelect={(selected) => {
-                    const next = new Set(selectedIds);
-                    if (selected) next.add(entry.id);
-                    else next.delete(entry.id);
-                    updateSelection(next);
-                  }}
-                />
-              ))}
+              <div className={styles.groupEntries} data-collapsed={collapsed ? "true" : "false"}>
+                <div className={styles.groupEntriesInner}>
+                  {group.entries.map((entry) => (
+                    <GitChangeRow
+                      entry={entry}
+                      selected={selectedIds.has(entry.id)}
+                      previewed={previewedId === entry.id}
+                      key={entry.id}
+                      onPreview={() => previewEntry(entry)}
+                      onSelect={(selected) => {
+                        const next = new Set(selectedIds);
+                        if (selected) next.add(entry.id);
+                        else next.delete(entry.id);
+                        updateSelection(next);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
             </section>
           );
         })}
@@ -99,24 +147,80 @@ export function GitChangesView({
   );
 }
 
+function GroupSelectionCheckbox({
+  group,
+  selectedIds,
+  onSelectionChange,
+}: {
+  group: GitChangeGroup;
+  selectedIds: ReadonlySet<string>;
+  onSelectionChange: (selectedIds: Set<string>) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const selectedCount = group.entries.reduce(
+    (count, entry) => count + (selectedIds.has(entry.id) ? 1 : 0),
+    0,
+  );
+  const checked = group.entries.length > 0 && selectedCount === group.entries.length;
+  const mixed = selectedCount > 0 && !checked;
+
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = mixed;
+  }, [mixed]);
+
+  return (
+    <input
+      ref={inputRef}
+      type="checkbox"
+      aria-label={`选择${group.label}`}
+      aria-checked={mixed ? "mixed" : checked}
+      checked={checked}
+      data-selection-state={mixed ? "mixed" : checked ? "all" : "none"}
+      onChange={(event) => {
+        const next = new Set(selectedIds);
+        group.entries.forEach((entry) => event.currentTarget.checked ? next.add(entry.id) : next.delete(entry.id));
+        onSelectionChange(next);
+      }}
+    />
+  );
+}
+
 function GitChangeRow({
   entry,
   selected,
+  previewed,
+  onPreview,
   onSelect,
 }: {
   entry: GitChangeEntry;
   selected: boolean;
+  previewed: boolean;
+  onPreview: () => void;
   onSelect: (selected: boolean) => void;
 }) {
   const icon = useMaterialEntryIcon(entry.path, "file");
   return (
-    <label
+    <div
       className={styles.row}
       data-status={entry.status}
+      data-previewed={previewed ? "true" : "false"}
       role="treeitem"
       aria-label={`${entry.displayPath} ${entry.status}`}
+      tabIndex={0}
+      onClick={onPreview}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onPreview();
+      }}
     >
-      <input type="checkbox" checked={selected} onChange={(event) => onSelect(event.currentTarget.checked)} />
+      <input
+        type="checkbox"
+        aria-label={`${entry.displayPath} ${entry.status}`}
+        checked={selected}
+        onClick={(event) => event.stopPropagation()}
+        onChange={(event) => onSelect(event.currentTarget.checked)}
+      />
       <img
         alt=""
         aria-hidden="true"
@@ -125,14 +229,14 @@ function GitChangeRow({
         draggable={false}
         src={icon.src}
       />
-      <span className={styles.fileText}>
-        <span className={styles.name}>{entry.name}</span>
-        {entry.directory ? <span className={styles.directory}>{entry.directory}</span> : null}
+      <span className={styles.fileText} title={entry.path}>
+        <span className={styles.name} title={entry.name}>{entry.name}</span>
+        {entry.directory ? <span className={styles.directory} title={entry.directory}>{entry.directory}</span> : null}
       </span>
       {entry.binary ? <small>二进制</small> : null}
       {entry.submodule ? <small>子模块</small> : null}
       <span className={styles.status} aria-hidden="true">{statusLabel(entry.status)}</span>
-    </label>
+    </div>
   );
 }
 
@@ -142,21 +246,31 @@ const VIRTUAL_CHANGE_OVERSCAN = 8;
 function VirtualizedChangesTree({
   groups,
   selectedIds,
+  collapsedGroupIds,
+  previewedId,
   viewportHeight,
   onSelectionChange,
+  onToggleGroup,
+  onPreview,
 }: {
   groups: readonly GitChangeGroup[];
   selectedIds: ReadonlySet<string>;
+  collapsedGroupIds: ReadonlySet<string>;
+  previewedId: string | null;
   viewportHeight: number;
   onSelectionChange: (selectedIds: Set<string>) => void;
+  onToggleGroup: (groupId: string) => void;
+  onPreview: (entry: GitChangeEntry) => void;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const items = useMemo(
-    () => groups.flatMap((group) => [
-      { key: `group:${group.id}`, group, entry: null },
-      ...group.entries.map((entry) => ({ key: entry.id, group, entry })),
-    ]),
-    [groups],
+    () => groups.flatMap((group) => {
+      const header = { key: `group:${group.id}`, group, entry: null };
+      return collapsedGroupIds.has(group.id)
+        ? [header]
+        : [header, ...group.entries.map((entry) => ({ key: entry.id, group, entry }))];
+    }),
+    [collapsedGroupIds, groups],
   );
   const window = changesVirtualWindow(items.length, scrollTop, viewportHeight);
   return (
@@ -172,7 +286,7 @@ function VirtualizedChangesTree({
           const index = window.start + offset;
           const position = { transform: `translateY(${index * VIRTUAL_CHANGE_ROW_HEIGHT}px)` };
           if (!item.entry) {
-            const groupSelected = item.group.entries.every((entry) => selectedIds.has(entry.id));
+            const collapsed = collapsedGroupIds.has(item.group.id);
             return (
               <div
                 className={`${styles.groupHeader} ${styles.virtualItem}`}
@@ -180,21 +294,24 @@ function VirtualizedChangesTree({
                 key={item.key}
                 role="treeitem"
                 aria-level={1}
-                aria-expanded="true"
+                aria-expanded={!collapsed}
               >
-                <ChevronDown size={13} aria-hidden="true" />
-                <input
-                  type="checkbox"
-                  aria-label={`选择${item.group.label}`}
-                  checked={groupSelected}
-                  onChange={(event) => {
-                    const next = new Set(selectedIds);
-                    item.group.entries.forEach((entry) => event.currentTarget.checked ? next.add(entry.id) : next.delete(entry.id));
-                    onSelectionChange(next);
-                  }}
+                <button
+                  type="button"
+                  className={styles.groupToggle}
+                  aria-label={`${collapsed ? "展开" : "折叠"}${item.group.label}`}
+                  aria-expanded={!collapsed}
+                  onClick={() => onToggleGroup(item.group.id)}
+                >
+                  <ChevronDown className={styles.groupChevron} data-collapsed={collapsed ? "true" : "false"} size={15} aria-hidden="true" />
+                </button>
+                <GroupSelectionCheckbox
+                  group={item.group}
+                  selectedIds={selectedIds}
+                  onSelectionChange={onSelectionChange}
                 />
                 <strong>{item.group.label}</strong>
-                <span>{item.group.entries.length}</span>
+                <span>{item.group.entries.length} 个文件</span>
               </div>
             );
           }
@@ -203,6 +320,8 @@ function VirtualizedChangesTree({
               <GitChangeRow
                 entry={item.entry}
                 selected={selectedIds.has(item.entry.id)}
+                previewed={previewedId === item.entry.id}
+                onPreview={() => onPreview(item.entry!)}
                 onSelect={(selected) => {
                   const next = new Set(selectedIds);
                   if (selected) next.add(item.entry!.id);
@@ -234,7 +353,6 @@ function statusLabel(status: GitChangeEntry["status"]): string {
     renamed: "R",
     copied: "C",
     untracked: "?",
-    ignored: "",
     conflicted: "!",
     type_changed: "T",
   })[status];

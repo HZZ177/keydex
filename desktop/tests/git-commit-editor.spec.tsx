@@ -57,7 +57,7 @@ describe("GitCommitEditor", () => {
         onCommit={vi.fn()}
       />,
     );
-    expect(screen.getByText("Keydex User <keydex@example.com>")).not.toBeNull();
+    expect(screen.getByText("Keydex User <keydex@example.com>").closest("header")).not.toBeNull();
     expect(screen.queryByRole("button", { name: "修改" })).toBeNull();
   });
 
@@ -95,7 +95,7 @@ describe("GitCommitEditor", () => {
     });
   });
 
-  it("keeps both commit actions visible while explaining that files must be selected", () => {
+  it("quietly disables both commit actions when no files are selected", () => {
     const unstagedStatus: GitStatusSnapshot = {
       ...status(),
       files: status().files.map((file) => ({ ...file, indexStatus: null })),
@@ -110,9 +110,13 @@ describe("GitCommitEditor", () => {
       />,
     );
 
-    expect(screen.getByText("请至少选择一个要提交的文件")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "提交" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByRole("button", { name: "提交并推送" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByText("请至少选择一个要提交的文件")).toBeNull();
+    const commit = screen.getByRole("button", { name: "提交" });
+    const commitAndPush = screen.getByRole("button", { name: "提交并推送" });
+    expect(commit.hasAttribute("disabled")).toBe(true);
+    expect(commitAndPush.hasAttribute("disabled")).toBe(true);
+    expect(commit.querySelector("svg")).toBeNull();
+    expect(commitAndPush.querySelector("svg")).toBeNull();
   });
 
   it("allows a merge commit when accepting ours leaves no staged tree delta", () => {

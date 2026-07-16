@@ -1,13 +1,35 @@
-import { ChevronRight, Copy, File, Folder, GitCommitHorizontal, ShieldCheck, ShieldQuestion, ShieldX } from "lucide-react";
+import {
+  ChevronRight,
+  Copy,
+  GitCommitHorizontal,
+  ShieldCheck,
+  ShieldQuestion,
+  ShieldX,
+} from "lucide-react";
+import {
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
-import type { GitCommitDetail, GitFileDiff, GitObjectId } from "@/runtime/gitTypes";
+import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
+import type { GitCommitDetail, GitFileDiff, GitFileStatusCode, GitObjectId } from "@/runtime/gitTypes";
 
 import styles from "./GitCommitDetailsView.module.css";
+
+type CommitFileStatus = "added" | "modified" | "deleted";
+
+const DEFAULT_FILES_PANE_PERCENT = 48;
+const MIN_FILES_PANE_PERCENT = 24;
+const MAX_FILES_PANE_PERCENT = 76;
+const KEYBOARD_RESIZE_STEP = 4;
 
 export interface GitCommitFileNode {
   name: string;
   path: string;
   kind: "directory" | "file";
+  status: CommitFileStatus;
   children: readonly GitCommitFileNode[];
   fileIndex: number | null;
 }
@@ -17,18 +39,17 @@ export function GitCommitDetailsView({
   loading,
   selectedFileIndex,
   onSelectFile,
-  onSelectParent,
   onCopyHash,
-  onSelectDecoration,
 }: {
   detail: GitCommitDetail | null;
   loading: boolean;
   selectedFileIndex: number;
   onSelectFile: (index: number) => void;
-  onSelectParent: (parentId: GitObjectId) => void;
   onCopyHash: (objectId: GitObjectId) => void | Promise<void>;
-  onSelectDecoration: (decoration: string) => void;
 }) {
+  const [filesPanePercent, setFilesPanePercent] = useState(DEFAULT_FILES_PANE_PERCENT);
+  const [resizing, setResizing] = useState(false);
+
   if (loading && !detail) return <div className={styles.empty} role="status">正在加载提交详情…</div>;
   if (!detail) return <div className={styles.empty} role="status">请选择一个提交以查看详情。</div>;
 
@@ -36,45 +57,138 @@ export function GitCommitDetailsView({
   const additions = detail.files.reduce((total, file) => total + (file.additions ?? 0), 0);
   const deletions = detail.files.reduce((total, file) => total + (file.deletions ?? 0), 0);
   const tree = buildCommitFileTree(detail.files);
+
+  const resizeFromClientY = (clientY: number, separator: HTMLDivElement) => {
+    const root = separator.parentElement;
+    if (!root) return;
+    const bounds = root.getBoundingClientRect();
+    if (bounds.height <= 0) return;
+    const next = ((clientY - bounds.top) / bounds.height) * 100;
+    setFilesPanePercent(clampFilesPanePercent(next));
+  };
+
+  const handleSeparatorPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setResizing(true);
+    resizeFromClientY(event.clientY, event.currentTarget);
+  };
+
+  const handleSeparatorPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!resizing) return;
+    resizeFromClientY(event.clientY, event.currentTarget);
+  };
+
+  const handleSeparatorPointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    }
+    setResizing(false);
+  };
+
+  const handleSeparatorKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    let next: number | null = null;
+    if (event.key === "ArrowUp") next = filesPanePercent - KEYBOARD_RESIZE_STEP;
+    if (event.key === "ArrowDown") next = filesPanePercent + KEYBOARD_RESIZE_STEP;
+    if (event.key === "Home") next = MIN_FILES_PANE_PERCENT;
+    if (event.key === "End") next = MAX_FILES_PANE_PERCENT;
+    if (next === null) return;
+    event.preventDefault();
+    setFilesPanePercent(clampFilesPanePercent(next));
+  };
+
   return (
-    <div className={styles.root} aria-label="提交详情" aria-busy={loading}>
-      <section className={styles.metadata}>
-        <div className={styles.subject}><GitCommitHorizontal size={14} /><strong>{commit.subject}</strong></div>
-        {commit.body ? <p>{commit.body}</p> : null}
-        <dl>
-          <div><dt>提交</dt><dd className={styles.commitHash}><code>{commit.objectId}</code><button type="button" aria-label="复制提交哈希" onClick={() => void onCopyHash(commit.objectId)}><Copy size={11} /></button></dd></div>
-          <div><dt>作者</dt><dd>{commit.authorName} &lt;{commit.authorEmail}&gt;</dd></div>
-          <div><dt>创作时间</dt><dd>{formatCommitDate(commit.authoredAt)}</dd></div>
-          <div><dt>提交者</dt><dd>{commit.committerName} &lt;{commit.committerEmail}&gt;</dd></div>
-          <div><dt>提交时间</dt><dd>{formatCommitDate(commit.committedAt)}</dd></div>
-          <div><dt>签名</dt><dd className={styles.signature}>{signatureIcon(commit.signature)}{signatureLabel(commit.signature)}</dd></div>
-        </dl>
-        {commit.decorations.length > 0 ? <div className={styles.decorations}>{commit.decorations.map((item) => <button type="button" key={item} onClick={() => onSelectDecoration(item)}>{item}</button>)}</div> : null}
-      </section>
-      {commit.parentIds.length > 0 ? (
-        <section className={styles.parents} aria-label="与父提交比较">
-          <span>与父提交比较</span>
-          <div>
-            {commit.parentIds.map((parentId, index) => (
-              <button
-                type="button"
-                key={parentId}
-                aria-pressed={detail.selectedParentId === parentId}
-                onClick={() => onSelectParent(parentId)}
-              >
-                P{index + 1} · {parentId.slice(0, 8)}
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : <div className={styles.rootCommit}>根提交将与空目录树比较</div>}
-      <section className={styles.files}>
-        <header><strong>{detail.files.length} 个变更文件</strong><span className={styles.additions}>+{additions}</span><span className={styles.deletions}>−{deletions}</span></header>
+    <div
+      className={styles.root}
+      aria-label="提交详情"
+      aria-busy={loading}
+      data-resizing={resizing ? "true" : undefined}
+      style={{ "--git-commit-files-pane-height": `${filesPanePercent}%` } as CSSProperties}
+    >
+      <section className={`${styles.filesPane} keydex-scrollable`} data-testid="git-commit-files-scroll">
+        <header className={styles.filesHeader}>
+          <strong>变更文件</strong>
+          <span>{detail.files.length} 个文件</span>
+          <span className={styles.additions}>+{additions}</span>
+          <span className={styles.deletions}>−{deletions}</span>
+        </header>
         {tree.length > 0 ? (
-          <ul role="tree" aria-label="提交文件">{tree.map((node) => (
-            <FileTreeNode key={node.path} node={node} selectedFileIndex={selectedFileIndex} onSelectFile={onSelectFile} />
-          ))}</ul>
-        ) : <div className={styles.empty}>相对此父提交没有文件变更。</div>}
+          <ul className={styles.fileTree} role="tree" aria-label="变更文件树">
+            {tree.map((node) => (
+              <FileTreeNode
+                key={node.path}
+                node={node}
+                selectedFileIndex={selectedFileIndex}
+                onSelectFile={onSelectFile}
+              />
+            ))}
+          </ul>
+        ) : loading
+          ? <div className={styles.paneEmpty} role="status">正在加载变更文件…</div>
+          : <div className={styles.paneEmpty}>此提交没有文件变更。</div>}
+      </section>
+
+      <div
+        className={styles.horizontalSeparator}
+        role="separator"
+        aria-label="调整变更文件与提交信息区域高度"
+        aria-orientation="horizontal"
+        aria-valuemin={MIN_FILES_PANE_PERCENT}
+        aria-valuemax={MAX_FILES_PANE_PERCENT}
+        aria-valuenow={Math.round(filesPanePercent)}
+        data-dragging={resizing ? "true" : undefined}
+        tabIndex={0}
+        onKeyDown={handleSeparatorKeyDown}
+        onPointerDown={handleSeparatorPointerDown}
+        onPointerMove={handleSeparatorPointerMove}
+        onPointerUp={handleSeparatorPointerEnd}
+        onPointerCancel={handleSeparatorPointerEnd}
+        onLostPointerCapture={() => setResizing(false)}
+      />
+
+      <section className={`${styles.metadataPane} keydex-scrollable`} data-testid="git-commit-metadata-scroll">
+        <header className={styles.commitSummary}>
+          <div className={styles.subject}>
+            <GitCommitHorizontal size={16} aria-hidden="true" />
+            <strong>{commit.subject}</strong>
+          </div>
+          {commit.body ? <p>{commit.body}</p> : null}
+        </header>
+
+        <dl className={styles.metadataList}>
+          <div className={styles.primaryMetadata}>
+            <dt>作者</dt>
+            <dd>
+              <strong>{commit.authorName}</strong>
+              <span>{commit.authorEmail}</span>
+            </dd>
+          </div>
+          <div>
+            <dt>提交时间</dt>
+            <dd>{formatCommitDate(commit.committedAt)}</dd>
+          </div>
+          <div>
+            <dt>提交</dt>
+            <dd className={styles.commitHash}>
+              <code title={commit.objectId}>{commit.objectId}</code>
+              <button type="button" aria-label="复制提交哈希" onClick={() => void onCopyHash(commit.objectId)}>
+                <Copy size={13} />
+              </button>
+            </dd>
+          </div>
+          <div>
+            <dt>提交者</dt>
+            <dd>{commit.committerName} <span className={styles.secondaryText}>{commit.committerEmail}</span></dd>
+          </div>
+          <div>
+            <dt>创作时间</dt>
+            <dd>{formatCommitDate(commit.authoredAt)}</dd>
+          </div>
+          <div>
+            <dt>签名</dt>
+            <dd className={styles.signature}>{signatureIcon(commit.signature)}{signatureLabel(commit.signature)}</dd>
+          </div>
+        </dl>
       </section>
     </div>
   );
@@ -85,6 +199,7 @@ export function buildCommitFileTree(files: readonly GitFileDiff[]): readonly Git
     name: string;
     path: string;
     kind: "directory" | "file";
+    status: CommitFileStatus;
     children: Map<string, MutableNode>;
     fileIndex: number | null;
   }
@@ -103,6 +218,7 @@ export function buildCommitFileTree(files: readonly GitFileDiff[]): readonly Git
           name: part,
           path: nodePath,
           kind: isFile ? "file" : "directory",
+          status: isFile ? commitFileStatus(file.status) : "modified",
           children: new Map(),
           fileIndex: isFile ? fileIndex : null,
         };
@@ -115,15 +231,19 @@ export function buildCommitFileTree(files: readonly GitFileDiff[]): readonly Git
   const freeze = (nodes: Map<string, MutableNode>): GitCommitFileNode[] => [...nodes.values()]
     .sort((left, right) => {
       if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
-      return left.name.localeCompare(right.name);
+      return left.name.localeCompare(right.name, "zh-CN");
     })
-    .map((node) => ({
-      name: node.name,
-      path: node.path,
-      kind: node.kind,
-      children: freeze(node.children),
-      fileIndex: node.fileIndex,
-    }));
+    .map((node) => {
+      const children = freeze(node.children);
+      return {
+        name: node.name,
+        path: node.path,
+        kind: node.kind,
+        status: node.kind === "directory" ? aggregateDirectoryStatus(children) : node.status,
+        children,
+        fileIndex: node.fileIndex,
+      };
+    });
   return freeze(roots);
 }
 
@@ -136,29 +256,76 @@ function FileTreeNode({
   selectedFileIndex: number;
   onSelectFile: (index: number) => void;
 }) {
-  if (node.kind === "directory") {
-    return (
-      <li role="treeitem" aria-expanded="true">
-        <span className={styles.directory}><ChevronRight size={11} /><Folder size={12} />{node.name}</span>
-        <ul role="group">{node.children.map((child) => (
-          <FileTreeNode key={child.path} node={child} selectedFileIndex={selectedFileIndex} onSelectFile={onSelectFile} />
-        ))}</ul>
-      </li>
-    );
-  }
+  const [expanded, setExpanded] = useState(true);
+  const icon = useMaterialEntryIcon(node.path, node.kind);
+  const selected = node.kind === "file" && node.fileIndex === selectedFileIndex;
+
   return (
-    <li role="treeitem" aria-selected={node.fileIndex === selectedFileIndex}>
-      <button type="button" title={node.path} onClick={() => node.fileIndex !== null && onSelectFile(node.fileIndex)}>
-        <File size={12} />{node.name}
+    <li
+      className={styles.treeItem}
+      role="treeitem"
+      aria-expanded={node.kind === "directory" ? expanded : undefined}
+      aria-selected={node.kind === "file" ? selected : undefined}
+    >
+      <button
+        className={styles.treeRow}
+        type="button"
+        title={node.path}
+        data-kind={node.kind}
+        data-status={node.status}
+        data-selected={selected ? "true" : undefined}
+        onClick={() => {
+          if (node.kind === "directory") {
+            setExpanded((current) => !current);
+          } else if (node.fileIndex !== null) {
+            onSelectFile(node.fileIndex);
+          }
+        }}
+      >
+        {node.kind === "directory"
+          ? <ChevronRight className={styles.chevron} size={14} data-expanded={expanded ? "true" : undefined} />
+          : <span className={styles.fileSpacer} />}
+        <img
+          className={styles.materialIcon}
+          src={icon.src}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          data-icon-id={icon.id}
+        />
+        <span className={styles.nodeName}>{node.name}</span>
       </button>
+      {node.kind === "directory" ? (
+        <div className={styles.treeGroup} data-expanded={expanded ? "true" : undefined}>
+          <ul role="group">{node.children.map((child) => (
+            <FileTreeNode key={child.path} node={child} selectedFileIndex={selectedFileIndex} onSelectFile={onSelectFile} />
+          ))}</ul>
+        </div>
+      ) : null}
     </li>
   );
 }
 
+function commitFileStatus(status: GitFileStatusCode): CommitFileStatus {
+  if (status === "added" || status === "untracked") return "added";
+  if (status === "deleted") return "deleted";
+  return "modified";
+}
+
+function aggregateDirectoryStatus(children: readonly GitCommitFileNode[]): CommitFileStatus {
+  if (children.length > 0 && children.every((child) => child.status === "added")) return "added";
+  if (children.length > 0 && children.every((child) => child.status === "deleted")) return "deleted";
+  return "modified";
+}
+
+function clampFilesPanePercent(value: number): number {
+  return Math.min(MAX_FILES_PANE_PERCENT, Math.max(MIN_FILES_PANE_PERCENT, value));
+}
+
 function signatureIcon(signature: GitCommitDetail["commit"]["signature"]) {
-  if (signature === "valid") return <ShieldCheck size={12} aria-hidden="true" />;
-  if (signature === "invalid") return <ShieldX size={12} aria-hidden="true" />;
-  return <ShieldQuestion size={12} aria-hidden="true" />;
+  if (signature === "valid") return <ShieldCheck size={13} aria-hidden="true" />;
+  if (signature === "invalid") return <ShieldX size={13} aria-hidden="true" />;
+  return <ShieldQuestion size={13} aria-hidden="true" />;
 }
 
 function signatureLabel(signature: GitCommitDetail["commit"]["signature"]): string {

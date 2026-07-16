@@ -262,7 +262,7 @@ class GitCommandService:
             response = GitCommandResponse(
                 operation_id=context.operation_id,
                 repository_id=repository.id,
-                repository_version=repository_version(repository),
+                repository_version=self._queries.version(repository),
                 state="succeeded",
                 summary=prepared.summary,
                 result={

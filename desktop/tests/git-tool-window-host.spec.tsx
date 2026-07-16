@@ -10,12 +10,40 @@ import {
   usePublishActiveProjectDiscovery,
 } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
+import { runtimeBridge, type RuntimeBridge } from "@/runtime";
+import type { Workspace } from "@/types/protocol";
 
 vi.mock("@/renderer/features/git/components/GitToolWindow", () => ({
-  GitToolWindow: ({ maximized }: { maximized?: boolean }) => (
-    <div data-testid="git-tool-window" data-layout={maximized ? "maximized" : "split"}>Git panel</div>
-  ),
+  GitToolWindow: ({ maximized, project, projectSelector }: MockGitToolWindowProps) => {
+    const targetWorkspace = projectSelector?.workspaces.at(-1);
+    return (
+      <div data-testid="git-tool-window" data-layout={maximized ? "maximized" : "split"}>
+        Git panel
+        <span data-testid="git-tool-project">
+          {project && project.status !== "none" ? project.workspaceId : "none"}
+        </span>
+        {projectSelector ? (
+          <button
+            type="button"
+            disabled={!targetWorkspace}
+            onClick={() => targetWorkspace && projectSelector.onSelectWorkspace?.(targetWorkspace)}
+          >
+            切换 Git 项目
+          </button>
+        ) : null}
+      </div>
+    );
+  },
 }));
+
+interface MockGitToolWindowProps {
+  maximized?: boolean;
+  project?: { status: string; workspaceId?: string } | null;
+  projectSelector?: {
+    workspaces: Workspace[];
+    onSelectWorkspace?: (workspace: Workspace) => void;
+  };
+}
 
 afterEach(() => {
   cleanup();
@@ -40,7 +68,7 @@ describe("Git primary content host", () => {
 
     const gitEntry = within(navigation).getByRole("button", { name: "Git" });
     expect(gitEntry.hasAttribute("disabled")).toBe(false);
-    expect(gitEntry.querySelectorAll("circle")).toHaveLength(3);
+    expect(gitEntry.querySelector("svg")).not.toBeNull();
     fireEvent.click(gitEntry);
 
     const shell = screen.getByTestId("app-shell");
@@ -59,6 +87,27 @@ describe("Git primary content host", () => {
     expect(screen.getByText("conversation content").closest("[hidden]")).toBeNull();
     expect(onContentUnmount).not.toHaveBeenCalled();
     expect(onNavigate).toHaveBeenCalledWith("/guid?focus=prompt");
+  });
+
+  it("navigates the routed Agent shell into the first-level Git page", () => {
+    const onNavigate = vi.fn();
+    renderLoadedProject(
+      <Layout
+        appMode="agent"
+        contentMode="full"
+        conversations={[]}
+        routePrimarySurface="content"
+        routeGitNavigation
+        onNavigate={onNavigate}
+      >
+        <div>conversation content</div>
+      </Layout>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/git/workspace-1");
+    expect(screen.getByTestId("app-shell").dataset.primarySurface).toBe("content");
   });
 
   it("keeps the system Git entry visible but disabled without a loaded project", () => {
@@ -118,6 +167,71 @@ describe("Git primary content host", () => {
     expect(screen.getByTestId("git-tool-window")).not.toBeNull();
     expect(screen.queryByRole("tab", { name: "Git" })).toBeNull();
   });
+
+  it("reuses the workbench workspace selection contract in the Git header", () => {
+    const current = workspace("workspace-1", "repo");
+    const target = workspace("workspace-2", "other-repo");
+    const onSelectWorkspace = vi.fn();
+    renderLoadedProject(
+      <Layout
+        appMode="workbench"
+        contentMode="full"
+        conversations={[]}
+        workbenchWorkspaceSelector={{
+          value: { type: "workspace", workspace: current },
+          workspaces: [current, target],
+          onSelectWorkspace,
+        }}
+      >
+        <div>conversation content</div>
+      </Layout>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    fireEvent.click(screen.getByRole("button", { name: "切换 Git 项目" }));
+    expect(onSelectWorkspace).toHaveBeenCalledWith(target);
+  });
+
+  it("switches only the Agent Git project and restores the conversation project after leaving Git", async () => {
+    const target = workspace("workspace-target", "target-repo");
+    const runtime = {
+      ...runtimeBridge,
+      workspaces: {
+        ...runtimeBridge.workspaces,
+        list: vi.fn().mockResolvedValue({
+          list: [workspace("workspace-agent", "agent-repo"), target],
+          total: 2,
+        }),
+      },
+    } as unknown as RuntimeBridge;
+    render(
+      <ThemeProvider>
+        <LayoutStateProvider>
+          <ActiveProjectCoordinatorProvider>
+            <Layout
+              appMode="agent"
+              contentMode="full"
+              conversations={[]}
+              runtime={runtime}
+              onNavigate={vi.fn()}
+            >
+              <AgentProjectPublisher onUnmount={vi.fn()} />
+            </Layout>
+          </ActiveProjectCoordinatorProvider>
+        </LayoutStateProvider>
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    const switchButton = await screen.findByRole("button", { name: "切换 Git 项目" });
+    await waitFor(() => expect(switchButton.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(switchButton);
+    await waitFor(() => expect(screen.getByTestId("git-tool-project").textContent).toBe("workspace-target"));
+
+    fireEvent.click(screen.getByRole("button", { name: "新对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    await waitFor(() => expect(screen.getByTestId("git-tool-project").textContent).toBe("workspace-agent"));
+  });
 });
 
 function renderLoadedProject(ui: React.ReactElement) {
@@ -151,4 +265,18 @@ function AgentProjectPublisher({ onUnmount }: { onUnmount: () => void }) {
   usePublishActiveProjectDiscovery("agent-test", AGENT_PROJECT_DISCOVERY);
   useEffect(() => onUnmount, [onUnmount]);
   return <div>agent project publisher</div>;
+}
+
+function workspace(id: string, name: string): Workspace {
+  return {
+    id,
+    name,
+    root_path: `D:/work/${name}`,
+    normalized_root_path: `D:/work/${name}`,
+    type: "local",
+    created_at: "2026-01-01",
+    updated_at: "2026-01-01",
+    last_opened_at: null,
+    archived_at: null,
+  };
 }

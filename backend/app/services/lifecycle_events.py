@@ -14,6 +14,7 @@ LIFECYCLE_EVENT_TYPES = frozenset(
         "workspace_archived",
         "workspace_restored",
         "workspace_purged",
+        "workspace_sessions_purged",
     }
 )
 

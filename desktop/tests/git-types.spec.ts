@@ -65,9 +65,19 @@ describe("Git runtime domain normalization", () => {
           binary: null,
           submodule: false,
         },
+        {
+          path: ".dev/",
+          original_path: null,
+          index_status: null,
+          worktree_status: "ignored",
+          conflicted: false,
+          binary: false,
+          submodule: false,
+        },
       ],
     });
     expect(status.branch).toMatchObject({ head: "main", ahead: 1, behind: 2 });
+    expect(status.files).toHaveLength(1);
     expect(status.files[0]).toMatchObject({ path: "src/a.ts", indexStatus: "added" });
   });
 

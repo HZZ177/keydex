@@ -1,7 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { GitRefsTree, buildGitRefTree } from "@/renderer/features/git/components/GitRefsTree";
+import {
+  GitRefsTree,
+  buildGitRefTree,
+  filterGitRefs,
+} from "@/renderer/features/git/components/GitRefsTree";
 import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 import type { GitObjectId, GitRef } from "@/runtime/gitTypes";
 
@@ -26,13 +30,25 @@ describe("GitRefsTree", () => {
     const currentBranch = screen.getByRole("treeitem", { name: "当前分支 main" });
     expect(currentBranch.querySelector(".lucide-star")).not.toBeNull();
     expect(screen.getByRole("treeitem", { name: "main" }).querySelector(".lucide-star")).not.toBeNull();
-    expect(screen.getByText("↑2↓1")).not.toBeNull();
+    const divergence = screen.getByLabelText("传入 1 个提交，传出 2 个提交");
+    expect(divergence.querySelector('[data-direction="incoming"] .lucide-arrow-down-left')).not.toBeNull();
+    expect(divergence.querySelector('[data-direction="outgoing"] .lucide-arrow-up-right')).not.toBeNull();
     const tagGroup = screen.getByRole("treeitem", { name: /^标签/ });
+    const tagItems = tagGroup.parentElement?.querySelector('[data-ref-items="tag"]');
     expect(tagGroup.getAttribute("aria-expanded")).toBe("false");
+    expect(tagGroup.querySelector(".lucide-chevron-right")?.getAttribute("data-expanded")).toBe("false");
+    expect(tagItems).not.toBeNull();
+    expect(tagItems?.querySelector('[data-tree-key="ref:refs/tags/v1.0.0"]')?.getAttribute("tabindex")).toBe("-1");
     expect(screen.queryByRole("treeitem", { name: /v1\.0\.0/ })).toBeNull();
     fireEvent.click(tagGroup);
     expect(tagGroup.getAttribute("aria-expanded")).toBe("true");
+    expect(tagGroup.querySelector(".lucide-chevron-right")?.getAttribute("data-expanded")).toBe("true");
+    expect(tagItems?.getAttribute("data-expanded")).toBe("true");
+    expect(tagItems?.hasAttribute("aria-hidden")).toBe(false);
     expect(screen.getByRole("treeitem", { name: /v1\.0\.0/ })).not.toBeNull();
+    fireEvent.click(tagGroup);
+    expect(tagItems?.getAttribute("data-expanded")).toBe("false");
+    expect(tagItems?.getAttribute("aria-hidden")).toBe("true");
     fireEvent.click(screen.getByRole("treeitem", { name: /^远程/ }));
     expect(screen.queryByRole("treeitem", { name: /origin\/main/ })).toBeNull();
     fireEvent.click(screen.getByRole("treeitem", { name: /^远程/ }));
@@ -50,6 +66,25 @@ describe("GitRefsTree", () => {
       expect.objectContaining({ fullName: "refs/remotes/origin/main" }),
     ));
     expect(screen.queryByRole("menu", { name: "页面右键菜单" })).toBeNull();
+  });
+
+  it("filters the independently scrollable branch region by branch name", () => {
+    const allRefs = refs();
+    expect(filterGitRefs(allRefs, "FEATURE/GIT").map((ref) => ref.shortName)).toEqual(["feature/git-view"]);
+
+    render(<GitRefsTree refs={allRefs} selectedRef={null} onSelect={vi.fn()} />);
+
+    const search = screen.getByRole("searchbox", { name: "筛选分支" });
+    fireEvent.change(search, { target: { value: "feature/git" } });
+    expect(screen.queryByRole("treeitem", { name: "当前分支 main" })).toBeNull();
+    expect(screen.getByRole("treeitem", { name: "feature/git-view" })).not.toBeNull();
+    expect(screen.queryByRole("treeitem", { name: "origin/main" })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "missing" } });
+    expect(screen.getByText("没有匹配的分支")).not.toBeNull();
+
+    fireEvent.change(search, { target: { value: "" } });
+    expect(screen.getByRole("treeitem", { name: "当前分支 main" })).not.toBeNull();
   });
 });
 

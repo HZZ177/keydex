@@ -7,6 +7,7 @@ export const PROJECT_PATH = "/project";
 export interface WorkbenchRouteParams {
   workspaceId?: string;
   sessionId?: string;
+  surface?: "git";
 }
 
 export function appModeFromPath(pathname: string): AppMode {
@@ -30,12 +31,20 @@ export function conversationPath(sessionId: string): string {
   return `/conversation/${encodeURIComponent(sessionId)}`;
 }
 
+export function gitPath(workspaceId: string): string {
+  return `/git/${encodeURIComponent(workspaceId)}`;
+}
+
 export function workbenchPath(workspaceId?: string, sessionId?: string): string {
   if (!workspaceId) {
     return WORKBENCH_PATH;
   }
   const base = `${WORKBENCH_PATH}/${encodeURIComponent(workspaceId)}`;
   return sessionId ? `${base}/session/${encodeURIComponent(sessionId)}` : base;
+}
+
+export function workbenchGitPath(workspaceId: string): string {
+  return `${WORKBENCH_PATH}/${encodeURIComponent(workspaceId)}/git`;
 }
 
 export function workbenchFilePreviewPath(path: string, workspaceId?: string): string {
@@ -52,7 +61,12 @@ export function parseWorkbenchPath(pathname: string): WorkbenchRouteParams | nul
   }
   const workspaceId = decodeSegment(segments[1]);
   const sessionId = segments[2] === "session" ? decodeSegment(segments[3]) : undefined;
-  return { workspaceId, sessionId };
+  const surface = segments[2] === "git" ? "git" : undefined;
+  return {
+    workspaceId,
+    ...(sessionId ? { sessionId } : {}),
+    ...(surface ? { surface } : {}),
+  };
 }
 
 export function newPromptConversationPath(params: { sessionType?: string; workspaceId?: string } = {}): string {
@@ -113,7 +127,7 @@ function isAgentPrimaryPath(pathname: string | undefined): pathname is string {
     return false;
   }
   const path = stripQuery(pathname);
-  return path === HOME_PATH || path.startsWith("/conversation/");
+  return path === HOME_PATH || path.startsWith("/conversation/") || path.startsWith("/git/");
 }
 
 function decodeSegment(segment: string | undefined): string | undefined {

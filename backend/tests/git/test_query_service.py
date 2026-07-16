@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from backend.app.git.access import GitAncestorGrantStore
-from backend.app.git.models import GitDiscoveryRequest, GitRepositoryRequest
+from backend.app.git.models import (
+    GitApiError,
+    GitCapabilityResponse,
+    GitDiscoveryRequest,
+    GitRepositoryRequest,
+    GitWorktreePathsRequest,
+)
 from backend.app.git.query_service import (
     GitQueryService,
     decode_cursor,
@@ -24,6 +30,27 @@ def _request(repo, repository_id: str) -> GitRepositoryRequest:
     )
 
 
+def test_git_capability_probe_is_reused_across_project_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = 0
+
+    def probe() -> GitCapabilityResponse:
+        nonlocal calls
+        calls += 1
+        return GitCapabilityResponse(available=False, reason="test")
+
+    monkeypatch.setattr("backend.app.git.query_service.probe_git_capabilities", probe)
+    service = GitQueryService(grants=GitAncestorGrantStore(tmp_path / "grants.json"))
+    request = GitDiscoveryRequest(workspace_id="workspace-query", project_root=str(tmp_path))
+
+    service.discover(request)
+    service.discover(request)
+
+    assert calls == 1
+
+
 @pytest.mark.asyncio
 async def test_query_service_routes_real_status_refs_history_diff_and_blame(
     git_repo_factory,
@@ -33,6 +60,10 @@ async def test_query_service_routes_real_status_refs_history_diff_and_blame(
     repo.run("switch", "-c", "topic")
     repo.write("README.md", "# changed\n")
     repo.write("new file.txt", "new\n")
+    repo.write(".gitignore", "ignored.log\n")
+    repo.run("add", "--", ".gitignore")
+    repo.run("commit", "-m", "ignore fixture file")
+    repo.write("ignored.log", "ignored\n")
     grants = GitAncestorGrantStore(tmp_path / "grants.json")
     service = GitQueryService(grants=grants)
     discovery = service.discover(
@@ -44,14 +75,18 @@ async def test_query_service_routes_real_status_refs_history_diff_and_blame(
     refs = await service.refs(request)
     history = await service.history(request, limit=1)
     diff = await service.diff(request)
+    scoped_diff = await service.diff(request, path="README.md")
     blame = await service.blame(request, "README.md")
     reflog = await service.reflog(request, limit=20)
 
     assert status.branch.head == "topic"
     assert {item.path for item in status.files} == {"README.md", "new file.txt"}
     assert any(ref.short_name == "topic" and ref.current for ref in refs.refs)
-    assert history.commits[0].subject == "initial fixture commit"
+    assert history.commits[0].subject == "ignore fixture file"
     assert diff.files[0].new_path == "README.md"
+    assert [item.new_path for item in scoped_diff.files] == ["README.md"]
+    with pytest.raises(GitApiError, match="traversal"):
+        await service.diff(request, path="../README.md")
     assert blame.lines[0].filename == "README.md"
     assert blame.start_line == 1
     assert blame.next_start_line is None
@@ -73,18 +108,51 @@ async def test_query_cache_is_versioned_and_cursor_is_bound_to_repository(
     )
     request = _request(repo, discovery.repositories[0].id)
     first = await service.status(request)
-    assert await service.status(request) is first
 
     repo.write("changed.txt", "new version\n")
-    repo.run("add", "--", "changed.txt")
     second = await service.status(request)
-    assert second.repository_version != first.repository_version
+    assert second.repository_version == first.repository_version
     assert second is not first
+    assert {item.path for item in second.files} == {"changed.txt"}
 
-    cursor = encode_cursor(request.repository_id, second.repository_version, 25)
-    assert decode_cursor(cursor, request.repository_id, second.repository_version) == 25
+    repo.run("add", "--", "changed.txt")
+    third = await service.status(request)
+    assert third.repository_version != second.repository_version
+
+    cursor = encode_cursor(request.repository_id, third.repository_version, 25)
+    assert decode_cursor(cursor, request.repository_id, third.repository_version) == 25
     with pytest.raises(Exception, match="invalid or stale"):
-        decode_cursor(cursor, "another-repo", second.repository_version)
+        decode_cursor(cursor, "another-repo", third.repository_version)
+
+
+@pytest.mark.asyncio
+async def test_worktree_paths_returns_only_paths_relevant_to_git_refresh(
+    git_repo_factory,
+    tmp_path: Path,
+) -> None:
+    repo = git_repo_factory.create("worktree-paths")
+    repo.write(".gitignore", "*.log\nignored-directory/\n")
+    repo.run("add", "--", ".gitignore")
+    repo.run("commit", "-m", "add ignore rules")
+    repo.write("ignored.log", "ignored\n")
+    repo.write("ignored-directory/cache.json", "{}\n")
+    service = GitQueryService(grants=GitAncestorGrantStore(tmp_path / "grants.json"))
+    discovery = service.discover(
+        GitDiscoveryRequest(workspace_id="workspace-query", project_root=str(repo.path))
+    )
+    repository_id = discovery.repositories[0].id
+
+    result = await service.worktree_paths(
+        GitWorktreePathsRequest(
+            workspace_id="workspace-query",
+            project_root=str(repo.path),
+            repository_id=repository_id,
+            paths=["README.md", "ignored.log", "ignored-directory/cache.json"],
+        )
+    )
+
+    assert result.repository_id == repository_id
+    assert result.paths == ["README.md"]
 
 
 @pytest.mark.asyncio
@@ -174,7 +242,36 @@ async def test_identical_git_queries_share_one_inflight_execution(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_git_queries_are_serial_per_repository_but_parallel_across_repositories(
+async def test_abandoned_coalesced_query_cancels_its_underlying_work(tmp_path: Path) -> None:
+    service = GitQueryService(grants=GitAncestorGrantStore(tmp_path / "grants.json"))
+    request = GitRepositoryRequest(
+        workspace_id="workspace-query",
+        project_root=str(tmp_path),
+        repository_id="repo-a",
+    )
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def query() -> str:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return "unreachable"
+
+    task = asyncio.create_task(service.coalesced_query(request, "diff", query))
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_git_queries_coalesce_duplicates_and_use_the_global_concurrency_budget(
     tmp_path: Path,
 ) -> None:
     service = GitQueryService(
@@ -227,12 +324,12 @@ async def test_git_queries_are_serial_per_repository_but_parallel_across_reposit
             break
         await asyncio.sleep(0)
 
-    assert set(started) == {"a-status", "b-status"}
+    assert set(started) == {"a-status", "a-diff"}
     assert maximum_total == 2
-    assert maximum_by_repository["repo-a"] == 1
+    assert maximum_by_repository["repo-a"] == 2
     release.set()
     assert set(await asyncio.gather(*tasks)) == {"a-status", "a-diff", "b-status"}
-    assert maximum_by_repository["repo-a"] == 1
+    assert maximum_by_repository["repo-a"] == 2
 
 
 @pytest.mark.asyncio

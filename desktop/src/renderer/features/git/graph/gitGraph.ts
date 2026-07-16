@@ -13,7 +13,9 @@
  * - keep the result as a renderer-neutral SVG/canvas model (no copied UI/CSS).
  */
 
-export const GIT_GRAPH_COLOR_COUNT = 6;
+import { GIT_GRAPH_COLOR_COUNT } from "./gitGraphColor";
+
+export { GIT_GRAPH_COLOR_COUNT } from "./gitGraphColor";
 
 export interface GitGraphCommitInput {
   objectId: string;

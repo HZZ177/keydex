@@ -30,27 +30,61 @@ describe("Git empty and recovery states", () => {
 
     expect(await screen.findByText("Git 不可用")).not.toBeNull();
     expect(screen.getByRole("button", { name: "重试" })).not.toBeNull();
-    expect(screen.getByText("Git executable was not found")).not.toBeNull();
+    expect(screen.getByText("未找到可用的 Git 命令行程序。")).not.toBeNull();
+  });
+
+  it("keeps the history branch selector, left ref selection, and history request synchronized", async () => {
+    const runtime = stateRuntime({ readyOnDiscover: true });
+    renderTool(runtime, "history");
+
+    const featureBranch = await screen.findByRole("treeitem", { name: "feature/demo" });
+    expect(screen.getByRole("button", { name: "分支筛选：全部分支" })).not.toBeNull();
+    fireEvent.click(featureBranch);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "分支筛选：feature/demo" })).not.toBeNull());
+    await waitFor(() => expect(runtime.history).toHaveBeenLastCalledWith(
+      expect.objectContaining({ repositoryId: "repo-1" }),
+      expect.objectContaining({ revision: "refs/heads/feature/demo" }),
+    ));
+    expect(featureBranch.getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "分支筛选：feature/demo" }));
+    fireEvent.click(screen.getByRole("option", { name: "全部分支" }));
+    await waitFor(() => expect(featureBranch.getAttribute("aria-selected")).toBe("false"));
+  });
+
+  it("loads only the clicked file diff and does not prefetch a repository-wide diff", async () => {
+    const runtime = stateRuntime({ readyOnDiscover: true, changedFile: true });
+    renderTool(runtime);
+
+    const row = await screen.findByRole("treeitem", { name: "src/a.ts modified" });
+    expect(runtime.diff).not.toHaveBeenCalled();
+    fireEvent.click(row);
+
+    await waitFor(() => expect(runtime.diff).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId: "repo-1" }),
+      expect.objectContaining({ cached: false, path: "src/a.ts", signal: expect.any(AbortSignal) }),
+    ));
   });
 });
 
-function Tool() {
-  return <GitToolWindow project={useActiveProjectState()} maximized />;
+function Tool({ initialView }: { initialView?: "history" }) {
+  return <GitToolWindow project={useActiveProjectState()} maximized initialView={initialView} />;
 }
 
-function renderTool(runtime: GitRuntime) {
+function renderTool(runtime: GitRuntime, initialView?: "history") {
   return render(
     <ActiveProjectProvider
       discovery={{ project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" } }}
     >
       <GitProvider runtime={runtime}>
-        <Tool />
+        <Tool initialView={initialView} />
       </GitProvider>
     </ActiveProjectProvider>,
   );
 }
 
-function stateRuntime(options: { gitUnavailable?: boolean } = {}): GitRuntime {
+function stateRuntime(options: { gitUnavailable?: boolean; readyOnDiscover?: boolean; changedFile?: boolean } = {}): GitRuntime {
   const repositoryId = "repo-1" as GitRepositoryId;
   const repositoryVersion = "version-1" as GitRepositoryVersion;
   const capability = options.gitUnavailable
@@ -93,7 +127,9 @@ function stateRuntime(options: { gitUnavailable?: boolean } = {}): GitRuntime {
   };
   const discover = options.gitUnavailable
     ? vi.fn().mockResolvedValue(empty)
-    : vi.fn().mockResolvedValueOnce(empty).mockResolvedValue(ready);
+    : options.readyOnDiscover
+      ? vi.fn().mockResolvedValue(ready)
+      : vi.fn().mockResolvedValueOnce(empty).mockResolvedValue(ready);
   return {
     capabilities: vi.fn().mockResolvedValue(capability),
     discover,
@@ -104,10 +140,45 @@ function stateRuntime(options: { gitUnavailable?: boolean } = {}): GitRuntime {
       repositoryId,
       repositoryVersion,
       branch: { head: "main", detachedAt: null, upstream: null, ahead: 0, behind: 0, unborn: false },
-      files: [],
+      files: options.changedFile ? [{
+        path: "src/a.ts",
+        originalPath: null,
+        indexStatus: null,
+        worktreeStatus: "modified" as const,
+        conflicted: false,
+        binary: false,
+        submodule: false,
+      }] : [],
       operation: null,
     }),
-    refs: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, refs: [] }),
+    refs: vi.fn().mockResolvedValue({
+      repositoryId,
+      repositoryVersion,
+      refs: options.readyOnDiscover ? [
+        {
+          fullName: "refs/heads/main",
+          shortName: "main",
+          kind: "local",
+          objectId: "a".repeat(40),
+          peeledObjectId: null,
+          upstream: "origin/main",
+          ahead: 0,
+          behind: 0,
+          current: true,
+        },
+        {
+          fullName: "refs/heads/feature/demo",
+          shortName: "feature/demo",
+          kind: "local",
+          objectId: "b".repeat(40),
+          peeledObjectId: null,
+          upstream: "origin/feature/demo",
+          ahead: 0,
+          behind: 0,
+          current: false,
+        },
+      ] : [],
+    }),
     history: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, commits: [], nextCursor: null }),
     diff: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, files: [] }),
     commit: vi.fn(),

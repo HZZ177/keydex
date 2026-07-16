@@ -194,7 +194,7 @@ export function FloatingLayer({
         right: "auto",
         top: position.top,
         visibility: position.ready ? style?.visibility : "hidden",
-        width: position.width,
+        width: position.width ?? style?.width,
       } as CSSProperties}
     >
       {children}
