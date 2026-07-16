@@ -404,6 +404,17 @@
   position: absolute;
   top: 0;
   left: 1px;
+  opacity: 1;
+  transition: opacity 90ms ease-out;
+}
+
+.turnEndStreamingCursor[data-streaming-cursor-visible="false"] > [data-streaming-cursor="true"] {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.turnEndStreamingCursor[data-streaming-cursor-visible="false"] [data-streaming-cursor-dot="true"] {
+  animation-play-state: paused;
 }
 
 .turnProcessingRow {

@@ -66,6 +66,7 @@ const LOAD_OLDER_TRIGGER_PX = 44;
 const LOAD_OLDER_ARM_PX = 120;
 const USER_SCROLL_SETTLE_MS = 180;
 const TURN_FOCUS_FLASH_DURATION_MS = 1300;
+const STREAMING_CURSOR_IDLE_DELAY_MS = 450;
 const CONVERSATION_NATIVE_MAX_TURNS = 120;
 const CONVERSATION_NATIVE_MAX_UNITS = 420;
 const CONVERSATION_NATIVE_MAX_A2UI_WEIGHT = 48;
@@ -1190,6 +1191,8 @@ function renderConversationRuntimeUnit({
           item: unit.item,
           renderMessage,
           showTurnEndStreamingCursor: false,
+          streamingCursorActivityKey: "",
+          streamingCursorShowImmediately: false,
           suppressStreamingCursorMessageIds: new Set(),
           workspaceRuntime,
           workspaceScope,
@@ -1247,6 +1250,8 @@ function renderConversationRuntimeUnit({
               showForkSourceMarkers,
             ),
             showCursor,
+            turnEndStreamingCursor.activityKey,
+            turnEndStreamingCursor.showImmediately,
           ),
           processingStartedAt,
         )}
@@ -1286,6 +1291,8 @@ function renderConversationRuntimeUnit({
         item: unit.item,
         renderMessage,
         showTurnEndStreamingCursor: false,
+        streamingCursorActivityKey: "",
+        streamingCursorShowImmediately: false,
         suppressStreamingCursorMessageIds: turnEndStreamingCursor.suppressedMessageIds,
         workspaceRuntime,
         workspaceScope,
@@ -1378,6 +1385,8 @@ function renderMessageTurn({
         turnFooter: assistantTurnFooters.footerByItemId.get(item.id),
         processingStartedAt: assistantTurnFooters.processingStartByItemId.get(item.id),
         showTurnEndStreamingCursor: turnEndStreamingCursor.cursorAfterItemIds.has(item.id),
+        streamingCursorActivityKey: turnEndStreamingCursor.activityKey,
+        streamingCursorShowImmediately: turnEndStreamingCursor.showImmediately,
         suppressStreamingCursorMessageIds: turnEndStreamingCursor.suppressedMessageIds,
         workspaceRuntime,
         workspaceScope,
@@ -1436,6 +1445,8 @@ function renderMessageItem({
   turnFooter,
   processingStartedAt,
   showTurnEndStreamingCursor,
+  streamingCursorActivityKey,
+  streamingCursorShowImmediately,
   suppressStreamingCursorMessageIds,
   workspaceRuntime,
   workspaceScope,
@@ -1461,6 +1472,8 @@ function renderMessageItem({
   turnFooter?: AssistantTurnFooter;
   processingStartedAt?: string;
   showTurnEndStreamingCursor: boolean;
+  streamingCursorActivityKey: string;
+  streamingCursorShowImmediately: boolean;
   suppressStreamingCursorMessageIds: Set<string>;
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
@@ -1517,6 +1530,8 @@ function renderMessageItem({
           showForkSourceMarkers,
         ),
         showTurnEndStreamingCursor,
+        streamingCursorActivityKey,
+        streamingCursorShowImmediately,
       ),
       processingStartedAt,
     );
@@ -1562,6 +1577,8 @@ function renderMessageItem({
         showForkSourceMarkers,
       ),
       showTurnEndStreamingCursor,
+      streamingCursorActivityKey,
+      streamingCursorShowImmediately,
     ),
     processingStartedAt,
   );
@@ -1654,17 +1671,55 @@ function isSessionFork(value: unknown): value is AgentSessionFork {
   );
 }
 
-function withTurnEndStreamingCursor(content: ReactNode, showCursor: boolean) {
+function withTurnEndStreamingCursor(
+  content: ReactNode,
+  showCursor: boolean,
+  activityKey: string,
+  showImmediately: boolean,
+) {
   if (!showCursor) {
     return content;
   }
   return (
     <>
       {content}
-      <div className={styles.turnEndStreamingCursor}>
-        <StreamingCursor />
-      </div>
+      <TurnEndStreamingCursor activityKey={activityKey} showImmediately={showImmediately} />
     </>
+  );
+}
+
+function TurnEndStreamingCursor({
+  activityKey,
+  showImmediately,
+}: {
+  activityKey: string;
+  showImmediately: boolean;
+}) {
+  const previousActivityKeyRef = useRef<string | null>(null);
+  const [visible, setVisible] = useState(showImmediately);
+
+  useLayoutEffect(() => {
+    const firstActivity = previousActivityKeyRef.current === null;
+    if (!firstActivity && previousActivityKeyRef.current === activityKey) {
+      return;
+    }
+    previousActivityKeyRef.current = activityKey;
+    if (firstActivity && showImmediately) {
+      return;
+    }
+    setVisible(false);
+    const timeoutId = window.setTimeout(() => setVisible(true), STREAMING_CURSOR_IDLE_DELAY_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [activityKey, showImmediately]);
+
+  return (
+    <div
+      className={styles.turnEndStreamingCursor}
+      data-streaming-cursor-visible={visible ? "true" : "false"}
+      data-testid="turn-end-streaming-cursor"
+    >
+      <StreamingCursor />
+    </div>
   );
 }
 
@@ -2185,6 +2240,8 @@ interface AssistantTurnFooter {
 interface TurnEndStreamingCursor {
   suppressedMessageIds: Set<string>;
   cursorAfterItemIds: Set<string>;
+  activityKey: string;
+  showImmediately: boolean;
 }
 
 function buildConversationTimeline(displayItems: ProcessedMessageItem[]): ConversationTimeline {
@@ -2680,6 +2737,8 @@ function collectTurnEndStreamingCursor(
   const empty = {
     suppressedMessageIds: new Set<string>(),
     cursorAfterItemIds: new Set<string>(),
+    activityKey: "",
+    showImmediately: false,
   };
   if (!isProcessing) {
     return empty;
@@ -2700,6 +2759,12 @@ function collectTurnEndStreamingCursor(
         .map((message) => message.id),
     ),
     cursorAfterItemIds: new Set([anchorItemId]),
+    activityKey: activeTurnMessages
+      .map((message) => `${message.id}:${message.status ?? ""}:${message.content.length}:${message.updatedAt}`)
+      .join("|"),
+    showImmediately: activeTurnMessages.every(
+      (message) => message.kind === "user" || message.kind === "turn_marker" || message.kind === "thread_task_status",
+    ),
   };
 }
 

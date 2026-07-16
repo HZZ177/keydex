@@ -1484,6 +1484,39 @@ describe("MessageList", () => {
     expect(screen.getByTestId("streaming-cursor")).not.toBeNull();
   });
 
+  it("hides the stable footer cursor while chunks arrive and reveals it after the stream is idle", () => {
+    vi.useFakeTimers();
+    const user = message("m1", "user", "开始");
+    const runningAssistant = { ...message("m2", "assistant", "第一段"), status: "running" as const };
+    const { rerender, unmount } = render(<MessageList messages={[user]} isProcessing />);
+
+    try {
+      const cursorHost = screen.getByTestId("turn-end-streaming-cursor");
+      expect(cursorHost.getAttribute("data-streaming-cursor-visible")).toBe("true");
+
+      rerender(<MessageList messages={[user, runningAssistant]} isProcessing />);
+      expect(screen.getByTestId("turn-end-streaming-cursor").getAttribute("data-streaming-cursor-visible")).toBe("false");
+
+      act(() => vi.advanceTimersByTime(449));
+      expect(screen.getByTestId("turn-end-streaming-cursor").getAttribute("data-streaming-cursor-visible")).toBe("false");
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(screen.getByTestId("turn-end-streaming-cursor").getAttribute("data-streaming-cursor-visible")).toBe("true");
+
+      rerender(
+        <MessageList
+          messages={[{ ...user }, { ...runningAssistant, content: "第一段，继续输出第二段" }]}
+          isProcessing
+        />,
+      );
+      expect(screen.getByTestId("turn-end-streaming-cursor").getAttribute("data-streaming-cursor-visible")).toBe("false");
+      expect(screen.getAllByTestId("streaming-cursor")).toHaveLength(1);
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("does not append a second pending cursor while a file change is streaming", () => {
     const { rerender } = render(
       <MessageList
