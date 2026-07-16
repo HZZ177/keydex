@@ -32,6 +32,7 @@ import { LoadingSkeleton } from "@/renderer/components/loading";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { useOptionalPreview, type PreviewContextValue } from "@/renderer/providers/PreviewProvider";
 import type { PreviewRequest } from "@/renderer/providers/previewTypes";
+import { resolveHtmlPreviewFrameSource } from "@/renderer/utils/htmlPreviewFrame";
 import {
   centerMermaidViewport,
   formatMermaidCssPixels,
@@ -771,14 +772,16 @@ function isHtmlPreviewLanguage(language: string): boolean {
 }
 
 function HtmlPreviewFrame({ html, size = "inline" }: { html: string; size?: "inline" | "fullscreen" }) {
+  const frameSource = resolveHtmlPreviewFrameSource(html);
   return (
     <div className={styles.htmlPreview} data-size={size} data-testid="html-preview-frame">
       <iframe
         className={styles.htmlPreviewFrame}
         data-size={size}
         title="HTML 预览"
-        sandbox=""
-        srcDoc={html}
+        sandbox={frameSource.sandbox}
+        src={frameSource.kind === "url" ? frameSource.src : undefined}
+        srcDoc={frameSource.kind === "srcdoc" ? frameSource.srcDoc : undefined}
       />
     </div>
   );

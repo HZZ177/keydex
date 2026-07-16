@@ -8,18 +8,18 @@ import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@
 afterEach(cleanup);
 
 describe("Git changes tree", () => {
-  it("groups index/worktree/conflict state and preserves rename, binary and submodule semantics", () => {
+  it("flattens changed files into 更改 and 未跟踪 groups without ignored files", () => {
     const groups = groupGitChanges(status().files);
     expect(groups.map((group) => [group.id, group.entries.length])).toEqual([
-      ["conflicts", 1],
-      ["staged", 2],
-      ["unstaged", 2],
+      ["changes", 5],
       ["untracked", 1],
-      ["ignored", 1],
     ]);
-    expect(groups.find((group) => group.id === "staged")?.entries.some((entry) => entry.displayPath.includes("old.ts → src/new.ts"))).toBe(true);
-    expect(groups.find((group) => group.id === "unstaged")?.entries.some((entry) => entry.binary)).toBe(true);
-    expect(groups.find((group) => group.id === "staged")?.entries.some((entry) => entry.submodule)).toBe(true);
+    const entries = groups.flatMap((group) => group.entries);
+    expect(entries.filter((entry) => entry.path === "src/new.ts")).toHaveLength(1);
+    expect(entries.some((entry) => entry.displayPath.includes("old.ts → src/new.ts"))).toBe(true);
+    expect(entries.some((entry) => entry.binary)).toBe(true);
+    expect(entries.some((entry) => entry.submodule)).toBe(true);
+    expect(entries.some((entry) => entry.path === "ignored.log")).toBe(false);
   });
 
   it("builds a direct commit scope from selected files and excludes conflicts and ignored files", () => {
@@ -34,63 +34,24 @@ describe("Git changes tree", () => {
     expect(selection.fileCount).toBe(5);
   });
 
-  it("supports group and row selection and marks large fixtures for virtualization", () => {
+  it("supports flat group selection and renders file name before its ghost path", () => {
     const onSelectionChange = vi.fn();
-    const onStagePaths = vi.fn();
-    const onUnstagePaths = vi.fn();
-    const onDiscardPaths = vi.fn();
-    const onCleanPaths = vi.fn();
-    const onIgnorePaths = vi.fn();
-    render(
-      <GitChangesView
-        status={status()}
-        onSelectionChange={onSelectionChange}
-        onStagePaths={onStagePaths}
-        onUnstagePaths={onUnstagePaths}
-        onDiscardPaths={onDiscardPaths}
-        onCleanPaths={onCleanPaths}
-        onIgnorePaths={onIgnorePaths}
-      />,
-    );
+    render(<GitChangesView status={status()} onSelectionChange={onSelectionChange} />);
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "选择已暂存" }));
+    expect(screen.getByRole("group", { name: "更改" })).not.toBeNull();
+    expect(screen.getByRole("group", { name: "未跟踪" })).not.toBeNull();
+    expect(screen.queryByText("ignored.log")).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择更改" }));
     expect(onSelectionChange).toHaveBeenLastCalledWith(
-      ["modules/core", "src/new.ts"],
-      expect.arrayContaining([expect.objectContaining({ group: "staged" })]),
+      ["asset.bin", "both.ts", "modules/core", "src/edit.ts", "src/new.ts"],
+      expect.arrayContaining([expect.objectContaining({ group: "changes" })]),
     );
-    expect(screen.getByRole("button", { name: "暂存" }).hasAttribute("disabled")).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "取消暂存" }));
-    expect(onUnstagePaths).toHaveBeenCalledWith(["modules/core", "src/new.ts"]);
-    fireEvent.click(screen.getByRole("checkbox", { name: "选择未暂存" }));
-    fireEvent.click(screen.getByRole("button", { name: "暂存" }));
-    expect(onStagePaths).toHaveBeenCalledWith(["asset.bin", "src/edit.ts"]);
-    fireEvent.click(screen.getByRole("button", { name: "丢弃改动" }));
-    fireEvent.click(screen.getByRole("button", { name: "确认" }));
-    expect(onDiscardPaths).toHaveBeenCalledWith(["asset.bin", "src/edit.ts"]);
-    fireEvent.click(screen.getByRole("checkbox", { name: "选择未跟踪" }));
-    fireEvent.click(screen.getByRole("button", { name: "删除未跟踪文件" }));
-    expect(screen.getByRole("button", { name: "确认" }).hasAttribute("disabled")).toBe(true);
-    fireEvent.change(screen.getByRole("textbox", { name: "输入 DELETE 确认" }), { target: { value: "DELETE" } });
-    fireEvent.click(screen.getByRole("button", { name: "确认" }));
-    expect(onCleanPaths).toHaveBeenCalledWith(["new.txt"]);
-    fireEvent.click(screen.getByRole("button", { name: "忽略" }));
-    expect(onIgnorePaths).toHaveBeenCalledWith(["asset.bin", "new.txt", "src/edit.ts"]);
-    expect(screen.getByRole("treeitem", { name: /asset.bin modified/ }).textContent).toContain("binary");
-    expect(screen.getByRole("treeitem", { name: /modules\/core added/ }).textContent).toContain("submodule");
-  });
-
-  it("keeps ignored files hidden by default and exposes a project-level toggle", () => {
-    const onShowIgnoredChange = vi.fn();
-    const { rerender } = render(
-      <GitChangesView status={status()} showIgnored={false} onShowIgnoredChange={onShowIgnoredChange} />,
-    );
-    expect(screen.queryByRole("group", { name: "已忽略" })).toBeNull();
-    fireEvent.click(screen.getByRole("checkbox", { name: "显示已忽略文件" }));
-    expect(onShowIgnoredChange).toHaveBeenCalledWith(true);
-
-    rerender(<GitChangesView status={status()} showIgnored onShowIgnoredChange={onShowIgnoredChange} />);
-    expect(screen.getByRole("group", { name: "已忽略" })).not.toBeNull();
-    expect(screen.getByRole("treeitem", { name: /ignored\.log ignored/ })).not.toBeNull();
+    const editRow = screen.getByRole("treeitem", { name: /src\/edit\.ts modified/ });
+    expect(editRow.querySelector("img")?.getAttribute("data-icon-id")).toBeTruthy();
+    expect(editRow.textContent?.indexOf("edit.ts")).toBeLessThan(editRow.textContent?.indexOf("src") ?? -1);
+    expect(screen.getByRole("treeitem", { name: /asset.bin modified/ }).textContent).toContain("二进制");
+    expect(screen.getByRole("treeitem", { name: /modules\/core added/ }).textContent).toContain("子模块");
+    expect(screen.queryByRole("button", { name: "查看逐行历史" })).toBeNull();
   });
 
   it("keeps a 5k change tree within its DOM and interaction budget", () => {
@@ -112,10 +73,10 @@ describe("Git changes tree", () => {
     expect(screen.getAllByRole("treeitem").length).toBeLessThanOrEqual(27);
     expect(performance.now() - started).toBeLessThan(1_000);
 
-    const maximumScrollTop = 5_001 * 29 - 290;
+    const maximumScrollTop = 5_001 * 31 - 290;
     fireEvent.scroll(scroller!, { target: { scrollTop: maximumScrollTop } });
     expect(screen.getByRole("treeitem", { name: /src\/file-999.ts modified/ })).not.toBeNull();
-    expect(changesVirtualWindow(5_001, maximumScrollTop, 290)).toMatchObject({ renderedCount: 18 });
+    expect(changesVirtualWindow(5_001, maximumScrollTop, 290)).toMatchObject({ renderedCount: 18, rowHeight: 31 });
   });
 });
 

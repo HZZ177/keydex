@@ -31,6 +31,7 @@ import styles from "./WorkspaceFileBrowser.module.css";
 
 export interface WorkspaceFileBrowserProps {
   workspaceId?: string;
+  workspaceRootPath?: string;
   sessionId?: string;
   label?: string;
   runtime: RuntimeBridge;
@@ -43,7 +44,6 @@ export interface WorkspaceFileBrowserProps {
   initialNavigationMode?: "files" | "outline";
   previewOutline?: MarkdownOutlineItem[];
   previewOutlineReady?: boolean;
-  bottomSafeArea?: string;
   initialState?: WorkspaceFileBrowserState | null;
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
   onStartChatFromAnnotation?: (request: PreviewAnnotationChatRequest | PreviewAnnotationChatRequest[]) => void;
@@ -83,6 +83,7 @@ interface ResizeState {
 
 export function WorkspaceFileBrowser({
   workspaceId,
+  workspaceRootPath,
   sessionId,
   label,
   runtime,
@@ -95,7 +96,6 @@ export function WorkspaceFileBrowser({
   initialNavigationMode = "files",
   previewOutline = [],
   previewOutlineReady = false,
-  bottomSafeArea,
   initialState = null,
   onQuoteSelection,
   onStartChatFromAnnotation,
@@ -461,7 +461,6 @@ export function WorkspaceFileBrowser({
               revealDirectoryPath={directoryRevealPath}
               revealDirectoryPathRequestId={directoryRevealRequestId}
               selectedPath={selectedPath}
-              bottomSafeArea={bottomSafeArea}
               initialState={workspacePanelState}
               onSelectFile={openPreview}
               onStateChange={setWorkspacePanelState}
@@ -507,12 +506,12 @@ export function WorkspaceFileBrowser({
               <FilePreview
                 breadcrumbRootLabel={label}
                 workspaceId={workspaceId}
+                workspaceRootPath={workspaceRootPath}
                 sessionId={sessionId}
                 request={previewRequest}
                 refreshRequestId={previewRefreshRequestId}
                 runtime={runtime}
                 chrome="panel"
-                bottomSafeArea={bottomSafeArea}
                 hideBreadcrumbs
                 outlineRevealRequest={outlineRevealRequest}
                 sourceRevealRequest={fileRevealRequest}

@@ -10,10 +10,10 @@ describe("GitHistoryView", () => {
     const commits = Array.from({ length: 10_000 }, (_, index) => commit(index));
     const started = performance.now();
     render(<GitHistoryView commits={commits} selectedObjectId={commits[500].objectId} loading={false} hasMore onSelect={vi.fn()} onLoadMore={vi.fn()} onRefresh={vi.fn()} viewportHeight={360} />);
-    expect(screen.getByRole("listbox", { name: "Commit history" }).getAttribute("data-virtualized")).toBe("true");
+    expect(screen.getByRole("listbox", { name: "提交日志" }).getAttribute("data-virtualized")).toBe("true");
     expect(screen.getAllByRole("option").length).toBeLessThanOrEqual(30);
     expect(performance.now() - started).toBeLessThan(1000);
-    expect(historyVirtualWindow(10_000, 36_000, 360)).toMatchObject({ start: 992, renderedCount: 26 });
+    expect(historyVirtualWindow(10_000, 36_000, 360)).toMatchObject({ start: 892, renderedCount: 25, rowHeight: 40 });
   });
 
   it("deduplicates prepend/append pages and preserves selection by oid", () => {
@@ -35,7 +35,7 @@ describe("GitHistoryView", () => {
     const merge = { ...commit(3), parentIds: [side.objectId, root.objectId] };
     render(<GitHistoryView commits={[merge, side, root]} selectedObjectId={merge.objectId} loading={false} hasMore={false} onSelect={vi.fn()} onLoadMore={vi.fn()} onRefresh={vi.fn()} />);
 
-    const graph = screen.getByRole("img", { name: "Merge graph with 2 parents" });
+    const graph = screen.getByRole("img", { name: "包含 2 个父提交的合并图" });
     expect(graph.querySelectorAll("path").length).toBeGreaterThanOrEqual(2);
     expect(graph.getAttribute("data-commit-column")).toBe("0");
   });

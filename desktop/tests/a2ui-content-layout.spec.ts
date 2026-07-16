@@ -150,6 +150,7 @@ describe("A2UI content layout contract", () => {
 
     expect(formCss).toMatch(/\.workspace\s*{[^}]*border-radius:\s*18px/s);
     expect(formCss).toMatch(/\.workspace\s*{[^}]*isolation:\s*isolate/s);
+    expect(formCss).toMatch(/\.workspace:has\(\.selectRoot\[data-open="true"\]\)\s*{[^}]*z-index:\s*2/s);
     expect(formCss).toMatch(/\.fields\s*{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/s);
     expect(formCss).toMatch(/\.field\s*{[^}]*min-height:\s*86px/s);
     expect(formCss).toMatch(/\.field\s*{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);

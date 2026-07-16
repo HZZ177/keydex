@@ -113,8 +113,6 @@ interface WorkbenchPreviewTabScrollState {
 const DEFAULT_WORKBENCH_BROWSER_WIDTH = 300;
 const MIN_WORKBENCH_BROWSER_WIDTH = 220;
 const MIN_WORKBENCH_MAIN_PREVIEW_WIDTH = 320;
-const WORKBENCH_MAIN_BOTTOM_SAFE_AREA = "140px";
-const WORKBENCH_MAIN_BOTTOM_SAFE_AREA_VAR = "var(--workbench-main-bottom-safe-area, 0px)";
 const WORKBENCH_PREVIEW_TAB_MENU_WIDTH = 148;
 const WORKBENCH_PREVIEW_TAB_MENU_HEIGHT = 136;
 const WORKBENCH_PREVIEW_TAB_MENU_EDGE = 8;
@@ -214,6 +212,13 @@ export function WorkbenchModePage({
     () => workbenchPreviewTabs.tabs.find((tab) => tab.id === workbenchPreviewTabs.activeTabId) ?? null,
     [workbenchPreviewTabs.activeTabId, workbenchPreviewTabs.tabs],
   );
+  const [mainPreviewNearBottom, setMainPreviewNearBottom] = useState(false);
+  const assistantViewportKey = activeWorkbenchPreviewTab
+    ? `${activeWorkbenchPreviewTab.id}:${activeWorkbenchPreviewTab.requestId}:${activeWorkbenchPreviewTab.refreshRequestId ?? 0}`
+    : "workspace-browser";
+  useEffect(() => {
+    setMainPreviewNearBottom(false);
+  }, [assistantViewportKey]);
   const previousPreviewResetScopeRef = useRef({
     externalPreviewPath,
     selectedSessionId,
@@ -238,7 +243,6 @@ export function WorkbenchModePage({
   const assistantDrawerInline =
     dockTransitionLayout.reservedWidth > 0 &&
     (dockTransitionLayout.phase === "idle" || dockTransitionLayout.phase === "resize");
-  const workbenchMainBottomSafeArea = assistantDrawerInline ? "0px" : WORKBENCH_MAIN_BOTTOM_SAFE_AREA;
   const applyDrawerInlineWidth = useCallback((width: number) => {
     const nextInlineWidth = resolveWorkbenchAssistantDockInlineWidth(
       clampWorkbenchAssistantDrawerWidth(width),
@@ -409,6 +413,7 @@ export function WorkbenchModePage({
     return {
       panelScopeKey: workbenchPreviewPanelScopeKey(workspaceId),
       workspaceId,
+      workspaceRootPath: selectedWorkspace.root_path,
       workspaceAvailable: true,
       workspaceLabel,
       runtime,
@@ -886,7 +891,6 @@ export function WorkbenchModePage({
             {
               "--workbench-assistant-dock-inline-size": `${drawerInlineWidth}px`,
               "--workbench-dock-reserved-width": `${dockTransitionLayout.reservedWidth}px`,
-              "--workbench-main-bottom-safe-area": workbenchMainBottomSafeArea,
             } as CSSProperties
           }
           aria-label="工作台"
@@ -905,8 +909,8 @@ export function WorkbenchModePage({
                     key={workbenchUiScopeKey}
                     runtime={runtime}
                     workspaceId={workspaceId}
+                    workspaceRootPath={selectedWorkspace.root_path}
                     label={workspaceLabel}
-                    bottomSafeArea={WORKBENCH_MAIN_BOTTOM_SAFE_AREA_VAR}
                     initialNavigationMode={externalPreviewPath ? "outline" : "files"}
                     previewPath={activeWorkbenchPreviewPath}
                     previewRequestId={activeWorkbenchPreviewTab?.requestId ?? 0}
@@ -965,6 +969,7 @@ export function WorkbenchModePage({
                   onCloseActive={closeActiveWorkbenchPreviewTab}
                   onCloseTab={closeWorkbenchPreviewTab}
                   onMarkdownOutlineChange={handleMainPreviewMarkdownOutlineChange}
+                  onViewportNearBottomChange={setMainPreviewNearBottom}
                   onSelectTab={selectWorkbenchPreviewTab}
                   tabs={workbenchPreviewTabs.tabs}
                 />
@@ -991,6 +996,8 @@ export function WorkbenchModePage({
               onDockTransitionChange={setDockTransitioning}
               onDockTransitionLayoutChange={updateDockTransitionLayout}
               onOpenMcpSettings={onOpenMcpSettings}
+              contentNearBottom={mainPreviewNearBottom}
+              contentViewportKey={assistantViewportKey}
             />
           ) : null}
         </main>
@@ -1135,6 +1142,7 @@ function WorkbenchMainPreviewTabs({
   onCloseActive,
   onCloseTab,
   onMarkdownOutlineChange,
+  onViewportNearBottomChange,
   onSelectTab,
   tabs,
 }: {
@@ -1147,6 +1155,7 @@ function WorkbenchMainPreviewTabs({
   onCloseActive: () => void;
   onCloseTab: (tabId: string) => void;
   onMarkdownOutlineChange?: (outline: MarkdownOutlineItem[]) => void;
+  onViewportNearBottomChange?: (nearBottom: boolean) => void;
   onSelectTab: (tabId: string) => void;
   tabs: WorkbenchMainPreviewTabState[];
 }) {
@@ -1438,6 +1447,7 @@ function WorkbenchMainPreviewTabs({
         title={activeTab.title}
         onClose={onCloseActive}
         onMarkdownOutlineChange={onMarkdownOutlineChange}
+        onViewportNearBottomChange={onViewportNearBottomChange}
       />
     </section>
   );
@@ -1457,6 +1467,7 @@ function WorkbenchMainFilePreview({
   title,
   onClose,
   onMarkdownOutlineChange,
+  onViewportNearBottomChange,
 }: {
   context: PreviewRenderContext | null;
   fallbackRuntime: RuntimeBridge;
@@ -1471,6 +1482,7 @@ function WorkbenchMainFilePreview({
   title: string;
   onClose: () => void;
   onMarkdownOutlineChange?: (outline: MarkdownOutlineItem[]) => void;
+  onViewportNearBottomChange?: (nearBottom: boolean) => void;
 }) {
   const sourceRevealRequest = useMemo<FilePreviewRevealRequest | null>(() => {
     if (!revealTarget) {
@@ -1506,6 +1518,7 @@ function WorkbenchMainFilePreview({
       <FilePreview
         breadcrumbRootLabel={context?.workspaceLabel}
         workspaceId={context?.workspaceId ?? fallbackWorkspaceId}
+        workspaceRootPath={workspaceRootPath ?? context?.workspaceRootPath}
         sessionId={context?.sessionId}
         workspaceAnnotationPath={workspaceAnnotationPath}
         request={request}
@@ -1515,11 +1528,11 @@ function WorkbenchMainFilePreview({
         sourceRevealRequest={sourceRevealRequest}
         markdownViewDescriptor={markdownView}
         onMarkdownOutlineChange={onMarkdownOutlineChange}
+        onViewportNearBottomChange={onViewportNearBottomChange}
         onQuoteSelection={context?.onQuoteSelection}
         onStartChatFromAnnotation={context?.onStartChatFromAnnotation}
         onClose={onClose}
         chrome="panel"
-        bottomSafeArea={WORKBENCH_MAIN_BOTTOM_SAFE_AREA_VAR}
       />
     </div>
   );

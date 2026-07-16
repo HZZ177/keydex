@@ -56,6 +56,18 @@ from backend.app.tools.command_runtime import command_process_manager
 
 router = APIRouter(prefix="/agent-base/ws", tags=["websocket"])
 
+_ERROR_REQUEST_CONTEXT_KEYS = (
+    "session_id",
+    "workspace_id",
+    "repository_id",
+    "watch_id",
+    "pending_input_id",
+    "interaction_id",
+    "command_id",
+    "approval_id",
+    "elicitation_id",
+)
+
 
 class WebSocketChannelAdapter:
     def __init__(self, websocket: WebSocket) -> None:
@@ -94,6 +106,8 @@ async def chat_websocket(websocket: WebSocket) -> None:
     bound_session_id = str(websocket.query_params.get("session_id") or "").strip() or None
     bound_session_ids: set[str] = set()
     bound_git_repository_ids: set[str] = set()
+    request_action = ""
+    request_payload: dict[str, Any] = {}
     if bound_session_id:
         bound_session_ids.add(bound_session_id)
         await stream_manager.subscribe(bound_session_id, adapter)
@@ -116,11 +130,19 @@ async def chat_websocket(websocket: WebSocket) -> None:
             )
 
     async def send_error(code: str, message: str, data: dict[str, Any] | None = None) -> None:
-        payload = {"code": code, "message": message, **(data or {})}
-        await send("error", payload)
+        error_payload = {"code": code, "message": message, **(data or {})}
+        if request_action:
+            error_payload.setdefault("source_action", request_action)
+        for key in _ERROR_REQUEST_CONTEXT_KEYS:
+            value = request_payload.get(key)
+            if isinstance(value, str) and value.strip():
+                error_payload.setdefault(key, value.strip())
+        await send("error", error_payload)
 
     try:
         while True:
+            request_action = ""
+            request_payload = {}
             try:
                 raw = await websocket.receive_text()
             except WebSocketDisconnect:
@@ -141,6 +163,8 @@ async def chat_websocket(websocket: WebSocket) -> None:
 
             action = str(message.get("action") or "").strip()
             payload = _payload(message)
+            request_action = action
+            request_payload = payload
             if not action:
                 logger.warning(f"[WebSocket] 缺少 action | trace_id={connection_trace_id}")
                 await send_error("missing_action", "action 字段必填")

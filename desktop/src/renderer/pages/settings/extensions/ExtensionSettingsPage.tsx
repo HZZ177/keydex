@@ -13,8 +13,9 @@ import type {
   ModelDefaultsResponse,
 } from "@/types/protocol";
 
+import { useRealtimeSetting } from "../useRealtimeSetting";
 import styles from "./ExtensionSettingsPage.module.css";
-import { WebSettingsSection, type WebSettingsSectionHandle } from "./WebSettingsSection";
+import { WebSettingsSection } from "./WebSettingsSection";
 
 export interface ExtensionSettingsPageProps {
   runtime?: RuntimeBridge;
@@ -38,12 +39,18 @@ export function ExtensionSettingsPage({
   onOpenModelConfig,
 }: ExtensionSettingsPageProps) {
   const notifications = useNotifications();
-  const [drafts, setDrafts] = useState<ExtensionDrafts | null>(null);
   const [defaults, setDefaults] = useState<ModelDefaultsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [webSettingsReady, setWebSettingsReady] = useState(false);
-  const webSettingsRef = useRef<WebSettingsSectionHandle | null>(null);
+  const fastConfigured = Boolean(defaults?.defaults.fast.configured);
+  const defaultChatConfigured = Boolean(defaults?.defaults.default_chat.configured);
+  const draftSetting = useRealtimeSetting<ExtensionDrafts>({
+    isValid: (value) => extensionDraftIsValid(value, fastConfigured, defaultChatConfigured),
+    onError: (reason) => notifications.error(errorMessage(reason, "保存扩展功能配置失败")),
+    save: async (value) => draftsFromSettings(
+      await runtime.settings.saveExtensionSettings(settingsFromDrafts(value)),
+    ),
+  });
+  const drafts = draftSetting.value;
 
   useEffect(() => {
     let active = true;
@@ -53,7 +60,7 @@ export function ExtensionSettingsPage({
         if (!active) {
           return;
         }
-        setDrafts(draftsFromSettings(nextSettings));
+        draftSetting.replace(draftsFromSettings(nextSettings));
         setDefaults(nextDefaults);
       })
       .catch((reason: unknown) => {
@@ -69,10 +76,8 @@ export function ExtensionSettingsPage({
     return () => {
       active = false;
     };
-  }, [notifications, runtime]);
+  }, [draftSetting.replace, notifications, runtime]);
 
-  const fastConfigured = Boolean(defaults?.defaults.fast.configured);
-  const defaultChatConfigured = Boolean(defaults?.defaults.default_chat.configured);
   const titleDraft = drafts?.autoTitle ?? null;
   const duplicateGuardDraft = drafts?.duplicateGuard ?? null;
   const compressionDraft = drafts?.compression ?? null;
@@ -90,62 +95,41 @@ export function ExtensionSettingsPage({
   const compressionWindowInvalid = compressionDraft
     ? compressionDraft.context_window_tokens < 1000 || compressionDraft.context_window_tokens > 2_000_000
     : false;
-  const canSave =
-    Boolean(drafts) &&
-    !saving &&
-    webSettingsReady &&
-    !titleDependencyMissing &&
-    !compressionDependencyMissing &&
-    !titleLengthInvalid &&
-    !duplicateGuardInvalid &&
-    !compressionTriggerInvalid &&
-    !compressionWindowInvalid;
-
-  const updateDrafts = (updater: (current: ExtensionDrafts) => ExtensionDrafts) => {
-    setDrafts((current) => (current ? updater(current) : current));
+  const updateTitleDraft = (patch: Partial<AutoTitleRuntimeSettings>, delayMs?: number) => {
+    draftSetting.update(
+      (current) => ({ ...current, autoTitle: { ...current.autoTitle, ...patch } }),
+      delayMs,
+    );
   };
 
-  const updateTitleDraft = (patch: Partial<AutoTitleRuntimeSettings>) => {
-    updateDrafts((current) => ({ ...current, autoTitle: { ...current.autoTitle, ...patch } }));
+  const updateDuplicateGuardDraft = (
+    patch: Partial<DuplicateToolCallGuardRuntimeSettings>,
+    delayMs?: number,
+  ) => {
+    draftSetting.update(
+      (current) => ({
+        ...current,
+        duplicateGuard: { ...current.duplicateGuard, ...patch },
+      }),
+      delayMs,
+    );
   };
 
-  const updateDuplicateGuardDraft = (patch: Partial<DuplicateToolCallGuardRuntimeSettings>) => {
-    updateDrafts((current) => ({
-      ...current,
-      duplicateGuard: { ...current.duplicateGuard, ...patch },
-    }));
+  const updateCompressionDraft = (
+    patch: Partial<ContextCompressionRuntimeSettings>,
+    delayMs?: number,
+  ) => {
+    draftSetting.update(
+      (current) => ({ ...current, compression: { ...current.compression, ...patch } }),
+      delayMs,
+    );
   };
 
-  const updateCompressionDraft = (patch: Partial<ContextCompressionRuntimeSettings>) => {
-    updateDrafts((current) => ({ ...current, compression: { ...current.compression, ...patch } }));
-  };
-
-  const updateA2UIDraft = (patch: Partial<A2UIRuntimeSettings>) => {
-    updateDrafts((current) => ({ ...current, a2ui: { ...current.a2ui, ...patch } }));
-  };
-
-  const saveExtensionPage = async () => {
-    if (!drafts || !canSave) {
-      return;
-    }
-    const webValidationMessage = webSettingsRef.current?.validationMessage() ?? null;
-    if (webValidationMessage) {
-      notifications.error(webValidationMessage);
-      return;
-    }
-    setSaving(true);
-    try {
-      const [nextSettings] = await Promise.all([
-        runtime.settings.saveExtensionSettings(settingsFromDrafts(drafts)),
-        webSettingsRef.current?.save() ?? Promise.resolve(),
-      ]);
-      setDrafts(draftsFromSettings(nextSettings));
-      notifications.success("扩展功能配置已保存");
-    } catch (reason) {
-      notifications.error(errorMessage(reason, "保存扩展功能配置失败"));
-    } finally {
-      setSaving(false);
-    }
+  const updateA2UIDraft = (patch: Partial<A2UIRuntimeSettings>, delayMs?: number) => {
+    draftSetting.update(
+      (current) => ({ ...current, a2ui: { ...current.a2ui, ...patch } }),
+      delayMs,
+    );
   };
 
   return (
@@ -176,6 +160,7 @@ export function ExtensionSettingsPage({
                     max={50}
                     min={4}
                     onChange={(max_title_length) => updateTitleDraft({ max_title_length })}
+                    onCommit={draftSetting.flush}
                     value={titleDraft.max_title_length}
                   />
                 </InlineNumberControl>
@@ -184,7 +169,7 @@ export function ExtensionSettingsPage({
                 <SettingsToggle
                   checked={titleDraft.enabled}
                   label="启用标题生成"
-                  onChange={(enabled) => updateTitleDraft({ enabled })}
+                  onChange={(enabled) => updateTitleDraft({ enabled }, 0)}
                 />
               }
             />
@@ -207,6 +192,7 @@ export function ExtensionSettingsPage({
                     max={20}
                     min={1}
                     onChange={(max_repeats) => updateDuplicateGuardDraft({ max_repeats })}
+                    onCommit={draftSetting.flush}
                     value={duplicateGuardDraft.max_repeats}
                   />
                 </InlineNumberControl>
@@ -215,7 +201,7 @@ export function ExtensionSettingsPage({
                 <SettingsToggle
                   checked={duplicateGuardDraft.enabled}
                   label="启用重复保护"
-                  onChange={(enabled) => updateDuplicateGuardDraft({ enabled })}
+                  onChange={(enabled) => updateDuplicateGuardDraft({ enabled }, 0)}
                 />
               }
             />
@@ -232,7 +218,7 @@ export function ExtensionSettingsPage({
                 <SettingsToggle
                   checked={compressionDraft.enabled}
                   label="启用上下文压缩"
-                  onChange={(enabled) => updateCompressionDraft({ enabled })}
+                  onChange={(enabled) => updateCompressionDraft({ enabled }, 0)}
                 />
               }
             />
@@ -241,7 +227,10 @@ export function ExtensionSettingsPage({
             ) : null}
             <CompressionConfigurator
               contextWindowTokens={compressionDraft.context_window_tokens}
-              onContextWindowChange={(context_window_tokens) => updateCompressionDraft({ context_window_tokens })}
+              onContextWindowChange={(context_window_tokens) =>
+                updateCompressionDraft({ context_window_tokens })
+              }
+              onCommit={draftSetting.flush}
               onTriggerFractionChange={(trigger_fraction) => updateCompressionDraft({ trigger_fraction })}
               triggerFraction={compressionDraft.trigger_fraction}
             />
@@ -261,7 +250,7 @@ export function ExtensionSettingsPage({
                 <SettingsToggle
                   checked={a2uiDraft.enabled}
                   label="启用 A2UI"
-                  onChange={(enabled) => updateA2UIDraft({ enabled })}
+                  onChange={(enabled) => updateA2UIDraft({ enabled }, 0)}
                 />
               }
             />
@@ -272,7 +261,7 @@ export function ExtensionSettingsPage({
                 <SettingsToggle
                   checked={a2uiDraft.debug_info_enabled}
                   label="显示 A2UI 调试入口"
-                  onChange={(debug_info_enabled) => updateA2UIDraft({ debug_info_enabled })}
+                  onChange={(debug_info_enabled) => updateA2UIDraft({ debug_info_enabled }, 0)}
                 />
               }
             />
@@ -283,21 +272,9 @@ export function ExtensionSettingsPage({
               <span>可编辑表格</span>
             </div>
           </div>
-
         </section>
       ) : null}
-      <WebSettingsSection
-        onReadyChange={setWebSettingsReady}
-        ref={webSettingsRef}
-        runtime={runtime}
-      />
-      {!loading && drafts ? (
-        <div className={styles.actions}>
-          <button data-settings-primary disabled={!canSave} onClick={() => void saveExtensionPage()} type="button">
-            {saving ? "保存中" : "保存"}
-          </button>
-        </div>
-      ) : null}
+      <WebSettingsSection runtime={runtime} />
     </main>
   );
 }
@@ -369,11 +346,13 @@ function InlineNumberControl({
 function CompressionConfigurator({
   contextWindowTokens,
   onContextWindowChange,
+  onCommit,
   onTriggerFractionChange,
   triggerFraction,
 }: {
   contextWindowTokens: number;
   onContextWindowChange: (value: number) => void;
+  onCommit: () => void;
   onTriggerFractionChange: (value: number) => void;
   triggerFraction: number;
 }) {
@@ -391,6 +370,7 @@ function CompressionConfigurator({
           max={2000000}
           min={1000}
           onChange={onContextWindowChange}
+          onCommit={onCommit}
           step={1000}
           value={contextWindowTokens}
         />
@@ -412,6 +392,7 @@ function CompressionConfigurator({
           max={MAX_COMPRESSION_TRIGGER_FRACTION}
           min={MIN_COMPRESSION_TRIGGER_FRACTION}
           onChange={onTriggerFractionChange}
+          onCommit={onCommit}
           step={COMPRESSION_TRIGGER_STEP}
           value={triggerFraction}
         />
@@ -431,6 +412,7 @@ function CompressionThresholdSlider({
   max,
   min,
   onChange,
+  onCommit,
   step,
   value,
 }: {
@@ -439,6 +421,7 @@ function CompressionThresholdSlider({
   max: number;
   min: number;
   onChange: (value: number) => void;
+  onCommit: () => void;
   step: number;
   value: number;
 }) {
@@ -490,6 +473,7 @@ function CompressionThresholdSlider({
     pointerStartXRef.current = null;
     setDragging(false);
     event.currentTarget.releasePointerCapture?.(event.pointerId);
+    onCommit();
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -537,6 +521,7 @@ function CompressionThresholdSlider({
       className={styles.thresholdSlider}
       data-dragging={dragging ? "true" : "false"}
       onKeyDown={handleKeyDown}
+      onBlur={onCommit}
       onPointerCancel={finishPointerInteraction}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -559,6 +544,7 @@ function NumberInput({
   max,
   min,
   onChange,
+  onCommit,
   step,
   value,
 }: {
@@ -566,6 +552,7 @@ function NumberInput({
   max: number;
   min: number;
   onChange: (value: number) => void;
+  onCommit: () => void;
   step?: number;
   value: number;
 }) {
@@ -575,6 +562,7 @@ function NumberInput({
       className={styles.numberInput}
       max={max}
       min={min}
+      onBlur={onCommit}
       onChange={(event) => onChange(Number(event.target.value))}
       step={step}
       type="number"
@@ -663,4 +651,23 @@ function errorMessage(reason: unknown, fallback = "读取扩展功能配置失�
     return (reason as { message: string }).message;
   }
   return fallback;
+}
+
+function extensionDraftIsValid(
+  drafts: ExtensionDrafts,
+  fastConfigured: boolean,
+  defaultChatConfigured: boolean,
+): boolean {
+  return (
+    (!drafts.autoTitle.enabled || fastConfigured) &&
+    drafts.autoTitle.max_title_length >= 4 &&
+    drafts.autoTitle.max_title_length <= 50 &&
+    drafts.duplicateGuard.max_repeats >= 1 &&
+    drafts.duplicateGuard.max_repeats <= 20 &&
+    (!drafts.compression.enabled || defaultChatConfigured) &&
+    drafts.compression.trigger_fraction >= MIN_COMPRESSION_TRIGGER_FRACTION &&
+    drafts.compression.trigger_fraction <= MAX_COMPRESSION_TRIGGER_FRACTION &&
+    drafts.compression.context_window_tokens >= 1000 &&
+    drafts.compression.context_window_tokens <= 2_000_000
+  );
 }

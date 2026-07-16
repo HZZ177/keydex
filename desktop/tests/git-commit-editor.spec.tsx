@@ -7,7 +7,7 @@ import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@
 afterEach(cleanup);
 
 describe("GitCommitEditor", () => {
-  it("validates messages and submits amend/sign options for selected files", () => {
+  it("validates messages and submits fixed standard options for selected files", () => {
     expect(validateCommitMessage(" ").valid).toBe(false);
     expect(validateCommitMessage("x".repeat(73))).toEqual({ valid: true, message: "标题超过建议的 72 个字符" });
     expect(validateCommitMessage("x".repeat(101)).valid).toBe(false);
@@ -18,20 +18,19 @@ describe("GitCommitEditor", () => {
       <GitCommitEditor status={status()} selectedFileCount={1} draft="" onDraftChange={onDraftChange} onCommit={onCommit} />,
     );
     expect(screen.getByRole("button", { name: "提交" }).hasAttribute("disabled")).toBe(true);
-    fireEvent.change(screen.getByRole("textbox", { name: "Commit message" }), { target: { value: "feat: Git workbench" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "提交说明" }), { target: { value: "feat: Git workbench" } });
     expect(onDraftChange).toHaveBeenCalledWith("feat: Git workbench");
 
     rerender(
       <GitCommitEditor status={status()} selectedFileCount={1} draft="feat: Git workbench" onDraftChange={onDraftChange} onCommit={onCommit} />,
     );
-    fireEvent.click(screen.getByRole("checkbox", { name: "修订上次提交" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "GPG 签名" }));
+    expect(screen.queryByRole("checkbox", { name: "修订上次提交" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "提交签名" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
-    expect(onCommit).toHaveBeenCalledWith({ message: "feat: Git workbench", amend: true, sign: true });
+    expect(onCommit).toHaveBeenCalledWith({ message: "feat: Git workbench", amend: false, sign: false });
   });
 
-  it("blocks commit until a repository-local identity is configured", () => {
-    const onConfigureIdentity = vi.fn();
+  it("shows repository identity as read-only and blocks commit when it is missing", () => {
     render(
       <GitCommitEditor
         status={status()}
@@ -40,19 +39,26 @@ describe("GitCommitEditor", () => {
         identity={null}
         onDraftChange={vi.fn()}
         onCommit={vi.fn()}
-        onConfigureIdentity={onConfigureIdentity}
       />,
     );
     expect(screen.getByRole("button", { name: "提交" }).hasAttribute("disabled")).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "配置" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Git 用户名" }), { target: { value: "Keydex User" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Git 邮箱" }), { target: { value: "keydex@example.com" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存到当前仓库" }));
-    expect(onConfigureIdentity).toHaveBeenCalledWith({
-      name: "Keydex User",
-      email: "keydex@example.com",
-      signByDefault: false,
-    });
+    expect(screen.getByText("尚未配置 Git 提交身份")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "配置" })).toBeNull();
+  });
+
+  it("does not expose a modify action for an existing identity", () => {
+    render(
+      <GitCommitEditor
+        status={status()}
+        selectedFileCount={1}
+        draft="feat: identity"
+        identity={{ repositoryId: "repo-1" as GitRepositoryId, name: "Keydex User", email: "keydex@example.com", signByDefault: true }}
+        onDraftChange={vi.fn()}
+        onCommit={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Keydex User <keydex@example.com>")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "修改" })).toBeNull();
   });
 
   it("renders the successful commit oid returned by the backend", () => {
@@ -65,28 +71,8 @@ describe("GitCommitEditor", () => {
         onCommit={vi.fn()}
       />,
     );
-    expect(screen.getByRole("status", { name: "Commit result" }).textContent).toContain("Created commit");
+    expect(screen.getByRole("status", { name: "提交结果" }).textContent).toContain("Created commit");
     expect(screen.getByText("1234567890ab")).not.toBeNull();
-  });
-
-  it("previews the amend target and requires explicit confirmation for published history", () => {
-    const onCommit = vi.fn();
-    render(
-      <GitCommitEditor
-        status={status()}
-        draft="fix: amended"
-        amendTarget={{ objectId: "a".repeat(40), subject: "previous subject", published: true }}
-        onDraftChange={vi.fn()}
-        onCommit={onCommit}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("checkbox", { name: "修订上次提交" }));
-    expect(screen.getByRole("status", { name: "Amend rewrite preview" }).textContent).toContain("aaaaaaaaaaaa");
-    expect(screen.getByRole("button", { name: "提交" }).hasAttribute("disabled")).toBe(true);
-    fireEvent.click(screen.getByRole("checkbox", { name: "确认重写已发布提交" }));
-    fireEvent.click(screen.getByRole("button", { name: "提交" }));
-    expect(onCommit).toHaveBeenCalledWith({ message: "fix: amended", amend: true, sign: false });
   });
 
   it("exposes 提交并推送 as an explicit second action", () => {

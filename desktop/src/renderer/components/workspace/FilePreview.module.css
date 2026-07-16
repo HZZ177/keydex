@@ -1,5 +1,4 @@
 .preview {
-  --file-preview-content-bottom-safe-area: 0px;
   --annotation-accent: #d87575;
   display: grid;
   min-height: 0;
@@ -392,7 +391,6 @@
 .body[data-custom-scrollbar="true"] {
   scrollbar-width: none;
   scrollbar-color: transparent transparent;
-  scroll-padding-bottom: var(--file-preview-content-bottom-safe-area);
 }
 
 .body[data-custom-scrollbar="true"]::-webkit-scrollbar {
@@ -899,14 +897,14 @@
   border-right: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
   background: var(--surface-muted);
   color: var(--color-text-tertiary);
-  padding: 10px 12px calc(14px + var(--file-preview-content-bottom-safe-area)) 10px;
+  padding: 10px 12px 14px 10px;
   text-align: right;
   user-select: none;
 }
 
 .sourcePlainCode {
   min-width: max-content;
-  padding: 10px 14px calc(14px + var(--file-preview-content-bottom-safe-area)) 12px;
+  padding: 10px 14px 14px 12px;
   white-space: pre;
 }
 
@@ -1032,11 +1030,6 @@
 .sourceViewer[data-renderer="codemirror"]::-webkit-scrollbar-corner {
   border: 0;
   background: transparent;
-}
-
-.previewScrollBottomSafeArea {
-  height: var(--file-preview-content-bottom-safe-area);
-  pointer-events: none;
 }
 
 .previewScrollRail {
@@ -1608,6 +1601,40 @@
 .htmlPane {
   position: relative;
   background: var(--color-bg-elevated);
+}
+
+.body[data-chrome="panel"][data-scroll-owner="html-frame"] {
+  overflow: hidden;
+  scroll-padding-bottom: 0;
+  scrollbar-gutter: auto;
+}
+
+.body[data-chrome="panel"][data-scroll-owner="html-frame"] .documentCanvas {
+  padding-right: 0;
+}
+
+.body[data-chrome="panel"][data-scroll-owner="html-frame"] .documentColumn,
+.body[data-chrome="panel"][data-scroll-owner="html-frame"] .documentColumn > .previewScrollShell,
+.splitScrollViewport[data-scroll-owner="html-frame"],
+.splitScrollViewport[data-scroll-owner="html-frame"] > .previewScrollShell {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.body[data-chrome="panel"] .htmlPane[data-html-frame-scroll-owner="true"],
+.splitScrollViewport[data-scroll-owner="html-frame"] .htmlPane[data-html-frame-scroll-owner="true"] {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.body[data-chrome="panel"] .htmlPane[data-html-frame-scroll-owner="true"] .htmlFrame,
+.splitScrollViewport[data-scroll-owner="html-frame"] .htmlPane[data-html-frame-scroll-owner="true"] .htmlFrame {
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .resourceAnnotationControl {

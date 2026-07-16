@@ -72,7 +72,7 @@ describe("ProjectGitMenu", () => {
     );
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Git：main" })).not.toBeNull());
-    expect(screen.getByLabelText("2 个改动")).not.toBeNull();
+    expect(screen.queryByLabelText("2 个改动")).toBeNull();
     expect(screen.getByLabelText("领先 2，落后 1")).not.toBeNull();
 
     const trigger = screen.getByRole("button", { name: "Git：main" });
@@ -85,18 +85,57 @@ describe("ProjectGitMenu", () => {
     expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
     fireEvent.keyDown(document.activeElement as Element, { key: "Home" });
     expect(document.activeElement).toBe(search);
+    expect(screen.queryByText(".")).toBeNull();
     expect(screen.getByRole("treeitem", { name: /^本地/ }).getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByRole("treeitem", { name: "main（本地）" })).not.toBeNull();
-    expect(screen.getByRole("treeitem", { name: "origin/main（远程）" })).not.toBeNull();
+    const currentBranch = screen.getByRole("treeitem", { name: "main（本地）" });
+    const upstreamBranch = screen.getByRole("treeitem", { name: "origin/main（远程）" });
+    expect(currentBranch.querySelector(".lucide-star")).not.toBeNull();
+    expect(upstreamBranch.querySelector(".lucide-star")).not.toBeNull();
+    expect(currentBranch.getAttribute("data-ref-state")).toBe("current");
+    expect(currentBranch.querySelector('[data-tone="mainline"]')).not.toBeNull();
+    expect(upstreamBranch.getAttribute("data-ref-state")).toBe("upstream");
+    expect(upstreamBranch.querySelector('[data-tone="mainline"]')).not.toBeNull();
+
+    fireEvent.click(currentBranch);
+    expect(screen.getByRole("menu", { name: "main 引用操作" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "从 'main' 新建分支…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "更新" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "推送…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "重命名…" })).not.toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "签出 'main'" })).toBeNull();
+    fireEvent.click(currentBranch);
+
+    fireEvent.click(upstreamBranch);
+    expect(screen.getByRole("menu", { name: "origin/main 引用操作" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "签出 'origin/main'（分离当前指针）" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "从 'origin/main' 新建分支…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "在 Git 面板中合并或变基…" })).not.toBeNull();
+    fireEvent.click(upstreamBranch);
+
     const tagGroup = screen.getByRole("treeitem", { name: /^标签/ });
     expect(tagGroup.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByRole("treeitem", { name: "v1.0.0（标签）" })).toBeNull();
     fireEvent.click(tagGroup);
-    expect(screen.getByRole("treeitem", { name: "v1.0.0（标签）" })).not.toBeNull();
+    const tag = screen.getByRole("treeitem", { name: "v1.0.0（标签）" });
+    expect(tag.querySelector('[data-tone="tag"]')).not.toBeNull();
+    fireEvent.click(tag);
+    expect(screen.getByRole("menuitem", { name: "签出标记 'v1.0.0'（分离当前指针）" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "在 Git 面板中管理标签…" })).not.toBeNull();
+    fireEvent.click(tag);
 
     fireEvent.change(search, { target: { value: "feature" } });
-    expect(screen.getByRole("treeitem", { name: "feature/git-menu（本地）" })).not.toBeNull();
+    const featureBranch = screen.getByRole("treeitem", { name: "feature/git-menu（本地）" });
+    fireEvent.click(featureBranch);
+    expect(screen.getByRole("menuitem", { name: "签出 'feature/git-menu'" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "与 'main' 比较" })).not.toBeNull();
+    fireEvent.click(featureBranch);
     expect(screen.queryByRole("treeitem", { name: "main（本地）" })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "" } });
+    const updateAction = screen.getByRole("menuitem", { name: /更新项目/ });
+    const pushAction = screen.getByRole("menuitem", { name: /推送…/ });
+    expect(updateAction.querySelector("svg.lucide-arrow-down-left")).not.toBeNull();
+    expect(pushAction.querySelector("svg.lucide-arrow-up-right")).not.toBeNull();
 
     fireEvent.keyDown(search, { key: "Escape" });
     expect(screen.queryByRole("menu", { name: "项目 Git 菜单" })).toBeNull();
@@ -105,6 +144,15 @@ describe("ProjectGitMenu", () => {
     fireEvent.click(screen.getByRole("button", { name: "Git：main" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /更新项目/ }));
     await waitFor(() => expect(runtime.update).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(
+      screen.getByRole("menuitem", { name: /更新项目/ }).querySelector("svg.lucide-check"),
+    ).not.toBeNull());
+    expect(screen.getByRole("menuitem", { name: /更新项目/ }).textContent).not.toContain("处理中");
+    expect(screen.getByRole("menu", { name: "项目 Git 菜单" }).getAttribute("data-state")).toBe("success");
+    await waitFor(
+      () => expect(screen.queryByRole("menu", { name: "项目 Git 菜单" })).toBeNull(),
+      { timeout: 1_500 },
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Git：main" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "打开 Git 面板" }));
@@ -113,7 +161,7 @@ describe("ProjectGitMenu", () => {
     fireEvent.click(screen.getByRole("button", { name: "Git：main" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Git 帮助与风险说明" }));
     expect(screen.getByRole("dialog", { name: "Git 操作与风险说明" })).not.toBeNull();
-    expect(screen.getByText(/Force Push 只使用 --force-with-lease/)).not.toBeNull();
+    expect(screen.getByText(/强制推送只使用带租约保护的方式/)).not.toBeNull();
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Git 操作与风险说明" })).toBeNull());
 

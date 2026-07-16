@@ -104,7 +104,15 @@ import {
   type SvgDimensions,
 } from "@/renderer/utils/mermaidSvg";
 import { getMermaidConfig } from "@/renderer/utils/mermaidConfig";
-import { isAbsoluteFilePath, resolveRelativeFileLinkPath } from "@/renderer/utils/fileLinks";
+import {
+  isAbsoluteFilePath,
+  resolveRelativeFileLinkPath,
+  workspaceAbsoluteFilePath,
+} from "@/renderer/utils/fileLinks";
+import {
+  HTML_PREVIEW_VIEWPORT_MESSAGE_TYPE,
+  resolveHtmlPreviewFrameSource,
+} from "@/renderer/utils/htmlPreviewFrame";
 import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
 import { parseUnifiedDiffDisplayLines } from "@/renderer/utils/unifiedDiff";
 
@@ -166,6 +174,8 @@ const EMPTY_ANNOTATION_FLOATING_ITEMS = Object.freeze([]);
 const ANNOTATION_RAIL_CARD_INSET = 32;
 const ANNOTATION_CONNECTOR_FAN_OUT = 8;
 const ANNOTATION_BOTTOM_ACTIONS_RESERVED = 68;
+const FILE_PREVIEW_BOTTOM_PROXIMITY_MIN_PX = 72;
+const FILE_PREVIEW_BOTTOM_PROXIMITY_MAX_PX = 160;
 
 interface ResourceAnnotationVisualState {
   readonly active: boolean;
@@ -207,6 +217,7 @@ export interface FilePreviewRevealRequest extends PreviewFileRevealTarget {
 
 export interface FilePreviewProps {
   workspaceId?: string;
+  workspaceRootPath?: string;
   sessionId?: string;
   workspaceAnnotationPath?: string | null;
   request: FilePreviewRequest;
@@ -214,13 +225,13 @@ export interface FilePreviewProps {
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
   onStartChatFromAnnotation?: (request: PreviewAnnotationChatRequest | PreviewAnnotationChatRequest[]) => void;
   onMarkdownOutlineChange?: (outline: MarkdownOutlineItem[]) => void;
+  onViewportNearBottomChange?: (nearBottom: boolean) => void;
   outlineRevealRequest?: MarkdownOutlineRevealRequest | null;
   sourceRevealRequest?: FilePreviewRevealRequest | null;
   onClose?: () => void;
   chrome?: "default" | "panel";
   breadcrumbRootLabel?: string;
   hideBreadcrumbs?: boolean;
-  bottomSafeArea?: string;
   markdownRuntimeSnapshotLoader?: FileMarkdownRuntimeSnapshotLoader;
   markdownViewDescriptor?: PreviewMarkdownViewDescriptor;
   refreshRequestId?: number;
@@ -233,6 +244,7 @@ declare global {
 
 export function FilePreview({
   workspaceId,
+  workspaceRootPath,
   sessionId,
   workspaceAnnotationPath,
   request,
@@ -240,13 +252,13 @@ export function FilePreview({
   onQuoteSelection,
   onStartChatFromAnnotation,
   onMarkdownOutlineChange,
+  onViewportNearBottomChange,
   outlineRevealRequest,
   sourceRevealRequest,
   onClose,
   chrome = "default",
   breadcrumbRootLabel,
   hideBreadcrumbs = false,
-  bottomSafeArea,
   markdownRuntimeSnapshotLoader,
   markdownViewDescriptor,
   refreshRequestId = 0,
@@ -261,7 +273,9 @@ export function FilePreview({
   const documentViewportRef = useRef<HTMLDivElement | null>(null);
   const [splitSourceViewport, setSplitSourceViewport] = useState<HTMLDivElement | null>(null);
   const [splitPreviewViewport, setSplitPreviewViewport] = useState<HTMLDivElement | null>(null);
+  const [htmlFrameElement, setHtmlFrameElement] = useState<HTMLIFrameElement | null>(null);
   const [annotationRailElement, setAnnotationRailElement] = useState<HTMLElement | null>(null);
+  const lastViewportNearBottomRef = useRef<boolean | null>(null);
   const splitScrollOwnerRef = useRef<"source" | "preview">("source");
   const pendingScrollRestoreRef = useRef<number | null>(null);
   const setDocumentViewportElement = useCallback((element: HTMLDivElement | null) => {
@@ -300,6 +314,84 @@ export function FilePreview({
   const previewContent = immediateContent ?? content;
   const previewLoading = immediateContent === null ? loading : false;
   const [error, setError] = useState<string | null>(null);
+  const directHtmlPreviewPath = useMemo(() => {
+    if (
+      kind !== "html"
+      || previewLoading
+      || (request.type !== "file" && request.type !== "local-file")
+    ) {
+      return null;
+    }
+    const detectedFrameSource = resolveHtmlPreviewFrameSource(
+      previewContent || "<p>文件为空</p>",
+      { sourcePath: request.path },
+    );
+    if (detectedFrameSource.kind === "url") {
+      return null;
+    }
+    if (request.type === "file" && !workspaceRootPath) {
+      return null;
+    }
+    return workspaceAbsoluteFilePath(request.path, workspaceRootPath ?? "");
+  }, [kind, previewContent, previewLoading, request, workspaceRootPath]);
+  const prepareHtmlFile = runtime?.localPreview?.prepareHtmlFile;
+  const directHtmlPreviewScopePath = request.type === "file" ? workspaceRootPath : undefined;
+  const [directHtmlPreview, setDirectHtmlPreview] = useState<{
+    error: string | null;
+    path: string;
+    status: "loading" | "ready" | "error";
+    url: string | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!directHtmlPreviewPath || !prepareHtmlFile) {
+      setDirectHtmlPreview(null);
+      return;
+    }
+    let active = true;
+    setDirectHtmlPreview({
+      error: null,
+      path: directHtmlPreviewPath,
+      status: "loading",
+      url: null,
+    });
+    void prepareHtmlFile(directHtmlPreviewPath, directHtmlPreviewScopePath)
+      .then((result) => {
+        if (!active) return;
+        setDirectHtmlPreview({
+          error: null,
+          path: directHtmlPreviewPath,
+          status: "ready",
+          url: result.url,
+        });
+      })
+      .catch((reason) => {
+        if (!active) return;
+        const message = reason instanceof Error ? reason.message : String(reason);
+        setDirectHtmlPreview({
+          error: `HTML 直接预览初始化失败：${message || "未知错误"}。请重启 Keydex 本地服务后重试。`,
+          path: directHtmlPreviewPath,
+          status: "error",
+          url: null,
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [directHtmlPreviewPath, directHtmlPreviewScopePath, prepareHtmlFile]);
+  const directHtmlPreviewMatches = directHtmlPreview?.path === directHtmlPreviewPath;
+  const directHtmlPreviewPreparing = Boolean(
+    directHtmlPreviewPath
+      && prepareHtmlFile
+      && (!directHtmlPreviewMatches || directHtmlPreview?.status === "loading"),
+  );
+  const directHtmlPreviewUrl = directHtmlPreviewMatches && directHtmlPreview?.status === "ready"
+    ? directHtmlPreview.url
+    : null;
+  const directHtmlPreviewError = directHtmlPreviewMatches && directHtmlPreview?.status === "error"
+    ? directHtmlPreview.error
+    : directHtmlPreviewPath && !prepareHtmlFile
+      ? "HTML 直接预览运行时尚未更新，请刷新 Keydex 页面后重新打开文件。"
+      : null;
   const [markdownRuntimeSnapshot, setMarkdownRuntimeSnapshot] = useState<MarkdownSnapshot | null>(null);
   const [markdownRuntimeSource, setMarkdownRuntimeSource] = useState<string | null>(null);
   const [markdownRuntimeError, setMarkdownRuntimeError] = useState<Error | null>(null);
@@ -320,7 +412,7 @@ export function FilePreview({
       pendingScrollRestoreRef.current = null;
     });
   }, []);
-  const previewBusy = previewLoading || fileOpenSettling;
+  const previewBusy = previewLoading || fileOpenSettling || directHtmlPreviewPreparing;
   const [viewMode, setViewMode] = useState<"preview" | "source">("preview");
   const [splitMode, setSplitMode] = useState(false);
   const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
@@ -880,8 +972,81 @@ export function FilePreview({
   const markdownRuntimePath = revealPath ?? sourceLabel;
   const markdownRuntimeRevision = renderedPreviewRevision;
   const splitViewActive = splitMode && canSplit;
+  const primaryHtmlFrameOwnsScroll = kind === "html" && viewMode === "preview" && !splitViewActive;
+  const htmlFrameOwnsScroll = kind === "html" && (viewMode === "preview" || splitViewActive);
   const sourcePaneScrollElement = splitViewActive ? splitSourceViewport : documentViewport;
   const previewPaneScrollElement = splitViewActive ? splitPreviewViewport : documentViewport;
+  const publishViewportNearBottom = useCallback((nearBottom: boolean) => {
+    if (lastViewportNearBottomRef.current === nearBottom) {
+      return;
+    }
+    lastViewportNearBottomRef.current = nearBottom;
+    onViewportNearBottomChange?.(nearBottom);
+  }, [onViewportNearBottomChange]);
+
+  useEffect(() => {
+    lastViewportNearBottomRef.current = null;
+    onViewportNearBottomChange?.(false);
+  }, [onViewportNearBottomChange, requestIdentity, splitViewActive, viewMode]);
+
+  useEffect(() => {
+    if (!onViewportNearBottomChange || !documentViewport || htmlFrameOwnsScroll) {
+      return;
+    }
+    let frame: number | null = null;
+    const update = () => {
+      frame = null;
+      const clientHeight = documentViewport.clientHeight;
+      if (clientHeight <= 0) {
+        return;
+      }
+      const threshold = Math.max(
+        FILE_PREVIEW_BOTTOM_PROXIMITY_MIN_PX,
+        Math.min(FILE_PREVIEW_BOTTOM_PROXIMITY_MAX_PX, clientHeight * 0.12),
+      );
+      const remaining = documentViewport.scrollHeight - clientHeight - documentViewport.scrollTop;
+      publishViewportNearBottom(
+        documentViewport.scrollHeight <= clientHeight + 1 || remaining <= threshold,
+      );
+    };
+    const schedule = () => {
+      if (frame !== null) {
+        return;
+      }
+      frame = window.requestAnimationFrame(update);
+    };
+    documentViewport.addEventListener("scroll", schedule, { passive: true });
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    resizeObserver?.observe(documentViewport);
+    if (annotationLayoutRef.current) {
+      resizeObserver?.observe(annotationLayoutRef.current);
+    }
+    schedule();
+    return () => {
+      documentViewport.removeEventListener("scroll", schedule);
+      resizeObserver?.disconnect();
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [documentViewport, htmlFrameOwnsScroll, onViewportNearBottomChange, publishViewportNearBottom]);
+
+  useEffect(() => {
+    if (!onViewportNearBottomChange || !htmlFrameOwnsScroll || !htmlFrameElement) {
+      return;
+    }
+    const handleMessage = (event: MessageEvent) => {
+      if (event.source !== htmlFrameElement.contentWindow || !isHtmlPreviewViewportMessage(event.data)) {
+        return;
+      }
+      publishViewportNearBottom(event.data.nearBottom);
+    };
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [htmlFrameElement, htmlFrameOwnsScroll, onViewportNearBottomChange, publishViewportNearBottom]);
+
   useLayoutEffect(() => {
     if (!splitViewActive || !documentViewport) return;
     documentViewport.scrollTop = 0;
@@ -1830,9 +1995,41 @@ export function FilePreview({
 
     if (kind === "html") {
       const htmlDocument = renderedPreviewContent || "<p>文件为空</p>";
+      if (directHtmlPreviewUrl) {
+        return (
+          <PreviewScrollPane
+            className={styles.htmlPane}
+            data-html-frame-scroll-owner="true"
+            data-file-preview-selectable-content="preview"
+            data-resource-annotation-active={wholeResourceAnnotationState.active ? "true" : undefined}
+            data-resource-annotation-highlight={wholeResourceAnnotationState.highlighted ? "true" : undefined}
+            data-resource-annotation-hovered={wholeResourceAnnotationState.hovered ? "true" : undefined}
+            scrollElement={previewPaneScrollElement}
+          >
+            {annotationAvailable ? (
+              <ResourceAnnotationButton label="批注整个 HTML 预览" onClick={startWholeResourceAnnotation} />
+            ) : null}
+            <iframe
+              key={`${directHtmlPreviewUrl}:${hashText(htmlDocument)}`}
+              className={styles.htmlFrame}
+              ref={setHtmlFrameElement}
+              title="HTML 文件预览"
+              src={directHtmlPreviewUrl}
+            />
+          </PreviewScrollPane>
+        );
+      }
+      const htmlFrameSource = resolveHtmlPreviewFrameSource(htmlDocument, {
+        sourcePath: request.type === "file" || request.type === "local-file"
+          ? request.path
+          : request.type === "content"
+            ? request.sourcePath
+            : undefined,
+      });
       return (
         <PreviewScrollPane
           className={styles.htmlPane}
+          data-html-frame-scroll-owner="true"
           data-file-preview-selectable-content="preview"
           data-resource-annotation-active={wholeResourceAnnotationState.active ? "true" : undefined}
           data-resource-annotation-highlight={wholeResourceAnnotationState.highlighted ? "true" : undefined}
@@ -1845,9 +2042,11 @@ export function FilePreview({
           <iframe
             key={hashText(htmlDocument)}
             className={styles.htmlFrame}
+            ref={setHtmlFrameElement}
             title="HTML 文件预览"
-            sandbox=""
-            srcDoc={htmlDocument}
+            sandbox={htmlFrameSource.sandbox}
+            src={htmlFrameSource.kind === "url" ? htmlFrameSource.src : undefined}
+            srcDoc={htmlFrameSource.kind === "srcdoc" ? htmlFrameSource.srcDoc : undefined}
           />
         </PreviewScrollPane>
       );
@@ -1892,6 +2091,7 @@ export function FilePreview({
               <div
                 ref={setSplitPreviewViewport}
                 className={styles.splitScrollViewport}
+                data-scroll-owner={kind === "html" ? "html-frame" : undefined}
                 data-split-scroll-pane="preview"
               >
                 {renderPreviewPane()}
@@ -2012,15 +2212,10 @@ export function FilePreview({
       showCopyFeedback("failed");
     }
   };
-  const previewStyle = bottomSafeArea
-    ? ({ "--file-preview-content-bottom-safe-area": bottomSafeArea } as CSSProperties)
-    : undefined;
-
   return (
     <section
       className={styles.preview}
       data-chrome={chrome}
-      data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
       data-file-preview-root="true"
       data-preview-source={request.type}
       data-skill-source={request.type === "skill-resource" ? request.skillSource : undefined}
@@ -2036,7 +2231,6 @@ export function FilePreview({
       data-file-annotation-model-ready={annotationSession.model ? "true" : "false"}
       data-file-markdown-view-id={kind === "markdown" ? resolvedMarkdownViewDescriptor.viewId : undefined}
       aria-label="文件预览"
-      style={previewStyle}
       ref={previewRootRef}
       onKeyDownCapture={handlePreviewKeyDownCapture}
       onFocusCapture={activateFindRoot}
@@ -2094,7 +2288,9 @@ export function FilePreview({
       </header>
 
       {previewBusy ? <FilePreviewLoading label="正在读取文件" /> : null}
-      {error ? <div className={styles.error} role="alert">{error}</div> : null}
+      {error || directHtmlPreviewError ? (
+        <div className={styles.error} role="alert">{error ?? directHtmlPreviewError}</div>
+      ) : null}
       {conflictDialogOpen ? (
         <AppDialog
           title="文件保存冲突"
@@ -2121,7 +2317,7 @@ export function FilePreview({
           <p className={styles.saveConflictMessage}>{FILE_SAVE_CONFLICT_MESSAGE}</p>
         </AppDialog>
       ) : null}
-      {!previewBusy && !error ? (
+      {!previewBusy && !error && !directHtmlPreviewError ? (
         <div className={styles.documentViewportShell}>
           {findOpen ? (
             <FilePreviewFindBar
@@ -2140,9 +2336,9 @@ export function FilePreview({
             className={styles.body}
             data-annotation-rail-open={annotationPanelOpen ? "true" : "false"}
             data-chrome={chrome}
-            data-bottom-safe-area={bottomSafeArea ? "true" : undefined}
             data-custom-scrollbar="true"
             data-document-scroll-viewport="true"
+            data-scroll-owner={primaryHtmlFrameOwnsScroll ? "html-frame" : undefined}
             data-split-mode={splitViewActive ? "true" : undefined}
             data-workspace-document-context={isPathPreviewRequest(request) ? "true" : undefined}
             data-workspace-document-name={isPathPreviewRequest(request) ? fileName(request.path) : undefined}
@@ -2211,7 +2407,7 @@ export function FilePreview({
               ref={setAnnotationActionsHost}
             />
           ) : null}
-          {!splitViewActive ? (
+          {!splitViewActive && !primaryHtmlFrameOwnsScroll ? (
             <FilePreviewScrollRail
               observeSelector={`.${styles.documentCanvas}`}
               railTestId="preview-scroll-rail"
@@ -3969,11 +4165,6 @@ function PreviewScrollPane({
     <div className={styles.previewScrollShell}>
       <div className={className} {...props}>
         {resolvedChildren}
-        <div
-          className={styles.previewScrollBottomSafeArea}
-          data-file-preview-bottom-safe-area="true"
-          aria-hidden="true"
-        />
       </div>
     </div>
   );
@@ -3983,6 +4174,17 @@ interface PreviewScrollPaneProps extends Omit<HTMLAttributes<HTMLDivElement>, "c
   className: string;
   children: ReactNode | ((scrollElement: HTMLElement | null) => ReactNode);
   scrollElement?: HTMLElement | null;
+}
+
+function isHtmlPreviewViewportMessage(value: unknown): value is {
+  type: typeof HTML_PREVIEW_VIEWPORT_MESSAGE_TYPE;
+  nearBottom: boolean;
+} {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const message = value as { type?: unknown; nearBottom?: unknown };
+  return message.type === HTML_PREVIEW_VIEWPORT_MESSAGE_TYPE && typeof message.nearBottom === "boolean";
 }
 
 const FILE_PREVIEW_SCROLL_MIN_THUMB_SIZE = 36;
@@ -4514,7 +4716,7 @@ function codeMirrorTheme(theme: "light" | "dark"): Extension {
       },
       ".cm-content": {
         minHeight: "100%",
-        padding: "10px 0 calc(14px + var(--file-preview-content-bottom-safe-area, 0px))",
+        padding: "10px 0 14px",
       },
       ".cm-line": {
         padding: "0 24px 0 14px",

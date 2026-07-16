@@ -1,61 +1,69 @@
 .root {
+  --git-control-height: 30px;
+  --git-field-height: 32px;
+  --git-ui-font-size: 12px;
+  --git-meta-font-size: 11px;
+  --git-emphasis-color: var(--color-text-1);
+  --git-emphasis-contrast: var(--color-text-inverse);
+  --color-accent-1: var(--git-emphasis-color);
+
   container-type: inline-size;
   display: grid;
   min-width: 0;
   min-height: 0;
   height: 100%;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  background: var(--color-bg-1);
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--surface-bg);
   color: var(--color-text-1);
+  font-family: var(--font-sans);
+  font-size: var(--git-ui-font-size);
+  line-height: var(--ui-line-height-body);
 }
 
-.header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px 8px;
-  border-bottom: 1px solid var(--color-border-2);
-}
-
-.identity {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.identity strong,
-.identity span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.identity strong {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.identity span,
-.repoCount,
 .paneHeader span {
   color: var(--color-text-3);
   font-size: 11px;
 }
 
-.repoCount {
-  flex: 0 0 auto;
+.tabs {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  overflow: visible;
+  border-bottom: 1px solid var(--color-border-2);
+  background: color-mix(in srgb, var(--surface-muted) 32%, var(--surface-bg));
 }
 
-.tabs {
+.projectName {
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabCenter {
   display: flex;
   min-width: 0;
+  align-items: center;
+  justify-content: center;
   gap: 2px;
-  padding: 5px 8px;
+}
+
+.tabsBalance { min-width: 0; }
+
+.primaryTabs {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  gap: 2px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--color-border-2);
-  scrollbar-width: thin;
+  scrollbar-width: auto;
 }
 
 .tab,
@@ -68,12 +76,12 @@
 
 .tab {
   display: inline-flex;
-  min-height: 28px;
+  min-height: var(--git-control-height);
   flex: 0 0 auto;
   align-items: center;
   gap: 5px;
   padding: 0 9px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   font-size: 12px;
 }
 
@@ -90,6 +98,58 @@
   color: var(--color-accent-1);
 }
 
+.moreRoot {
+  position: relative;
+  flex: 0 0 auto;
+  margin-left: 6px;
+}
+
+.moreMenu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 7px);
+  left: 0;
+  display: grid;
+  width: 292px;
+  padding: 6px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+  transform-origin: left top;
+  animation: git-tool-more-enter 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.moreMenuItem {
+  display: grid;
+  min-height: 46px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.moreMenuItem > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.moreMenuItem strong { color: var(--color-text-1); font-size: 12px; }
+.moreMenuItem small { color: var(--color-text-3); font-size: 10px; }
+
+.moreMenuItem:hover,
+.moreMenuItem:focus-visible,
+.moreMenuItem[data-active="true"] {
+  background: var(--surface-hover);
+}
+
 .workspace {
   display: grid;
   min-width: 0;
@@ -103,8 +163,19 @@
   overflow: hidden;
 }
 
+.workspace[data-navigation="hidden"] {
+  grid-template-columns:
+    clamp(280px, var(--git-detail-pane-width, 28%), 42%)
+    5px
+    minmax(0, 1fr);
+}
+
 .root[data-layout="split"] .workspace {
   grid-template-columns: clamp(92px, var(--git-navigation-pane-width, 19%), 35%) 5px minmax(180px, 1fr);
+}
+
+.root[data-layout="split"] .workspace[data-navigation="hidden"] {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .root[data-layout="split"] .details,
@@ -118,17 +189,23 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  scrollbar-width: thin;
+  scrollbar-width: auto;
 }
 
 .navigation,
 .details {
   padding: 10px 8px;
+  background: color-mix(in srgb, var(--surface-muted) 20%, var(--surface-bg));
+}
+
+.navigation > * + * {
+  margin-top: 8px;
 }
 
 .separator {
   position: relative;
-  z-index: 1;
+  z-index: 4;
+  min-width: 5px;
   cursor: col-resize;
   touch-action: none;
   background: transparent;
@@ -140,13 +217,16 @@
   inset: 0 2px;
   background: var(--color-border-2);
   content: "";
+  transition:
+    inset var(--motion-fast) var(--motion-ease-out),
+    background-color var(--motion-fast) var(--motion-ease-out);
 }
 
 .separator:hover::before,
 .separator:focus-visible::before,
 .separator[data-dragging="true"]::before {
   inset: 0 1px;
-  background: var(--color-accent-1);
+  background: color-mix(in srgb, var(--color-text-3) 42%, transparent);
 }
 
 .paneTitle {
@@ -166,7 +246,7 @@
   align-items: center;
   gap: 6px;
   padding: 6px 7px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font-size: 12px;
   text-align: left;
 }
@@ -247,11 +327,11 @@
 }
 
 .stateAction {
-  min-height: 30px;
+  min-height: var(--git-control-height);
   margin-top: 4px;
   padding: 0 12px;
   border: 1px solid var(--color-border-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--surface-active);
   color: var(--color-text-1);
   cursor: pointer;
@@ -288,20 +368,150 @@
   to { transform: translateX(122%); }
 }
 
-@container (max-width: 900px) {
-  .workspace,
-  .root[data-layout="split"] .workspace {
-    grid-template-columns: minmax(90px, 0.5fr) 1px minmax(180px, 2fr);
+@keyframes git-tool-more-enter {
+  from {
+    opacity: 0;
+    transform: translate(-4px, -4px) scale(0.985);
   }
-
-  .details,
-  .workspace > .separator:last-of-type {
-    display: none;
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
+/*
+ * Git owns complex interaction semantics, but its controls must still speak the
+ * same visual language as the rest of Keydex. Keep this feature-level adapter
+ * at the host boundary so child views cannot silently drift back to IDE-sized
+ * controls or native scrollbars.
+ */
+.root :global(button),
+.root :global(input),
+.root :global(select),
+.root :global(textarea) {
+  font-family: var(--font-sans);
+}
+
+.root :global(button) {
+  min-height: var(--git-control-height);
+  border-radius: var(--radius-md);
+  font-size: var(--git-ui-font-size);
+  line-height: var(--ui-line-height-compact);
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    opacity var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.root :global(button[aria-label]) {
+  min-width: var(--git-control-height);
+}
+
+.root :global(button:not(:disabled):active) {
+  transform: scale(0.98);
+}
+
+.root :global(input:not([type="checkbox"]):not([type="radio"])),
+.root :global(select) {
+  min-height: var(--git-field-height);
+  border-radius: var(--radius-md);
+  font-size: var(--git-ui-font-size);
+}
+
+.root :global(textarea) {
+  border-radius: var(--radius-md);
+  font-size: var(--git-ui-font-size);
+  line-height: var(--ui-line-height-body);
+}
+
+.root :global(input[type="checkbox"]),
+.root :global(input[type="radio"]) {
+  accent-color: var(--color-accent-1);
+}
+
+.root :global([role="treeitem"]),
+.root :global([role="option"]),
+.root :global([role="menuitem"]) {
+  border-radius: var(--radius-md);
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out);
+}
+
+.root .tab {
+  border-radius: var(--radius-pill);
+}
+
+.root :global([data-git-history-row="true"]) {
+  border-radius: 0;
+}
+
+.root :global([role="menu"]) {
+  border-color: var(--color-border-2);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-popover);
+}
+
+.root :global(strong) {
+  font-size: var(--git-ui-font-size);
+}
+
+.root :global(span:not([aria-hidden="true"])),
+.root :global(p),
+.root :global(label),
+.root :global(time),
+.root :global(em) {
+  font-size: var(--git-ui-font-size);
+}
+
+.root :global(small) {
+  font-size: var(--git-meta-font-size);
+}
+
+.root :global(code),
+.root :global(pre) {
+  font-size: var(--git-meta-font-size);
+}
+
+.root :global([data-git-diff-viewer] [role="table"] span) {
+  font-size: var(--git-meta-font-size);
+}
+
+.root,
+.root * {
+  scrollbar-color: var(--color-border-3) transparent;
+  scrollbar-width: auto;
+}
+
+.root *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.root *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.root *::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-3);
+  background-clip: padding-box;
+}
+
+.root *::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-3);
+  background-clip: padding-box;
+}
+
+.root *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 @container (max-width: 560px) {
-  .header { align-items: flex-start; }
   .tabs { padding-inline: 6px; }
   .workspace,
   .root[data-layout="split"] .workspace {
@@ -311,14 +521,17 @@
   .navigation { border-bottom: 1px solid var(--color-border-2); }
   .workspace > .separator,
   .details { display: none; }
-}
 
-@container (min-width: 1600px) {
-  .workspace {
-    grid-template-columns: 260px 1px minmax(560px, 1fr) 1px 420px;
+  .workspace[data-navigation="hidden"],
+  .root[data-layout="split"] .workspace[data-navigation="hidden"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .loadingBar::after { animation: none; }
+  .loadingBar::after,
+  .moreMenu { animation: none; }
+
+  .root :global(button) { transition: none; }
 }

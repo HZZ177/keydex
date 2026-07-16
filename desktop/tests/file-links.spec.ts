@@ -5,6 +5,7 @@ import {
   parseFileLinkTarget,
   parseMarkdownFileLinkExpression,
   resolveRelativeFileLinkPath,
+  workspaceAbsoluteFilePath,
   workspaceRelativeFilePath,
 } from "@/renderer/utils/fileLinks";
 
@@ -62,6 +63,18 @@ describe("file link target parsing", () => {
     ).toBe("docs/README.md");
     expect(workspaceRelativeFilePath("D:/docs/README.md", "D:/Pycharm Projects/keydex")).toBeNull();
     expect(workspaceRelativeFilePath("D:/repo-copy/README.md", "D:/repo")).toBeNull();
+  });
+
+  it("derives absolute preview paths without allowing workspace escapes", () => {
+    expect(
+      workspaceAbsoluteFilePath(
+        ".ktaicoding/prototype/A2UI/index.html",
+        "D:\\Pycharm Projects\\kt-agent-framework",
+      ),
+    ).toBe("D:/Pycharm Projects/kt-agent-framework/.ktaicoding/prototype/A2UI/index.html");
+    expect(workspaceAbsoluteFilePath("../outside.html", "D:/repo")).toBeNull();
+    expect(workspaceAbsoluteFilePath("D:\\standalone\\index.html", "D:/repo"))
+      .toBe("D:/standalone/index.html");
   });
 
   it("parses only complete standard markdown file link expressions", () => {

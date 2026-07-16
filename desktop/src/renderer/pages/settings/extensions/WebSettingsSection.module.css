@@ -6,7 +6,8 @@
 .headingRow,
 .providerRow,
 .providerSummary,
-.fieldBoolean {
+.fieldBoolean,
+.applyRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -26,18 +27,54 @@
   font-weight: 650;
 }
 
+.headingActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+}
+
+.configureButton {
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 9px;
+}
+
+.configureButton:hover,
+.configureButton:focus-visible {
+  background: color-mix(in srgb, var(--surface-hover) 76%, transparent);
+  color: var(--color-text-primary);
+}
+
+.configureButton:focus-visible {
+  box-shadow: var(--settings-focus-ring, 0 0 0 2px color-mix(in srgb, var(--color-border-3) 24%, transparent));
+}
+
+.configureButton:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
 .headingRow p,
 .providerCopy span,
 .providerSummary p,
 .helpText,
-.loading {
+.loading,
+.applyRow p {
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
 
 .headingRow p,
 .providerSummary p,
-.loading {
+.loading,
+.applyRow p {
   margin: 4px 0 0;
 }
 
@@ -52,7 +89,8 @@
 .providerRow,
 .providerSummary,
 .fields,
-.loading {
+.loading,
+.applyRow {
   padding: 12px 14px;
 }
 
@@ -229,7 +267,8 @@
 }
 
 .secretActions button,
-.secondaryButton {
+.secondaryButton,
+.primaryButton {
   display: inline-flex;
   height: 32px;
   align-items: center;
@@ -244,16 +283,72 @@
   padding: 0 12px;
 }
 
-.secretActions button:focus-visible,
-.secondaryButton:focus-visible {
+.secretActions button:focus-visible:not(:disabled),
+.secondaryButton:focus-visible:not(:disabled),
+.primaryButton:focus-visible:not(:disabled) {
   outline: 0;
   box-shadow: var(--settings-focus-ring, 0 0 0 2px color-mix(in srgb, var(--color-border-3) 24%, transparent));
 }
 
 .secretActions button:disabled,
-.secondaryButton:disabled {
+.secondaryButton:disabled,
+.primaryButton:disabled {
   cursor: default;
   opacity: 0.48;
+}
+
+.applyRow {
+  min-height: 40px;
+}
+
+.applyRow p {
+  line-height: 1.5;
+}
+
+.primaryButton {
+  border-color: var(
+    --settings-button-border-strong,
+    color-mix(in srgb, var(--color-border-3) 66%, var(--color-border-default))
+  );
+  background: var(
+    --settings-button-primary-bg,
+    color-mix(in srgb, var(--surface-muted) 70%, var(--color-bg-elevated))
+  );
+  box-shadow: var(
+    --settings-button-shadow,
+    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 72%, transparent)
+  );
+  color: var(--color-text-primary);
+  font-weight: 560;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.primaryButton:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-border-3) 72%, var(--color-border-default));
+  background: var(
+    --settings-button-hover-bg,
+    color-mix(in srgb, var(--surface-hover) 78%, var(--color-bg-elevated))
+  );
+  box-shadow: var(
+    --settings-button-hover-shadow,
+    0 1px 4px rgb(15 23 42 / 7%),
+    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 88%, transparent)
+  );
+  transform: translateY(-1px);
+}
+
+.primaryButton:disabled {
+  border-color: color-mix(in srgb, var(--color-border-default) 76%, transparent);
+  background: var(--surface-muted);
+  box-shadow: none;
+  color: var(--color-text-tertiary);
+  opacity: 1;
+  transform: none;
 }
 
 .visibilityButton {
@@ -313,7 +408,8 @@
 @media (max-width: 760px) {
   .providerRow,
   .providerSummary,
-  .fieldBoolean {
+  .fieldBoolean,
+  .applyRow {
     align-items: stretch;
     flex-direction: column;
   }

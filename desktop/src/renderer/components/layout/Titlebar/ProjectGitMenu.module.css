@@ -1,4 +1,6 @@
 .root {
+  --color-accent-1: var(--color-text-1);
+
   position: relative;
   flex: 0 0 auto;
 }
@@ -10,24 +12,38 @@
   align-items: center;
   gap: 5px;
   padding: 0 9px;
-  border: 1px solid var(--control-pill-border);
+  border: 1px solid color-mix(in srgb, var(--color-border-strong) 48%, transparent);
   border-radius: var(--radius-pill);
-  background: var(--control-pill-bg);
+  background: color-mix(in srgb, var(--control-pill-bg) 82%, transparent);
   color: var(--color-text-2);
   font-size: 12px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 8%),
+    inset 0 -1px 0 rgb(9 10 16 / 8%),
+    0 2px 8px rgb(9 10 16 / 10%);
+  backdrop-filter: blur(12px) saturate(1.12);
+  -webkit-backdrop-filter: blur(12px) saturate(1.12);
 }
 
 .trigger:not(:disabled) { cursor: pointer; }
 .trigger:not(:disabled):hover,
 .trigger:not(:disabled):focus-visible,
 .trigger[aria-expanded="true"] {
-  border-color: var(--control-pill-border);
-  background: var(--control-pill-active-bg);
+  border-color: color-mix(in srgb, var(--color-text-1) 12%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--control-pill-active-bg) 92%, transparent);
   color: var(--color-text-1);
 }
 
 .trigger:disabled {
   opacity: 0.45;
+}
+
+.trigger > svg:last-child {
+  transition: transform 160ms var(--motion-ease-standard);
+}
+
+.trigger[aria-expanded="true"] > svg:last-child {
+  transform: rotate(180deg);
 }
 
 .branch {
@@ -37,20 +53,10 @@
   white-space: nowrap;
 }
 
-.badge,
 .sync {
   flex: 0 0 auto;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
-}
-
-.badge {
-  min-width: 17px;
-  padding: 1px 4px;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-accent-1) 14%, transparent);
-  color: var(--color-accent-1);
-  text-align: center;
 }
 
 .sync { color: var(--color-text-3); }
@@ -61,31 +67,22 @@
   top: calc(100% + 7px);
   left: 0;
   display: grid;
-  width: 286px;
-  overflow: hidden;
+  width: min(520px, calc(100vw - 24px));
+  overflow: visible;
   padding: 6px;
-  border: 1px solid var(--color-border-2);
+  border: 1px solid color-mix(in srgb, var(--color-border-2) 68%, var(--color-text-2) 32%);
   border-radius: var(--radius-md);
-  background: var(--color-bg-elevated);
-  box-shadow: var(--shadow-lg);
+  background: color-mix(in srgb, var(--color-bg-elevated) 95%, var(--color-text-1) 5%);
+  box-shadow: 0 16px 42px rgb(0 0 0 / 24%), 0 2px 8px rgb(0 0 0 / 14%);
+  transform-origin: left top;
+  animation: git-menu-enter 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.summary {
-  display: grid;
-  gap: 2px;
-  padding: 7px 9px 9px;
-  border-bottom: 1px solid var(--color-border-2);
+.menu[data-state="closing"] {
+  pointer-events: none;
+  animation: git-menu-exit 150ms ease-in both;
 }
 
-.summary strong,
-.summary span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.summary strong { font-size: 12px; }
-.summary span,
 .metrics { color: var(--color-text-3); font-size: 11px; }
 
 .search {
@@ -97,6 +94,7 @@
   padding: 0 7px;
   border: 1px solid var(--color-border-2);
   border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-1) 90%, var(--color-text-1) 10%);
   color: var(--color-text-3);
 }
 
@@ -150,12 +148,38 @@
   font-size: 10px;
 }
 
+.busyIcon {
+  animation: git-menu-spin 800ms linear infinite;
+}
+
+.successIcon {
+  color: var(--color-success, #2e9b59);
+  animation: git-success-pop 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes git-menu-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes git-success-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .commandForm {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 4px;
   padding: 6px 3px;
   border-top: 1px solid var(--color-border-2);
+  transform-origin: top;
+  animation: git-panel-enter 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .commandForm input {
@@ -206,10 +230,16 @@
   overflow-y: auto;
   padding: 3px 0;
   border-top: 1px solid var(--color-border-2);
-  scrollbar-width: thin;
+  scrollbar-width: auto;
 }
 
 .refGroup { display: grid; }
+
+.refItems {
+  display: grid;
+  transform-origin: top;
+  animation: git-panel-enter 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
 
 .groupHeader,
 .refItem {
@@ -238,27 +268,59 @@
 }
 
 .refItem {
-  gap: 6px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) minmax(0, auto) auto 12px;
+  gap: 7px;
   padding: 0 8px 0 28px;
 }
 
-.refItem > span:nth-child(2) {
+.refName {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.refItem small {
-  margin-left: auto;
+.refUpstream {
+  max-width: 160px;
+  overflow: hidden;
   color: var(--color-text-3);
-  font-size: 10px;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.refCurrent {
-  width: 8px;
-  color: var(--color-accent-1);
-  font-size: 8px;
+.refItem small {
+  color: var(--color-text-3);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.refIcon {
+  display: inline-grid;
+  width: 16px;
+  height: 18px;
+  place-items: center;
+  color: var(--color-text-3);
+}
+
+.refIcon[data-tone="mainline"],
+.refIcon[data-tone="current"],
+.refIcon[data-tone="upstream"] {
+  color: color-mix(in srgb, #d99b21 78%, var(--color-text-1));
+}
+
+.refIcon[data-tone="tag"] {
+  color: color-mix(in srgb, #8b7cf6 78%, var(--color-text-1));
+}
+
+.refIcon[data-tone="remote"] {
+  color: color-mix(in srgb, var(--color-accent-1) 76%, var(--color-text-2));
+}
+
+.refChevron {
+  color: var(--color-text-3);
+  opacity: 0.72;
 }
 
 .groupHeader:hover,
@@ -269,6 +331,61 @@
   color: var(--color-text-1);
 }
 
+.refItem[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--color-accent-1) 18%, var(--surface-active));
+  color: var(--color-text-1);
+}
+
+.refSubmenu {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  width: 264px;
+  max-height: min(360px, calc(100vh - 24px));
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-2) 62%, var(--color-text-2) 38%);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg-elevated) 92%, var(--color-text-1) 8%);
+  box-shadow: 0 14px 34px rgb(0 0 0 / 26%), 0 2px 8px rgb(0 0 0 / 16%);
+}
+
+.refSubmenu[data-side="right"] {
+  left: calc(100% + 8px);
+  transform-origin: left top;
+  animation: git-submenu-enter-right 145ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.refSubmenu[data-side="left"] {
+  right: calc(100% + 8px);
+  transform-origin: right top;
+  animation: git-submenu-enter-left 145ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.refSubmenuItem {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-2);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.refSubmenuItem:hover,
+.refSubmenuItem:focus-visible {
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.submenuSeparator {
+  height: 1px;
+  margin: 5px 3px;
+  background: var(--color-border-2);
+}
+
 .helpOverlay {
   position: fixed;
   z-index: 300;
@@ -277,6 +394,7 @@
   place-items: center;
   padding: 24px;
   background: rgb(0 0 0 / 46%);
+  animation: git-overlay-enter 150ms ease-out both;
 }
 
 .helpDialog {
@@ -287,6 +405,8 @@
   border-radius: var(--radius-lg);
   background: var(--color-bg-elevated);
   box-shadow: var(--shadow-lg);
+  transform-origin: center;
+  animation: git-dialog-enter 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .helpHeader {
@@ -357,9 +477,136 @@
 .helpBody ul { margin: 0; }
 .helpBody ul { padding-left: 18px; }
 
+.refTree,
+.refSubmenu,
+.helpBody {
+  scrollbar-color: var(--color-border-3) transparent;
+  scrollbar-width: auto;
+}
+
+.refTree::-webkit-scrollbar,
+.refSubmenu::-webkit-scrollbar,
+.helpBody::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.refTree::-webkit-scrollbar-track,
+.refSubmenu::-webkit-scrollbar-track,
+.helpBody::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.refTree::-webkit-scrollbar-thumb,
+.refSubmenu::-webkit-scrollbar-thumb,
+.helpBody::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-3);
+  background-clip: padding-box;
+}
+
+.refTree::-webkit-scrollbar-thumb:hover,
+.refSubmenu::-webkit-scrollbar-thumb:hover,
+.helpBody::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-3);
+  background-clip: padding-box;
+}
+
+.refTree::-webkit-scrollbar-corner,
+.refSubmenu::-webkit-scrollbar-corner,
+.helpBody::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 .helpBody footer {
   padding-top: 12px;
   border-top: 1px solid var(--color-border-2);
   color: var(--color-text-3);
   font-size: 11px;
+}
+
+@keyframes git-menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes git-menu-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.985);
+  }
+}
+
+@keyframes git-submenu-enter-right {
+  from {
+    opacity: 0;
+    transform: translateX(-6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes git-submenu-enter-left {
+  from {
+    opacity: 0;
+    transform: translateX(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes git-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scaleY(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+@keyframes git-overlay-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes git-dialog-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trigger > svg:last-child { transition: none; }
+
+  .menu,
+  .refSubmenu,
+  .refItems,
+  .commandForm,
+  .helpOverlay,
+  .helpDialog,
+  .successIcon {
+    animation: none;
+  }
 }

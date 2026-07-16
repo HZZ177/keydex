@@ -2121,6 +2121,10 @@ export interface AgentCompletedPayload {
 
 export interface AgentErrorData {
   session_id?: string;
+  source_action?: string;
+  workspace_id?: string;
+  repository_id?: string;
+  watch_id?: string;
   timestamp_ms?: number;
   first_token_at_ms?: number;
   code?: string | number;

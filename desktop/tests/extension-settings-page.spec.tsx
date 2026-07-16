@@ -40,10 +40,10 @@ describe("ExtensionSettingsPage", () => {
     expect(screen.queryByLabelText("保留轮数")).toBeNull();
     expect(screen.getByText("约 204,800 token 时自动压缩上下文")).not.toBeNull();
     expect(screen.queryByText("快速模型未配置，标题生成不可用")).toBeNull();
-    expect(screen.getAllByRole("button", { name: "保存" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
   });
 
-  it("saves the whole extension settings page in one request", async () => {
+  it("automatically coalesces extension setting changes", async () => {
     const saveExtensionSettings = vi.fn((payload: AgentRuntimeSettings) => Promise.resolve(payload));
     const runtime = fakeRuntime({ saveExtensionSettings, fastConfigured: true });
 
@@ -59,11 +59,8 @@ describe("ExtensionSettingsPage", () => {
     for (let index = 0; index < 5; index += 1) {
       fireEvent.keyDown(triggerSlider, { key: "ArrowLeft" });
     }
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-
     await waitFor(() => {
-      expect(saveExtensionSettings).toHaveBeenCalledTimes(1);
-      expect(saveExtensionSettings).toHaveBeenCalledWith({
+      expect(saveExtensionSettings).toHaveBeenLastCalledWith({
         file_edit_tool_style: "claude_code",
         auto_title: {
           enabled: true,
@@ -85,10 +82,10 @@ describe("ExtensionSettingsPage", () => {
         },
       });
     });
-    expect(await screen.findByText("扩展功能配置已保存")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
   });
 
-  it("uses the one page-level save action for extension and Web settings", async () => {
+  it("keeps Web credentials staged until they are saved", async () => {
     const saveExtensionSettings = vi.fn((payload: AgentRuntimeSettings) => Promise.resolve(payload));
     const saveWebSettings = vi.fn(async (_payload: UpdateWebSettingsPayload) => webSettingsResponse());
     const runtime = fakeRuntime({
@@ -100,12 +97,17 @@ describe("ExtensionSettingsPage", () => {
     renderWithNotifications(<ExtensionSettingsPage runtime={runtime} />);
 
     await screen.findByRole("heading", { name: "网络搜索" });
+    fireEvent.click(screen.getByRole("button", { name: "配置" }));
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "new-secret" } });
-    expect(screen.queryByRole("button", { name: "保存网络设置" })).toBeNull();
+    expect(screen.getByRole("button", { name: "保存" })).not.toBeNull();
+    expect(saveExtensionSettings).not.toHaveBeenCalled();
+    expect(saveWebSettings).not.toHaveBeenCalled();
+
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(saveExtensionSettings).toHaveBeenCalledTimes(1);
+      expect(saveExtensionSettings).not.toHaveBeenCalled();
+      expect(runtime.settings.checkWebProvider).not.toHaveBeenCalled();
       expect(saveWebSettings).toHaveBeenCalledWith(
         expect.objectContaining({
           providers: expect.objectContaining({
@@ -116,10 +118,9 @@ describe("ExtensionSettingsPage", () => {
         }),
       );
     });
-    expect(await screen.findByText("扩展功能配置已保存")).not.toBeNull();
   });
 
-  it("shows missing Web credentials in the top notification before saving anything", async () => {
+  it("opens first-time Web configuration without validating or persisting", async () => {
     const saveExtensionSettings = vi.fn((payload: AgentRuntimeSettings) => Promise.resolve(payload));
     const saveWebSettings = vi.fn(async (_payload: UpdateWebSettingsPayload) => webSettingsResponse());
     const runtime = fakeRuntime({
@@ -132,12 +133,13 @@ describe("ExtensionSettingsPage", () => {
 
     await screen.findByRole("heading", { name: "网络搜索" });
     fireEvent.click(screen.getByRole("switch", { name: "启用网络搜索" }));
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByTestId("web-settings-section").querySelector('[role="alert"]')).toBeNull();
     expect(screen.queryByText("配置会从下一轮对话开始生效，不会中断当前回答。")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-
-    expect(await screen.findByText("请先填写 API Key 后再保存")).not.toBeNull();
-    expect(screen.getByTestId("notification-viewport").textContent).toContain("请先填写 API Key 后再保存");
+    expect(await screen.findByText("请先填写 API Key，配置完整后即可保存并启用。")).not.toBeNull();
+    expect(screen.getByLabelText("API Key")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "保存并启用" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("switch", { name: "启用网络搜索" }).getAttribute("aria-checked")).toBe("false");
+    expect(runtime.settings.checkWebProvider).not.toHaveBeenCalled();
     expect(saveExtensionSettings).not.toHaveBeenCalled();
     expect(saveWebSettings).not.toHaveBeenCalled();
   });
@@ -165,17 +167,16 @@ describe("ExtensionSettingsPage", () => {
 
     fireEvent.click(screen.getByRole("switch", { name: "启用 A2UI" }));
     fireEvent.click(screen.getByRole("switch", { name: "显示 A2UI 调试入口" }));
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(saveExtensionSettings).toHaveBeenCalledWith({
+      expect(saveExtensionSettings).toHaveBeenLastCalledWith({
         ...defaultExtensionSettings(),
         a2ui: { enabled: true, debug_info_enabled: true },
       });
     });
   });
 
-  it("saves disabled switch states through the page-level save button", async () => {
+  it("saves disabled switch states immediately", async () => {
     const saveExtensionSettings = vi.fn((payload: AgentRuntimeSettings) => Promise.resolve(payload));
     const runtime = fakeRuntime({ saveExtensionSettings, fastConfigured: true });
 
@@ -183,7 +184,6 @@ describe("ExtensionSettingsPage", () => {
 
     await screen.findByText("重复工具调用保护");
     fireEvent.click(screen.getByRole("switch", { name: "启用重复保护" }));
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
       expect(saveExtensionSettings).toHaveBeenCalledWith({
@@ -194,6 +194,21 @@ describe("ExtensionSettingsPage", () => {
         },
       });
     });
+  });
+
+  it("rolls back an automatic extension setting change when persistence fails", async () => {
+    const saveExtensionSettings = vi.fn().mockRejectedValue(new Error("扩展功能保存失败"));
+    const runtime = fakeRuntime({ saveExtensionSettings, fastConfigured: true });
+
+    renderWithNotifications(<ExtensionSettingsPage runtime={runtime} />);
+
+    await screen.findByText("重复工具调用保护");
+    const toggle = screen.getByRole("switch", { name: "启用重复保护" });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(toggle);
+
+    expect(await screen.findByText("扩展功能保存失败")).not.toBeNull();
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
   });
 
   it("blocks enabling title generation when fast model is missing", async () => {
@@ -209,7 +224,7 @@ describe("ExtensionSettingsPage", () => {
     fireEvent.click(screen.getByRole("switch", { name: "启用标题生成" }));
 
     expect(screen.getByRole("alert").textContent).toContain("快速模型未配置，标题生成不可用");
-    expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "配置模型" }));
 
     expect(saveExtensionSettings).not.toHaveBeenCalled();
@@ -228,14 +243,14 @@ describe("ExtensionSettingsPage", () => {
     await screen.findByText("上下文压缩");
 
     expect(screen.getByRole("alert").textContent).toContain("默认对话模型未配置，上下文压缩不可用");
-    expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "配置模型" }));
 
     expect(saveExtensionSettings).not.toHaveBeenCalled();
     expect(onOpenModelConfig).toHaveBeenCalledTimes(1);
   });
 
-  it("disables page save when title length is invalid", async () => {
+  it("does not apply an invalid title length", async () => {
     const saveExtensionSettings = vi.fn();
     const runtime = fakeRuntime({ saveExtensionSettings });
 
@@ -245,11 +260,11 @@ describe("ExtensionSettingsPage", () => {
     fireEvent.change(screen.getByLabelText("期望标题最大长度"), { target: { value: "51" } });
 
     expect(screen.getByText("期望标题最大长度必须在 4 到 50 之间")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
     expect(saveExtensionSettings).not.toHaveBeenCalled();
   });
 
-  it("disables page save when duplicate guard threshold is invalid", async () => {
+  it("does not apply an invalid duplicate guard threshold", async () => {
     const saveExtensionSettings = vi.fn();
     const runtime = fakeRuntime({ saveExtensionSettings });
 
@@ -259,11 +274,11 @@ describe("ExtensionSettingsPage", () => {
     fireEvent.change(screen.getByLabelText("连续重复阈值"), { target: { value: "0" } });
 
     expect(screen.getByText("连续重复阈值必须在 1 到 20 之间")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
     expect(saveExtensionSettings).not.toHaveBeenCalled();
   });
 
-  it("disables page save when a saved context compression trigger exceeds the allowed threshold", async () => {
+  it("does not rewrite a saved invalid compression trigger until it is corrected", async () => {
     const saveExtensionSettings = vi.fn();
     const runtime = fakeRuntime({
       saveExtensionSettings,
@@ -281,11 +296,11 @@ describe("ExtensionSettingsPage", () => {
     await screen.findByText("上下文压缩");
 
     expect(screen.getByText("触发阈值必须在 10% 到 95% 之间")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
     expect(saveExtensionSettings).not.toHaveBeenCalled();
   });
 
-  it("disables page save when context compression window is invalid", async () => {
+  it("does not apply an invalid context compression window", async () => {
     const saveExtensionSettings = vi.fn();
     const runtime = fakeRuntime({ saveExtensionSettings });
 
@@ -295,7 +310,7 @@ describe("ExtensionSettingsPage", () => {
     fireEvent.change(screen.getByLabelText("模型上下文窗口"), { target: { value: "999" } });
 
     expect(screen.getByText("上下文窗口必须在 1000 到 2000000 token 之间")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
     expect(saveExtensionSettings).not.toHaveBeenCalled();
   });
 });
@@ -327,7 +342,12 @@ function fakeRuntime({
       getModelDefaults: vi.fn().mockResolvedValue(modelDefaultsResponse(fastConfigured, defaultChatConfigured)),
       ...(webResponse
         ? {
-            checkWebProvider: vi.fn(),
+            checkWebProvider: vi.fn(async (providerId: string) => ({
+              provider_id: providerId,
+              ok: true,
+              duration_ms: 20,
+              error: null,
+            })),
             getWebSettings: vi.fn().mockResolvedValue(webResponse),
             saveWebSettings,
           }

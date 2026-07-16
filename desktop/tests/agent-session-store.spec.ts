@@ -3908,6 +3908,28 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentRuntimeState(state, "ses-2")).toBe("failed");
   });
 
+  it("keeps unscoped infrastructure errors out of the selected conversation", () => {
+    const state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "session/select",
+      sessionId: "ses-current",
+    });
+
+    const next = reduceAgentWsEvent(state, {
+      action: "error",
+      data: {
+        code: "git_unavailable",
+        message: "Git metadata watch is unavailable",
+        source_action: "bind_git_repository_watch",
+        workspace_id: "workspace-1",
+        repository_id: "repo-1",
+      },
+    });
+
+    expect(next).toBe(state);
+    expect(selectAgentMessages(next, "ses-current")).toEqual([]);
+    expect(selectAgentRuntimeState(next, "ses-current")).toBe("idle");
+  });
+
   it("does not synthesize ghost stats when completed has no trace or token data", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, { action: "stream", data: { session_id: "ses-1", content: "完成" } });

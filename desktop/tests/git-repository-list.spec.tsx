@@ -9,7 +9,7 @@ afterEach(cleanup);
 describe("multi-root Git navigation", () => {
   it("shows selected root, hierarchy, and an aggregate project summary", () => {
     render(<GitRepositoryList items={items()} selectedRepositoryId={"nested" as never} onSelect={vi.fn()} />);
-    expect(screen.getByLabelText("All Git repositories summary").textContent).toContain("2 roots · 3 changes · ↑2 ↓1");
+    expect(screen.getByLabelText("全部 Git 仓库摘要").textContent).toContain("2 个根目录 · 3 个改动 · ↑2 ↓1");
     const root = screen.getByRole("option", { name: /project/ });
     const nested = screen.getByRole("option", { name: /packages\/app/ });
     expect(root.getAttribute("aria-selected")).toBe("false");

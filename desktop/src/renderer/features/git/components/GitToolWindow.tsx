@@ -1,4 +1,4 @@
-import { AlertTriangle, GitBranch, GitCommitHorizontal, GitPullRequest, History, ListChecks } from "lucide-react";
+import { AlertTriangle, ChevronDown, FileClock, GitBranch, GitCommitHorizontal, GitPullRequest, History, ListChecks, MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 
 import type { ActiveProjectState, GitRepositoryRoot } from "@/renderer/features/git/activeProject";
@@ -44,15 +44,27 @@ import { commitSelectionFromEntries, type GitChangeEntry } from "../changesTree"
 
 export type GitToolWindowView = "changes" | "history" | "blame" | "reflog" | "branches" | "stash" | "operations";
 
-const VIEWS: readonly { id: GitToolWindowView; label: string; icon: typeof GitBranch }[] = [
-  { id: "blame", label: "Blame", icon: History },
-  { id: "reflog", label: "Reflog", icon: History },
-  { id: "changes", label: "本地改动", icon: GitPullRequest },
-  { id: "history", label: "提交历史", icon: History },
+const PRIMARY_VIEWS: readonly { id: GitToolWindowView; label: string; icon: typeof GitBranch }[] = [
+  { id: "changes", label: "提交", icon: GitPullRequest },
+  { id: "history", label: "Git 日志", icon: History },
   { id: "branches", label: "分支", icon: GitBranch },
-  { id: "stash", label: "暂存区", icon: GitCommitHorizontal },
-  { id: "operations", label: "操作", icon: ListChecks },
 ];
+
+const MORE_VIEWS: readonly { id: GitToolWindowView; label: string; description: string; icon: typeof GitBranch }[] = [
+  { id: "stash", label: "暂存的改动", description: "保存、应用或清理储藏", icon: GitCommitHorizontal },
+  { id: "reflog", label: "恢复提交", description: "通过本地引用记录找回历史", icon: FileClock },
+  { id: "operations", label: "高级 Git 工具", description: "仓库维护、历史修改与诊断", icon: ListChecks },
+];
+
+const VIEW_LABELS: Readonly<Record<GitToolWindowView, string>> = {
+  changes: "提交",
+  history: "Git 日志",
+  blame: "逐行历史",
+  reflog: "恢复提交",
+  branches: "分支",
+  stash: "暂存的改动",
+  operations: "高级 Git 工具",
+};
 
 export interface GitToolWindowProps {
   project: ActiveProjectState | null;
@@ -68,6 +80,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   const gitStore = useOptionalGitStore();
   const projectKey = resolvedProject && resolvedProject.status !== "none" ? resolvedProject.workspaceId : "none";
   const [view, setView] = useState<GitToolWindowView>(initialView);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [projectAction, setProjectAction] = useState<"init" | "grant" | "retry" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [identity, setIdentity] = useState<GitIdentity | null>(null);
@@ -95,6 +108,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   const [selectedHistoryObjectId, setSelectedHistoryObjectId] = useState<GitObjectId | null>(null);
   const [navigationPanePercent, setNavigationPanePercent] = useState(19);
   const [detailPanePercent, setDetailPanePercent] = useState(28);
+  const [commitPanePercent, setCommitPanePercent] = useState(28);
   const [draggingSplitter, setDraggingSplitter] = useState<"navigation" | "details" | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyFilters, setHistoryFilters] = useState<GitHistoryFilters>({ ...EMPTY_GIT_HISTORY_FILTERS });
@@ -138,14 +152,15 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     file: GitConflictFile;
     resolvedIndexEntry: string;
   } | null>(null);
-  const [mutation, setMutation] = useState<"stage" | "patch" | "unstage" | "discard" | "clean" | "ignore" | "commit" | "push" | "checkout" | "branch" | "fetch" | "update" | "stash" | "merge" | "rebase" | "cherry_pick" | "revert" | "reset" | "restore" | "conflict_save" | "conflict_action" | "bisect" | "submodule" | "worktree" | "lfs" | null>(null);
+  const [mutation, setMutation] = useState<"patch" | "commit" | "push" | "checkout" | "branch" | "fetch" | "update" | "stash" | "merge" | "rebase" | "cherry_pick" | "revert" | "reset" | "restore" | "conflict_save" | "conflict_action" | "bisect" | "submodule" | "worktree" | "lfs" | null>(null);
   const tabRefs = useRef(new Map<GitToolWindowView, HTMLButtonElement>());
+  const moreRootRef = useRef<HTMLDivElement | null>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
-  const mutationGateRef = useRef(new Set<string>());
 
   const activateView = (nextView: GitToolWindowView): boolean => {
     if (nextView === view) return true;
-    if (mergeEditorDirty && !window.confirm("The merge result has unsaved changes. Leave without saving?")) return false;
+    if (mergeEditorDirty && !window.confirm("合并结果存在未保存的改动。确定不保存并离开吗？")) return false;
     setMergeEditorDirty(false);
     setView(nextView);
     if (storeSnapshot?.project) {
@@ -153,6 +168,24 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     }
     return true;
   };
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !moreRootRef.current?.contains(event.target)) setMoreOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMoreOpen(false);
+      moreTriggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+      document.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [moreOpen]);
 
   const selectHistoryObjectId = (objectId: GitObjectId | null) => {
     setSelectedHistoryObjectId(objectId);
@@ -164,6 +197,10 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   };
 
   const updatePanePercent = (pane: "navigation" | "details", requestedPercent: number) => {
+    if (pane === "details" && view === "changes") {
+      setCommitPanePercent(Math.min(42, Math.max(18, requestedPercent)));
+      return;
+    }
     const next = pane === "navigation"
       ? Math.min(35, Math.max(12, Math.min(requestedPercent, 72 - detailPanePercent)))
       : Math.min(42, Math.max(18, Math.min(requestedPercent, 72 - navigationPanePercent)));
@@ -182,22 +219,27 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   ) => {
     if (event.button !== 0) return;
     event.preventDefault();
+    const splitter = event.currentTarget;
+    const pointerId = event.pointerId;
+    splitter.setPointerCapture?.(pointerId);
     setDraggingSplitter(pane);
     const updateFromClientX = (clientX: number) => {
       const bounds = workspaceRef.current?.getBoundingClientRect();
       if (!bounds || bounds.width <= 0) return;
-      const percent = pane === "navigation"
+      const percent = pane === "navigation" || (pane === "details" && view === "changes")
         ? ((clientX - bounds.left) / bounds.width) * 100
         : ((bounds.right - clientX) / bounds.width) * 100;
       updatePanePercent(pane, percent);
     };
     const handleMove = (moveEvent: PointerEvent) => updateFromClientX(moveEvent.clientX);
     const handleEnd = () => {
+      if (splitter.hasPointerCapture?.(pointerId)) splitter.releasePointerCapture(pointerId);
       setDraggingSplitter(null);
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleEnd);
       window.removeEventListener("pointercancel", handleEnd);
     };
+    updateFromClientX(event.clientX);
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleEnd);
     window.addEventListener("pointercancel", handleEnd);
@@ -207,8 +249,12 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     pane: "navigation" | "details",
     event: ReactKeyboardEvent<HTMLDivElement>,
   ) => {
-    const current = pane === "navigation" ? navigationPanePercent : detailPanePercent;
-    const direction = pane === "details" ? -1 : 1;
+    const current = pane === "navigation"
+      ? navigationPanePercent
+      : view === "changes"
+        ? commitPanePercent
+        : detailPanePercent;
+    const direction = pane === "details" && view !== "changes" ? -1 : 1;
     let next: number | null = null;
     if (event.key === "ArrowLeft") next = current - (2 * direction);
     if (event.key === "ArrowRight") next = current + (2 * direction);
@@ -242,6 +288,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     setSelectedHistoryObjectId((storeSnapshot?.ui?.selectedHistoryObjectId as GitObjectId | null | undefined) ?? null);
     setNavigationPanePercent(storeSnapshot?.ui?.navigationPanePercent ?? 19);
     setDetailPanePercent(storeSnapshot?.ui?.detailPanePercent ?? 28);
+    setCommitPanePercent(28);
   }, [initialView, projectKey]);
 
   useEffect(() => {
@@ -621,14 +668,10 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   }
 
   const selectedRepository = resolvedProject.repoRoots.find((repository) => repository.id === resolvedProject.selectedRepoId);
-  const amendRef = storeSnapshot?.refs?.find((ref) => ref.current) ?? null;
-  const amendSummary = amendRef
-    ? historyCommits.find((commit) => commit.objectId === amendRef.objectId)?.subject ?? null
-    : null;
-  const activeView = VIEWS.find((candidate) => candidate.id === view) ?? VIEWS[0];
+  const activeViewLabel = VIEW_LABELS[view];
   const selectRepository = (repositoryId: GitRepositoryId) => {
     if (!storeSnapshot?.project || storeSnapshot.project.selectedRepositoryId === repositoryId) return;
-    if (mergeEditorDirty && !window.confirm("The merge result has unsaved changes. Switch repository and discard the editor draft?")) return;
+    if (mergeEditorDirty && !window.confirm("合并结果存在未保存的改动。确定切换仓库并丢弃编辑草稿吗？")) return;
     setMergeEditorDirty(false);
     setActionError(null);
     setCommitOutcome(null);
@@ -663,7 +706,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     if (!runtime || !gitStore || !selectedPath || !storeSnapshot?.project?.selectedRepositoryId) return;
     const file = storeSnapshot.status?.files.find((candidate) => candidate.path === selectedPath || candidate.originalPath === selectedPath);
     try {
-      const cached = entries[0]?.group === "staged"
+      const cached = Boolean(entries[0]?.indexStatus && !entries[0]?.worktreeStatus)
         || Boolean(file?.indexStatus && !file.worktreeStatus);
       setSelectedChangePatchAction(cached ? "unstage" : "stage");
       const diff = await runtime.diff({
@@ -675,27 +718,6 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
       gitStore.getState().setDiff(selected ? { ...diff, files: [selected] } : diff);
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
-    }
-  };
-  const runStage = async (paths: readonly string[]) => {
-    if (!controller || !runtime || !storeSnapshot?.project || !storeSnapshot.project.selectedRepositoryId || paths.length === 0) return;
-    if (!acquireGitMutationGate(mutationGateRef.current, "stage")) return;
-    setMutation("stage");
-    setActionError(null);
-    try {
-      await controller.runCommand(() => runtime.stage({
-        workspaceId: storeSnapshot.project!.workspaceId,
-        projectRoot: storeSnapshot.project!.projectRoot,
-        repositoryId: storeSnapshot.project!.selectedRepositoryId!,
-        idempotencyKey: `tool-window-stage-${Date.now()}`,
-        expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
-        paths: [...paths],
-      }));
-    } catch (error) {
-      setActionError(gitUiErrorMessage(error));
-    } finally {
-      releaseGitMutationGate(mutationGateRef.current, "stage");
-      setMutation(null);
     }
   };
   const runStagePatches = async (patches: readonly string[]) => {
@@ -714,66 +736,6 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
           reverse: selectedChangePatchAction === "unstage",
         }));
       }
-    } catch (error) {
-      setActionError(gitUiErrorMessage(error));
-    } finally {
-      setMutation(null);
-    }
-  };
-  const runUnstage = async (paths: readonly string[]) => {
-    if (!controller || !runtime || !storeSnapshot?.project || !storeSnapshot.project.selectedRepositoryId || paths.length === 0) return;
-    setMutation("unstage");
-    setActionError(null);
-    try {
-      await controller.runCommand(() => runtime.unstage({
-        workspaceId: storeSnapshot.project!.workspaceId,
-        projectRoot: storeSnapshot.project!.projectRoot,
-        repositoryId: storeSnapshot.project!.selectedRepositoryId!,
-        idempotencyKey: `tool-window-unstage-${Date.now()}`,
-        expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
-        paths: [...paths],
-      }));
-    } catch (error) {
-      setActionError(gitUiErrorMessage(error));
-    } finally {
-      setMutation(null);
-    }
-  };
-  const runDestructivePaths = async (kind: "discard" | "clean", paths: readonly string[]) => {
-    if (!controller || !runtime || !storeSnapshot?.project || !storeSnapshot.project.selectedRepositoryId || paths.length === 0) return;
-    setMutation(kind);
-    setActionError(null);
-    const idempotencyKey = `tool-window-${kind}-${Date.now()}`;
-    const command = {
-      workspaceId: storeSnapshot.project.workspaceId,
-      projectRoot: storeSnapshot.project.projectRoot,
-      repositoryId: storeSnapshot.project.selectedRepositoryId,
-      idempotencyKey,
-      expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
-      paths: [...paths],
-    };
-    try {
-      const confirmation = await runtime.confirmation(kind, command);
-      await controller.runCommand(() => runtime[kind]({ ...command, confirmationToken: confirmation.token }));
-    } catch (error) {
-      setActionError(gitUiErrorMessage(error));
-    } finally {
-      setMutation(null);
-    }
-  };
-  const runIgnore = async (paths: readonly string[]) => {
-    if (!controller || !runtime || !storeSnapshot?.project || !storeSnapshot.project.selectedRepositoryId || paths.length === 0) return;
-    setMutation("ignore");
-    setActionError(null);
-    try {
-      await controller.runCommand(() => runtime.ignore({
-        workspaceId: storeSnapshot.project!.workspaceId,
-        projectRoot: storeSnapshot.project!.projectRoot,
-        repositoryId: storeSnapshot.project!.selectedRepositoryId!,
-        idempotencyKey: `tool-window-ignore-${Date.now()}`,
-        expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
-        paths: [...paths],
-      }));
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
     } finally {
@@ -806,7 +768,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
       }
       setCommitOutcome({
           oid: typeof result.result.oid === "string" ? result.result.oid : null,
-          summary: result.summary,
+          summary: "提交成功",
           status: typeof result.result.status === "string" ? result.result.status : result.state,
         });
         setSelectedCommitPaths([]);
@@ -819,10 +781,10 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
           if (!target) {
             setCommitOutcome({
               oid: typeof result.result.oid === "string" ? result.result.oid : null,
-              summary: "Commit succeeded; Push requires an upstream",
+              summary: "提交成功，但推送需要先设置上游",
               status: "commit_succeeded_push_blocked",
             });
-            setActionError("Commit 已成功，但当前分支没有 upstream。请先在分支视图显式设置 upstream 后再 Push。");
+            setActionError("提交已成功，但当前分支没有上游。请先在分支视图明确设置上游后再推送。");
             return;
           }
           const pushed = await controller.runCommand(() => runtime.push({
@@ -837,16 +799,16 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
           if (pushed.state === "succeeded") {
             setCommitOutcome({
               oid: typeof result.result.oid === "string" ? result.result.oid : null,
-              summary: `Committed and pushed to ${target.upstream}`,
+              summary: `已提交并推送到 ${target.upstream}`,
               status: "committed_and_pushed",
             });
           } else {
             setCommitOutcome({
               oid: typeof result.result.oid === "string" ? result.result.oid : null,
-              summary: "Commit succeeded; Push failed",
+              summary: "提交成功，但推送失败",
               status: "commit_succeeded_push_failed",
             });
-            setActionError(`Commit 已成功，但 Push 失败：${gitOperationFailureMessage(pushed)}`);
+            setActionError(`提交已成功，但推送失败：${gitOperationFailureMessage(pushed)}`);
           }
         }
     } catch (error) {
@@ -859,16 +821,16 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     if (!storeSnapshot?.project) return;
     gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { selectedRef: ref.fullName });
     if (action === "compare") {
-      setView("history");
+      activateView("history");
       return;
     }
     if (action === "create_branch" || action === "rename" || action === "delete") {
-      setView("branches");
+      activateView("branches");
       return;
     }
     if (storeSnapshot.status?.files.length) {
-      setView("branches");
-      setActionError("工作区存在本地改动，请先选择 Commit、Stash 或 Cancel；Keydex 不会自动 stash。");
+      activateView("branches");
+      setActionError("工作区存在本地改动，请先选择提交、储藏或取消；Keydex 不会自动储藏。");
       return;
     }
     if (!controller || !runtime || !storeSnapshot.project.selectedRepositoryId) return;
@@ -1136,9 +1098,9 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   const runRemoveRemote = async (remote: GitRemoteInfo) => {
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
     const impact = remote.trackingBranches.length
-      ? `以下本地分支将失去 upstream：${remote.trackingBranches.join("、")}。`
-      : "没有本地分支跟踪此 remote。";
-    if (!window.confirm(`删除 remote ${remote.name}？${impact}`)) return;
+      ? `以下本地分支将失去上游：${remote.trackingBranches.join("、")}。`
+      : "没有本地分支跟踪此远程仓库。";
+    if (!window.confirm(`删除远程仓库 ${remote.name}？${impact}`)) return;
     setMutation("branch");
     try {
       const command = {
@@ -1195,7 +1157,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
       }));
       if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
       const lines = Array.isArray(result.result.progress_lines) ? result.result.progress_lines.map(String) : [];
-      setSyncProgress(lines.length > 0 ? lines : [result.summary]);
+      setSyncProgress(lines.length > 0 ? lines : ["远程数据获取完成"]);
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
     } finally {
@@ -1218,12 +1180,12 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
     const upstream = storeSnapshot.status?.branch.upstream;
     if (!upstream) {
-      setActionError("当前分支没有 upstream，请先显式设置后再 Update。");
+      setActionError("当前分支没有上游，请先明确设置后再更新。");
       return;
     }
     const separator = upstream.indexOf("/");
     if (separator <= 0 || separator === upstream.length - 1) {
-      setActionError(`无法解析 upstream：${upstream}`);
+      setActionError(`无法解析上游：${upstream}`);
       return;
     }
     setMutation("update");
@@ -1259,7 +1221,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
     if (options.forceWithLease) {
       const remoteLoss = storeSnapshot.status?.branch.behind ?? 0;
-      if (!window.confirm(`Force Push with Lease 将改写 ${options.remote}/${options.target}，最多替换 ${remoteLoss} 个远端提交。是否继续？`)) return;
+      if (!window.confirm(`带租约强制推送将改写 ${options.remote}/${options.target}，最多替换 ${remoteLoss} 个远程提交。是否继续？`)) return;
       if (!window.confirm("请再次确认：仅在你已检查远端提交且确定要改写远端历史时继续。")) return;
     }
     setMutation("push");
@@ -1283,7 +1245,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
         const message = gitOperationFailureMessage(result);
         if (/non-fast-forward|rejected|fetch first/i.test(message)) {
           setPushOutcome("rejected");
-          throw new Error(`${message}。请先 Fetch/Update，确认远端提交后再重试。`);
+          throw new Error(`${message}。请先获取或更新，确认远程提交后再重试。`);
         }
         throw new Error(message);
       }
@@ -1382,7 +1344,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
         ...scope,
         idempotencyKey: `tool-window-stash-before-checkout-${Date.now()}`,
         expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
-        message: `Keydex stash before checkout ${ref.shortName}`,
+        message: `Keydex：切换到 ${ref.shortName} 前的自动储藏`,
         staged: false,
         includeUntracked: true,
       }));
@@ -1408,8 +1370,8 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   const runStashEntryAction = async (action: "apply" | "pop" | "drop", entry: GitStashEntry, reinstateIndex = false) => {
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
     if (action === "drop") {
-      if (!window.confirm(`Drop ${entry.selector} (${entry.objectId.slice(0, 8)})?`)) return;
-      if (!window.confirm("This stash entry cannot be restored from the stash list. Confirm drop again.")) return;
+      if (!window.confirm(`要删除储藏 ${entry.selector}（${entry.objectId.slice(0, 8)}）吗？`)) return;
+      if (!window.confirm("此储藏记录删除后无法从储藏列表恢复，请再次确认删除。")) return;
     }
     setMutation("stash");
     setActionError(null);
@@ -1466,8 +1428,8 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   };
   const runClearStashes = async () => {
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId || stashEntries.length === 0) return;
-    if (!window.confirm(`Clear all ${stashEntries.length} stash entries?`)) return;
-    if (!window.confirm("This removes every stash entry. Confirm clear all again.")) return;
+    if (!window.confirm(`要清空全部 ${stashEntries.length} 条储藏记录吗？`)) return;
+    if (!window.confirm("此操作会删除所有储藏记录，请再次确认清空。")) return;
     setMutation("stash");
     setActionError(null);
     try {
@@ -1930,7 +1892,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   const startBisect = async (goodRevision: string, badRevision: string) => {
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId) return;
     if (storeSnapshot.status?.files.length) {
-      setActionError("Bisect requires a clean worktree and index. Commit, stash, or discard local changes first.");
+      setActionError("二分定位要求工作树和暂存区没有改动。请先提交、储藏或丢弃本地改动。");
       return;
     }
     setMutation("bisect");
@@ -1955,7 +1917,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   };
   const controlBisect = async (action: "good" | "bad" | "skip" | "reset") => {
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId) return;
-    if (action === "reset" && !window.confirm("Reset bisect and restore the original branch/HEAD?")) return;
+    if (action === "reset" && !window.confirm("要结束二分定位并恢复原始分支或指针吗？")) return;
     setMutation("bisect");
     setActionError(null);
     try {
@@ -1982,7 +1944,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   ) => {
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId) return;
     const highRisk = action === "deinit" || recursive;
-    if (highRisk && !window.confirm(`${action === "deinit" ? "Deinitialize" : "Run recursively for"} ${paths.join(", ")}? ${recursive ? "Nested submodule repositories are included." : "Checked-out child files will be removed; Git metadata remains recoverable."}`)) return;
+    if (highRisk && !window.confirm(`${action === "deinit" ? "要取消初始化" : "要递归处理"} ${paths.join(", ")} 吗？${recursive ? "此操作包含嵌套子模块仓库。" : "已签出的子仓库文件将被移除，但 Git 元数据仍可恢复。"}`)) return;
     setMutation("submodule");
     setActionError(null);
     try {
@@ -2026,7 +1988,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   };
   const authorizeWorktree = async (path: string) => {
     if (!runtime || !storeSnapshot?.project?.selectedRepositoryId || !path) return;
-    if (!window.confirm(`Authorize this exact external worktree path for the selected parent repository?\n${path}`)) return;
+    if (!window.confirm(`要为所选父仓库授权这个外部工作树精确路径吗？\n${path}`)) return;
     setMutation("worktree");
     setActionError(null);
     try {
@@ -2045,7 +2007,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   };
   const revokeWorktree = async (path: string) => {
     if (!runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
-    if (!window.confirm(`Revoke Keydex access to this external worktree?\n${path}`)) return;
+    if (!window.confirm(`要撤销 Keydex 对此外部工作树的访问权限吗？\n${path}`)) return;
     setMutation("worktree");
     setActionError(null);
     try {
@@ -2073,7 +2035,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId) return;
     const path = options.path ?? null;
     if (action === "remove" && !confirmWorktreeRemoval({ path: path ?? "", dirty: options.dirty ?? null })) return;
-    if (action === "prune" && !window.confirm("Prune stale worktree metadata? Only registrations Git identifies as prunable are affected.")) return;
+    if (action === "prune" && !window.confirm("要清理失效的工作树元数据吗？只会影响 Git 判定为可清理的登记信息。")) return;
     setMutation("worktree");
     setActionError(null);
     try {
@@ -2136,8 +2098,8 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   };
   const runReset = async (target: string, mode: GitResetMode) => {
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId || !resetPreview) return;
-    if (!window.confirm(`${mode.toUpperCase()} reset ${resetPreview.headObjectId?.slice(0, 12) ?? "unborn"} to ${resetPreview.targetObjectId.slice(0, 12)}? The previous tip remains recoverable through reflog.`)) return;
-    if (mode === "hard" && resetPreview.untrackedOverwrites.length > 0 && !window.confirm(`Confirm untracked data loss: ${resetPreview.untrackedOverwrites.join(", ")}`)) return;
+    if (!window.confirm(`要执行${resetModeLabel(mode)}，将 ${resetPreview.headObjectId?.slice(0, 12) ?? "尚无提交"} 重置到 ${resetPreview.targetObjectId.slice(0, 12)} 吗？之前的分支端点仍可通过引用记录恢复。`)) return;
+    if (mode === "hard" && resetPreview.untrackedOverwrites.length > 0 && !window.confirm(`确认丢失以下未跟踪数据：${resetPreview.untrackedOverwrites.join(", ")}`)) return;
     setMutation("reset");
     setActionError(null);
     try {
@@ -2269,7 +2231,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   const runRecoveredOperationAction = (action: GitRecoveryAction) => {
     const kind = storeSnapshot?.status?.operation?.kind;
     if (action === "resolve" || action === "complete") {
-      setView("changes");
+      activateView("changes");
       return;
     }
     if (kind === "merge" && action === "abort") void abortMerge();
@@ -2357,7 +2319,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
       if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
       if (action === "mark_resolved") {
         const resolvedIndexEntry = String(result.result.resolved_index ?? "");
-        if (!resolvedIndexEntry) throw new Error("Git did not return the resolved index entry");
+        if (!resolvedIndexEntry) throw new Error("Git 没有返回已解决的暂存区条目");
         setRecentlyResolvedConflict({ file: source, resolvedIndexEntry });
       } else if (action === "reopen") {
         setRecentlyResolvedConflict(null);
@@ -2386,119 +2348,154 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
 
   return (
     <section className={styles.root} data-layout={maximized ? "maximized" : "split"} data-testid="git-tool-window">
-      <header className={styles.header}>
-        <div className={styles.identity}>
-          <strong>{resolvedProject.name}</strong>
-          <span>{selectedRepository?.displayPath ?? resolvedProject.projectPath}</span>
+      <div className={styles.tabs} data-testid="git-tool-tabs">
+        <strong className={styles.projectName} data-testid="git-project-name" title={resolvedProject.name}>
+          {resolvedProject.name}
+        </strong>
+        <div className={styles.tabCenter}>
+          <nav className={styles.primaryTabs} role="tablist" aria-label="Git 面板视图">
+            {PRIMARY_VIEWS.map((candidate) => {
+              const Icon = candidate.icon;
+              return (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  role="tab"
+                  id={`git-tool-tab-${candidate.id}`}
+                  aria-controls="git-tool-panel"
+                  aria-selected={view === candidate.id}
+                  tabIndex={view === candidate.id ? 0 : -1}
+                  ref={(element) => {
+                    if (element) tabRefs.current.set(candidate.id, element);
+                    else tabRefs.current.delete(candidate.id);
+                  }}
+                  className={styles.tab}
+                  data-active={view === candidate.id ? "true" : "false"}
+                  onClick={() => activateView(candidate.id)}
+                  onKeyDown={(event) => {
+                    const target = adjacentGitToolView(candidate.id, event.key);
+                    if (!target) return;
+                    event.preventDefault();
+                    if (activateView(target)) tabRefs.current.get(target)?.focus();
+                  }}
+                >
+                  <Icon size={14} />
+                  <span>{candidate.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+          <div className={styles.moreRoot} ref={moreRootRef}>
+          <button
+            type="button"
+            ref={moreTriggerRef}
+            className={styles.tab}
+            data-active={MORE_VIEWS.some((candidate) => candidate.id === view) ? "true" : "false"}
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            aria-label="更多 Git 视图"
+            onClick={() => setMoreOpen((current) => !current)}
+            onKeyDown={(event) => {
+              if (!['ArrowDown', 'Enter', ' '].includes(event.key)) return;
+              event.preventDefault();
+              setMoreOpen(true);
+              queueMicrotask(() => moreRootRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus());
+            }}
+          >
+            <MoreHorizontal size={14} />
+            <span>更多</span>
+            <ChevronDown size={12} aria-hidden="true" />
+          </button>
+          {moreOpen ? (
+            <div className={styles.moreMenu} role="menu" aria-label="更多 Git 视图">
+              {MORE_VIEWS.map((candidate) => {
+                const Icon = candidate.icon;
+                return (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={styles.moreMenuItem}
+                    data-active={view === candidate.id ? "true" : "false"}
+                    key={candidate.id}
+                    onClick={() => {
+                      if (activateView(candidate.id)) setMoreOpen(false);
+                    }}
+                  >
+                    <Icon size={15} />
+                    <span><strong>{candidate.label}</strong><small>{candidate.description}</small></span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          </div>
         </div>
-        {resolvedProject.status === "multi_repo" ? <span className={styles.repoCount}>{resolvedProject.repoRoots.length} 个仓库</span> : null}
-      </header>
-
-      <nav className={styles.tabs} role="tablist" aria-label="Git 面板视图">
-        {VIEWS.map((candidate) => {
-          const Icon = candidate.icon;
-          return (
-            <button
-              key={candidate.id}
-              type="button"
-              role="tab"
-              id={`git-tool-tab-${candidate.id}`}
-              aria-controls={`git-tool-panel-${candidate.id}`}
-              aria-selected={view === candidate.id}
-              tabIndex={view === candidate.id ? 0 : -1}
-              ref={(element) => {
-                if (element) tabRefs.current.set(candidate.id, element);
-                else tabRefs.current.delete(candidate.id);
-              }}
-              className={styles.tab}
-              data-active={view === candidate.id ? "true" : "false"}
-              onClick={() => activateView(candidate.id)}
-              onKeyDown={(event) => {
-                const target = adjacentGitToolView(candidate.id, event.key);
-                if (!target) return;
-                event.preventDefault();
-                if (activateView(target)) tabRefs.current.get(target)?.focus();
-              }}
-            >
-              <Icon size={14} />
-              <span>{candidate.label}</span>
-            </button>
-          );
-        })}
-      </nav>
+        <span className={styles.tabsBalance} aria-hidden="true" />
+      </div>
 
       <div
         className={styles.workspace}
+        data-navigation={view === "changes" ? "hidden" : "visible"}
+        data-testid="git-workspace"
         ref={workspaceRef}
         style={{
           "--git-navigation-pane-width": `${navigationPanePercent}%`,
-          "--git-detail-pane-width": `${detailPanePercent}%`,
+          "--git-detail-pane-width": `${view === "changes" ? commitPanePercent : detailPanePercent}%`,
         } as CSSProperties}
       >
-        <aside className={styles.navigation} aria-label="Git 仓库导航">
-          <span className={styles.paneTitle}>仓库</span>
-          <GitRepositoryList
-            items={storeSnapshot?.repositoryItems ?? []}
-            selectedRepositoryId={storeSnapshot?.project?.selectedRepositoryId ?? null}
-            onSelect={selectRepository}
-          />
-          <GitRefsTree
-            refs={storeSnapshot?.refs ?? []}
-            selectedRef={storeSnapshot?.ui?.selectedRef ?? null}
-            onSelect={(ref) => {
-              if (storeSnapshot?.project) {
-                gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { selectedRef: ref.fullName });
-              }
-            }}
-            onAction={(action, ref) => void runRefAction(action, ref)}
-          />
-        </aside>
-        <div
-          className={styles.separator}
-          role="separator"
-          aria-label="调整 Git 仓库导航宽度"
-          aria-orientation="vertical"
-          aria-valuemin={12}
-          aria-valuemax={35}
-          aria-valuenow={Math.round(navigationPanePercent)}
-          data-dragging={draggingSplitter === "navigation" ? "true" : undefined}
-          tabIndex={0}
-          onKeyDown={(event) => handleSplitterKeyDown("navigation", event)}
-          onPointerDown={(event) => handleSplitterPointerDown("navigation", event)}
-        />
+        {view !== "changes" ? (
+          <>
+            <aside className={styles.navigation} aria-label="Git 仓库导航">
+              <span className={styles.paneTitle}>仓库</span>
+              <GitRepositoryList
+                items={storeSnapshot?.repositoryItems ?? []}
+                selectedRepositoryId={storeSnapshot?.project?.selectedRepositoryId ?? null}
+                onSelect={selectRepository}
+              />
+              <GitRefsTree
+                refs={storeSnapshot?.refs ?? []}
+                selectedRef={storeSnapshot?.ui?.selectedRef ?? null}
+                onSelect={(ref) => {
+                  if (storeSnapshot?.project) {
+                    gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { selectedRef: ref.fullName });
+                  }
+                }}
+                onAction={(action, ref) => void runRefAction(action, ref)}
+              />
+            </aside>
+            <div
+              className={styles.separator}
+              role="separator"
+              aria-label="调整 Git 仓库导航宽度"
+              aria-orientation="vertical"
+              aria-valuemin={12}
+              aria-valuemax={35}
+              aria-valuenow={Math.round(navigationPanePercent)}
+              data-dragging={draggingSplitter === "navigation" ? "true" : undefined}
+              tabIndex={0}
+              onKeyDown={(event) => handleSplitterKeyDown("navigation", event)}
+              onPointerDown={(event) => handleSplitterPointerDown("navigation", event)}
+            />
+          </>
+        ) : null}
         <main
           className={styles.primary}
           data-view={view}
           role="tabpanel"
-          id={`git-tool-panel-${view}`}
-          aria-labelledby={`git-tool-tab-${view}`}
+          id="git-tool-panel"
+          aria-label={activeViewLabel}
           tabIndex={0}
         >
           <div className={styles.paneHeader}>
-            <strong>{activeView.label}</strong>
-            <span>Git 数据加载后显示在这里</span>
+            <strong>{activeViewLabel}</strong>
           </div>
           {actionError ? <div className={styles.actionError} role="alert">{actionError}</div> : null}
           {view === "changes" ? (
             <div className={styles.changesWorkspace}>
               <GitChangesView
                 status={storeSnapshot?.status ?? null}
-                showIgnored={storeSnapshot?.ui?.showIgnored ?? false}
-                onShowIgnoredChange={(showIgnored) => {
-                  if (storeSnapshot?.project) {
-                    gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { showIgnored });
-                  }
-                }}
                 onSelectionChange={(paths, entries) => void loadSelectedChangeDiff(paths, entries)}
                 selectionResetKey={changeSelectionResetKey}
-                staging={mutation === "stage"}
-                onStagePaths={runStage}
-                unstaging={mutation === "unstage"}
-                onUnstagePaths={runUnstage}
-                destructiveActionRunning={mutation === "discard" || mutation === "clean" || mutation === "ignore"}
-                onDiscardPaths={(paths) => runDestructivePaths("discard", paths)}
-                onCleanPaths={(paths) => runDestructivePaths("clean", paths)}
-                onIgnorePaths={runIgnore}
               />
               <GitCommitEditor
                 status={storeSnapshot?.status ?? null}
@@ -2513,21 +2510,6 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
                 identity={identity}
                 identityLoading={identityLoading}
                 outcome={commitOutcome}
-                amendTarget={amendRef ? {
-                  objectId: amendRef.objectId,
-                  subject: amendSummary,
-                  published: amendRequiresStrongConfirmation(storeSnapshot?.status ?? null),
-                } : null}
-                onConfigureIdentity={async (nextIdentity) => {
-                  if (!runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
-                  const updated = await runtime.updateIdentity({
-                    workspaceId: storeSnapshot.project.workspaceId,
-                    projectRoot: storeSnapshot.project.projectRoot,
-                    repositoryId: storeSnapshot.project.selectedRepositoryId,
-                    ...nextIdentity,
-                  });
-                  setIdentity(updated);
-                }}
               />
             </div>
           ) : view === "history" ? (
@@ -2559,7 +2541,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
               onOpenCommit={(objectId) => {
                 selectHistoryObjectId(objectId);
                 setHistoryFilters({ ...EMPTY_GIT_HISTORY_FILTERS, search: objectId });
-                setView("history");
+                activateView("history");
               }}
             />
           ) : view === "reflog" ? (
@@ -2579,7 +2561,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
               }}
               onReset={(objectId) => {
                 setResetTargetSeed(objectId);
-                setView("operations");
+                activateView("operations");
               }}
             />
           ) : view === "branches" ? (
@@ -2614,7 +2596,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
               onDeleteTag={runDeleteTag}
               onPushTag={runPushTag}
               onSetUpstream={runSetUpstream}
-              onOpenChanges={() => setView("changes")}
+              onOpenChanges={() => activateView("changes")}
               onStashAndCheckout={runStashAndCheckout}
             />
             <GitRemoteManager
@@ -2675,7 +2657,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
                 onOpenHistory={(objectId) => {
                   selectHistoryObjectId(objectId);
                   setHistoryFilters({ ...EMPTY_GIT_HISTORY_FILTERS, search: objectId });
-                  setView("history");
+                  activateView("history");
                 }}
               />
               <GitSubmoduleView
@@ -2769,11 +2751,11 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
         <div
           className={styles.separator}
           role="separator"
-          aria-label="调整 Git 详情宽度"
+          aria-label={view === "changes" ? "调整提交面板宽度" : "调整 Git 详情宽度"}
           aria-orientation="vertical"
           aria-valuemin={18}
           aria-valuemax={42}
-          aria-valuenow={Math.round(detailPanePercent)}
+          aria-valuenow={Math.round(view === "changes" ? commitPanePercent : detailPanePercent)}
           data-dragging={draggingSplitter === "details" ? "true" : undefined}
           tabIndex={0}
           onKeyDown={(event) => handleSplitterKeyDown("details", event)}
@@ -2789,7 +2771,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
                 selectedPath={selectedConflictPath}
                 onSelect={(file) => {
                   if (file.path === selectedConflictPath) return;
-                  if (mergeEditorDirty && !window.confirm("The merge result has unsaved changes. Switch files without saving?")) return;
+                  if (mergeEditorDirty && !window.confirm("合并结果存在未保存的改动。确定不保存并切换文件吗？")) return;
                   setMergeEditorDirty(false);
                   setSelectedConflictPath(file.path);
                 }}
@@ -2950,13 +2932,13 @@ export function adjacentGitToolView(
   current: GitToolWindowView,
   key: string,
 ): GitToolWindowView | null {
-  const currentIndex = VIEWS.findIndex((view) => view.id === current);
+  const currentIndex = PRIMARY_VIEWS.findIndex((view) => view.id === current);
   if (currentIndex < 0) return null;
-  if (key === "Home") return VIEWS[0].id;
-  if (key === "End") return VIEWS[VIEWS.length - 1].id;
+  if (key === "Home") return PRIMARY_VIEWS[0].id;
+  if (key === "End") return PRIMARY_VIEWS[PRIMARY_VIEWS.length - 1].id;
   if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(key)) return null;
   const direction = key === "ArrowRight" || key === "ArrowDown" ? 1 : -1;
-  return VIEWS[(currentIndex + direction + VIEWS.length) % VIEWS.length].id;
+  return PRIMARY_VIEWS[(currentIndex + direction + PRIMARY_VIEWS.length) % PRIMARY_VIEWS.length].id;
 }
 
 type GitRefsSnapshotRef = NonNullable<GitToolWindowStoreSnapshot["refs"]>[number];
@@ -2974,7 +2956,7 @@ export function resolveGitToolWindowProject(
   };
   if (project.loading) return { ...base, status: "loading", selectedRepoId: null };
   if (project.error) {
-    return { ...base, status: "error", selectedRepoId: null, errorCode: project.error.code, message: project.error.message };
+    return { ...base, status: "error", selectedRepoId: null, errorCode: project.error.code, message: gitUiErrorMessage(project.error) };
   }
   if (project.capability && !project.capability.available) {
     return {
@@ -2982,7 +2964,7 @@ export function resolveGitToolWindowProject(
       status: "error",
       selectedRepoId: null,
       errorCode: "git_unavailable",
-      message: project.capability.reason || "未找到可用的 Git 命令行程序。",
+      message: "未找到可用的 Git 命令行程序。",
     };
   }
   if (project.repositoryIds.length === 0 && project.ancestorCandidateId) {
@@ -3024,29 +3006,20 @@ export function operationControlWarning(
 ): string {
   const paths = status?.files.map((file) => file.path) ?? [];
   const visible = paths.slice(0, 5).join(", ");
-  const remainder = paths.length > 5 ? ` and ${paths.length - 5} more` : "";
+  const remainder = paths.length > 5 ? `，另有 ${paths.length - 5} 个路径` : "";
   const impact = paths.length
-    ? ` Affected worktree/index paths: ${visible}${remainder}.`
-    : " No changed paths are currently reported.";
+    ? `受影响的工作树或暂存区路径：${visible}${remainder}。`
+    : "当前没有报告发生改动的路径。";
+  const kindLabel = ({ merge: "合并", rebase: "变基", cherry_pick: "摘取提交", revert: "反向提交" } as Record<string, string>)[kind] ?? "Git";
   if (action === "skip") {
     const current = status?.operation?.currentObjectId?.slice(0, 12);
-    return `Skip the current ${kind} step${current ? ` ${current}` : ""}? Its changes will not be applied.${impact}`;
+    return `要跳过当前${kindLabel}步骤${current ? ` ${current}` : ""}吗？该步骤的改动不会被应用。${impact}`;
   }
-  return `Abort the in-progress ${kind}? Git will restore the pre-operation state and discard conflict-resolution edits.${impact}`;
+  return `要中止正在进行的${kindLabel}吗？Git 将恢复操作前状态，并丢弃冲突解决编辑。${impact}`;
 }
 
-export function amendRequiresStrongConfirmation(status: GitStatusSnapshot | null): boolean {
-  return Boolean(status?.branch.upstream && status.branch.ahead === 0);
-}
-
-export function acquireGitMutationGate(inFlight: Set<string>, key: string): boolean {
-  if (inFlight.has(key)) return false;
-  inFlight.add(key);
-  return true;
-}
-
-export function releaseGitMutationGate(inFlight: Set<string>, key: string): void {
-  inFlight.delete(key);
+function resetModeLabel(mode: GitResetMode): string {
+  return ({ soft: "软重置", mixed: "混合重置", hard: "硬重置" } as Record<GitResetMode, string>)[mode];
 }
 
 export function pushTargetFromStatus(

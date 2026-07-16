@@ -465,20 +465,32 @@ describe("SendBox", () => {
     expect(fragment?.querySelector('[data-paste-summary-omission="true"]')?.textContent).toBe(
       "…省略 180 个字符…",
     );
-    expect(fragment?.querySelector('[data-paste-toggle-position="trailing"]')?.textContent).toBe("⌄]");
+    expect(fragment?.querySelector('[data-paste-toggle-position="trailing"]')?.textContent).toBe("⌄");
+    expect(fragment?.querySelector('[data-paste-boundary="leading"]')?.textContent).toBe("[");
+    expect(fragment?.querySelector('[data-paste-boundary="trailing"]')?.textContent).toBe("]");
     expect(fragment?.querySelector('[data-paste-toggle-position="trailing"]')?.getAttribute("title")).toBe(
       "展开粘贴内容",
     );
-    expect(fragment?.getAttribute("contenteditable")).toBeNull();
+    expect(fragment?.getAttribute("contenteditable")).toBe("false");
     expect(fragment?.querySelector('[data-paste-summary="true"]')?.getAttribute("contenteditable")).toBe("false");
     expect((fragment?.querySelector('[data-paste-summary="true"]') as HTMLElement | null)?.tabIndex).toBe(-1);
 
-    fireEvent.mouseDown(screen.getByRole("button", { name: "展开粘贴内容，共 200 个字符" }));
-    fireEvent.click(screen.getByRole("button", { name: "展开粘贴内容，共 200 个字符" }));
+    const summary = screen.getByRole("button", { name: "展开粘贴内容，共 200 个字符" });
+    const summarySelection = document.createRange();
+    summarySelection.selectNodeContents(summary);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(summarySelection);
+    expect(fireEvent.mouseDown(summary)).toBe(true);
+    fireEvent.click(summary);
+    expect(fragment?.dataset.collapsed).toBe("true");
+
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(summary);
     expect(fragment?.dataset.collapsed).toBe("false");
+    expect(fragment?.getAttribute("contenteditable")).toBeNull();
     expect(document.activeElement).toBe(input);
-    expect(fragment?.querySelector('[data-paste-toggle-position="leading"]')?.textContent).toBe("[⌃");
-    expect(fragment?.querySelector('[data-paste-toggle-position="trailing"]')?.textContent).toBe("⌃]");
+    expect(fragment?.querySelector('[data-paste-toggle-position="leading"]')?.textContent).toBe("⌃");
+    expect(fragment?.querySelector('[data-paste-toggle-position="trailing"]')?.textContent).toBe("⌃");
     expect(fragment?.querySelector('[data-paste-toggle-position="leading"]')?.getAttribute("title")).toBe(
       "收起粘贴内容",
     );
@@ -546,6 +558,93 @@ describe("SendBox", () => {
 
     input.querySelector<HTMLElement>('[data-paste-raw="true"]')!.textContent = "";
     fireEvent.input(input);
+
+    expect(onChange).toHaveBeenLastCalledWith("");
+    expect(input.querySelector('[data-sendbox-pasted-text="true"]')).toBeNull();
+  });
+
+  it("lets users type ordinary text before and after a collapsed paste", () => {
+    const raw = "x".repeat(200);
+    const onChange = vi.fn();
+
+    function Harness() {
+      const [value, setValue] = useState(raw);
+      const [fragments, setFragments] = useState<PastedTextFragment[]>([
+        { id: "paste-boundaries", start: 0, end: raw.length, collapsed: true },
+      ]);
+      return (
+        <SendBox
+          value={value}
+          pastedTextFragments={fragments}
+          runtimeState="idle"
+          canSend
+          canStop={false}
+          onChange={(nextValue) => {
+            onChange(nextValue);
+            setValue(nextValue);
+          }}
+          onPastedTextFragmentsChange={setFragments}
+          onSend={vi.fn()}
+          onStop={vi.fn()}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const input = screen.getByLabelText("继续输入");
+    const leadingBoundary = input.querySelector<HTMLElement>('[data-paste-boundary="leading"]')!;
+    fireEvent.mouseDown(leadingBoundary);
+    fireEvent.click(leadingBoundary);
+    insertTextAtSelection("前");
+    fireEvent.input(input);
+    expect(onChange).toHaveBeenLastCalledWith(`前${raw}`);
+
+    const trailingBoundary = input.querySelector<HTMLElement>('[data-paste-boundary="trailing"]')!;
+    fireEvent.mouseDown(trailingBoundary);
+    fireEvent.click(trailingBoundary);
+    const trailingSelectionNode = window.getSelection()?.anchorNode;
+    const trailingSelectionElement = trailingSelectionNode instanceof Element
+      ? trailingSelectionNode
+      : trailingSelectionNode?.parentElement;
+    expect(trailingSelectionElement?.closest('[data-paste-caret-host="trailing"]')).not.toBeNull();
+    insertTextAtSelection("后");
+    fireEvent.input(input);
+    expect(onChange).toHaveBeenLastCalledWith(`前${raw}后`);
+  });
+
+  it("deletes a terminal collapsed paste with one Backspace from its visible caret host", () => {
+    const raw = "x".repeat(200);
+    const onChange = vi.fn();
+
+    function Harness() {
+      const [value, setValue] = useState(raw);
+      const [fragments, setFragments] = useState<PastedTextFragment[]>([
+        { id: "paste-delete", start: 0, end: raw.length, collapsed: true },
+      ]);
+      return (
+        <SendBox
+          value={value}
+          pastedTextFragments={fragments}
+          runtimeState="idle"
+          canSend
+          canStop={false}
+          onChange={(nextValue) => {
+            onChange(nextValue);
+            setValue(nextValue);
+          }}
+          onPastedTextFragmentsChange={setFragments}
+          onSend={vi.fn()}
+          onStop={vi.fn()}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const input = screen.getByLabelText("继续输入");
+    const trailingBoundary = input.querySelector<HTMLElement>('[data-paste-boundary="trailing"]')!;
+    fireEvent.mouseDown(trailingBoundary);
+    fireEvent.click(trailingBoundary);
+    fireEvent.keyDown(input, { key: "Backspace" });
 
     expect(onChange).toHaveBeenLastCalledWith("");
     expect(input.querySelector('[data-sendbox-pasted-text="true"]')).toBeNull();
@@ -1609,6 +1708,20 @@ function placeSelectionAtEnd(element: HTMLElement) {
   range.collapse(false);
   window.getSelection()?.removeAllRanges();
   window.getSelection()?.addRange(range);
+}
+
+function insertTextAtSelection(text: string) {
+  const selection = window.getSelection();
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+  if (!range) {
+    throw new Error("Expected an active editor selection");
+  }
+  const node = document.createTextNode(text);
+  range.insertNode(node);
+  range.setStartAfter(node);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
 }
 
 function stubObjectUrl(): () => void {

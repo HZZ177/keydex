@@ -5,6 +5,10 @@ export const PASTED_TEXT_FRAGMENT_SELECTOR = '[data-sendbox-pasted-text="true"]'
 export const PASTED_TEXT_RAW_SELECTOR = '[data-paste-raw="true"]';
 export const PASTED_TEXT_SUMMARY_SELECTOR = '[data-paste-summary="true"]';
 export const PASTED_TEXT_TOGGLE_SELECTOR = '[data-paste-toggle="true"]';
+export const PASTED_TEXT_BOUNDARY_SELECTOR = '[data-paste-boundary]';
+export const PASTED_TEXT_CARET_HOST_SELECTOR = '[data-paste-caret-host]';
+
+const PASTED_TEXT_CARET_PLACEHOLDER = "\u200B";
 
 export interface PastedTextFragment {
   id: string;
@@ -147,6 +151,12 @@ export function createPastedTextFragmentElement(
   wrapper.dataset.sendboxPastedText = "true";
   wrapper.dataset.fragmentId = fragment.id;
 
+  const leadingBoundary = document.createElement("span");
+  leadingBoundary.setAttribute("contenteditable", "false");
+  leadingBoundary.dataset.pasteBoundary = "leading";
+  leadingBoundary.textContent = "[";
+  leadingBoundary.setAttribute("aria-hidden", "true");
+
   const leadingToggle = document.createElement("span");
   leadingToggle.setAttribute("contenteditable", "false");
   leadingToggle.dataset.pasteToggle = "true";
@@ -166,9 +176,29 @@ export function createPastedTextFragmentElement(
   trailingToggle.dataset.pasteToggle = "true";
   trailingToggle.dataset.pasteTogglePosition = "trailing";
 
-  wrapper.append(leadingToggle, summary, raw, trailingToggle);
+  const trailingBoundary = document.createElement("span");
+  trailingBoundary.setAttribute("contenteditable", "false");
+  trailingBoundary.dataset.pasteBoundary = "trailing";
+  trailingBoundary.textContent = "]";
+  trailingBoundary.setAttribute("aria-hidden", "true");
+
+  wrapper.append(leadingBoundary, leadingToggle, summary, raw, trailingToggle, trailingBoundary);
   setPastedTextElementCollapsed(wrapper, fragment.collapsed);
   return wrapper;
+}
+
+export function createPastedTextCaretHostElement(
+  position: "leading" | "trailing",
+): HTMLSpanElement {
+  const host = document.createElement("span");
+  host.dataset.pasteCaretHost = position;
+  host.setAttribute("aria-hidden", "true");
+  host.textContent = PASTED_TEXT_CARET_PLACEHOLDER;
+  return host;
+}
+
+export function pastedTextCaretHostValue(element: Element): string {
+  return normalizePastedText(element.textContent ?? "").replaceAll(PASTED_TEXT_CARET_PLACEHOLDER, "");
 }
 
 export function setPastedTextElementCollapsed(element: HTMLElement, collapsed: boolean): void {
@@ -178,6 +208,7 @@ export function setPastedTextElementCollapsed(element: HTMLElement, collapsed: b
   const leadingToggle = element.querySelector<HTMLElement>('[data-paste-toggle-position="leading"]');
   const trailingToggle = element.querySelector<HTMLElement>('[data-paste-toggle-position="trailing"]');
   element.dataset.collapsed = collapsed ? "true" : "false";
+  element.removeAttribute("contenteditable");
   element.setAttribute(
     "aria-label",
     collapsed
@@ -194,10 +225,10 @@ export function setPastedTextElementCollapsed(element: HTMLElement, collapsed: b
     } else {
       summary.removeAttribute("title");
     }
-    summary.tabIndex = -1;
+    summary.removeAttribute("tabindex");
   }
   if (leadingToggle) {
-    leadingToggle.textContent = collapsed ? "[" : "[⌃";
+    leadingToggle.textContent = collapsed ? "" : "⌃";
     leadingToggle.setAttribute("role", collapsed ? "presentation" : "button");
     leadingToggle.setAttribute("aria-label", collapsed ? "" : "折叠粘贴内容");
     if (collapsed) {
@@ -207,15 +238,15 @@ export function setPastedTextElementCollapsed(element: HTMLElement, collapsed: b
       leadingToggle.setAttribute("aria-expanded", "true");
       leadingToggle.title = "收起粘贴内容";
     }
-    leadingToggle.tabIndex = -1;
+    leadingToggle.removeAttribute("tabindex");
   }
   if (trailingToggle) {
-    trailingToggle.textContent = collapsed ? "⌄]" : "⌃]";
+    trailingToggle.textContent = collapsed ? "⌄" : "⌃";
     trailingToggle.setAttribute("role", "button");
     trailingToggle.setAttribute("aria-label", collapsed ? "展开粘贴内容" : "折叠粘贴内容");
     trailingToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
     trailingToggle.title = collapsed ? "展开粘贴内容" : "收起粘贴内容";
-    trailingToggle.tabIndex = -1;
+    trailingToggle.removeAttribute("tabindex");
   }
 }
 
@@ -227,6 +258,13 @@ export function closestPastedTextFragment(target: EventTarget | null): HTMLEleme
 export function isPastedTextToggle(target: EventTarget | null): boolean {
   const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
   return Boolean(element?.closest(PASTED_TEXT_TOGGLE_SELECTOR));
+}
+
+export function pastedTextBoundaryPosition(target: EventTarget | null): "leading" | "trailing" | null {
+  const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+  const boundary = element?.closest<HTMLElement>(PASTED_TEXT_BOUNDARY_SELECTOR);
+  const position = boundary?.dataset.pasteBoundary;
+  return position === "leading" || position === "trailing" ? position : null;
 }
 
 export function readPastedTextAwareDocument(root: Node): PastedTextDocument | null {
@@ -255,6 +293,10 @@ export function readPastedTextAwareDocument(root: Node): PastedTextDocument | nu
     }
     if (!(node instanceof HTMLElement)) {
       appendChildren(node);
+      return;
+    }
+    if (node.matches(PASTED_TEXT_CARET_HOST_SELECTOR)) {
+      value += pastedTextCaretHostValue(node);
       return;
     }
     if (node.matches(PASTED_TEXT_FRAGMENT_SELECTOR)) {
@@ -289,11 +331,14 @@ export function readPastedTextSelection(range: Range): string | null {
 }
 
 function containsPastedTextFragment(root: Node): boolean {
-  if (root instanceof HTMLElement && root.matches(PASTED_TEXT_FRAGMENT_SELECTOR)) {
+  if (
+    root instanceof HTMLElement &&
+    (root.matches(PASTED_TEXT_FRAGMENT_SELECTOR) || root.matches(PASTED_TEXT_CARET_HOST_SELECTOR))
+  ) {
     return true;
   }
   return "querySelector" in root && typeof root.querySelector === "function"
-    ? Boolean(root.querySelector(PASTED_TEXT_FRAGMENT_SELECTOR))
+    ? Boolean(root.querySelector(`${PASTED_TEXT_FRAGMENT_SELECTOR}, ${PASTED_TEXT_CARET_HOST_SELECTOR}`))
     : false;
 }
 

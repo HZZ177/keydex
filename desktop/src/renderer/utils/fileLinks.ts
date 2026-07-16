@@ -103,6 +103,37 @@ export function isAbsoluteFilePath(path: string): boolean {
   return isWindowsAbsoluteFilePath(value) || value.startsWith("/") || value.startsWith("\\\\") || value.startsWith("//");
 }
 
+export function workspaceAbsoluteFilePath(path: string, workspaceRootPath: string): string | null {
+  const target = normalizePathSeparators(path);
+  if (!target || /[\u0000-\u001f]/u.test(target)) {
+    return null;
+  }
+  if (isAbsoluteFilePath(target)) {
+    return target;
+  }
+
+  const root = normalizePathSeparators(workspaceRootPath);
+  if (!isAbsoluteFilePath(root)) {
+    return null;
+  }
+  const segments: string[] = [];
+  for (const segment of target.split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      return null;
+    }
+    segments.push(segment);
+  }
+  if (!segments.length) {
+    return null;
+  }
+
+  const normalizedRoot = root === "/" ? root : root.replace(/\/+$/u, "");
+  return `${normalizedRoot}${normalizedRoot.endsWith("/") ? "" : "/"}${segments.join("/")}`;
+}
+
 export function workspaceRelativeFilePath(path: string, workspaceRootPath: string): string | null {
   const target = normalizePathSeparators(path);
   const root = normalizePathSeparators(workspaceRootPath);

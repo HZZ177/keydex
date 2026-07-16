@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitRefsTree, buildGitRefTree } from "@/renderer/features/git/components/GitRefsTree";
+import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 import type { GitObjectId, GitRef } from "@/runtime/gitTypes";
 
 afterEach(cleanup);
@@ -13,12 +14,18 @@ describe("GitRefsTree", () => {
     expect(groups[0].refs.map((ref) => ref.shortName)).toEqual(["main", "feature/git-view"]);
   });
 
-  it("supports selection, collapse, ahead/behind and context actions", () => {
+  it("supports selection, collapse, ahead/behind and context actions", async () => {
     const onSelect = vi.fn();
     const onAction = vi.fn();
-    render(<GitRefsTree refs={refs()} selectedRef={null} onSelect={onSelect} onAction={onAction} />);
+    render(
+      <AppContextMenuProvider>
+        <GitRefsTree refs={refs()} selectedRef={null} onSelect={onSelect} onAction={onAction} />
+      </AppContextMenuProvider>,
+    );
 
-    expect(screen.getByRole("treeitem", { name: "HEAD main" })).not.toBeNull();
+    const currentBranch = screen.getByRole("treeitem", { name: "当前分支 main" });
+    expect(currentBranch.querySelector(".lucide-star")).not.toBeNull();
+    expect(screen.getByRole("treeitem", { name: "main" }).querySelector(".lucide-star")).not.toBeNull();
     expect(screen.getByText("↑2↓1")).not.toBeNull();
     const tagGroup = screen.getByRole("treeitem", { name: /^标签/ });
     expect(tagGroup.getAttribute("aria-expanded")).toBe("false");
@@ -29,9 +36,20 @@ describe("GitRefsTree", () => {
     fireEvent.click(screen.getByRole("treeitem", { name: /^远程/ }));
     expect(screen.queryByRole("treeitem", { name: /origin\/main/ })).toBeNull();
     fireEvent.click(screen.getByRole("treeitem", { name: /^远程/ }));
-    fireEvent.click(screen.getByRole("button", { name: "origin/main actions" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Checkout" }));
-    expect(onAction).toHaveBeenCalledWith("checkout", expect.objectContaining({ fullName: "refs/remotes/origin/main" }));
+    const remoteBranch = screen.getByRole("treeitem", { name: "origin/main" });
+    expect(screen.queryByRole("button", { name: "origin/main 操作" })).toBeNull();
+    expect(remoteBranch.querySelector(".lucide-star")).not.toBeNull();
+    fireEvent.contextMenu(remoteBranch, { clientX: 120, clientY: 96 });
+    const menu = screen.getByRole("menu", { name: "页面右键菜单" });
+    expect(menu.dataset.contextKind).toBe("custom");
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+    expect(screen.queryByRole("menuitem", { name: "刷新" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "签出" }));
+    await waitFor(() => expect(onAction).toHaveBeenCalledWith(
+      "checkout",
+      expect.objectContaining({ fullName: "refs/remotes/origin/main" }),
+    ));
+    expect(screen.queryByRole("menu", { name: "页面右键菜单" })).toBeNull();
   });
 });
 

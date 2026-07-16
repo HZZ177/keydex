@@ -65,11 +65,11 @@ export function GitBranchActions({
   };
 
   return (
-    <section className={styles.root} aria-label="Branch actions">
+    <section className={styles.root} aria-label="分支操作">
       <header>
         <GitBranch size={15} />
-        <strong>Branches</strong>
-        <span>{selected ? selected.shortName : "Select a ref"}</span>
+        <strong>分支</strong>
+        <span>{selected ? selected.shortName : "请选择引用"}</span>
       </header>
       <form
         className={styles.create}
@@ -80,7 +80,7 @@ export function GitBranchActions({
           setBranchName("");
         }}
       >
-        <label htmlFor="git-new-branch">New branch from {selected?.shortName ?? "HEAD"}</label>
+        <label htmlFor="git-new-branch">从 {selected?.shortName ?? "当前指针"} 新建分支</label>
         <div>
           <input
             id="git-new-branch"
@@ -88,13 +88,13 @@ export function GitBranchActions({
             placeholder="feature/name"
             onChange={(event) => setBranchName(event.currentTarget.value)}
           />
-          <button type="submit" disabled={!validation.valid || busy}><Plus size={13} />Create</button>
+          <button type="submit" disabled={!validation.valid || busy}><Plus size={13} />创建</button>
         </div>
         <small data-valid={validation.valid ? "true" : "false"}>{validation.message}</small>
       </form>
       <div className={styles.checkout}>
-        <span>{selected?.current ? "Current branch" : "Switch working tree to selected ref"}</span>
-        <button type="button" disabled={!selected || selected.current || busy} onClick={checkout}>Checkout</button>
+        <span>{selected?.current ? "当前分支" : "将工作树切换到所选引用"}</span>
+        <button type="button" disabled={!selected || selected.current || busy} onClick={checkout}>签出</button>
       </div>
       {selected?.kind === "local" ? (
         <form
@@ -108,32 +108,32 @@ export function GitBranchActions({
         >
           <input
             value={renameName}
-            aria-label={`Rename ${selected.shortName}`}
-            placeholder="New branch name"
+            aria-label={`重命名 ${selected.shortName}`}
+            placeholder="新分支名称"
             onChange={(event) => setRenameName(event.currentTarget.value)}
           />
-          <button type="submit" disabled={!validateBranchName(renameName).valid || busy}>Rename</button>
+          <button type="submit" disabled={!validateBranchName(renameName).valid || busy}>重命名</button>
         </form>
       ) : null}
       {selected?.kind === "local" ? (
         <div className={styles.upstream}>
-          <span>Upstream: {selected.upstream ?? "Not configured"}</span>
-          <select aria-label="Upstream branch" value={upstreamChoice} onChange={(event) => setUpstreamChoice(event.currentTarget.value)}>
-            <option value="">Select remote branch</option>
+          <span>上游分支：{selected.upstream ?? "未配置"}</span>
+          <select aria-label="上游分支" value={upstreamChoice} onChange={(event) => setUpstreamChoice(event.currentTarget.value)}>
+            <option value="">选择远程分支</option>
             {refs.filter((ref) => ref.kind === "remote").map((ref) => (
               <option value={ref.shortName} key={ref.fullName}>{ref.shortName}</option>
             ))}
           </select>
-          <button type="button" disabled={!upstreamChoice || busy} onClick={() => void onSetUpstream(selected, upstreamChoice)}>Set upstream</button>
-          <button type="button" disabled={!selected.upstream || busy} onClick={() => void onSetUpstream(selected, null)}>Unset</button>
+          <button type="button" disabled={!upstreamChoice || busy} onClick={() => void onSetUpstream(selected, upstreamChoice)}>设置上游</button>
+          <button type="button" disabled={!selected.upstream || busy} onClick={() => void onSetUpstream(selected, null)}>取消设置</button>
         </div>
       ) : null}
       {selected && !selected.current && selected.kind !== "tag" ? (
         <div className={styles.deleteZone} data-risk={deletionRisk}>
-          <span>{selected.kind === "remote" ? `Delete remote branch ${selected.shortName}` : `Delete ${selected.shortName}`}</span>
-          <button type="button" disabled={busy} onClick={() => void onDelete(selected, false)}>Delete…</button>
+          <span>{selected.kind === "remote" ? `删除远程分支 ${selected.shortName}` : `删除 ${selected.shortName}`}</span>
+          <button type="button" disabled={busy} onClick={() => void onDelete(selected, false)}>删除…</button>
           {selected.kind === "local" ? (
-            <button type="button" disabled={busy} onClick={() => void onDelete(selected, true)}>Force delete…</button>
+            <button type="button" disabled={busy} onClick={() => void onDelete(selected, true)}>强制删除…</button>
           ) : null}
         </div>
       ) : null}
@@ -153,41 +153,41 @@ export function GitBranchActions({
           setTagMessage("");
         }}
       >
-        <strong>Create tag at {selected?.shortName ?? "HEAD"}</strong>
-        <input aria-label="Tag name" value={tagName} placeholder="v1.0.0" onChange={(event) => setTagName(event.currentTarget.value)} />
-        <label><input type="checkbox" checked={tagAnnotated} onChange={(event) => setTagAnnotated(event.currentTarget.checked)} />Annotated</label>
-        <label><input type="checkbox" checked={tagSigned} onChange={(event) => setTagSigned(event.currentTarget.checked)} />Sign tag</label>
+        <strong>在 {selected?.shortName ?? "当前指针"} 创建标签</strong>
+        <input aria-label="标签名称" value={tagName} placeholder="v1.0.0" onChange={(event) => setTagName(event.currentTarget.value)} />
+        <label><input type="checkbox" checked={tagAnnotated} onChange={(event) => setTagAnnotated(event.currentTarget.checked)} />附注标签</label>
+        <label><input type="checkbox" checked={tagSigned} onChange={(event) => setTagSigned(event.currentTarget.checked)} />签名标签</label>
         {tagAnnotated || tagSigned ? (
-          <input aria-label="Tag message" value={tagMessage} placeholder="Release message" onChange={(event) => setTagMessage(event.currentTarget.value)} />
+          <input aria-label="标签说明" value={tagMessage} placeholder="版本说明" onChange={(event) => setTagMessage(event.currentTarget.value)} />
         ) : null}
-        <button type="submit" disabled={!validateBranchName(tagName).valid || busy}>Create tag</button>
+        <button type="submit" disabled={!validateBranchName(tagName).valid || busy}>创建标签</button>
       </form>
       {selected?.kind === "tag" ? (
         <div className={styles.tagDetails}>
           <strong>{selected.shortName}</strong>
-          <span>Target {(selected.peeledObjectId ?? selected.objectId).slice(0, 12)}</span>
-          <span>{selected.annotated ? selected.annotation || "Annotated tag" : "Lightweight tag"}</span>
-          <button type="button" onClick={() => void onDeleteTag(selected, null)}>Delete local tag…</button>
+          <span>目标 {(selected.peeledObjectId ?? selected.objectId).slice(0, 12)}</span>
+          <span>{selected.annotated ? selected.annotation || "附注标签" : "轻量标签"}</span>
+          <button type="button" onClick={() => void onDeleteTag(selected, null)}>删除本地标签…</button>
           <label>
-            Remote
-            <input value={tagRemote} aria-label="Tag remote" onChange={(event) => setTagRemote(event.currentTarget.value)} />
+            远程仓库
+            <input value={tagRemote} aria-label="标签远程仓库" onChange={(event) => setTagRemote(event.currentTarget.value)} />
           </label>
-          <button type="button" disabled={!tagRemote.trim() || busy} onClick={() => void onPushTag(selected, tagRemote.trim())}>Push tag…</button>
-          <button type="button" disabled={!tagRemote.trim()} onClick={() => void onDeleteTag(selected, tagRemote.trim())}>Delete remote tag…</button>
+          <button type="button" disabled={!tagRemote.trim() || busy} onClick={() => void onPushTag(selected, tagRemote.trim())}>推送标签…</button>
+          <button type="button" disabled={!tagRemote.trim()} onClick={() => void onDeleteTag(selected, tagRemote.trim())}>删除远程标签…</button>
         </div>
       ) : null}
       {dirtyCheckout ? (
         <div className={styles.dirty} role="alert">
-          <strong>Working tree has local changes</strong>
-          <span>Switching to {dirtyCheckout.shortName} may overwrite them. Keydex will not stash automatically.</span>
+          <strong>工作树存在本地改动</strong>
+          <span>切换到 {dirtyCheckout.shortName} 可能覆盖这些改动。Keydex 不会自动储藏。</span>
           <div>
-            <button type="button" onClick={onOpenChanges}>Commit changes</button>
+            <button type="button" onClick={onOpenChanges}>提交改动</button>
             <button type="button" onClick={() => {
               const target = dirtyCheckout;
               setDirtyCheckout(null);
               void onStashAndCheckout(target);
-            }}>Stash and checkout</button>
-            <button type="button" onClick={() => setDirtyCheckout(null)}>Cancel</button>
+            }}>储藏并签出</button>
+            <button type="button" onClick={() => setDirtyCheckout(null)}>取消</button>
           </div>
         </div>
       ) : null}
@@ -211,8 +211,8 @@ export function branchDeletionRisk(
 
 export function validateBranchName(value: string): { valid: boolean; message: string } {
   const branch = value.trim();
-  if (!branch) return { valid: false, message: "Enter a branch name" };
-  if (branch.length > 255) return { valid: false, message: "Branch name is too long" };
+  if (!branch) return { valid: false, message: "请输入分支名称" };
+  if (branch.length > 255) return { valid: false, message: "分支名称过长" };
   if (
     branch.startsWith("-")
     || branch.startsWith("/")
@@ -222,6 +222,6 @@ export function validateBranchName(value: string): { valid: boolean; message: st
     || branch.includes("@{")
     || /[\s~^:?*\\]/u.test(branch)
     || branch.includes("[")
-  ) return { valid: false, message: "Branch name is not valid for Git" };
-  return { valid: true, message: "Branch name is valid" };
+  ) return { valid: false, message: "分支名称不符合 Git 规则" };
+  return { valid: true, message: "分支名称有效" };
 }

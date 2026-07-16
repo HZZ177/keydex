@@ -14,6 +14,7 @@ const GLOBAL_PREVIEW_SCOPE = "global";
 export interface PreviewRenderContext {
   panelScopeKey?: string;
   workspaceId?: string;
+  workspaceRootPath?: string;
   sessionId?: string;
   workspaceAvailable?: boolean;
   workspaceLabel?: string;

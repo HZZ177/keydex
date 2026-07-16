@@ -22,14 +22,14 @@ describe("GitDiffViewer", () => {
 
     const onStagePatches = vi.fn();
     render(<GitDiffViewer diff={diff()} onStagePatches={onStagePatches} />);
-    expect(screen.getByRole("table", { name: "统一 Diff 内容" })).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "暂存 Hunk 1" }));
+    expect(screen.getByRole("table", { name: "统一差异内容" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "暂存变更块 1" }));
     expect(onStagePatches).toHaveBeenCalledWith([expect.stringContaining("@@ -10,2 +20,2 @@")]);
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 新增行 21" }));
     fireEvent.click(screen.getByRole("button", { name: "暂存所选行 (1)" }));
     expect(onStagePatches).toHaveBeenLastCalledWith([expect.stringContaining("@@ -12,0 +21,1 @@")]);
-    fireEvent.click(screen.getByRole("button", { name: "并排 Diff" }));
-    expect(screen.getByRole("table", { name: "并排 Diff 内容" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "并排差异" }));
+    expect(screen.getByRole("table", { name: "并排差异内容" })).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "自动换行" }));
     expect(screen.getByRole("button", { name: "自动换行" }).getAttribute("aria-pressed")).toBe("true");
   });
@@ -47,8 +47,8 @@ describe("GitDiffViewer", () => {
     const onUnstage = vi.fn();
     render(<GitDiffViewer diff={modeChange} patchAction="unstage" onStagePatches={onUnstage} />);
 
-    expect(screen.getByLabelText("Mode change").textContent).toBe("100644 → 100755");
-    fireEvent.click(screen.getByRole("button", { name: "取消暂存 Hunk 1" }));
+    expect(screen.getByLabelText("文件模式变化").textContent).toBe("100644 → 100755");
+    fireEvent.click(screen.getByRole("button", { name: "取消暂存变更块 1" }));
     expect(onUnstage).toHaveBeenCalledWith([expect.stringContaining("@@ -10,2 +20,2 @@")]);
   });
 
@@ -56,19 +56,19 @@ describe("GitDiffViewer", () => {
     const binary = diff();
     binary.binary = true;
     const { rerender } = render(<GitDiffViewer diff={binary} />);
-    expect(screen.getByText("二进制文件不提供文本 Diff")).not.toBeNull();
+    expect(screen.getByText("二进制文件不提供文本差异")).not.toBeNull();
 
     const large = diff();
     large.rawPatch = "x".repeat(100);
     rerender(<GitDiffViewer diff={large} maxBytes={10} />);
-    expect(screen.getByText("Diff 过大")).not.toBeNull();
+    expect(screen.getByText("差异内容过大")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "仍然查看" }));
-    expect(screen.getByRole("table", { name: "统一 Diff 内容" })).not.toBeNull();
+    expect(screen.getByRole("table", { name: "统一差异内容" })).not.toBeNull();
 
     const truncated = diff();
     truncated.truncated = true;
     rerender(<GitDiffViewer diff={truncated} key="truncated" />);
-    expect(screen.getByText("Diff 过大")).not.toBeNull();
+    expect(screen.getByText("差异内容过大")).not.toBeNull();
     expect(screen.queryByRole("button", { name: "仍然查看" })).toBeNull();
   });
 });

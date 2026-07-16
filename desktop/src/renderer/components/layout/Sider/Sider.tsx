@@ -138,28 +138,6 @@ export interface SiderProps {
   onNavigate?: (path: string) => void;
 }
 
-function SystemGitIcon({ size }: { size: number }) {
-  return (
-    <svg
-      aria-hidden="true"
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.45"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="4.25" cy="3.25" r="1.35" />
-      <circle cx="4.25" cy="12.75" r="1.35" />
-      <circle cx="11.75" cy="5.75" r="1.35" />
-      <path d="M4.25 4.6v6.8" />
-      <path d="M5.6 11.25c3.75-.4 6.15-2.1 6.15-4.15" />
-    </svg>
-  );
-}
-
 export function Sider({
   collapsed = false,
   appMode = "agent",
@@ -863,7 +841,7 @@ export function Sider({
           disabled={!gitEnabled}
           onClick={onOpenGit}
         >
-          <SystemGitIcon size={17} />
+          <GitBranch size={17} />
           <span>Git</span>
         </button>
       </nav>

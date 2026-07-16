@@ -21,11 +21,11 @@ export function GitRepositoryList({ items, selectedRepositoryId, onSelect }: {
   }), { changes: 0, ahead: 0, behind: 0 });
   return (
     <div className={styles.root}>
-      <div className={styles.summary} aria-label="All Git repositories summary">
-        <strong>All repositories</strong>
-        <small>{items.length} roots · {totals.changes} changes · ↑{totals.ahead} ↓{totals.behind}</small>
+      <div className={styles.summary} aria-label="全部 Git 仓库摘要">
+        <strong>全部仓库</strong>
+        <small>{items.length} 个根目录 · {totals.changes} 个改动 · ↑{totals.ahead} ↓{totals.behind}</small>
       </div>
-      <div className={styles.list} role="listbox" aria-label="Git repository roots">
+      <div className={styles.list} role="listbox" aria-label="Git 仓库根目录">
         {items.map(({ repository, status }) => (
           <button
             key={repository.id}
@@ -39,7 +39,7 @@ export function GitRepositoryList({ items, selectedRepositoryId, onSelect }: {
             <GitBranch size={13} />
             <span>
               <strong>{repository.displayPath}</strong>
-              <small>{repository.kind} · {status?.branch.head ?? (status?.branch.detachedAt ? "detached" : "loading")}</small>
+              <small>{repositoryKindLabel(repository.kind)} · {status?.branch.head ?? (status?.branch.detachedAt ? "分离指针" : "加载中")}</small>
             </span>
             <em>{status?.files.length ?? 0}</em>
           </button>
@@ -47,6 +47,10 @@ export function GitRepositoryList({ items, selectedRepositoryId, onSelect }: {
       </div>
     </div>
   );
+}
+
+function repositoryKindLabel(kind: GitRepositoryDescriptor["kind"]): string {
+  return ({ workspace: "工作区", nested: "嵌套仓库", worktree: "工作树", ancestor: "上级仓库", submodule: "子模块" })[kind];
 }
 
 function repositoryDepth(repository: GitRepositoryDescriptor, items: readonly GitRepositoryListItem[]): number {

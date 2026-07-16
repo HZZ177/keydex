@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 
 from backend.app.git.access import GitAncestorGrantStore, GitWorktreeGrantStore
 from backend.app.git.capabilities import probe_git_capabilities
@@ -96,19 +96,23 @@ from backend.app.git.runner import GitCliRunner
 router = APIRouter(prefix="/api/git", tags=["git"])
 
 
-def get_git_query_service(request: Request) -> GitQueryService:
-    service = getattr(request.app.state, "git_query_service", None)
+def get_or_create_git_query_service(app: FastAPI) -> GitQueryService:
+    service = getattr(app.state, "git_query_service", None)
     if isinstance(service, GitQueryService):
         return service
-    settings = request.app.state.settings
+    settings = app.state.settings
     service = GitQueryService(
         grants=GitAncestorGrantStore(Path(settings.data_dir) / "git" / "ancestor-grants.json"),
         worktree_grants=GitWorktreeGrantStore(
             Path(settings.data_dir) / "git" / "worktree-grants.json"
         ),
     )
-    request.app.state.git_query_service = service
+    app.state.git_query_service = service
     return service
+
+
+def get_git_query_service(request: Request) -> GitQueryService:
+    return get_or_create_git_query_service(request.app)
 
 
 GitQueries = Annotated[GitQueryService, Depends(get_git_query_service)]

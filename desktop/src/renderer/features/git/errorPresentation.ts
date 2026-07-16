@@ -63,19 +63,20 @@ export function gitErrorPresentation(code: string): GitErrorPresentation {
 }
 
 export function gitUiErrorMessage(error: unknown, fallback = "Git 操作失败"): string {
-  if (typeof error === "string") return error.trim() || fallback;
+  if (typeof error === "string") return localizeGitMessage(error, fallback);
   if (!error || typeof error !== "object") return fallback;
   const value = error as { code?: unknown; message?: unknown };
   if (typeof value.code !== "string" || !value.code.startsWith("git_")) {
-    return error instanceof Error ? error.message : typeof value.message === "string" ? value.message : fallback;
+    const message = error instanceof Error ? error.message : typeof value.message === "string" ? value.message : "";
+    return localizeGitMessage(message, fallback);
   }
   return formatGitErrorMessage(value.code, typeof value.message === "string" ? value.message : "");
 }
 
 export function formatGitErrorMessage(code: string, message: string, serverHelp = ""): string {
   const presentation = gitErrorPresentation(code);
-  const detail = message.trim() || presentation.fallbackMessage;
-  const help = serverHelp.trim() || presentation.helpAction;
+  const detail = localizeGitMessage(message, presentation.fallbackMessage);
+  const help = containsChinese(serverHelp) ? serverHelp.trim() : presentation.helpAction;
   return `${presentation.title}：${detail}${help ? ` ${help}` : ""}`;
 }
 
@@ -96,7 +97,32 @@ export function gitOperationErrorMessage(result: {
       typeof rawHelp === "string" ? rawHelp : "",
     );
   }
-  return typeof rawHelp === "string" && rawHelp.trim() ? `${message} ${rawHelp}` : message;
+  const localized = localizeGitMessage(message, "Git 操作失败。");
+  return typeof rawHelp === "string" && containsChinese(rawHelp) ? `${localized} ${rawHelp.trim()}` : localized;
+}
+
+function localizeGitMessage(message: string, fallback: string): string {
+  const value = message.trim();
+  if (!value) return fallback;
+  if (containsChinese(value)) return value;
+  if (/must be run in a work tree|not a working tree/i.test(value)) return "当前目标不是可操作的 Git 工作树。";
+  if (/not a git repository/i.test(value)) return "当前目录不属于 Git 仓库。";
+  if (/authentication failed|could not read username|terminal prompts disabled|credentials?/i.test(value)) return "远程仓库认证失败，请先配置可用凭据。";
+  if (/could not resolve host|failed to connect|network|unable to access/i.test(value)) return "无法连接远程仓库，请检查网络和远程地址。";
+  if (/non-fast-forward|fetch first|rejected/i.test(value)) return "远程拒绝了此次更新，请先获取远程改动后再试。";
+  if (/local changes.*overwritten|would be overwritten/i.test(value)) return "本地改动会被覆盖，请先提交、储藏或丢弃这些改动。";
+  if (/already exists/i.test(value)) return "同名分支、标签或远程仓库已经存在。";
+  if (/not fully merged/i.test(value)) return "目标分支尚未完全合并。";
+  if (/no upstream|has no upstream/i.test(value)) return "当前分支尚未设置上游。";
+  if (/unknown revision|bad revision|ambiguous argument|pathspec.*did not match/i.test(value)) return "指定的修订、分支或路径不存在。";
+  if (/conflict/i.test(value)) return "操作因冲突而停止，请先解决冲突。";
+  if (/nothing to commit|working tree clean/i.test(value)) return "没有需要提交的改动。";
+  if (/timed out|timeout/i.test(value)) return "Git 操作超时，请检查仓库或网络后重试。";
+  return fallback;
+}
+
+function containsChinese(value: string): boolean {
+  return /[\u3400-\u9fff]/u.test(value);
 }
 
 function entry(

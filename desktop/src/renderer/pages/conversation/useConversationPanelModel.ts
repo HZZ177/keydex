@@ -177,6 +177,7 @@ export function useConversationPanelModel({
   const workspaceUnavailable = Boolean(session && session.session_type === "workspace" && !session.workspace);
   const workspaceAvailable = Boolean(session?.session_type === "workspace" && session.workspace && !workspaceUnavailable);
   const workspaceLabel = session?.workspace?.root_path ?? session?.workspace?.name ?? session?.cwd ?? undefined;
+  const workspaceRootPath = session?.workspace?.root_path ?? session?.cwd ?? fallbackWorkspaceScope?.workspaceRoot ?? undefined;
   const workspaceId = workspaceAvailable ? (session?.workspace?.id ?? session?.workspace_id ?? undefined) : undefined;
   const effectiveSkillScope = useMemo(
     () => session
@@ -410,6 +411,7 @@ export function useConversationPanelModel({
       panelScopeKey: previewPanelScopeKey ?? undefined,
       sessionId,
       workspaceId,
+      workspaceRootPath,
       workspaceAvailable,
       workspaceLabel,
       runtime,
@@ -425,6 +427,7 @@ export function useConversationPanelModel({
       workspaceAvailable,
       workspaceId,
       workspaceLabel,
+      workspaceRootPath,
     ],
   );
 

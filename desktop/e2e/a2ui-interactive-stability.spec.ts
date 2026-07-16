@@ -79,6 +79,38 @@ test("interactive A2UI form and choice restore as independent page components", 
   await expect(page.getByLabel("项目名称")).toBeVisible();
   await expect(page.getByText("写代码")).toBeVisible();
   await expect(page.getByTestId("a2ui-block")).toHaveCount(2);
+
+  await page.getByLabel("技术栈").click();
+  const listbox = page.getByRole("listbox");
+  await expect(listbox).toBeVisible();
+  await page.waitForTimeout(250);
+
+  const overlap = await page.evaluate(() => {
+    const menu = document.querySelector<HTMLElement>('[role="listbox"]');
+    const correction = document.querySelector<HTMLElement>(
+      '[aria-label="以上信息不对！我来告诉 Keydex 应该怎么做"]',
+    );
+    if (!menu || !correction) {
+      return { exists: false, intersects: false, menuOwnsHitTarget: false };
+    }
+    const menuRect = menu.getBoundingClientRect();
+    const correctionRect = correction.getBoundingClientRect();
+    const left = Math.max(menuRect.left, correctionRect.left);
+    const right = Math.min(menuRect.right, correctionRect.right);
+    const top = Math.max(menuRect.top, correctionRect.top);
+    const bottom = Math.min(menuRect.bottom, correctionRect.bottom);
+    if (right <= left || bottom <= top) {
+      return { exists: true, intersects: false, menuOwnsHitTarget: false };
+    }
+    const hitTarget = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+    return {
+      exists: true,
+      intersects: true,
+      menuOwnsHitTarget: Boolean(hitTarget && menu.contains(hitTarget)),
+    };
+  });
+
+  expect(overlap).toEqual({ exists: true, intersects: true, menuOwnsHitTarget: true });
 });
 
 test("interactive table edits cells and column labels before submitting a stable snapshot", async ({ page }) => {

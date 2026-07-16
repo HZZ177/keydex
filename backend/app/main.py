@@ -19,7 +19,12 @@ from backend.app.annotations.api import router as annotations_router
 from backend.app.api.approvals import router as approvals_router
 from backend.app.api.archive import router as archive_router
 from backend.app.api.attachments import router as attachments_router
-from backend.app.api.git import router as git_router
+from backend.app.api.git import (
+    get_or_create_git_query_service,
+)
+from backend.app.api.git import (
+    router as git_router,
+)
 from backend.app.api.health import router as health_router
 from backend.app.api.local_preview import router as local_preview_router
 from backend.app.api.mcp import router as mcp_router
@@ -320,10 +325,10 @@ def create_app(
     app.state.file_change_hub = FileChangeHub(
         ignored_roots=(resolved_settings.data_dir,),
     )
+    app.state.git_query_service = get_or_create_git_query_service(app)
     app.state.git_metadata_event_service = GitMetadataEventService(
         invalidate=lambda repository_id: (
-            getattr(app.state, "git_query_service", None)
-            and app.state.git_query_service.invalidate(repository_id)
+            app.state.git_query_service.invalidate(repository_id)
         )
     )
     app.state.runtime = create_desktop_runtime(

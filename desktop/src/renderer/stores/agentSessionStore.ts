@@ -2084,7 +2084,9 @@ function handleCommandTerminated(state: AgentConversationState, data: Record<str
 }
 
 function handleError(state: AgentConversationState, data: AgentErrorData): AgentConversationState {
-  const sessionId = data.session_id ?? state.selectedSessionId ?? "";
+  // The shared socket also carries project/file/Git failures. Only an error
+  // with an explicit session scope is allowed to become conversation history.
+  const sessionId = stringValue(data.session_id).trim();
   if (!sessionId) {
     return state;
   }

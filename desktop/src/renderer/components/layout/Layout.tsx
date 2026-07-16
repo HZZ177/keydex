@@ -315,7 +315,7 @@ export function Layout({
   const notifications = useNotifications();
   const collapsed = state.sidebarCollapsed;
   const sidebarEnabled = appMode !== "project";
-  const globalRightSidebarEnabled = true;
+  const globalRightSidebarEnabled = appMode === "agent";
   const { sidebarMotion, toggleSidebar } = useSidebarCollapseMotion(actions.toggleSidebar);
   const {
     sidebarMotion: rightSidebarMotion,
@@ -2127,6 +2127,7 @@ function RightSidebarPanel({
                     label={filePanelRenderContext.workspaceLabel}
                     runtime={filePanelRenderContext.runtime}
                     workspaceId={filePanelRenderContext.workspaceId}
+                    workspaceRootPath={filePanelRenderContext.workspaceRootPath}
                     sessionId={filePanelRenderContext.sessionId}
                     previewPath={activeFilePanel?.filePreviewPath ?? null}
                     previewRequestId={activeFilePanel?.filePreviewRequestId ?? 0}
@@ -2149,6 +2150,7 @@ function RightSidebarPanel({
                         : activeRenderContext?.workspaceLabel
                     }
                     workspaceId={activeRenderContext?.workspaceId}
+                    workspaceRootPath={activeRenderContext?.workspaceRootPath}
                     sessionId={activeRenderContext?.sessionId}
                     request={activeRequest}
                     runtime={activeRenderContext?.runtime}

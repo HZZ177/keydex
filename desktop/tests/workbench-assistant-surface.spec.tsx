@@ -1734,6 +1734,109 @@ describe("WorkbenchAssistantSurface", () => {
     expect(screen.queryByLabelText("工作台助手输入")).toBeNull();
   });
 
+  it("yields the bottom capsule near the preview end and keeps an explicit restore button", async () => {
+    const controller = fakeController();
+    const view = render(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={controller}
+          contentNearBottom={false}
+          contentViewportKey="preview-1"
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    const surface = screen.getByTestId("workbench-assistant-surface");
+    expect(surface.getAttribute("data-capsule-yielded")).toBe("false");
+    expect(screen.queryByTestId("workbench-assistant-capsule-restore")).toBeNull();
+
+    view.rerender(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={controller}
+          contentNearBottom
+          contentViewportKey="preview-1"
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(surface.getAttribute("data-capsule-yielded")).toBe("true");
+    });
+
+    view.rerender(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={controller}
+          contentNearBottom={false}
+          contentViewportKey="preview-1"
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+    await waitFor(() => {
+      expect(surface.getAttribute("data-capsule-yielded")).toBe("false");
+    });
+    expect(screen.queryByTestId("workbench-assistant-capsule-restore")).toBeNull();
+
+    view.rerender(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={controller}
+          contentNearBottom
+          contentViewportKey="preview-1"
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("workbench-assistant-capsule-restore")).not.toBeNull();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "恢复工作台助手胶囊" }));
+    expect(surface.getAttribute("data-capsule-yielded")).toBe("false");
+    expect(screen.queryByTestId("workbench-assistant-capsule-restore")).toBeNull();
+  });
+
+  it("lets the user manually yield and restore the capsule without viewport reports", async () => {
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={fakeController()}
+          contentNearBottom={false}
+          contentViewportKey="cross-origin-html"
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    const surface = screen.getByTestId("workbench-assistant-surface");
+    fireEvent.click(screen.getByRole("button", { name: "收起工作台助手胶囊" }));
+
+    await waitFor(() => {
+      expect(surface.getAttribute("data-capsule-yielded")).toBe("true");
+    });
+    expect(screen.queryByRole("button", { name: "收起工作台助手胶囊" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "恢复工作台助手胶囊" }));
+
+    await waitFor(() => {
+      expect(surface.getAttribute("data-capsule-yielded")).toBe("false");
+    });
+    expect(screen.getByRole("button", { name: "收起工作台助手胶囊" })).not.toBeNull();
+  });
+
   it("falls back to the placeholder when no workbench session is bound", async () => {
     render(
       <WorkbenchSurfaceTestProviders>

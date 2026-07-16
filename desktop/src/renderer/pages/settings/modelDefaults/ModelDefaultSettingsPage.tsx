@@ -5,6 +5,7 @@ import { SearchableModelDropdown, type SearchableModelDropdownOption } from "@/r
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { ModelDefaultScope, ModelDefaultsResponse } from "@/types/protocol";
 
+import { useRealtimeSetting } from "../useRealtimeSetting";
 import styles from "./ModelDefaultSettingsPage.module.css";
 
 export interface ModelDefaultSettingsPageProps {
@@ -18,10 +19,17 @@ export function ModelDefaultSettingsPage({
 }: ModelDefaultSettingsPageProps) {
   const notifications = useNotifications();
   const [providers, setProviders] = useState<ModelProvider[]>([]);
-  const [draft, setDraft] = useState<DefaultDraft>(emptyDraft());
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const draftSetting = useRealtimeSetting<DefaultDraft>({
+    isValid: (value) => Boolean(value.default_chat.providerId && value.default_chat.model),
+    onError: (reason) => notifications.error(errorMessage(reason, "保存模型配置失败")),
+    save: async (value) => {
+      const nextDefaults = await runtime.settings.saveModelDefaults(payloadFromDraft(value));
+      return draftFromDefaults(nextDefaults);
+    },
+  });
+  const draft = draftSetting.value ?? emptyDraft();
 
   useEffect(() => {
     let active = true;
@@ -31,7 +39,7 @@ export function ModelDefaultSettingsPage({
       .then(([items, nextDefaults]) => {
         if (active) {
           setProviders(items);
-          setDraft(draftFromDefaults(nextDefaults));
+          draftSetting.replace(draftFromDefaults(nextDefaults));
         }
       })
       .catch((reason: unknown) => {
@@ -50,7 +58,7 @@ export function ModelDefaultSettingsPage({
     return () => {
       active = false;
     };
-  }, [notifications, runtime]);
+  }, [draftSetting.replace, notifications, runtime]);
 
   const enabledProviderCount = providers.filter((provider) => provider.enabled).length;
   const enabledModelCount = providers.reduce(
@@ -59,38 +67,15 @@ export function ModelDefaultSettingsPage({
     0,
   );
   const modelOptions = modelOptionsFromProviders(providers);
-  const canSave = Boolean(draft.default_chat.providerId && draft.default_chat.model) && !saving;
-
   const updateDraft = (scope: ModelDefaultScope, patch: Partial<DefaultDraftItem>) => {
-    setDraft((current) => ({
-      ...current,
-      [scope]: { ...current[scope], ...patch },
-    }));
-  };
-
-  const saveDefaults = async () => {
-    if (!canSave) {
-      return;
-    }
-    setSaving(true);
     setError(null);
-    try {
-      const nextDefaults = await runtime.settings.saveModelDefaults({
-        defaults: {
-          default_chat: { provider_id: draft.default_chat.providerId, model: draft.default_chat.model },
-          fast:
-            draft.fast.providerId && draft.fast.model
-              ? { provider_id: draft.fast.providerId, model: draft.fast.model }
-              : null,
-        },
-      });
-      setDraft(draftFromDefaults(nextDefaults));
-      notifications.success("模型配置已保存");
-    } catch (reason) {
-      notifications.error(errorMessage(reason));
-    } finally {
-      setSaving(false);
-    }
+    draftSetting.update(
+      (current) => ({
+        ...current,
+        [scope]: { ...current[scope], ...patch },
+      }),
+      0,
+    );
   };
 
   return (
@@ -153,11 +138,6 @@ export function ModelDefaultSettingsPage({
                 })
               }
             />
-          </div>
-          <div className={styles.actions}>
-            <button data-settings-primary type="button" disabled={!canSave} onClick={() => void saveDefaults()}>
-              {saving ? "保存中" : "保存"}
-            </button>
           </div>
         </section>
       ) : null}
@@ -248,6 +228,18 @@ function draftFromDefaults(response: ModelDefaultsResponse): DefaultDraft {
   };
 }
 
+function payloadFromDraft(draft: DefaultDraft) {
+  return {
+    defaults: {
+      default_chat: { provider_id: draft.default_chat.providerId, model: draft.default_chat.model },
+      fast:
+        draft.fast.providerId && draft.fast.model
+          ? { provider_id: draft.fast.providerId, model: draft.fast.model }
+          : null,
+    },
+  };
+}
+
 function enabledModels(provider: ModelProvider): string[] {
   return provider.models.filter((model) => provider.model_enabled[model] !== false);
 }
@@ -264,12 +256,12 @@ function modelOptionsFromProviders(providers: ModelProvider[]): SearchableModelD
     );
 }
 
-function errorMessage(reason: unknown): string {
+function errorMessage(reason: unknown, fallback = "读取供应商失败"): string {
   if (reason instanceof Error && reason.message) {
     return reason.message;
   }
   if (reason && typeof reason === "object" && typeof (reason as { message?: unknown }).message === "string") {
     return (reason as { message: string }).message;
   }
-  return "读取供应商失败";
+  return fallback;
 }

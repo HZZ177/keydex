@@ -80,6 +80,7 @@
   color: inherit;
   font: inherit;
   line-height: inherit;
+  user-select: text;
   white-space: pre-wrap;
 }
 
@@ -92,6 +93,7 @@
   cursor: pointer;
   font: inherit;
   line-height: inherit;
+  user-select: text;
 }
 
 .richInput [data-paste-summary-omission="true"] {
@@ -117,6 +119,21 @@
   font: inherit;
   line-height: inherit;
   transition: color 140ms ease;
+}
+
+.richInput [data-paste-boundary] {
+  color: var(--color-text-tertiary);
+  cursor: text;
+  font: inherit;
+  line-height: inherit;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.richInput [data-paste-caret-host] {
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
 }
 
 .richInput [data-sendbox-pasted-text="true"][data-collapsed="true"] [data-paste-toggle-position="trailing"] {

@@ -32,41 +32,49 @@ export function GitRevertView({
   const invalidMainline = parsedMainline !== null && (!Number.isInteger(parsedMainline) || parsedMainline < 1 || parsedMainline > 64);
   const operation = status?.operation?.kind === "revert" ? status.operation : null;
   return (
-    <section className={styles.root} aria-label="Revert workflow">
-      <header><RotateCcw size={14} /><div><strong>Revert</strong><span>Create new commits that undo selected commits. Existing history is not moved or deleted.</span></div></header>
+    <section className={styles.root} aria-label="反向提交处理流程">
+      <header><RotateCcw size={14} /><div><strong>反向提交</strong><span>创建新提交以撤销所选提交，不移动或删除现有历史。</span></div></header>
       {operation ? (
         <div className={styles.operation} role="status">
-          <div><strong>Revert {operation.state}</strong><span>Resolve the current commit, skip it, or abort the uncommitted sequence.</span></div>
-          <button type="button" disabled={busy || operation.state === "conflicted"} onClick={() => onControl("continue")}>Continue revert</button>
-          <button type="button" disabled={busy} onClick={() => setPendingControl("skip")}>Skip revert</button>
-          <button type="button" disabled={busy} onClick={() => setPendingControl("abort")}>Abort revert</button>
+          <div><strong>反向提交：{operationStateLabel(operation.state)}</strong><span>请解决当前提交、跳过它或中止尚未提交的序列。</span></div>
+          <button type="button" disabled={busy || operation.state === "conflicted"} onClick={() => onControl("continue")}>继续</button>
+          <button type="button" disabled={busy} onClick={() => setPendingControl("skip")}>跳过</button>
+          <button type="button" disabled={busy} onClick={() => setPendingControl("abort")}>中止</button>
         </div>
       ) : null}
       {pendingControl ? (
-        <div className={styles.confirmation} role="alertdialog" aria-label={`Confirm revert ${pendingControl}`}>
-          <strong>{pendingControl === "abort" ? "Abort the revert sequence?" : "Skip the current revert commit?"}</strong>
-          <span>{pendingControl === "abort" ? "Uncommitted revert changes will be discarded and the starting HEAD restored." : "The current revert is omitted; remaining commits continue."}</span>
-          <button type="button" onClick={() => { const action = pendingControl; setPendingControl(null); onControl(action); }}>Confirm {pendingControl}</button>
-          <button type="button" onClick={() => setPendingControl(null)}>Cancel</button>
+        <div className={styles.confirmation} role="alertdialog" aria-label="确认反向提交控制操作">
+          <strong>{pendingControl === "abort" ? "中止反向提交序列吗？" : "跳过当前反向提交吗？"}</strong>
+          <span>{pendingControl === "abort" ? "尚未提交的撤销改动将被丢弃，并恢复到序列开始时的状态。" : "当前撤销提交将被省略，其余提交继续执行。"}</span>
+          <button type="button" onClick={() => { const action = pendingControl; setPendingControl(null); onControl(action); }}>{pendingControl === "abort" ? "确认中止" : "确认跳过"}</button>
+          <button type="button" onClick={() => setPendingControl(null)}>取消</button>
         </div>
       ) : null}
       <div className={styles.form}>
-        <label><span>Commits (one per line, reverted in listed order)</span><textarea aria-label="Commits to revert" rows={4} value={input} onChange={(event) => setInput(event.target.value)} /></label>
-        <div className={styles.suggestions} aria-label="Revert reference suggestions">{refs.slice(0, 8).map((ref) => <button type="button" key={ref.fullName} disabled={busy} onClick={() => setInput((current) => `${current}${current.trim() ? "\n" : ""}${ref.fullName}`)}>{ref.shortName}</button>)}</div>
-        <label><span>Mainline parent (required for merge commits)</span><input aria-label="Mainline parent" type="number" min={1} max={64} step={1} value={mainline} placeholder="1" onChange={(event) => setMainline(event.target.value)} /></label>
-        <p className={styles.note}>For a merge commit, choose the parent whose history should be kept (usually 1). Keydex never guesses this value.</p>
-        {duplicate ? <p className={styles.warning} role="alert">Commit {duplicate} appears more than once.</p> : null}
-        {invalidMainline ? <p className={styles.warning} role="alert">Mainline parent must be an integer from 1 to 64.</p> : null}
-        <button type="button" className={styles.primary} disabled={busy || commits.length === 0 || Boolean(duplicate) || invalidMainline || Boolean(operation)} onClick={() => onRevert(commits, parsedMainline)}>Create revert commits</button>
+        <label><span>提交（每行一个，按列出顺序撤销）</span><textarea aria-label="要撤销的提交" rows={4} value={input} onChange={(event) => setInput(event.target.value)} /></label>
+        <div className={styles.suggestions} aria-label="反向提交引用建议">{refs.slice(0, 8).map((ref) => <button type="button" key={ref.fullName} disabled={busy} onClick={() => setInput((current) => `${current}${current.trim() ? "\n" : ""}${ref.fullName}`)}>{ref.shortName}</button>)}</div>
+        <label><span>主线父提交（合并提交必填）</span><input aria-label="主线父提交" type="number" min={1} max={64} step={1} value={mainline} placeholder="1" onChange={(event) => setMainline(event.target.value)} /></label>
+        <p className={styles.note}>对于合并提交，请选择需要保留其历史的父提交（通常为 1）。Keydex 不会猜测此值。</p>
+        {duplicate ? <p className={styles.warning} role="alert">提交 {duplicate} 重复出现。</p> : null}
+        {invalidMainline ? <p className={styles.warning} role="alert">主线父提交必须是 1 到 64 之间的整数。</p> : null}
+        <button type="button" className={styles.primary} disabled={busy || commits.length === 0 || Boolean(duplicate) || invalidMainline || Boolean(operation)} onClick={() => onRevert(commits, parsedMainline)}>创建反向提交</button>
       </div>
       {requestedCommits.length ? (
-        <ol className={styles.queue} aria-label="Revert result queue">{requestedCommits.map((commit, index) => {
+        <ol className={styles.queue} aria-label="反向提交结果队列">{requestedCommits.map((commit, index) => {
           const state = revertItemState(commit, index, requestedCommits, status, outcome);
-          return <li key={`${commit}:${index}`} data-state={state}><code>{commit.length > 16 ? commit.slice(0, 12) : commit}</code><span>{state}</span></li>;
+          return <li key={`${commit}:${index}`} data-state={state}><code>{commit.length > 16 ? commit.slice(0, 12) : commit}</code><span>{queueStateLabel(state)}</span></li>;
         })}</ol>
       ) : null}
     </section>
   );
+}
+
+function operationStateLabel(state: NonNullable<GitStatusSnapshot["operation"]>["state"]): string {
+  return ({ running: "执行中", conflicted: "存在冲突", continuable: "可以继续" })[state];
+}
+
+function queueStateLabel(state: ReturnType<typeof revertItemState>): string {
+  return ({ pending: "等待中", reverted: "已撤销", conflicted: "存在冲突", empty: "已跳过", failed: "失败", aborted: "已中止" })[state];
 }
 
 export function revertItemState(

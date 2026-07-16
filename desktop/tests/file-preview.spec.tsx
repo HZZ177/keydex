@@ -333,7 +333,9 @@ describe("FilePreview", () => {
     expect(screen.queryByRole("status", { name: "正在准备预览" })).toBeNull();
   });
 
-  it("applies a panel bottom safe area to scrollable preview content", async () => {
+  it("reports when the panel preview viewport approaches the document bottom", async () => {
+    mockSourceScrollMetrics({ clientWidth: 640, clientHeight: 200, scrollHeight: 1000 });
+    const onViewportNearBottomChange = vi.fn();
     const runtime = fakeRuntime({
       readFile: vi.fn().mockResolvedValue({
         path: "README.md",
@@ -348,18 +350,19 @@ describe("FilePreview", () => {
         sessionId="ses-1"
         runtime={runtime}
         chrome="panel"
-        bottomSafeArea="140px"
+        onViewportNearBottomChange={onViewportNearBottomChange}
       />,
     );
 
     expect(await screen.findByRole("heading", { name: "Safe Area" })).not.toBeNull();
-    const root = document.querySelector<HTMLElement>("[data-file-preview-root='true']");
-    expect(root?.getAttribute("data-bottom-safe-area")).toBe("true");
-    expect(root?.style.getPropertyValue("--file-preview-content-bottom-safe-area")).toBe("140px");
-    expect(
-      document.querySelector("[data-workspace-document-path='README.md']")?.getAttribute("data-bottom-safe-area"),
-    ).toBe("true");
-    expect(document.querySelector("[data-file-preview-bottom-safe-area='true']")).not.toBeNull();
+    const viewport = screen.getByLabelText("预览内容");
+    await waitFor(() => expect(onViewportNearBottomChange).toHaveBeenLastCalledWith(false));
+
+    viewport.scrollTop = 760;
+    fireEvent.scroll(viewport);
+
+    await waitFor(() => expect(onViewportNearBottomChange).toHaveBeenLastCalledWith(true));
+    expect(document.querySelector("[data-file-preview-bottom-safe-area='true']")).toBeNull();
   });
 
   it("keeps panel file previews loading through the open animation", async () => {
@@ -1676,7 +1679,7 @@ describe("FilePreview", () => {
     }
   });
 
-  it("renders html files in a sandboxed preview frame", async () => {
+  it("allows html file scripts in an origin-isolated sandboxed preview frame", async () => {
     const runtime = fakeRuntime({
       readFile: vi.fn().mockResolvedValue({
         path: "index.html",
@@ -1688,8 +1691,172 @@ describe("FilePreview", () => {
     render(<FilePreview request={{ type: "file", path: "index.html" }} sessionId="ses-1" runtime={runtime} />);
 
     const frame = (await screen.findByTitle("HTML 文件预览")) as HTMLIFrameElement;
-    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
     expect(frame.getAttribute("srcdoc")).toContain("页面预览");
+  });
+
+  it("uses the html frame as the only panel scroll owner and accepts its bottom proximity report", async () => {
+    const onViewportNearBottomChange = vi.fn();
+    render(
+      <FilePreview
+        chrome="panel"
+        onViewportNearBottomChange={onViewportNearBottomChange}
+        request={{
+          type: "content",
+          title: "HTML 预览",
+          content: "<main>很长的 HTML 页面</main>",
+          contentType: "html",
+        }}
+      />,
+    );
+
+    const viewport = screen.getByLabelText("预览内容");
+    const frame = screen.getByTitle<HTMLIFrameElement>("HTML 文件预览");
+    const pane = frame.closest<HTMLElement>("[data-html-frame-scroll-owner='true']");
+    expect(viewport.getAttribute("data-scroll-owner")).toBe("html-frame");
+    expect(pane).not.toBeNull();
+    expect(frame.srcdoc).toContain("data-keydex-preview-viewport-bridge");
+    expect(pane?.querySelector("[data-file-preview-bottom-safe-area='true']")).toBeNull();
+    expect(screen.queryByTestId("preview-scroll-rail")).toBeNull();
+
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        type: "keydex:html-preview-viewport-state/v1",
+        nearBottom: true,
+      },
+      source: frame.contentWindow,
+    }));
+    await waitFor(() => expect(onViewportNearBottomChange).toHaveBeenLastCalledWith(true));
+
+    fireEvent.click(screen.getByRole("button", { name: "源码" }));
+
+    expect(viewport.getAttribute("data-scroll-owner")).toBeNull();
+    expect(screen.getByTestId("preview-scroll-rail")).not.toBeNull();
+  });
+
+  it("keeps the capsule visible when a cross-origin html frame cannot report its viewport", async () => {
+    vi.useFakeTimers();
+    const onViewportNearBottomChange = vi.fn();
+    render(
+      <FilePreview
+        chrome="panel"
+        onViewportNearBottomChange={onViewportNearBottomChange}
+        request={{
+          type: "content",
+          title: "Vite HTML 预览",
+          content: [
+            '<script type="module" src="http://localhost:4173/@vite/client"></script>',
+            '<script type="module" src="http://localhost:4173/src/main.tsx"></script>',
+          ].join(""),
+          contentType: "html",
+        }}
+      />,
+    );
+
+    const frame = screen.getByTitle<HTMLIFrameElement>("HTML 文件预览");
+    expect(frame.src).toBe("http://localhost:4173/");
+
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
+      await Promise.resolve();
+    });
+
+    expect(onViewportNearBottomChange).not.toHaveBeenCalledWith(true);
+  });
+
+  it("opens workspace html files directly from their native directory without a sandbox", async () => {
+    const prepareHtmlFile = vi.fn().mockResolvedValue({
+      path: "D:\\repo\\.ktaicoding\\prototype\\A2UI\\index.html",
+      url: "http://asset.localhost/D%3A/repo/.ktaicoding/prototype/A2UI/index.html",
+    });
+    const runtime = {
+      ...fakeRuntime({
+        readFile: vi.fn().mockResolvedValue({
+          path: ".ktaicoding/prototype/A2UI/index.html",
+          content: '<iframe src="prototype-subpage.html"></iframe>',
+          encoding: "utf-8",
+        }),
+      }),
+      localPreview: { prepareHtmlFile },
+    } as unknown as RuntimeBridge;
+
+    render(
+      <FilePreview
+        request={{ type: "file", path: ".ktaicoding/prototype/A2UI/index.html" }}
+        runtime={runtime}
+        sessionId="ses-1"
+        workspaceRootPath="D:/repo"
+      />,
+    );
+
+    const frame = (await screen.findByTitle("HTML 文件预览")) as HTMLIFrameElement;
+    expect(prepareHtmlFile).toHaveBeenCalledWith(
+      "D:/repo/.ktaicoding/prototype/A2UI/index.html",
+      "D:/repo",
+    );
+    expect(frame.getAttribute("src")).toBe(
+      "http://asset.localhost/D%3A/repo/.ktaicoding/prototype/A2UI/index.html",
+    );
+    expect(frame.getAttribute("sandbox")).toBeNull();
+    expect(frame.getAttribute("srcdoc")).toBeNull();
+  });
+
+  it("does not silently fall back to srcdoc when the workspace html runtime is stale", async () => {
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: ".ktaicoding/prototype/A2UI/index.html",
+        content: '<iframe src="prototype-subpage.html"></iframe>',
+        encoding: "utf-8",
+      }),
+    });
+
+    render(
+      <FilePreview
+        request={{ type: "file", path: ".ktaicoding/prototype/A2UI/index.html" }}
+        runtime={runtime}
+        sessionId="ses-1"
+        workspaceRootPath="D:/repo"
+      />,
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "HTML 直接预览运行时尚未更新，请刷新 Keydex 页面后重新打开文件。",
+    );
+    expect(screen.queryByTitle("HTML 文件预览")).toBeNull();
+  });
+
+  it("opens Vite-backed html files through their loopback server origin", async () => {
+    const prepareHtmlFile = vi.fn();
+    const runtime = {
+      ...fakeRuntime({
+        readFile: vi.fn().mockResolvedValue({
+          path: "prototype-20260623-001-a2ui-config.html",
+          content: [
+            '<script type="module" src="http://localhost:4173/@vite/client"></script>',
+            '<script type="module" src="http://localhost:4173/src/main.tsx?t=123"></script>',
+          ].join("\n"),
+          encoding: "utf-8",
+        }),
+      }),
+      localPreview: { prepareHtmlFile },
+    } as unknown as RuntimeBridge;
+
+    render(
+      <FilePreview
+        request={{ type: "file", path: "prototype-20260623-001-a2ui-config.html" }}
+        sessionId="ses-1"
+        runtime={runtime}
+      />,
+    );
+
+    const frame = (await screen.findByTitle("HTML 文件预览")) as HTMLIFrameElement;
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-same-origin");
+    expect(frame.getAttribute("src")).toBe(
+      "http://localhost:4173/prototype-20260623-001-a2ui-config.html",
+    );
+    expect(frame.getAttribute("srcdoc")).toBeNull();
+    expect(prepareHtmlFile).not.toHaveBeenCalled();
   });
 
   it("renders direct html content into the sandboxed frame without an empty first document", () => {
@@ -1708,7 +1875,8 @@ describe("FilePreview", () => {
     );
 
     const frame = screen.getByTitle("HTML 文件预览") as HTMLIFrameElement;
-    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
     expect(frame.getAttribute("srcdoc")).toContain("<style>h1 { color: rgb(220, 38, 38); }</style>");
     expect(frame.getAttribute("srcdoc")).toContain("面板样式");
     expect(frame.getAttribute("srcdoc")).not.toContain("文件为空");
@@ -1730,7 +1898,8 @@ describe("FilePreview", () => {
 
     const frame = screen.getByTitle("HTML 文件预览") as HTMLIFrameElement;
     expect(screen.getByLabelText("源码内容").textContent).toContain("<main>");
-    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
     expect(frame.getAttribute("srcdoc")).toContain("页面预览");
   });
 

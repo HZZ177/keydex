@@ -1045,7 +1045,7 @@ describe("AppRouter", () => {
 
     const workbenchShell = await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 });
     expect(workbenchShell).not.toBeNull();
-    expect(workbenchShell.style.getPropertyValue("--workbench-main-bottom-safe-area")).toBe("140px");
+    expect(workbenchShell.style.getPropertyValue("--workbench-main-bottom-safe-area")).toBe("");
     const shell = await screen.findByTestId("app-shell", undefined, { timeout: 10000 });
     expect(shell.dataset.rightSidebarEnabled).toBe("false");
     expect(shell.dataset.rightSidebar).toBe("closed");
@@ -1058,12 +1058,11 @@ describe("AppRouter", () => {
     });
     const tree = screen.getByTestId("workspace-file-browser-tree");
     const workspacePanel = tree.querySelector<HTMLElement>("[data-workspace-panel-root='true']");
-    expect(workspacePanel?.style.getPropertyValue("--workspace-panel-bottom-safe-area")).toBe(
-      "var(--workbench-main-bottom-safe-area, 0px)",
-    );
+    expect(workspacePanel?.style.getPropertyValue("--workspace-panel-bottom-safe-area")).toBe("");
     fireEvent.click(await within(tree).findByTestId("workspace-browser-outline-tab"));
     expect(await within(tree).findByText("Workbench file")).not.toBeNull();
     const previewRoot = document.querySelector("[data-file-preview-root='true']");
+    expect(previewRoot?.getAttribute("data-bottom-safe-area")).toBeNull();
     const readCount = vi.mocked(runtime.workspace.readFile).mock.calls.length;
 
     fireEvent.click(screen.getByTestId("reveal-workbench-file-readme-line"));

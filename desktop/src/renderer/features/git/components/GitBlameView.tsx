@@ -34,10 +34,10 @@ export function GitBlameView({
   }, [defaultPath, path]);
 
   return (
-    <section className={styles.root} aria-label="Git blame">
+    <section className={styles.root} aria-label="Git 逐行历史">
       <form
         className={styles.toolbar}
-        aria-label="Blame options"
+        aria-label="逐行历史选项"
         onSubmit={(event) => {
           event.preventDefault();
           onLoad({
@@ -47,20 +47,20 @@ export function GitBlameView({
           });
         }}
       >
-        <label><span>File path</span><input required value={path} placeholder="src/file.ts" onChange={(event) => setPath(event.target.value)} /></label>
-        <label><span>Revision</span><input value={revision} placeholder="Working tree" onChange={(event) => setRevision(event.target.value)} /></label>
-        <label className={styles.check}><input type="checkbox" checked={useIgnoreRevs} onChange={(event) => setUseIgnoreRevs(event.target.checked)} />Use .git-blame-ignore-revs</label>
-        <button type="submit" disabled={loading || !path.trim()}><Search size={12} />{loading ? "Loading…" : "Blame"}</button>
+        <label><span>文件路径</span><input required value={path} placeholder="例如：源码/文件.ts" onChange={(event) => setPath(event.target.value)} /></label>
+        <label><span>修订</span><input value={revision} placeholder="当前工作树" onChange={(event) => setRevision(event.target.value)} /></label>
+        <label className={styles.check}><input type="checkbox" checked={useIgnoreRevs} onChange={(event) => setUseIgnoreRevs(event.target.checked)} />使用忽略修订配置文件</label>
+        <button type="submit" disabled={loading || !path.trim()}><Search size={12} />{loading ? "正在加载…" : "查看逐行历史"}</button>
       </form>
       {page ? (
         <>
           <header className={styles.summary}>
             <strong>{page.path}</strong>
-            <span>{page.revision ?? "Working tree"}</span>
-            <span>Lines {page.startLine}–{page.lines.at(-1)?.finalLine ?? page.startLine}</span>
-            {page.ignoreRevsFile ? <span>Ignoring revisions from {page.ignoreRevsFile}</span> : null}
+            <span>{page.revision ?? "当前工作树"}</span>
+            <span>第 {page.startLine}–{page.lines.at(-1)?.finalLine ?? page.startLine} 行</span>
+            {page.ignoreRevsFile ? <span>已忽略 {page.ignoreRevsFile} 中的修订</span> : null}
           </header>
-          <div className={styles.scroller} role="table" aria-label="Blame lines">
+          <div className={styles.scroller} role="table" aria-label="逐行历史">
             {page.lines.map((line) => (
               <div className={styles.line} role="row" key={`${line.finalLine}-${line.objectId}`}>
                 <span role="cell" className={styles.lineNumber}>{line.finalLine}</span>
@@ -69,25 +69,25 @@ export function GitBlameView({
                   role="cell"
                   className={styles.commit}
                   disabled={line.uncommitted}
-                  title={line.uncommitted ? "Uncommitted working tree line" : `${line.objectId} ${line.summary}`}
+                  title={line.uncommitted ? "工作树中尚未提交的行" : `${line.objectId} ${line.summary}`}
                   onClick={() => onOpenCommit(line.objectId)}
                 >
-                  {line.uncommitted ? "Working" : line.objectId.slice(0, 8)}
+                  {line.uncommitted ? "未提交" : line.objectId.slice(0, 8)}
                 </button>
-                <span role="cell" className={styles.author}>{line.authorName || "Unknown"}</span>
+                <span role="cell" className={styles.author}>{line.authorName || "未知"}</span>
                 <span role="cell" className={styles.date}>{formatBlameDate(line.authoredAt)}</span>
                 <code role="cell">{line.content}</code>
-                {line.boundary ? <span className={styles.badge}>boundary</span> : null}
+                {line.boundary ? <span className={styles.badge}>边界提交</span> : null}
               </div>
             ))}
           </div>
           {page.nextStartLine ? (
             <button type="button" className={styles.more} disabled={loading} onClick={onLoadMore}>
-              Load lines from {page.nextStartLine}
+              从第 {page.nextStartLine} 行继续加载
             </button>
           ) : null}
         </>
-      ) : <div className={styles.empty}><History size={18} /><span>Choose a file to inspect line history.</span></div>}
+      ) : <div className={styles.empty}><History size={18} /><span>请选择文件以查看逐行修改历史。</span></div>}
     </section>
   );
 }

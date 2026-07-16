@@ -17,8 +17,8 @@ export function confirmWorktreeRemoval(
   worktree: Pick<GitWorktree, "path" | "dirty">,
   confirm: (message: string) => boolean = window.confirm,
 ): boolean {
-  if (!confirm(`Remove this linked worktree registration?\n${worktree.path}`)) return false;
-  return !worktree.dirty || confirm(`Confirm destruction of uncommitted changes in this dirty worktree:\n${worktree.path}`);
+  if (!confirm(`要移除此关联工作树的登记信息吗？\n${worktree.path}`)) return false;
+  return !worktree.dirty || confirm(`此工作树存在未提交改动。确认丢弃这些改动并移除工作树吗？\n${worktree.path}`);
 }
 
 export function GitWorktreeView({
@@ -61,13 +61,13 @@ export function GitWorktreeView({
     });
   };
   return (
-    <section className={styles.root} aria-label="Git worktrees">
+    <section className={styles.root} aria-label="Git 工作树">
       <header>
-        <div><GitBranch size={14} /><strong>Worktrees</strong></div>
-        <button type="button" disabled={busy} onClick={onPrune}>Prune stale</button>
+        <div><GitBranch size={14} /><strong>工作树</strong></div>
+        <button type="button" disabled={busy} onClick={onPrune}>清理失效登记</button>
       </header>
-      <p className={styles.identity}>Parent repository <code>{parentRepositoryId ?? "unavailable"}</code>. External paths require an independent exact-path grant.</p>
-      {loading ? <p>Loading worktrees…</p> : (
+      <p className={styles.identity}>父仓库 <code>{parentRepositoryId ?? "不可用"}</code>。外部路径需要单独授予精确路径权限。</p>
+      {loading ? <p>正在读取工作树…</p> : (
         <ul className={styles.list}>
           {(snapshot?.worktrees ?? []).map((worktree) => (
             <WorktreeRow
@@ -84,16 +84,16 @@ export function GitWorktreeView({
         </ul>
       )}
       <form className={styles.addForm} onSubmit={submit}>
-        <strong><Plus size={13} />Add worktree</strong>
-        <label>Absolute target path<input aria-label="Worktree target path" value={path} onChange={(event) => setPath(event.target.value)} placeholder="D:\\worktrees\\feature" /></label>
+        <strong><Plus size={13} />添加工作树</strong>
+        <label>目标绝对路径<input aria-label="工作树目标路径" value={path} onChange={(event) => setPath(event.target.value)} placeholder="D:\\项目工作树\\功能分支" /></label>
         <div className={styles.addGrid}>
-          <label>Revision<input aria-label="Worktree revision" value={revision} onChange={(event) => setRevision(event.target.value)} /></label>
-          <label>New branch<input aria-label="Worktree new branch" value={newBranch} disabled={detach} onChange={(event) => setNewBranch(event.target.value)} placeholder="feature/topic" /></label>
+          <label>修订<input aria-label="工作树修订" value={revision} onChange={(event) => setRevision(event.target.value)} /></label>
+          <label>新分支<input aria-label="工作树新分支" value={newBranch} disabled={detach} onChange={(event) => setNewBranch(event.target.value)} placeholder="功能/主题" /></label>
         </div>
-        <label className={styles.check}><input type="checkbox" checked={detach} onChange={(event) => setDetach(event.target.checked)} />Detached HEAD</label>
+        <label className={styles.check}><input type="checkbox" checked={detach} onChange={(event) => setDetach(event.target.checked)} />使用分离指针</label>
         <div className={styles.addActions}>
-          <button type="button" disabled={busy || !path.trim()} onClick={() => onAuthorize(path.trim())}><ShieldCheck size={13} />Authorize external path</button>
-          <button type="submit" disabled={busy || !path.trim() || !revision.trim()}><Plus size={13} />Add</button>
+          <button type="button" disabled={busy || !path.trim()} onClick={() => onAuthorize(path.trim())}><ShieldCheck size={13} />授权外部路径</button>
+          <button type="submit" disabled={busy || !path.trim() || !revision.trim()}><Plus size={13} />添加</button>
         </div>
       </form>
     </section>
@@ -109,25 +109,25 @@ function WorktreeRow({ worktree, busy, onAuthorize, onRevoke, onRemove, onLock, 
   onLock: (worktree: GitWorktree, reason: string | null) => void;
   onUnlock: (worktree: GitWorktree) => void;
 }) {
-  const branch = worktree.branch?.replace(/^refs\/heads\//, "") ?? (worktree.detached ? "detached HEAD" : "bare");
+  const branch = worktree.branch?.replace(/^refs\/heads\//, "") ?? (worktree.detached ? "分离指针" : "裸仓库");
   return (
     <li className={styles.row}>
       <div className={styles.details}>
         <strong>{branch}</strong>
         <code>{worktree.path}</code>
         <small>
-          {worktree.primary ? "primary" : worktree.authorizationRequired ? "external" : "project path"}
-          {worktree.dirty === true ? " · dirty" : worktree.dirty === false ? " · clean" : " · status hidden"}
-          {worktree.lockedReason ? ` · locked: ${worktree.lockedReason}` : ""}
-          {worktree.prunableReason ? ` · prunable: ${worktree.prunableReason}` : ""}
+          {worktree.primary ? "主工作树" : worktree.authorizationRequired ? "外部路径" : "项目路径"}
+          {worktree.dirty === true ? " · 有改动" : worktree.dirty === false ? " · 干净" : " · 状态不可见"}
+          {worktree.lockedReason ? ` · 已锁定：${worktree.lockedReason}` : ""}
+          {worktree.prunableReason ? " · 可清理" : ""}
         </small>
       </div>
       <div className={styles.actions}>
-        {worktree.authorizationRequired && !worktree.authorized ? <button type="button" disabled={busy} onClick={() => onAuthorize(worktree.path)}><ShieldCheck size={12} />Authorize</button> : null}
-        {worktree.authorizationRequired && worktree.authorized ? <button type="button" disabled={busy} onClick={() => onRevoke(worktree.path)}><Unplug size={12} />Revoke</button> : null}
-        {!worktree.primary && worktree.lockedReason ? <button type="button" disabled={busy} onClick={() => onUnlock(worktree)}><LockOpen size={12} />Unlock</button> : null}
-        {!worktree.primary && !worktree.lockedReason ? <button type="button" disabled={busy || !worktree.authorized} onClick={() => onLock(worktree, window.prompt("Optional worktree lock reason")?.trim() || null)}><Lock size={12} />Lock</button> : null}
-        {!worktree.primary ? <button type="button" className={styles.remove} disabled={busy || !worktree.authorized} onClick={() => onRemove(worktree)}><Trash2 size={12} />Remove</button> : null}
+        {worktree.authorizationRequired && !worktree.authorized ? <button type="button" disabled={busy} onClick={() => onAuthorize(worktree.path)}><ShieldCheck size={12} />授权</button> : null}
+        {worktree.authorizationRequired && worktree.authorized ? <button type="button" disabled={busy} onClick={() => onRevoke(worktree.path)}><Unplug size={12} />撤销授权</button> : null}
+        {!worktree.primary && worktree.lockedReason ? <button type="button" disabled={busy} onClick={() => onUnlock(worktree)}><LockOpen size={12} />解锁</button> : null}
+        {!worktree.primary && !worktree.lockedReason ? <button type="button" disabled={busy || !worktree.authorized} onClick={() => onLock(worktree, window.prompt("工作树锁定原因（可选）")?.trim() || null)}><Lock size={12} />锁定</button> : null}
+        {!worktree.primary ? <button type="button" className={styles.remove} disabled={busy || !worktree.authorized} onClick={() => onRemove(worktree)}><Trash2 size={12} />移除</button> : null}
       </div>
     </li>
   );

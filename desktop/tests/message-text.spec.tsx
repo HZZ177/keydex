@@ -1109,7 +1109,8 @@ describe("MessageText", () => {
     expect(document.querySelector("script")).toBeNull();
     const frame = screen.getByTitle("HTML 预览") as HTMLIFrameElement;
     expect(frame).not.toBeNull();
-    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
     expect(frame.getAttribute("srcdoc")).toContain("预览标题");
     expect(screen.queryByTestId("markdown-code-viewport")).toBeNull();
     expect(screen.getByRole("button", { name: "全屏显示 HTML" })).not.toBeNull();
@@ -1165,7 +1166,8 @@ describe("MessageText", () => {
 
     const dialog = screen.getByRole("dialog", { name: "HTML 预览" });
     const frames = within(dialog).getAllByTitle("HTML 预览") as HTMLIFrameElement[];
-    expect(frames[0]?.getAttribute("sandbox")).toBe("");
+    expect(frames[0]?.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frames[0]?.getAttribute("sandbox")).not.toContain("allow-same-origin");
     expect(frames[0]?.getAttribute("srcdoc")).toContain("全屏页面");
 
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭全屏预览" }));

@@ -158,7 +158,8 @@
     border-radius var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
     border-color var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
     background var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
-    box-shadow var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease);
+    box-shadow var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
+    opacity 180ms ease;
   will-change: left, bottom, width, height, translate, border-radius;
 }
 
@@ -277,6 +278,80 @@
   backdrop-filter: blur(18px);
   translate: 0 0;
   transform: none;
+}
+
+.surface[data-capsule-yielded="true"] .chrome[data-shell-mode="capsule"] {
+  translate: -50% calc(100% + 40px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.capsuleRestoreButton {
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  z-index: 4;
+  display: inline-grid;
+  width: 34px;
+  height: 24px;
+  transform: translateX(-50%);
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-info-6) 54%, transparent);
+  border-radius: 13px 13px 5px 5px;
+  background: var(--workbench-assistant-glass-bg);
+  box-shadow:
+    0 2px 8px rgb(15 23 42 / 12%),
+    inset 0 1px 0 color-mix(in srgb, var(--color-bg-elevated) 42%, transparent);
+  color: var(--color-text-3);
+  cursor: pointer;
+  opacity: 1;
+  pointer-events: auto;
+  animation: capsuleRestoreButtonIn 180ms var(--motion-ease-out) both;
+}
+
+.capsuleYieldButton {
+  position: absolute;
+  top: -19px;
+  left: 50%;
+  z-index: 4;
+  display: inline-grid;
+  width: 34px;
+  height: 20px;
+  transform: translateX(-50%);
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-info-6) 54%, transparent);
+  border-radius: 5px 5px 12px 12px;
+  background: var(--workbench-assistant-glass-bg);
+  box-shadow: 0 -2px 10px rgb(15 23 42 / 6%);
+  color: var(--color-text-3);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.capsuleYieldButton:hover,
+.capsuleYieldButton:focus-visible,
+.capsuleRestoreButton:hover,
+.capsuleRestoreButton:focus-visible {
+  border-color: color-mix(in srgb, var(--color-info-6) 72%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--workbench-assistant-glass-bg) 82%,
+    var(--control-pill-hover-bg)
+  );
+  color: var(--color-text-1);
+  outline: none;
+}
+
+@keyframes capsuleRestoreButtonIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 .surface[data-review-active="true"] .chrome[data-shell-mode="drawer"] {
@@ -1958,6 +2033,8 @@
   }
 
   .dockHandle,
+  .capsuleYieldButton,
+  .capsuleRestoreButton,
   .newSessionButton,
   .headerActionButton,
   .messageButton,
@@ -1966,6 +2043,7 @@
   .miniTurnNavigator,
   .capsule,
   .miniComposer {
+    animation: none;
     transition: none;
   }
 

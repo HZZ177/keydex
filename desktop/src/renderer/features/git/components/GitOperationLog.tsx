@@ -40,19 +40,19 @@ export function GitOperationLog({
             <article className={styles.row} data-state={operation.state} key={operation.operationId} role="listitem">
               <div className={styles.summary}>
                 <span className={styles.state}>{operationStateLabel(operation.state)}</span>
-                <strong>{operation.summary}</strong>
+                <strong>{operationSummaryLabel(operation)}</strong>
                 <code>{operation.command}</code>
               </div>
               <dl className={styles.metadata}>
                 <div><dt>仓库</dt><dd>{repository}</dd></div>
                 <div><dt>风险</dt><dd>{riskLabel(operation.risk)}</dd></div>
                 <div><dt>耗时</dt><dd>{durationLabel(operation.durationMs)}</dd></div>
-                <div><dt>操作 ID</dt><dd title={operation.operationId}>{operation.operationId.slice(0, 12)}</dd></div>
+                <div><dt>操作编号</dt><dd title={operation.operationId}>{operation.operationId.slice(0, 12)}</dd></div>
               </dl>
               {operation.error ? (
                 <div className={styles.error} role="alert">
-                  <strong>{errorPresentation?.title} <code>{operation.error.code}</code></strong>
-                  <span>{redactDiagnosticText(operation.error.message)}</span>
+                  <strong>{errorPresentation?.title}</strong>
+                  <span>{errorPresentation?.fallbackMessage}</span>
                   <small>{errorPresentation?.helpAction}</small>
                 </div>
               ) : null}
@@ -139,6 +139,14 @@ function riskLabel(risk: GitCommandResult["risk"]): string {
 
 function durationLabel(durationMs: number | null): string {
   if (durationMs === null) return "—";
-  if (durationMs < 1000) return `${durationMs} ms`;
-  return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`;
+  if (durationMs < 1000) return `${durationMs} 毫秒`;
+  return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} 秒`;
+}
+
+function operationSummaryLabel(operation: GitCommandResult): string {
+  if (operation.state === "queued") return "操作已进入队列";
+  if (operation.state === "running") return "操作正在执行";
+  if (operation.state === "succeeded") return "操作成功完成";
+  if (operation.state === "cancelled") return "操作已取消";
+  return gitErrorPresentation(operation.error?.code ?? "git_failed").fallbackMessage;
 }

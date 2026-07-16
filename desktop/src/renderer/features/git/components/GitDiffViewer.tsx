@@ -41,13 +41,13 @@ export function GitDiffViewer({
   const rows = useMemo(() => diff ? gitDiffDisplayRows(diff.hunks) : [], [diff]);
   useEffect(() => setSelectedLines(new Set()), [diff?.newPath, diff?.oldPath, diff?.rawPatch]);
 
-  if (!diff) return <div className={styles.state}>选择文件查看 Diff</div>;
-  if (diff.binary) return <div className={styles.state}>二进制文件不提供文本 Diff</div>;
+  if (!diff) return <div className={styles.state}>选择文件查看差异</div>;
+  if (diff.binary) return <div className={styles.state}>二进制文件不提供文本差异</div>;
   const tooLarge = diff.truncated || diff.rawPatch.length > maxBytes || rows.length > maxLines;
   if (tooLarge && !largeFileAccepted) {
     return (
       <div className={styles.state}>
-        <strong>Diff 过大</strong>
+        <strong>差异内容过大</strong>
         <span>为避免界面卡顿，已暂停渲染完整内容。</span>
         {!diff.truncated ? <button type="button" onClick={() => setLargeFileAccepted(true)}>仍然查看</button> : null}
       </div>
@@ -56,16 +56,16 @@ export function GitDiffViewer({
 
   const path = diff.newPath ?? diff.oldPath ?? "Diff";
   return (
-    <section className={styles.root} data-mode={mode} data-wrap={wrap ? "true" : "false"}>
+    <section className={styles.root} data-git-diff-viewer="true" data-mode={mode} data-wrap={wrap ? "true" : "false"}>
       <header className={styles.header}>
         <strong>{path}</strong>
         <span className={styles.stat}>+{diff.additions ?? 0} −{diff.deletions ?? 0}</span>
         {diff.oldMode && diff.newMode && diff.oldMode !== diff.newMode ? (
-          <span className={styles.stat} aria-label="Mode change">{diff.oldMode} → {diff.newMode}</span>
+          <span className={styles.stat} aria-label="文件模式变化">{diff.oldMode} → {diff.newMode}</span>
         ) : null}
-        <div className={styles.controls} role="group" aria-label="Diff 显示方式">
-          <button type="button" aria-pressed={mode === "unified"} aria-label="统一 Diff" onClick={() => setMode("unified")}><Rows3 size={13} /></button>
-          <button type="button" aria-pressed={mode === "split"} aria-label="并排 Diff" onClick={() => setMode("split")}><Columns2 size={13} /></button>
+        <div className={styles.controls} role="group" aria-label="差异显示方式">
+          <button type="button" aria-pressed={mode === "unified"} aria-label="统一差异" onClick={() => setMode("unified")}><Rows3 size={13} /></button>
+          <button type="button" aria-pressed={mode === "split"} aria-label="并排差异" onClick={() => setMode("split")}><Columns2 size={13} /></button>
           <button type="button" aria-pressed={wrap} aria-label="自动换行" onClick={() => setWrap((current) => !current)}><WrapText size={13} /></button>
         </div>
       </header>
@@ -78,7 +78,7 @@ export function GitDiffViewer({
               disabled={staging}
               onClick={() => void onStagePatches([buildGitHunkPatch(diff, index)])}
             >
-              {patchAction === "unstage" ? "取消暂存" : "暂存"} Hunk {index + 1}
+              {patchAction === "unstage" ? "取消暂存" : "暂存"}变更块 {index + 1}
             </button>
           ))}
           <button
@@ -124,12 +124,12 @@ function UnifiedRows({
   onToggleLine: (key: string, selected: boolean) => void;
 }) {
   return (
-    <div className={styles.lines} role="table" aria-label="统一 Diff 内容">
+    <div className={styles.lines} role="table" aria-label="统一差异内容">
       {rows.map((row) => (
-        <div className={styles.line} data-kind={row.kind} role="row" aria-label={`${row.kind} line ${row.newLine ?? row.oldLine ?? ""}`} key={row.key}>
-          <span className={styles.number} role="cell" aria-label="Old line number">{row.oldLine ?? ""}</span>
-          <span className={styles.number} role="cell" aria-label="New line number">{row.newLine ?? ""}</span>
-          <span className={styles.sign} role="cell" aria-label={row.kind}>
+        <div className={styles.line} data-kind={row.kind} role="row" aria-label={`${diffRowKindLabel(row.kind)}行 ${row.newLine ?? row.oldLine ?? ""}`} key={row.key}>
+          <span className={styles.number} role="cell" aria-label="旧行号">{row.oldLine ?? ""}</span>
+          <span className={styles.number} role="cell" aria-label="新行号">{row.newLine ?? ""}</span>
+          <span className={styles.sign} role="cell" aria-label={diffRowKindLabel(row.kind)}>
             {selectable && row.kind !== "context" ? (
               <input
                 type="checkbox"
@@ -148,12 +148,12 @@ function UnifiedRows({
 
 function SplitRows({ rows }: { rows: readonly GitDiffDisplayRow[] }) {
   return (
-    <div className={styles.splitLines} role="table" aria-label="并排 Diff 内容">
+    <div className={styles.splitLines} role="table" aria-label="并排差异内容">
       {rows.map((row) => (
-        <div className={styles.splitLine} data-kind={row.kind} role="row" aria-label={`${row.kind} line ${row.newLine ?? row.oldLine ?? ""}`} key={row.key}>
-          <span className={styles.number} role="cell" aria-label="Old line number">{row.oldLine ?? ""}</span>
+        <div className={styles.splitLine} data-kind={row.kind} role="row" aria-label={`${diffRowKindLabel(row.kind)}行 ${row.newLine ?? row.oldLine ?? ""}`} key={row.key}>
+          <span className={styles.number} role="cell" aria-label="旧行号">{row.oldLine ?? ""}</span>
           <code role="cell">{row.kind === "add" ? "" : row.content}</code>
-          <span className={styles.number} role="cell" aria-label="New line number">{row.newLine ?? ""}</span>
+          <span className={styles.number} role="cell" aria-label="新行号">{row.newLine ?? ""}</span>
           <code role="cell">{row.kind === "delete" ? "" : row.content}</code>
         </div>
       ))}
@@ -186,7 +186,7 @@ export function gitDiffDisplayRows(hunks: readonly GitDiffHunk[]): GitDiffDispla
 
 export function buildGitHunkPatch(diff: GitFileDiff, hunkIndex: number): string {
   const hunk = diff.hunks[hunkIndex];
-  if (!hunk) throw new Error("Git diff hunk was not found");
+  if (!hunk) throw new Error("未找到 Git 差异变更块");
   return patchEnvelope(diff, `${hunk.header}\n${hunk.lines.join("\n")}\n`);
 }
 
@@ -194,7 +194,7 @@ export function buildGitLinePatch(diff: GitFileDiff, hunkIndex: number, lineInde
   const hunk = diff.hunks[hunkIndex];
   const line = hunk?.lines[lineIndex];
   if (!hunk || !line || (line[0] !== "+" && line[0] !== "-")) {
-    throw new Error("Only added or deleted Git diff lines can be staged individually");
+    throw new Error("只能单独暂存 Git 差异中的新增行或删除行");
   }
   let oldLine = hunk.oldStart;
   let newLine = hunk.newStart;
@@ -212,7 +212,7 @@ export function buildGitLinePatch(diff: GitFileDiff, hunkIndex: number, lineInde
 function patchEnvelope(diff: GitFileDiff, body: string): string {
   const oldPath = diff.oldPath ?? diff.newPath;
   const newPath = diff.newPath ?? diff.oldPath;
-  if (!oldPath || !newPath) throw new Error("Git diff paths are missing");
+  if (!oldPath || !newPath) throw new Error("Git 差异缺少文件路径");
   return [
     `diff --git a/${oldPath} b/${newPath}`,
     `--- a/${oldPath}`,
@@ -220,4 +220,8 @@ function patchEnvelope(diff: GitFileDiff, body: string): string {
     body.trimEnd(),
     "",
   ].join("\n");
+}
+
+function diffRowKindLabel(kind: GitDiffDisplayRow["kind"]): string {
+  return ({ add: "新增", delete: "删除", context: "上下文" })[kind];
 }

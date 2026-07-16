@@ -14,7 +14,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -41,7 +43,7 @@ type EditableTarget = TextControl | HTMLElement;
 interface MenuContext {
   documentEntry: WorkspaceEntryContext | null;
   editable: EditableTarget | null;
-  kind: "editable" | "selection" | "empty" | "workspace-document" | "workspace-file" | "workspace-directory";
+  kind: "custom" | "editable" | "selection" | "empty" | "workspace-document" | "workspace-file" | "workspace-directory";
   mutable: boolean;
   selectionText: string;
   workspaceEntry: WorkspaceEntryContext | null;
@@ -59,6 +61,7 @@ interface WorkspaceEntryContext {
 
 interface MenuState {
   context: MenuContext;
+  items: AppContextMenuItem[] | null;
   left: number;
   ready: boolean;
   top: number;
@@ -66,13 +69,31 @@ interface MenuState {
   y: number;
 }
 
-interface MenuItem {
+export interface AppContextMenuItem {
   action?: () => void | Promise<void>;
-  children?: MenuItem[];
+  children?: AppContextMenuItem[];
   disabled?: boolean;
   icon: LucideIcon;
   id: string;
   label: string;
+}
+
+export interface OpenAppContextMenuRequest {
+  items: AppContextMenuItem[];
+  target: EventTarget | null;
+  x: number;
+  y: number;
+}
+
+interface AppContextMenuController {
+  closeContextMenu: () => void;
+  openContextMenu: (request: OpenAppContextMenuRequest) => void;
+}
+
+const AppContextMenuContext = createContext<AppContextMenuController | null>(null);
+
+export function useOptionalAppContextMenu(): AppContextMenuController | null {
+  return useContext(AppContextMenuContext);
 }
 
 const MENU_MARGIN = 8;
@@ -113,6 +134,7 @@ export function AppContextMenuProvider({ children }: PropsWithChildren) {
 
     setMenu({
       context: getMenuContext(targetElement),
+      items: null,
       left: x,
       ready: false,
       top: y,
@@ -120,6 +142,28 @@ export function AppContextMenuProvider({ children }: PropsWithChildren) {
       y,
     });
   }, []);
+
+  const openCustomMenu = useCallback((request: OpenAppContextMenuRequest) => {
+    const targetElement = eventTargetElement(request.target);
+    if (!targetElement || targetElement.closest(NATIVE_CONTEXT_MENU_SELECTOR)) {
+      setMenu(null);
+      return;
+    }
+    setMenu({
+      context: { ...getMenuContext(targetElement), kind: "custom" },
+      items: request.items,
+      left: request.x,
+      ready: false,
+      top: request.y,
+      x: request.x,
+      y: request.y,
+    });
+  }, []);
+
+  const controller = useMemo<AppContextMenuController>(() => ({
+    closeContextMenu: closeMenu,
+    openContextMenu: openCustomMenu,
+  }), [closeMenu, openCustomMenu]);
 
   useEffect(() => {
     const handleContextMenu = (event: MouseEvent) => {
@@ -158,6 +202,9 @@ export function AppContextMenuProvider({ children }: PropsWithChildren) {
 
       const target = document.activeElement;
       if (!target) {
+        return;
+      }
+      if (target instanceof Element && target.closest(LOCAL_CONTEXT_MENU_SELECTOR)) {
         return;
       }
       const rect = target.getBoundingClientRect();
@@ -225,7 +272,7 @@ export function AppContextMenuProvider({ children }: PropsWithChildren) {
   }, [closeMenu, menu]);
 
   return (
-    <>
+    <AppContextMenuContext.Provider value={controller}>
       {children}
       {menu ? (
         <AppContextMenu
@@ -234,7 +281,7 @@ export function AppContextMenuProvider({ children }: PropsWithChildren) {
           onClose={closeMenu}
         />
       ) : null}
-    </>
+    </AppContextMenuContext.Provider>
   );
 }
 
@@ -245,10 +292,11 @@ interface AppContextMenuProps {
 }
 
 function AppContextMenu({ menu, menuRef, onClose }: AppContextMenuProps) {
-  const items = useMenuItems(menu.context);
+  const defaultItems = useMenuItems(menu.context);
+  const items = menu.items ?? defaultItems;
 
   const runAction = useCallback(
-    async (item: MenuItem) => {
+    async (item: AppContextMenuItem) => {
       if (item.disabled || !item.action) {
         return;
       }
@@ -304,8 +352,8 @@ function ContextMenuItemView({
   onRunAction,
   tabIndex,
 }: {
-  item: MenuItem;
-  onRunAction: (item: MenuItem) => void | Promise<void>;
+  item: AppContextMenuItem;
+  onRunAction: (item: AppContextMenuItem) => void | Promise<void>;
   tabIndex: number;
 }) {
   const Icon = item.icon;
@@ -361,10 +409,10 @@ function ContextMenuItemView({
   );
 }
 
-function useMenuItems(context: MenuContext): MenuItem[] {
+function useMenuItems(context: MenuContext): AppContextMenuItem[] {
   return useMemo(() => {
     const hasSelection = context.selectionText.length > 0;
-    const withDocumentActions = (items: MenuItem[]) => addDocumentActions(items, context.documentEntry);
+    const withDocumentActions = (items: AppContextMenuItem[]) => addDocumentActions(items, context.documentEntry);
     const workspaceEntry = context.workspaceEntry;
 
     if (workspaceEntry?.kind === "directory") {
@@ -473,7 +521,7 @@ function useMenuItems(context: MenuContext): MenuItem[] {
   }, [context]);
 }
 
-function addDocumentActions(items: MenuItem[], documentEntry: WorkspaceEntryContext | null): MenuItem[] {
+function addDocumentActions(items: AppContextMenuItem[], documentEntry: WorkspaceEntryContext | null): AppContextMenuItem[] {
   if (!documentEntry) {
     return items;
   }
@@ -494,7 +542,7 @@ function addDocumentActions(items: MenuItem[], documentEntry: WorkspaceEntryCont
   ];
 }
 
-function withRefresh(items: MenuItem[]): MenuItem[] {
+function withRefresh(items: AppContextMenuItem[]): AppContextMenuItem[] {
   return [
     ...items,
     {

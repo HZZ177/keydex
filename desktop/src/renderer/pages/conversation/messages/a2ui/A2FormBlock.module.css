@@ -86,6 +86,10 @@
   isolation: isolate;
 }
 
+.workspace:has(.selectRoot[data-open="true"]) {
+  z-index: 2;
+}
+
 .workspace::before {
   content: "";
   position: absolute;

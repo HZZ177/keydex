@@ -29,31 +29,31 @@ export function GitCommitDetailsView({
   onCopyHash: (objectId: GitObjectId) => void | Promise<void>;
   onSelectDecoration: (decoration: string) => void;
 }) {
-  if (loading && !detail) return <div className={styles.empty} role="status">Loading commit details…</div>;
-  if (!detail) return <div className={styles.empty} role="status">Select a commit to inspect its details.</div>;
+  if (loading && !detail) return <div className={styles.empty} role="status">正在加载提交详情…</div>;
+  if (!detail) return <div className={styles.empty} role="status">请选择一个提交以查看详情。</div>;
 
   const { commit } = detail;
   const additions = detail.files.reduce((total, file) => total + (file.additions ?? 0), 0);
   const deletions = detail.files.reduce((total, file) => total + (file.deletions ?? 0), 0);
   const tree = buildCommitFileTree(detail.files);
   return (
-    <div className={styles.root} aria-label="Commit details" aria-busy={loading}>
+    <div className={styles.root} aria-label="提交详情" aria-busy={loading}>
       <section className={styles.metadata}>
         <div className={styles.subject}><GitCommitHorizontal size={14} /><strong>{commit.subject}</strong></div>
         {commit.body ? <p>{commit.body}</p> : null}
         <dl>
-          <div><dt>Commit</dt><dd className={styles.commitHash}><code>{commit.objectId}</code><button type="button" aria-label="Copy commit hash" onClick={() => void onCopyHash(commit.objectId)}><Copy size={11} /></button></dd></div>
-          <div><dt>Author</dt><dd>{commit.authorName} &lt;{commit.authorEmail}&gt;</dd></div>
-          <div><dt>Authored</dt><dd>{formatCommitDate(commit.authoredAt)}</dd></div>
-          <div><dt>Committer</dt><dd>{commit.committerName} &lt;{commit.committerEmail}&gt;</dd></div>
-          <div><dt>Committed</dt><dd>{formatCommitDate(commit.committedAt)}</dd></div>
-          <div><dt>Signature</dt><dd className={styles.signature}>{signatureIcon(commit.signature)}{commit.signature}</dd></div>
+          <div><dt>提交</dt><dd className={styles.commitHash}><code>{commit.objectId}</code><button type="button" aria-label="复制提交哈希" onClick={() => void onCopyHash(commit.objectId)}><Copy size={11} /></button></dd></div>
+          <div><dt>作者</dt><dd>{commit.authorName} &lt;{commit.authorEmail}&gt;</dd></div>
+          <div><dt>创作时间</dt><dd>{formatCommitDate(commit.authoredAt)}</dd></div>
+          <div><dt>提交者</dt><dd>{commit.committerName} &lt;{commit.committerEmail}&gt;</dd></div>
+          <div><dt>提交时间</dt><dd>{formatCommitDate(commit.committedAt)}</dd></div>
+          <div><dt>签名</dt><dd className={styles.signature}>{signatureIcon(commit.signature)}{signatureLabel(commit.signature)}</dd></div>
         </dl>
         {commit.decorations.length > 0 ? <div className={styles.decorations}>{commit.decorations.map((item) => <button type="button" key={item} onClick={() => onSelectDecoration(item)}>{item}</button>)}</div> : null}
       </section>
       {commit.parentIds.length > 0 ? (
-        <section className={styles.parents} aria-label="Compare with parent">
-          <span>Compare with parent</span>
+        <section className={styles.parents} aria-label="与父提交比较">
+          <span>与父提交比较</span>
           <div>
             {commit.parentIds.map((parentId, index) => (
               <button
@@ -67,14 +67,14 @@ export function GitCommitDetailsView({
             ))}
           </div>
         </section>
-      ) : <div className={styles.rootCommit}>Root commit compared with the empty tree</div>}
+      ) : <div className={styles.rootCommit}>根提交将与空目录树比较</div>}
       <section className={styles.files}>
-        <header><strong>{detail.files.length} changed file(s)</strong><span className={styles.additions}>+{additions}</span><span className={styles.deletions}>−{deletions}</span></header>
+        <header><strong>{detail.files.length} 个变更文件</strong><span className={styles.additions}>+{additions}</span><span className={styles.deletions}>−{deletions}</span></header>
         {tree.length > 0 ? (
-          <ul role="tree" aria-label="Commit files">{tree.map((node) => (
+          <ul role="tree" aria-label="提交文件">{tree.map((node) => (
             <FileTreeNode key={node.path} node={node} selectedFileIndex={selectedFileIndex} onSelectFile={onSelectFile} />
           ))}</ul>
-        ) : <div className={styles.empty}>No file changes for this parent.</div>}
+        ) : <div className={styles.empty}>相对此父提交没有文件变更。</div>}
       </section>
     </div>
   );
@@ -159,6 +159,10 @@ function signatureIcon(signature: GitCommitDetail["commit"]["signature"]) {
   if (signature === "valid") return <ShieldCheck size={12} aria-hidden="true" />;
   if (signature === "invalid") return <ShieldX size={12} aria-hidden="true" />;
   return <ShieldQuestion size={12} aria-hidden="true" />;
+}
+
+function signatureLabel(signature: GitCommitDetail["commit"]["signature"]): string {
+  return ({ valid: "有效", invalid: "无效", unknown: "未知", unsigned: "未签名" })[signature];
 }
 
 function formatCommitDate(value: string) {

@@ -31,53 +31,61 @@ export function GitCherryPickView({
   const duplicate = commits.find((commit, index) => commits.indexOf(commit) !== index) ?? null;
   const operation = status?.operation?.kind === "cherry_pick" ? status.operation : null;
   return (
-    <section className={styles.root} aria-label="Cherry-pick workflow">
+    <section className={styles.root} aria-label="摘取提交流程">
       <header>
         <Cherry size={14} />
-        <div><strong>Cherry-pick</strong><span>Apply one or more commits in the exact order listed below.</span></div>
+        <div><strong>摘取提交</strong><span>按照下方列出的顺序依次应用一个或多个提交。</span></div>
       </header>
       {operation ? (
         <div className={styles.operation} role="status">
-          <div><strong>Cherry-pick {operation.state}</strong><span>{operation.currentStep && operation.totalSteps ? `Commit ${operation.currentStep} of ${operation.totalSteps}` : "Resolve the current commit, skip it, or abort the sequence."}</span></div>
-          <button type="button" disabled={busy || operation.state === "conflicted"} onClick={() => onControl("continue")}>Continue</button>
-          <button type="button" disabled={busy} onClick={() => setPendingControl("skip")}>Skip</button>
-          <button type="button" disabled={busy} onClick={() => setPendingControl("abort")}>Abort</button>
+          <div><strong>摘取提交：{operationStateLabel(operation.state)}</strong><span>{operation.currentStep && operation.totalSteps ? `第 ${operation.currentStep}/${operation.totalSteps} 个提交` : "请解决当前提交、跳过它或中止整个序列。"}</span></div>
+          <button type="button" disabled={busy || operation.state === "conflicted"} onClick={() => onControl("continue")}>继续</button>
+          <button type="button" disabled={busy} onClick={() => setPendingControl("skip")}>跳过</button>
+          <button type="button" disabled={busy} onClick={() => setPendingControl("abort")}>中止</button>
         </div>
       ) : null}
       {pendingControl ? (
-        <div className={styles.confirmation} role="alertdialog" aria-label={`Confirm cherry-pick ${pendingControl}`}>
-          <strong>{pendingControl === "abort" ? "Abort the cherry-pick sequence?" : "Skip the current cherry-pick commit?"}</strong>
-          <span>{pendingControl === "abort" ? "The branch and worktree will return to the pre-sequence state." : "Only the current empty or conflicted commit is omitted; remaining commits continue."}</span>
-          <button type="button" onClick={() => { const action = pendingControl; setPendingControl(null); onControl(action); }}>Confirm {pendingControl}</button>
-          <button type="button" onClick={() => setPendingControl(null)}>Cancel</button>
+        <div className={styles.confirmation} role="alertdialog" aria-label="确认摘取提交操作">
+          <strong>{pendingControl === "abort" ? "中止整个摘取提交序列吗？" : "跳过当前提交吗？"}</strong>
+          <span>{pendingControl === "abort" ? "分支和工作树将恢复到序列开始前的状态。" : "只会省略当前空提交或冲突提交，其余提交继续执行。"}</span>
+          <button type="button" onClick={() => { const action = pendingControl; setPendingControl(null); onControl(action); }}>{pendingControl === "abort" ? "确认中止" : "确认跳过"}</button>
+          <button type="button" onClick={() => setPendingControl(null)}>取消</button>
         </div>
       ) : null}
       <div className={styles.form}>
         <label>
-          <span>Commits (one per line, first applied first)</span>
+          <span>提交（每行一个，按从上到下的顺序应用）</span>
           <textarea
-            aria-label="Commits"
+            aria-label="要摘取的提交"
             rows={4}
             value={input}
-            placeholder={"feature~2\nfeature~1\nfeature"}
+            placeholder={"分支名~2\n分支名~1\n分支名"}
             onChange={(event) => setInput(event.target.value)}
           />
         </label>
-        <div className={styles.suggestions} aria-label="Commit reference suggestions">{refs.slice(0, 8).map((ref) => <button type="button" key={ref.fullName} disabled={busy} onClick={() => setInput((current) => `${current}${current.trim() ? "\n" : ""}${ref.fullName}`)}>{ref.shortName}</button>)}</div>
-        <label className={styles.check}><input type="checkbox" checked={recordOrigin} onChange={(event) => setRecordOrigin(event.target.checked)} />Append origin metadata (-x)</label>
-        {duplicate ? <p className={styles.warning} role="alert">Commit {duplicate} appears more than once.</p> : null}
-        <button type="button" className={styles.primary} disabled={busy || commits.length === 0 || Boolean(duplicate) || Boolean(operation)} onClick={() => onCherryPick(commits, recordOrigin)}>Cherry-pick commits</button>
+        <div className={styles.suggestions} aria-label="提交引用建议">{refs.slice(0, 8).map((ref) => <button type="button" key={ref.fullName} disabled={busy} onClick={() => setInput((current) => `${current}${current.trim() ? "\n" : ""}${ref.fullName}`)}>{ref.shortName}</button>)}</div>
+        <label className={styles.check}><input type="checkbox" checked={recordOrigin} onChange={(event) => setRecordOrigin(event.target.checked)} />附加来源信息（-x）</label>
+        {duplicate ? <p className={styles.warning} role="alert">提交 {duplicate} 重复出现。</p> : null}
+        <button type="button" className={styles.primary} disabled={busy || commits.length === 0 || Boolean(duplicate) || Boolean(operation)} onClick={() => onCherryPick(commits, recordOrigin)}>摘取提交</button>
       </div>
       {requestedCommits.length > 0 ? (
-        <ol className={styles.queue} aria-label="Cherry-pick result queue">
+        <ol className={styles.queue} aria-label="摘取提交结果队列">
           {requestedCommits.map((commit, index) => {
             const state = cherryPickItemState(commit, index, requestedCommits, status, outcome, skippedCommits);
-            return <li key={`${commit}:${index}`} data-state={state}><GripVertical size={12} /><code>{commit.length > 16 ? commit.slice(0, 12) : commit}</code><span>{state}</span></li>;
+            return <li key={`${commit}:${index}`} data-state={state}><GripVertical size={12} /><code>{commit.length > 16 ? commit.slice(0, 12) : commit}</code><span>{queueStateLabel(state)}</span></li>;
           })}
         </ol>
       ) : null}
     </section>
   );
+}
+
+function operationStateLabel(state: NonNullable<GitStatusSnapshot["operation"]>["state"]): string {
+  return ({ running: "执行中", conflicted: "存在冲突", continuable: "可以继续" })[state];
+}
+
+function queueStateLabel(state: ReturnType<typeof cherryPickItemState>): string {
+  return ({ pending: "等待中", applied: "已应用", conflicted: "存在冲突", empty: "已跳过", failed: "失败", aborted: "已中止" })[state];
 }
 
 export function parseCherryPickCommits(value: string): string[] {

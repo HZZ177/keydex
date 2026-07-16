@@ -161,6 +161,8 @@ export interface WorkbenchAssistantSurfaceProps {
   workspaceId: string;
   workspace?: Workspace | null;
   controller: AgentSessionController;
+  contentNearBottom?: boolean;
+  contentViewportKey?: string;
   creatingSession?: boolean;
   drawerWidth?: number;
   drawerInlineWidth?: number;
@@ -184,6 +186,8 @@ export function WorkbenchAssistantSurface({
   workspaceId,
   workspace = null,
   controller,
+  contentNearBottom = false,
+  contentViewportKey,
   creatingSession = false,
   drawerWidth: controlledDrawerWidth,
   drawerInlineWidth: controlledDrawerInlineWidth,
@@ -213,6 +217,8 @@ export function WorkbenchAssistantSurface({
   const messageTriggerPrimingTimerRef = useRef<number | null>(null);
   const panelMessageCountRef = useRef(0);
   const previousSurfaceModeRef = useRef<AssistantSurfaceMode>("capsule");
+  const previousCapsuleYieldEligibleRef = useRef(true);
+  const previousContentNearBottomRef = useRef(false);
   const previousRuntimeStateRef = useRef<ConversationRuntimeState | null>(null);
   const handledFileChipRequestIdRef = useRef(controller.fileChipRequest?.requestId ?? 0);
   const handledQuoteChipRequestIdRef = useRef(controller.quoteChipRequest?.requestId ?? 0);
@@ -227,6 +233,7 @@ export function WorkbenchAssistantSurface({
   const [drawerContentReady, setDrawerContentReady] = useState(false);
   const [expandedContentReady, setExpandedContentReady] = useState(false);
   const [messageTriggerPriming, setMessageTriggerPriming] = useState(false);
+  const [capsuleYielded, setCapsuleYielded] = useState(false);
   const [unreadAssistantMessageKey, setUnreadAssistantMessageKey] = useState<string | null>(null);
   const [allowPersistentTrust, setAllowPersistentTrust] = useState(true);
   const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>("workspace_trusted");
@@ -352,6 +359,7 @@ export function WorkbenchAssistantSurface({
     () => ({
       panelScopeKey: workbenchPreviewScopeKey,
       workspaceId,
+      workspaceRootPath: workspace?.root_path,
       workspaceAvailable: Boolean(workspaceId),
       workspaceLabel: workbenchWorkspaceLabel,
       sessionId: panelSessionId || undefined,
@@ -366,6 +374,7 @@ export function WorkbenchAssistantSurface({
       runtime,
       panelSessionId,
       workbenchWorkspaceLabel,
+      workspace?.root_path,
       workspaceId,
     ],
   );
@@ -430,6 +439,34 @@ export function WorkbenchAssistantSurface({
           ? "composer"
             : surfaceMode;
   const composerFocusSeq = assistantState.focusSeq;
+  const capsuleYieldEligible = surfaceMode === "capsule" && dockTransitionPhase === null && !reviewActive;
+  const resolvedContentViewportKey = contentViewportKey ?? workspaceId;
+
+  useEffect(() => {
+    setCapsuleYielded(false);
+    previousContentNearBottomRef.current = false;
+    previousCapsuleYieldEligibleRef.current = capsuleYieldEligible;
+  }, [capsuleYieldEligible, resolvedContentViewportKey]);
+
+  useEffect(() => {
+    const enteredNearBottom = contentNearBottom && !previousContentNearBottomRef.current;
+    const enteredEligibleCapsule = capsuleYieldEligible && !previousCapsuleYieldEligibleRef.current;
+    if (!contentNearBottom) {
+      setCapsuleYielded(false);
+    } else if (capsuleYieldEligible && (enteredNearBottom || enteredEligibleCapsule)) {
+      setCapsuleYielded(true);
+    }
+    previousContentNearBottomRef.current = contentNearBottom;
+    previousCapsuleYieldEligibleRef.current = capsuleYieldEligible;
+  }, [capsuleYieldEligible, contentNearBottom]);
+
+  const restoreYieldedCapsule = useCallback(() => {
+    setCapsuleYielded(false);
+  }, []);
+
+  const yieldCapsule = useCallback(() => {
+    setCapsuleYielded(true);
+  }, []);
 
   useEffect(() => {
     if (!backendReady) {
@@ -1719,6 +1756,7 @@ export function WorkbenchAssistantSurface({
       </div>
     </section>
   ) : null;
+  const capsuleAutoYielded = capsuleYielded && capsuleYieldEligible;
 
   return (
     <div
@@ -1738,6 +1776,7 @@ export function WorkbenchAssistantSurface({
       data-session-title-visible={bottomSessionTitleVisible ? "true" : "false"}
       data-running={runtimeState === "running" ? "true" : "false"}
       data-pending-approval={pendingApproval ? "true" : "false"}
+      data-capsule-yielded={capsuleAutoYielded ? "true" : "false"}
       style={
         {
           ...geometryVars,
@@ -1813,6 +1852,18 @@ export function WorkbenchAssistantSurface({
             data-compose-collapsing={collapsingComposer ? "true" : "false"}
             data-testid="workbench-assistant-capsule"
           >
+            {capsuleYieldEligible && !capsuleAutoYielded ? (
+              <button
+                aria-label="收起工作台助手胶囊"
+                className={styles.capsuleYieldButton}
+                data-testid="workbench-assistant-capsule-yield"
+                title="向下收起助手胶囊"
+                type="button"
+                onClick={yieldCapsule}
+              >
+                <ChevronDown aria-hidden="true" size={14} strokeWidth={2} />
+              </button>
+            ) : null}
             <motion.div
               className={styles.composerFrame}
               layout={enableDockChildLayout}
@@ -1923,6 +1974,18 @@ export function WorkbenchAssistantSurface({
           </motion.div>
         ) : null}
       </WorkbenchAssistantShell>
+      {capsuleAutoYielded ? (
+        <button
+          aria-label="恢复工作台助手胶囊"
+          className={styles.capsuleRestoreButton}
+          data-testid="workbench-assistant-capsule-restore"
+          title="恢复助手胶囊"
+          type="button"
+          onClick={restoreYieldedCapsule}
+        >
+          <ChevronUp aria-hidden="true" size={15} strokeWidth={2} />
+        </button>
+      ) : null}
     </div>
   );
 }

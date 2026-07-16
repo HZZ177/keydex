@@ -224,6 +224,35 @@ def test_websocket_binds_exact_git_repository_watch_and_unbinds(tmp_path) -> Non
     assert [item[0] for item in metadata_events.unsubscribed] == ["repo-1"]
 
 
+def test_websocket_git_watch_error_keeps_feature_scope_without_session(tmp_path) -> None:
+    client = _client(tmp_path)
+    assert client.app.state.git_query_service is not None
+    client.app.state.git_query_service = None
+
+    with client.websocket_connect("/agent-base/ws/chat") as ws:
+        ws.send_json(
+            {
+                "action": "bind_git_repository_watch",
+                "data": {
+                    "workspace_id": "workspace-1",
+                    "project_root": str(tmp_path),
+                    "repository_id": "repo-1",
+                },
+            }
+        )
+
+        assert ws.receive_json() == {
+            "action": "error",
+            "data": {
+                "code": "git_unavailable",
+                "message": "Git metadata watch is unavailable",
+                "source_action": "bind_git_repository_watch",
+                "workspace_id": "workspace-1",
+                "repository_id": "repo-1",
+            },
+        }
+
+
 def test_websocket_cleans_git_repository_watch_on_disconnect(tmp_path) -> None:
     client = _client(tmp_path)
     client.app.state.git_query_service = RecordingGitQueryService()

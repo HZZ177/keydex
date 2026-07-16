@@ -1,6 +1,6 @@
 import type { GitChangedFile, GitFileStatusCode } from "@/runtime/gitTypes";
 
-export type GitChangeGroupId = "conflicts" | "staged" | "unstaged" | "untracked" | "ignored";
+export type GitChangeGroupId = "changes" | "untracked";
 
 export interface GitChangeEntry {
   id: string;
@@ -11,6 +11,8 @@ export interface GitChangeEntry {
   name: string;
   originalPath: string | null;
   status: GitFileStatusCode;
+  indexStatus: GitFileStatusCode | null;
+  worktreeStatus: GitFileStatusCode | null;
   binary: boolean;
   submodule: boolean;
 }
@@ -22,11 +24,8 @@ export interface GitChangeGroup {
 }
 
 const GROUP_LABELS: Record<GitChangeGroupId, string> = {
-  conflicts: "冲突",
-  staged: "已暂存",
-  unstaged: "未暂存",
+  changes: "更改",
   untracked: "未跟踪",
-  ignored: "已忽略",
 };
 
 export function groupGitChanges(files: readonly GitChangedFile[]): readonly GitChangeGroup[] {
@@ -46,6 +45,8 @@ export function groupGitChanges(files: readonly GitChangedFile[]): readonly GitC
       name,
       originalPath: file.originalPath,
       status,
+      indexStatus: file.indexStatus,
+      worktreeStatus: file.worktreeStatus,
       binary: file.binary === true,
       submodule: file.submodule,
     };
@@ -53,17 +54,12 @@ export function groupGitChanges(files: readonly GitChangedFile[]): readonly GitC
   };
 
   files.forEach((file) => {
-    if (file.conflicted || file.indexStatus === "conflicted" || file.worktreeStatus === "conflicted") {
-      append("conflicts", file, "conflicted");
-      return;
-    }
-    if (file.indexStatus) append("staged", file, file.indexStatus);
-    if (file.worktreeStatus === "untracked") append("untracked", file, "untracked");
-    else if (file.worktreeStatus === "ignored") append("ignored", file, "ignored");
-    else if (file.worktreeStatus) append("unstaged", file, file.worktreeStatus);
+    if (file.worktreeStatus === "ignored") return;
+    const group: GitChangeGroupId = file.worktreeStatus === "untracked" ? "untracked" : "changes";
+    append(group, file, displayStatus(file));
   });
 
-  return (["conflicts", "staged", "unstaged", "untracked", "ignored"] as GitChangeGroupId[])
+  return (["changes", "untracked"] as GitChangeGroupId[])
     .map((id) => ({
       id,
       label: GROUP_LABELS[id],
@@ -85,7 +81,7 @@ export interface GitCommitSelection {
 }
 
 export function commitSelectionFromEntries(entries: readonly GitChangeEntry[]): GitCommitSelection {
-  const committable = entries.filter((entry) => entry.group !== "conflicts" && entry.group !== "ignored");
+  const committable = entries.filter((entry) => entry.status !== "conflicted");
   const paths = new Set<string>();
   const files = new Set<string>();
   const untrackedPaths = new Set<string>();
@@ -100,4 +96,18 @@ export function commitSelectionFromEntries(entries: readonly GitChangeEntry[]): 
     untrackedPaths: Array.from(untrackedPaths).sort(),
     fileCount: files.size,
   };
+}
+
+function displayStatus(file: GitChangedFile): GitFileStatusCode {
+  if (file.conflicted || file.indexStatus === "conflicted" || file.worktreeStatus === "conflicted") {
+    return "conflicted";
+  }
+  if (file.worktreeStatus === "untracked") return "untracked";
+  const statuses: GitFileStatusCode[] = [];
+  if (file.worktreeStatus && file.worktreeStatus !== "ignored") statuses.push(file.worktreeStatus);
+  if (file.indexStatus && file.indexStatus !== "ignored") statuses.push(file.indexStatus);
+  return statuses.find((status) => status === "deleted")
+    ?? statuses.find((status) => status === "added")
+    ?? statuses[0]
+    ?? "modified";
 }

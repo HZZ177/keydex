@@ -40,6 +40,7 @@ describe("ModelDefaultSettingsPage", () => {
     expect(screen.getByText("快速模型")).not.toBeNull();
     expect(screen.getAllByLabelText("选择模型")[0].textContent).toContain("选择模型");
     expect(screen.getAllByLabelText("选择模型")[1].textContent).toContain("不配置");
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
   });
 
   it("keeps model default dropdowns openable when no models are available", async () => {
@@ -64,7 +65,7 @@ describe("ModelDefaultSettingsPage", () => {
     expect(onOpenProviderSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("saves chat and fast model defaults", async () => {
+  it("saves chat and fast model defaults as soon as each selection changes", async () => {
     const saveModelDefaults = vi.fn((payload: UpdateModelDefaultsPayload) =>
       Promise.resolve(modelDefaultsResponse(payload.defaults.default_chat, payload.defaults.fast)),
     );
@@ -82,17 +83,16 @@ describe("ModelDefaultSettingsPage", () => {
     await screen.findByText("默认值");
     await chooseModel(0, "qwen-coder");
     await chooseModel(1, "fast-title");
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(saveModelDefaults).toHaveBeenCalledWith({
+      expect(saveModelDefaults).toHaveBeenLastCalledWith({
         defaults: {
           default_chat: { provider_id: "provider-1", model: "qwen-coder" },
           fast: { provider_id: "provider-1", model: "fast-title" },
         },
       });
     });
-    expect(await screen.findByText("模型配置已保存")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
   });
 
   it("saves an explicit null fast model default when only chat default is configured", async () => {
@@ -112,7 +112,6 @@ describe("ModelDefaultSettingsPage", () => {
 
     await screen.findByText("默认值");
     await chooseModel(0, "qwen-coder");
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
       expect(saveModelDefaults).toHaveBeenCalledWith({
@@ -124,15 +123,17 @@ describe("ModelDefaultSettingsPage", () => {
     });
   });
 
-  it("requires default chat model before saving", async () => {
+  it("waits for a required default chat model before applying an optional fast model", async () => {
     const saveModelDefaults = vi.fn();
     const runtime = fakeRuntime([provider()], { saveModelDefaults });
 
     renderWithNotifications(<ModelDefaultSettingsPage runtime={runtime} />);
 
     await screen.findByText("默认值");
-    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+    await chooseModel(1, "qwen-coder");
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(saveModelDefaults).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
   });
 
   it("filters model defaults across providers with the same searchable picker as chat", async () => {
@@ -155,6 +156,38 @@ describe("ModelDefaultSettingsPage", () => {
     fireEvent.click(screen.getByRole("option", { name: "doubao-fast" }));
     expect(screen.getAllByLabelText("选择模型")[0].textContent).toContain("doubao-fast");
     expect(screen.getAllByLabelText("选择模型")[0].textContent).not.toContain("火山模型服务");
+    await waitFor(() => {
+      expect(runtime.settings.saveModelDefaults).toHaveBeenCalledWith({
+        defaults: {
+          default_chat: { provider_id: "provider-2", model: "doubao-fast" },
+          fast: null,
+        },
+      });
+    });
+  });
+
+  it("rolls back to the last confirmed model default when an automatic save fails", async () => {
+    const saveModelDefaults = vi.fn().mockRejectedValue(new Error("模型配置保存失败"));
+    const runtime = fakeRuntime(
+      [provider({ models: ["qwen-coder", "fast-title"] })],
+      {
+        getModelDefaults: vi.fn().mockResolvedValue(
+          modelDefaultsResponse({ provider_id: "provider-1", model: "qwen-coder" }, null),
+        ),
+        saveModelDefaults,
+      },
+    );
+
+    renderWithNotifications(<ModelDefaultSettingsPage runtime={runtime} />);
+
+    await screen.findByText("默认值");
+    expect(screen.getAllByLabelText("选择模型")[0].textContent).toContain("qwen-coder");
+    await chooseModel(0, "fast-title");
+
+    expect(await screen.findByText("模型配置保存失败")).not.toBeNull();
+    await waitFor(() => {
+      expect(screen.getAllByLabelText("选择模型")[0].textContent).toContain("qwen-coder");
+    });
   });
 
   it("renders provider loading errors", async () => {
@@ -208,7 +241,9 @@ function fakeRuntime(
   return {
     settings: {
       getModelDefaults: vi.fn().mockResolvedValue(modelDefaultsResponse()),
-      saveModelDefaults: vi.fn(),
+      saveModelDefaults: vi.fn((payload: UpdateModelDefaultsPayload) =>
+        Promise.resolve(modelDefaultsResponse(payload.defaults.default_chat, payload.defaults.fast)),
+      ),
       ...overrides,
     },
     models: {

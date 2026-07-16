@@ -39,6 +39,38 @@ describe("style foundation", () => {
     expect(markdown).toContain("overflow-y: visible");
   });
 
+  it("keeps the Git workbench aligned with the Keydex visual foundation", () => {
+    const gitHost = readSource("renderer/features/git/components/GitToolWindow.module.css");
+    const gitDiff = readSource("renderer/features/git/components/GitDiffViewer.module.css");
+    const gitHistory = readSource("renderer/features/git/components/GitHistoryView.module.css");
+    const gitMenu = readSource("renderer/components/layout/Titlebar/ProjectGitMenu.module.css");
+    const gitComponentStyles = collectCssFiles(resolve(srcDir, "renderer/features/git/components"))
+      .map((filePath) => readFileSync(filePath, "utf8"))
+      .join("\n");
+
+    expect(gitHost).toContain("--git-control-height: 30px");
+    expect(gitHost).toContain("--git-emphasis-color: var(--color-text-1)");
+    expect(gitHost).toContain("--git-emphasis-contrast: var(--color-text-inverse)");
+    expect(gitHost).toContain("--color-accent-1: var(--git-emphasis-color)");
+    expect(gitHost).not.toContain("--color-accent-1: var(--color-accent)");
+    expect(gitHost).toMatch(/\.root \.tab\s*{[^}]*border-radius:\s*var\(--radius-pill\)/s);
+    expect(gitHost).toMatch(/\.root \*::-webkit-scrollbar-thumb\s*{[^}]*border-radius:\s*var\(--radius-pill\)/s);
+    expect(gitHost).toMatch(/\.root \*::-webkit-scrollbar\s*{[^}]*width:\s*10px[^}]*height:\s*10px/s);
+    expect(gitHost).toMatch(/\.root,[\s\S]*?\.root \*\s*{[^}]*scrollbar-width:\s*auto/s);
+    expect(gitHistory).toMatch(/\.scroller\s*{[^}]*scrollbar-width:\s*auto/s);
+    expect(gitComponentStyles).not.toContain("scrollbar-width: thin");
+    expect(gitHost).toMatch(/\.separator:hover::before,[\s\S]*?\.separator\[data-dragging="true"\]::before\s*{[^}]*background:\s*color-mix\(in srgb, var\(--color-text-3\) 42%, transparent\)/s);
+    expect(gitMenu).toContain("--color-accent-1: var(--color-text-1)");
+    expect(gitMenu).not.toContain("--color-accent-1: var(--color-accent)");
+    expect(gitMenu).toMatch(/\.refTree::-webkit-scrollbar-track,[\s\S]*?\.helpBody::-webkit-scrollbar-track\s*{[^}]*background:\s*transparent/s);
+    expect(gitMenu).toMatch(/\.refTree::-webkit-scrollbar,[\s\S]*?\.helpBody::-webkit-scrollbar\s*{[^}]*width:\s*10px[^}]*height:\s*10px/s);
+    expect(gitHost).toContain("background: var(--color-bg-elevated)");
+    expect(gitDiff).toContain("background: var(--diff-added-bg)");
+    expect(gitDiff).toContain("background: var(--diff-removed-bg)");
+    expect(gitDiff).not.toContain("color-mix(in srgb, #2b8a57");
+    expect(gitDiff).not.toContain("color-mix(in srgb, #d14343");
+  });
+
   it("does not define blue focus rings on interactive controls", () => {
     for (const filePath of collectCssFiles(srcDir)) {
       const css = readFileSync(filePath, "utf8");

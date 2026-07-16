@@ -31,8 +31,8 @@ export function GitRemoteManager({ remotes, busy = false, onAdd, onRename, onSet
   }, [selected?.fetchUrl, selected?.name, selected?.pushUrl]);
 
   return (
-    <section className={styles.root} aria-label="Remote manager">
-      <header><RadioTower size={14} /><strong>Remotes</strong><span>{remotes.length}</span></header>
+    <section className={styles.root} aria-label="远程仓库管理">
+      <header><RadioTower size={14} /><strong>远程仓库</strong><span>{remotes.length}</span></header>
       <form
         className={styles.add}
         onSubmit={(event) => {
@@ -44,13 +44,13 @@ export function GitRemoteManager({ remotes, busy = false, onAdd, onRename, onSet
           setPushUrl("");
         }}
       >
-        <input aria-label="Remote name" value={name} placeholder="origin" onChange={(event) => setName(event.currentTarget.value)} />
-        <input aria-label="Fetch URL" value={fetchUrl} placeholder="Fetch URL" onChange={(event) => setFetchUrl(event.currentTarget.value)} />
-        <input aria-label="Push URL" value={pushUrl} placeholder="Push URL (optional)" onChange={(event) => setPushUrl(event.currentTarget.value)} />
-        <button type="submit" disabled={!name.trim() || !fetchUrl.trim() || busy}><Plus size={12} />Add</button>
+        <input aria-label="远程仓库名称" value={name} placeholder="例如：origin" onChange={(event) => setName(event.currentTarget.value)} />
+        <input aria-label="获取地址" value={fetchUrl} placeholder="获取地址" onChange={(event) => setFetchUrl(event.currentTarget.value)} />
+        <input aria-label="推送地址" value={pushUrl} placeholder="推送地址（可选）" onChange={(event) => setPushUrl(event.currentTarget.value)} />
+        <button type="submit" disabled={!name.trim() || !fetchUrl.trim() || busy}><Plus size={12} />添加</button>
       </form>
       <div className={styles.body}>
-        <div className={styles.list} role="listbox" aria-label="Git remotes">
+        <div className={styles.list} role="listbox" aria-label="Git 远程仓库">
           {remotes.map((remote) => (
             <button
               type="button"
@@ -60,26 +60,26 @@ export function GitRemoteManager({ remotes, busy = false, onAdd, onRename, onSet
               onClick={() => setSelectedName(remote.name)}
             >
               <strong>{remote.name}</strong>
-              <span>{remote.fetchUrl ?? "No fetch URL"}</span>
+              <span>{remote.fetchUrl ?? "未配置获取地址"}</span>
             </button>
           ))}
         </div>
         {selected ? (
           <div className={styles.editor}>
-            <label>Remote name<input aria-label="Rename remote" value={renameTo} onChange={(event) => setRenameTo(event.currentTarget.value)} /></label>
-            <button type="button" disabled={!renameTo.trim() || renameTo === selected.name || busy} onClick={() => void onRename(selected.name, renameTo.trim())}>Rename</button>
-            <label>Fetch URL<input aria-label="Edit fetch URL" value={editedFetchUrl} onChange={(event) => setEditedFetchUrl(event.currentTarget.value)} /></label>
-            <button type="button" disabled={!editedFetchUrl.trim() || busy} onClick={() => void onSetUrl(selected.name, editedFetchUrl.trim(), false)}>Save fetch URL</button>
-            <label>Push URL<input aria-label="Edit push URL" value={editedPushUrl} onChange={(event) => setEditedPushUrl(event.currentTarget.value)} /></label>
-            <button type="button" disabled={!editedPushUrl.trim() || busy} onClick={() => void onSetUrl(selected.name, editedPushUrl.trim(), true)}>Save push URL</button>
+            <label>远程仓库名称<input aria-label="重命名远程仓库" value={renameTo} onChange={(event) => setRenameTo(event.currentTarget.value)} /></label>
+            <button type="button" disabled={!renameTo.trim() || renameTo === selected.name || busy} onClick={() => void onRename(selected.name, renameTo.trim())}>重命名</button>
+            <label>获取地址<input aria-label="编辑获取地址" value={editedFetchUrl} onChange={(event) => setEditedFetchUrl(event.currentTarget.value)} /></label>
+            <button type="button" disabled={!editedFetchUrl.trim() || busy} onClick={() => void onSetUrl(selected.name, editedFetchUrl.trim(), false)}>保存获取地址</button>
+            <label>推送地址<input aria-label="编辑推送地址" value={editedPushUrl} onChange={(event) => setEditedPushUrl(event.currentTarget.value)} /></label>
+            <button type="button" disabled={!editedPushUrl.trim() || busy} onClick={() => void onSetUrl(selected.name, editedPushUrl.trim(), true)}>保存推送地址</button>
             <div className={styles.removePreview}>
               <span>{selected.trackingBranches.length > 0
-                ? `Removing ${selected.name} affects upstream for: ${selected.trackingBranches.join(", ")}`
-                : `No local branch tracks ${selected.name}`}</span>
-              <button type="button" disabled={busy} onClick={() => void onRemove(selected)}>Remove remote…</button>
+                ? `删除 ${selected.name} 会影响以下分支的上游设置：${selected.trackingBranches.join(", ")}`
+                : `没有本地分支跟踪 ${selected.name}`}</span>
+              <button type="button" disabled={busy} onClick={() => void onRemove(selected)}>删除远程仓库…</button>
             </div>
           </div>
-        ) : <div className={styles.empty}>No remotes configured</div>}
+        ) : <div className={styles.empty}>尚未配置远程仓库</div>}
       </div>
     </section>
   );

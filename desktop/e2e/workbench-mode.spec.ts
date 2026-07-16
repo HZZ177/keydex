@@ -292,9 +292,9 @@ test("workbench expanded layer, drawer and approval stay above the workspace", a
   await mockWorkbenchBackend(page, backend);
 
   await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
-  await expect(page.getByTestId("app-shell")).toHaveAttribute("data-right-sidebar-enabled", "true");
+  await expect(page.getByTestId("app-shell")).toHaveAttribute("data-right-sidebar-enabled", "false");
   await expect(page.getByTestId("app-shell")).toHaveAttribute("data-right-sidebar", "closed");
-  await expect(page.getByLabel("展开右侧栏")).toBeVisible();
+  await expect(page.getByLabel("展开右侧栏")).toHaveCount(0);
   const fileBrowser = page.getByTestId("workspace-file-browser");
   await expect(fileBrowser).toBeVisible();
   const beforeBox = await fileBrowser.boundingBox();

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { GitBranch } from "lucide-react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -6,8 +7,32 @@ import {
   APP_EXPAND_WORKSPACE_DIRECTORY_EVENT,
   APP_START_WORKSPACE_FILE_ANNOTATION_EVENT,
 } from "@/renderer/events/workspaceFileContext";
-import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
+import {
+  AppContextMenuProvider,
+  useOptionalAppContextMenu,
+} from "@/renderer/providers/AppContextMenuProvider";
 import { createPastedTextFragmentElement } from "@/renderer/components/chat/SendBox/collapsiblePaste";
+
+function CustomContextMenuTarget({ onAction }: { onAction: () => void }) {
+  const contextMenu = useOptionalAppContextMenu();
+  return (
+    <button
+      type="button"
+      data-app-context-menu="local"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        contextMenu?.openContextMenu({
+          items: [{ action: onAction, icon: GitBranch, id: "custom-action", label: "自定义操作" }],
+          target: event.currentTarget,
+          x: event.clientX,
+          y: event.clientY,
+        });
+      }}
+    >
+      自定义目标
+    </button>
+  );
+}
 
 describe("AppContextMenuProvider", () => {
   const writeText = vi.fn();
@@ -49,6 +74,28 @@ describe("AppContextMenuProvider", () => {
     expect(screen.getByRole("menu", { name: "页面右键菜单" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "刷新" })).not.toBeNull();
     expect(screen.queryByRole("menuitem", { name: "暂无可用操作" })).toBeNull();
+  });
+
+  it("renders registered business actions in the single app context menu", async () => {
+    const onAction = vi.fn();
+    render(
+      <AppContextMenuProvider>
+        <CustomContextMenuTarget onAction={onAction} />
+      </AppContextMenuProvider>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "自定义目标" }), {
+      clientX: 12,
+      clientY: 18,
+    });
+
+    const menu = screen.getByRole("menu", { name: "页面右键菜单" });
+    expect(menu.dataset.contextKind).toBe("custom");
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+    expect(screen.queryByRole("menuitem", { name: "刷新" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "自定义操作" }));
+    await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("menu", { name: "页面右键菜单" })).toBeNull();
   });
 
   it("copies selected text from an input", async () => {

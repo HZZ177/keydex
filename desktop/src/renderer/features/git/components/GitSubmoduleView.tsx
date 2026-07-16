@@ -31,12 +31,12 @@ export function GitSubmoduleView({
     () => snapshot?.submodules.filter((module) => selected.includes(module.path)) ?? [],
     [selected, snapshot],
   );
-  if (loading) return <section className={styles.root} aria-label="Git submodules"><p>Loading submodules…</p></section>;
-  if (!snapshot?.submodules.length) return <section className={styles.root} aria-label="Git submodules"><header><Boxes size={14} /><strong>Submodules</strong></header><p>No submodules configured in this repository.</p></section>;
+  if (loading) return <section className={styles.root} aria-label="Git 子模块"><p>正在读取子模块…</p></section>;
+  if (!snapshot?.submodules.length) return <section className={styles.root} aria-label="Git 子模块"><header><Boxes size={14} /><strong>子模块</strong></header><p>此仓库尚未配置子模块。</p></section>;
   const run = (action: GitSubmoduleAction) => onAction(action, selected, recursive, action === "deinit");
   return (
-    <section className={styles.root} aria-label="Git submodules">
-      <header><Boxes size={14} /><div><strong>Submodules</strong><span>Parent repository {snapshot.repositoryId}</span></div></header>
+    <section className={styles.root} aria-label="Git 子模块">
+      <header><Boxes size={14} /><div><strong>子模块</strong><span>父仓库 {snapshot.repositoryId}</span></div></header>
       <ul>{snapshot.submodules.map((module) => (
         <SubmoduleRow
           key={module.path}
@@ -45,13 +45,13 @@ export function GitSubmoduleView({
           onToggle={() => setSelected((current) => current.includes(module.path) ? current.filter((path) => path !== module.path) : [...current, module.path])}
         />
       ))}</ul>
-      <label className={styles.recursive}><input type="checkbox" checked={recursive} onChange={(event) => setRecursive(event.target.checked)} />Include nested submodules recursively</label>
-      {recursive ? <aside role="status"><strong>Recursive impact preview</strong><span>{selectedModules.length} selected root(s): {selectedModules.map((module) => module.path).join(", ")}. Nested repositories may also be initialized, updated, or synchronized.</span></aside> : null}
+      <label className={styles.recursive}><input type="checkbox" checked={recursive} onChange={(event) => setRecursive(event.target.checked)} />递归包含嵌套子模块</label>
+      {recursive ? <aside role="status"><strong>递归影响预览</strong><span>已选择 {selectedModules.length} 个根子模块：{selectedModules.map((module) => module.path).join(", ")}。嵌套仓库也可能被初始化、更新或同步。</span></aside> : null}
       <div className={styles.actions}>
-        <button type="button" disabled={busy || !selected.length} onClick={() => run("init")}>Initialize</button>
-        <button type="button" disabled={busy || !selected.length} onClick={() => run("update")}><RefreshCw size={12} />Update</button>
-        <button type="button" disabled={busy || !selected.length} onClick={() => run("sync")}>Sync URLs</button>
-        <button type="button" disabled={busy || !selected.length} onClick={() => run("deinit")}><Unplug size={12} />Deinitialize</button>
+        <button type="button" disabled={busy || !selected.length} onClick={() => run("init")}>初始化</button>
+        <button type="button" disabled={busy || !selected.length} onClick={() => run("update")}><RefreshCw size={12} />更新</button>
+        <button type="button" disabled={busy || !selected.length} onClick={() => run("sync")}>同步地址</button>
+        <button type="button" disabled={busy || !selected.length} onClick={() => run("deinit")}><Unplug size={12} />取消初始化</button>
       </div>
     </section>
   );
@@ -60,8 +60,12 @@ export function GitSubmoduleView({
 function SubmoduleRow({ module, checked, onToggle }: { module: GitSubmodule; checked: boolean; onToggle: () => void }) {
   return (
     <li data-state={module.state}>
-      <label><input type="checkbox" aria-label={`Select ${module.path}`} checked={checked} onChange={onToggle} /><span><strong>{module.path}</strong><small>{module.state} · {module.objectId.slice(0, 12)}</small></span></label>
-      <dl><div><dt>Child root</dt><dd>{module.childRootPath ?? "Not initialized"}</dd></div><div><dt>URL</dt><dd>{module.url ?? "Not configured"}</dd></div></dl>
+      <label><input type="checkbox" aria-label={`选择 ${module.path}`} checked={checked} onChange={onToggle} /><span><strong>{module.path}</strong><small>{submoduleStateLabel(module.state)} · {module.objectId.slice(0, 12)}</small></span></label>
+      <dl><div><dt>子仓库根目录</dt><dd>{module.childRootPath ?? "尚未初始化"}</dd></div><div><dt>远程地址</dt><dd>{module.url ?? "尚未配置"}</dd></div></dl>
     </li>
   );
+}
+
+function submoduleStateLabel(state: GitSubmodule["state"]): string {
+  return ({ uninitialized: "未初始化", initialized: "已初始化", modified: "有改动", missing: "目录缺失", conflict: "存在冲突" } as Partial<Record<GitSubmodule["state"], string>>)[state] ?? "状态未知";
 }

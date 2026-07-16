@@ -40,7 +40,7 @@
     "classnames": "^2.5.1",
     "echarts": "^5.6.0",
     "katex": "^0.17.0",
-    "lucide-react": "^0.468.0",
+    "lucide-react": "^1.24.0",
     "markdown-it": "^14.2.0",
     "material-icon-theme": "^5.36.0",
     "mermaid": "^11.15.0",

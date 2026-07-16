@@ -77,19 +77,23 @@ import {
 import { useCompositionInput, type SendBoxSubmitOptions } from "./useCompositionInput";
 import {
   PASTED_TEXT_FRAGMENT_SELECTOR,
+  PASTED_TEXT_CARET_HOST_SELECTOR,
   PASTED_TEXT_RAW_SELECTOR,
   closestPastedTextFragment,
+  createPastedTextCaretHostElement,
   createPastedTextFragmentElement,
   createPastedTextFragmentId,
   isPastedTextToggle,
   normalizePastedText,
   normalizePastedTextFragments,
+  pastedTextCaretHostValue,
   readPastedTextAwareDocument,
   readPastedTextSelection,
   rebasePastedTextFragments,
   samePastedTextFragments,
   setPastedTextElementCollapsed,
   shouldCollapsePastedText,
+  pastedTextBoundaryPosition,
   type PastedTextDocument,
   type PastedTextFragment,
 } from "./collapsiblePaste";
@@ -268,6 +272,8 @@ export function SendBox({
   const [atDirectoryLoading, setAtDirectoryLoading] = useState(false);
   const [atDirectoryError, setAtDirectoryError] = useState<string | null>(null);
   const [uncontrolledImageAttachments, setUncontrolledImageAttachments] = useState<SelectedImageAttachment[]>([]);
+  const controlledImageAttachmentsRef = useRef(controlledImageAttachments);
+  controlledImageAttachmentsRef.current = controlledImageAttachments;
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [activeImagePreview, setActiveImagePreview] = useState<SelectedImageAttachment | null>(null);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
@@ -316,14 +322,16 @@ export function SendBox({
   );
   const setImageAttachments = useCallback(
     (update: SetStateAction<SelectedImageAttachment[]>) => {
-      if (controlledImageAttachments === undefined) {
+      const current = controlledImageAttachmentsRef.current;
+      if (current === undefined) {
         setUncontrolledImageAttachments(update);
         return;
       }
-      const next = typeof update === "function" ? update(controlledImageAttachments) : update;
+      const next = typeof update === "function" ? update(current) : update;
+      controlledImageAttachmentsRef.current = next;
       onSelectedImageAttachmentsChange?.(next);
     },
-    [controlledImageAttachments, onSelectedImageAttachmentsChange],
+    [onSelectedImageAttachmentsChange],
   );
   const dispatchFileSelection = useCallback(
     (action: FileSelectionAction) => {
@@ -382,7 +390,7 @@ export function SendBox({
         return [...next, attachment];
       });
     },
-    [rememberPreviewUrl],
+    [rememberPreviewUrl, setImageAttachments],
   );
   const removeImageAttachment = useCallback(
     (attachmentId: string) => {
@@ -395,7 +403,7 @@ export function SendBox({
         return current.filter((item) => item.attachment_id !== attachmentId);
       });
     },
-    [activeImagePreview?.attachment_id, revokePreviewUrl],
+    [activeImagePreview?.attachment_id, revokePreviewUrl, setImageAttachments],
   );
   const clearImageAttachments = useCallback(() => {
     setImageAttachments((current) => {
@@ -403,7 +411,7 @@ export function SendBox({
       return [];
     });
     setActiveImagePreview(null);
-  }, [revokePreviewUrl]);
+  }, [revokePreviewUrl, setImageAttachments]);
   const replaceImageAttachments = useCallback(
     (attachments: SelectedImageAttachment[]) => {
       setImageAttachments((current) => {
@@ -413,7 +421,7 @@ export function SendBox({
       });
       setActiveImagePreview(null);
     },
-    [rememberPreviewUrl, revokePreviewUrl],
+    [rememberPreviewUrl, revokePreviewUrl, setImageAttachments],
   );
   const updateImageAttachmentPreview = useCallback(
     (attachmentId: string, previewUrl: string) => {
@@ -430,7 +438,7 @@ export function SendBox({
         current?.attachment_id === attachmentId && !current.previewUrl ? { ...current, previewUrl } : current,
       );
     },
-    [rememberPreviewUrl],
+    [rememberPreviewUrl, setImageAttachments],
   );
   const canSubmit =
     runtimeState !== "cancelling" &&
@@ -1132,6 +1140,21 @@ export function SendBox({
       if (!fragment || !event.currentTarget.contains(fragment)) {
         return;
       }
+      const boundaryPosition = pastedTextBoundaryPosition(event.target);
+      if (boundaryPosition) {
+        event.preventDefault();
+        event.currentTarget.focus({ preventScroll: true });
+        placeCaretAtNodeBoundary(event.currentTarget, fragment, boundaryPosition === "trailing");
+        return;
+      }
+      const selection = window.getSelection();
+      if (
+        selection &&
+        !selection.isCollapsed &&
+        selectionBelongsToEditor(event.currentTarget, selection)
+      ) {
+        return;
+      }
       if (fragment.dataset.collapsed !== "false" || isPastedTextToggle(event.target)) {
         event.preventDefault();
         togglePastedTextFragment(event.currentTarget, fragment, event.target);
@@ -1145,14 +1168,58 @@ export function SendBox({
     if (!fragment || !event.currentTarget.contains(fragment)) {
       return;
     }
-    if (fragment.dataset.collapsed === "false" && !isPastedTextToggle(event.target)) {
+    if (pastedTextBoundaryPosition(event.target)) {
+      event.preventDefault();
+      event.currentTarget.focus({ preventScroll: true });
       return;
     }
-    // Keep focus on the editing host. Otherwise Ctrl+A/C/X is handled as a
-    // page shortcut when a non-editable summary or boundary owns focus.
+    if (fragment.dataset.collapsed !== "false") {
+      // Preserve the browser's native drag-to-select behavior for the
+      // collapsed preview. A non-collapsed selection suppresses expansion in
+      // handleEditorClick.
+      return;
+    }
+    if (!isPastedTextToggle(event.target)) {
+      return;
+    }
     event.preventDefault();
     event.currentTarget.focus({ preventScroll: true });
   }, []);
+
+  const deleteAdjacentPastedTextFragment = useCallback(
+    (editor: HTMLDivElement, direction: "backward" | "forward") => {
+      const selection = window.getSelection();
+      if (!selection?.rangeCount || !selection.isCollapsed) {
+        return false;
+      }
+      const fragment = adjacentPastedTextFragment(editor, selection.getRangeAt(0), direction);
+      if (!fragment) {
+        return false;
+      }
+      const previousSibling = fragment.previousSibling;
+      const caretHost = previousSibling instanceof HTMLElement &&
+        previousSibling.matches(PASTED_TEXT_CARET_HOST_SELECTOR)
+        ? previousSibling
+        : createPastedTextCaretHostElement("leading");
+      if (!caretHost.isConnected) {
+        fragment.before(caretHost);
+      }
+      const deletionRange = document.createRange();
+      deletionRange.selectNode(fragment);
+      selection.removeAllRanges();
+      selection.addRange(deletionRange);
+      const deletedWithUndo =
+        typeof document.execCommand === "function" && document.execCommand("delete", false);
+      if (!deletedWithUndo || fragment.isConnected) {
+        fragment.remove();
+      }
+      placeCaretAtNodeBoundary(editor, caretHost.firstChild ?? caretHost, true);
+      commitEditableDocument(editor);
+      resizeEditableInput(editor);
+      return true;
+    },
+    [commitEditableDocument],
+  );
 
   const handleEditorBeforeInput = useCallback(
     (event: FormEvent<HTMLDivElement>) => {
@@ -1160,28 +1227,16 @@ export function SendBox({
       if (inputType !== "deleteContentBackward" && inputType !== "deleteContentForward") {
         return;
       }
-      const selection = window.getSelection();
-      if (!selection?.rangeCount || !selection.isCollapsed) {
-        return;
-      }
-      const range = selection.getRangeAt(0);
-      const fragment = adjacentPastedTextFragment(
+      const deleted = deleteAdjacentPastedTextFragment(
         event.currentTarget,
-        range,
         inputType === "deleteContentBackward" ? "backward" : "forward",
       );
-      if (!fragment) {
+      if (!deleted) {
         return;
       }
       event.preventDefault();
-      const caretAnchor = fragment.previousSibling ?? fragment.nextSibling ?? event.currentTarget;
-      const caretAfterAnchor = Boolean(fragment.previousSibling);
-      fragment.remove();
-      placeCaretAtNodeBoundary(event.currentTarget, caretAnchor, caretAfterAnchor);
-      commitEditableDocument(event.currentTarget);
-      resizeEditableInput(event.currentTarget);
     },
-    [commitEditableDocument],
+    [deleteAdjacentPastedTextFragment],
   );
 
   const handleEditorCopy = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
@@ -1255,6 +1310,16 @@ export function SendBox({
       event.preventDefault();
       event.stopPropagation();
       togglePastedTextFragment(event.currentTarget as HTMLDivElement, pastedTextFragment, event.target);
+      return;
+    }
+    if (
+      (event.key === "Backspace" || event.key === "Delete") &&
+      deleteAdjacentPastedTextFragment(
+        event.currentTarget as HTMLDivElement,
+        event.key === "Backspace" ? "backward" : "forward",
+      )
+    ) {
+      event.preventDefault();
       return;
     }
     if (slashOpen) {
@@ -2327,8 +2392,13 @@ function renderEditorValue(
   for (const fragment of fragments) {
     if (fragment.start > cursor) {
       nodes.push(document.createTextNode(value.slice(cursor, fragment.start)));
+    } else if (fragment.start === 0 && nodes.length === 0) {
+      nodes.push(createPastedTextCaretHostElement("leading"));
     }
     nodes.push(createPastedTextFragmentElement(value.slice(fragment.start, fragment.end), fragment));
+    if (fragment.end === value.length) {
+      nodes.push(createPastedTextCaretHostElement("trailing"));
+    }
     cursor = fragment.end;
   }
   if (cursor < value.length) {
@@ -2501,12 +2571,30 @@ function adjacentPastedTextFragment(
   if (!range.collapsed || !rangeBelongsToEditor(editor, range)) {
     return null;
   }
+  const containingElement = range.startContainer instanceof Element
+    ? range.startContainer
+    : range.startContainer.parentElement;
+  const containingFragment = containingElement?.closest<HTMLElement>(PASTED_TEXT_FRAGMENT_SELECTOR) ?? null;
+  if (
+    containingFragment &&
+    editor.contains(containingFragment) &&
+    containingFragment.dataset.collapsed !== "false"
+  ) {
+    return containingFragment;
+  }
   let directChild: Node = range.startContainer;
   if (directChild === editor) {
     const offset = range.startOffset;
-    const candidate = direction === "backward"
+    let candidate = direction === "backward"
       ? editor.childNodes[offset - 1] ?? null
       : editor.childNodes[offset] ?? null;
+    if (
+      candidate instanceof HTMLElement &&
+      candidate.matches(PASTED_TEXT_CARET_HOST_SELECTOR) &&
+      !pastedTextCaretHostValue(candidate)
+    ) {
+      candidate = direction === "backward" ? candidate.previousSibling : candidate.nextSibling;
+    }
     return candidate instanceof HTMLElement && candidate.matches(PASTED_TEXT_FRAGMENT_SELECTOR) ? candidate : null;
   }
   while (directChild.parentNode && directChild.parentNode !== editor) {
@@ -2514,6 +2602,20 @@ function adjacentPastedTextFragment(
   }
   if (directChild.parentNode !== editor) {
     return null;
+  }
+  if (
+    directChild instanceof HTMLElement &&
+    directChild.matches(PASTED_TEXT_CARET_HOST_SELECTOR)
+  ) {
+    if (pastedTextCaretHostValue(directChild)) {
+      return null;
+    }
+    const candidate = direction === "backward"
+      ? directChild.previousSibling
+      : directChild.nextSibling;
+    return candidate instanceof HTMLElement && candidate.matches(PASTED_TEXT_FRAGMENT_SELECTOR)
+      ? candidate
+      : null;
   }
   if (range.startContainer.nodeType === Node.TEXT_NODE) {
     const length = range.startContainer.textContent?.length ?? 0;
@@ -2531,12 +2633,43 @@ function adjacentPastedTextFragment(
   return candidate instanceof HTMLElement && candidate.matches(PASTED_TEXT_FRAGMENT_SELECTOR) ? candidate : null;
 }
 
+function ensurePastedTextCaretHost(
+  editor: HTMLElement,
+  fragment: HTMLElement,
+  after: boolean,
+): HTMLElement | null {
+  const sibling = after ? fragment.nextSibling : fragment.previousSibling;
+  if (sibling instanceof HTMLElement && sibling.matches(PASTED_TEXT_CARET_HOST_SELECTOR)) {
+    return sibling;
+  }
+  if (sibling || !editor.contains(fragment)) {
+    return null;
+  }
+  const host = createPastedTextCaretHostElement(after ? "trailing" : "leading");
+  if (after) {
+    fragment.after(host);
+  } else {
+    fragment.before(host);
+  }
+  return host;
+}
+
 function placeCaretAtNodeBoundary(editor: HTMLElement, node: Node, after: boolean) {
   const selection = window.getSelection();
   if (!selection) {
     return;
   }
   const range = document.createRange();
+  if (node instanceof HTMLElement && node.matches(PASTED_TEXT_FRAGMENT_SELECTOR)) {
+    const caretHost = ensurePastedTextCaretHost(editor, node, after);
+    if (caretHost) {
+      range.selectNodeContents(caretHost);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return;
+    }
+  }
   if (node === editor) {
     range.selectNodeContents(editor);
     range.collapse(after);

@@ -26,4 +26,33 @@ describe("LocalPreviewRuntime", () => {
     });
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });
+
+  it("prepares browser html files through the local preview server", async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("http://127.0.0.1:8765/api/local-preview/html/register");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        path: "D:/repo/prototype/index.html",
+        scope_path: "D:/repo",
+      });
+      return new Response(JSON.stringify({
+        path: "D:\\repo\\prototype\\index.html",
+        url: "http://127.0.0.1:8765/api/local-preview/html/token/prototype/index.html",
+      }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const runtime = createLocalPreviewRuntime(createHttpClient({
+      baseUrl: "http://127.0.0.1:8765",
+      fetcher: fetcher as typeof fetch,
+    }), {
+      isTauriRuntime: () => true,
+    });
+
+    await expect(runtime.prepareHtmlFile("D:/repo/prototype/index.html", "D:/repo")).resolves.toEqual({
+      path: "D:\\repo\\prototype\\index.html",
+      url: "http://127.0.0.1:8765/api/local-preview/html/token/prototype/index.html",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });

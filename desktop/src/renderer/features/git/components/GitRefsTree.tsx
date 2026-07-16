@@ -1,6 +1,22 @@
-import { ChevronDown, ChevronRight, GitBranch, GitPullRequest, MoreHorizontal, Tag } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+  GitCompareArrows,
+  GitPullRequest,
+  Pencil,
+  Plus,
+  Star,
+  Tag,
+  Trash2,
+} from "lucide-react";
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
+import { isConventionalMainBranch } from "@/renderer/features/git/refPresentation";
+import {
+  type AppContextMenuItem,
+  useOptionalAppContextMenu,
+} from "@/renderer/providers/AppContextMenuProvider";
 import type { GitRef } from "@/runtime/gitTypes";
 
 import styles from "./GitRefsTree.module.css";
@@ -29,10 +45,10 @@ const GROUPS: readonly { kind: GitRef["kind"]; label: string; icon: typeof GitBr
 export function GitRefsTree({ refs, selectedRef, onSelect, onAction }: GitRefsTreeProps) {
   const groups = useMemo(() => buildGitRefTree(refs), [refs]);
   const [collapsed, setCollapsed] = useState<Set<GitRef["kind"]>>(() => new Set(["tag"]));
-  const [menuRef, setMenuRef] = useState<GitRef | null>(null);
   const head = refs.find((ref) => ref.current) ?? null;
+  const currentUpstream = head?.upstream ?? null;
   const [focusedKey, setFocusedKey] = useState(head ? "head" : `group:${groups[0]?.kind ?? "local"}`);
-  const actionButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const appContextMenu = useOptionalAppContextMenu();
 
   useEffect(() => {
     const available = new Set([
@@ -45,36 +61,60 @@ export function GitRefsTree({ refs, selectedRef, onSelect, onAction }: GitRefsTr
     if (!available.has(focusedKey)) setFocusedKey(available.values().next().value ?? "");
   }, [collapsed, focusedKey, groups, head]);
 
-  useEffect(() => {
-    if (!menuRef) return;
-    queueMicrotask(() => actionButtonRefs.current.get(menuRef.fullName)
-      ?.parentElement?.querySelector<HTMLButtonElement>("[role=menu] [role=menuitem]")?.focus());
-  }, [menuRef]);
+  const openRefContextMenu = (ref: GitRef, target: HTMLButtonElement, x: number, y: number) => {
+    onSelect(ref);
+    appContextMenu?.openContextMenu({
+      items: buildGitRefContextMenuItems(ref, onAction),
+      target,
+      x,
+      y,
+    });
+  };
 
-  if (refs.length === 0) return <div className={styles.empty}>暂无 refs</div>;
+  const openKeyboardContextMenu = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    ref: GitRef,
+  ) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    openRefContextMenu(ref, event.currentTarget, bounds.left + 18, bounds.bottom + 4);
+  };
+
+  if (refs.length === 0) return <div className={styles.empty}>暂无引用</div>;
   return (
     <div
       className={styles.root}
       role="tree"
-      aria-label="Repository refs"
-      onPointerDown={() => setMenuRef(null)}
-      onKeyDown={(event) => moveGitTreeFocus(event)}
+      aria-label="仓库引用"
+      onKeyDown={(event) => {
+        if (moveGitTreeFocus(event)) event.preventDefault();
+      }}
     >
       {head ? (
         <button
           type="button"
           role="treeitem"
           className={styles.head}
-          aria-label={`HEAD ${head.shortName}`}
+          aria-label={`当前分支 ${head.shortName}`}
           aria-selected={selectedRef === head.fullName}
+          aria-haspopup="menu"
+          data-app-context-menu="local"
           data-tree-key="head"
           tabIndex={focusedKey === "head" ? 0 : -1}
           onFocus={() => setFocusedKey("head")}
           onClick={() => onSelect(head)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openRefContextMenu(head, event.currentTarget, event.clientX, event.clientY);
+          }}
+          onKeyDown={(event) => openKeyboardContextMenu(event, head)}
         >
-          <GitBranch size={13} />
-          <strong>HEAD</strong>
-          <span>{head.shortName}</span>
+          <GitRefIcon refValue={head} currentUpstream={currentUpstream} />
+          <strong>当前</strong>
+          <span className={styles.headName}>{head.shortName}</span>
         </button>
       ) : null}
       {groups.map((group) => {
@@ -104,63 +144,28 @@ export function GitRefsTree({ refs, selectedRef, onSelect, onAction }: GitRefsTr
                   type="button"
                   role="treeitem"
                   className={styles.ref}
+                  aria-label={ref.shortName}
                   aria-selected={selectedRef === ref.fullName}
                   aria-current={ref.current ? "true" : undefined}
+                  aria-haspopup="menu"
+                  data-app-context-menu="local"
                   data-tree-key={`ref:${ref.fullName}`}
                   tabIndex={focusedKey === `ref:${ref.fullName}` ? 0 : -1}
                   onFocus={() => setFocusedKey(`ref:${ref.fullName}`)}
                   onClick={() => onSelect(ref)}
                   onContextMenu={(event) => {
                     event.preventDefault();
-                    onSelect(ref);
-                    setMenuRef(ref);
+                    event.stopPropagation();
+                    openRefContextMenu(ref, event.currentTarget, event.clientX, event.clientY);
                   }}
+                  onKeyDown={(event) => openKeyboardContextMenu(event, ref)}
                 >
-                  <span className={styles.current}>{ref.current ? "●" : ""}</span>
-                  <span title={ref.fullName}>{ref.shortName}</span>
+                  <GitRefIcon refValue={ref} currentUpstream={currentUpstream} />
+                  <span className={styles.refName} title={ref.fullName}>{ref.shortName}</span>
                   {ref.ahead || ref.behind ? (
                     <small>{ref.ahead ? `↑${ref.ahead}` : ""}{ref.behind ? `↓${ref.behind}` : ""}</small>
                   ) : null}
                 </button>
-                <button
-                  type="button"
-                  className={styles.more}
-                  aria-label={`${ref.shortName} actions`}
-                  aria-haspopup="menu"
-                  aria-expanded={menuRef?.fullName === ref.fullName}
-                  ref={(element) => {
-                    if (element) actionButtonRefs.current.set(ref.fullName, element);
-                    else actionButtonRefs.current.delete(ref.fullName);
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    const opening = menuRef?.fullName !== ref.fullName;
-                    setMenuRef(opening ? ref : null);
-                  }}
-                ><MoreHorizontal size={13} /></button>
-                {menuRef?.fullName === ref.fullName ? (
-                  <div
-                    className={styles.contextMenu}
-                    role="menu"
-                    aria-label={`${ref.shortName} actions`}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") {
-                        event.preventDefault();
-                        setMenuRef(null);
-                        queueMicrotask(() => actionButtonRefs.current.get(ref.fullName)?.focus());
-                        return;
-                      }
-                      if (movePopupMenuFocus(event)) event.preventDefault();
-                    }}
-                  >
-                    {!ref.current ? <RefAction label="Checkout" action="checkout" refValue={ref} onAction={onAction} /> : null}
-                    <RefAction label="New branch from here" action="create_branch" refValue={ref} onAction={onAction} />
-                    <RefAction label="Compare with HEAD" action="compare" refValue={ref} onAction={onAction} />
-                    {ref.kind === "local" ? <RefAction label="Rename" action="rename" refValue={ref} onAction={onAction} /> : null}
-                    {!ref.current ? <RefAction label="Delete…" action="delete" refValue={ref} onAction={onAction} /> : null}
-                  </div>
-                ) : null}
               </div>
             )) : null}
           </div>
@@ -170,13 +175,44 @@ export function GitRefsTree({ refs, selectedRef, onSelect, onAction }: GitRefsTr
   );
 }
 
-function RefAction({ label, action, refValue, onAction }: {
-  label: string;
-  action: GitRefAction;
-  refValue: GitRef;
-  onAction?: (action: GitRefAction, ref: GitRef) => void;
-}) {
-  return <button type="button" role="menuitem" onClick={() => onAction?.(action, refValue)}>{label}</button>;
+function GitRefIcon({ refValue, currentUpstream }: { refValue: GitRef; currentUpstream: string | null }) {
+  if (isConventionalMainBranch(refValue)) {
+    return <span className={styles.refIcon} data-tone="mainline" aria-hidden="true"><Star size={14} fill="currentColor" /></span>;
+  }
+  if (refValue.current) {
+    return <span className={styles.refIcon} data-tone="current" aria-hidden="true"><Tag size={14} /></span>;
+  }
+  if (refValue.kind === "remote" && currentUpstream === refValue.shortName) {
+    return <span className={styles.refIcon} data-tone="upstream" aria-hidden="true"><Star size={14} fill="currentColor" /></span>;
+  }
+  if (refValue.kind === "tag") {
+    return <span className={styles.refIcon} data-tone="tag" aria-hidden="true"><Tag size={14} /></span>;
+  }
+  return <span className={styles.refIcon} data-tone={refValue.kind} aria-hidden="true"><GitBranch size={14} /></span>;
+}
+
+export function buildGitRefContextMenuItems(
+  ref: GitRef,
+  onAction?: (action: GitRefAction, ref: GitRef) => void,
+): AppContextMenuItem[] {
+  const item = (
+    action: GitRefAction,
+    label: string,
+    icon: AppContextMenuItem["icon"],
+  ): AppContextMenuItem => ({
+    action: () => onAction?.(action, ref),
+    icon,
+    id: `git-ref-${action}-${ref.fullName}`,
+    label,
+  });
+
+  return [
+    ...(!ref.current ? [item("checkout", "签出", GitBranch)] : []),
+    item("create_branch", "从此处新建分支", Plus),
+    item("compare", "与当前分支比较", GitCompareArrows),
+    ...(ref.kind === "local" ? [item("rename", "重命名", Pencil)] : []),
+    ...(!ref.current ? [item("delete", "删除…", Trash2)] : []),
+  ];
 }
 
 export function buildGitRefTree(refs: readonly GitRef[]): readonly GitRefGroupModel[] {
@@ -234,18 +270,4 @@ function moveGitTreeFocus(event: ReactKeyboardEvent<HTMLDivElement>): boolean {
             : null;
   target?.focus();
   return Boolean(target);
-}
-
-function movePopupMenuFocus(event: ReactKeyboardEvent<HTMLElement>): boolean {
-  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return false;
-  const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button[role=menuitem]:not(:disabled)"));
-  if (items.length === 0) return false;
-  const current = Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement));
-  const target = event.key === "Home"
-    ? items[0]
-    : event.key === "End"
-      ? items[items.length - 1]
-      : items[(current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length];
-  target.focus();
-  return true;
 }

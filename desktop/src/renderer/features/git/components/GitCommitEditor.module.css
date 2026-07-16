@@ -2,25 +2,17 @@
 .root header, .root footer, .meta { display: flex; align-items: center; gap: 7px; }
 .root header strong { font-size: 11px; }
 .root header span { margin-left: auto; color: var(--color-text-3); font-size: 10px; }
-.body { display: grid; min-height: 0; align-content: start; gap: 5px; overflow-y: auto; scrollbar-width: thin; }
+.body { display: grid; min-height: 0; align-content: start; gap: 5px; overflow-y: auto; scrollbar-width: auto; }
 .root textarea { min-height: 62px; max-height: 160px; resize: vertical; padding: 7px 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); outline: 0; background: var(--color-bg-1); color: var(--color-text-1); font-family: var(--font-sans); font-size: 11px; line-height: 1.5; }
 .root textarea:focus { border-color: var(--color-accent-1); }
 .meta { justify-content: space-between; color: var(--color-text-3); font-size: 9px; }
 .meta [data-valid="false"] { color: var(--color-danger, #d14343); }
 .outcome { display: flex; align-items: center; gap: 6px; color: var(--color-success, #2f9e64); font-size: 10px; }
 .outcome code { color: var(--color-text-3); }
-.amendPreview { display: grid; gap: 4px; padding: 8px 10px; border-left: 2px solid var(--status-warning, #d49b42); background: color-mix(in srgb, var(--status-warning, #d49b42) 8%, transparent); }
-.amendPreview span, .amendPreview small { color: var(--color-text-3); }
-.amendPreview label { display: inline-flex; align-items: center; gap: 4px; }
-.root footer { min-height: 31px; flex: 0 0 auto; flex-wrap: wrap; justify-content: space-between; padding-top: 5px; border-top: 1px solid var(--color-border-2); background: var(--color-bg-1); }
-.options, .actions { display: flex; align-items: center; gap: 7px; }
+.root footer { min-height: 31px; flex: 0 0 auto; justify-content: flex-end; padding-top: 5px; border-top: 1px solid var(--color-border-2); background: var(--color-bg-1); }
+.actions { display: flex; align-items: center; gap: 7px; }
 .actions { margin-left: auto; }
-.root footer label { display: inline-flex; align-items: center; gap: 3px; color: var(--color-text-3); font-size: 10px; }
-.root footer button { display: inline-flex; min-height: 27px; flex: 0 0 auto; align-items: center; gap: 4px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: var(--color-accent-1); color: white; cursor: pointer; font-size: 10px; white-space: nowrap; }
+.root footer button { display: inline-flex; min-height: 27px; flex: 0 0 auto; align-items: center; gap: 4px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: var(--color-accent-1); color: var(--git-emphasis-contrast); cursor: pointer; font-size: 10px; white-space: nowrap; }
 .root footer button:disabled { cursor: default; opacity: 0.45; }
 .identity { display: flex; align-items: center; gap: 6px; color: var(--color-text-3); font-size: 10px; }
 .identity[data-ready="false"] { color: var(--color-danger, #d14343); }
-.identity button, .identityForm button { min-height: 24px; margin-left: auto; border: 0; border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-2); cursor: pointer; font-size: 9px; }
-.identityForm { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(130px, 1.2fr) auto; gap: 4px; }
-.identityForm input { min-width: 0; height: 27px; padding: 0 6px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-1); color: var(--color-text-1); font-size: 10px; }
-.identityForm button { margin-left: 0; padding: 0 7px; }

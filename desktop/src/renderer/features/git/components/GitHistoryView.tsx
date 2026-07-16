@@ -7,7 +7,7 @@ import { computeGitGraph, type GitGraphRow } from "@/renderer/features/git/graph
 
 import styles from "./GitHistoryView.module.css";
 
-const ROW_HEIGHT = 36;
+const ROW_HEIGHT = 40;
 const OVERSCAN = 8;
 
 export const EMPTY_GIT_HISTORY_FILTERS: GitHistoryFilters = {
@@ -62,17 +62,17 @@ export function GitHistoryView({
   );
 
   return (
-    <section className={styles.root} aria-label="Git history">
+    <section className={styles.root} aria-label="Git 日志">
       <header>
-        <span>{commits.length} loaded commit(s)</span>
+        <span>已加载 {commits.length} 个提交</span>
         <button type="button" disabled={loading} onClick={onRefresh}>
-          <RefreshCw size={12} />Refresh
+          <RefreshCw size={12} />刷新
         </button>
       </header>
       {onApplyFilters ? (
         <form
           className={styles.filters}
-          aria-label="History filters"
+          aria-label="日志筛选条件"
           onSubmit={(event) => {
             event.preventDefault();
             const validation = validateHistoryRevision(draftFilters.revision);
@@ -87,20 +87,20 @@ export function GitHistoryView({
         >
           <label className={styles.searchField}>
             <Search size={12} aria-hidden="true" />
-            <span className={styles.visuallyHidden}>Message or commit hash</span>
+            <span className={styles.visuallyHidden}>提交说明或哈希</span>
             <input
               value={draftFilters.search}
-              placeholder="Message or hash"
+              placeholder="提交说明或哈希"
               onChange={(event) => setDraftFilters((current) => ({ ...current, search: event.target.value }))}
             />
           </label>
           <label>
-            <span>Revision</span>
+            <span>修订</span>
             <input
-              aria-label="Revision"
+              aria-label="修订"
               list="git-history-revisions"
               value={draftFilters.revision}
-              placeholder="All refs / HEAD / branch / range"
+              placeholder="全部引用、当前指针、分支或范围"
               onChange={(event) => {
                 setRevisionError(null);
                 setDraftFilters((current) => ({ ...current, revision: event.target.value }));
@@ -111,28 +111,28 @@ export function GitHistoryView({
             </datalist>
           </label>
           <label>
-            <span>Author</span>
+            <span>作者</span>
             <input value={draftFilters.author} onChange={(event) => setDraftFilters((current) => ({ ...current, author: event.target.value }))} />
           </label>
           <label>
-            <span>Since</span>
+            <span>开始日期</span>
             <input type="date" value={draftFilters.since} onChange={(event) => setDraftFilters((current) => ({ ...current, since: event.target.value }))} />
           </label>
           <label>
-            <span>Until</span>
+            <span>结束日期</span>
             <input type="date" value={draftFilters.until} onChange={(event) => setDraftFilters((current) => ({ ...current, until: event.target.value }))} />
           </label>
           <label>
-            <span>Path</span>
-            <input value={draftFilters.path} placeholder="src/file.ts" onChange={(event) => setDraftFilters((current) => ({ ...current, path: event.target.value }))} />
+            <span>路径</span>
+            <input value={draftFilters.path} placeholder="源码/文件.ts" onChange={(event) => setDraftFilters((current) => ({ ...current, path: event.target.value }))} />
           </label>
           <label className={styles.check}>
-            <input type="checkbox" checked={draftFilters.firstParent} onChange={(event) => setDraftFilters((current) => ({ ...current, firstParent: event.target.checked }))} />First parent
+            <input type="checkbox" checked={draftFilters.firstParent} onChange={(event) => setDraftFilters((current) => ({ ...current, firstParent: event.target.checked }))} />仅第一父提交
           </label>
           <label className={styles.check}>
-            <input type="checkbox" checked={draftFilters.mergesOnly} onChange={(event) => setDraftFilters((current) => ({ ...current, mergesOnly: event.target.checked }))} />Merges
+            <input type="checkbox" checked={draftFilters.mergesOnly} onChange={(event) => setDraftFilters((current) => ({ ...current, mergesOnly: event.target.checked }))} />仅合并提交
           </label>
-          <button type="submit" disabled={loading}><Search size={12} />Apply</button>
+          <button type="submit" disabled={loading}><Search size={12} />应用</button>
           <button
             type="button"
             disabled={loading || isEmptyHistoryFilters(draftFilters)}
@@ -143,18 +143,18 @@ export function GitHistoryView({
               onApplyFilters(empty);
             }}
           >
-            <X size={12} />Clear
+            <X size={12} />清除
           </button>
           {revisionError ? <span className={styles.filterError} role="alert">{revisionError}</span> : null}
         </form>
       ) : null}
       {commits.length === 0 && !loading ? (
-        <div className={styles.empty} role="status">No commits match the current filters.</div>
+        <div className={styles.empty} role="status">没有符合当前筛选条件的提交。</div>
       ) : (
         <div
           className={styles.scroller}
           role="listbox"
-          aria-label="Commit history"
+          aria-label="提交日志"
           aria-busy={loading}
           data-virtualized={commits.length > window.renderedCount ? "true" : "false"}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
@@ -168,6 +168,7 @@ export function GitHistoryView({
                   role="option"
                   aria-selected={selectedObjectId === commit.objectId}
                   className={styles.row}
+                  data-git-history-row="true"
                   style={{ transform: `translateY(${index * ROW_HEIGHT}px)` }}
                   key={commit.objectId}
                   onClick={() => onSelect(commit)}
@@ -186,7 +187,7 @@ export function GitHistoryView({
       )}
       {hasMore ? (
         <button type="button" className={styles.more} disabled={loading} onClick={onLoadMore}>
-          {loading ? "Loading…" : "Load older commits"}
+          {loading ? "正在加载…" : "加载更早的提交"}
         </button>
       ) : null}
     </section>
@@ -231,7 +232,7 @@ export function validateHistoryRevision(value: string): { valid: boolean; messag
   const separator = revision.includes("...") ? "..." : revision.includes("..") ? ".." : null;
   const parts = separator ? revision.split(separator) : [revision];
   if ((separator && parts.length !== 2) || parts.some((part) => !isSafeRevisionAtom(part))) {
-    return { valid: false, message: "Enter a valid Git revision or two-revision range." };
+    return { valid: false, message: "请输入有效的 Git 修订或双修订范围。" };
   }
   return { valid: true, message: "" };
 }
@@ -265,7 +266,7 @@ function GitGraphCell({ row, columnCount }: { row: GitGraphRow; columnCount: num
       height={ROW_HEIGHT}
       viewBox={`0 0 ${width} ${ROW_HEIGHT}`}
       role="img"
-      aria-label={row.isMerge ? `Merge graph with ${row.parentIds.length} parents` : "Commit graph"}
+      aria-label={row.isMerge ? `包含 ${row.parentIds.length} 个父提交的合并图` : "提交关系图"}
       data-commit-column={row.commitColumn}
     >
       {row.inputLanes.map((lane, inputColumn) => {

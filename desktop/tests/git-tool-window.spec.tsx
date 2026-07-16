@@ -3,12 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   GitToolWindow,
-  acquireGitMutationGate,
-  amendRequiresStrongConfirmation,
   gitOperationFailureMessage,
   operationControlWarning,
   pushTargetFromStatus,
-  releaseGitMutationGate,
 } from "@/renderer/features/git/components/GitToolWindow";
 import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@/runtime/gitTypes";
 import type { ActiveProjectState } from "@/renderer/features/git/activeProject";
@@ -31,28 +28,22 @@ describe("GitToolWindow", () => {
     expect(gitOperationFailureMessage({
       summary: "commit",
       result: { error: "Keydex policy rejected this commit" },
-    })).toBe("Keydex policy rejected this commit");
-    expect(gitOperationFailureMessage({ summary: "commit", result: {} })).toBe("commit failed");
+    })).toBe("远程拒绝了此次更新，请先获取远程改动后再试。");
+    expect(gitOperationFailureMessage({ summary: "commit", result: {} })).toBe("Git 操作失败。");
     expect(gitOperationFailureMessage({
       summary: "fetch",
       result: {
         error: "Git credentials are unavailable.",
         help_action: "Configure the system credential manager, then retry.",
       },
-    })).toBe("Git credentials are unavailable. Configure the system credential manager, then retry.");
+    })).toBe("远程仓库认证失败，请先配置可用凭据。");
     expect(gitOperationFailureMessage({
       summary: "fetch",
       result: {
         error_code: "git_credentials_missing",
         error: "Git credentials are unavailable.",
       },
-    })).toContain("Git 凭据不可用：Git credentials are unavailable.");
-  });
-
-  it("requires a strong UI confirmation only when amend may rewrite an upstream commit", () => {
-    expect(amendRequiresStrongConfirmation(statusWithUpstream(0))).toBe(true);
-    expect(amendRequiresStrongConfirmation(statusWithUpstream(1))).toBe(false);
-    expect(amendRequiresStrongConfirmation(null)).toBe(false);
+    })).toBe("Git 凭据不可用：远程仓库认证失败，请先配置可用凭据。 在系统凭据管理器或外部 Git 客户端中配置凭据后重试。");
   });
 
   it("derives an explicit push target and rejects detached/no-upstream states", () => {
@@ -94,37 +85,53 @@ describe("GitToolWindow", () => {
     };
     expect(operationControlWarning("rebase", "skip", status)).toContain("abcdef123456");
     expect(operationControlWarning("rebase", "skip", status)).toContain("src/conflict.ts");
-    expect(operationControlWarning("rebase", "abort", status)).toContain("pre-operation state");
-  });
-
-  it("rejects a synchronous duplicate mutation until the first request releases its gate", () => {
-    const inFlight = new Set<string>();
-    expect(acquireGitMutationGate(inFlight, "stage")).toBe(true);
-    expect(acquireGitMutationGate(inFlight, "stage")).toBe(false);
-    expect(acquireGitMutationGate(inFlight, "commit")).toBe(true);
-    releaseGitMutationGate(inFlight, "stage");
-    expect(acquireGitMutationGate(inFlight, "stage")).toBe(true);
+    expect(operationControlWarning("rebase", "abort", status)).toContain("恢复操作前状态");
   });
 
   it("renders project-scoped navigation and switches views", () => {
     render(<GitToolWindow project={readyProject} maximized />);
 
     expect(screen.getByTestId("git-tool-window").dataset.layout).toBe("maximized");
-    const changesTab = screen.getByRole("tab", { name: "本地改动" });
+    expect(screen.getByTestId("git-project-name").textContent).toBe("repo");
+    expect(screen.queryByText(".")).toBeNull();
+    const changesTab = screen.getByRole("tab", { name: "提交" });
     expect(changesTab.getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("tabpanel", { name: "本地改动" }).getAttribute("data-view")).toBe("changes");
+    expect(screen.queryByRole("complementary", { name: "Git 仓库导航" })).toBeNull();
+    expect(screen.queryByRole("separator", { name: "调整 Git 仓库导航宽度" })).toBeNull();
+    const commitPaneSplitter = screen.getByRole("separator", { name: "调整提交面板宽度" });
+    expect(commitPaneSplitter.getAttribute("aria-valuenow")).toBe("28");
+    fireEvent.keyDown(commitPaneSplitter, { key: "ArrowRight" });
+    expect(commitPaneSplitter.getAttribute("aria-valuenow")).toBe("30");
+    expect(screen.queryByText("Git 数据加载后显示在这里")).toBeNull();
+    expect(screen.queryByRole("button", { name: "查看逐行历史" })).toBeNull();
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.queryByRole("tab", { name: "Blame" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Reflog" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "操作" })).toBeNull();
+    expect(screen.getByRole("tabpanel", { name: "提交" }).getAttribute("data-view")).toBe("changes");
     changesTab.focus();
     fireEvent.keyDown(changesTab, { key: "ArrowRight" });
-    const historyTab = screen.getByRole("tab", { name: "提交历史" });
+    const historyTab = screen.getByRole("tab", { name: "Git 日志" });
     expect(historyTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("separator", { name: "调整 Git 详情宽度" }).getAttribute("aria-valuenow")).toBe("28");
+    expect(screen.getByRole("complementary", { name: "Git 仓库导航" })).not.toBeNull();
+    expect(screen.getByRole("separator", { name: "调整 Git 仓库导航宽度" })).not.toBeNull();
     expect(historyTab.getAttribute("tabindex")).toBe("0");
     expect(document.activeElement).toBe(historyTab);
-    const panel = screen.getByRole("tabpanel", { name: "提交历史" });
+    const panel = screen.getByRole("tabpanel", { name: "Git 日志" });
     expect(historyTab.getAttribute("aria-controls")).toBe(panel.id);
+
+    fireEvent.click(screen.getByRole("button", { name: "更多 Git 视图" }));
+    expect(screen.getByRole("menuitem", { name: /暂存的改动/ })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: /恢复提交/ })).not.toBeNull();
+    const advanced = screen.getByRole("menuitem", { name: /高级 Git 工具/ });
+    fireEvent.click(advanced);
+    expect(screen.queryByRole("menu", { name: "更多 Git 视图" })).toBeNull();
+    expect(screen.getByRole("tabpanel", { name: "高级 Git 工具" }).getAttribute("data-view")).toBe("operations");
   });
 
   it("exposes bounded keyboard-adjustable navigation and detail splitters", () => {
-    render(<GitToolWindow project={readyProject} maximized />);
+    render(<GitToolWindow project={readyProject} maximized initialView="history" />);
 
     const navigation = screen.getByRole("separator", { name: "调整 Git 仓库导航宽度" });
     const details = screen.getByRole("separator", { name: "调整 Git 详情宽度" });
@@ -139,6 +146,28 @@ describe("GitToolWindow", () => {
     expect(details.getAttribute("aria-valuenow")).toBe("30");
     fireEvent.keyDown(details, { key: "End" });
     expect(details.getAttribute("aria-valuenow")).toBe("42");
+  });
+
+  it("resizes both visible panes from pointer movement instead of only changing hover state", () => {
+    render(<GitToolWindow project={readyProject} maximized initialView="history" />);
+
+    const workspace = screen.getByTestId("git-workspace");
+    Object.defineProperty(workspace, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 100, right: 1100, top: 0, bottom: 600, width: 1000, height: 600, x: 100, y: 0, toJSON: () => ({}) }),
+    });
+    const navigation = screen.getByRole("separator", { name: "调整 Git 仓库导航宽度" });
+    const details = screen.getByRole("separator", { name: "调整 Git 详情宽度" });
+
+    fireEvent(navigation, new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 290 }));
+    fireEvent(window, new MouseEvent("pointermove", { bubbles: true, clientX: 340 }));
+    fireEvent(window, new MouseEvent("pointerup", { bubbles: true, clientX: 340 }));
+    expect(navigation.getAttribute("aria-valuenow")).toBe("24");
+
+    fireEvent(details, new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 820 }));
+    fireEvent(window, new MouseEvent("pointermove", { bubbles: true, clientX: 760 }));
+    fireEvent(window, new MouseEvent("pointerup", { bubbles: true, clientX: 760 }));
+    expect(details.getAttribute("aria-valuenow")).toBe("34");
   });
 
   it.each([

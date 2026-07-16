@@ -1,11 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createRef, type ReactElement } from "react";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  WebSettingsSection,
-  type WebSettingsSectionHandle,
-} from "@/renderer/pages/settings/extensions/WebSettingsSection";
+import { WebSettingsSection } from "@/renderer/pages/settings/extensions/WebSettingsSection";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import type { RuntimeBridge } from "@/runtime";
 import type {
@@ -23,6 +20,8 @@ describe("WebSettingsSection", () => {
     expect(await screen.findByRole("heading", { name: "网络搜索" })).not.toBeNull();
     expect(screen.getByText("让 Keydex 在需要时查找公开网络信息并读取网页内容")).not.toBeNull();
     expect(screen.getByRole("switch", { name: "启用网络搜索" }).getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByRole("button", { name: "搜索引擎：Alpha" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "配置" }));
     expect(screen.getByRole("button", { name: "搜索引擎：Alpha" })).not.toBeNull();
     expect(screen.getByLabelText("Alpha API Key").getAttribute("placeholder")).toBe("••••1234");
     expect(screen.getByLabelText("Alpha API Key").getAttribute("type")).toBe("password");
@@ -32,7 +31,7 @@ describe("WebSettingsSection", () => {
     expect(screen.getByRole("button", { name: "获取 Alpha 密钥" })).not.toBeNull();
     expect(screen.queryByText(/max_results/i)).toBeNull();
     expect(screen.queryByText(/search_depth/i)).toBeNull();
-    expect(screen.queryByRole("button", { name: "保存网络设置" })).toBeNull();
+    expect(screen.getByRole("button", { name: "保存" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "清除Alpha API Key" })).not.toBeNull();
     expect(screen.queryByText("密钥仅保存在当前 Keydex 本地数据库中。")).toBeNull();
     expect(screen.queryByText("不会保存当前草稿")).toBeNull();
@@ -62,7 +61,9 @@ describe("WebSettingsSection", () => {
 
   it("opens the provider-driven credential page and explains the free quota", async () => {
     const openWindow = vi.spyOn(window, "open").mockImplementation(() => window);
-    renderSection(fakeRuntime());
+    const runtime = fakeRuntime();
+    renderSection(runtime);
+    await openConfiguration();
 
     try {
       const setupButton = await screen.findByRole("button", { name: "获取 Alpha 密钥" });
@@ -84,6 +85,7 @@ describe("WebSettingsSection", () => {
       await chooseProvider("Beta");
       expect(screen.queryByRole("button", { name: "获取 Alpha 密钥" })).toBeNull();
       expect(screen.queryByRole("button", { name: "获取 Alpha 密钥额度说明" })).toBeNull();
+      expect(runtime.settings.saveWebSettings).not.toHaveBeenCalled();
     } finally {
       openWindow.mockRestore();
     }
@@ -92,6 +94,7 @@ describe("WebSettingsSection", () => {
   it("shows a top notification when the credential page cannot be opened", async () => {
     const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
     renderSection(fakeRuntime());
+    await openConfiguration();
 
     try {
       fireEvent.click(await screen.findByRole("button", { name: "获取 Alpha 密钥" }));
@@ -101,8 +104,10 @@ describe("WebSettingsSection", () => {
     }
   });
 
-  it("preserves independent provider drafts while switching back and forth", async () => {
-    renderSection(fakeRuntime());
+  it("preserves independent provider drafts and saves only the selected provider", async () => {
+    const runtime = fakeRuntime();
+    renderSection(runtime);
+    await openConfiguration();
     await screen.findByLabelText("Endpoint");
     fireEvent.change(screen.getByLabelText("Endpoint"), { target: { value: "https://alpha-draft.example" } });
 
@@ -112,6 +117,21 @@ describe("WebSettingsSection", () => {
     await chooseProvider("Alpha");
 
     expect(screen.getByLabelText("Endpoint")).toHaveProperty("value", "https://alpha-draft.example");
+    expect(runtime.settings.saveWebSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => {
+      expect(runtime.settings.saveWebSettings).toHaveBeenCalledWith({
+        enabled: false,
+        active_provider_id: "alpha",
+        providers: {
+          alpha: {
+            config: { endpoint: "https://alpha-draft.example" },
+            secrets: { api_key: { action: "keep" } },
+          },
+        },
+      });
+    });
+    expect(runtime.settings.checkWebProvider).not.toHaveBeenCalled();
     await chooseProvider("Beta");
     expect(screen.getByRole("button", { name: "Region：Europe" })).not.toBeNull();
   });
@@ -124,45 +144,45 @@ describe("WebSettingsSection", () => {
         value: "saved-alpha-secret",
       }),
     );
-    const saveWebSettings = vi.fn(async (_payload: UpdateWebSettingsPayload) => webSettings());
-    const { webRef } = renderSection(fakeRuntime({ revealWebProviderSecret, saveWebSettings }));
+    const saveWebSettings = vi.fn(async (payload: UpdateWebSettingsPayload) => webSettingsForPayload(payload));
+    renderSection(fakeRuntime({ revealWebProviderSecret, saveWebSettings }));
+    await openConfiguration();
     const input = await screen.findByLabelText("Alpha API Key");
 
     fireEvent.click(screen.getByRole("button", { name: "显示Alpha API Key" }));
     await waitFor(() => expect(input).toHaveProperty("value", "saved-alpha-secret"));
     expect(revealWebProviderSecret).toHaveBeenCalledWith("alpha", "api_key");
 
-    await act(async () => webRef.current?.save());
-    expect(saveWebSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        providers: expect.objectContaining({
-          alpha: expect.objectContaining({ secrets: { api_key: { action: "keep" } } }),
-        }),
-      }),
-    );
+    expect(saveWebSettings).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "隐藏Alpha API Key" }));
     expect(input).toHaveProperty("value", "");
   });
 
-  it("keeps saved secrets by default and can explicitly clear them", async () => {
-    const saveWebSettings = vi.fn(async (_payload: UpdateWebSettingsPayload) => webSettings());
-    const { webRef } = renderSection(fakeRuntime({ saveWebSettings }));
+  it("keeps saved secrets by default and clears them only after confirmation", async () => {
+    const saveWebSettings = vi.fn(async (payload: UpdateWebSettingsPayload) => webSettingsForPayload(payload));
+    renderSection(fakeRuntime({ saveWebSettings }));
+    await openConfiguration();
     await screen.findByLabelText("Alpha API Key");
 
     fireEvent.click(screen.getByRole("button", { name: "清除Alpha API Key" }));
-    expect(screen.getByLabelText("Alpha API Key").getAttribute("placeholder")).toBe("保存后清除");
-    await act(async () => webRef.current?.save());
+    expect(screen.getByRole("dialog").textContent).toContain("清除Alpha API Key？");
+    expect(saveWebSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "清除密钥" }));
 
     await waitFor(() => {
-      expect(saveWebSettings).toHaveBeenCalledWith(
-        expect.objectContaining({
-          providers: expect.objectContaining({
-            alpha: expect.objectContaining({ secrets: { api_key: { action: "clear" } } }),
-          }),
-        }),
-      );
+      expect(saveWebSettings).toHaveBeenCalledWith({
+        enabled: false,
+        active_provider_id: "alpha",
+        providers: {
+          alpha: {
+            config: { endpoint: "https://alpha.example" },
+            secrets: { api_key: { action: "clear" } },
+          },
+        },
+      });
     });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("shows loading while revealing and reports failures without exposing a value", async () => {
@@ -174,6 +194,7 @@ describe("WebSettingsSection", () => {
         }),
     );
     renderSection(fakeRuntime({ revealWebProviderSecret }));
+    await openConfiguration();
     const input = await screen.findByLabelText("Alpha API Key");
     const revealButton = screen.getByRole("button", { name: "显示Alpha API Key" });
 
@@ -190,7 +211,7 @@ describe("WebSettingsSection", () => {
     expect(input).toHaveProperty("value", "");
   });
 
-  it("ignores a reveal response that arrives after the saved secret is cleared", async () => {
+  it("ignores a reveal response after a clear request opens confirmation", async () => {
     let resolveReveal!: (response: WebSecretRevealResponse) => void;
     const revealWebProviderSecret = vi.fn(
       () =>
@@ -199,6 +220,7 @@ describe("WebSettingsSection", () => {
         }),
     );
     renderSection(fakeRuntime({ revealWebProviderSecret }));
+    await openConfiguration();
     const input = await screen.findByLabelText("Alpha API Key");
 
     fireEvent.click(screen.getByRole("button", { name: "显示Alpha API Key" }));
@@ -211,15 +233,16 @@ describe("WebSettingsSection", () => {
       });
     });
 
-    await waitFor(() => expect(input.getAttribute("placeholder")).toBe("保存后清除"));
+    expect(screen.getByRole("dialog").textContent).toContain("清除Alpha API Key？");
     expect(input.getAttribute("type")).toBe("password");
     expect(input).toHaveProperty("value", "");
-    expect(screen.getByRole("button", { name: "显示Alpha API Key" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "显示Alpha API Key" })).toHaveProperty("disabled", false);
   });
 
   it("toggles a newly typed draft locally without requesting the saved secret", async () => {
     const revealWebProviderSecret = vi.fn();
     renderSection(fakeRuntime({ revealWebProviderSecret }));
+    await openConfiguration();
     const input = await screen.findByLabelText("Alpha API Key");
 
     fireEvent.change(input, { target: { value: "new-local-secret" } });
@@ -230,48 +253,146 @@ describe("WebSettingsSection", () => {
     expect(revealWebProviderSecret).not.toHaveBeenCalled();
   });
 
-  it("sends only an explicit set action for a newly typed secret", async () => {
-    const saveWebSettings = vi.fn(async (_payload: UpdateWebSettingsPayload) => webSettings());
-    const { webRef } = renderSection(fakeRuntime({ saveWebSettings }));
+  it("keeps a newly typed secret local until it is saved", async () => {
+    const saveWebSettings = vi.fn(async (payload: UpdateWebSettingsPayload) => webSettingsForPayload(payload));
+    renderSection(fakeRuntime({ saveWebSettings }));
+    await openConfiguration();
     const input = await screen.findByLabelText("Alpha API Key");
 
     fireEvent.change(input, { target: { value: "new-secret" } });
-    await act(async () => webRef.current?.save());
+    expect(saveWebSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(saveWebSettings).toHaveBeenCalledWith(
-        expect.objectContaining({
-          providers: expect.objectContaining({
-            alpha: expect.objectContaining({
-              secrets: { api_key: { action: "set", value: "new-secret" } },
-            }),
-            beta: expect.objectContaining({ secrets: { token: { action: "keep" } } }),
-          }),
-        }),
-      );
+      expect(saveWebSettings).toHaveBeenCalledWith({
+        enabled: false,
+        active_provider_id: "alpha",
+        providers: {
+          alpha: {
+            config: { endpoint: "https://alpha.example" },
+            secrets: { api_key: { action: "set", value: "new-secret" } },
+          },
+        },
+      });
     });
   });
 
-  it("reports enabled-provider validation without rendering an inline error", async () => {
-    const saveWebSettings = vi.fn(async (_payload: UpdateWebSettingsPayload) => webSettings());
-    const onReadyChange = vi.fn();
-    const { webRef } = renderSection(fakeRuntime({ saveWebSettings }), onReadyChange);
+  it("keeps the local draft available when persistence fails", async () => {
+    const saveWebSettings = vi.fn().mockRejectedValue(new Error("网络搜索配置保存失败"));
+    renderSection(fakeRuntime({ saveWebSettings }));
+    await openConfiguration();
+    const endpoint = await screen.findByLabelText("Endpoint");
+
+    fireEvent.change(endpoint, { target: { value: "https://broken.example" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("网络搜索配置保存失败")).not.toBeNull();
+    expect(endpoint).toHaveProperty("value", "https://broken.example");
+  });
+
+  it("turns a first-time enable request into configuration before saving and enabling", async () => {
+    const checkWebProvider = vi.fn(async (providerId: string): Promise<WebConnectionCheckResponse> => ({
+      provider_id: providerId,
+      ok: true,
+      duration_ms: 20,
+      error: null,
+    }));
+    const saveWebSettings = vi.fn(async (payload: UpdateWebSettingsPayload) => webSettingsForPayload(payload));
+    renderSection(fakeRuntime({ checkWebProvider, saveWebSettings }));
+    await openConfiguration();
     await screen.findByLabelText("Alpha API Key");
     await chooseProvider("Beta");
 
-    await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(true));
     fireEvent.click(screen.getByRole("switch", { name: "启用网络搜索" }));
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(webRef.current?.validationMessage()).toBe("请先填写 Beta Token 后再保存");
-    expect(onReadyChange).toHaveBeenLastCalledWith(true);
+    expect(screen.getByTestId("web-settings-section").querySelector('[role="alert"]')).toBeNull();
+    expect(await screen.findByText("填写完成后保存配置，随后启用网络搜索。")).not.toBeNull();
+    expect(screen.getByRole("switch", { name: "启用网络搜索" }).getAttribute("aria-checked")).toBe("false");
+    expect(checkWebProvider).not.toHaveBeenCalled();
     expect(saveWebSettings).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText("Beta Token"), { target: { value: "beta-secret" } });
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(webRef.current?.validationMessage()).toBeNull();
+    expect(screen.getByTestId("web-settings-section").querySelector('[role="alert"]')).toBeNull();
+    expect(saveWebSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存并启用" }));
+    await waitFor(() => {
+      expect(saveWebSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ enabled: true, active_provider_id: "beta" }),
+      );
+    });
+    expect(checkWebProvider).not.toHaveBeenCalled();
+    expect(screen.getByRole("switch", { name: "启用网络搜索" }).getAttribute("aria-checked")).toBe("true");
   });
 
-  it("checks the current draft without saving and renders success", async () => {
+  it("enables an already saved provider without calling the validation API", async () => {
+    const checkWebProvider = vi.fn();
+    const saveWebSettings = vi.fn(async (payload: UpdateWebSettingsPayload) => webSettingsForPayload(payload));
+    renderSection(fakeRuntime({ checkWebProvider, saveWebSettings }));
+
+    const toggle = await screen.findByRole("switch", { name: "启用网络搜索" });
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(saveWebSettings).toHaveBeenCalledWith({
+        enabled: true,
+        active_provider_id: "alpha",
+        providers: {},
+      });
+    });
+    expect(checkWebProvider).not.toHaveBeenCalled();
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByLabelText("Alpha API Key")).not.toBeNull();
+  });
+
+  it("disables immediately without validating or persisting staged provider drafts", async () => {
+    const response = webSettings();
+    response.enabled = true;
+    const checkWebProvider = vi.fn();
+    const saveWebSettings = vi.fn(async (payload: UpdateWebSettingsPayload) => webSettingsForPayload(payload));
+    renderSection(fakeRuntime({ checkWebProvider, response, saveWebSettings }));
+
+    const endpoint = await screen.findByLabelText("Endpoint");
+    fireEvent.change(endpoint, { target: { value: "https://unsaved.example" } });
+    fireEvent.click(screen.getByRole("switch", { name: "启用网络搜索" }));
+
+    await waitFor(() => {
+      expect(saveWebSettings).toHaveBeenCalledWith({
+        enabled: false,
+        active_provider_id: "alpha",
+        providers: {},
+      });
+    });
+    expect(checkWebProvider).not.toHaveBeenCalled();
+    expect(endpoint).toHaveProperty("value", "https://unsaved.example");
+    expect(screen.getByRole("switch", { name: "启用网络搜索" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("atomically disables network search when clearing its active required secret", async () => {
+    const response = webSettings();
+    response.enabled = true;
+    const saveWebSettings = vi.fn(async (payload: UpdateWebSettingsPayload) => webSettingsForPayload(payload));
+    renderSection(fakeRuntime({ response, saveWebSettings }));
+
+    await screen.findByLabelText("Alpha API Key");
+    fireEvent.click(screen.getByRole("button", { name: "清除Alpha API Key" }));
+    expect(screen.getByRole("dialog").textContent).toContain("会同时关闭网络搜索");
+    fireEvent.click(screen.getByRole("button", { name: "清除密钥" }));
+
+    await waitFor(() => {
+      expect(saveWebSettings).toHaveBeenCalledWith({
+        enabled: false,
+        active_provider_id: "alpha",
+        providers: {
+          alpha: {
+            config: { endpoint: "https://alpha.example" },
+            secrets: { api_key: { action: "clear" } },
+          },
+        },
+      });
+    });
+    expect(screen.getByRole("switch", { name: "启用网络搜索" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("tests the current draft without saving it", async () => {
     let resolveCheck!: (response: WebConnectionCheckResponse) => void;
     const checkWebProvider = vi.fn(
       (_providerId: string, _draft?: WebConnectionCheckDraft) =>
@@ -279,8 +400,9 @@ describe("WebSettingsSection", () => {
           resolveCheck = resolve;
         }),
     );
-    const saveWebSettings = vi.fn();
+    const saveWebSettings = vi.fn(async (payload: UpdateWebSettingsPayload) => webSettingsForPayload(payload));
     renderSection(fakeRuntime({ checkWebProvider, saveWebSettings }));
+    await openConfiguration();
     const secret = await screen.findByLabelText("Alpha API Key");
     fireEvent.change(secret, { target: { value: "draft-secret" } });
 
@@ -322,6 +444,7 @@ describe("WebSettingsSection", () => {
       },
     }));
     renderSection(fakeRuntime({ checkWebProvider }));
+    await openConfiguration();
     await screen.findByLabelText("Alpha API Key");
 
     fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
@@ -347,6 +470,7 @@ describe("WebSettingsSection", () => {
       });
     });
     renderSection(fakeRuntime({ checkWebProvider }));
+    await openConfiguration();
     await screen.findByLabelText("Alpha API Key");
     fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
     await chooseProvider("Beta");
@@ -360,18 +484,8 @@ describe("WebSettingsSection", () => {
   });
 });
 
-function renderSection(uiRuntime: RuntimeBridge, onReadyChange = vi.fn()) {
-  const webRef = createRef<WebSettingsSectionHandle>();
-  return {
-    ...renderWithNotifications(
-      <WebSettingsSection
-        onReadyChange={onReadyChange}
-        ref={webRef}
-        runtime={uiRuntime}
-      />,
-    ),
-    webRef,
-  };
+function renderSection(uiRuntime: RuntimeBridge) {
+  return renderWithNotifications(<WebSettingsSection runtime={uiRuntime} />);
 }
 
 function renderWithNotifications(ui: ReactElement) {
@@ -381,6 +495,10 @@ function renderWithNotifications(ui: ReactElement) {
 async function chooseProvider(label: string) {
   fireEvent.click(screen.getByRole("button", { name: /搜索引擎：/ }));
   fireEvent.click(await screen.findByRole("option", { name: new RegExp(label) }));
+}
+
+async function openConfiguration() {
+  fireEvent.click(await screen.findByRole("button", { name: "配置" }));
 }
 
 function fakeRuntime({
@@ -397,15 +515,17 @@ function fakeRuntime({
       value: "saved-alpha-secret",
     }),
   ),
-  saveWebSettings = vi.fn(async (_payload: UpdateWebSettingsPayload) => webSettings()),
+  response = webSettings(),
+  saveWebSettings = vi.fn(async (payload: UpdateWebSettingsPayload) => webSettingsForPayload(payload)),
 }: {
   checkWebProvider?: (providerId: string, draft?: WebConnectionCheckDraft) => Promise<WebConnectionCheckResponse>;
   revealWebProviderSecret?: (providerId: string, fieldKey: string) => Promise<WebSecretRevealResponse>;
+  response?: WebSettingsResponse;
   saveWebSettings?: (payload: UpdateWebSettingsPayload) => Promise<WebSettingsResponse>;
 } = {}): RuntimeBridge {
   return {
     settings: {
-      getWebSettings: vi.fn(async () => webSettings()),
+      getWebSettings: vi.fn(async () => response),
       saveWebSettings,
       revealWebProviderSecret,
       checkWebProvider,
@@ -506,4 +626,30 @@ function webSettings(): WebSettingsResponse {
       },
     ],
   };
+}
+
+function webSettingsForPayload(payload: UpdateWebSettingsPayload): WebSettingsResponse {
+  const response = webSettings();
+  response.enabled = payload.enabled;
+  response.active_provider_id = payload.active_provider_id;
+  response.providers = response.providers.map((provider) => {
+    const update = payload.providers[provider.provider_id];
+    if (!update) {
+      return provider;
+    }
+    const secrets = { ...provider.secrets };
+    for (const [key, secretUpdate] of Object.entries(update.secrets)) {
+      if (secretUpdate.action === "set") {
+        secrets[key] = { configured: true, preview: "••••saved" };
+      } else if (secretUpdate.action === "clear") {
+        secrets[key] = { configured: false, preview: null };
+      }
+    }
+    return {
+      ...provider,
+      config: { ...update.config },
+      secrets,
+    };
+  });
+  return response;
 }
