@@ -5,29 +5,11 @@
   --workbench-assistant-compose-duration: 420ms;
   --workbench-assistant-dock-out-duration: 650ms;
   --workbench-assistant-compose-ease: cubic-bezier(0.2, 0.82, 0.22, 1);
-  --workbench-assistant-glass-bg:
-    radial-gradient(circle at 18% 0%, rgb(255 255 255 / 78%), transparent 38%),
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--color-bg-elevated) 76%, transparent),
-      color-mix(in srgb, var(--color-bg-elevated) 48%, transparent)
-    );
-  --workbench-assistant-glass-border: color-mix(in srgb, var(--color-border-subtle) 62%, rgb(255 255 255 / 70%));
-  --workbench-assistant-glass-shadow:
-    0 20px 56px rgb(15 23 42 / 11%),
-    0 8px 20px rgb(15 23 42 / 6%),
-    inset 0 1px 0 rgb(255 255 255 / 68%),
-    inset 0 -1px 0 rgb(15 23 42 / 5%);
-  --workbench-assistant-control-glass-bg:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--color-bg-elevated) 90%, rgb(255 255 255 / 72%)),
-      color-mix(in srgb, var(--color-bg-elevated) 68%, transparent)
-    );
-  --workbench-assistant-control-glass-shadow:
-    0 8px 20px rgb(15 23 42 / 9%),
-    0 1px 2px rgb(15 23 42 / 5%),
-    inset 0 1px 0 rgb(255 255 255 / 72%);
+  --workbench-assistant-glass-bg: var(--control-pill-bg);
+  --workbench-assistant-glass-border: var(--control-pill-border);
+  --workbench-assistant-glass-shadow: none;
+  --workbench-assistant-control-glass-bg: var(--control-pill-bg);
+  --workbench-assistant-control-glass-shadow: none;
   --workbench-assistant-title-height: 18px;
   --workbench-assistant-accessory-height: 30px;
   --workbench-assistant-message-trigger-height: 34px;
@@ -204,13 +186,13 @@
   background: var(--workbench-assistant-glass-bg);
   box-shadow: var(--workbench-assistant-glass-shadow);
   opacity: 1;
-  backdrop-filter: blur(24px) saturate(1.45);
-  -webkit-backdrop-filter: blur(24px) saturate(1.45);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .chrome[data-shell-mode="composer"]::before {
-  inset: -12px -18px -10px;
-  border-radius: 32px;
+  inset: 0;
+  border-radius: inherit;
 }
 
 .surface[data-drawer-resizing="true"] .chrome,
@@ -223,8 +205,8 @@
 
 .chrome[data-shell-mode="capsule"]::before,
 .chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="capsule"]::before {
-  inset: -14px -24px -12px;
-  border-radius: 34px;
+  inset: 0;
+  border-radius: inherit;
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -232,12 +214,7 @@
   .chrome[data-shell-mode="composer"]::before,
   .chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="capsule"]::before,
   .chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="composer"]::before {
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--color-bg-elevated) 88%, rgb(255 255 255 / 70%)),
-        color-mix(in srgb, var(--color-bg-elevated) 74%, transparent)
-      );
+    background: var(--control-pill-bg);
   }
 }
 
@@ -654,11 +631,11 @@
 }
 
 .composerFrameAccessory :global([aria-label="输入框状态"] > [data-selected-item] > [data-selected-item]) {
-  border-color: color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  border-color: var(--control-pill-border);
   background: var(--workbench-assistant-control-glass-bg);
   box-shadow: var(--workbench-assistant-control-glass-shadow);
-  backdrop-filter: blur(14px) saturate(1.25);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .inputSurface {
@@ -669,16 +646,13 @@
   grid-area: input;
   align-self: start;
   align-items: stretch;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, transparent);
+  border: 1px solid var(--control-pill-border);
   border-radius: 20px;
-  background: color-mix(in srgb, var(--workbench-assistant-transition-bg) 98%, transparent);
-  box-shadow:
-    0 18px 42px rgb(15 23 42 / 13%),
-    0 6px 18px rgb(15 23 42 / 7%),
-    0 1px 2px rgb(15 23 42 / 6%);
+  background: var(--composer-bg);
+  box-shadow: none;
   overflow: visible;
   padding: 0;
-  backdrop-filter: blur(18px);
+  backdrop-filter: none;
   transition:
     width var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
     height var(--workbench-assistant-compose-duration) var(--workbench-assistant-compose-ease),
@@ -711,9 +685,7 @@
   max-width: none;
   height: var(--workbench-assistant-input-closed-height);
   border-radius: var(--radius-pill);
-  box-shadow:
-    0 18px 42px rgb(15 23 42 / 12%),
-    0 4px 14px rgb(15 23 42 / 6%);
+  box-shadow: none;
 }
 
 .miniComposer {
@@ -789,21 +761,21 @@
   width: 30px;
   height: 30px;
   flex: 0 0 30px;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  border: 1px solid var(--control-pill-border);
   border-radius: 50%;
   background: var(--workbench-assistant-control-glass-bg);
   box-shadow: var(--workbench-assistant-control-glass-shadow);
   color: var(--color-text-3);
-  backdrop-filter: blur(14px) saturate(1.25);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .newSessionButton:hover,
 .newSessionButton:focus-visible {
-  background: var(--surface-hover);
+  background: var(--control-pill-hover-bg);
   color: var(--color-text-1);
   outline: none;
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .newSessionButton:disabled {
@@ -817,13 +789,13 @@
   width: 30px;
   height: 30px;
   flex: 0 0 30px;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  border: 1px solid var(--control-pill-border);
   border-radius: 50%;
   background: var(--workbench-assistant-control-glass-bg);
   box-shadow: var(--workbench-assistant-control-glass-shadow);
   color: var(--color-text-3);
-  backdrop-filter: blur(14px) saturate(1.25);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .messageButtonIcon {
@@ -1058,7 +1030,7 @@
   align-self: stretch;
   justify-self: stretch;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  border: 1px solid var(--control-pill-border);
   border-radius: var(--radius-pill);
   background: var(--workbench-assistant-control-glass-bg);
   box-shadow: var(--workbench-assistant-control-glass-shadow);
@@ -1066,8 +1038,8 @@
   cursor: pointer;
   opacity: 1;
   padding: 0 12px;
-  backdrop-filter: blur(14px) saturate(1.25);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   transition:
     background var(--motion-fast) ease,
     border-color var(--motion-fast) ease,
@@ -1102,14 +1074,12 @@
 
 .messageCarrier:hover,
 .messageCarrier:focus-visible {
-  background: var(--workbench-assistant-control-glass-bg);
-  border-color: color-mix(in srgb, var(--color-border-default) 74%, transparent);
-  box-shadow:
-    var(--workbench-assistant-control-glass-shadow),
-    0 7px 18px rgb(15 23 42 / 8%);
+  background: var(--control-pill-hover-bg);
+  border-color: var(--control-pill-border);
+  box-shadow: none;
   color: var(--color-text-1);
   outline: none;
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .messageCarrier[data-state="streaming"]:hover,
@@ -1122,7 +1092,7 @@
 .messageCarrier[data-state="approval"]:focus-visible,
 .messageCarrier[data-state="priming"]:hover,
 .messageCarrier[data-state="priming"]:focus-visible {
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .messageCarrier[data-expanded="true"] {
@@ -1201,13 +1171,13 @@
   width: 30px;
   height: 30px;
   flex: 0 0 30px;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  border: 1px solid var(--control-pill-border);
   border-radius: 50%;
   background: var(--workbench-assistant-control-glass-bg);
   box-shadow: var(--workbench-assistant-control-glass-shadow);
   margin-bottom: 0;
-  backdrop-filter: blur(14px) saturate(1.25);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   transition:
     background var(--motion-fast) ease,
     border-color var(--motion-fast) ease,
@@ -1217,11 +1187,11 @@
 }
 
 .headerActionButton {
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  border: 1px solid var(--control-pill-border);
   background: var(--workbench-assistant-control-glass-bg);
   box-shadow: var(--workbench-assistant-control-glass-shadow);
-  backdrop-filter: blur(14px) saturate(1.25);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .composerFrame[data-compose-open="true"] .dockHandle {
@@ -1234,11 +1204,11 @@
 .messageButton:focus-visible,
 .headerActionButton:hover,
 .headerActionButton:focus-visible {
-  background: var(--surface-hover);
-  border-color: color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  background: var(--control-pill-hover-bg);
+  border-color: var(--control-pill-border);
   color: var(--color-text-1);
   outline: none;
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .miniTurnNavigator:hover,
@@ -1261,7 +1231,7 @@
 .messageCarrier:disabled:hover,
 .messageCarrier:disabled:focus-visible {
   background: var(--workbench-assistant-control-glass-bg);
-  border-color: color-mix(in srgb, var(--color-border-subtle) 78%, rgb(255 255 255 / 72%));
+  border-color: var(--control-pill-border);
   color: var(--color-text-3);
   transform: none;
 }
@@ -1833,18 +1803,13 @@
   0% {
     height: var(--workbench-assistant-input-open-height);
     border-radius: 20px;
-    box-shadow:
-      0 18px 42px rgb(15 23 42 / 13%),
-      0 6px 18px rgb(15 23 42 / 7%),
-      0 1px 2px rgb(15 23 42 / 6%);
+    box-shadow: none;
   }
 
   100% {
     height: var(--workbench-assistant-input-closed-height);
     border-radius: var(--radius-pill);
-    box-shadow:
-      0 18px 42px rgb(15 23 42 / 12%),
-      0 4px 14px rgb(15 23 42 / 6%);
+    box-shadow: none;
   }
 }
 

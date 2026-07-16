@@ -367,11 +367,11 @@ describe("style foundation", () => {
       /\.modeSwitch\s*{[^}]*width:\s*max\(\s*248px,\s*var\(--titlebar-mode-switch-width\)\s*\)/s,
     );
     expect(titlebar).toMatch(
-      /\.modeSwitch\s*{[^}]*background:\s*color-mix\(in srgb,\s*var\(--surface-active\) 74%,\s*var\(--sidebar-bg\)\)/s,
+      /\.modeSwitch\s*{[^}]*background:\s*var\(--control-pill-bg\)/s,
     );
-    expect(titlebar).toMatch(/\.modeSwitch::before\s*{[^}]*0 2px 7px rgb\(15 23 42 \/ 13%\)/s);
+    expect(titlebar).toMatch(/\.modeSwitch::before\s*{[^}]*box-shadow:\s*none/s);
     expect(workspaceSelector).toMatch(
-      /\.root\[data-variant="titlebar"\]\s+\.trigger\s*{[^}]*background:\s*color-mix\(in srgb,\s*var\(--surface-active\) 76%,\s*var\(--sidebar-bg\)\)/s,
+      /\.root\[data-variant="titlebar"\]\s+\.trigger\s*{[^}]*background:\s*var\(--control-pill-bg\)/s,
     );
     expect(workspaceSelector).toMatch(
       /\.root\[data-variant="titlebar"\]\s+\.trigger\s*{[^}]*color:\s*var\(--color-text-1\)/s,

@@ -51,10 +51,10 @@
   max-width: 100%;
   align-items: center;
   gap: 2px;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--control-pill-border);
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--composer-bg) 92%, var(--surface-muted));
-  box-shadow: 0 6px 18px rgb(15 23 42 / 6%);
+  background: var(--control-pill-bg);
+  box-shadow: var(--control-pill-shadow);
   padding: 0 6px;
   pointer-events: auto;
 }
@@ -1131,10 +1131,10 @@
   height: 30px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--control-pill-border);
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--composer-bg) 92%, var(--surface-muted));
-  box-shadow: 0 6px 18px rgb(15 23 42 / 6%);
+  background: var(--control-pill-bg);
+  box-shadow: var(--control-pill-shadow);
   color: var(--color-text-primary);
   pointer-events: auto;
   transition:
@@ -1147,11 +1147,11 @@
 }
 
 .scrollBottomButton:not(:disabled):hover {
-  background: var(--surface-hover);
-  border-color: color-mix(in srgb, var(--color-border-subtle) 72%, var(--color-text-tertiary));
-  box-shadow: 0 8px 20px rgb(15 23 42 / 8%);
+  background: var(--control-pill-hover-bg);
+  border-color: var(--control-pill-border);
+  box-shadow: none;
   color: var(--color-text-primary);
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .scrollBottomButton:disabled {

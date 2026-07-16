@@ -10,9 +10,9 @@
   align-items: center;
   gap: 5px;
   padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--color-border-3) 72%, transparent);
+  border: 1px solid var(--control-pill-border);
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--surface-active) 64%, var(--sidebar-bg));
+  background: var(--control-pill-bg);
   color: var(--color-text-2);
   font-size: 12px;
 }
@@ -21,8 +21,8 @@
 .trigger:not(:disabled):hover,
 .trigger:not(:disabled):focus-visible,
 .trigger[aria-expanded="true"] {
-  border-color: var(--color-border-3);
-  background: var(--surface-hover);
+  border-color: var(--control-pill-border);
+  background: var(--control-pill-active-bg);
   color: var(--color-text-1);
 }
 

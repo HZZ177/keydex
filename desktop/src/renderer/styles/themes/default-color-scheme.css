@@ -49,6 +49,19 @@
   --diff-hunk-bg: #eef5ff;
   --diff-hunk-text: var(--color-primary-6);
 
+  --syntax-keyword: #7c3aed;
+  --syntax-atom: #2563eb;
+  --syntax-number: #0f766e;
+  --syntax-string: #15803d;
+  --syntax-regexp: #be123c;
+  --syntax-comment: var(--color-text-tertiary);
+  --syntax-variable: var(--color-text-primary);
+  --syntax-function: #0f68a8;
+  --syntax-type: #b45309;
+  --syntax-property: #1d4ed8;
+  --syntax-operator: #9333ea;
+  --syntax-punctuation: var(--color-text-tertiary);
+
   --app-bg: var(--color-bg-2);
   --shell-bg: var(--color-bg-1);
   --sidebar-bg: #f6f6f6;
@@ -64,7 +77,15 @@
 
   --composer-bg: #ffffff;
   --composer-border: #e5e5e5;
+  --composer-frame:
+    linear-gradient(var(--composer-bg), var(--composer-bg)) padding-box,
+    linear-gradient(180deg, rgb(255 255 255 / 72%), rgb(0 0 0 / 4%)) border-box;
   --composer-shadow: var(--shadow-soft);
+  --control-pill-bg: color-mix(in srgb, var(--surface-muted) 88%, var(--sidebar-bg));
+  --control-pill-active-bg: var(--color-bg-elevated);
+  --control-pill-hover-bg: var(--surface-hover);
+  --control-pill-border: color-mix(in srgb, var(--color-border-default) 72%, transparent);
+  --control-pill-shadow: none;
 
   --message-user-bg: #f1f6ff;
   --message-assistant-bg: transparent;
@@ -76,73 +97,94 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --color-bg-1: #111111;
-  --color-bg-2: #0f0f0f;
-  --color-bg-3: #1a1a1a;
-  --color-bg-4: #222222;
-  --color-fill-1: #181818;
-  --color-fill-2: #202020;
-  --color-fill-3: #2a2a2a;
-  --fill-0: #111111;
+  --color-bg-1: #282a36;
+  --color-bg-2: #21222c;
+  --color-bg-3: #30323f;
+  --color-bg-4: #3a3d4e;
+  --color-fill-1: #30323f;
+  --color-fill-2: #393c4d;
+  --color-fill-3: #44475a;
+  --fill-0: #282a36;
 
-  --color-border-1: #242424;
-  --color-border-2: #333333;
-  --color-border-3: #444444;
+  --color-border-1: #343746;
+  --color-border-2: #44475a;
+  --color-border-3: #596483;
 
-  --color-text-1: #fcfcfc;
-  --color-text-2: #e6e6e6;
-  --color-text-3: #b8b8b8;
-  --color-text-4: #858585;
-  --color-text-inverse: #111111;
+  --color-text-1: #f8f8f2;
+  --color-text-2: #dedee7;
+  --color-text-3: #a9acc2;
+  --color-text-4: #6272a4;
+  --color-text-inverse: #282a36;
   --color-text-primary: var(--color-text-1);
   --color-text-secondary: var(--color-text-2);
   --color-text-tertiary: var(--color-text-3);
 
-  --color-primary-1: #061929;
-  --color-primary-2: #082744;
-  --color-primary-3: #073763;
-  --color-primary-4: #024f9b;
-  --color-primary-5: #0169cc;
-  --color-primary-6: #0169cc;
-  --color-primary-7: #2d8ce8;
+  --color-primary-1: #3a2638;
+  --color-primary-2: #4b2946;
+  --color-primary-3: #663052;
+  --color-primary-4: #8f3f70;
+  --color-primary-5: #d65da8;
+  --color-primary-6: #ff79c6;
+  --color-primary-7: #ff92d0;
 
-  --color-success-6: #00a240;
-  --color-warning-6: #e6a700;
-  --color-danger-6: #e02e2a;
-  --color-info-6: #0169cc;
+  --color-success-6: #50fa7b;
+  --color-warning-6: #ffb86c;
+  --color-danger-6: #ff5555;
+  --color-info-6: #8be9fd;
   --color-accent: var(--color-primary-6);
-  --color-skill: #b06dff;
+  --color-skill: #ff79c6;
   --color-warning: var(--color-warning-6);
   --color-danger: var(--color-danger-6);
-  --diff-added-bg: rgb(0 162 64 / 16%);
-  --diff-added-text: #00a240;
-  --diff-added-glow: rgb(0 162 64 / 10%);
-  --diff-removed-bg: rgb(224 46 42 / 16%);
-  --diff-removed-text: #e02e2a;
-  --diff-removed-glow: rgb(224 46 42 / 10%);
-  --diff-hunk-bg: rgb(1 105 204 / 14%);
-  --diff-hunk-text: var(--color-primary-6);
+  --diff-added-bg: rgb(80 250 123 / 14%);
+  --diff-added-text: #50fa7b;
+  --diff-added-glow: rgb(80 250 123 / 10%);
+  --diff-removed-bg: rgb(255 85 85 / 14%);
+  --diff-removed-text: #ff5555;
+  --diff-removed-glow: rgb(255 85 85 / 10%);
+  --diff-hunk-bg: rgb(139 233 253 / 12%);
+  --diff-hunk-text: #8be9fd;
+
+  --syntax-keyword: #ff79c6;
+  --syntax-atom: #bd93f9;
+  --syntax-number: #bd93f9;
+  --syntax-string: #f1fa8c;
+  --syntax-regexp: #ff5555;
+  --syntax-comment: #6272a4;
+  --syntax-variable: #f8f8f2;
+  --syntax-function: #50fa7b;
+  --syntax-type: #8be9fd;
+  --syntax-property: #8be9fd;
+  --syntax-operator: #ff79c6;
+  --syntax-punctuation: #a9acc2;
 
   --app-bg: var(--color-bg-2);
   --shell-bg: var(--color-bg-1);
-  --sidebar-bg: #101010;
+  --sidebar-bg: #242631;
   --surface-bg: var(--color-bg-1);
   --surface-muted: var(--color-fill-1);
   --surface-hover: var(--color-fill-2);
-  --surface-active: #252525;
-  --color-bg-elevated: var(--color-bg-1);
+  --surface-active: var(--color-fill-3);
+  --color-bg-elevated: #2d2f3d;
   --color-fill-muted: var(--color-fill-1);
   --color-border-default: var(--color-border-2);
   --color-border-subtle: var(--color-border-1);
   --color-border-strong: var(--color-border-3);
 
-  --composer-bg: #111111;
-  --composer-border: #333333;
-  --composer-shadow: 0 12px 32px rgb(0 0 0 / 28%);
+  --shadow-soft: 0 10px 28px rgb(9 10 16 / 34%);
+  --shadow-popover: 0 18px 50px rgb(9 10 16 / 48%);
+  --composer-bg: #343746;
+  --composer-border: transparent;
+  --composer-frame: var(--composer-bg);
+  --composer-shadow: 0 14px 40px rgb(9 10 16 / 28%);
+  --control-pill-bg: #30323f;
+  --control-pill-active-bg: #3a3d4e;
+  --control-pill-hover-bg: #44475a;
+  --control-pill-border: transparent;
+  --control-pill-shadow: none;
 
-  --message-user-bg: rgb(1 105 204 / 16%);
+  --message-user-bg: #3a2d40;
   --message-assistant-bg: transparent;
-  --inline-block-bg: #181818;
-  --inline-block-border: #333333;
-  --code-bg: #181818;
+  --inline-block-bg: #343746;
+  --inline-block-border: #44475a;
+  --code-bg: #21222c;
 }

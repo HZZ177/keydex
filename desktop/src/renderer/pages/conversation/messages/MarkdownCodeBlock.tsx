@@ -100,8 +100,8 @@ type SyntaxHighlighterModule = {
   default: ComponentType<SyntaxHighlighterRuntimeProps & { style: unknown }>;
 };
 type HighlightStyleModule = {
+  dracula: unknown;
   vs: unknown;
-  vs2015: unknown;
 };
 type SyntaxHighlighterViewProps = SyntaxHighlighterRuntimeProps & { theme: "light" | "dark" };
 type SyntaxHighlighterViewModule = {
@@ -121,7 +121,7 @@ function loadSyntaxHighlighterView(): Promise<SyntaxHighlighterViewModule> {
         const SyntaxHighlighter = highlighterModule.default;
 
         const SyntaxHighlighterView = function SyntaxHighlighterView({ theme, ...props }: SyntaxHighlighterViewProps) {
-          return <SyntaxHighlighter {...props} style={theme === "dark" ? styleModule.vs2015 : styleModule.vs} />;
+          return <SyntaxHighlighter {...props} style={theme === "dark" ? styleModule.dracula : styleModule.vs} />;
         };
         loadedSyntaxHighlighterView = SyntaxHighlighterView;
 

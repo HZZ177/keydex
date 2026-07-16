@@ -85,25 +85,21 @@
   width: 100%;
   max-width: none;
   justify-content: flex-start;
-  border: 1px solid color-mix(in srgb, var(--color-border-3) 72%, transparent);
+  border: 1px solid var(--control-pill-border);
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--surface-active) 76%, var(--sidebar-bg));
+  background: var(--control-pill-bg);
   color: var(--color-text-1);
-  box-shadow:
-    inset 0 1px 1px rgb(15 23 42 / 5%),
-    0 1px 2px rgb(15 23 42 / 5%);
+  box-shadow: var(--control-pill-shadow);
   padding-inline: 10px 9px;
-  backdrop-filter: blur(12px);
+  backdrop-filter: none;
 }
 
 .root[data-variant="titlebar"] .trigger:hover:not(:disabled),
 .root[data-variant="titlebar"] .trigger[aria-expanded="true"] {
-  border-color: color-mix(in srgb, var(--color-border-3) 66%, var(--color-border-default));
-  background: color-mix(in srgb, var(--color-bg-elevated) 74%, var(--surface-hover));
+  border-color: var(--control-pill-border);
+  background: var(--control-pill-active-bg);
   color: var(--color-text-1);
-  box-shadow:
-    0 2px 7px rgb(15 23 42 / 11%),
-    inset 0 1px 0 color-mix(in srgb, #fff 62%, transparent);
+  box-shadow: none;
 }
 
 .root[data-variant="titlebar"] .triggerText {
