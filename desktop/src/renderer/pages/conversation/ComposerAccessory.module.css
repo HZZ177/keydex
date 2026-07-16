@@ -219,6 +219,15 @@
   white-space: nowrap;
 }
 
+.typingSpeedValue {
+  display: inline-block;
+  min-width: 4ch;
+  flex: 0 0 auto;
+  margin-inline: 2px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .pendingInputsPill {
   display: grid;
   width: 100%;

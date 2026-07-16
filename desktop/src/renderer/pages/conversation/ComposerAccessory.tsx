@@ -1013,7 +1013,8 @@ function ComposerAccessorySwitcher({
 function TypingSpeedPill({ speed, backlog }: { speed: number; backlog: number }) {
   return (
     <span className={styles.typingSpeedPill} data-testid="typing-speed-pill">
-      打字机 {speed} 字符/s - 待输出 {backlog} 字
+      打字机 <span className={styles.typingSpeedValue}>{speed}</span> 字符/s - 待输出{" "}
+      <span className={styles.typingSpeedValue}>{backlog}</span> 字
     </span>
   );
 }

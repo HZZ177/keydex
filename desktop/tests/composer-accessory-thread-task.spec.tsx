@@ -33,6 +33,19 @@ afterAll(() => {
 });
 
 describe("ConversationComposerAccessory thread task", () => {
+  it("centers typing metrics in stable four-digit slots", () => {
+    const composerAccessoryCss = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/conversation/ComposerAccessory.module.css"),
+      "utf8",
+    );
+    const valueRule = composerAccessoryCss.match(/\.typingSpeedValue\s*{([^}]*)}/s)?.[1] ?? "";
+
+    expect(valueRule).toMatch(/min-width:\s*4ch/);
+    expect(valueRule).toMatch(/margin-inline:\s*2px/);
+    expect(valueRule).toMatch(/font-variant-numeric:\s*tabular-nums/);
+    expect(valueRule).toMatch(/text-align:\s*center/);
+  });
+
   it("caps goal-related composer capsules to two thirds of the input width", () => {
     const composerAccessoryCss = readFileSync(
       resolve(process.cwd(), "src/renderer/pages/conversation/ComposerAccessory.module.css"),
@@ -192,7 +205,7 @@ describe("ConversationComposerAccessory thread task", () => {
       "runtime-typing-speed",
     );
     expect(screen.getByTestId("plan-summary-pill").textContent).toBe("1/2 步");
-    expect(screen.getByTestId("typing-speed-pill")).not.toBeNull();
+    expect(screen.getByTestId("typing-speed-pill").textContent).toBe("打字机 0 字符/s - 待输出 0 字");
     expect(screen.queryByTestId("thread-task-pill")).toBeNull();
   });
 
