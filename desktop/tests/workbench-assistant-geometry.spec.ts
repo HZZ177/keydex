@@ -107,21 +107,21 @@ describe("workbench assistant geometry", () => {
     expect(css).not.toContain("morphPanelDockOut");
   });
 
-  it("keeps a flat bottom support layer for the assistant capsule controls", () => {
+  it("keeps a flat outer support layer around the assistant controls and input", () => {
     const css = readFileSync(
       resolve(process.cwd(), "src/renderer/pages/workbench/WorkbenchAssistantSurface.module.css"),
       "utf8",
     );
 
-    expect(css).toContain("--workbench-assistant-glass-bg: var(--control-pill-bg)");
-    expect(css).toContain("--workbench-assistant-glass-border: var(--control-pill-border)");
+    expect(css).toMatch(/--workbench-assistant-glass-bg:\s*color-mix\([\s\S]*var\(--color-bg-elevated\) 72%,[\s\S]*var\(--color-border-strong\)/);
+    expect(css).toContain("--workbench-assistant-glass-border: transparent");
     expect(css).toContain("--workbench-assistant-glass-shadow: none");
     expect(css).toContain("--workbench-assistant-control-glass-bg: var(--control-pill-bg)");
     expect(css).toContain("--workbench-assistant-control-glass-shadow: none");
     expect(css).toMatch(/\.chrome::before\s*\{[\s\S]*backdrop-filter/);
     expect(css).toMatch(/\.chrome\[data-shell-mode="capsule"\]::before,\s*\.chrome\[data-shell-mode="composer"\]::before,\s*\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="capsule"\]::before,\s*\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="composer"\]::before\s*\{[\s\S]*opacity: 1/);
-    expect(css).toMatch(/\.chrome\[data-shell-mode="capsule"\]::before,\s*\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="capsule"\]::before\s*\{[\s\S]*inset: 0/);
-    expect(css).toMatch(/\.chrome\[data-shell-mode="capsule"\]::before,\s*\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="capsule"\]::before\s*\{[\s\S]*border-radius: inherit/);
+    expect(css).toMatch(/\.chrome\[data-shell-mode="composer"\]::before\s*\{[\s\S]*inset: -12px -18px -10px[\s\S]*border-radius: 32px/);
+    expect(css).toMatch(/\.chrome\[data-shell-mode="capsule"\]::before,\s*\.chrome\[data-shell-mode="dock-out-morph"\]\[data-dock-out-target="capsule"\]::before\s*\{[\s\S]*inset: -14px -24px -12px[\s\S]*border-radius: 34px/);
     expect(css).not.toMatch(/\.chrome\[data-shell-mode="drawer"\]::before/);
     expect(css).not.toMatch(/\.chrome\[data-shell-mode="dock-morph"\]::before/);
     expect(css).toMatch(/\.composerFrameAccessory :global\(\[aria-label="输入框状态"\] > \[data-selected-item\] > \[data-selected-item\]\)\s*\{[\s\S]*var\(--workbench-assistant-control-glass-bg\)/);

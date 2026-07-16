@@ -5,8 +5,12 @@
   --workbench-assistant-compose-duration: 420ms;
   --workbench-assistant-dock-out-duration: 650ms;
   --workbench-assistant-compose-ease: cubic-bezier(0.2, 0.82, 0.22, 1);
-  --workbench-assistant-glass-bg: var(--control-pill-bg);
-  --workbench-assistant-glass-border: var(--control-pill-border);
+  --workbench-assistant-glass-bg: color-mix(
+    in srgb,
+    var(--color-bg-elevated) 72%,
+    var(--color-border-strong)
+  );
+  --workbench-assistant-glass-border: transparent;
   --workbench-assistant-glass-shadow: none;
   --workbench-assistant-control-glass-bg: var(--control-pill-bg);
   --workbench-assistant-control-glass-shadow: none;
@@ -191,8 +195,8 @@
 }
 
 .chrome[data-shell-mode="composer"]::before {
-  inset: 0;
-  border-radius: inherit;
+  inset: -12px -18px -10px;
+  border-radius: 32px;
 }
 
 .surface[data-drawer-resizing="true"] .chrome,
@@ -205,8 +209,8 @@
 
 .chrome[data-shell-mode="capsule"]::before,
 .chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="capsule"]::before {
-  inset: 0;
-  border-radius: inherit;
+  inset: -14px -24px -12px;
+  border-radius: 34px;
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -214,7 +218,7 @@
   .chrome[data-shell-mode="composer"]::before,
   .chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="capsule"]::before,
   .chrome[data-shell-mode="dock-out-morph"][data-dock-out-target="composer"]::before {
-    background: var(--control-pill-bg);
+    background: var(--workbench-assistant-glass-bg);
   }
 }
 
