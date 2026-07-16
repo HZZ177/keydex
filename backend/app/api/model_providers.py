@@ -210,7 +210,7 @@ async def refresh_provider_models(
     )
 
 
-@router.post("/{provider_id}/models/{model}/health", response_model=HealthResponse)
+@router.post("/{provider_id}/models/{model:path}/health", response_model=HealthResponse)
 async def check_model_health(
     provider_id: str,
     model: str,

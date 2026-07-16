@@ -59,6 +59,7 @@ export function SearchableModelDropdown({
 }: SearchableModelDropdownProps) {
   const menuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -118,11 +119,24 @@ export function SearchableModelDropdown({
     setOpen(true);
   };
 
-  const closeMenu = () => {
+  const moveFocusOutsideMenu = (restoreTriggerFocus: boolean) => {
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLElement) || !menuRef.current?.contains(activeElement)) {
+      return;
+    }
+    if (restoreTriggerFocus && !disabledButton) {
+      triggerRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    activeElement.blur();
+  };
+
+  const closeMenu = ({ restoreTriggerFocus = true } = {}) => {
     if (!open && !menuClosing) {
       return;
     }
     clearMenuCloseTimer();
+    moveFocusOutsideMenu(restoreTriggerFocus);
     setOpen(false);
     if (prefersReducedMotion()) {
       setMenuClosing(false);
@@ -163,7 +177,7 @@ export function SearchableModelDropdown({
         return;
       }
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
-        closeMenu();
+        closeMenu({ restoreTriggerFocus: false });
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -181,7 +195,7 @@ export function SearchableModelDropdown({
 
   useEffect(() => {
     if (disabledButton) {
-      closeMenu();
+      closeMenu({ restoreTriggerFocus: false });
       setQuery("");
       setActiveChoiceIndex(-1);
     }
@@ -318,6 +332,7 @@ export function SearchableModelDropdown({
           aria-controls={menuVisible ? menuId : undefined}
           title={title ?? ariaLabel}
           disabled={disabledButton}
+          ref={triggerRef}
           onPointerDown={(event) => {
             if (!disabledButton) {
               event.preventDefault();
@@ -341,6 +356,7 @@ export function SearchableModelDropdown({
           data-state={menuClosing ? "closing" : "open"}
           data-variant={variant}
           aria-hidden={menuClosing ? "true" : undefined}
+          inert={menuClosing ? true : undefined}
         >
           <div className={styles.menuLabel}>{menuLabel}</div>
           <label className={styles.searchBox}>

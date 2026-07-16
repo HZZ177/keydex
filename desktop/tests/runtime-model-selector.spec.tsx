@@ -35,6 +35,33 @@ describe("RuntimeModelSelector", () => {
     });
   });
 
+  it("moves focus back to the trigger before hiding the closing menu", async () => {
+    render(
+      <RuntimeModelSelector
+        model={{ providerId: "provider-a", model: "qwen-coder" }}
+        modelOptions={modelOptions()}
+        modelLoadState="ready"
+        modelError={null}
+        onModelChange={vi.fn()}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "选择模型" });
+    fireEvent.click(trigger);
+    const search = screen.getByLabelText("筛选模型");
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(search);
+    });
+
+    fireEvent.keyDown(search, { key: "Escape" });
+
+    const closingMenu = document.querySelector<HTMLElement>('[data-floating-layer="true"]');
+    expect(document.activeElement).toBe(trigger);
+    expect(closingMenu?.getAttribute("aria-hidden")).toBe("true");
+    expect(closingMenu?.hasAttribute("inert")).toBe(true);
+  });
+
   it("selects models with arrow keys from the search field", async () => {
     const onModelChange = vi.fn();
 

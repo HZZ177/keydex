@@ -182,6 +182,32 @@ def test_model_provider_health_check_returns_transient_result(tmp_path) -> None:
     assert providers_after_check[0]["health"] == {}
 
 
+def test_model_provider_health_check_accepts_model_id_with_slash(tmp_path) -> None:
+    model_id = "tencent/deepseek-v4-pro-202606"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        assert f'"model":"{model_id}"'.encode() in request.content.replace(b" ", b"")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    with _client(tmp_path, handler) as client:
+        provider = client.post(
+            "/api/model-providers",
+            json={
+                "name": "主模型",
+                "base_url": "http://provider.test/v1",
+                "models": [model_id],
+            },
+        ).json()
+
+        response = client.post(
+            f"/api/model-providers/{provider['id']}/models/tencent%2Fdeepseek-v4-pro-202606/health"
+        )
+
+    assert response.status_code == 200
+    assert response.json()["health"]["status"] == "healthy"
+
+
 def test_model_provider_health_check_returns_transient_unhealthy_result(tmp_path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/chat/completions"
