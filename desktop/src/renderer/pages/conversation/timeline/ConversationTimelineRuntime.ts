@@ -1,6 +1,26 @@
-import { MarkdownHeightIndex } from "@/renderer/markdownRuntime/layout/HeightIndex";
-import { MarkdownViewportController, type MarkdownViewportResult } from "@/renderer/markdownRuntime/view/ViewportController";
+import {
+  createMarkdownSnapshot,
+  type MarkdownSnapshot,
+  type MarkdownSnapshotBlock,
+} from "@/renderer/markdownRuntime/document/MarkdownSnapshot";
+import { MarkdownMeasurementScheduler } from "@/renderer/markdownRuntime/layout/MeasurementScheduler";
+import type { MarkdownHeightUpdate } from "@/renderer/markdownRuntime/layout/HeightIndex";
+import {
+  CONVERSATION_MARKDOWN_RENDERER_PROFILE,
+  SemanticMarkdownRendererRegistry,
+  type MarkdownBlockDomInstance,
+  type MarkdownBlockRendererContext,
+  type MarkdownBlockRendererDefinition,
+} from "@/renderer/markdownRuntime/renderers";
+import {
+  DocumentViewRuntime,
+  type DocumentViewPatchResult,
+  type DocumentViewportUpdateOptions,
+} from "@/renderer/markdownRuntime/view/DocumentViewRuntime";
+import type { MarkdownViewportResult } from "@/renderer/markdownRuntime/view/ViewportController";
+
 import type { ConversationRenderUnit } from "./ConversationRenderUnit";
+import { CONVERSATION_GEOMETRY_COMMIT_EVENT } from "./ConversationGeometryCommit";
 
 export interface ConversationTimelineUnitHandle {
   update(unit: ConversationRenderUnit): void;
@@ -54,6 +74,7 @@ export interface ConversationTimelineDiagnostics {
   readonly scrollPatches: number;
   readonly followBottom: boolean;
   readonly userScrollActive: boolean;
+  readonly controlledScrollActive: boolean;
   readonly topLocked: boolean;
   readonly deferredMeasurements: number;
 }
@@ -65,289 +86,350 @@ export interface ConversationTimelineAnchor {
   readonly capturedRevision: string;
 }
 
-interface Slot {
-  unit: ConversationRenderUnit;
-  readonly element: HTMLDivElement;
-  readonly handle: ConversationTimelineUnitHandle;
-}
-
-const MAX_RECYCLED_TIMELINE_SLOTS = 64;
-const TOP_INTENT_THRESHOLD_PX = 44;
+const DEFAULT_OVERSCAN_PX = 800;
+const DEFAULT_MAX_PINNED_UNITS = 64;
+const HEIGHT_EPSILON_PX = 0.5;
 const USER_SCROLL_SETTLE_MS = 180;
-const SCROLL_TARGET_EPSILON_PX = 1;
-const MIN_MEASURED_UNIT_HEIGHT_PX = 1;
+const MIN_UNIT_HEIGHT_PX = 1;
 
+/**
+ * Conversation timeline backed by the same retained document runtime as the
+ * large Markdown file preview.
+ *
+ * The Snapshot is deliberately lightweight: each conversation render unit is
+ * one semantic block and its payload stays in the unit map rather than being
+ * cloned into the Snapshot. DocumentViewRuntime owns the height index,
+ * viewport, scroll anchoring and retained block lifecycle. React/A2UI is only
+ * mounted by the custom block renderer for the bounded visible window.
+ */
 export class ConversationTimelineRuntime {
   readonly canvas: HTMLDivElement;
   private readonly renderer: ConversationTimelineUnitRenderer;
-  private readonly overscanPx: number;
   private readonly maxPinnedUnits: number;
   private readonly onPatch?: (patch: ConversationTimelinePatch) => void;
   private readonly onScrollRequest?: (request: ConversationTimelineScrollRequest) => void;
-  private readonly slots = new Map<string, Slot>();
-  private readonly recycledSlots: Slot[] = [];
-  private readonly measuredHeights = new Map<string, number>();
-  private readonly deferredMeasuredHeights = new Map<string, number>();
+  private readonly view: DocumentViewRuntime;
+  private readonly measurement: MarkdownMeasurementScheduler | null;
+  private readonly measuredElements = new Map<string, Element>();
   private readonly pinnedIds = new Set<string>();
-  private units: readonly ConversationRenderUnit[] = [];
+  private readonly residentIds = new Set<string>();
+  private readonly viewportResizeObserver: ResizeObserver | null;
+  private units: readonly ConversationRenderUnit[] = Object.freeze([]);
+  private unitsById = new Map<string, ConversationRenderUnit>();
   private indexById = new Map<string, number>();
-  private heightIndex: MarkdownHeightIndex | null = null;
-  private viewport: MarkdownViewportController | null = null;
+  private snapshot: MarkdownSnapshot | null = null;
   private revision: string | null = null;
   private sequence = 0;
   private patches = 0;
   private scrollPatches = 0;
   private followBottom: boolean;
   private userScrollActive = false;
-  private topLocked = false;
-  private lastObservedScrollTop = 0;
+  private controlledScrollActive = false;
   private expectedProgrammaticScrollTop: number | null = null;
+  private viewportFrame: number | null = null;
+  private geometryFrame: number | null = null;
+  private readonly dirtyGeometryIds = new Set<string>();
+  private readonly earlyRenderedCommits = new Map<string, string>();
   private userScrollSettleTimer: number | null = null;
+  private viewMutationActive = false;
   private disposed = false;
-  private readonly resizeObserver: ResizeObserver | null;
 
   constructor(readonly root: HTMLElement, options: ConversationTimelineRuntimeOptions) {
     this.renderer = options.renderer;
-    this.overscanPx = finiteNonNegative(options.overscanPx ?? 800, "overscanPx");
-    this.maxPinnedUnits = positiveInteger(options.maxPinnedUnits ?? 64, "maxPinnedUnits");
+    this.maxPinnedUnits = positiveInteger(options.maxPinnedUnits ?? DEFAULT_MAX_PINNED_UNITS, "maxPinnedUnits");
     this.followBottom = options.followBottom ?? false;
     this.onPatch = options.onPatch;
     this.onScrollRequest = options.onScrollRequest;
-    this.canvas = root.ownerDocument.createElement("div");
+    const registry = new SemanticMarkdownRendererRegistry({
+      unknown: this.conversationBlockRenderer(),
+    });
+    this.view = new DocumentViewRuntime(root, {
+      profile: CONVERSATION_MARKDOWN_RENDERER_PROFILE,
+      registry,
+      protectFocusAndSelection: true,
+      viewport: {
+        defaultOverscanPx: finiteNonNegative(options.overscanPx ?? DEFAULT_OVERSCAN_PX, "overscanPx"),
+        maxPinnedBlocks: this.maxPinnedUnits,
+      },
+    });
+    this.canvas = this.view.canvas;
+    // The document renderer normally styles a Markdown canvas. Conversation
+    // blocks contain their own Markdown roots plus arbitrary React/A2UI, so
+    // the outer retained canvas must not leak Markdown typography into them.
+    this.canvas.classList.remove("keydex-markdown");
     this.canvas.dataset.conversationTimelineCanvas = "true";
-    this.canvas.style.position = "relative";
-    this.canvas.style.width = "100%";
-    // Absolutely positioned units may temporarily be taller than their index
-    // estimate. They must not expand the browser's native scrollHeight behind
-    // the HeightIndex, otherwise the native thumb changes size while dragging.
     this.canvas.style.overflowX = "visible";
     this.canvas.style.overflowY = "clip";
-    root.replaceChildren(this.canvas);
     root.dataset.conversationTimelineRuntime = "true";
-    this.lastObservedScrollTop = root.scrollTop;
+    root.dataset.conversationTimelineEngine = "document-view";
+    root.dataset.conversationTimelineLayoutMode = "virtual";
+    root.dataset.conversationTimelineFollowBottom = this.followBottom ? "true" : "false";
     root.addEventListener("scroll", this.handleScroll, { passive: true });
-    this.resizeObserver = options.observeMeasurements !== false && typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver((entries) => this.handleMeasurements(entries))
+    root.addEventListener(CONVERSATION_GEOMETRY_COMMIT_EVENT, this.handleGeometryCommit);
+    this.measurement = options.observeMeasurements !== false && typeof ResizeObserver !== "undefined"
+      ? new MarkdownMeasurementScheduler({
+          revision: "conversation-document:initial",
+          epoch: 0,
+          epsilon: HEIGHT_EPSILON_PX,
+          onMeasurements: (batch) => this.applyMeasuredHeightBatch(batch.updates, batch.revision),
+        })
       : null;
+    this.viewportResizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(() => this.scheduleViewportUpdate());
+    this.viewportResizeObserver?.observe(root);
   }
 
-  publish(units: readonly ConversationRenderUnit[]): ConversationTimelinePatch {
+  publish(
+    units: readonly ConversationRenderUnit[],
+    residentUnitIds: readonly string[] = [],
+  ): ConversationTimelinePatch {
     this.assertActive();
     assertUniqueUnits(units);
     this.units = Object.freeze([...units]);
+    this.unitsById = new Map(units.map((unit) => [unit.id, unit]));
     this.indexById = new Map(units.map((unit, index) => [unit.id, index]));
     for (const id of [...this.pinnedIds]) if (!this.indexById.has(id)) this.pinnedIds.delete(id);
-    this.revision = `conversation-timeline:${++this.sequence}`;
-    const heights = units.map((unit) => {
-      const measuredHeight = this.measuredHeights.get(unit.id);
-      if (measuredHeight !== undefined && measuredHeight >= MIN_MEASURED_UNIT_HEIGHT_PX) return measuredHeight;
-      return Math.max(MIN_MEASURED_UNIT_HEIGHT_PX, unit.estimatedHeight);
-    });
-    this.heightIndex = new MarkdownHeightIndex(this.revision, heights);
-    this.viewport = new MarkdownViewportController(this.heightIndex, {
-      defaultOverscanPx: this.overscanPx,
-      maxPinnedBlocks: this.maxPinnedUnits,
-    });
-    return this.followBottom
-      ? this.updateViewportAtBottom(false)
-      : this.patch(this.root.scrollTop, this.root.clientHeight);
+    this.residentIds.clear();
+    for (const id of residentUnitIds) if (this.indexById.has(id)) this.residentIds.add(id);
+    this.assertPinBudget();
+    this.revision = `conversation-document:${++this.sequence}`;
+    this.snapshot = conversationSnapshot(this.units, this.revision);
+    this.measurement?.setContext({ revision: this.revision, epoch: this.sequence });
+    this.measuredElements.clear();
+    const heights = this.units.map((unit) => Math.max(MIN_UNIT_HEIGHT_PX, unit.estimatedHeight));
+    const estimatedTotalHeight = heights.reduce((total, height) => total + height, 0);
+    const scrollTop = this.followBottom && !this.userScrollActive
+      ? Math.max(0, estimatedTotalHeight - this.root.clientHeight)
+      : this.root.scrollTop;
+    const result = this.stabilizeMountedGeometry(this.withViewMutation(() => this.view.publish(
+      this.snapshot!,
+      heights,
+      this.viewportInput(scrollTop),
+      { preserveRevisionGeometry: true },
+    )));
+    let patch = this.publishPatch(result);
+    if (this.followBottom && !this.userScrollActive) {
+      const target = this.bottomScrollTop();
+      if (Math.abs(result.viewport.scrollTop - target) > HEIGHT_EPSILON_PX) {
+        patch = this.updateViewportWithOrigin(target, this.root.clientHeight, "programmatic");
+      }
+      if (Math.abs(this.root.scrollTop - target) > HEIGHT_EPSILON_PX) {
+        this.requestScroll(target, "follow-bottom");
+      }
+    }
+    return patch;
   }
 
-  updateViewport(scrollTop = this.root.scrollTop, viewportHeight = this.root.clientHeight): ConversationTimelinePatch {
-    this.assertActive();
-    if (!this.viewport || !this.heightIndex || !this.revision) throw new Error("Conversation timeline has not been published");
-    this.scrollPatches += 1;
-    return this.patch(scrollTop, viewportHeight);
+  updateViewport(
+    scrollTop = this.root.scrollTop,
+    viewportHeight = this.root.clientHeight,
+  ): ConversationTimelinePatch {
+    return this.updateViewportWithOrigin(scrollTop, viewportHeight, "user");
   }
 
   setPinned(unitId: string, pinned: boolean): ConversationTimelinePatch | null {
     this.assertActive();
     if (!this.indexById.has(unitId)) return null;
-    if (pinned) {
-      if (!this.pinnedIds.has(unitId) && this.pinnedIds.size >= this.maxPinnedUnits) {
-        throw new Error(`Pinned conversation units exceed limit ${this.maxPinnedUnits}`);
-      }
-      this.pinnedIds.add(unitId);
-    } else {
-      this.pinnedIds.delete(unitId);
+    if (pinned) this.pinnedIds.add(unitId);
+    else this.pinnedIds.delete(unitId);
+    try {
+      this.assertPinBudget();
+    } catch (error) {
+      if (pinned) this.pinnedIds.delete(unitId);
+      throw error;
     }
-    return this.updateViewport();
+    return this.snapshot ? this.updateViewportWithOrigin(this.root.scrollTop, this.root.clientHeight, "automatic") : null;
+  }
+
+  setResidentUnits(unitIds: readonly string[]): ConversationTimelinePatch | null {
+    this.assertActive();
+    const next = new Set(unitIds.filter((unitId) => this.indexById.has(unitId)));
+    const combined = new Set([...this.pinnedIds, ...next]);
+    if (combined.size > this.maxPinnedUnits) {
+      throw new Error(`Pinned conversation units exceed limit ${this.maxPinnedUnits}`);
+    }
+    if (setsEqual(this.residentIds, next)) return null;
+    this.residentIds.clear();
+    next.forEach((unitId) => this.residentIds.add(unitId));
+    return this.snapshot ? this.updateViewportWithOrigin(this.root.scrollTop, this.root.clientHeight, "automatic") : null;
   }
 
   setFollowBottom(enabled: boolean): ConversationTimelinePatch | null {
     this.assertActive();
-    if (this.followBottom === enabled) {
-      if (enabled) this.setTopLocked(false);
-      return null;
-    }
     this.followBottom = enabled;
-    if (enabled) this.setTopLocked(false);
-    setDatasetValue(this.root, "conversationTimelineFollowBottom", enabled ? "true" : "false");
-    return enabled && this.viewport && this.heightIndex && this.revision
-      ? this.updateViewportAtBottom()
-      : null;
+    this.root.dataset.conversationTimelineFollowBottom = enabled ? "true" : "false";
+    if (!enabled || !this.snapshot) return null;
+    const target = this.bottomScrollTop();
+    const patch = this.updateViewportWithOrigin(target, this.root.clientHeight, "programmatic");
+    this.requestScroll(target, "follow-bottom");
+    return patch;
   }
 
   setUserScrollInteraction(active: boolean): void {
     this.assertActive();
-    if (this.userScrollActive === active) return;
-    if (!active) this.collectInteractionMeasurements();
     this.userScrollActive = active;
-    this.lastObservedScrollTop = this.root.scrollTop;
-    setDatasetValue(this.root, "conversationTimelineUserScrollActive", active ? "true" : "false");
-    if (active) this.applyInteractionClips();
-    else {
-      this.flushDeferredMeasurements();
-      this.clearCommittedInteractionClips();
-    }
+    this.root.dataset.conversationTimelineUserScrollActive = active ? "true" : "false";
+    if (!active) this.clearUserScrollSettleTimer();
+  }
+
+  setControlledScrollInteraction(active: boolean): void {
+    this.assertActive();
+    this.controlledScrollActive = active;
+    this.root.dataset.conversationTimelineControlledScrollActive = active ? "true" : "false";
+    // Unlike the retired timeline, a controlled thumb never freezes the old
+    // render window. Scroll events continue to publish once per animation
+    // frame, exactly like FileMarkdownRuntimeHost.
+    if (!active) this.settleControlledScrollViewport();
+  }
+
+  settleControlledScrollViewport(): ConversationTimelinePatch | null {
+    this.assertActive();
+    if (!this.snapshot) return null;
+    this.cancelViewportFrame();
+    return this.updateViewportWithOrigin(this.root.scrollTop, this.root.clientHeight, "user");
   }
 
   updateMeasuredHeight(unitId: string, height: number): ConversationTimelinePatch | null {
     this.assertActive();
     const index = this.indexById.get(unitId);
-    if (index === undefined || !this.heightIndex || !this.revision) return null;
+    if (index === undefined || !this.snapshot) return null;
     const normalized = finiteNonNegative(height, "height");
-    if (normalized < MIN_MEASURED_UNIT_HEIGHT_PX) return null;
-    if (this.userScrollActive) {
-      this.deferMeasuredHeight(unitId, normalized);
+    if (normalized < MIN_UNIT_HEIGHT_PX || Math.abs(this.view.baseHeightAt(index) - normalized) <= HEIGHT_EPSILON_PX) {
       return null;
     }
-    const anchor = this.captureMeasurementAnchor();
-    this.measuredHeights.set(unitId, normalized);
-    const delta = this.heightIndex.update(index, normalized, { kind: "measured", revision: this.revision });
-    return delta === 0
-      ? null
-      : this.updateViewportAfterMeasurement(anchor);
+    return this.applyMeasuredHeightBatch([{ index, height: normalized, kind: "measured" }], this.snapshot.revision);
   }
 
   measureMounted(): ConversationTimelinePatch | null {
-    if (this.userScrollActive) {
-      for (const [id, slot] of this.slots) {
-        const height = this.interactionContentHeight(slot.element);
-        if (height === null) continue;
-        this.deferMeasuredHeight(id, height);
-      }
-      return null;
-    }
-    const anchor = this.captureMeasurementAnchor();
-    let changed = false;
-    for (const [id, slot] of this.slots) {
-      const height = slot.element.getBoundingClientRect().height;
-      if (
-        !Number.isFinite(height)
-        || height < MIN_MEASURED_UNIT_HEIGHT_PX
-        || slot.element.dataset.conversationUnitMeasurementPending
-        || this.measuredHeights.get(id) === height
-      ) continue;
-      this.measuredHeights.set(id, height);
-      const index = this.indexById.get(id);
-      if (index !== undefined && this.heightIndex && this.revision) {
-        changed = this.heightIndex.update(index, height, { kind: "measured", revision: this.revision }) !== 0 || changed;
+    this.assertActive();
+    if (!this.snapshot) return null;
+    const updates: MarkdownHeightUpdate[] = [];
+    for (const blockId of this.view.mountedBlockIds()) {
+      const element = this.view.getBlockElement(blockId);
+      const index = this.indexById.get(blockId);
+      if (!element || index === undefined || element.dataset.conversationUnitMeasurementPending) continue;
+      const height = element.getBoundingClientRect().height;
+      if (!Number.isFinite(height) || height < MIN_UNIT_HEIGHT_PX) continue;
+      this.measurement?.synchronize(element, height);
+      if (Math.abs(this.view.baseHeightAt(index) - height) > HEIGHT_EPSILON_PX) {
+        updates.push({ index, height, kind: "measured" });
       }
     }
-    return changed ? this.updateViewportAfterMeasurement(anchor) : null;
+    return updates.length ? this.applyMeasuredHeightBatch(updates, this.snapshot.revision) : null;
   }
 
   revealUnit(unitId: string, align: "start" | "center" | "end" = "center"): boolean {
     this.assertActive();
     const index = this.indexById.get(unitId);
-    if (index === undefined || !this.heightIndex) return false;
+    const heightIndex = this.view.getHeightIndex();
+    if (index === undefined || !heightIndex || !this.snapshot) return false;
     this.followBottom = false;
-    this.setTopLocked(false);
-    setDatasetValue(this.root, "conversationTimelineFollowBottom", "false");
-    const top = this.heightIndex.offsetOf(index);
-    const height = this.heightIndex.heightAt(index);
-    const viewport = this.root.clientHeight;
-    const target = align === "start" ? top : align === "end" ? top + height - viewport : top + height / 2 - viewport / 2;
-    const scrollTop = Math.max(0, Math.min(target, Math.max(0, this.heightIndex.totalHeight - viewport)));
-    this.patch(scrollTop, viewport);
-    this.requestScroll(scrollTop, "reveal-unit");
+    this.root.dataset.conversationTimelineFollowBottom = "false";
+    const top = heightIndex.offsetOf(index);
+    const height = heightIndex.heightAt(index);
+    const viewportHeight = this.root.clientHeight;
+    const rawTarget = align === "start"
+      ? top
+      : align === "end"
+        ? top + height - viewportHeight
+        : top + height / 2 - viewportHeight / 2;
+    const target = clamp(rawTarget, 0, Math.max(0, heightIndex.totalHeight - viewportHeight));
+    this.updateViewportWithOrigin(target, viewportHeight, "programmatic");
+    this.requestScroll(target, "reveal-unit");
     return true;
   }
 
   captureAnchor(viewportOffset = 0): ConversationTimelineAnchor | null {
     this.assertActive();
-    if (!this.heightIndex || !this.revision || !this.units.length) return null;
-    const absoluteY = Math.max(0, Math.min(
-      this.root.scrollTop + Math.max(0, viewportOffset),
-      Math.max(0, this.heightIndex.totalHeight - Number.EPSILON),
-    ));
-    const position = this.heightIndex.queryY(absoluteY);
-    if (!position) return null;
-    const unit = this.units[position.index];
-    if (!unit) return null;
+    const heightIndex = this.view.getHeightIndex();
+    if (!heightIndex || !this.revision || !this.units.length) return null;
+    const boundedOffset = clamp(viewportOffset, 0, Math.max(0, this.root.clientHeight));
+    const absoluteY = clamp(
+      this.root.scrollTop + boundedOffset,
+      0,
+      Math.max(0, heightIndex.totalHeight - Number.EPSILON),
+    );
+    const position = heightIndex.queryY(absoluteY);
+    const unit = position ? this.units[position.index] : null;
+    if (!position || !unit) return null;
     return Object.freeze({
       unitId: unit.id,
       offsetWithinUnit: position.offsetWithinBlock,
-      viewportOffset,
+      viewportOffset: boundedOffset,
       capturedRevision: this.revision,
     });
   }
 
   restoreAnchor(anchor: ConversationTimelineAnchor): boolean {
     this.assertActive();
-    this.followBottom = false;
-    this.setTopLocked(false);
-    setDatasetValue(this.root, "conversationTimelineFollowBottom", "false");
-    return this.updateViewportFromAnchor(anchor) !== null;
-  }
-
-  private updateViewportFromAnchor(anchor: ConversationTimelineAnchor | null): ConversationTimelinePatch | null {
-    if (!anchor) return this.viewport ? this.updateViewport() : null;
     const index = this.indexById.get(anchor.unitId);
-    if (index === undefined || !this.heightIndex) return null;
-    const target = this.heightIndex.offsetOf(index) + anchor.offsetWithinUnit - anchor.viewportOffset;
-    const scrollTop = Math.max(
+    const heightIndex = this.view.getHeightIndex();
+    if (index === undefined || !heightIndex || !this.snapshot) return false;
+    this.followBottom = false;
+    this.root.dataset.conversationTimelineFollowBottom = "false";
+    const target = clamp(
+      heightIndex.offsetOf(index) + anchor.offsetWithinUnit - anchor.viewportOffset,
       0,
-      Math.min(target, Math.max(0, this.heightIndex.totalHeight - this.root.clientHeight)),
+      Math.max(0, heightIndex.totalHeight - this.root.clientHeight),
     );
-    const patch = this.patch(scrollTop, this.root.clientHeight);
-    this.requestScroll(scrollTop, "restore-anchor");
-    return patch;
+    this.updateViewportWithOrigin(target, this.root.clientHeight, "programmatic");
+    this.requestScroll(target, "restore-anchor");
+    return true;
   }
 
   getUnitElement(unitId: string): HTMLElement | null {
-    return this.slots.get(unitId)?.element ?? null;
+    return this.view.getBlockElement(unitId);
   }
 
   commitRenderedUnit(unit: Pick<ConversationRenderUnit, "id" | "renderVersion">): boolean {
     this.assertActive();
-    const slot = this.slots.get(unit.id);
-    if (!slot || slot.unit.renderVersion !== unit.renderVersion) return false;
-    if (!commitConversationTimelineUnitMeasurement(slot.element, unit)) return false;
-
-    if (slot.element.dataset.conversationUnitScrollClip === "true") {
-      const contentHeight = this.interactionContentHeight(slot.element);
-      if (contentHeight !== null) this.updateMeasuredHeight(unit.id, contentHeight);
-      if (
-        !this.userScrollActive
-        && this.slots.get(unit.id) === slot
-        && !slot.element.dataset.conversationUnitMeasurementPending
-      ) this.clearInteractionClip(slot.element);
+    const current = this.unitsById.get(unit.id);
+    const element = this.view.getBlockElement(unit.id);
+    if (!current || current.renderVersion !== unit.renderVersion) return false;
+    if (!element) {
+      // A renderer is allowed to commit before its create() call has returned
+      // the DOM instance to DocumentViewRuntime. Record that edge without
+      // forcing a React flush; createConversationBlock consumes it below.
+      this.earlyRenderedCommits.set(unit.id, unit.renderVersion);
+      return true;
+    }
+    if (element.dataset.conversationUnitMeasurementPending !== conversationTimelineUnitCommitKey(unit)) return false;
+    delete element.dataset.conversationUnitMeasurementPending;
+    this.dirtyGeometryIds.add(unit.id);
+    this.syncMeasurementTargets();
+    if (!this.viewMutationActive) {
+      const height = element.getBoundingClientRect().height;
+      if (Number.isFinite(height) && height >= MIN_UNIT_HEIGHT_PX) {
+        this.dirtyGeometryIds.delete(unit.id);
+        this.updateMeasuredHeight(unit.id, height);
+      }
     }
     return true;
   }
 
   mountedUnitIds(): readonly string[] {
-    return Object.freeze([...this.slots.keys()]);
+    return this.view.mountedBlockIds();
   }
 
   diagnostics(): ConversationTimelineDiagnostics {
+    const heightIndex = this.view.getHeightIndex();
     return Object.freeze({
       revision: this.revision,
       units: this.units.length,
-      mounted: this.slots.size,
-      recycled: this.recycledSlots.length,
-      pinned: this.pinnedIds.size,
-      measured: this.heightIndex?.measuredCount() ?? 0,
-      totalHeight: this.heightIndex?.totalHeight ?? 0,
+      mounted: this.view.mountedBlockIds().length,
+      recycled: 0,
+      pinned: new Set([...this.pinnedIds, ...this.residentIds]).size,
+      measured: heightIndex?.measuredCount() ?? 0,
+      totalHeight: heightIndex?.totalHeight ?? 0,
       domNodes: this.root.querySelectorAll("*").length,
       patches: this.patches,
       scrollPatches: this.scrollPatches,
       followBottom: this.followBottom,
       userScrollActive: this.userScrollActive,
-      topLocked: this.topLocked,
-      deferredMeasurements: this.deferredMeasuredHeights.size,
+      controlledScrollActive: this.controlledScrollActive,
+      topLocked: false,
+      deferredMeasurements: 0,
     });
   }
 
@@ -355,349 +437,297 @@ export class ConversationTimelineRuntime {
     if (this.disposed) return;
     this.disposed = true;
     this.root.removeEventListener("scroll", this.handleScroll);
+    this.root.removeEventListener(CONVERSATION_GEOMETRY_COMMIT_EVENT, this.handleGeometryCommit);
     this.clearUserScrollSettleTimer();
-    this.resizeObserver?.disconnect();
-    for (const slot of this.slots.values()) slot.handle.destroy();
-    for (const slot of this.recycledSlots) slot.handle.destroy();
-    this.slots.clear();
-    this.recycledSlots.length = 0;
-    this.deferredMeasuredHeights.clear();
-    this.canvas.remove();
+    this.cancelViewportFrame();
+    this.cancelGeometryFrame();
+    this.viewportResizeObserver?.disconnect();
+    this.measurement?.dispose();
+    this.measuredElements.clear();
+    this.earlyRenderedCommits.clear();
+    this.view.destroy();
+    this.unitsById.clear();
+    this.indexById.clear();
     delete this.root.dataset.conversationTimelineRuntime;
-    delete this.root.dataset.conversationTimelineUserScrollActive;
-    delete this.root.dataset.conversationTimelineTopLocked;
+    delete this.root.dataset.conversationTimelineEngine;
     delete this.root.dataset.conversationTimelineLayoutMode;
+    delete this.root.dataset.conversationTimelineFollowBottom;
+    delete this.root.dataset.conversationTimelineUserScrollActive;
+    delete this.root.dataset.conversationTimelineControlledScrollActive;
   }
 
-  private patch(scrollTop: number, viewportHeight: number): ConversationTimelinePatch {
-    const patchStartedAt = performance.now();
-    const completeLayout = this.units.length <= this.maxPinnedUnits;
-    const pinnedIndices = completeLayout
-      ? this.units.map((_unit, index) => index)
-      : [...this.pinnedIds].map((id) => this.indexById.get(id)!).filter((index) => index !== undefined);
-    const viewport = this.viewport!.update({
+  private conversationBlockRenderer(): MarkdownBlockRendererDefinition {
+    return {
+      create: (context) => this.createConversationBlock(context),
+    };
+  }
+
+  private createConversationBlock(context: MarkdownBlockRendererContext): MarkdownBlockDomInstance {
+    let currentContext = context;
+    let currentUnit = this.requiredUnit(context.block.id);
+    const element = context.ownerDocument.createElement("div");
+    applyUnitAttributes(element, currentUnit, context.block.index, this.units);
+    element.dataset.conversationUnitMeasurementPending = conversationTimelineUnitCommitKey(currentUnit);
+    this.dirtyGeometryIds.add(currentUnit.id);
+    const handle = this.renderer.mount(currentUnit, element);
+    if (this.earlyRenderedCommits.get(currentUnit.id) === currentUnit.renderVersion) {
+      this.earlyRenderedCommits.delete(currentUnit.id);
+      delete element.dataset.conversationUnitMeasurementPending;
+    }
+    return {
+      element,
+      update: (nextContext) => {
+        const nextUnit = this.requiredUnit(nextContext.block.id);
+        const changed = nextUnit.renderVersion !== currentUnit.renderVersion;
+        currentContext = nextContext;
+        currentUnit = nextUnit;
+        applyUnitAttributes(element, nextUnit, nextContext.block.index, this.units);
+        if (changed) {
+          element.dataset.conversationUnitMeasurementPending = conversationTimelineUnitCommitKey(nextUnit);
+          this.dirtyGeometryIds.add(nextUnit.id);
+          handle.update(nextUnit);
+          return "updated";
+        }
+        return "reused";
+      },
+      sourceMap: () => Object.freeze({
+        blockId: currentContext.block.id,
+        sourceStart: 0,
+        sourceEnd: 0,
+        logicalStart: 0,
+        logicalEnd: 0,
+        inline: Object.freeze([]),
+      }),
+      measure: () => {
+        const rect = element.getBoundingClientRect();
+        return Object.freeze({ width: rect.width, height: rect.height });
+      },
+      destroy: () => {
+        this.measurement?.unobserve(element);
+        this.measuredElements.delete(currentUnit.id);
+        this.dirtyGeometryIds.delete(currentUnit.id);
+        this.earlyRenderedCommits.delete(currentUnit.id);
+        handle.destroy();
+        element.remove();
+      },
+    };
+  }
+
+  private updateViewportWithOrigin(
+    scrollTop: number,
+    viewportHeight: number,
+    origin: NonNullable<DocumentViewportUpdateOptions["origin"]>,
+  ): ConversationTimelinePatch {
+    this.assertActive();
+    if (!this.snapshot) throw new Error("Conversation timeline has not been published");
+    this.scrollPatches += 1;
+    const update = () => this.stabilizeMountedGeometry(
+      this.withViewMutation(() => this.view.updateViewport(
+        this.viewportInput(scrollTop, viewportHeight),
+        { origin },
+      )),
+    );
+    const result = update();
+    return this.publishPatch(result);
+  }
+
+  private publishPatch(result: DocumentViewPatchResult): ConversationTimelinePatch {
+    this.patches += 1;
+    for (const item of result.viewport.items) {
+      const unit = this.units[item.index];
+      const element = unit ? this.view.getBlockElement(unit.id) : null;
+      if (!unit || !element) continue;
+      element.dataset.conversationUnitVisible = item.visible ? "true" : "false";
+      element.dataset.conversationUnitPinned = item.pinned ? "true" : "false";
+      element.dataset.conversationUnitResident = this.residentIds.has(unit.id) ? "true" : "false";
+    }
+    this.syncMeasurementTargets();
+    const patch: ConversationTimelinePatch = Object.freeze({
+      revision: result.revision,
+      viewport: result.viewport,
+      created: result.render.created,
+      updated: result.render.updated,
+      reused: result.render.reused,
+      destroyed: result.render.destroyed,
+      mounted: result.mountedBlockRoots,
+    });
+    this.root.dataset.conversationTimelineMountedUnits = String(patch.mounted);
+    this.canvas.dataset.conversationTimelineTotalHeight = String(result.viewport.totalHeight);
+    this.onPatch?.(patch);
+    return patch;
+  }
+
+  private applyMeasuredHeightBatch(
+    updates: readonly MarkdownHeightUpdate[],
+    revision: string,
+  ): ConversationTimelinePatch | null {
+    if (!this.snapshot || this.snapshot.revision !== revision) return null;
+    const effective = updates.filter((update) => (
+      update.height >= MIN_UNIT_HEIGHT_PX
+      && Math.abs(this.view.baseHeightAt(update.index) - update.height) > HEIGHT_EPSILON_PX
+    ));
+    if (!effective.length) return null;
+    // A ResizeObserver/React commit can land between the native scroll event
+    // and its coalesced viewport frame. Rebase the document window to the
+    // actual thumb position before applying geometry so an old tail window can
+    // never be repainted over the user's new location.
+    if (this.userScrollActive || this.controlledScrollActive) {
+      this.cancelViewportFrame();
+      this.publishPatch(this.withViewMutation(() => this.view.updateViewport(
+        this.viewportInput(this.root.scrollTop),
+        { origin: "user" },
+      )));
+    }
+    const result = this.withViewMutation(() => this.view.updateMeasuredHeights(effective, revision));
+    if (!result) return null;
+    let patch = this.publishPatch(result);
+    if (this.followBottom && !this.userScrollActive) {
+      const target = this.bottomScrollTop();
+      patch = this.updateViewportWithOrigin(target, this.root.clientHeight, "automatic");
+      if (Math.abs(this.root.scrollTop - target) > HEIGHT_EPSILON_PX) {
+        this.requestScroll(target, "follow-bottom-geometry");
+      }
+    } else if (
+      !this.userScrollActive
+      && !this.controlledScrollActive
+      && Math.abs(this.root.scrollTop - result.viewport.scrollTop) > HEIGHT_EPSILON_PX
+    ) {
+      this.requestScroll(result.viewport.scrollTop, "preserve-top");
+    }
+    return patch;
+  }
+
+  private syncMeasurementTargets(): void {
+    const scheduler = this.measurement;
+    if (!scheduler || !this.snapshot) return;
+    const mountedIds = new Set(this.view.mountedBlockIds());
+    for (const [blockId, element] of this.measuredElements) {
+      if (mountedIds.has(blockId) && this.view.getBlockElement(blockId) === element) continue;
+      scheduler.unobserve(element);
+      this.measuredElements.delete(blockId);
+    }
+    for (const blockId of mountedIds) {
+      const element = this.view.getBlockElement(blockId);
+      const index = this.indexById.get(blockId);
+      if (
+        !element
+        || index === undefined
+        || element.dataset.conversationUnitMeasurementPending
+        || this.measuredElements.get(blockId) === element
+      ) continue;
+      scheduler.observe(element, {
+        index,
+        blockId,
+        initialHeight: this.view.baseHeightAt(index),
+      });
+      this.measuredElements.set(blockId, element);
+    }
+  }
+
+  private stabilizeMountedGeometry(initial: DocumentViewPatchResult): DocumentViewPatchResult {
+    let result = initial;
+    // React/A2UI blocks have much less predictable geometry than Markdown.
+    // Only blocks dirtied by a renderer commit are read here; scanning every
+    // mounted block on each scroll frame would force avoidable layout work.
+    // A second pass covers a block pulled into overscan by the first correction.
+    for (let pass = 0; pass < 2; pass += 1) {
+      const updates: MarkdownHeightUpdate[] = [];
+      const dirtyIds = [...this.dirtyGeometryIds];
+      this.dirtyGeometryIds.clear();
+      for (const blockId of dirtyIds) {
+        const element = this.view.getBlockElement(blockId);
+        const index = this.indexById.get(blockId);
+        if (!element || index === undefined || element.dataset.conversationUnitMeasurementPending) continue;
+        const height = element.getBoundingClientRect().height;
+        if (!Number.isFinite(height) || height < MIN_UNIT_HEIGHT_PX) continue;
+        this.measurement?.synchronize(element, height);
+        if (Math.abs(this.view.baseHeightAt(index) - height) > HEIGHT_EPSILON_PX) {
+          updates.push({ index, height, kind: "measured" });
+        }
+      }
+      if (!updates.length || !this.snapshot) break;
+      const measured = this.withViewMutation(() => this.view.updateMeasuredHeights(updates, this.snapshot!.revision));
+      if (!measured) break;
+      result = measured;
+    }
+    return result;
+  }
+
+  private withViewMutation<T>(callback: () => T): T {
+    const previous = this.viewMutationActive;
+    this.viewMutationActive = true;
+    try {
+      return callback();
+    } finally {
+      this.viewMutationActive = previous;
+    }
+  }
+
+  private scheduleGeometryMeasurement(unitId: string): void {
+    if (!this.indexById.has(unitId)) return;
+    this.dirtyGeometryIds.add(unitId);
+    if (this.geometryFrame !== null) return;
+    const view = this.root.ownerDocument.defaultView;
+    if (!view) {
+      this.flushGeometryMeasurements();
+      return;
+    }
+    this.geometryFrame = view.requestAnimationFrame(() => {
+      this.geometryFrame = null;
+      this.flushGeometryMeasurements();
+    });
+  }
+
+  private flushGeometryMeasurements(): void {
+    if (this.disposed || !this.snapshot || !this.dirtyGeometryIds.size) return;
+    const updates: MarkdownHeightUpdate[] = [];
+    for (const unitId of this.dirtyGeometryIds) {
+      const index = this.indexById.get(unitId);
+      const element = this.view.getBlockElement(unitId);
+      if (index === undefined || !element) continue;
+      // A pending local React root will schedule its own exact measurement in
+      // commitRenderedUnit. Never poll it frame-by-frame: a stale pending flag
+      // must not be able to create an infinite requestAnimationFrame loop.
+      if (element.dataset.conversationUnitMeasurementPending) continue;
+      const height = element.getBoundingClientRect().height;
+      if (
+        Number.isFinite(height)
+        && height >= MIN_UNIT_HEIGHT_PX
+        && Math.abs(this.view.baseHeightAt(index) - height) > HEIGHT_EPSILON_PX
+      ) updates.push({ index, height, kind: "measured" });
+    }
+    this.dirtyGeometryIds.clear();
+    if (updates.length) this.applyMeasuredHeightBatch(updates, this.snapshot.revision);
+  }
+
+  private cancelGeometryFrame(): void {
+    if (this.geometryFrame === null) return;
+    this.root.ownerDocument.defaultView?.cancelAnimationFrame(this.geometryFrame);
+    this.geometryFrame = null;
+  }
+
+  private viewportInput(scrollTop: number, viewportHeight = this.root.clientHeight) {
+    const pinnedIndices = [...new Set([...this.pinnedIds, ...this.residentIds])]
+      .flatMap((id) => {
+        const index = this.indexById.get(id);
+        return index === undefined ? [] : [index];
+      });
+    return {
       scrollTop,
       viewportHeight,
-      revision: this.revision!,
+      revision: this.snapshot?.revision,
       pinnedIndices,
-    });
-    const desiredIds = new Set(viewport.items.map((item) => this.units[item.index].id));
-    let destroyed = 0;
-    for (const [id, slot] of [...this.slots]) {
-      if (desiredIds.has(id)) continue;
-      this.resizeObserver?.unobserve(slot.element);
-      slot.element.remove();
-      this.slots.delete(id);
-      this.recycledSlots.push(slot);
-      destroyed += 1;
-    }
-    let created = 0;
-    let updated = 0;
-    let reused = 0;
-    for (const item of viewport.items) {
-      const unit = this.units[item.index];
-      let slot = this.slots.get(unit.id);
-      if (!slot) {
-        const recycled = this.takeRecycledSlot(unit.kind);
-        if (recycled) {
-          setDatasetValue(recycled.element, "conversationUnitId", unit.id);
-          setDatasetValue(
-            recycled.element,
-            "conversationUnitMeasurementPending",
-            conversationTimelineUnitCommitKey(unit),
-          );
-          recycled.handle.update(unit);
-          recycled.unit = unit;
-          slot = recycled;
-        } else {
-          const element = this.root.ownerDocument.createElement("div");
-          element.style.position = "absolute";
-          element.style.insetInline = "0";
-          setDatasetValue(element, "conversationUnitId", unit.id);
-          setDatasetValue(
-            element,
-            "conversationUnitMeasurementPending",
-            conversationTimelineUnitCommitKey(unit),
-          );
-          const handle = this.renderer.mount(unit, element);
-          slot = { unit, element, handle };
-        }
-        slot.element.dataset.conversationUnitId = unit.id;
-        this.slots.set(unit.id, slot);
-        this.canvas.append(slot.element);
-        this.resizeObserver?.observe(slot.element);
-        created += 1;
-      } else if (slot.unit.renderVersion !== unit.renderVersion) {
-        setDatasetValue(
-          slot.element,
-          "conversationUnitMeasurementPending",
-          conversationTimelineUnitCommitKey(unit),
-        );
-        slot.handle.update(unit);
-        slot.unit = unit;
-        updated += 1;
-      } else {
-        slot.unit = unit;
-        reused += 1;
-      }
-      const top = `${item.top}px`;
-      if (slot.element.style.top !== top) slot.element.style.top = top;
-      if (slot.element.style.transform) slot.element.style.removeProperty("transform");
-      // HeightIndex estimates position siblings; they must never constrain the
-      // measured DOM box. A min-height here makes a short 1-line unit report its
-      // 120px estimate forever, so ResizeObserver can never correct the index.
-      if (slot.element.style.minHeight) slot.element.style.removeProperty("min-height");
-      if (this.userScrollActive || slot.element.dataset.conversationUnitMeasurementPending) {
-        this.applyInteractionClip(slot, item.index);
-      } else this.clearInteractionClip(slot.element);
-      setDatasetValue(slot.element, "conversationUnitIndex", String(item.index));
-      setDatasetValue(slot.element, "conversationUnitKind", unit.kind);
-      setDatasetValue(slot.element, "conversationUnitVisible", item.visible ? "true" : "false");
-      setDatasetValue(slot.element, "conversationUnitPinned", item.pinned ? "true" : "false");
-      setDatasetValue(
-        slot.element,
-        "conversationUnitTailAdjacent",
-        this.units[item.index + 1]?.id === "conversation-runtime:bottom" ? "true" : "false",
-      );
-      if (unit.turnIndex !== null) {
-        setDatasetValue(slot.element, "turnIndex", String(unit.turnIndex));
-        if (this.units[item.index - 1]?.turnIndex !== unit.turnIndex) {
-          setDatasetValue(slot.element, "testid", "message-turn");
-        } else {
-          delete slot.element.dataset.testid;
-        }
-      } else {
-        delete slot.element.dataset.turnIndex;
-        delete slot.element.dataset.testid;
-      }
-    }
-    while (this.recycledSlots.length > MAX_RECYCLED_TIMELINE_SLOTS) {
-      this.recycledSlots.shift()?.handle.destroy();
-    }
-    const canvasHeight = `${viewport.totalHeight}px`;
-    if (this.canvas.style.height !== canvasHeight) this.canvas.style.height = canvasHeight;
-    setDatasetValue(this.canvas, "conversationTimelineTotalHeight", String(viewport.totalHeight));
-    setDatasetValue(this.root, "conversationTimelineMountedUnits", String(this.slots.size));
-    setDatasetValue(this.root, "conversationTimelineRevision", this.revision!);
-    setDatasetValue(this.root, "conversationTimelineFollowBottom", this.followBottom ? "true" : "false");
-    setDatasetValue(this.root, "conversationTimelineLayoutMode", completeLayout ? "complete" : "virtual");
-    this.patches += 1;
-    const patch = Object.freeze({
-      revision: this.revision!,
-      viewport,
-      created,
-      updated,
-      reused,
-      destroyed,
-      mounted: this.slots.size,
-    });
-    this.onPatch?.(patch);
-    const runtimeRoot = this.root as HTMLElement & {
-      __conversationTimelineLastPatchMs?: number;
-      __conversationTimelineLastPatchCreated?: number;
-      __conversationTimelineLastPatchDestroyed?: number;
     };
-    runtimeRoot.__conversationTimelineLastPatchMs = performance.now() - patchStartedAt;
-    runtimeRoot.__conversationTimelineLastPatchCreated = created;
-    runtimeRoot.__conversationTimelineLastPatchDestroyed = destroyed;
-    return patch;
   }
 
-  private takeRecycledSlot(kind: ConversationRenderUnit["kind"]): Slot | undefined {
-    const family = recycleFamily(kind);
-    for (let index = this.recycledSlots.length - 1; index >= 0; index -= 1) {
-      if (recycleFamily(this.recycledSlots[index].unit.kind) !== family) continue;
-      return this.recycledSlots.splice(index, 1)[0];
-    }
-    return this.recycledSlots.pop();
+  private requiredUnit(id: string): ConversationRenderUnit {
+    const unit = this.unitsById.get(id);
+    if (!unit) throw new Error(`Conversation unit ${id} is not available`);
+    return unit;
   }
 
-  private readonly handleScroll = () => {
-    if (this.disposed || !this.viewport) return;
-    const scrollTop = this.root.scrollTop;
-    const programmatic = this.consumeProgrammaticScroll(scrollTop);
-    if (!programmatic) this.markUserScrollActivity();
-    if (this.userScrollActive) {
-      if (scrollTop < this.lastObservedScrollTop && scrollTop <= TOP_INTENT_THRESHOLD_PX) {
-        this.setTopLocked(true);
-      } else if (scrollTop > this.lastObservedScrollTop) {
-        this.setTopLocked(false);
-      }
-    }
-    this.lastObservedScrollTop = scrollTop;
-    this.updateViewport(scrollTop, this.root.clientHeight);
-  };
-
-  private handleMeasurements(entries: readonly ResizeObserverEntry[]): void {
-    const measurements: Array<{ id: string; index: number; height: number }> = [];
-    for (const entry of entries) {
-      const measurement = this.validMeasurement(entry);
-      if (measurement) measurements.push(measurement);
-    }
-    if (this.userScrollActive) {
-      for (const measurement of measurements) this.deferMeasuredHeight(measurement.id, measurement.height);
-      return;
-    }
-    const anchor = this.captureMeasurementAnchor();
-    let changed = false;
-    for (const measurement of measurements) {
-      if (this.measuredHeights.get(measurement.id) === measurement.height) continue;
-      this.measuredHeights.set(measurement.id, measurement.height);
-      changed = this.heightIndex!.update(measurement.index, measurement.height, {
-        kind: "measured",
-        revision: this.revision!,
-      }) !== 0 || changed;
-    }
-    if (changed) this.updateViewportAfterMeasurement(anchor);
-  }
-
-  private validMeasurement(entry: ResizeObserverEntry): { id: string; index: number; height: number } | null {
-    const element = entry.target as HTMLElement;
-    const id = element.dataset.conversationUnitId;
-    const index = id ? this.indexById.get(id) : undefined;
-    const height = entry.contentRect.height;
-    const slot = id ? this.slots.get(id) : undefined;
-    if (
-      !id
-      || index === undefined
-      || !slot
-      || slot.element !== element
-      || slot.unit.id !== id
-      || !this.heightIndex
-      || !this.revision
-      || !Number.isFinite(height)
-      || height < MIN_MEASURED_UNIT_HEIGHT_PX
-      || Boolean(element.dataset.conversationUnitMeasurementPending)
-      || element.dataset.conversationUnitScrollClip === "true"
-    ) return null;
-    const currentHeight = element.getBoundingClientRect().height;
-    if (Number.isFinite(currentHeight) && Math.abs(currentHeight - height) > 0.5) return null;
-    return { id, index, height };
-  }
-
-  private deferMeasuredHeight(unitId: string, height: number): void {
-    if (!Number.isFinite(height) || height < MIN_MEASURED_UNIT_HEIGHT_PX) return;
-    if (this.measuredHeights.get(unitId) === height) {
-      this.deferredMeasuredHeights.delete(unitId);
-      return;
-    }
-    this.deferredMeasuredHeights.set(unitId, height);
-  }
-
-  private flushDeferredMeasurements(): ConversationTimelinePatch | null {
-    if (!this.deferredMeasuredHeights.size || !this.heightIndex || !this.revision) return null;
-    const pending = [...this.deferredMeasuredHeights];
-    this.deferredMeasuredHeights.clear();
-    const anchor = this.captureMeasurementAnchor();
-    let changed = false;
-    for (const [id, height] of pending) {
-      const index = this.indexById.get(id);
-      if (index === undefined || this.measuredHeights.get(id) === height) continue;
-      this.measuredHeights.set(id, height);
-      changed = this.heightIndex.update(index, height, {
-        kind: "measured",
-        revision: this.revision,
-      }) !== 0 || changed;
-    }
-    return changed ? this.updateViewportAfterMeasurement(anchor) : null;
-  }
-
-  private applyInteractionClips(): void {
-    for (const [id, slot] of this.slots) {
-      const index = this.indexById.get(id);
-      if (index !== undefined) this.applyInteractionClip(slot, index);
-    }
-  }
-
-  private applyInteractionClip(slot: Slot, index: number): void {
-    if (!this.heightIndex) return;
-    const allocatedHeight = Math.max(MIN_MEASURED_UNIT_HEIGHT_PX, this.heightIndex.heightAt(index));
-    slot.element.style.height = `${allocatedHeight}px`;
-    slot.element.style.overflowX = "visible";
-    slot.element.style.overflowY = "clip";
-    setDatasetValue(slot.element, "conversationUnitScrollClip", "true");
-  }
-
-  private clearCommittedInteractionClips(): void {
-    for (const slot of this.slots.values()) {
-      if (!slot.element.dataset.conversationUnitMeasurementPending) this.clearInteractionClip(slot.element);
-    }
-  }
-
-  private clearInteractionClip(element: HTMLElement): void {
-    if (element.dataset.conversationUnitScrollClip !== "true") return;
-    element.style.removeProperty("height");
-    element.style.removeProperty("overflow-x");
-    element.style.removeProperty("overflow-y");
-    delete element.dataset.conversationUnitScrollClip;
-  }
-
-  private collectInteractionMeasurements(): void {
-    for (const [id, slot] of this.slots) {
-      const height = this.interactionContentHeight(slot.element);
-      if (height !== null) this.deferMeasuredHeight(id, height);
-    }
-  }
-
-  private interactionContentHeight(element: HTMLElement): number | null {
-    if (element.dataset.conversationUnitMeasurementPending) return null;
-    if (element.dataset.conversationUnitScrollClip !== "true") {
-      const height = element.getBoundingClientRect().height;
-      return Number.isFinite(height) && height >= MIN_MEASURED_UNIT_HEIGHT_PX ? height : null;
-    }
-
-    // Measure the host's real auto height while retaining the allocated clip
-    // for paint. Units are absolutely positioned, so this synchronous probe
-    // cannot reflow their siblings or alter the native scroll extent.
-    const allocatedHeight = element.style.height;
-    const overflowX = element.style.overflowX;
-    const overflowY = element.style.overflowY;
-    element.style.removeProperty("height");
-    element.style.removeProperty("overflow-x");
-    element.style.removeProperty("overflow-y");
-    let height: number;
-    try {
-      height = element.getBoundingClientRect().height;
-    } finally {
-      element.style.height = allocatedHeight;
-      element.style.overflowX = overflowX;
-      element.style.overflowY = overflowY;
-    }
-    return Number.isFinite(height) && height >= MIN_MEASURED_UNIT_HEIGHT_PX ? height : null;
-  }
-
-  private captureMeasurementAnchor(): ConversationTimelineAnchor | null {
-    return this.followBottom || this.userScrollActive || this.topLocked ? null : this.captureAnchor();
-  }
-
-  private updateViewportAfterMeasurement(anchor: ConversationTimelineAnchor | null): ConversationTimelinePatch | null {
-    if (this.topLocked) {
-      const patch = this.patch(0, this.root.clientHeight);
-      this.requestScroll(0, "preserve-top");
-      return patch;
-    }
-    if (this.userScrollActive) {
-      return this.patch(this.root.scrollTop, this.root.clientHeight);
-    }
-    if (this.followBottom) return this.updateViewportAtBottom();
-    return this.updateViewportFromAnchor(anchor);
-  }
-
-  private setTopLocked(locked: boolean): void {
-    if (this.topLocked === locked) return;
-    this.topLocked = locked;
-    setDatasetValue(this.root, "conversationTimelineTopLocked", locked ? "true" : "false");
-  }
-
-  private updateViewportAtBottom(countAsScrollPatch = true): ConversationTimelinePatch {
-    if (!this.heightIndex || !this.viewport || !this.revision) {
-      throw new Error("Conversation timeline has not been published");
-    }
-    if (countAsScrollPatch) this.scrollPatches += 1;
-    const target = Math.max(0, this.heightIndex.totalHeight - this.root.clientHeight);
-    const patch = this.patch(target, this.root.clientHeight);
-    this.requestScroll(target, "follow-bottom");
-    return patch;
+  private bottomScrollTop(): number {
+    return Math.max(0, (this.view.getHeightIndex()?.totalHeight ?? 0) - this.root.clientHeight);
   }
 
   private requestScroll(scrollTop: number, reason: ConversationTimelineScrollRequest["reason"]): void {
@@ -705,35 +735,60 @@ export class ConversationTimelineRuntime {
     this.onScrollRequest?.(Object.freeze({ scrollTop, reason }));
   }
 
-  private consumeProgrammaticScroll(scrollTop: number): boolean {
-    const expected = this.expectedProgrammaticScrollTop;
-    if (expected !== null) {
-      this.expectedProgrammaticScrollTop = null;
-      if (Math.abs(scrollTop - expected) <= SCROLL_TARGET_EPSILON_PX) return true;
+  private scheduleViewportUpdate(): void {
+    if (this.disposed || !this.snapshot || this.viewportFrame !== null) return;
+    const view = this.root.ownerDocument.defaultView;
+    if (!view) {
+      this.updateViewportWithOrigin(this.root.scrollTop, this.root.clientHeight, "user");
+      return;
     }
-    if (!this.followBottom) return false;
-    const nativeBottom = Math.max(0, this.root.scrollHeight - this.root.clientHeight);
-    const indexedBottom = Math.max(0, (this.heightIndex?.totalHeight ?? 0) - this.root.clientHeight);
-    return Math.abs(scrollTop - nativeBottom) <= SCROLL_TARGET_EPSILON_PX
-      || Math.abs(scrollTop - indexedBottom) <= SCROLL_TARGET_EPSILON_PX;
+    this.viewportFrame = view.requestAnimationFrame(() => {
+      this.viewportFrame = null;
+      if (this.disposed || !this.snapshot) return;
+      const programmatic = this.expectedProgrammaticScrollTop !== null
+        && Math.abs(this.root.scrollTop - this.expectedProgrammaticScrollTop) <= 1;
+      if (programmatic) this.expectedProgrammaticScrollTop = null;
+      this.updateViewportWithOrigin(
+        this.root.scrollTop,
+        this.root.clientHeight,
+        programmatic ? "programmatic" : "user",
+      );
+    });
   }
 
-  private markUserScrollActivity(): void {
-    if (!this.userScrollActive) {
-      const previousScrollTop = this.lastObservedScrollTop;
-      this.setUserScrollInteraction(true);
-      // The first native scroll event arrives after scrollTop changed. Preserve
-      // the previous sample so top-intent detection still sees its direction.
-      this.lastObservedScrollTop = previousScrollTop;
-    }
-    this.clearUserScrollSettleTimer();
-    const view = this.root.ownerDocument.defaultView;
-    if (!view) return;
-    this.userScrollSettleTimer = view.setTimeout(() => {
-      this.userScrollSettleTimer = null;
-      if (!this.disposed && this.userScrollActive) this.setUserScrollInteraction(false);
-    }, USER_SCROLL_SETTLE_MS);
+  private cancelViewportFrame(): void {
+    if (this.viewportFrame === null) return;
+    this.root.ownerDocument.defaultView?.cancelAnimationFrame(this.viewportFrame);
+    this.viewportFrame = null;
   }
+
+  private readonly handleScroll = () => {
+    if (this.disposed || !this.snapshot) return;
+    const programmatic = this.expectedProgrammaticScrollTop !== null
+      && Math.abs(this.root.scrollTop - this.expectedProgrammaticScrollTop) <= 1;
+    if (!programmatic && !this.controlledScrollActive) {
+      this.userScrollActive = true;
+      this.root.dataset.conversationTimelineUserScrollActive = "true";
+      this.clearUserScrollSettleTimer();
+      const view = this.root.ownerDocument.defaultView;
+      if (view) {
+        this.userScrollSettleTimer = view.setTimeout(() => {
+          this.userScrollSettleTimer = null;
+          this.userScrollActive = false;
+          this.root.dataset.conversationTimelineUserScrollActive = "false";
+        }, USER_SCROLL_SETTLE_MS);
+      }
+    }
+    this.scheduleViewportUpdate();
+  };
+
+  private readonly handleGeometryCommit = (event: Event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest<HTMLElement>("[data-conversation-unit-id]")
+      : null;
+    const unitId = target?.dataset.conversationUnitId;
+    if (unitId) this.scheduleGeometryMeasurement(unitId);
+  };
 
   private clearUserScrollSettleTimer(): void {
     if (this.userScrollSettleTimer === null) return;
@@ -741,20 +796,111 @@ export class ConversationTimelineRuntime {
     this.userScrollSettleTimer = null;
   }
 
-  private assertActive(): void {
-    if (this.disposed) throw new Error("ConversationTimelineRuntime is destroyed");
+  private assertPinBudget(): void {
+    if (new Set([...this.pinnedIds, ...this.residentIds]).size > this.maxPinnedUnits) {
+      throw new Error(`Pinned conversation units exceed limit ${this.maxPinnedUnits}`);
+    }
   }
+
+  private assertActive(): void {
+    if (this.disposed) throw new Error("Conversation timeline is destroyed");
+  }
+}
+
+function conversationSnapshot(
+  units: readonly ConversationRenderUnit[],
+  revision: string,
+): MarkdownSnapshot {
+  const blocks: MarkdownSnapshotBlock[] = units.map((unit, index) => ({
+    id: unit.id,
+    identity_key: unit.id,
+    content_hash: unit.renderVersion || unit.id,
+    index,
+    kind: "unknown",
+    parent_id: null,
+    depth: 0,
+    line_start: 0,
+    line_end: 0,
+    source_start: 0,
+    source_end: 0,
+    logical_start: 0,
+    logical_end: 0,
+    inline_spans: Object.freeze([]),
+    metadata: Object.freeze({}),
+  }));
+  return createMarkdownSnapshot({
+    surface: "message",
+    document_id: "conversation-timeline",
+    revision,
+    renderer_profile: "conversation",
+    mode: "canonical",
+    source_bytes: 0,
+    source_characters: 0,
+    logical_text: "",
+    line_count: 0,
+    blocks,
+    outline: Object.freeze([]),
+    resources: Object.freeze([]),
+    stream: Object.freeze({ kind: "canonical", finalized: true }),
+    indexes: Object.freeze({
+      line_map_revision: revision,
+      logical_projection_revision: revision,
+      source_index_revision: revision,
+      find_index_revision: null,
+      annotation_index_revision: null,
+    }),
+  });
+}
+
+function applyUnitAttributes(
+  element: HTMLElement,
+  unit: ConversationRenderUnit,
+  index: number,
+  units: readonly ConversationRenderUnit[],
+): void {
+  element.dataset.conversationUnitId = unit.id;
+  element.dataset.markdownBlockId = unit.id;
+  element.dataset.markdownBlockKind = "unknown";
+  element.dataset.conversationUnitIndex = String(index);
+  element.dataset.conversationUnitKind = unit.kind;
+  element.dataset.conversationUnitResident = "false";
+  element.dataset.conversationUnitTailAdjacent = isTailAdjacent(index, units) ? "true" : "false";
+  if (unit.turnIndex === null) {
+    delete element.dataset.turnIndex;
+    delete element.dataset.testid;
+  } else {
+    element.dataset.turnIndex = String(unit.turnIndex);
+    if (units[index - 1]?.turnIndex !== unit.turnIndex) element.dataset.testid = "message-turn";
+    else delete element.dataset.testid;
+  }
+}
+
+function isTailAdjacent(index: number, units: readonly ConversationRenderUnit[]): boolean {
+  const last = units.at(-1);
+  const semanticTailIndex = last?.id === "conversation-runtime:bottom" ? units.length - 2 : units.length - 1;
+  return index === semanticTailIndex;
+}
+
+function conversationTimelineUnitCommitKey(unit: Pick<ConversationRenderUnit, "id" | "renderVersion">): string {
+  return `${unit.id}\u0000${unit.renderVersion}`;
 }
 
 function assertUniqueUnits(units: readonly ConversationRenderUnit[]): void {
   const ids = new Set<string>();
   for (const unit of units) {
+    if (!unit.id.trim()) throw new Error("Conversation unit id is required");
     if (ids.has(unit.id)) throw new Error(`Duplicate conversation unit ${unit.id}`);
     ids.add(unit.id);
-    if (!Number.isFinite(unit.estimatedHeight) || unit.estimatedHeight < 0) {
-      throw new Error(`Conversation unit ${unit.id} has invalid estimated height`);
-    }
+    finiteNonNegative(unit.estimatedHeight, `estimatedHeight:${unit.id}`);
   }
+}
+
+function setsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
+  return left.size === right.size && [...left].every((value) => right.has(value));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(value, max));
 }
 
 function finiteNonNegative(value: number, name: string): number {
@@ -765,28 +911,4 @@ function finiteNonNegative(value: number, name: string): number {
 function positiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
   return value;
-}
-
-function setDatasetValue(element: HTMLElement, key: string, value: string): void {
-  if (element.dataset[key] !== value) element.dataset[key] = value;
-}
-
-function recycleFamily(kind: ConversationRenderUnit["kind"]): string {
-  if (kind === "user-markdown" || kind === "assistant-markdown") return "markdown";
-  return kind;
-}
-
-function conversationTimelineUnitCommitKey(
-  unit: Pick<ConversationRenderUnit, "id" | "renderVersion">,
-): string {
-  return JSON.stringify([unit.id, unit.renderVersion]);
-}
-
-function commitConversationTimelineUnitMeasurement(
-  host: HTMLElement,
-  unit: Pick<ConversationRenderUnit, "id" | "renderVersion">,
-): boolean {
-  if (host.dataset.conversationUnitMeasurementPending !== conversationTimelineUnitCommitKey(unit)) return false;
-  delete host.dataset.conversationUnitMeasurementPending;
-  return true;
 }

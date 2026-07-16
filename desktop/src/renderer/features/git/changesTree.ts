@@ -77,3 +77,27 @@ export function uniqueSelectedChangePaths(groups: readonly GitChangeGroup[], sel
     groups.flatMap((group) => group.entries.filter((entry) => selectedIds.has(entry.id)).map((entry) => entry.path)),
   )).sort();
 }
+
+export interface GitCommitSelection {
+  paths: readonly string[];
+  untrackedPaths: readonly string[];
+  fileCount: number;
+}
+
+export function commitSelectionFromEntries(entries: readonly GitChangeEntry[]): GitCommitSelection {
+  const committable = entries.filter((entry) => entry.group !== "conflicts" && entry.group !== "ignored");
+  const paths = new Set<string>();
+  const files = new Set<string>();
+  const untrackedPaths = new Set<string>();
+  committable.forEach((entry) => {
+    files.add(entry.path);
+    paths.add(entry.path);
+    if (entry.originalPath && entry.originalPath !== entry.path) paths.add(entry.originalPath);
+    if (entry.group === "untracked") untrackedPaths.add(entry.path);
+  });
+  return {
+    paths: Array.from(paths).sort(),
+    untrackedPaths: Array.from(untrackedPaths).sort(),
+    fileCount: files.size,
+  };
+}

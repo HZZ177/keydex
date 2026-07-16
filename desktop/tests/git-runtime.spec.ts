@@ -166,6 +166,35 @@ describe("Git runtime", () => {
     expect(pushTagBody).not.toHaveProperty("sign");
   });
 
+  it("sends the selected commit scope and untracked subset", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({
+      operation_id: "op-commit",
+      repository_id: repositoryId,
+      repository_version: "pending",
+      state: "queued",
+      summary: "commit",
+      result: {},
+    }));
+    const runtime = createGitRuntime(new HttpClient({ baseUrl: "http://127.0.0.1:8765", fetcher }));
+
+    await runtime.createCommit({
+      ...scope,
+      idempotencyKey: "selected-commit-key",
+      message: "feat: selected files",
+      paths: ["src/renamed.ts", "src/old.ts", "new.txt"],
+      untrackedPaths: ["new.txt"],
+    });
+
+    const [, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      message: "feat: selected files",
+      paths: ["src/renamed.ts", "src/old.ts", "new.txt"],
+      untracked_paths: ["new.txt"],
+      amend: false,
+      sign: false,
+    });
+  });
+
   it("saves a conflict result with optimistic result and index-stage revisions", async () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({
       repository_id: repositoryId,

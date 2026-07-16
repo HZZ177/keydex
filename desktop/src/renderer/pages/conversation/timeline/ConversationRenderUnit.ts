@@ -322,15 +322,26 @@ function estimatedHeight(kind: ConversationRenderUnitKind): number {
 }
 
 function isDynamicMessage(message: ConversationMessage): boolean {
+  if (message.kind === "a2ui") return isLiveA2UIStreamMessage(message);
   return message.status === "pending" || message.status === "running"
     || message.kind === "thinking" && message.status !== "completed";
 }
 
 function isInteractiveMessage(message: ConversationMessage): boolean {
-  return message.kind === "a2ui"
-    || message.kind === "approval" && message.status === "pending"
+  // A settled A2UI card is not intrinsically active. Focus, dirty input and
+  // expanded state are tracked by ConversationPinRegistry while the user is
+  // actually interacting with the mounted card. Treating the message kind as
+  // permanently interactive keeps every historical card mounted forever.
+  return message.kind === "approval" && message.status === "pending"
     || message.kind === "mcp_elicitation" && message.status === "pending"
     || message.kind === "command" && message.status === "running";
+}
+
+export function isLiveA2UIStreamMessage(message: ConversationMessage): boolean {
+  if (recordValue(message.payload.a2ui)) return false;
+  const debug = recordValue(message.payload.a2uiDebug);
+  const status = stringValue(debug?.status).toLowerCase();
+  return status === "started" || status === "streaming" || status === "finished";
 }
 
 function isTimelineEventItem(item: ProcessedMessageItem): boolean {

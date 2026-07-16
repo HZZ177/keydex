@@ -43,6 +43,7 @@ def test_discovers_workspace_sibling_and_nested_roots_without_collapsing_them(
 
 def test_ignores_nested_repositories_under_gitignored_directories(
     git_repo_factory,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     workspace_repo = git_repo_factory.create("workspace-ignored")
@@ -56,10 +57,24 @@ def test_ignores_nested_repositories_under_gitignored_directories(
         git_repo_factory.root = root
         git_repo_factory.create(f"nested-{index}")
     grants = GitAncestorGrantStore(tmp_path / "grants.json")
+    visited: list[Path] = []
+    original_resolve = resolve_repository_layout
+
+    def tracked_resolve(path: str | Path):
+        candidate = Path(path).resolve()
+        visited.append(candidate)
+        return original_resolve(candidate)
+
+    monkeypatch.setattr("backend.app.git.discovery.resolve_repository_layout", tracked_resolve)
 
     response = discover(workspace, grants)
 
     assert [item.display_path for item in response.repositories] == ["."]
+    assert all(
+        not candidate.is_relative_to(ignored_root)
+        for candidate in visited
+        for ignored_root in ignored_roots
+    )
 
 
 def test_reports_nearest_ancestor_as_pending_then_granted(git_repo_factory, tmp_path: Path) -> None:

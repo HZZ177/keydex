@@ -11,6 +11,7 @@ import {
   SendBox,
   agentAttachmentFromSelected,
   selectedQuoteFromText,
+  type PastedTextFragment,
   type SelectedFile,
   type SelectedImageAttachment,
   type SelectedQuote,
@@ -410,11 +411,16 @@ export function HomePage({
       : undefined;
 
   const handleDraftChange = useCallback((value: string) => {
-    setDraft(value);
+    composerDraftBinding.setDraft({ text: value });
     if (goalError) {
       setGoalError(null);
     }
-  }, [goalError, setDraft]);
+  }, [composerDraftBinding.setDraft, goalError]);
+  const handlePastedTextFragmentsChange = useCallback(
+    (pastedTextFragments: PastedTextFragment[], value: string) =>
+      composerDraftBinding.setDraft({ text: value, pastedTextFragments }),
+    [composerDraftBinding.setDraft],
+  );
 
   const handleSlashCommand = useCallback((command: SlashCommand) => {
     if (command.id !== "goal") {
@@ -585,6 +591,7 @@ export function HomePage({
           selectedFiles={composerDraft.files}
           selectedQuotes={composerDraft.quotes}
           selectedImageAttachments={composerDraft.attachments}
+          pastedTextFragments={composerDraft.pastedTextFragments}
           allowBypassConversationSlashCommand={false}
           allowContextCompressionSlashCommand={false}
           onListWorkspaceDirectory={listWorkspaceDirectory}
@@ -636,6 +643,7 @@ export function HomePage({
           onSelectedFilesChange={(files) => composerDraftBinding.setDraft({ files })}
           onSelectedQuotesChange={(quotes) => composerDraftBinding.setDraft({ quotes })}
           onSelectedImageAttachmentsChange={(attachments) => composerDraftBinding.setDraft({ attachments })}
+          onPastedTextFragmentsChange={handlePastedTextFragmentsChange}
           onSkillChange={setSelectedSkill}
           onRefreshSkills={() => refreshEffectiveSkills({ forceReload: true })}
           onSend={submit}

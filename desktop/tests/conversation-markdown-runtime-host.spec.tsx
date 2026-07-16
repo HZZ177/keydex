@@ -161,6 +161,25 @@ describe("ConversationMarkdownRuntimeHost", () => {
     conversationBaselineDiagnostics.reset();
   });
 
+  it("publishes a retained settled Snapshot during remount layout without reparsing", async () => {
+    const registry = createConversationMarkdownRendererRegistry();
+    const settled = message("assistant-warm-remount", "Warm retained answer", "completed");
+    const first = render(
+      <ConversationMarkdownRuntimeHost message={settled} registry={registry} showCursor={false} source={settled.content} />,
+    );
+    await ready(first.container, "Warm retained answer");
+    expect(harness.canonicalParses).toBe(1);
+    first.unmount();
+
+    const second = render(
+      <ConversationMarkdownRuntimeHost message={settled} registry={registry} showCursor={false} source={settled.content} />,
+    );
+
+    expect(second.container.querySelector('[data-message-markdown-runtime-status="ready"]')).not.toBeNull();
+    expect(second.container.textContent).toContain("Warm retained answer");
+    expect(harness.canonicalParses).toBe(1);
+  });
+
   it("publishes append-only tails including lists, preserves prefix DOM, corrects by epoch, and canonically completes", async () => {
     const registry = createConversationMarkdownRendererRegistry();
     const running = message("assistant-stream", "Alpha\n\nBeta", "running");

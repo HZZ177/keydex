@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { agentMessageToConversationMessage } from "@/renderer/pages/conversation/conversationMessageAdapter";
@@ -69,6 +69,97 @@ describe("MessageList A2UI callback contract", () => {
         screen.getByTestId("message-list-scroll").querySelectorAll('[data-conversation-unit-pinned="true"]').length,
       ).toBeGreaterThan(0);
     });
+  });
+
+  it("keeps a 50-turn A2UI history bounded to the viewport and three-turn hot tail", () => {
+    withBrowserListEnvironment(() => {
+      render(
+        <MessageList
+          messages={Array.from({ length: 50 }, (_, index) => conversationA2UITurn(index + 1)).flat()}
+          onA2UISubmit={vi.fn()}
+          onA2UICancel={vi.fn()}
+        />,
+      );
+
+      const scroller = screen.getByTestId("message-list-scroll");
+      expect(Number(scroller.getAttribute("data-conversation-timeline-mounted-units"))).toBeLessThan(40);
+      expect(scroller.querySelector('[data-conversation-unit-id="unit:a2ui:agent:a2ui-1"]')).toBeNull();
+      for (const index of [48, 49, 50]) {
+        expect(
+          scroller.querySelector(`[data-conversation-unit-id="unit:a2ui:agent:a2ui-${index}"]`)
+            ?.getAttribute("data-conversation-unit-resident"),
+        ).toBe("true");
+      }
+      expect(screen.getAllByTestId("a2ui-block").length).toBeLessThan(10);
+    });
+  });
+
+  it("jumps backward from a 59-turn A2UI tail without retaining both expensive DOM islands", () => {
+    withBrowserListEnvironment(() => {
+      render(
+        <MessageList
+          messages={Array.from({ length: 59 }, (_, index) => conversationA2UITurn(index + 1)).flat()}
+          onA2UISubmit={vi.fn()}
+          onA2UICancel={vi.fn()}
+        />,
+      );
+      const scroller = screen.getByTestId("message-list-scroll");
+      const marker = screen.getByRole("button", { name: /跳转到第 36 轮/u });
+
+      fireEvent.focus(marker);
+      fireEvent.click(marker);
+
+      expect(scroller.querySelector('[data-conversation-unit-id="unit:a2ui:agent:a2ui-36"]')).not.toBeNull();
+      expect(scroller.querySelectorAll('[data-conversation-unit-resident="true"]')).toHaveLength(0);
+      for (const index of [57, 58, 59]) {
+        expect(scroller.querySelector(`[data-conversation-unit-id="unit:a2ui:agent:a2ui-${index}"]`)).toBeNull();
+      }
+      expect(Number(scroller.getAttribute("data-conversation-timeline-mounted-units"))).toBeLessThan(40);
+      expect(scroller.getAttribute("data-conversation-timeline-follow-bottom")).toBe("false");
+    });
+  });
+
+  it("lets the latest rapid navigator click win without a delayed second settlement", () => {
+    vi.useFakeTimers();
+    try {
+      withBrowserListEnvironment(() => {
+        const { unmount } = render(
+          <MessageList
+            messages={Array.from({ length: 59 }, (_, index) => conversationA2UITurn(index + 1)).flat()}
+            onA2UISubmit={vi.fn()}
+            onA2UICancel={vi.fn()}
+          />,
+        );
+        try {
+          const scroller = screen.getByTestId("message-list-scroll");
+          const navigator = screen.getByTestId("conversation-turn-navigator");
+          const markerFor = (turn: number) => [...navigator.querySelectorAll<HTMLButtonElement>("button")]
+            .find((button) => button.getAttribute("aria-label")?.startsWith(`跳转到第 ${turn} 轮`));
+
+          for (const turn of [50, 5, 36]) {
+            const marker = markerFor(turn);
+            expect(marker).toBeTruthy();
+            fireEvent.focus(marker!);
+            fireEvent.click(marker!);
+          }
+
+          expect(scroller.hasAttribute("data-conversation-timeline-navigation-active")).toBe(false);
+          const target = scroller.querySelector('[data-conversation-unit-id="unit:a2ui:agent:a2ui-36"]');
+          expect(target).not.toBeNull();
+          expect(target?.querySelector('[data-a2ui-playback-suppressed="true"]')).not.toBeNull();
+          expect(target?.querySelector('[data-interactive-ready="true"]')).not.toBeNull();
+          expect(Number(scroller.getAttribute("data-conversation-timeline-mounted-units"))).toBeLessThan(40);
+
+          act(() => vi.runOnlyPendingTimers());
+          expect(scroller.hasAttribute("data-conversation-timeline-navigation-active")).toBe(false);
+          expect(scroller.querySelector('[data-conversation-unit-id="unit:a2ui:agent:a2ui-36"]')).not.toBeNull();
+        } finally {
+          unmount();
+        }
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("switches to virtual mode for one data-heavy chart", () => {

@@ -188,7 +188,8 @@
   flex-direction: column;
 }
 
-.changesWorkspace { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-rows: minmax(120px, 1fr) auto; overflow: hidden; }
+.primary[data-view="changes"] { overflow: hidden; }
+.changesWorkspace { display: grid; min-width: 0; min-height: 0; height: 0; flex: 1 1 0; grid-template-rows: minmax(120px, 1fr) clamp(176px, 30%, 260px); overflow: hidden; }
 .branchWorkspace { min-width: 0; min-height: 0; flex: 1; overflow: auto; }
 
 .paneHeader {

@@ -2,7 +2,13 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { SendBox, selectedQuoteFromText, type SelectedFile, type SelectedQuote } from "@/renderer/components/chat/SendBox";
+import {
+  SendBox,
+  selectedQuoteFromText,
+  type PastedTextFragment,
+  type SelectedFile,
+  type SelectedQuote,
+} from "@/renderer/components/chat/SendBox";
 import "@/renderer/components/chat/AtFileMenu/AtFileMenu";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import type { RuntimeBridge } from "@/runtime";
@@ -383,6 +389,200 @@ describe("SendBox", () => {
       unmount();
       restoreObjectUrl();
     }
+  });
+
+  it("keeps a 199-character paste as ordinary text", () => {
+    const onChange = vi.fn();
+    render(
+      <SendBox
+        value=""
+        runtimeState="idle"
+        canSend={false}
+        canStop={false}
+        onChange={onChange}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+    const input = screen.getByLabelText("继续输入");
+    placeSelectionAtEnd(input);
+    const text = "x".repeat(199);
+
+    fireEvent.paste(input, {
+      clipboardData: {
+        files: fileList(),
+        getData: vi.fn((type: string) => (type === "text/plain" ? text : "")),
+      },
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith(text);
+    expect(input.querySelector('[data-sendbox-pasted-text="true"]')).toBeNull();
+  });
+
+  it("folds a 200-character paste inline while preserving the complete draft", () => {
+    const onChange = vi.fn();
+
+    function Harness() {
+      const [value, setValue] = useState("错误信息：");
+      const [fragments, setFragments] = useState<PastedTextFragment[]>([]);
+      return (
+        <SendBox
+          value={value}
+          pastedTextFragments={fragments}
+          runtimeState="idle"
+          canSend
+          canStop={false}
+          onChange={(nextValue) => {
+            onChange(nextValue);
+            setValue(nextValue);
+          }}
+          onPastedTextFragmentsChange={setFragments}
+          onSend={vi.fn()}
+          onStop={vi.fn()}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const input = screen.getByLabelText("继续输入");
+    placeSelectionAtEnd(input);
+    const text = `0123456789${"x".repeat(180)}ABCDEFGHIJ`;
+
+    fireEvent.paste(input, {
+      clipboardData: {
+        files: fileList(),
+        getData: vi.fn((type: string) => (type === "text/plain" ? text : "")),
+      },
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith(`错误信息：${text}`);
+    const fragment = input.querySelector<HTMLElement>('[data-sendbox-pasted-text="true"]');
+    expect(fragment?.dataset.collapsed).toBe("true");
+    expect(fragment?.querySelector('[data-paste-summary="true"]')?.textContent).toBe(
+      "0123456789…省略 180 个字符…ABCDEFGHIJ",
+    );
+    expect(fragment?.querySelector('[data-paste-raw="true"]')?.textContent).toBe(text);
+    expect(fragment?.querySelector('[data-paste-summary-omission="true"]')?.textContent).toBe(
+      "…省略 180 个字符…",
+    );
+    expect(fragment?.querySelector('[data-paste-toggle-position="trailing"]')?.textContent).toBe("⌄]");
+    expect(fragment?.querySelector('[data-paste-toggle-position="trailing"]')?.getAttribute("title")).toBe(
+      "展开粘贴内容",
+    );
+    expect(fragment?.getAttribute("contenteditable")).toBeNull();
+    expect(fragment?.querySelector('[data-paste-summary="true"]')?.getAttribute("contenteditable")).toBe("false");
+    expect((fragment?.querySelector('[data-paste-summary="true"]') as HTMLElement | null)?.tabIndex).toBe(-1);
+
+    fireEvent.mouseDown(screen.getByRole("button", { name: "展开粘贴内容，共 200 个字符" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开粘贴内容，共 200 个字符" }));
+    expect(fragment?.dataset.collapsed).toBe("false");
+    expect(document.activeElement).toBe(input);
+    expect(fragment?.querySelector('[data-paste-toggle-position="leading"]')?.textContent).toBe("[⌃");
+    expect(fragment?.querySelector('[data-paste-toggle-position="trailing"]')?.textContent).toBe("⌃]");
+    expect(fragment?.querySelector('[data-paste-toggle-position="leading"]')?.getAttribute("title")).toBe(
+      "收起粘贴内容",
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "折叠粘贴内容" })[0]);
+    expect(fragment?.dataset.collapsed).toBe("true");
+    expect(onChange).toHaveBeenLastCalledWith(`错误信息：${text}`);
+  });
+
+  it("keeps expanded pasted text editable as ordinary composer text", () => {
+    const original = "x".repeat(200);
+    const onChange = vi.fn();
+
+    function Harness() {
+      const [value, setValue] = useState(original);
+      const [fragments, setFragments] = useState<PastedTextFragment[]>([
+        { id: "paste-editable", start: 0, end: original.length, collapsed: true },
+      ]);
+      return (
+        <SendBox
+          value={value}
+          pastedTextFragments={fragments}
+          runtimeState="idle"
+          canSend
+          canStop={false}
+          onChange={(nextValue) => {
+            onChange(nextValue);
+            setValue(nextValue);
+          }}
+          onPastedTextFragmentsChange={(nextFragments) => setFragments(nextFragments)}
+          onSend={vi.fn()}
+          onStop={vi.fn()}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const input = screen.getByLabelText("继续输入");
+    const summary = screen.getByRole("button", { name: "展开粘贴内容，共 200 个字符" });
+    fireEvent.mouseDown(summary);
+    fireEvent.click(summary);
+
+    const raw = input.querySelector<HTMLElement>('[data-paste-raw="true"]');
+    expect(document.activeElement).toBe(input);
+    expect(raw?.isContentEditable).not.toBe(false);
+
+    const edited = `${original}yz`;
+    raw!.textContent = edited;
+    fireEvent.input(input);
+
+    expect(onChange).toHaveBeenLastCalledWith(edited);
+    expect(input.querySelector('[data-paste-raw="true"]')?.textContent).toBe(edited);
+
+    const trailingCollapse = input.querySelector<HTMLElement>('[data-paste-toggle-position="trailing"]')!;
+    fireEvent.mouseDown(trailingCollapse);
+    fireEvent.click(trailingCollapse);
+    expect(input.querySelector('[data-paste-summary-omission="true"]')?.textContent).toBe(
+      "…省略 182 个字符…",
+    );
+    expect(input.querySelector('[data-paste-summary="true"]')?.textContent?.endsWith("xxxxxxxxyz")).toBe(true);
+
+    const editedSummary = screen.getByRole("button", { name: "展开粘贴内容，共 202 个字符" });
+    fireEvent.mouseDown(editedSummary);
+    fireEvent.click(editedSummary);
+
+    input.querySelector<HTMLElement>('[data-paste-raw="true"]')!.textContent = "";
+    fireEvent.input(input);
+
+    expect(onChange).toHaveBeenLastCalledWith("");
+    expect(input.querySelector('[data-sendbox-pasted-text="true"]')).toBeNull();
+  });
+
+  it("copies the complete raw text when a folded paste is selected", () => {
+    const text = `0123456789${"x".repeat(180)}ABCDEFGHIJ`;
+    const fragment: PastedTextFragment = {
+      id: "paste-copy",
+      start: 0,
+      end: text.length,
+      collapsed: true,
+    };
+    render(
+      <SendBox
+        value={text}
+        pastedTextFragments={[fragment]}
+        runtimeState="idle"
+        canSend
+        canStop={false}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+    const input = screen.getByLabelText("继续输入");
+    const folded = input.querySelector('[data-sendbox-pasted-text="true"]');
+    expect(folded).not.toBeNull();
+    const range = document.createRange();
+    range.selectNode(folded!);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    const setData = vi.fn();
+
+    fireEvent.copy(input, { clipboardData: { setData } });
+
+    expect(setData).toHaveBeenCalledWith("text/plain", text);
   });
 
   it("tracks focus state and submits when sending is allowed", () => {
@@ -1400,6 +1600,15 @@ function fileList(...files: File[]): FileList {
   return Object.assign(files, {
     item: (index: number) => files[index] ?? null,
   }) as unknown as FileList;
+}
+
+function placeSelectionAtEnd(element: HTMLElement) {
+  fireEvent.focus(element);
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  range.collapse(false);
+  window.getSelection()?.removeAllRanges();
+  window.getSelection()?.addRange(range);
 }
 
 function stubObjectUrl(): () => void {

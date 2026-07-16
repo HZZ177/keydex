@@ -31,6 +31,7 @@ import {
   emitExpandWorkspaceDirectory,
   emitStartWorkspaceFileAnnotation,
 } from "@/renderer/events/workspaceFileContext";
+import { readPastedTextSelection } from "@/renderer/components/chat/SendBox/collapsiblePaste";
 
 import styles from "./AppContextMenuProvider.module.css";
 
@@ -733,7 +734,11 @@ function getEditableTarget(target: Element): EditableTarget | null {
     return isTextInput(candidate) ? candidate : null;
   }
 
-  return isEditableElement(candidate) ? candidate : null;
+  if (isEditableElement(candidate)) {
+    return candidate;
+  }
+  const sendBoxInput = target.closest<HTMLElement>("[data-sendbox-input='true']");
+  return sendBoxInput && isEditableElement(sendBoxInput) ? sendBoxInput : null;
 }
 
 function getEditableSelectionText(editable: EditableTarget) {
@@ -755,6 +760,10 @@ function getEditableSelectionText(editable: EditableTarget) {
     return "";
   }
 
+  const logicalText = readPastedTextSelection(selection.getRangeAt(0));
+  if (logicalText !== null) {
+    return logicalText;
+  }
   return selection.toString();
 }
 

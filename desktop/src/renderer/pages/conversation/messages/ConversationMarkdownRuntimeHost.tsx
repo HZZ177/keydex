@@ -193,7 +193,7 @@ function AsynchronousConversationMarkdownRuntimeHost(props: ConversationMarkdown
     };
   }, [props.rootRef]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = localRootRef.current;
     if (!root) return;
     const desired = desiredRef.current;
@@ -230,28 +230,44 @@ function AsynchronousConversationMarkdownRuntimeHost(props: ConversationMarkdown
     };
     stateRef.current = state;
     propsRef.current.onError?.(null);
-    void attachment.load().then((snapshot) => {
-      if (!state.active) return;
-      if (state.desiredVersion === desiredRef.current.version && baseSource === desiredRef.current.source) {
-        publish(state, snapshot, desiredRef.current, propsRef.current);
-      }
+    const projection = attachment.projection();
+    const retained = attachment.runtime.current();
+    if (
+      retained
+      && retained.revision === projection.revision
+      && retained.source === baseSource
+    ) {
+      // Virtual turns are repeatedly detached and remounted. A retained
+      // Snapshot is already the canonical result, so publish it during the
+      // layout commit instead of leaving a blank host until Promise.resolve()
+      // crosses a microtask boundary. Cache misses still parse in the Worker.
+      publish(state, retained.snapshot, desiredRef.current, propsRef.current);
       state.syncing = false;
       void drain(state, propsRef, desiredRef);
-    }).catch((error: unknown) => {
-      state.syncing = false;
-      if (!state.active) return;
-      if (isCancellation(error)) {
-        // The first canonical load can be superseded while React replaces a
-        // streaming host with its settled projection. Nothing has been
-        // published in this view yet, so force drain() to request the desired
-        // revision instead of mistaking the optimistic baseSource bookkeeping
-        // for a rendered snapshot.
-        state.appliedStatus = "retry-after-cancel";
+    } else {
+      void attachment.load().then((snapshot) => {
+        if (!state.active) return;
+        if (state.desiredVersion === desiredRef.current.version && baseSource === desiredRef.current.source) {
+          publish(state, snapshot, desiredRef.current, propsRef.current);
+        }
+        state.syncing = false;
         void drain(state, propsRef, desiredRef);
-        return;
-      }
-      publishError(state, propsRef.current, error);
-    });
+      }).catch((error: unknown) => {
+        state.syncing = false;
+        if (!state.active) return;
+        if (isCancellation(error)) {
+          // The first canonical load can be superseded while React replaces a
+          // streaming host with its settled projection. Nothing has been
+          // published in this view yet, so force drain() to request the desired
+          // revision instead of mistaking the optimistic baseSource bookkeeping
+          // for a rendered snapshot.
+          state.appliedStatus = "retry-after-cancel";
+          void drain(state, propsRef, desiredRef);
+          return;
+        }
+        publishError(state, propsRef.current, error);
+      });
+    }
     return () => {
       state.active = false;
       state.view.destroy();

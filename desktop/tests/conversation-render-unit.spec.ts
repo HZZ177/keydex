@@ -41,7 +41,7 @@ describe("Conversation RenderUnit projection", () => {
       tool("tool-2"),
       fileChange("file-1"),
       fileChange("file-2"),
-      message("a2ui-1", "a2ui", "", "pending"),
+      message("a2ui-1", "a2ui", "", "pending", { a2ui: { render_key: "choice" } }),
       message("approval-1", "approval", "Approve", "pending"),
       message("mcp-1", "mcp_elicitation", "Input", "pending"),
     ]));
@@ -52,13 +52,32 @@ describe("Conversation RenderUnit projection", () => {
     expect(byKind.get("reasoning")).toMatchObject({ owner: "react", dynamic: true });
     expect(byKind.get("tool-group")).toMatchObject({ owner: "react", sourceMessageIds: ["tool-1", "tool-2"] });
     expect(byKind.get("file-change-group")).toMatchObject({ sourceMessageIds: ["file-1", "file-2"] });
-    for (const kind of ["a2ui", "approval", "mcp-elicitation"] as const) {
+    expect(byKind.get("a2ui")).toMatchObject({
+      dynamic: false,
+      interactive: false,
+      pinPolicy: "never",
+      measurementPolicy: "estimate-once",
+    });
+    for (const kind of ["approval", "mcp-elicitation"] as const) {
       expect(byKind.get(kind)).toMatchObject({
         interactive: true,
         pinPolicy: "while-interacting",
         measurementPolicy: "observe-always",
       });
     }
+  });
+
+  it("pins only a genuinely live A2UI stream, not a settled waiting-input card", () => {
+    const projection = projectConversationRenderUnits(processMessages([
+      message("a2ui-live", "a2ui", "", "running", { a2uiDebug: { status: "streaming" } }),
+    ]));
+
+    expect(unit(projection, "a2ui")).toMatchObject({
+      dynamic: true,
+      interactive: false,
+      pinPolicy: "while-active",
+      measurementPolicy: "observe-until-settled",
+    });
   });
 
   it("covers error, skill, task, status, command, and file-change families", () => {

@@ -8,6 +8,7 @@ import {
   type SendBoxSubmitOptions,
   type SelectedFile,
   type SelectedImageAttachment,
+  type PastedTextFragment,
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
 import type { SlashCommand } from "@/renderer/components/chat/SlashCommandMenu";
@@ -45,12 +46,14 @@ export interface ConversationComposerProps {
   selectedFiles?: SelectedFile[];
   selectedQuotes?: SelectedQuote[];
   selectedImageAttachments?: SelectedImageAttachment[];
+  pastedTextFragments?: PastedTextFragment[];
   onSearchWorkspace?: (query: string, options?: { signal?: AbortSignal }) => Promise<WorkspaceSearchResult[]>;
   onListWorkspaceDirectory?: (path: string) => Promise<WorkspaceSearchResult[]>;
   onOpenModelSettings?: () => void;
   onSelectedFilesChange?: (files: SelectedFile[]) => void;
   onSelectedQuotesChange?: (quotes: SelectedQuote[]) => void;
   onSelectedImageAttachmentsChange?: (attachments: SelectedImageAttachment[]) => void;
+  onPastedTextFragmentsChange?: (fragments: PastedTextFragment[], value: string) => void;
   onChange: (value: string) => void;
   onSkillChange: (skill: SkillSummary | null) => void;
   onSend: (
@@ -103,12 +106,14 @@ export function ConversationComposer({
   selectedFiles,
   selectedQuotes,
   selectedImageAttachments,
+  pastedTextFragments,
   onSearchWorkspace,
   onListWorkspaceDirectory,
   onOpenModelSettings,
   onSelectedFilesChange,
   onSelectedQuotesChange,
   onSelectedImageAttachmentsChange,
+  onPastedTextFragmentsChange,
   onChange,
   onSkillChange,
   onSend,
@@ -174,10 +179,12 @@ export function ConversationComposer({
       selectedFiles={selectedFiles}
       selectedQuotes={selectedQuotes}
       selectedImageAttachments={selectedImageAttachments}
+      pastedTextFragments={pastedTextFragments}
       selectedSkill={selectedSkill}
       onSelectedFilesChange={onSelectedFilesChange}
       onSelectedQuotesChange={onSelectedQuotesChange}
       onSelectedImageAttachmentsChange={onSelectedImageAttachmentsChange}
+      onPastedTextFragmentsChange={onPastedTextFragmentsChange}
       onSkillChange={onSkillChange}
       onSend={onSend}
       onStop={onStop}

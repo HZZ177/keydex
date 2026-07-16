@@ -1,4 +1,5 @@
-import { act, fireEvent, waitFor } from "@testing-library/react";
+import { useEffect, useRef } from "react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { StreamingTailParser, StreamingTailView } from "@/renderer/markdownRuntime/streaming";
@@ -32,6 +33,23 @@ describe("Conversation Markdown renderer profile", () => {
     expect(root.querySelector('[data-testid="streaming-cursor"]')).not.toBeNull();
     act(() => { view.destroy(); });
     root.remove();
+  });
+
+  it("defers nested code-root disposal beyond the parent passive unmount", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { unmount } = render(<MarkdownLifecycleHost />);
+    try {
+      await waitFor(() => expect(document.querySelector('[data-testid="markdown-code-viewport"]')).not.toBeNull());
+
+      unmount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Attempted to synchronously unmount a root");
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("enhances file links with Keydex identity, icon, line badge, and host navigation", () => {
@@ -100,3 +118,22 @@ describe("Conversation Markdown renderer profile", () => {
     expect(root.textContent).toContain("x^2+y^2=z^2");
   });
 });
+
+function MarkdownLifecycleHost() {
+  const hostRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const parser = new StreamingTailParser(parserOptions);
+    const view = new StreamingTailView(host, { registry: createConversationMarkdownRendererRegistry() });
+    const snapshot = parser.update({
+      source: "```ts\nconst navigation = 'rapid';\n```",
+      revision: "passive-unmount",
+      epoch: 1,
+      final: true,
+    }).snapshot;
+    view.publish(snapshot, { showCursor: false });
+    return () => view.destroy();
+  }, []);
+  return <div ref={hostRef} />;
+}

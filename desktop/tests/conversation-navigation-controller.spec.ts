@@ -84,18 +84,39 @@ describe("ConversationNavigationController", () => {
     expect(controller.diagnostics()).toMatchObject({ revealAttempts: 1, revealSuccesses: 1 });
   });
 
-  it("stabilizes the revealed viewport after late resource measurement until user intent cancels it", () => {
+  it("does not rewrite a revealed viewport when later resize publications fire", () => {
     const target = targetHarness(["turn-50"]);
     const controller = new ConversationNavigationController();
     controller.attach(target);
     controller.requestNavigation({ requestId: "resource", unitId: "turn-50" });
     target.restoreAnchor.mockClear();
-    controller.onTimelinePublished();
-    expect(target.restoreAnchor).toHaveBeenCalledTimes(1);
-    expect(controller.diagnostics().navigationStabilizations).toBe(1);
-    controller.recordUserScroll();
-    controller.onTimelinePublished();
-    expect(target.restoreAnchor).toHaveBeenCalledTimes(1);
+    for (let index = 0; index < 100; index += 1) controller.onTimelinePublished();
+    expect(target.restoreAnchor).not.toHaveBeenCalled();
+    expect(controller.diagnostics()).toMatchObject({
+      activeNavigationAnchorId: null,
+      navigationStabilizations: 0,
+    });
+  });
+
+  it("does not recursively reveal the same request when publication re-enters during navigation", () => {
+    const controller = new ConversationNavigationController();
+    const target = targetHarness(["turn-36"]);
+    target.revealUnit.mockImplementation((unitId: string) => {
+      expect(unitId).toBe("turn-36");
+      controller.onTimelinePublished();
+      return true;
+    });
+    controller.attach(target);
+
+    expect(controller.requestNavigation({ requestId: "rapid-click", unitId: "turn-36" })).toBe(true);
+
+    expect(target.revealUnit).toHaveBeenCalledTimes(1);
+    expect(controller.diagnostics()).toMatchObject({
+      pendingNavigationId: null,
+      completedNavigationId: "rapid-click",
+      revealAttempts: 1,
+      revealSuccesses: 1,
+    });
   });
 });
 

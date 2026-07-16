@@ -33,6 +33,8 @@ class GitPreparedCommand:
     summary: str
     input_text: str | None = None
     timeout_seconds: float = 120
+    setup_commands: tuple[tuple[str, ...], ...] = ()
+    failure_commands: tuple[tuple[str, ...], ...] = ()
     result_queries: tuple[tuple[str, tuple[str, ...]], ...] = ()
     identity_checks: tuple[tuple[tuple[str, ...], str], ...] = ()
     env: Mapping[str, str] | None = None
@@ -162,22 +164,66 @@ class GitCommandService:
                         repository_id=repository.id,
                     )
 
-            async def run() -> GitCommandResult:
+            async def run_argv(
+                argv: tuple[str, ...],
+                *,
+                input_text: str | None = None,
+                timeout_seconds: float = prepared.timeout_seconds,
+                cancel_event: asyncio.Event | None = context.cancel_event,
+            ) -> GitCommandResult:
                 return await self._runner.run(
-                    prepared.argv,
+                    argv,
                     cwd=repository.root_path,
                     env=prepared.env,
-                    input_text=prepared.input_text,
-                    timeout_seconds=prepared.timeout_seconds,
-                    cancel_event=context.cancel_event,
+                    input_text=input_text,
+                    timeout_seconds=timeout_seconds,
+                    cancel_event=cancel_event,
                 )
 
-            result = await run_with_git_lock_retry(run)
+            async def run_failure_commands() -> None:
+                for argv in prepared.failure_commands:
+                    try:
+                        await run_with_git_lock_retry(
+                            lambda argv=argv: run_argv(
+                                argv,
+                                timeout_seconds=20,
+                                cancel_event=None,
+                            )
+                        )
+                    except Exception:
+                        # Preserve the primary Git failure; rollback is best effort.
+                        continue
+
+            for argv in prepared.setup_commands:
+                setup_result = await run_with_git_lock_retry(
+                    lambda argv=argv: run_argv(argv, timeout_seconds=20)
+                )
+                if setup_result.cancelled:
+                    await run_failure_commands()
+                    raise asyncio.CancelledError
+                if setup_result.timed_out:
+                    await run_failure_commands()
+                    raise GitApiError("git_timeout", "Git command setup timed out", retryable=True)
+                if not setup_result.succeeded:
+                    await run_failure_commands()
+                    raise GitApiError(
+                        "git_failed",
+                        setup_result.safe_stderr.strip() or "Git command setup failed",
+                        operation_id=context.operation_id,
+                        repository_id=repository.id,
+                    )
+
+            result = await run_with_git_lock_retry(
+                lambda: run_argv(prepared.argv, input_text=prepared.input_text)
+            )
             if result.cancelled:
+                await run_failure_commands()
                 raise asyncio.CancelledError
             if result.timed_out:
+                await run_failure_commands()
                 raise GitApiError("git_timeout", "Git command timed out", retryable=True)
             if not result.succeeded:
+                await run_failure_commands()
                 if definition.refresh_on_failure:
                     self._queries.invalidate(repository.id)
                 if prepared.argv[0] in {"fetch", "pull", "push", "ls-remote"}:

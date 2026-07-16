@@ -9,13 +9,18 @@ import {
   type ConversationTimelineScrollRequest,
 } from "./ConversationTimelineRuntime";
 
+const EMPTY_RESIDENT_UNIT_IDS: readonly string[] = Object.freeze([]);
+
 export interface ConversationTimelineSurfaceHandle {
   revealUnit(unitId: string, align?: "start" | "center" | "end"): boolean;
   setFollowBottom(enabled: boolean): void;
   setUserScrollInteraction(active: boolean): void;
+  setControlledScrollInteraction(active: boolean): void;
+  settleControlledScrollViewport(): void;
   captureAnchor(viewportOffset?: number): ConversationTimelineAnchor | null;
   restoreAnchor(anchor: ConversationTimelineAnchor): boolean;
   setPinned(unitId: string, pinned: boolean): void;
+  setResidentUnits(unitIds: readonly string[]): void;
   getUnitElement(unitId: string): HTMLElement | null;
   mountedUnitIds(): readonly string[];
   diagnostics(): ConversationTimelineDiagnostics | null;
@@ -24,6 +29,7 @@ export interface ConversationTimelineSurfaceHandle {
 
 export interface ConversationTimelineSurfaceProps {
   readonly units: readonly ConversationRenderUnit[];
+  readonly residentUnitIds?: readonly string[];
   readonly renderUnit: (unit: ConversationRenderUnit) => ReactNode;
   readonly className?: string;
   readonly canvasClassName?: string;
@@ -47,6 +53,7 @@ export interface ConversationTimelineSurfaceProps {
  */
 export function ConversationTimelineSurface({
   units,
+  residentUnitIds = EMPTY_RESIDENT_UNIT_IDS,
   renderUnit,
   className,
   canvasClassName,
@@ -89,7 +96,7 @@ export function ConversationTimelineSurface({
           const root = createRoot(host);
           roots.set(unit.id, root);
           const render = (nextUnit: ConversationRenderUnit) => {
-            root.render(
+            const content = (
               <ConversationTimelineMeasurementCommit
                 unit={nextUnit}
                 onCommit={(committedUnit) => {
@@ -97,8 +104,9 @@ export function ConversationTimelineSurface({
                 }}
               >
                 {renderUnitRef.current(nextUnit)}
-              </ConversationTimelineMeasurementCommit>,
+              </ConversationTimelineMeasurementCommit>
             );
+            root.render(content);
           };
           render(unit);
           return {
@@ -118,9 +126,21 @@ export function ConversationTimelineSurface({
       followBottom,
     });
     runtime.canvas.className = canvasClassName ?? "";
+    let canvasPublishFrame: number | null = null;
     const canvasObserver = typeof ResizeObserver === "undefined"
       ? null
-      : new ResizeObserver(() => onPublishedRef.current?.(runtime.diagnostics()));
+      : new ResizeObserver(() => {
+          if (canvasPublishFrame !== null) return;
+          const view = element.ownerDocument.defaultView;
+          if (!view) {
+            onPublishedRef.current?.(runtime.diagnostics());
+            return;
+          }
+          canvasPublishFrame = view.requestAnimationFrame(() => {
+            canvasPublishFrame = null;
+            onPublishedRef.current?.(runtime.diagnostics());
+          });
+        });
     canvasObserver?.observe(runtime.canvas);
     runtimeInstanceRef.current = runtime;
     const handle: ConversationTimelineSurfaceHandle = {
@@ -131,10 +151,19 @@ export function ConversationTimelineSurface({
       setUserScrollInteraction: (active) => {
         runtime.setUserScrollInteraction(active);
       },
+      setControlledScrollInteraction: (active) => {
+        runtime.setControlledScrollInteraction(active);
+      },
+      settleControlledScrollViewport: () => {
+        runtime.settleControlledScrollViewport();
+      },
       captureAnchor: (viewportOffset) => runtime.captureAnchor(viewportOffset),
       restoreAnchor: (anchor) => runtime.restoreAnchor(anchor),
       setPinned: (unitId, pinned) => {
         runtime.setPinned(unitId, pinned);
+      },
+      setResidentUnits: (unitIds) => {
+        runtime.setResidentUnits(unitIds);
       },
       getUnitElement: (unitId) => runtime.getUnitElement(unitId),
       mountedUnitIds: () => runtime.mountedUnitIds(),
@@ -149,6 +178,7 @@ export function ConversationTimelineSurface({
       scrollerRefRef.current?.(null);
       if (runtimeRef?.current === handle) runtimeRef.current = null;
       canvasObserver?.disconnect();
+      if (canvasPublishFrame !== null) element.ownerDocument.defaultView?.cancelAnimationFrame(canvasPublishFrame);
       runtime.destroy();
       runtimeInstanceRef.current = null;
       roots.clear();
@@ -162,9 +192,9 @@ export function ConversationTimelineSurface({
   useLayoutEffect(() => {
     const runtime = runtimeInstanceRef.current;
     if (!runtime) return;
-    runtime.publish(units);
+    runtime.publish(units, residentUnitIds);
     onPublishedRef.current?.(runtime.diagnostics());
-  }, [units]);
+  }, [residentUnitIds, units]);
 
   return (
     <div

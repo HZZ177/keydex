@@ -7,7 +7,7 @@ import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@
 afterEach(cleanup);
 
 describe("GitCommitEditor", () => {
-  it("validates messages and submits amend/sign options for staged files", () => {
+  it("validates messages and submits amend/sign options for selected files", () => {
     expect(validateCommitMessage(" ").valid).toBe(false);
     expect(validateCommitMessage("x".repeat(73))).toEqual({ valid: true, message: "标题超过建议的 72 个字符" });
     expect(validateCommitMessage("x".repeat(101)).valid).toBe(false);
@@ -15,14 +15,14 @@ describe("GitCommitEditor", () => {
     const onDraftChange = vi.fn();
     const onCommit = vi.fn();
     const { rerender } = render(
-      <GitCommitEditor status={status()} draft="" onDraftChange={onDraftChange} onCommit={onCommit} />,
+      <GitCommitEditor status={status()} selectedFileCount={1} draft="" onDraftChange={onDraftChange} onCommit={onCommit} />,
     );
     expect(screen.getByRole("button", { name: "提交" }).hasAttribute("disabled")).toBe(true);
     fireEvent.change(screen.getByRole("textbox", { name: "Commit message" }), { target: { value: "feat: Git workbench" } });
     expect(onDraftChange).toHaveBeenCalledWith("feat: Git workbench");
 
     rerender(
-      <GitCommitEditor status={status()} draft="feat: Git workbench" onDraftChange={onDraftChange} onCommit={onCommit} />,
+      <GitCommitEditor status={status()} selectedFileCount={1} draft="feat: Git workbench" onDraftChange={onDraftChange} onCommit={onCommit} />,
     );
     fireEvent.click(screen.getByRole("checkbox", { name: "修订上次提交" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "GPG 签名" }));
@@ -35,6 +35,7 @@ describe("GitCommitEditor", () => {
     render(
       <GitCommitEditor
         status={status()}
+        selectedFileCount={1}
         draft="feat: identity"
         identity={null}
         onDraftChange={vi.fn()}
@@ -88,23 +89,44 @@ describe("GitCommitEditor", () => {
     expect(onCommit).toHaveBeenCalledWith({ message: "fix: amended", amend: true, sign: false });
   });
 
-  it("exposes Commit and Push as an explicit second action", () => {
+  it("exposes 提交并推送 as an explicit second action", () => {
     const onCommitAndPush = vi.fn();
     render(
       <GitCommitEditor
         status={status()}
+        selectedFileCount={1}
         draft="feat: commit and push"
         onDraftChange={vi.fn()}
         onCommit={vi.fn()}
         onCommitAndPush={onCommitAndPush}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Commit and Push" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交并推送" }));
     expect(onCommitAndPush).toHaveBeenCalledWith({
       message: "feat: commit and push",
       amend: false,
       sign: false,
     });
+  });
+
+  it("keeps both commit actions visible while explaining that files must be selected", () => {
+    const unstagedStatus: GitStatusSnapshot = {
+      ...status(),
+      files: status().files.map((file) => ({ ...file, indexStatus: null })),
+    };
+    render(
+      <GitCommitEditor
+        status={unstagedStatus}
+        draft="fix: selected files required"
+        onDraftChange={vi.fn()}
+        onCommit={vi.fn()}
+        onCommitAndPush={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("请至少选择一个要提交的文件")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "提交" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "提交并推送" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("allows a merge commit when accepting ours leaves no staged tree delta", () => {
@@ -164,7 +186,7 @@ describe("GitCommitEditor", () => {
       />,
     );
 
-    expect(screen.getByText("0 个已暂存文件")).not.toBeNull();
+    expect(screen.getByText("0 个已选择文件")).not.toBeNull();
     expect(screen.getByRole("button", { name: "提交" }).hasAttribute("disabled")).toBe(true);
   });
 });

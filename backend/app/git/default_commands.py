@@ -798,10 +798,24 @@ def _prepare_commit(request: GitCommitCommandRequest) -> GitPreparedCommand:
         argv.append("--amend")
     if request.sign:
         argv.append("-S")
+    if request.paths:
+        argv.extend(("--only", "--", *request.paths))
+    setup_commands = (
+        (("add", "--intent-to-add", "--", *request.untracked_paths),)
+        if request.untracked_paths
+        else ()
+    )
+    failure_commands = (
+        (("reset", "--", *request.untracked_paths),)
+        if request.untracked_paths
+        else ()
+    )
     return GitPreparedCommand(
         argv=tuple(argv),
         input_text=request.message,
         summary="Amended commit" if request.amend else "Created commit",
+        setup_commands=setup_commands,
+        failure_commands=failure_commands,
         result_queries=(("oid", ("rev-parse", "HEAD")),),
     )
 

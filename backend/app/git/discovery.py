@@ -49,6 +49,7 @@ def discover_git_repositories(
         include_nested=request.include_nested,
         max_depth=request.max_depth,
         max_directories=request.max_directories,
+        executable=capability.executable or "git",
     )
     layouts = _exclude_ignored_nested_repositories(
         project_root,
@@ -93,41 +94,65 @@ def _scan_repositories(
     include_nested: bool,
     max_depth: int,
     max_directories: int,
+    executable: str,
 ) -> list[GitRepositoryLayout]:
     queue: deque[tuple[Path, int]] = deque([(project_root, 0)])
     layouts: list[GitRepositoryLayout] = []
     visited: set[str] = set()
     directory_count = 0
+    root_worktree_found = False
     while queue:
-        directory, depth = queue.popleft()
-        key = _path_key(directory)
-        if key in visited:
-            continue
-        visited.add(key)
-        directory_count += 1
-        if directory_count > max_directories:
-            raise GitParameterError("Git repository discovery directory limit exceeded")
-        try:
-            layout = resolve_repository_layout(directory)
-        except (GitParameterError, OSError):
-            layout = None
-        if layout is not None:
-            layouts.append(layout)
-            if not include_nested:
+        depth = queue[0][1]
+        level: list[Path] = []
+        while queue and queue[0][1] == depth:
+            level.append(queue.popleft()[0])
+        children: list[Path] = []
+        for directory in level:
+            key = _path_key(directory)
+            if key in visited:
                 continue
-        if depth >= max_depth:
-            continue
-        try:
-            children = sorted(
-                (entry for entry in directory.iterdir() if entry.is_dir()),
-                key=lambda path: path.name.casefold(),
+            visited.add(key)
+            directory_count += 1
+            if directory_count > max_directories:
+                raise GitParameterError("Git repository discovery directory limit exceeded")
+            try:
+                layout = resolve_repository_layout(directory)
+            except (GitParameterError, OSError):
+                layout = None
+            if layout is not None:
+                layouts.append(layout)
+                if (
+                    depth == 0
+                    and not layout.bare
+                    and _path_key(layout.worktree_root) == _path_key(project_root)
+                ):
+                    root_worktree_found = True
+                if not include_nested:
+                    continue
+            if depth >= max_depth:
+                continue
+            try:
+                directory_children = sorted(
+                    (entry for entry in directory.iterdir() if entry.is_dir()),
+                    key=lambda path: path.name.casefold(),
+                )
+            except OSError:
+                continue
+            children.extend(
+                child
+                for child in directory_children
+                if child.name not in _SKIP_DIRECTORY_NAMES and not child.is_symlink()
             )
-        except OSError:
-            continue
-        for child in children:
-            if child.name in _SKIP_DIRECTORY_NAMES or child.is_symlink():
-                continue
-            queue.append((child, depth + 1))
+        if root_worktree_found and children:
+            ignored = _check_ignored_paths(
+                project_root,
+                [_relative_path(child, project_root) for child in children],
+                executable=executable,
+            )
+            children = [
+                child for child in children if _relative_path(child, project_root) not in ignored
+            ]
+        queue.extend((child, depth + 1) for child in children)
     return layouts
 
 
@@ -167,6 +192,29 @@ def _exclude_ignored_nested_repositories(
         candidates[relative] = layout
     if not candidates:
         return layouts
+    ignored = _check_ignored_paths(
+        project_root,
+        list(candidates),
+        executable=executable,
+    )
+    if not ignored:
+        return layouts
+    return [
+        layout
+        for layout in layouts
+        if layout is root_layout or _relative_layout_path(layout, project_root) not in ignored
+    ]
+
+
+def _check_ignored_paths(
+    project_root: Path,
+    candidates: list[str],
+    *,
+    executable: str,
+) -> set[str]:
+    candidates = [candidate for candidate in candidates if candidate]
+    if not candidates:
+        return set()
     startupinfo: subprocess.STARTUPINFO | None = None
     creationflags = 0
     if os.name == "nt":
@@ -197,16 +245,12 @@ def _exclude_ignored_nested_repositories(
             creationflags=creationflags,
         )
     except (OSError, subprocess.SubprocessError):
-        return layouts
-    ignored = {item for item in result.stdout.split("\0") if item}
-    if not ignored:
-        return layouts
-    return [
-        layout
-        for layout in layouts
-        if layout is root_layout
-        or _relative_layout_path(layout, project_root) not in ignored
-    ]
+        return set()
+    return {item for item in result.stdout.split("\0") if item}
+
+
+def _relative_path(path: Path, project_root: Path) -> str:
+    return path.relative_to(project_root).as_posix()
 
 
 def _relative_layout_path(layout: GitRepositoryLayout, project_root: Path) -> str | None:

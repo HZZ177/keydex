@@ -597,6 +597,7 @@ export function useAgentSessionController({
   const restoreComposerDraft = useCallback((nextDraft: AgentSessionControllerComposerDraft) => {
     setComposerDraft({
       text: nextDraft.value,
+      pastedTextFragments: [],
       selectedSkill: nextDraft.selectedSkill ?? null,
       files: nextDraft.files ?? [],
       quotes: nextDraft.quotes ?? [],

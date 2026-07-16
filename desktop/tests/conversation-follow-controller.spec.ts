@@ -157,6 +157,28 @@ describe("ConversationFollowController", () => {
     harness.controller.destroy();
     expect(() => harness.controller.notifyContentMutation("token-append")).toThrow(/destroyed/u);
   });
+
+  it("gives an external controlled scrollbar the same follow ownership as the native thumb", () => {
+    const harness = createHarness();
+    harness.controller.setContentAvailable(true);
+    harness.controller.setTailReady(true);
+
+    harness.controller.beginScrollbarDrag("controlled-scrollbar-drag");
+    harness.element.scrollTop = 400;
+    harness.controller.endScrollbarDrag();
+    expect(harness.controller.snapshot()).toMatchObject({
+      mode: "user-detached",
+      reason: "controlled-scrollbar-drag",
+    });
+
+    harness.controller.beginScrollbarDrag("controlled-scrollbar-drag");
+    harness.element.scrollTop = 800;
+    harness.controller.endScrollbarDrag();
+    expect(harness.controller.snapshot()).toMatchObject({
+      mode: "following-bottom",
+      reason: "scrollbar-drag-ended-at-bottom",
+    });
+  });
 });
 
 function createHarness() {

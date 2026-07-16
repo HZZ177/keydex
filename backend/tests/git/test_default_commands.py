@@ -67,6 +67,44 @@ def test_commit_command_runs_hooks_and_collects_full_oid() -> None:
     )
 
 
+def test_commit_command_scopes_selected_paths_and_prepares_untracked_files() -> None:
+    definition = create_default_git_command_registry().get("commit")
+    prepared = definition.prepare(
+        GitCommitCommandRequest(
+            workspace_id="workspace-1",
+            project_root="D:/repo",
+            repository_id="repo-1",
+            idempotency_key="selected-commit-key",
+            message="feat: selected files",
+            paths=["src/renamed.ts", "src/old.ts", "new.txt"],
+            untracked_paths=["new.txt"],
+        )
+    )
+
+    assert prepared.argv == (
+        "commit",
+        "--file=-",
+        "--only",
+        "--",
+        "src/renamed.ts",
+        "src/old.ts",
+        "new.txt",
+    )
+    assert prepared.setup_commands == (("add", "--intent-to-add", "--", "new.txt"),)
+    assert prepared.failure_commands == (("reset", "--", "new.txt"),)
+
+    with pytest.raises(ValueError, match="must also be selected"):
+        GitCommitCommandRequest(
+            workspace_id="workspace-1",
+            project_root="D:/repo",
+            repository_id="repo-1",
+            idempotency_key="invalid-untracked-key",
+            message="invalid selection",
+            paths=["tracked.txt"],
+            untracked_paths=["new.txt"],
+        )
+
+
 def test_checkout_can_explicitly_enter_detached_head() -> None:
     definition = create_default_git_command_registry().get("checkout")
     request = GitCheckoutCommandRequest(

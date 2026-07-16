@@ -100,6 +100,7 @@ export function useComposerDraft(scopeKey: string | null): ComposerDraftBinding 
     (update) => {
       setDraft((current) => ({
         text: typeof update === "function" ? update(current.text) : update,
+        pastedTextFragments: [],
       }));
     },
     [setDraft],

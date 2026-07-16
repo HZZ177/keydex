@@ -66,10 +66,53 @@ def test_explicit_mutation_routes_are_idempotent_and_mutate_real_repository(tmp_
         assert repo.run("log", "-1", "--format=%s").stdout.strip() == "api commit"
 
 
+def test_commit_selected_tracked_and_untracked_paths_without_including_other_index_changes(
+    tmp_path: Path,
+) -> None:
+    repo = GitRepoFactory(tmp_path).create("api-selected-commit")
+    repo.write("selected.txt", "selected base\n")
+    repo.write("unrelated.txt", "unrelated base\n")
+    repo.commit("selected commit fixture", "selected.txt", "unrelated.txt")
+    repo.write("selected.txt", "selected changed\n")
+    repo.write("unrelated.txt", "unrelated staged\n")
+    repo.run("add", "--", "unrelated.txt")
+    repo.write("new.txt", "new selected file\n")
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(data_dir=tmp_path)
+    app.include_router(router)
+
+    with TestClient(app) as client:
+        repository_id = client.post(
+            "/api/git/repositories/discover",
+            json={"workspace_id": "workspace-selected", "project_root": str(repo.path)},
+        ).json()["repositories"][0]["id"]
+        submitted = client.post(
+            f"/api/git/repositories/{repository_id}/commit",
+            json={
+                **_payload(repo, repository_id, "selected-commit-key"),
+                "workspace_id": "workspace-selected",
+                "message": "commit selected paths",
+                "paths": ["selected.txt", "new.txt"],
+                "untracked_paths": ["new.txt"],
+            },
+        )
+        result = _wait(client, submitted.json()["operation_id"])
+
+    assert result["state"] == "succeeded"
+    assert set(repo.run("show", "--pretty=format:", "--name-only", "HEAD").stdout.split()) == {
+        "selected.txt",
+        "new.txt",
+    }
+    assert repo.run("show", "HEAD:selected.txt").stdout == "selected changed\n"
+    assert repo.run("show", "HEAD:new.txt").stdout == "new selected file\n"
+    assert repo.run("diff", "--cached", "--name-only").stdout.strip() == "unrelated.txt"
+
+
 def test_commit_hook_failure_is_readable_and_preserves_staged_state(tmp_path: Path) -> None:
     repo = GitRepoFactory(tmp_path).create("api-hook-failure")
     repo.write("blocked.txt", "staged content\n")
     repo.run("add", "--", "blocked.txt")
+    repo.write("new.txt", "still untracked after hook failure\n")
     hook = repo.path / ".git" / "hooks" / "pre-commit"
     hook.write_text(
         "#!/bin/sh\necho 'Keydex policy rejected this commit' >&2\nexit 1\n",
@@ -91,12 +134,15 @@ def test_commit_hook_failure_is_readable_and_preserves_staged_state(tmp_path: Pa
                 **_payload(repo, repository_id, "hook-failure-key"),
                 "workspace_id": "workspace-hook",
                 "message": "blocked commit",
+                "paths": ["blocked.txt", "new.txt"],
+                "untracked_paths": ["new.txt"],
             },
         )
         result = _wait(client, submitted.json()["operation_id"])
         assert result["state"] == "failed"
         assert "Keydex policy rejected this commit" in result["result"]["error"]
         assert repo.run("diff", "--cached", "--name-only").stdout.strip() == "blocked.txt"
+        assert repo.run("status", "--porcelain", "--", "new.txt").stdout.startswith("??")
 
 
 def test_amend_requires_payload_bound_confirmation_and_returns_new_oid(tmp_path: Path) -> None:

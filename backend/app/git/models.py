@@ -605,6 +605,8 @@ class GitCommitCommandRequest(GitCommandRequest):
     message: str = Field(min_length=1, max_length=20_000)
     amend: bool = False
     sign: bool = False
+    paths: list[str] = Field(default_factory=list, max_length=1000)
+    untracked_paths: list[str] = Field(default_factory=list, max_length=1000)
 
     @field_validator("message")
     @classmethod
@@ -612,6 +614,19 @@ class GitCommitCommandRequest(GitCommandRequest):
         if not value.strip():
             raise ValueError("Commit message cannot be blank")
         return value.replace("\r\n", "\n")
+
+    @field_validator("paths", "untracked_paths")
+    @classmethod
+    def validate_commit_paths(cls, value: list[str]) -> list[str]:
+        from .security import validate_repo_relative_path
+
+        return list(dict.fromkeys(validate_repo_relative_path(path) for path in value))
+
+    @model_validator(mode="after")
+    def validate_untracked_paths_are_selected(self) -> GitCommitCommandRequest:
+        if not set(self.untracked_paths).issubset(self.paths):
+            raise ValueError("Untracked commit paths must also be selected commit paths")
+        return self
 
 
 class GitBranchCommandRequest(GitCommandRequest):

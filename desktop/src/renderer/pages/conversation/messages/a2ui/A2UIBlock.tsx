@@ -54,6 +54,7 @@ export interface A2UIBlockProps {
   onCancel?: A2UICancelHandler;
   debugInfoEnabled?: boolean;
   renderSuspended?: boolean;
+  playbackSuppressed?: boolean;
   children?: ReactNode;
 }
 
@@ -71,6 +72,7 @@ export interface ParsedA2UIMessage {
   streamText: string;
   parseError: string;
   historyHydrated: boolean;
+  playbackSuppressed?: boolean;
 }
 
 export const A2UIBlock = memo(function A2UIBlock(props: A2UIBlockProps) {
@@ -117,8 +119,28 @@ class A2UIBlockErrorBoundary extends Component<
   }
 }
 
-function A2UIBlockContent({ message, onSubmit, onCancel, debugInfoEnabled, children }: A2UIBlockProps) {
-  const rawParsed = useMemo(() => parseA2UIMessage(message), [message]);
+function A2UIBlockContent({
+  message,
+  onSubmit,
+  onCancel,
+  debugInfoEnabled,
+  playbackSuppressed = false,
+  children,
+}: A2UIBlockProps) {
+  const rawParsed = useMemo(() => {
+    const parsed = parseA2UIMessage(message);
+    if (!playbackSuppressed || parsed.historyHydrated) return parsed;
+    // Historical virtual units remain actionable, but replaying their motion
+    // and semantic stream timelines every time a recycled slot lands on them
+    // can leave many animation/worker jobs behind a fast seek. Downstream
+    // players already use historyHydrated as their settled-playback signal;
+    // preserve the original renderState so this does not make the card read-only.
+    return Object.freeze({
+      ...parsed,
+      historyHydrated: true,
+      playbackSuppressed: true,
+    });
+  }, [message, playbackSuppressed]);
   if (rawParsed.renderState.isFailed) {
     return <A2UIFailedAttemptPlaceholder parsed={rawParsed} />;
   }
@@ -231,6 +253,7 @@ function A2UIResolvedContent({
       data-outcome={parsed.renderState.outcome}
       data-presentation={parsed.renderState.presentation}
       data-interactive-ready={interactiveReady ? "true" : "false"}
+      data-a2ui-playback-suppressed={parsed.playbackSuppressed ? "true" : "false"}
       aria-label={`${renderKeyLabel(parsed.renderKey)} A2UI：${title}`}
     >
       <header className={styles.header}>
@@ -422,6 +445,7 @@ export function parseA2UIMessage(message: ConversationMessage): ParsedA2UIMessag
     streamText,
     parseError,
     historyHydrated,
+    playbackSuppressed: false,
   };
 }
 

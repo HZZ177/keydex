@@ -238,6 +238,8 @@ export interface GitCommitCommand extends GitCommandBase {
   message: string;
   amend?: boolean;
   sign?: boolean;
+  paths: string[];
+  untrackedPaths?: string[];
 }
 
 export interface GitBranchCommand extends GitCommandBase {
@@ -980,6 +982,7 @@ function commandPayload(command: GitCommandBase): Record<string, unknown> {
     payload.message = commit.message;
     payload.amend = commit.amend ?? false;
     payload.sign = commit.sign ?? false;
+    payload.untracked_paths = commit.untrackedPaths ?? [];
   }
   if ("branchName" in command) {
     const branch = command as GitBranchCommand & GitBranchDeleteCommand & GitUpstreamCommand;

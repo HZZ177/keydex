@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { groupGitChanges } from "@/renderer/features/git/changesTree";
+import { commitSelectionFromEntries, groupGitChanges } from "@/renderer/features/git/changesTree";
 import { changesVirtualWindow, GitChangesView } from "@/renderer/features/git/components/GitChangesView";
 import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@/runtime/gitTypes";
 
@@ -20,6 +20,18 @@ describe("Git changes tree", () => {
     expect(groups.find((group) => group.id === "staged")?.entries.some((entry) => entry.displayPath.includes("old.ts → src/new.ts"))).toBe(true);
     expect(groups.find((group) => group.id === "unstaged")?.entries.some((entry) => entry.binary)).toBe(true);
     expect(groups.find((group) => group.id === "staged")?.entries.some((entry) => entry.submodule)).toBe(true);
+  });
+
+  it("builds a direct commit scope from selected files and excludes conflicts and ignored files", () => {
+    const entries = groupGitChanges(status().files).flatMap((group) => group.entries);
+    const selection = commitSelectionFromEntries(entries);
+
+    expect(selection.paths).toContain("src/old.ts");
+    expect(selection.paths).toContain("src/new.ts");
+    expect(selection.untrackedPaths).toEqual(["new.txt"]);
+    expect(selection.paths).not.toContain("both.ts");
+    expect(selection.paths).not.toContain("ignored.log");
+    expect(selection.fileCount).toBe(5);
   });
 
   it("supports group and row selection and marks large fixtures for virtualization", () => {

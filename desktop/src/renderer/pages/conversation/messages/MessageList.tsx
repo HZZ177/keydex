@@ -39,13 +39,11 @@ import { WebActivityBlock, webActivityFromMessage } from "./WebActivityBlock";
 import { processMessages, type ProcessedMessageItem } from "./processMessages";
 import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnostics";
 import {
+  isLiveA2UIStreamMessage,
   projectConversationRenderUnits,
   type ConversationRenderUnit,
   type ConversationRenderTurn,
 } from "../timeline/ConversationRenderUnit";
-import {
-  ConversationNativeTimelineSurface,
-} from "../timeline/ConversationNativeTimelineSurface";
 import {
   ConversationTimelineSurface,
   type ConversationTimelineSurfaceHandle,
@@ -67,9 +65,9 @@ const LOAD_OLDER_ARM_PX = 120;
 const USER_SCROLL_SETTLE_MS = 180;
 const TURN_FOCUS_FLASH_DURATION_MS = 1300;
 const STREAMING_CURSOR_IDLE_DELAY_MS = 450;
-const CONVERSATION_NATIVE_MAX_TURNS = 120;
-const CONVERSATION_NATIVE_MAX_UNITS = 420;
-const CONVERSATION_NATIVE_MAX_A2UI_WEIGHT = 48;
+const CONVERSATION_HOT_TAIL_TURNS = 3;
+const CONVERSATION_HOT_TAIL_MAX_UNITS = 32;
+const EMPTY_CONVERSATION_UNIT_IDS: readonly string[] = Object.freeze([]);
 const MESSAGE_LIST_BOTTOM_BUFFER_PX: Readonly<Record<MessageListVariant, number>> = Object.freeze({
   full: 80,
   compact: 64,
@@ -236,22 +234,6 @@ export function MessageList({
   const a2uiRenderPressure = useMemo(() => calculateA2UIRenderPressure(displayBlocks), [displayBlocks]);
   const [visibleTurnIndexes, setVisibleTurnIndexes] = useState<Set<number>>(() => new Set());
   const conversationIdentity = conversationSessionIdentity(visibleMessages);
-  const preferredListMode = conversationListModeFor({
-    turnCount: displayTurns.length,
-    unitCount: timeline.runtimeUnits.length,
-    a2uiWeight: a2uiRenderPressure.weight,
-  });
-  const listModeDecisionRef = useRef<{ identity: string; mode: ConversationListMode }>({
-    identity: conversationIdentity,
-    mode: preferredListMode,
-  });
-  if (listModeDecisionRef.current.identity !== conversationIdentity) {
-    listModeDecisionRef.current = { identity: conversationIdentity, mode: preferredListMode };
-  }
-  // Never replace the active scroll surface merely because a live session
-  // crossed the threshold by one turn. The mode is recalculated when another
-  // conversation is opened, preserving scroll and interactive DOM continuity.
-  const listMode = listModeDecisionRef.current.mode;
   const externalTurnNavigationIndex = useMemo(
     () => resolveTurnNavigationIndex(turnNavigationRequest, displayTurns),
     [displayTurns, turnNavigationRequest],
@@ -314,10 +296,15 @@ export function MessageList({
     });
     return Object.freeze([
       topUnit,
-      ...timeline.runtimeUnits.map((unit) => Object.freeze({
-        ...unit,
-        renderVersion: `${unit.renderVersion}:${globalVersion}`,
-      })),
+      ...timeline.runtimeUnits.map((unit) => {
+        const activeFooterVersion = unit.kind === "footer" && unit.turnIndex === displayTurns.length - 1
+          ? turnEndStreamingCursor.activityKey
+          : "settled-footer";
+        return Object.freeze({
+          ...unit,
+          renderVersion: `${unit.renderVersion}:${globalVersion}:${activeFooterVersion}`,
+        });
+      }),
       bottomUnit,
     ]);
   }, [
@@ -325,6 +312,7 @@ export function MessageList({
     a2uiRenderSuspended,
     bottomBufferHeight,
     canLoadOlder,
+    displayTurns.length,
     flashingTurnIndex,
     isProcessing,
     loadingOlder,
@@ -332,16 +320,23 @@ export function MessageList({
     showOlderTrigger,
     timeline.runtimeUnits,
     topNotice,
+    turnEndStreamingCursor.activityKey,
     turnFirstTokenAtMs,
   ]);
   const hydrationCandidates = useMemo(
     () => buildConversationHydrationCandidates(displayItems, timeline.runtimeUnits),
     [displayItems, timeline.runtimeUnits],
   );
-  const nativeRuntimeUnits = useMemo(
-    () => Object.freeze(virtualRuntimeUnits.slice(1, -1)),
-    [virtualRuntimeUnits],
+  const hotTailUnitIds = useMemo(
+    () => tailUnitIds(
+      timeline.runtimeUnits,
+      displayTurns.length,
+      CONVERSATION_HOT_TAIL_TURNS,
+      CONVERSATION_HOT_TAIL_MAX_UNITS,
+    ),
+    [displayTurns.length, timeline.runtimeUnits],
   );
+  const residentTailUnitIds = autoScroll.shouldFollowTail ? hotTailUnitIds : EMPTY_CONVERSATION_UNIT_IDS;
   const hydrationSessionId = hydrationCandidates[0]?.sessionId ?? visibleMessages[0]?.threadId ?? "";
   const scrollControls = autoScroll;
   const scrollToConversationBottom = useCallback((behavior?: ScrollBehavior) => {
@@ -408,11 +403,6 @@ export function MessageList({
   }, [autoScroll.snapshot.bootstrapCommitted, displayTurns.length, setVisibleTurnIndexesIfChanged, showTurnNavigator]);
 
   const evaluateTailReadiness = useCallback(() => {
-    if (listMode === "native") {
-      if (virtualScrollerRef.current) virtualScrollerRef.current.dataset.tailReadiness = "ready";
-      autoScroll.setTailReady(true);
-      return;
-    }
     const runtime = conversationTimelineRef.current;
     const tailUnit = virtualRuntimeUnits.at(-2);
     if (!runtime || !tailUnit || tailUnit.id === "conversation-runtime:top") {
@@ -430,6 +420,7 @@ export function MessageList({
     const markdownReady = runtime.mountedUnitIds().every((unitId) => {
       const unit = unitsById.get(unitId);
       if (unit?.owner !== "markdown-runtime") return true;
+      if (renderMessage) return true;
       const unitElement = runtime.getUnitElement(unitId);
       if (!unitElement || unitElement.dataset.conversationUnitMeasurementPending) return false;
       const host = unitElement.querySelector<HTMLElement>(
@@ -441,7 +432,7 @@ export function MessageList({
       virtualScrollerRef.current.dataset.tailReadiness = markdownReady ? "ready" : "markdown-loading";
     }
     autoScroll.setTailReady(markdownReady);
-  }, [autoScroll.setTailReady, listMode, virtualRuntimeUnits]);
+  }, [autoScroll.setTailReady, renderMessage, virtualRuntimeUnits]);
   evaluateTailReadinessRef.current = evaluateTailReadiness;
 
   const scheduleTailReadinessCheck = useCallback(() => {
@@ -488,18 +479,40 @@ export function MessageList({
     conversationTimelineRef.current?.setUserScrollInteraction(true);
   }, []);
 
+  const suspendConversationHydration = useCallback(() => {
+    conversationHydrationRef.current?.suspend();
+    if (typeof window === "undefined") return;
+    if (hydrationIdleRef.current !== null && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(hydrationIdleRef.current);
+      hydrationIdleRef.current = null;
+    }
+    if (hydrationTimeoutRef.current !== null) {
+      window.clearTimeout(hydrationTimeoutRef.current);
+      hydrationTimeoutRef.current = null;
+    }
+  }, []);
+
   const handleControlledScrollbarInteraction = useCallback((active: boolean) => {
     nativeScrollbarDragRef.current = active;
     if (active) {
-      beginUserScrollInteraction();
+      suspendConversationHydration();
+      autoScroll.beginScrollbarDrag();
+      conversationTimelineRef.current?.setControlledScrollInteraction(true);
       conversationNavigation.recordUserScroll();
       return;
     }
-    finishUserScrollInteraction();
+    conversationTimelineRef.current?.setControlledScrollInteraction(false);
+    autoScroll.endScrollbarDrag();
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => updateVisibleVirtualTurns(virtualScrollerRef.current));
     }
-  }, [beginUserScrollInteraction, conversationNavigation, finishUserScrollInteraction, updateVisibleVirtualTurns]);
+  }, [
+    autoScroll.beginScrollbarDrag,
+    autoScroll.endScrollbarDrag,
+    conversationNavigation,
+    suspendConversationHydration,
+    updateVisibleVirtualTurns,
+  ]);
 
   const handleVirtualScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
@@ -565,16 +578,11 @@ export function MessageList({
   const handleConversationViewportChanged = useCallback(() => {
     scheduleTailReadinessCheck();
     if (autoScroll.snapshot.bootstrapCommitted) updateVisibleVirtualTurns(virtualScrollerRef.current);
-    conversationHydrationRef.current?.suspend();
+    suspendConversationHydration();
     if (typeof requestAnimationFrame !== "function") {
       updateConversationHydrationWindow();
       return;
     }
-    if (hydrationIdleRef.current !== null && typeof window.cancelIdleCallback === "function") {
-      window.cancelIdleCallback(hydrationIdleRef.current);
-      hydrationIdleRef.current = null;
-    }
-    if (hydrationTimeoutRef.current !== null) window.clearTimeout(hydrationTimeoutRef.current);
     // Debounce from the latest viewport change. Continuous wheel/scroll input
     // must never overlap speculative Markdown parsing.
     hydrationTimeoutRef.current = window.setTimeout(() => {
@@ -589,6 +597,7 @@ export function MessageList({
   }, [
     autoScroll.snapshot.bootstrapCommitted,
     scheduleTailReadinessCheck,
+    suspendConversationHydration,
     updateConversationHydrationWindow,
     updateVisibleVirtualTurns,
     virtualRuntimeUnits,
@@ -625,18 +634,6 @@ export function MessageList({
     scheduleUserScrollSettled();
     conversationNavigation.recordUserScroll();
   }, [beginUserScrollInteraction, conversationNavigation, scheduleUserScrollSettled]);
-
-  const handleNativePointerDown = useCallback(
-    (event: PointerEvent<HTMLDivElement>) => {
-      markNativeScrollbarDrag(event, event.currentTarget);
-      conversationNavigation.recordUserScroll();
-    },
-    [conversationNavigation, markNativeScrollbarDrag],
-  );
-
-  const handleNativeWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
-    if (event.deltaY !== 0) conversationNavigation.recordUserScroll();
-  }, [conversationNavigation]);
 
   const setHoveredAgentTurnFooter = useCallback((footer: HTMLElement | null) => {
     const current = hoveredAgentTurnFooterRef.current;
@@ -681,7 +678,7 @@ export function MessageList({
         return;
       }
       nativeScrollbarDragRef.current = false;
-      if (listMode === "virtual") scheduleUserScrollSettled();
+      scheduleUserScrollSettled();
       window.requestAnimationFrame(() => {
         updateVisibleVirtualTurns(virtualScrollerRef.current);
       });
@@ -694,7 +691,7 @@ export function MessageList({
       window.removeEventListener("pointercancel", finishNativeScrollbarDrag);
       window.removeEventListener("blur", finishNativeScrollbarDrag);
     };
-  }, [listMode, scheduleUserScrollSettled, updateVisibleVirtualTurns]);
+  }, [scheduleUserScrollSettled, updateVisibleVirtualTurns]);
 
   useEffect(() => {
     if (loading || !canLoadOlder) {
@@ -730,6 +727,7 @@ export function MessageList({
     if (userScrollSettleTimerRef.current !== null) window.clearTimeout(userScrollSettleTimerRef.current);
     userScrollInteractionRef.current = false;
     conversationTimelineRef.current?.setUserScrollInteraction(false);
+    conversationTimelineRef.current?.setControlledScrollInteraction(false);
   }, []);
 
   useEffect(() => {
@@ -844,7 +842,11 @@ export function MessageList({
         return false;
       }
       autoScroll.beginNavigation();
-      return conversationNavigation.requestNavigation({
+      // A direct jump must not keep a second island of expensive A2UI DOM at
+      // the tail. Release tail residency before mounting the destination;
+      // normal residency is restored when the user returns to the bottom.
+      conversationTimelineRef.current?.setResidentUnits(EMPTY_CONVERSATION_UNIT_IDS);
+      const revealed = conversationNavigation.requestNavigation({
         requestId: request?.requestId ?? `turn-navigator:${++navigationRequestSequenceRef.current}`,
         unitId,
         align: "start",
@@ -856,6 +858,7 @@ export function MessageList({
           if (request?.flash) triggerTurnFlash(index);
         },
       });
+      return revealed;
     },
     [
       autoScroll.beginNavigation,
@@ -914,6 +917,9 @@ export function MessageList({
       onResolveMcpElicitation,
       a2uiDebugInfoEnabled,
       a2uiRenderSuspended,
+      a2uiPlaybackSuppressed: unit.kind === "a2ui"
+        && unit.turnIndex !== null
+        && unit.turnIndex < displayTurns.length - CONVERSATION_HOT_TAIL_TURNS,
       onA2UISubmit,
       onA2UICancel,
       onFilePreview,
@@ -957,27 +963,11 @@ export function MessageList({
     workspaceScope,
   ]);
 
-  const messageListContent = listMode === "native" ? (
-    <ConversationNativeTimelineSurface
-      runtimeRef={conversationTimelineRef}
-      units={nativeRuntimeUnits}
-      before={<>{olderLoader}{renderedTopNotice}</>}
-      className={styles.scroller}
-      contentClassName={styles.list}
-      variant={variant}
-      scrollerRef={setConversationTimelineScroller}
-      onPointerDown={handleNativePointerDown}
-      onScroll={handleVirtualScroll}
-      onWheel={handleNativeWheel}
-      onPublished={handleConversationTimelinePublished}
-      onScrollRequest={autoScroll.applyScrollRequest}
-      followBottom={autoScroll.shouldFollowTail}
-      renderUnit={renderTimelineUnit}
-    />
-  ) : (
+  const messageListContent = (
     <ConversationTimelineSurface
       runtimeRef={conversationTimelineRef}
       units={virtualRuntimeUnits}
+      residentUnitIds={residentTailUnitIds}
       className={`${styles.scroller} ${styles.virtualScroller}`}
       canvasClassName={`${styles.list} ${styles.virtualList} ${styles.timelineRuntimeCanvas}`}
       overscanPx={CONVERSATION_TIMELINE_OVERSCAN_PX}
@@ -997,7 +987,7 @@ export function MessageList({
   const list = (
     <section
       className={styles.root}
-      data-list-mode={listMode}
+      data-list-mode="virtual"
       data-follow-mode={autoScroll.snapshot.mode}
       data-follow-reason={autoScroll.snapshot.reason}
       data-tail-bootstrap={autoScroll.snapshot.bootstrapCommitted ? "committed" : "pending"}
@@ -1040,14 +1030,14 @@ export function MessageList({
         </div>
       )}
 
-      {visibleMessages.length && listMode === "virtual" ? (
+      {visibleMessages.length ? (
         <ConversationScrollRail
           scrollElement={timelineScroller}
           onInteractionChange={handleControlledScrollbarInteraction}
         />
       ) : null}
 
-      {visibleMessages.length && listMode === "virtual" && !autoScroll.snapshot.bootstrapCommitted && showTailBootstrapSkeleton ? (
+      {visibleMessages.length && !autoScroll.snapshot.bootstrapCommitted && showTailBootstrapSkeleton ? (
         <div className={styles.bootstrapOverlay} data-testid="message-list-tail-bootstrap">
           <MessageSkeleton />
         </div>
@@ -1138,6 +1128,7 @@ function renderConversationRuntimeUnit({
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
   a2uiRenderSuspended,
+  a2uiPlaybackSuppressed,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -1165,6 +1156,7 @@ function renderConversationRuntimeUnit({
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled: boolean;
   a2uiRenderSuspended: boolean;
+  a2uiPlaybackSuppressed: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -1201,6 +1193,7 @@ function renderConversationRuntimeUnit({
           onResolveMcpElicitation,
           a2uiDebugInfoEnabled,
           a2uiRenderSuspended,
+          a2uiPlaybackSuppressed,
           onA2UISubmit,
           onA2UICancel,
           onFilePreview,
@@ -1301,6 +1294,7 @@ function renderConversationRuntimeUnit({
         onResolveMcpElicitation,
         a2uiDebugInfoEnabled,
         a2uiRenderSuspended,
+        a2uiPlaybackSuppressed,
         onA2UISubmit,
         onA2UICancel,
         onFilePreview,
@@ -1455,6 +1449,7 @@ function renderMessageItem({
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
   a2uiRenderSuspended,
+  a2uiPlaybackSuppressed = false,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -1482,6 +1477,7 @@ function renderMessageItem({
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled: boolean;
   a2uiRenderSuspended: boolean;
+  a2uiPlaybackSuppressed?: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -1509,6 +1505,7 @@ function renderMessageItem({
         onResolveMcpElicitation={onResolveMcpElicitation}
         a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
         a2uiRenderSuspended={a2uiRenderSuspended}
+        a2uiPlaybackSuppressed={a2uiPlaybackSuppressed}
         onA2UISubmit={onA2UISubmit}
         onA2UICancel={onA2UICancel}
         onFilePreview={onFilePreview}
@@ -1747,6 +1744,7 @@ function DefaultMessage({
   onResolveMcpElicitation,
   a2uiDebugInfoEnabled,
   a2uiRenderSuspended,
+  a2uiPlaybackSuppressed,
   onA2UISubmit,
   onA2UICancel,
   onFilePreview,
@@ -1766,6 +1764,7 @@ function DefaultMessage({
   onResolveMcpElicitation?: McpElicitationResolveHandler;
   a2uiDebugInfoEnabled?: boolean;
   a2uiRenderSuspended?: boolean;
+  a2uiPlaybackSuppressed?: boolean;
   onA2UISubmit?: A2UISubmitHandler;
   onA2UICancel?: A2UICancelHandler;
   onFilePreview?: (file: FileChangePreview) => void;
@@ -1826,6 +1825,7 @@ function DefaultMessage({
         message={message}
         debugInfoEnabled={a2uiDebugInfoEnabled}
         renderSuspended={a2uiRenderSuspended}
+        playbackSuppressed={a2uiPlaybackSuppressed}
         onSubmit={onA2UISubmit}
         onCancel={onA2UICancel}
       />
@@ -1965,25 +1965,6 @@ interface A2UIRenderPressure {
   weight: number;
 }
 
-export type ConversationListMode = "native" | "virtual";
-
-export function conversationListModeFor({
-  turnCount,
-  unitCount,
-  a2uiWeight,
-}: {
-  turnCount: number;
-  unitCount: number;
-  a2uiWeight: number;
-}): ConversationListMode {
-  const unusuallyExpensiveHistory = turnCount > 40 && a2uiWeight > CONVERSATION_NATIVE_MAX_A2UI_WEIGHT;
-  return turnCount <= CONVERSATION_NATIVE_MAX_TURNS
-    && unitCount <= CONVERSATION_NATIVE_MAX_UNITS
-    && !unusuallyExpensiveHistory
-    ? "native"
-    : "virtual";
-}
-
 function calculateA2UIRenderPressure(blocks: TimelineBlock[]): A2UIRenderPressure {
   let count = 0;
   let liveCount = 0;
@@ -2005,16 +1986,6 @@ function calculateA2UIRenderPressure(blocks: TimelineBlock[]): A2UIRenderPressur
     }
   }
   return { count, liveCount, weight };
-}
-
-function isLiveA2UIStreamMessage(message: ConversationMessage): boolean {
-  const a2ui = recordValue(message.payload.a2ui);
-  if (a2ui) {
-    return false;
-  }
-  const debug = recordValue(message.payload.a2uiDebug);
-  const status = stringRecordValue(debug?.status).toLowerCase();
-  return status === "started" || status === "streaming" || status === "finished";
 }
 
 function a2uiMessageRenderWeight(message: ConversationMessage): number {
@@ -2289,6 +2260,19 @@ function buildConversationTimeline(displayItems: ProcessedMessageItem[]): Conver
     runtimeBlockByUnitId,
     turnUnitIds: Object.freeze(turnUnitIds),
   };
+}
+
+function tailUnitIds(
+  units: readonly ConversationRenderUnit[],
+  turnCount: number,
+  tailTurns: number,
+  maxUnits = Number.POSITIVE_INFINITY,
+): readonly string[] {
+  const firstHotTurn = Math.max(0, turnCount - tailTurns);
+  const ids = units
+    .filter((unit) => unit.turnIndex !== null && unit.turnIndex >= firstHotTurn)
+    .map((unit) => unit.id);
+  return Object.freeze(Number.isFinite(maxUnits) ? ids.slice(-maxUnits) : ids);
 }
 
 function turnNavigationUnitPriority(kind: ConversationRenderUnit["kind"]): number {

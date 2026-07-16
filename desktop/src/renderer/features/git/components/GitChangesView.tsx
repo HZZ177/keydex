@@ -1,5 +1,5 @@
 import { ChevronDown, File, FileWarning, Folder, Package } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { groupGitChanges, uniqueSelectedChangePaths, type GitChangeEntry, type GitChangeGroup } from "@/renderer/features/git/changesTree";
 import type { GitStatusSnapshot } from "@/runtime/gitTypes";
@@ -14,6 +14,7 @@ export interface GitChangesViewProps {
   virtualizationThreshold?: number;
   viewportHeight?: number;
   onSelectionChange?: (paths: readonly string[], entries: readonly GitChangeEntry[]) => void;
+  selectionResetKey?: number;
   onStagePaths?: (paths: readonly string[]) => void | Promise<void>;
   staging?: boolean;
   onUnstagePaths?: (paths: readonly string[]) => void | Promise<void>;
@@ -31,6 +32,7 @@ export function GitChangesView({
   virtualizationThreshold = GIT_CHANGES_VIRTUALIZATION_THRESHOLD,
   viewportHeight = 520,
   onSelectionChange,
+  selectionResetKey = 0,
   onStagePaths,
   staging = false,
   onUnstagePaths,
@@ -80,6 +82,10 @@ export function GitChangesView({
     new Set(Array.from(selectedIds).filter((id) => untrackedIds.has(id))),
   );
   const ignorablePaths = Array.from(new Set([...discardablePaths, ...cleanablePaths])).sort();
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [selectionResetKey]);
 
   const updateSelection = (next: Set<string>) => {
     setSelectedIds(next);

@@ -119,6 +119,26 @@ describe("composer draft store", () => {
     expect(store.getDraft(newWorkspace).text).toBe("新会话草稿");
   });
 
+  it("persists folded paste ranges without duplicating their raw text", () => {
+    const storage = new MemoryStorage();
+    const scope = composerSessionDraftScope("ses-paste");
+    const text = `0123456789${"x".repeat(180)}ABCDEFGHIJ`;
+    const store = createComposerDraftStore({ storage, persistDelayMs: 0 });
+
+    store.updateDraft(scope, {
+      text,
+      pastedTextFragments: [{ id: "paste-1", start: 0, end: text.length, collapsed: true }],
+    });
+    store.flush();
+
+    const restored = createComposerDraftStore({ storage }).getDraft(scope);
+    expect(restored.text).toBe(text);
+    expect(restored.pastedTextFragments).toEqual([
+      { id: "paste-1", start: 0, end: text.length, collapsed: true },
+    ]);
+    expect(storage.getItem(COMPOSER_DRAFT_STORAGE_KEY)?.match(new RegExp(text, "g"))?.length).toBe(1);
+  });
+
   it("ignores malformed or incompatible persisted data", () => {
     const storage = new MemoryStorage();
     storage.setItem(COMPOSER_DRAFT_STORAGE_KEY, JSON.stringify({ version: 999, drafts: { "session:ses-1": {} } }));

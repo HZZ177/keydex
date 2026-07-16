@@ -229,6 +229,26 @@ export class ConversationFollowController {
     if (next === "following-bottom") this.notifyContentMutation("timeline-publish");
   }
 
+  beginScrollbarDrag(reason = "scrollbar-drag"): void {
+    this.assertActive();
+    this.cancelScheduledScroll();
+    this.userIntent = true;
+    this.scrollbarDrag = true;
+    this.bootstrapCommitted = true;
+    if (this.mode === "following-bottom" || this.mode === "bootstrapping-tail") {
+      this.transition("user-detached", reason);
+    } else this.emit();
+  }
+
+  endScrollbarDrag(): void {
+    this.assertActive();
+    this.scrollbarDrag = false;
+    if (this.atBottom() && this.autoFollow && this.mode === "user-detached") {
+      this.userIntent = false;
+      this.transition("following-bottom", "scrollbar-drag-ended-at-bottom");
+    }
+  }
+
   suspend(reason: string): void {
     this.assertActive();
     if (this.mode !== "suspended") this.temporaryPreviousMode = this.mode;
@@ -328,14 +348,11 @@ export class ConversationFollowController {
   private readonly handlePointerDown = (event: Event) => {
     const element = this.element;
     if (!element || !isScrollbarPointerStart(event, element)) return;
-    this.cancelScheduledScroll();
-    this.userIntent = true;
-    this.scrollbarDrag = true;
-    if (this.mode === "following-bottom") this.transition("user-detached", "scrollbar-drag");
+    this.beginScrollbarDrag();
   };
 
   private readonly finishPointerIntent = () => {
-    this.scrollbarDrag = false;
+    this.endScrollbarDrag();
   };
 
   private readonly handleScroll = (event: Event) => {

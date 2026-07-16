@@ -77,6 +77,85 @@
   word-break: break-word;
 }
 
+.richInput [data-sendbox-pasted-text="true"] {
+  display: inline;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+}
+
+.richInput [data-sendbox-pasted-text="true"][data-collapsed="true"] {
+  cursor: pointer;
+}
+
+.richInput [data-paste-summary="true"] {
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+}
+
+.richInput [data-paste-summary-omission="true"] {
+  color: var(--color-text-tertiary);
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+  text-underline-offset: 3px;
+  transition:
+    color 140ms ease,
+    text-decoration-color 140ms ease;
+}
+
+.richInput [data-paste-summary="true"]:focus-visible,
+.richInput [data-paste-toggle="true"]:focus-visible {
+  border-radius: 2px;
+  outline: 1px dotted currentColor;
+  outline-offset: 1px;
+}
+
+.richInput [data-paste-toggle-position] {
+  color: var(--color-text-tertiary);
+  font: inherit;
+  line-height: inherit;
+  transition: color 140ms ease;
+}
+
+.richInput [data-sendbox-pasted-text="true"][data-collapsed="true"] [data-paste-toggle-position="trailing"] {
+  cursor: pointer;
+  text-decoration: underline dotted color-mix(in srgb, currentColor 55%, transparent);
+  text-underline-offset: 3px;
+}
+
+.richInput [data-sendbox-pasted-text="true"][data-collapsed="true"]:hover [data-paste-summary-omission="true"],
+.richInput [data-sendbox-pasted-text="true"][data-collapsed="true"]:focus-within [data-paste-summary-omission="true"],
+.richInput [data-sendbox-pasted-text="true"] [data-paste-toggle-position]:hover,
+.richInput [data-sendbox-pasted-text="true"] [data-paste-toggle-position]:focus-visible {
+  color: var(--color-text-secondary);
+  text-decoration-color: currentColor;
+}
+
+.richInput [data-sendbox-pasted-text="true"][data-collapsed="false"] [data-paste-toggle-position] {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.richInput [data-sendbox-pasted-text="true"][data-collapsed="true"] [data-paste-raw="true"],
+.richInput [data-sendbox-pasted-text="true"][data-collapsed="false"] [data-paste-summary="true"] {
+  display: none;
+}
+
+.richInput [data-sendbox-pasted-text="true"][data-collapsed="false"] [data-paste-raw="true"] {
+  display: inline;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
 .richInput:empty::before,
 .richInput[data-empty="true"]::before {
   position: absolute;

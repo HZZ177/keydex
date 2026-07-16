@@ -112,6 +112,7 @@ describe("GitToolWindow", () => {
     expect(screen.getByTestId("git-tool-window").dataset.layout).toBe("maximized");
     const changesTab = screen.getByRole("tab", { name: "本地改动" });
     expect(changesTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tabpanel", { name: "本地改动" }).getAttribute("data-view")).toBe("changes");
     changesTab.focus();
     fireEvent.keyDown(changesTab, { key: "ArrowRight" });
     const historyTab = screen.getByRole("tab", { name: "提交历史" });

@@ -10,6 +10,7 @@ import {
 import {
   agentAttachmentFromSelected,
   selectedQuoteFromText,
+  type PastedTextFragment,
   type SendBoxExternalQuoteRequest,
   type SelectedFile,
   type SelectedImageAttachment,
@@ -522,12 +523,17 @@ export function ConversationSessionSurface({
 
   const handleDraftChange = useCallback(
     (value: string) => {
-      setDraft(value);
+      controller.setComposerDraft({ text: value });
       if (goalError) {
         setGoalError(null);
       }
     },
-    [goalError, setDraft],
+    [controller.setComposerDraft, goalError],
+  );
+  const handlePastedTextFragmentsChange = useCallback(
+    (pastedTextFragments: PastedTextFragment[], value: string) =>
+      controller.setComposerDraft({ text: value, pastedTextFragments }),
+    [controller.setComposerDraft],
   );
 
   const openBtwConversation = useCallback(() => {
@@ -863,6 +869,7 @@ export function ConversationSessionSurface({
         selectedFiles={composerDraft.files}
         selectedQuotes={composerDraft.quotes}
         selectedImageAttachments={composerDraft.attachments}
+        pastedTextFragments={composerDraft.pastedTextFragments}
         runtime={runtime}
         sessionId={threadId}
         fileAccessMode={fileAccessMode}
@@ -874,6 +881,7 @@ export function ConversationSessionSurface({
         onSelectedFilesChange={(files) => controller.setComposerDraft({ files })}
         onSelectedQuotesChange={(quotes) => controller.setComposerDraft({ quotes })}
         onSelectedImageAttachmentsChange={(attachments) => controller.setComposerDraft({ attachments })}
+        onPastedTextFragmentsChange={handlePastedTextFragmentsChange}
         onSkillChange={setSelectedSkill}
         onSend={sendFromComposer}
         onStop={controller.stop}

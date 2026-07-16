@@ -1,7 +1,8 @@
-.root { display: grid; gap: 5px; padding: 7px 9px 8px; border-top: 1px solid var(--color-border-2); background: var(--color-bg-1); }
+.root { display: grid; min-height: 0; height: 100%; grid-template-rows: auto minmax(0, 1fr) auto; gap: 5px; padding: 7px 9px 8px; overflow: hidden; border-top: 1px solid var(--color-border-2); background: var(--color-bg-1); }
 .root header, .root footer, .meta { display: flex; align-items: center; gap: 7px; }
 .root header strong { font-size: 11px; }
 .root header span { margin-left: auto; color: var(--color-text-3); font-size: 10px; }
+.body { display: grid; min-height: 0; align-content: start; gap: 5px; overflow-y: auto; scrollbar-width: thin; }
 .root textarea { min-height: 62px; max-height: 160px; resize: vertical; padding: 7px 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); outline: 0; background: var(--color-bg-1); color: var(--color-text-1); font-family: var(--font-sans); font-size: 11px; line-height: 1.5; }
 .root textarea:focus { border-color: var(--color-accent-1); }
 .meta { justify-content: space-between; color: var(--color-text-3); font-size: 9px; }
@@ -11,10 +12,11 @@
 .amendPreview { display: grid; gap: 4px; padding: 8px 10px; border-left: 2px solid var(--status-warning, #d49b42); background: color-mix(in srgb, var(--status-warning, #d49b42) 8%, transparent); }
 .amendPreview span, .amendPreview small { color: var(--color-text-3); }
 .amendPreview label { display: inline-flex; align-items: center; gap: 4px; }
-.root footer { flex-wrap: wrap; }
+.root footer { min-height: 31px; flex: 0 0 auto; flex-wrap: wrap; justify-content: space-between; padding-top: 5px; border-top: 1px solid var(--color-border-2); background: var(--color-bg-1); }
+.options, .actions { display: flex; align-items: center; gap: 7px; }
+.actions { margin-left: auto; }
 .root footer label { display: inline-flex; align-items: center; gap: 3px; color: var(--color-text-3); font-size: 10px; }
-.root footer button { display: inline-flex; min-height: 27px; margin-left: auto; align-items: center; gap: 4px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: var(--color-accent-1); color: white; cursor: pointer; font-size: 10px; }
-.root footer button + button { margin-left: 0; }
+.root footer button { display: inline-flex; min-height: 27px; flex: 0 0 auto; align-items: center; gap: 4px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: var(--color-accent-1); color: white; cursor: pointer; font-size: 10px; white-space: nowrap; }
 .root footer button:disabled { cursor: default; opacity: 0.45; }
 .identity { display: flex; align-items: center; gap: 6px; color: var(--color-text-3); font-size: 10px; }
 .identity[data-ready="false"] { color: var(--color-danger, #d14343); }

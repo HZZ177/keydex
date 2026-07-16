@@ -23,6 +23,7 @@ import {
 } from "@/runtime";
 import {
   agentAttachmentFromSelected,
+  type PastedTextFragment,
   type SelectedFile,
   type SelectedImageAttachment,
   type SelectedQuote,
@@ -238,6 +239,7 @@ export function WorkbenchAssistantSurface({
   const composerFiles = controller.composerDraft.files;
   const composerQuotes = controller.composerDraft.quotes;
   const composerAttachments = controller.composerDraft.attachments;
+  const composerPastedTextFragments = controller.composerDraft.pastedTextFragments;
   const setComposerFiles = useCallback(
     (files: SelectedFile[]) => controller.setComposerDraft({ files }),
     [controller.setComposerDraft],
@@ -998,12 +1000,17 @@ export function WorkbenchAssistantSurface({
 
   const handleComposerChange = useCallback(
     (value: string) => {
-      controller.setDraft(value);
+      controller.setComposerDraft({ text: value });
       if (goalError) {
         setGoalError(null);
       }
     },
     [controller, goalError],
+  );
+  const handlePastedTextFragmentsChange = useCallback(
+    (pastedTextFragments: PastedTextFragment[], value: string) =>
+      controller.setComposerDraft({ text: value, pastedTextFragments }),
+    [controller.setComposerDraft],
   );
 
   const closeGoalComposer = useCallback(() => {
@@ -1484,6 +1491,7 @@ export function WorkbenchAssistantSurface({
       selectedFiles={composerFiles}
       selectedQuotes={composerQuotes}
       selectedImageAttachments={composerAttachments}
+      pastedTextFragments={composerPastedTextFragments}
       selectedSkill={controller.selectedSkill}
       runtime={runtime}
       sessionId={panelSessionId}
@@ -1508,6 +1516,7 @@ export function WorkbenchAssistantSurface({
       onSelectedFilesChange={setComposerFiles}
       onSelectedQuotesChange={setComposerQuotes}
       onSelectedImageAttachmentsChange={setComposerAttachments}
+      onPastedTextFragmentsChange={handlePastedTextFragmentsChange}
       onChange={handleComposerChange}
       onSkillChange={controller.setSelectedSkill}
       onSubmitApproval={controller.submitApproval}
@@ -2808,6 +2817,7 @@ function WorkbenchComposer({
   selectedFiles,
   selectedQuotes,
   selectedImageAttachments,
+  pastedTextFragments,
   selectedSkill,
   runtime,
   sessionId,
@@ -2830,6 +2840,7 @@ function WorkbenchComposer({
   onSelectedFilesChange,
   onSelectedQuotesChange,
   onSelectedImageAttachmentsChange,
+  onPastedTextFragmentsChange,
   onChange,
   onSkillChange,
   onSubmitApproval,
@@ -2856,6 +2867,7 @@ function WorkbenchComposer({
   selectedFiles: SelectedFile[];
   selectedQuotes: SelectedQuote[];
   selectedImageAttachments: SelectedImageAttachment[];
+  pastedTextFragments: PastedTextFragment[];
   selectedSkill: SkillSummary | null;
   runtime: RuntimeBridge;
   sessionId?: string | null;
@@ -2878,6 +2890,7 @@ function WorkbenchComposer({
   onSelectedFilesChange: (files: SelectedFile[]) => void;
   onSelectedQuotesChange: (quotes: SelectedQuote[]) => void;
   onSelectedImageAttachmentsChange: (attachments: SelectedImageAttachment[]) => void;
+  onPastedTextFragmentsChange: (fragments: PastedTextFragment[], value: string) => void;
   onChange: (value: string) => void;
   onSkillChange: (skill: SkillSummary | null) => void;
   onSubmitApproval: AgentSessionController["submitApproval"];
@@ -2925,6 +2938,7 @@ function WorkbenchComposer({
       selectedFiles={selectedFiles}
       selectedQuotes={selectedQuotes}
       selectedImageAttachments={selectedImageAttachments}
+      pastedTextFragments={pastedTextFragments}
       selectedSkill={selectedSkill}
       runtime={runtime}
       sessionId={sessionId}
@@ -2947,6 +2961,7 @@ function WorkbenchComposer({
       onSelectedFilesChange={onSelectedFilesChange}
       onSelectedQuotesChange={onSelectedQuotesChange}
       onSelectedImageAttachmentsChange={onSelectedImageAttachmentsChange}
+      onPastedTextFragmentsChange={onPastedTextFragmentsChange}
       onChange={onChange}
       onSkillChange={onSkillChange}
       onSend={onSend}

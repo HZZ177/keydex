@@ -40,6 +40,8 @@ export class ConversationNavigationController {
   private pendingNavigation: ConversationTurnNavigationIntent | null = null;
   private pendingPrepend: PendingPrepend | null = null;
   private activeNavigationAnchor: ConversationTimelineAnchor | null = null;
+  private navigationStabilizationsRemaining = 0;
+  private revealInProgress = false;
   private sequence = 0;
   private userGeneration = 0;
   private completedNavigationId: string | number | null = null;
@@ -93,7 +95,14 @@ export class ConversationNavigationController {
 
   requestNavigation(intent: ConversationTurnNavigationIntent): boolean {
     this.assertActive();
-    if (this.completedNavigationId === intent.requestId && !this.pendingNavigation) return true;
+    if (this.completedNavigationId === intent.requestId && !this.pendingNavigation) {
+      intent.onRevealed?.(intent);
+      return true;
+    }
+    // A new request owns the viewport immediately. Publications left over from
+    // the previous target must not restore its anchor during the next reveal.
+    this.activeNavigationAnchor = null;
+    this.navigationStabilizationsRemaining = 0;
     this.pendingNavigation = Object.freeze({ ...intent });
     this.sequence += 1;
     return this.tryRevealPending();
@@ -101,11 +110,11 @@ export class ConversationNavigationController {
 
   onTimelinePublished(): void {
     this.assertActive();
+    // revealUnit can synchronously mount React roots and publish measurements.
+    // Never re-enter the same pending reveal from that publication.
+    if (this.revealInProgress) return;
     if (this.pendingNavigation && this.tryRevealPending()) return;
     if (this.completePrepend()) return;
-    if (this.activeNavigationAnchor && this.target?.restoreAnchor(this.activeNavigationAnchor)) {
-      this.navigationStabilizations += 1;
-    }
   }
 
   recordUserScroll(): void {
@@ -117,6 +126,7 @@ export class ConversationNavigationController {
     }
     this.pendingNavigation = null;
     this.activeNavigationAnchor = null;
+    this.navigationStabilizationsRemaining = 0;
   }
 
   cancelNavigation(requestId?: string | number): boolean {
@@ -149,17 +159,40 @@ export class ConversationNavigationController {
     this.pendingNavigation = null;
     this.pendingPrepend = null;
     this.activeNavigationAnchor = null;
+    this.navigationStabilizationsRemaining = 0;
+    this.revealInProgress = false;
   }
 
   private tryRevealPending(): boolean {
+    if (this.revealInProgress) return false;
     const intent = this.pendingNavigation;
     const target = this.target;
     if (!intent || !target) return false;
-    this.revealAttempts += 1;
-    if (!target.revealUnit(intent.unitId, intent.align ?? "center")) return false;
+    const revealSequence = this.sequence;
+    // Claim the intent before invoking external code. Leaving it pending here
+    // allows a synchronous publication to recursively reveal it forever.
     this.pendingNavigation = null;
+    this.revealInProgress = true;
+    this.revealAttempts += 1;
+    let revealed = false;
+    try {
+      revealed = target.revealUnit(intent.unitId, intent.align ?? "center");
+    } finally {
+      this.revealInProgress = false;
+    }
+    if (!revealed) {
+      if (this.sequence === revealSequence && !this.pendingNavigation) this.pendingNavigation = intent;
+      return false;
+    }
+    // A newer request may have been queued synchronously by the reveal target.
+    // Only the latest request may capture an anchor or run completion effects.
+    if (this.sequence !== revealSequence) return this.tryRevealPending();
     this.completedNavigationId = intent.requestId;
-    this.activeNavigationAnchor = target.captureAnchor(0);
+    // revealUnit already patches and writes the exact indexed destination.
+    // Capturing it again and restoring on later ResizeObserver publications
+    // produces a second visible scroll after the target's first frame.
+    this.activeNavigationAnchor = null;
+    this.navigationStabilizationsRemaining = 0;
     this.revealSuccesses += 1;
     intent.onRevealed?.(intent);
     return true;

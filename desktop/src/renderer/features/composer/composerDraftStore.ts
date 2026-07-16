@@ -2,6 +2,10 @@ import type { SkillSummary } from "@/runtime";
 import type { SelectedFile } from "@/renderer/components/chat/SendBox/fileSelection";
 import type { SelectedImageAttachment } from "@/renderer/components/chat/SendBox/imageAttachments";
 import type { SelectedQuote } from "@/renderer/components/chat/SendBox/quoteSelection";
+import {
+  normalizePastedTextFragments,
+  type PastedTextFragment,
+} from "@/renderer/components/chat/SendBox/collapsiblePaste";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "keydex.composer-drafts.v1";
 export const COMPOSER_DRAFT_SCHEMA_VERSION = 1;
@@ -12,6 +16,7 @@ const DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface ComposerDraft {
   text: string;
+  pastedTextFragments: PastedTextFragment[];
   selectedSkill: SkillSummary | null;
   files: SelectedFile[];
   quotes: SelectedQuote[];
@@ -48,6 +53,7 @@ export interface ComposerDraftStore {
 
 export const EMPTY_COMPOSER_DRAFT: ComposerDraft = Object.freeze({
   text: "",
+  pastedTextFragments: [],
   selectedSkill: null,
   files: [],
   quotes: [],
@@ -224,8 +230,10 @@ function writePersistedDrafts(
 }
 
 function normalizeDraft(draft: ComposerDraft, updatedAt: number): ComposerDraft {
+  const text = typeof draft.text === "string" ? draft.text : "";
   return {
-    text: typeof draft.text === "string" ? draft.text : "",
+    text,
+    pastedTextFragments: normalizePastedTextFragments(text, draft.pastedTextFragments),
     selectedSkill: normalizeSkill(draft.selectedSkill),
     files: recordArray<SelectedFile>(draft.files),
     quotes: recordArray<SelectedQuote>(draft.quotes),
@@ -243,8 +251,10 @@ function decodeDraft(value: unknown): ComposerDraft | null {
   if (!updatedAt) {
     return null;
   }
+  const text = typeof raw.text === "string" ? raw.text : "";
   return {
-    text: typeof raw.text === "string" ? raw.text : "",
+    text,
+    pastedTextFragments: normalizePastedTextFragments(text, raw.pastedTextFragments),
     selectedSkill: normalizeSkill(raw.selectedSkill),
     files: recordArray<SelectedFile>(raw.files),
     quotes: recordArray<SelectedQuote>(raw.quotes),
@@ -256,6 +266,7 @@ function decodeDraft(value: unknown): ComposerDraft | null {
 function persistableDraft(draft: ComposerDraft): ComposerDraft {
   return {
     ...draft,
+    pastedTextFragments: draft.pastedTextFragments.map((fragment) => ({ ...fragment })),
     files: draft.files.map((file) => ({ ...file })),
     quotes: draft.quotes.map((quote) => ({ ...quote })),
     attachments: draft.attachments.map(stripAttachmentPreview),

@@ -6,6 +6,7 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type CSSProperties,
   type ReactNode,
   type SetStateAction,
@@ -74,6 +75,24 @@ import {
   type SelectedQuote,
 } from "./quoteSelection";
 import { useCompositionInput, type SendBoxSubmitOptions } from "./useCompositionInput";
+import {
+  PASTED_TEXT_FRAGMENT_SELECTOR,
+  PASTED_TEXT_RAW_SELECTOR,
+  closestPastedTextFragment,
+  createPastedTextFragmentElement,
+  createPastedTextFragmentId,
+  isPastedTextToggle,
+  normalizePastedText,
+  normalizePastedTextFragments,
+  readPastedTextAwareDocument,
+  readPastedTextSelection,
+  rebasePastedTextFragments,
+  samePastedTextFragments,
+  setPastedTextElementCollapsed,
+  shouldCollapsePastedText,
+  type PastedTextDocument,
+  type PastedTextFragment,
+} from "./collapsiblePaste";
 
 const LazyAtFileMenu = lazy(() =>
   import("@/renderer/components/chat/AtFileMenu/AtFileMenu").then((module) => ({
@@ -113,6 +132,7 @@ export interface SendBoxProps {
   selectedFiles?: SelectedFile[];
   selectedQuotes?: SelectedQuote[];
   selectedImageAttachments?: SelectedImageAttachment[];
+  pastedTextFragments?: PastedTextFragment[];
   leftHint?: ReactNode;
   allowBypassConversationSlashCommand?: boolean;
   allowGoalSlashCommand?: boolean;
@@ -123,6 +143,7 @@ export interface SendBoxProps {
   onSelectedFilesChange?: (files: SelectedFile[]) => void;
   onSelectedQuotesChange?: (quotes: SelectedQuote[]) => void;
   onSelectedImageAttachmentsChange?: (attachments: SelectedImageAttachment[]) => void;
+  onPastedTextFragmentsChange?: (fragments: PastedTextFragment[], value: string) => void;
   onSkillChange?: (skill: SkillSummary | null) => void;
   onChange: (value: string) => void;
   onSend: (
@@ -196,6 +217,7 @@ export function SendBox({
   selectedFiles: controlledSelectedFiles,
   selectedQuotes: controlledSelectedQuotes,
   selectedImageAttachments: controlledImageAttachments,
+  pastedTextFragments: controlledPastedTextFragments = [],
   leftHint = null,
   allowBypassConversationSlashCommand = true,
   allowGoalSlashCommand = true,
@@ -206,6 +228,7 @@ export function SendBox({
   onSelectedFilesChange,
   onSelectedQuotesChange,
   onSelectedImageAttachmentsChange,
+  onPastedTextFragmentsChange,
   onSkillChange,
   onChange,
   onSend,
@@ -259,6 +282,10 @@ export function SendBox({
   );
   const notifications = useNotifications();
   const editorValue = value;
+  const pastedTextFragments = useMemo(
+    () => normalizePastedTextFragments(editorValue, controlledPastedTextFragments),
+    [controlledPastedTextFragments, editorValue],
+  );
   const busy = isBusy(runtimeState);
   const inputDisabled = disabled || (busy && !canTypeWhileBusy(runtimeState));
   const canUseFileContext = allowFileSelection && fileAccessMode !== "no_file_access";
@@ -274,6 +301,19 @@ export function SendBox({
       ? uncontrolledQuoteSelection
       : { quotes: controlledSelectedQuotes };
   const imageAttachments = controlledImageAttachments ?? uncontrolledImageAttachments;
+  const emitEditorChange = useCallback(
+    (nextValue: string, nextFragments: PastedTextFragment[]) => {
+      onPastedTextFragmentsChange?.(nextFragments, nextValue);
+      onChange(nextValue);
+    },
+    [onChange, onPastedTextFragmentsChange],
+  );
+  const commitProgrammaticEditorValue = useCallback(
+    (nextValue: string) => {
+      emitEditorChange(nextValue, rebasePastedTextFragments(editorValue, nextValue, pastedTextFragments));
+    },
+    [editorValue, emitEditorChange, pastedTextFragments],
+  );
   const setImageAttachments = useCallback(
     (update: SetStateAction<SelectedImageAttachment[]>) => {
       if (controlledImageAttachments === undefined) {
@@ -729,7 +769,7 @@ export function SendBox({
       setSlashMode("skills");
       setSlashActiveIndex(0);
       if (slashQuery && slashSkills.length === 0) {
-        onChange(replaceSlashQuery(editorValue, "/"));
+        commitProgrammaticEditorValue(replaceSlashQuery(editorValue, "/"));
       }
       return;
     }
@@ -742,10 +782,10 @@ export function SendBox({
       setSlashMode("root");
       const nextValue = removeSlashQuery(editorValue);
       setDismissedSlashValue(nextValue);
-      onChange(nextValue);
+      commitProgrammaticEditorValue(nextValue);
       return;
     }
-    onChange(replaceSlashQuery(editorValue, `${command.label} `));
+    commitProgrammaticEditorValue(replaceSlashQuery(editorValue, `${command.label} `));
   };
 
   const selectSlashSkill = (skill: SkillSummary) => {
@@ -755,14 +795,14 @@ export function SendBox({
     setSlashMode("root");
     const nextValue = removeSlashQuery(editorValue);
     setDismissedSlashValue(editorValue);
-    onChange(nextValue);
+    commitProgrammaticEditorValue(nextValue);
   };
 
   const navigateSlashRoot = () => {
     setSlashMode("root");
     setSlashActiveIndex(0);
     if (slashQuery) {
-      onChange(replaceSlashQuery(editorValue, "/"));
+      commitProgrammaticEditorValue(replaceSlashQuery(editorValue, "/"));
     }
   };
 
@@ -771,7 +811,7 @@ export function SendBox({
     const nextValue = removeAtQuery(editorValue);
     setAtBrowseState(null);
     setDismissedAtValue(nextValue);
-    onChange(nextValue);
+    commitProgrammaticEditorValue(nextValue);
   };
 
   const navigateAtDirectory = (path: string) => {
@@ -1054,6 +1094,132 @@ export function SendBox({
     void addFiles(event.dataTransfer.files, "dropped");
   };
 
+  const commitEditableDocument = useCallback(
+    (editor: HTMLDivElement) => {
+      removeEmptyPastedTextFragments(editor);
+      const document = readEditorDocument(editor);
+      editor.dataset.empty = document.value ? "false" : "true";
+      emitEditorChange(document.value, document.fragments);
+      return document;
+    },
+    [emitEditorChange],
+  );
+
+  const togglePastedTextFragment = useCallback(
+    (editor: HTMLDivElement, fragment: HTMLElement, target?: EventTarget | null) => {
+      const wasCollapsed = fragment.dataset.collapsed !== "false";
+      const targetElement = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+      const collapseBeforeFragment = Boolean(
+        targetElement?.closest('[data-paste-toggle-position="leading"]'),
+      );
+      setPastedTextElementCollapsed(fragment, !wasCollapsed);
+      commitEditableDocument(editor);
+      if (wasCollapsed) {
+        placeCaretInsidePastedTextRaw(editor, fragment);
+      } else {
+        editor.focus({ preventScroll: true });
+        placeCaretAtNodeBoundary(editor, fragment, !collapseBeforeFragment);
+      }
+      resizeEditableInput(editor);
+      window.requestAnimationFrame(() => resizeEditableInput(editor));
+    },
+    [commitEditableDocument],
+  );
+
+  const handleEditorClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      const fragment = closestPastedTextFragment(event.target);
+      if (!fragment || !event.currentTarget.contains(fragment)) {
+        return;
+      }
+      if (fragment.dataset.collapsed !== "false" || isPastedTextToggle(event.target)) {
+        event.preventDefault();
+        togglePastedTextFragment(event.currentTarget, fragment, event.target);
+      }
+    },
+    [togglePastedTextFragment],
+  );
+
+  const handleEditorMouseDown = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const fragment = closestPastedTextFragment(event.target);
+    if (!fragment || !event.currentTarget.contains(fragment)) {
+      return;
+    }
+    if (fragment.dataset.collapsed === "false" && !isPastedTextToggle(event.target)) {
+      return;
+    }
+    // Keep focus on the editing host. Otherwise Ctrl+A/C/X is handled as a
+    // page shortcut when a non-editable summary or boundary owns focus.
+    event.preventDefault();
+    event.currentTarget.focus({ preventScroll: true });
+  }, []);
+
+  const handleEditorBeforeInput = useCallback(
+    (event: FormEvent<HTMLDivElement>) => {
+      const inputType = (event.nativeEvent as InputEvent).inputType;
+      if (inputType !== "deleteContentBackward" && inputType !== "deleteContentForward") {
+        return;
+      }
+      const selection = window.getSelection();
+      if (!selection?.rangeCount || !selection.isCollapsed) {
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const fragment = adjacentPastedTextFragment(
+        event.currentTarget,
+        range,
+        inputType === "deleteContentBackward" ? "backward" : "forward",
+      );
+      if (!fragment) {
+        return;
+      }
+      event.preventDefault();
+      const caretAnchor = fragment.previousSibling ?? fragment.nextSibling ?? event.currentTarget;
+      const caretAfterAnchor = Boolean(fragment.previousSibling);
+      fragment.remove();
+      placeCaretAtNodeBoundary(event.currentTarget, caretAnchor, caretAfterAnchor);
+      commitEditableDocument(event.currentTarget);
+      resizeEditableInput(event.currentTarget);
+    },
+    [commitEditableDocument],
+  );
+
+  const handleEditorCopy = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount || !selectionBelongsToEditor(event.currentTarget, selection)) {
+      return;
+    }
+    const logicalText = readPastedTextSelection(selection.getRangeAt(0));
+    if (logicalText === null) {
+      return;
+    }
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", logicalText);
+  }, []);
+
+  const handleEditorCut = useCallback(
+    (event: ClipboardEvent<HTMLDivElement>) => {
+      const selection = window.getSelection();
+      if (!selection?.rangeCount || selection.isCollapsed || !selectionBelongsToEditor(event.currentTarget, selection)) {
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const logicalText = readPastedTextSelection(range);
+      if (logicalText === null) {
+        return;
+      }
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", logicalText);
+      range.deleteContents();
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      commitEditableDocument(event.currentTarget);
+      resizeEditableInput(event.currentTarget);
+    },
+    [commitEditableDocument],
+  );
+
   const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
     if (event.clipboardData.files.length) {
       event.preventDefault();
@@ -1066,13 +1232,31 @@ export function SendBox({
       void addImageUrl(imageUrl);
       return;
     }
+    const text = normalizePastedText(event.clipboardData.getData("text/plain"));
+    if (text && shouldCollapsePastedText(text)) {
+      event.preventDefault();
+      insertPastedTextFragment(event.currentTarget, text);
+      commitEditableDocument(event.currentTarget);
+      resizeEditableInput(event.currentTarget);
+      return;
+    }
     pastePlainText(event);
-    syncEditableChange(event.currentTarget, (nextValue) => {
-      onChange(nextValue);
-    });
+    commitEditableDocument(event.currentTarget);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    const pastedTextFragment = closestPastedTextFragment(event.target);
+    if (
+      pastedTextFragment &&
+      event.currentTarget.contains(pastedTextFragment) &&
+      isPastedTextToggle(event.target) &&
+      (event.key === "Enter" || event.key === " ")
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      togglePastedTextFragment(event.currentTarget as HTMLDivElement, pastedTextFragment, event.target);
+      return;
+    }
     if (slashOpen) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -1156,9 +1340,7 @@ export function SendBox({
     if (event.key === "Enter" && event.shiftKey) {
       event.preventDefault();
       insertPlainText("\n");
-      syncEditableChange(event.currentTarget, (nextValue) => {
-        onChange(nextValue);
-      });
+      commitEditableDocument(event.currentTarget as HTMLDivElement);
       resizeEditableInput(event.currentTarget);
       scrollEditableToBottom(event.currentTarget);
       return;
@@ -1168,12 +1350,10 @@ export function SendBox({
 
   const handleEditorInput = useCallback(
     (event: FormEvent<HTMLDivElement>) => {
-      syncEditableChange(event.currentTarget, (nextValue) => {
-        onChange(nextValue);
-      });
+      commitEditableDocument(event.currentTarget);
       resizeEditableInput(event.currentTarget);
     },
-    [onChange],
+    [commitEditableDocument],
   );
 
   const handleQuoteRemove = useCallback(
@@ -1276,16 +1456,22 @@ export function SendBox({
           inputRef.current = node;
         }}
         value={value}
+        pastedTextFragments={pastedTextFragments}
         inputLabel={inputLabel}
         placeholder={placeholder}
         disabled={inputDisabled}
         className={styles.input}
         onBlur={() => setFocused(false)}
+        onBeforeInput={handleEditorBeforeInput}
+        onClick={handleEditorClick}
         onChange={handleEditorInput}
         onCompositionEnd={composition.handleCompositionEnd}
         onCompositionStart={composition.handleCompositionStart}
         onFocus={() => setFocused(true)}
+        onCopy={handleEditorCopy}
+        onCut={handleEditorCut}
         onKeyDown={handleKeyDown}
+        onMouseDown={handleEditorMouseDown}
         onPaste={handlePaste}
       />
 
@@ -2028,33 +2214,45 @@ function clamp(value: number, min: number, max: number): number {
 
 interface ContentEditableInputProps {
   value: string;
+  pastedTextFragments: PastedTextFragment[];
   inputLabel: string;
   placeholder: string;
   disabled: boolean;
   className: string;
   refSetter: (node: HTMLDivElement | null) => void;
   onBlur: () => void;
+  onBeforeInput: (event: FormEvent<HTMLDivElement>) => void;
+  onClick: (event: ReactMouseEvent<HTMLDivElement>) => void;
   onChange: (event: FormEvent<HTMLDivElement>) => void;
   onCompositionEnd: (event: CompositionEvent<HTMLElement>) => void;
   onCompositionStart: (event: CompositionEvent<HTMLElement>) => void;
   onFocus: () => void;
+  onCopy: (event: ClipboardEvent<HTMLDivElement>) => void;
+  onCut: (event: ClipboardEvent<HTMLDivElement>) => void;
   onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+  onMouseDown: (event: ReactMouseEvent<HTMLDivElement>) => void;
   onPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
 }
 
 function ContentEditableInput({
   value,
+  pastedTextFragments,
   inputLabel,
   placeholder,
   disabled,
   className,
   refSetter,
   onBlur,
+  onBeforeInput,
+  onClick,
   onChange,
   onCompositionEnd,
   onCompositionStart,
   onFocus,
+  onCopy,
+  onCut,
   onKeyDown,
+  onMouseDown,
   onPaste,
 }: ContentEditableInputProps) {
   const editorRef = useRef<HTMLDivElement | null>(null);
@@ -2071,11 +2269,16 @@ function ContentEditableInput({
     if (!editor) {
       return;
     }
-    if (readEditorValue(editor) !== value) {
-      renderEditorValue(editor, value);
+    const currentDocument = readEditorDocument(editor);
+    const normalizedFragments = normalizePastedTextFragments(value, pastedTextFragments);
+    if (
+      currentDocument.value !== value ||
+      !samePastedTextFragments(currentDocument.fragments, normalizedFragments)
+    ) {
+      renderEditorValue(editor, value, normalizedFragments);
     }
     editor.dataset.empty = value ? "false" : "true";
-  }, [value]);
+  }, [pastedTextFragments, value]);
 
   return (
     <div
@@ -2093,11 +2296,16 @@ function ContentEditableInput({
       suppressContentEditableWarning
       tabIndex={disabled ? -1 : 0}
       onBlur={onBlur}
+      onBeforeInput={onBeforeInput}
+      onClick={onClick}
       onCompositionEnd={onCompositionEnd}
       onCompositionStart={onCompositionStart}
       onFocus={onFocus}
+      onCopy={onCopy}
+      onCut={onCut}
       onInput={onChange}
       onKeyDown={onKeyDown}
+      onMouseDown={onMouseDown}
       onPaste={onPaste}
     />
   );
@@ -2108,17 +2316,45 @@ const CONTEXT_HOVER_CARD_MAX_WIDTH = 420;
 const HOVER_CARD_EDGE_GAP = 12;
 const HOVER_CARD_ARROW_PADDING = 16;
 
-function renderEditorValue(editor: HTMLDivElement, value: string) {
-  editor.replaceChildren(...(value ? [document.createTextNode(value)] : []));
+function renderEditorValue(
+  editor: HTMLDivElement,
+  value: string,
+  pastedTextFragments: readonly PastedTextFragment[],
+) {
+  const fragments = normalizePastedTextFragments(value, pastedTextFragments);
+  const nodes: Node[] = [];
+  let cursor = 0;
+  for (const fragment of fragments) {
+    if (fragment.start > cursor) {
+      nodes.push(document.createTextNode(value.slice(cursor, fragment.start)));
+    }
+    nodes.push(createPastedTextFragmentElement(value.slice(fragment.start, fragment.end), fragment));
+    cursor = fragment.end;
+  }
+  if (cursor < value.length) {
+    nodes.push(document.createTextNode(value.slice(cursor)));
+  }
+  editor.replaceChildren(...nodes);
 }
 
-function syncEditableChange(editor: HTMLElement, onChange: (value: string) => void) {
-  const nextValue = readEditorValue(editor);
-  editor.dataset.empty = nextValue ? "false" : "true";
-  onChange(nextValue);
+function removeEmptyPastedTextFragments(editor: HTMLElement) {
+  editor.querySelectorAll<HTMLElement>(PASTED_TEXT_FRAGMENT_SELECTOR).forEach((fragment) => {
+    const raw = fragment.querySelector(PASTED_TEXT_RAW_SELECTOR);
+    if ((raw?.textContent ?? "") === "") {
+      fragment.remove();
+    }
+  });
+}
+
+function readEditorDocument(root: Node): PastedTextDocument {
+  return readPastedTextAwareDocument(root) ?? { value: readEditorValue(root), fragments: [] };
 }
 
 function readEditorValue(root: Node): string {
+  const pastedTextDocument = readPastedTextAwareDocument(root);
+  if (pastedTextDocument) {
+    return normalizeEditorText(pastedTextDocument.value);
+  }
   if (!hasMeaningfulEditorContent(root)) {
     return "";
   }
@@ -2206,6 +2442,131 @@ function focusEditableInput(input: HTMLElement) {
   }
   const range = document.createRange();
   range.selectNodeContents(input);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function insertPastedTextFragment(editor: HTMLDivElement, rawText: string) {
+  const fragmentId = createPastedTextFragmentId();
+  const element = createPastedTextFragmentElement(rawText, { id: fragmentId, collapsed: true });
+  const selection = window.getSelection();
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+  const hasEditorRange = Boolean(range && rangeBelongsToEditor(editor, range));
+
+  if (
+    hasEditorRange &&
+    typeof document.execCommand === "function" &&
+    document.execCommand("insertHTML", false, element.outerHTML)
+  ) {
+    const inserted = Array.from(editor.querySelectorAll<HTMLElement>(PASTED_TEXT_FRAGMENT_SELECTOR))
+      .find((candidate) => candidate.dataset.fragmentId === fragmentId);
+    if (inserted) {
+      placeCaretAtNodeBoundary(editor, inserted, true);
+    }
+    return;
+  }
+
+  if (range && hasEditorRange) {
+    range.deleteContents();
+    range.insertNode(element);
+    range.setStartAfter(element);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    return;
+  }
+
+  editor.append(element);
+  placeCaretAtNodeBoundary(editor, element, true);
+}
+
+function selectionBelongsToEditor(editor: HTMLElement, selection: Selection): boolean {
+  return containsEditorNode(editor, selection.anchorNode) && containsEditorNode(editor, selection.focusNode);
+}
+
+function rangeBelongsToEditor(editor: HTMLElement, range: Range): boolean {
+  return containsEditorNode(editor, range.startContainer) && containsEditorNode(editor, range.endContainer);
+}
+
+function containsEditorNode(editor: HTMLElement, node: Node | null): boolean {
+  return Boolean(node && (node === editor || editor.contains(node)));
+}
+
+function adjacentPastedTextFragment(
+  editor: HTMLDivElement,
+  range: Range,
+  direction: "backward" | "forward",
+): HTMLElement | null {
+  if (!range.collapsed || !rangeBelongsToEditor(editor, range)) {
+    return null;
+  }
+  let directChild: Node = range.startContainer;
+  if (directChild === editor) {
+    const offset = range.startOffset;
+    const candidate = direction === "backward"
+      ? editor.childNodes[offset - 1] ?? null
+      : editor.childNodes[offset] ?? null;
+    return candidate instanceof HTMLElement && candidate.matches(PASTED_TEXT_FRAGMENT_SELECTOR) ? candidate : null;
+  }
+  while (directChild.parentNode && directChild.parentNode !== editor) {
+    directChild = directChild.parentNode;
+  }
+  if (directChild.parentNode !== editor) {
+    return null;
+  }
+  if (range.startContainer.nodeType === Node.TEXT_NODE) {
+    const length = range.startContainer.textContent?.length ?? 0;
+    if (
+      (direction === "backward" && range.startOffset > 0) ||
+      (direction === "forward" && range.startOffset < length)
+    ) {
+      return null;
+    }
+  }
+  const index = Array.prototype.indexOf.call(editor.childNodes, directChild) as number;
+  const candidate = direction === "backward"
+    ? editor.childNodes[index - 1] ?? null
+    : editor.childNodes[index + 1] ?? null;
+  return candidate instanceof HTMLElement && candidate.matches(PASTED_TEXT_FRAGMENT_SELECTOR) ? candidate : null;
+}
+
+function placeCaretAtNodeBoundary(editor: HTMLElement, node: Node, after: boolean) {
+  const selection = window.getSelection();
+  if (!selection) {
+    return;
+  }
+  const range = document.createRange();
+  if (node === editor) {
+    range.selectNodeContents(editor);
+    range.collapse(after);
+  } else if (editor.contains(node)) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      range.setStart(node, after ? node.textContent?.length ?? 0 : 0);
+    } else if (after) {
+      range.setStartAfter(node);
+    } else {
+      range.setStartBefore(node);
+    }
+    range.collapse(true);
+  } else {
+    range.selectNodeContents(editor);
+    range.collapse(false);
+  }
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function placeCaretInsidePastedTextRaw(editor: HTMLElement, fragment: HTMLElement) {
+  const raw = fragment.querySelector<HTMLElement>(PASTED_TEXT_RAW_SELECTOR);
+  const selection = window.getSelection();
+  if (!raw || !selection) {
+    placeCaretAtNodeBoundary(editor, fragment, true);
+    return;
+  }
+  editor.focus({ preventScroll: true });
+  const range = document.createRange();
+  range.selectNodeContents(raw);
   range.collapse(false);
   selection.removeAllRanges();
   selection.addRange(range);

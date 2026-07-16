@@ -40,7 +40,7 @@ import { confirmWorktreeRemoval, GitWorktreeView, type GitWorktreeAddOptions } f
 import { GitLfsView, type GitLfsAction } from "./GitLfsView";
 import { GitRepositoryList } from "./GitRepositoryList";
 import { GitOperationLog } from "./GitOperationLog";
-import type { GitChangeEntry } from "../changesTree";
+import { commitSelectionFromEntries, type GitChangeEntry } from "../changesTree";
 
 export type GitToolWindowView = "changes" | "history" | "blame" | "reflog" | "branches" | "stash" | "operations";
 
@@ -73,6 +73,10 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   const [identity, setIdentity] = useState<GitIdentity | null>(null);
   const [identityLoading, setIdentityLoading] = useState(false);
   const [commitOutcome, setCommitOutcome] = useState<GitCommitOutcome | null>(null);
+  const [selectedCommitPaths, setSelectedCommitPaths] = useState<readonly string[]>([]);
+  const [selectedUntrackedCommitPaths, setSelectedUntrackedCommitPaths] = useState<readonly string[]>([]);
+  const [selectedCommitFileCount, setSelectedCommitFileCount] = useState(0);
+  const [changeSelectionResetKey, setChangeSelectionResetKey] = useState(0);
   const [selectedChangePatchAction, setSelectedChangePatchAction] = useState<"stage" | "unstage">("stage");
   const [remotes, setRemotes] = useState<readonly GitRemoteInfo[]>([]);
   const [syncProgress, setSyncProgress] = useState<readonly string[]>([]);
@@ -239,6 +243,13 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     setNavigationPanePercent(storeSnapshot?.ui?.navigationPanePercent ?? 19);
     setDetailPanePercent(storeSnapshot?.ui?.detailPanePercent ?? 28);
   }, [initialView, projectKey]);
+
+  useEffect(() => {
+    setSelectedCommitPaths([]);
+    setSelectedUntrackedCommitPaths([]);
+    setSelectedCommitFileCount(0);
+    setChangeSelectionResetKey((current) => current + 1);
+  }, [projectKey, storeSnapshot?.project?.selectedRepositoryId]);
 
   useEffect(() => {
     const projectState = storeSnapshot?.project;
@@ -629,6 +640,10 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     setCompareResult(null);
     setBlamePage(null);
     setReflogPage(null);
+    setSelectedCommitPaths([]);
+    setSelectedUntrackedCommitPaths([]);
+    setSelectedCommitFileCount(0);
+    setChangeSelectionResetKey((current) => current + 1);
     gitStore?.getState().selectRepository(storeSnapshot.project.workspaceId, repositoryId);
     void controller?.refreshRepository({
       workspaceId: storeSnapshot.project.workspaceId,
@@ -640,6 +655,10 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
     paths: readonly string[],
     entries: readonly GitChangeEntry[] = [],
   ) => {
+    const commitSelection = commitSelectionFromEntries(entries);
+    setSelectedCommitPaths(commitSelection.paths);
+    setSelectedUntrackedCommitPaths(commitSelection.untrackedPaths);
+    setSelectedCommitFileCount(commitSelection.fileCount);
     const selectedPath = paths[0];
     if (!runtime || !gitStore || !selectedPath || !storeSnapshot?.project?.selectedRepositoryId) return;
     const file = storeSnapshot.status?.files.find((candidate) => candidate.path === selectedPath || candidate.originalPath === selectedPath);
@@ -773,6 +792,8 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
         repositoryId: storeSnapshot.project!.selectedRepositoryId!,
         idempotencyKey: `tool-window-commit-${Date.now()}`,
         expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
+        paths: [...selectedCommitPaths],
+        untrackedPaths: [...selectedUntrackedCommitPaths],
         ...options,
       };
       if (options.amend) {
@@ -788,6 +809,10 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
           summary: result.summary,
           status: typeof result.result.status === "string" ? result.result.status : result.state,
         });
+        setSelectedCommitPaths([]);
+        setSelectedUntrackedCommitPaths([]);
+        setSelectedCommitFileCount(0);
+        setChangeSelectionResetKey((current) => current + 1);
         gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { commitDraft: "" });
         if (pushAfter) {
           const target = pushTargetFromStatus(storeSnapshot.status ?? null);
@@ -2443,6 +2468,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
         />
         <main
           className={styles.primary}
+          data-view={view}
           role="tabpanel"
           id={`git-tool-panel-${view}`}
           aria-labelledby={`git-tool-tab-${view}`}
@@ -2464,6 +2490,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
                   }
                 }}
                 onSelectionChange={(paths, entries) => void loadSelectedChangeDiff(paths, entries)}
+                selectionResetKey={changeSelectionResetKey}
                 staging={mutation === "stage"}
                 onStagePaths={runStage}
                 unstaging={mutation === "unstage"}
@@ -2475,6 +2502,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
               />
               <GitCommitEditor
                 status={storeSnapshot?.status ?? null}
+                selectedFileCount={selectedCommitFileCount}
                 draft={storeSnapshot?.ui?.commitDraft ?? ""}
                 committing={mutation === "commit" || mutation === "push"}
                 onDraftChange={(commitDraft) => {

@@ -96,6 +96,7 @@ export function ConversationNativeTimelineSurface({
       scrollPatches: 0,
       followBottom: followBottomRef.current,
       userScrollActive: false,
+      controlledScrollActive: false,
       topLocked: false,
       deferredMeasurements: 0,
     });
@@ -150,6 +151,9 @@ export function ConversationNativeTimelineSurface({
         return true;
       },
       setPinned() {},
+      setResidentUnits() {},
+      setControlledScrollInteraction() {},
+      settleControlledScrollViewport() {},
       getUnitElement: (unitId) => elementsByIdRef.current.get(unitId) ?? null,
       mountedUnitIds: () => Object.freeze(unitsRef.current.map((unit) => unit.id)),
       diagnostics,

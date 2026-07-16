@@ -2631,6 +2631,7 @@ function composerDraft(
 ): AgentSessionController["composerDraft"] {
   return {
     text: "",
+    pastedTextFragments: [],
     selectedSkill: null,
     files: [],
     quotes: [],

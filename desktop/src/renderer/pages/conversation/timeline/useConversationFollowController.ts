@@ -25,6 +25,8 @@ export interface UseConversationFollowControllerResult {
   readonly endNavigation: () => void;
   readonly beginHistoryRestore: () => void;
   readonly endHistoryRestore: () => void;
+  readonly beginScrollbarDrag: () => void;
+  readonly endScrollbarDrag: () => void;
   readonly suspend: (reason: string) => void;
   readonly resume: (reason?: string) => void;
   readonly scrollToBottom: (behavior?: ScrollBehavior) => void;
@@ -75,6 +77,8 @@ export function useConversationFollowController(
   const endNavigation = useCallback(() => controller.endNavigation(), [controller]);
   const beginHistoryRestore = useCallback(() => controller.beginHistoryRestore(), [controller]);
   const endHistoryRestore = useCallback(() => controller.endHistoryRestore(), [controller]);
+  const beginScrollbarDrag = useCallback(() => controller.beginScrollbarDrag("controlled-scrollbar-drag"), [controller]);
+  const endScrollbarDrag = useCallback(() => controller.endScrollbarDrag(), [controller]);
   const suspend = useCallback((reason: string) => controller.suspend(reason), [controller]);
   const resume = useCallback((reason?: string) => controller.resume(reason), [controller]);
   const scrollToBottom = useCallback((behavior?: ScrollBehavior) => controller.scrollToBottom(behavior), [controller]);
@@ -92,6 +96,8 @@ export function useConversationFollowController(
     endNavigation,
     beginHistoryRestore,
     endHistoryRestore,
+    beginScrollbarDrag,
+    endScrollbarDrag,
     suspend,
     resume,
     scrollToBottom,

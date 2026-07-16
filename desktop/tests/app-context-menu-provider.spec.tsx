@@ -7,6 +7,7 @@ import {
   APP_START_WORKSPACE_FILE_ANNOTATION_EVENT,
 } from "@/renderer/events/workspaceFileContext";
 import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
+import { createPastedTextFragmentElement } from "@/renderer/components/chat/SendBox/collapsiblePaste";
 
 describe("AppContextMenuProvider", () => {
   const writeText = vi.fn();
@@ -108,6 +109,34 @@ describe("AppContextMenuProvider", () => {
     expect(screen.getByRole("menuitem", { name: "粘贴" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "全选" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "刷新" })).not.toBeNull();
+  });
+
+  it("copies complete raw text from a folded paste inside the sendbox editor", async () => {
+    render(
+      <AppContextMenuProvider>
+        <div
+          aria-label="富文本输入"
+          contentEditable
+          data-sendbox-input="true"
+          role="textbox"
+          suppressContentEditableWarning
+        />
+      </AppContextMenuProvider>,
+    );
+    const editor = screen.getByRole("textbox", { name: "富文本输入" });
+    const rawText = `0123456789${"x".repeat(180)}ABCDEFGHIJ`;
+    const fragment = createPastedTextFragmentElement(rawText, { id: "paste-menu-copy", collapsed: true });
+    editor.append(fragment);
+    const range = document.createRange();
+    range.selectNode(fragment);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    fireEvent.contextMenu(fragment.querySelector('[data-paste-summary="true"]')!, { clientX: 12, clientY: 18 });
+    expect(screen.getByRole("menu", { name: "页面右键菜单" }).dataset.contextKind).toBe("editable");
+    fireEvent.click(screen.getByRole("menuitem", { name: "复制" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(rawText));
   });
 
   it("copies selected page text", async () => {

@@ -174,6 +174,7 @@ function conversationCodeRenderer(
   return {
     create(initial) {
       let context = initial;
+      let destroyed = false;
       const element = initial.ownerDocument.createElement("div");
       applyAttributes(element, initial.block);
       const reactRoot = createRoot(element);
@@ -181,6 +182,7 @@ function conversationCodeRenderer(
       return {
         element,
         update(next) {
+          if (destroyed) return "reused";
           const unchanged = next.block.content_hash === context.block.content_hash;
           context = next;
           applyAttributes(element, next.block);
@@ -193,8 +195,15 @@ function conversationCodeRenderer(
           return Object.freeze({ width: rect.width, height: rect.height });
         },
         destroy() {
-          reactRoot.unmount();
+          if (destroyed) return;
+          destroyed = true;
           element.remove();
+          // The retained Markdown view is often destroyed from a parent React
+          // passive cleanup while navigating between virtual turns. Unmounting
+          // this nested root synchronously during that commit re-enters React
+          // and can race the replacement timeline root. Retire it after the
+          // current commit; removing the detached host remains synchronous.
+          queueMicrotask(() => reactRoot.unmount());
         },
       } satisfies MarkdownBlockDomInstance;
     },
